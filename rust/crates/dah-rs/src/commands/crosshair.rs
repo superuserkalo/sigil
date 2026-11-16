@@ -12,7 +12,7 @@ use deadlock_core::autoexec;
 use deadlock_core::crosshair::{self, Crosshair};
 
 use crate::error::{CliError, Result};
-use crate::paths::{self, CliPaths};
+use crate::paths::CliPaths;
 use crate::util::print_json;
 
 pub struct ShowArgs {
