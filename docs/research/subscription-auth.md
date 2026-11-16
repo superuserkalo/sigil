@@ -80,6 +80,13 @@ store at `<data>/auth/<provider>.json` with owner-only permissions.
 - Settings shows the account and expiry, starts the CLI sign-in, and switches the
   host to the subscription.
 
+Model ids come from the subscription catalog. fx's current defaults are
+`gpt-5.6-luna` for Codex and `grok-4.5` for Grok; the exact id the account exposes
+is the one to use. The host sends the provider headers the fx client sends:
+`originator`, `OpenAI-Beta`, `chatgpt-account-id` and `accept` for Codex;
+`X-XAI-Token-Auth`, `x-grok-client-identifier` and `x-grok-model-override` for
+Grok.
+
 The OAuth browser round trip has not been exercised here because it needs a real
 subscription and a browser. The token exchange, refresh, JWT claim, store and
 header shape are covered by tests, and the host starts against a fixture token.
