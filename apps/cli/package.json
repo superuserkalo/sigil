@@ -1,0 +1,20 @@
+{
+  "name": "@dah/cli",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx src/index.ts",
+    "typecheck": "tsc --noEmit -p ."
+  },
+  "dependencies": {
+    "@dah/deadlock-tools": "workspace:*",
+    "@dah/harness": "workspace:*",
+    "@earendil-works/chord": "1.5.2",
+    "@earendil-works/pi-ai": "1.5.2",
+    "@earendil-works/pi-durable": "1.5.2"
+  },
+  "devDependencies": {
+    "tsx": "^4.23.15"
+  }
+}
