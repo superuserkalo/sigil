@@ -14,6 +14,7 @@ pub enum Screen {
     Updates,
     Profiles,
     Autoexec,
+    Crosshair,
     Stats,
     Locker,
     Launch,
@@ -45,6 +46,7 @@ impl Screen {
                 | Screen::Conflicts
                 | Screen::Updates
                 | Screen::Autoexec
+                | Screen::Crosshair
                 | Screen::Profiles
                 | Screen::Stats
                 | Screen::Locker
@@ -59,6 +61,7 @@ impl Screen {
             Screen::Updates => "updates",
             Screen::Profiles => "profiles",
             Screen::Autoexec => "autoexec",
+            Screen::Crosshair => "crosshair",
             Screen::Stats => "stats",
             Screen::Locker => "locker",
             Screen::Launch => "launch",
@@ -82,6 +85,7 @@ impl Screen {
             Screen::Updates => "Updates",
             Screen::Profiles => "Profiles",
             Screen::Autoexec => "Autoexec",
+            Screen::Crosshair => "Crosshair",
             Screen::Stats => "Stats",
             Screen::Locker => "Locker",
             Screen::Launch => "Launch",
@@ -105,6 +109,7 @@ impl Screen {
             Screen::Updates => "PATCH FEED AND BASELINES",
             Screen::Profiles => "SAVED SLOT SETS",
             Screen::Autoexec => "GAME CONFIG",
+            Screen::Crosshair => "AIM RETICLE",
             Screen::Stats => "DEADLOCK API AND LOCAL DEMOS",
             Screen::Locker => "HERO ASSETS",
             Screen::Launch => "GAME LAUNCH",
@@ -128,6 +133,7 @@ impl Screen {
             Screen::Updates => "Project baselines against the current patch feed",
             Screen::Profiles => "Named sets of enabled slots, captured and restored",
             Screen::Autoexec => "The game config file, read and edited behind approval",
+            Screen::Crosshair => "The reticle convars, with a live geometry preview",
             Screen::Stats => "Rank, heroes, matches and heatmaps from the API, depth from demos",
             Screen::Locker => "Hero renders and asset paths resolved from the local game",
             Screen::Launch => "Modded, vanilla and the restore path",
@@ -151,6 +157,7 @@ impl Screen {
             Screen::Updates => "⟳",
             Screen::Profiles => "☰",
             Screen::Autoexec => "≡",
+            Screen::Crosshair => "✛",
             Screen::Stats => "◉",
             Screen::Locker => "◐",
             Screen::Launch => "▶",
@@ -174,6 +181,7 @@ impl Screen {
             Screen::Updates => "CMD 4",
             Screen::Profiles => "CMD P",
             Screen::Autoexec => "CMD E",
+            Screen::Crosshair => "CMD X",
             Screen::Stats => "CMD 5",
             Screen::Locker => "CMD 6",
             Screen::Launch => "CMD L",
@@ -203,11 +211,21 @@ impl Screen {
             '0' => Some(Screen::Patches),
             'p' => Some(Screen::Profiles),
             'e' => Some(Screen::Autoexec),
+            'x' => Some(Screen::Crosshair),
             'l' => Some(Screen::Launch),
             ',' => Some(Screen::Settings),
             _ => None,
         }
     }
+}
+
+/// The durable state a `dah watch` loop writes.
+pub struct WatchState {
+    pub updated_at: String,
+    pub interval_seconds: u64,
+    pub newest_patch: Option<String>,
+    pub total_projects: usize,
+    pub needs_review: usize,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]

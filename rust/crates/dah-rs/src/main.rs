@@ -143,6 +143,11 @@ enum Command {
         #[command(subcommand)]
         command: LaunchCommand,
     },
+    /// Read, edit and apply the crosshair convars.
+    Crosshair {
+        #[command(subcommand)]
+        command: CrosshairCommand,
+    },
     /// Download a GameBanana mod or archive, plan an install and apply it with approval.
     Install {
         #[command(subcommand)]
@@ -581,6 +586,46 @@ enum CharacterCommand {
 }
 
 #[derive(Subcommand)]
+enum CrosshairCommand {
+    /// Print the editor crosshair and the convars it emits.
+    Show {
+        /// Workspace directory. Reserved for saved presets.
+        #[arg(long, value_name = "DIR")]
+        workspace: Option<PathBuf>,
+        /// Print machine-readable JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Read the in-game crosshair from machine_convars.vcfg.
+    Import {
+        /// Workspace directory. Reserved for saved presets.
+        #[arg(long, value_name = "DIR")]
+        workspace: Option<PathBuf>,
+        /// Print machine-readable JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Merge the managed crosshair block into autoexec.cfg.
+    Apply {
+        /// Write the file. Without it only the plan is printed.
+        #[arg(long)]
+        approve: bool,
+        /// Print machine-readable JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Remove the managed crosshair block from autoexec.cfg.
+    Clear {
+        /// Write the file. Without it only the plan is printed.
+        #[arg(long)]
+        approve: bool,
+        /// Print machine-readable JSON.
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand)]
 enum InstallCommand {
     /// Download, extract, validate and plan an install. Writes nothing to the game.
     Plan {
@@ -898,6 +943,12 @@ impl Cli {
                 | LaunchCommand::Vanilla { json, .. }
                 | LaunchCommand::Restore { json, .. }
                 | LaunchCommand::Status { json } => *json,
+            },
+            Command::Crosshair { command } => match command {
+                CrosshairCommand::Show { json, .. }
+                | CrosshairCommand::Import { json, .. }
+                | CrosshairCommand::Apply { json, .. }
+                | CrosshairCommand::Clear { json, .. } => *json,
             },
             Command::Install { command } => match command {
                 InstallCommand::Plan { json, .. }
@@ -1282,6 +1333,45 @@ fn run(cli: &Cli) -> error::Result<i32> {
             }
             LaunchCommand::Status { json } => {
                 commands::launch::status(*json)?;
+                Ok(0)
+            }
+        },
+        Command::Crosshair { command } => match command {
+            CrosshairCommand::Show { workspace, json } => {
+                commands::crosshair::show(&commands::crosshair::ShowArgs {
+                    workspace: workspace.clone(),
+                    json: *json,
+                })?;
+                Ok(0)
+            }
+            CrosshairCommand::Import { workspace, json } => {
+                commands::crosshair::import(
+                    &paths::resolve_paths(None)?,
+                    &commands::crosshair::ImportArgs {
+                        workspace: workspace.clone(),
+                        json: *json,
+                    },
+                )?;
+                Ok(0)
+            }
+            CrosshairCommand::Apply { approve, json } => {
+                commands::crosshair::apply(
+                    &paths::resolve_paths(None)?,
+                    &commands::crosshair::ApplyArgs {
+                        approve: *approve,
+                        json: *json,
+                    },
+                )?;
+                Ok(0)
+            }
+            CrosshairCommand::Clear { approve, json } => {
+                commands::crosshair::clear(
+                    &paths::resolve_paths(None)?,
+                    &commands::crosshair::ClearArgs {
+                        approve: *approve,
+                        json: *json,
+                    },
+                )?;
                 Ok(0)
             }
         },

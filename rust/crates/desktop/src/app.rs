@@ -85,6 +85,9 @@ pub struct State {
     pub review_job: Job<ReviewQueue>,
     pub launch_dialog: bool,
     pub addon_dialog: Option<(u8, bool)>,
+    pub watch: Option<model::WatchState>,
+    pub capabilities: Vec<(String, String)>,
+    pub crosshair: screens::crosshair::View,
     pub profiles: screens::profiles::View,
     pub profiles_job: Job<screens::profiles::Load>,
     pub autoexec: screens::autoexec::View,
@@ -162,6 +165,9 @@ impl Default for State {
             review_job: Job::default(),
             launch_dialog: false,
             addon_dialog: None,
+            watch: None,
+            capabilities: Vec::new(),
+            crosshair: screens::crosshair::View::default(),
             profiles: screens::profiles::View::default(),
             profiles_job: Job::default(),
             autoexec: screens::autoexec::View::default(),
@@ -1012,6 +1018,7 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
         Screen::Updates => screens::updates::view(s, &u),
         Screen::Profiles => screens::profiles::view(s, &u),
         Screen::Autoexec => screens::autoexec::view(s, &u),
+        Screen::Crosshair => screens::crosshair::view(s, &u),
         Screen::Stats => screens::stats::view(s, &u),
         Screen::Locker => screens::locker::view(s, &u),
         Screen::Launch => screens::launch::view(s, &u),
@@ -1052,6 +1059,7 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
         ("toolchain-modal", screens::toolchain::dialog(s, &u)),
         ("addon-modal", screens::installed::dialog(s, &u)),
         ("review-modal", screens::stats::dialog(s, &u)),
+        ("crosshair-modal", screens::crosshair::dialog(s, &u)),
     ] {
         if let Some(layer) = layer {
             root = root.child(u.modal_layer(key, layer));
@@ -1080,6 +1088,7 @@ fn sidebar(s: &State, u: &Ui) -> El {
     for screen in [
         Screen::Profiles,
         Screen::Autoexec,
+        Screen::Crosshair,
         Screen::Stats,
         Screen::Locker,
         Screen::Launch,
@@ -1845,6 +1854,13 @@ pub fn scene_profiles(s: &mut State) {
     }
 }
 
+pub fn scene_crosshair(s: &mut State) {
+    s.screen = Screen::Crosshair;
+    if rune::is_headless() {
+        crate::data::import_crosshair(s);
+    }
+}
+
 pub fn scene_autoexec(s: &mut State) {
     s.screen = Screen::Autoexec;
     if rune::is_headless() {
@@ -2007,6 +2023,7 @@ pub fn scenes() -> &'static [(&'static str, fn(&mut State))] {
         ("updates", scene_updates),
         ("profiles", scene_profiles),
         ("autoexec", scene_autoexec),
+        ("crosshair", scene_crosshair),
         ("stats", scene_stats),
         ("locker", scene_locker),
         ("launch", scene_launch),

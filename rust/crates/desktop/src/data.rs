@@ -30,6 +30,8 @@ pub fn init_state() -> State {
     let game_root = apply_game_status(&mut state);
     load_cached_patches(&mut state);
     load_workspace_project(&mut state);
+    state.watch = read_watch_state();
+    state.capabilities = build_capabilities();
     refresh_release_with(&mut state, game_root.as_deref());
     state
 }
@@ -2341,6 +2343,214 @@ pub fn save_review(state: &mut State) {
                 panel.log = Some(error.to_string());
                 panel.tone = crate::ui::Tone::Bad;
             }
+        }
+    }
+}
+
+/// The durable state a `dah watch` loop writes, if one has run.
+pub fn read_watch_state() -> Option<model::WatchState> {
+    let path = workspace_dir().join(".dah").join("watch-state.json");
+    let text = fs::read_to_string(path).ok()?;
+    let value: serde_json::Value = serde_json::from_str(&text).ok()?;
+    Some(model::WatchState {
+        updated_at: value
+            .get("updatedAt")
+            .and_then(|value| value.as_str())
+            .unwrap_or("unknown")
+            .chars()
+            .take(16)
+            .collect::<String>()
+            .replace('T', " "),
+        interval_seconds: value
+            .get("intervalSeconds")
+            .and_then(|value| value.as_u64())
+            .unwrap_or(0),
+        newest_patch: value
+            .get("newestPatch")
+            .and_then(|value| value.as_str())
+            .map(str::to_string),
+        total_projects: value
+            .get("totalProjects")
+            .and_then(|value| value.as_u64())
+            .unwrap_or(0) as usize,
+        needs_review: value
+            .get("needsReview")
+            .and_then(|value| value.as_u64())
+            .unwrap_or(0) as usize,
+    })
+}
+
+/// What this build can actually do on this machine, measured at startup.
+pub fn build_capabilities() -> Vec<(String, String)> {
+    let mut lines = Vec::new();
+    lines.push((
+        "Stats API".to_string(),
+        "api.deadlock-api.com, keyless".to_string(),
+    ));
+
+    let demos = deadlock_core::demo::backend_status();
+    lines.push((
+        "Demo backend".to_string(),
+        if demos.position_extraction_available {
+            "positions and heatmaps available".to_string()
+        } else {
+            "container only, positions and heatmaps absent".to_string()
+        },
+    ));
+
+    let tools = deadlock_core::install::ToolPaths::from_environment();
+    lines.push((
+        "Install archives".to_string(),
+        format!(
+            "zip in process, 7z {}, rar {}",
+            if tools.seven_zip.is_some() {
+                "available"
+            } else {
+                "missing"
+            },
+            if tools.unrar.is_some() {
+                "available"
+            } else {
+                "missing"
+            }
+        ),
+    ));
+
+    let chain = deadlock_core::toolchain::toolchain_status();
+    lines.push((
+        "Decompile".to_string(),
+        if chain.decompile_available {
+            "ready".to_string()
+        } else {
+            "Source2Viewer-CLI not found".to_string()
+        },
+    ));
+    lines.push((
+        "Compile".to_string(),
+        if chain.compile_available {
+            "ready".to_string()
+        } else if cfg!(target_os = "windows") {
+            "resourcecompiler.exe not found".to_string()
+        } else {
+            "Windows and CSDK 12 only".to_string()
+        },
+    ));
+
+    let assets = deadlock_core::locker::LockerAssetPaths::discover();
+    lines.push((
+        "Locker art".to_string(),
+        assets
+            .heroes_dir
+            .as_ref()
+            .map(|path| path.display().to_string())
+            .unwrap_or_else(|| "no art root".to_string()),
+    ));
+
+    lines.push((
+        "Character".to_string(),
+        if std::env::var_os("DAH_MESHGEN_COMMAND").is_some() {
+            "local command configured".to_string()
+        } else if std::env::var_os("DAH_MESHGEN_URL").is_some() {
+            "local HTTP model server configured".to_string()
+        } else if std::env::var_os("MESHY_API_KEY").is_some() {
+            "Meshy adapter configured".to_string()
+        } else {
+            "no generative backend".to_string()
+        },
+    ));
+
+    lines
+}
+
+// --- crosshair -------------------------------------------------------------
+
+pub fn import_crosshair(state: &mut State) {
+    let Some(game_root) = state.game_root.clone() else {
+        state.crosshair.log =
+            Some("No Deadlock install was found, so there is no machine_convars.vcfg to read.".to_string());
+        state.crosshair.tone = crate::ui::Tone::Warn;
+        return;
+    };
+    let vcfg = game_root
+        .join("game")
+        .join("citadel")
+        .join("cfg")
+        .join("machine_convars.vcfg");
+    match fs::read_to_string(&vcfg) {
+        Ok(text) => match deadlock_core::crosshair::parse_machine_convars(&text) {
+            Some(crosshair) => {
+                state.crosshair.settings = crosshair;
+                state.crosshair.source = "in-game machine_convars.vcfg".to_string();
+                state.crosshair.log = Some(format!(
+                    "Read the live crosshair from {}.",
+                    vcfg.display()
+                ));
+                state.crosshair.tone = crate::ui::Tone::Ok;
+            }
+            None => {
+                state.crosshair.log = Some(format!(
+                    "{} has no citadel_crosshair_ convars yet. The game writes them after the first crosshair change.",
+                    vcfg.display()
+                ));
+                state.crosshair.tone = crate::ui::Tone::Warn;
+            }
+        },
+        Err(error) => {
+            state.crosshair.log = Some(format!(
+                "Could not read {}: {error}. The game may never have written it.",
+                vcfg.display()
+            ));
+            state.crosshair.tone = crate::ui::Tone::Warn;
+        }
+    }
+}
+
+pub fn apply_crosshair(state: &mut State) {
+    state.crosshair.pending = false;
+    let Some(game_root) = state.game_root.clone() else {
+        state.crosshair.log =
+            Some("No Deadlock install was found. Nothing was written.".to_string());
+        state.crosshair.tone = crate::ui::Tone::Bad;
+        return;
+    };
+    let existing = match autoexec::read_autoexec(&game_root) {
+        Ok(text) => text.unwrap_or_default(),
+        Err(error) => {
+            state.crosshair.log = Some(error.to_string());
+            state.crosshair.tone = crate::ui::Tone::Bad;
+            return;
+        }
+    };
+    let merged = match deadlock_core::crosshair::apply_to_autoexec(
+        &existing,
+        &state.crosshair.settings,
+    ) {
+        Ok(text) => text,
+        Err(error) => {
+            state.crosshair.log = Some(error.to_string());
+            state.crosshair.tone = crate::ui::Tone::Bad;
+            return;
+        }
+    };
+    match autoexec::write_autoexec(&game_root, &merged, true) {
+        Ok(result) => {
+            state.crosshair.log = Some(match result.backup {
+                Some(backup) => format!(
+                    "Wrote the crosshair block into {} and copied the previous file to {}.",
+                    result.path.display(),
+                    backup.display()
+                ),
+                None => format!(
+                    "Wrote the crosshair block into {}. There was no previous file to back up.",
+                    result.path.display()
+                ),
+            });
+            state.crosshair.tone = crate::ui::Tone::Ok;
+            state.status = format!("Crosshair applied to {}.", result.path.display());
+        }
+        Err(error) => {
+            state.crosshair.log = Some(error.to_string());
+            state.crosshair.tone = crate::ui::Tone::Bad;
         }
     }
 }

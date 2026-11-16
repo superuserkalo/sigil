@@ -45,6 +45,7 @@ pub fn view(s: &State, u: &Ui) -> El {
         })
         .gap(12.0)
         .child(safety(s, u))
+        .child(capabilities(s, u))
         .child(agent_host(s, u))
         .child(about(u));
 
@@ -443,4 +444,44 @@ fn about(u: &Ui) -> El {
                         .wrap(),
                 ),
         )
+}
+
+/// What this build measured at startup. No value here is a feature claim.
+fn capabilities(s: &State, u: &Ui) -> El {
+    let mut panel = u
+        .panel()
+        .key("capabilities")
+        .w_full()
+        .child(u.panel_header("CAPABILITIES", "measured, not promised"));
+    let mut body = col().w_full().padding(8.0).gap(2.0);
+    if s.capabilities.is_empty() {
+        body = body.child(
+            text("Capability probe has not run.")
+                .font(SMALL)
+                .color(u.faint),
+        );
+    }
+    for (label, value) in &s.capabilities {
+        body = body.child(
+            row()
+                .w_full()
+                .gap(8.0)
+                .items_start()
+                .py(4.0)
+                .child(
+                    text(label.clone())
+                        .font(SMALL)
+                        .color(u.faint)
+                        .w(104.0),
+                )
+                .child(
+                    text(value.clone())
+                        .font(MONO)
+                        .color(u.muted)
+                        .grow(1.0)
+                        .wrap_anywhere(),
+                ),
+        );
+    }
+    panel.child(body)
 }
