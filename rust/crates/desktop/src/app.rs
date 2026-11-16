@@ -1060,6 +1060,7 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
         ("addon-modal", screens::installed::dialog(s, &u)),
         ("review-modal", screens::stats::dialog(s, &u)),
         ("crosshair-modal", screens::crosshair::dialog(s, &u)),
+        ("recolor-modal", screens::locker::dialog(s, &u)),
     ] {
         if let Some(layer) = layer {
             root = root.child(u.modal_layer(key, layer));
@@ -1804,6 +1805,46 @@ pub fn scene_browse(s: &mut State) {
     }
 }
 
+pub fn scene_recolor(s: &mut State) {
+    s.screen = Screen::Locker;
+    if rune::is_headless() {
+        crate::data::locker_now(s);
+    }
+    let chosen = s
+        .locker
+        .heroes
+        .iter()
+        .find(|hero| {
+            s.locker
+                .pinned
+                .as_deref()
+                .is_some_and(|pinned| {
+                    let key = deadlock_core::locker::hero_asset_key(pinned);
+                    deadlock_core::locker::hero_asset_key(&hero.codename) == key
+                        || deadlock_core::locker::hero_asset_key(&hero.display_name) == key
+                })
+        })
+        .or_else(|| {
+            s.locker.heroes.iter().find(|hero| {
+                hero.display_name.eq_ignore_ascii_case("billy")
+                    || hero.codename.eq_ignore_ascii_case("punkgoat")
+            })
+        })
+        .or_else(|| s.locker.heroes.first());
+    if let Some(hero) = chosen {
+        s.locker.selected = Some(hero.codename.clone());
+        s.locker.panel = Some(screens::locker::Panel {
+            codename: hero.codename.clone(),
+            display_name: hero.display_name.clone(),
+            in_catalog: hero.in_catalog,
+            targets: hero.recolor_paths.clone(),
+            palette: 0,
+            note: rune::TextEdit::new(""),
+            log: None,
+        });
+    }
+}
+
 pub fn scene_review(s: &mut State) {
     s.screen = Screen::Stats;
     crate::data::demos_now(s);
@@ -2022,6 +2063,7 @@ pub fn scenes() -> &'static [(&'static str, fn(&mut State))] {
         ("install", scene_install),
         ("toggle", scene_toggle),
         ("review", scene_review),
+        ("recolor", scene_recolor),
         ("conflicts", scene_conflicts),
         ("updates", scene_updates),
         ("profiles", scene_profiles),

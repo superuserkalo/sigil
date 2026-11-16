@@ -37,6 +37,8 @@ pub fn deadlock_tools(cli: Arc<DahRsCli>) -> Result<Vec<Tool>> {
         install_status(cli.clone())?,
         install_plan(cli.clone())?,
         profiles_list(cli.clone())?,
+        locker_heroes(cli.clone())?,
+        recolor_brief(cli.clone())?,
         validate_payload()?,
     ])
 }
@@ -929,6 +931,94 @@ fn demo_review_write(cli: Arc<DahRsCli>) -> Result<Tool> {
             let result = cli.json(&args, &context.cancellation).await;
             let _ = std::fs::remove_file(&path);
             let text = result?;
+            Ok(ToolReturn::Output(text))
+        }
+    })
+}
+
+fn locker_heroes(cli: Arc<DahRsCli>) -> Result<Tool> {
+    cli_tool(
+        cli,
+        "locker_heroes",
+        "List heroes with local art, catalog path counts, installed mod counts and recolorable material paths. Read-only. An art-only hero has no game path to edit.",
+        object_schema(
+            json!({
+                "modded": {
+                    "type": ["boolean", "null"],
+                    "description": "Only heroes touched by an installed addon. Pass null for every hero.",
+                },
+            }),
+            &["modded"],
+        ),
+        true,
+        |arguments| {
+            let mut args = vec!["locker".to_string(), "list".to_string(), "--json".to_string()];
+            if arguments.get("modded").and_then(Value::as_bool) == Some(true) {
+                args.push("--modded".to_string());
+            }
+            Ok(args)
+        },
+    )
+}
+
+fn recolor_brief(cli: Arc<DahRsCli>) -> Result<Tool> {
+    Tool::builder(definition(
+        "recolor_brief",
+        "Record a recolor work order for one hero in the workspace: exact catalog targets, a palette and the steps still required. It does not edit an asset and never writes the game install. It refuses a hero with no catalog material.",
+        object_schema(
+            json!({
+                "hero": {
+                    "type": "string",
+                    "description": "Hero codename or display name from locker_heroes.",
+                },
+                "palette": {
+                    "type": ["string", "null"],
+                    "description": "ember, frost, toxic or void. Pass null for ember.",
+                },
+                "hue": {
+                    "type": ["integer", "null"],
+                    "minimum": -180,
+                    "maximum": 180,
+                    "description": "Custom hue shift in degrees. Pass null to use the preset.",
+                },
+                "note": {
+                    "type": ["string", "null"],
+                    "description": "Why the recolor exists. Pass null for none.",
+                },
+            }),
+            &["hero", "palette", "hue", "note"],
+        ),
+    ))
+    .idempotent(false)
+    .timeout_seconds(60)
+    .handler(move |arguments: Value, context: ToolContext| {
+        let cli = cli.clone();
+        async move {
+            let hero = arguments
+                .get("hero")
+                .and_then(Value::as_str)
+                .ok_or_else(|| Error::Tool("hero is required.".into()))?;
+            let mut args = vec![
+                "locker".to_string(),
+                "recolor".to_string(),
+                hero.to_string(),
+                "--json".to_string(),
+            ];
+            if let Some(palette) = arguments.get("palette").and_then(Value::as_str) {
+                args.push("--palette".to_string());
+                args.push(palette.to_string());
+            }
+            if let Some(hue) = arguments.get("hue").and_then(Value::as_i64) {
+                args.push("--hue".to_string());
+                args.push(hue.to_string());
+            }
+            if let Some(note) = arguments.get("note").and_then(Value::as_str)
+                && !note.trim().is_empty()
+            {
+                args.push("--note".to_string());
+                args.push(note.to_string());
+            }
+            let text = cli.json(&args, &context.cancellation).await?;
             Ok(ToolReturn::Output(text))
         }
     })

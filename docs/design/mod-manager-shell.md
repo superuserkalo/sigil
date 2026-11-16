@@ -23,7 +23,7 @@ MODDING
   Autoexec         read the game config, write behind approval
   Crosshair        reticle convars with a live HUD geometry preview
   Stats            rank, career, heroes, matches, heatmap
-  Locker           hero renders and asset paths from the local game
+  Locker           hero renders, catalog paths and recolor briefs
   Launch           modded launch, vanilla stash, restore
 
 WORKBENCH

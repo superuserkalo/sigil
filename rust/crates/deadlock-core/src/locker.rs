@@ -84,6 +84,10 @@ pub struct LockerHero {
     /// and every consumer must label them as art only.
     #[serde(default = "default_true")]
     pub in_catalog: bool,
+    /// Recolorable catalog paths under the hero folder, sorted and capped.
+    /// Empty for an art-only hero: there is no game path to edit.
+    #[serde(default)]
+    pub recolor_paths: Vec<String>,
 }
 
 fn default_true() -> bool {
@@ -224,6 +228,8 @@ pub fn discover_heroes_with_assets(
             let name_art_path = resolver.name_art_for(&codename, &display_name);
             let mod_count = touched.get(&codename).map(BTreeSet::len).unwrap_or(0);
 
+            let recolor_paths =
+                recolor_paths_for(&catalog.entries, &codename, &display_name);
             LockerHero {
                 codename,
                 display_name,
@@ -232,6 +238,7 @@ pub fn discover_heroes_with_assets(
                 mod_count,
                 asset_count,
                 in_catalog: true,
+                recolor_paths,
             }
         })
         .collect();
@@ -261,6 +268,7 @@ pub fn discover_heroes_with_assets(
             mod_count: 0,
             asset_count: 0,
             in_catalog: false,
+            recolor_paths: Vec::new(),
         })
         .collect();
     heroes.append(&mut art_only);
@@ -523,6 +531,36 @@ fn strip_suffix_ignore_case<'a>(value: &'a str, suffix: &str) -> &'a str {
 }
 
 /// Codename from a path that starts with `models/heroes_*/<codename>/`.
+/// Materials and textures under one hero folder, the paths a recolor edits.
+fn recolor_paths_for(
+    entries: &[crate::game_catalog::CatalogEntry],
+    codename: &str,
+    display_name: &str,
+) -> Vec<String> {
+    let wanted = hero_asset_key(display_name);
+    let mut paths: Vec<String> = entries
+        .iter()
+        .filter(|entry| {
+            let lowered = entry.path.to_ascii_lowercase();
+            // Materials live under materials/models/heroes_*, not models/, so
+            // match the heroes_* segment anywhere. An alias such as `billy`
+            // next to `punkgoat` is unified by the display name.
+            let Some((code, _)) = hero_code(&lowered) else {
+                return false;
+            };
+            code == codename || hero_asset_key(&display_name_for(code)) == wanted
+        })
+        .filter(|entry| {
+            entry.path.ends_with(".vmat_c") || entry.path.ends_with(".vtex_c")
+        })
+        .map(|entry| entry.path.clone())
+        .collect();
+    paths.sort();
+    paths.dedup();
+    paths.truncate(16);
+    paths
+}
+
 fn hero_folder_code(path_lower: &str) -> Option<&str> {
     let segments: Vec<&str> = path_lower.split('/').collect();
 

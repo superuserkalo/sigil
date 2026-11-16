@@ -143,6 +143,11 @@ enum Command {
         #[command(subcommand)]
         command: LaunchCommand,
     },
+    /// List heroes with local art and catalog paths, and record recolor briefs.
+    Locker {
+        #[command(subcommand)]
+        command: LockerCommand,
+    },
     /// Read, edit and apply the crosshair convars.
     Crosshair {
         #[command(subcommand)]
@@ -586,6 +591,49 @@ enum CharacterCommand {
 }
 
 #[derive(Subcommand)]
+enum LockerCommand {
+    /// List heroes, local art and recolorable catalog paths.
+    List {
+        /// Only heroes touched by an installed addon.
+        #[arg(long)]
+        modded: bool,
+        /// Workspace directory. Defaults to DAH_WORKSPACE_DIR or <data>/workspace.
+        #[arg(long, value_name = "DIR")]
+        workspace: Option<PathBuf>,
+        /// Print machine-readable JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Record a recolor brief for one hero.
+    Recolor {
+        /// Hero codename or display name.
+        #[arg(value_name = "HERO")]
+        hero: String,
+        /// Palette preset: ember, frost, toxic or void.
+        #[arg(long, value_name = "NAME")]
+        palette: Option<String>,
+        /// Custom hue shift, -180 to 180.
+        #[arg(long, value_name = "DEG")]
+        hue: Option<i32>,
+        /// Custom saturation multiplier, 0 to 3.
+        #[arg(long, value_name = "X")]
+        saturation: Option<f64>,
+        /// Custom value multiplier, 0 to 3.
+        #[arg(long, value_name = "X")]
+        value: Option<f64>,
+        /// Note recorded with the brief.
+        #[arg(long, value_name = "TEXT")]
+        note: Option<String>,
+        /// Workspace directory. Defaults to DAH_WORKSPACE_DIR or <data>/workspace.
+        #[arg(long, value_name = "DIR")]
+        workspace: Option<PathBuf>,
+        /// Print machine-readable JSON.
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand)]
 enum CrosshairCommand {
     /// Print the editor crosshair and the convars it emits.
     Show {
@@ -943,6 +991,9 @@ impl Cli {
                 | LaunchCommand::Vanilla { json, .. }
                 | LaunchCommand::Restore { json, .. }
                 | LaunchCommand::Status { json } => *json,
+            },
+            Command::Locker { command } => match command {
+                LockerCommand::List { json, .. } | LockerCommand::Recolor { json, .. } => *json,
             },
             Command::Crosshair { command } => match command {
                 CrosshairCommand::Show { json, .. }
@@ -1333,6 +1384,42 @@ fn run(cli: &Cli) -> error::Result<i32> {
             }
             LaunchCommand::Status { json } => {
                 commands::launch::status(*json)?;
+                Ok(0)
+            }
+        },
+        Command::Locker { command } => match command {
+            LockerCommand::List {
+                modded,
+                workspace,
+                json,
+            } => {
+                commands::locker::list(&commands::locker::ListArgs {
+                    workspace: workspace.clone(),
+                    modded: *modded,
+                    json: *json,
+                })?;
+                Ok(0)
+            }
+            LockerCommand::Recolor {
+                hero,
+                palette,
+                hue,
+                saturation,
+                value,
+                note,
+                workspace,
+                json,
+            } => {
+                commands::locker::recolor(&commands::locker::RecolorArgs {
+                    hero: hero.clone(),
+                    palette: palette.clone(),
+                    hue: *hue,
+                    saturation: *saturation,
+                    value: *value,
+                    note: note.clone(),
+                    workspace: workspace.clone(),
+                    json: *json,
+                })?;
                 Ok(0)
             }
         },

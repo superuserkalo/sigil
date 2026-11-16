@@ -1422,7 +1422,10 @@ fn read_art(path: &Path) -> Option<(String, Vec<u8>)> {
     Some((path.display().to_string(), bytes))
 }
 
-pub fn load_locker(workspace: &Path) -> Result<crate::screens::locker::Load, String> {
+pub fn load_locker(
+    workspace: &Path,
+    pinned: Option<String>,
+) -> Result<crate::screens::locker::Load, String> {
     let install = discovery::read_game_status(None)
         .ok()
         .and_then(|status| status.install);
@@ -1454,6 +1457,7 @@ pub fn load_locker(workspace: &Path) -> Result<crate::screens::locker::Load, Str
             mod_count: hero.mod_count,
             asset_count: hero.asset_count,
             in_catalog: hero.in_catalog,
+            recolor_paths: hero.recolor_paths.clone(),
         })
         .collect();
     let assets_dir = assets
@@ -1470,6 +1474,7 @@ pub fn load_locker(workspace: &Path) -> Result<crate::screens::locker::Load, Str
             catalog.catalog.sources.len(),
             if catalog.catalog.sources.len() == 1 { "" } else { "s" }
         ),
+        pinned,
         error: None,
     })
 }
@@ -1480,14 +1485,38 @@ pub fn start_locker_load(state: &mut State) {
     }
     let workspace = workspace_dir();
     let wake = state.wake.clone();
+    let pinned = state.project().and_then(project_hero);
     state.locker.error = None;
     state.locker_job
-        .start(wake, move || load_locker(&workspace));
+        .start(wake, move || load_locker(&workspace, pinned));
 }
 
 pub fn locker_now(state: &mut State) {
     let workspace = workspace_dir();
-    apply_locker(state, load_locker(&workspace));
+    let pinned = state.project().and_then(project_hero);
+    apply_locker(state, load_locker(&workspace, pinned));
+}
+
+/// The hero codename a project targets, from the first target under a
+/// `heroes_*` folder. `materials/models/heroes_wip/billy/x.vmat_c` gives
+/// `billy`; `models/heroes_wip/punkgoat/punkgoat.vmdl_c` gives `punkgoat`.
+pub fn project_hero(project: &model::Project) -> Option<String> {
+    let hero_of = |path: &str| -> Option<String> {
+        let lowered = path.to_ascii_lowercase();
+        let segments: Vec<&str> = lowered.split('/').collect();
+        let index = segments
+            .iter()
+            .position(|segment| segment.starts_with("heroes"))?;
+        segments.get(index + 1).map(|code| (*code).to_string())
+    };
+    // A material target is the recolor surface, so it names the hero the user
+    // is actually editing. Model targets often point at a WIP variant folder.
+    project
+        .targets
+        .iter()
+        .filter(|target| target.path.starts_with("materials/"))
+        .find_map(|target| hero_of(&target.path))
+        .or_else(|| project.targets.iter().find_map(|target| hero_of(&target.path)))
 }
 
 pub fn apply_locker(
@@ -1496,7 +1525,20 @@ pub fn apply_locker(
 ) {
     match result {
         Ok(load) => {
-            state.locker.heroes = load.heroes;
+            let mut heroes = load.heroes;
+            if let Some(pinned) = &load.pinned {
+                let key = deadlock_core::locker::hero_asset_key(pinned);
+                heroes.sort_by_key(|hero| {
+                    let matches = deadlock_core::locker::hero_asset_key(&hero.codename) == key
+                        || deadlock_core::locker::hero_asset_key(&hero.display_name) == key;
+                    if matches { 0 } else { 1 }
+                });
+                if let Some(first) = heroes.first() {
+                    state.locker.selected = Some(first.codename.clone());
+                }
+            }
+            state.locker.heroes = heroes;
+            state.locker.pinned = load.pinned;
             state.locker.assets_dir = load.assets_dir;
             state.locker.catalog_label = load.catalog_label;
             state.locker.error = load.error;
@@ -2552,5 +2594,41 @@ pub fn apply_crosshair(state: &mut State) {
             state.crosshair.log = Some(error.to_string());
             state.crosshair.tone = crate::ui::Tone::Bad;
         }
+    }
+}
+
+// --- recolor ---------------------------------------------------------------
+
+pub fn write_recolor_brief(state: &mut State) {
+    let Some(panel) = state.locker.panel.as_ref() else {
+        return;
+    };
+    let hero = deadlock_core::locker::LockerHero {
+        codename: panel.codename.clone(),
+        display_name: panel.display_name.clone(),
+        render_path: None,
+        name_art_path: None,
+        mod_count: 0,
+        asset_count: panel.targets.len(),
+        in_catalog: panel.in_catalog,
+        recolor_paths: panel.targets.clone(),
+    };
+    let palettes = deadlock_core::recolor::presets();
+    let palette = palettes
+        .get(panel.palette)
+        .cloned()
+        .unwrap_or_else(|| palettes[0].clone());
+    let note = panel.note.text.clone();
+    let workspace = workspace_dir();
+    let result = deadlock_core::recolor::write_brief(&workspace, &hero, &palette, &note);
+    if let Some(panel) = state.locker.panel.as_mut() {
+        panel.log = Some(match result {
+            Ok(path) => format!(
+                "Brief written to {}. It lists {} target(s) and the steps still required; nothing is in game ready.",
+                path.display(),
+                hero.recolor_paths.len()
+            ),
+            Err(error) => error.to_string(),
+        });
     }
 }
