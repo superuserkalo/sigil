@@ -22,6 +22,11 @@ use crate::error::CliError;
     long_about = "Inspect the Deadlock install, index game paths, extract files and manage mod projects.\n\n\
 Mod flow: `dah mod validate`, `dah mod pack`, `dah mod release`, `dah mod deploy`, `dah publish prepare`.\n\
 Deploy writes to the game install only with --approve; publish prepare never uploads.\n\n\
+Browse: `dah browse` lists Deadlock mods from GameBanana. Read only, no key or account.\n\n\
+Addons: `dah addons list` and `dah addons conflicts` read `game/citadel/addons` and never write.\n\
+         `dah addons enable|disable <slot> --approve` renames one slot file.\n\n\
+Profiles: `dah profiles save` captures the enabled slots, `dah profiles apply --approve` renames them back.\n\
+Autoexec: `dah autoexec show` reads `game/citadel/cfg/autoexec.cfg`, `set` and `clear` write with --approve.\n\n\
 Data directory: DAH_DATA_DIR, else the platform data directory.\n\
 Workspace: --workspace, else DAH_WORKSPACE_DIR, else <data>/workspace.",
     disable_help_subcommand = true,
@@ -106,6 +111,33 @@ enum Command {
         #[arg(long)]
         full: bool,
     },
+    /// List Deadlock mod submissions from GameBanana.
+    Browse {
+        /// Feed page. GameBanana pages start at 1.
+        #[arg(long, default_value_t = 1, value_name = "N")]
+        page: usize,
+        /// Records per page, 1 to 50.
+        #[arg(long, default_value_t = 15, value_name = "N")]
+        limit: usize,
+        /// Print machine-readable JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Report installed addon slots and conflicts, or set one slot on or off.
+    Addons {
+        #[command(subcommand)]
+        command: AddonsCommand,
+    },
+    /// Save and apply named sets of enabled addon slots.
+    Profiles {
+        #[command(subcommand)]
+        command: ProfilesCommand,
+    },
+    /// Read and edit the game autoexec.cfg behind approval.
+    Autoexec {
+        #[command(subcommand)]
+        command: AutoexecCommand,
+    },
     /// Create and maintain a mod project.
     Mod {
         #[command(subcommand)]
@@ -138,6 +170,117 @@ enum Command {
     Vpk {
         #[command(subcommand)]
         command: VpkCommand,
+    },
+}
+
+#[derive(Subcommand)]
+enum AddonsCommand {
+    /// List installed addon slots with state, size and entry count.
+    List {
+        /// Print machine-readable JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Report game paths shipped by more than one enabled addon.
+    Conflicts {
+        /// Print machine-readable JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Rename pakNN_dir.vpk.disabled back to pakNN_dir.vpk.
+    Enable {
+        /// Addon slot, 1 to 99.
+        #[arg(value_name = "SLOT")]
+        slot: u8,
+        /// Write the rename into the game addons folder.
+        #[arg(long)]
+        approve: bool,
+        /// Print machine-readable JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Rename pakNN_dir.vpk to pakNN_dir.vpk.disabled.
+    Disable {
+        /// Addon slot, 1 to 99.
+        #[arg(value_name = "SLOT")]
+        slot: u8,
+        /// Write the rename into the game addons folder.
+        #[arg(long)]
+        approve: bool,
+        /// Print machine-readable JSON.
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum ProfilesCommand {
+    /// List saved profiles from the workspace.
+    List {
+        /// Print machine-readable JSON.
+        #[arg(long)]
+        json: bool,
+        /// Workspace directory. Defaults to DAH_WORKSPACE_DIR or <data>/workspace.
+        #[arg(long, value_name = "DIR")]
+        workspace: Option<PathBuf>,
+    },
+    /// Capture the installed addon slots as a named profile.
+    Save {
+        /// Profile display name, for example `Bright night`.
+        #[arg(value_name = "NAME")]
+        name: String,
+        /// Print machine-readable JSON.
+        #[arg(long)]
+        json: bool,
+        /// Workspace directory. Defaults to DAH_WORKSPACE_DIR or <data>/workspace.
+        #[arg(long, value_name = "DIR")]
+        workspace: Option<PathBuf>,
+    },
+    /// Rename slot files so the install matches a saved profile.
+    Apply {
+        /// Profile slug or display name.
+        #[arg(value_name = "NAME")]
+        name: String,
+        /// Print machine-readable JSON.
+        #[arg(long)]
+        json: bool,
+        /// Write the renames into the game addons folder.
+        #[arg(long)]
+        approve: bool,
+        /// Workspace directory. Defaults to DAH_WORKSPACE_DIR or <data>/workspace.
+        #[arg(long, value_name = "DIR")]
+        workspace: Option<PathBuf>,
+    },
+}
+
+#[derive(Subcommand)]
+enum AutoexecCommand {
+    /// Print the game autoexec.cfg and its path.
+    Show {
+        /// Print machine-readable JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Replace autoexec.cfg with a local file.
+    Set {
+        /// Local text file to write as autoexec.cfg.
+        #[arg(long, value_name = "FILE")]
+        file: PathBuf,
+        /// Write into the game install.
+        #[arg(long)]
+        approve: bool,
+        /// Print machine-readable JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Empty autoexec.cfg, keeping a backup of the previous file.
+    Clear {
+        /// Write into the game install.
+        #[arg(long)]
+        approve: bool,
+        /// Print machine-readable JSON.
+        #[arg(long)]
+        json: bool,
     },
 }
 
@@ -341,7 +484,22 @@ impl Cli {
             | Command::Find { json, .. }
             | Command::Extract { json, .. }
             | Command::Patches { json, .. }
+            | Command::Browse { json, .. }
             | Command::Watch { json, .. } => *json,
+            Command::Addons { command } => match command {
+                AddonsCommand::List { json } | AddonsCommand::Conflicts { json } => *json,
+                AddonsCommand::Enable { json, .. } | AddonsCommand::Disable { json, .. } => *json,
+            },
+            Command::Profiles { command } => match command {
+                ProfilesCommand::List { json, .. }
+                | ProfilesCommand::Save { json, .. }
+                | ProfilesCommand::Apply { json, .. } => *json,
+            },
+            Command::Autoexec { command } => match command {
+                AutoexecCommand::Show { json }
+                | AutoexecCommand::Set { json, .. }
+                | AutoexecCommand::Clear { json, .. } => *json,
+            },
             Command::Publish { command } => match command {
                 PublishCommand::Prepare { json, .. }
                 | PublishCommand::Upload { json, .. }
@@ -459,6 +617,81 @@ fn run(cli: &Cli) -> error::Result<i32> {
             )?;
             Ok(0)
         }
+        Command::Browse { page, limit, json } => {
+            commands::browse::run(&commands::browse::BrowseArgs {
+                page: *page,
+                limit: *limit,
+                json: *json,
+            })?;
+            Ok(0)
+        }
+        Command::Addons { command } => match command {
+            AddonsCommand::List { json } => {
+                commands::addons::list(*json)?;
+                Ok(0)
+            }
+            AddonsCommand::Conflicts { json } => {
+                commands::addons::conflicts(*json)?;
+                Ok(0)
+            }
+            AddonsCommand::Enable {
+                slot,
+                approve,
+                json,
+            } => {
+                commands::addons::enable(*slot, *approve, *json)?;
+                Ok(0)
+            }
+            AddonsCommand::Disable {
+                slot,
+                approve,
+                json,
+            } => {
+                commands::addons::disable(*slot, *approve, *json)?;
+                Ok(0)
+            }
+        },
+        Command::Profiles { command } => match command {
+            ProfilesCommand::List { json, workspace } => {
+                commands::profiles::list(*json, workspace.clone())?;
+                Ok(0)
+            }
+            ProfilesCommand::Save {
+                name,
+                json,
+                workspace,
+            } => {
+                commands::profiles::save(name, *json, workspace.clone())?;
+                Ok(0)
+            }
+            ProfilesCommand::Apply {
+                name,
+                json,
+                approve,
+                workspace,
+            } => {
+                commands::profiles::apply(name, *approve, *json, workspace.clone())?;
+                Ok(0)
+            }
+        },
+        Command::Autoexec { command } => match command {
+            AutoexecCommand::Show { json } => {
+                commands::autoexec::show(*json)?;
+                Ok(0)
+            }
+            AutoexecCommand::Set {
+                file,
+                approve,
+                json,
+            } => {
+                commands::autoexec::set(file, *approve, *json)?;
+                Ok(0)
+            }
+            AutoexecCommand::Clear { approve, json } => {
+                commands::autoexec::clear(*approve, *json)?;
+                Ok(0)
+            }
+        },
         Command::Mod { command } => match command {
             ModCommand::New {
                 slug,

@@ -3,13 +3,17 @@
 
 mod util;
 
+pub mod addons;
+pub mod autoexec;
 pub mod discovery;
 pub mod error;
 pub mod extract;
+pub mod gamebanana;
 pub mod game_catalog;
 pub mod game_index;
 pub mod patch_notes;
 pub mod payload;
+pub mod profiles;
 pub mod project;
 pub mod release;
 pub mod deploy;
@@ -17,6 +21,14 @@ pub mod migrate;
 pub mod vpk;
 pub mod vpk_write;
 
+pub use addons::{
+    AddonConflict, ConflictReport, InstalledAddon, find_conflicts, list_installed,
+    read_conflict_report,
+};
+pub use autoexec::{
+    AUTOEXEC_FILE_NAME, AUTOEXEC_RELATIVE_PATH, AutoexecWriteResult, autoexec_path, list_lines,
+    normalize_trailing_newline, read_autoexec, write_autoexec,
+};
 pub use discovery::{
     AddonSlot, AddonsStatus, DEADLOCK_APP_ID, DeadlockInstall, GameInfoStatus, GameStatus,
     InstallDiscovery, InstallDiscoveryOptions, default_steam_roots, default_steam_roots_for,
@@ -27,6 +39,11 @@ pub use error::{Error, Result};
 pub use extract::{
     ExtractIssue, ExtractOptions, ExtractResult, ExtractedFile, extract_from_vpk,
     format_extract_result,
+};
+pub use gamebanana::{
+    BrowseMod, BrowsePage, GAMEBANANA_API_BASE, GAMEBANANA_GAME_ID, GAMEBANANA_MAX_PERPAGE,
+    GAMEBANANA_USER_AGENT, fetch_deadlock_mods, fetch_deadlock_mods_page, format_browse_mods,
+    parse_subfeed,
 };
 pub use game_catalog::{
     CatalogEntry, CatalogError, CatalogSource, GameCatalog, GameVpkDescriptor,
@@ -48,6 +65,10 @@ pub use patch_notes::{
     detect_is_patch, fetch_patch_notes, format_patch_note, format_patch_notes,
     load_patch_note_cache, new_since_cache, patch_note_cache_path, save_patch_note_cache,
     strip_patch_note_html,
+};
+pub use profiles::{
+    PROFILE_SCHEMA, Profile, ProfileApplyResult, ProfileSlot, apply_profile, capture_profile,
+    find_profile, list_profiles, profile_dir, profile_path, read_profile, write_profile,
 };
 pub use project::{
     BASELINE_SCHEMA, BaselineEntry, ModProject, PROJECT_SCHEMA, ProjectBaseline, ProjectCheck,

@@ -987,6 +987,7 @@ dependencies = [
  "deadlock-core",
  "rune",
  "serde_json",
+ "ureq",
 ]
 
 [[package]]
