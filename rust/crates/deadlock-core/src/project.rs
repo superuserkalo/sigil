@@ -51,6 +51,10 @@ pub struct ModProject {
     /// Exact game paths the mod intends to replace.
     pub targets: Vec<String>,
     pub slot: Option<u8>,
+    #[serde(default)]
+    pub deployed_slot: Option<u8>,
+    #[serde(default)]
+    pub deployed_at: Option<String>,
     pub references: Vec<String>,
     pub history: Vec<ProjectHistoryEntry>,
 }
@@ -69,6 +73,8 @@ impl ModProject {
             game_app_id: DEADLOCK_APP_ID.to_string(),
             targets: Vec::new(),
             slot: None,
+            deployed_slot: None,
+            deployed_at: None,
             references: Vec::new(),
             history: vec![ProjectHistoryEntry::new("created")],
         }
@@ -134,6 +140,8 @@ pub struct ProjectCheck {
     pub gameinfo: Option<GameInfoStatus>,
     pub gameinfo_ok: bool,
     pub slot: Option<u8>,
+    /// Slot this project last deployed to, when known.
+    pub deployed_slot: Option<u8>,
     /// Installed addon occupying the project's preferred slot, when any.
     pub slot_conflict: Option<AddonSlot>,
     pub next_free_slot: Option<u8>,
@@ -361,6 +369,10 @@ pub fn check_project(
     }
 
     let slot_conflict = project.slot.and_then(|slot| {
+        if project.deployed_slot == Some(slot) {
+            return None;
+        }
+
         status
             .addons
             .as_ref()
@@ -386,6 +398,7 @@ pub fn check_project(
         gameinfo,
         gameinfo_ok,
         slot: project.slot,
+        deployed_slot: project.deployed_slot,
         slot_conflict,
         next_free_slot: status
             .addons
