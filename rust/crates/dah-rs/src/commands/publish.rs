@@ -1,9 +1,13 @@
 //! `dah publish prepare`: stage the latest release, its metadata and install
 //! instructions in a folder. It never uploads anything.
 
+use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
+use zip::write::SimpleFileOptions;
 
 use crate::domain;
 use crate::error::{CliError, Result};
@@ -88,27 +92,6 @@ pub fn prepare(args: &PrepareArgs) -> Result<()> {
         files.push(lossy(&target));
     }
 
-    let created = now_rfc3339();
-    let metadata = json!({
-        "name": manifest.project_name,
-        "slug": manifest.project_slug,
-        "version": manifest.version,
-        "slot": manifest.slot,
-        "slotFile": domain::slot_file_name(manifest.slot),
-        "entries": manifest.entries,
-        "totalBytes": manifest.total_bytes,
-        "targets": project.targets,
-        "created": created,
-        "files": names,
-        "install": {
-            "addonsFolder": "game/citadel/addons",
-            "requiresGameinfoAddonsLine": true,
-        },
-    });
-
-    let metadata_path = destination.join("metadata.json");
-    write_json(&metadata_path, &metadata)?;
-
     let readme_path = destination.join("README.md");
     std::fs::write(
         &readme_path,
@@ -121,6 +104,33 @@ pub fn prepare(args: &PrepareArgs) -> Result<()> {
         )
     })?;
 
+    let archive = create_archive(&destination, &manifest, &names, &readme_path)?;
+    let created = now_rfc3339();
+    let metadata = json!({
+        "name": manifest.project_name,
+        "slug": manifest.project_slug,
+        "version": manifest.version,
+        "slot": manifest.slot,
+        "slotFile": domain::slot_file_name(manifest.slot),
+        "entries": manifest.entries,
+        "totalBytes": manifest.total_bytes,
+        "targets": project.targets,
+        "created": created,
+        "files": names,
+        "archive": {
+            "file": archive.file,
+            "bytes": archive.bytes,
+            "sha256": archive.sha256,
+        },
+        "install": {
+            "addonsFolder": "game/citadel/addons",
+            "requiresGameinfoAddonsLine": true,
+        },
+    });
+
+    let metadata_path = destination.join("metadata.json");
+    write_json(&metadata_path, &metadata)?;
+
     if args.json {
         print_json(&json!({
             "ok": true,
@@ -129,6 +139,9 @@ pub fn prepare(args: &PrepareArgs) -> Result<()> {
             "files": files,
             "metadata": lossy(&metadata_path),
             "readme": lossy(&readme_path),
+            "archive": lossy(&destination.join(&archive.file)),
+            "archiveSha256": archive.sha256,
+            "archiveBytes": archive.bytes,
             "uploaded": false,
         }));
         return Ok(());
@@ -145,6 +158,8 @@ pub fn prepare(args: &PrepareArgs) -> Result<()> {
     }
     println!("  Metadata: {}", metadata_path.display());
     println!("  README:   {}", readme_path.display());
+    println!("  Archive:  {}", destination.join(&archive.file).display());
+    println!("  SHA-256:  {}", archive.sha256);
     println!(
         "  Size:     {} across {} entr{}",
         format_bytes(manifest.total_bytes),
@@ -251,14 +266,137 @@ fn render_readme(
 
 pub struct UploadArgs {
     pub workspace: Option<PathBuf>,
+    pub approve: bool,
     pub open: bool,
     pub json: bool,
 }
 
-const GAMEBANANA_SUBMIT_URL: &str = "https://gamebanana.com/mods/submit";
+pub struct ConfirmArgs {
+    pub workspace: Option<PathBuf>,
+    pub url: Option<String>,
+    pub skip_verify: bool,
+    pub allow_http: bool,
+    pub json: bool,
+}
 
-/// Open the GameBanana submission page. The upload, login and category choice
-/// stay with the user; this command never sends files anywhere.
+pub struct StatusArgs {
+    pub workspace: Option<PathBuf>,
+    pub json: bool,
+}
+
+const GAMEBANANA_SUBMIT_URL: &str = "https://gamebanana.com/mods/submit";
+const UPLOAD_RECORD: &str = "upload.json";
+
+struct ArchiveInfo {
+    file: String,
+    bytes: u64,
+    sha256: String,
+}
+
+/// Create a GameBanana-ready archive next to the prepared files.
+fn create_archive(
+    folder: &Path,
+    manifest: &domain::ReleaseManifest,
+    names: &[String],
+    readme: &Path,
+) -> Result<ArchiveInfo> {
+    let file_name = format!("{}-{}.zip", manifest.project_slug, manifest.version);
+    let path = folder.join(&file_name);
+    let file = fs::File::create(&path).map_err(|error| {
+        CliError::new(
+            "publish_archive",
+            format!("Could not create {}: {error}", path.display()),
+        )
+    })?;
+    let mut zip = zip::ZipWriter::new(file);
+    let options = SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+
+    for name in names {
+        let source = folder.join(name);
+        let bytes = fs::read(&source).map_err(|error| {
+            CliError::new(
+                "publish_archive",
+                format!("Could not read {}: {error}", source.display()),
+            )
+        })?;
+        zip.start_file(name, options).map_err(|error| {
+            CliError::new("publish_archive", format!("Could not add {name}: {error}"))
+        })?;
+        zip.write_all(&bytes).map_err(|error| {
+            CliError::new("publish_archive", format!("Could not write {name}: {error}"))
+        })?;
+    }
+
+    let readme_bytes = fs::read(readme).map_err(|error| {
+        CliError::new(
+            "publish_archive",
+            format!("Could not read {}: {error}", readme.display()),
+        )
+    })?;
+    zip.start_file("README.md", options).map_err(|error| {
+        CliError::new("publish_archive", format!("Could not add README.md: {error}"))
+    })?;
+    zip.write_all(&readme_bytes).map_err(|error| {
+        CliError::new("publish_archive", format!("Could not write README.md: {error}"))
+    })?;
+    zip.finish().map_err(|error| {
+        CliError::new("publish_archive", format!("Could not finish archive: {error}"))
+    })?;
+
+    let bytes = fs::metadata(&path).map(|meta| meta.len()).unwrap_or(0);
+    let sha256 = sha256_file(&path)?;
+
+    Ok(ArchiveInfo {
+        file: file_name,
+        bytes,
+        sha256,
+    })
+}
+
+fn sha256_file(path: &Path) -> Result<String> {
+    let bytes = fs::read(path).map_err(|error| {
+        CliError::new(
+            "publish_hash",
+            format!("Could not read {}: {error}", path.display()),
+        )
+    })?;
+    let digest = Sha256::digest(&bytes);
+    Ok(format!("{digest:x}"))
+}
+
+fn upload_record_path(folder: &Path) -> PathBuf {
+    folder.join(UPLOAD_RECORD)
+}
+
+fn read_upload_record(folder: &Path) -> Result<Option<Value>> {
+    let path = upload_record_path(folder);
+    let text = match fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(CliError::new(
+                "publish_state",
+                format!("Could not read {}: {error}", path.display()),
+            ))
+        }
+    };
+    Ok(Some(serde_json::from_str(&text).map_err(|error| {
+        CliError::new(
+            "publish_state",
+            format!("{} is not valid JSON: {error}", path.display()),
+        )
+    })?))
+}
+
+fn write_upload_record(folder: &Path, record: &Value) -> Result<PathBuf> {
+    let path = upload_record_path(folder);
+    write_json(&path, record)?;
+    Ok(path)
+}
+
+/// Plan or start an approval-gated GameBanana upload. With `approve`, the
+/// archive and a durable upload record are prepared and the submission page is
+/// opened. The user still signs in and submits; no API credential is read.
 pub fn upload(args: &UploadArgs) -> Result<()> {
     let project_dir = paths::project_dir(args.workspace.as_deref())?;
     let project = domain::read_project(&project_dir)?;
@@ -272,9 +410,9 @@ pub fn upload(args: &UploadArgs) -> Result<()> {
         )
     })?;
     let folder = domain::publish_dir(&project_dir, &manifest.version);
-    let metadata = folder.join("metadata.json");
+    let metadata_path = folder.join("metadata.json");
 
-    if !metadata.is_file() {
+    if !metadata_path.is_file() {
         return Err(CliError::new(
             "publish_not_prepared",
             format!(
@@ -284,9 +422,279 @@ pub fn upload(args: &UploadArgs) -> Result<()> {
         ));
     }
 
+    let metadata: Value = serde_json::from_str(&fs::read_to_string(&metadata_path).map_err(
+        |error| CliError::new("publish_metadata", format!("Could not read metadata: {error}")),
+    )?)
+    .map_err(|error| CliError::new("publish_metadata", format!("Invalid metadata: {error}")))?;
+
+    let archive_file = metadata
+        .get("archive")
+        .and_then(|archive| archive.get("file"))
+        .and_then(Value::as_str)
+        .ok_or_else(|| {
+            CliError::new(
+                "publish_archive",
+                "metadata.json has no archive. Run `dah publish prepare` again.",
+            )
+        })?;
+    let archive_path = folder.join(archive_file);
+    if !archive_path.is_file() {
+        return Err(CliError::new(
+            "publish_archive",
+            format!("Archive {} is missing. Run `dah publish prepare` again.", archive_path.display()),
+        ));
+    }
+    let sha256 = sha256_file(&archive_path)?;
+    let bytes = fs::metadata(&archive_path)
+        .map(|meta| meta.len())
+        .unwrap_or(0);
+
+    if !args.approve {
+        if args.json {
+            print_json(&json!({
+                "ok": true,
+                "approved": false,
+                "project": lossy(&project_dir),
+                "slug": project.slug,
+                "version": manifest.version,
+                "folder": lossy(&folder),
+                "archive": lossy(&archive_path),
+                "archiveSha256": sha256,
+                "archiveBytes": bytes,
+                "url": GAMEBANANA_SUBMIT_URL,
+                "uploaded": false,
+            }));
+            return Ok(());
+        }
+
+        println!(
+            "GameBanana upload plan for {} {}",
+            project.name, manifest.version
+        );
+        println!("  Folder:  {}", folder.display());
+        println!("  Archive: {}", archive_path.display());
+        println!("  SHA-256: {sha256}");
+        println!("  Page:    {GAMEBANANA_SUBMIT_URL}");
+        println!("Nothing was opened or recorded. Re-run with `--approve` to start the handoff.");
+        return Ok(());
+    }
+
+    let now = now_rfc3339();
+    let record = json!({
+        "schema": 1,
+        "state": "awaiting_user",
+        "projectSlug": project.slug,
+        "projectName": project.name,
+        "version": manifest.version,
+        "folder": lossy(&folder),
+        "archiveFile": archive_file,
+        "archiveSha256": sha256,
+        "archiveBytes": bytes,
+        "submitUrl": GAMEBANANA_SUBMIT_URL,
+        "submissionUrl": null,
+        "verified": false,
+        "createdAt": now,
+        "updatedAt": now,
+    });
+    let record_path = write_upload_record(&folder, &record)?;
+
     if args.open {
         open_browser(GAMEBANANA_SUBMIT_URL)?;
     }
+
+    if args.json {
+        print_json(&json!({
+            "ok": true,
+            "approved": true,
+            "state": "awaiting_user",
+            "project": lossy(&project_dir),
+            "slug": project.slug,
+            "version": manifest.version,
+            "folder": lossy(&folder),
+            "archive": lossy(&archive_path),
+            "archiveSha256": sha256,
+            "archiveBytes": bytes,
+            "url": GAMEBANANA_SUBMIT_URL,
+            "record": lossy(&record_path),
+            "opened": args.open,
+            "uploaded": false,
+        }));
+        return Ok(());
+    }
+
+    println!(
+        "GameBanana handoff approved for {} {}",
+        project.name, manifest.version
+    );
+    println!("  Folder:  {}", folder.display());
+    println!("  Archive: {}", archive_path.display());
+    println!("  SHA-256: {sha256}");
+    println!("  Page:    {GAMEBANANA_SUBMIT_URL}");
+    println!("  Record:  {}", record_path.display());
+    if args.open {
+        println!("  Opened the page in your browser.");
+    }
+    println!("Sign in, choose the Deadlock category, upload the archive, then run:");
+    println!(
+        "  dah publish confirm --url https://gamebanana.com/mods/<id>"
+    );
+    println!("Nothing was uploaded by this command.");
+
+    Ok(())
+}
+
+/// Record and verify the submission URL after the user uploads in the browser.
+pub fn confirm(args: &ConfirmArgs) -> Result<()> {
+    let project_dir = paths::project_dir(args.workspace.as_deref())?;
+    let project = domain::read_project(&project_dir)?;
+    let manifest = domain::latest_release_manifest(&project_dir)?.ok_or_else(|| {
+        CliError::new(
+            "no_release",
+            format!(
+                "Project {} has no release. Run `dah mod release` first.",
+                project.slug
+            ),
+        )
+    })?;
+    let folder = domain::publish_dir(&project_dir, &manifest.version);
+    let mut record = read_upload_record(&folder)?.ok_or_else(|| {
+        CliError::new(
+            "publish_state",
+            "No upload record. Run `dah publish upload --approve` first.",
+        )
+    })?;
+
+    if record.get("state").and_then(Value::as_str) != Some("awaiting_user") {
+        return Err(CliError::new(
+            "publish_state",
+            format!(
+                "Upload record is {:?}, not awaiting_user.",
+                record.get("state").and_then(Value::as_str)
+            ),
+        ));
+    }
+
+    let archive_file = record
+        .get("archiveFile")
+        .and_then(Value::as_str)
+        .ok_or_else(|| CliError::new("publish_state", "Upload record has no archiveFile."))?;
+    let archive_path = folder.join(archive_file);
+    let sha256 = sha256_file(&archive_path)?;
+    let expected = record
+        .get("archiveSha256")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+
+    if sha256 != expected {
+        return Err(CliError::new(
+            "publish_archive",
+            format!(
+                "Archive hash changed: expected {expected}, found {sha256}. Re-run `dah publish prepare` and upload again."
+            ),
+        ));
+    }
+
+    let url = args
+        .url
+        .clone()
+        .or_else(|| std::env::var("GAMEBANANA_SUBMISSION_URL").ok())
+        .ok_or_else(|| {
+            CliError::new(
+                "publish_confirm",
+                "Pass --url https://gamebanana.com/mods/<id> after uploading, or set GAMEBANANA_SUBMISSION_URL.",
+            )
+        })?;
+
+    let local_test = args.allow_http
+        && (url.starts_with("http://127.0.0.1:") || url.starts_with("http://localhost:"));
+
+    if !url.starts_with("https://gamebanana.com/") && !local_test {
+        return Err(CliError::new(
+            "publish_confirm",
+            "Submission URL must be https://gamebanana.com/mods/<id>. Pass --allow-http only for a local test server.",
+        ));
+    }
+
+    let verified = if args.skip_verify {
+        false
+    } else {
+        let mut response = ureq::get(&url)
+            .header("User-Agent", "dah/0.0.0")
+            .call()
+            .map_err(|error| {
+                CliError::new("publish_verify", format!("Could not fetch {url}: {error}"))
+            })?;
+        let status = response.status();
+        let body = response.body_mut().read_to_string().map_err(|error| {
+            CliError::new("publish_verify", format!("Could not read {url}: {error}"))
+        })?;
+        let name = project.name.to_lowercase();
+        let slug = project.slug.to_lowercase();
+        let body_lower = body.to_lowercase();
+
+        if status.as_u16() != 200 || (!body_lower.contains(&name) && !body_lower.contains(&slug)) {
+            return Err(CliError::new(
+                "publish_verify",
+                format!(
+                    "The submission page at {url} did not confirm this project. Check the URL or pass --skip-verify to record it unverified."
+                ),
+            ));
+        }
+        true
+    };
+
+    let now = now_rfc3339();
+    if let Some(object) = record.as_object_mut() {
+        object.insert("state".into(), Value::String(if verified { "verified" } else { "recorded" }.into()));
+        object.insert("submissionUrl".into(), Value::String(url.clone()));
+        object.insert("verified".into(), Value::Bool(verified));
+        object.insert("confirmedAt".into(), Value::String(now.clone()));
+        object.insert("updatedAt".into(), Value::String(now));
+    }
+    let record_path = write_upload_record(&folder, &record)?;
+
+    if args.json {
+        print_json(&json!({
+            "ok": true,
+            "state": record.get("state"),
+            "verified": verified,
+            "project": lossy(&project_dir),
+            "slug": project.slug,
+            "version": manifest.version,
+            "submissionUrl": url,
+            "record": lossy(&record_path),
+        }));
+    } else {
+        println!(
+            "Recorded GameBanana submission for {} {}: {url}",
+            project.name, manifest.version
+        );
+        println!(
+            "  State:  {}",
+            if verified { "verified" } else { "recorded (not checked)" }
+        );
+        println!("  Record: {}", record_path.display());
+    }
+
+    Ok(())
+}
+
+pub fn status(args: &StatusArgs) -> Result<()> {
+    let project_dir = paths::project_dir(args.workspace.as_deref())?;
+    let project = domain::read_project(&project_dir)?;
+    let manifest = domain::latest_release_manifest(&project_dir)?.ok_or_else(|| {
+        CliError::new(
+            "no_release",
+            format!("Project {} has no release.", project.slug),
+        )
+    })?;
+    let folder = domain::publish_dir(&project_dir, &manifest.version);
+    let record = read_upload_record(&folder)?.ok_or_else(|| {
+        CliError::new(
+            "publish_state",
+            format!("No upload record for {}. Run `dah publish upload` first.", folder.display()),
+        )
+    })?;
 
     if args.json {
         print_json(&json!({
@@ -295,28 +703,36 @@ pub fn upload(args: &UploadArgs) -> Result<()> {
             "slug": project.slug,
             "version": manifest.version,
             "folder": lossy(&folder),
-            "url": GAMEBANANA_SUBMIT_URL,
-            "opened": args.open,
-            "uploaded": false,
+            "record": record,
         }));
-        return Ok(());
+    } else {
+        println!(
+            "GameBanana upload state for {} {}",
+            project.name, manifest.version
+        );
+        println!("  Folder: {}", folder.display());
+        println!(
+            "  State:  {}",
+            record.get("state").and_then(Value::as_str).unwrap_or("unknown")
+        );
+        println!(
+            "  URL:    {}",
+            record
+                .get("submissionUrl")
+                .and_then(Value::as_str)
+                .unwrap_or("not recorded")
+        );
+        println!(
+            "  SHA:    {}",
+            record
+                .get("archiveSha256")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown")
+        );
     }
-
-    println!(
-        "GameBanana handoff for {} {}",
-        project.name, manifest.version
-    );
-    println!("  Folder: {}", folder.display());
-    println!("  Page:   {GAMEBANANA_SUBMIT_URL}");
-    if args.open {
-        println!("  Opened the page in your browser.");
-    }
-    println!("Sign in, choose the Deadlock category, and upload the files from the folder.");
-    println!("Nothing was uploaded by this command.");
 
     Ok(())
 }
-
 fn open_browser(url: &str) -> Result<()> {
     let mut command = if cfg!(target_os = "macos") {
         let mut command = std::process::Command::new("open");

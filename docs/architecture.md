@@ -361,7 +361,9 @@ dah mod deploy             plan or approve an addon install
 dah mod migrate            plan or apply moved target paths
 dah watch                  review every project and correlate the newest patch
 dah publish prepare        build a local release folder, never upload
-dah publish upload         open the GameBanana submission page, no file upload
+dah publish upload         approval-gated GameBanana handoff with upload record
+dah publish confirm        record and verify the submitted GameBanana URL
+dah publish status         show the recorded upload state
 dah vpk inspect            list a VPK tree and verify CRCs
 ```
 
