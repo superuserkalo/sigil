@@ -28,6 +28,7 @@ directory. Treat every boundary here as security relevant.
 6. No telemetry, analytics or heartbeat.
 7. Network access from tools limited to model providers, `api.steampowered.com`, GameBanana and the
    GitHub update check. Local OpenAI-compatible endpoints are loopback or user-configured.
+   GameBanana publish confirmation fetches the public submission page to verify the recorded URL.
 8. External binaries resolved from settings with pinned version and hash when bundled.
 
 ## Known risks

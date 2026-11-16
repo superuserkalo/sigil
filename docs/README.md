@@ -34,6 +34,7 @@ Every doc starts with a status line. Values: `active`, `draft`, `planned`, `supe
 | `decisions/0005-reference-images-and-likeness.md` | accepted | Reference images, likeness rights and generated character mods. |
 | `decisions/0006-native-rust-rune-desktop.md` | accepted | Native Rust and Rune desktop, Rust core and CLI. |
 | `decisions/0007-tinyagent-host.md` | accepted | TinyAgent replaces Pi Durable as the agent host. |
+| `decisions/0008-gamebanana-approved-handoff.md` | accepted | Publishing is an approved browser handoff with recorded state. |
 | `runbooks/development.md` | active | Local setup and verification. |
 
 ## Updating docs
