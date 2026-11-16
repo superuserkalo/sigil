@@ -14,6 +14,8 @@ pub struct WatchArgs {
     pub limit: usize,
     pub json: bool,
     pub refresh: bool,
+    pub watch: bool,
+    pub interval: u64,
 }
 
 struct WatchedProject {
@@ -96,6 +98,27 @@ impl WatchedProject {
 }
 
 pub fn run(args: &WatchArgs) -> Result<()> {
+    if !args.watch {
+        watch_once(args)?;
+        return Ok(());
+    }
+
+    let interval = args.interval.max(5);
+    loop {
+        let summary = watch_once(args)?;
+        write_watch_state(&summary, interval)?;
+        std::thread::sleep(std::time::Duration::from_secs(interval));
+    }
+}
+
+struct WatchSummary {
+    total: usize,
+    review: usize,
+    newest_patch: Option<String>,
+    game_root: String,
+}
+
+fn watch_once(args: &WatchArgs) -> Result<WatchSummary> {
     let paths = paths::resolve_paths(None)?;
     let workspace = &paths.workspace_dir;
     let project_dirs = discover_projects(workspace);
@@ -190,6 +213,12 @@ pub fn run(args: &WatchArgs) -> Result<()> {
     let shown = projects.iter().take(args.limit).collect::<Vec<_>>();
 
     if args.json {
+        let summary = WatchSummary {
+            total,
+            review,
+            newest_patch: newest_patch.as_ref().map(|patch| patch.title.clone()),
+            game_root: lossy(&install.game_root),
+        };
         print_json(&json!({
             "ok": true,
             "workspace": lossy(workspace),
@@ -211,7 +240,7 @@ pub fn run(args: &WatchArgs) -> Result<()> {
                 .map(|project| project_json(project, newest_patch.as_ref()))
                 .collect::<Vec<_>>(),
         }));
-        return Ok(());
+        return Ok(summary);
     }
 
     println!(
@@ -248,6 +277,33 @@ pub fn run(args: &WatchArgs) -> Result<()> {
 
     println!("Read-only pass: no project files were written.");
 
+    Ok(WatchSummary {
+        total,
+        review,
+        newest_patch: newest_patch.as_ref().map(|patch| patch.title.clone()),
+        game_root: lossy(&install.game_root),
+    })
+}
+
+fn write_watch_state(summary: &WatchSummary, interval: u64) -> Result<()> {
+    let paths = paths::resolve_paths(None)?;
+    let path = paths.workspace_dir.join(".dah").join("watch-state.json");
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let state = json!({
+        "schema": 1,
+        "updatedAt": crate::util::now_rfc3339(),
+        "intervalSeconds": interval,
+        "gameRoot": summary.game_root,
+        "newestPatch": summary.newest_patch,
+        "totalProjects": summary.total,
+        "needsReview": summary.review,
+    });
+    let mut text = serde_json::to_string_pretty(&state)?;
+    text.push('\n');
+    std::fs::write(&path, text)?;
+    eprintln!("[watch] state written to {}", path.display());
     Ok(())
 }
 
