@@ -12,6 +12,7 @@ supersede one with a new record instead of rewriting it.
 | `0002-durable-agent-runtime.md` | accepted | Runtime, storage, secrets, process split |
 | `0003-windows-compile-backend.md` | accepted | Compile is a backend with availability |
 | `0004-embedded-runtime-choice.md` | accepted | Pi Durable stays the runtime; fx is optional |
+| `0005-reference-images-and-likeness.md` | accepted | Reference images and likeness stay local and consent-based |
 
 Use this template:
 

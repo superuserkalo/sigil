@@ -1,6 +1,6 @@
 import { readFile, readdir, stat } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 
 export const DEADLOCK_APP_ID = "1422450";
 
@@ -52,6 +52,8 @@ export type GameStatus = {
 
 export type InstallDiscoveryOptions = {
   steamRoots?: readonly string[];
+  /** Deadlock game folder, its `game` folder, or `game/citadel`. Overrides Steam discovery. */
+  gameDir?: string;
   platform?: NodeJS.Platform;
   home?: string;
   env?: NodeJS.ProcessEnv;
@@ -103,10 +105,33 @@ export function formatSlotFileName(slot: number): string {
 export async function discoverDeadlockInstall(
   options: InstallDiscoveryOptions = {},
 ): Promise<InstallDiscovery> {
+  const env = options.env ?? process.env;
+  const configuredGameDir = options.gameDir ?? env.DAH_GAME_DIR;
+
+  if (configuredGameDir !== undefined && configuredGameDir.trim().length > 0) {
+    const configured = resolve(configuredGameDir.trim());
+    const candidates = [
+      { gameRoot: configured, citadelDir: join(configured, "game", "citadel") },
+      { gameRoot: resolve(configured, ".."), citadelDir: join(configured, "citadel") },
+      { gameRoot: resolve(configured, "..", ".."), citadelDir: configured },
+    ];
+
+    for (const candidate of candidates) {
+      if (await isDirectory(candidate.citadelDir)) {
+        return {
+          install: installAt(candidate.gameRoot, candidate.citadelDir),
+          searchedRoots: [configured],
+        };
+      }
+    }
+
+    return { install: null, searchedRoots: [configured] };
+  }
+
   const configuredRoots = options.steamRoots;
   const seedRoots =
     configuredRoots ??
-    defaultSteamRoots(options.platform ?? process.platform, options.home ?? homedir(), options.env ?? process.env);
+    defaultSteamRoots(options.platform ?? process.platform, options.home ?? homedir(), env);
 
   const searchedRoots: string[] = [];
 
@@ -123,18 +148,22 @@ export async function discoverDeadlockInstall(
     if (!(await isDirectory(citadelDir))) continue;
 
     return {
-      install: {
-        steamRoot,
-        gameRoot,
-        citadelDir,
-        gameinfoPath: join(gameRoot, GAMEINFO_RELATIVE),
-        addonsDir: join(gameRoot, ADDONS_RELATIVE),
-      },
+      install: installAt(gameRoot, citadelDir),
       searchedRoots,
     };
   }
 
   return { install: null, searchedRoots };
+}
+
+function installAt(gameRoot: string, citadelDir: string): DeadlockInstall {
+  return {
+    steamRoot: gameRoot,
+    gameRoot,
+    citadelDir,
+    gameinfoPath: join(gameRoot, GAMEINFO_RELATIVE),
+    addonsDir: join(gameRoot, ADDONS_RELATIVE),
+  };
 }
 
 export async function readGameInfoStatus(gameinfoPath: string): Promise<GameInfoStatus> {

@@ -22,6 +22,24 @@ Three promises shape every boundary:
 3. A payload that violates the community rules cannot be deployed, regardless of what the prompt
    says. Validation is code.
 
+## Mod capability ladder
+
+The workbench grows along one ladder. Every tier uses the same loop: search the game, extract,
+edit, build, validate, deploy with approval. Complexity changes the tools and the review, not the
+safety gate.
+
+| Tier | Example | What it needs | Status |
+| --- | --- | --- | --- |
+| 0 Inspect | Find Billy's model and the texture that paints his jacket | Game index, search, extract | Implemented in the CLI and agent tools. Verify against a real install. |
+| 1 Asset swap | Recolor a texture, replace a sound or a HUD image | Decompile, edit, compile, pack, validate, deploy | Pack and validate pieces exist. Decompile and compile need external backends. |
+| 2 Material and effect work | Change a material, particle or camera | Tier 1 plus format-aware editing | Planned |
+| 3 Character work | Restyle a hero, or base a look on a reference photo | Tier 2 plus skeleton-compatible mesh, materials, likeness review | Planned. Gated by `docs/decisions/0005-reference-images-and-likeness.md`. |
+| 4 Multi-asset work | A themed set across heroes, UI and audio | Build graph, batch validation, versioned workspace | Planned |
+| 5 Release and survive updates | Publish to GameBanana, migrate paths after a patch | Versioned release, upload approval, path migration | Planned |
+
+The first useful milestone is not a generated character. It is a texture recolor that travels the
+whole loop and shows up in game. Each later tier reuses that loop.
+
 ## Processes
 
 ```text
@@ -105,14 +123,17 @@ Implemented today:
 | Tool | Effects | Replay | Approval |
 | --- | --- | --- | --- |
 | `deadlock_game_status` | Reads Steam libraries, `gameinfo.gi`, addon folder | safe | none |
+| `deadlock_game_index` | Parses the game VPK tree and caches path metadata in the workspace | safe | none |
+| `deadlock_search_paths` | Filters the cached index by text, hero, type or folder | safe | none |
+| `deadlock_extract` | Copies exact game paths into the workspace | unsafe | none (workspace only) |
 | `deadlock_validate_payload` | Pure path rules over a proposed entry list | safe | none |
 
 Planned, in rough dependency order:
 
 | Tool | Effects | Replay | Approval |
 | --- | --- | --- | --- |
-| `game_index` | Reads and caches the game VPK entry list | safe | none |
-| `game_extract` | Writes extracted files to the workspace | unsafe | none (workspace only) |
+| `game_decompile` | Runs an external decompiler into the workspace | unsafe | none (workspace only) |
+| `game_index_watch` | Detects a game update and invalidates stale paths | safe | none |
 | `project_init` | Writes a project manifest and staging layout | unsafe | none |
 | `project_build` | Runs the build backend, writes staging | unsafe | none |
 | `vpk_inspect` | Reads a VPK manifest | safe | none |
@@ -135,6 +156,25 @@ Rules for adding a tool:
 - Anything that leaves the mod workspace goes through a main-process action. The tool returns a
   plan, not a side effect.
 - Every new contract gets a test in `packages/*/test`.
+
+## Game index
+
+`deadlock_game_index` parses the directory tree of `game/citadel/pak01_dir.vpk` and writes metadata
+to `<workspace>/.dah/index/citadel-pak01.json`. It never copies the whole VPK into memory.
+
+- The cache records the source path, size and modification time. A mismatch rebuilds it.
+- Search is a pure function over the cached entries. Filters compose: text, hero codename, compiled
+  file type and folder prefix.
+- Hero codenames come from paths such as `models/heroes_wip/billy/`, not from a bundled table that
+  goes stale after a patch.
+- Extraction re-reads the VPK tree, verifies the entry CRC32 and writes under the workspace. It
+  refuses absolute paths, parent segments and destinations outside the workspace.
+- `DAH_GAME_DIR` points at a game folder, its `game` folder or `game/citadel` for non-Steam installs
+  and fixtures.
+- VPK format facts and sources are in `docs/research/vpk-format.md`.
+
+Extraction returns compiled `_c` files. Decompiling them is a separate backend that is not bundled
+yet.
 
 ## Build pipeline
 
@@ -216,6 +256,9 @@ Enforced in code:
 8. **Untrusted input.** Mod descriptions, wiki pages and GameBanana metadata are data, not
    instructions. Tools that fetch them must not forward them into a privileged path. The approval
    gate is the backstop.
+9. **Reference images and likeness.** Reference images stay local and are never shipped or used to
+   train a shared model. A likeness mod records the rights basis and needs a named approval before
+   publish. See `docs/decisions/0005-reference-images-and-likeness.md`.
 
 Cosmetic-only policy is both an ethical rule and a compatibility rule: gameplay data goes stale
 after updates and can break other players' mods.
@@ -234,6 +277,8 @@ mods/<slug>/          mod workspace, git-friendly
   staging/            compiled _c files at game paths
   builds/             packed VPKs and validation reports
   notes/              agent notes and screenshots
+  extracted/          raw game files pulled out of the VPK
+  .dah/index/         cached game path index, safe to rebuild
 logs/                 redacted app and tool logs
 ```
 
@@ -272,6 +317,9 @@ dah models                 providers, auth status, available models
 dah auth set <provider>    store a key, chmod 600
 dah auth list              provider ids and credential types, no secrets
 dah chat "<prompt>"        one agent run
+dah index                  build or load the game VPK path index
+dah find "billy"           search game paths by text, hero, type or folder
+dah extract <path...>      copy exact game paths into the workspace
 ```
 
 Later: `dah mod new`, `dah mod build`, `dah mod validate`, `dah mod deploy`. The CLI is useful for
@@ -292,7 +340,7 @@ CI, for scripted batch work, and for testing the runtime without Electron.
 
 ## Roadmap
 
-Phase 0, scaffold (current):
+Phase 0, scaffold (complete):
 
 - Monorepo, docs, agent manuals, domain glossary.
 - Working harness bootstrap and BYOK credential store.
@@ -300,12 +348,15 @@ Phase 0, scaffold (current):
 - Game discovery, `gameinfo.gi` status, addon slot status.
 - Payload validator with tests.
 
-Phase 1, read-only game introspection:
+Phase 1, read-only game introspection (in progress):
 
-- Index `pak01_dir.vpk` and cache entry paths.
-- Search paths by hero codename and file type.
-- Extract and decompile into the workspace.
-- Preview extracted textures and models in the existing Grimoire viewers.
+- Done: index `pak01_dir.vpk` and cache entry paths.
+- Done: search paths by hero codename, file type and folder.
+- Done: extract exact game paths into the workspace with CRC verification.
+- Done: CLI `dah index`, `dah find`, `dah extract` and agent tools for the same.
+- Next: decompile extracted files through a configured Source 2 Viewer backend.
+- Next: preview extracted textures and models in the existing Grimoire viewers.
+- Next: verify entry counts and hero folders against a real install.
 
 Phase 2, build loop without compile:
 
@@ -335,6 +386,12 @@ Phase 5, advanced:
 
 ## Open questions
 
+- Which reference image source is acceptable: user upload only, a licensed stock provider, or a
+  search API with attribution? Any choice updates the network allowlist and notices.
+- Which image-to-3D backend, if any, produces a mesh that fits a Deadlock skeleton, materials and
+  AnimGraph 2, and on which platform? Do not promise one before it compiles in game.
+- Does the app support local OpenAI-compatible models, and how are they configured without leaking
+  keys or adding a hosted proxy?
 - Is CSDK 12 viable under Wine or Proton on macOS and Linux? Until verified, do not promise it.
 - Can any part of the toolchain be redistributed? CSDK 12 has no license. Bundle only tools with a
   clear license and a pinned hash.

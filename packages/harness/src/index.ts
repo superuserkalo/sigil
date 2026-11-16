@@ -11,7 +11,7 @@ import {
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import { CodingTools } from "@earendil-works/pi-durable/tools";
-import { deadlockExtension } from "@dah/deadlock-tools";
+import { createDeadlockExtension } from "@dah/deadlock-tools";
 import { JsonFileCredentialStore } from "./credentials.ts";
 import {
   PROVIDER_ORDER,
@@ -73,7 +73,7 @@ export async function openHarness(options: OpenHarnessOptions): Promise<Runtime>
 
   const registry = createRegistry();
   registry.install(CodingTools);
-  registry.install(deadlockExtension);
+  registry.install(createDeadlockExtension({ workspaceDir: options.workspaceDir }));
 
   const storage = await openNodeSqliteStorage(options.storagePath);
   const harness = await Harness.open(

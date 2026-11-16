@@ -107,6 +107,8 @@ Adding a tool:
   until a verified backend exists.
 - Upstream path moves break mods. Use `GameTracking-Deadlock` history and a path migration step
   instead of guessing.
+- Use the game index (`dah index`, `deadlock_search_paths`) for exact paths. Hero folders move
+  between updates, so do not hard-code a hero folder table.
 
 ## Docs
 

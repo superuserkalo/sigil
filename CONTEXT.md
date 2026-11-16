@@ -42,6 +42,29 @@ _Avoid_: sandbox, repo
 The Steam copy of Deadlock the app inspects and, with approval, installs into.
 _Avoid_: game folder, install root
 
+**Game index**:
+The cached list of paths inside `game/citadel/pak01_dir.vpk`, with metadata needed to extract them.
+_Avoid_: file list, database
+
+**Extracted file**:
+A raw game file copied out of the VPK into the mod workspace. It is still compiled until a
+decompile backend runs.
+_Avoid_: source asset, decompiled file
+
+**Reference image**:
+A user-supplied or licensed image used as visual direction for a mod. It stays local and is never
+shipped in the payload.
+_Avoid_: asset, texture source
+
+**Likeness**:
+A real person's face or identity in a mod. It needs a recorded rights basis and a separate approval
+before publish.
+_Avoid_: face swap, celeb mod
+
+**Character mod**:
+A mod that changes a hero's appearance while staying on the game skeleton and animations.
+_Avoid_: model swap, hero replacement
+
 **Harness**:
 The durable agent runtime: storage, conversations, tasks, tools and the model.
 _Avoid_: server, backend
