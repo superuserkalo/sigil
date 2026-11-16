@@ -2365,6 +2365,15 @@ pub fn apply_install(plan: &InstallPlan, approve: bool) -> Result<InstallRecord>
         ));
     }
 
+    // Repair a stale gameinfo before the slot is touched. A failed repair then
+    // aborts with nothing written, instead of leaving a VPK the game ignores.
+    if plan.gameinfo_repair {
+        let status = read_game_info_status(&plan.gameinfo_path)?;
+        if status.present {
+            repair_gameinfo(&plan.gameinfo_path, true)?;
+        }
+    }
+
     fs::create_dir_all(&plan.addons_dir)?;
 
     let backups = backup_existing(plan)?;
@@ -2377,13 +2386,6 @@ pub fn apply_install(plan: &InstallPlan, approve: bool) -> Result<InstallRecord>
         } => deploy_archive_vpk(plan, dir_path, chunk_paths)?,
         InstallArtifact::Staging { path } => deploy_staged(plan, path)?,
     };
-
-    if plan.gameinfo_repair {
-        let status = read_game_info_status(&plan.gameinfo_path)?;
-        if status.present {
-            repair_gameinfo(&plan.gameinfo_path, true)?;
-        }
-    }
 
     let gameinfo_repaired = plan.gameinfo_repair
         && read_game_info_status(&plan.gameinfo_path)?.addons_search_path;

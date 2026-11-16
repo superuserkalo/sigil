@@ -96,6 +96,22 @@ needed for the test suite.
 Decompiling extracted `_c` files is not implemented yet. Use Source 2 Viewer until a decompile
 backend lands.
 
+## Acceptance
+
+One command exercises the tier 5 loop against a disposable fake install. It never reads or writes a
+real game directory.
+
+```bash
+scripts/acceptance.sh              # offline surfaces
+scripts/acceptance.sh --network    # also calls api.deadlock-api.com
+```
+
+It builds a project, validates and packs it, seeds a fake game catalog, baselines and releases,
+toggles slots, saves and applies a profile, writes autoexec and a crosshair block, records a
+character task and a recolor brief, deploys, prepares a publish folder, imports a demo, plans and
+applies an install, and checks launch status and the watch state. Artifacts land under
+`.scratch/acceptance/<stamp>/`. The script exits with the number of failed checks.
+
 ## Native app and agent host
 
 ```bash
