@@ -13,6 +13,10 @@ pub enum ProviderKind {
     OpenAi,
     Anthropic,
     Chat,
+    /// ChatGPT subscription through the Codex endpoint.
+    Codex,
+    /// Grok subscription through the CLI proxy endpoint.
+    Grok,
 }
 
 impl ProviderKind {
@@ -21,6 +25,8 @@ impl ProviderKind {
             Self::OpenAi => "openai",
             Self::Anthropic => "anthropic",
             Self::Chat => "chat",
+            Self::Codex => "codex",
+            Self::Grok => "grok",
         }
     }
 
@@ -29,6 +35,8 @@ impl ProviderKind {
             "openai" => Some(Self::OpenAi),
             "anthropic" => Some(Self::Anthropic),
             "chat" => Some(Self::Chat),
+            "codex" => Some(Self::Codex),
+            "grok" => Some(Self::Grok),
             _ => None,
         }
     }
@@ -51,7 +59,7 @@ impl Config {
             None => ProviderKind::OpenAi,
             Some(value) => ProviderKind::parse(&value).ok_or_else(|| {
                 format!(
-                    "DAH_AGENT_PROVIDER must be openai, anthropic or chat; received \"{value}\"."
+                    "DAH_AGENT_PROVIDER must be openai, anthropic, chat, codex or grok; received \"{value}\"."
                 )
             })?,
         };
@@ -60,13 +68,24 @@ impl Config {
             "DAH_AGENT_MODEL is required. Set it to the exact model id for the configured provider. The host does not choose a default model.".to_string()
         })?;
 
+        let subscription = matches!(provider, ProviderKind::Codex | ProviderKind::Grok);
         let native_key = match provider {
             ProviderKind::Anthropic => env::var("ANTHROPIC_API_KEY").ok(),
+            ProviderKind::Codex | ProviderKind::Grok => None,
             _ => env::var("OPENAI_API_KEY").ok(),
         };
-        let api_key = non_empty(env::var("DAH_AGENT_API_KEY").ok()).or(non_empty(native_key));
+        let api_key = if subscription {
+            None
+        } else {
+            non_empty(env::var("DAH_AGENT_API_KEY").ok()).or(non_empty(native_key))
+        };
 
-        if api_key.is_none() && provider != ProviderKind::Chat {
+        if api_key.is_none()
+            && !matches!(
+                provider,
+                ProviderKind::Chat | ProviderKind::Codex | ProviderKind::Grok
+            )
+        {
             let fallback = if provider == ProviderKind::Anthropic {
                 "ANTHROPIC_API_KEY"
             } else {

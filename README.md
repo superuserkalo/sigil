@@ -72,9 +72,11 @@ One command proves the loop against a disposable fake install:
 scripts/acceptance.sh
 ```
 
-Subscription sign-in (Codex, Grok and the AI Gateway) is designed from the
-Apache-2.0 fx source in [docs/research/subscription-auth.md](docs/research/subscription-auth.md).
-It is not wired yet; BYOK and local endpoints are the supported paths today.
+Subscription sign-in works for Codex and Grok, with the first-party OAuth flows
+documented from the Apache-2.0 fx source. Use `dah auth login codex`, or the
+Settings panel, then `dah auth use codex --model <id>`. Tokens live in the app
+data auth folder, never in a transcript. See
+[docs/research/subscription-auth.md](docs/research/subscription-auth.md).
 
 ## Where it stands
 
@@ -122,6 +124,8 @@ pnpm rust:dah -- demo import match.dem        # local store and merged summary
 pnpm rust:dah -- demo review <id> --file r.md --write   # linted coaching review
 pnpm rust:dah -- demo review <id> --model local --base-url http://127.0.0.1:8080/v1 --write
 pnpm rust:dah -- toolchain status             # what can decompile and compile
+pnpm rust:dah -- auth login codex             # ChatGPT subscription sign-in
+pnpm rust:dah -- auth use codex --model <id>  # point the host at it
 pnpm rust:dah -- character stages             # the generation stage graph
 pnpm rust:dah -- character backends           # Blender code, local models, Meshy
 pnpm rust:dah -- character scaffold billy     # a Blender script an LLM can edit

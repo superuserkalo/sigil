@@ -35,6 +35,52 @@ cp "$bindir/dah.exe" "$out/dah.exe"
 cp THIRD_PARTY_NOTICES.md "$out/" 2>/dev/null || true
 cp README.md "$out/" 2>/dev/null || true
 
+cat > "$out/Sign in with ChatGPT.bat" <<'BAT'
+@echo off
+cd /d "%~dp0"
+echo Sign in with your ChatGPT subscription in the browser.
+dah.exe auth login codex
+if errorlevel 1 (
+  echo Sign-in failed. Check the message above.
+  pause
+  exit /b 1
+)
+set /p MODEL=Model id (the one your Codex subscription exposes):
+if "%MODEL%"=="" (
+  echo No model id entered. Run this again or open Settings.
+  pause
+  exit /b 1
+)
+dah.exe auth use codex --model "%MODEL%"
+pause
+BAT
+
+cat > "$out/Sign in with Grok.bat" <<'BAT'
+@echo off
+cd /d "%~dp0"
+echo Sign in with your SuperGrok or X Premium subscription in the browser.
+dah.exe auth login grok
+if errorlevel 1 (
+  echo Sign-in failed. Check the message above.
+  pause
+  exit /b 1
+)
+set /p MODEL=Model id (the one your Grok subscription exposes):
+if "%MODEL%"=="" (
+  echo No model id entered. Run this again or open Settings.
+  pause
+  exit /b 1
+)
+dah.exe auth use grok --model "%MODEL%"
+pause
+BAT
+
+cat > "$out/Start Deadlock Mod Manager.bat" <<'BAT'
+@echo off
+cd /d "%~dp0"
+start "" "Deadlock Mod Manager.exe"
+BAT
+
 cat > "$out/README-WINDOWS.txt" <<'TXT'
 Deadlock Mod Manager (Windows x64)
 
@@ -47,22 +93,29 @@ Run
 The app is a native window with an agent inside. It does not use a browser
 view or Electron.
 
-Agent (optional)
-  The sidecar is dah-agent.exe beside the app. It starts only when the model
-  environment is set. In a terminal:
+Subscriptions (no API key)
+  1. Run "Sign in with ChatGPT.bat" or "Sign in with Grok.bat".
+  2. Finish the sign-in in the browser. The script asks for the exact model id
+     your subscription exposes.
+  3. Start the app. Settings shows the account and lets you switch provider or
+     model.
 
+  The token is stored under %APPDATA%\DeadlockAgentHarness\auth and is never
+  shown in the window, the transcript or a log. Sign out from the app or with
+  `dah.exe auth logout codex`.
+
+Agent with an API key (optional)
     set DAH_AGENT_PROVIDER=openai
     set DAH_AGENT_MODEL=<the exact model id>
     set DAH_AGENT_API_KEY=<your key>
 
-  For a local OpenAI-compatible server:
+  Local OpenAI-compatible server:
 
     set DAH_AGENT_PROVIDER=chat
     set DAH_AGENT_BASE_URL=http://127.0.0.1:8080/v1
     set DAH_AGENT_MODEL=<the model id>
 
-  Keys are read by the host and never shown in the transcript. There is no
-  telemetry. The app works without an agent for the manager screens.
+  The app works without an agent for the manager screens. There is no telemetry.
 
 Game
   Install Deadlock through Steam. The app finds the install, the addon folder

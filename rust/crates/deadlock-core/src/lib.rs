@@ -27,6 +27,7 @@ pub mod character;
 pub mod deploy;
 pub mod migrate;
 pub mod stats;
+pub mod subscription;
 pub mod toolchain;
 pub mod vpk;
 pub mod vpk_write;

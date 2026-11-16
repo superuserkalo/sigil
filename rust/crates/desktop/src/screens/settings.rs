@@ -5,7 +5,7 @@ use rune::{Color, El, ScrollSpec, col, row, text};
 use crate::agent::AgentStatus;
 use crate::app::State;
 use crate::model::{Provider, ProviderState, Screen};
-use crate::ui::{ActionKind, BODY_MED, MONO, SMALL, Tone, Ui};
+use crate::ui::{ActionKind, BODY, LABEL, BODY_MED, MONO, SMALL, Tone, Ui};
 
 pub fn view(s: &State, u: &Ui) -> El {
     let configured = s
@@ -45,6 +45,7 @@ pub fn view(s: &State, u: &Ui) -> El {
         })
         .gap(12.0)
         .child(safety(s, u))
+        .child(subscriptions(s, u))
         .child(capabilities(s, u))
         .child(agent_host(s, u))
         .child(about(u));
@@ -483,5 +484,121 @@ fn capabilities(s: &State, u: &Ui) -> El {
                 ),
         );
     }
+    panel.child(body)
+}
+
+/// Subscription sign-in. The token lives in the auth store; this panel only
+/// shows account and expiry, and points the host at a signed-in provider.
+fn subscriptions(s: &State, u: &Ui) -> El {
+    let panel = u
+        .panel()
+        .key("subscriptions")
+        .w_full()
+        .child(u.panel_header("SUBSCRIPTIONS", "your own account"));
+    let mut body = col().w_full().padding(12.0).gap(9.0);
+
+    if s.subscriptions.is_empty() {
+        body = body.child(
+            text("No subscription state loaded.")
+                .font(SMALL)
+                .color(u.faint),
+        );
+    }
+
+    for item in &s.subscriptions {
+        let sign_in_id = item.id.clone();
+        let use_id = item.id.clone();
+        let tone = if item.signed_in { Tone::Ok } else { Tone::Quiet };
+        let detail = if item.signed_in {
+            match (&item.account, item.expires_in_seconds) {
+                (Some(account), seconds) => format!(
+                    "{} · {} min left · refresh {}",
+                    account,
+                    seconds / 60,
+                    if item.has_refresh { "present" } else { "absent" }
+                ),
+                (None, seconds) => format!("{} min left", seconds / 60),
+            }
+        } else {
+            "not signed in".to_string()
+        };
+        body = body.child(
+            row()
+                .w_full()
+                .gap(8.0)
+                .center_y()
+                .child(
+                    text(item.id.clone())
+                        .font(MONO)
+                        .color(u.muted)
+                        .w(48.0),
+                )
+                .child(u.status_chip(
+                    if item.signed_in { "signed in" } else { "signed out" },
+                    tone,
+                ))
+                .child(
+                    text(detail)
+                        .font(LABEL)
+                        .color(u.faint)
+                        .grow(1.0)
+                        .truncate(),
+                )
+                .child(
+                    u.action("Sign in", ActionKind::Ghost)
+                        .key(format!("sign-in-{}", item.id))
+                        .on_press(move |st: &mut State| {
+                            crate::data::start_subscription_login(st, &sign_in_id)
+                        }),
+                )
+                .child(
+                    u.action("Use", ActionKind::Secondary)
+                        .key(format!("use-{}", item.id))
+                        .disabled(!item.signed_in)
+                        .opacity(if item.signed_in { 1.0 } else { 0.45 })
+                        .on_press(move |st: &mut State| {
+                            crate::data::use_subscription_for_agent(st, &use_id)
+                        }),
+                ),
+        );
+    }
+
+    body = body
+        .child(u.divider())
+        .child(u.field_label("MODEL ID"))
+        .child(
+            rune::text_input(&s.host_model, BODY)
+                .key("host-model")
+                .label("Subscription model id")
+                .single_line()
+                .color(u.ink)
+                .placeholder("the exact model id your subscription exposes", u.faint)
+                .caret(u.accent, u.accent.alpha(0.20))
+                .on_edit(|st: &mut State| &mut st.host_model),
+        )
+        .child(
+            text("Sign in opens the provider's own OAuth page. The token is stored in the auth folder, never in this window. Use writes host.json and restarts the agent.")
+                .font(LABEL)
+                .color(u.faint)
+                .wrap(),
+        )
+        .child(
+            u.action("Refresh status", ActionKind::Ghost)
+                .key("subscriptions-refresh")
+                .on_press(|st: &mut State| {
+                    crate::data::refresh_subscriptions(st);
+                    st.subscription_log = Some("Subscription state reloaded.".to_string());
+                }),
+        );
+
+    if let Some(log) = &s.subscription_log {
+        body = body.child(
+            text(log.clone())
+                .font(SMALL)
+                .color(u.muted)
+                .wrap(),
+        );
+    }
+
     panel.child(body)
 }

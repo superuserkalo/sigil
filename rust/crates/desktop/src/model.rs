@@ -219,6 +219,15 @@ impl Screen {
     }
 }
 
+/// One subscription login shown in Settings, without a token.
+pub struct SubscriptionRow {
+    pub id: String,
+    pub signed_in: bool,
+    pub account: Option<String>,
+    pub expires_in_seconds: i64,
+    pub has_refresh: bool,
+}
+
 /// The durable state a `dah watch` loop writes.
 pub struct WatchState {
     pub updated_at: String,

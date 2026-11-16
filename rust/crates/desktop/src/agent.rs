@@ -159,30 +159,67 @@ impl AgentLink {
     /// Start the host. A missing model or binary returns a link in the error state, so the UI
     /// always has something to render and an explicit reason.
     pub fn start(wake: Waker) -> AgentLink {
-        let provider = env_value("DAH_AGENT_PROVIDER").unwrap_or_else(|| "openai".to_string());
-        let model = env_value("DAH_AGENT_MODEL");
+        // `<data>/host.json` wins over the environment. The Settings screen and
+        // `dah auth use` write it after a subscription sign-in.
+        let host = deadlock_core::subscription::load_host_config().ok().flatten();
+        let provider = host
+            .as_ref()
+            .map(|host| host.provider.clone())
+            .or_else(|| env_value("DAH_AGENT_PROVIDER"))
+            .unwrap_or_else(|| "openai".to_string());
+        let model = host
+            .as_ref()
+            .map(|host| host.model.clone())
+            .or_else(|| env_value("DAH_AGENT_MODEL"));
         let base_url = env_value("DAH_AGENT_BASE_URL");
-        let key_present = match provider.as_str() {
-            "chat" => true,
-            "anthropic" => {
-                env_value("DAH_AGENT_API_KEY").is_some() || env_value("ANTHROPIC_API_KEY").is_some()
+        let subscription = matches!(provider.as_str(), "codex" | "grok");
+        let subscription_login = subscription
+            && deadlock_core::subscription::Provider::parse(&provider)
+                .and_then(|provider| deadlock_core::subscription::load(provider).ok().flatten())
+                .is_some();
+        let key_present = if subscription {
+            subscription_login
+        } else {
+            match provider.as_str() {
+                "chat" => true,
+                "anthropic" => {
+                    env_value("DAH_AGENT_API_KEY").is_some()
+                        || env_value("ANTHROPIC_API_KEY").is_some()
+                }
+                _ => {
+                    env_value("DAH_AGENT_API_KEY").is_some()
+                        || env_value("OPENAI_API_KEY").is_some()
+                }
             }
-            _ => env_value("DAH_AGENT_API_KEY").is_some() || env_value("OPENAI_API_KEY").is_some(),
         };
         let mut link = AgentLink::blank(provider.clone(), model.clone());
-        link.base_url = base_url;
+        link.base_url = base_url.clone();
         link.key_present = key_present;
 
         if model.is_none() {
             return AgentLink::config_error(
                 link,
-                "DAH_AGENT_MODEL is not set. Export it to the exact model id for the configured provider, then restart the host.",
+                "DAH_AGENT_MODEL is not set. Set the exact model id for the configured provider, or run `dah auth use <provider> --model <id>`.",
             );
         }
-        if !matches!(provider.as_str(), "openai" | "anthropic" | "chat") {
+        if !matches!(
+            provider.as_str(),
+            "openai" | "anthropic" | "chat" | "codex" | "grok"
+        ) {
             return AgentLink::config_error(
                 link,
-                &format!("DAH_AGENT_PROVIDER is {provider:?}. Use openai, anthropic or chat."),
+                &format!(
+                    "DAH_AGENT_PROVIDER is {provider:?}. Use openai, anthropic, chat, codex or grok."
+                ),
+            );
+        }
+        if subscription && !subscription_login {
+            return AgentLink::config_error(
+                link,
+                &format!(
+                    "No {} login yet. Run `dah auth login {}` in a terminal, then restart the app.",
+                    provider, provider
+                ),
             );
         }
 
@@ -197,7 +234,14 @@ impl AgentLink {
         command
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
+            .stderr(Stdio::piped())
+            .env("DAH_AGENT_PROVIDER", &provider);
+        if let Some(model) = &model {
+            command.env("DAH_AGENT_MODEL", model);
+        }
+        if let Some(base_url) = &base_url {
+            command.env("DAH_AGENT_BASE_URL", base_url);
+        }
         let mut child = match command.spawn() {
             Ok(child) => child,
             Err(error) => {
