@@ -1,0 +1,48 @@
+name: build-windows
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  windows-x64:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Vendor Rune and TinyAgent
+        shell: bash
+        run: |
+          ./scripts/vendor-rune.sh
+          ./scripts/vendor-tinyagent.sh
+
+      - name: Build
+        shell: bash
+        run: |
+          cargo build --manifest-path rust/Cargo.toml --release \
+            -p dah-desktop -p dah-agent -p dah-rs
+
+      - name: Stage bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(sed -n 's/^version = "\(.*\)"/\1/p' rust/Cargo.toml | head -1)"
+          out="dist/DeadlockModManager-${version:-0.1.0}-windows-x64"
+          mkdir -p "$out"
+          cp rust/target/release/dah-desktop.exe "$out/Deadlock Mod Manager.exe"
+          cp rust/target/release/dah-agent.exe "$out/"
+          cp rust/target/release/dah.exe "$out/"
+          cp THIRD_PARTY_NOTICES.md README.md "$out/"
+          echo "Built $GITHUB_SHA on $GITHUB_RUN_ID" > "$out/BUILD.txt"
+          echo "$out" > dist/OUTDIR
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: DeadlockModManager-windows-x64
+          path: dist/DeadlockModManager-*-windows-x64/
+          if-no-files-found: error
