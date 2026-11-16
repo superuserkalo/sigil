@@ -1194,6 +1194,9 @@ fn sidebar(s: &State, u: &Ui) -> El {
                 .min_h(0.0)
                 .px(10.0)
                 .gap(1.0)
+                .scroll(rune::ScrollSpec {
+                    stick_bottom: false,
+                })
                 .child(section_gap(u, "LIBRARY", 6.0))
                 .child(library)
                 .child(el().h(12.0))
