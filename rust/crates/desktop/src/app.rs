@@ -87,6 +87,9 @@ pub struct State {
     pub addon_dialog: Option<(u8, bool)>,
     pub watch: Option<model::WatchState>,
     pub capabilities: Vec<(String, String)>,
+    pub subscriptions: Vec<model::SubscriptionRow>,
+    pub host_model: TextEdit,
+    pub subscription_log: Option<String>,
     pub crosshair: screens::crosshair::View,
     pub profiles: screens::profiles::View,
     pub profiles_job: Job<screens::profiles::Load>,
@@ -168,6 +171,9 @@ impl Default for State {
             addon_dialog: None,
             watch: None,
             capabilities: Vec::new(),
+            subscriptions: Vec::new(),
+            host_model: TextEdit::new(""),
+            subscription_log: None,
             crosshair: screens::crosshair::View::default(),
             profiles: screens::profiles::View::default(),
             profiles_job: Job::default(),
@@ -319,6 +325,9 @@ impl State {
                 if !self.character.loaded && !self.character_job.is_running() {
                     crate::data::start_character_read(self);
                 }
+            }
+            Screen::Settings => {
+                crate::data::refresh_subscriptions(self);
             }
             _ => {}
         }

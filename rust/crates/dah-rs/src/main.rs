@@ -148,6 +148,11 @@ enum Command {
         #[command(subcommand)]
         command: LockerCommand,
     },
+    /// Sign in with a ChatGPT or Grok subscription.
+    Auth {
+        #[command(subcommand)]
+        command: AuthCommand,
+    },
     /// Read, edit and apply the crosshair convars.
     Crosshair {
         #[command(subcommand)]
@@ -661,6 +666,52 @@ enum LockerCommand {
 }
 
 #[derive(Subcommand)]
+enum AuthCommand {
+    /// Sign in with a subscription in the browser.
+    Login {
+        /// codex or grok.
+        #[arg(value_name = "PROVIDER")]
+        provider: String,
+        /// Print the URL and wait instead of opening a browser.
+        #[arg(long)]
+        no_open: bool,
+        /// Print machine-readable JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Show stored subscription logins without printing a token.
+    Status {
+        /// Limit to one provider.
+        #[arg(value_name = "PROVIDER")]
+        provider: Option<String>,
+        /// Print machine-readable JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Remove a subscription login and ask the provider to revoke it.
+    Logout {
+        /// codex or grok.
+        #[arg(value_name = "PROVIDER")]
+        provider: String,
+        /// Print machine-readable JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Point the agent host at a signed-in subscription.
+    Use {
+        /// codex or grok.
+        #[arg(value_name = "PROVIDER")]
+        provider: String,
+        /// Exact model id the subscription exposes.
+        #[arg(long, value_name = "MODEL")]
+        model: String,
+        /// Print machine-readable JSON.
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand)]
 enum CrosshairCommand {
     /// Print the editor crosshair and the convars it emits.
     Show {
@@ -1021,6 +1072,12 @@ impl Cli {
             },
             Command::Locker { command } => match command {
                 LockerCommand::List { json, .. } | LockerCommand::Recolor { json, .. } => *json,
+            },
+            Command::Auth { command } => match command {
+                AuthCommand::Login { json, .. }
+                | AuthCommand::Status { json, .. }
+                | AuthCommand::Logout { json, .. }
+                | AuthCommand::Use { json, .. } => *json,
             },
             Command::Crosshair { command } => match command {
                 CrosshairCommand::Show { json, .. }
@@ -1447,6 +1504,48 @@ fn run(cli: &Cli) -> error::Result<i32> {
                     value: *value,
                     note: note.clone(),
                     workspace: workspace.clone(),
+                    json: *json,
+                })?;
+                Ok(0)
+            }
+        },
+        Command::Auth { command } => match command {
+            AuthCommand::Login {
+                provider,
+                no_open,
+                json,
+            } => {
+                commands::subscription::login(&commands::subscription::LoginArgs {
+                    provider: provider.clone(),
+                    no_open: *no_open,
+                    json: *json,
+                })?;
+                Ok(0)
+            }
+            AuthCommand::Status { provider, json } => {
+                commands::subscription::status(&commands::subscription::StatusArgs {
+                    provider: provider.clone(),
+                    json: *json,
+                })?;
+                Ok(0)
+            }
+            AuthCommand::Use {
+                provider,
+                model,
+                json,
+            } => {
+                commands::subscription::use_for_agent(
+                    &commands::subscription::UseArgs {
+                        provider: provider.clone(),
+                        model: model.clone(),
+                        json: *json,
+                    },
+                )?;
+                Ok(0)
+            }
+            AuthCommand::Logout { provider, json } => {
+                commands::subscription::logout(&commands::subscription::LogoutArgs {
+                    provider: provider.clone(),
                     json: *json,
                 })?;
                 Ok(0)

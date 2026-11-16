@@ -32,6 +32,10 @@ pub fn init_state() -> State {
     load_workspace_project(&mut state);
     state.watch = read_watch_state();
     state.capabilities = build_capabilities();
+    refresh_subscriptions(&mut state);
+    if let Ok(Some(host)) = deadlock_core::subscription::load_host_config() {
+        state.host_model = TextEdit::new(host.model);
+    }
     refresh_release_with(&mut state, game_root.as_deref());
     state
 }
@@ -2697,6 +2701,143 @@ pub fn apply_review_generation(state: &mut State, result: Result<String, String>
         Err(error) => {
             panel.log = Some(error);
             panel.tone = crate::ui::Tone::Bad;
+        }
+    }
+}
+
+// --- subscriptions ---------------------------------------------------------
+
+pub fn refresh_subscriptions(state: &mut State) {
+    let mut rows = Vec::new();
+    for provider in deadlock_core::subscription::Provider::ALL {
+        match deadlock_core::subscription::load(provider) {
+            Ok(Some(tokens)) => rows.push(model::SubscriptionRow {
+                id: provider.id().to_string(),
+                signed_in: true,
+                account: tokens.account_id.clone(),
+                expires_in_seconds: tokens.expires_in_seconds(now_unix()),
+                has_refresh: tokens.refresh_token.is_some(),
+            }),
+            Ok(None) => rows.push(model::SubscriptionRow {
+                id: provider.id().to_string(),
+                signed_in: false,
+                account: None,
+                expires_in_seconds: 0,
+                has_refresh: false,
+            }),
+            Err(error) => {
+                state.subscription_log = Some(error.to_string());
+                rows.push(model::SubscriptionRow {
+                    id: provider.id().to_string(),
+                    signed_in: false,
+                    account: None,
+                    expires_in_seconds: 0,
+                    has_refresh: false,
+                });
+            }
+        }
+    }
+    state.subscriptions = rows;
+}
+
+fn now_unix() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_secs() as i64)
+        .unwrap_or(0)
+}
+
+fn dah_binary() -> Option<PathBuf> {
+    let name = if cfg!(windows) { "dah.exe" } else { "dah" };
+    if let Ok(exe) = std::env::current_exe()
+        && let Some(dir) = exe.parent()
+    {
+        let candidate = dir.join(name);
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+    }
+    let candidate = PathBuf::from("rust/target/debug").join(name);
+    if candidate.is_file() {
+        return Some(candidate);
+    }
+    None
+}
+
+pub fn start_subscription_login(state: &mut State, provider: &str) {
+    if rune::is_headless() {
+        state.subscription_log =
+            Some("Headless run: the browser sign-in was not started.".to_string());
+        return;
+    }
+    let Some(provider) = deadlock_core::subscription::Provider::parse(provider) else {
+        state.subscription_log = Some("Unknown subscription provider.".to_string());
+        return;
+    };
+    let Some(binary) = dah_binary() else {
+        state.subscription_log = Some(
+            "The dah CLI was not found beside the app. Keep dah.exe in the same folder."
+                .to_string(),
+        );
+        return;
+    };
+    let mut command = std::process::Command::new(&binary);
+    command
+        .args(["auth", "login", provider.id()])
+        .env("DAH_DATA_DIR", &state.paths.data)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+    match command.spawn() {
+        Ok(_) => {
+            state.subscription_log = Some(format!(
+                "Opened the browser for {}. Finish sign-in, then press Refresh.",
+                provider.id()
+            ));
+        }
+        Err(error) => {
+            state.subscription_log = Some(format!("Could not start {}: {error}", binary.display()));
+        }
+    }
+}
+
+pub fn use_subscription_for_agent(
+    state: &mut State,
+    provider: &str,
+) {
+    let Some(provider) = deadlock_core::subscription::Provider::parse(provider) else {
+        state.subscription_log = Some("Unknown subscription provider.".to_string());
+        return;
+    };
+    let logged_in = deadlock_core::subscription::load(provider)
+        .ok()
+        .flatten()
+        .is_some();
+    if !logged_in {
+        state.subscription_log = Some(format!(
+            "No {} login yet. Press Sign in and finish the browser flow first.",
+            provider.id()
+        ));
+        return;
+    }
+    let model = state.host_model.text.trim().to_string();
+    if model.is_empty() {
+        state.subscription_log = Some("Enter the exact model id before using the subscription.".to_string());
+        return;
+    }
+    match deadlock_core::subscription::save_host_config(provider, &model) {
+        Ok(path) => {
+            state.subscription_log = Some(format!(
+                "The agent host will use {} with {}. Saved to {}.",
+                provider.id(),
+                model,
+                path.display()
+            ));
+            state.agent.shutdown();
+            state.start_host();
+        }
+        Err(error) => {
+            state.subscription_log = Some(error.to_string());
         }
     }
 }

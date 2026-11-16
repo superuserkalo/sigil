@@ -1,6 +1,6 @@
 # Subscription sign-in (BYOS)
 
-Status: proposed. Research 2026-11-16. Not implemented yet.
+Status: active. Implemented 2026-11-16. The browser flow is not run on this machine.
 Updated: 2026-11-16
 
 Bring your own subscription means the user signs in with an account they already
@@ -64,6 +64,25 @@ existing `chat` adapter. Account login is a separate OAuth flow and is deferred.
 
 Provider terms still apply. A provider can change or block a third-party client.
 The app must report that failure instead of pretending the subscription works.
+
+## Implemented
+
+`deadlock-core::subscription` owns PKCE, the authorize URL, token exchange,
+refresh, revocation, the account-id claim, the per-provider request headers and a
+store at `<data>/auth/<provider>.json` with owner-only permissions.
+
+- `dah auth login codex|grok` opens the browser and waits on the loopback.
+- `dah auth status` and `dah auth logout` never print a token.
+- `dah auth use <provider> --model <id>` writes `<data>/host.json`, which the
+  desktop reads before it starts the sidecar.
+- The host supports `DAH_AGENT_PROVIDER=codex|grok`, refreshes near expiry and
+  configures the OpenAI Responses adapter with the provider endpoint and headers.
+- Settings shows the account and expiry, starts the CLI sign-in, and switches the
+  host to the subscription.
+
+The OAuth browser round trip has not been exercised here because it needs a real
+subscription and a browser. The token exchange, refresh, JWT claim, store and
+header shape are covered by tests, and the host starts against a fixture token.
 
 ## Rust design
 

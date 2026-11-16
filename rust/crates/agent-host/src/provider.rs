@@ -3,8 +3,9 @@
 use std::sync::Arc;
 
 use serde_json::json;
+use deadlock_core::subscription::{self, Provider as SubscriptionProvider};
 use tiny_agent::{
-    AfterToolOutcome, Agent, AgentConfig, AnthropicProvider, ChatCompletionsProvider,
+    AfterToolOutcome, Agent, AgentConfig, AnthropicProvider, ChatCompletionsProvider, Error,
     OpenAIProvider, Provider, ProviderOptions, ProviderRequest, ProviderStream, Result, ToolCall,
     ToolContext, ToolDecision,
 };
@@ -58,6 +59,34 @@ fn build_provider(config: &Config) -> Result<AnyProvider> {
         options = options.with_api_key(api_key);
     }
     match config.provider {
+        ProviderKind::Codex | ProviderKind::Grok => {
+            let subscription_provider = if config.provider == ProviderKind::Codex {
+                SubscriptionProvider::Codex
+            } else {
+                SubscriptionProvider::Grok
+            };
+            let tokens = subscription::access_token(subscription_provider)
+                .map_err(|error| Error::Configuration(error.to_string()))?;
+            let request = subscription::request_config(
+                subscription_provider,
+                &tokens,
+                &config.model,
+            )
+            .map_err(|error| Error::Configuration(error.to_string()))?;
+            let mut options = ProviderOptions::new()
+                .with_api_key(tokens.access_token.clone());
+            options = match &config.base_url {
+                Some(endpoint) => options.with_endpoint(endpoint.clone()),
+                None => options.with_endpoint(request.endpoint),
+            };
+            for (name, value) in request.headers {
+                if name.eq_ignore_ascii_case("authorization") {
+                    continue;
+                }
+                options = options.with_header(name, value);
+            }
+            Ok(AnyProvider::OpenAi(OpenAIProvider::with_options(options)?))
+        }
         ProviderKind::OpenAi => Ok(AnyProvider::OpenAi(OpenAIProvider::with_options(options)?)),
         ProviderKind::Anthropic => Ok(AnyProvider::Anthropic(AnthropicProvider::with_options(
             options,

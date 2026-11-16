@@ -81,6 +81,26 @@ set DAH_AGENT_MODEL=<model id>
 
 The manager screens work without an agent.
 
+## Subscriptions
+
+The bundle includes three batch files:
+
+- `Sign in with ChatGPT.bat` runs `dah.exe auth login codex`, then asks for the
+  model id and writes `host.json` with `dah.exe auth use codex --model <id>`.
+- `Sign in with Grok.bat` does the same for Grok.
+- `Start Deadlock Mod Manager.bat` opens the app.
+
+The app reads `host.json` before it starts the sidecar, so the subscription is
+used without an environment variable. Settings shows the account, expiry and a
+refresh action, and can switch provider or model.
+
+The token lives in `%APPDATA%\DeadlockAgentHarness\auth`. It is never rendered,
+logged or put in a command line. `dah.exe auth logout codex` revokes it.
+
+The browser login is the first-party OAuth flow documented in
+`docs/research/subscription-auth.md`. It has not been run on Windows here, so
+treat the first sign-in as a test.
+
 ## Data
 
 `%APPDATA%\DeadlockAgentHarness` holds sessions, the workspace, caches and the

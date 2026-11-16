@@ -16,4 +16,6 @@ ureq.workspace = true
 # Install pipeline: sha256 for downloads and the ZIP reader. Both are already
 # in the workspace lock through `dah-rs`, so this adds no new crate.
 sha2 = "0.10"
+getrandom = "0.3"
+base64 = "0.22"
 zip = { version = "2", default-features = false, features = ["deflate"] }
