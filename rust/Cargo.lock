@@ -968,7 +968,7 @@ checksum = "f27ae1dd37df86211c42e150270f82743308803d90a6f6e6651cd730d5e1732f"
 
 [[package]]
 name = "dah-agent"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "chrono",
  "dirs",
@@ -982,7 +982,7 @@ dependencies = [
 
 [[package]]
 name = "dah-desktop"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "deadlock-core",
  "rune",
@@ -992,7 +992,7 @@ dependencies = [
 
 [[package]]
 name = "dah-rs"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "chrono",
  "clap",
@@ -1012,7 +1012,7 @@ checksum = "be1e0bca6c3637f992fc1cc7cbc52a78c1ef6db076dbf1059c4323d6a2048376"
 
 [[package]]
 name = "deadlock-core"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "chrono",
  "crc32fast",
