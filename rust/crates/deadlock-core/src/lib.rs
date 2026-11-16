@@ -11,13 +11,17 @@ pub mod extract;
 pub mod gamebanana;
 pub mod game_catalog;
 pub mod game_index;
+pub mod launch;
+pub mod locker;
 pub mod patch_notes;
 pub mod payload;
 pub mod profiles;
 pub mod project;
 pub mod release;
+pub mod character;
 pub mod deploy;
 pub mod migrate;
+pub mod toolchain;
 pub mod vpk;
 pub mod vpk_write;
 
@@ -59,6 +63,16 @@ pub use game_index::{
     default_game_index_path, diff_game_index, format_index_summary, format_index_summary_result,
     format_search_results, game_vpk_path, list_heroes, load_game_index, search_game_index,
     top_extensions,
+};
+pub use launch::{
+    LaunchResult, MODE_MODDED, MODE_VANILLA, STASH_DIR_NAME, STASH_MANIFEST_NAME, STASH_SCHEMA,
+    STEAM_RUN_URL, RestoreResult, StashFile, StashManifest, StashResult, StashStatus,
+    launch_modded, launch_vanilla, restore_vanilla, stash_manifest_path, stash_status,
+    stash_vanilla, vanilla_stash_dir,
+};
+pub use locker::{
+    LOCKER_ASSETS_ENV, LockerAssetPaths, LockerHero, discover_heroes, discover_heroes_with_assets,
+    display_name_for, hero_asset_key, read_hero_asset_index, resolve_name_art, resolve_render,
 };
 pub use patch_notes::{
     DEADLOCK_NEWS_URL, PATCH_NOTES_CACHE_SCHEMA, PatchNote, PatchNoteCache, cache_from_notes,

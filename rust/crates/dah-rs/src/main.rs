@@ -138,6 +138,21 @@ enum Command {
         #[command(subcommand)]
         command: AutoexecCommand,
     },
+    /// Launch Deadlock with addons or vanilla, and restore the stash.
+    Launch {
+        #[command(subcommand)]
+        command: LaunchCommand,
+    },
+    /// Report external decompile and compile tools.
+    Toolchain {
+        #[command(subcommand)]
+        command: ToolchainCommand,
+    },
+    /// Generate a character mesh from a prompt or reference image.
+    Character {
+        #[command(subcommand)]
+        command: CharacterCommand,
+    },
     /// Create and maintain a mod project.
     Mod {
         #[command(subcommand)]
@@ -304,6 +319,117 @@ enum VpkCommand {
 }
 
 #[derive(Subcommand)]
+enum LaunchCommand {
+    /// Launch Deadlock through Steam with the current addons.
+    Modded {
+        /// Start Steam.
+        #[arg(long)]
+        approve: bool,
+        /// Print machine-readable JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Stash every addon, then launch Deadlock.
+    Vanilla {
+        /// Move addons and start Steam.
+        #[arg(long)]
+        approve: bool,
+        /// Print machine-readable JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Move stashed addon files back into the game.
+    Restore {
+        /// Write the restore.
+        #[arg(long)]
+        approve: bool,
+        /// Print machine-readable JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Report a pending vanilla stash.
+    Status {
+        /// Print machine-readable JSON.
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum CharacterCommand {
+    /// Create an image-to-3D or text-to-3D task.
+    Create {
+        /// Text prompt describing the character.
+        #[arg(value_name = "PROMPT")]
+        prompt: String,
+        /// Local reference image (JPG, PNG or WebP).
+        #[arg(long, value_name = "FILE")]
+        reference: Option<PathBuf>,
+        /// Target hero codename.
+        #[arg(long, value_name = "X")]
+        hero: Option<String>,
+        /// Style direction.
+        #[arg(long, value_name = "TEXT")]
+        style: Option<String>,
+        /// Provider: meshy or mock.
+        #[arg(long, value_name = "NAME")]
+        provider: Option<String>,
+        /// Rights and consent note recorded with the task.
+        #[arg(long, value_name = "TEXT")]
+        rights_note: Option<String>,
+        /// Consent to send the reference image to the provider.
+        #[arg(long)]
+        allow_reference_upload: bool,
+        /// Project directory. Defaults to DAH_WORKSPACE_DIR or <data>/workspace.
+        #[arg(long, value_name = "DIR")]
+        workspace: Option<PathBuf>,
+        /// Print machine-readable JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Show generated character tasks, optionally polling a task.
+    Status {
+        /// Character slug.
+        #[arg(long, value_name = "SLUG")]
+        slug: Option<String>,
+        /// Poll the provider for a pending task.
+        #[arg(long)]
+        refresh: bool,
+        /// Maximum tasks to print.
+        #[arg(long, default_value_t = 20, value_name = "N")]
+        limit: usize,
+        /// Project directory.
+        #[arg(long, value_name = "DIR")]
+        workspace: Option<PathBuf>,
+        /// Print machine-readable JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Import a downloaded GLB into the character workspace.
+    Import {
+        /// Character slug.
+        #[arg(value_name = "SLUG")]
+        slug: String,
+        /// Project directory.
+        #[arg(long, value_name = "DIR")]
+        workspace: Option<PathBuf>,
+        /// Print machine-readable JSON.
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum ToolchainCommand {
+    /// Show detected decompile and compile tools.
+    Status {
+        /// Print machine-readable JSON.
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand)]
 enum ModCommand {
     /// Create a mod project under the workspace.
     New {
@@ -349,6 +475,45 @@ enum ModCommand {
         /// Mod project directory, or a workspace containing one project.
         #[arg(long, value_name = "DIR")]
         workspace: Option<PathBuf>,
+    },
+    /// Plan or run Source2Viewer-CLI on a compiled file.
+    Decompile {
+        /// Compiled `_c` file inside the project.
+        #[arg(value_name = "FILE")]
+        input: PathBuf,
+        /// Destination folder. Defaults to <project>/sources.
+        #[arg(long, value_name = "DIR")]
+        out: Option<PathBuf>,
+        /// Project directory, or a workspace containing one project.
+        #[arg(long, value_name = "DIR")]
+        workspace: Option<PathBuf>,
+        /// Run the tool. Without it only the plan is printed.
+        #[arg(long)]
+        approve: bool,
+        /// Print machine-readable JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Plan or run resourcecompiler.exe on a source file.
+    Compile {
+        /// Edited source file inside the project.
+        #[arg(value_name = "FILE")]
+        source: PathBuf,
+        /// CSDK 12 gameinfo.gi or the folder that holds it.
+        #[arg(long, value_name = "FILE")]
+        gameinfo: Option<PathBuf>,
+        /// Output folder. Defaults to <project>/staging.
+        #[arg(long, value_name = "DIR")]
+        out: Option<PathBuf>,
+        /// Project directory, or a workspace containing one project.
+        #[arg(long, value_name = "DIR")]
+        workspace: Option<PathBuf>,
+        /// Run the compiler. Without it only the plan is printed.
+        #[arg(long)]
+        approve: bool,
+        /// Print machine-readable JSON.
+        #[arg(long)]
+        json: bool,
     },
     /// Check the staging tree against the payload rules.
     Validate {
@@ -500,6 +665,20 @@ impl Cli {
                 | AutoexecCommand::Set { json, .. }
                 | AutoexecCommand::Clear { json, .. } => *json,
             },
+            Command::Launch { command } => match command {
+                LaunchCommand::Modded { json, .. }
+                | LaunchCommand::Vanilla { json, .. }
+                | LaunchCommand::Restore { json, .. }
+                | LaunchCommand::Status { json } => *json,
+            },
+            Command::Toolchain { command } => match command {
+                ToolchainCommand::Status { json } => *json,
+            },
+            Command::Character { command } => match command {
+                CharacterCommand::Create { json, .. }
+                | CharacterCommand::Status { json, .. }
+                | CharacterCommand::Import { json, .. } => *json,
+            },
             Command::Publish { command } => match command {
                 PublishCommand::Prepare { json, .. }
                 | PublishCommand::Upload { json, .. }
@@ -517,7 +696,9 @@ impl Cli {
                 | ModCommand::Pack { json, .. }
                 | ModCommand::Release { json, .. }
                 | ModCommand::Deploy { json, .. }
-                | ModCommand::Migrate { json, .. } => *json,
+                | ModCommand::Migrate { json, .. }
+                | ModCommand::Decompile { json, .. }
+                | ModCommand::Compile { json, .. } => *json,
                 ModCommand::Version { .. } => false,
             },
         }
@@ -787,6 +968,126 @@ fn run(cli: &Cli) -> error::Result<i32> {
                 commands::migrate::run(&commands::migrate::MigrateArgs {
                     workspace: workspace.clone(),
                     apply: *apply,
+                    json: *json,
+                })?;
+                Ok(0)
+            }
+            ModCommand::Decompile {
+                input,
+                out,
+                workspace,
+                approve,
+                json,
+            } => {
+                let paths = paths::resolve_paths(None)?;
+                commands::toolchain::decompile(
+                    &paths,
+                    &commands::toolchain::DecompileArgs {
+                        input: input.clone(),
+                        out: out.clone(),
+                        workspace: workspace.clone(),
+                        approve: *approve,
+                        json: *json,
+                    },
+                )?;
+                Ok(0)
+            }
+            ModCommand::Compile {
+                source,
+                gameinfo,
+                out,
+                workspace,
+                approve,
+                json,
+            } => {
+                let paths = paths::resolve_paths(None)?;
+                commands::toolchain::compile(
+                    &paths,
+                    &commands::toolchain::CompileArgs {
+                        source: source.clone(),
+                        gameinfo: gameinfo.clone(),
+                        out: out.clone(),
+                        workspace: workspace.clone(),
+                        approve: *approve,
+                        json: *json,
+                    },
+                )?;
+                Ok(0)
+            }
+        },
+        Command::Launch { command } => match command {
+            LaunchCommand::Modded { approve, json } => {
+                commands::launch::modded(*approve, *json)?;
+                Ok(0)
+            }
+            LaunchCommand::Vanilla { approve, json } => {
+                commands::launch::vanilla(*approve, *json)?;
+                Ok(0)
+            }
+            LaunchCommand::Restore { approve, json } => {
+                commands::launch::restore(*approve, *json)?;
+                Ok(0)
+            }
+            LaunchCommand::Status { json } => {
+                commands::launch::status(*json)?;
+                Ok(0)
+            }
+        },
+        Command::Toolchain { command } => match command {
+            ToolchainCommand::Status { json } => {
+                commands::toolchain::status(&commands::toolchain::StatusArgs { json: *json })?;
+                Ok(0)
+            }
+        },
+        Command::Character { command } => match command {
+            CharacterCommand::Create {
+                prompt,
+                reference,
+                hero,
+                style,
+                provider,
+                rights_note,
+                allow_reference_upload,
+                workspace,
+                json,
+            } => {
+                commands::character::create(&commands::character::CreateArgs {
+                    prompt: prompt.clone(),
+                    reference: reference.clone(),
+                    target_hero: hero.clone(),
+                    style: style.clone(),
+                    provider: provider.clone(),
+                    rights_note: rights_note.clone(),
+                    allow_reference_upload: *allow_reference_upload,
+                    workspace: workspace.clone(),
+                    json: *json,
+                })?;
+                Ok(0)
+            }
+            CharacterCommand::Status {
+                slug,
+                refresh,
+                limit,
+                workspace,
+                json,
+            } => {
+                commands::character::status(&commands::character::StatusArgs {
+                    workspace: workspace.clone(),
+                    slug: slug.clone(),
+                    refresh: *refresh,
+                    limit: *limit,
+                    json: *json,
+                })?;
+                Ok(0)
+            }
+            CharacterCommand::Import {
+                slug,
+                workspace,
+                json,
+            } => {
+                commands::character::import(&commands::character::ImportArgs {
+                    slug: slug.clone(),
+                    workspace: workspace.clone(),
                     json: *json,
                 })?;
                 Ok(0)
