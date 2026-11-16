@@ -96,6 +96,7 @@ pub struct State {
     pub stats: screens::stats::View,
     pub stats_job: Job<screens::stats::Load>,
     pub demo_job: Job<screens::stats::DemoLoad>,
+    pub model_review_job: Job<Result<String, String>>,
     pub locker: screens::locker::View,
     pub locker_job: Job<screens::locker::Load>,
     pub launch: screens::launch::View,
@@ -176,6 +177,7 @@ impl Default for State {
             stats: screens::stats::View::default(),
             stats_job: Job::default(),
             demo_job: Job::default(),
+            model_review_job: Job::default(),
             locker: screens::locker::View::default(),
             locker_job: Job::default(),
             launch: screens::launch::View::default(),
@@ -1706,6 +1708,10 @@ pub fn poll(s: &mut State, t: f64, _tx: &mut Tx) -> bool {
     }
     if let Some(result) = s.demo_job.try_take() {
         crate::data::apply_demo_list(s, result);
+        changed = true;
+    }
+    if let Some(result) = s.model_review_job.try_take() {
+        crate::data::apply_review_generation(s, result.unwrap_or_else(|error| Err(error)));
         changed = true;
     }
     if let Some(result) = s.locker_job.try_take() {

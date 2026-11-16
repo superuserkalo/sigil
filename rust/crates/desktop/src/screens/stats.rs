@@ -401,10 +401,26 @@ fn demo_panel(s: &State, u: &Ui) -> El {
 
 /// Mounted at the root so the review panel overlays the shell.
 pub fn dialog(s: &State, u: &Ui) -> Option<El> {
-    s.stats.review.as_ref().map(|review| review_dialog(u, review))
+    s.stats
+        .review
+        .as_ref()
+        .map(|review| review_dialog(s, u, review))
 }
 
-fn review_dialog(u: &Ui, review: &ReviewPanel) -> El {
+fn review_dialog(s: &State, u: &Ui, review: &ReviewPanel) -> El {
+    let endpoint = s.local_endpoint.text.trim().to_string();
+    let model = s
+        .agent
+        .model
+        .clone()
+        .or_else(|| {
+            if s.model_label.is_empty() || s.model_label == "No model" {
+                None
+            } else {
+                Some(s.model_label.clone())
+            }
+        });
+    let can_generate = !endpoint.is_empty() && model.is_some() && !s.model_review_job.is_running();
     let mut facts = col().w_full().gap(3.0);
     for fact in review.facts.facts.iter().take(7) {
         facts = facts.child(
@@ -516,6 +532,36 @@ fn review_dialog(u: &Ui, review: &ReviewPanel) -> El {
                         .wrap_anywhere()
                         .selectable(true),
                 ),
+        )
+        .child(
+            row()
+                .w_full()
+                .gap(9.0)
+                .center_y()
+                .child(u.field_label("MODEL"))
+                .child(
+                    text(format!(
+                        "{} · {}",
+                        model.clone().unwrap_or_else(|| "no model".to_string()),
+                        if endpoint.is_empty() {
+                            "no local endpoint".to_string()
+                        } else {
+                            endpoint.clone()
+                        }
+                    ))
+                    .font(MONO)
+                    .color(if can_generate { u.muted } else { u.faint })
+                    .grow(1.0)
+                    .truncate(),
+                )
+                .child(if s.model_review_job.is_running() {
+                    u.status_chip("generating", Tone::Warn)
+                } else {
+                    u.action("Generate with model", ActionKind::Secondary)
+                        .disabled(!can_generate)
+                        .opacity(if can_generate { 1.0 } else { 0.45 })
+                        .on_press(|st: &mut State| crate::data::start_review_generation(st))
+                }),
         )
         .child(u.field_label("REVIEW REPLY"))
         .child(

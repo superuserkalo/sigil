@@ -999,7 +999,7 @@ pub fn drain_thumbnails(state: &mut State) -> bool {
 /// Kick one review queue pass on a worker. It loads the game catalog, so this
 /// never runs from a view.
 pub fn start_review_scan(state: &mut State) {
-    if state.review_job.is_running() {
+    if state.model_review_job.is_running() {
         return;
     }
     let wake = state.wake.clone();
@@ -2629,5 +2629,74 @@ pub fn write_recolor_brief(state: &mut State) {
             ),
             Err(error) => error.to_string(),
         });
+    }
+}
+
+// --- review generation -----------------------------------------------------
+
+pub fn start_review_generation(state: &mut State) {
+    if state.model_review_job.is_running() {
+        return;
+    }
+    let Some(panel) = state.stats.review.as_ref() else {
+        return;
+    };
+    let endpoint = state.local_endpoint.text.trim().to_string();
+    let model = state
+        .agent
+        .model
+        .clone()
+        .or_else(|| {
+            if state.model_label.is_empty() || state.model_label == "No model" {
+                None
+            } else {
+                Some(state.model_label.clone())
+            }
+        });
+    let (Some(model), false) = (model, endpoint.is_empty()) else {
+        if let Some(panel) = state.stats.review.as_mut() {
+            panel.log = Some(
+                "Set the local OpenAI-compatible endpoint in Settings and pick a model before generating."
+                    .to_string(),
+            );
+            panel.tone = crate::ui::Tone::Warn;
+        }
+        return;
+    };
+    let facts = panel.facts.clone();
+    let wake = state.wake.clone();
+    if let Some(panel) = state.stats.review.as_mut() {
+        panel.log = Some(format!("Calling {model} at {endpoint}. This stays local."));
+        panel.tone = crate::ui::Tone::Info;
+    }
+    state.model_review_job.start(wake, move || {
+        let config = deadlock_core::review::ModelConfig {
+            base_url: endpoint,
+            model,
+            api_key: deadlock_core::review::key_from_environment(),
+            timeout_seconds: 120,
+        };
+        Ok(deadlock_core::review::generate_review(&facts, &config)
+            .map_err(|error| error.to_string()))
+    });
+}
+
+pub fn apply_review_generation(state: &mut State, result: Result<String, String>) {
+    let Some(panel) = state.stats.review.as_mut() else {
+        return;
+    };
+    match result {
+        Ok(text) => {
+            panel.body = TextEdit::new(text);
+            panel.log = Some(
+                "Generated. Lint and save checks every number against the facts before writing."
+                    .to_string(),
+            );
+            panel.tone = crate::ui::Tone::Ok;
+        }
+        Err(error) => {
+            panel.log = Some(error);
+            panel.tone = crate::ui::Tone::Bad;
+        }
     }
 }
