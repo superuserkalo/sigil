@@ -493,6 +493,12 @@ enum DemoCommand {
         /// Match id, as printed by `dah demo list`.
         #[arg(value_name = "ID")]
         id: String,
+        /// OpenAI-compatible model name. Needs --base-url.
+        #[arg(long, value_name = "NAME")]
+        model: Option<String>,
+        /// Base URL, for example http://127.0.0.1:8080/v1. Needs --model.
+        #[arg(long, value_name = "URL")]
+        base_url: Option<String>,
         /// Review text to lint. Without it the prompt is printed.
         #[arg(long, value_name = "FILE")]
         file: Option<PathBuf>,
@@ -1610,6 +1616,8 @@ fn run(cli: &Cli) -> error::Result<i32> {
             }
             DemoCommand::Review {
                 id,
+                model,
+                base_url,
                 file,
                 write,
                 workspace,
@@ -1617,6 +1625,8 @@ fn run(cli: &Cli) -> error::Result<i32> {
             } => {
                 commands::demo::run_review(&commands::demo::ReviewArgs {
                     id: id.clone(),
+                    model: model.clone(),
+                    base_url: base_url.clone(),
                     file: file.clone(),
                     write: *write,
                     workspace: workspace.clone(),

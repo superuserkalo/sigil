@@ -669,6 +669,10 @@ fn core_error(error: deadlock_core::Error) -> CliError {
 pub struct ReviewArgs {
     /// Match id in the local store.
     pub id: String,
+    /// OpenAI-compatible model name. Needs `base_url`.
+    pub model: Option<String>,
+    /// Base URL, for example http://127.0.0.1:8080/v1. Needs `model`.
+    pub base_url: Option<String>,
     /// A review text to lint. Without it the prompt and fact set are printed.
     pub file: Option<PathBuf>,
     /// Write review.md after the linter accepts every number.
@@ -684,6 +688,106 @@ pub fn run_review(args: &ReviewArgs) -> Result<()> {
     let workspace = paths::workspace_root(args.workspace.as_deref())?;
     let summary = demo::read_summary(&workspace, &args.id).map_err(core_error)?;
     let facts = review::facts_for(&summary);
+
+    let model = args
+        .model
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let base_url = args
+        .base_url
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    match (model, base_url) {
+        (Some(model), Some(base_url)) => {
+            if args.file.is_some() {
+                return Err(CliError::new(
+                    "review_args",
+                    "Use --file to lint an existing review, or --model with --base-url to generate one, not both.".to_string(),
+                ));
+            }
+            let config = review::ModelConfig {
+                base_url: base_url.to_string(),
+                model: model.to_string(),
+                api_key: review::key_from_environment(),
+                timeout_seconds: 120,
+            };
+            let body = review::generate_review(&facts, &config)
+                .map_err(|error| CliError::new("review_model", error.to_string()))?;
+            let report = review::lint_review(&body, &facts);
+            if !report.ok() {
+                if args.json {
+                    print_json(&json!({
+                        "ok": false,
+                        "matchId": facts.match_id,
+                        "model": model,
+                        "checkedNumbers": report.checked_numbers,
+                        "violations": report.violations,
+                        "review": body,
+                    }));
+                } else {
+                    println!(
+                        "Model review refused: {} unsupported number(s) out of {} checked.",
+                        report.violations.len(),
+                        report.checked_numbers
+                    );
+                    for violation in &report.violations {
+                        println!("  line {}: {} is not in the fact set", violation.line, violation.number);
+                    }
+                    println!("Nothing was written. A review may not invent a statistic.");
+                }
+                return Err(CliError::new(
+                    "review_lint",
+                    "The model invented a number the verified summary does not support.".to_string(),
+                ));
+            }
+            if args.write {
+                let stored = review::write_review(&workspace, &facts, &body)
+                    .map_err(core_error)?;
+                if args.json {
+                    print_json(&json!({
+                        "ok": true,
+                        "matchId": stored.match_id,
+                        "model": model,
+                        "checkedNumbers": stored.checked_numbers,
+                        "written": true,
+                        "path": lossy(&review::review_path(&workspace, &facts.match_id).map_err(core_error)?),
+                    }));
+                } else {
+                    println!(
+                        "Wrote review.md for match {} from {} after checking {} number(s).",
+                        stored.match_id, model, stored.checked_numbers
+                    );
+                }
+            } else {
+                if args.json {
+                    print_json(&json!({
+                        "ok": true,
+                        "matchId": facts.match_id,
+                        "model": model,
+                        "checkedNumbers": report.checked_numbers,
+                        "written": false,
+                        "review": body,
+                    }));
+                } else {
+                    println!("Generated with {model}; {} number(s) checked.", report.checked_numbers);
+                    println!();
+                    print!("{body}");
+                    println!();
+                    println!("Nothing was written. Re-run with --write to store review.md.");
+                }
+            }
+            return Ok(());
+        }
+        (None, None) => {}
+        _ => {
+            return Err(CliError::new(
+                "review_args",
+                "--model and --base-url must be set together.".to_string(),
+            ));
+        }
+    }
 
     let Some(file) = &args.file else {
         if args.json {
