@@ -38,7 +38,7 @@ pnpm rust:dah -- publish prepare --workspace <project>
 pnpm rust:dah -- publish upload --workspace <project> --approve --open
 pnpm rust:dah -- publish confirm --workspace <project> --url https://gamebanana.com/mods/<id>
 pnpm rust:dah -- publish status --workspace <project>
-pnpm rust:dah -- watch                 # add --refresh to fetch the patch feed
+pnpm rust:dah -- watch                 # add --refresh for patches, --watch for a loop
 ```
 
 The deploy plan reports slot conflicts, replacement and `gameinfo.gi` repair before anything is

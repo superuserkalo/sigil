@@ -119,6 +119,12 @@ enum Command {
         /// Fetch the official patch feed even when a cache exists.
         #[arg(long)]
         refresh: bool,
+        /// Keep watching and write .dah/watch-state.json after each pass.
+        #[arg(long)]
+        watch: bool,
+        /// Seconds between watch passes. Minimum 5.
+        #[arg(long, default_value_t = 300, value_name = "N")]
+        interval: u64,
         /// Print machine-readable JSON.
         #[arg(long)]
         json: bool,
@@ -556,11 +562,15 @@ fn run(cli: &Cli) -> error::Result<i32> {
         Command::Watch {
             limit,
             refresh,
+            watch,
+            interval,
             json,
         } => {
             commands::watch::run(&commands::watch::WatchArgs {
                 limit: *limit,
                 refresh: *refresh,
+                watch: *watch,
+                interval: *interval,
                 json: *json,
             })?;
             Ok(0)

@@ -36,7 +36,7 @@ safety gate.
 | 3 Character work | Restyle a hero, or base a look on a reference photo | Tier 2 plus skeleton-compatible mesh, materials, likeness review | Planned. Gated by `docs/decisions/0005-reference-images-and-likeness.md`. |
 | 4 Multi-asset work | A themed set across heroes, UI and audio | Build graph, batch validation, versioned workspace | Planned |
 | 5 Release and survive updates | Publish to GameBanana, migrate paths after a patch | Versioned release, upload approval, path migration | Local release, deploy, migration and GameBanana handoff implemented. Direct API upload is not. |
-| 6 Living workbench | Watch patches, explain breakage, propose migrations, manage a catalog of mods | Patch feed, baseline diffs, impact rules, batch checks, review queue | Watch queue, patch feed, diff, impact and migration implemented. Scheduled background watch is not. |
+| 6 Living workbench | Watch patches, explain breakage, propose migrations, manage a catalog of mods | Patch feed, baseline diffs, impact rules, batch checks, review queue | Watch queue, patch feed, diff, impact and migration implemented. Opt-in watch loop writes durable state; an OS service is not packaged. |
 
 The first useful milestone is not a generated character. It is a texture recolor that travels the
 whole loop and shows up in game. Each later tier reuses that loop.
@@ -359,7 +359,7 @@ dah mod baseline           record target paths, CRCs and index sources
 dah mod check              show what changed, moved or broke after a patch
 dah mod deploy             plan or approve an addon install
 dah mod migrate            plan or apply moved target paths
-dah watch                  review every project and correlate the newest patch
+dah watch [--watch]        review every project and correlate the newest patch
 dah publish prepare        build a local release folder, never upload
 dah publish upload         approval-gated GameBanana handoff with upload record
 dah publish confirm        record and verify the submitted GameBanana URL
@@ -393,7 +393,7 @@ Phase 0, scaffold (complete):
 - Game discovery, `gameinfo.gi` status, addon slot status.
 - Payload validator with tests.
 
-Phase 0.5, native port (in progress):
+Phase 0.5, native port (complete):
 
 - Rust workspace, pinned Rune vendor and headless Rune app.
 - Rust domain core: VPK, catalog, index, extraction, discovery, projects, patches and impact.
