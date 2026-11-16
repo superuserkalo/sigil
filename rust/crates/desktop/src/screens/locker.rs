@@ -276,8 +276,10 @@ fn card(s: &State, u: &Ui, hero: &HeroCard) -> El {
             u.accent_ink,
             u.accent,
         )
-    } else {
+    } else if hero.in_catalog {
         u.chip("vanilla", Color::WHITE.alpha(0.66), Color::BLACK.alpha(0.45))
+    } else {
+        u.chip("art only", u.accent, Color::BLACK.alpha(0.55))
     };
 
     col()
@@ -386,23 +388,4 @@ fn loading(u: &Ui) -> El {
         grid = grid.child(r);
     }
     grid
-}
-
-/// Decode every resolved render on the UI thread. Bytes were read on a worker.
-pub fn decode(s: &mut State, heroes: &[HeroCard]) {
-    let Some(cache) = s.images.as_ref() else {
-        return;
-    };
-    let mut map: HashMap<String, ()> = HashMap::new();
-    for hero in heroes {
-        if let Some((path, bytes)) = &hero.render
-            && map.insert(path.clone(), ()).is_none()
-        {
-            let image = cache.load(bytes.clone());
-            if rune::is_headless() {
-                let _ = image.wait();
-            }
-            s.thumbnails.insert(path.clone(), image.pixels().clone());
-        }
-    }
 }

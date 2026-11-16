@@ -1,6 +1,6 @@
 # Local match recording and AI review
 
-Status: proposed. Researched 2026-11-16.
+Status: active. Researched 2026-11-16.
 Updated: 2026-11-16
 
 Idea: when the public API lacks a stat, record the user's own matches locally, build a private
@@ -148,6 +148,36 @@ download. The UI must show which matches have deep data and which are summary-on
 
 Privacy rule: API caching and demo parsing stay local. A provider call sends only the merged summary
 the user chooses to review.
+
+## Implementation status
+
+Shipped in `deadlock-core::demo` and `deadlock-core::review`:
+
+- Container parser: magic, command framing, Snappy, header, file info, string tables, packet
+  inventory, provenance and coverage.
+- Import store: `<workspace>/matches/<id>/` with meta, events, summary and provenance.
+- API merge on the match id with per-field source, confidence and recorded disagreements.
+- Review contract: a deterministic prompt built from the summary, a numeric linter that refuses
+  any number absent from the facts, and `review.md` written only after it passes.
+
+Not shipped, and explicitly absent from the data:
+
+- Positions, Citadel events and per-player combat rows from a real demo. These need a
+  serializer-aware backend; the container extractor reports them as absent instead of guessing.
+
+Commands:
+
+```text
+dah demo import <file.dem> [--id]
+dah demo list
+dah demo show <id>
+dah demo heatmap <id>
+dah demo review <id> [--file review.md] [--write]
+dah demo backends
+```
+
+The agent has `demo_matches`, `demo_import`, `demo_review_prompt` and `demo_review_write`. The
+model writes the narrative; the linter decides whether it is allowed to be stored.
 
 ## Privacy
 

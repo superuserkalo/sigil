@@ -28,7 +28,7 @@ Every doc starts with a status line. Values: `active`, `draft`, `planned`, `supe
 | `research/vpk-format.md` | active | VPK v1/v2 layout used by the game index. |
 | `research/patch-feeds.md` | active | Official Deadlock patch feed and file-change sources. |
 | `research/stats-case-study.md` | active | Leetify, Blitz.gg and Scope.gg patterns for Deadlock stats. |
-| `research/match-recording.md` | proposed | Local demo recording, stats and LLM review pipeline. |
+| `research/match-recording.md` | active | Demo import, merged API data and the linted review pipeline. |
 | `research/demo-import.md` | active | Source 2 demo container parsing, local match store and merge. |
 | `research/install-pipeline.md` | active | Browse download, archive extraction, payload check and slot deploy. |
 | `research/meshy-reverse-engineering.md` | active | Evidence-led study of the Meshy pipeline and our own stage graph. |

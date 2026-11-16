@@ -478,6 +478,24 @@ enum DemoCommand {
         #[arg(long)]
         json: bool,
     },
+    /// Print the verified review prompt, or lint a review before storing it.
+    Review {
+        /// Match id, as printed by `dah demo list`.
+        #[arg(value_name = "ID")]
+        id: String,
+        /// Review text to lint. Without it the prompt is printed.
+        #[arg(long, value_name = "FILE")]
+        file: Option<PathBuf>,
+        /// Store review.md when every number is supported.
+        #[arg(long)]
+        write: bool,
+        /// Workspace directory. Defaults to DAH_WORKSPACE_DIR or <data>/workspace.
+        #[arg(long, value_name = "DIR")]
+        workspace: Option<PathBuf>,
+        /// Print machine-readable JSON.
+        #[arg(long)]
+        json: bool,
+    },
     /// Report which demo extractors are available on this build.
     Backends {
         /// Print machine-readable JSON.
@@ -910,6 +928,7 @@ impl Cli {
                 | DemoCommand::List { json, .. }
                 | DemoCommand::Show { json, .. }
                 | DemoCommand::Heatmap { json, .. }
+                | DemoCommand::Review { json, .. }
                 | DemoCommand::Backends { json } => *json,
             },
             Command::Publish { command } => match command {
@@ -1407,6 +1426,22 @@ fn run(cli: &Cli) -> error::Result<i32> {
             DemoCommand::Heatmap { id, workspace, json } => {
                 commands::demo::run_heatmap(&commands::demo::HeatmapArgs {
                     id: id.clone(),
+                    workspace: workspace.clone(),
+                    json: *json,
+                })?;
+                Ok(0)
+            }
+            DemoCommand::Review {
+                id,
+                file,
+                write,
+                workspace,
+                json,
+            } => {
+                commands::demo::run_review(&commands::demo::ReviewArgs {
+                    id: id.clone(),
+                    file: file.clone(),
+                    write: *write,
                     workspace: workspace.clone(),
                     json: *json,
                 })?;

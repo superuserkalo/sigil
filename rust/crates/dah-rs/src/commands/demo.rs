@@ -14,6 +14,7 @@ use serde_json::json;
 use deadlock_core::demo::{
     self, Confidence, CoverageState, FieldValue, ImportResult, MatchSummaryDoc,
 };
+use deadlock_core::review;
 
 use crate::error::{CliError, Result};
 use crate::paths;
@@ -663,4 +664,135 @@ fn clip(value: &str, limit: usize) -> String {
 
 fn core_error(error: deadlock_core::Error) -> CliError {
     CliError::new("demo", error.to_string())
+}
+
+pub struct ReviewArgs {
+    /// Match id in the local store.
+    pub id: String,
+    /// A review text to lint. Without it the prompt and fact set are printed.
+    pub file: Option<PathBuf>,
+    /// Write review.md after the linter accepts every number.
+    pub write: bool,
+    /// Workspace directory. Defaults to `DAH_WORKSPACE_DIR` or `<data>/workspace`.
+    pub workspace: Option<PathBuf>,
+    pub json: bool,
+}
+
+/// `dah demo review <id>`: build the verified prompt, or lint a review and
+/// store it only when every number is supported by the summary.
+pub fn run_review(args: &ReviewArgs) -> Result<()> {
+    let workspace = paths::workspace_root(args.workspace.as_deref())?;
+    let summary = demo::read_summary(&workspace, &args.id).map_err(core_error)?;
+    let facts = review::facts_for(&summary);
+
+    let Some(file) = &args.file else {
+        if args.json {
+            print_json(&json!({
+                "ok": true,
+                "matchId": facts.match_id,
+                "prompt": facts.prompt,
+                "facts": facts.facts,
+                "allowedNumbers": facts.allowed_numbers,
+                "absent": facts.absent,
+                "note": "No provider is called. Send the prompt to the model you configured, then lint the reply with --file.",
+            }));
+            return Ok(());
+        }
+        println!("Review prompt for match {}", facts.match_id);
+        println!(
+            "  {} verified fact(s), {} absent field(s)",
+            facts.facts.len(),
+            facts.absent.len()
+        );
+        println!();
+        print!("{}", facts.prompt);
+        println!();
+        println!(
+            "No provider is called. Send this prompt to the model you configured, save the reply, then run:"
+        );
+        println!(
+            "  dah demo review {} --file reply.md --write",
+            facts.match_id
+        );
+        return Ok(());
+    };
+
+    let body = std::fs::read_to_string(file).map_err(|error| {
+        CliError::new(
+            "review_file",
+            format!("Could not read {}: {error}", file.display()),
+        )
+    })?;
+    let report = review::lint_review(&body, &facts);
+
+    if !report.ok() {
+        if args.json {
+            print_json(&json!({
+                "ok": false,
+                "matchId": facts.match_id,
+                "checkedNumbers": report.checked_numbers,
+                "violations": report.violations,
+            }));
+        } else {
+            println!(
+                "Review refused: {} unsupported number(s) out of {} checked.",
+                report.violations.len(),
+                report.checked_numbers
+            );
+            for violation in &report.violations {
+                println!(
+                    "  line {}: {} is not in the fact set",
+                    violation.line, violation.number
+                );
+                println!("    {}", violation.excerpt);
+            }
+            println!("Nothing was written. A review may not invent a statistic.");
+        }
+        return Err(CliError::new(
+            "review_lint",
+            "The review contains numbers the verified summary does not support.".to_string(),
+        ));
+    }
+
+    if !args.write {
+        if args.json {
+            print_json(&json!({
+                "ok": true,
+                "matchId": facts.match_id,
+                "checkedNumbers": report.checked_numbers,
+                "written": false,
+            }));
+        } else {
+            println!(
+                "Review accepted: {} number(s) checked against the summary. Nothing was written.",
+                report.checked_numbers
+            );
+            println!("Re-run with --write to store review.md.");
+        }
+        return Ok(());
+    }
+
+    let stored = review::write_review(&workspace, &facts, &body).map_err(core_error)?;
+    if args.json {
+        print_json(&json!({
+            "ok": true,
+            "matchId": stored.match_id,
+            "checkedNumbers": stored.checked_numbers,
+            "generatedAt": stored.generated_at,
+            "written": true,
+            "path": lossy(&review::review_path(&workspace, &facts.match_id).map_err(core_error)?),
+        }));
+    } else {
+        println!(
+            "Wrote review.md for match {} after checking {} number(s).",
+            stored.match_id, stored.checked_numbers
+        );
+        println!(
+            "  {}",
+            review::review_path(&workspace, &facts.match_id)
+                .map_err(core_error)?
+                .display()
+        );
+    }
+    Ok(())
 }
