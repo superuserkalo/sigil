@@ -62,11 +62,19 @@ no browser renderer. The Rust protocol v2 crate is landed; the Rust host is bein
 TypeScript host remains the reference during the cutover. See
 [ADR 0007](docs/decisions/0007-tinyagent-host.md).
 
+A Windows x64 bundle is built with `scripts/package-windows.sh` (cargo-xwin) or
+the GitHub Actions workflow. It contains the app, the sidecar and the CLI. See
+[docs/runbooks/windows.md](docs/runbooks/windows.md).
+
 One command proves the loop against a disposable fake install:
 
 ```bash
 scripts/acceptance.sh
 ```
+
+Subscription sign-in (Codex, Grok and the AI Gateway) is designed from the
+Apache-2.0 fx source in [docs/research/subscription-auth.md](docs/research/subscription-auth.md).
+It is not wired yet; BYOK and local endpoints are the supported paths today.
 
 ## Where it stands
 
