@@ -153,6 +153,11 @@ enum Command {
         #[command(subcommand)]
         command: CharacterCommand,
     },
+    /// Player profile, matches, hero performance, heatmap and leaderboard.
+    Stats {
+        #[command(subcommand)]
+        command: StatsCommand,
+    },
     /// Create and maintain a mod project.
     Mod {
         #[command(subcommand)]
@@ -349,6 +354,64 @@ enum LaunchCommand {
     },
     /// Report a pending vanilla stash.
     Status {
+        /// Print machine-readable JSON.
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum StatsCommand {
+    /// Show rank, career totals and recent form for a player.
+    Player {
+        /// Steam account id.
+        #[arg(value_name = "ACCOUNT_ID")]
+        account_id: u64,
+        /// Newest matches to include in the window.
+        #[arg(long, default_value_t = 20, value_name = "N")]
+        recent: usize,
+        /// Print machine-readable JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// List recent matches.
+    Matches {
+        /// Steam account id.
+        #[arg(value_name = "ACCOUNT_ID")]
+        account_id: u64,
+        /// Maximum matches to print.
+        #[arg(long, default_value_t = 20, value_name = "N")]
+        limit: usize,
+        /// Print machine-readable JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Show hero performance.
+    Heroes {
+        /// Steam account id.
+        #[arg(value_name = "ACCOUNT_ID")]
+        account_id: u64,
+        /// Print machine-readable JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Show the aggregate kill/death heatmap.
+    Heatmap {
+        /// Steam account id.
+        #[arg(value_name = "ACCOUNT_ID")]
+        account_id: u64,
+        /// Print machine-readable JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Show a regional leaderboard.
+    Leaderboard {
+        /// Region name, for example Europe.
+        #[arg(value_name = "REGION")]
+        region: String,
+        /// Maximum players to print.
+        #[arg(long, default_value_t = 20, value_name = "N")]
+        limit: usize,
         /// Print machine-readable JSON.
         #[arg(long)]
         json: bool,
@@ -678,6 +741,13 @@ impl Cli {
                 CharacterCommand::Create { json, .. }
                 | CharacterCommand::Status { json, .. }
                 | CharacterCommand::Import { json, .. } => *json,
+            },
+            Command::Stats { command } => match command {
+                StatsCommand::Player { json, .. }
+                | StatsCommand::Matches { json, .. }
+                | StatsCommand::Heroes { json, .. }
+                | StatsCommand::Heatmap { json, .. }
+                | StatsCommand::Leaderboard { json, .. } => *json,
             },
             Command::Publish { command } => match command {
                 PublishCommand::Prepare { json, .. }
@@ -1036,6 +1106,58 @@ fn run(cli: &Cli) -> error::Result<i32> {
         Command::Toolchain { command } => match command {
             ToolchainCommand::Status { json } => {
                 commands::toolchain::status(&commands::toolchain::StatusArgs { json: *json })?;
+                Ok(0)
+            }
+        },
+        Command::Stats { command } => match command {
+            StatsCommand::Player {
+                account_id,
+                recent,
+                json,
+            } => {
+                commands::stats::run_player(&commands::stats::PlayerArgs {
+                    account_id: *account_id,
+                    recent: *recent,
+                    json: *json,
+                })?;
+                Ok(0)
+            }
+            StatsCommand::Matches {
+                account_id,
+                limit,
+                json,
+            } => {
+                commands::stats::run_matches(&commands::stats::MatchesArgs {
+                    account_id: *account_id,
+                    limit: *limit,
+                    json: *json,
+                })?;
+                Ok(0)
+            }
+            StatsCommand::Heroes { account_id, json } => {
+                commands::stats::run_heroes(&commands::stats::HeroesArgs {
+                    account_id: *account_id,
+                    json: *json,
+                })?;
+                Ok(0)
+            }
+            StatsCommand::Heatmap { account_id, json } => {
+                commands::stats::run_heatmap(&commands::stats::HeatmapArgs {
+                    account_id: *account_id,
+                    json: *json,
+                })?;
+                Ok(0)
+            }
+            StatsCommand::Leaderboard {
+                region,
+                limit,
+                json,
+            } => {
+                commands::stats::run_leaderboard(&commands::stats::LeaderboardArgs {
+                    region: region.clone(),
+                    limit: *limit,
+                    json: *json,
+                })?;
                 Ok(0)
             }
         },

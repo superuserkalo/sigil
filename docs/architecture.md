@@ -271,7 +271,7 @@ Enforced in code:
    file, records the exact edit, and can restore Valve's version. Anything else is refused.
 5. **Secrets.** Decrypted keys exist only in main. The agent host receives provider auth through a
    narrow handshake, not the transcript. Tool output and logs are scrubbed for known key shapes.
-6. **Network allowlist.** Provider endpoints, GameBanana, and the GitHub update check. No other
+6. **Network allowlist.** Provider endpoints, `api.steampowered.com`, `api.deadlock-api.com`, GameBanana, and the GitHub update check. No other
    outbound calls from tools without a documented allowlist entry.
 7. **Exec allowlist.** The desktop wraps `bash` with a workspace boundary and a binary allowlist.
    The CLI keeps the plain tool for local development until the wrapper lands.

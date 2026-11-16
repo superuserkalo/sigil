@@ -14,6 +14,7 @@ pub mod profiles;
 pub mod project;
 pub mod publish;
 pub mod release;
+pub mod stats;
 pub mod vpk;
 pub mod watch;
 pub mod toolchain;
