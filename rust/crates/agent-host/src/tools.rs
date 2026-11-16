@@ -30,6 +30,11 @@ pub fn deadlock_tools(cli: Arc<DahRsCli>) -> Result<Vec<Tool>> {
         hero_performance(cli.clone())?,
         launch_status(cli.clone())?,
         toolchain_status(cli.clone())?,
+        demo_matches(cli.clone())?,
+        demo_import(cli.clone())?,
+        install_status(cli.clone())?,
+        install_plan(cli.clone())?,
+        profiles_list(cli.clone())?,
         validate_payload()?,
     ])
 }
@@ -692,6 +697,154 @@ fn toolchain_status(cli: Arc<DahRsCli>) -> Result<Tool> {
             Ok(vec![
                 "toolchain".to_string(),
                 "status".to_string(),
+                "--json".to_string(),
+            ])
+        },
+    )
+}
+
+fn demo_matches(cli: Arc<DahRsCli>) -> Result<Tool> {
+    cli_tool(
+        cli,
+        "demo_matches",
+        "List locally imported Deadlock match demos with source, map, duration, event count and heatmap cell count. Read-only. A match with zero cells has no real position samples; never describe movement for it.",
+        empty_parameters(),
+        true,
+        |_arguments| {
+            Ok(vec![
+                "demo".to_string(),
+                "list".to_string(),
+                "--json".to_string(),
+            ])
+        },
+    )
+}
+
+fn demo_import(cli: Arc<DahRsCli>) -> Result<Tool> {
+    Tool::builder(definition(
+        "demo_import",
+        "Copy one Source 2 .dem file into the local match store, parse its container header and provenance, and write a summary. It refuses a file without the PBDEMS2 magic. It never uploads the demo.",
+        object_schema(
+            json!({
+                "path": {
+                    "type": "string",
+                    "description": "Absolute path to a .dem file on this machine.",
+                },
+                "match_id": {
+                    "type": ["string", "null"],
+                    "description": "Optional match id. Pass null to derive one.",
+                },
+            }),
+            &["path", "match_id"],
+        ),
+    ))
+    .idempotent(false)
+    .timeout_seconds(150)
+    .handler(move |arguments: Value, context: ToolContext| {
+        let cli = cli.clone();
+        async move {
+            let path = arguments
+                .get("path")
+                .and_then(Value::as_str)
+                .ok_or_else(|| Error::Tool("path is required.".into()))?;
+            let mut args = vec![
+                "demo".to_string(),
+                "import".to_string(),
+                path.to_string(),
+                "--json".to_string(),
+            ];
+            if let Some(id) = arguments.get("match_id").and_then(Value::as_str)
+                && !id.trim().is_empty()
+            {
+                args.push("--id".to_string());
+                args.push(id.to_string());
+            }
+            let text = cli.json(&args, &context.cancellation).await?;
+            Ok(ToolReturn::Output(text))
+        }
+    })
+}
+
+fn install_status(cli: Arc<DahRsCli>) -> Result<Tool> {
+    cli_tool(
+        cli,
+        "install_status",
+        "List install journal entries from the Browse pipeline and whether each file is still present in the addons folder. Read-only.",
+        empty_parameters(),
+        true,
+        |_arguments| {
+            Ok(vec![
+                "install".to_string(),
+                "list".to_string(),
+                "--json".to_string(),
+            ])
+        },
+    )
+}
+
+fn install_plan(cli: Arc<DahRsCli>) -> Result<Tool> {
+    Tool::builder(definition(
+        "install_plan",
+        "Download a GameBanana mod or archive into the workspace, extract it, validate the payload and plan a free addon slot. It writes only inside the workspace. Applying the plan to the game is an app action behind approval and is not available to the agent.",
+        object_schema(
+            json!({
+                "target": {
+                    "type": "string",
+                    "description": "GameBanana mod id, mod URL or https archive URL.",
+                },
+                "slot": {
+                    "type": ["integer", "null"],
+                    "minimum": 1,
+                    "maximum": 99,
+                    "description": "Requested slot. Pass null for the lowest free slot.",
+                },
+                "force": {
+                    "type": ["boolean", "null"],
+                    "description": "Allow replacing an occupied slot. Pass null for false.",
+                },
+            }),
+            &["target", "slot", "force"],
+        ),
+    ))
+    .idempotent(false)
+    .timeout_seconds(300)
+    .handler(move |arguments: Value, context: ToolContext| {
+        let cli = cli.clone();
+        async move {
+            let target = arguments
+                .get("target")
+                .and_then(Value::as_str)
+                .ok_or_else(|| Error::Tool("target is required.".into()))?;
+            let mut args = vec![
+                "install".to_string(),
+                "plan".to_string(),
+                target.to_string(),
+                "--json".to_string(),
+            ];
+            if let Some(slot) = arguments.get("slot").and_then(Value::as_u64) {
+                args.push("--slot".to_string());
+                args.push(slot.to_string());
+            }
+            if arguments.get("force").and_then(Value::as_bool) == Some(true) {
+                args.push("--force".to_string());
+            }
+            let text = cli.json(&args, &context.cancellation).await?;
+            Ok(ToolReturn::Output(text))
+        }
+    })
+}
+
+fn profiles_list(cli: Arc<DahRsCli>) -> Result<Tool> {
+    cli_tool(
+        cli,
+        "profiles_list",
+        "List saved addon slot profiles in the workspace with their enabled and total slot counts. Read-only. Applying a profile changes files in the game install and is an app action, not a tool.",
+        empty_parameters(),
+        true,
+        |_arguments| {
+            Ok(vec![
+                "profiles".to_string(),
+                "list".to_string(),
                 "--json".to_string(),
             ])
         },
