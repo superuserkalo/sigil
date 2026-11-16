@@ -1051,6 +1051,7 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
         ("launch-modal", screens::launch::dialog(s, &u)),
         ("toolchain-modal", screens::toolchain::dialog(s, &u)),
         ("addon-modal", screens::installed::dialog(s, &u)),
+        ("review-modal", screens::stats::dialog(s, &u)),
     ] {
         if let Some(layer) = layer {
             root = root.child(u.modal_layer(key, layer));
@@ -1791,6 +1792,14 @@ pub fn scene_browse(s: &mut State) {
     }
 }
 
+pub fn scene_review(s: &mut State) {
+    s.screen = Screen::Stats;
+    crate::data::demos_now(s);
+    if let Some(first) = s.stats.demos.first().map(|demo| demo.match_id.clone()) {
+        crate::data::open_review(s, &first);
+    }
+}
+
 pub fn scene_toggle(s: &mut State) {
     s.screen = Screen::Installed;
     if rune::is_headless() {
@@ -1993,6 +2002,7 @@ pub fn scenes() -> &'static [(&'static str, fn(&mut State))] {
         ("browse", scene_browse),
         ("install", scene_install),
         ("toggle", scene_toggle),
+        ("review", scene_review),
         ("conflicts", scene_conflicts),
         ("updates", scene_updates),
         ("profiles", scene_profiles),
