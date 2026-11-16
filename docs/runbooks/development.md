@@ -68,6 +68,34 @@ models/heroes_wip/punkgoat/punkgoat.vmdl_c"
 The agent runs in the workspace directory and can read, write, edit and use bash there. Game install
 writes are not implemented yet.
 
+## Game introspection
+
+```bash
+pnpm dah index
+pnpm dah index --refresh
+pnpm dah find billy --hero billy --type vmdl_c
+pnpm dah find vtex_c --folder panorama/images --limit 20
+pnpm dah extract models/heroes_wip/billy/billy.vmdl_c --out extracted
+```
+
+`index` parses `game/citadel/pak01_dir.vpk` and caches metadata in
+`<workspace>/.dah/index/citadel-pak01.json`. The cache invalidates when the VPK path, size or
+modification time changes. `find` searches that cache. `extract` re-reads the VPK, checks the entry
+CRC32 and writes under the workspace with the original game paths.
+
+On a machine without Steam discovery, point at the game:
+
+```bash
+DAH_GAME_DIR="/path/to/Deadlock" pnpm dah index
+DAH_GAME_DIR="/path/to/Deadlock/game/citadel" pnpm dah index
+```
+
+The same override works for the agent tools. Tests build synthetic VPKs, so no game install is
+needed for the test suite.
+
+Decompiling extracted `_c` files is not implemented yet. Use Source 2 Viewer until a decompile
+backend lands.
+
 ## Vendoring Grimoire
 
 ```bash
@@ -117,6 +145,17 @@ Pin a version and a hash when one is bundled. Otherwise let the user point at an
 
 **The game does not load any mods.** Check `pnpm dah doctor`: `gameinfo.gi` must list
 `Game citadel/addons` above `Game citadel`. A game update or Steam verification resets it.
+
+**`dah index` says the install was not found.** Steam discovery found no library. Set
+`DAH_GAME_DIR` to the Deadlock folder, its `game` folder, or `game/citadel`. Run `pnpm dah doctor`
+to see which roots were searched.
+
+**The index is stale after a game update.** `pnpm dah index --refresh`, or delete
+`<workspace>/.dah/index/`. The cache also invalidates on its own when the VPK size or modification
+time changes.
+
+**An extracted file is missing or has the wrong path.** Run `pnpm dah find` with the exact name.
+A payload needs the exact game path, so copy the path from the index instead of typing it.
 
 **The mod loads but the change is missing.** The path inside the VPK is wrong, the file is not
 compiled, or a lower-numbered mod ships the same path. Inspect the VPK and compare paths with the

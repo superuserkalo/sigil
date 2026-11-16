@@ -13,6 +13,7 @@ Deadlock runs on Valve's Source 2 engine. The internal game name is `citadel`.
 
 - `game/citadel/pak01_dir.vpk` is the main index. It lists roughly 150,000 files.
 - The data is split across numbered chunks, `pak01_000.vpk` upward.
+- The container layout and the parser rules are in `docs/research/vpk-format.md`.
 - `game/core/pak01_dir.vpk` holds shared engine files.
 - Maps are separate VPKs under `game/citadel/maps/`.
 

@@ -154,3 +154,21 @@ test("discoverDeadlockInstall reports searched roots when nothing is found", asy
   assert.equal(discovery.install, null);
   assert.deepEqual(discovery.searchedRoots, [directory]);
 });
+
+test("discoverDeadlockInstall accepts an explicit game folder", async () => {
+  const directory = await scratch("game-dir-");
+  const citadel = join(directory, "game", "citadel");
+  await mkdir(citadel, { recursive: true });
+
+  const configured = await discoverDeadlockInstall({ gameDir: directory, env: {} });
+  assert.equal(configured.install?.gameRoot, directory);
+  assert.equal(configured.install?.citadelDir, citadel);
+  assert.deepEqual(configured.searchedRoots, [directory]);
+
+  const atCitadel = await discoverDeadlockInstall({ gameDir: citadel, env: {} });
+  assert.equal(atCitadel.install?.gameRoot, directory);
+
+  const fromEnv = await discoverDeadlockInstall({ env: { DAH_GAME_DIR: directory } });
+  assert.equal(fromEnv.install?.gameRoot, directory);
+});
+

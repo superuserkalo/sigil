@@ -12,7 +12,7 @@
   "scripts": {
     "typecheck": "pnpm -r --if-present typecheck",
     "test": "bash scripts/test.sh",
-    "dah": "pnpm --filter @dah/cli dev --",
+    "dah": "pnpm --filter @dah/cli exec tsx src/index.ts",
     "vendor": "bash scripts/vendor-grimoire.sh"
   },
   "devDependencies": {
