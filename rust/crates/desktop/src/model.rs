@@ -8,97 +8,203 @@
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Screen {
-    Workbench,
+    Installed,
+    Browse,
+    Conflicts,
+    Updates,
+    Profiles,
+    Autoexec,
+    Stats,
+    Locker,
+    Launch,
+    Agent,
     Projects,
     Index,
     Patches,
     Impact,
     Release,
+    Toolchain,
+    Character,
     Settings,
 }
 
 impl Screen {
+    /// Library screens own the top bar search; the rest keep the header quiet.
+    pub fn searches(self) -> bool {
+        matches!(
+            self,
+            Screen::Installed | Screen::Browse | Screen::Conflicts
+        )
+    }
+
+    pub fn is_library(self) -> bool {
+        matches!(
+            self,
+            Screen::Installed
+                | Screen::Browse
+                | Screen::Conflicts
+                | Screen::Updates
+                | Screen::Autoexec
+                | Screen::Profiles
+                | Screen::Stats
+                | Screen::Locker
+        )
+    }
+
     pub fn key(self) -> &'static str {
         match self {
-            Screen::Workbench => "workbench",
+            Screen::Installed => "installed",
+            Screen::Browse => "browse",
+            Screen::Conflicts => "conflicts",
+            Screen::Updates => "updates",
+            Screen::Profiles => "profiles",
+            Screen::Autoexec => "autoexec",
+            Screen::Stats => "stats",
+            Screen::Locker => "locker",
+            Screen::Launch => "launch",
+            Screen::Agent => "agent",
             Screen::Projects => "projects",
             Screen::Index => "index",
             Screen::Patches => "patches",
             Screen::Impact => "impact",
             Screen::Release => "release",
+            Screen::Toolchain => "toolchain",
+            Screen::Character => "character",
             Screen::Settings => "settings",
         }
     }
 
     pub fn title(self) -> &'static str {
         match self {
-            Screen::Workbench => "Workbench",
+            Screen::Installed => "Installed",
+            Screen::Browse => "Browse",
+            Screen::Conflicts => "Conflicts",
+            Screen::Updates => "Updates",
+            Screen::Profiles => "Profiles",
+            Screen::Autoexec => "Autoexec",
+            Screen::Stats => "Stats",
+            Screen::Locker => "Locker",
+            Screen::Launch => "Launch",
+            Screen::Agent => "Agent",
             Screen::Projects => "Projects",
             Screen::Index => "Game Index",
             Screen::Patches => "Patches",
             Screen::Impact => "Impact",
             Screen::Release => "Release",
+            Screen::Toolchain => "Toolchain",
+            Screen::Character => "Character",
             Screen::Settings => "Settings",
         }
     }
 
     pub fn kicker(self) -> &'static str {
         match self {
-            Screen::Workbench => "AGENT SESSION",
+            Screen::Installed => "LIBRARY",
+            Screen::Browse => "GAMEBANANA CATALOG",
+            Screen::Conflicts => "SHARED PATHS",
+            Screen::Updates => "PATCH FEED AND BASELINES",
+            Screen::Profiles => "SAVED SLOT SETS",
+            Screen::Autoexec => "GAME CONFIG",
+            Screen::Stats => "DEADLOCK API AND LOCAL DEMOS",
+            Screen::Locker => "HERO ASSETS",
+            Screen::Launch => "GAME LAUNCH",
+            Screen::Agent => "AGENT SESSION",
             Screen::Projects => "MOD PROJECTS",
             Screen::Index => "GAME PATHS",
             Screen::Patches => "PATCH FEED",
             Screen::Impact => "COMPATIBILITY",
             Screen::Release => "RELEASE AND REVIEW",
+            Screen::Toolchain => "DECOMPILE AND COMPILE",
+            Screen::Character => "CHARACTER GENERATION",
             Screen::Settings => "LOCAL CONFIGURATION",
         }
     }
 
     pub fn subtitle(self) -> &'static str {
         match self {
-            Screen::Workbench => "Plan, stage and validate with the project in context",
+            Screen::Installed => "Addon slots on disk, with the files the game loads",
+            Screen::Browse => "The public Deadlock mod feed, read only",
+            Screen::Conflicts => "Game paths that more than one enabled slot replaces",
+            Screen::Updates => "Project baselines against the current patch feed",
+            Screen::Profiles => "Named sets of enabled slots, captured and restored",
+            Screen::Autoexec => "The game config file, read and edited behind approval",
+            Screen::Stats => "Rank, heroes, matches and heatmaps from the API, depth from demos",
+            Screen::Locker => "Hero renders and asset paths resolved from the local game",
+            Screen::Launch => "Modded, vanilla and the restore path",
+            Screen::Agent => "Plan, stage and validate with the project in context",
             Screen::Projects => "One workspace per mod, with targets and history",
             Screen::Index => "Exact paths from the installed game, read only",
             Screen::Patches => "Steam news, with the targets each note touches",
             Screen::Impact => "What a patch does to the selected project",
             Screen::Release => "Latest build, deploy plan and the queue after an update",
+            Screen::Toolchain => "External decompile and compile tools, with real availability",
+            Screen::Character => "Reference to mesh pipeline, stopped at a verified artifact",
             Screen::Settings => "Providers, paths and safety, nothing secret on screen",
         }
     }
 
     pub fn glyph(self) -> &'static str {
         match self {
-            Screen::Workbench => "◆",
+            Screen::Installed => "▦",
+            Screen::Browse => "⊕",
+            Screen::Conflicts => "⚑",
+            Screen::Updates => "⟳",
+            Screen::Profiles => "☰",
+            Screen::Autoexec => "≡",
+            Screen::Stats => "◉",
+            Screen::Locker => "◐",
+            Screen::Launch => "▶",
+            Screen::Agent => "◆",
             Screen::Projects => "▤",
             Screen::Index => "⌕",
             Screen::Patches => "❐",
-            Screen::Impact => "⚑",
+            Screen::Impact => "◇",
             Screen::Release => "◈",
+            Screen::Toolchain => "⚒",
+            Screen::Character => "◭",
             Screen::Settings => "⚙",
         }
     }
 
     pub fn shortcut(self) -> &'static str {
         match self {
-            Screen::Workbench => "⌘1",
-            Screen::Projects => "⌘2",
-            Screen::Index => "⌘3",
-            Screen::Patches => "⌘4",
-            Screen::Impact => "⌘5",
-            Screen::Release => "⌘6",
-            Screen::Settings => "⌘7",
+            Screen::Installed => "CMD 1",
+            Screen::Browse => "CMD 2",
+            Screen::Conflicts => "CMD 3",
+            Screen::Updates => "CMD 4",
+            Screen::Profiles => "CMD P",
+            Screen::Autoexec => "CMD E",
+            Screen::Stats => "CMD 5",
+            Screen::Locker => "CMD 6",
+            Screen::Launch => "CMD L",
+            Screen::Agent => "CMD 7",
+            Screen::Projects => "CMD 8",
+            Screen::Index => "CMD 9",
+            Screen::Patches => "CMD 0",
+            Screen::Impact => "",
+            Screen::Release => "",
+            Screen::Toolchain => "",
+            Screen::Character => "",
+            Screen::Settings => "CMD ,",
         }
     }
 
     pub fn from_command(c: char) -> Option<Screen> {
         match c {
-            '1' => Some(Screen::Workbench),
-            '2' => Some(Screen::Projects),
-            '3' => Some(Screen::Index),
-            '4' => Some(Screen::Patches),
-            '5' => Some(Screen::Impact),
-            '6' => Some(Screen::Release),
-            '7' => Some(Screen::Settings),
+            '1' => Some(Screen::Installed),
+            '2' => Some(Screen::Browse),
+            '3' => Some(Screen::Conflicts),
+            '4' => Some(Screen::Updates),
+            '5' => Some(Screen::Stats),
+            '6' => Some(Screen::Locker),
+            '7' => Some(Screen::Agent),
+            '8' => Some(Screen::Projects),
+            '9' => Some(Screen::Index),
+            '0' => Some(Screen::Patches),
+            'p' => Some(Screen::Profiles),
+            'e' => Some(Screen::Autoexec),
+            'l' => Some(Screen::Launch),
+            ',' => Some(Screen::Settings),
             _ => None,
         }
     }
@@ -228,6 +334,218 @@ pub fn format_size(bytes: u64) -> String {
     }
 }
 
+/// Compact counts for likes and views: 1234 becomes 1.2k, 12639 becomes 12.6k.
+pub fn format_count(value: u64) -> String {
+    if value >= 1_000_000 {
+        format!("{:.1}m", value as f64 / 1_000_000.0)
+    } else if value >= 1_000 {
+        format!("{:.1}k", value as f64 / 1_000.0)
+    } else {
+        value.to_string()
+    }
+}
+
+/// One slot in `game/citadel/addons`, as `list_installed` reports it.
+pub struct AddonRow {
+    pub slot: u8,
+    pub file: String,
+    pub size_bytes: u64,
+    pub chunk_files: Vec<String>,
+    pub entry_count: Option<usize>,
+    pub enabled: bool,
+}
+
+impl AddonRow {
+    pub fn slot_label(&self) -> String {
+        format!("{:02}", self.slot)
+    }
+
+    pub fn size_label(&self) -> String {
+        format_size(self.size_bytes)
+    }
+
+    pub fn entries_label(&self) -> String {
+        match self.entry_count {
+            Some(0) => "no entries".to_string(),
+            Some(count) => format!(
+                "{count} entr{}",
+                if count == 1 { "y" } else { "ies" }
+            ),
+            None => "entries unknown".to_string(),
+        }
+    }
+
+    pub fn chunks_label(&self) -> String {
+        match self.chunk_files.len() {
+            0 => "no chunks".to_string(),
+            1 => "1 chunk".to_string(),
+            count => format!("{count} chunks"),
+        }
+    }
+
+    pub fn state_label(&self) -> &'static str {
+        if self.enabled { "enabled" } else { "disabled" }
+    }
+}
+
+/// A game path shipped by more than one enabled slot. `winner` is the lowest
+/// slot, which the game loads first.
+pub struct ConflictRow {
+    pub path: String,
+    pub slots: Vec<u8>,
+    pub winner: u8,
+}
+
+impl ConflictRow {
+    pub fn slot_labels(&self) -> Vec<String> {
+        self.slots.iter().map(|slot| format!("{slot:02}")).collect()
+    }
+
+    pub fn winner_label(&self) -> String {
+        format!("slot {:02} wins", self.winner)
+    }
+
+    pub fn detail(&self) -> String {
+        let overridden: Vec<String> = self
+            .slots
+            .iter()
+            .filter(|slot| **slot != self.winner)
+            .map(|slot| format!("{slot:02}"))
+            .collect();
+        format!(
+            "{} enabled slots ship this path. Slot {:02} loads first, so {} {} ignored for this file.",
+            self.slots.len(),
+            self.winner,
+            if overridden.len() == 1 {
+                format!("slot {}", overridden[0])
+            } else {
+                format!("slots {}", overridden.join(", "))
+            },
+            if overridden.len() == 1 { "is" } else { "are" }
+        )
+    }
+}
+
+/// The whole installed inventory plus the conflict pass. `scanned` separates
+/// "not read yet" from a real empty folder.
+#[derive(Default)]
+pub struct AddonLibrary {
+    pub addons: Vec<AddonRow>,
+    pub conflicts: Vec<ConflictRow>,
+    pub warnings: Vec<String>,
+    pub scanned: bool,
+    pub error: Option<String>,
+}
+
+impl AddonLibrary {
+    pub fn enabled_count(&self) -> usize {
+        self.addons.iter().filter(|addon| addon.enabled).count()
+    }
+
+    pub fn disabled_count(&self) -> usize {
+        self.addons.len() - self.enabled_count()
+    }
+
+    pub fn chunk_count(&self) -> usize {
+        self.addons.iter().map(|addon| addon.chunk_files.len()).sum()
+    }
+
+    pub fn total_bytes(&self) -> u64 {
+        self.addons
+            .iter()
+            .map(|addon| addon.size_bytes)
+            .sum::<u64>()
+    }
+
+    pub fn summary(&self) -> String {
+        format!(
+            "{} addon{}, {} enabled, {} disabled",
+            self.addons.len(),
+            if self.addons.len() == 1 { "" } else { "s" },
+            self.enabled_count(),
+            self.disabled_count()
+        )
+    }
+}
+
+/// One GameBanana row, read only until the download and install backend exists.
+pub struct BrowseCard {
+    pub id: u64,
+    pub name: String,
+    pub author: String,
+    pub category: String,
+    pub updated_at: String,
+    pub likes: u64,
+    pub views: u64,
+    pub profile_url: String,
+    pub thumbnail_url: Option<String>,
+    pub version: Option<String>,
+}
+
+impl BrowseCard {
+    pub fn author_label(&self) -> String {
+        if self.author.is_empty() {
+            "unknown author".to_string()
+        } else {
+            format!("by {}", self.author)
+        }
+    }
+
+    pub fn meta_label(&self) -> String {
+        let updated = if self.updated_at.is_empty() {
+            "update date unknown".to_string()
+        } else {
+            format!("updated {}", self.updated_at.chars().take(10).collect::<String>())
+        };
+        format!(
+            "{updated} · {} likes · {} views",
+            format_count(self.likes),
+            format_count(self.views)
+        )
+    }
+
+    pub fn version_label(&self) -> Option<String> {
+        self.version
+            .as_ref()
+            .filter(|version| !version.is_empty())
+            .map(|version| format!("v{version}"))
+    }
+}
+
+pub struct BrowsePageView {
+    pub page: usize,
+    pub per_page: usize,
+    pub total: usize,
+    pub complete: bool,
+    pub page_count: usize,
+    pub mods: Vec<BrowseCard>,
+}
+
+impl BrowsePageView {
+    pub fn page_label(&self) -> String {
+        format!("page {} of {}", self.page, self.page_count)
+    }
+}
+
+#[derive(Default)]
+pub struct BrowseState {
+    pub page: Option<BrowsePageView>,
+    pub loading: bool,
+    pub error: Option<String>,
+}
+
+impl BrowseState {
+    pub fn can_prev(&self) -> bool {
+        self.page.as_ref().is_some_and(|page| page.page > 1)
+    }
+
+    pub fn can_next(&self) -> bool {
+        self.page
+            .as_ref()
+            .is_some_and(|page| page.page < page.page_count)
+    }
+}
+
 pub struct PatchNote {
     pub title: String,
     pub date: String,
@@ -292,6 +610,8 @@ pub struct ReleaseState {
     pub plan: Option<DeployPlanView>,
     pub plan_error: Option<String>,
     pub publish: Option<PublishInfo>,
+    pub upload: Option<UploadInfo>,
+    pub upload_error: Option<String>,
     pub lookup_error: Option<String>,
     pub review: Option<ReviewQueue>,
 }
@@ -311,10 +631,6 @@ pub struct ReleaseInfo {
 }
 
 impl ReleaseInfo {
-    pub fn slot_file(&self) -> String {
-        format!("pak{:02}_dir.vpk", self.slot)
-    }
-
     pub fn size_label(&self) -> String {
         format_size(self.total_bytes)
     }
@@ -338,11 +654,81 @@ impl ReleaseInfo {
 
 pub struct PublishInfo {
     pub dir: String,
-    pub metadata_path: String,
-    pub dir_present: bool,
-    pub metadata_present: bool,
+    pub archive_file: Option<String>,
+    pub archive_sha256: Option<String>,
+    pub archive_bytes: Option<u64>,
+}
+
+/// The durable GameBanana handoff record at `<publish>/<version>/upload.json`.
+/// It is written by `dah publish upload --approve` and updated by
+/// `dah publish confirm`. The app only reads it; the browser upload stays the
+/// user's action.
+pub struct UploadInfo {
+    pub state: String,
+    pub archive_file: String,
+    pub archive_sha256: String,
+    pub archive_bytes: u64,
+    pub submit_url: String,
+    pub submission_url: Option<String>,
+    pub verified: bool,
     pub created_at: Option<String>,
-    pub files: Vec<String>,
+    pub confirmed_at: Option<String>,
+    pub record_path: String,
+}
+
+impl UploadInfo {
+    pub fn state_label(&self) -> String {
+        if self.state.is_empty() {
+            "unknown".to_string()
+        } else {
+            self.state.clone()
+        }
+    }
+
+    pub fn state_tone(&self) -> ToneKey {
+        match self.state.as_str() {
+            "verified" => ToneKey::Ok,
+            "recorded" => ToneKey::Info,
+            "awaiting_user" => ToneKey::Warn,
+            _ => ToneKey::Quiet,
+        }
+    }
+
+    pub fn archive_size_label(&self) -> String {
+        format_size(self.archive_bytes)
+    }
+
+    pub fn pending(&self) -> bool {
+        self.state == "awaiting_user"
+    }
+
+    pub fn submit_label(&self) -> String {
+        if self.submit_url.is_empty() {
+            "https://gamebanana.com/mods/submit".to_string()
+        } else {
+            self.submit_url.clone()
+        }
+    }
+}
+
+/// Semantic tone without depending on the UI module, so the data layer stays
+/// renderable on its own. The Release screen maps it to a `ui::Tone`.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum ToneKey {
+    Ok,
+    Warn,
+    Info,
+    Quiet,
+}
+
+/// An in-app modal owned by the Release screen. The dialog layer is mounted at
+/// the window root so it can dim the whole canvas without a web view.
+#[derive(Clone, Copy, PartialEq, Eq, Default)]
+pub enum ReleaseDialog {
+    #[default]
+    None,
+    ApproveUpload,
+    ConfirmUrl,
 }
 
 pub struct DeployPlanView {
@@ -578,7 +964,7 @@ pub fn default_providers() -> Vec<Provider> {
 
 pub fn welcome_messages() -> Vec<Message> {
     vec![Message::assistant(
-        "Workbench is ready. Open a project to give the agent context, or use Game Index to find exact game paths.\n\nPrompts run through the local dah-agent host. Each tool call is listed in the timeline; nothing writes to the game install.",
+        "The agent is ready. Open a project to give it context, or use Game Index to find exact game paths.\n\nPrompts run through the local dah-agent host. Each tool call is listed in the timeline; nothing writes to the game install.",
         "now",
         None,
     )]
@@ -1045,10 +1431,138 @@ pub fn demo_paths() -> Paths {
     }
 }
 
+/// Fixture library for the explicit demo scenes. It is never loaded by the
+/// window or by a real scene; the `DEMO DATA` chip is the label.
+pub fn demo_addon_library() -> AddonLibrary {
+    let addons = vec![
+        AddonRow {
+            slot: 1,
+            file: "pak01_dir.vpk".to_string(),
+            size_bytes: 18_663_424,
+            chunk_files: vec!["pak01_000.vpk".to_string()],
+            entry_count: Some(148),
+            enabled: true,
+        },
+        AddonRow {
+            slot: 2,
+            file: "pak02_dir.vpk".to_string(),
+            size_bytes: 4_128_768,
+            chunk_files: Vec::new(),
+            entry_count: Some(36),
+            enabled: true,
+        },
+        AddonRow {
+            slot: 3,
+            file: "pak03_dir.vpk".to_string(),
+            size_bytes: 9_437_184,
+            chunk_files: vec!["pak03_000.vpk".to_string()],
+            entry_count: Some(81),
+            enabled: true,
+        },
+        AddonRow {
+            slot: 4,
+            file: "pak04_dir.vpk".to_string(),
+            size_bytes: 2_412_544,
+            chunk_files: Vec::new(),
+            entry_count: Some(22),
+            enabled: true,
+        },
+        AddonRow {
+            slot: 5,
+            file: "pak05_dir.vpk".to_string(),
+            size_bytes: 30_838_784,
+            chunk_files: vec![
+                "pak05_000.vpk".to_string(),
+                "pak05_001.vpk".to_string(),
+            ],
+            entry_count: Some(212),
+            enabled: true,
+        },
+        AddonRow {
+            slot: 7,
+            file: "pak07_dir.vpk".to_string(),
+            size_bytes: 1_048_576,
+            chunk_files: Vec::new(),
+            entry_count: Some(14),
+            enabled: true,
+        },
+        AddonRow {
+            slot: 9,
+            file: "pak09_dir.vpk.disabled".to_string(),
+            size_bytes: 12_582_912,
+            chunk_files: Vec::new(),
+            entry_count: Some(64),
+            enabled: false,
+        },
+        AddonRow {
+            slot: 11,
+            file: "pak11_dir.vpk.disabled".to_string(),
+            size_bytes: 6_291_456,
+            chunk_files: Vec::new(),
+            entry_count: Some(41),
+            enabled: false,
+        },
+        AddonRow {
+            slot: 12,
+            file: "pak12_dir.vpk.disabled".to_string(),
+            size_bytes: 5_248_950,
+            chunk_files: Vec::new(),
+            entry_count: Some(4),
+            enabled: false,
+        },
+        AddonRow {
+            slot: 18,
+            file: "pak18_dir.vpk.disabled".to_string(),
+            size_bytes: 855_244,
+            chunk_files: Vec::new(),
+            entry_count: Some(9),
+            enabled: false,
+        },
+    ];
+    let conflicts = vec![
+        ConflictRow {
+            path: "materials/models/heroes_wip/infernus/infernus_body.vmat_c".to_string(),
+            slots: vec![1, 5, 7],
+            winner: 1,
+        },
+        ConflictRow {
+            path: "panorama/layout/hud/scoreboard.vxml_c".to_string(),
+            slots: vec![2, 7],
+            winner: 2,
+        },
+        ConflictRow {
+            path: "particles/abilities/infernus/infernus_flame_trail.vpcf_c".to_string(),
+            slots: vec![3, 5],
+            winner: 3,
+        },
+        ConflictRow {
+            path: "sounds/heroes/infernus/infernus_fire_loop.vsnd_c".to_string(),
+            slots: vec![1, 4],
+            winner: 1,
+        },
+        ConflictRow {
+            path: "models/heroes_wip/lash/lash_body.vmdl_c".to_string(),
+            slots: vec![3, 5],
+            winner: 3,
+        },
+    ];
+    AddonLibrary {
+        addons,
+        conflicts,
+        warnings: vec![
+            "Addon pak18_dir.vpk.disabled could not be read, so its paths are not compared."
+                .to_string(),
+        ],
+        scanned: true,
+        error: None,
+    }
+}
+
 pub fn demo_release_state() -> ReleaseState {
     let release_dir = "~/Deadlock Mods/ashfall-recolor/builds/0.4.2".to_string();
     let publish_dir = "~/Deadlock Mods/ashfall-recolor/publish/0.4.2".to_string();
-    let addons = "~/Library/Application Support/Steam/steamapps/common/Deadlock/game/citadel/addons";
+    let addons =
+        "~/Library/Application Support/Steam/steamapps/common/Deadlock/game/citadel/addons";
     let info = ReleaseInfo {
         version: "0.4.2".to_string(),
         slot: 12,
@@ -1064,11 +1578,24 @@ pub fn demo_release_state() -> ReleaseState {
     };
     let publish = PublishInfo {
         dir: publish_dir.clone(),
-        metadata_path: format!("{publish_dir}/metadata.json"),
-        dir_present: true,
-        metadata_present: true,
-        created_at: Some("2026-11-15T18:09:44.000Z".to_string()),
-        files: vec!["pak12_dir.vpk".to_string()],
+        archive_file: Some("ashfall-recolor-0.4.2.zip".to_string()),
+        archive_sha256: Some(
+            "8f1c0a5d2b7e4493a6c8d1f0e5b2937461c8d5a9e2f7b0436d9a1c7e5b8f2d64".to_string(),
+        ),
+        archive_bytes: Some(5_201_408),
+    };
+    let upload = UploadInfo {
+        state: "awaiting_user".to_string(),
+        archive_file: "ashfall-recolor-0.4.2.zip".to_string(),
+        archive_sha256: "8f1c0a5d2b7e4493a6c8d1f0e5b2937461c8d5a9e2f7b0436d9a1c7e5b8f2d64"
+            .to_string(),
+        archive_bytes: 5_201_408,
+        submit_url: "https://gamebanana.com/mods/submit".to_string(),
+        submission_url: None,
+        verified: false,
+        created_at: Some("2026-11-15T18:11:02.000Z".to_string()),
+        confirmed_at: None,
+        record_path: format!("{publish_dir}/upload.json"),
     };
     let plan = DeployPlanView {
         slot: 12,
@@ -1132,9 +1659,7 @@ pub fn demo_release_state() -> ReleaseState {
                 moved: 0,
                 unbaselined: 0,
                 migrations: Vec::new(),
-                warnings: vec![
-                    "slot pak07_dir.vpk already exists in the addon folder".to_string(),
-                ],
+                warnings: vec!["slot pak07_dir.vpk already exists in the addon folder".to_string()],
                 error: None,
             },
             ReviewItem {
@@ -1175,7 +1700,21 @@ pub fn demo_release_state() -> ReleaseState {
         plan: Some(plan),
         plan_error: None,
         publish: Some(publish),
+        upload: Some(upload),
+        upload_error: None,
         lookup_error: None,
         review: Some(review),
     }
+}
+
+/// The awaiting handoff fixture with the browser submission already verified.
+pub fn demo_release_verified_state() -> ReleaseState {
+    let mut state = demo_release_state();
+    if let Some(upload) = state.upload.as_mut() {
+        upload.state = "verified".to_string();
+        upload.submission_url = Some("https://gamebanana.com/mods/512480".to_string());
+        upload.verified = true;
+        upload.confirmed_at = Some("2026-11-15T18:24:37.000Z".to_string());
+    }
+    state
 }

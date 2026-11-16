@@ -1,21 +1,32 @@
-//! The workbench shell: state, scenes, sidebar, header, status bar and screen dispatch.
+//! The mod-manager shell: state, scenes, sidebar, header, status bar and screen
+//! dispatch. The library is the default surface; the agent is one workbench
+//! screen inside the same shell.
 
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::time::Instant;
 
 use rune::tok::motion;
-use rune::{Color, Cx, El, Key, KeyEvent, TextEdit, Tx, Waker, col, el, row, spacer, text};
+use rune::{
+    Color, Cx, El, ImageCache, Key, KeyEvent, Pixels, TextEdit, Tx, Waker, col, el, row, text,
+};
 use serde_json::Value;
 
 use crate::agent::{
     self, AgentEvent, AgentLink, AgentStatus, CommandKind, HostError, Pause, ResultEnvelope,
 };
+use crate::data::ThumbCrew;
+use crate::jobs::Job;
 use crate::model::{
-    self, Catalog, ImpactReport, IndexRow, Message, PatchNote, Paths, Project, ProjectState,
-    Provider, ProviderState, ReleaseState, Role, Screen, ToolRun,
+    self, AddonLibrary, BrowseState, Catalog, ImpactReport, IndexRow, Message, PatchNote, Paths,
+    Project, ProjectState, Provider, ProviderState, ReleaseDialog, ReleaseState, ReviewQueue, Role,
+    Screen, ToolRun,
 };
+use crate::publish::PublishJob;
 use crate::screens;
-use crate::ui::{BODY, BODY_MED, H2, HEADER_H, LABEL, SIDEBAR_W, SMALL, STATUS_H, Tone, Ui};
+use crate::ui::{
+    ActionKind, BODY, BODY_MED, H2, HEADER_H, LABEL, SIDEBAR_W, SMALL, STATUS_H, Tone, Ui,
+};
 
 pub struct State {
     pub screen: Screen,
@@ -33,6 +44,9 @@ pub struct State {
     pub selected_patch: usize,
     pub impact: Option<ImpactReport>,
     pub release: ReleaseState,
+    pub release_dialog: ReleaseDialog,
+    pub confirm_url: TextEdit,
+    pub publish_job: PublishJob,
     pub messages: Vec<Message>,
     pub tools: Vec<ToolRun>,
     pub composer: TextEdit,
@@ -46,6 +60,8 @@ pub struct State {
     pub pulse: f32,
     pub game_detected: bool,
     pub game_label: String,
+    pub game_root: Option<PathBuf>,
+    pub addons_dir: Option<String>,
     pub model_label: String,
     pub elapsed: String,
     pub agent: AgentLink,
@@ -53,12 +69,43 @@ pub struct State {
     pub streaming: Option<usize>,
     pub run_started: Option<Instant>,
     pub tool_started: HashMap<String, Instant>,
+    pub addons: AddonLibrary,
+    pub addon_job: Job<AddonLibrary>,
+    pub installed_query: TextEdit,
+    pub browse: BrowseState,
+    pub browse_job: Job<model::BrowsePageView>,
+    pub browse_query: TextEdit,
+    pub install: screens::browse::InstallView,
+    pub install_job: Job<screens::browse::InstallOutcome>,
+    pub conflicts_query: TextEdit,
+    pub images: Option<ImageCache>,
+    pub thumbnails: HashMap<String, Pixels>,
+    pub pending_thumbs: Vec<(String, Vec<u8>)>,
+    pub thumb_crew: ThumbCrew,
+    pub review_job: Job<ReviewQueue>,
+    pub launch_dialog: bool,
+    pub profiles: screens::profiles::View,
+    pub profiles_job: Job<screens::profiles::Load>,
+    pub autoexec: screens::autoexec::View,
+    pub autoexec_original: String,
+    pub autoexec_job: Job<screens::autoexec::Read>,
+    pub stats: screens::stats::View,
+    pub stats_job: Job<screens::stats::Load>,
+    pub demo_job: Job<screens::stats::DemoLoad>,
+    pub locker: screens::locker::View,
+    pub locker_job: Job<screens::locker::Load>,
+    pub launch: screens::launch::View,
+    pub launch_job: Job<screens::launch::Read>,
+    pub toolchain: screens::toolchain::View,
+    pub toolchain_job: Job<deadlock_core::toolchain::ToolchainStatus>,
+    pub character: screens::character::View,
+    pub character_job: Job<screens::character::Load>,
 }
 
 impl Default for State {
     fn default() -> Self {
         State {
-            screen: Screen::Workbench,
+            screen: Screen::Installed,
             demo: false,
             projects: Vec::new(),
             selected_project: 0,
@@ -73,6 +120,9 @@ impl Default for State {
             selected_patch: 0,
             impact: None,
             release: ReleaseState::default(),
+            release_dialog: ReleaseDialog::None,
+            confirm_url: TextEdit::new(""),
+            publish_job: PublishJob::default(),
             messages: model::welcome_messages(),
             tools: Vec::new(),
             composer: TextEdit::new(""),
@@ -86,6 +136,8 @@ impl Default for State {
             pulse: 0.0,
             game_detected: false,
             game_label: "Game not detected".to_string(),
+            game_root: None,
+            addons_dir: None,
             model_label: "No model".to_string(),
             elapsed: "0s".to_string(),
             agent: AgentLink::disconnected(),
@@ -93,6 +145,37 @@ impl Default for State {
             streaming: None,
             run_started: None,
             tool_started: HashMap::new(),
+            addons: AddonLibrary::default(),
+            addon_job: Job::default(),
+            installed_query: TextEdit::new(""),
+            browse: BrowseState::default(),
+            browse_job: Job::default(),
+            browse_query: TextEdit::new(""),
+            install: screens::browse::InstallView::default(),
+            install_job: Job::default(),
+            conflicts_query: TextEdit::new(""),
+            images: None,
+            thumbnails: HashMap::new(),
+            pending_thumbs: Vec::new(),
+            thumb_crew: ThumbCrew::default(),
+            review_job: Job::default(),
+            launch_dialog: false,
+            profiles: screens::profiles::View::default(),
+            profiles_job: Job::default(),
+            autoexec: screens::autoexec::View::default(),
+            autoexec_original: String::new(),
+            autoexec_job: Job::default(),
+            stats: screens::stats::View::default(),
+            stats_job: Job::default(),
+            demo_job: Job::default(),
+            locker: screens::locker::View::default(),
+            locker_job: Job::default(),
+            launch: screens::launch::View::default(),
+            launch_job: Job::default(),
+            toolchain: screens::toolchain::View::default(),
+            toolchain_job: Job::default(),
+            character: screens::character::View::default(),
+            character_job: Job::default(),
         }
     }
 }
@@ -130,6 +213,10 @@ impl State {
 
     pub fn load_demo(&mut self) {
         self.demo = true;
+        self.addons_dir = Some(
+            "~/Library/Application Support/Steam/steamapps/common/Deadlock/game/citadel/addons"
+                .to_string(),
+        );
         self.projects = model::demo_projects();
         self.selected_project = 0;
         self.catalog = Some(model::demo_catalog());
@@ -145,6 +232,7 @@ impl State {
         self.paths = model::demo_paths();
         self.game_detected = true;
         self.game_label = "citadel · build 2210".to_string();
+        self.addons = model::demo_addon_library();
         self.model_label = "qwen3-coder-30b".to_string();
         self.elapsed = "2m 14s".to_string();
         self.status = "Demo fixture loaded. Nothing on this screen reads or writes a game install."
@@ -154,10 +242,115 @@ impl State {
     pub fn load_empty(&mut self) {
         let agent = std::mem::replace(&mut self.agent, AgentLink::disconnected());
         let wake = self.wake.take();
+        let images = self.images.take();
         *self = State::default();
         self.agent = agent;
         self.wake = wake;
+        self.images = images;
         self.paths.data = crate::data::data_dir().display().to_string();
+    }
+
+    /// Move to a screen and start the read that screen needs. Library screens
+    /// fetch on first entry rather than on every frame.
+    pub fn go(&mut self, screen: Screen) {
+        self.screen = screen;
+        self.status.clear();
+        match screen {
+            Screen::Installed | Screen::Conflicts => {
+                if !self.addons.scanned && !self.addon_job.is_running() {
+                    crate::data::start_addon_scan(self);
+                }
+            }
+            Screen::Browse => {
+                if self.browse.page.is_none() && !self.browse.loading {
+                    crate::data::start_browse_fetch(self, 1);
+                }
+            }
+            Screen::Updates => {
+                if self.release.review.is_none() && !self.review_job.is_running() {
+                    crate::data::start_review_scan(self);
+                }
+            }
+            Screen::Profiles => {
+                if !self.autoexec.loaded {
+                    crate::data::load_autoexec_now(self);
+                }
+                crate::data::start_profile_list(self);
+            }
+            Screen::Autoexec => {
+                if !self.autoexec.loaded && !self.autoexec_job.is_running() {
+                    crate::data::start_autoexec_read(self);
+                }
+            }
+            Screen::Stats => {
+                if !self.stats.loaded && !self.stats_job.is_running() {
+                    crate::data::start_stats_load(self);
+                }
+                if !self.demo_job.is_running() {
+                    crate::data::start_demo_list(self);
+                }
+            }
+            Screen::Locker => {
+                if !self.locker.loaded && !self.locker_job.is_running() {
+                    crate::data::start_locker_load(self);
+                }
+            }
+            Screen::Launch => {
+                if !self.launch.loaded && !self.launch_job.is_running() {
+                    crate::data::start_launch_read(self);
+                }
+            }
+            Screen::Toolchain => {
+                if !self.toolchain.loaded && !self.toolchain_job.is_running() {
+                    crate::data::start_toolchain_read(self);
+                }
+            }
+            Screen::Character => {
+                if !self.character.loaded && !self.character_job.is_running() {
+                    crate::data::start_character_read(self);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Launch the game through Steam with the current addon folder. This is an
+    /// app action behind the launch dialog, never an agent tool.
+    pub fn launch_modded(&mut self) {
+        self.launch_dialog = false;
+        if rune::is_headless() {
+            self.status =
+                "Headless run: the launch request was not sent to Steam.".to_string();
+            return;
+        }
+        let spawn = |program: &str, args: &[&str]| {
+            std::process::Command::new(program)
+                .args(args)
+                .spawn()
+                .map(|_| ())
+                .map_err(|error| error.to_string())
+        };
+        let target = "steam://rungameid/1422450";
+        #[cfg(target_os = "macos")]
+        let opened = spawn("open", &[target]);
+        #[cfg(target_os = "windows")]
+        let opened = spawn("cmd", &["/C", "start", "", target]);
+        #[cfg(all(unix, not(target_os = "macos")))]
+        let opened = spawn("xdg-open", &[target]);
+        match opened {
+            Ok(()) => {
+                self.status = format!(
+                    "Asked Steam to launch Deadlock with {} addon{} enabled. The app wrote nothing.",
+                    self.addons.enabled_count(),
+                    if self.addons.enabled_count() == 1 {
+                        ""
+                    } else {
+                        "s"
+                    }
+                )
+            }
+            Err(error) => self.status = format!("Steam could not be opened: {error}"),
+        }
     }
 
     /// Start the Rust host for the real scenes and the window. Demo scenes get a labelled
@@ -165,6 +358,12 @@ impl State {
     pub fn start_host(&mut self) {
         if self.demo {
             self.agent = AgentLink::demo();
+            return;
+        }
+        // A headless render must not spawn the sidecar: its state would depend on
+        // a local binary and the snapshot would not be reproducible.
+        if rune::is_headless() {
+            self.agent = AgentLink::disconnected();
             return;
         }
         let waker = self.wake.clone();
@@ -262,7 +461,7 @@ impl State {
         }
         if self.agent.status == AgentStatus::Paused || self.agent.pause.is_some() {
             self.status =
-                "Resolve the paused tool call first: approve or deny it in the workbench."
+                "Resolve the paused tool call first: approve or deny it on the Agent screen."
                     .to_string();
             return;
         }
@@ -685,7 +884,7 @@ impl State {
                             self.agent.status = AgentStatus::Paused;
                             self.mark_paused_tool(&pause);
                             self.status = format!(
-                                "Paused on {}. Approve or deny the payload in the workbench.",
+                                "Paused on {}. Approve or deny the payload on the Agent screen.",
                                 pause.tool_name
                             );
                         } else {
@@ -805,15 +1004,26 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
     let u = Ui::new();
     cx.foreground(u.ink);
     let body = match s.screen {
-        Screen::Workbench => screens::workbench::view(s, &u),
+        Screen::Installed => screens::installed::view(s, &u),
+        Screen::Browse => screens::browse::view(s, &u),
+        Screen::Conflicts => screens::conflicts::view(s, &u),
+        Screen::Updates => screens::updates::view(s, &u),
+        Screen::Profiles => screens::profiles::view(s, &u),
+        Screen::Autoexec => screens::autoexec::view(s, &u),
+        Screen::Stats => screens::stats::view(s, &u),
+        Screen::Locker => screens::locker::view(s, &u),
+        Screen::Launch => screens::launch::view(s, &u),
+        Screen::Agent => screens::workbench::view(s, &u),
         Screen::Projects => screens::projects::view(s, &u),
         Screen::Index => screens::index::view(s, &u),
         Screen::Patches => screens::patches::view(s, &u),
         Screen::Impact => screens::impact::view(s, &u),
         Screen::Release => screens::release::view(s, &u),
+        Screen::Toolchain => screens::toolchain::view(s, &u),
+        Screen::Character => screens::character::view(s, &u),
         Screen::Settings => screens::settings::view(s, &u),
     };
-    row()
+    let mut root = row()
         .key("root")
         .w_full()
         .h_full()
@@ -828,164 +1038,185 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
                 .child(header(s, &u))
                 .child(body)
                 .child(status_bar(s, &u)),
-        )
+        );
+    if s.launch_dialog {
+        root = root.child(u.modal_layer("launch-run-modal", launch_layer(s, &u)));
+    }
+    for (key, layer) in [
+        ("browse-modal", screens::browse::dialog(s, &u)),
+        ("profiles-modal", screens::profiles::dialog(s, &u)),
+        ("autoexec-modal", screens::autoexec::dialog(s, &u)),
+        ("launch-modal", screens::launch::dialog(s, &u)),
+        ("toolchain-modal", screens::toolchain::dialog(s, &u)),
+    ] {
+        if let Some(layer) = layer {
+            root = root.child(u.modal_layer(key, layer));
+        }
+    }
+    if s.screen == Screen::Release
+        && let Some(layer) = screens::release::dialog(s, &u)
+    {
+        root = root.child(layer);
+    }
+    root
 }
 
 fn sidebar(s: &State, u: &Ui) -> El {
-    let project = s.project();
-    let mut nav = col().key("nav").grow(1.0).min_h(0.0).px(10.0).gap(2.0);
-    nav = nav
-        .child(section_gap(u, "WORKBENCH", 14.0))
-        .child(nav_item(s, u, Screen::Workbench))
-        .child(nav_item(s, u, Screen::Projects))
-        .child(nav_item(s, u, Screen::Index))
-        .child(nav_item(s, u, Screen::Patches))
-        .child(nav_item(s, u, Screen::Impact))
-        .child(nav_item(s, u, Screen::Release))
-        .child(el().h(10.0))
-        .child(section_gap(u, "SYSTEM", 14.0))
-        .child(nav_item(s, u, Screen::Settings));
+    let mut library = col().w_full().gap(1.0);
+    for screen in [
+        Screen::Installed,
+        Screen::Browse,
+        Screen::Conflicts,
+        Screen::Updates,
+    ] {
+        library = library.child(nav_item(s, u, screen));
+    }
 
-    let workspace = match project {
-        Some(p) => {
-            let tone = match p.state {
-                ProjectState::Ready => Tone::Ok,
-                ProjectState::Attention => Tone::Warn,
-                ProjectState::Draft => Tone::Quiet,
-            };
-            col()
-                .key("workspace-card")
-                .mx(12.0)
-                .mb(10.0)
-                .padding(10.0)
-                .gap(5.0)
-                .radius(8.0)
-                .fill(Color::WHITE.alpha(0.03))
-                .border(1.0, u.hair)
-                .child(
-                    row()
-                        .w_full()
-                        .gap(7.0)
-                        .center_y()
-                        .child(u.dot(tone))
-                        .child(
-                            text(p.name.clone())
-                                .font(BODY_MED)
-                                .color(u.ink)
-                                .grow(1.0)
-                                .truncate(),
-                        )
-                        .child(u.chip(&format!("{:02}", p.slot), u.accent, u.accent.alpha(0.13))),
-                )
-                .child(
-                    text(p.summary.clone())
-                        .font(SMALL)
-                        .color(u.faint)
-                        .max_lines(2)
-                        .wrap(),
-                )
-        }
-        None => col()
-            .key("workspace-card")
-            .mx(12.0)
-            .mb(10.0)
-            .padding(10.0)
-            .gap(5.0)
-            .radius(8.0)
-            .fill(Color::WHITE.alpha(0.025))
-            .border(1.0, u.hair)
-            .child(
-                row()
-                    .w_full()
-                    .gap(7.0)
-                    .center_y()
-                    .child(u.dot(Tone::Quiet))
-                    .child(
-                        text("No project open")
-                            .font(BODY_MED)
-                            .color(u.muted)
-                            .grow(1.0),
-                    ),
-            )
-            .child(
-                text("Open a project to scope the session.")
-                    .font(SMALL)
-                    .color(u.faint),
-            ),
+    let mut modding = col().w_full().gap(1.0);
+    for screen in [
+        Screen::Profiles,
+        Screen::Autoexec,
+        Screen::Stats,
+        Screen::Locker,
+        Screen::Launch,
+    ] {
+        modding = modding.child(nav_item(s, u, screen));
+    }
+
+    let mut workbench = col().w_full().gap(1.0);
+    for screen in [
+        Screen::Agent,
+        Screen::Projects,
+        Screen::Index,
+        Screen::Patches,
+        Screen::Impact,
+        Screen::Release,
+    ] {
+        workbench = workbench.child(nav_item(s, u, screen));
+    }
+
+    let mut foundry = col().w_full().gap(1.0);
+    for screen in [Screen::Toolchain, Screen::Character] {
+        foundry = foundry.child(nav_item(s, u, screen));
+    }
+
+    let project_line = match s.project() {
+        Some(project) => project.name.clone(),
+        None => "No project open".to_string(),
     };
-
+    let project_tone = match s.project().map(|project| project.state) {
+        Some(ProjectState::Ready) => Tone::Ok,
+        Some(ProjectState::Attention) => Tone::Warn,
+        Some(ProjectState::Draft) | None => Tone::Quiet,
+    };
     let provider_label = match s.provider() {
-        Some(p) => p.name.clone(),
+        Some(provider) => provider.name.clone(),
         None => "No provider".to_string(),
     };
 
-    let footer_tone = s.game_tone();
     col()
         .key("sidebar")
         .w(SIDEBAR_W)
         .h_full()
         .fill(u.sidebar)
         .border_sides([0.0, 1.0, 0.0, 0.0], u.hair)
-        .pt(26.0)
+        .pt(24.0)
         .child(
             row()
                 .key("brand")
                 .h(38.0)
-                .px(15.0)
+                .px(16.0)
                 .gap(9.0)
                 .center_y()
-                .child(u.glyph_box("◆", Tone::Accent, 27.0))
+                .child(u.glyph_box("◆", Tone::Accent, 26.0))
                 .child(
                     col()
                         .gap(0.0)
                         .child(text("DEADLOCK").font(H2).color(u.ink))
-                        .child(text("Modding Workbench").font(LABEL).color(u.faint)),
+                        .child(text("MOD MANAGER").font(LABEL).color(u.faint)),
                 ),
         )
-        .child(workspace)
-        .child(nav)
+        .child(
+            col()
+                .key("sidebar-status")
+                .w_full()
+                .px(16.0)
+                .pt(12.0)
+                .pb(10.0)
+                .gap(4.0)
+                .child(
+                    row()
+                        .w_full()
+                        .gap(7.0)
+                        .center_y()
+                        .child(u.dot(project_tone))
+                        .child(
+                            text(project_line)
+                                .font(SMALL)
+                                .color(u.muted)
+                                .grow(1.0)
+                                .truncate(),
+                        ),
+                )
+                .child(
+                    row()
+                        .w_full()
+                        .gap(7.0)
+                        .center_y()
+                        .child(u.dot(s.game_tone()))
+                        .child(
+                            text(s.game_label.clone())
+                                .font(LABEL)
+                                .color(u.faint)
+                                .grow(1.0)
+                                .truncate(),
+                        ),
+                ),
+        )
+        .child(u.divider())
+        .child(
+            col()
+                .key("nav")
+                .grow(1.0)
+                .min_h(0.0)
+                .px(10.0)
+                .gap(1.0)
+                .child(section_gap(u, "LIBRARY", 6.0))
+                .child(library)
+                .child(el().h(12.0))
+                .child(section_gap(u, "MODDING", 6.0))
+                .child(modding)
+                .child(el().h(12.0))
+                .child(section_gap(u, "WORKBENCH", 6.0))
+                .child(workbench)
+                .child(el().h(12.0))
+                .child(section_gap(u, "FOUNDRY", 6.0))
+                .child(foundry),
+        )
         .child(
             col()
                 .key("sidebar-foot")
-                .px(14.0)
+                .w_full()
+                .px(10.0)
                 .pb(12.0)
-                .gap(7.0)
-                .child(u.divider())
+                .gap(4.0)
+                .child(u.divider().mb(6.0))
+                .child(launch_item(s, u))
+                .child(nav_item(s, u, Screen::Settings))
                 .child(
                     row()
                         .w_full()
-                        .gap(7.0)
-                        .center_y()
-                        .child(u.dot(footer_tone))
-                        .child(
-                            text(s.game_label.clone())
-                                .font(SMALL)
-                                .color(u.muted)
-                                .grow(1.0)
-                                .truncate(),
-                        ),
-                )
-                .child(
-                    row()
-                        .w_full()
-                        .gap(7.0)
-                        .center_y()
-                        .child(u.dot(s.provider_tone()))
-                        .child(
-                            text(provider_label)
-                                .font(SMALL)
-                                .color(u.muted)
-                                .grow(1.0)
-                                .truncate(),
-                        ),
-                )
-                .child(
-                    row()
-                        .w_full()
+                        .px(9.0)
+                        .pt(8.0)
                         .gap(6.0)
                         .center_y()
-                        .child(text("dah-desktop 0.0.0").font(LABEL).color(u.faint))
-                        .child(spacer())
+                        .child(
+                            text(provider_label)
+                                .font(LABEL)
+                                .color(u.faint)
+                                .grow(1.0)
+                                .truncate(),
+                        )
                         .child(text("RUST · RUNE").font(LABEL).color(u.faint)),
                 ),
         )
@@ -1002,15 +1233,16 @@ fn section_gap(u: &Ui, label: &str, bottom: f32) -> El {
 
 fn nav_item(s: &State, u: &Ui, screen: Screen) -> El {
     let on = s.screen == screen;
+    let count = nav_count(s, screen);
     let mut r = row()
         .key(format!("nav-{}", screen.key()))
-        .h(33.0)
+        .h(32.0)
         .px(9.0)
         .gap(9.0)
         .center_y()
         .radius(6.0)
         .fill(if on {
-            u.accent.alpha(0.10)
+            u.accent.alpha(0.09)
         } else {
             Color::TRANSPARENT
         })
@@ -1018,96 +1250,220 @@ fn nav_item(s: &State, u: &Ui, screen: Screen) -> El {
         .press(Color::WHITE.alpha(0.055))
         .focusable(true)
         .role("tab")
-        .label(screen.title())
+        .label(format!("{} ({})", screen.title(), screen.shortcut()))
         .checked(on)
         .motion(motion::SNAPPY)
-        .on_press(move |st: &mut State| {
-            st.screen = screen;
-            st.status.clear();
-        });
+        .on_press(move |st: &mut State| st.go(screen));
     if on {
         r = r.child(
             el().w(2.0)
-                .h(17.0)
+                .h(16.0)
                 .radius(1.0)
                 .fill(u.accent)
                 .absolute(0.0, 8.0)
                 .a11y_hidden(),
         );
     }
-    r.child(
-        text(screen.glyph())
-            .font(BODY)
-            .w(17.0)
-            .color(if on { u.accent } else { u.faint })
-            .a11y_hidden(),
-    )
-    .child(
-        text(screen.title())
-            .font(if on { BODY_MED } else { BODY })
-            .color(if on { u.ink } else { u.muted })
-            .grow(1.0),
-    )
-    .child(text(screen.shortcut()).font(LABEL).color(if on {
-        u.accent.alpha(0.85)
-    } else {
-        u.faint
-    }))
+    r = r
+        .child(
+            text(screen.glyph())
+                .font(BODY)
+                .w(16.0)
+                .color(if on { u.accent } else { u.faint })
+                .a11y_hidden(),
+        )
+        .child(
+            text(screen.title())
+                .font(if on { BODY_MED } else { BODY })
+                .color(if on { u.ink } else { u.muted })
+                .grow(1.0)
+                .truncate(),
+        );
+    let shortcut = screen.shortcut();
+    match count {
+        Some((label, tone)) => r.child(text(label).font(LABEL).color(tone.fg(u))),
+        None if shortcut.is_empty() => r,
+        None => r.child(text(shortcut).font(LABEL).color(if on {
+            u.accent.alpha(0.85)
+        } else {
+            u.faint
+        })),
+    }
+}
+
+/// A live count for the library items. `None` means the scan has not run, so
+/// the shortcut is shown instead of a number the shell does not have.
+fn nav_count(s: &State, screen: Screen) -> Option<(String, Tone)> {
+    match screen {
+        Screen::Installed if s.addons.scanned && s.addons.error.is_none() => Some((
+            s.addons.addons.len().to_string(),
+            if s.addons.addons.is_empty() {
+                Tone::Quiet
+            } else {
+                Tone::Accent
+            },
+        )),
+        Screen::Conflicts if s.addons.scanned && s.addons.error.is_none() => {
+            let count = s.addons.conflicts.len();
+            Some((
+                count.to_string(),
+                if count > 0 { Tone::Warn } else { Tone::Quiet },
+            ))
+        }
+        Screen::Updates if s.release.review.is_some() => {
+            let count = s
+                .release
+                .review
+                .as_ref()
+                .map(|queue| queue.review_count())
+                .unwrap_or(0);
+            Some((
+                count.to_string(),
+                if count > 0 { Tone::Warn } else { Tone::Quiet },
+            ))
+        }
+        _ => None,
+    }
+}
+
+fn launch_item(s: &State, u: &Ui) -> El {
+    row()
+        .key("launch-modded")
+        .h(36.0)
+        .px(9.0)
+        .gap(9.0)
+        .center_y()
+        .radius(6.0)
+        .fill(u.accent.alpha(0.08))
+        .border(1.0, u.accent.alpha(0.16))
+        .hover(u.accent.alpha(0.14))
+        .press(u.accent.alpha(0.20))
+        .press_scale(0.985)
+        .focusable(true)
+        .role("button")
+        .label("Launch Modded")
+        .motion(motion::SNAPPY)
+        .on_press(|st: &mut State| st.launch_dialog = true)
+        .child(
+            text("▶")
+                .font(BODY)
+                .w(16.0)
+                .color(u.accent)
+                .a11y_hidden(),
+        )
+        .child(
+            text("Launch Modded")
+                .font(BODY_MED)
+                .color(u.ink)
+                .grow(1.0),
+        )
+        .child(if s.game_detected {
+            text("STEAM").font(LABEL).color(u.accent.alpha(0.75))
+        } else {
+            text("NO GAME").font(LABEL).color(u.faint)
+        })
 }
 
 fn header(s: &State, u: &Ui) -> El {
-    let mut chips = row().gap(7.0).center_y();
+    let mut chips = row().gap(8.0).center_y();
     if s.demo {
         chips = chips.child(u.chip("DEMO DATA", u.accent_ink, u.accent));
     }
     if s.agent.pause.is_some() {
         chips = chips.child(u.status_chip("approval paused", Tone::Warn));
     }
-    chips = chips
-        .child(u.status_chip(
-            if s.game_detected {
-                "citadel found"
-            } else {
-                "no game install"
-            },
-            s.game_tone(),
-        ))
-        .child(u.status_chip(
+    chips = chips.child(
+        row()
+            .gap(6.0)
+            .center_y()
+            .child(u.dot(s.game_tone()))
+            .child(
+                text(if s.game_detected {
+                    s.game_label.clone()
+                } else {
+                    "No game install".to_string()
+                })
+                .font(SMALL)
+                .color(u.muted)
+                .max_w(230.0)
+                .truncate(),
+            ),
+    );
+    if !s.screen.is_library() {
+        chips = chips.child(u.status_chip(
             if s.provider_ready() {
                 "provider ready"
             } else {
                 "no provider"
             },
             s.provider_tone(),
-        ))
-        .child(u.chip("LOCAL ONLY", u.faint, Color::WHITE.alpha(0.035)));
+        ));
+    }
 
-    row()
+    let mut bar = row()
         .key("header")
         .w_full()
         .h(HEADER_H)
         .px(22.0)
-        .gap(9.0)
+        .gap(12.0)
         .center_y()
         .fill(u.bg)
         .border_sides([0.0, 0.0, 1.0, 0.0], u.hair)
         .window_drag()
         .child(text(s.screen.title()).font(H2).color(u.ink))
-        .child(text("/").font(SMALL).color(u.faint).a11y_hidden())
         .child(
             text(s.screen.subtitle())
                 .font(SMALL)
                 .color(u.faint)
                 .grow(1.0)
                 .truncate(),
-        )
-        .child(chips)
+        );
+    if s.screen.searches() {
+        bar = bar.child(search(s, u));
+    }
+    bar.child(chips)
+}
+
+fn search(s: &State, u: &Ui) -> El {
+    let field = match s.screen {
+        Screen::Installed => rune::text_input(&s.installed_query, SMALL)
+            .key("search-installed")
+            .label("Search installed addons")
+            .single_line()
+            .color(u.ink)
+            .placeholder("Search installed", u.faint)
+            .caret(u.accent, u.accent.alpha(0.20))
+            .on_edit(|st: &mut State| &mut st.installed_query),
+        Screen::Browse => rune::text_input(&s.browse_query, SMALL)
+            .key("search-browse")
+            .label("Filter this GameBanana page")
+            .single_line()
+            .color(u.ink)
+            .placeholder("Filter this page", u.faint)
+            .caret(u.accent, u.accent.alpha(0.20))
+            .on_edit(|st: &mut State| &mut st.browse_query),
+        _ => rune::text_input(&s.conflicts_query, SMALL)
+            .key("search-conflicts")
+            .label("Search conflicting paths")
+            .single_line()
+            .color(u.ink)
+            .placeholder("Search paths", u.faint)
+            .caret(u.accent, u.accent.alpha(0.20))
+            .on_edit(|st: &mut State| &mut st.conflicts_query),
+    };
+    u.search_shell(field)
 }
 
 fn status_bar(s: &State, u: &Ui) -> El {
+    let lower = s.status.to_lowercase();
     let tone = if s.status.is_empty() {
         Tone::Quiet
-    } else if s.status.contains("not ") || s.status.contains("No ") || s.status.contains("blocked")
+    } else if lower.contains("not ")
+        || lower.contains("no ")
+        || lower.contains("blocked")
+        || lower.contains("failed")
+        || lower.contains("error")
+        || lower.contains("could not")
     {
         Tone::Warn
     } else {
@@ -1139,16 +1495,234 @@ fn status_bar(s: &State, u: &Ui) -> El {
         .child(text("NO TELEMETRY").font(LABEL).color(u.faint))
 }
 
-/// Start the agent host once, after Rune has applied the selected scene.
+/// The launch approval. Opening Steam is the only thing it does; the app never
+/// renames or copies an addon here.
+fn launch_layer(s: &State, u: &Ui) -> El {
+    let addons = if !s.addons.scanned {
+        "The addon folder has not been read yet.".to_string()
+    } else if s.addons.addons.is_empty() {
+        "No addon files were found. The game launches with its own assets.".to_string()
+    } else {
+        format!(
+            "{} addon{} in the folder, {} enabled.",
+            s.addons.addons.len(),
+            if s.addons.addons.len() == 1 { "" } else { "s" },
+            s.addons.enabled_count()
+        )
+    };
+    let body = col()
+        .w_full()
+        .gap(16.0)
+        .child(
+            row()
+                .w_full()
+                .gap(12.0)
+                .items_start()
+                .child(
+                    col()
+                        .grow(1.0)
+                        .gap(6.0)
+                        .child(u.eyebrow("APP ACTION · STEAM"))
+                        .child(text("Launch Deadlock").font(H2).color(u.ink))
+                        .child(
+                            text("Steam starts the game with the addon folder as it sits on disk. Nothing is copied, renamed or repaired.")
+                                .font(SMALL)
+                                .color(u.muted)
+                                .wrap(),
+                        ),
+                )
+                .child(u.glyph_box("▶", Tone::Accent, 38.0)),
+        )
+        .child(u.divider())
+        .child(u.kv("Game", &s.paths.game, u.ink))
+        .child(u.kv("Addons", &addons, u.muted))
+        .child(u.kv(
+            "gameinfo.gi",
+            if s.game_label.contains("addons missing") {
+                "the addons folder is missing from the install"
+            } else {
+                "read by the game only when SearchPaths lists citadel/addons"
+            },
+            u.faint,
+        ))
+        .child(
+            row()
+                .w_full()
+                .gap(9.0)
+                .child(
+                    u.action("Cancel", ActionKind::Ghost)
+                        .grow(1.0)
+                        .on_press(|st: &mut State| st.launch_dialog = false),
+                )
+                .child(
+                    u.action("Launch through Steam", ActionKind::Primary)
+                        .grow(1.0)
+                        .on_press(|st: &mut State| st.launch_modded()),
+                ),
+        );
+    let frame = u
+        .dialog_shell()
+        .key("launch-dialog")
+        .role("dialog")
+        .label("Launch Deadlock through Steam")
+        .w(480.0)
+        .padding(1.0)
+        .modal(true, |st: &mut State| st.launch_dialog = false)
+        .on_key(|st: &mut State, ev: &KeyEvent, _| {
+            if ev.key == Key::Escape {
+                st.launch_dialog = false;
+                true
+            } else {
+                false
+            }
+        })
+        .child(u.dialog_core().w_full().padding(24.0).child(body));
+    el().key("launch-modal")
+        .absolute(0.0, 0.0)
+        .w_full()
+        .h_full()
+        .child(
+            el().absolute(0.0, 0.0)
+                .w_full()
+                .h_full()
+                .fill(Color::BLACK.alpha(0.68))
+                .a11y_hidden(),
+        )
+        .child(
+            el().absolute(0.0, 0.0)
+                .w_full()
+                .h_full()
+                .padding(34.0)
+                .center()
+                .child(frame),
+        )
+}
+
+/// Start the agent host and the library readers once, after Rune has applied
+/// the selected scene.
 pub fn setup(s: &mut State, waker: Waker) {
-    s.wake = Some(waker);
+    s.wake = Some(waker.clone());
+    s.images = Some(ImageCache::new(waker));
+    preload_thumbnails(s);
     s.start_host();
+    if s.demo || rune::is_headless() {
+        return;
+    }
+    if !s.addons.scanned {
+        crate::data::start_addon_scan(s);
+    }
+    if s.screen == Screen::Browse && s.browse.page.is_none() {
+        crate::data::start_browse_fetch(s, 1);
+    }
+    if s.screen == Screen::Updates && s.release.review.is_none() {
+        crate::data::start_review_scan(s);
+    }
+}
+
+/// A headless scene fetches thumbnails before `setup` because there is no
+/// window to wake. Decode is still on Rune's worker, and `wait` makes the
+/// fixture deterministic.
+fn preload_thumbnails(s: &mut State) {
+    let pending = std::mem::take(&mut s.pending_thumbs);
+    let Some(cache) = s.images.as_ref() else {
+        return;
+    };
+    for (url, bytes) in pending {
+        let image = cache.load(bytes);
+        if rune::is_headless() {
+            let _ = image.wait();
+        }
+        s.thumbnails.insert(url, image.pixels().clone());
+    }
 }
 
 pub fn poll(s: &mut State, t: f64, _tx: &mut Tx) -> bool {
     let mut changed = false;
     while let Some(event) = s.agent.try_event() {
         s.apply_agent_event(event);
+        changed = true;
+    }
+    if let Some(result) = s.addon_job.try_take() {
+        match result {
+            Ok(library) => crate::data::apply_addon_library(s, library),
+            Err(error) => {
+                s.addons.scanned = true;
+                s.addons.error = Some(error.clone());
+                s.status = error;
+            }
+        }
+        changed = true;
+    }
+    if let Some(result) = s.browse_job.try_take() {
+        crate::data::apply_browse_page(s, result);
+        changed = true;
+    }
+    if let Some(result) = s.install_job.try_take() {
+        crate::data::apply_install_outcome(
+            s,
+            result.unwrap_or(crate::screens::browse::InstallOutcome {
+                plan: None,
+                applied: None,
+                error: Some("The install worker stopped before reporting.".to_string()),
+            }),
+        );
+        changed = true;
+    }
+    if crate::data::drain_thumbnails(s) {
+        changed = true;
+    }
+    if let Some(result) = s.review_job.try_take() {
+        crate::data::apply_review_queue(s, result);
+        changed = true;
+    }
+    if let Some(result) = s.profiles_job.try_take() {
+        crate::data::apply_profile_list(s, result);
+        changed = true;
+    }
+    if let Some(result) = s.autoexec_job.try_take() {
+        crate::data::apply_autoexec(s, result);
+        changed = true;
+    }
+    if let Some(result) = s.stats_job.try_take() {
+        crate::data::apply_stats(s, result);
+        changed = true;
+    }
+    if let Some(result) = s.demo_job.try_take() {
+        crate::data::apply_demo_list(s, result);
+        changed = true;
+    }
+    if let Some(result) = s.locker_job.try_take() {
+        crate::data::apply_locker(s, result);
+        changed = true;
+    }
+    if let Some(result) = s.launch_job.try_take() {
+        crate::data::apply_launch(s, result);
+        changed = true;
+    }
+    if let Some(result) = s.toolchain_job.try_take() {
+        crate::data::apply_toolchain(s, result);
+        changed = true;
+    }
+    if let Some(result) = s.character_job.try_take() {
+        crate::data::apply_character(s, result);
+        changed = true;
+    }
+    if let Some(outcome) = s.publish_job.try_outcome() {
+        let ok = outcome.ok;
+        s.status = outcome.summary();
+        if ok {
+            crate::data::refresh_upload(s);
+            if let Some(upload) = &s.release.upload {
+                s.status
+                    .push_str(&format!(" · state {}", upload.state_label()));
+                if let Some(url) = &upload.submission_url {
+                    s.status.push_str(&format!(" · {url}"));
+                }
+            } else {
+                s.status
+                    .push_str(" · no upload.json was written, so the state is unchanged");
+            }
+        }
         changed = true;
     }
     if let Some(start) = s.run_started {
@@ -1160,7 +1734,7 @@ pub fn poll(s: &mut State, t: f64, _tx: &mut Tx) -> bool {
     }
     let running = s.agent.status == AgentStatus::Running
         || s.tools.iter().any(|r| r.state == model::RunState::Running);
-    if s.screen == Screen::Workbench && running {
+    if s.screen == Screen::Agent && running {
         s.pulse = ((t * std::f64::consts::TAU * 0.75).sin() * 0.5 + 0.5) as f32;
         changed = true;
     }
@@ -1179,8 +1753,7 @@ pub fn on_key(s: &mut State, ev: &KeyEvent, tx: &mut Tx) -> bool {
     if let Key::Command(c) = ev.key
         && let Some(screen) = Screen::from_command(c)
     {
-        s.screen = screen;
-        s.status.clear();
+        s.go(screen);
         return true;
     }
     // Rune's `run` has no close hook. Take the quit chords it does deliver here, send the host
@@ -1199,9 +1772,120 @@ pub fn on_key(s: &mut State, ev: &KeyEvent, tx: &mut Tx) -> bool {
     false
 }
 
-pub fn scene_workbench(s: &mut State) {
+// Headless scenes read synchronously before the first frame so a snapshot is
+// deterministic. A live scene lets `setup` start the same read on a worker.
+pub fn scene_installed(s: &mut State) {
+    s.screen = Screen::Installed;
+    if rune::is_headless() {
+        crate::data::scan_addons_now(s);
+    }
+}
+
+pub fn scene_browse(s: &mut State) {
+    s.screen = Screen::Browse;
+    if rune::is_headless() {
+        crate::data::browse_now(s, 1);
+    }
+}
+
+pub fn scene_install(s: &mut State) {
+    s.screen = Screen::Browse;
+    if rune::is_headless() {
+        crate::data::browse_now(s, 1);
+        if let Some(page) = &s.browse.page
+            && let Some(first) = page.mods.first()
+        {
+            s.install = screens::browse::InstallView::for_mod(first.id, &first.name);
+        }
+    }
+}
+
+pub fn scene_conflicts(s: &mut State) {
+    s.screen = Screen::Conflicts;
+    if rune::is_headless() {
+        crate::data::scan_addons_now(s);
+    }
+}
+
+pub fn scene_updates(s: &mut State) {
+    s.screen = Screen::Updates;
+    if rune::is_headless() {
+        crate::data::review_now(s);
+    }
+}
+
+pub fn scene_profiles(s: &mut State) {
+    s.screen = Screen::Profiles;
+    if rune::is_headless() {
+        crate::data::scan_addons_now(s);
+        crate::data::profiles_now(s);
+        crate::data::load_autoexec_now(s);
+    }
+}
+
+pub fn scene_autoexec(s: &mut State) {
+    s.screen = Screen::Autoexec;
+    if rune::is_headless() {
+        crate::data::load_autoexec_now(s);
+    }
+}
+
+pub fn scene_stats(s: &mut State) {
+    s.screen = Screen::Stats;
+    if rune::is_headless() {
+        crate::data::demos_now(s);
+        crate::data::stats_now(s);
+    }
+}
+
+pub fn scene_locker(s: &mut State) {
+    s.screen = Screen::Locker;
+    if rune::is_headless() {
+        crate::data::locker_now(s);
+    }
+}
+
+pub fn scene_launch(s: &mut State) {
+    s.screen = Screen::Launch;
+    if rune::is_headless() {
+        crate::data::launch_now(s);
+    }
+}
+
+pub fn scene_toolchain(s: &mut State) {
+    s.screen = Screen::Toolchain;
+    crate::data::toolchain_now(s);
+}
+
+pub fn scene_character(s: &mut State) {
+    s.screen = Screen::Character;
+    if rune::is_headless() {
+        crate::data::character_now(s);
+    }
+}
+
+pub fn scene_agent(s: &mut State) {
+    s.screen = Screen::Agent;
+}
+
+pub fn scene_demo_agent(s: &mut State) {
     s.load_demo();
-    s.screen = Screen::Workbench;
+    s.screen = Screen::Agent;
+}
+
+pub fn scene_demo_installed(s: &mut State) {
+    s.load_demo();
+    s.screen = Screen::Installed;
+}
+
+pub fn scene_demo_conflicts(s: &mut State) {
+    s.load_demo();
+    s.screen = Screen::Conflicts;
+}
+
+pub fn scene_demo_updates(s: &mut State) {
+    s.load_demo();
+    s.screen = Screen::Updates;
 }
 
 pub fn scene_projects(s: &mut State) {
@@ -1226,15 +1910,41 @@ pub fn scene_impact(s: &mut State) {
 
 pub fn scene_release(s: &mut State) {
     s.load_demo();
+    s.release = model::demo_release_state();
+    s.release_dialog = ReleaseDialog::None;
+    s.screen = Screen::Release;
+}
+
+pub fn scene_release_verified(s: &mut State) {
+    s.load_demo();
+    s.release = model::demo_release_verified_state();
+    s.release_dialog = ReleaseDialog::None;
+    s.screen = Screen::Release;
+}
+
+pub fn scene_release_approval(s: &mut State) {
+    s.load_demo();
+    s.release = model::demo_release_state();
+    s.release_dialog = ReleaseDialog::ApproveUpload;
+    s.screen = Screen::Release;
+}
+
+pub fn scene_release_confirm(s: &mut State) {
+    s.load_demo();
+    s.release = model::demo_release_verified_state();
+    s.confirm_url = TextEdit::new("https://gamebanana.com/mods/512480");
+    s.release_dialog = ReleaseDialog::ConfirmUrl;
     s.screen = Screen::Release;
 }
 
 pub fn scene_local_release(s: &mut State) {
     let agent = std::mem::replace(&mut s.agent, AgentLink::disconnected());
     let wake = s.wake.take();
+    let images = s.images.take();
     *s = crate::data::init_release_state();
     s.agent = agent;
     s.wake = wake;
+    s.images = images;
 }
 
 pub fn scene_settings(s: &mut State) {
@@ -1242,12 +1952,18 @@ pub fn scene_settings(s: &mut State) {
     s.screen = Screen::Settings;
 }
 
+pub fn scene_launch_approval(s: &mut State) {
+    s.load_demo();
+    s.screen = Screen::Installed;
+    s.launch_dialog = true;
+}
+
 pub fn scene_empty(s: &mut State) {
     s.load_empty();
 }
 
-pub fn scene_local_workbench(s: &mut State) {
-    s.screen = Screen::Workbench;
+pub fn scene_local_agent(s: &mut State) {
+    s.screen = Screen::Agent;
 }
 
 pub fn scene_local_projects(s: &mut State) {
@@ -1260,15 +1976,35 @@ pub fn scene_local_patches(s: &mut State) {
 
 pub fn scenes() -> &'static [(&'static str, fn(&mut State))] {
     &[
-        ("workbench", scene_workbench),
+        ("installed", scene_installed),
+        ("browse", scene_browse),
+        ("install", scene_install),
+        ("conflicts", scene_conflicts),
+        ("updates", scene_updates),
+        ("profiles", scene_profiles),
+        ("autoexec", scene_autoexec),
+        ("stats", scene_stats),
+        ("locker", scene_locker),
+        ("launch", scene_launch),
+        ("toolchain", scene_toolchain),
+        ("character", scene_character),
+        ("agent", scene_agent),
+        ("demo-agent", scene_demo_agent),
+        ("demo-installed", scene_demo_installed),
+        ("demo-conflicts", scene_demo_conflicts),
+        ("demo-updates", scene_demo_updates),
         ("projects", scene_projects),
         ("index", scene_index),
         ("patches", scene_patches),
         ("impact", scene_impact),
         ("release", scene_release),
+        ("release-verified", scene_release_verified),
+        ("release-approval", scene_release_approval),
+        ("release-confirm", scene_release_confirm),
         ("settings", scene_settings),
+        ("launch-approval", scene_launch_approval),
         ("empty", scene_empty),
-        ("local", scene_local_workbench),
+        ("local", scene_local_agent),
         ("local-projects", scene_local_projects),
         ("local-patches", scene_local_patches),
         ("local-release", scene_local_release),

@@ -5,20 +5,23 @@
 //! verified state, rose for blocked state. Everything is built from `rune::oklch` so the
 //! palette stays perceptually even.
 
-use rune::tok::{self, Theme, motion};
-use rune::{Color, El, Family, TextStyle, col, el, oklch, row, rule, spacer, text};
+use rune::tok::motion;
+use rune::{Color, El, Family, Shadow, TextStyle, col, el, oklch, row, rule, spacer, text};
 
-use crate::model::Compat;
+use crate::model::{Compat, ToneKey};
 
-pub const SIDEBAR_W: f32 = 238.0;
+pub const SIDEBAR_W: f32 = 240.0;
 pub const RAIL_W: f32 = 304.0;
 pub const HEADER_H: f32 = 58.0;
 pub const STATUS_H: f32 = 27.0;
 
+pub const HERO: TextStyle = TextStyle::new(31.0, 640.0).lh(37.0);
 pub const DISPLAY: TextStyle = TextStyle::new(25.0, 640.0).lh(31.0);
 pub const H1: TextStyle = TextStyle::new(19.0, 600.0).lh(25.0);
 pub const H2: TextStyle = TextStyle::new(14.5, 590.0).lh(20.0);
+pub const LEAD: TextStyle = TextStyle::new(15.0, 440.0).lh(23.0);
 pub const BODY: TextStyle = TextStyle::new(13.0, 420.0).lh(20.0);
+pub const CHAT: TextStyle = TextStyle::new(14.0, 420.0).lh(23.0);
 pub const BODY_MED: TextStyle = TextStyle::new(13.0, 540.0).lh(20.0);
 pub const SMALL: TextStyle = TextStyle::new(11.5, 440.0).lh(17.0);
 pub const LABEL: TextStyle = TextStyle::new(10.0, 620.0).lh(13.0).tracking(0.55);
@@ -34,7 +37,6 @@ pub const NUM: TextStyle = TextStyle::new(18.0, 620.0).lh(22.0).features("'tnum'
 pub struct Ui {
     pub bg: Color,
     pub sidebar: Color,
-    pub panel: Color,
     pub well: Color,
     pub hair: Color,
     pub hair_strong: Color,
@@ -49,6 +51,12 @@ pub struct Ui {
     pub amber: Color,
     pub violet: Color,
     pub shadow: Color,
+    pub glass_top: Color,
+    pub glass_bottom: Color,
+    pub sheen: Color,
+    pub glow_cool: Color,
+    pub glow_warm: Color,
+    pub field: Color,
 }
 
 impl Default for Ui {
@@ -59,25 +67,29 @@ impl Default for Ui {
 
 impl Ui {
     pub fn new() -> Ui {
-        let t: Theme = tok::theme(true);
         Ui {
-            bg: oklch(0.168, 0.007, 265.0),
-            sidebar: oklch(0.138, 0.006, 265.0),
-            panel: t.card,
-            well: oklch(0.152, 0.006, 265.0),
-            hair: Color::WHITE.alpha(0.065),
+            bg: oklch(0.112, 0.008, 268.0),
+            sidebar: oklch(0.094, 0.007, 268.0),
+            well: oklch(0.138, 0.007, 266.0),
+            hair: Color::WHITE.alpha(0.062),
             hair_strong: Color::WHITE.alpha(0.11),
-            ink: oklch(0.955, 0.004, 80.0),
-            prose: oklch(0.86, 0.005, 80.0),
-            muted: oklch(0.68, 0.008, 260.0),
-            faint: oklch(0.50, 0.008, 260.0),
-            accent: oklch(0.80, 0.135, 76.0),
+            ink: oklch(0.962, 0.004, 80.0),
+            prose: oklch(0.875, 0.005, 80.0),
+            muted: oklch(0.70, 0.008, 260.0),
+            faint: oklch(0.515, 0.008, 260.0),
+            accent: oklch(0.805, 0.135, 76.0),
             accent_ink: oklch(0.19, 0.035, 70.0),
-            teal: oklch(0.74, 0.09, 190.0),
-            rose: oklch(0.68, 0.16, 22.0),
-            amber: oklch(0.82, 0.13, 72.0),
-            violet: oklch(0.72, 0.10, 300.0),
-            shadow: Color::BLACK.alpha(0.32),
+            teal: oklch(0.76, 0.095, 190.0),
+            rose: oklch(0.70, 0.155, 22.0),
+            amber: oklch(0.835, 0.13, 72.0),
+            violet: oklch(0.73, 0.10, 300.0),
+            shadow: Color::BLACK.alpha(0.42),
+            glass_top: Color::WHITE.alpha(0.055),
+            glass_bottom: Color::WHITE.alpha(0.018),
+            sheen: Color::WHITE.alpha(0.13),
+            glow_cool: oklch(0.52, 0.075, 258.0),
+            glow_warm: oklch(0.52, 0.09, 78.0),
+            field: oklch(0.07, 0.006, 268.0),
         }
     }
 
@@ -86,7 +98,184 @@ impl Ui {
     }
 
     pub fn panel(&self) -> El {
-        col().fill(self.panel).radius(10.0).border(1.0, self.hair)
+        col()
+            .fill(Color::WHITE.alpha(0.032))
+            .radius(14.0)
+            .border(1.0, Color::WHITE.alpha(0.055))
+            .box_shadow(Shadow {
+                y: 1.0,
+                blur: 0.0,
+                spread: 0.0,
+                color: Color::WHITE.alpha(0.045),
+                inset: true,
+                ..Shadow::default()
+            })
+    }
+
+    /// A radial glow field painted behind content. Mount it first inside a
+    /// full-height column so later children paint above it.
+    pub fn glow(&self, key: &str, center: [f32; 2], radius: (f32, f32), color: Color) -> El {
+        el().key(key)
+            .absolute(0.0, 0.0)
+            .w_full()
+            .h_full()
+            .radial_gradient(
+                center,
+                radius,
+                [
+                    (0.0, color.alpha(0.26)),
+                    (0.42, color.alpha(0.10)),
+                    (1.0, Color::TRANSPARENT),
+                ],
+            )
+            .a11y_hidden()
+    }
+
+    /// The outer shell of a double bezel: a hairline lit from above, a deep
+    /// translucent fill and one soft shadow.
+    pub fn glass_shell(&self) -> El {
+        col()
+            .fill(Color::WHITE.alpha(0.038))
+            .backdrop_blur(16.0)
+            .radius(22.0)
+            .border_gradient(1.0, self.sheen, Color::WHITE.alpha(0.025))
+            .shadow(26.0, 64.0, Color::BLACK.alpha(0.46))
+    }
+
+    /// The inner core of a double bezel, one radius step in.
+    pub fn glass_core(&self) -> El {
+        col()
+            .fill(Color::WHITE.alpha(0.021))
+            .gradient(self.glass_top, self.glass_bottom)
+            .radius(20.0)
+            .border(1.0, Color::WHITE.alpha(0.045))
+            .box_shadow(Shadow {
+                y: 1.0,
+                blur: 10.0,
+                spread: 0.0,
+                color: Color::BLACK.alpha(0.18),
+                inset: true,
+                ..Shadow::default()
+            })
+    }
+
+    /// A modal shell: the same double bezel, but opaque enough that the page
+    /// behind it never competes with the dialog copy.
+    pub fn dialog_shell(&self) -> El {
+        col()
+            .fill(self.bg)
+            .radius(22.0)
+            .border_gradient(1.0, self.sheen, Color::WHITE.alpha(0.03))
+            .shadow(34.0, 90.0, Color::BLACK.alpha(0.62))
+    }
+
+    pub fn dialog_core(&self) -> El {
+        col()
+            .fill(Color::WHITE.alpha(0.022))
+            .gradient(self.glass_top, self.glass_bottom)
+            .radius(20.0)
+            .border(1.0, Color::WHITE.alpha(0.05))
+            .box_shadow(Shadow {
+                y: 1.0,
+                blur: 12.0,
+                spread: 0.0,
+                color: Color::BLACK.alpha(0.22),
+                inset: true,
+                ..Shadow::default()
+            })
+    }
+
+    /// A full-window modal layer: scrim, a soft accent bloom and the dialog
+    /// centred over the shell. Mount it last on the root so it overlays.
+    pub fn modal_layer(&self, key: &str, inner: El) -> El {
+        let scrim = el()
+            .key(format!("{key}-scrim"))
+            .absolute(0.0, 0.0)
+            .w_full()
+            .h_full()
+            .fill(Color::BLACK.alpha(0.68))
+            .radial_gradient(
+                [0.5, 0.28],
+                [760.0, 520.0],
+                [(0.0, self.accent.alpha(0.055)), (1.0, Color::TRANSPARENT)],
+            )
+            .a11y_hidden();
+        el().key(key)
+            .absolute(0.0, 0.0)
+            .w_full()
+            .h_full()
+            .child(scrim)
+            .child(el().h_full().w_full().padding(34.0).center().child(inner))
+    }
+
+    /// A quiet inset field for a path, hash or prompt.
+    pub fn well_field(&self) -> El {
+        col()
+            .fill(self.field)
+            .radius(12.0)
+            .border(1.0, Color::WHITE.alpha(0.045))
+            .box_shadow(Shadow {
+                y: 1.0,
+                blur: 0.0,
+                spread: 0.0,
+                color: Color::WHITE.alpha(0.035),
+                inset: true,
+                ..Shadow::default()
+            })
+    }
+
+    /// A rounded action pill with a nested trailing glyph circle. Primary is
+    /// the one strongest action on a screen; cancel stays quiet.
+    pub fn pill(&self, label: &str, glyph: &str, kind: ActionKind) -> El {
+        let (fill, ink, border, badge) = match kind {
+            ActionKind::Primary => (
+                self.accent,
+                self.accent_ink,
+                Color::TRANSPARENT,
+                self.accent_ink.alpha(0.16),
+            ),
+            ActionKind::Secondary => (
+                Color::WHITE.alpha(0.055),
+                self.ink,
+                Color::WHITE.alpha(0.09),
+                Color::WHITE.alpha(0.07),
+            ),
+            ActionKind::Ghost => (
+                Color::TRANSPARENT,
+                self.muted,
+                Color::TRANSPARENT,
+                Color::WHITE.alpha(0.045),
+            ),
+        };
+        row()
+            .h(38.0)
+            .pl(16.0)
+            .pr(6.0)
+            .gap(10.0)
+            .center_y()
+            .radius(19.0)
+            .fill(fill)
+            .border(1.0, border)
+            .hover(Color::WHITE.alpha(if kind == ActionKind::Primary {
+                0.10
+            } else {
+                0.05
+            }))
+            .press(Color::WHITE.alpha(0.10))
+            .press_scale(0.972)
+            .focusable(true)
+            .role("button")
+            .label(label)
+            .motion(motion::SNAPPY)
+            .child(text(label).font(BODY_MED).color(ink).a11y_hidden())
+            .child(
+                el().size(26.0, 26.0)
+                    .radius(13.0)
+                    .center()
+                    .fill(badge)
+                    .child(text(glyph).font(SMALL).color(ink).a11y_hidden())
+                    .a11y_hidden(),
+            )
     }
 
     pub fn divider(&self) -> El {
@@ -151,16 +340,16 @@ impl Ui {
     pub fn action(&self, label: &str, kind: ActionKind) -> El {
         let (fill, ink, border) = self.action_colors(kind);
         row()
-            .h(29.0)
-            .px(11.0)
+            .h(32.0)
+            .px(13.0)
             .gap(6.0)
             .center()
-            .radius(7.0)
+            .radius(16.0)
             .fill(fill)
             .border(1.0, border)
             .hover(Color::WHITE.alpha(0.05))
             .press(Color::WHITE.alpha(0.08))
-            .press_scale(0.985)
+            .press_scale(0.98)
             .focusable(true)
             .role("button")
             .label(label)
@@ -171,7 +360,11 @@ impl Ui {
     fn action_colors(&self, kind: ActionKind) -> (Color, Color, Color) {
         match kind {
             ActionKind::Primary => (self.accent, self.accent_ink, Color::TRANSPARENT),
-            ActionKind::Secondary => (Color::WHITE.alpha(0.055), self.ink, self.hair_strong),
+            ActionKind::Secondary => (
+                Color::WHITE.alpha(0.045),
+                self.ink,
+                Color::WHITE.alpha(0.075),
+            ),
             ActionKind::Ghost => (Color::TRANSPARENT, self.muted, Color::TRANSPARENT),
         }
     }
@@ -291,6 +484,34 @@ impl Ui {
     pub fn field_label(&self, s: &str) -> El {
         text(s).font(LABEL).color(self.faint)
     }
+
+    /// A section row above a card grid: `ENABLED` and its count.
+    pub fn grid_head(&self, label: &str, meta: &str) -> El {
+        row()
+            .w_full()
+            .pt(2.0)
+            .pb(2.0)
+            .gap(9.0)
+            .center_y()
+            .child(text(label).font(LABEL).color(self.faint))
+            .child(text(meta).font(LABEL).color(self.faint).opacity(0.72))
+            .child(spacer())
+            .child(self.divider().opacity(0.5))
+    }
+
+    /// The top bar search shell. The field itself comes from `rune::text_input`
+    /// so each screen owns its own `TextEdit`.
+    pub fn search_shell(&self, field: El) -> El {
+        row()
+            .h(34.0)
+            .w(268.0)
+            .px(12.0)
+            .center_y()
+            .radius(9.0)
+            .fill(Color::WHITE.alpha(0.035))
+            .border(1.0, self.hair)
+            .child(field.grow(1.0).min_w(0.0))
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -334,6 +555,17 @@ impl Compat {
             Compat::Changed => Tone::Warn,
             Compat::Missing => Tone::Bad,
             Compat::Moved => Tone::Info,
+        }
+    }
+}
+
+impl ToneKey {
+    pub fn tone(self) -> Tone {
+        match self {
+            ToneKey::Ok => Tone::Ok,
+            ToneKey::Warn => Tone::Warn,
+            ToneKey::Info => Tone::Info,
+            ToneKey::Quiet => Tone::Quiet,
         }
     }
 }
