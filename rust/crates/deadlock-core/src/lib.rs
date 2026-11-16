@@ -5,12 +5,14 @@ mod util;
 
 pub mod addons;
 pub mod autoexec;
+pub mod demo;
 pub mod discovery;
 pub mod error;
 pub mod extract;
 pub mod gamebanana;
 pub mod game_catalog;
 pub mod game_index;
+pub mod install;
 pub mod launch;
 pub mod locker;
 pub mod patch_notes;

@@ -79,6 +79,15 @@ pub struct LockerHero {
     pub mod_count: usize,
     /// Catalog entries under this hero folder.
     pub asset_count: usize,
+    /// False when the hero is only known from local art, not from the game
+    /// catalog. The Locker keeps these so the art set can cover a thin catalog,
+    /// and every consumer must label them as art only.
+    #[serde(default = "default_true")]
+    pub in_catalog: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 /// Local artwork directories. Each field is `None` when it is not present.
@@ -222,9 +231,39 @@ pub fn discover_heroes_with_assets(
                 name_art_path,
                 mod_count,
                 asset_count,
+                in_catalog: true,
             }
         })
         .collect();
+
+    // Local art can cover heroes the catalog does not list yet, which happens
+    // when the index is partial or the hero is not in this build. They are
+    // merged as art-only: zero catalog paths, zero mods, and `in_catalog`
+    // false so the UI never presents them as game assets.
+    let known: BTreeSet<String> = heroes
+        .iter()
+        .flat_map(|hero| {
+            [
+                hero_asset_key(&hero.codename),
+                hero_asset_key(&hero.display_name),
+            ]
+        })
+        .collect();
+    let mut art_only: Vec<LockerHero> = resolver
+        .renders
+        .iter()
+        .filter(|(key, _)| !known.contains(*key))
+        .map(|(key, path)| LockerHero {
+            codename: key.clone(),
+            display_name: title_case(key),
+            render_path: Some(path.clone()),
+            name_art_path: resolver.names.get(key).cloned(),
+            mod_count: 0,
+            asset_count: 0,
+            in_catalog: false,
+        })
+        .collect();
+    heroes.append(&mut art_only);
 
     heroes.sort_by(|left, right| {
         left.display_name
