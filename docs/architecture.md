@@ -316,13 +316,21 @@ The desktop app is native Rust with Rune. It carries its own design language on 
 with GPU rendering, springs and headless snapshots. The shell is not Grimoire and has no browser
 renderer.
 
-Screens and responsibilities:
+Screens and responsibilities. Sidebar order follows `docs/design/mod-manager-shell.md`, and a screen
+ships only when core can back it with real data or a gated action:
 
-- Workbench: conversation, tool timeline, approvals, plan and build panels.
-- Projects: manifest, targets, local versions, references and rights records.
-- Game: install status, VPK sources, index search, extraction, `gameinfo.gi` and slot state.
-- Patches: official Deadlock news, change correlation and compatibility impact.
+- Library: Installed (addon slots on disk), Browse (GameBanana feed), Conflicts (shared paths),
+  Updates (project baselines against the patch feed).
+- Modding: Profiles (captured slot sets), Autoexec (the config file behind approval), Stats (the
+  public API plus local demos), Locker (hero renders and asset paths), Launch (modded, vanilla,
+  restore).
+- Workbench: Agent, Projects, Game Index, Patches, Impact, Release.
+- Foundry: Toolchain (external decompile and compile tools), Character (reference to mesh, stopped
+  at a verified artifact).
 - Settings: BYOK provider status, local model endpoint, toolchain paths, workspace location.
+
+The default surface is Installed, because this is a mod manager first. The agent is one screen inside
+the same shell, not the product shell.
 
 The Rust app owns credentials, settings, file dialogs, mod workspace access, game install writes and
 approval decisions. It talks to the TinyAgent agent host over local IPC. It never loads the
@@ -364,6 +372,15 @@ dah publish prepare        build a local release folder, never upload
 dah publish upload         approval-gated GameBanana handoff with upload record
 dah publish confirm        record and verify the submitted GameBanana URL
 dah publish status         show the recorded upload state
+dah addons list            installed slots and shared-path conflicts
+dah addons set <n> on|off  rename one slot file, behind approval
+dah profiles list|save|apply   named sets of enabled slots
+dah autoexec show|set      the game config file, writes behind approval
+dah launch modded|vanilla|restore|status   Steam launch and vanilla stash
+dah toolchain status       external tool availability with reasons
+dah mod decompile|compile  Source2Viewer-CLI and resourcecompiler.exe, plan first
+dah stats player|matches|heroes|heatmap|leaderboard   public API reads
+dah character create|status|stages|import   reference or prompt to a stage graph, then a GLB
 dah vpk inspect            list a VPK tree and verify CRCs
 ```
 
@@ -435,11 +452,27 @@ Phase 4, publish and survive updates (in progress):
 - Next: GameBanana upload with approval; the current handoff prepares the folder only.
 - Acceptance: update a published mod after a game patch with a recorded diff.
 
-Phase 5, advanced:
+Phase 5, stats and the living catalog (in progress):
 
-- Model swaps and AnimGraph 2 via `DeadlockTools`.
-- Multi-chunk packs, batch operations, VPK previews.
-- Reviewer subagent and multi-client harness.
+- Done: public API player, rank, career, hero, match, leaderboard and heatmap reads.
+- Done: API host added to the network allowlist; no key is required.
+- Done: local demo container parser and merged API plus demo summary.
+- Done: Locker hero and asset resolution from a local art root.
+- Next: real `.dem` files from a live match; positions need a serializer-aware extractor.
+- Next: browse install pipeline verified against a real GameBanana archive.
+
+Phase 6, character generation (in progress):
+
+- Done: reference and prompt to GLB task pipeline with a recorded stage graph.
+- Done: deterministic reference and GLB checks, and a Source 2 compile plan.
+- Next: a local generative backend, retarget to a Source 2 skeleton, vmdl and AnimGraph binding.
+- Blocked: no in-game character can be claimed until a real compile and an in-game check happen.
+
+Phase 7, packaging:
+
+- Done: `scripts/package-desktop.sh` stages the desktop, the sidecar, the CLI and the manifest.
+- Next: sign the macOS bundle, produce a Windows build on Windows, verify the sidecar lookup.
+- Acceptance: a clean machine runs the app, finds the game, deploys a mod and restores vanilla.
 
 ## Open questions
 
