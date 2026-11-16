@@ -4,9 +4,10 @@ An open-source desktop workbench where an AI agent builds, packs, validates and 
 mods. Model access is bring-your-own-key. The app keeps your code, your game install and your
 credentials on your machine.
 
-Status: pre-alpha. The native Rust core, Rune desktop app, Rust CLI and TinyAgent v2 host are
-connected. There is no Electron window. Decompiling, packing, deploying to a game install and
-publishing are still in progress.
+Status: pre-alpha. The native release loop works: validate, pack, versioned release, deploy plan
+and approved deploy, path migration, cross-project patch watch and GameBanana handoff. The Rune
+desktop app, Rust CLI and TinyAgent v2 host are connected. Decompiling, compiling and direct
+GameBanana API upload are still in progress.
 
 ## Native desktop
 
