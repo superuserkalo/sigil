@@ -68,6 +68,23 @@ One command proves the loop against a disposable fake install:
 scripts/acceptance.sh
 ```
 
+## Where it stands
+
+| Tier | State | Evidence |
+| --- | --- | --- |
+| 0 Inspect | Works | `dah index`, `find`, `extract` against a real install |
+| 1 Asset swap | Pack, validate, release, deploy work; decompile and compile need external tools | Acceptance run and deploy backup |
+| 2 Material and effect | Planned | Not claimed |
+| 3 Character | Stage graph and reference checks; no compile | `dah character stages` |
+| 4 Multi-asset | Batch watch, versioned releases | `dah watch` |
+| 5 Release and survive updates | Works | `scripts/acceptance.sh`: 44 checks pass |
+| 6 Living workbench | Works | Watch state, stats, demos, linted review, crosshair, profiles, installs |
+
+Not verified on this machine: a Windows install and launch, a real CSDK compile, a real Meshy or local
+model, positions from a real `.dem`, 7z and rar archives, and signed bundles. The Deadworks server
+browser is not shipped because it needs a third-party relay and content sync; see
+[docs/design/mod-manager-shell.md](docs/design/mod-manager-shell.md).
+
 ## The manager
 
 The default screen is Installed, because this is a mod manager with an agent inside, not an agent
