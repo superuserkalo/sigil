@@ -11,6 +11,7 @@ supersede one with a new record instead of rewriting it.
 | `0001-grimoire-fork-and-monorepo.md` | accepted | Shell, license, monorepo layout |
 | `0002-durable-agent-runtime.md` | accepted | Runtime, storage, secrets, process split |
 | `0003-windows-compile-backend.md` | accepted | Compile is a backend with availability |
+| `0004-embedded-runtime-choice.md` | accepted | Pi Durable stays the runtime; fx is optional |
 
 Use this template:
 

@@ -135,6 +135,9 @@ clone. Keep it that way. `docs/README.md` is the index; every doc carries a stat
 
 - Pi Durable is pinned to `1.5.2` and is marked experimental. Read installed types before using a
   new API; the README can drift from the published package.
+- Do not swap the embedded runtime to fx or libfx without superseding ADR 0004. libfx has no Windows
+  native addon, no durable approval primitive and a narrower provider surface. fx remains a possible
+  external ACP or MCP lane, not a dependency.
 - One process owns a Pi Durable storage. Do not open the same SQLite file from the CLI and the
   desktop app at once.
 - `CodingTools` includes `bash`. In the desktop app it must be wrapped with a workspace boundary and

@@ -88,6 +88,9 @@ Alternatives considered at scaffold time:
 - Build a plain agent loop: less machinery, but no crash recovery, approvals or durable transcripts.
 - Use Pi the coding agent directly: excellent terminal agent, but not a library shaped for an
   embedded product with its own storage and UI.
+- Embed fx or libfx: a complete coding agent, but no Windows native addon, no durable approval
+  primitive and a narrower provider surface. See `docs/research/fx-libfx.md` and
+  `docs/decisions/0004-embedded-runtime-choice.md`.
 - Use a hosted agent API: violates the BYOK and no-telemetry constraints.
 
 ## Sources

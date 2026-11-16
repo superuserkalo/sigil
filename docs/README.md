@@ -24,9 +24,11 @@ Every doc starts with a status line. Values: `active`, `draft`, `planned`, `supe
 | `architecture.md` | draft | Proposed boundaries and roadmap. Changes need a decision record. |
 | `research/deadlock-modding.md` | active | Domain facts with sources. Verify after a game update. |
 | `research/pi-durable.md` | active | Runtime facts pinned to the installed version. |
+| `research/fx-libfx.md` | active | Why fx and libfx are not the embedded runtime. |
 | `decisions/0001-grimoire-fork-and-monorepo.md` | accepted | Fork and repo layout. |
 | `decisions/0002-durable-agent-runtime.md` | accepted | Pi Durable, SQLite, secrets and process split. |
 | `decisions/0003-windows-compile-backend.md` | accepted | Compile is a backend, not an assumption. |
+| `decisions/0004-embedded-runtime-choice.md` | accepted | Pi Durable over fx and libfx, with fx as an optional lane. |
 | `runbooks/development.md` | active | Local setup and verification. |
 
 ## Updating docs
