@@ -9,25 +9,21 @@ tool that works on the selected mod or project.
 
 ## Sidebar
 
+The shipped order. Every item below has a real core read or a gated app action.
+
 ```text
 LIBRARY
   Installed        addon slots, enable/disable, conflicts, open folder
-  Browse           GameBanana catalog, categories, search, install
+  Browse           GameBanana catalog, filter, install pipeline
+  Conflicts        game paths more than one enabled slot replaces
   Updates          patch feed, stale baselines, broken projects
 
-PLAY
-  Launch Modded    start through Steam, approval
-  Launch Vanilla   stash addons, launch, restore
-
-LOCKER
-  Heroes           hero list from the catalog, 2D previews
-  Recolor          ability VFX recolor
-  Sounds           per-ability sound picker
-
-TOOLS
-  Profiles         save and apply enabled-mod sets
-  Autoexec         edit the game autoexec with approval
-  Merge VPK        merge or split addon VPKs
+MODDING
+  Profiles         capture and apply named sets of enabled slots
+  Autoexec         read the game config, write behind approval
+  Stats            rank, career, heroes, matches, heatmap
+  Locker           hero renders and asset paths from the local game
+  Launch           modded launch, vanilla stash, restore
 
 WORKBENCH
   Agent            conversation, tools, approvals
@@ -37,25 +33,46 @@ WORKBENCH
   Impact           what a patch breaks
   Release          pack, deploy plan, publish
 
+FOUNDRY
+  Toolchain        decompile and compile tools with real availability
+  Character        reference or prompt to a verified GLB, compile plan
+
 SETTINGS
+  Settings         providers, paths, safety, nothing secret on screen
 ```
 
-A sidebar item appears only when it has a real data source and a real action. A screen with a
-"coming soon" badge is not shipped.
+A sidebar item appears only when it has a real data source and a real action. There is no
+"coming soon" state. When a backend is unavailable, the screen says which backend, why, and what
+would make it available, and keeps every action that does not need it.
 
 ## Real data sources
 
 | Screen | Source |
 | --- | --- |
-| Installed | `read_game_status`: addon slots, chunk files, ignored files, `gameinfo.gi` |
-| Browse | GameBanana API v11: `Game/20948/Subfeed`, item preview images and profile URLs |
+| Installed | `addons::read_conflict_report`: slot files, chunk files, entry counts, conflicts |
+| Browse | GameBanana API v11 `Game/20948/Subfeed`, item preview images and profile URLs |
+| Conflicts | the same conflict report, grouped by game path |
 | Updates | `dah watch`, patch cache, project baselines |
-| Launch | Steam `steam://rungameid/1422450`, approval gate |
+| Profiles | `profiles::list_profiles`, `capture_profile`, approved `apply_profile` |
+| Autoexec | `autoexec::read_autoexec`, approved `write_autoexec` with a backup |
+| Stats | `stats::StatsClient`: player, rank, career, heroes, matches, heatmap |
+| Locker | `locker::discover_heroes_with_assets`, local art root, never copied |
+| Launch | `launch::launch_modded`, `launch_vanilla`, `restore_vanilla`, `stash_status` |
 | Game Index | citadel, core and map VPK catalog |
 | Patches | Steam news cache |
 | Impact | project baseline + catalog + patch correlation |
 | Release | release manifest, deploy plan, publish state |
+| Toolchain | `toolchain::toolchain_status`, plan and approved run |
+| Character | `character::character_status`, create, refresh, import |
 | Agent | TinyAgent JSONL host |
+
+## Layout rules
+
+- One page head per screen: eyebrow, title, one sentence of provenance, trailing actions.
+- A strip under the head carries the path or scope the screen reads, so a screenshot always says
+  where the data came from.
+- Cards state a real count, a real path or a real error. A number without a sample size is a bug.
+- Results of an app action land in a result strip on the same screen, not only in the status bar.
 
 ## Design rules
 

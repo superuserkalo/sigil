@@ -25,6 +25,11 @@ pub fn deadlock_tools(cli: Arc<DahRsCli>) -> Result<Vec<Tool>> {
         watch_projects(cli.clone())?,
         publish_prepare(cli.clone())?,
         patch_notes(cli.clone())?,
+        player_stats(cli.clone())?,
+        player_heatmap(cli.clone())?,
+        hero_performance(cli.clone())?,
+        launch_status(cli.clone())?,
+        toolchain_status(cli.clone())?,
         validate_payload()?,
     ])
 }
@@ -549,4 +554,146 @@ fn string_list(value: Option<&Value>, name: &str) -> Result<Vec<String>> {
                 .ok_or_else(|| Error::Tool(format!("{name} must be an array of strings.")))
         })
         .collect()
+}
+
+fn player_stats(cli: Arc<DahRsCli>) -> Result<Tool> {
+    Tool::builder(definition(
+        "player_stats",
+        "Report a Deadlock player's rank, percentile, career totals, recent form and top heroes from the public Deadlock API. Read-only and keyless. Numbers are computed from the API payload; never invent a statistic that is absent.",
+        object_schema(
+            json!({
+                "account_id": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "description": "Steam account id. Ask the user when unknown; do not guess.",
+                },
+                "recent": {
+                    "type": ["integer", "null"],
+                    "minimum": 1,
+                    "maximum": 100,
+                    "description": "Newest matches to include in the window. Pass null for 20.",
+                },
+            }),
+            &["account_id", "recent"],
+        ),
+    ))
+    .idempotent(true)
+    .timeout_seconds(150)
+    .handler(move |arguments: Value, context: ToolContext| {
+        let cli = cli.clone();
+        async move {
+            let account = arguments
+                .get("account_id")
+                .and_then(Value::as_u64)
+                .ok_or_else(|| Error::Tool("account_id is required.".into()))?;
+            let mut args = vec![
+                "stats".to_string(),
+                "player".to_string(),
+                account.to_string(),
+                "--json".to_string(),
+            ];
+            if let Some(recent) = arguments.get("recent").and_then(Value::as_u64) {
+                args.push("--recent".to_string());
+                args.push(recent.to_string());
+            }
+            let text = cli.json(&args, &context.cancellation).await?;
+            Ok(ToolReturn::Output(text))
+        }
+    })
+}
+
+fn player_heatmap(cli: Arc<DahRsCli>) -> Result<Tool> {
+    cli_tool(
+        cli,
+        "player_heatmap",
+        "Report aggregate kill and death map cells for a player over the API's 30 day window. The cells are real positions; without a returned cell, say the data is absent instead of describing a pattern.",
+        object_schema(
+            json!({
+                "account_id": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "description": "Steam account id.",
+                },
+            }),
+            &["account_id"],
+        ),
+        true,
+        |arguments| {
+            let account = arguments
+                .get("account_id")
+                .and_then(Value::as_u64)
+                .ok_or_else(|| Error::Tool("account_id is required.".into()))?;
+            Ok(vec![
+                "stats".to_string(),
+                "heatmap".to_string(),
+                account.to_string(),
+                "--json".to_string(),
+            ])
+        },
+    )
+}
+
+fn hero_performance(cli: Arc<DahRsCli>) -> Result<Tool> {
+    cli_tool(
+        cli,
+        "hero_performance",
+        "Report per-hero career rows for a player, sorted by sample size, with Wilson intervals for win rate. Read-only.",
+        object_schema(
+            json!({
+                "account_id": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "description": "Steam account id.",
+                },
+            }),
+            &["account_id"],
+        ),
+        true,
+        |arguments| {
+            let account = arguments
+                .get("account_id")
+                .and_then(Value::as_u64)
+                .ok_or_else(|| Error::Tool("account_id is required.".into()))?;
+            Ok(vec![
+                "stats".to_string(),
+                "heroes".to_string(),
+                account.to_string(),
+                "--json".to_string(),
+            ])
+        },
+    )
+}
+
+fn launch_status(cli: Arc<DahRsCli>) -> Result<Tool> {
+    cli_tool(
+        cli,
+        "launch_status",
+        "Report whether a vanilla stash is pending and where it lives. Launching and restoring are app actions behind approval and are not available as agent tools.",
+        empty_parameters(),
+        true,
+        |_arguments| {
+            Ok(vec![
+                "launch".to_string(),
+                "status".to_string(),
+                "--json".to_string(),
+            ])
+        },
+    )
+}
+
+fn toolchain_status(cli: Arc<DahRsCli>) -> Result<Tool> {
+    cli_tool(
+        cli,
+        "toolchain_status",
+        "Report which external decompile and compile tools are available, with the path, version and exact reason when one is missing. Nothing is downloaded.",
+        empty_parameters(),
+        true,
+        |_arguments| {
+            Ok(vec![
+                "toolchain".to_string(),
+                "status".to_string(),
+                "--json".to_string(),
+            ])
+        },
+    )
 }

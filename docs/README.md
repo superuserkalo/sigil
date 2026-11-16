@@ -29,6 +29,10 @@ Every doc starts with a status line. Values: `active`, `draft`, `planned`, `supe
 | `research/patch-feeds.md` | active | Official Deadlock patch feed and file-change sources. |
 | `research/stats-case-study.md` | active | Leetify, Blitz.gg and Scope.gg patterns for Deadlock stats. |
 | `research/match-recording.md` | proposed | Local demo recording, stats and LLM review pipeline. |
+| `research/demo-import.md` | active | Source 2 demo container parsing, local match store and merge. |
+| `research/install-pipeline.md` | active | Browse download, archive extraction, payload check and slot deploy. |
+| `research/meshy-reverse-engineering.md` | active | Evidence-led study of the Meshy pipeline and our own stage graph. |
+| `runbooks/packaging.md` | draft | Desktop, sidecar and CLI packaging, with the unverified rows listed. |
 | `design/mod-manager-shell.md` | draft | Mod-manager-first sidebar, screens and real data sources. |
 | `decisions/0001-grimoire-fork-and-monorepo.md` | accepted | Fork and repo layout. |
 | `decisions/0002-durable-agent-runtime.md` | accepted | Pi Durable, SQLite, secrets and process split. |
