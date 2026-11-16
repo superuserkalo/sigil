@@ -11,4 +11,9 @@ thiserror.workspace = true
 chrono.workspace = true
 regex.workspace = true
 crc32fast.workspace = true
+flate2.workspace = true
 ureq.workspace = true
+# Install pipeline: sha256 for downloads and the ZIP reader. Both are already
+# in the workspace lock through `dah-rs`, so this adds no new crate.
+sha2 = "0.10"
+zip = { version = "2", default-features = false, features = ["deflate"] }

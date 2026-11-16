@@ -143,6 +143,11 @@ enum Command {
         #[command(subcommand)]
         command: LaunchCommand,
     },
+    /// Download a GameBanana mod or archive, plan an install and apply it with approval.
+    Install {
+        #[command(subcommand)]
+        command: InstallCommand,
+    },
     /// Report external decompile and compile tools.
     Toolchain {
         #[command(subcommand)]
@@ -157,6 +162,11 @@ enum Command {
     Stats {
         #[command(subcommand)]
         command: StatsCommand,
+    },
+    /// Import local demo recordings and read the merged match summary.
+    Demo {
+        #[command(subcommand)]
+        command: DemoCommand,
     },
     /// Create and maintain a mod project.
     Mod {
@@ -419,11 +429,69 @@ enum StatsCommand {
 }
 
 #[derive(Subcommand)]
+enum DemoCommand {
+    /// Import a Deadlock .dem into the local match store.
+    Import {
+        /// Demo file recorded by the game.
+        #[arg(value_name = "FILE")]
+        file: PathBuf,
+        /// Match id for the store folder. Defaults to the file stem or a CRC32 id.
+        #[arg(long, value_name = "ID")]
+        id: Option<String>,
+        /// Workspace directory. Defaults to DAH_WORKSPACE_DIR or <data>/workspace.
+        #[arg(long, value_name = "DIR")]
+        workspace: Option<PathBuf>,
+        /// Print machine-readable JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// List imported matches from the workspace store.
+    List {
+        /// Workspace directory. Defaults to DAH_WORKSPACE_DIR or <data>/workspace.
+        #[arg(long, value_name = "DIR")]
+        workspace: Option<PathBuf>,
+        /// Print machine-readable JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Show the merged summary, coverage and provenance for one match.
+    Show {
+        /// Match id, as printed by `dah demo list`.
+        #[arg(value_name = "ID")]
+        id: String,
+        /// Workspace directory. Defaults to DAH_WORKSPACE_DIR or <data>/workspace.
+        #[arg(long, value_name = "DIR")]
+        workspace: Option<PathBuf>,
+        /// Print machine-readable JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Show heatmap cells from real position samples, or why they are absent.
+    Heatmap {
+        /// Match id, as printed by `dah demo list`.
+        #[arg(value_name = "ID")]
+        id: String,
+        /// Workspace directory. Defaults to DAH_WORKSPACE_DIR or <data>/workspace.
+        #[arg(long, value_name = "DIR")]
+        workspace: Option<PathBuf>,
+        /// Print machine-readable JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Report which demo extractors are available on this build.
+    Backends {
+        /// Print machine-readable JSON.
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand)]
 enum CharacterCommand {
     /// Create an image-to-3D or text-to-3D task.
     Create {
-        /// Text prompt describing the character.
-        #[arg(value_name = "PROMPT")]
+        /// Text prompt describing the character. Optional with --reference.
+        #[arg(value_name = "PROMPT", default_value = "")]
         prompt: String,
         /// Local reference image (JPG, PNG or WebP).
         #[arg(long, value_name = "FILE")]
@@ -468,12 +536,91 @@ enum CharacterCommand {
         #[arg(long)]
         json: bool,
     },
+    /// Print the character stage graph, optionally for one recorded task.
+    Stages {
+        /// Character slug. Without one, print the canonical graph.
+        #[arg(value_name = "SLUG")]
+        slug: Option<String>,
+        /// Project directory.
+        #[arg(long, value_name = "DIR")]
+        workspace: Option<PathBuf>,
+        /// Print machine-readable JSON.
+        #[arg(long)]
+        json: bool,
+    },
     /// Import a downloaded GLB into the character workspace.
     Import {
         /// Character slug.
         #[arg(value_name = "SLUG")]
         slug: String,
         /// Project directory.
+        #[arg(long, value_name = "DIR")]
+        workspace: Option<PathBuf>,
+        /// Print machine-readable JSON.
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum InstallCommand {
+    /// Download, extract, validate and plan an install. Writes nothing to the game.
+    Plan {
+        /// GameBanana mod id, mod URL, https archive URL or local archive file.
+        #[arg(value_name = "URL|ID")]
+        target: String,
+        /// Addon slot 1 to 99. Defaults to the lowest free slot.
+        #[arg(long, value_name = "N")]
+        slot: Option<u8>,
+        /// Replace an occupied slot after backing up its files.
+        #[arg(long)]
+        force: bool,
+        /// Extra download origin, for example a local mirror.
+        #[arg(long, value_name = "ORIGIN")]
+        mirror: Option<String>,
+        /// Workspace directory. Defaults to DAH_WORKSPACE_DIR or <data>/workspace.
+        #[arg(long, value_name = "DIR")]
+        workspace: Option<PathBuf>,
+        /// Print machine-readable JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Apply a stored install plan with approval.
+    Apply {
+        /// Plan id printed by `dah install plan`.
+        #[arg(value_name = "PLAN_ID")]
+        plan_id: String,
+        /// Write the payload into the game addons folder.
+        #[arg(long)]
+        approve: bool,
+        /// Workspace directory. Defaults to DAH_WORKSPACE_DIR or <data>/workspace.
+        #[arg(long, value_name = "DIR")]
+        workspace: Option<PathBuf>,
+        /// Print machine-readable JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// List install journal entries and whether each file is still present.
+    List {
+        /// Workspace directory. Defaults to DAH_WORKSPACE_DIR or <data>/workspace.
+        #[arg(long, value_name = "DIR")]
+        workspace: Option<PathBuf>,
+        /// Print machine-readable JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Delete downloaded archives and extracted trees from the workspace.
+    Cache {
+        #[command(subcommand)]
+        command: InstallCacheCommand,
+    },
+}
+
+#[derive(Subcommand)]
+enum InstallCacheCommand {
+    /// Remove every cached download and extraction folder.
+    Prune {
+        /// Workspace directory. Defaults to DAH_WORKSPACE_DIR or <data>/workspace.
         #[arg(long, value_name = "DIR")]
         workspace: Option<PathBuf>,
         /// Print machine-readable JSON.
@@ -734,12 +881,21 @@ impl Cli {
                 | LaunchCommand::Restore { json, .. }
                 | LaunchCommand::Status { json } => *json,
             },
+            Command::Install { command } => match command {
+                InstallCommand::Plan { json, .. }
+                | InstallCommand::Apply { json, .. }
+                | InstallCommand::List { json, .. }
+                | InstallCommand::Cache {
+                    command: InstallCacheCommand::Prune { json, .. },
+                } => *json,
+            },
             Command::Toolchain { command } => match command {
                 ToolchainCommand::Status { json } => *json,
             },
             Command::Character { command } => match command {
                 CharacterCommand::Create { json, .. }
                 | CharacterCommand::Status { json, .. }
+                | CharacterCommand::Stages { json, .. }
                 | CharacterCommand::Import { json, .. } => *json,
             },
             Command::Stats { command } => match command {
@@ -748,6 +904,13 @@ impl Cli {
                 | StatsCommand::Heroes { json, .. }
                 | StatsCommand::Heatmap { json, .. }
                 | StatsCommand::Leaderboard { json, .. } => *json,
+            },
+            Command::Demo { command } => match command {
+                DemoCommand::Import { json, .. }
+                | DemoCommand::List { json, .. }
+                | DemoCommand::Show { json, .. }
+                | DemoCommand::Heatmap { json, .. }
+                | DemoCommand::Backends { json } => *json,
             },
             Command::Publish { command } => match command {
                 PublishCommand::Prepare { json, .. }
@@ -1103,6 +1266,56 @@ fn run(cli: &Cli) -> error::Result<i32> {
                 Ok(0)
             }
         },
+        Command::Install { command } => match command {
+            InstallCommand::Plan {
+                target,
+                slot,
+                force,
+                mirror,
+                workspace,
+                json,
+            } => {
+                commands::install::plan(&commands::install::PlanArgs {
+                    target: target.clone(),
+                    slot: *slot,
+                    force: *force,
+                    workspace: workspace.clone(),
+                    mirror: mirror.clone(),
+                    json: *json,
+                })?;
+                Ok(0)
+            }
+            InstallCommand::Apply {
+                plan_id,
+                approve,
+                workspace,
+                json,
+            } => {
+                commands::install::apply(&commands::install::ApplyArgs {
+                    plan_id: plan_id.clone(),
+                    approve: *approve,
+                    workspace: workspace.clone(),
+                    json: *json,
+                })?;
+                Ok(0)
+            }
+            InstallCommand::List { workspace, json } => {
+                commands::install::list(&commands::install::ListArgs {
+                    workspace: workspace.clone(),
+                    json: *json,
+                })?;
+                Ok(0)
+            }
+            InstallCommand::Cache { command } => match command {
+                InstallCacheCommand::Prune { workspace, json } => {
+                    commands::install::cache_prune(&commands::install::PruneArgs {
+                        workspace: workspace.clone(),
+                        json: *json,
+                    })?;
+                    Ok(0)
+                }
+            },
+        },
         Command::Toolchain { command } => match command {
             ToolchainCommand::Status { json } => {
                 commands::toolchain::status(&commands::toolchain::StatusArgs { json: *json })?;
@@ -1161,6 +1374,49 @@ fn run(cli: &Cli) -> error::Result<i32> {
                 Ok(0)
             }
         },
+        Command::Demo { command } => match command {
+            DemoCommand::Import {
+                file,
+                id,
+                workspace,
+                json,
+            } => {
+                commands::demo::run_import(&commands::demo::ImportArgs {
+                    file: file.clone(),
+                    id: id.clone(),
+                    workspace: workspace.clone(),
+                    json: *json,
+                })?;
+                Ok(0)
+            }
+            DemoCommand::List { workspace, json } => {
+                commands::demo::run_list(&commands::demo::ListArgs {
+                    workspace: workspace.clone(),
+                    json: *json,
+                })?;
+                Ok(0)
+            }
+            DemoCommand::Show { id, workspace, json } => {
+                commands::demo::run_show(&commands::demo::ShowArgs {
+                    id: id.clone(),
+                    workspace: workspace.clone(),
+                    json: *json,
+                })?;
+                Ok(0)
+            }
+            DemoCommand::Heatmap { id, workspace, json } => {
+                commands::demo::run_heatmap(&commands::demo::HeatmapArgs {
+                    id: id.clone(),
+                    workspace: workspace.clone(),
+                    json: *json,
+                })?;
+                Ok(0)
+            }
+            DemoCommand::Backends { json } => {
+                commands::demo::run_backends(&commands::demo::BackendsArgs { json: *json })?;
+                Ok(0)
+            }
+        },
         Command::Character { command } => match command {
             CharacterCommand::Create {
                 prompt,
@@ -1198,6 +1454,18 @@ fn run(cli: &Cli) -> error::Result<i32> {
                     slug: slug.clone(),
                     refresh: *refresh,
                     limit: *limit,
+                    json: *json,
+                })?;
+                Ok(0)
+            }
+            CharacterCommand::Stages {
+                slug,
+                workspace,
+                json,
+            } => {
+                commands::character::stages(&commands::character::StagesArgs {
+                    slug: slug.clone(),
+                    workspace: workspace.clone(),
                     json: *json,
                 })?;
                 Ok(0)
