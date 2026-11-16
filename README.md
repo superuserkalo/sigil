@@ -62,6 +62,12 @@ no browser renderer. The Rust protocol v2 crate is landed; the Rust host is bein
 TypeScript host remains the reference during the cutover. See
 [ADR 0007](docs/decisions/0007-tinyagent-host.md).
 
+One command proves the loop against a disposable fake install:
+
+```bash
+scripts/acceptance.sh
+```
+
 ## The manager
 
 The default screen is Installed, because this is a mod manager with an agent inside, not an agent
