@@ -9,7 +9,7 @@
 use rune::{Color, El, ScrollSpec, TextEdit, col, el, row, spacer, text};
 
 use crate::app::State;
-use crate::ui::{ActionKind, BODY, BODY_MED, H2, LABEL, MONO, NUM, SMALL, Tone, Ui};
+use crate::ui::{ActionKind, BODY, H2, LABEL, MONO, NUM, SMALL, Tone, Ui};
 
 pub struct HeatCell {
     pub cx: usize,
@@ -34,7 +34,6 @@ pub struct DemoRow {
     pub source: String,
     pub map: Option<String>,
     pub duration_seconds: Option<u64>,
-    pub result: Option<String>,
     pub players: usize,
     pub events: usize,
     pub heat_cells: usize,
@@ -179,7 +178,7 @@ pub fn view(s: &State, u: &Ui) -> El {
         }
     };
 
-    let mut page = col()
+    let page = col()
         .key("stats-page")
         .grow(1.0)
         .h_full()
@@ -600,7 +599,7 @@ fn loaded(s: &State, u: &Ui, snap: &deadlock_core::stats::StatsSnapshot) -> El {
     page = page.child(identity(s, u, snap));
     page = page.child(kpis(s, u, snap));
 
-    let mut middle = row()
+    let middle = row()
         .w_full()
         .gap(12.0)
         .items_start()
@@ -609,7 +608,7 @@ fn loaded(s: &State, u: &Ui, snap: &deadlock_core::stats::StatsSnapshot) -> El {
 
     page = page.child(middle);
 
-    let mut lower = row()
+    let lower = row()
         .w_full()
         .gap(12.0)
         .items_start()

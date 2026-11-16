@@ -2201,7 +2201,6 @@ pub fn load_demo_rows(workspace: &Path) -> crate::screens::stats::DemoLoad {
                     source: item.source.clone(),
                     map: item.map.clone(),
                     duration_seconds: item.duration_seconds,
-                    result: item.result.clone(),
                     players: item.player_count,
                     events: item.event_count,
                     heat_cells: item.heatmap_cells,

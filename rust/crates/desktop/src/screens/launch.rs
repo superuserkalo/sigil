@@ -5,7 +5,7 @@
 //! and a vanilla launch is explicit about moving addon files out of the addon
 //! folder before Steam starts.
 
-use rune::{Color, El, Key, KeyEvent, col, el, row, spacer, text};
+use rune::{Color, El, Key, KeyEvent, col, el, row, text};
 
 use crate::app::State;
 use crate::model::Screen;

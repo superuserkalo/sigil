@@ -9,17 +9,13 @@ use rune::{Color, El, ScrollSpec, TextEdit, col, el, row, spacer, text};
 
 use crate::app::State;
 use crate::model::Screen;
-use crate::ui::{ActionKind, BODY, BODY_MED, CHAT, H2, LABEL, MONO, SMALL, Tone, Ui};
+use crate::ui::{ActionKind, BODY, BODY_MED, CHAT, LABEL, MONO, SMALL, Tone, Ui};
 
 #[derive(Clone)]
 pub struct StageRow {
     pub id: String,
     pub title: String,
     pub state: String,
-    pub backend: String,
-    pub generative: bool,
-    pub paid: bool,
-    pub lossy: bool,
     pub note: Option<String>,
 }
 
@@ -30,12 +26,10 @@ pub struct Row {
     pub provider: String,
     pub stage: String,
     pub status: String,
-    pub progress: u32,
     pub created: String,
     pub error: Option<String>,
     pub model_bytes: u64,
     pub imported: bool,
-    pub in_game_ready: bool,
     pub reference: Option<String>,
     pub hero: Option<String>,
     pub backend: String,
@@ -54,7 +48,6 @@ pub fn row_from_record(record: &deadlock_core::character::CharacterTaskRecord) -
         provider: record.request.provider.as_str().to_string(),
         stage: record.task.stage.clone(),
         status: record.task.status.as_str().to_string(),
-        progress: record.task.progress,
         created: record
             .created_at
             .chars()
@@ -64,7 +57,6 @@ pub fn row_from_record(record: &deadlock_core::character::CharacterTaskRecord) -
         error: record.task.error.clone(),
         model_bytes: record.asset.as_ref().map(|asset| asset.bytes).unwrap_or(0),
         imported: record.asset.is_some(),
-        in_game_ready: false,
         reference: record
             .request
             .reference_image
@@ -83,10 +75,6 @@ pub fn row_from_record(record: &deadlock_core::character::CharacterTaskRecord) -
                 id: stage.id.id().to_string(),
                 title: stage.id.title().to_string(),
                 state: stage.state.as_str().to_string(),
-                backend: stage.backend.clone(),
-                generative: stage.id.is_generative(),
-                paid: stage.id.is_paid(),
-                lossy: stage.id.is_lossy(),
                 note: stage.notes.first().cloned(),
             })
             .collect(),
