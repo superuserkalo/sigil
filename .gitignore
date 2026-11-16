@@ -22,3 +22,6 @@ vendor/
 # Local mod workspaces and build output
 /workspace/
 *.vpk
+
+# commandcode CLI local state
+.commandcode/
