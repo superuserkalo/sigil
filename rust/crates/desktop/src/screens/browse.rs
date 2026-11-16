@@ -5,7 +5,7 @@
 //! extraction and slot rules exist in core; the one action opens the real
 //! submission page in the browser.
 
-use rune::{Color, El, Key, KeyEvent, ScrollSpec, SurfaceFit, TextEdit, Tx, col, el, row, spacer, text};
+use rune::{Color, El, Key, KeyEvent, ScrollSpec, SurfaceFit, TextEdit, Tx, col, el, row, text};
 
 use crate::app::State;
 use crate::model::{BrowseCard, Screen};

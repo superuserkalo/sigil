@@ -5,9 +5,7 @@
 //! never copied into this repository or redistributed. A missing art root is a
 //! valid state: heroes list, and each card says the render is unavailable.
 
-use std::collections::HashMap;
-
-use rune::{Color, El, ScrollSpec, SurfaceFit, TextEdit, col, el, row, spacer, text};
+use rune::{Color, El, ScrollSpec, SurfaceFit, TextEdit, col, el, row, text};
 
 use crate::app::State;
 use crate::model::Screen;
@@ -260,8 +258,6 @@ fn art_notice(v: &View) -> El {
 
 fn card(s: &State, u: &Ui, hero: &HeroCard) -> El {
     let codename = hero.codename.clone();
-    let display_name = hero.display_name.clone();
-    let asset_count = hero.asset_count;
     let pixels = hero
         .render
         .as_ref()

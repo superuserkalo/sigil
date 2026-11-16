@@ -448,7 +448,7 @@ fn about(u: &Ui) -> El {
 
 /// What this build measured at startup. No value here is a feature claim.
 fn capabilities(s: &State, u: &Ui) -> El {
-    let mut panel = u
+    let panel = u
         .panel()
         .key("capabilities")
         .w_full()

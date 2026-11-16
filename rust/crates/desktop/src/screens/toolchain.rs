@@ -4,7 +4,7 @@
 //! and then `PATH`. A plan shows the exact program and argument array before
 //! anything starts; running needs the approval step.
 
-use rune::{Color, El, Key, KeyEvent, TextEdit, col, el, row, spacer, text};
+use rune::{Color, El, Key, KeyEvent, TextEdit, col, row, spacer, text};
 
 use crate::app::State;
 use crate::model::Screen;
