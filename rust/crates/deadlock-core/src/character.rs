@@ -5216,5 +5216,278 @@ fn minimal_glb_bytes() -> Vec<u8> {
     output
 }
 
+
+// ---------------------------------------------------------------------------
+// Mesh backends: what the machine can actually run
+// ---------------------------------------------------------------------------
+
+/// One way to produce a mesh. Availability is measured, never assumed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BackendOption {
+    pub id: String,
+    pub label: String,
+    /// `local-command`, `http` or `meshy`.
+    pub kind: String,
+    pub local: bool,
+    pub needs_key: bool,
+    pub available: bool,
+    pub reason: String,
+    pub setup: String,
+    /// Stages the backend can claim when configured.
+    pub stages: Vec<String>,
+}
+
+/// Environment variable for a local Blender binary.
+pub const BLENDER_ENV: &str = "DAH_BLENDER";
+
+/// Resolve Blender from `DAH_BLENDER`, then `PATH`.
+pub fn blender_binary() -> Option<PathBuf> {
+    if let Some(value) = env::var_os(BLENDER_ENV) {
+        let path = PathBuf::from(value);
+        if path.is_file() {
+            return Some(path);
+        }
+    }
+
+    let path = env::var_os("PATH")?;
+    for directory in env::split_paths(&path) {
+        let candidate = directory.join(if cfg!(windows) { "blender.exe" } else { "blender" });
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+    }
+    None
+}
+
+/// The mesh lanes this build knows about, with measured availability.
+///
+/// An LLM cannot emit a mesh as tokens with useful topology. It can write a
+/// Blender or Python script, look at the render, and iterate. That is the
+/// `blender-code` lane. Image or text to 3D is a separate trained model; it runs
+/// locally (`local-command`, `http`) or through a provider (`meshy`).
+pub fn backend_options() -> Vec<BackendOption> {
+    let meshy_key = env::var(MESHY_API_KEY_ENV)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    let command = env::var(MESHGEN_COMMAND_ENV)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    let url = env::var(MESHGEN_URL_ENV)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    let blender = blender_binary();
+
+    let default_stages = vec![
+        CharacterStage::GenerateViews.id().to_string(),
+        CharacterStage::Reconstruct.id().to_string(),
+    ];
+
+    let mut options = Vec::new();
+
+    options.push(BackendOption {
+        id: "blender-code".to_string(),
+        label: "Blender code (LLM-written script)".to_string(),
+        kind: "local-command".to_string(),
+        local: true,
+        needs_key: false,
+        available: blender.is_some(),
+        reason: match &blender {
+            Some(path) => format!("Blender found at {}.", path.display()),
+            None => format!(
+                "Blender was not found. Set {BLENDER_ENV} or put blender on PATH. The script lane also needs Blender to run."
+            ),
+        },
+        setup: "dah character scaffold <slug>, edit mesh.py, then set DAH_MESHGEN_COMMAND to blender and DAH_MESHGEN_ARGS to [\"--background\",\"--factory-startup\",\"--python\",\"<character>/mesh.py\"]. The script exports model.glb and a turnaround render.".to_string(),
+        stages: default_stages.clone(),
+    });
+
+    options.push(BackendOption {
+        id: "local-command".to_string(),
+        label: "Local command (TRELLIS, Hunyuan3D, a wrapper)".to_string(),
+        kind: "local-command".to_string(),
+        local: true,
+        needs_key: false,
+        available: command.is_some(),
+        reason: match &command {
+            Some(program) => format!("{MESHGEN_COMMAND_ENV} is set to {program}."),
+            None => format!("{MESHGEN_COMMAND_ENV} is not set."),
+        },
+        setup: format!(
+            "Set {MESHGEN_COMMAND_ENV} to an executable and {MESHGEN_ARGS_ENV} to a JSON array. It runs in the character folder with DAH_PROMPT, DAH_REFERENCE, DAH_CHARACTER_DIR and DAH_STAGE_DIR, and writes model.glb on reconstruct."
+        ),
+        stages: default_stages.clone(),
+    });
+
+    options.push(BackendOption {
+        id: "http".to_string(),
+        label: "Local HTTP model server (ComfyUI, TRELLIS server)".to_string(),
+        kind: "http".to_string(),
+        local: true,
+        needs_key: false,
+        available: url.is_some(),
+        reason: match &url {
+            Some(url) => format!("{MESHGEN_URL_ENV} is set to {url}."),
+            None => format!("{MESHGEN_URL_ENV} is not set."),
+        },
+        setup: format!(
+            "Set {MESHGEN_URL_ENV} to a JSON model server. Optional {MESHGEN_TOKEN_ENV} is sent as a bearer token. TRELLIS is MIT and needs an NVIDIA GPU with 16 GB; run it behind this lane."
+        ),
+        stages: default_stages.clone(),
+    });
+
+    options.push(BackendOption {
+        id: "meshy".to_string(),
+        label: "Meshy (hosted, bring your own key)".to_string(),
+        kind: "meshy".to_string(),
+        local: false,
+        needs_key: true,
+        available: meshy_key.is_some(),
+        reason: match &meshy_key {
+            Some(_) => format!("{MESHY_API_KEY_ENV} is set. The key is never printed."),
+            None => format!("{MESHY_API_KEY_ENV} is not set. Meshy is an adapter, not the product."),
+        },
+        setup: "Pass --provider meshy and set MESHY_API_KEY, or keep the local lanes. Do not bundle or resell a provider key.".to_string(),
+        stages: default_stages.clone(),
+    });
+
+    options
+}
+
+/// Where an LLM-written Blender script lives for a character.
+pub fn mesh_script_path(workspace: &Path, slug: &str) -> Result<PathBuf> {
+    validate_slug(slug)?;
+    Ok(character_dir(workspace, slug).join("mesh.py"))
+}
+
+/// Write a Blender script scaffold for one character. It refuses to overwrite
+/// an edited script unless `force` is set.
+pub fn scaffold_mesh_script(workspace: &Path, slug: &str, force: bool) -> Result<PathBuf> {
+    let path = mesh_script_path(workspace, slug)?;
+    if path.exists() && !force {
+        return Err(Error::msg(format!(
+            "{} already exists. Edit it, or pass force to replace it.",
+            path.display()
+        )));
+    }
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::write(&path, BLENDER_SCAFFOLD)?;
+    Ok(path)
+}
+
+/// A Blender script that produces `model.glb` and a turnaround render.
+///
+/// The primitives are a starting point, not a finished character. Replace the
+/// body with the design the brief describes and keep the export and render.
+pub const BLENDER_SCAFFOLD: &str = r##"""Dah character mesh scaffold.
+
+Blender contract:
+  blender --background --factory-startup --python mesh.py
+
+Inputs (env): DAH_CHARACTER_DIR, DAH_STAGE_DIR, DAH_PROMPT, DAH_REFERENCE,
+              DAH_TARGET_HERO, DAH_POLYCOUNT
+Output: <DAH_CHARACTER_DIR>/model.glb
+Optional: <DAH_STAGE_DIR>/turnaround.png
+
+This is a starting point, not a finished character. An LLM or a coding agent
+can edit this file directly, run the stage, look at the render and iterate.
+"""
+import math
+import os
+import bpy
+
+char_dir = os.environ.get("DAH_CHARACTER_DIR", os.getcwd())
+stage_dir = os.environ.get("DAH_STAGE_DIR", char_dir)
+prompt = os.environ.get("DAH_PROMPT", "")
+hero = os.environ.get("DAH_TARGET_HERO", "")
+
+bpy.ops.wm.read_factory_settings(use_empty=True)
+
+
+def material(name, rgb, metallic=0.0, roughness=0.6):
+    m = bpy.data.materials.new(name)
+    m.use_nodes = True
+    bsdf = m.node_tree.nodes.get("Principled BSDF")
+    if bsdf:
+        bsdf.inputs["Base Color"].default_value = (*rgb, 1.0)
+        bsdf.inputs["Metallic"].default_value = metallic
+        bsdf.inputs["Roughness"].default_value = roughness
+    return m
+
+
+body = material("Body", (0.10, 0.32, 0.20))
+trim = material("Trim", (0.22, 0.22, 0.25), metallic=0.7, roughness=0.35)
+accent = material("Accent", (0.85, 0.55, 0.12), metallic=0.2, roughness=0.4)
+
+parts = []
+
+
+def sphere(name, loc, scale, mat):
+    bpy.ops.mesh.primitive_uv_sphere_add(segments=32, ring_count=16, location=loc)
+    obj = bpy.context.object
+    obj.name = name
+    obj.scale = scale
+    obj.data.materials.append(mat)
+    parts.append(obj)
+    return obj
+
+
+def limb(name, loc, radius, depth, mat, tilt=0.0):
+    bpy.ops.mesh.primitive_cylinder_add(vertices=20, radius=radius, depth=depth, location=loc)
+    obj = bpy.context.object
+    obj.name = name
+    obj.rotation_euler[1] = tilt
+    obj.data.materials.append(mat)
+    parts.append(obj)
+    return obj
+
+
+# 1.8 m figure in an A-pose. Replace these with the brief.
+sphere("Torso", (0.0, 0.0, 1.05), (0.20, 0.14, 0.30), body)
+sphere("Head", (0.0, 0.02, 1.52), (0.115, 0.115, 0.14), body)
+sphere("Hair", (0.0, 0.03, 1.60), (0.12, 0.12, 0.06), trim)
+limb("Arm.L", (-0.28, 0.0, 1.06), 0.052, 0.52, body, tilt=math.radians(-18))
+limb("Arm.R", (0.28, 0.0, 1.06), 0.052, 0.52, body, tilt=math.radians(18))
+limb("Leg.L", (-0.10, 0.0, 0.44), 0.072, 0.80, trim)
+limb("Leg.R", (0.10, 0.0, 0.44), 0.072, 0.80, trim)
+limb("Belt", (0.0, 0.0, 0.92), 0.215, 0.06, accent)
+
+bpy.ops.object.select_all(action="DESELECT")
+for obj in parts:
+    obj.select_set(True)
+bpy.context.view_layer.objects.active = parts[0]
+bpy.ops.object.join()
+character = bpy.context.active_object
+character.name = "Character"
+bpy.ops.object.transform_apply(location=False, rotation=True, scale=True)
+bpy.ops.object.shade_smooth()
+
+os.makedirs(char_dir, exist_ok=True)
+glb = os.path.join(char_dir, "model.glb")
+bpy.ops.export_scene.gltf(filepath=glb, export_format="GLB", use_selection=True)
+print("wrote", glb, "for", hero or "the target hero", "from prompt:", prompt[:120])
+
+# A quick render so an agent can look at the result and edit. A headless build
+# may not render; the GLB is the required output.
+try:
+    os.makedirs(stage_dir, exist_ok=True)
+    scene = bpy.context.scene
+    scene.render.engine = "BLENDER_WORKBENCH"
+    scene.render.resolution_x = 512
+    scene.render.resolution_y = 512
+    bpy.ops.object.camera_add(location=(0.0, -3.2, 1.1), rotation=(math.radians(88), 0.0, 0.0))
+    scene.camera = bpy.context.object
+    bpy.ops.object.light_add(type="SUN", location=(2.0, -3.0, 5.0))
+    scene.render.filepath = os.path.join(stage_dir, "turnaround.png")
+    bpy.ops.render.render(write_still=True)
+except Exception as exc:
+    print("render skipped:", exc)
+"""##;
+
 #[cfg(test)]
 mod tests;

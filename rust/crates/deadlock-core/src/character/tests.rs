@@ -1014,3 +1014,49 @@ fn write_response(stream: &mut TcpStream, status: u16, content_type: &str, body:
     stream.write_all(body).unwrap();
     stream.flush().unwrap();
 }
+
+#[test]
+fn backend_options_name_every_lane() {
+    let options = backend_options();
+    let ids: Vec<&str> = options.iter().map(|option| option.id.as_str()).collect();
+    for id in ["blender-code", "local-command", "http", "meshy"] {
+        assert!(ids.contains(&id), "missing backend {id}: {ids:?}");
+    }
+    let blender = options
+        .iter()
+        .find(|option| option.id == "blender-code")
+        .expect("blender option");
+    assert!(blender.stages.iter().any(|stage| stage == "reconstruct"));
+    assert!(blender.setup.contains("mesh.py"));
+    assert!(blender.setup.contains("model.glb"));
+    let meshy = options
+        .iter()
+        .find(|option| option.id == "meshy")
+        .expect("meshy option");
+    assert!(!meshy.local);
+    assert!(meshy.needs_key);
+}
+
+#[test]
+fn scaffold_writes_the_blender_contract_and_refuses_overwrite() {
+    let workspace = temp_workspace("scaffold");
+    let path = scaffold_mesh_script(&workspace, "scaffold-test", false).expect("scaffold");
+    let text = fs::read_to_string(&path).expect("read scaffold");
+    assert!(text.contains("bpy"));
+    assert!(text.contains("model.glb"));
+    assert!(text.contains("DAH_CHARACTER_DIR"));
+    assert!(text.contains("turnaround.png"));
+    assert!(
+        scaffold_mesh_script(&workspace, "scaffold-test", false).is_err(),
+        "a second scaffold must not overwrite an edit"
+    );
+    assert!(scaffold_mesh_script(&workspace, "scaffold-test", true).is_ok());
+    let _ = fs::remove_dir_all(&workspace);
+}
+
+#[test]
+fn scaffold_rejects_an_unsafe_slug() {
+    let workspace = temp_workspace("scaffold-slug");
+    assert!(scaffold_mesh_script(&workspace, "../escape", false).is_err());
+    let _ = fs::remove_dir_all(&workspace);
+}

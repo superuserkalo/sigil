@@ -294,3 +294,12 @@ Not verified:
 - Local domain facts: `docs/research/deadlock-modding.md`
 - Likeness policy: `docs/decisions/0005-reference-images-and-likeness.md`
 - Compile backend policy: `docs/decisions/0003-windows-compile-backend.md`
+
+
+## Which model makes the mesh
+
+An LLM cannot emit a production mesh as tokens, but it can write and iterate
+Blender code. `dah character backends` reports the measured lanes, and
+`dah character scaffold <slug>` writes the Blender script contract. The full
+comparison, including MeshGPT, TRELLIS, MCP for Blender and the subscription
+caveat, is in `docs/research/llm-mesh-generation.md`.

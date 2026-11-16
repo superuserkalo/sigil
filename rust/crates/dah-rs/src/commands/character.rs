@@ -17,7 +17,7 @@ use deadlock_core::character::{
 
 use crate::error::{CliError, Result};
 use crate::paths;
-use crate::util::{format_bytes, print_json};
+use crate::util::{format_bytes, lossy, print_json};
 
 pub struct CreateArgs {
     pub prompt: String,
@@ -708,4 +708,94 @@ mod tests {
 
         let _ = fs::remove_dir_all(workspace);
     }
+}
+
+pub struct BackendsArgs {
+    pub json: bool,
+}
+
+pub struct ScaffoldArgs {
+    pub slug: String,
+    pub force: bool,
+    pub workspace: Option<PathBuf>,
+    pub json: bool,
+}
+
+/// `dah character backends`: what this machine can run, and how to set it up.
+pub fn backends(args: &BackendsArgs) -> Result<()> {
+    let options = character::backend_options();
+
+    if args.json {
+        print_json(&json!({
+            "ok": true,
+            "platform": std::env::consts::OS,
+            "backends": options,
+            "note": "An LLM can write a Blender or Python script for the blender-code lane. Image or text to 3D is a separate trained model, local or hosted.",
+        }));
+        return Ok(());
+    }
+
+    println!("Mesh backends on {}", std::env::consts::OS);
+    for option in &options {
+        println!(
+            "  {:<16} {:<12} {}",
+            option.id,
+            if option.available { "available" } else { "unavailable" },
+            option.kind
+        );
+        println!("    {}", option.reason);
+        if option.available {
+            println!("    stages: {}", option.stages.join(", "));
+        }
+        println!("    setup:  {}", option.setup);
+    }
+    println!();
+    println!("An LLM cannot emit a production mesh as tokens, but it can write and iterate Blender code.");
+    println!("Run `dah character scaffold <slug>` to give it a real script contract.");
+    Ok(())
+}
+
+/// `dah character scaffold <slug>`: write a Blender script an LLM can edit.
+pub fn scaffold(args: &ScaffoldArgs) -> Result<()> {
+    let workspace = paths::workspace_root(args.workspace.as_deref())?;
+    let path = character::scaffold_mesh_script(&workspace, &args.slug, args.force)
+        .map_err(|error| map_core("character_scaffold", error))?;
+    let blender = character::blender_binary();
+
+    if args.json {
+        print_json(&json!({
+            "ok": true,
+            "path": lossy(&path),
+            "blender": blender.as_ref().map(|path| lossy(path)),
+            "next": [
+                "edit mesh.py",
+                "set DAH_MESHGEN_COMMAND to the Blender binary",
+                "set DAH_MESHGEN_ARGS to a JSON array with --background --factory-startup --python <mesh.py>",
+                "run `dah character create \"<prompt>\" --provider local`",
+            ],
+        }));
+        return Ok(());
+    }
+
+    println!("Wrote the Blender mesh scaffold:");
+    println!("  {}", path.display());
+    println!();
+    println!("Blender: {}", match &blender {
+        Some(path) => lossy(path),
+        None => "not found. Set DAH_BLENDER or put blender on PATH.".to_string(),
+    });
+    println!();
+    println!("Next:");
+    println!("  1. Edit the script. Replace the primitives with the brief; keep the");
+    println!("     model.glb export and the turnaround render.");
+    println!("  2. Point the local backend at Blender:");
+    println!(
+        "     DAH_MESHGEN_COMMAND=<blender> DAH_MESHGEN_ARGS='[\"--background\",\"--factory-startup\",\"--python\",\"{}\"]'",
+        path.display()
+    );
+    println!("  3. Run `dah character create \"<prompt>\" --provider local`.");
+    println!("     The script gets DAH_CHARACTER_DIR, DAH_STAGE_DIR and DAH_PROMPT.");
+    println!();
+    println!("An LLM or coding agent can edit mesh.py, look at turnaround.png, and iterate.");
+    Ok(())
 }

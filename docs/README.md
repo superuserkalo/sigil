@@ -27,6 +27,7 @@ Every doc starts with a status line. Values: `active`, `draft`, `planned`, `supe
 | `research/fx-libfx.md` | active | Why fx and libfx are not the embedded runtime. |
 | `research/vpk-format.md` | active | VPK v1/v2 layout used by the game index. |
 | `research/patch-feeds.md` | active | Official Deadlock patch feed and file-change sources. |
+| `research/llm-mesh-generation.md` | active | Can an LLM produce a mesh? Code lanes, mesh models and BYO backends. |
 | `research/locker-and-recolor.md` | active | Hero roster, Grimoire art, project pin and recolor briefs. |
 | `research/crosshair.md` | active | Reticle convars, HUD geometry and the managed autoexec block. |
 | `research/stats-case-study.md` | active | Leetify, Blitz.gg and Scope.gg patterns for Deadlock stats. |
