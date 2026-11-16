@@ -1805,6 +1805,14 @@ pub fn scene_browse(s: &mut State) {
     }
 }
 
+pub fn scene_crosshair_apply(s: &mut State) {
+    s.screen = Screen::Crosshair;
+    if rune::is_headless() {
+        crate::data::import_crosshair(s);
+    }
+    s.crosshair.pending = true;
+}
+
 pub fn scene_recolor(s: &mut State) {
     s.screen = Screen::Locker;
     if rune::is_headless() {
@@ -2069,6 +2077,7 @@ pub fn scenes() -> &'static [(&'static str, fn(&mut State))] {
         ("profiles", scene_profiles),
         ("autoexec", scene_autoexec),
         ("crosshair", scene_crosshair),
+        ("crosshair-apply", scene_crosshair_apply),
         ("stats", scene_stats),
         ("locker", scene_locker),
         ("launch", scene_launch),
