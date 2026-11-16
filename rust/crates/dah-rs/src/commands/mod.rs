@@ -1,3 +1,6 @@
+pub mod addons;
+pub mod autoexec;
+pub mod browse;
 pub mod doctor;
 pub mod extract;
 pub mod find;
@@ -5,6 +8,7 @@ pub mod index;
 pub mod migrate;
 pub mod package;
 pub mod patches;
+pub mod profiles;
 pub mod project;
 pub mod publish;
 pub mod release;
