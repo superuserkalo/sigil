@@ -10,18 +10,51 @@ generated mesh is not a Deadlock hero model. The executable side is
 
 ## What the pipeline does
 
-1. Build a `CharacterRequest`: prompt, optional local reference image, optional
-   target hero, style text and provider.
-2. Create a provider task. Image input goes to Meshy image-to-3D; prompt only
-   input goes to Meshy text-to-3D preview.
-3. Record the task under `<workspace>/generated/characters/<slug>/task.json`.
-4. Poll the task, then download the GLB to `model.glb` in the same folder.
-5. Import the GLB into `character.json` with `source2Compile: "required"` and
-   `inGameReady: false`.
+The pipeline is a stage graph, not one provider call. The observed vendor
+process it is modelled on, and the evidence for each stage, is in
+`docs/research/meshy-reverse-engineering.md`. Eleven stages run in this order:
 
-The import step validates the GLB header, records size and CRC32, and writes the
-prompt, provider, target hero and rights note. It has no path that claims the
-asset loads in Deadlock.
+1. `prepare_reference`: deterministic. Format, dimensions, alpha channel, matte
+   coverage, subject centring and alpha edge quality. No model, no key.
+2. `generate_views`: generative. Multi-view or single-view image conditioning.
+3. `reconstruct`: generative. Views to a mesh.
+4. `cleanup`: deterministic measurement of triangle count against the LOD0
+   budget, plus an optional decimation backend call when the mesh is over
+   budget.
+5. `uv_bake`: skipped when the mesh already carries `TEXCOORD_0`, otherwise a
+   backend stage.
+6. `pbr_synthesize`: skipped when the materials already reference textures,
+   otherwise a backend stage.
+7. `retopo`: backend stage, gated on a mesh.
+8. `rig`: backend stage, gated on a mesh and on the rigging triangle limit.
+9. `animate_retarget`: backend stage, gated on a succeeded `rig`.
+10. `source2_map`: deterministic. Writes `source2-plan.json` with the `vmdl`,
+    `vmat`, `vtex`, compiled `_c` paths, skeleton and weight requirements and the
+    AnimGraph 2 binding. Always `inGameReady: false`.
+11. `export`: deterministic. Copies the GLB to `export/<slug>.glb` and records
+    its CRC32.
+
+Every stage records `id`, `state` (`skipped`, `pending`, `running`, `succeeded`,
+`failed`, `unsupported`), `backend`, `inputs`, `outputs`, `bytes`, `hash`,
+`notes` and the evidence id from the research doc. The graph is persisted in
+`task.json` and copied into `character.json`.
+
+A generative stage with no configured backend is `unsupported` with a precise
+reason. It is never skipped silently and never reported as success. A task whose
+generative stages are all unsupported ends `BLOCKED`, which is an honest final
+state: nothing was generated and nothing is claimed.
+
+Backends:
+
+| Backend | Configured by | Stages |
+| --- | --- | --- |
+| Local command | `DAH_MESHGEN_COMMAND` plus `DAH_MESHGEN_ARGS` (JSON array) and optional `DAH_MESHGEN_STAGES` | declared stages, default `generate_views,reconstruct` |
+| HTTP JSON server | `DAH_MESHGEN_URL`, optional `DAH_MESHGEN_TOKEN` | declared stages |
+| Meshy | `--provider meshy` and `MESHY_API_KEY` | the single provider task, recorded as `generate_views` plus `reconstruct` |
+| Mock | `--provider mock` | deterministic offline task, for tests and demos |
+
+`auto`, the default, tries the local command, then the HTTP server, then
+nothing. Meshy is never selected implicitly.
 
 ## Meshy API
 
@@ -162,31 +195,43 @@ ADR 0005 rules, as implemented:
 - A rights note is recorded in `task.json` and `character.json`. The default
   note says rights are not confirmed.
 - `publishAllowed` is always false. This code has no publish path.
-- A local provider (`mock`) never uploads the reference image, so consent is not
-  required for it.
+- A local backend (command or HTTP on loopback) and the `mock` provider never
+  upload the reference image, so consent is not required for them. Only Meshy is
+  treated as remote.
 - The remote provider receives the image as a base64 data URI in the request
   body. Provider terms govern retention and processing on that side. Check them
   before uploading a real person's photo.
 
 ## Implementation map
 
-The core functions are implemented and tested. The `dah character` subcommand
-wiring and the `lib.rs` module declaration land with the CLI change.
+The core functions and the CLI module are implemented and tested, except for the
+`stages` clap arm, which is owned by the `main.rs` change.
 
 | Item | Location |
 | --- | --- |
-| Types, providers, pipeline | `rust/crates/deadlock-core/src/character.rs` |
+| Types, stage graph, backends, native checks | `rust/crates/deadlock-core/src/character.rs` |
+| Core tests, including a hand-built GLB | `rust/crates/deadlock-core/src/character/tests.rs` |
 | CLI module | `rust/crates/dah-rs/src/commands/character.rs` |
-| Task metadata | `<workspace>/generated/characters/<slug>/task.json` |
-| Downloaded mesh | `<workspace>/generated/characters/<slug>/model.glb` |
+| Task metadata and stage graph | `<workspace>/generated/characters/<slug>/task.json` |
+| Mesh | `<workspace>/generated/characters/<slug>/model.glb` |
+| Source 2 plan | `<workspace>/generated/characters/<slug>/source2-plan.json` |
+| Export copy | `<workspace>/generated/characters/<slug>/export/<slug>.glb` |
+| Stage scratch folders | `<workspace>/generated/characters/<slug>/stages/<stage>/` |
 | Import record | `<workspace>/generated/characters/<slug>/character.json` |
 
-Providers:
+Backends:
 
-- `MeshyProvider` uses the documented image-to-3D and text-to-3D endpoints,
-  `Retry-After`, and a plain GET for signed asset URLs.
-- `MockProvider` is deterministic and offline, for tests and demos. Each poll
-  moves `PENDING` to `IN_PROGRESS` to `SUCCEEDED` and writes a minimal valid
+- `LocalCommandBackend` runs a configured executable, one stage per call, with
+  an argument array, no shell, a working directory inside the character folder,
+  a timeout and a containment check on every produced file. Stage parameters are
+  passed as `DAH_*` environment variables. This is the seam for TRELLIS,
+  Hunyuan3D, ComfyUI CLI or a Blender script.
+- `HttpBackend` posts one JSON stage request to `DAH_MESHGEN_URL` and accepts
+  either base64 file data or a source path per output.
+- `ProviderBackend` wraps a `CharacterProvider`. `MeshyProvider` uses the
+  documented image-to-3D and text-to-3D endpoints, `Retry-After`, and a plain
+  GET for signed asset URLs. `MockProvider` is deterministic and offline: each
+  poll moves `PENDING` to `IN_PROGRESS` to `SUCCEEDED` and writes a minimal valid
   GLB.
 
 A local scripted HTTP server that follows the Meshy response shape can be used
@@ -197,10 +242,21 @@ with `MESHY_API_BASE_URL=http://127.0.0.1:<port>` and any non-empty
 
 Verified on 2026-11-16:
 
-- The base64 encoder against known vectors.
-- Slug generation from a prompt.
+- The base64 encoder and decoder against known vectors.
+- Slug generation from a prompt, and from the reference file name when the
+  prompt is empty.
 - GLB header validation, including rejection of short and mismatched files.
-- The full mock flow: create, two polls, download, import, status.
+- The GLB structural parser against a hand-built single-triangle GLB: chunk
+  table, accessor bounds, triangle and vertex counts, attribute presence, bounds
+  box, and a detected accessor overrun.
+- PNG header and pixel analysis against a generated RGBA disc: dimensions, alpha
+  channel, alpha coverage, subject box, centring and edge quality. Also a JPEG
+  header read without decoding, and a too-small PNG rejected.
+- Reference-only create with no backend: `prepare_reference` succeeds,
+  `generate_views` is `unsupported` with the fix in the note, the task is
+  `BLOCKED`, and `import` refuses.
+- The full mock flow: create, two polls, download, import, status, and restoring
+  a deleted GLB from the recorded task.
 - Import refuses a task that is still `PENDING`.
 - Create refuses a remote upload of a reference image without consent.
 - The Meshy-shaped flow against a local scripted HTTP server: `POST
@@ -208,10 +264,18 @@ Verified on 2026-11-16:
   /openapi/v1/image-to-3d/img-task-1` with `Retry-After`, then the GLB download
   from the recorded `model_urls.glb`, then import metadata with
   `source2Compile: "required"`.
+- The local command backend end to end with a real executable: views output
+  recorded, `model.glb` produced, cleanup measured, `source2_map` and `export`
+  written.
+- The HTTP backend with a scripted JSON server returning a base64 GLB.
 
 Not verified:
 
 - A real Meshy call. No key or credits were used.
+- Any real local generative backend. No mesh model was installed, so the local
+  command and HTTP seams are proven only against scripted fixtures.
+- Retopology, rigging, weight transfer, LOD generation, material translation and
+  AnimGraph 2 binding. Those stages are recorded as `unsupported` or skipped.
 - Image-to-3D output quality, texture quality or rigging quality.
 - The Rigging API and skeleton templates.
 - Loading the GLB in Blender, Source 2 Viewer, CSDK 12 or the game.
