@@ -477,8 +477,17 @@ pub fn request_config(
             "OpenAI-Beta".to_string(),
             "responses=experimental".to_string(),
         ));
+        headers.push(("originator".to_string(), "dah".to_string()));
+        headers.push(("accept".to_string(), "text/event-stream".to_string()));
     } else {
+        // The Grok CLI proxy checks this token marker and the client id.
+        headers.push((
+            "X-XAI-Token-Auth".to_string(),
+            "xai-grok-cli".to_string(),
+        ));
+        headers.push(("x-grok-client-identifier".to_string(), "dah".to_string()));
         headers.push(("x-grok-model-override".to_string(), model.to_string()));
+        headers.push(("accept".to_string(), "text/event-stream".to_string()));
     }
 
     Ok(ProviderRequest {
@@ -949,6 +958,7 @@ mod tests {
             "https://cli-chat-proxy.grok.com/v1/responses"
         );
         assert!(grok.headers.iter().any(|(name, value)| name == "x-grok-model-override" && value == "grok-4"));
+        assert!(grok.headers.iter().any(|(name, value)| name == "X-XAI-Token-Auth" && value == "xai-grok-cli"));
     }
 
     #[test]

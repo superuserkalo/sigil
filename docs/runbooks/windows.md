@@ -86,7 +86,7 @@ The manager screens work without an agent.
 The bundle includes three batch files:
 
 - `Sign in with ChatGPT.bat` runs `dah.exe auth login codex`, then asks for the
-  model id and writes `host.json` with `dah.exe auth use codex --model <id>`.
+  model id, for example `gpt-5.6-luna` or `grok-4.5`, and writes `host.json` with `dah.exe auth use codex --model <id>`.
 - `Sign in with Grok.bat` does the same for Grok.
 - `Start Deadlock Mod Manager.bat` opens the app.
 

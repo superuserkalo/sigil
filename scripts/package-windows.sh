@@ -45,7 +45,7 @@ if errorlevel 1 (
   pause
   exit /b 1
 )
-set /p MODEL=Model id (the one your Codex subscription exposes):
+set /p MODEL=Model id (for example gpt-5.6-luna):
 if "%MODEL%"=="" (
   echo No model id entered. Run this again or open Settings.
   pause
@@ -65,7 +65,7 @@ if errorlevel 1 (
   pause
   exit /b 1
 )
-set /p MODEL=Model id (the one your Grok subscription exposes):
+set /p MODEL=Model id (for example grok-4.5):
 if "%MODEL%"=="" (
   echo No model id entered. Run this again or open Settings.
   pause
