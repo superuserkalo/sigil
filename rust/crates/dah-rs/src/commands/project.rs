@@ -222,7 +222,13 @@ pub fn check(args: &ProjectArgs) -> Result<bool> {
         None => println!("gameinfo.gi: WARNING the file could not be read"),
     }
 
-    match (check.slot, &check.slot_conflict) {
+    if check.slot.is_some() && check.slot == check.deployed_slot && check.slot_conflict.is_none() {
+        println!(
+            "Slot: deployed to {} by this project",
+            format!("pak{:02}_dir.vpk", check.slot.unwrap_or(0))
+        );
+    } else {
+        match (check.slot, &check.slot_conflict) {
         (Some(slot), Some(conflict)) => {
             if conflict.file_name == format!("pak{slot:02}_dir.vpk") {
                 println!(
@@ -239,6 +245,7 @@ pub fn check(args: &ProjectArgs) -> Result<bool> {
         }
         (Some(slot), None) => println!("Slot: pak{slot:02}_dir.vpk is free"),
         (None, _) => println!("Slot: none assigned in the manifest"),
+        }
     }
 
     if ok {

@@ -86,6 +86,18 @@ _Avoid_: action, skill, command
 A durable pause that requires a human decision before a tool with external effects runs.
 _Avoid_: confirmation, prompt
 
+**Release**:
+A versioned VPK plus its manifest, checksums and release notes, stored in the project workspace.
+_Avoid_: build, export
+
+**Deploy plan**:
+The slot, conflicts, replacement decision and `gameinfo.gi` repair computed before any game write.
+_Avoid_: install
+
+**Migration**:
+A proposed mapping from a broken target path to its new path after a game update.
+_Avoid_: fix, patch
+
 **Baseline**:
 The recorded CRCs, sizes and owning VPK for a project target set, captured after a check.
 _Avoid_: snapshot, lockfile

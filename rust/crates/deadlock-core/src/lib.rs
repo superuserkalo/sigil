@@ -9,8 +9,13 @@ pub mod extract;
 pub mod game_catalog;
 pub mod game_index;
 pub mod patch_notes;
+pub mod payload;
 pub mod project;
+pub mod release;
+pub mod deploy;
+pub mod migrate;
 pub mod vpk;
+pub mod vpk_write;
 
 pub use discovery::{
     AddonSlot, AddonsStatus, DEADLOCK_APP_ID, DeadlockInstall, GameInfoStatus, GameStatus,

@@ -20,6 +20,8 @@ use crate::error::CliError;
     version,
     about = "Deadlock modding workbench CLI",
     long_about = "Inspect the Deadlock install, index game paths, extract files and manage mod projects.\n\n\
+Mod flow: `dah mod validate`, `dah mod pack`, `dah mod release`, `dah mod deploy`, `dah publish prepare`.\n\
+Deploy writes to the game install only with --approve; publish prepare never uploads.\n\n\
 Data directory: DAH_DATA_DIR, else the platform data directory.\n\
 Workspace: --workspace, else DAH_WORKSPACE_DIR, else <data>/workspace.",
     disable_help_subcommand = true,
@@ -109,6 +111,44 @@ enum Command {
         #[command(subcommand)]
         command: ModCommand,
     },
+    /// Report every mod project as a review queue after a game update.
+    Watch {
+        /// Maximum projects to print.
+        #[arg(long, default_value_t = 20, value_name = "N")]
+        limit: usize,
+        /// Print machine-readable JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Prepare a release folder for upload. Never uploads.
+    Publish {
+        #[command(subcommand)]
+        command: PublishCommand,
+    },
+    /// Inspect a VPK directory file and optionally verify its entries.
+    Vpk {
+        #[command(subcommand)]
+        command: VpkCommand,
+    },
+}
+
+#[derive(Subcommand)]
+enum VpkCommand {
+    /// Print the directory tree and check CRCs.
+    Inspect {
+        /// Directory file, for example pak06_dir.vpk.
+        #[arg(value_name = "VPK")]
+        path: PathBuf,
+        /// Maximum entries to print.
+        #[arg(long, default_value_t = 50, value_name = "N")]
+        limit: usize,
+        /// Read every entry and verify its CRC32.
+        #[arg(long)]
+        verify: bool,
+        /// Print machine-readable JSON.
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -158,6 +198,100 @@ enum ModCommand {
         #[arg(long, value_name = "DIR")]
         workspace: Option<PathBuf>,
     },
+    /// Check the staging tree against the payload rules.
+    Validate {
+        /// Mod project directory, or a workspace containing one project.
+        #[arg(long, value_name = "DIR")]
+        workspace: Option<PathBuf>,
+        /// Print machine-readable JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Validate staging and pack it as pakNN_dir.vpk.
+    Pack {
+        /// Mod project directory, or a workspace containing one project.
+        #[arg(long, value_name = "DIR")]
+        workspace: Option<PathBuf>,
+        /// Addon slot 1 to 99. Defaults to project.slot or 01.
+        #[arg(long, value_name = "N")]
+        slot: Option<u8>,
+        /// Output directory. Defaults to <project>/builds.
+        #[arg(long, value_name = "DIR")]
+        out: Option<PathBuf>,
+        /// Print machine-readable JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Pack into builds/<version>/ and write release.json.
+    Release {
+        /// Mod project directory, or a workspace containing one project.
+        #[arg(long, value_name = "DIR")]
+        workspace: Option<PathBuf>,
+        /// Addon slot 1 to 99. Defaults to project.slot or 01.
+        #[arg(long, value_name = "N")]
+        slot: Option<u8>,
+        /// Note stored in the release manifest and project history.
+        #[arg(long, value_name = "TEXT")]
+        note: Option<String>,
+        /// Print machine-readable JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Plan or apply the latest release against the game install.
+    Deploy {
+        /// Mod project directory, or a workspace containing one project.
+        #[arg(long, value_name = "DIR")]
+        workspace: Option<PathBuf>,
+        /// Addon slot 1 to 99. Defaults to the release manifest.
+        #[arg(long, value_name = "N")]
+        slot: Option<u8>,
+        /// Write the VPK and gameinfo repair into the game install.
+        #[arg(long)]
+        approve: bool,
+        /// Print machine-readable JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Update target paths that moved after a game update.
+    Migrate {
+        /// Mod project directory, or a workspace containing one project.
+        #[arg(long, value_name = "DIR")]
+        workspace: Option<PathBuf>,
+        /// Write the new paths into project.json.
+        #[arg(long)]
+        apply: bool,
+        /// Print machine-readable JSON.
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum PublishCommand {
+    /// Copy the latest release, metadata and install notes into a folder.
+    Prepare {
+        /// Mod project directory, or a workspace containing one project.
+        #[arg(long, value_name = "DIR")]
+        workspace: Option<PathBuf>,
+        /// Destination folder. Defaults to <project>/publish/<version>.
+        #[arg(long, value_name = "DIR")]
+        out: Option<PathBuf>,
+        /// Print machine-readable JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Open the GameBanana submission page for the prepared release.
+    Upload {
+        /// Mod project directory, or a workspace containing one project.
+        #[arg(long, value_name = "DIR")]
+        workspace: Option<PathBuf>,
+        /// Open the page in the default browser.
+        #[arg(long)]
+        open: bool,
+        /// Print machine-readable JSON.
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 impl Cli {
@@ -167,11 +301,23 @@ impl Cli {
             | Command::Index { json, .. }
             | Command::Find { json, .. }
             | Command::Extract { json, .. }
-            | Command::Patches { json, .. } => *json,
+            | Command::Patches { json, .. }
+            | Command::Watch { json, .. } => *json,
+            Command::Publish { command } => match command {
+                PublishCommand::Prepare { json, .. } | PublishCommand::Upload { json, .. } => *json,
+            },
+            Command::Vpk { command } => match command {
+                VpkCommand::Inspect { json, .. } => *json,
+            },
             Command::Mod { command } => match command {
                 ModCommand::New { json, .. }
                 | ModCommand::Baseline { json, .. }
-                | ModCommand::Check { json, .. } => *json,
+                | ModCommand::Check { json, .. }
+                | ModCommand::Validate { json, .. }
+                | ModCommand::Pack { json, .. }
+                | ModCommand::Release { json, .. }
+                | ModCommand::Deploy { json, .. }
+                | ModCommand::Migrate { json, .. } => *json,
                 ModCommand::Version { .. } => false,
             },
         }
@@ -309,6 +455,113 @@ fn run(cli: &Cli) -> error::Result<i32> {
                     version: new_version.clone(),
                     note: note.clone(),
                     workspace: workspace.clone(),
+                })?;
+                Ok(0)
+            }
+            ModCommand::Validate { workspace, json } => {
+                let ok = commands::package::validate(&commands::package::ValidateArgs {
+                    workspace: workspace.clone(),
+                    json: *json,
+                })?;
+                Ok(if ok { 0 } else { 1 })
+            }
+            ModCommand::Pack {
+                workspace,
+                slot,
+                out,
+                json,
+            } => commands::package::pack(&commands::package::PackArgs {
+                workspace: workspace.clone(),
+                slot: *slot,
+                out: out.clone(),
+                json: *json,
+            }),
+            ModCommand::Release {
+                workspace,
+                slot,
+                note,
+                json,
+            } => {
+                commands::release::release(&commands::release::ReleaseArgs {
+                    workspace: workspace.clone(),
+                    slot: *slot,
+                    note: note.clone(),
+                    json: *json,
+                })?;
+                Ok(0)
+            }
+            ModCommand::Deploy {
+                workspace,
+                slot,
+                approve,
+                json,
+            } => {
+                commands::release::deploy(&commands::release::DeployArgs {
+                    workspace: workspace.clone(),
+                    slot: *slot,
+                    approve: *approve,
+                    json: *json,
+                })?;
+                Ok(0)
+            }
+            ModCommand::Migrate {
+                workspace,
+                apply,
+                json,
+            } => {
+                commands::migrate::run(&commands::migrate::MigrateArgs {
+                    workspace: workspace.clone(),
+                    apply: *apply,
+                    json: *json,
+                })?;
+                Ok(0)
+            }
+        },
+        Command::Watch { limit, json } => {
+            commands::watch::run(&commands::watch::WatchArgs {
+                limit: *limit,
+                json: *json,
+            })?;
+            Ok(0)
+        }
+        Command::Vpk { command } => match command {
+            VpkCommand::Inspect {
+                path,
+                limit,
+                verify,
+                json,
+            } => {
+                let ok = commands::vpk::inspect(&commands::vpk::InspectArgs {
+                    path: path.clone(),
+                    limit: *limit,
+                    verify: *verify,
+                    json: *json,
+                })?;
+                Ok(if ok { 0 } else { 1 })
+            }
+        },
+        Command::Publish { command } => match command {
+            PublishCommand::Prepare {
+                workspace,
+                out,
+                json,
+            } => {
+                commands::publish::prepare(&commands::publish::PrepareArgs {
+                    workspace: workspace.clone(),
+                    out: out.clone(),
+                    json: *json,
+                })?;
+                Ok(0)
+            }
+            PublishCommand::Upload {
+                workspace,
+                open,
+                json,
+            } => {
+                commands::publish::upload(&commands::publish::UploadArgs {
+                    workspace: workspace.clone(),
+                    open: *open,
+                    json: *json,
                 })?;
                 Ok(0)
             }

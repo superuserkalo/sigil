@@ -350,12 +350,20 @@ dah find "billy"           search game paths by text, hero, type, folder or VPK
 dah extract <path...>      copy exact game paths into the workspace
 dah patches                official Deadlock patch notes and what is new
 dah mod new <slug>         create a project manifest and workspace
+dah mod validate           check staging against the payload rules
+dah mod pack               pack staging as pakNN_dir.vpk plus chunks
+dah mod release            write a versioned release manifest and history
 dah mod baseline           record target paths, CRCs and index sources
 dah mod check              show what changed, moved or broke after a patch
+dah mod deploy             plan or approve an addon install
+dah mod migrate            plan or apply moved target paths
+dah watch                  review every project after a patch
+dah publish prepare        build a local release folder, never upload
+dah publish upload         open the GameBanana submission page, no file upload
+dah vpk inspect            list a VPK tree and verify CRCs
 ```
 
-Later: `dah mod build`, `dah mod validate`, `dah mod deploy`. The CLI is useful for CI, scripted
-batch work, and testing the runtime without the desktop app.
+The CLI is useful for CI, scripted batch work, and testing the runtime without the desktop app.
 
 ## Failure modes
 
@@ -389,7 +397,7 @@ Phase 0.5, native port (in progress):
 - Rune workbench screens: workbench, projects, game index, patches, impact and settings, with headless scenes.
 - Rust TinyAgent protocol v2 crate: durable sessions, pause/resume, hooks, providers and events.
 - Done: the Rune app spawns `dah-agent` and streams turns, tool events and approvals.
-- Next: decompile, pack, deploy plans and release flows.
+- Done: validate, pack, versioned release, deploy plan/apply, migration, watch and publish prepare.
 
 Phase 1, read-only game introspection (in progress):
 
@@ -401,11 +409,12 @@ Phase 1, read-only game introspection (in progress):
 - Next: preview extracted textures and models in the existing Grimoire viewers.
 - Next: verify entry counts and hero folders against a real install.
 
-Phase 2, build loop without compile:
+Phase 2, build loop without compile (in progress):
 
-- Project manifest and staging layout.
-- Pack with `vpkeditcli`, inspect, merge.
-- Validate, plan deploy, deploy to a test slot with approval, launch.
+- Done: project manifest and staging layout.
+- Done: native VPK writer, pack, inspect with CRC verification.
+- Done: validate, versioned release, deploy plan, approved deploy to a test slot.
+- Next: launch and a real in-game recolor acceptance run.
 - Acceptance: recolor a texture whose source asset can be produced without a compiler, pack it,
   deploy it, and see it in game.
 
@@ -415,10 +424,11 @@ Phase 3, compile backends:
 - Remote backend over a Pi execution environment.
 - Acceptance: edit a source asset, compile, pack, deploy, verify in game on Windows.
 
-Phase 4, publish and survive updates:
+Phase 4, publish and survive updates (in progress):
 
-- Release folder and metadata for GameBanana, upload with approval.
-- Update detection using `GameTracking-Deadlock`, path migration, `gameinfo.gi` repair.
+- Done: release folder and metadata, publish prepare with install notes.
+- Done: update detection, path migration including staging, `gameinfo.gi` repair, cross-project watch.
+- Next: GameBanana upload with approval; the current handoff prepares the folder only.
 - Acceptance: update a published mod after a game patch with a recorded diff.
 
 Phase 5, advanced:
