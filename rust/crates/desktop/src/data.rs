@@ -2260,3 +2260,87 @@ pub fn set_addon_enabled(state: &mut State, slot: u8, enable: bool) {
         }
     }
 }
+
+// --- review ----------------------------------------------------------------
+
+pub fn open_review(state: &mut State, match_id: &str) {
+    let workspace = workspace_dir();
+    match deadlock_core::demo::read_summary(&workspace, match_id) {
+        Ok(summary) => {
+            let facts = deadlock_core::review::facts_for(&summary);
+            state.stats.review = Some(crate::screens::stats::ReviewPanel {
+                match_id: match_id.to_string(),
+                facts,
+                body: TextEdit::new(""),
+                log: Some(
+                    "The prompt and the allowed numbers are from the stored summary only. Nothing was sent anywhere."
+                        .to_string(),
+                ),
+                tone: crate::ui::Tone::Info,
+            });
+        }
+        Err(error) => {
+            state.stats.demo_error = Some(error.to_string());
+        }
+    }
+}
+
+pub fn save_review(state: &mut State) {
+    let workspace = workspace_dir();
+    let Some(panel) = state.stats.review.as_ref() else {
+        return;
+    };
+    if panel.body.text.trim().is_empty() {
+        if let Some(panel) = state.stats.review.as_mut() {
+            panel.log = Some("The reply is empty. Nothing was written.".to_string());
+            panel.tone = crate::ui::Tone::Warn;
+        }
+        return;
+    }
+    let facts = panel.facts.clone();
+    let body = panel.body.text.clone();
+    let report = deadlock_core::review::lint_review(&body, &facts);
+    if !report.ok() {
+        let lines: Vec<String> = report
+            .violations
+            .iter()
+            .take(6)
+            .map(|violation| {
+                format!(
+                    "line {}: {} is not in the fact set",
+                    violation.line, violation.number
+                )
+            })
+            .collect();
+        if let Some(panel) = state.stats.review.as_mut() {
+            panel.log = Some(format!(
+                "Refused: {} unsupported number(s). {}",
+                report.violations.len(),
+                lines.join(" · ")
+            ));
+            panel.tone = crate::ui::Tone::Bad;
+        }
+        return;
+    }
+    match deadlock_core::review::write_review(&workspace, &facts, &body) {
+        Ok(stored) => {
+            let path = deadlock_core::review::review_path(&workspace, &facts.match_id)
+                .map(|path| path.display().to_string())
+                .unwrap_or_default();
+            if let Some(panel) = state.stats.review.as_mut() {
+                panel.log = Some(format!(
+                    "Accepted {} number(s) and wrote review.md: {}",
+                    stored.checked_numbers, path
+                ));
+                panel.tone = crate::ui::Tone::Ok;
+            }
+            state.status = format!("Review saved for match {}.", facts.match_id);
+        }
+        Err(error) => {
+            if let Some(panel) = state.stats.review.as_mut() {
+                panel.log = Some(error.to_string());
+                panel.tone = crate::ui::Tone::Bad;
+            }
+        }
+    }
+}

@@ -65,6 +65,15 @@ pub struct View {
     pub demos: Vec<DemoRow>,
     pub demo_error: Option<String>,
     pub demo_busy: bool,
+    pub review: Option<ReviewPanel>,
+}
+
+pub struct ReviewPanel {
+    pub match_id: String,
+    pub facts: deadlock_core::review::ReviewFacts,
+    pub body: TextEdit,
+    pub log: Option<String>,
+    pub tone: Tone,
 }
 
 impl Default for View {
@@ -84,6 +93,7 @@ impl Default for View {
             demos: Vec::new(),
             demo_error: None,
             demo_busy: false,
+            review: None,
         }
     }
 }
@@ -376,10 +386,200 @@ fn demo_panel(s: &State, u: &Ui) -> El {
                         .color(u.faint)
                         .grow(1.0)
                         .truncate(),
+                )
+                .child(
+                    u.action("Review", ActionKind::Secondary)
+                        .key(format!("demo-review-{}", item.match_id))
+                        .on_press({
+                            let id = item.match_id.clone();
+                            move |st: &mut State| crate::data::open_review(st, &id)
+                        }),
                 ),
         );
     }
     panel
+}
+
+/// Mounted at the root so the review panel overlays the shell.
+pub fn dialog(s: &State, u: &Ui) -> Option<El> {
+    s.stats.review.as_ref().map(|review| review_dialog(u, review))
+}
+
+fn review_dialog(u: &Ui, review: &ReviewPanel) -> El {
+    let mut facts = col().w_full().gap(3.0);
+    for fact in review.facts.facts.iter().take(7) {
+        facts = facts.child(
+            text(fact.text.clone())
+                .font(MONO)
+                .color(u.muted)
+                .wrap_anywhere(),
+        );
+    }
+    let more = review.facts.facts.len().saturating_sub(7);
+    if more > 0 {
+        facts = facts.child(
+            text(format!("+ {more} more verified fact(s)"))
+                .font(LABEL)
+                .color(u.faint),
+        );
+    }
+
+    let body = col()
+        .w_full()
+        .gap(13.0)
+        .child(
+            row()
+                .w_full()
+                .gap(12.0)
+                .items_start()
+                .child(
+                    col()
+                        .grow(1.0)
+                        .gap(5.0)
+                        .child(u.eyebrow("VERIFIED FACTS · LINTED REVIEW"))
+                        .child(
+                            text(format!("Review match {}", review.match_id))
+                                .font(H2)
+                                .color(u.ink),
+                        )
+                        .child(
+                            text("Send the prompt to your model, paste the reply, and the linter refuses any number the facts do not support. review.md is written only when it passes.")
+                                .font(SMALL)
+                                .color(u.muted)
+                                .wrap(),
+                        ),
+                )
+                .child(u.glyph_box("◇", Tone::Info, 36.0)),
+        )
+        .child(u.divider())
+        .child(
+            row()
+                .w_full()
+                .gap(12.0)
+                .items_start()
+                .child(
+                    col()
+                        .grow(1.0)
+                        .min_w(0.0)
+                        .gap(5.0)
+                        .child(u.field_label("VERIFIED FACTS"))
+                        .child(facts),
+                )
+                .child(
+                    col()
+                        .w(300.0)
+                        .gap(4.0)
+                        .child(u.field_label("ALLOWED NUMBERS"))
+                        .child(
+                            text(
+                                review
+                                    .facts
+                                    .allowed_numbers
+                                    .iter()
+                                    .cloned()
+                                    .collect::<Vec<_>>()
+                                    .join("  "),
+                            )
+                            .font(MONO)
+                            .color(u.faint)
+                            .wrap_anywhere(),
+                        )
+                        .child(u.field_label("ABSENT"))
+                        .child(
+                            text(if review.facts.absent.is_empty() {
+                                "none".to_string()
+                            } else {
+                                review.facts.absent.join(", ")
+                            })
+                            .font(MONO)
+                            .color(u.amber)
+                            .wrap_anywhere(),
+                        ),
+                ),
+        )
+        .child(u.field_label("PROMPT"))
+        .child(
+            col()
+                .key("review-prompt")
+                .w_full()
+                .h(118.0)
+                .padding(10.0)
+                .radius(9.0)
+                .fill(u.field)
+                .border(1.0, u.hair)
+                .scroll(ScrollSpec {
+                    stick_bottom: false,
+                })
+                .child(
+                    text(review.facts.prompt.clone())
+                        .font(MONO)
+                        .color(u.prose)
+                        .wrap_anywhere()
+                        .selectable(true),
+                ),
+        )
+        .child(u.field_label("REVIEW REPLY"))
+        .child(
+            rune::text_input(&review.body, BODY)
+                .key("review-body")
+                .label("Review reply")
+                .h(92.0)
+                .color(u.ink)
+                .placeholder("Paste the model reply here", u.faint)
+                .caret(u.accent, u.accent.alpha(0.20))
+                .on_edit(|st: &mut State| {
+                    st.stats
+                        .review
+                        .as_mut()
+                        .map(|review| &mut review.body)
+                        .unwrap_or(&mut st.stats.demo_path)
+                }),
+        );
+
+    let mut body = body;
+    if let Some(log) = &review.log {
+        body = body.child(
+            text(log.clone())
+                .font(SMALL)
+                .color(review.tone.fg(u))
+                .wrap(),
+        );
+    }
+
+    body = body.child(
+        row()
+            .w_full()
+            .gap(9.0)
+            .child(
+                u.action("Close", ActionKind::Ghost)
+                    .grow(1.0)
+                    .on_press(|st: &mut State| st.stats.review = None),
+            )
+            .child(
+                u.action("Lint and save review", ActionKind::Primary)
+                    .grow(1.0)
+                    .on_press(|st: &mut State| crate::data::save_review(st)),
+            ),
+    );
+
+    let close = |st: &mut State| st.stats.review = None;
+    u.dialog_shell()
+        .key("review-dialog")
+        .role("dialog")
+        .label("Review a match")
+        .w(780.0)
+        .max_w(780.0)
+        .padding(1.0)
+        .modal(true, close)
+        .on_key(move |st: &mut State, ev: &rune::KeyEvent, _| {
+            if ev.key == rune::Key::Escape {
+                close(st);
+                true
+            } else {
+                false
+            }
+        })
+        .child(u.dialog_core().padding(20.0).child(body))
 }
 
 fn account_field(s: &State, u: &Ui) -> El {
