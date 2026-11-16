@@ -12,7 +12,7 @@ use crate::agent::{
 };
 use crate::model::{
     self, Catalog, ImpactReport, IndexRow, Message, PatchNote, Paths, Project, ProjectState,
-    Provider, ProviderState, Role, Screen, ToolRun,
+    Provider, ProviderState, ReleaseState, Role, Screen, ToolRun,
 };
 use crate::screens;
 use crate::ui::{BODY, BODY_MED, H2, HEADER_H, LABEL, SIDEBAR_W, SMALL, STATUS_H, Tone, Ui};
@@ -32,6 +32,7 @@ pub struct State {
     pub patches: Vec<PatchNote>,
     pub selected_patch: usize,
     pub impact: Option<ImpactReport>,
+    pub release: ReleaseState,
     pub messages: Vec<Message>,
     pub tools: Vec<ToolRun>,
     pub composer: TextEdit,
@@ -71,6 +72,7 @@ impl Default for State {
             patches: Vec::new(),
             selected_patch: 0,
             impact: None,
+            release: ReleaseState::default(),
             messages: model::welcome_messages(),
             tools: Vec::new(),
             composer: TextEdit::new(""),
@@ -135,6 +137,7 @@ impl State {
         self.patches = model::demo_patches();
         self.selected_patch = 0;
         self.impact = Some(model::demo_impact());
+        self.release = model::demo_release_state();
         self.messages = model::demo_messages();
         self.tools = model::demo_tools();
         self.providers = model::demo_providers();
@@ -298,6 +301,13 @@ impl State {
                 .clone()
                 .unwrap_or_else(|| "The agent host did not accept the prompt.".to_string());
         }
+    }
+
+    /// Send a prompt from a screen action. The composer is filled first so the
+    /// transcript and the input agree on what was asked.
+    pub fn ask_agent(&mut self, body: impl Into<String>) {
+        self.composer = TextEdit::new(body.into());
+        self.send_prompt();
     }
 
     pub fn approve_pause(&mut self) {
@@ -800,6 +810,7 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
         Screen::Index => screens::index::view(s, &u),
         Screen::Patches => screens::patches::view(s, &u),
         Screen::Impact => screens::impact::view(s, &u),
+        Screen::Release => screens::release::view(s, &u),
         Screen::Settings => screens::settings::view(s, &u),
     };
     row()
@@ -830,6 +841,7 @@ fn sidebar(s: &State, u: &Ui) -> El {
         .child(nav_item(s, u, Screen::Index))
         .child(nav_item(s, u, Screen::Patches))
         .child(nav_item(s, u, Screen::Impact))
+        .child(nav_item(s, u, Screen::Release))
         .child(el().h(10.0))
         .child(section_gap(u, "SYSTEM", 14.0))
         .child(nav_item(s, u, Screen::Settings));
@@ -1212,6 +1224,19 @@ pub fn scene_impact(s: &mut State) {
     s.screen = Screen::Impact;
 }
 
+pub fn scene_release(s: &mut State) {
+    s.load_demo();
+    s.screen = Screen::Release;
+}
+
+pub fn scene_local_release(s: &mut State) {
+    let agent = std::mem::replace(&mut s.agent, AgentLink::disconnected());
+    let wake = s.wake.take();
+    *s = crate::data::init_release_state();
+    s.agent = agent;
+    s.wake = wake;
+}
+
 pub fn scene_settings(s: &mut State) {
     s.load_demo();
     s.screen = Screen::Settings;
@@ -1240,11 +1265,13 @@ pub fn scenes() -> &'static [(&'static str, fn(&mut State))] {
         ("index", scene_index),
         ("patches", scene_patches),
         ("impact", scene_impact),
+        ("release", scene_release),
         ("settings", scene_settings),
         ("empty", scene_empty),
         ("local", scene_local_workbench),
         ("local-projects", scene_local_projects),
         ("local-patches", scene_local_patches),
+        ("local-release", scene_local_release),
     ]
 }
 

@@ -25,6 +25,23 @@ cargo run --manifest-path rust/Cargo.toml -p dah-agent  # Rust TinyAgent host
 Rune is pre-release. The revision is pinned and its patched crates are vendored. See
 [ADR 0006](docs/decisions/0006-native-rust-rune-desktop.md).
 
+The release loop is native:
+
+```bash
+pnpm rust:dah -- mod validate --workspace <project>
+pnpm rust:dah -- mod release --workspace <project> --slot 6
+pnpm rust:dah -- mod deploy --workspace <project> --slot 6          # plan
+pnpm rust:dah -- mod deploy --workspace <project> --slot 6 --approve
+pnpm rust:dah -- vpk inspect <project>/builds/<version>/pak06_dir.vpk --verify
+pnpm rust:dah -- publish prepare --workspace <project>
+pnpm rust:dah -- publish upload --workspace <project> --open
+pnpm rust:dah -- watch
+```
+
+The deploy plan reports slot conflicts, replacement and `gameinfo.gi` repair before anything is
+written. Approved deploy backs up replaced files. Publish prepares a release folder and opens the
+GameBanana submission page; it never uploads or handles your account.
+
 The agent host is TinyAgent. The Rust app owns the window, game discovery, VPK work, approvals UI and
 game writes. TinyAgent owns durable sessions, pause and resume, provider access and tools. There is
 no browser renderer. The Rust protocol v2 crate is landed; the Rust host is being completed, and the

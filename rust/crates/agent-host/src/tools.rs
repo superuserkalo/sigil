@@ -17,6 +17,13 @@ pub fn deadlock_tools(cli: Arc<DahRsCli>) -> Result<Vec<Tool>> {
         search_paths(cli.clone())?,
         extract_paths(cli.clone())?,
         project_check(cli.clone())?,
+        project_validate(cli.clone())?,
+        project_pack(cli.clone())?,
+        project_release(cli.clone())?,
+        deploy_plan(cli.clone())?,
+        project_migrate(cli.clone())?,
+        watch_projects(cli.clone())?,
+        publish_prepare(cli.clone())?,
         patch_notes(cli.clone())?,
         validate_payload()?,
     ])
@@ -41,6 +48,29 @@ fn object_schema(properties: Value, required: &[&str]) -> Value {
         "required": required,
         "additionalProperties": false,
     })
+}
+
+/// A tool that runs one `dah-rs` call with fixed or argument-derived words and
+/// returns its JSON. The argument builder never receives a shell string.
+fn cli_tool(
+    cli: Arc<DahRsCli>,
+    name: &'static str,
+    description: &'static str,
+    parameters: Value,
+    idempotent: bool,
+    build: fn(&Value) -> Result<Vec<String>>,
+) -> Result<Tool> {
+    Tool::builder(definition(name, description, parameters))
+        .idempotent(idempotent)
+        .timeout_seconds(150)
+        .handler(move |arguments: Value, context: ToolContext| {
+            let cli = cli.clone();
+            async move {
+                let args = build(&arguments)?;
+                let text = cli.json(&args, &context.cancellation).await?;
+                Ok(ToolReturn::Output(text))
+            }
+        })
 }
 
 fn game_status(cli: Arc<DahRsCli>) -> Result<Tool> {
@@ -246,6 +276,169 @@ fn project_check(cli: Arc<DahRsCli>) -> Result<Tool> {
     })
 }
 
+fn project_validate(cli: Arc<DahRsCli>) -> Result<Tool> {
+    cli_tool(
+        cli,
+        "project_validate",
+        "Check the project staging tree against the payload rules without packing. Read-only. Reports the project, the staging folder, the entry count and every error and warning.",
+        empty_parameters(),
+        true,
+        |_arguments| {
+            Ok(vec![
+                "mod".to_string(),
+                "validate".to_string(),
+                "--json".to_string(),
+            ])
+        },
+    )
+}
+
+fn project_pack(cli: Arc<DahRsCli>) -> Result<Tool> {
+    cli_tool(
+        cli,
+        "project_pack",
+        "Validate the staging tree and pack it as pakNN_dir.vpk in the project builds folder. The addon slot comes from project.json unless slot is passed. Writes inside the mod workspace only.",
+        object_schema(
+            json!({
+                "slot": {
+                    "type": ["integer", "null"],
+                    "minimum": 1,
+                    "maximum": 99,
+                    "description": "Addon slot 1 to 99. Pass null to use the project slot, else 01.",
+                },
+            }),
+            &["slot"],
+        ),
+        false,
+        |arguments| {
+            let mut args = vec!["mod".to_string(), "pack".to_string()];
+            if let Some(slot) = slot_argument(arguments)? {
+                args.push("--slot".to_string());
+                args.push(slot.to_string());
+            }
+            args.push("--json".to_string());
+            Ok(args)
+        },
+    )
+}
+
+fn project_release(cli: Arc<DahRsCli>) -> Result<Tool> {
+    cli_tool(
+        cli,
+        "project_release",
+        "Pack the staging tree into builds/<version>/, write release.json and record the release in project history. Bump the version with the project first. Writes inside the mod workspace only.",
+        object_schema(
+            json!({
+                "slot": {
+                    "type": ["integer", "null"],
+                    "minimum": 1,
+                    "maximum": 99,
+                    "description": "Addon slot 1 to 99. Pass null to use the project slot, else 01.",
+                },
+                "note": {
+                    "type": ["string", "null"],
+                    "description": "Note stored in the release manifest and project history. Pass null for none.",
+                },
+            }),
+            &["slot", "note"],
+        ),
+        false,
+        |arguments| {
+            let mut args = vec!["mod".to_string(), "release".to_string()];
+            if let Some(slot) = slot_argument(arguments)? {
+                args.push("--slot".to_string());
+                args.push(slot.to_string());
+            }
+            if let Some(note) = optional_string(arguments.get("note")) {
+                args.push("--note".to_string());
+                args.push(note);
+            }
+            args.push("--json".to_string());
+            Ok(args)
+        },
+    )
+}
+
+fn deploy_plan(cli: Arc<DahRsCli>) -> Result<Tool> {
+    cli_tool(
+        cli,
+        "deploy_plan",
+        "Plan an install of the latest release into game/citadel/addons: target slot, overlapping paths, gameinfo.gi state and whether a replace is required. Read-only, it never writes to the game install and never approves a deploy.",
+        empty_parameters(),
+        true,
+        |_arguments| {
+            Ok(vec![
+                "mod".to_string(),
+                "deploy".to_string(),
+                "--json".to_string(),
+            ])
+        },
+    )
+}
+
+fn project_migrate(cli: Arc<DahRsCli>) -> Result<Tool> {
+    cli_tool(
+        cli,
+        "project_migrate",
+        "Plan target paths that moved after a game update, with the exact new path for each one. Read-only: project.json is not changed, because applying a migration is an app action.",
+        empty_parameters(),
+        true,
+        |_arguments| {
+            Ok(vec![
+                "mod".to_string(),
+                "migrate".to_string(),
+                "--json".to_string(),
+            ])
+        },
+    )
+}
+
+fn watch_projects(cli: Arc<DahRsCli>) -> Result<Tool> {
+    cli_tool(
+        cli,
+        "watch_projects",
+        "One read-only pass over every mod project in the workspace as a review queue after a game update. Reports changed, missing, moved and unbaselined targets, slot conflicts, gameinfo.gi state and planned migrations.",
+        object_schema(
+            json!({
+                "limit": {
+                    "type": ["integer", "null"],
+                    "minimum": 1,
+                    "maximum": 200,
+                    "description": "Maximum projects to report. Pass null for the default of 20.",
+                },
+            }),
+            &["limit"],
+        ),
+        true,
+        |arguments| {
+            let mut args = vec!["watch".to_string()];
+            if let Some(limit) = arguments.get("limit").and_then(Value::as_u64) {
+                args.push("--limit".to_string());
+                args.push(limit.to_string());
+            }
+            args.push("--json".to_string());
+            Ok(args)
+        },
+    )
+}
+
+fn publish_prepare(cli: Arc<DahRsCli>) -> Result<Tool> {
+    cli_tool(
+        cli,
+        "publish_prepare",
+        "Copy the latest release, its metadata.json and install notes into a publish folder inside the workspace. It never uploads anything, because uploading is an app action behind approval.",
+        empty_parameters(),
+        false,
+        |_arguments| {
+            Ok(vec![
+                "publish".to_string(),
+                "prepare".to_string(),
+                "--json".to_string(),
+            ])
+        },
+    )
+}
+
 fn patch_notes(cli: Arc<DahRsCli>) -> Result<Tool> {
     Tool::builder(definition(
         "patch_notes",
@@ -328,6 +521,20 @@ fn optional_string(value: Option<&Value>) -> Option<String> {
         .map(str::trim)
         .filter(|text| !text.is_empty())
         .map(str::to_string)
+}
+
+fn slot_argument(arguments: &Value) -> Result<Option<u8>> {
+    let Some(value) = arguments.get("slot") else {
+        return Ok(None);
+    };
+    if value.is_null() {
+        return Ok(None);
+    }
+    let slot = value
+        .as_u64()
+        .filter(|slot| (1..=99).contains(slot))
+        .ok_or_else(|| Error::Tool("slot must be an integer from 1 to 99.".into()))?;
+    Ok(Some(slot as u8))
 }
 
 fn string_list(value: Option<&Value>, name: &str) -> Result<Vec<String>> {
