@@ -31,12 +31,12 @@ safety gate.
 | Tier | Example | What it needs | Status |
 | --- | --- | --- | --- |
 | 0 Inspect | Find Billy's model and the texture that paints his jacket | Game index, search, extract | Implemented in the CLI and agent tools. Verify against a real install. |
-| 1 Asset swap | Recolor a texture, replace a sound or a HUD image | Decompile, edit, compile, pack, validate, deploy | Pack and validate pieces exist. Decompile and compile need external backends. |
+| 1 Asset swap | Recolor a texture, replace a sound or a HUD image | Decompile, edit, compile, pack, validate, deploy | Pack, validate, release and deploy work. Decompile and compile need external backends. |
 | 2 Material and effect work | Change a material, particle or camera | Tier 1 plus format-aware editing | Planned |
 | 3 Character work | Restyle a hero, or base a look on a reference photo | Tier 2 plus skeleton-compatible mesh, materials, likeness review | Planned. Gated by `docs/decisions/0005-reference-images-and-likeness.md`. |
 | 4 Multi-asset work | A themed set across heroes, UI and audio | Build graph, batch validation, versioned workspace | Planned |
-| 5 Release and survive updates | Publish to GameBanana, migrate paths after a patch | Versioned release, upload approval, path migration | Planned |
-| 6 Living workbench | Watch patches, explain breakage, propose migrations, manage a catalog of mods | Patch feed, baseline diffs, impact rules, batch checks, review queue | Research. The update-survival pieces start now. |
+| 5 Release and survive updates | Publish to GameBanana, migrate paths after a patch | Versioned release, upload approval, path migration | Local release, deploy, migration and GameBanana handoff implemented. Direct API upload is not. |
+| 6 Living workbench | Watch patches, explain breakage, propose migrations, manage a catalog of mods | Patch feed, baseline diffs, impact rules, batch checks, review queue | Watch queue, patch feed, diff, impact and migration implemented. Scheduled background watch is not. |
 
 The first useful milestone is not a generated character. It is a texture recolor that travels the
 whole loop and shows up in game. Each later tier reuses that loop.
@@ -122,6 +122,13 @@ Implemented today:
 | `project_check` | Compares project targets with the current catalog and baseline | yes | none |
 | `patch_notes` | Fetches and reads the official Steam patch feed | no | none |
 | `validate_payload` | Pure path rules over a proposed entry list | yes | none |
+| `project_validate` | Checks the staging tree against payload rules | yes | none |
+| `project_pack` | Writes a VPK and chunks in the workspace | no | none |
+| `project_release` | Writes a versioned release manifest | no | none |
+| `deploy_plan` | Computes slot, conflicts, replacement and gameinfo repair | yes | none |
+| `project_migrate` | Proposes moved target paths | yes | none |
+| `watch_projects` | Reviews every project after a patch | yes | none |
+| `publish_prepare` | Builds a release folder and metadata | no | none |
 
 Planned, in rough dependency order:
 
@@ -129,16 +136,11 @@ Planned, in rough dependency order:
 | --- | --- | --- | --- |
 | `game_decompile` | Runs an external decompiler into the workspace | no | none (workspace only) |
 | `game_index_watch` | Detects a game update and invalidates stale paths | yes | none |
-| `project_init` | Writes a project manifest and staging layout | no | none |
-| `project_build` | Runs the build backend, writes staging | no | none |
-| `vpk_inspect` | Reads a VPK manifest | yes | none |
-| `vpk_pack` | Writes a VPK in the workspace | no | none |
+| `vpk_inspect` | Reads a VPK manifest and verifies CRCs | yes | none |
 | `vpk_merge` | Writes a merged VPK in the workspace | no | none |
-| `addon_plan_deploy` | Computes conflicts and target slot | yes | none |
 | `addon_deploy` | Copies a VPK into the game install | no | required |
 | `game_launch` | Starts the game | no | required |
 | `gameinfo_repair` | Restores the `addons` SearchPaths line | no | required |
-| `publish_prepare` | Builds a release folder and metadata | no | none |
 | `publish_upload` | Sends files to GameBanana | no | required |
 | `knowledge_search` | Searches curated modding notes | yes | none |
 

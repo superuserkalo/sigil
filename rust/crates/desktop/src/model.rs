@@ -13,6 +13,7 @@ pub enum Screen {
     Index,
     Patches,
     Impact,
+    Release,
     Settings,
 }
 
@@ -24,6 +25,7 @@ impl Screen {
             Screen::Index => "index",
             Screen::Patches => "patches",
             Screen::Impact => "impact",
+            Screen::Release => "release",
             Screen::Settings => "settings",
         }
     }
@@ -35,6 +37,7 @@ impl Screen {
             Screen::Index => "Game Index",
             Screen::Patches => "Patches",
             Screen::Impact => "Impact",
+            Screen::Release => "Release",
             Screen::Settings => "Settings",
         }
     }
@@ -46,6 +49,7 @@ impl Screen {
             Screen::Index => "GAME PATHS",
             Screen::Patches => "PATCH FEED",
             Screen::Impact => "COMPATIBILITY",
+            Screen::Release => "RELEASE AND REVIEW",
             Screen::Settings => "LOCAL CONFIGURATION",
         }
     }
@@ -57,6 +61,7 @@ impl Screen {
             Screen::Index => "Exact paths from the installed game, read only",
             Screen::Patches => "Steam news, with the targets each note touches",
             Screen::Impact => "What a patch does to the selected project",
+            Screen::Release => "Latest build, deploy plan and the queue after an update",
             Screen::Settings => "Providers, paths and safety, nothing secret on screen",
         }
     }
@@ -68,6 +73,7 @@ impl Screen {
             Screen::Index => "⌕",
             Screen::Patches => "❐",
             Screen::Impact => "⚑",
+            Screen::Release => "◈",
             Screen::Settings => "⚙",
         }
     }
@@ -79,7 +85,8 @@ impl Screen {
             Screen::Index => "⌘3",
             Screen::Patches => "⌘4",
             Screen::Impact => "⌘5",
-            Screen::Settings => "⌘6",
+            Screen::Release => "⌘6",
+            Screen::Settings => "⌘7",
         }
     }
 
@@ -90,7 +97,8 @@ impl Screen {
             '3' => Some(Screen::Index),
             '4' => Some(Screen::Patches),
             '5' => Some(Screen::Impact),
-            '6' => Some(Screen::Settings),
+            '6' => Some(Screen::Release),
+            '7' => Some(Screen::Settings),
             _ => None,
         }
     }
@@ -273,6 +281,170 @@ pub struct ImpactReport {
 impl ImpactReport {
     pub fn total(&self) -> u32 {
         self.unchanged + self.changed + self.missing + self.moved
+    }
+}
+
+/// Everything the Release screen renders. Empty by default: each field is
+/// filled by a small read in `data.rs` or by the labelled demo fixture.
+#[derive(Default)]
+pub struct ReleaseState {
+    pub info: Option<ReleaseInfo>,
+    pub plan: Option<DeployPlanView>,
+    pub plan_error: Option<String>,
+    pub publish: Option<PublishInfo>,
+    pub lookup_error: Option<String>,
+    pub review: Option<ReviewQueue>,
+}
+
+pub struct ReleaseInfo {
+    pub version: String,
+    pub slot: u8,
+    pub vpk_file: String,
+    pub chunk_files: Vec<String>,
+    pub entries: usize,
+    pub total_bytes: u64,
+    pub created_at: String,
+    pub baseline_captured_at: Option<String>,
+    pub notes: Option<String>,
+    pub dir: String,
+    pub vpk_present: bool,
+}
+
+impl ReleaseInfo {
+    pub fn slot_file(&self) -> String {
+        format!("pak{:02}_dir.vpk", self.slot)
+    }
+
+    pub fn size_label(&self) -> String {
+        format_size(self.total_bytes)
+    }
+
+    pub fn chunks_label(&self) -> String {
+        if self.chunk_files.is_empty() {
+            "none".to_string()
+        } else {
+            self.chunk_files.join(", ")
+        }
+    }
+
+    pub fn file_label(&self) -> String {
+        if self.vpk_present {
+            format!("{} · present", self.vpk_file)
+        } else {
+            format!("{} · missing", self.vpk_file)
+        }
+    }
+}
+
+pub struct PublishInfo {
+    pub dir: String,
+    pub metadata_path: String,
+    pub dir_present: bool,
+    pub metadata_present: bool,
+    pub created_at: Option<String>,
+    pub files: Vec<String>,
+}
+
+pub struct DeployPlanView {
+    pub slot: u8,
+    pub target: String,
+    pub chunk_targets: Vec<String>,
+    pub replace_required: bool,
+    pub conflicts: Vec<DeployConflictView>,
+    pub gameinfo_repair: bool,
+    pub warnings: Vec<String>,
+    pub entry_count: usize,
+    pub entry_preview: Vec<String>,
+}
+
+pub struct DeployConflictView {
+    pub slot: u8,
+    pub file: String,
+    pub paths: Vec<String>,
+}
+
+impl DeployConflictView {
+    pub fn slot_label(&self) -> String {
+        format!("{:02}", self.slot)
+    }
+
+    pub fn paths_label(&self) -> String {
+        format!(
+            "{} shared path{}",
+            self.paths.len(),
+            if self.paths.len() == 1 { "" } else { "s" }
+        )
+    }
+}
+
+pub struct ReviewQueue {
+    pub workspace: String,
+    pub catalog_label: String,
+    pub items: Vec<ReviewItem>,
+    /// Queue-level note: no install, no catalog or a failed scan.
+    pub error: Option<String>,
+}
+
+impl ReviewQueue {
+    pub fn review_count(&self) -> usize {
+        self.items.iter().filter(|item| item.needs_review()).count()
+    }
+
+    pub fn summary(&self) -> String {
+        format!(
+            "{} project{}, {} need review",
+            self.items.len(),
+            if self.items.len() == 1 { "" } else { "s" },
+            self.review_count()
+        )
+    }
+}
+
+pub struct PathMove {
+    pub from: String,
+    pub to: String,
+}
+
+pub struct ReviewItem {
+    pub slug: String,
+    pub name: String,
+    pub version: String,
+    pub path: String,
+    pub slot: Option<u8>,
+    pub unchanged: usize,
+    pub changed: usize,
+    pub missing: usize,
+    pub moved: usize,
+    pub unbaselined: usize,
+    pub migrations: Vec<PathMove>,
+    pub warnings: Vec<String>,
+    pub error: Option<String>,
+}
+
+impl ReviewItem {
+    pub fn label(&self) -> String {
+        if self.name.is_empty() {
+            self.slug.clone()
+        } else {
+            self.name.clone()
+        }
+    }
+
+    pub fn slot_label(&self) -> String {
+        match self.slot {
+            Some(slot) => format!("{slot:02}"),
+            None => "no slot".to_string(),
+        }
+    }
+
+    pub fn needs_review(&self) -> bool {
+        self.error.is_some()
+            || !self.migrations.is_empty()
+            || !self.warnings.is_empty()
+            || self.changed > 0
+            || self.missing > 0
+            || self.moved > 0
+            || self.unbaselined > 0
     }
 }
 
@@ -870,5 +1042,140 @@ pub fn demo_paths() -> Paths {
         workspace: "~/Deadlock Mods/ashfall-recolor".to_string(),
         staging: ".dah/staging/ashfall-012".to_string(),
         game: "~/Library/Application Support/Steam/steamapps/common/Deadlock".to_string(),
+    }
+}
+
+pub fn demo_release_state() -> ReleaseState {
+    let release_dir = "~/Deadlock Mods/ashfall-recolor/builds/0.4.2".to_string();
+    let publish_dir = "~/Deadlock Mods/ashfall-recolor/publish/0.4.2".to_string();
+    let addons = "~/Library/Application Support/Steam/steamapps/common/Deadlock/game/citadel/addons";
+    let info = ReleaseInfo {
+        version: "0.4.2".to_string(),
+        slot: 12,
+        vpk_file: "pak12_dir.vpk".to_string(),
+        chunk_files: Vec::new(),
+        entries: 4,
+        total_bytes: 5_248_950,
+        created_at: "2026-11-15T18:04:12.000Z".to_string(),
+        baseline_captured_at: Some("2026-11-15T17:52:31.000Z".to_string()),
+        notes: Some("Retargeted the flame trail after the Hideout update.".to_string()),
+        dir: release_dir,
+        vpk_present: true,
+    };
+    let publish = PublishInfo {
+        dir: publish_dir.clone(),
+        metadata_path: format!("{publish_dir}/metadata.json"),
+        dir_present: true,
+        metadata_present: true,
+        created_at: Some("2026-11-15T18:09:44.000Z".to_string()),
+        files: vec!["pak12_dir.vpk".to_string()],
+    };
+    let plan = DeployPlanView {
+        slot: 12,
+        target: format!("{addons}/pak12_dir.vpk"),
+        chunk_targets: Vec::new(),
+        replace_required: false,
+        conflicts: vec![DeployConflictView {
+            slot: 7,
+            file: "pak07_dir.vpk".to_string(),
+            paths: vec![
+                "materials/models/heroes_wip/infernus/infernus_body.vmat_c".to_string(),
+                "panorama/layout/hud/scoreboard.vxml_c".to_string(),
+            ],
+        }],
+        gameinfo_repair: true,
+        warnings: vec![
+            "gameinfo.gi has no `Game citadel/addons` SearchPaths line. Deploy plans a repair before the copy."
+                .to_string(),
+            "Lower slot 07 already ships 2 of these paths. pak07 wins for those files while both mods are enabled."
+                .to_string(),
+        ],
+        entry_count: 4,
+        entry_preview: vec![
+            "materials/models/heroes_wip/infernus/infernus_body.vmat_c".to_string(),
+            "materials/models/heroes_wip/infernus/infernus_head.vmat_c".to_string(),
+            "particles/abilities/infernus/infernus_flame_trail.vpcf_c".to_string(),
+            "panorama/layout/hud/scoreboard.vxml_c".to_string(),
+        ],
+    };
+    let review = ReviewQueue {
+        workspace: "~/Deadlock Mods".to_string(),
+        catalog_label: "312,448 paths from 2 cached game sources".to_string(),
+        items: vec![
+            ReviewItem {
+                slug: "ashfall-recolor".to_string(),
+                name: "Ashfall Recolor".to_string(),
+                version: "0.4.2".to_string(),
+                path: "~/Deadlock Mods/mods/ashfall-recolor".to_string(),
+                slot: Some(12),
+                unchanged: 1,
+                changed: 1,
+                missing: 1,
+                moved: 1,
+                unbaselined: 0,
+                migrations: vec![PathMove {
+                    from: "particles/abilities/infernus/flame_trail.vpcf_c".to_string(),
+                    to: "particles/abilities/infernus/infernus_flame_trail.vpcf_c".to_string(),
+                }],
+                warnings: Vec::new(),
+                error: None,
+            },
+            ReviewItem {
+                slug: "hideout-hud".to_string(),
+                name: "Hideout HUD".to_string(),
+                version: "0.2.0".to_string(),
+                path: "~/Deadlock Mods/mods/hideout-hud".to_string(),
+                slot: Some(7),
+                unchanged: 1,
+                changed: 1,
+                missing: 0,
+                moved: 0,
+                unbaselined: 0,
+                migrations: Vec::new(),
+                warnings: vec![
+                    "slot pak07_dir.vpk already exists in the addon folder".to_string(),
+                ],
+                error: None,
+            },
+            ReviewItem {
+                slug: "wardrobe-accents".to_string(),
+                name: "Wardrobe Accents".to_string(),
+                version: "1.0.1".to_string(),
+                path: "~/Deadlock Mods/mods/wardrobe-accents".to_string(),
+                slot: Some(4),
+                unchanged: 2,
+                changed: 0,
+                missing: 0,
+                moved: 0,
+                unbaselined: 0,
+                migrations: Vec::new(),
+                warnings: Vec::new(),
+                error: None,
+            },
+            ReviewItem {
+                slug: "ember-trail-fx".to_string(),
+                name: "Ember Trail FX".to_string(),
+                version: "0.1.3".to_string(),
+                path: "~/Deadlock Mods/mods/ember-trail-fx".to_string(),
+                slot: Some(21),
+                unchanged: 0,
+                changed: 0,
+                missing: 0,
+                moved: 0,
+                unbaselined: 1,
+                migrations: Vec::new(),
+                warnings: Vec::new(),
+                error: None,
+            },
+        ],
+        error: None,
+    };
+    ReleaseState {
+        info: Some(info),
+        plan: Some(plan),
+        plan_error: None,
+        publish: Some(publish),
+        lookup_error: None,
+        review: Some(review),
     }
 }

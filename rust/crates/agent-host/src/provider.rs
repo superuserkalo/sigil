@@ -68,12 +68,24 @@ fn build_provider(config: &Config) -> Result<AnyProvider> {
     }
 }
 
-/// Tools whose name mentions an app action pause the run until the app answers.
-const APPROVAL_WORDS: [&str; 5] = ["deploy", "publish", "launch", "install", "gameinfo"];
+/// Exact tool names that perform an app action outside the workspace. The
+/// suffix rules catch a future apply or upload tool without pausing reads such
+/// as `deploy_plan` or `project_migrate`.
+const DANGEROUS_TOOLS: [&str; 5] = [
+    "deploy_apply",
+    "publish_upload",
+    "game_launch",
+    "gameinfo_repair",
+    "install_addon",
+];
+const DANGEROUS_SUFFIXES: [&str; 2] = ["_apply", "_upload"];
 
 fn needs_approval(name: &str) -> bool {
     let lowered = name.to_ascii_lowercase();
-    APPROVAL_WORDS.iter().any(|word| lowered.contains(word))
+    DANGEROUS_TOOLS.contains(&lowered.as_str())
+        || DANGEROUS_SUFFIXES
+            .iter()
+            .any(|suffix| lowered.ends_with(suffix))
 }
 
 fn before_tool() -> tiny_agent::BeforeTool {

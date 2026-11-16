@@ -121,11 +121,13 @@ object. The journal stays on disk and can be reopened by id.
 
 ## Approval flow
 
-`beforeTool` pauses any tool whose name contains `deploy`, `publish`, `launch`, `install` or
-`gameinfo` (case-insensitive). The pause payload is:
+`beforeTool` pauses an exact dangerous action instead of matching a substring: `deploy_apply`,
+`publish_upload`, `game_launch`, `gameinfo_repair`, `install_addon`, and any tool name ending in
+`_apply` or `_upload` (case-insensitive). Reads and workspace writes such as `deploy_plan`,
+`project_migrate`, `project_release` and `publish_prepare` pass through. The pause payload is:
 
 ```json
-{"kind":"approval","tool":"deploy_mod","arguments":{...}}
+{"kind":"approval","tool":"deploy_apply","arguments":{...}}
 ```
 
 The result envelope carries the same payload in `pause`. The UI shows it, then answers with
@@ -133,8 +135,9 @@ The result envelope carries the same payload in `pause`. The UI shows it, then a
 the session, see `state.paused`, and resume it. A resumed call is settled with the app's answer; its
 hooks do not decide again.
 
-Workspace-only tools do not pause. No tool in this host deploys, installs, launches, repairs
-`gameinfo.gi` or publishes.
+No tool in this host installs into the game, applies a migration, launches the game, repairs
+`gameinfo.gi` or uploads a release. `deploy_plan` and `project_migrate` return a plan only, and
+`publish_prepare` writes a folder. The app performs the approved action.
 
 ## Tools
 
@@ -145,8 +148,20 @@ Workspace-only tools do not pause. No tool in this host deploys, installs, launc
 | `search_paths` | yes | `dah-rs find <query> [--hero] [--type] [--folder] [--limit] --json` |
 | `extract_paths` | no | `dah-rs extract <paths...> [--out] [--overwrite] --json` |
 | `project_check` | yes | `dah-rs mod check --json` |
+| `project_validate` | yes | `dah-rs mod validate --json` |
+| `project_pack` | no | `dah-rs mod pack [--slot NN] --json` |
+| `project_release` | no | `dah-rs mod release [--slot NN] [--note TEXT] --json` |
+| `deploy_plan` | yes | `dah-rs mod deploy --json` (never `--approve`) |
+| `project_migrate` | yes | `dah-rs mod migrate --json` (never `--apply`) |
+| `watch_projects` | yes | `dah-rs watch [--limit N] --json` |
+| `publish_prepare` | no | `dah-rs publish prepare --json` |
 | `patch_notes` | no | `dah-rs patches [--limit] [--refresh] --json` |
 | `validate_payload` | yes | in-process path rules |
+
+`project_pack` and `project_release` take the addon slot from `project.json` unless the model passes
+`slot`. No tool accepts `--workspace` or `--out`, so every write lands in the workspace that
+`DAH_WORKSPACE_DIR` names. `project_release` requires a recorded baseline and refuses to overwrite an
+existing version folder.
 
 `dah-rs` is spawned with an argument array, never a shell string, from `DAH_WORKSPACE_DIR`, with a
 120 second timeout and no provider credentials. `validate_payload` ports
