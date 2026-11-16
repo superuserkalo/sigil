@@ -582,6 +582,27 @@ enum CharacterCommand {
         #[arg(long)]
         json: bool,
     },
+    /// List mesh backends and how to set each one up.
+    Backends {
+        /// Print machine-readable JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Write a Blender script scaffold for one character.
+    Scaffold {
+        /// Character slug.
+        #[arg(value_name = "SLUG")]
+        slug: String,
+        /// Replace an existing mesh.py.
+        #[arg(long)]
+        force: bool,
+        /// Project directory.
+        #[arg(long, value_name = "DIR")]
+        workspace: Option<PathBuf>,
+        /// Print machine-readable JSON.
+        #[arg(long)]
+        json: bool,
+    },
     /// Import a downloaded GLB into the character workspace.
     Import {
         /// Character slug.
@@ -1022,6 +1043,8 @@ impl Cli {
                 CharacterCommand::Create { json, .. }
                 | CharacterCommand::Status { json, .. }
                 | CharacterCommand::Stages { json, .. }
+                | CharacterCommand::Backends { json }
+                | CharacterCommand::Scaffold { json, .. }
                 | CharacterCommand::Import { json, .. } => *json,
             },
             Command::Stats { command } => match command {
@@ -1687,6 +1710,26 @@ fn run(cli: &Cli) -> error::Result<i32> {
             } => {
                 commands::character::stages(&commands::character::StagesArgs {
                     slug: slug.clone(),
+                    workspace: workspace.clone(),
+                    json: *json,
+                })?;
+                Ok(0)
+            }
+            CharacterCommand::Backends { json } => {
+                commands::character::backends(&commands::character::BackendsArgs {
+                    json: *json,
+                })?;
+                Ok(0)
+            }
+            CharacterCommand::Scaffold {
+                slug,
+                force,
+                workspace,
+                json,
+            } => {
+                commands::character::scaffold(&commands::character::ScaffoldArgs {
+                    slug: slug.clone(),
+                    force: *force,
                     workspace: workspace.clone(),
                     json: *json,
                 })?;
