@@ -6,8 +6,18 @@ credentials on your machine.
 
 Status: pre-alpha. The native release loop works: validate, pack, versioned release, deploy plan
 and approved deploy, path migration, cross-project patch watch and GameBanana handoff. The Rune
-desktop app, Rust CLI and TinyAgent v2 host are connected. Decompiling, compiling and direct
-GameBanana API upload are still in progress.
+desktop app, Rust CLI and TinyAgent v2 host are connected and the mod manager is usable against a
+game install: installed slots toggle, profiles capture and apply, autoexec edits behind approval,
+Browse downloads and installs with a validated plan, and Launch handles modded, vanilla and restore.
+
+Stats read the public Deadlock API and local demos, including a real kill and death heatmap and a
+coaching review whose numbers are linted against the verified facts. The Locker resolves hero art
+from a local root. Character generation runs a studied stage graph: deterministic stages work with
+no key, generative stages need a configured backend, and nothing claims to be in game.
+
+Still blocked on hardware and accounts: real in-game deploy, a Windows CSDK compile, real
+`resourcecompiler.exe` runs, a real Meshy or local model backend, and 7z or rar archives when those
+tools are absent. Direct GameBanana API upload stays out of scope by decision.
 
 ## Native desktop
 
@@ -51,6 +61,34 @@ game writes. TinyAgent owns durable sessions, pause and resume, provider access 
 no browser renderer. The Rust protocol v2 crate is landed; the Rust host is being completed, and the
 TypeScript host remains the reference during the cutover. See
 [ADR 0007](docs/decisions/0007-tinyagent-host.md).
+
+## The manager
+
+The default screen is Installed, because this is a mod manager with an agent inside, not an agent
+demo. Sidebar groups:
+
+- Library: Installed, Browse, Conflicts, Updates.
+- Modding: Profiles, Autoexec, Stats, Locker, Launch.
+- Workbench: Agent, Projects, Game Index, Patches, Impact, Release.
+- Foundry: Toolchain, Character.
+
+A screen ships only when core can back it with real data or a gated action. When a backend is
+missing, the screen names it, says why, and keeps every action that does not need it.
+
+```bash
+pnpm rust:dah -- addons list                  # installed slots and shared paths
+pnpm rust:dah -- addons set 6 off --approve   # one rename, behind approval
+pnpm rust:dah -- profiles save "Ranked"       # capture the current slot set
+pnpm rust:dah -- install plan 715100          # download, extract, validate, plan a slot
+pnpm rust:dah -- install apply <plan> --approve
+pnpm rust:dah -- launch modded                # or vanilla, restore, status
+pnpm rust:dah -- stats player <account-id>    # rank, career, heroes, form
+pnpm rust:dah -- stats heatmap <account-id>   # real kill and death cells
+pnpm rust:dah -- demo import match.dem        # local store and merged summary
+pnpm rust:dah -- demo review <id> --file r.md --write   # linted coaching review
+pnpm rust:dah -- toolchain status             # what can decompile and compile
+pnpm rust:dah -- character stages             # the generation stage graph
+```
 
 ## What it should do
 

@@ -2,6 +2,8 @@
 
 use serde_json::{json, Value};
 
+use deadlock_core::{demo, install, locker, toolchain};
+
 use crate::domain;
 use crate::error::Result;
 use crate::paths::CliPaths;
@@ -93,11 +95,101 @@ pub fn run(paths: &CliPaths, json_output: bool) -> Result<()> {
         }
     }
 
+    println!();
+    println!("Capabilities");
+    for (label, value) in capabilities() {
+        println!("  {label}: {value}");
+    }
+
     for warning in &warnings {
         println!("WARNING {warning}");
     }
 
     Ok(())
+}
+
+/// What this build can actually do on this machine. Every line is a measured
+/// availability, not a feature claim.
+fn capabilities() -> Vec<(String, String)> {
+    let mut lines = Vec::new();
+
+    lines.push((
+        "Stats API".to_string(),
+        "api.deadlock-api.com, keyless".to_string(),
+    ));
+
+    let demos = demo::backend_status();
+    let positions = if demos.position_extraction_available {
+        "positions and heatmaps available"
+    } else {
+        "container only, positions and heatmaps absent"
+    };
+    lines.push(("Demo backend".to_string(), positions.to_string()));
+
+    let tools = install::ToolPaths::from_environment();
+    let archives = format!(
+        "zip in process, 7z {}, rar {}",
+        if tools.seven_zip.is_some() {
+            "available"
+        } else {
+            "needs DAH_7Z or 7z on PATH"
+        },
+        if tools.unrar.is_some() {
+            "available"
+        } else {
+            "needs DAH_UNRAR or unrar on PATH"
+        }
+    );
+    lines.push(("Install archives".to_string(), archives));
+
+    let chain = toolchain::toolchain_status();
+    lines.push((
+        "Decompile".to_string(),
+        if chain.decompile_available {
+            "ready".to_string()
+        } else {
+            chain
+                .decompile_reason
+                .clone()
+                .unwrap_or_else(|| "unavailable".to_string())
+        },
+    ));
+    lines.push((
+        "Compile".to_string(),
+        if chain.compile_available {
+            "ready".to_string()
+        } else {
+            chain
+                .compile_reason
+                .clone()
+                .unwrap_or_else(|| "unavailable".to_string())
+        },
+    ));
+
+    let assets = locker::LockerAssetPaths::discover();
+    lines.push((
+        "Locker art".to_string(),
+        assets
+            .heroes_dir
+            .as_ref()
+            .map(|path| lossy(path))
+            .unwrap_or_else(|| {
+                "no art root. Set DAH_LOCKER_ASSETS to a folder with heroes/ and names/".to_string()
+            }),
+    ));
+
+    let mesh = if std::env::var_os("DAH_MESHGEN_COMMAND").is_some() {
+        "local command configured"
+    } else if std::env::var_os("DAH_MESHGEN_URL").is_some() {
+        "local HTTP model server configured"
+    } else if std::env::var_os("MESHY_API_KEY").is_some() {
+        "Meshy adapter configured, local backend not configured"
+    } else {
+        "no generative backend. The deterministic character stages still run"
+    };
+    lines.push(("Character".to_string(), mesh.to_string()));
+
+    lines
 }
 
 fn warnings_for(status: &domain::GameStatus) -> Vec<String> {

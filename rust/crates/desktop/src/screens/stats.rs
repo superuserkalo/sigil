@@ -269,6 +269,12 @@ fn demo_panel(s: &State, u: &Ui) -> El {
                 u.pill("Reload", "↻", ActionKind::Ghost)
                     .key("demo-reload")
                     .on_press(|st: &mut State| crate::data::start_demo_list(st)),
+            )
+            .child(
+                text("review: dah demo review <id> --file reply.md --write")
+                    .font(LABEL)
+                    .color(u.faint)
+                    .selectable(true),
             ),
     );
 
