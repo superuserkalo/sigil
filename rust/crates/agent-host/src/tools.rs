@@ -32,6 +32,8 @@ pub fn deadlock_tools(cli: Arc<DahRsCli>) -> Result<Vec<Tool>> {
         toolchain_status(cli.clone())?,
         demo_matches(cli.clone())?,
         demo_import(cli.clone())?,
+        demo_review_prompt(cli.clone())?,
+        demo_review_write(cli.clone())?,
         install_status(cli.clone())?,
         install_plan(cli.clone())?,
         profiles_list(cli.clone())?,
@@ -849,4 +851,85 @@ fn profiles_list(cli: Arc<DahRsCli>) -> Result<Tool> {
             ])
         },
     )
+}
+
+fn demo_review_prompt(cli: Arc<DahRsCli>) -> Result<Tool> {
+    cli_tool(
+        cli,
+        "demo_review_prompt",
+        "Return the verified review prompt and fact set for one imported match. Use only those facts in a review. The prompt names every absent field. No provider is called by this tool.",
+        object_schema(
+            json!({
+                "match_id": {
+                    "type": "string",
+                    "description": "Match id from demo_matches.",
+                },
+            }),
+            &["match_id"],
+        ),
+        true,
+        |arguments| {
+            let id = arguments
+                .get("match_id")
+                .and_then(Value::as_str)
+                .ok_or_else(|| Error::Tool("match_id is required.".into()))?;
+            Ok(vec![
+                "demo".to_string(),
+                "review".to_string(),
+                id.to_string(),
+                "--json".to_string(),
+            ])
+        },
+    )
+}
+
+fn demo_review_write(cli: Arc<DahRsCli>) -> Result<Tool> {
+    Tool::builder(definition(
+        "demo_review_write",
+        "Lint a match review against the verified facts and store review.md only when every number is supported. It refuses invented statistics and never writes the game install.",
+        object_schema(
+            json!({
+                "match_id": {
+                    "type": "string",
+                    "description": "Match id from demo_matches.",
+                },
+                "body": {
+                    "type": "string",
+                    "description": "The Markdown review. Cite only facts from demo_review_prompt.",
+                },
+            }),
+            &["match_id", "body"],
+        ),
+    ))
+    .idempotent(false)
+    .timeout_seconds(60)
+    .handler(move |arguments: Value, context: ToolContext| {
+        let cli = cli.clone();
+        async move {
+            let id = arguments
+                .get("match_id")
+                .and_then(Value::as_str)
+                .ok_or_else(|| Error::Tool("match_id is required.".into()))?;
+            let body = arguments
+                .get("body")
+                .and_then(Value::as_str)
+                .ok_or_else(|| Error::Tool("body is required.".into()))?;
+            let path = std::env::temp_dir().join(format!("dah-review-{id}-{}.md", std::process::id()));
+            std::fs::write(&path, body)
+                .map_err(|error| Error::Tool(format!("Could not stage the review: {error}")))?;
+            let args = vec![
+                "demo".to_string(),
+                "review".to_string(),
+                id.to_string(),
+                "--file".to_string(),
+                path.display().to_string(),
+                "--write".to_string(),
+                "--json".to_string(),
+            ];
+            let result = cli.json(&args, &context.cancellation).await;
+            let _ = std::fs::remove_file(&path);
+            let text = result?;
+            Ok(ToolReturn::Output(text))
+        }
+    })
 }

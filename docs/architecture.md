@@ -456,10 +456,14 @@ Phase 5, stats and the living catalog (in progress):
 
 - Done: public API player, rank, career, hero, match, leaderboard and heatmap reads.
 - Done: API host added to the network allowlist; no key is required.
-- Done: local demo container parser and merged API plus demo summary.
-- Done: Locker hero and asset resolution from a local art root.
+- Done: local demo container parser, merged API plus demo summary, and a linted review contract.
+- Done: Locker hero and asset resolution from a local art root, with art-only heroes labelled.
+- Done: Browse install pipeline: HTTPS allowlist, ZIP in process, 7z/rar through explicit tools,
+  payload validation, free-slot plan and approval-gated apply. Verified with a local server and a
+  live GameBanana ZIP; 7z and rar are unverified because those tools are absent here.
+- Done: Installed slots toggle on and off behind a confirm dialog.
 - Next: real `.dem` files from a live match; positions need a serializer-aware extractor.
-- Next: browse install pipeline verified against a real GameBanana archive.
+- Next: verify 7z and rar extraction on a machine with those tools.
 
 Phase 6, character generation (in progress):
 
@@ -470,7 +474,9 @@ Phase 6, character generation (in progress):
 
 Phase 7, packaging:
 
-- Done: `scripts/package-desktop.sh` stages the desktop, the sidecar, the CLI and the manifest.
+- Done: `scripts/package-desktop.sh` stages the desktop, the sidecar, the CLI and a manifest with
+  byte counts, SHA-256 and the excluded material. A macOS bundle is assembled and the release
+  build was produced on this machine.
 - Next: sign the macOS bundle, produce a Windows build on Windows, verify the sidecar lookup.
 - Acceptance: a clean machine runs the app, finds the game, deploys a mod and restores vanilla.
 

@@ -976,6 +976,14 @@ pub fn apply_browse_page(state: &mut State, result: Result<BrowsePageView, Strin
 /// thread; decode still happens on Rune's image workers.
 pub fn drain_thumbnails(state: &mut State) -> bool {
     let mut changed = false;
+    if let Some(cache) = state.images.as_ref() {
+        let pending = std::mem::take(&mut state.pending_thumbs);
+        for (key, bytes) in pending {
+            let image = cache.load(bytes);
+            state.thumbnails.insert(key, image.pixels().clone());
+            changed = true;
+        }
+    }
     while let Some((url, bytes)) = state.thumb_crew.try_next() {
         if let (Some(cache), Some(bytes)) = (state.images.as_ref(), bytes) {
             let image = cache.load(bytes);
@@ -1491,8 +1499,14 @@ pub fn apply_locker(
             state.locker.catalog_label = load.catalog_label;
             state.locker.error = load.error;
             state.locker.loaded = true;
-            let heroes = state.locker.heroes.clone();
-            crate::screens::locker::decode(state, &heroes);
+            for hero in &state.locker.heroes {
+                if let Some((path, bytes)) = &hero.render {
+                    state.pending_thumbs.push((path.clone(), bytes.clone()));
+                }
+                if let Some((path, bytes)) = &hero.name_art {
+                    state.pending_thumbs.push((path.clone(), bytes.clone()));
+                }
+            }
             state.status = format!(
                 "Locker resolved {} heroes from the game catalog.",
                 state.locker.heroes.len()
@@ -2223,4 +2237,26 @@ pub fn import_demo_file(state: &mut State) {
         }
         Ok(load)
     });
+}
+
+pub fn set_addon_enabled(state: &mut State, slot: u8, enable: bool) {
+    let Some(game_root) = state.game_root.clone() else {
+        state.status = "No Deadlock install was found. Nothing was renamed.".to_string();
+        state.addon_dialog = None;
+        return;
+    };
+    state.addon_dialog = None;
+    match addons::set_enabled(&game_root, slot, enable, true) {
+        Ok(result) => {
+            state.status = format!(
+                "Slot {:02}: renamed {} to {}.",
+                result.slot, result.from, result.to
+            );
+            scan_addons_now(state);
+            start_addon_scan(state);
+        }
+        Err(error) => {
+            state.status = error.to_string();
+        }
+    }
 }

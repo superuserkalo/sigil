@@ -11,7 +11,7 @@ use rune::{Color, El, ScrollSpec, col, el, row, spacer, text};
 
 use crate::app::State;
 use crate::model::{AddonRow, Screen, format_size};
-use crate::ui::{ActionKind, BODY_MED, LABEL, MONO, NUM, SMALL, Tone, Ui};
+use crate::ui::{ActionKind, BODY_MED, H2, LABEL, MONO, NUM, SMALL, Tone, Ui};
 
 pub fn view(s: &State, u: &Ui) -> El {
     let query = s.installed_query.text.trim().to_lowercase();
@@ -254,6 +254,8 @@ fn card(s: &State, u: &Ui, addon: &AddonRow) -> El {
     let file = addon.file.clone();
     let reveal_path = PathBuf::from(&folder).join(&file);
     let label = format!("Slot {} {}", addon.slot_label(), addon.file);
+    let slot = addon.slot;
+    let currently_enabled = addon.enabled;
     let chunks = if addon.chunk_files.is_empty() {
         "single file".to_string()
     } else {
@@ -331,11 +333,27 @@ fn card(s: &State, u: &Ui, addon: &AddonRow) -> El {
                 .gap(8.0)
                 .center_y()
                 .border_sides([1.0, 0.0, 0.0, 0.0], u.hair)
+                .child(u.toggle(addon.enabled))
                 .child(
                     text(if addon.enabled { "ACTIVE" } else { "INACTIVE" })
                         .font(LABEL)
                         .color(tone.fg(u))
                         .grow(1.0),
+                )
+                .child(
+                    u.action(
+                        if addon.enabled { "Disable" } else { "Enable" },
+                        ActionKind::Ghost,
+                    )
+                    .key(format!("toggle-{:02}", addon.slot))
+                    .label(format!(
+                        "{} slot {}",
+                        if addon.enabled { "Disable" } else { "Enable" },
+                        addon.slot_label()
+                    ))
+                    .on_press(move |st: &mut State| {
+                        st.addon_dialog = Some((slot, !currently_enabled));
+                    }),
                 )
                 .child(
                     u.action("Reveal", ActionKind::Ghost)
@@ -469,4 +487,93 @@ fn reveal_command(path: &PathBuf) -> Result<(), String> {
         .spawn()
         .map(|_| ())
         .map_err(|error| error.to_string())
+}
+
+/// The enable or disable approval. A slot toggle is one rename in the addon
+/// folder, and it is an app action behind this confirm step.
+pub fn dialog(s: &State, u: &Ui) -> Option<El> {
+    let (slot, enable) = s.addon_dialog?;
+    let file = s
+        .addons
+        .addons
+        .iter()
+        .find(|addon| addon.slot == slot)
+        .map(|addon| addon.file.clone())
+        .unwrap_or_else(|| format!("pak{slot:02}_dir.vpk"));
+    let title = if enable { "Enable slot" } else { "Disable slot" };
+    let body = col()
+        .w_full()
+        .gap(15.0)
+        .child(
+            row()
+                .w_full()
+                .gap(12.0)
+                .items_start()
+                .child(
+                    col()
+                        .grow(1.0)
+                        .gap(6.0)
+                        .child(u.eyebrow("APP ACTION · ADDN FOLDER"))
+                        .child(text(format!("{title} {slot:02}")).font(H2).color(u.ink))
+                        .child(
+                            text(if enable {
+                                "Renames the slot file back to pakNN_dir.vpk. The game loads it on the next start."
+                            } else {
+                                "Renames the slot file to pakNN_dir.vpk.disabled. Chunk files stay attached."
+                            })
+                            .font(SMALL)
+                            .color(u.muted)
+                            .wrap(),
+                        ),
+                )
+                .child(u.glyph_box(
+                    if enable { "✓" } else { "∅" },
+                    if enable { Tone::Ok } else { Tone::Warn },
+                    36.0,
+                )),
+        )
+        .child(u.divider())
+        .child(u.kv("Slot", &format!("{slot:02}"), u.ink))
+        .child(u.kv("File", &file, u.muted))
+        .child(u.kv(
+            "Refuses",
+            "a slot with both names present, or a missing addon folder",
+            u.faint,
+        ))
+        .child(
+            row()
+                .w_full()
+                .gap(9.0)
+                .child(
+                    u.action("Cancel", ActionKind::Ghost)
+                        .grow(1.0)
+                        .on_press(|st: &mut State| st.addon_dialog = None),
+                )
+                .child(
+                    u.action(title, ActionKind::Primary)
+                        .grow(1.0)
+                        .on_press(move |st: &mut State| {
+                            crate::data::set_addon_enabled(st, slot, enable);
+                        }),
+                ),
+        );
+    let close = |st: &mut State| st.addon_dialog = None;
+    Some(
+        u.dialog_shell()
+            .key("addon-toggle-dialog")
+            .role("dialog")
+            .label(title)
+            .w(480.0)
+            .padding(1.0)
+            .modal(true, close)
+            .on_key(move |st: &mut State, ev: &rune::KeyEvent, _| {
+                if ev.key == rune::Key::Escape {
+                    close(st);
+                    true
+                } else {
+                    false
+                }
+            })
+            .child(u.dialog_core().padding(20.0).child(body)),
+    )
 }

@@ -84,6 +84,7 @@ pub struct State {
     pub thumb_crew: ThumbCrew,
     pub review_job: Job<ReviewQueue>,
     pub launch_dialog: bool,
+    pub addon_dialog: Option<(u8, bool)>,
     pub profiles: screens::profiles::View,
     pub profiles_job: Job<screens::profiles::Load>,
     pub autoexec: screens::autoexec::View,
@@ -160,6 +161,7 @@ impl Default for State {
             thumb_crew: ThumbCrew::default(),
             review_job: Job::default(),
             launch_dialog: false,
+            addon_dialog: None,
             profiles: screens::profiles::View::default(),
             profiles_job: Job::default(),
             autoexec: screens::autoexec::View::default(),
@@ -1048,6 +1050,7 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
         ("autoexec-modal", screens::autoexec::dialog(s, &u)),
         ("launch-modal", screens::launch::dialog(s, &u)),
         ("toolchain-modal", screens::toolchain::dialog(s, &u)),
+        ("addon-modal", screens::installed::dialog(s, &u)),
     ] {
         if let Some(layer) = layer {
             root = root.child(u.modal_layer(key, layer));
@@ -1490,7 +1493,7 @@ fn status_bar(s: &State, u: &Ui) -> El {
             .grow(1.0)
             .truncate(),
         )
-        .child(text("READ ONLY").font(LABEL).color(u.faint))
+        .child(text("APPROVAL GATED").font(LABEL).color(u.faint))
         .child(text("·").font(LABEL).color(u.faint).a11y_hidden())
         .child(text("NO TELEMETRY").font(LABEL).color(u.faint))
 }
@@ -1788,6 +1791,16 @@ pub fn scene_browse(s: &mut State) {
     }
 }
 
+pub fn scene_toggle(s: &mut State) {
+    s.screen = Screen::Installed;
+    if rune::is_headless() {
+        crate::data::scan_addons_now(s);
+        if let Some(addon) = s.addons.addons.iter().find(|addon| addon.enabled) {
+            s.addon_dialog = Some((addon.slot, false));
+        }
+    }
+}
+
 pub fn scene_install(s: &mut State) {
     s.screen = Screen::Browse;
     if rune::is_headless() {
@@ -1979,6 +1992,7 @@ pub fn scenes() -> &'static [(&'static str, fn(&mut State))] {
         ("installed", scene_installed),
         ("browse", scene_browse),
         ("install", scene_install),
+        ("toggle", scene_toggle),
         ("conflicts", scene_conflicts),
         ("updates", scene_updates),
         ("profiles", scene_profiles),

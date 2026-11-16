@@ -20,6 +20,7 @@ pub mod payload;
 pub mod profiles;
 pub mod project;
 pub mod release;
+pub mod review;
 pub mod character;
 pub mod deploy;
 pub mod migrate;
