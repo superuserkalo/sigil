@@ -91,6 +91,10 @@ Mapping to the product:
 | Extension `knowledge` | curated modding docs and path lookup (planned) |
 | `env` | `NodeExecutionEnv` rooted at the mod workspace |
 
+The choice of Pi Durable over fx and libfx is recorded in
+`docs/decisions/0004-embedded-runtime-choice.md`. fx stays an optional external lane (ACP or MCP),
+not a dependency.
+
 One process owns a storage. The desktop app and the CLI must not open the same SQLite file at the
 same time. The CLI uses its own data directory by default.
 
