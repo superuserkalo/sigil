@@ -15,6 +15,7 @@ supersede one with a new record instead of rewriting it.
 | `0005-reference-images-and-likeness.md` | accepted | Reference images and likeness stay local and consent-based |
 | `0006-native-rust-rune-desktop.md` | accepted | Native Rune desktop; Rust core and CLI |
 | `0007-tinyagent-host.md` | accepted | TinyAgent host; durable sessions and approvals |
+| `0008-gamebanana-approved-handoff.md` | accepted | Approved GameBanana handoff and verification |
 
 Use this template:
 
