@@ -10,6 +10,7 @@ pub mod find;
 pub mod index;
 pub mod install;
 pub mod launch;
+pub mod locker;
 pub mod migrate;
 pub mod package;
 pub mod patches;

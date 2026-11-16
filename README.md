@@ -83,6 +83,8 @@ pnpm rust:dah -- crosshair show               # reticle convars and preview geom
 pnpm rust:dah -- install plan 715100          # download, extract, validate, plan a slot
 pnpm rust:dah -- install apply <plan> --approve
 pnpm rust:dah -- launch modded                # or vanilla, restore, status
+pnpm rust:dah -- locker list                  # heroes, Grimoire art and catalog paths
+pnpm rust:dah -- locker recolor billy --palette frost   # a recorded work order
 pnpm rust:dah -- stats player <account-id>    # rank, career, heroes, form
 pnpm rust:dah -- stats heatmap <account-id>   # real kill and death cells
 pnpm rust:dah -- demo import match.dem        # local store and merged summary

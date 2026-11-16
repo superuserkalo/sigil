@@ -20,6 +20,7 @@ pub mod patch_notes;
 pub mod payload;
 pub mod profiles;
 pub mod project;
+pub mod recolor;
 pub mod release;
 pub mod review;
 pub mod character;
