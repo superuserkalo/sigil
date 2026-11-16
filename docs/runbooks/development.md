@@ -1,0 +1,135 @@
+# Development runbook
+
+Status: active.
+Updated: 2026-11-16
+
+## Prerequisites
+
+- Node 24 or newer.
+- pnpm 10 (`corepack enable` is enough).
+- Deadlock installed through Steam for the game checks.
+- Optional: Windows with community CSDK 12 for compiling assets.
+- Optional: Source 2 Viewer, `vpkeditcli`, `vpkmerge` on PATH for packing and inspection. None are
+  required by the scaffold.
+
+## First run
+
+```bash
+pnpm install
+pnpm typecheck
+pnpm test
+pnpm dah doctor
+```
+
+`pnpm test` runs every package typecheck and then `node --test` over `packages/*/test/*.test.ts`.
+
+## Data locations
+
+The CLI resolves its data directory as:
+
+- macOS: `~/Library/Application Support/DeadlockAgentHarness`
+- Windows: `%APPDATA%/DeadlockAgentHarness`
+- Linux: `$XDG_DATA_HOME/deadlock-agent-harness`, defaulting to
+  `~/.local/share/deadlock-agent-harness`
+
+Contents:
+
+```text
+agent.sqlite      Pi Durable storage
+credentials.json  provider keys, chmod 600
+workspace/        default mod workspace root
+```
+
+Override with `DAH_DATA_DIR` and `DAH_WORKSPACE_DIR`. Use a separate data directory when running the
+CLI beside the desktop app: one process owns a Pi Durable storage.
+
+## Providers
+
+```bash
+pnpm dah auth set anthropic
+pnpm dah auth list
+pnpm dah models
+```
+
+The prompt reads the key without echoing it. Keys are stored in `credentials.json` with mode `600`.
+Environment variables are a fallback when no credential is stored (`ANTHROPIC_API_KEY`,
+`OPENAI_API_KEY`, and so on, depending on the provider).
+
+Never commit `credentials.json` or paste a key into a conversation. The agent does not need to see
+it.
+
+## One agent run
+
+```bash
+pnpm dah chat "Find the game install, report the addon slots, and validate a payload containing \
+models/heroes_wip/punkgoat/punkgoat.vmdl_c"
+```
+
+The agent runs in the workspace directory and can read, write, edit and use bash there. Game install
+writes are not implemented yet.
+
+## Vendoring Grimoire
+
+```bash
+pnpm vendor
+```
+
+This clones `grimoire` and `grimoire-social` side by side into `vendor/`. Override the owner or ref
+when the fork exists:
+
+```bash
+GRIMOIRE_OWNER=your-handle GRIMOIRE_REF=main pnpm vendor
+```
+
+Grimoire needs pnpm 12 and native module rebuilds:
+
+```bash
+cd vendor/grimoire-social && pnpm install --ignore-scripts
+cd ../grimoire && corepack pnpm@12 install
+corepack pnpm@12 exec electron-rebuild -f -w better-sqlite3
+corepack pnpm@12 dev
+```
+
+Do not commit `vendor/`. Do not edit it in place without writing down the patch.
+
+## Windows compile toolchain
+
+1. Download community CSDK 12 from the Deadlock Modding Notes page. Use the "Reduced" build.
+2. Unzip to a short path such as `C:\Reduced_CSDK_12`. Keep it out of OneDrive and out of the game
+   folder.
+3. Start Steam, then `csdkcfg.exe`.
+4. Create an addon and confirm `game/bin_tools/win64/resourcecompiler.exe` exists.
+5. Record the paths in settings when the build backend lands.
+
+The app will never redistribute CSDK 12. It has no license.
+
+## Packing and inspection tools
+
+The pack layer will call external binaries resolved from settings:
+
+- `vpkeditcli` for create, inspect and extract.
+- `Source2Viewer-CLI` for decompile, export and VPK create with chunks.
+- `vpkmerge` for merging addon slots.
+
+Pin a version and a hash when one is bundled. Otherwise let the user point at an existing install.
+
+## Troubleshooting
+
+**The game does not load any mods.** Check `pnpm dah doctor`: `gameinfo.gi` must list
+`Game citadel/addons` above `Game citadel`. A game update or Steam verification resets it.
+
+**The mod loads but the change is missing.** The path inside the VPK is wrong, the file is not
+compiled, or a lower-numbered mod ships the same path. Inspect the VPK and compare paths with the
+game index.
+
+**The agent says no model is configured.** Run `pnpm dah auth set <provider>` or export the provider
+key. `pnpm dah models` shows what resolved.
+
+**The storage is locked or stale.** Another process owns it. Close the desktop app or point
+`DAH_DATA_DIR` somewhere else.
+
+**The CLI cannot import workspace packages.** Run through `pnpm dah`, which uses `tsx`. Node's type
+stripping does not run TypeScript inside `node_modules` symlinks.
+
+**A test wrote outside the repo.** It should not. Tests use `.scratch/tmp/` and clean up after
+themselves.
