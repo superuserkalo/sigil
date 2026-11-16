@@ -4,9 +4,32 @@ An open-source desktop workbench where an AI agent builds, packs, validates and 
 mods. Model access is bring-your-own-key. The app keeps your code, your game install and your
 credentials on your machine.
 
-Status: pre-alpha. Phase 1 game introspection is in place: the game VPK index, path search and
-workspace extraction, plus the CLI commands and agent tools for them. Decompiling, packing,
-deploying to a game install and the desktop UI are not implemented yet.
+Status: pre-alpha. The native Rust core, Rune desktop app, Rust CLI and TinyAgent v2 host are
+connected. There is no Electron window. Decompiling, packing, deploying to a game install and
+publishing are still in progress.
+
+## Native desktop
+
+The desktop shell is native Rust with [Rune](https://github.com/anomalyco/rune), not Electron. The
+domain core lives in `rust/crates/deadlock-core`, the CLI in `rust/crates/dah-rs`, and the app in
+`rust/crates/desktop`.
+
+```bash
+./scripts/vendor-rune.sh      # pinned Rune checkout for the Rust build
+./scripts/vendor-tinyagent.sh # pinned TinyAgent SDK for the agent host
+cargo run --manifest-path rust/Cargo.toml -p dah-desktop
+cargo run --manifest-path rust/Cargo.toml -p dah-rs -- doctor
+cargo run --manifest-path rust/Cargo.toml -p dah-agent  # Rust TinyAgent host
+```
+
+Rune is pre-release. The revision is pinned and its patched crates are vendored. See
+[ADR 0006](docs/decisions/0006-native-rust-rune-desktop.md).
+
+The agent host is TinyAgent. The Rust app owns the window, game discovery, VPK work, approvals UI and
+game writes. TinyAgent owns durable sessions, pause and resume, provider access and tools. There is
+no browser renderer. The Rust protocol v2 crate is landed; the Rust host is being completed, and the
+TypeScript host remains the reference during the cutover. See
+[ADR 0007](docs/decisions/0007-tinyagent-host.md).
 
 ## What it should do
 
@@ -29,17 +52,25 @@ Reference images and likeness work follow
 basis is recorded, and publishing a real person's likeness needs a separate approval.
 
 The shell is a fork of [Grimoire](https://github.com/Slush97/grimoire), a Deadlock mod manager, so
-Steam discovery, addon slots, `gameinfo.gi`, VPK merging and previews already have a home. The
-agent runtime is [Pi Durable](https://github.com/earendil-works/pi/tree/main/packages/durable).
+Steam discovery, addon slots, `gameinfo.gi`, VPK merging and previews already have a home. The agent
+host is [TinyAgent](https://github.com/superuserkalo/tinyagent).
 
 ## Architecture at a glance
 
 ```text
-apps/cli                 dah doctor / index / find / extract / models / auth / chat
-packages/harness         Pi Durable session, BYOK catalog, credential store
-packages/deadlock-tools  Steam discovery, VPK index and extraction, payload validation, tools
-docs/                    tracked project docs
-vendor/                  local Grimoire checkouts for the future desktop app (gitignored)
+rust/crates/desktop       native Rune workbench (Rust)
+rust/crates/deadlock-core game, VPK, index, project, patch and impact logic (Rust)
+rust/crates/dah-rs        native CLI (Rust)
+rust/crates/tinyagent     Rust TinyAgent v2 port
+rust/crates/agent-host    Rust TinyAgent JSONL host (dah-agent)
+apps/agent-host           TinyAgent v2 local agent host (Node sidecar)
+apps/cli                  legacy TypeScript CLI during the port
+packages/harness          legacy Pi Durable host, kept for reference during the port
+packages/deadlock-tools   TypeScript domain core and tools during the port
+docs/                     tracked project docs
+vendor/rune               pinned Rune checkout (gitignored, scripts/vendor-rune.sh)
+vendor/tinyagent          pinned TinyAgent checkout (gitignored, scripts/vendor-tinyagent.sh)
+vendor/                   local Grimoire checkouts for domain reference (gitignored)
 ```
 
 Read [docs/architecture.md](docs/architecture.md) before changing a boundary:

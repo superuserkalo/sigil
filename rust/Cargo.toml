@@ -1,0 +1,33 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/deadlock-core",
+    "crates/tinyagent",
+    "crates/agent-host",
+    "crates/dah-rs",
+    "crates/desktop",
+]
+
+[workspace.package]
+version = "0.0.0"
+edition = "2024"
+license = "MIT"
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
+regex = "1"
+crc32fast = "1"
+ureq = { version = "3", features = ["json"] }
+clap = { version = "4", features = ["derive"] }
+
+# Rune is pre-release. These patches mirror vendor/rune/Cargo.toml; an app that
+# builds Rune must repeat them because a dependency's [patch] does not apply.
+[patch.crates-io]
+wgpu-hal = { path = "../vendor/rune/vendor/wgpu-hal" }
+winit = { path = "../vendor/rune/vendor/winit" }
+parley_engine = { path = "../vendor/rune/vendor/parley_engine" }
+accesskit_windows = { path = "../vendor/rune/vendor/accesskit_windows" }
+accesskit_macos = { path = "../vendor/rune/vendor/accesskit_macos" }

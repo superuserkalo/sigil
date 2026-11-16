@@ -42,8 +42,8 @@ _Avoid_: sandbox, repo
 The Steam copy of Deadlock the app inspects and, with approval, installs into.
 _Avoid_: game folder, install root
 
-**Game index**:
-The cached list of paths inside `game/citadel/pak01_dir.vpk`, with metadata needed to extract them.
+**Game catalog**:
+The cached paths from the citadel, core and map VPKs, with the metadata needed to extract them.
 _Avoid_: file list, database
 
 **Extracted file**:
@@ -65,25 +65,39 @@ _Avoid_: face swap, celeb mod
 A mod that changes a hero's appearance while staying on the game skeleton and animations.
 _Avoid_: model swap, hero replacement
 
-**Harness**:
-The durable agent runtime: storage, conversations, tasks, tools and the model.
-_Avoid_: server, backend
+**Agent host**:
+The TinyAgent process that owns durable sessions, tools, providers and approvals. It runs beside the
+app and never draws the UI.
+_Avoid_: server, backend, harness
 
-**Conversation**:
-One durable transcript. The product uses one per mod project plus a root workbench.
-_Avoid_: chat, session
+**Session**:
+One durable TinyAgent journal. The product uses one per mod project plus a root workbench.
+_Avoid_: chat, conversation
 
-**Task**:
-A durable unit of work with checkpoints, such as one tool call or one build. Survives process death.
-_Avoid_: job, step
+**Run**:
+One prompt through the model and its tool calls. A run is journaled and can resume after a crash.
+_Avoid_: job, task
 
 **Tool**:
-A function the model can call. Declares whether it is safe to replay after a crash.
+A function the model can call. Declares whether it is idempotent when a run resumes after a crash.
 _Avoid_: action, skill, command
 
 **Approval gate**:
 A durable pause that requires a human decision before a tool with external effects runs.
 _Avoid_: confirmation, prompt
+
+**Baseline**:
+The recorded CRCs, sizes and owning VPK for a project target set, captured after a check.
+_Avoid_: snapshot, lockfile
+
+**Change impact**:
+The comparison of a project baseline with the current game catalog: unchanged, changed, missing,
+moved or unbaselined.
+_Avoid_: diff, breakage report
+
+**Patch note**:
+An official Deadlock update post from the Steam news feed. A hint, not proof of a file change.
+_Avoid_: changelog, update log
 
 **Deploy**:
 Copying a validated VPK into a chosen addon slot, with approval.

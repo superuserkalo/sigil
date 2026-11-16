@@ -35,13 +35,13 @@ The CLI resolves its data directory as:
 Contents:
 
 ```text
-agent.sqlite      Pi Durable storage
+agent-sessions/   TinyAgent session journals, one per conversation
 credentials.json  provider keys, chmod 600
 workspace/        default mod workspace root
 ```
 
 Override with `DAH_DATA_DIR` and `DAH_WORKSPACE_DIR`. Use a separate data directory when running the
-CLI beside the desktop app: one process owns a Pi Durable storage.
+CLI beside the desktop app: one process owns the TinyAgent session directory.
 
 ## Providers
 
@@ -95,6 +95,39 @@ needed for the test suite.
 
 Decompiling extracted `_c` files is not implemented yet. Use Source 2 Viewer until a decompile
 backend lands.
+
+## Native app and agent host
+
+```bash
+./scripts/vendor-rune.sh
+./scripts/vendor-tinyagent.sh
+cargo run --manifest-path rust/Cargo.toml -p dah-desktop
+cargo run --manifest-path rust/Cargo.toml -p dah-rs -- doctor
+```
+
+Rune is pinned pre-release. The workspace repeats its `[patch.crates-io]` entries; a plain git
+dependency fails on the patched text stack. Headless checks:
+
+```bash
+cargo run --manifest-path rust/Cargo.toml -p dah-desktop -- --snap .scratch/desktop.png --scene workbench
+cargo run --manifest-path rust/Cargo.toml -p dah-desktop -- --tree .scratch/tree.json --scene index
+```
+
+The agent host is TinyAgent v2. The Rust host is `rust/crates/agent-host` (`dah-agent`) over
+`rust/crates/tinyagent`. It speaks JSONL over stdio:
+
+```bash
+cargo run --manifest-path rust/Cargo.toml -p dah-agent
+```
+
+The Rune app spawns `dah-agent`. The TypeScript host in `apps/agent-host` is reference only.
+
+Configuration: `DAH_AGENT_PROVIDER` (`openai`, `anthropic` or `chat`), `DAH_AGENT_MODEL`,
+`DAH_AGENT_BASE_URL` for a local OpenAI-compatible server, and `DAH_AGENT_API_KEY`. Sessions live
+under the app data directory. The Rune app spawns `dah-agent`, which calls `dah-rs` for game and
+project operations.
+
+Do not point two hosts at the same session directory.
 
 ## Vendoring Grimoire
 

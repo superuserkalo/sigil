@@ -1,6 +1,6 @@
 # 0004 Embedded runtime: Pi Durable over libfx
 
-Status: accepted
+Status: accepted. Superseded by `0007-tinyagent-host.md` for the runtime choice. The fx and libfx rejection still stands.
 Date: 2026-11-16
 
 ## Context

@@ -13,6 +13,8 @@ supersede one with a new record instead of rewriting it.
 | `0003-windows-compile-backend.md` | accepted | Compile is a backend with availability |
 | `0004-embedded-runtime-choice.md` | accepted | Pi Durable stays the runtime; fx is optional |
 | `0005-reference-images-and-likeness.md` | accepted | Reference images and likeness stay local and consent-based |
+| `0006-native-rust-rune-desktop.md` | accepted | Native Rune desktop; Rust core and CLI |
+| `0007-tinyagent-host.md` | accepted | TinyAgent host; durable sessions and approvals |
 
 Use this template:
 

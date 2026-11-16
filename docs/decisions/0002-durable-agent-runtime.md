@@ -1,6 +1,6 @@
 # 0002 Durable agent runtime
 
-Status: accepted
+Status: accepted. Superseded in part by `0007-tinyagent-host.md` for the runtime and storage; the process, secrets and approval principles still apply.
 Date: 2026-11-16
 
 ## Context
