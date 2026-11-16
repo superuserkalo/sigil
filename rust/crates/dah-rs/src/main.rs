@@ -116,6 +116,9 @@ enum Command {
         /// Maximum projects to print.
         #[arg(long, default_value_t = 20, value_name = "N")]
         limit: usize,
+        /// Fetch the official patch feed even when a cache exists.
+        #[arg(long)]
+        refresh: bool,
         /// Print machine-readable JSON.
         #[arg(long)]
         json: bool,
@@ -517,9 +520,14 @@ fn run(cli: &Cli) -> error::Result<i32> {
                 Ok(0)
             }
         },
-        Command::Watch { limit, json } => {
+        Command::Watch {
+            limit,
+            refresh,
+            json,
+        } => {
             commands::watch::run(&commands::watch::WatchArgs {
                 limit: *limit,
+                refresh: *refresh,
                 json: *json,
             })?;
             Ok(0)

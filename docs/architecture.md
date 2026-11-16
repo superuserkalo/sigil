@@ -359,7 +359,7 @@ dah mod baseline           record target paths, CRCs and index sources
 dah mod check              show what changed, moved or broke after a patch
 dah mod deploy             plan or approve an addon install
 dah mod migrate            plan or apply moved target paths
-dah watch                  review every project after a patch
+dah watch                  review every project and correlate the newest patch
 dah publish prepare        build a local release folder, never upload
 dah publish upload         open the GameBanana submission page, no file upload
 dah vpk inspect            list a VPK tree and verify CRCs

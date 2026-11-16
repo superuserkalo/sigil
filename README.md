@@ -35,7 +35,7 @@ pnpm rust:dah -- mod deploy --workspace <project> --slot 6 --approve
 pnpm rust:dah -- vpk inspect <project>/builds/<version>/pak06_dir.vpk --verify
 pnpm rust:dah -- publish prepare --workspace <project>
 pnpm rust:dah -- publish upload --workspace <project> --open
-pnpm rust:dah -- watch
+pnpm rust:dah -- watch                 # add --refresh to fetch the patch feed
 ```
 
 The deploy plan reports slot conflicts, replacement and `gameinfo.gi` repair before anything is

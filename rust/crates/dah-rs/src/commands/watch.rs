@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 
 use serde_json::{json, Value};
 
-use crate::domain::{self, Migration, ProjectCheck};
+use crate::domain::{self, Migration, PatchNote, ProjectCheck};
 use crate::error::{CliError, Result};
 use crate::paths;
 use crate::util::{lossy, print_json};
@@ -13,6 +13,7 @@ use crate::util::{lossy, print_json};
 pub struct WatchArgs {
     pub limit: usize,
     pub json: bool,
+    pub refresh: bool,
 }
 
 struct WatchedProject {
@@ -22,6 +23,7 @@ struct WatchedProject {
     version: String,
     check: Option<ProjectCheck>,
     migrations: Vec<Migration>,
+    baseline_at: Option<String>,
     error: Option<String>,
 }
 
@@ -84,6 +86,13 @@ impl WatchedProject {
 
         warnings
     }
+
+    fn baseline_stale(&self, newest_patch: Option<&PatchNote>) -> bool {
+        match (self.baseline_at.as_deref(), newest_patch) {
+            (Some(baseline), Some(patch)) => baseline < patch.published_at.as_str(),
+            _ => false,
+        }
+    }
 }
 
 pub fn run(args: &WatchArgs) -> Result<()> {
@@ -107,6 +116,30 @@ pub fn run(args: &WatchArgs) -> Result<()> {
     let loaded = domain::load_catalog_for(&install.game_root, workspace, false)?;
     let catalog = &loaded.catalog;
 
+    let patch_cache_path = domain::patch_note_cache_path(workspace);
+    let mut patch_notes = domain::load_patch_note_cache(&patch_cache_path)
+        .map(|cache| cache.notes)
+        .unwrap_or_default();
+    let mut patch_error = None;
+
+    if args.refresh {
+        match domain::fetch_patch_notes(20) {
+            Ok(notes) => {
+                if let Err(error) = domain::save_patch_note_cache(
+                    &patch_cache_path,
+                    &domain::cache_from_notes(notes.clone()),
+                ) {
+                    patch_error = Some(format!("Could not write the patch cache: {error}"));
+                }
+                patch_notes = notes;
+            }
+            Err(error) => patch_error = Some(format!("Could not fetch patch notes: {error}")),
+        }
+    }
+
+    patch_notes.sort_by(|left, right| right.published_at.cmp(&left.published_at));
+    let newest_patch = patch_notes.first().cloned();
+
     let mut projects = Vec::with_capacity(project_dirs.len());
 
     for project_dir in &project_dirs {
@@ -120,6 +153,7 @@ pub fn run(args: &WatchArgs) -> Result<()> {
                     version: String::new(),
                     check: None,
                     migrations: Vec::new(),
+                    baseline_at: None,
                     error: Some(error.to_string()),
                 });
                 continue;
@@ -127,6 +161,9 @@ pub fn run(args: &WatchArgs) -> Result<()> {
         };
 
         let migrations = domain::migration_plan(&project, catalog);
+        let baseline_at = domain::read_baseline(project_dir)
+            .ok()
+            .map(|baseline| baseline.captured_at);
         let check = domain::check_project(project_dir, catalog, &status);
         let (check, error) = match check {
             Ok(check) => (Some(check), None),
@@ -140,6 +177,7 @@ pub fn run(args: &WatchArgs) -> Result<()> {
             version: project.version,
             check,
             migrations,
+            baseline_at,
             error,
         });
     }
@@ -160,9 +198,17 @@ pub fn run(args: &WatchArgs) -> Result<()> {
             "needsReview": review,
             "limit": args.limit,
             "truncated": args.limit < total,
+            "patches": {
+                "newest": newest_patch.as_ref().map(|patch| json!({
+                    "id": patch.id,
+                    "title": patch.title,
+                    "publishedAt": patch.published_at,
+                })),
+                "error": patch_error,
+            },
             "projects": shown
                 .iter()
-                .map(|project| project_json(project))
+                .map(|project| project_json(project, newest_patch.as_ref()))
                 .collect::<Vec<_>>(),
         }));
         return Ok(());
@@ -174,11 +220,23 @@ pub fn run(args: &WatchArgs) -> Result<()> {
         workspace.display()
     );
     println!("  Game:   {}", install.game_root.display());
+    if let Some(patch) = &newest_patch {
+        println!(
+            "  Patch:  {} ({})",
+            patch.title,
+            patch.published_at.chars().take(10).collect::<String>()
+        );
+    } else {
+        println!("  Patch:  no cached patch notes (run `dah patches`)");
+    }
+    if let Some(error) = &patch_error {
+        println!("  Patch:  WARNING {error}");
+    }
     println!("  Review: {review} project(s) need attention");
     println!();
 
     for project in &shown {
-        print_project(project);
+        print_project(project, newest_patch.as_ref());
     }
 
     if args.limit < total {
@@ -193,7 +251,7 @@ pub fn run(args: &WatchArgs) -> Result<()> {
     Ok(())
 }
 
-fn print_project(project: &WatchedProject) {
+fn print_project(project: &WatchedProject, newest_patch: Option<&PatchNote>) {
     let flag = if project.needs_review() {
         " REVIEW"
     } else {
@@ -222,10 +280,20 @@ fn print_project(project: &WatchedProject) {
         println!("  WARNING {warning}");
     }
 
+    if project.baseline_stale(newest_patch)
+        && let Some(patch) = newest_patch
+    {
+        println!(
+            "  WARNING baseline predates the newest patch ({} on {})",
+            patch.title,
+            patch.published_at.chars().take(10).collect::<String>()
+        );
+    }
+
     println!();
 }
 
-fn project_json(project: &WatchedProject) -> Value {
+fn project_json(project: &WatchedProject, newest_patch: Option<&PatchNote>) -> Value {
     let check = project.check.as_ref();
     let (changed, missing, moved, unbaselined) = project.counts();
 
@@ -236,6 +304,8 @@ fn project_json(project: &WatchedProject) -> Value {
         "version": project.version,
         "needsReview": project.needs_review(),
         "error": project.error,
+        "baselineAt": project.baseline_at,
+        "staleBaseline": project.baseline_stale(newest_patch),
         "counts": {
             "changed": changed,
             "missing": missing,
