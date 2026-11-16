@@ -464,6 +464,8 @@ Phase 5, stats and the living catalog (in progress):
 - Done: Installed slots toggle on and off behind a confirm dialog.
 - Done: Crosshair editor with the HUD geometry, in-game import and a managed
   autoexec block; applied through the same approval and backup path.
+- Done: Locker hero roster from the catalog merged with Grimoire art, a pinned
+  project hero, and recolor briefs with exact targets and the remaining steps.
 - Next: real `.dem` files from a live match; positions need a serializer-aware extractor.
 - Next: verify 7z and rar extraction on a machine with those tools.
 
