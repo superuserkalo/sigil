@@ -27,6 +27,7 @@ Every doc starts with a status line. Values: `active`, `draft`, `planned`, `supe
 | `research/fx-libfx.md` | active | Why fx and libfx are not the embedded runtime. |
 | `research/vpk-format.md` | active | VPK v1/v2 layout used by the game index. |
 | `research/patch-feeds.md` | active | Official Deadlock patch feed and file-change sources. |
+| `design/mod-manager-shell.md` | draft | Mod-manager-first sidebar, screens and real data sources. |
 | `decisions/0001-grimoire-fork-and-monorepo.md` | accepted | Fork and repo layout. |
 | `decisions/0002-durable-agent-runtime.md` | accepted | Pi Durable, SQLite, secrets and process split. |
 | `decisions/0003-windows-compile-backend.md` | accepted | Compile is a backend, not an assumption. |
