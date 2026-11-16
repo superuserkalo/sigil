@@ -31,6 +31,16 @@ The script builds with `-C target-feature=+crt-static`, so the bundle does not
 need the Visual C++ redistributable. The result is
 `.scratch/package/DeadlockModManager-<version>-windows-x64.zip` with a SHA-256.
 
+Verify a bundle without running it:
+
+```bash
+scripts/verify-windows.sh .scratch/package/DeadlockModManager-0.1.0-windows-x64.zip
+```
+
+It prints the SHA-256, the PE format and subsystem, the binary sizes, and checks
+that the sidecar sits beside the app and that no PDB, CSDK binary or VPK is in the
+archive.
+
 ## Build on Windows
 
 ```powershell
