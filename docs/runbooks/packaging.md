@@ -24,14 +24,18 @@ stores, downloaded mods.
 
 ```bash
 scripts/package-desktop.sh                 # host target
-scripts/package-desktop.sh x86_64-pc-windows-msvc
+scripts/package-windows.sh                 # Windows x64 via cargo-xwin
 ```
 
 The script refuses nothing silently: a missing binary fails the stage step, and the manifest records
 the target, the host, the timestamp and the itemised exclusions. On macOS it also assembles
 `Deadlock Mod Manager.app` with an `Info.plist` and the notices under `Resources`.
 
-Output: `.scratch/package/<target>-<version>/` plus a zip beside it.
+Output: `.scratch/package/<target>-<version>/` plus a zip beside it. The Windows
+script stages `Deadlock Mod Manager.exe`, `dah-agent.exe`, `dah.exe`, the notices
+and a first-run README into
+`.scratch/package/DeadlockModManager-<version>-windows-x64.zip`. See
+`docs/runbooks/windows.md`.
 
 ## Sidecar resolution
 

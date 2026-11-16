@@ -1,3 +1,5 @@
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
+
 //! Deadlock Mod Manager: a native Rune desktop app with an agent inside.
 //!
 //! `cargo run -p dah-desktop` opens the window. Headless scenes render with

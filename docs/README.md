@@ -36,6 +36,7 @@ Every doc starts with a status line. Values: `active`, `draft`, `planned`, `supe
 | `research/install-pipeline.md` | active | Browse download, archive extraction, payload check and slot deploy. |
 | `research/meshy-reverse-engineering.md` | active | Evidence-led study of the Meshy pipeline and our own stage graph. |
 | `runbooks/acceptance.md` | active | Tier 5 acceptance result and the unverified rows. |
+| `runbooks/windows.md` | draft | Windows bundle, first run and unverified rows. |
 | `runbooks/packaging.md` | draft | Desktop, sidecar and CLI packaging, with the unverified rows listed. |
 | `design/mod-manager-shell.md` | draft | Mod-manager-first sidebar, screens and real data sources. |
 | `decisions/0001-grimoire-fork-and-monorepo.md` | accepted | Fork and repo layout. |
