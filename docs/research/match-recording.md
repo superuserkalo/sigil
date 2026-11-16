@@ -104,6 +104,51 @@ Rules:
 - The prompt says "if the data does not support a claim, omit it."
 - A deterministic linter checks generated numbers against the summary.
 
+
+## API plus local demos
+
+The strongest data product is both, not either one.
+
+| Source | Strength | What it gives |
+| --- | --- | --- |
+| deadlock-api | Breadth and population context | rank, MMR, match summaries, hero stats, item stats, leaderboards, benchmarks |
+| local demo | Depth and personal truth | positions, event timing, deaths, objectives, economy, item timings, team fights |
+
+Join rules:
+
+- Primary key: match id. Fall back to account id, start time, map and hero only when the id is
+  missing, and mark the join as inferred.
+- Demo wins for event-level facts inside the match.
+- API wins for rank, MMR, population percentiles and fields the demo does not carry.
+- A disagreement is recorded, not hidden. Each field in the merged summary names its source and
+  confidence.
+
+What the combination unlocks:
+
+- Personal heatmaps with population benchmarks: where you die vs where players at your rank die.
+- Objective conversion and timing compared with rank averages.
+- Lane-phase soul differentials and item timing deltas.
+- Death clusters by area, time and team-fight state.
+- Match review that cites the exact timestamp from the demo.
+- Hero-pool advice grounded in your matches and the current meta.
+- Anomaly detection: games where your impact is far below your own baseline.
+- Coaching that separates "your mechanics" from "your decisions" from "the matchup".
+
+Merged storage:
+
+```text
+<data>/matches/<match-id>/
+  api.json           raw API response, cached, with fetched-at
+  match.dem          optional demo
+  summary.json       merged facts with per-field source and confidence
+```
+
+Coverage rule: the API can cover every match; demos cover only matches the user captures or can
+download. The UI must show which matches have deep data and which are summary-only.
+
+Privacy rule: API caching and demo parsing stay local. A provider call sends only the merged summary
+the user chooses to review.
+
 ## Privacy
 
 - Local only by default. No match upload, no telemetry.
