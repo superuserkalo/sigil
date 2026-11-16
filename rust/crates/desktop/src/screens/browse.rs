@@ -694,7 +694,7 @@ fn install_dialog(s: &State, u: &Ui) -> El {
                     .w_full()
                     .gap(9.0)
                     .center_y()
-                    .child(u.toggle(v.force))
+                    .child(u.toggle(v.force).label("Allow replacing an occupied slot"))
                     .child(
                         text("Allow replacing an occupied slot")
                             .font(SMALL)

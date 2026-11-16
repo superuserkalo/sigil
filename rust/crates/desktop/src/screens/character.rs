@@ -376,7 +376,7 @@ fn create_panel(s: &State, u: &Ui) -> El {
                                         .h(30.0)
                                         .gap(8.0)
                                         .center_y()
-                                        .child(u.toggle(v.consent))
+                                        .child(u.toggle(v.consent).label("Reference upload consent"))
                                         .child(
                                             text(if v.consent {
                                                 "consent recorded"

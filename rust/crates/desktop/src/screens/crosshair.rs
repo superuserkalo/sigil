@@ -599,7 +599,7 @@ fn switch_row(
         .gap(9.0)
         .center_y()
         .py(3.0)
-        .child(u.toggle(on))
+        .child(u.toggle(on).label(label))
         .child(
             col()
                 .grow(1.0)

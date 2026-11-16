@@ -333,7 +333,7 @@ fn card(s: &State, u: &Ui, addon: &AddonRow) -> El {
                 .gap(8.0)
                 .center_y()
                 .border_sides([1.0, 0.0, 0.0, 0.0], u.hair)
-                .child(u.toggle(addon.enabled))
+                .child(u.toggle(addon.enabled).label(format!("Slot {} enabled", addon.slot_label())))
                 .child(
                     text(if addon.enabled { "ACTIVE" } else { "INACTIVE" })
                         .font(LABEL)
