@@ -21,6 +21,7 @@ LIBRARY
 MODDING
   Profiles         capture and apply named sets of enabled slots
   Autoexec         read the game config, write behind approval
+  Crosshair        reticle convars with a live HUD geometry preview
   Stats            rank, career, heroes, matches, heatmap
   Locker           hero renders and asset paths from the local game
   Launch           modded launch, vanilla stash, restore
@@ -65,6 +66,18 @@ would make it available, and keeps every action that does not need it.
 | Toolchain | `toolchain::toolchain_status`, plan and approved run |
 | Character | `character::character_status`, create, refresh, import |
 | Agent | TinyAgent JSONL host |
+
+## Servers, and why there is no screen
+
+Deadlock is matchmade. Valve ships no public server browser and no joinable
+dedicated servers for the base game. The only server directory in this space is
+the community Deadworks relay, which needs a third-party service, a content
+manifest download, VPK safety gating and a `gameinfo.gi` search path. Shipping a
+Servers screen would mean adding a third-party host to the network allowlist and
+a new safety boundary, so it is a decision record, not a sidebar item. Until that
+exists, no Servers screen ships. The requested surface is covered elsewhere:
+region and rank context is on Stats, and the game's own matchmaking is the only
+supported join path.
 
 ## Layout rules
 

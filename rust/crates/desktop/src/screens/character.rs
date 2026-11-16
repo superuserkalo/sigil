@@ -417,7 +417,7 @@ fn create_panel(s: &State, u: &Ui) -> El {
                 )
                 .child(
                     u.action("Create task", ActionKind::Primary)
-                        .grow(1.0)
+                        .w_full()
                         .disabled(!ready)
                         .opacity(if ready { 1.0 } else { 0.45 })
                         .on_press(|st: &mut State| crate::data::create_character_task(st)),

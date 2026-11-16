@@ -2,6 +2,7 @@ pub mod autoexec;
 pub mod browse;
 pub mod character;
 pub mod conflicts;
+pub mod crosshair;
 pub mod impact;
 pub mod index;
 pub mod installed;

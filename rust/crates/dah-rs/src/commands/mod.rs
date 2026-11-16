@@ -2,6 +2,7 @@ pub mod addons;
 pub mod autoexec;
 pub mod browse;
 pub mod character;
+pub mod crosshair;
 pub mod demo;
 pub mod doctor;
 pub mod extract;

@@ -243,7 +243,7 @@ fn modded_card(s: &State, u: &Ui, read: Option<&Read>, stashed: bool) -> El {
                 u.note("Addons are stashed, so a modded launch would start an empty addon folder. Restore first.")
             } else {
                 u.action("Launch modded", ActionKind::Primary)
-                    .grow(1.0)
+                    .w_full()
                     .disabled(!ready)
                     .opacity(if ready { 1.0 } else { 0.5 })
                     .on_press(|st: &mut State| st.launch.dialog = Dialog::Modded)
@@ -297,7 +297,7 @@ fn vanilla_card(s: &State, u: &Ui, read: Option<&Read>, stashed: bool) -> El {
                 u.note("A stash is already pending. Restore it instead of stashing twice.")
             } else {
                 u.action("Launch vanilla", ActionKind::Secondary)
-                    .grow(1.0)
+                    .w_full()
                     .disabled(!ready)
                     .opacity(if ready { 1.0 } else { 0.5 })
                     .on_press(|st: &mut State| st.launch.dialog = Dialog::Vanilla)

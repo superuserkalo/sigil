@@ -5,6 +5,7 @@ mod util;
 
 pub mod addons;
 pub mod autoexec;
+pub mod crosshair;
 pub mod demo;
 pub mod discovery;
 pub mod error;

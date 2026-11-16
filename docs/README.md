@@ -27,6 +27,7 @@ Every doc starts with a status line. Values: `active`, `draft`, `planned`, `supe
 | `research/fx-libfx.md` | active | Why fx and libfx are not the embedded runtime. |
 | `research/vpk-format.md` | active | VPK v1/v2 layout used by the game index. |
 | `research/patch-feeds.md` | active | Official Deadlock patch feed and file-change sources. |
+| `research/crosshair.md` | active | Reticle convars, HUD geometry and the managed autoexec block. |
 | `research/stats-case-study.md` | active | Leetify, Blitz.gg and Scope.gg patterns for Deadlock stats. |
 | `research/match-recording.md` | active | Demo import, merged API data and the linted review pipeline. |
 | `research/demo-import.md` | active | Source 2 demo container parsing, local match store and merge. |

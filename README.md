@@ -79,6 +79,7 @@ missing, the screen names it, says why, and keeps every action that does not nee
 pnpm rust:dah -- addons list                  # installed slots and shared paths
 pnpm rust:dah -- addons set 6 off --approve   # one rename, behind approval
 pnpm rust:dah -- profiles save "Ranked"       # capture the current slot set
+pnpm rust:dah -- crosshair show               # reticle convars and preview geometry
 pnpm rust:dah -- install plan 715100          # download, extract, validate, plan a slot
 pnpm rust:dah -- install apply <plan> --approve
 pnpm rust:dah -- launch modded                # or vanilla, restore, status

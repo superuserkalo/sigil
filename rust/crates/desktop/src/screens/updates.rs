@@ -63,6 +63,7 @@ pub fn view(s: &State, u: &Ui) -> El {
             &detail,
             Some(trailing),
         ))
+        .child(watch_strip(s, u))
         .child(
             row()
                 .key("updates-body")
@@ -552,4 +553,65 @@ fn patch_row(u: &Ui, note: &PatchNote) -> El {
                 .max_lines(2)
                 .wrap(),
         )
+}
+
+/// The durable state the opt-in `dah watch --watch` loop writes. A missing file
+/// means no loop has run; this is never inferred from the queue.
+fn watch_strip(s: &State, u: &Ui) -> El {
+    match &s.watch {
+        Some(watch) => row()
+            .key("updates-watch")
+            .w_full()
+            .padding(11.0)
+            .gap(10.0)
+            .center_y()
+            .radius(10.0)
+            .fill(u.violet.alpha(0.05))
+            .border(1.0, u.violet.alpha(0.16))
+            .child(u.dot(Tone::Info))
+            .child(
+                text(format!(
+                    "Watch loop last ran {} at {}s interval over {} project(s)",
+                    watch.updated_at, watch.interval_seconds, watch.total_projects
+                ))
+                .font(SMALL)
+                .color(u.muted)
+                .grow(1.0)
+                .truncate(),
+            )
+            .child(u.chip(
+                &format!("{} need review", watch.needs_review),
+                if watch.needs_review == 0 { u.faint } else { u.amber },
+                Color::WHITE.alpha(0.04),
+            ))
+            .child(
+                text(
+                    watch
+                        .newest_patch
+                        .clone()
+                        .unwrap_or_else(|| "no patch recorded".to_string()),
+                )
+                .font(LABEL)
+                .color(u.faint)
+                .max_w(320.0)
+                .truncate(),
+            ),
+        None => row()
+            .key("updates-watch-none")
+            .w_full()
+            .padding(10.0)
+            .gap(9.0)
+            .center_y()
+            .radius(10.0)
+            .fill(Color::WHITE.alpha(0.02))
+            .border(1.0, u.hair)
+            .child(u.dot(Tone::Quiet))
+            .child(
+                text("No watch loop state yet. `dah watch --watch` writes .dah/watch-state.json; this queue is the same read, run on demand.")
+                    .font(SMALL)
+                    .color(u.muted)
+                    .grow(1.0)
+                    .truncate(),
+            ),
+    }
 }
