@@ -27,6 +27,8 @@ Every doc starts with a status line. Values: `active`, `draft`, `planned`, `supe
 | `research/fx-libfx.md` | active | Why fx and libfx are not the embedded runtime. |
 | `research/vpk-format.md` | active | VPK v1/v2 layout used by the game index. |
 | `research/patch-feeds.md` | active | Official Deadlock patch feed and file-change sources. |
+| `research/stats-case-study.md` | active | Leetify, Blitz.gg and Scope.gg patterns for Deadlock stats. |
+| `research/match-recording.md` | proposed | Local demo recording, stats and LLM review pipeline. |
 | `design/mod-manager-shell.md` | draft | Mod-manager-first sidebar, screens and real data sources. |
 | `decisions/0001-grimoire-fork-and-monorepo.md` | accepted | Fork and repo layout. |
 | `decisions/0002-durable-agent-runtime.md` | accepted | Pi Durable, SQLite, secrets and process split. |
