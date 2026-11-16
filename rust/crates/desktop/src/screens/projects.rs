@@ -257,7 +257,7 @@ fn hero(s: &State, u: &Ui, p: &Project) -> El {
                         )
                         .child(
                             u.action("Open session", ActionKind::Secondary)
-                                .on_press(|st: &mut State| st.screen = Screen::Workbench),
+                                .on_press(|st: &mut State| st.go(Screen::Agent)),
                         )
                         .child(
                             u.action("Reveal", ActionKind::Ghost).on_press(|st: &mut State| {

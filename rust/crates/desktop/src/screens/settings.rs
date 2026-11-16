@@ -426,7 +426,7 @@ fn about(u: &Ui) -> El {
                 .w_full()
                 .padding(14.0)
                 .gap(7.0)
-                .child(text("Deadlock Modding Workbench").font(BODY_MED).color(u.ink))
+                .child(text("Deadlock Mod Manager").font(BODY_MED).color(u.ink))
                 .child(
                     row()
                         .gap(6.0)

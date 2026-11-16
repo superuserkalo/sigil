@@ -1,4 +1,4 @@
-//! Deadlock Modding Workbench: a native Rune desktop app.
+//! Deadlock Mod Manager: a native Rune desktop app with an agent inside.
 //!
 //! `cargo run -p dah-desktop` opens the window. Headless scenes render with
 //! `cargo run -p dah-desktop -- --snap out.png --scene index`.
@@ -6,7 +6,9 @@
 mod agent;
 mod app;
 mod data;
+mod jobs;
 mod model;
+mod publish;
 mod screens;
 mod ui;
 
@@ -21,7 +23,7 @@ fn main() {
         on_key: Some(app::on_key),
         min_size: Some((1120.0, 720.0)),
         ..AppSpec::new(
-            "Deadlock Modding Workbench",
+            "Deadlock Mod Manager",
             (1440.0, 960.0),
             data::init_state,
             app::view,

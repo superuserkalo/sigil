@@ -1,4 +1,6 @@
-//! Workbench: transcript, prompt composer, provider status and the running tool timeline.
+//! Workbench: one conversation canvas, a quiet context rail and the prompt
+//! composer anchored at the bottom. Tool calls stay compact; approvals appear
+//! inline, in the conversation, where the run paused.
 
 use rune::tok::motion;
 use rune::{Color, El, ScrollSpec, col, el, row, spacer, text};
@@ -6,33 +8,38 @@ use rune::{Color, El, ScrollSpec, col, el, row, spacer, text};
 use crate::agent::{AgentStatus, Pause};
 use crate::app::State;
 use crate::model::{Message, Role, RunState, Screen, ToolRun};
-use crate::ui::{ActionKind, BODY, BODY_MED, LABEL, MONO, MONO_MED, RAIL_W, SMALL, Tone, Ui};
+use crate::ui::{
+    ActionKind, BODY_MED, CHAT, HERO, LABEL, LEAD, MONO, MONO_MED, RAIL_W, SMALL, Tone, Ui,
+};
 
 pub fn view(s: &State, u: &Ui) -> El {
     let project = s.project();
     let title = match project {
-        Some(p) => format!("{} session", p.name),
-        None => "General workbench".to_string(),
+        Some(p) => p.name.clone(),
+        None => "General session".to_string(),
+    };
+    let detail = match project {
+        Some(p) => format!(
+            "A working conversation for {}. Tools stage and validate, and only the app writes, behind your approval.",
+            p.name
+        ),
+        None => {
+            "Open a project for scoped paths, or ask a general question about Deadlock modding."
+                .to_string()
+        }
     };
     let trailing = row()
-        .gap(8.0)
+        .gap(9.0)
         .center_y()
         .child(u.status_chip(
             &format!("host {}", s.agent.status.label()),
             status_tone(s.agent.status),
         ))
         .child(
-            u.action("New session", ActionKind::Secondary)
+            u.pill("New session", "＋", ActionKind::Ghost)
+                .key("new-session")
                 .on_press(|st: &mut State| st.begin_session()),
         );
-    let detail = match project {
-        Some(p) => format!(
-            "One conversation for {}. Tools stage and validate; only the app writes, behind approval.",
-            p.name
-        ),
-        None => "One conversation per mod project. Open a project for scoped paths, or ask a general question."
-            .to_string(),
-    };
 
     let mut column = col()
         .key("feed-column")
@@ -40,14 +47,14 @@ pub fn view(s: &State, u: &Ui) -> El {
         .h_full()
         .min_w(0.0)
         .min_h(0.0)
-        .gap(12.0)
-        .child(host_card(s, u));
+        .gap(13.0)
+        .child(session_strip(s, u));
     if let Some(error) = &s.agent.error {
         column = column.child(host_error_card(s, u, error));
     }
     column = column.child(feed(s, u));
     if let Some(pause) = &s.agent.pause {
-        column = column.child(pause_card(u, pause));
+        column = column.child(pause_card(s, u, pause));
     }
     column = column.child(composer(s, u));
 
@@ -56,20 +63,49 @@ pub fn view(s: &State, u: &Ui) -> El {
         .grow(1.0)
         .h_full()
         .min_h(0.0)
-        .px(24.0)
+        .px(26.0)
         .pt(20.0)
         .pb(16.0)
-        .gap(14.0)
-        .child(u.page_head(Screen::Workbench.kicker(), &title, &detail, Some(trailing)))
+        .gap(16.0)
+        .child(u.glow(
+            "workbench-glow-warm",
+            [0.20, 0.0],
+            (700.0, 480.0),
+            u.glow_warm,
+        ))
+        .child(u.glow(
+            "workbench-glow-cool",
+            [0.88, 0.10],
+            (640.0, 520.0),
+            u.glow_cool,
+        ))
+        .child(head(u, &title, &detail, trailing))
         .child(
             row()
                 .key("workbench-body")
                 .grow(1.0)
                 .min_h(0.0)
-                .gap(16.0)
+                .gap(18.0)
                 .child(column)
                 .child(rail(s, u)),
         )
+}
+
+fn head(u: &Ui, title: &str, detail: &str, trailing: El) -> El {
+    row()
+        .w_full()
+        .gap(20.0)
+        .items_end()
+        .child(
+            col()
+                .grow(1.0)
+                .gap(7.0)
+                .max_w(760.0)
+                .child(u.eyebrow(Screen::Agent.kicker()))
+                .child(text(title).font(HERO).color(u.ink))
+                .child(text(detail).font(LEAD).color(u.muted).wrap()),
+        )
+        .child(trailing)
 }
 
 fn status_tone(status: AgentStatus) -> Tone {
@@ -83,62 +119,65 @@ fn status_tone(status: AgentStatus) -> Tone {
     }
 }
 
-fn host_card(s: &State, u: &Ui) -> El {
+fn session_strip(s: &State, u: &Ui) -> El {
     let tone = status_tone(s.agent.status);
-    row()
-        .key("host-card")
+    let mut strip = row()
+        .key("session-strip")
         .w_full()
-        .min_h(38.0)
-        .px(11.0)
-        .py(7.0)
+        .min_h(34.0)
+        .px(12.0)
+        .py(6.0)
         .gap(9.0)
         .center_y()
-        .radius(8.0)
-        .fill(Color::WHITE.alpha(0.022))
-        .border(1.0, u.hair)
         .child(u.dot(tone))
-        .child(text("HOST").font(LABEL).color(u.faint))
-        .child(u.status_chip(s.agent.status.label(), tone))
+        .child(text("SESSION").font(LABEL).color(u.faint))
+        .child(u.status_chip(s.agent.status.label(), tone));
+    if s.publish_job.is_running()
+        && let Some(label) = s.publish_job.label()
+    {
+        strip = strip.child(u.chip(&format!("{label} running"), u.amber, u.amber.alpha(0.10)));
+    }
+    strip = strip
         .child(
-            text(s.agent.binary_label())
-                .font(MONO)
-                .color(u.muted)
-                .grow(1.0)
-                .min_w(0.0)
-                .truncate(),
-        )
-        .child(u.chip(
-            &s.agent.provider_label(),
-            if s.agent.demo || s.agent.configured {
-                u.teal
+            text(if s.agent.demo {
+                "Demo fixture, no host process".to_string()
+            } else {
+                s.agent.provider_label()
+            })
+            .font(MONO)
+            .color(if s.agent.demo || s.agent.configured {
+                u.muted
             } else {
                 u.rose
-            },
-            if s.agent.demo || s.agent.configured {
-                u.teal.alpha(0.10)
-            } else {
-                u.rose.alpha(0.10)
-            },
-        ))
+            })
+            .grow(1.0)
+            .min_w(0.0)
+            .truncate(),
+        )
         .child(
             text(format!("session {}", s.agent.session_label()))
                 .font(MONO)
-                .color(u.faint),
-        )
+                .color(u.faint)
+                .truncate(),
+        );
+    u.glass_shell()
+        .w_full()
+        .padding(1.0)
+        .child(u.glass_core().w_full().child(strip))
 }
 
 fn host_error_card(s: &State, u: &Ui, error: &str) -> El {
     let mut card = col()
         .key("host-error")
         .w_full()
-        .gap(6.0)
-        .padding(10.0)
-        .radius(8.0)
-        .fill(u.rose.alpha(0.08))
-        .border(1.0, u.rose.alpha(0.28))
+        .gap(7.0)
+        .padding(14.0)
+        .radius(14.0)
+        .fill(u.rose.alpha(0.055))
+        .border(1.0, u.rose.alpha(0.20))
         .child(
             row()
-                .gap(8.0)
+                .gap(9.0)
                 .center_y()
                 .child(u.status_chip("HOST ERROR", Tone::Bad))
                 .child(
@@ -168,23 +207,29 @@ fn host_error_card(s: &State, u: &Ui, error: &str) -> El {
     card
 }
 
-fn pause_card(u: &Ui, pause: &Pause) -> El {
-    u.panel()
-        .key("approval-card")
+fn pause_card(s: &State, u: &Ui, pause: &Pause) -> El {
+    let inner = col()
         .w_full()
-        .border(1.0, u.amber.alpha(0.34))
+        .padding(18.0)
+        .gap(13.0)
         .child(
             row()
                 .w_full()
-                .px(12.0)
-                .pt(10.0)
-                .pb(8.0)
-                .gap(8.0)
+                .gap(10.0)
                 .center_y()
-                .child(u.dot(Tone::Warn))
-                .child(text("APPROVAL REQUIRED").font(LABEL).color(u.amber))
+                .child(u.glyph_box("!", Tone::Warn, 30.0))
+                .child(
+                    col()
+                        .grow(1.0)
+                        .gap(2.0)
+                        .child(text("APPROVAL REQUIRED").font(LABEL).color(u.amber))
+                        .child(
+                            text(format!("{} is paused before it runs", pause.tool_name))
+                                .font(BODY_MED)
+                                .color(u.ink),
+                        ),
+                )
                 .child(u.chip(&pause.tool_name, u.amber, u.amber.alpha(0.12)))
-                .child(spacer())
                 .child(
                     text(format!("call {}", pause.tool_call_id))
                         .font(MONO)
@@ -194,58 +239,84 @@ fn pause_card(u: &Ui, pause: &Pause) -> El {
         .child(
             col()
                 .w_full()
-                .px(12.0)
-                .pb(10.0)
-                .gap(7.0)
+                .gap(6.0)
                 .child(u.field_label("PAYLOAD"))
                 .child(
-                    text(pause.payload_text())
-                        .font(MONO)
-                        .color(u.prose)
-                        .wrap_anywhere()
-                        .selectable(true),
+                    u.well_field().w_full().padding(11.0).child(
+                        text(pause.payload_text())
+                            .font(MONO)
+                            .color(u.prose)
+                            .wrap_anywhere()
+                            .selectable(true),
+                    ),
                 ),
         )
         .child(
             row()
                 .w_full()
-                .px(12.0)
-                .pb(11.0)
-                .gap(8.0)
+                .gap(10.0)
                 .center_y()
                 .child(
-                    u.action("Approve", ActionKind::Primary)
+                    u.pill("Approve", "✓", ActionKind::Primary)
                         .key("approve")
+                        .autofocus()
                         .on_press(|st: &mut State| st.approve_pause()),
                 )
                 .child(
-                    u.action("Deny", ActionKind::Secondary)
+                    u.pill("Deny", "esc", ActionKind::Ghost)
                         .key("deny")
                         .on_press(|st: &mut State| st.deny_pause()),
                 )
                 .child(spacer())
                 .child(
-                    text("Approve sends resume with a result; Deny sends resume with an error.")
-                        .font(SMALL)
-                        .color(u.faint),
+                    text(if s.agent.demo {
+                        "Demo fixture: no resume is sent."
+                    } else {
+                        "Approve resumes with a result. Deny resumes with an error."
+                    })
+                    .font(SMALL)
+                    .color(u.faint),
                 ),
+        );
+
+    u.glass_shell()
+        .key("approval-card")
+        .w_full()
+        .padding(1.0)
+        .child(
+            u.glass_core()
+                .w_full()
+                .fill(u.amber.alpha(0.035))
+                .border(1.0, u.amber.alpha(0.22))
+                .child(inner),
         )
 }
 
 fn feed(s: &State, u: &Ui) -> El {
-    let mut list = col().key("feed").w_full().gap(18.0).pb(4.0);
+    let mut list = col().key("feed").w_full().gap(22.0).pb(8.0);
     if !s.demo && s.messages.len() <= 1 {
         list = list.child(start_strip(u));
     }
     for (i, m) in s.messages.iter().enumerate() {
         list = list.child(message(s, u, i, m));
     }
-    col()
-        .key("transcript")
+    u.glass_shell()
+        .key("transcript-shell")
         .grow(1.0)
         .min_h(0.0)
-        .scroll(ScrollSpec { stick_bottom: true })
-        .child(list)
+        .padding(1.0)
+        .child(
+            u.glass_core().grow(1.0).min_h(0.0).child(
+                col()
+                    .key("transcript")
+                    .grow(1.0)
+                    .min_h(0.0)
+                    .padding(18.0)
+                    .clip_soft(14.0)
+                    .scroll(ScrollSpec { stick_bottom: true })
+                    .child(list),
+            ),
+        )
 }
 
 fn start_strip(u: &Ui) -> El {
@@ -283,13 +354,14 @@ fn start_strip(u: &Ui) -> El {
 fn start_card(u: &Ui, glyph: &str, title: &str, detail: &str, press: fn(&mut State)) -> El {
     col()
         .grow(1.0)
-        .gap(6.0)
-        .padding(12.0)
-        .radius(8.0)
-        .fill(Color::WHITE.alpha(0.024))
-        .border(1.0, u.hair)
+        .gap(7.0)
+        .padding(13.0)
+        .radius(13.0)
+        .fill(Color::WHITE.alpha(0.022))
+        .border(1.0, Color::WHITE.alpha(0.05))
         .hover(Color::WHITE.alpha(0.045))
         .press(Color::WHITE.alpha(0.06))
+        .press_scale(0.985)
         .focusable(true)
         .role("button")
         .label(title)
@@ -299,7 +371,7 @@ fn start_card(u: &Ui, glyph: &str, title: &str, detail: &str, press: fn(&mut Sta
             row()
                 .gap(8.0)
                 .center_y()
-                .child(u.glyph_box(glyph, Tone::Quiet, 24.0))
+                .child(u.glyph_box(glyph, Tone::Quiet, 26.0))
                 .child(text(title).font(BODY_MED).color(u.ink)),
         )
         .child(text(detail).font(SMALL).color(u.faint).wrap())
@@ -319,11 +391,15 @@ fn user_row(u: &Ui, idx: usize, m: &Message) -> El {
         .w_full()
         .gap(12.0)
         .items_start()
-        .child(avatar(u, "YOU", Tone::Quiet))
+        .child(spacer())
         .child(
             col()
-                .grow(1.0)
-                .gap(5.0)
+                .max_w(620.0)
+                .gap(6.0)
+                .padding(14.0)
+                .radius(16.0)
+                .fill(Color::WHITE.alpha(0.035))
+                .border(1.0, Color::WHITE.alpha(0.055))
                 .child(
                     row()
                         .gap(8.0)
@@ -333,7 +409,7 @@ fn user_row(u: &Ui, idx: usize, m: &Message) -> El {
                 )
                 .child(
                     text(m.body.clone())
-                        .font(BODY)
+                        .font(CHAT)
                         .color(u.ink)
                         .wrap()
                         .selectable(true),
@@ -345,18 +421,24 @@ fn assistant_row(s: &State, u: &Ui, idx: usize, m: &Message) -> El {
     let mut meta = row()
         .gap(8.0)
         .center_y()
-        .child(text("Workbench").font(BODY_MED).color(u.ink));
+        .child(text("Agent").font(BODY_MED).color(u.ink));
     if let Some(model) = &m.model {
         meta = meta.child(u.chip(model, u.teal, u.teal.alpha(0.10)));
     }
     meta = meta.child(text(m.meta.clone()).font(SMALL).color(u.faint));
-    let mut body = col().grow(1.0).gap(5.0).child(meta).child(
-        text(m.body.clone())
-            .font(BODY)
-            .color(u.prose)
-            .wrap()
-            .selectable(true),
-    );
+    let mut body = col()
+        .grow(1.0)
+        .min_w(0.0)
+        .gap(7.0)
+        .max_w(760.0)
+        .child(meta)
+        .child(
+            text(m.body.clone())
+                .font(CHAT)
+                .color(u.prose)
+                .wrap()
+                .selectable(true),
+        );
     if s.tools.iter().any(|t| t.state == RunState::Running) && idx + 1 == s.messages.len() {
         body = body.child(
             row()
@@ -369,9 +451,8 @@ fn assistant_row(s: &State, u: &Ui, idx: usize, m: &Message) -> El {
     row()
         .key(format!("msg-{idx}"))
         .w_full()
-        .gap(12.0)
+        .gap(0.0)
         .items_start()
-        .child(avatar(u, "◆", Tone::Accent))
         .child(body)
 }
 
@@ -381,8 +462,8 @@ fn tool_row(_s: &State, u: &Ui, idx: usize, tool: Option<&ToolRun>) -> El {
     };
     let tone = run_tone(tool.state);
     let mut head = row()
-        .px(11.0)
-        .pt(5.0)
+        .px(12.0)
+        .pt(7.0)
         .gap(8.0)
         .center_y()
         .child(text("▸").font(MONO).color(tone.fg(u)).a11y_hidden())
@@ -403,24 +484,24 @@ fn tool_row(_s: &State, u: &Ui, idx: usize, tool: Option<&ToolRun>) -> El {
         .min_w(0.0)
         .gap(5.0)
         .py(6.0)
-        .radius(8.0)
-        .fill(Color::WHITE.alpha(0.025))
-        .border(1.0, u.hair)
+        .radius(12.0)
+        .fill(Color::WHITE.alpha(0.018))
+        .border(1.0, Color::WHITE.alpha(0.04))
         .child(head);
     if !tool.args.is_empty() {
         card = card.child(
             text(tool.args.clone())
                 .font(MONO)
                 .color(u.faint)
-                .px(11.0)
+                .px(12.0)
                 .wrap_anywhere(),
         );
     }
     card = card.child(
         row()
-            .px(11.0)
-            .pb(5.0)
-            .gap(7.0)
+            .px(12.0)
+            .pb(6.0)
+            .gap(8.0)
             .items_center()
             .child(u.dot(tone))
             .child(
@@ -434,20 +515,10 @@ fn tool_row(_s: &State, u: &Ui, idx: usize, tool: Option<&ToolRun>) -> El {
     row()
         .key(format!("msg-{idx}"))
         .w_full()
-        .gap(12.0)
+        .gap(13.0)
         .items_start()
-        .child(el().w(26.0).h(1.0))
+        .child(el().w(30.0).h(1.0))
         .child(card)
-}
-
-fn avatar(u: &Ui, glyph: &str, tone: Tone) -> El {
-    el().size(26.0, 26.0)
-        .radius(7.0)
-        .center()
-        .fill(tone.bg(u))
-        .border(1.0, tone.fg(u).alpha(0.22))
-        .child(text(glyph).font(LABEL).color(tone.fg(u)).a11y_hidden())
-        .a11y_hidden()
 }
 
 fn run_tone(state: RunState) -> Tone {
@@ -466,14 +537,14 @@ fn pulse_dot(u: &Ui, pulse: f32) -> El {
 }
 
 fn composer(s: &State, u: &Ui) -> El {
-    let field = rune::text_input(&s.composer, BODY)
+    let field = rune::text_input(&s.composer, CHAT)
         .key("composer")
         .label("Prompt")
         .grow(1.0)
-        .min_h(22.0)
-        .max_h(96.0)
+        .min_h(26.0)
+        .max_h(104.0)
         .color(u.ink)
-        .placeholder("Ask the workbench, or describe the mod you want", u.faint)
+        .placeholder("Ask the agent, or describe the mod you want", u.faint)
         .caret(u.accent, u.accent.alpha(0.22))
         .on_edit(|st: &mut State| &mut st.composer)
         .on_submit(|st: &mut State, _| st.send_prompt());
@@ -481,34 +552,28 @@ fn composer(s: &State, u: &Ui) -> El {
     let ready = !s.composer.text.trim().is_empty() && s.agent.status == AgentStatus::Ready;
     let running = s.agent.status == AgentStatus::Running;
     let action = if running {
-        u.action("Stop", ActionKind::Secondary)
+        u.pill("Stop", "■", ActionKind::Secondary)
             .key("abort")
             .on_press(|st: &mut State| st.abort_run())
     } else {
         let mut send = u
-            .action("Send", ActionKind::Primary)
+            .pill("Send", "↑", ActionKind::Primary)
             .key("send")
             .on_press(|st: &mut State| st.send_prompt());
         if !ready {
-            send = send.opacity(0.55);
+            send = send.opacity(0.52);
         }
         send
     };
 
-    col()
-        .key("composer-card")
+    let inner = col()
         .w_full()
-        .radius(11.0)
-        .fill(u.panel)
-        .border(1.0, u.hair_strong)
-        .shadow(10.0, 28.0, u.shadow)
+        .padding(14.0)
+        .gap(9.0)
         .child(
             row()
                 .w_full()
-                .px(13.0)
-                .pt(11.0)
-                .pb(4.0)
-                .gap(10.0)
+                .gap(12.0)
                 .items_end()
                 .child(field)
                 .child(action),
@@ -516,8 +581,6 @@ fn composer(s: &State, u: &Ui) -> El {
         .child(
             row()
                 .w_full()
-                .px(12.0)
-                .pb(9.0)
                 .gap(8.0)
                 .center_y()
                 .child(u.dot(status_tone(s.agent.status)))
@@ -547,25 +610,34 @@ fn composer(s: &State, u: &Ui) -> El {
                         .font(SMALL)
                         .color(u.faint),
                 ),
+        );
+
+    u.glass_shell()
+        .key("composer-card")
+        .w_full()
+        .padding(1.0)
+        .child(
+            u.glass_core()
+                .w_full()
+                .fill(Color::WHITE.alpha(0.028))
+                .child(inner),
         )
 }
 
 fn rail(s: &State, u: &Ui) -> El {
     let tone = status_tone(s.agent.status);
-    let provider_card = u
-        .panel()
-        .key("provider-card")
-        .padding(12.0)
-        .gap(8.0)
-        .child(
-            row()
-                .gap(8.0)
-                .center_y()
-                .child(text("MODEL").font(LABEL).color(u.faint))
-                .child(spacer())
-                .child(u.dot(tone))
-                .child(u.status_chip(s.agent.status.label(), tone)),
-        )
+    let project = s.project();
+
+    let mut model = col().w_full().gap(9.0).child(
+        row()
+            .gap(8.0)
+            .center_y()
+            .child(text("MODEL").font(LABEL).color(u.faint))
+            .child(spacer())
+            .child(u.dot(tone))
+            .child(u.status_chip(s.agent.status.label(), tone)),
+    );
+    model = model
         .child(
             text(if s.agent.demo {
                 "Demo fixture: no host process".to_string()
@@ -578,7 +650,7 @@ fn rail(s: &State, u: &Ui) -> El {
             } else {
                 u.rose
             })
-            .truncate(),
+            .wrap_anywhere(),
         )
         .child(
             row()
@@ -594,7 +666,6 @@ fn rail(s: &State, u: &Ui) -> El {
         )
         .child(
             row()
-                .w_full()
                 .gap(8.0)
                 .child(text("session").font(SMALL).color(u.faint))
                 .child(spacer())
@@ -604,21 +675,50 @@ fn rail(s: &State, u: &Ui) -> El {
                         .color(u.muted)
                         .truncate(),
                 ),
-        )
-        .child(
-            text(if s.agent.demo {
-                "Demo scene. No host process and no model call."
-            } else {
-                "Provider keys are read by the host. This window only sees status."
-            })
-            .font(SMALL)
-            .color(u.faint)
-            .wrap(),
         );
+
+    let mut context = col()
+        .w_full()
+        .gap(8.0)
+        .child(text("CONTEXT").font(LABEL).color(u.faint));
+    match project {
+        Some(p) => {
+            context = context
+                .child(text(p.name.clone()).font(BODY_MED).color(u.ink))
+                .child(text(p.summary.clone()).font(SMALL).color(u.faint).wrap())
+                .child(
+                    row()
+                        .gap(6.0)
+                        .child(u.chip(
+                            &format!("slot {:02}", p.slot),
+                            u.accent,
+                            u.accent.alpha(0.11),
+                        ))
+                        .child(u.chip(
+                            &format!("{} targets", p.targets.len()),
+                            u.violet,
+                            u.violet.alpha(0.10),
+                        )),
+                );
+        }
+        None => {
+            context = context.child(
+                text("No project is open. The session is unscoped, so game paths are guesses.")
+                    .font(SMALL)
+                    .color(u.muted)
+                    .wrap(),
+            );
+        }
+    }
+    context = context
+        .child(u.divider().mt(4.0))
+        .child(boundary_row(u, "Staging folder", "agent", Tone::Ok))
+        .child(boundary_row(u, "Game install", "approval", Tone::Warn))
+        .child(boundary_row(u, "Publish", "approval", Tone::Warn));
 
     let mut timeline = col().key("timeline-list").w_full().gap(0.0);
     if s.tools.is_empty() {
-        timeline = timeline.padding(12.0).child(
+        timeline = timeline.padding(2.0).child(
             text("No tools have run in this session.")
                 .font(SMALL)
                 .color(u.faint)
@@ -633,70 +733,92 @@ fn rail(s: &State, u: &Ui) -> El {
         }
     }
 
-    let timeline_card = u
-        .panel()
-        .key("timeline-card")
-        .grow(if s.tools.is_empty() { 0.0 } else { 1.0 })
-        .min_h(0.0)
-        .child(u.panel_header("TOOL TIMELINE", &format!("{} calls", s.tools.len())))
+    let timeline_block = col()
+        .w_full()
+        .gap(6.0)
+        .child(
+            row()
+                .w_full()
+                .gap(8.0)
+                .center_y()
+                .child(text("TOOL TIMELINE").font(LABEL).color(u.faint))
+                .child(spacer())
+                .child(
+                    text(format!("{} calls", s.tools.len()))
+                        .font(SMALL)
+                        .color(u.faint),
+                ),
+        )
         .child(
             col()
-                .grow(if s.tools.is_empty() { 0.0 } else { 1.0 })
-                .min_h(0.0)
+                .w_full()
                 .scroll(ScrollSpec {
                     stick_bottom: false,
                 })
                 .child(timeline),
         );
 
-    let boundary_card = u
-        .panel()
-        .key("boundary-card")
-        .padding(12.0)
-        .gap(7.0)
-        .child(text("WRITE BOUNDARY").font(LABEL).color(u.faint))
-        .child(boundary_row(u, "Staging folder", "agent", Tone::Ok))
-        .child(boundary_row(u, "Game install", "approval", Tone::Warn))
-        .child(boundary_row(u, "Publish", "approval", Tone::Warn));
-
-    let session_card = u
-        .panel()
-        .key("session-card")
-        .padding(12.0)
-        .gap(10.0)
-        .child(text("SESSION").font(LABEL).color(u.faint))
+    let stats = row()
+        .w_full()
+        .gap(8.0)
+        .center_y()
         .child(
-            row()
-                .gap(8.0)
-                .child(u.stat(format!("{}", s.messages.len()), "MESSAGES", Tone::Info))
-                .child(u.stat(format!("{}", s.tools.len()), "TOOLS", Tone::Accent))
-                .child(u.stat(s.elapsed.clone(), "ELAPSED", Tone::Quiet)),
-        );
+            text(format!("{} messages", s.messages.len()))
+                .font(SMALL)
+                .color(u.muted),
+        )
+        .child(text("·").font(SMALL).color(u.faint).a11y_hidden())
+        .child(
+            text(format!("{} tools", s.tools.len()))
+                .font(SMALL)
+                .color(u.muted),
+        )
+        .child(text("·").font(SMALL).color(u.faint).a11y_hidden())
+        .child(text(s.elapsed.clone()).font(SMALL).color(u.muted))
+        .child(spacer())
+        .child(text("this session").font(SMALL).color(u.faint));
 
-    let bottom_pad = if s.tools.is_empty() {
-        spacer()
-    } else {
-        el().h(0.0)
-    };
+    let body = col()
+        .w_full()
+        .padding(16.0)
+        .gap(14.0)
+        .child(model)
+        .child(u.divider())
+        .child(context)
+        .child(u.divider())
+        .child(timeline_block)
+        .child(u.divider())
+        .child(stats)
+        .child(
+            text("The running tool drives this timeline. No tool writes to the game install.")
+                .font(SMALL)
+                .color(u.faint)
+                .wrap(),
+        );
 
     col()
         .key("rail")
         .w(RAIL_W)
         .h_full()
         .min_h(0.0)
-        .pl(16.0)
         .gap(12.0)
-        .border_sides([0.0, 0.0, 0.0, 1.0], u.hair)
-        .child(provider_card)
-        .child(timeline_card)
-        .child(boundary_card)
-        .child(session_card)
-        .child(bottom_pad)
         .child(
-            text("The running tool drives this timeline. No tool writes to the game install.")
-                .font(SMALL)
-                .color(u.faint)
-                .wrap(),
+            u.glass_shell()
+                .key("context-rail")
+                .w_full()
+                .grow(1.0)
+                .min_h(0.0)
+                .padding(1.0)
+                .child(
+                    u.glass_core()
+                        .w_full()
+                        .grow(1.0)
+                        .min_h(0.0)
+                        .scroll(ScrollSpec {
+                            stick_bottom: false,
+                        })
+                        .child(body),
+                ),
         )
 }
 
@@ -718,8 +840,8 @@ fn timeline_row(s: &State, u: &Ui, run: &ToolRun) -> El {
     };
     let mut r = row()
         .w_full()
-        .h(35.0)
-        .px(12.0)
+        .h(32.0)
+        .px(2.0)
         .gap(8.0)
         .center_y()
         .child(dot)
