@@ -21,6 +21,7 @@ Every doc starts with a status line. Values: `active`, `draft`, `planned`, `supe
 
 | Doc | Status | Meaning |
 | --- | --- | --- |
+| `provenance.md` | active | Original code, dependencies, references and asset rules. |
 | `architecture.md` | draft | Proposed boundaries and roadmap. Changes need a decision record. |
 | `research/deadlock-modding.md` | active | Domain facts with sources. Verify after a game update. |
 | `research/pi-durable.md` | superseded | Legacy Pi Durable runtime notes. |
