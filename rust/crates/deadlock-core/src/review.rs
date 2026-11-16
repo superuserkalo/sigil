@@ -6,8 +6,10 @@
 //! linter is deterministic and has no provider, so it runs in tests and in CI.
 
 use std::collections::BTreeSet;
+use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
@@ -17,6 +19,33 @@ use crate::util::now_iso;
 
 pub const REVIEW_FILE_NAME: &str = "review.md";
 pub const REVIEW_SCHEMA: u32 = 1;
+/// Environment variables read for a review model key, in order. The key is
+/// never logged, stored in a review or written to the workspace.
+pub const REVIEW_KEY_ENVS: [&str; 2] = ["DAH_REVIEW_API_KEY", "OPENAI_API_KEY"];
+
+const REVIEW_SYSTEM: &str = "You are a Deadlock coach. Use only the verified facts in the user message. Never invent a statistic, a timestamp or a movement pattern. If a field is absent, say it is absent. Return Markdown with the requested sections.";
+
+/// An OpenAI-compatible chat endpoint. `api_key` is optional for a local server.
+#[derive(Clone, PartialEq, Eq)]
+pub struct ModelConfig {
+    /// Base URL, for example `http://127.0.0.1:8080/v1`.
+    pub base_url: String,
+    pub model: String,
+    pub api_key: Option<String>,
+    pub timeout_seconds: u64,
+}
+
+impl fmt::Debug for ModelConfig {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ModelConfig")
+            .field("base_url", &self.base_url)
+            .field("model", &self.model)
+            .field("api_key", &self.api_key.as_ref().map(|_| "[redacted]"))
+            .field("timeout_seconds", &self.timeout_seconds)
+            .finish()
+    }
+}
 
 /// One factual line the model may cite.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -426,6 +455,120 @@ fn fmt(value: f64) -> String {
     }
 }
 
+/// Ask an OpenAI-compatible chat model for a review from the verified facts.
+///
+/// The prompt is the same one printed by `dah demo review`; the reply is not
+/// linted here. Call [`review_and_write`] to lint and store in one step.
+pub fn generate_review(facts: &ReviewFacts, config: &ModelConfig) -> Result<String> {
+    if config.base_url.trim().is_empty() {
+        return Err(Error::msg(
+            "A review needs a base URL, for example http://127.0.0.1:8080/v1.",
+        ));
+    }
+    if config.model.trim().is_empty() {
+        return Err(Error::msg("A review needs a model name."));
+    }
+    let url = format!(
+        "{}/chat/completions",
+        config.base_url.trim_end_matches('/')
+    );
+    let body = serde_json::json!({
+        "model": config.model,
+        "temperature": 0.2,
+        "max_tokens": 1200,
+        "messages": [
+            {"role": "system", "content": REVIEW_SYSTEM},
+            {"role": "user", "content": facts.prompt},
+        ],
+    });
+
+    let agent = ureq::Agent::config_builder()
+        .timeout_global(Some(Duration::from_secs(config.timeout_seconds.max(5))))
+        .build()
+        .new_agent();
+    let mut request = agent
+        .post(&url)
+        .header("Content-Type", "application/json")
+        .header("Accept", "application/json");
+    if let Some(key) = &config.api_key
+        && !key.is_empty()
+    {
+        request = request.header("Authorization", format!("Bearer {key}"));
+    }
+
+    let body = serde_json::to_string(&body)
+        .map_err(|error| Error::msg(format!("Could not encode the review request: {error}")))?;
+    let mut response = request
+        .header("Content-Length", body.len().to_string())
+        .send(body.as_bytes())
+        .map_err(|error| Error::msg(format!("The review request failed: {error}")))?;
+    let status = response.status().as_u16();
+    let text = response
+        .body_mut()
+        .read_to_string()
+        .map_err(|error| Error::msg(format!("The review response was unreadable: {error}")))?;
+
+    if !(200..300).contains(&status) {
+        return Err(Error::msg(format!(
+            "The review endpoint returned HTTP {status}: {}",
+            text.chars().take(300).collect::<String>()
+        )));
+    }
+    if text.len() > 64 * 1024 {
+        return Err(Error::msg(
+            "The review endpoint returned more than 64 KiB. Refusing to parse it.",
+        ));
+    }
+
+    let value: serde_json::Value = serde_json::from_str(&text).map_err(|error| {
+        Error::msg(format!(
+            "The review endpoint returned invalid JSON: {error}. Body: {}",
+            text.chars().take(300).collect::<String>()
+        ))
+    })?;
+    let content = value
+        .get("choices")
+        .and_then(|choices| choices.get(0))
+        .and_then(|choice| choice.get("message"))
+        .and_then(|message| message.get("content"))
+        .and_then(|content| content.as_str())
+        .ok_or_else(|| {
+            Error::msg(
+                "The review endpoint returned no choices[0].message.content. Check that the model is a chat model.",
+            )
+        })?;
+
+    let content = content.trim();
+    if content.is_empty() {
+        return Err(Error::msg("The review endpoint returned an empty reply."));
+    }
+    Ok(content.to_string())
+}
+
+/// Generate, lint and store a review. A number the facts do not support aborts
+/// the write, exactly like a hand-written review.
+pub fn review_and_write(
+    workspace: &Path,
+    facts: &ReviewFacts,
+    config: &ModelConfig,
+) -> Result<StoredReview> {
+    let body = generate_review(facts, config)?;
+    write_review(workspace, facts, &body)
+}
+
+/// Read the first non-empty key from [`REVIEW_KEY_ENVS`].
+pub fn key_from_environment() -> Option<String> {
+    for name in REVIEW_KEY_ENVS {
+        if let Ok(value) = std::env::var(name) {
+            let value = value.trim();
+            if !value.is_empty() {
+                return Some(value.to_string());
+            }
+        }
+    }
+    None
+}
+
 pub fn review_path(workspace: &Path, match_id: &str) -> Result<PathBuf> {
     Ok(crate::demo::match_dir(workspace, match_id)?.join(REVIEW_FILE_NAME))
 }
@@ -525,6 +668,129 @@ mod tests {
     fn keeps_list_markers_out_of_the_count() {
         let report = lint_review("1. Buy boots\n2. Ward mid", &facts());
         assert_eq!(report.checked_numbers, 0);
+    }
+
+    fn serve_once(content: &str) -> (String, std::thread::JoinHandle<String>) {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("listener");
+        let address = listener.local_addr().expect("address");
+        let payload = format!(
+            "{{\"choices\":[{{\"message\":{{\"role\":\"assistant\",\"content\":{}}}}}]}}",
+            serde_json::to_string(content).expect("content json")
+        );
+        let handle = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept");
+            let mut buffer = Vec::new();
+            let mut chunk = [0_u8; 2048];
+            loop {
+                let read = stream.read(&mut chunk).expect("read");
+                if read == 0 {
+                    break;
+                }
+                buffer.extend_from_slice(&chunk[..read]);
+                if buffer.windows(4).any(|window| window == b"\r\n\r\n") {
+                    break;
+                }
+            }
+            let header_end = buffer
+                .windows(4)
+                .position(|window| window == b"\r\n\r\n")
+                .expect("headers")
+                + 4;
+            let headers = String::from_utf8_lossy(&buffer[..header_end]).to_lowercase();
+            let length = headers
+                .lines()
+                .find_map(|line| line.strip_prefix("content-length:"))
+                .and_then(|value| value.trim().parse::<usize>().ok())
+                .unwrap_or(0);
+            while buffer.len() < header_end + length {
+                let read = stream.read(&mut chunk).expect("body read");
+                if read == 0 {
+                    break;
+                }
+                buffer.extend_from_slice(&chunk[..read]);
+            }
+            let request = String::from_utf8_lossy(&buffer).to_string();
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                payload.len(),
+                payload
+            );
+            stream.write_all(response.as_bytes()).expect("write");
+            request
+        });
+        (format!("http://{address}/v1"), handle)
+    }
+
+    fn model_facts() -> ReviewFacts {
+        let mut facts = facts();
+        facts.prompt = "Verified facts for match 42".to_string();
+        facts
+    }
+
+    #[test]
+    fn a_model_reply_is_linted_before_it_is_stored() {
+        let (base_url, server) = serve_once("Your aim accuracy was 87%.");
+        let facts = model_facts();
+        let config = ModelConfig {
+            base_url,
+            model: "test-model".to_string(),
+            api_key: Some("secret".to_string()),
+            timeout_seconds: 5,
+        };
+        let text = generate_review(&facts, &config).expect("reply");
+        assert!(text.contains("87%"));
+        let report = lint_review(&text, &facts);
+        assert!(!report.ok(), "an invented number must be refused");
+
+        let request = server.join().expect("server");
+        assert!(request.starts_with("POST /v1/chat/completions"), "{request}");
+        assert!(request.contains("Bearer secret"));
+        assert!(request.contains("\"model\":\"test-model\""));
+        assert!(request.contains("Verified facts for match 42"));
+    }
+
+    #[test]
+    fn a_grounded_model_reply_is_written() {
+        let (base_url, server) = serve_once("You had 7 kills and 4 deaths.");
+        let facts = model_facts();
+        let config = ModelConfig {
+            base_url,
+            model: "test-model".to_string(),
+            api_key: None,
+            timeout_seconds: 5,
+        };
+        let workspace =
+            std::env::temp_dir().join(format!("dah-review-model-{}", std::process::id()));
+        std::fs::create_dir_all(workspace.join("matches").join("42")).expect("match dir");
+        let stored = review_and_write(&workspace, &facts, &config).expect("review");
+        assert_eq!(stored.checked_numbers, 2);
+        let path = review_path(&workspace, "42").expect("path");
+        assert!(path.is_file());
+        let request = server.join().expect("server");
+        assert!(!request.contains("Authorization"), "no key means no header");
+        let _ = std::fs::remove_dir_all(&workspace);
+    }
+
+    #[test]
+    fn a_model_call_needs_an_endpoint_and_model() {
+        let facts = model_facts();
+        let missing = ModelConfig {
+            base_url: String::new(),
+            model: "x".to_string(),
+            api_key: None,
+            timeout_seconds: 5,
+        };
+        assert!(generate_review(&facts, &missing).is_err());
+        let no_model = ModelConfig {
+            base_url: "http://127.0.0.1:9/v1".to_string(),
+            model: String::new(),
+            api_key: None,
+            timeout_seconds: 5,
+        };
+        assert!(generate_review(&facts, &no_model).is_err());
     }
 
     #[test]

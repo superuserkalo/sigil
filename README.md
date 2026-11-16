@@ -95,6 +95,7 @@ pnpm rust:dah -- stats player <account-id>    # rank, career, heroes, form
 pnpm rust:dah -- stats heatmap <account-id>   # real kill and death cells
 pnpm rust:dah -- demo import match.dem        # local store and merged summary
 pnpm rust:dah -- demo review <id> --file r.md --write   # linted coaching review
+pnpm rust:dah -- demo review <id> --model local --base-url http://127.0.0.1:8080/v1 --write
 pnpm rust:dah -- toolchain status             # what can decompile and compile
 pnpm rust:dah -- character stages             # the generation stage graph
 ```

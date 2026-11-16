@@ -173,11 +173,17 @@ dah demo list
 dah demo show <id>
 dah demo heatmap <id>
 dah demo review <id> [--file review.md] [--write]
+dah demo review <id> --model <name> --base-url http://127.0.0.1:8080/v1 --write
 dah demo backends
 ```
 
 The agent has `demo_matches`, `demo_import`, `demo_review_prompt` and `demo_review_write`. The
 model writes the narrative; the linter decides whether it is allowed to be stored.
+
+The CLI can also call an OpenAI-compatible chat endpoint directly. The key is read from
+`DAH_REVIEW_API_KEY`, then `OPENAI_API_KEY`, and is never printed, stored in the review or written to
+the workspace. A local server needs no key. A reply with a number the facts do not support is refused
+with the line and the token, and nothing is written.
 
 ## Privacy
 
