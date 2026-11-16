@@ -1,0 +1,19 @@
+{
+  "name": "@dah/agent-host",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "TinyAgent local agent host for the Deadlock modding workbench",
+  "scripts": {
+    "dev": "tsx src/main.ts",
+    "start": "tsx src/main.ts",
+    "typecheck": "tsc --noEmit -p .",
+    "test": "node --test test/*.test.ts"
+  },
+  "dependencies": {
+    "tiny-agent-sdk": "file:../../vendor/tinyagent/tinyagents/typescript"
+  },
+  "devDependencies": {
+    "tsx": "^4.23.15"
+  }
+}

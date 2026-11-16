@@ -1,10 +1,10 @@
 # Deadlock Agent Harness
 
 Desktop workbench where an AI coding agent builds, packs, validates and installs Deadlock mods.
-The shell is a fork of Grimoire (MIT). The agent runtime is Pi Durable. Model access is BYOK.
+The desktop UI is native Rust with Rune. The agent host is TinyAgent. Model access is BYOK.
 
-Status: pre-alpha scaffold. The agent runtime, CLI, game discovery and payload validation exist.
-Nothing writes to a game install yet.
+Status: pre-alpha. The native Rust core, Rune app and CLI are in progress. The TinyAgent host, game
+discovery, VPK indexing and payload validation exist. Nothing writes to a game install yet.
 
 ## Read first
 
@@ -17,12 +17,17 @@ Nothing writes to a game install yet.
 ## Repository layout
 
 ```text
-apps/cli/                 dah command: doctor, models, auth, chat
-packages/harness/         Pi Durable session, BYOK catalog, credential store
-packages/deadlock-tools/  game discovery, VPK payload rules, agent tools
+apps/cli/                 dah command: doctor, models, auth, chat, index, find, extract
+rust/crates/deadlock-core  Rust domain core: discovery, VPK, catalog, project, patches, impact
+rust/crates/dah-rs        native Rust CLI
+rust/crates/tinyagent     Rust TinyAgent v2 port
+rust/crates/agent-host    Rust TinyAgent JSONL host (dah-agent)
+rust/crates/desktop       native Rune desktop workbench
+packages/harness/         legacy Pi Durable session, BYOK catalog, credential store
+packages/deadlock-tools/  game discovery, VPK payload rules, agent tools (during the port)
 docs/                     tracked project docs (architecture, decisions, research, runbooks)
-scripts/                  test dispatch and Grimoire vendoring
-vendor/                   local Grimoire checkouts, gitignored
+scripts/                  test dispatch, Grimoire and Rune vendoring
+vendor/                   local Rune and Grimoire checkouts, gitignored
 .scratch/                 local specs, issues, worktrees, throwaway output, gitignored
 ```
 
@@ -41,10 +46,15 @@ pnpm dah models                # configured providers and available models
 pnpm dah auth set anthropic   # prompts for a key, stores it outside the repo
 pnpm dah chat "recolor ..."    # one agent run in the local workspace
 pnpm vendor                    # clone Grimoire and grimoire-social into vendor/
+pnpm vendor:rune               # clone the pinned Rune revision into vendor/rune
+pnpm rust:check                # cargo check the Rust workspace
+pnpm rust:app                  # run the Rune desktop workbench
+pnpm rust:dah -- doctor        # run the native CLI
+pnpm rust:agent               # run the Rust TinyAgent host
 ```
 
-Node 24 or newer. pnpm 10. The repo has no build step yet: TypeScript runs through `tsx` or Node
-type stripping.
+Node 24 or newer. pnpm 10. Rust 1.99.1 for the native workspace. The repo has no TypeScript build
+step yet: it runs through `tsx` or Node type stripping.
 
 ## Hard rules
 
@@ -52,45 +62,50 @@ These are product constraints, not preferences.
 
 - Never write to a game install from an agent tool. Tools produce a plan, a staging folder and
   validated output. Installing into `citadel/addons`, editing `gameinfo.gi`, launching the game,
-  and publishing are main-process actions behind an explicit approval gate.
+  and publishing are app actions behind an explicit approval gate.
+- The desktop UI is native Rust with Rune. Do not introduce an Electron renderer or a browser web
+  view as the app shell. See `docs/decisions/0006-native-rust-rune-desktop.md`.
+- TinyAgent remains the agent host in a Node sidecar until the Rust implementation reaches protocol
+  v2 with durable sessions, pause and resume. The UI never runs agent tools in its render loop.
 - A mod payload contains compiled `_c` files only, at exact game paths. Deny `scripts/*.vdata_c`,
   `*.vnmskel_c`, source assets, tool caches and executables. `packages/deadlock-tools/src/validate.ts`
   is the executable version of that rule. Do not weaken it in a prompt.
 - Cosmetic only. No gameplay data, no skeleton replacement, no feature that gives an advantage in
   matchmaking.
-- BYOK keys live in the main process. They never enter the renderer, the transcript, tool output,
-  logs or a commit. The CLI store is `chmod 600`; the desktop store is wrapped with Electron
-  `safeStorage`.
+- BYOK keys live in the Rust app and never enter the UI transcript, tool output, logs or a commit.
+  The CLI store is `chmod 600`; the desktop store uses the OS keychain.
 - No telemetry, no analytics, no heartbeat. Network calls come from a documented allowlist:
-  model provider endpoints, GameBanana, and the GitHub update check.
-- Preserve MIT attribution for Grimoire and every bundled community tool. See
+  model provider endpoints, `api.steampowered.com` for the official patch feed, GameBanana, and the
+  GitHub update check.
+- Preserve MIT attribution for Rune, TinyAgent, Grimoire and every bundled community tool. See
   `THIRD_PARTY_NOTICES.md`. CSDK 12 has no license and is never redistributed.
-- No em dashes in Grimoire-derived code, UI strings, comments or docs. Use a colon, period or
-  parentheses.
+- No em dashes in code, UI strings, comments or docs. Use a colon, period or parentheses.
 
 ## Agent runtime
 
-`packages/harness` maps Pi Durable to this product:
+`rust/crates/agent-host` runs TinyAgent v2 as a local sidecar (`dah-agent`):
 
-- Harness over one SQLite storage. One process owns it.
-- One conversation per mod project. The root conversation is the general workbench.
-- Extensions installed in a registry: `coding` (read, write, edit, bash), `deadlock` (game status,
-  payload validation, prompt rules), later `plan`, `approval`, `knowledge`.
-- Every tool call is a durable task. `replay: "safe"` is allowed only for reads and pure
-  computation. Anything with external effects stays `unsafe` and gets an approval gate.
-- Per-conversation environment rooted at the mod workspace. A remote or Windows environment is a
-  later implementation detail behind the same `env` hook.
-- Credentials go through a pi-ai `CredentialStore`; `getAuth` owns provider resolution.
+- One durable session per mod project. The root session is the general workbench. Sessions are
+  JSONL journals under the app data directory.
+- Tools call the Rust domain core through `dah-rs`. The payload validator is also implemented in the
+  host for pure checks.
+- Mark a tool `idempotent: true` only for reads and pure computation. Writes, process launches and
+  external calls are not idempotent.
+- Approval gates use `beforeTool` and `pause`. The Rust app answers with a resume result. Deploy,
+  launch, `gameinfo.gi` repair and publish are gated.
+- Providers are OpenAI Responses, Anthropic Messages and OpenAI-compatible Chat Completions. The
+  last one is the local-model path.
+- Keys come from the app or environment and never enter the journal.
+- `apps/agent-host` is the TypeScript reference implementation during the cutover.
+  `packages/harness` is the legacy Pi Durable host; do not add features to it. See
+  `docs/decisions/0007-tinyagent-host.md`.
 
 Adding a tool:
 
-1. Define it with `defineTool` in the owning package.
-2. Choose `replay` deliberately. Reads and pure functions are safe; writes and process launches are
-   not.
-3. Return model-facing `output` text. Do not stuff secrets or huge binary data into it.
-4. If it mutates anything outside the workspace, route it through the approval gate and the main
-   process.
-5. Add a test under `packages/*/test`. Contract rules belong in code, not only in the system prompt.
+1. Define it in `rust/crates/agent-host` with a JSON Schema and an explicit `idempotent` value.
+2. Return compact model-facing text. Do not put secrets or large binaries in it.
+3. If it leaves the mod workspace, route it through the Rust app and pause for approval.
+4. Add a contract test in the owning crate or package. Rules belong in code, not only in the prompt.
 
 ## Deadlock domain rules
 
@@ -135,19 +150,20 @@ clone. Keep it that way. `docs/README.md` is the index; every doc carries a stat
 
 ## Gotchas
 
-- Pi Durable is pinned to `1.5.2` and is marked experimental. Read installed types before using a
-  new API; the README can drift from the published package.
-- Do not swap the embedded runtime to fx or libfx without superseding ADR 0004. libfx has no Windows
-  native addon, no durable approval primitive and a narrower provider surface. fx remains a possible
+- TinyAgent is pinned and vendored. The Rust port in `rust/crates/tinyagent` is protocol v2. Keep it
+  in sync by reading the TypeScript implementation; run `scripts/vendor-tinyagent.sh` after a
+  revision bump.
+- Rune is pre-release. `rune = { git = ... }` alone fails because its patched `parley_engine` is not
+  published. Run `scripts/vendor-rune.sh` and keep the `[patch.crates-io]` entries in
+  `rust/Cargo.toml`. Bump the vendored revision deliberately.
+- Do not swap the agent runtime to fx or libfx without superseding ADR 0007. fx remains a possible
   external ACP or MCP lane, not a dependency.
-- One process owns a Pi Durable storage. Do not open the same SQLite file from the CLI and the
-  desktop app at once.
-- `CodingTools` includes `bash`. In the desktop app it must be wrapped with a workspace boundary and
-  an executable allowlist. The CLI may keep the plain tool for now.
+- One process owns the TinyAgent session directory. Do not point two hosts at the same journals.
+- The agent host must not expose a general shell tool by default. Tools call `dah-rs` with argument
+  arrays from the workspace.
 - External binaries are resolved from settings, never downloaded on demand from an arbitrary URL.
   Pin a version and a hash when one is added.
-- Electron packaging strips `node_modules` except an allowlist. Any new main-process runtime
-  dependency must be bundled or the packaged app crashes on launch. This is a known Grimoire
-  failure mode.
+- The desktop app is a Rust binary plus a Node sidecar. Packaging must bundle or locate the sidecar;
+  there is no Electron `node_modules` allowlist to lean on.
 - Game updates move hero folders and reset `gameinfo.gi`. A "worked yesterday" report is usually a
   path or SearchPaths regression, not an agent bug.

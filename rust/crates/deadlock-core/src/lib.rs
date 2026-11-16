@@ -1,0 +1,56 @@
+//! Deadlock domain core: game discovery, VPK reading, catalog indexes, project
+//! manifests, patch notes and change impact. No UI, no agent runtime.
+
+mod util;
+
+pub mod discovery;
+pub mod error;
+pub mod extract;
+pub mod game_catalog;
+pub mod game_index;
+pub mod patch_notes;
+pub mod project;
+pub mod vpk;
+
+pub use discovery::{
+    AddonSlot, AddonsStatus, DEADLOCK_APP_ID, DeadlockInstall, GameInfoStatus, GameStatus,
+    InstallDiscovery, InstallDiscoveryOptions, default_steam_roots, default_steam_roots_for,
+    discover_deadlock_install, format_game_status, format_slot_file_name, parse_library_folders,
+    read_addons_status, read_game_info_status, read_game_status,
+};
+pub use error::{Error, Result};
+pub use extract::{
+    ExtractIssue, ExtractOptions, ExtractResult, ExtractedFile, extract_from_vpk,
+    format_extract_result,
+};
+pub use game_catalog::{
+    CatalogEntry, CatalogError, CatalogSource, GameCatalog, GameVpkDescriptor,
+    LoadGameCatalogOptions, LoadGameCatalogResult, SearchCatalogOptions, SearchCatalogResult,
+    SearchGameCatalogOptions, SearchGameCatalogResult, VpkKind, catalog_index_path,
+    catalog_sources_by_id, discover_game_vpks, format_catalog_search_results,
+    format_catalog_summary, load_game_catalog, search_game_catalog,
+};
+pub use game_index::{
+    ExtensionSummary, GAME_INDEX_SCHEMA, GameIndex, GameIndexSource, HeroSummary, IndexChange,
+    IndexDiff, IndexEntry, IndexLoadMeta, IndexMove, LoadGameIndexOptions, LoadGameIndexResult,
+    SearchGameIndexOptions, SearchGameIndexResult, SearchOptions, SearchResult,
+    default_game_index_path, diff_game_index, format_index_summary, format_index_summary_result,
+    format_search_results, game_vpk_path, list_heroes, load_game_index, search_game_index,
+    top_extensions,
+};
+pub use patch_notes::{
+    DEADLOCK_NEWS_URL, PATCH_NOTES_CACHE_SCHEMA, PatchNote, PatchNoteCache, cache_from_notes,
+    detect_is_patch, fetch_patch_notes, format_patch_note, format_patch_notes,
+    load_patch_note_cache, new_since_cache, patch_note_cache_path, save_patch_note_cache,
+    strip_patch_note_html,
+};
+pub use project::{
+    BASELINE_SCHEMA, BaselineEntry, ModProject, PROJECT_SCHEMA, ProjectBaseline, ProjectCheck,
+    ProjectHistoryEntry, TargetCheck, TargetStatus, baseline_path, check_project, create_project,
+    format_project_check, project_path, read_baseline, read_project, write_baseline, write_project,
+};
+pub use vpk::{
+    ReadVpkOptions, VPK_DIRECTORY_ARCHIVE, VPK_MAGIC, VpkDirectory, VpkEntry, VpkHeader,
+    chunk_path_for, crc32, is_safe_vpk_path, read_vpk_directory, read_vpk_directory_with,
+    read_vpk_entry_data, try_chunk_path_for,
+};

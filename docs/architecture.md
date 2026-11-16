@@ -14,7 +14,7 @@ the game install or publishing anything. A CLI exposes the same runtime without 
 
 Three promises shape every boundary:
 
-1. The model never gets a credential. BYOK keys stay in the main process and are injected into
+1. The model never gets a credential. BYOK keys stay in the Rust app and are injected into
    provider requests there or into the isolated agent host, never into a transcript.
 2. An agent tool never writes to the game install. It can write the mod workspace and produce a
    plan or a validated artifact. A main-process action, behind an approval gate, performs the
@@ -36,6 +36,7 @@ safety gate.
 | 3 Character work | Restyle a hero, or base a look on a reference photo | Tier 2 plus skeleton-compatible mesh, materials, likeness review | Planned. Gated by `docs/decisions/0005-reference-images-and-likeness.md`. |
 | 4 Multi-asset work | A themed set across heroes, UI and audio | Build graph, batch validation, versioned workspace | Planned |
 | 5 Release and survive updates | Publish to GameBanana, migrate paths after a patch | Versioned release, upload approval, path migration | Planned |
+| 6 Living workbench | Watch patches, explain breakage, propose migrations, manage a catalog of mods | Patch feed, baseline diffs, impact rules, batch checks, review queue | Research. The update-survival pieces start now. |
 
 The first useful milestone is not a generated character. It is a texture recolor that travels the
 whole loop and shows up in game. Each later tier reuses that loop.
@@ -44,19 +45,14 @@ whole loop and shows up in game. Each later tier reuses that loop.
 
 ```text
 +---------------------------------------------------------------+
-| Renderer (React, Grimoire fork)                                |
-| chat, plan, approvals, build panel, mod list, 2D/3D previews   |
+| Rune desktop app (Rust)                                        |
+| chat, projects, index, patches, impact, approvals, build panel |
+| owns credentials, game writes, file dialogs, mod workspace     |
 +------------------------------+--------------------------------+
-                               | contextBridge (preload)
-+------------------------------v--------------------------------+
-| Electron main                                                  |
-| secrets (safeStorage), settings, game discovery, VPK writes,   |
-| file dialogs, approval decisions, toolchain configuration      |
-+------------------------------+--------------------------------+
-                               | utilityProcess IPC (view ops)
+                               | local IPC (JSON)
 +------------------------------v--------------------------------+
 | Agent host (Node utility process)                              |
-| Pi Durable Harness, registry, tools, SQLite storage            |
+| TinyAgent host, tools, JSONL sessions                            |
 +------------------------------+--------------------------------+
                                | ExecutionEnv
 +------------------------------v--------------------------------+
@@ -68,103 +64,105 @@ whole loop and shows up in game. Each later tier reuses that loop.
 
 Why a separate agent host:
 
-- A crashed or wedged agent does not take the UI with it. Pi Durable reopens the same SQLite storage
-  and resumes unfinished tasks.
-- The renderer can attach to the durable view over IPC, so reconnects are cheap and multiple windows
-  can watch one conversation.
-- The main process keeps the only copy of decrypted credentials and the only code path that writes
-  to the game install.
+- A crashed or wedged agent does not take the UI with it. TinyAgent reopens the same session
+  journal and resumes unfinished work.
+- The app can attach to the durable view over IPC, so reconnects are cheap.
+- The Rust app keeps the only copy of decrypted credentials and the only code path that writes to
+  the game install.
 
 The agent host is not a security sandbox by itself. It is a crash and responsibility boundary. The
-security boundary for game writes is the main process plus the approval gate.
+security boundary for game writes is the Rust app plus the approval gate.
 
 ## Agent runtime
 
-Pi Durable is an experimental harness package, pinned to `1.5.2` (MIT). It provides:
+The agent host is TinyAgent TypeScript v2, vendored at a pinned revision (MIT). It provides:
 
-- A durable transcript and task graph over SQLite.
-- Extensions as named bundles of tools, prompt sections, hooks and tasks.
-- Tool calls as checkpointed tasks. `replay: "safe"` decides whether a call may rerun after a crash.
-- Documents for application state, committed with the transcript.
-- Signals and parked tasks, which is how an approval can wait for a person without holding a
-  process.
-- Per-conversation agent configuration: model, thinking level, tools, extensions, working
-  directory.
-- A watchable view for UIs and a task graph for build progress.
+- Durable sessions as an ordered journal of JSON records with fenced appends.
+- Resume after a crash. A recorded tool call reruns only when it is marked idempotent; otherwise the
+  model is told it may have partly run.
+- Pause and resume for human approvals, questions and client-executed tools.
+- `beforeTool` and `afterTool` hooks for policy, redaction and approval gates.
+- OpenAI Responses, Anthropic Messages and OpenAI-compatible Chat Completions, including local
+  servers and gateways.
+- Streaming events and a replayable journal.
+- Typed output, limits, retries and compaction.
 
 Mapping to the product:
 
-| Pi Durable | Product |
+| TinyAgent | Product |
 | --- | --- |
-| Harness | The agent host session, one SQLite file in userData |
-| Root conversation | The general workbench |
-| Conversation | One mod project, plus optional reviewer or subagent conversations |
-| Document | Project manifest, plan, approval decisions, build records |
-| Task | One tool call, one build, one publish attempt |
-| Signal | A human approval or a build-complete notification |
-| Extension `coding` | read, write, edit, bash |
-| Extension `deadlock` | game status, payload validation, domain prompt section |
-| Extension `plan` | read-only planning mode (planned) |
-| Extension `approval` | `beforeTool` gate for deploy, launch, publish (planned) |
-| Extension `knowledge` | curated modding docs and path lookup (planned) |
-| `env` | `NodeExecutionEnv` rooted at the mod workspace |
+| Session | One mod project, plus a root workbench conversation |
+| Tool | A Rust CLI operation such as index, search, extract or project check |
+| `pause` | An approval gate or a question to the user |
+| `beforeTool` | Tool policy and the deploy, launch and publish approval gates |
+| Event stream | The workbench timeline and tool cards |
+| `FileStorage` | `<data>/agent-sessions/`, one journal per session |
+| Provider | BYOK provider or a local OpenAI-compatible endpoint |
 
-The choice of Pi Durable over fx and libfx is recorded in
-`docs/decisions/0004-embedded-runtime-choice.md`. fx stays an optional external lane (ACP or MCP),
-not a dependency.
+The host speaks JSONL over stdio. The Rust app owns the window, credentials, approvals UI and game
+writes. The choice is recorded in `docs/decisions/0007-tinyagent-host.md`; the earlier Pi Durable
+choice is superseded.
 
-One process owns a storage. The desktop app and the CLI must not open the same SQLite file at the
-same time. The CLI uses its own data directory by default.
+TinyAgent's Rust implementation is protocol v2 in `rust/crates/tinyagent`. `rust/crates/agent-host`
+(`dah-agent`) is the host the Rune app spawns. The TypeScript host is a reference implementation
+only. fx remains an optional external lane, not a dependency.
+
+One app instance owns the session directory. Do not point two hosts at the same journal directory.
 
 ## Tool catalog
 
 Implemented today:
 
-| Tool | Effects | Replay | Approval |
+| Tool | Effects | Idempotent | Approval |
 | --- | --- | --- | --- |
-| `deadlock_game_status` | Reads Steam libraries, `gameinfo.gi`, addon folder | safe | none |
-| `deadlock_game_index` | Parses the game VPK tree and caches path metadata in the workspace | safe | none |
-| `deadlock_search_paths` | Filters the cached index by text, hero, type or folder | safe | none |
-| `deadlock_extract` | Copies exact game paths into the workspace | unsafe | none (workspace only) |
-| `deadlock_validate_payload` | Pure path rules over a proposed entry list | safe | none |
+| `game_status` | Reads Steam libraries, `gameinfo.gi`, addon folder | yes | none |
+| `game_index` | Builds the catalog for citadel, core and maps VPKs | yes | none |
+| `search_paths` | Filters the catalog by text, hero, type, folder or VPK | yes | none |
+| `extract_paths` | Copies exact game paths into the workspace | no | none (workspace only) |
+| `project_check` | Compares project targets with the current catalog and baseline | yes | none |
+| `patch_notes` | Fetches and reads the official Steam patch feed | no | none |
+| `validate_payload` | Pure path rules over a proposed entry list | yes | none |
 
 Planned, in rough dependency order:
 
-| Tool | Effects | Replay | Approval |
+| Tool | Effects | Idempotent | Approval |
 | --- | --- | --- | --- |
-| `game_decompile` | Runs an external decompiler into the workspace | unsafe | none (workspace only) |
-| `game_index_watch` | Detects a game update and invalidates stale paths | safe | none |
-| `project_init` | Writes a project manifest and staging layout | unsafe | none |
-| `project_build` | Runs the build backend, writes staging | unsafe | none |
-| `vpk_inspect` | Reads a VPK manifest | safe | none |
-| `vpk_pack` | Writes a VPK in the workspace | unsafe | none |
-| `vpk_merge` | Writes a merged VPK in the workspace | unsafe | none |
-| `addon_plan_deploy` | Computes conflicts and target slot | safe | none |
-| `addon_deploy` | Copies a VPK into the game install | unsafe | required |
-| `game_launch` | Starts the game | unsafe | required |
-| `gameinfo_repair` | Restores the `addons` SearchPaths line | unsafe | required |
-| `publish_prepare` | Builds a release folder and metadata | unsafe | none |
-| `publish_upload` | Sends files to GameBanana | unsafe | required |
-| `knowledge_search` | Searches curated modding notes | safe | none |
+| `game_decompile` | Runs an external decompiler into the workspace | no | none (workspace only) |
+| `game_index_watch` | Detects a game update and invalidates stale paths | yes | none |
+| `project_init` | Writes a project manifest and staging layout | no | none |
+| `project_build` | Runs the build backend, writes staging | no | none |
+| `vpk_inspect` | Reads a VPK manifest | yes | none |
+| `vpk_pack` | Writes a VPK in the workspace | no | none |
+| `vpk_merge` | Writes a merged VPK in the workspace | no | none |
+| `addon_plan_deploy` | Computes conflicts and target slot | yes | none |
+| `addon_deploy` | Copies a VPK into the game install | no | required |
+| `game_launch` | Starts the game | no | required |
+| `gameinfo_repair` | Restores the `addons` SearchPaths line | no | required |
+| `publish_prepare` | Builds a release folder and metadata | no | none |
+| `publish_upload` | Sends files to GameBanana | no | required |
+| `knowledge_search` | Searches curated modding notes | yes | none |
 
 Rules for adding a tool:
 
-- A tool that only reads or computes is `replay: "safe"`. A tool that writes, spawns a process that
-  writes, or calls an external service is `replay: "unsafe"`.
+- Mark a tool `idempotent: true` only when repeating the same call with the same execution id is
+  safe. Reads and pure computation qualify. Writes, process launches and external calls do not.
 - Model-facing output stays small and text. Large results go to workspace files and are referenced
   by path.
-- Anything that leaves the mod workspace goes through a main-process action. The tool returns a
-  plan, not a side effect.
-- Every new contract gets a test in `packages/*/test`.
+- Anything that leaves the mod workspace goes through the Rust app. The tool returns a plan, not a
+  side effect.
+- Approval-gated tools pause through `beforeTool`. The run resumes with the user's decision.
+- Every new contract gets a test in the owning Rust crate or TypeScript package.
 
 ## Game index
 
-`deadlock_game_index` parses the directory tree of `game/citadel/pak01_dir.vpk` and writes metadata
-to `<workspace>/.dah/index/citadel-pak01.json`. It never copies the whole VPK into memory.
+`game_index` discovers `game/citadel/pak01_dir.vpk`, `game/core/pak01_dir.vpk` and
+`game/citadel/maps/*_dir.vpk`, then writes one metadata cache per source under
+`<workspace>/.dah/index/`. It never copies a whole VPK into memory.
 
-- The cache records the source path, size and modification time. A mismatch rebuilds it.
-- Search is a pure function over the cached entries. Filters compose: text, hero codename, compiled
-  file type and folder prefix.
+- The cache records the source path, size and modification time. A mismatch rebuilds it and reports
+  a diff against the previous cache: added, removed, changed and likely moves.
+- Search is a pure function over the catalog. Filters compose: text, hero codename, compiled file
+  type, folder prefix and VPK.
 - Hero codenames come from paths such as `models/heroes_wip/billy/`, not from a bundled table that
   goes stale after a patch.
 - Extraction re-reads the VPK tree, verifies the entry CRC32 and writes under the workspace. It
@@ -175,6 +173,28 @@ to `<workspace>/.dah/index/citadel-pak01.json`. It never copies the whole VPK in
 
 Extraction returns compiled `_c` files. Decompiling them is a separate backend that is not bundled
 yet.
+
+## Update survival
+
+A mod that worked yesterday is a compatibility problem, not an agent bug. The workbench keeps three
+records:
+
+1. A catalog of game paths from citadel, core and maps VPKs.
+2. A project baseline: target paths, CRCs, owning VPK, slot and `gameinfo.gi` state.
+3. The official patch feed, with the newest post date.
+
+The loop after an update:
+
+1. Fetch the official patch notes. Mark new posts since the last check.
+2. Rebuild the catalog. Diff it against the previous cache: added, removed, changed and likely moves
+   by unique basename.
+3. Check the project against the baseline and the new catalog. Report unchanged, changed, missing,
+   moved and unbaselined targets, plus a missing `addons` SearchPath and a slot collision.
+4. Propose a migration: exact new path, recompile, re-extract, or a human decision.
+5. Never deploy automatically. A migration is a plan until the user approves it.
+
+Correlating a patch note with a path change is a hint, not proof. Valve's notes omit file moves and
+compiled changes. The catalog diff and the baseline are the evidence.
 
 ## Build pipeline
 
@@ -268,7 +288,7 @@ after updates and can break other players' mods.
 Desktop userData:
 
 ```text
-agent.sqlite          Pi Durable transcripts, tasks, documents
+agent-sessions/       TinyAgent session journals, one per conversation
 credentials.json      safeStorage-wrapped provider credentials
 settings.json         model choice, toolchain paths, workspace root, UI settings
 mods/<slug>/          mod workspace, git-friendly
@@ -288,28 +308,36 @@ CLI data directory follows the OS convention (`~/Library/Application Support` on
 A mod workspace is deliberately a normal directory. Users can open it in an editor, version it, or
 hand it to another agent.
 
-## Desktop integration
+## Desktop app
 
-The desktop app is Grimoire with an agent surface. Keep the fork narrow:
+The desktop app is native Rust with Rune. It carries its own design language on every platform,
+with GPU rendering, springs and headless snapshots. The shell is not Grimoire and has no browser
+renderer.
 
-- Keep: Steam discovery, addon slots, `gameinfo.gi` handling, VPK merge, mod catalog, Locker
-  previews, design tokens, i18n pipeline, no-telemetry policy.
-- Add: agent chat and plan views, tool call timeline, approval panel, project picker, build panel,
-  payload validation report, settings for providers and toolchains.
-- Cut or hide initially: social profiles, Steam sign-in, deadlock-api stats, crosshair designer.
-  They widen the security surface and are not needed to prove the mod loop.
-- Do not grow the existing god files (`Installed.tsx`, `Browse.tsx`). New UI goes in
-  `src/components/<feature>/`.
-- Keep the no-em-dash rule and the MIT attribution in the fork.
+Screens and responsibilities:
 
-Grimoire depends on the sibling `grimoire-social` workspace for wire types. `pnpm vendor` clones
-both into `vendor/` so the relative workspace path resolves. Once the fork is official, the fork
-becomes its own repository and the desktop app can live in `apps/desktop` or stay as a pinned
-submodule; that decision is recorded in `docs/decisions/0001-grimoire-fork-and-monorepo.md`.
+- Workbench: conversation, tool timeline, approvals, plan and build panels.
+- Projects: manifest, targets, local versions, references and rights records.
+- Game: install status, VPK sources, index search, extraction, `gameinfo.gi` and slot state.
+- Patches: official Deadlock news, change correlation and compatibility impact.
+- Settings: BYOK provider status, local model endpoint, toolchain paths, workspace location.
+
+The Rust app owns credentials, settings, file dialogs, mod workspace access, game install writes and
+approval decisions. It talks to the TinyAgent agent host over local IPC. It never loads the
+transcript or credentials into a web context because there is no web context.
+
+Grimoire remains a reference for Steam discovery, addon slot handling, VPK merge and preview ideas,
+and its MIT attribution stays in `THIRD_PARTY_NOTICES.md`. See
+`docs/decisions/0006-native-rust-rune-desktop.md`.
+
+Rune is pinned to a dev revision and vendored by `scripts/vendor-rune.sh`. The app repeats Rune's
+`[patch.crates-io]` entries in `rust/Cargo.toml`; a plain git dependency does not resolve its
+patched text stack.
 
 ## CLI
 
-`dah` is the headless surface over the same packages:
+`dah` is the headless surface. The Rust CLI is `rust/crates/dah-rs`; the TypeScript CLI remains
+during the port.
 
 ```text
 dah doctor                 game install, gameinfo, slots, providers
@@ -317,20 +345,25 @@ dah models                 providers, auth status, available models
 dah auth set <provider>    store a key, chmod 600
 dah auth list              provider ids and credential types, no secrets
 dah chat "<prompt>"        one agent run
-dah index                  build or load the game VPK path index
-dah find "billy"           search game paths by text, hero, type or folder
+dah index                  build or load the game catalog for citadel, core and maps
+dah find "billy"           search game paths by text, hero, type, folder or VPK
 dah extract <path...>      copy exact game paths into the workspace
+dah patches                official Deadlock patch notes and what is new
+dah mod new <slug>         create a project manifest and workspace
+dah mod baseline           record target paths, CRCs and index sources
+dah mod check              show what changed, moved or broke after a patch
 ```
 
-Later: `dah mod new`, `dah mod build`, `dah mod validate`, `dah mod deploy`. The CLI is useful for
-CI, for scripted batch work, and for testing the runtime without Electron.
+Later: `dah mod build`, `dah mod validate`, `dah mod deploy`. The CLI is useful for CI, scripted
+batch work, and testing the runtime without the desktop app.
 
 ## Failure modes
 
-- **Process death during a run.** Reopen the same SQLite storage, call `resume()`, unfinished tool
-  calls rerun only if replay-safe. A model request that was cut off is retried.
-- **Agent host crash loop.** Pi Durable's restart limit ends the task instead of looping. The UI
-  reports it and keeps the transcript.
+- **Process death during a run.** Reopen the session journal and resume. A call marked idempotent
+  reruns with the same execution id. Any other interrupted call is reported to the model as
+  uncertain. A model request that was cut off is retried.
+- **Agent host crash loop.** The sidecar supervisor stops restarting after repeated crashes. The UI
+  reports it and keeps the journal.
 - **Game update.** Hero paths move and `gameinfo.gi` resets. Detection: compare the project's target
   paths with the current VPK index. Repair: add the SearchPaths line back, then migrate paths.
 - **Missing toolchain.** `doctor` reports the missing backend and the compile step is disabled with a
@@ -347,6 +380,16 @@ Phase 0, scaffold (complete):
 - CLI `doctor`, `auth`, `models`, `chat`.
 - Game discovery, `gameinfo.gi` status, addon slot status.
 - Payload validator with tests.
+
+Phase 0.5, native port (in progress):
+
+- Rust workspace, pinned Rune vendor and headless Rune app.
+- Rust domain core: VPK, catalog, index, extraction, discovery, projects, patches and impact.
+- Rust CLI with index, find, extract, patches and mod checks.
+- Rune workbench screens: workbench, projects, game index, patches, impact and settings, with headless scenes.
+- Rust TinyAgent protocol v2 crate: durable sessions, pause/resume, hooks, providers and events.
+- Done: the Rune app spawns `dah-agent` and streams turns, tool events and approvals.
+- Next: decompile, pack, deploy plans and release flows.
 
 Phase 1, read-only game introspection (in progress):
 
@@ -397,6 +440,8 @@ Phase 5, advanced:
   clear license and a pinned hash.
 - Which GameBanana upload flow is acceptable: browser handoff, API key, or a prepared zip only?
 - Do we keep Grimoire's social features, and does the fork inherit its companion server?
+- How does the Rust app package or locate the Node agent sidecar without requiring a separate Node
+  install?
 - How much of the prompt and knowledge pack ships in the app versus being read from `docs/`?
 - What is the minimum viable visual verification after deploy?
 

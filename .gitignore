@@ -25,3 +25,6 @@ vendor/
 
 # commandcode CLI local state
 .commandcode/
+
+# Rust workspace build output
+rust/target/

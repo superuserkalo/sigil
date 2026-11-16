@@ -9,22 +9,35 @@ for redistribution.
 
 ## Desktop shell
 
+**Rune**
+- Source: https://github.com/anomalyco/rune
+- License: MIT, Copyright (c) Anomaly
+- Use: native GPU desktop UI framework. Vendored at a pinned pre-release revision by
+  `scripts/vendor-rune.sh`; its patched crates are built from `vendor/rune/vendor`. Not exposed as a
+  general-purpose public dependency.
+
 **Grimoire**
 - Source: https://github.com/Slush97/grimoire
 - License: MIT, Copyright (c) 2025 esoc
-- Use: fork of the desktop mod manager shell. The full MIT text ships with the fork at
-  `vendor/grimoire/LICENSE`. Keep this notice and the upstream license in any packaged build.
-- Companion: `grimoire-social` is also MIT by the same author. Its wire types are consumed by the
-  fork.
+- Use: domain reference for Steam discovery, addon slots, `gameinfo.gi`, VPK merge and previews. No
+  longer the desktop shell. Keep this notice and the upstream license in any packaged build that
+  reuses its code or assets.
+- Companion: `grimoire-social` is also MIT by the same author. Its wire types are consumed only if a
+  Grimoire component is reused.
 
 ## Agent runtime and model access
 
+**TinyAgent**
+- Source: https://github.com/superuserkalo/tinyagent
+- License: MIT, Copyright (c) 2026 superuserkalo
+- Use: agent host. Durable sessions, pause and resume, hooks and provider access. Vendored at a
+  pinned revision by `scripts/vendor-tinyagent.sh`. The Rust implementation is not the host yet.
+
 **Pi Durable, Pi AI, Pi Schema, Chord**
 - Source: https://github.com/earendil-works/pi
-- Packages: `@earendil-works/pi-durable`, `@earendil-works/pi-ai`,
-  `@earendil-works/pi-schema`, `@earendil-works/chord`
 - License: MIT
-- Use: durable agent harness, provider access, schemas and document state. Pinned to `1.5.2`.
+- Use: legacy agent host in `packages/harness` during the TinyAgent port. Not a target dependency.
+  Remove this entry when the package is deleted.
 
 ## Deadlock tooling
 

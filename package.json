@@ -13,7 +13,15 @@
     "typecheck": "pnpm -r --if-present typecheck",
     "test": "bash scripts/test.sh",
     "dah": "pnpm --filter @dah/cli exec tsx src/index.ts",
-    "vendor": "bash scripts/vendor-grimoire.sh"
+    "vendor": "bash scripts/vendor-grimoire.sh",
+    "rust:check": "cargo check --manifest-path rust/Cargo.toml --workspace",
+    "rust:app": "cargo run --manifest-path rust/Cargo.toml -p dah-desktop",
+    "rust:dah": "cargo run --manifest-path rust/Cargo.toml -p dah-rs --",
+    "vendor:rune": "./scripts/vendor-rune.sh",
+    "vendor:tinyagent": "./scripts/vendor-tinyagent.sh",
+    "agent:host": "cargo run --manifest-path rust/Cargo.toml -p dah-agent",
+    "rust:agent": "cargo run --manifest-path rust/Cargo.toml -p dah-agent",
+    "agent:host:ts": "pnpm --filter @dah/agent-host dev"
   },
   "devDependencies": {
     "@types/node": "^24.19.2",

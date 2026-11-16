@@ -1,6 +1,6 @@
 # 0001 Grimoire fork and monorepo
 
-Status: accepted
+Status: accepted. Superseded in part by `0006-native-rust-rune-desktop.md` for the desktop shell.
 Date: 2026-11-16
 
 ## Context

@@ -1,0 +1,16 @@
+[package]
+name = "dah-rs"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "dah"
+path = "src/main.rs"
+
+[dependencies]
+deadlock-core = { path = "../deadlock-core" }
+clap.workspace = true
+serde_json.workspace = true
+chrono.workspace = true
+dirs = "6"
