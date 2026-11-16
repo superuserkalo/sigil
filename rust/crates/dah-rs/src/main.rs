@@ -283,14 +283,44 @@ enum PublishCommand {
         #[arg(long)]
         json: bool,
     },
-    /// Open the GameBanana submission page for the prepared release.
+    /// Plan or approve the GameBanana upload handoff for the prepared release.
     Upload {
         /// Mod project directory, or a workspace containing one project.
         #[arg(long, value_name = "DIR")]
         workspace: Option<PathBuf>,
+        /// Approve the handoff and write the upload record.
+        #[arg(long)]
+        approve: bool,
         /// Open the page in the default browser.
         #[arg(long)]
         open: bool,
+        /// Print machine-readable JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Record and verify the submission URL after the browser upload.
+    Confirm {
+        /// Mod project directory, or a workspace containing one project.
+        #[arg(long, value_name = "DIR")]
+        workspace: Option<PathBuf>,
+        /// Public submission URL, for example https://gamebanana.com/mods/123456.
+        #[arg(long, value_name = "URL")]
+        url: Option<String>,
+        /// Record the URL without fetching the page.
+        #[arg(long)]
+        skip_verify: bool,
+        /// Allow http:// for a local test server.
+        #[arg(long)]
+        allow_http: bool,
+        /// Print machine-readable JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Show the recorded GameBanana upload state.
+    Status {
+        /// Mod project directory, or a workspace containing one project.
+        #[arg(long, value_name = "DIR")]
+        workspace: Option<PathBuf>,
         /// Print machine-readable JSON.
         #[arg(long)]
         json: bool,
@@ -307,7 +337,10 @@ impl Cli {
             | Command::Patches { json, .. }
             | Command::Watch { json, .. } => *json,
             Command::Publish { command } => match command {
-                PublishCommand::Prepare { json, .. } | PublishCommand::Upload { json, .. } => *json,
+                PublishCommand::Prepare { json, .. }
+                | PublishCommand::Upload { json, .. }
+                | PublishCommand::Confirm { json, .. }
+                | PublishCommand::Status { json, .. } => *json,
             },
             Command::Vpk { command } => match command {
                 VpkCommand::Inspect { json, .. } => *json,
@@ -563,12 +596,37 @@ fn run(cli: &Cli) -> error::Result<i32> {
             }
             PublishCommand::Upload {
                 workspace,
+                approve,
                 open,
                 json,
             } => {
                 commands::publish::upload(&commands::publish::UploadArgs {
                     workspace: workspace.clone(),
+                    approve: *approve,
                     open: *open,
+                    json: *json,
+                })?;
+                Ok(0)
+            }
+            PublishCommand::Confirm {
+                workspace,
+                url,
+                skip_verify,
+                allow_http,
+                json,
+            } => {
+                commands::publish::confirm(&commands::publish::ConfirmArgs {
+                    workspace: workspace.clone(),
+                    url: url.clone(),
+                    skip_verify: *skip_verify,
+                    allow_http: *allow_http,
+                    json: *json,
+                })?;
+                Ok(0)
+            }
+            PublishCommand::Status { workspace, json } => {
+                commands::publish::status(&commands::publish::StatusArgs {
+                    workspace: workspace.clone(),
                     json: *json,
                 })?;
                 Ok(0)

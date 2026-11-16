@@ -35,13 +35,16 @@ pnpm rust:dah -- mod deploy --workspace <project> --slot 6          # plan
 pnpm rust:dah -- mod deploy --workspace <project> --slot 6 --approve
 pnpm rust:dah -- vpk inspect <project>/builds/<version>/pak06_dir.vpk --verify
 pnpm rust:dah -- publish prepare --workspace <project>
-pnpm rust:dah -- publish upload --workspace <project> --open
+pnpm rust:dah -- publish upload --workspace <project> --approve --open
+pnpm rust:dah -- publish confirm --workspace <project> --url https://gamebanana.com/mods/<id>
+pnpm rust:dah -- publish status --workspace <project>
 pnpm rust:dah -- watch                 # add --refresh to fetch the patch feed
 ```
 
 The deploy plan reports slot conflicts, replacement and `gameinfo.gi` repair before anything is
-written. Approved deploy backs up replaced files. Publish prepares a release folder and opens the
-GameBanana submission page; it never uploads or handles your account.
+written. Approved deploy backs up replaced files. Publish prepares a ZIP, records the approved
+handoff, opens the GameBanana submission page, then records and verifies the submission URL. It
+never handles your account or uploads files.
 
 The agent host is TinyAgent. The Rust app owns the window, game discovery, VPK work, approvals UI and
 game writes. TinyAgent owns durable sessions, pause and resume, provider access and tools. There is
