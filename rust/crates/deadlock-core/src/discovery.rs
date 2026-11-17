@@ -93,9 +93,131 @@ pub fn parse_library_folders(vdf: &str) -> Vec<String> {
 }
 
 pub fn default_steam_roots() -> Vec<PathBuf> {
-    default_steam_roots_for(std::env::consts::OS, home_dir().as_deref(), |name| {
+    let mut roots = default_steam_roots_for(std::env::consts::OS, home_dir().as_deref(), |name| {
         std::env::var(name).ok()
-    })
+    });
+    // Windows: Steam can live on any drive. Its own path from the registry, then the usual
+    // Steam folders on every fixed drive (D:\Steam, E:\SteamLibrary, ...). Read once per run.
+    #[cfg(windows)]
+    {
+        static FOUND: std::sync::OnceLock<Vec<PathBuf>> = std::sync::OnceLock::new();
+        for root in FOUND.get_or_init(windows_roots::steam_roots) {
+            let known = roots.iter().any(|r| {
+                r.to_string_lossy().eq_ignore_ascii_case(&root.to_string_lossy())
+            });
+            if !known {
+                roots.push(root.clone());
+            }
+        }
+    }
+    roots
+}
+
+/// Windows registry and drive lookups behind [`default_steam_roots`] and Deadlock's own install
+/// entry.
+#[cfg(windows)]
+mod windows_roots {
+    use std::path::PathBuf;
+    use windows_sys::Win32::Foundation::ERROR_SUCCESS;
+    use windows_sys::Win32::Storage::FileSystem::{GetDriveTypeW, GetLogicalDrives};
+    use windows_sys::Win32::System::Registry::{
+        HKEY, HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, RRF_RT_REG_SZ, RegGetValueW,
+    };
+
+    const DRIVE_FIXED: u32 = 3;
+
+    fn wide(s: &str) -> Vec<u16> {
+        s.encode_utf16().chain(Some(0)).collect()
+    }
+
+    fn reg_string(root: HKEY, sub: &str, name: &str) -> Option<String> {
+        let (sub, name) = (wide(sub), wide(name));
+        let mut buf = vec![0u16; 1024];
+        let mut bytes = (buf.len() * 2) as u32;
+        // SAFETY: NUL-terminated strings; `buf` holds `bytes` bytes and the call writes at most
+        // that.
+        let rc = unsafe {
+            RegGetValueW(
+                root,
+                sub.as_ptr(),
+                name.as_ptr(),
+                RRF_RT_REG_SZ,
+                std::ptr::null_mut(),
+                buf.as_mut_ptr().cast(),
+                &mut bytes,
+            )
+        };
+        if rc != ERROR_SUCCESS {
+            return None;
+        }
+        let len = (bytes as usize / 2).saturating_sub(1).min(buf.len());
+        let value = String::from_utf16_lossy(&buf[..len]).trim().to_string();
+        (!value.is_empty()).then_some(value)
+    }
+
+    /// Steam's install folder as Steam records it.
+    fn steam_from_registry() -> Vec<PathBuf> {
+        [
+            (HKEY_CURRENT_USER, r"Software\Valve\Steam", "SteamPath"),
+            (HKEY_LOCAL_MACHINE, r"SOFTWARE\WOW6432Node\Valve\Steam", "InstallPath"),
+            (HKEY_LOCAL_MACHINE, r"SOFTWARE\Valve\Steam", "InstallPath"),
+        ]
+        .into_iter()
+        .filter_map(|(root, sub, name)| reg_string(root, sub, name))
+        .map(PathBuf::from)
+        .collect()
+    }
+
+    /// The root of each fixed drive (`C:\`, `D:\`, ...). Network, removable and optical drives
+    /// are left out so a disconnected share never stalls a lookup.
+    fn fixed_drives() -> Vec<String> {
+        // SAFETY: no arguments; returns a bitmask of drive letters.
+        let mask = unsafe { GetLogicalDrives() };
+        (0..26u8)
+            .filter(|i| mask & (1 << i) != 0)
+            .map(|i| format!("{}:\\", (b'A' + i) as char))
+            .filter(|root| {
+                let w = wide(root);
+                // SAFETY: a NUL-terminated root path.
+                unsafe { GetDriveTypeW(w.as_ptr()) == DRIVE_FIXED }
+            })
+            .collect()
+    }
+
+    /// Steam's own folder, then every fixed drive's usual Steam folders that hold `steamapps`.
+    pub fn steam_roots() -> Vec<PathBuf> {
+        const FOLDERS: [&str; 7] = [
+            "Steam",
+            "SteamLibrary",
+            "Steam Library",
+            r"Program Files (x86)\Steam",
+            r"Program Files\Steam",
+            r"Games\Steam",
+            r"Games\SteamLibrary",
+        ];
+        let mut roots = steam_from_registry();
+        for drive in fixed_drives() {
+            for folder in FOLDERS {
+                let root = PathBuf::from(&drive).join(folder);
+                if root.join("steamapps").is_dir() {
+                    roots.push(root);
+                }
+            }
+        }
+        roots
+    }
+
+    /// Where Steam installed Deadlock, from its uninstall entry.
+    pub fn deadlock_location() -> Option<PathBuf> {
+        let key = format!(
+            r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Steam App {}",
+            super::DEADLOCK_APP_ID
+        );
+        let wow = key.replacen("SOFTWARE", r"SOFTWARE\WOW6432Node", 1);
+        reg_string(HKEY_LOCAL_MACHINE, &key, "InstallLocation")
+            .or_else(|| reg_string(HKEY_LOCAL_MACHINE, &wow, "InstallLocation"))
+            .map(PathBuf::from)
+    }
 }
 
 pub fn default_steam_roots_for(
@@ -188,8 +310,25 @@ pub fn discover_deadlock_install(options: InstallDiscoveryOptions) -> Result<Ins
         });
     }
 
+    // Windows: the folder Steam recorded for Deadlock, on whatever drive it is.
+    #[cfg(windows)]
+    if options.steam_roots.is_none()
+        && options.platform.is_none()
+        && let Some(game_root) = windows_roots::deadlock_location()
+    {
+        let citadel_dir = game_root.join("game").join("citadel");
+        if is_directory(&citadel_dir)? {
+            return Ok(InstallDiscovery {
+                install: Some(install_at(game_root.clone(), citadel_dir)),
+                searched_roots: vec![game_root],
+            });
+        }
+    }
+
     let seed_roots = match options.steam_roots {
         Some(roots) => roots,
+        // A real run on this machine: every Steam root it can find.
+        None if options.platform.is_none() => default_steam_roots(),
         None => {
             let fallback_home = home_dir();
             let home = options.home.as_deref().or(fallback_home.as_deref());
