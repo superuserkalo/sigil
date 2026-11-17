@@ -618,7 +618,7 @@ pub fn confirm(args: &ConfirmArgs) -> Result<()> {
     let verified = if args.skip_verify {
         false
     } else {
-        let mut response = ureq::get(&url)
+        let mut response = deadlock_core::net::get(&url)
             .header("User-Agent", "dah/0.0.0")
             .call()
             .map_err(|error| {

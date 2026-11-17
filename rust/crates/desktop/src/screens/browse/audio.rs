@@ -221,7 +221,7 @@ pub(crate) fn ensure_device(
 }
 
 pub(crate) fn fetch_sample(url: &str) -> Result<Vec<u8>, String> {
-    let agent = deadlock_core::net::with_proxy(ureq::Agent::config_builder())
+    let agent = deadlock_core::net::with_proxy(deadlock_core::net::builder())
         .middleware(deadlock_core::net::gate)
         .timeout_global(Some(std::time::Duration::from_secs(30)))
         .build()

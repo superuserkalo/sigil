@@ -134,7 +134,7 @@ pub struct Http {
 
 impl Default for Http {
     fn default() -> Self {
-        let agent = ureq::Agent::config_builder()
+        let agent = crate::net::builder()
             .middleware(crate::net::gate)
             .timeout_global(Some(Duration::from_secs(TIMEOUT_SECONDS)))
             .http_status_as_error(false)

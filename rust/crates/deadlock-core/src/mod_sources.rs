@@ -303,7 +303,7 @@ pub fn parse_page(base: &str, body: &str) -> Result<(Vec<Listing>, Option<String
 }
 
 fn get_json(url: &str) -> Result<String> {
-    let agent = crate::net::with_proxy(ureq::Agent::config_builder())
+    let agent = crate::net::with_proxy(crate::net::builder())
         .middleware(crate::net::gate)
         .timeout_global(Some(Duration::from_secs(30)))
         .max_redirects(0)

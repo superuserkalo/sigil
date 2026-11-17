@@ -46,7 +46,7 @@ pub fn fetch_requirements(mod_id: u64) -> Result<Vec<Requirement>> {
         "{}/Mod/{mod_id}?_csvProperties=_aRequirements",
         crate::gamebanana::GAMEBANANA_API_BASE
     );
-    let mut r = crate::net::with_proxy(ureq::Agent::config_builder())
+    let mut r = crate::net::with_proxy(crate::net::builder())
         .middleware(crate::net::gate)
         .timeout_global(Some(Duration::from_secs(15)))
         .build()

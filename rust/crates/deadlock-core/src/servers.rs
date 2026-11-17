@@ -399,7 +399,7 @@ pub fn parse_registry_only(registry_json: &str) -> Result<Vec<Server>> {
 }
 
 fn get_text(url: &str) -> Result<String> {
-    let agent = ureq::Agent::config_builder()
+    let agent = crate::net::builder()
         .middleware(crate::net::gate)
         .timeout_global(Some(LIST_TIMEOUT))
         .http_status_as_error(false)
@@ -1066,7 +1066,7 @@ fn guard_addrs(
 }
 
 fn download_agent(allow_private: bool) -> ureq::Agent {
-    let config = ureq::Agent::config_builder()
+    let config = crate::net::builder()
         .middleware(crate::net::gate)
         .timeout_connect(Some(Duration::from_secs(15)))
         .timeout_recv_response(Some(Duration::from_secs(30)))
@@ -1525,7 +1525,7 @@ pub fn parse_bootstrap_manifest(json: &str) -> Result<BootstrapManifest> {
 /// `Ok(None)` when nothing is published (404).
 pub fn fetch_bootstrap_manifest(api_base: &str) -> Result<Option<BootstrapManifest>> {
     let url = format!("{}/api/bootstrap", api_base.trim_end_matches('/'));
-    let agent = ureq::Agent::config_builder()
+    let agent = crate::net::builder()
         .middleware(crate::net::gate)
         .timeout_global(Some(LIST_TIMEOUT))
         .http_status_as_error(false)

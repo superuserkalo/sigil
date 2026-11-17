@@ -891,7 +891,7 @@ fn api_agent() -> ureq::Agent {
     {
         return agent.clone();
     }
-    let agent = crate::net::with_proxy(ureq::Agent::config_builder())
+    let agent = crate::net::with_proxy(crate::net::builder())
         .middleware(crate::net::gate)
         .timeout_global(Some(Duration::from_secs(REQUEST_TIMEOUT_SECONDS)))
         .build()

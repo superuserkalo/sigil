@@ -350,7 +350,7 @@ fn allowed_url(url: &str, api: &str, repo: &str) -> bool {
 /// `wait`: for the response to start; `body`: for the whole body to arrive.
 fn agent(wait: Duration, body: Duration) -> ureq::Agent {
     deadlock_core::net::with_proxy(
-        ureq::Agent::config_builder()
+        deadlock_core::net::builder()
             .middleware(deadlock_core::net::gate)
             .timeout_connect(Some(Duration::from_secs(20)))
             .timeout_recv_response(Some(wait))
