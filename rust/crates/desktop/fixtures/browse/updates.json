@@ -1,0 +1,32 @@
+{
+ "_aMetadata": {
+  "_nRecordCount": 3,
+  "_nPerpage": 10,
+  "_bIsComplete": true
+ },
+ "_aRecords": [
+  {
+   "_idRow": 476791,
+   "_sName": "NEW MODEL + CARBINE CLOCK",
+   "_tsDateModified": 0,
+   "_tsDateAdded": 1794869586,
+   "_sText": "<p>New High Quality Spirit Dress model from Punishing: Gray Raven</p>",
+   "_sVersion": "1.2"
+  },
+  {
+   "_idRow": 471853,
+   "_sName": "Fixed Hair Textures",
+   "_tsDateModified": 0,
+   "_tsDateAdded": 1793680501,
+   "_sText": "<p>Fixed hair textures to make models look much, much better.</p>",
+   "_sVersion": "1.2"
+  },
+  {
+   "_idRow": 468986,
+   "_tsDateModified": 0,
+   "_tsDateAdded": 1793056190,
+   "_sText": "<p>ADDED: New outfit/variant, custom (canon) flintlock weapons<br>FIXED: Clipping error on school uniform</p>",
+   "_sVersion": "1.1"
+  }
+ ]
+}

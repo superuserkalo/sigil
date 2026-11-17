@@ -1,31 +1,103 @@
-//! Locker: hero renders and asset paths resolved from the local machine.
+//! Locker, ported from Grimoire's `Locker.tsx`, `LockerHero.tsx` and the General drill-in.
 //!
-//! `deadlock_core::locker` resolves the hero list from the game catalog and the
-//! local art root. The art is read at runtime from a configured folder and is
-//! never copied into this repository or redistributed. A missing art root is a
-//! valid state: heroes list, and each card says the render is unavailable.
+//! Three pages: the grid (a General tile, then one 3:4 card per roster hero with its render
+//! anchored on the face and the name plate at the bottom), a hero page (the render full height
+//! on the right under a layered fade, a left rail with the name plate and sections, and the
+//! section's content beside it), and the General page (a rail of General types and the user's
+//! own categories, and the mods in the chosen one).
+//!
+//! `deadlock_core::locker` owns the roster, the art lookup, mod classification and the category
+//! store. Art is read at runtime from the app's asset folder and never copied into the repo.
 
-use rune::{Color, El, ScrollSpec, SurfaceFit, TextEdit, col, el, row, text};
+use deadlock_core::locker::{GeneralType, LockerCategory, LockerPrefs, LockerSound};
+use rune::{
+    Color, El, Pixels, ScrollSpec, SurfaceFit, TextEdit, col, el, oklch, row, spacer, text,
+};
 
 use crate::app::State;
+use crate::icons;
 use crate::model::Screen;
-use crate::ui::{ActionKind, BODY, BODY_MED, H2, LABEL, MONO, SMALL, Tone, Ui};
+use crate::ui::{ActionKind, BODY, BODY_MED, H1, H2, MONO, SMALL, Ui};
 
+mod cards;
+mod variants;
+
+/// One roster hero as the screen draws it. `asset_count` is kept for later views.
 #[derive(Clone)]
+#[allow(dead_code)]
 pub struct HeroCard {
     pub codename: String,
     pub display_name: String,
-    /// Render bytes and the path they came from.
-    pub render: Option<(String, Vec<u8>)>,
-    pub name_art: Option<(String, Vec<u8>)>,
+    /// Render and name art paths, the image cache's keys (`State::thumbnails`).
+    pub render: Option<String>,
+    pub name_art: Option<String>,
+    /// Pixel size of the render and the name art, read from the file header so layout never
+    /// waits for a decode.
+    pub render_size: Option<(u32, u32)>,
+    pub name_size: Option<(u32, u32)>,
+    /// The card-sized copy of the render the grid draws (`data::card_copy`), and its size.
+    pub card: Option<String>,
+    pub card_size: Option<(u32, u32)>,
+    /// A custom card image the user picked, and where its face sits.
+    pub custom: Option<String>,
+    pub custom_size: Option<(u32, u32)>,
+    pub custom_focus: f32,
+    /// Face position across the render, percent.
+    pub face_x: f32,
     pub mod_count: usize,
     pub asset_count: usize,
     pub in_catalog: bool,
     pub recolor_paths: Vec<String>,
 }
 
+impl HeroCard {
+    /// The art the grid draws: the custom card when there is one.
+    pub fn art(&self) -> (Option<String>, Option<(u32, u32)>, f32) {
+        match &self.custom {
+            Some(path) => (Some(path.clone()), self.custom_size, self.custom_focus),
+            None => (self.card.clone(), self.card_size, self.face_x),
+        }
+    }
+}
+
+/// One installed addon slot.
+#[derive(Clone)]
+pub struct ModRow {
+    pub slot: u8,
+    pub file: String,
+    pub enabled: bool,
+    /// Content identity, the category membership key.
+    pub key: String,
+    /// The install's name when Sigil installed it, else the slot.
+    pub label: String,
+    pub heroes: Vec<String>,
+    pub general: Option<GeneralType>,
+    /// Ability sounds this mod replaces.
+    pub sounds: Vec<LockerSound>,
+}
+
+/// A recolor brief in the workspace, for the applied changes review.
+#[derive(Clone)]
+pub struct BriefRow {
+    pub hero: String,
+    pub display_name: String,
+    pub palette: String,
+    pub note: String,
+}
+
 pub struct Load {
     pub heroes: Vec<HeroCard>,
+    pub mods: Vec<ModRow>,
+    pub categories: Vec<LockerCategory>,
+    pub prefs: LockerPrefs,
+    pub briefs: Vec<BriefRow>,
+    pub global: deadlock_core::locker::GlobalPathStatus,
+    /// The General backdrop's path.
+    pub general_bg: Option<String>,
+    pub general_bg_size: Option<(u32, u32)>,
+    /// The backdrop's card copy, for the General tile.
+    pub general_card: Option<String>,
+    pub general_card_size: Option<(u32, u32)>,
     pub assets_dir: String,
     pub catalog_label: String,
     pub pinned: Option<String>,
@@ -42,16 +114,93 @@ pub struct Panel {
     pub log: Option<String>,
 }
 
+#[derive(Clone, PartialEq)]
+pub enum Page {
+    Grid,
+    Hero(String),
+    General,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+pub enum HeroSection {
+    Mods,
+    Sounds,
+    Recolor,
+}
+
+#[derive(Clone, PartialEq)]
+pub enum GeneralTab {
+    Type(GeneralType),
+    Custom(String),
+}
+
+/// The New category and Rename dialog.
+pub struct NameDialog {
+    /// The category being renamed, or `None` for a new one.
+    pub editing: Option<String>,
+    /// A mod to file into the new category, as Grimoire's per-card "New category...".
+    pub file_key: Option<String>,
+    pub name: TextEdit,
+    pub error: Option<String>,
+}
+
+/// The custom card picker. `path` is the chosen source, held until Save copies it.
+pub struct CardDialog {
+    pub hero: String,
+    pub display_name: String,
+    pub path: Option<String>,
+    pub size: Option<(u32, u32)>,
+    pub focus_x: f32,
+    pub existing: bool,
+    pub error: Option<String>,
+}
+
+#[allow(clippy::large_enum_variant)]
+pub enum Dialog {
+    Name(NameDialog),
+    /// Add mods to the category with this id.
+    Picker(String),
+    Manage,
+    /// The per-hero launch shuffle switches.
+    Shuffle,
+    /// What the Locker applied: cards, shuffle, sounds, colors.
+    Applied,
+    Card(CardDialog),
+}
+
 pub struct View {
     pub loaded: bool,
     pub heroes: Vec<HeroCard>,
+    pub mods: Vec<ModRow>,
+    pub categories: Vec<LockerCategory>,
+    pub prefs: LockerPrefs,
+    pub briefs: Vec<BriefRow>,
+    pub global: deadlock_core::locker::GlobalPathStatus,
+    pub general_bg: Option<String>,
+    pub general_bg_size: Option<(u32, u32)>,
+    pub general_card: Option<String>,
+    pub general_card_size: Option<(u32, u32)>,
     pub assets_dir: String,
     pub catalog_label: String,
     pub error: Option<String>,
     pub pinned: Option<String>,
     pub modded_only: bool,
+    pub starred_only: bool,
+    pub query: TextEdit,
+    pub query_text: String,
+    /// The list view: full width hero rows, each expandable to its skins.
+    pub list_view: bool,
+    /// Hero codenames whose list row is open.
+    pub expanded: std::collections::BTreeSet<String>,
+    pub page: Page,
+    pub hero_section: HeroSection,
+    pub general_tab: Option<GeneralTab>,
+    /// Kept for the recolor scene: the hero the recolor dialog was opened for.
     pub selected: Option<String>,
     pub panel: Option<Panel>,
+    pub dialog: Option<Dialog>,
+    /// The content area's laid-out size, so cards can crop the render on the face.
+    pub page_size: (f32, f32),
     pub notes_placeholder: TextEdit,
 }
 
@@ -60,553 +209,2173 @@ impl Default for View {
         View {
             loaded: false,
             heroes: Vec::new(),
+            mods: Vec::new(),
+            categories: Vec::new(),
+            prefs: LockerPrefs::default(),
+            briefs: Vec::new(),
+            global: deadlock_core::locker::GlobalPathStatus::default(),
+            general_bg: None,
+            general_bg_size: None,
+            general_card: None,
+            general_card_size: None,
             assets_dir: String::new(),
             catalog_label: String::new(),
             error: None,
             pinned: None,
             modded_only: false,
+            starred_only: false,
+            query: TextEdit::new(""),
+            query_text: String::new(),
+            list_view: false,
+            expanded: std::collections::BTreeSet::new(),
+            page: Page::Grid,
+            hero_section: HeroSection::Mods,
+            general_tab: None,
             selected: None,
             panel: None,
+            dialog: None,
+            page_size: (
+                1360.0 - crate::ui::SIDEBAR_W,
+                860.0 - crate::ui::TITLEBAR_H,
+            ),
             notes_placeholder: TextEdit::new(""),
         }
     }
 }
 
+const GRID_GAP: f32 = 12.0;
+const CARD_RADIUS: f32 = 12.0;
+const CARD_MIN_W: f32 = 160.0;
+const RAIL_W: f32 = 300.0;
+const PANE_W: f32 = 480.0;
+/// How wide the left fade runs over the art on the hero and General pages.
+const FADE_W: f32 = 1040.0;
+
+/// Pixel size of a PNG, WebP or JPEG from its header. `None` for anything else. The reader
+/// lives in core so the card picker and the grid agree on what an image is.
+pub fn image_size(bytes: &[u8]) -> Option<(u32, u32)> {
+    deadlock_core::locker::art_dimensions(bytes)
+}
+
 pub fn view(s: &State, u: &Ui) -> El {
     let v = &s.locker;
-    let shown: Vec<&HeroCard> = v
+    let body = match &v.page {
+        Page::Hero(name) => match v.heroes.iter().find(|hero| &hero.display_name == name) {
+            Some(hero) => return measured(hero_page(s, u, v, hero)),
+            None => grid_page(s, u, v),
+        },
+        Page::General if v.loaded => return measured(general_page(s, u, v)),
+        _ => grid_page(s, u, v),
+    };
+    measured(body)
+}
+
+/// Wraps a page so its laid-out size lands in `View::page_size`.
+fn measured(page: El) -> El {
+    el().key("locker-root")
+        .w_full()
+        .h_full()
+        .min_h(0.0)
+        .on_layout(|st: &mut State, [_, _, w, h]: [f32; 4]| {
+            if (st.locker.page_size.0 - w).abs() > 0.5 || (st.locker.page_size.1 - h).abs() > 0.5
+            {
+                st.locker.page_size = (w, h);
+            }
+        })
+        .child(page)
+}
+
+// --- grid --------------------------------------------------------------------
+
+fn sorted_heroes(v: &View) -> Vec<&HeroCard> {
+    let pinned = v.pinned.as_deref();
+    let query = v.query_text.trim().to_ascii_lowercase();
+    let mut heroes: Vec<&HeroCard> = v
         .heroes
         .iter()
         .filter(|hero| !v.modded_only || hero.mod_count > 0)
+        .filter(|hero| !v.starred_only || v.prefs.is_favorite(&hero.display_name))
+        .filter(|hero| hero_name_matches(&hero.display_name, &hero.codename, &query))
         .collect();
-    let with_art = v.heroes.iter().filter(|hero| hero.render.is_some()).count();
-
-    let trailing = row()
-        .gap(8.0)
-        .center_y()
-        .child(match &v.pinned {
-            Some(pinned) => u.chip(
-                &format!("project hero {pinned}"),
-                u.accent,
-                u.accent.alpha(0.12),
-            ),
-            None => u.status_chip("no project hero", Tone::Quiet),
-        })
-        .child(if s.locker_job.is_running() {
-            u.status_chip("resolving", Tone::Warn)
-        } else if v.error.is_some() {
-            u.status_chip("catalog error", Tone::Bad)
-        } else if v.loaded {
-            u.status_chip(
-                &format!("{with_art} with art"),
-                if with_art == 0 { Tone::Quiet } else { Tone::Ok },
-            )
-        } else {
-            u.status_chip("not resolved", Tone::Quiet)
-        })
-        .child(toggle_chip(u, "Modded only", v.modded_only, |st| {
-            st.locker.modded_only = !st.locker.modded_only
-        }))
-        .child(
-            u.pill("Rescan", "↻", ActionKind::Ghost)
-                .key("locker-rescan")
-                .on_press(|st: &mut State| crate::data::start_locker_load(st)),
-        );
-
-    let detail = if let Some(error) = &v.error {
-        error.clone()
-    } else if !v.loaded {
-        "Loading the game catalog and resolving local art.".to_string()
-    } else if v.heroes.is_empty() {
-        "The game catalog has no hero folders yet. Run a catalog load from Settings or Updates.".to_string()
-    } else {
-        format!(
-            "{} heroes · {} · art read from {}",
-            v.heroes.len(),
-            v.catalog_label,
-            if v.assets_dir.is_empty() {
-                "no local art root"
-            } else {
-                &v.assets_dir
-            }
+    // The project hero leads the grid, then starred heroes, then the roster. Stable.
+    heroes.sort_by_key(|hero| {
+        (
+            !pinned.is_some_and(|key| same_hero(hero, key)),
+            !v.prefs.is_favorite(&hero.display_name),
         )
+    });
+    heroes
+}
+
+/// True when the hero search reaches a hero: its display name, its current codename, or any
+/// older codename the game and community packs still use (`orion` finds Grey Talon).
+fn hero_name_matches(name: &str, codename: &str, query: &str) -> bool {
+    query.is_empty()
+        || name.to_ascii_lowercase().contains(query)
+        || codename.to_ascii_lowercase().contains(query)
+        || deadlock_core::locker::roster_hero(name).is_some_and(|roster| {
+            roster.codenames.iter().any(|code| code.contains(query))
+        })
+}
+
+fn grid_columns(v: &View) -> (usize, f32) {
+    let avail = (v.page_size.0 - 2.0 * crate::ui::PAGE_X).max(CARD_MIN_W);
+    let cols = (((avail + GRID_GAP) / (CARD_MIN_W + GRID_GAP)).floor() as usize).clamp(2, 8);
+    let card_w = (avail - GRID_GAP * (cols as f32 - 1.0)) / cols as f32;
+    (cols, card_w.floor())
+}
+
+fn grid_page(s: &State, u: &Ui, v: &View) -> El {
+    let modded = v.heroes.iter().filter(|hero| hero.mod_count > 0).count();
+    let starred = v
+        .heroes
+        .iter()
+        .filter(|hero| v.prefs.is_favorite(&hero.display_name))
+        .count();
+    let shown = sorted_heroes(v);
+
+    let search = rune::text_input(&v.query, BODY)
+        .key("locker-search")
+        .label("Search heroes")
+        .single_line()
+        .color(u.ink)
+        .placeholder("Search heroes", u.faint)
+        .caret(u.accent, u.accent.alpha(0.20))
+        .on_edit(|st: &mut State| {
+            let text = st.locker.query.text.clone();
+            st.locker.query_text = text;
+            &mut st.locker.query
+        })
+        .on_input_key(|st: &mut State, ev: &rune::KeyEvent, _| {
+            if ev.key == rune::Key::Escape {
+                st.locker.query = TextEdit::new("");
+                st.locker.query_text.clear();
+                true
+            } else {
+                false
+            }
+        });
+
+    let mut actions = row().gap(8.0).center_y().child(u.search_shell(search));
+    if v.loaded && !v.heroes.is_empty() {
+        actions = actions.child(filter(u, v.modded_only, v.starred_only));
+    }
+    if v.loaded {
+        actions = actions
+            .child(view_toggle(u, v.list_view))
+            .child(
+                u.icon_button(&icons::SLIDERS_HORIZONTAL, "Locker changes")
+                    .key("locker-applied")
+                    .cursor(rune::Cursor::Pointer)
+                    .on_press(|st: &mut State| st.locker.dialog = Some(Dialog::Applied)),
+            )
+            .child(
+                u.icon_button(&icons::ROTATE_CCW, "Shuffle on launch")
+                    .key("locker-shuffle")
+                    .cursor(rune::Cursor::Pointer)
+                    .on_press(|st: &mut State| st.locker.dialog = Some(Dialog::Shuffle)),
+            );
+    }
+    actions = actions.child(
+        u.icon_button(&icons::REFRESH_CW, "Rescan")
+            .key("locker-rescan")
+            .cursor(rune::Cursor::Pointer)
+            .on_press(|st: &mut State| crate::data::start_locker_load(st)),
+    );
+
+    let detail = if v.loaded && !v.heroes.is_empty() {
+        let mut parts = vec![plural(v.heroes.len(), "hero", "heroes")];
+        if modded > 0 {
+            parts.push(format!("{modded} modded"));
+        }
+        if starred > 0 {
+            parts.push(format!("{starred} starred"));
+        }
+        if !v.heroes.iter().any(|hero| hero.render.is_some()) {
+            parts.push("hero art not found next to Sigil".to_string());
+        }
+        parts.join(", ")
+    } else {
+        String::new()
     };
 
-    let mut page = col()
-        .key("locker-page")
-        .grow(1.0)
-        .h_full()
-        .min_h(0.0)
-        .px(24.0)
-        .pt(18.0)
-        .pb(16.0)
-        .gap(13.0)
-        .child(u.glow(
-            "locker-glow",
-            [0.86, 0.02],
-            (760.0, 460.0),
-            u.glow_warm,
-        ))
-        .child(u.page_head(
-            Screen::Locker.kicker(),
-            "Locker",
-            &detail,
-            Some(trailing),
-        ));
-
-    if v.loaded && with_art == 0 && !v.heroes.is_empty() {
-        page = page.child(art_notice(v));
-    }
-
-    let body = if !v.loaded && s.locker_job.is_running() {
-        loading(u)
-    } else if v.heroes.is_empty() {
-        u.empty_state(
-            "◐",
-            "No heroes resolved",
-            "The Locker reads hero folders from the game index. Without a catalog there is no hero list, and the screen stays empty instead of inventing one.",
-            Some(
-                u.action("Rescan", ActionKind::Secondary)
-                    .on_press(|st: &mut State| crate::data::start_locker_load(st)),
-            ),
-        )
+    let (cols, card_w) = grid_columns(v);
+    let body = if v.heroes.is_empty() {
+        if !v.loaded {
+            loading(cols)
+        } else if let Some(error) = &v.error {
+            u.empty_state("", "Heroes could not be loaded", error, Some(retry(u)))
+        } else {
+            u.empty_state("", "No heroes yet", "Try again in a moment.", Some(retry(u)))
+        }
     } else if shown.is_empty() {
+        let (title, line) = if v.starred_only && v.query_text.trim().is_empty() {
+            ("No starred heroes", "Star a hero to keep it at the top.")
+        } else if v.modded_only && v.query_text.trim().is_empty() {
+            ("No modded heroes", "None of your installed mods change a hero.")
+        } else {
+            ("No heroes match", "Try another name or clear the search.")
+        };
         u.empty_state(
-            "◐",
-            "No modded heroes",
-            "No enabled addon ships a path under a hero folder. Clear the filter to see every hero.",
+            "",
+            title,
+            line,
             Some(
                 u.action("Show all heroes", ActionKind::Secondary)
-                    .on_press(|st: &mut State| st.locker.modded_only = false),
+                    .key("locker-show-all")
+                    .cursor(rune::Cursor::Pointer)
+                    .on_press(|st: &mut State| {
+                        st.locker.modded_only = false;
+                        st.locker.starred_only = false;
+                        st.locker.query = TextEdit::new("");
+                        st.locker.query_text.clear();
+                    }),
             ),
         )
+    } else if v.list_view {
+        list_body(s, u, v, &shown)
     } else {
-        let mut grid = col().w_full().gap(12.0);
-        for start in (0..shown.len()).step_by(4) {
-            let mut r = row().w_full().gap(12.0).items_start();
-            for index in start..(start + 4).min(shown.len()) {
-                r = r.child(card(s, u, shown[index]));
-            }
-            for _ in (start..(start + 4).min(shown.len())).count()..4 {
-                r = r.child(el().grow(1.0).min_w(0.0).h(1.0));
-            }
-            grid = grid.child(r);
+        let mut grid = el().w_full().equal_columns(cols).gap(GRID_GAP);
+        if !v.modded_only && !v.starred_only && v.query_text.trim().is_empty() {
+            grid = grid.child(general_card(s, u, v, card_w));
         }
-        col()
-            .key("locker-scroll")
-            .grow(1.0)
-            .min_h(0.0)
-            .scroll(ScrollSpec {
-                stick_bottom: false,
-            })
-            .child(grid)
-    };
-
-    page.child(body)
-}
-
-fn toggle_chip(u: &Ui, label: &str, on: bool, press: fn(&mut State)) -> El {
-    row()
-        .h(27.0)
-        .px(10.0)
-        .gap(6.0)
-        .center()
-        .radius(13.0)
-        .fill(if on {
-            u.accent.alpha(0.16)
-        } else {
-            Color::WHITE.alpha(0.03)
-        })
-        .border(
-            1.0,
-            if on {
-                u.accent.alpha(0.28)
-            } else {
-                u.hair
-            },
-        )
-        .focusable(true)
-        .role("switch")
-        .checked(on)
-        .label(label)
-        .child(u.dot(if on { Tone::Accent } else { Tone::Quiet }))
-        .child(
-            text(label)
-                .font(LABEL)
-                .color(if on { u.accent } else { u.muted }),
-        )
-        .on_press(press)
-}
-
-fn art_notice(v: &View) -> El {
-    let detail = if v.assets_dir.is_empty() {
-        "Set DAH_LOCKER_ASSETS to a folder with heroes/ and names/, or place a Grimoire checkout at vendor/grimoire/public. Art is read there, never copied into this app."
-    } else {
-        "The art root exists but no hero render matched. The resolver tries the hero code name, the display name and the portrait fallback."
-    };
-    row()
-        .w_full()
-        .padding(11.0)
-        .gap(10.0)
-        .items_start()
-        .radius(10.0)
-        .fill(Color::WHITE.alpha(0.024))
-        .border(1.0, Color::WHITE.alpha(0.06))
-        .child(text("ART").font(LABEL).color(Color::WHITE.alpha(0.55)))
-        .child(text(detail).font(SMALL).color(Color::WHITE.alpha(0.62)).wrap())
-}
-
-fn card(s: &State, u: &Ui, hero: &HeroCard) -> El {
-    let codename = hero.codename.clone();
-    let pixels = hero
-        .render
-        .as_ref()
-        .and_then(|(path, _)| s.thumbnails.get(path));
-    let image = match pixels {
-        Some(pixels) => el()
-            .key(format!("render-{}", hero.codename))
-            .absolute(0.0, 0.0)
-            .w_full()
-            .h_full()
-            .pixels_fit(pixels, SurfaceFit::Fill)
-            .a11y_hidden(),
-        None => el()
-            .key(format!("render-missing-{}", hero.codename))
-            .absolute(0.0, 0.0)
-            .w_full()
-            .h_full()
-            .fill(hero_tint(u, &hero.codename))
-            .center()
-            .child(
-                col()
-                    .gap(6.0)
-                    .items_center()
-                    .child(
-                        text(initials(&hero.display_name))
-                            .font(H2)
-                            .color(Color::WHITE.alpha(0.35)),
-                    )
-                    .child(text("no render").font(LABEL).color(Color::WHITE.alpha(0.30))),
-            )
-            .a11y_hidden(),
-    };
-
-    let selected = s.locker.selected.as_deref() == Some(hero.codename.as_str());
-    let pinned_here = s
-        .locker
-        .pinned
-        .as_deref()
-        .is_some_and(|pinned| same_hero(hero, pinned));
-    let mod_chip = if hero.mod_count > 0 {
-        u.chip(
-            &format!("{} mod{}", hero.mod_count, if hero.mod_count == 1 { "" } else { "s" }),
-            u.accent_ink,
-            u.accent,
-        )
-    } else if hero.in_catalog {
-        u.chip("vanilla", Color::WHITE.alpha(0.66), Color::BLACK.alpha(0.45))
-    } else {
-        u.chip("art only", u.accent, Color::BLACK.alpha(0.55))
+        for hero in &shown {
+            grid = grid.child(hero_card(s, u, v, hero, card_w));
+        }
+        grid
     };
 
     col()
-        .key(format!("locker-{}", hero.codename))
-        .grow(1.0)
-        .min_w(0.0)
-        .radius(14.0)
-        .fill(Color::WHITE.alpha(0.026))
-        .border(
-            1.0,
-            if selected {
-                u.accent.alpha(0.45)
-            } else {
-                u.hair
-            },
-        )
-        .hover(Color::WHITE.alpha(0.04))
-        .focusable(true)
-        .role("button")
-        .label(format!("{} hero card", hero.display_name))
-        .child(
-            el()
-                .w_full()
-                .aspect_ratio(0.78)
-                .fill(Color::BLACK.alpha(0.25))
-                .child(image)
-                .child(
-                    row()
-                        .absolute(8.0, 8.0)
-                        .gap(5.0)
-                        .center_y()
-                        .child(mod_chip)
-                        .child(if pinned_here {
-                            u.chip("PROJECT", u.accent_ink, u.accent)
-                        } else {
-                            el()
-                        }),
-                ),
-        )
+        .key("locker-scroll")
+        .w_full()
+        .h_full()
+        .min_h(0.0)
+        .scroll(ScrollSpec {
+            stick_bottom: false,
+        })
         .child(
             col()
+                .key("locker-page")
                 .w_full()
+                .px(crate::ui::PAGE_X)
+                .pt(crate::ui::PAGE_TOP)
+                .pb(32.0)
+                .gap(16.0)
+                .child(u.page_head("", "Locker", &detail, Some(actions)))
+                .child(body),
+        )
+}
+
+/// Grid or list, as a two part segmented control.
+fn view_toggle(u: &Ui, list: bool) -> El {
+    let segment = |glyph: &'static rune::Icon, label: &'static str, on: bool, value: bool| {
+        row()
+            .key(format!("locker-view-{label}"))
+            .size(26.0, 26.0)
+            .center()
+            .radius(crate::ui::r(6.0))
+            .fill(if on { u.selected } else { Color::TRANSPARENT })
+            .hover(u.hover)
+            .focusable(true)
+            .role("radio")
+            .checked(on)
+            .label(label)
+            .cursor(rune::Cursor::Pointer)
+            .on_press(move |st: &mut State| {
+                st.locker.list_view = value;
+                if value && crate::screens::settings::options::locker_expanded() {
+                    st.locker.expanded = st
+                        .locker
+                        .heroes
+                        .iter()
+                        .map(|hero| hero.codename.clone())
+                        .collect();
+                }
+            })
+            .child(rune::icon(glyph, 14.0).color(if on { u.ink } else { u.muted }).a11y_hidden())
+    };
+    row()
+        .key("locker-view")
+        .h(32.0)
+        .padding(2.0)
+        .gap(2.0)
+        .center_y()
+        .radius(crate::ui::r(8.0))
+        .border(1.0, u.hair)
+        .role("radiogroup")
+        .label("View")
+        .child(segment(&icons::LAYOUT_GRID, "Grid", !list, false))
+        .child(segment(&icons::LIST, "List", list, true))
+}
+
+fn retry(u: &Ui) -> El {
+    u.icon_action(&icons::REFRESH_CW, "Try again", ActionKind::Secondary)
+        .key("locker-retry")
+        .cursor(rune::Cursor::Pointer)
+        .on_press(|st: &mut State| crate::data::start_locker_load(st))
+}
+
+/// All, Modded or Starred, as a three part segmented control.
+fn filter(u: &Ui, modded_only: bool, starred_only: bool) -> El {
+    let segment = |label: &'static str, on: bool, modded: bool, starred: bool| {
+        row()
+            .key(format!("locker-filter-{}", label.to_lowercase()))
+            .h(26.0)
+            .px(10.0)
+            .center()
+            .radius(crate::ui::r(6.0))
+            .fill(if on { u.selected } else { Color::TRANSPARENT })
+            .hover(u.hover)
+            .focusable(true)
+            .role("radio")
+            .checked(on)
+            .label(label)
+            .cursor(rune::Cursor::Pointer)
+            .on_press(move |st: &mut State| {
+                st.locker.modded_only = modded;
+                st.locker.starred_only = starred;
+            })
+            .child(
+                text(label)
+                    .font(BODY_MED)
+                    .color(if on { u.ink } else { u.muted })
+                    .a11y_hidden(),
+            )
+    };
+    row()
+        .key("locker-filter")
+        .h(32.0)
+        .padding(2.0)
+        .gap(2.0)
+        .center_y()
+        .radius(crate::ui::r(8.0))
+        .border(1.0, u.hair)
+        .role("radiogroup")
+        .label("Show heroes")
+        .child(segment("All", !modded_only && !starred_only, false, false))
+        .child(segment("Modded", modded_only, true, false))
+        .child(segment("Starred", starred_only, false, true))
+}
+
+pub(super) fn pixels_for(s: &State, path: Option<&str>) -> Option<Pixels> {
+    s.thumbnails.get(path?).cloned()
+}
+
+/// Pixels that have finished decoding, so a larger image can stand in for a smaller one only
+/// once it is there.
+fn ready_pixels(s: &State, path: Option<&str>) -> Option<Pixels> {
+    pixels_for(s, path).filter(|pixels| pixels.size().0 > 0)
+}
+
+/// An image cropped into a `box_w` by `box_h` box like CSS `object-fit: cover` with
+/// `object-position: x% y%`: the side with slack slides so that point stays in view.
+pub(super) fn cover_at(pixels: &Pixels, size: Option<(u32, u32)>, box_w: f32, box_h: f32, x: f32, y: f32) -> El {
+    let ratio = size
+        .filter(|(w, h)| *w > 0 && *h > 0)
+        .map(|(w, h)| w as f32 / h as f32);
+    let Some(ratio) = ratio else {
+        return el()
+            .absolute(0.0, 0.0)
+            .size(box_w, box_h)
+            .pixels_fit(pixels, SurfaceFit::Fill)
+            .a11y_hidden();
+    };
+    let (w, h, left, top) = if ratio >= box_w / box_h {
+        let w = box_h * ratio;
+        (w, box_h, -(w - box_w) * x / 100.0, 0.0)
+    } else {
+        let h = box_w / ratio;
+        (box_w, h, 0.0, -(h - box_h) * y / 100.0)
+    };
+    el().absolute(left.round(), top.round())
+        .size(w.round(), h.round())
+        .pixels_fit(pixels, SurfaceFit::Fill)
+        .a11y_hidden()
+}
+
+/// The shared frame of a Locker card: 3:4, rounded, a dark bottom scrim, the hover wash.
+fn card_frame(key: String, label: String, card_w: f32) -> El {
+    el().key(key)
+        .w_full()
+        .min_w(0.0)
+        .h((card_w * 4.0 / 3.0).round())
+        .radius(CARD_RADIUS)
+        .fill(Color::WHITE.alpha(0.03))
+        .clip_rounded(CARD_RADIUS)
+        .hover_group()
+        .focusable(true)
+        .role("button")
+        .label(label)
+        .cursor(rune::Cursor::Pointer)
+}
+
+fn card_chrome() -> [El; 2] {
+    [
+        // Grimoire's `from-black/70 via-black/10 to-transparent`, bottom up.
+        el().absolute(0.0, 0.0)
+            .w_full()
+            .h_full()
+            .linear_gradient(
+                std::f32::consts::PI,
+                [
+                    (0.0, Color::BLACK.alpha(0.0)),
+                    (0.5, Color::BLACK.alpha(0.08)),
+                    (1.0, Color::BLACK.alpha(0.62)),
+                ],
+            )
+            .a11y_hidden(),
+        el().absolute(0.0, 0.0)
+            .w_full()
+            .h_full()
+            .radius(CARD_RADIUS)
+            .border(1.0, Color::WHITE.alpha(0.07))
+            .fill(Color::WHITE.alpha(0.05))
+            .group_opacity(0.0, 1.0)
+            .a11y_hidden(),
+    ]
+}
+
+fn hero_card(s: &State, u: &Ui, v: &View, hero: &HeroCard, card_w: f32) -> El {
+    let card_h = (card_w * 4.0 / 3.0).round();
+    let pinned_here = v
+        .pinned
+        .as_deref()
+        .is_some_and(|pinned| same_hero(hero, pinned));
+    let favorite = v.prefs.is_favorite(&hero.display_name);
+    let shuffles = v.prefs.shuffles(&hero.display_name);
+    let name = hero.display_name.clone();
+    let mut frame = card_frame(
+        format!("locker-{}", hero.codename),
+        hero.display_name.clone(),
+        card_w,
+    )
+    .on_press(move |st: &mut State| open_hero(st, &name));
+
+    let (art, art_size, focus) = hero.art();
+    if let Some(pixels) = pixels_for(s, art.as_deref()) {
+        frame = frame.child(cover_at(&pixels, art_size, card_w, card_h, focus, 20.0));
+    }
+    let [scrim, wash] = card_chrome();
+    frame = frame.child(scrim);
+
+    // Mods on this hero, top left, as Grimoire's customization pill.
+    if hero.mod_count > 0 || pinned_here || shuffles {
+        let mut pill = row()
+            .absolute(8.0, 8.0)
+            .h(22.0)
+            .px(8.0)
+            .gap(4.0)
+            .center_y()
+            .radius(11.0)
+            .fill(Color::BLACK.alpha(0.55))
+            .a11y_hidden();
+        if hero.mod_count > 0 {
+            pill = pill
+                .child(rune::icon(&icons::SHIRT, 12.0).color(Color::WHITE.alpha(0.85)))
+                .child(
+                    text(hero.mod_count.to_string())
+                        .font(SMALL)
+                        .color(Color::WHITE.alpha(0.85)),
+                );
+        }
+        if shuffles {
+            pill = pill.child(rune::icon(&icons::ROTATE_CCW, 12.0).color(Color::WHITE.alpha(0.85)));
+        }
+        if pinned_here {
+            pill = pill.child(text("Project").font(SMALL).color(Color::WHITE.alpha(0.85)));
+        }
+        frame = frame.child(pill);
+    }
+
+    // The star is a sibling of the card press, so starring never opens the hero.
+    let hero_name = hero.display_name.clone();
+    frame = frame.child(
+        el().key(format!("locker-star-{}", hero.codename))
+            .pin(None, Some(8.0), Some(8.0), None)
+            .size(26.0, 26.0)
+            .center()
+            .radius(13.0)
+            .fill(if favorite {
+                Color::WHITE.alpha(0.22)
+            } else {
+                Color::BLACK.alpha(0.42)
+            })
+            .hover(Color::BLACK.alpha(0.60))
+            .focusable(true)
+            .role("button")
+            .label(if favorite {
+                format!("Unstar {}", hero.display_name)
+            } else {
+                format!("Star {}", hero.display_name)
+            })
+            .group_opacity(if favorite { 1.0 } else { 0.0 }, 1.0)
+            .cursor(rune::Cursor::Pointer)
+            .on_press(move |st: &mut State| {
+                crate::data::toggle_locker_favorite(st, &hero_name)
+            })
+            .child(
+                rune::icon(&icons::HEART, 13.0)
+                    .color(if favorite {
+                        Color::WHITE
+                    } else {
+                        Color::WHITE.alpha(0.90)
+                    })
+                    .a11y_hidden(),
+            ),
+    );
+
+    frame = frame.child(name_plate(s, u, hero, (card_w * 0.7).floor(), 26.0, true));
+    frame.child(wash)
+}
+
+/// The name art, right aligned at the bottom of a card, or the name as text without art.
+fn name_plate(s: &State, u: &Ui, hero: &HeroCard, max_w: f32, max_h: f32, on_card: bool) -> El {
+    let pixels = pixels_for(s, hero.name_art.as_deref());
+    let place = |e: El| {
+        if on_card {
+            e.pin(None, None, Some(12.0), Some(12.0))
+        } else {
+            e
+        }
+    };
+    match (pixels, hero.name_size) {
+        (Some(pixels), Some((w, h))) if w > 0 && h > 0 => {
+            let ratio = w as f32 / h as f32;
+            let (pw, ph) = if max_w / ratio <= max_h {
+                (max_w, max_w / ratio)
+            } else {
+                (max_h * ratio, max_h)
+            };
+            place(
+                el().size(pw.round(), ph.round())
+                    .pixels_fit(&pixels, SurfaceFit::Fit)
+                    .label(hero.display_name.clone()),
+            )
+        }
+        _ => place(
+            text(hero.display_name.clone())
+                .font(if on_card { H2 } else { H1 })
+                .color(if on_card { Color::WHITE } else { u.ink })
+                .truncate(),
+        ),
+    }
+}
+
+fn general_counts(v: &View) -> (usize, usize) {
+    let general: Vec<&ModRow> = v.mods.iter().filter(|m| m.general.is_some()).collect();
+    let types: std::collections::BTreeSet<GeneralType> =
+        general.iter().filter_map(|m| m.general).collect();
+    (general.len(), types.len())
+}
+
+/// The General tile: the environment backdrop, the label bottom right, as Grimoire's
+/// `GlobalGalleryCard`.
+fn general_card(s: &State, _u: &Ui, v: &View, card_w: f32) -> El {
+    let card_h = (card_w * 4.0 / 3.0).round();
+    let (count, types) = general_counts(v);
+    let mut frame = card_frame("locker-general".to_string(), "General".to_string(), card_w)
+        .on_press(|st: &mut State| open_general(st));
+    if let Some(pixels) = pixels_for(s, v.general_card.as_deref()) {
+        frame = frame.child(cover_at(&pixels, v.general_card_size, card_w, card_h, 50.0, 50.0));
+    }
+    let [scrim, wash] = card_chrome();
+    let detail = if count == 0 {
+        "HUD, icons, sounds and more".to_string()
+    } else if v.categories.is_empty() {
+        format!("{}, {}", plural(count, "mod", "mods"), plural(types, "type", "types"))
+    } else {
+        format!(
+            "{}, {}",
+            plural(count, "mod", "mods"),
+            plural(v.categories.len(), "category", "categories")
+        )
+    };
+    frame
+        .child(scrim)
+        .child(
+            col()
+                .pin(Some(12.0), None, Some(12.0), Some(12.0))
+                .gap(2.0)
+                .items_end()
+                .child(text("General").font(H1).color(Color::WHITE))
+                .child(
+                    text(detail)
+                        .font(SMALL)
+                        .color(Color::WHITE.alpha(0.70))
+                        .align(rune::Align::End)
+                        .wrap(),
+                ),
+        )
+        .child(wash)
+}
+
+fn loading(cols: usize) -> El {
+    let mut grid = el().w_full().equal_columns(cols).gap(GRID_GAP);
+    for _ in 0..cols * 2 {
+        grid = grid.child(
+            el().w_full()
+                .aspect_ratio(3.0 / 4.0)
+                .radius(CARD_RADIUS)
+                .fill(Color::WHITE.alpha(0.04)),
+        );
+    }
+    grid
+}
+
+/// Grimoire's list view: one row per hero, opened to its skins.
+fn list_body(s: &State, u: &Ui, v: &View, shown: &[&HeroCard]) -> El {
+    let mut rows = col().w_full();
+    for hero in shown {
+        rows = rows.child(list_row(s, u, v, hero));
+    }
+    rows
+}
+
+fn list_row(s: &State, u: &Ui, v: &View, hero: &HeroCard) -> El {
+    let open = v.expanded.contains(&hero.codename);
+    let favorite = v.prefs.is_favorite(&hero.display_name);
+    let shuffles = v.prefs.shuffles(&hero.display_name);
+    let pinned_here = v
+        .pinned
+        .as_deref()
+        .is_some_and(|pinned| same_hero(hero, pinned));
+    let codename = hero.codename.clone();
+
+    let (art, art_size, focus) = hero.art();
+    let thumb = el()
+        .size(40.0, 53.0)
+        .radius(crate::ui::r(8.0))
+        .clip_rounded(crate::ui::r(8.0))
+        .fill(Color::WHITE.alpha(0.04))
+        .a11y_hidden();
+    let thumb = match pixels_for(s, art.as_deref()) {
+        Some(pixels) => thumb.child(cover_at(&pixels, art_size, 40.0, 53.0, focus, 20.0)),
+        None => thumb,
+    };
+
+    let mut meta = vec![plural(hero.mod_count, "mod", "mods")];
+    let sounds = v
+        .mods
+        .iter()
+        .filter(|m| m.heroes.iter().any(|name| name == &hero.display_name))
+        .filter(|m| m.sounds.iter().any(|s| s.hero == hero.display_name))
+        .count();
+    if sounds > 0 {
+        meta.push(plural(sounds, "sound", "sounds"));
+    }
+    if pinned_here {
+        meta.push("project".to_string());
+    }
+    if shuffles {
+        meta.push("shuffle".to_string());
+    }
+
+    let header = row()
+        .key(format!("locker-list-{}", hero.codename))
+        .w_full()
+        .h(64.0)
+        .gap(12.0)
+        .center_y()
+        .border_sides([0.0, 0.0, 1.0, 0.0], u.hair)
+        .hover(u.hover)
+        .focusable(true)
+        .role("button")
+        .label(format!("{} skins", hero.display_name))
+        .cursor(rune::Cursor::Pointer)
+        .on_press(move |st: &mut State| {
+            if !st.locker.expanded.remove(&codename) {
+                st.locker.expanded.insert(codename.clone());
+            }
+        })
+        .child(thumb)
+        .child(
+            col()
                 .grow(1.0)
-                .padding(11.0)
-                .gap(3.0)
+                .min_w(0.0)
                 .child(
                     text(hero.display_name.clone())
                         .font(BODY_MED)
                         .color(u.ink)
                         .truncate(),
                 )
+                .child(text(meta.join(", ")).font(SMALL).color(u.faint).truncate()),
+        );
+
+    let star_name = hero.display_name.clone();
+    let star = el()
+        .key(format!("locker-list-star-{}", hero.codename))
+        .size(28.0, 28.0)
+        .center()
+        .radius(crate::ui::r(14.0))
+        .fill(if favorite {
+            Color::WHITE.alpha(0.10)
+        } else {
+            Color::TRANSPARENT
+        })
+        .hover(u.hover)
+        .focusable(true)
+        .role("button")
+        .label(if favorite {
+            format!("Unstar {}", hero.display_name)
+        } else {
+            format!("Star {}", hero.display_name)
+        })
+        .cursor(rune::Cursor::Pointer)
+        .on_press(move |st: &mut State| {
+            crate::data::toggle_locker_favorite(st, &star_name)
+        })
+        .child(
+            rune::icon(&icons::HEART, 14.0)
+                .color(if favorite { u.ink } else { u.faint })
+                .a11y_hidden(),
+        );
+
+    let open_name = hero.display_name.clone();
+    let header = header
+        .child(star)
+        .child(
+            u.icon_button(&icons::CHEVRON_RIGHT, &format!("Open {}", hero.display_name))
+                .key(format!("locker-list-open-{}", hero.codename))
+                .cursor(rune::Cursor::Pointer)
+                .on_press(move |st: &mut State| open_hero(st, &open_name)),
+        )
+        .child(
+            rune::icon(&icons::CHEVRON_DOWN, 16.0)
+                .color(u.faint)
+                .rotate(if open { std::f32::consts::PI } else { 0.0 })
+                .a11y_hidden(),
+        );
+
+    let mut body = col().w_full();
+    if open {
+        body = body.child(variants::skins_list(s, u, v, hero, false));
+    }
+
+    col().key(format!("locker-list-block-{}", hero.codename)).w_full().child(header).child(body)
+}
+
+fn open_hero(st: &mut State, name: &str) {
+    st.locker.page = Page::Hero(name.to_string());
+    st.locker.hero_section = HeroSection::Mods;
+    let render = st
+        .locker
+        .heroes
+        .iter()
+        .find(|hero| hero.display_name == name)
+        .and_then(|hero| hero.render.clone());
+    if let Some(render) = render {
+        crate::data::request_locker_art(st, &render);
+    }
+}
+
+fn open_general(st: &mut State) {
+    st.locker.page = Page::General;
+    if let Some(bg) = st.locker.general_bg.clone() {
+        crate::data::request_locker_art(st, &bg);
+    }
+    if st.locker.general_tab.is_none() {
+        // Land on the first populated type, as Grimoire does.
+        let first = GeneralType::ALL
+            .into_iter()
+            .find(|kind| st.locker.mods.iter().any(|m| m.general == Some(*kind)))
+            .unwrap_or(GeneralType::SoulContainer);
+        st.locker.general_tab = Some(GeneralTab::Type(first));
+    }
+}
+
+fn back(st: &mut State) {
+    st.locker.page = Page::Grid;
+}
+
+// --- shared drill-in shell -----------------------------------------------------
+
+/// The backdrop, the layered fade and the content row for the hero and General pages.
+fn drill_shell(u: &Ui, key: &str, backdrop: Option<El>, dim: f32, content: El) -> El {
+    let mut shell = el().key(key.to_string()).w_full().h_full().fill(u.bg).clip_rounded(0.0);
+    if let Some(art) = backdrop {
+        shell = shell.child(art);
+    }
+    if dim > 0.0 {
+        shell = shell.child(
+            el().absolute(0.0, 0.0)
+                .w_full()
+                .h_full()
+                .fill(u.bg.alpha(dim))
+                .a11y_hidden(),
+        );
+    }
+    let bg = u.bg;
+    shell
+        // Depth at the bottom, Grimoire's `from-black/50`.
+        .child(
+            el().pin(Some(0.0), None, Some(0.0), Some(0.0))
+                .h(128.0)
+                .gradient(Color::BLACK.alpha(0.0), Color::BLACK.alpha(0.5))
+                .a11y_hidden(),
+        )
+        // The rail side stays dark and fades out across the art, as the frosted layers do.
+        .child(
+            el().absolute(0.0, 0.0)
+                .w(FADE_W)
+                .h_full()
+                .linear_gradient(
+                    std::f32::consts::FRAC_PI_2,
+                    [
+                        (0.0, bg),
+                        (0.28, bg.alpha(0.95)),
+                        (0.50, bg.alpha(0.75)),
+                        (0.70, bg.alpha(0.40)),
+                        (0.85, bg.alpha(0.15)),
+                        (0.96, bg.alpha(0.0)),
+                    ],
+                )
+                .a11y_hidden(),
+        )
+        .child(content)
+}
+
+fn back_row(u: &Ui, extra: Option<El>) -> El {
+    let mut r = row().w_full().gap(8.0).center_y().child(
+        row()
+            .key("locker-back")
+            .h(32.0)
+            .pl(8.0)
+            .pr(12.0)
+            .gap(8.0)
+            .center_y()
+            .radius(crate::ui::r(8.0))
+            .hover(u.hover)
+            .focusable(true)
+            .role("button")
+            .label("Back to Locker")
+            .cursor(rune::Cursor::Pointer)
+            .on_press(back)
+            .child(rune::icon(&icons::ARROW_LEFT, 16.0).color(u.muted).a11y_hidden())
+            .child(text("Locker").font(BODY_MED).color(u.muted).a11y_hidden()),
+    );
+    if let Some(extra) = extra {
+        r = r.child(spacer()).child(extra);
+    }
+    r
+}
+
+/// A rail row: label, count on the right, neutral fill when active.
+fn rail_row(u: &Ui, key: String, label: &str, count: usize, active: bool, dim: bool) -> El {
+    row()
+        .key(key)
+        .w_full()
+        .h(40.0)
+        .px(12.0)
+        .gap(12.0)
+        .center_y()
+        .radius(crate::ui::r(8.0))
+        .fill(if active { u.selected } else { Color::TRANSPARENT })
+        .hover(u.hover)
+        .focusable(true)
+        .role("tab")
+        .checked(active)
+        .label(label.to_string())
+        .cursor(rune::Cursor::Pointer)
+        .child(
+            text(label.to_string())
+                .font(BODY_MED)
+                .color(if active || !dim { u.ink } else { u.muted })
+                .grow(1.0)
+                .min_w(0.0)
+                .truncate()
+                .a11y_hidden(),
+        )
+        .child(
+            text(count.to_string())
+                .font(SMALL)
+                .color(u.faint)
+                .a11y_hidden(),
+        )
+}
+
+/// A rail action: an icon and a label, tinted while its state is on.
+fn rail_action(u: &Ui, key: String, glyph: &'static rune::Icon, label: &str, active: bool) -> El {
+    row()
+        .key(key)
+        .w_full()
+        .h(40.0)
+        .px(12.0)
+        .gap(10.0)
+        .center_y()
+        .radius(crate::ui::r(8.0))
+        .fill(if active { u.selected } else { Color::TRANSPARENT })
+        .hover(u.hover)
+        .focusable(true)
+        .role("button")
+        .label(label.to_string())
+        .child(
+            rune::icon(glyph, 16.0)
+                .color(if active { u.ink } else { u.muted })
+                .a11y_hidden(),
+        )
+        .child(
+            text(label.to_string())
+                .font(BODY_MED)
+                .color(if active { u.ink } else { u.muted })
+                .grow(1.0)
+                .min_w(0.0)
+                .truncate()
+                .a11y_hidden(),
+        )
+}
+
+fn pane_head(u: &Ui, title: &str, count: String, trailing: Option<El>) -> El {
+    let mut r = row()
+        .w_full()
+        .h(32.0)
+        .gap(8.0)
+        .center_y()
+        .child(text(title.to_string()).font(H2).color(u.ink).truncate())
+        .child(text(count).font(SMALL).color(u.faint));
+    if let Some(t) = trailing {
+        r = r.child(spacer()).child(t);
+    }
+    r
+}
+
+/// One installed mod: name, what it is, and its on or off state.
+pub(super) fn mod_row(s: &State, u: &Ui, m: &ModRow, trailing: Option<El>) -> El {
+    // The Installed screen's library is fresher than this load after a toggle.
+    let enabled = s
+        .addons
+        .addons
+        .iter()
+        .find(|addon| addon.slot == m.slot)
+        .map(|addon| addon.enabled)
+        .unwrap_or(m.enabled);
+    let detail = {
+        let mut parts = vec![format!("Slot {:02}", m.slot)];
+        if !m.heroes.is_empty() {
+            parts.push(m.heroes.join(", "));
+        } else if let Some(kind) = m.general {
+            parts.push(kind.label().to_string());
+        }
+        parts.join(" · ")
+    };
+    let slot = m.slot;
+    let mut r = row()
+        .key(format!("locker-mod-{}", m.key))
+        .label(format!("{}, {}", m.label, m.file))
+        .w_full()
+        .h(52.0)
+        .gap(12.0)
+        .center_y()
+        .border_sides([0.0, 0.0, 1.0, 0.0], u.hair)
+        .child(
+            col()
+                .grow(1.0)
+                .min_w(0.0)
                 .child(
-                    text(hero.codename.clone())
-                        .font(LABEL)
-                        .color(u.faint)
+                    text(m.label.clone())
+                        .font(BODY_MED)
+                        .color(if enabled { u.ink } else { u.muted })
                         .truncate(),
                 )
-                .child(
-                    text(if hero.in_catalog {
-                        format!(
-                            "{} catalog path{}",
-                            hero.asset_count,
-                            if hero.asset_count == 1 { "" } else { "s" }
-                        )
-                    } else {
-                        "art only, not in this catalog".to_string()
-                    })
-                    .font(SMALL)
-                    .color(if hero.in_catalog { u.muted } else { u.amber })
-                    .truncate(),
-                ),
+                .child(text(detail).font(SMALL).color(u.faint).truncate()),
+        );
+    if let Some(t) = trailing {
+        r = r.child(t);
+    }
+    r.child(
+        u.toggle(enabled)
+            .key(format!("locker-mod-toggle-{}", m.slot))
+            .label(if enabled {
+                format!("Disable {}", m.label)
+            } else {
+                format!("Enable {}", m.label)
+            })
+            .cursor(rune::Cursor::Pointer)
+            .on_press(move |st: &mut State| st.addon_dialog = Some((slot, !enabled))),
+    )
+}
+
+// --- hero page -------------------------------------------------------------------
+
+fn hero_page(s: &State, u: &Ui, v: &View, hero: &HeroCard) -> El {
+    let (page_w, page_h) = v.page_size;
+    // The full render once it has decoded, the card copy until then.
+    let backdrop = ready_pixels(s, hero.render.as_deref())
+        .or_else(|| pixels_for(s, hero.card.as_deref()))
+        .map(|pixels| {
+        // Full height, natural width, anchored right: Grimoire's `h-full w-auto right-0`.
+        let ratio = hero
+            .render_size
+            .filter(|(w, h)| *w > 0 && *h > 0)
+            .map(|(w, h)| w as f32 / h as f32)
+            .unwrap_or(1.0);
+        let w = (page_h * ratio).round().max(page_w * 0.5);
+        el().pin(None, Some(0.0), Some(0.0), None)
+            .size(w, page_h.round())
+            .pixels_fit(&pixels, SurfaceFit::Fill)
+            .a11y_hidden()
+    });
+
+    let list = sorted_heroes(v);
+    let at = list.iter().position(|h| h.display_name == hero.display_name);
+    let step = |delta: isize| -> Option<String> {
+        let at = at? as isize;
+        let n = list.len() as isize;
+        if n < 2 {
+            return None;
+        }
+        Some(list[((at + delta).rem_euclid(n)) as usize].display_name.clone())
+    };
+    let mut nav = row().gap(4.0);
+    for (glyph, label, target, key) in [
+        (&icons::CHEVRON_LEFT, "Previous hero", step(-1), "locker-prev"),
+        (&icons::CHEVRON_RIGHT, "Next hero", step(1), "locker-next"),
+    ] {
+        if let Some(target) = target {
+            nav = nav.child(
+                u.icon_button(glyph, label)
+                    .key(key)
+                    .cursor(rune::Cursor::Pointer)
+                    .on_press(move |st: &mut State| open_hero(st, &target)),
+            );
+        }
+    }
+
+    let mods: Vec<&ModRow> = v
+        .mods
+        .iter()
+        .filter(|m| m.heroes.iter().any(|name| name == &hero.display_name))
+        .collect();
+    let sounds = hero_sounds(v, hero);
+    let section = v.hero_section;
+    let sections = col()
+        .w_full()
+        .gap(4.0)
+        .role("tablist")
+        .child(
+            rail_row(u, "locker-section-mods".into(), "Skins", mods.len(), section == HeroSection::Mods, mods.is_empty())
+                .on_press(|st: &mut State| st.locker.hero_section = HeroSection::Mods),
+        )
+        .child(
+            rail_row(u, "locker-section-sounds".into(), "Sounds", sounds.len(), section == HeroSection::Sounds, sounds.is_empty())
+                .on_press(|st: &mut State| st.locker.hero_section = HeroSection::Sounds),
+        )
+        .child(
+            rail_row(
+                u,
+                "locker-section-recolor".into(),
+                "Recolor",
+                hero.recolor_paths.len(),
+                section == HeroSection::Recolor,
+                hero.recolor_paths.is_empty(),
+            )
+            .on_press(|st: &mut State| st.locker.hero_section = HeroSection::Recolor),
+        );
+
+    let pinned_here = v
+        .pinned
+        .as_deref()
+        .is_some_and(|pinned| same_hero(hero, pinned));
+    let mut identity = col()
+        .w_full()
+        .px(12.0)
+        .gap(8.0)
+        .child(name_plate(s, u, hero, RAIL_W - 72.0, 34.0, false));
+    if pinned_here {
+        identity = identity.child(text("Your project hero").font(SMALL).color(u.muted));
+    }
+
+    // Star, shuffle and the card picker, as three rail rows. The star and the switch are
+    // states, so only the switch uses the accent.
+    let favorite = v.prefs.is_favorite(&hero.display_name);
+    let shuffles = v.prefs.shuffles(&hero.display_name);
+    let star_name = hero.display_name.clone();
+    let shuffle_name = hero.display_name.clone();
+    let card_hero = hero.clone();
+    let controls = col()
+        .w_full()
+        .gap(2.0)
+        .child(
+            rail_action(
+                u,
+                format!("locker-hero-star-{}", hero.codename),
+                &icons::HEART,
+                if favorite { "Starred" } else { "Star this hero" },
+                favorite,
+            )
+            .cursor(rune::Cursor::Pointer)
+            .on_press(move |st: &mut State| {
+                crate::data::toggle_locker_favorite(st, &star_name)
+            }),
+        )
+        .child(
+            rail_action(
+                u,
+                format!("locker-hero-card-{}", hero.codename),
+                &icons::SQUARE_PEN,
+                "Custom card",
+                hero.custom.is_some(),
+            )
+            .cursor(rune::Cursor::Pointer)
+            .on_press(move |st: &mut State| cards::open_card_dialog(st, &card_hero)),
         )
         .child(
             row()
+                .key(format!("locker-hero-shuffle-{}", hero.codename))
                 .w_full()
-                .px(11.0)
-                .py(8.0)
-                .gap(7.0)
+                .h(40.0)
+                .px(12.0)
+                .gap(12.0)
                 .center_y()
-                .border_sides([1.0, 0.0, 0.0, 0.0], u.hair)
+                .radius(crate::ui::r(8.0))
+                .hover(u.hover)
+                .label(format!("Shuffle {} skins at launch", hero.display_name))
                 .child(
-                    text(if hero.recolor_paths.is_empty() {
-                        "no recolor target".to_string()
-                    } else {
-                        format!("{} recolor target(s)", hero.recolor_paths.len())
-                    })
-                    .font(LABEL)
-                    .color(if hero.recolor_paths.is_empty() { u.faint } else { u.violet })
-                    .grow(1.0)
-                    .truncate(),
+                    text("Shuffle at launch".to_string())
+                        .font(BODY_MED)
+                        .color(u.ink)
+                        .grow(1.0)
+                        .min_w(0.0)
+                        .truncate(),
                 )
                 .child(
-                    u.action("Recolor", ActionKind::Secondary)
-                        .key(format!("recolor-{}", hero.codename))
-                        .on_press({
-                            let codename = hero.codename.clone();
-                            let display_name = hero.display_name.clone();
-                            let in_catalog = hero.in_catalog;
-                            let targets = hero.recolor_paths.clone();
-                            move |st: &mut State| {
-                                st.locker.selected = Some(codename.clone());
-                                st.locker.panel = Some(Panel {
-                                    codename: codename.clone(),
-                                    display_name: display_name.clone(),
-                                    in_catalog,
-                                    targets: targets.clone(),
-                                    palette: 0,
-                                    note: TextEdit::new(""),
-                                    log: None,
-                                });
-                            }
+                    u.toggle(shuffles)
+                        .cursor(rune::Cursor::Pointer)
+                        .on_press(move |st: &mut State| {
+                            crate::data::toggle_locker_shuffle(st, &shuffle_name)
+                        }),
+                ),
+        );
+
+    let rail = col()
+        .key("locker-hero-rail")
+        .w(RAIL_W)
+        .h_full()
+        .padding(24.0)
+        .gap(24.0)
+        .child(back_row(u, Some(nav)))
+        .child(identity)
+        .child(sections)
+        .child(controls);
+
+    let pane_body = match section {
+        HeroSection::Mods => {
+            let browse_name = hero.display_name.clone();
+            let browse = move |kind: ActionKind| {
+                let name = browse_name.clone();
+                u.icon_action(&icons::COMPASS, "Browse skins", kind)
+                    .key("locker-find-mods")
+                    .label(format!("Browse skins for {name}"))
+                    .cursor(rune::Cursor::Pointer)
+                    .on_press(move |st: &mut State| {
+                        crate::screens::browse::open_for_hero(st, &name)
+                    })
+            };
+            let empty = mods.is_empty();
+            let mut c = col().w_full().gap(8.0).child(pane_head(
+                u,
+                "Skins",
+                plural(mods.len(), "mod", "mods"),
+                (!empty).then(|| browse(ActionKind::Secondary)),
+            ));
+            if empty {
+                c = c
+                    .child(
+                        text(format!("No installed mod changes {} yet.", hero.display_name))
+                            .font(BODY)
+                            .color(u.muted)
+                            .wrap(),
+                    )
+                    .child(row().pt(8.0).child(browse(ActionKind::Primary)));
+            } else {
+                c = c.child(variants::skins_list(s, u, v, hero, true));
+            }
+            c
+        }
+        HeroSection::Sounds => {
+            let empty = sounds.is_empty();
+            let mut c = col().w_full().gap(8.0).child(pane_head(
+                u,
+                "Ability sounds",
+                plural(sounds.len(), "mod", "mods"),
+                None,
+            ));
+            if empty {
+                c = c.child(
+                    text(format!(
+                        "No installed mod changes {}'s ability sounds yet.",
+                        hero.display_name
+                    ))
+                    .font(BODY)
+                    .color(u.muted)
+                    .wrap(),
+                );
+            } else {
+                c = c.child(variants::sounds_list(s, u, v, hero));
+            }
+            c
+        }
+        HeroSection::Recolor => {
+            let recolor_hero = hero.clone();
+            let can = !hero.recolor_paths.is_empty();
+            let action = u
+                .icon_action(
+                    &icons::SPARKLES,
+                    "Recolor",
+                    if can { ActionKind::Primary } else { ActionKind::Secondary },
+                )
+                .key(format!("recolor-{}", hero.codename))
+                .cursor(rune::Cursor::Pointer)
+                .on_press(move |st: &mut State| open_recolor(st, &recolor_hero));
+            let mut c = col().w_full().gap(8.0).child(pane_head(
+                u,
+                "Recolor",
+                plural(hero.recolor_paths.len(), "file", "files"),
+                Some(action),
+            ));
+            if hero.recolor_paths.is_empty() {
+                c = c.child(
+                    text(if hero.in_catalog {
+                        "This hero has no materials or textures to recolor yet."
+                    } else {
+                        "Index the game files to find this hero's materials."
+                    })
+                    .font(BODY)
+                    .color(u.muted)
+                    .wrap(),
+                );
+            } else {
+                let mut rows = col().w_full();
+                for target in &hero.recolor_paths {
+                    let (folder, file) = target.rsplit_once('/').unwrap_or(("", target));
+                    rows = rows.child(
+                        col()
+                            .w_full()
+                            .h(48.0)
+                            .justify_center()
+                            .border_sides([0.0, 0.0, 1.0, 0.0], u.hair)
+                            .child(text(file.to_string()).font(MONO).color(u.ink).truncate().selectable(true))
+                            .child(text(folder.to_string()).font(SMALL).color(u.faint).truncate()),
+                    );
+                }
+                c = c.child(rows);
+            }
+            c
+        }
+    };
+
+    let pane = col()
+        .key("locker-hero-pane")
+        .w(PANE_W)
+        .h_full()
+        .min_h(0.0)
+        .scroll(ScrollSpec {
+            stick_bottom: false,
+        })
+        .child(col().w_full().padding(24.0).child(pane_body));
+
+    drill_shell(
+        u,
+        &format!("locker-hero-{}", hero.codename),
+        backdrop,
+        0.0,
+        row().w_full().h_full().child(rail).child(pane),
+    )
+}
+
+fn open_recolor(st: &mut State, hero: &HeroCard) {
+    st.locker.selected = Some(hero.codename.clone());
+    st.locker.panel = Some(Panel {
+        codename: hero.codename.clone(),
+        display_name: hero.display_name.clone(),
+        in_catalog: hero.in_catalog,
+        targets: hero.recolor_paths.clone(),
+        palette: 0,
+        note: TextEdit::new(""),
+        log: None,
+    });
+}
+
+pub(super) fn plural(n: usize, one: &str, many: &str) -> String {
+    format!("{n} {}", if n == 1 { one } else { many })
+}
+
+pub(super) fn hero_sounds<'a>(v: &'a View, hero: &HeroCard) -> Vec<&'a ModRow> {
+    let mut rows: Vec<&ModRow> = v
+        .mods
+        .iter()
+        .filter(|m| m.sounds.iter().any(|s| s.hero == hero.display_name))
+        .collect();
+    rows.sort_by(|a, b| {
+        let ability = |m: &ModRow| {
+            m.sounds
+                .iter()
+                .find(|s| s.hero == hero.display_name)
+                .map(|s| s.ability)
+                .unwrap_or(0)
+        };
+        ability(a)
+            .cmp(&ability(b))
+            .then_with(|| a.label.to_lowercase().cmp(&b.label.to_lowercase()))
+    });
+    rows
+}
+
+// --- General page ----------------------------------------------------------------
+
+fn tab_mods<'a>(v: &'a View, tab: &GeneralTab) -> Vec<&'a ModRow> {
+    let mut mods: Vec<&ModRow> = match tab {
+        GeneralTab::Type(kind) => v.mods.iter().filter(|m| m.general == Some(*kind)).collect(),
+        GeneralTab::Custom(id) => match v.categories.iter().find(|c| &c.id == id) {
+            Some(category) => v
+                .mods
+                .iter()
+                .filter(|m| category.keys.iter().any(|key| key == &m.key))
+                .collect(),
+            None => Vec::new(),
+        },
+    };
+    // Enabled first, then by name, as Grimoire's groups.
+    mods.sort_by(|a, b| {
+        b.enabled
+            .cmp(&a.enabled)
+            .then_with(|| a.label.to_lowercase().cmp(&b.label.to_lowercase()))
+    });
+    mods
+}
+
+fn general_page(s: &State, u: &Ui, v: &View) -> El {
+    let (page_w, page_h) = v.page_size;
+    let backdrop = match ready_pixels(s, v.general_bg.as_deref()) {
+        Some(pixels) => Some(cover_at(&pixels, v.general_bg_size, page_w, page_h, 50.0, 50.0)),
+        None => pixels_for(s, v.general_card.as_deref())
+            .map(|pixels| cover_at(&pixels, v.general_card_size, page_w, page_h, 50.0, 50.0)),
+    };
+    let (total, _) = general_counts(v);
+    let active = v
+        .general_tab
+        .clone()
+        .unwrap_or(GeneralTab::Type(GeneralType::SoulContainer));
+
+    let mut tabs = col().w_full().gap(4.0).role("tablist");
+    for kind in GeneralType::ALL {
+        let count = v.mods.iter().filter(|m| m.general == Some(kind)).count();
+        tabs = tabs.child(
+            rail_row(
+                u,
+                format!("locker-tab-{}", kind.id()),
+                kind.label(),
+                count,
+                active == GeneralTab::Type(kind),
+                count == 0,
+            )
+            .on_press(move |st: &mut State| st.locker.general_tab = Some(GeneralTab::Type(kind))),
+        );
+    }
+    if !v.categories.is_empty() {
+        tabs = tabs.child(el().w_full().h(1.0).my(4.0).fill(u.hair).a11y_hidden());
+    }
+    for category in &v.categories {
+        let tab = GeneralTab::Custom(category.id.clone());
+        let count = tab_mods(v, &tab).len();
+        let id = category.id.clone();
+        tabs = tabs.child(
+            rail_row(
+                u,
+                format!("locker-tab-custom-{}", category.id),
+                &category.name,
+                count,
+                active == tab,
+                count == 0,
+            )
+            .on_press(move |st: &mut State| {
+                st.locker.general_tab = Some(GeneralTab::Custom(id.clone()))
+            }),
+        );
+    }
+    let small_link = |key: &'static str, glyph: &'static rune::Icon, label: &'static str| {
+        row()
+            .key(key)
+            .h(28.0)
+            .pl(10.0)
+            .pr(12.0)
+            .gap(6.0)
+            .center_y()
+            .radius(crate::ui::r(6.0))
+            .hover(u.hover)
+            .focusable(true)
+            .role("button")
+            .label(label)
+            .cursor(rune::Cursor::Pointer)
+            .child(rune::icon(glyph, 14.0).color(u.muted).a11y_hidden())
+            .child(text(label).font(SMALL).color(u.muted).a11y_hidden())
+    };
+    let mut links = col().pt(4.0).gap(2.0).child(
+        small_link("locker-new-category", &icons::PLUS, "New category")
+            .on_press(|st: &mut State| open_name_dialog(st, None, None)),
+    );
+    if !v.categories.is_empty() {
+        links = links.child(
+            small_link("locker-manage-categories", &icons::SLIDERS_HORIZONTAL, "Manage")
+                .on_press(|st: &mut State| st.locker.dialog = Some(Dialog::Manage)),
+        );
+    }
+    tabs = tabs.child(links);
+    tabs = tabs
+        .child(el().w_full().h(1.0).my(4.0).fill(u.hair).a11y_hidden())
+        .child(
+            row()
+                .key("locker-global")
+                .w_full()
+                .h(40.0)
+                .px(12.0)
+                .gap(12.0)
+                .center_y()
+                .radius(crate::ui::r(8.0))
+                .label("Load the Global mods folder before addons")
+                .child(
+                    col()
+                        .grow(1.0)
+                        .min_w(0.0)
+                        .child(
+                            text("Global mods folder")
+                                .font(BODY_MED)
+                                .color(u.ink)
+                                .truncate(),
+                        )
+                        .child(
+                            text(if v.global.configured {
+                                "Loads before addons"
+                            } else {
+                                "Off"
+                            })
+                            .font(SMALL)
+                            .color(u.faint)
+                            .truncate(),
+                        ),
+                )
+                .child(
+                    u.toggle(v.global.configured)
+                        .cursor(rune::Cursor::Pointer)
+                        .on_press(|st: &mut State| {
+                            let on = !st.locker.global.configured;
+                            crate::data::set_locker_global(st, on)
                         }),
                 ),
         )
-        .on_press(move |st: &mut State| {
-            st.locker.selected = Some(codename.clone());
+        .child(
+            text("A mod in game/citadel/grimoire wins any file it shares with an addon.")
+                .font(SMALL)
+                .color(u.faint)
+                .px(12.0)
+                .wrap(),
+        );
+
+    let rail = col()
+        .key("locker-general-rail")
+        .w(RAIL_W)
+        .h_full()
+        .min_h(0.0)
+        .scroll(ScrollSpec {
+            stick_bottom: false,
         })
-}
+        .child(
+            col()
+                .w_full()
+                .padding(24.0)
+                .gap(24.0)
+                .child(back_row(u, None))
+                .child(
+                    row()
+                        .px(12.0)
+                        .gap(8.0)
+                        .items_end()
+                        .child(text("General").font(H1).color(u.ink))
+                        .child(text(plural(total, "mod", "mods")).font(SMALL).color(u.faint).pb(2.0)),
+                )
+                .child(tabs),
+        );
 
-fn hero_tint(u: &Ui, codename: &str) -> Color {
-    let palette = [u.violet, u.teal, u.accent, u.rose];
-    let index = codename.bytes().map(|byte| byte as usize).sum::<usize>() % palette.len();
-    palette[index].alpha(0.10)
-}
-
-fn initials(name: &str) -> String {
-    name.split_whitespace()
-        .take(2)
-        .filter_map(|part| part.chars().next())
-        .collect::<String>()
-        .to_uppercase()
-}
-
-fn loading(u: &Ui) -> El {
-    let mut grid = col().w_full().gap(12.0);
-    for _ in 0..2 {
-        let mut r = row().w_full().gap(12.0);
-        for _ in 0..4 {
-            r = r.child(
-                el()
-                    .grow(1.0)
-                    .min_w(0.0)
-                    .aspect_ratio(0.78)
-                    .radius(14.0)
-                    .fill(Color::WHITE.alpha(0.022))
-                    .border(1.0, u.hair),
-            );
+    let mods = tab_mods(v, &active);
+    let (title, custom_id) = match &active {
+        GeneralTab::Type(kind) => (kind.label().to_string(), None),
+        GeneralTab::Custom(id) => (
+            v.categories
+                .iter()
+                .find(|c| &c.id == id)
+                .map(|c| c.name.clone())
+                .unwrap_or_default(),
+            Some(id.clone()),
+        ),
+    };
+    let add = custom_id.clone().map(|id| {
+        u.icon_action(&icons::PLUS, "Add mods", ActionKind::Secondary)
+            .key("locker-add-mods")
+            .cursor(rune::Cursor::Pointer)
+            .on_press(move |st: &mut State| st.locker.dialog = Some(Dialog::Picker(id.clone())))
+    });
+    let mut pane_body = col()
+        .w_full()
+        .gap(8.0)
+        .child(pane_head(u, &title, plural(mods.len(), "mod", "mods"), add));
+    if mods.is_empty() {
+        let (line, action) = match &custom_id {
+            Some(_) => (
+                format!("Nothing in {title} yet. Add mods to file them here."),
+                None,
+            ),
+            None => (
+                format!("No {title} installed yet. Find some in Browse and they show up here."),
+                Some(
+                    u.action("Browse mods", ActionKind::Secondary)
+                        .key("locker-browse")
+                        .cursor(rune::Cursor::Pointer)
+                        .on_press(|st: &mut State| st.go(Screen::Browse)),
+                ),
+            ),
+        };
+        let mut empty = col()
+            .w_full()
+            .pt(8.0)
+            .gap(12.0)
+            .items_start()
+            .child(text(line).font(BODY).color(u.muted).wrap());
+        if let Some(action) = action {
+            empty = empty.child(action);
         }
-        grid = grid.child(r);
+        pane_body = pane_body.child(empty);
+    } else {
+        let mut rows = col().w_full();
+        for m in mods {
+            let trailing = custom_id.clone().map(|id| {
+                let key = m.key.clone();
+                u.icon_button(&icons::X, &format!("Remove {} from {title}", m.label))
+                    .key(format!("locker-unfile-{}", m.key))
+                    .cursor(rune::Cursor::Pointer)
+                    .on_press(move |st: &mut State| {
+                        let next = deadlock_core::locker::toggle_category_membership(
+                            &st.locker.categories,
+                            &id,
+                            &key,
+                        );
+                        crate::data::save_locker_categories(st, next);
+                    })
+            });
+            rows = rows.child(mod_row(s, u, m, trailing));
+        }
+        pane_body = pane_body.child(rows);
     }
-    grid
+
+    let pane = col()
+        .key("locker-general-pane")
+        .grow(1.0)
+        .max_w(640.0)
+        .min_w(0.0)
+        .h_full()
+        .min_h(0.0)
+        .scroll(ScrollSpec {
+            stick_bottom: false,
+        })
+        .child(col().w_full().padding(24.0).child(pane_body));
+
+    drill_shell(
+        u,
+        "locker-general-page",
+        backdrop,
+        0.55,
+        row().w_full().h_full().child(rail).child(pane),
+    )
 }
 
-/// Mounted at the root so the recolor brief overlays the shell.
-pub fn dialog(s: &State, u: &Ui) -> Option<El> {
-    s.locker
-        .panel
+fn open_name_dialog(st: &mut State, editing: Option<String>, file_key: Option<String>) {
+    let current = editing
         .as_ref()
-        .map(|panel| recolor_dialog(u, panel))
+        .and_then(|id| st.locker.categories.iter().find(|c| &c.id == id))
+        .map(|c| c.name.clone())
+        .unwrap_or_default();
+    st.locker.dialog = Some(Dialog::Name(NameDialog {
+        editing,
+        file_key,
+        name: TextEdit::new(&current),
+        error: None,
+    }));
+}
+
+fn submit_name(st: &mut State) {
+    let Some(Dialog::Name(dialog)) = st.locker.dialog.as_ref() else {
+        return;
+    };
+    let name = dialog.name.text.clone();
+    let editing = dialog.editing.clone();
+    let file_key = dialog.file_key.clone();
+    let categories = st.locker.categories.clone();
+    match editing {
+        Some(id) => {
+            let (next, applied) = deadlock_core::locker::rename_category(&categories, &id, &name);
+            if applied {
+                crate::data::save_locker_categories(st, next);
+                st.locker.dialog = Some(Dialog::Manage);
+            } else if let Some(Dialog::Name(dialog)) = st.locker.dialog.as_mut() {
+                dialog.error = Some(if name.trim().is_empty() {
+                    "Give the category a name.".to_string()
+                } else {
+                    "Another category already uses that name.".to_string()
+                });
+            }
+        }
+        None => {
+            let (mut next, id) = deadlock_core::locker::create_category(&categories, &name);
+            let Some(id) = id else {
+                if let Some(Dialog::Name(dialog)) = st.locker.dialog.as_mut() {
+                    dialog.error = Some("Give the category a name.".to_string());
+                }
+                return;
+            };
+            if let Some(key) = file_key {
+                next = deadlock_core::locker::add_category_membership(&next, &id, &key);
+            }
+            crate::data::save_locker_categories(st, next);
+            st.locker.general_tab = Some(GeneralTab::Custom(id));
+            st.locker.dialog = None;
+        }
+    }
+}
+
+// --- dialogs ---------------------------------------------------------------------
+
+/// Mounted at the root so dialogs overlay the shell.
+pub fn dialog(s: &State, u: &Ui) -> Option<El> {
+    if let Some(panel) = s.locker.panel.as_ref() {
+        return Some(recolor_dialog(u, panel));
+    }
+    match s.locker.dialog.as_ref()? {
+        Dialog::Name(dialog) => Some(name_dialog(u, dialog)),
+        Dialog::Picker(id) => Some(picker_dialog(s, u, id)),
+        Dialog::Manage => Some(manage_dialog(u, &s.locker.categories)),
+        Dialog::Shuffle => Some(cards::shuffle_dialog(s, u)),
+        Dialog::Applied => Some(cards::applied_dialog(s, u)),
+        Dialog::Card(dialog) => Some(cards::card_dialog(s, u, dialog)),
+    }
+}
+
+pub(super) fn close_dialog(st: &mut State) {
+    st.locker.dialog = None;
+}
+
+pub(super) fn shell(u: &Ui, key: &str, label: String, body: El) -> El {
+    u.dialog_shell()
+        .key(key.to_string())
+        .role("dialog")
+        .label(label)
+        .w(480.0)
+        .max_w(480.0)
+        .padding(24.0)
+        .modal(true, close_dialog)
+        .on_key(move |st: &mut State, ev: &rune::KeyEvent, _| {
+            if ev.key == rune::Key::Escape {
+                close_dialog(st);
+                true
+            } else {
+                false
+            }
+        })
+        .child(body)
+}
+
+pub(super) fn dialog_title(u: &Ui, title: String, close_key: &'static str) -> El {
+    row()
+        .w_full()
+        .gap(8.0)
+        .center_y()
+        .child(text(title).font(H1).color(u.ink).grow(1.0).min_w(0.0).truncate())
+        .child(
+            u.icon_button(&icons::X, "Close")
+                .key(close_key)
+                .cursor(rune::Cursor::Pointer)
+                .on_press(close_dialog),
+        )
+}
+
+fn name_dialog(u: &Ui, dialog: &NameDialog) -> El {
+    let renaming = dialog.editing.is_some();
+    let title = if renaming { "Rename category" } else { "New category" };
+    let mut body = col()
+        .w_full()
+        .gap(16.0)
+        .child(dialog_title(u, title.to_string(), "locker-name-close"))
+        .child(
+            row()
+                .w_full()
+                .h(32.0)
+                .px(10.0)
+                .center_y()
+                .radius(crate::ui::r(8.0))
+                .fill(u.field)
+                .border(1.0, u.hair)
+                .child(
+                    rune::text_input(&dialog.name, BODY)
+                        .key("locker-category-name")
+                        .label("Category name")
+                        .single_line()
+                        .autofocus()
+                        .color(u.ink)
+                        .placeholder("e.g. My favorites", u.faint)
+                        .caret(u.accent, u.accent.alpha(0.20))
+                        .on_edit(|st: &mut State| match st.locker.dialog.as_mut() {
+                            Some(Dialog::Name(dialog)) => &mut dialog.name,
+                            _ => &mut st.locker.notes_placeholder,
+                        })
+                        .on_submit(|st: &mut State, _| submit_name(st))
+                        .grow(1.0)
+                        .min_w(0.0),
+                ),
+        );
+    if let Some(error) = &dialog.error {
+        body = body.child(text(error.clone()).font(SMALL).color(u.rose));
+    }
+    let ready = !dialog.name.text.trim().is_empty();
+    body = body.child(
+        row()
+            .w_full()
+            .gap(8.0)
+            .child(spacer())
+            .child(
+                u.action("Cancel", ActionKind::Ghost)
+                    .key("locker-name-cancel")
+                    .cursor(rune::Cursor::Pointer)
+                    .on_press(close_dialog),
+            )
+            .child(
+                u.action(if renaming { "Rename" } else { "Create" }, ActionKind::Primary)
+                    .key("locker-name-save")
+                    .disabled(!ready)
+                    .opacity(if ready { 1.0 } else { 0.45 })
+                    .cursor(rune::Cursor::Pointer)
+                    .on_press(submit_name),
+            ),
+    );
+    shell(u, "locker-name-dialog", title.to_string(), body)
+}
+
+fn picker_dialog(s: &State, u: &Ui, id: &str) -> El {
+    let v = &s.locker;
+    let Some(category) = v.categories.iter().find(|c| c.id == id) else {
+        return shell(
+            u,
+            "locker-picker",
+            "Add mods".to_string(),
+            dialog_title(u, "Add mods".to_string(), "locker-picker-close"),
+        );
+    };
+    let title = format!("Add mods to {}", category.name);
+    let mut list = col().w_full();
+    let mut mods: Vec<&ModRow> = v.mods.iter().collect();
+    mods.sort_by_key(|a| a.label.to_lowercase());
+    for m in &mods {
+        let filed = category.keys.iter().any(|key| key == &m.key);
+        let (cid, key) = (category.id.clone(), m.key.clone());
+        let what = if !m.heroes.is_empty() {
+            m.heroes.join(", ")
+        } else {
+            m.general
+                .map(|kind| kind.label().to_string())
+                .unwrap_or_else(|| format!("Slot {:02}", m.slot))
+        };
+        list = list.child(
+            row()
+                .key(format!("locker-pick-{}", m.key))
+                .w_full()
+                .h(44.0)
+                .px(8.0)
+                .gap(12.0)
+                .center_y()
+                .radius(crate::ui::r(8.0))
+                .hover(u.hover)
+                .focusable(true)
+                .role("checkbox")
+                .checked(filed)
+                .label(m.label.clone())
+                .cursor(rune::Cursor::Pointer)
+                .on_press(move |st: &mut State| {
+                    let next = deadlock_core::locker::toggle_category_membership(
+                        &st.locker.categories,
+                        &cid,
+                        &key,
+                    );
+                    crate::data::save_locker_categories(st, next);
+                })
+                .child(
+                    el().size(16.0, 16.0)
+                        .center()
+                        .radius(4.0)
+                        .fill(if filed { u.accent } else { Color::TRANSPARENT })
+                        .border(1.0, if filed { u.accent } else { u.hair_strong })
+                        .child(if filed {
+                            rune::icon(&icons::CHECK, 12.0).color(u.accent_ink)
+                        } else {
+                            el()
+                        })
+                        .a11y_hidden(),
+                )
+                .child(
+                    col()
+                        .grow(1.0)
+                        .min_w(0.0)
+                        .child(text(m.label.clone()).font(BODY_MED).color(u.ink).truncate())
+                        .child(text(what).font(SMALL).color(u.faint).truncate())
+                        .a11y_hidden(),
+                ),
+        );
+    }
+    let body = col()
+        .w_full()
+        .gap(16.0)
+        .child(dialog_title(u, title.clone(), "locker-picker-close"))
+        .child(
+            text("Filing a mod here never turns it on or off.")
+                .font(BODY)
+                .color(u.muted),
+        )
+        .child(if mods.is_empty() {
+            text("No installed mods yet.").font(BODY).color(u.muted)
+        } else {
+            col()
+                .key("locker-picker-scroll")
+                .w_full()
+                .max_h(360.0)
+                .scroll(ScrollSpec {
+                    stick_bottom: false,
+                })
+                .child(list)
+        })
+        .child(
+            row().w_full().child(spacer()).child(
+                u.action("Done", ActionKind::Primary)
+                    .key("locker-picker-done")
+                    .cursor(rune::Cursor::Pointer)
+                    .on_press(close_dialog),
+            ),
+        );
+    shell(u, "locker-picker", title, body)
+}
+
+fn manage_dialog(u: &Ui, categories: &[LockerCategory]) -> El {
+    let mut list = col().w_full();
+    for category in categories {
+        let (rename_id, delete_id) = (category.id.clone(), category.id.clone());
+        list = list.child(
+            row()
+                .key(format!("locker-manage-{}", category.id))
+                .w_full()
+                .h(44.0)
+                .gap(4.0)
+                .center_y()
+                .border_sides([0.0, 0.0, 1.0, 0.0], u.hair)
+                .child(
+                    text(category.name.clone())
+                        .font(BODY_MED)
+                        .color(u.ink)
+                        .grow(1.0)
+                        .min_w(0.0)
+                        .truncate(),
+                )
+                .child(
+                    text(plural(category.keys.len(), "mod", "mods"))
+                        .font(SMALL)
+                        .color(u.faint)
+                        .pr(8.0),
+                )
+                .child(
+                    u.icon_button(&icons::SQUARE_PEN, &format!("Rename {}", category.name))
+                        .key(format!("locker-rename-{}", category.id))
+                        .cursor(rune::Cursor::Pointer)
+                        .on_press(move |st: &mut State| {
+                            open_name_dialog(st, Some(rename_id.clone()), None)
+                        }),
+                )
+                .child(
+                    u.icon_button(&icons::TRASH_2, &format!("Delete {}", category.name))
+                        .key(format!("locker-delete-{}", category.id))
+                        .cursor(rune::Cursor::Pointer)
+                        .on_press(move |st: &mut State| {
+                            let next = deadlock_core::locker::delete_category(
+                                &st.locker.categories,
+                                &delete_id,
+                            );
+                            if st.locker.general_tab == Some(GeneralTab::Custom(delete_id.clone())) {
+                                st.locker.general_tab = None;
+                                open_general(st);
+                            }
+                            crate::data::save_locker_categories(st, next);
+                        }),
+                ),
+        );
+    }
+    let body = col()
+        .w_full()
+        .gap(16.0)
+        .child(dialog_title(u, "Manage categories".to_string(), "locker-manage-close"))
+        .child(
+            text("Deleting a category never deletes its mods.")
+                .font(BODY)
+                .color(u.muted),
+        )
+        .child(if categories.is_empty() {
+            text("No categories yet.").font(BODY).color(u.muted)
+        } else {
+            list
+        })
+        .child(
+            row().w_full().child(spacer()).child(
+                u.action("Done", ActionKind::Primary)
+                    .key("locker-manage-done")
+                    .cursor(rune::Cursor::Pointer)
+                    .on_press(close_dialog),
+            ),
+        );
+    shell(u, "locker-manage", "Manage categories".to_string(), body)
+}
+
+/// A representative colour for a palette preset, for its swatch.
+fn swatch(name: &str, hue_shift: i32, saturation: f64) -> Color {
+    let hue = match name.to_ascii_lowercase().as_str() {
+        "ember" => 50.0,
+        "frost" => 215.0,
+        "toxic" => 140.0,
+        "void" => 295.0,
+        _ => (30 + hue_shift).rem_euclid(360) as f32,
+    };
+    oklch(0.72, (0.11 * saturation as f32).clamp(0.04, 0.17), hue)
+}
+
+fn title_case(s: &str) -> String {
+    let mut chars = s.chars();
+    match chars.next() {
+        Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+        None => String::new(),
+    }
 }
 
 fn recolor_dialog(u: &Ui, panel: &Panel) -> El {
     let palettes = deadlock_core::recolor::presets();
-    let mut targets = col().w_full().gap(3.0);
+
+    let mut options = el().w_full().equal_columns(palettes.len().max(1)).gap(8.0);
+    for (index, palette) in palettes.iter().enumerate() {
+        let on = index == panel.palette;
+        options = options.child(
+            row()
+                .key(format!("palette-{}", palette.name))
+                .h(36.0)
+                .px(12.0)
+                .gap(8.0)
+                .center_y()
+                .radius(crate::ui::r(8.0))
+                .fill(if on { u.selected } else { Color::TRANSPARENT })
+                .border(1.0, if on { u.hair_strong } else { u.hair })
+                .hover(u.hover)
+                .focusable(true)
+                .role("radio")
+                .checked(on)
+                .label(format!("{} palette", palette.name))
+                .cursor(rune::Cursor::Pointer)
+                .on_press(move |st: &mut State| {
+                    if let Some(panel) = st.locker.panel.as_mut() {
+                        panel.palette = index;
+                    }
+                })
+                .child(
+                    el().size(10.0, 10.0)
+                        .radius(5.0)
+                        .fill(swatch(&palette.name, palette.hue_shift, palette.saturation))
+                        .a11y_hidden(),
+                )
+                .child(
+                    text(title_case(&palette.name))
+                        .font(BODY_MED)
+                        .color(if on { u.ink } else { u.muted })
+                        .a11y_hidden(),
+                ),
+        );
+    }
+    let chosen_note = palettes
+        .get(panel.palette)
+        .map(|palette| title_case(&palette.note))
+        .unwrap_or_default();
+
+    let mut files = col().w_full().gap(4.0);
     if panel.targets.is_empty() {
-        targets = targets.child(
+        files = files.child(
             text(if panel.in_catalog {
-                "The catalog has no material or texture under this hero folder, so there is nothing to recolor yet."
+                "This hero has no materials or textures to recolor yet."
             } else {
-                "This hero is known only from local art, so there is no game path to edit."
+                "Index the game files to find this hero's materials."
             })
             .font(SMALL)
-            .color(u.amber)
+            .color(u.muted)
             .wrap(),
         );
     } else {
-        for target in panel.targets.iter().take(10) {
-            targets = targets.child(
+        for target in panel.targets.iter().take(6) {
+            files = files.child(
                 text(target.clone())
                     .font(MONO)
                     .color(u.muted)
-                    .wrap_anywhere()
+                    .truncate()
                     .selectable(true),
             );
         }
-        if panel.targets.len() > 10 {
-            targets = targets.child(
-                text(format!("+ {} more target(s)", panel.targets.len() - 10))
-                    .font(LABEL)
+        if panel.targets.len() > 6 {
+            files = files.child(
+                text(format!("and {} more", panel.targets.len() - 6))
+                    .font(SMALL)
                     .color(u.faint),
             );
         }
     }
 
-    let mut swatches = row().w_full().gap(7.0);
-    for (index, palette) in palettes.iter().enumerate() {
-        let on = index == panel.palette;
-        swatches = swatches.child(
-            row()
-                .h(30.0)
-                .px(11.0)
-                .gap(6.0)
-                .center()
-                .radius(15.0)
-                .fill(if on {
-                    u.violet.alpha(0.18)
-                } else {
-                    Color::WHITE.alpha(0.04)
-                })
-                .border(1.0, if on { u.violet.alpha(0.35) } else { u.hair })
-                .focusable(true)
-                .role("button")
-                .label(format!("{} palette", palette.name))
-                .child(u.dot(if on { Tone::Info } else { Tone::Quiet }))
-                .child(
-                    text(format!(
-                        "{} · {}° · x{:.2}",
-                        palette.name, palette.hue_shift, palette.saturation
-                    ))
-                    .font(LABEL)
-                    .color(if on { u.ink } else { u.muted }),
-                )
-                .on_press(move |st: &mut State| {
-                    if let Some(panel) = st.locker.panel.as_mut() {
-                        panel.palette = index;
-                    }
-                }),
-        );
-    }
+    let section = |title: &str, meta: String| {
+        row()
+            .w_full()
+            .gap(6.0)
+            .center_y()
+            .child(text(title.to_string()).font(BODY_MED).color(u.ink))
+            .child(text(meta).font(SMALL).color(u.faint))
+    };
 
     let ready = !panel.targets.is_empty();
-    let body = col()
+    let mut body = col()
         .w_full()
-        .gap(13.0)
+        .gap(16.0)
         .child(
             row()
                 .w_full()
-                .gap(12.0)
+                .gap(8.0)
                 .items_start()
                 .child(
                     col()
                         .grow(1.0)
-                        .gap(5.0)
-                        .child(u.eyebrow("RECOLOR · WORK ORDER"))
+                        .min_w(0.0)
+                        .gap(4.0)
                         .child(
                             text(format!("Recolor {}", panel.display_name))
-                                .font(H2)
-                                .color(u.ink),
+                                .font(H1)
+                                .color(u.ink)
+                                .truncate(),
                         )
                         .child(
-                            text("A brief records the exact targets, the palette and the steps that remain. It is not an edited asset and never writes the game install.")
-                                .font(SMALL)
+                            text("Pick a palette and save a recolor brief to your workspace.")
+                                .font(BODY)
                                 .color(u.muted)
                                 .wrap(),
                         ),
                 )
-                .child(u.glyph_box("◐", Tone::Info, 36.0)),
+                .child(
+                    u.icon_button(&icons::X, "Close")
+                        .key("recolor-close")
+                        .cursor(rune::Cursor::Pointer)
+                        .on_press(|st: &mut State| st.locker.panel = None),
+                ),
         )
-        .child(u.divider())
-        .child(u.field_label("TARGETS"))
-        .child(targets)
-        .child(u.field_label("PALETTE"))
-        .child(swatches)
-        .child(u.field_label("NOTE"))
         .child(
-            rune::text_input(&panel.note, BODY)
-                .key("recolor-note")
-                .label("Recolor note")
-                .single_line()
-                .color(u.ink)
-                .placeholder("why this recolor", u.faint)
-                .caret(u.accent, u.accent.alpha(0.20))
-                .on_edit(|st: &mut State| {
-                    st.locker
-                        .panel
-                        .as_mut()
-                        .map(|panel| &mut panel.note)
-                        .unwrap_or(&mut st.locker.notes_placeholder)
-                }),
+            col()
+                .w_full()
+                .gap(8.0)
+                .child(section("Palette", String::new()))
+                .child(options)
+                .child(text(chosen_note).font(SMALL).color(u.faint)),
+        )
+        .child(
+            col()
+                .w_full()
+                .gap(8.0)
+                .child(section(
+                    "Files",
+                    if panel.targets.is_empty() {
+                        String::new()
+                    } else {
+                        panel.targets.len().to_string()
+                    },
+                ))
+                .child(files),
+        )
+        .child(
+            col()
+                .w_full()
+                .gap(8.0)
+                .child(section("Note", String::new()))
+                .child(
+                    row()
+                        .w_full()
+                        .h(32.0)
+                        .px(10.0)
+                        .center_y()
+                        .radius(crate::ui::r(8.0))
+                        .fill(u.field)
+                        .border(1.0, u.hair)
+                        .child(
+                            rune::text_input(&panel.note, BODY)
+                                .key("recolor-note")
+                                .label("Recolor note")
+                                .single_line()
+                                .color(u.ink)
+                                .placeholder("Optional", u.faint)
+                                .caret(u.accent, u.accent.alpha(0.20))
+                                .on_edit(|st: &mut State| {
+                                    st.locker
+                                        .panel
+                                        .as_mut()
+                                        .map(|panel| &mut panel.note)
+                                        .unwrap_or(&mut st.locker.notes_placeholder)
+                                })
+                                .grow(1.0)
+                                .min_w(0.0),
+                        ),
+                ),
         );
 
-    let mut body = body;
     if let Some(log) = &panel.log {
-        body = body.child(text(log.clone()).font(SMALL).color(u.muted).wrap());
+        let saved = log
+            .strip_prefix("Brief written to ")
+            .and_then(|rest| rest.split(". It lists").next());
+        body = body.child(match saved {
+            Some(path) => row()
+                .w_full()
+                .gap(8.0)
+                .center_y()
+                .child(
+                    rune::icon(&icons::CIRCLE_CHECK, 14.0)
+                        .color(u.muted)
+                        .a11y_hidden(),
+                )
+                .child(
+                    text(format!("Saved to {path}"))
+                        .font(SMALL)
+                        .color(u.prose)
+                        .truncate()
+                        .selectable(true)
+                        .grow(1.0)
+                        .min_w(0.0),
+                ),
+            None => text(log.clone()).font(SMALL).color(u.rose).wrap(),
+        });
     }
 
     body = body.child(
         row()
             .w_full()
             .gap(8.0)
+            .child(spacer())
             .child(
-                u.action("Close", ActionKind::Ghost)
-                    .grow(1.0)
+                u.action("Cancel", ActionKind::Ghost)
+                    .key("recolor-cancel")
+                    .cursor(rune::Cursor::Pointer)
                     .on_press(|st: &mut State| st.locker.panel = None),
             )
             .child(
-                u.action("Write brief", ActionKind::Primary)
-                    .grow(1.0)
+                u.action("Save brief", ActionKind::Primary)
+                    .key("recolor-save")
                     .disabled(!ready)
                     .opacity(if ready { 1.0 } else { 0.45 })
+                    .cursor(rune::Cursor::Pointer)
                     .on_press(|st: &mut State| crate::data::write_recolor_brief(st)),
             ),
     );
@@ -615,10 +2384,10 @@ fn recolor_dialog(u: &Ui, panel: &Panel) -> El {
     u.dialog_shell()
         .key("recolor-dialog")
         .role("dialog")
-        .label("Recolor brief")
-        .w(640.0)
-        .max_w(640.0)
-        .padding(1.0)
+        .label(format!("Recolor {}", panel.display_name))
+        .w(520.0)
+        .max_w(520.0)
+        .padding(24.0)
         .modal(true, close)
         .on_key(move |st: &mut State, ev: &rune::KeyEvent, _| {
             if ev.key == rune::Key::Escape {
@@ -628,11 +2397,297 @@ fn recolor_dialog(u: &Ui, panel: &Panel) -> El {
                 false
             }
         })
-        .child(u.dialog_core().padding(20.0).child(body))
+        .child(body)
 }
 
 fn same_hero(hero: &HeroCard, key: &str) -> bool {
     let wanted = deadlock_core::locker::hero_asset_key(key);
-    deadlock_core::locker::hero_asset_key(&hero.codename) == wanted
+    if deadlock_core::locker::hero_asset_key(&hero.codename) == wanted
         || deadlock_core::locker::hero_asset_key(&hero.display_name) == wanted
+    {
+        return true;
+    }
+    // A project target names a folder such as `inferno_v4`.
+    deadlock_core::locker::hero_for_codename(key).is_some_and(|roster| roster.name == hero.display_name)
+}
+
+// --- scenes ------------------------------------------------------------------------
+
+/// A hero page from the live roster.
+pub fn scene_hero(s: &mut State) {
+    s.screen = Screen::Locker;
+    if rune::is_headless() {
+        crate::data::locker_now(s);
+    }
+    open_hero(s, "Haze");
+}
+
+/// The hero page's Browse skins pressed: Browse on Skins with the hero picked.
+pub fn scene_browse_hero(s: &mut State) {
+    scene_hero(s);
+    crate::screens::browse::open_for_hero(s, "Haze");
+    if rune::is_headless() {
+        crate::data::browse_now(s, 1);
+    }
+}
+
+/// Installed mods the screens draw in a scene: a real install may be absent, and a page of
+/// empty rows shows nothing about the layout.
+fn fixture_mods(s: &mut State) {
+    if !s.locker.mods.is_empty() {
+        return;
+    }
+    let sound = |hero: &str, ability: u8| LockerSound {
+        hero: hero.to_string(),
+        ability,
+    };
+    let mut rows = vec![
+        ModRow {
+            slot: 11,
+            file: "pak11_dir.vpk".to_string(),
+            enabled: true,
+            key: "vpk:haze-neon".to_string(),
+            label: "Haze Neon".to_string(),
+            heroes: vec!["Haze".to_string()],
+            general: None,
+            sounds: Vec::new(),
+        },
+        ModRow {
+            slot: 12,
+            file: "pak12_dir.vpk.disabled".to_string(),
+            enabled: false,
+            key: "vpk:haze-frost".to_string(),
+            label: "Haze Frost".to_string(),
+            heroes: vec!["Haze".to_string()],
+            general: None,
+            sounds: Vec::new(),
+        },
+        ModRow {
+            slot: 13,
+            file: "pak13_dir.vpk".to_string(),
+            enabled: true,
+            key: "vpk:haze-ember".to_string(),
+            label: "Haze Ember".to_string(),
+            heroes: vec!["Haze".to_string()],
+            general: None,
+            sounds: Vec::new(),
+        },
+        ModRow {
+            slot: 14,
+            file: "pak14_dir.vpk".to_string(),
+            enabled: true,
+            key: "vpk:wraith-royal".to_string(),
+            label: "Wraith Royal".to_string(),
+            heroes: vec!["Wraith".to_string()],
+            general: None,
+            sounds: Vec::new(),
+        },
+        ModRow {
+            slot: 15,
+            file: "pak15_dir.vpk".to_string(),
+            enabled: true,
+            key: "vpk:haze-smoke".to_string(),
+            label: "Smoke Bomb, quieter".to_string(),
+            heroes: Vec::new(),
+            general: Some(GeneralType::Announcer),
+            sounds: vec![sound("Haze", 2)],
+        },
+        ModRow {
+            slot: 16,
+            file: "pak16_dir.vpk.disabled".to_string(),
+            enabled: false,
+            key: "vpk:haze-smoke-2".to_string(),
+            label: "Smoke Bomb, echo".to_string(),
+            heroes: Vec::new(),
+            general: Some(GeneralType::Announcer),
+            sounds: vec![sound("Haze", 2)],
+        },
+        ModRow {
+            slot: 17,
+            file: "pak17_dir.vpk".to_string(),
+            enabled: true,
+            key: "vpk:haze-ult".to_string(),
+            label: "Bullet Dance, brass".to_string(),
+            heroes: Vec::new(),
+            general: Some(GeneralType::Announcer),
+            sounds: vec![sound("Haze", 4)],
+        },
+    ];
+    rows.sort_by_key(|row| row.slot);
+    s.locker.mods = rows;
+    for hero in &mut s.locker.heroes {
+        hero.mod_count = s
+            .locker
+            .mods
+            .iter()
+            .filter(|m| m.heroes.iter().any(|name| name == &hero.display_name))
+            .count();
+    }
+}
+
+fn fixture_hero(s: &State, name: &str) -> Option<HeroCard> {
+    s.locker
+        .heroes
+        .iter()
+        .find(|hero| hero.display_name == name)
+        .cloned()
+}
+
+/// The grid in list view, two heroes starred and Haze open to its skins.
+pub fn scene_list(s: &mut State) {
+    s.screen = Screen::Locker;
+    if rune::is_headless() {
+        crate::data::locker_now(s);
+    }
+    fixture_mods(s);
+    s.locker.list_view = true;
+    s.locker.prefs.toggle_favorite("Haze");
+    s.locker.prefs.toggle_favorite("Abrams");
+    s.locker.expanded.insert("haze".to_string());
+}
+
+/// The grid with the starred filter on.
+pub fn scene_starred(s: &mut State) {
+    scene_list(s);
+    s.locker.list_view = false;
+    s.locker.starred_only = true;
+}
+
+/// The grid filtered by the hero search, as type-ahead leaves it.
+pub fn scene_search(s: &mut State) {
+    s.screen = Screen::Locker;
+    if rune::is_headless() {
+        crate::data::locker_now(s);
+    }
+    fixture_mods(s);
+    s.locker.query = TextEdit::new("talon");
+    s.locker.query_text = "talon".to_string();
+}
+
+/// A hero page on its ability sounds.
+pub fn scene_sounds(s: &mut State) {
+    s.screen = Screen::Locker;
+    if rune::is_headless() {
+        crate::data::locker_now(s);
+    }
+    fixture_mods(s);
+    open_hero(s, "Haze");
+    s.locker.hero_section = HeroSection::Sounds;
+}
+
+/// The custom card dialog with an image chosen.
+pub fn scene_card(s: &mut State) {
+    s.screen = Screen::Locker;
+    if rune::is_headless() {
+        crate::data::locker_now(s);
+    }
+    fixture_mods(s);
+    let Some(hero) = fixture_hero(s, "Haze") else {
+        return;
+    };
+    open_hero(s, "Haze");
+    cards::open_card_dialog(s, &hero);
+    let source = hero.render.clone();
+    let size = hero.render_size;
+    if let Some(path) = source {
+        crate::data::request_locker_art(s, &path);
+        if let Some(Dialog::Card(dialog)) = s.locker.dialog.as_mut() {
+            dialog.path = Some(path);
+            dialog.size = size;
+            dialog.focus_x = 46.0;
+        }
+    }
+}
+
+/// The shuffle switches, with two heroes on.
+pub fn scene_shuffle(s: &mut State) {
+    s.screen = Screen::Locker;
+    if rune::is_headless() {
+        crate::data::locker_now(s);
+    }
+    fixture_mods(s);
+    s.locker.prefs.toggle_shuffle("Haze");
+    s.locker.prefs.toggle_shuffle("Wraith");
+    s.locker.dialog = Some(Dialog::Shuffle);
+}
+
+/// The applied changes review with a card, shuffle, a sound and a brief.
+pub fn scene_applied(s: &mut State) {
+    s.screen = Screen::Locker;
+    if rune::is_headless() {
+        crate::data::locker_now(s);
+    }
+    fixture_mods(s);
+    s.locker.prefs.toggle_shuffle("Haze");
+    if let Some(hero) = fixture_hero(s, "Haze")
+        && let Some(path) = hero.render.clone()
+    {
+        s.locker.prefs.set_card(
+            "Haze",
+            deadlock_core::locker::CustomCard {
+                file: "haze-card.png".to_string(),
+                focus_x: 55.0,
+                width: 100,
+                height: 100,
+            },
+        );
+        if let Some(found) = s
+            .locker
+            .heroes
+            .iter_mut()
+            .find(|found| found.display_name == "Haze")
+        {
+            found.custom = Some(path);
+            found.custom_size = hero.render_size;
+            found.custom_focus = 55.0;
+        }
+    }
+    s.locker.briefs = vec![BriefRow {
+        hero: "inferno".to_string(),
+        display_name: "Infernus".to_string(),
+        palette: "ember".to_string(),
+        note: "winter event".to_string(),
+    }];
+    s.locker.dialog = Some(Dialog::Applied);
+}
+
+/// The General page with the Global priority folder turned on.
+pub fn scene_global(s: &mut State) {
+    s.screen = Screen::Locker;
+    if rune::is_headless() {
+        crate::data::locker_now(s);
+    }
+    fixture_mods(s);
+    open_general(s);
+    s.locker.global.configured = true;
+    s.locker.global.folder = true;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{hero_name_matches, image_size};
+
+    #[test]
+    fn reads_png_and_webp_sizes() {
+        let mut png = b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR".to_vec();
+        png.extend_from_slice(&1100u32.to_be_bytes());
+        png.extend_from_slice(&967u32.to_be_bytes());
+        assert_eq!(image_size(&png), Some((1100, 967)));
+
+        let mut webp = b"RIFF\0\0\0\0WEBPVP8X\0\0\0\0\0\0\0\0".to_vec();
+        webp.extend_from_slice(&[0x4b, 0x04, 0x00, 0xc6, 0x03, 0x00]);
+        assert_eq!(image_size(&webp), Some((1100, 967)));
+        assert_eq!(image_size(b"nope"), None);
+    }
+
+    #[test]
+    fn hero_search_reaches_names_codenames_and_aliases() {
+        assert!(hero_name_matches("Grey Talon", "orion", ""));
+        assert!(hero_name_matches("Grey Talon", "orion", "talon"));
+        assert!(hero_name_matches("Grey Talon", "orion", "orion"));
+        assert!(hero_name_matches("Grey Talon", "orion", "archer"));
+        assert!(hero_name_matches("Abrams", "atlas", "bull"));
+        assert!(!hero_name_matches("Haze", "haze", "talon"));
+        assert!(!hero_name_matches("Haze", "haze", "wraith"));
+    }
 }

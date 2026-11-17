@@ -1,0 +1,658 @@
+{
+ "_idRow": 730155,
+ "_nStatus": "0",
+ "_bIsPrivate": false,
+ "_bAccessorIsSubmitter": false,
+ "_bIsTrashed": false,
+ "_bIsWithheld": false,
+ "_sName": "Kurumi Tokisaki over Paradox",
+ "_sCommentsMode": "open",
+ "_tsDateModified": 1794869541,
+ "_tsDateAdded": 1792527295,
+ "_sProfileUrl": "https://gamebanana.com/mods/730155",
+ "_aPreviewMedia": {
+  "_aImages": [
+   {
+    "_sType": "screenshot",
+    "_sBaseUrl": "https://images.gamebanana.com/img/ss/mods",
+    "_sCaption": "PGR model",
+    "_sFile": "6afb88bcb4b4f.jpg",
+    "_sFile220": "220-90_6afb88bcb4b4f.jpg",
+    "_hFile220": 197,
+    "_wFile220": 220,
+    "_sFile530": "530-90_6afb88bcb4b4f.jpg",
+    "_hFile530": 475,
+    "_wFile530": 530,
+    "_sFile100": "100-90_6afb88bcb4b4f.jpg",
+    "_hFile100": 90,
+    "_wFile100": 100
+   },
+   {
+    "_sType": "screenshot",
+    "_sBaseUrl": "https://images.gamebanana.com/img/ss/mods",
+    "_sCaption": "Spirit Dress",
+    "_sFile": "6ad7cb0536cef.jpg",
+    "_sFile100": "100-90_6ad7cb0536cef.jpg",
+    "_hFile100": 97,
+    "_wFile100": 100
+   },
+   {
+    "_sType": "screenshot",
+    "_sBaseUrl": "https://images.gamebanana.com/img/ss/mods",
+    "_sCaption": "Lingerie",
+    "_sFile": "6ad7cb05804d8.jpg",
+    "_sFile100": "100-90_6ad7cb05804d8.jpg",
+    "_hFile100": 105,
+    "_wFile100": 100
+   },
+   {
+    "_sType": "screenshot",
+    "_sBaseUrl": "https://images.gamebanana.com/img/ss/mods",
+    "_sCaption": "Swimsuit",
+    "_sFile": "6ad7cb05875be.jpg",
+    "_sFile100": "100-90_6ad7cb05875be.jpg",
+    "_hFile100": 119,
+    "_wFile100": 100
+   },
+   {
+    "_sType": "screenshot",
+    "_sBaseUrl": "https://images.gamebanana.com/img/ss/mods",
+    "_sCaption": "School Uniform",
+    "_sFile": "6ad7cb05995ff.jpg",
+    "_sFile100": "100-90_6ad7cb05995ff.jpg",
+    "_hFile100": 88,
+    "_wFile100": 100
+   },
+   {
+    "_sType": "screenshot",
+    "_sBaseUrl": "https://images.gamebanana.com/img/ss/mods",
+    "_sCaption": "Black Dress",
+    "_sFile": "6ad7cb05bfde9.jpg",
+    "_sFile100": "100-90_6ad7cb05bfde9.jpg",
+    "_hFile100": 122,
+    "_wFile100": 100
+   },
+   {
+    "_sType": "screenshot",
+    "_sBaseUrl": "https://images.gamebanana.com/img/ss/mods",
+    "_sCaption": "Wedding Dress",
+    "_sFile": "6ad7cb05ce4ff.jpg",
+    "_sFile100": "100-90_6ad7cb05ce4ff.jpg",
+    "_hFile100": 83,
+    "_wFile100": 100
+   },
+   {
+    "_sType": "screenshot",
+    "_sBaseUrl": "https://images.gamebanana.com/img/ss/mods",
+    "_sCaption": "Petal Dress",
+    "_sFile": "6adfdc9d40fa6.jpg",
+    "_sFile100": "100-90_6adfdc9d40fa6.jpg",
+    "_hFile100": 95,
+    "_wFile100": 100
+   }
+  ]
+ },
+ "_nUpdatesCount": 3,
+ "_bHasUpdates": true,
+ "_tsDateUpdated": 1794869586,
+ "_nAllTodosCount": 0,
+ "_bHasTodos": false,
+ "_nPostCount": 14,
+ "_bCreatedBySubmitter": true,
+ "_bIsPorted": true,
+ "_nThanksCount": 1,
+ "_aContentRatings": {
+  "sa": "Skimpy Attire"
+ },
+ "_sInitialVisibility": "warn",
+ "_sDownloadUrl": "https://gamebanana.com/mods/download/730155",
+ "_nDownloadCount": 25901,
+ "_aArchivedFiles": [
+  {
+   "_idRow": 1857058,
+   "_sFile": "kurumi_over_paradox_spiritdress.zip",
+   "_nFilesize": 19521844,
+   "_tsDateAdded": 1792527231,
+   "_nDownloadCount": 2530,
+   "_sDownloadUrl": "https://gamebanana.com/dl/1857058",
+   "_sMd5Checksum": "23071d2cc4b1758fba62d7e9022c5964",
+   "_sAnalysisState": "done",
+   "_sAnalysisResult": "ok",
+   "_sAnalysisResultVerbose": "File passed preliminary analysis",
+   "_sAvState": "done",
+   "_sAvResult": "clean",
+   "_bIsArchived": true,
+   "_bHasContents": true,
+   "_sDescription": "Spirit Dress",
+   "_aModManagerIntegrations": [
+    {
+     "_idToolRow": 20646,
+     "_bSupportsRemoteInstall": true,
+     "_aGameRowIds": [
+      20948
+     ],
+     "_sModManagerAlias": "DeadlockModManager",
+     "_sInstallerName": "Deadlock Mod Manager",
+     "_idSubmitterRow": 4765184,
+     "_sInstallerUrl": "https://gamebanana.com/tools/20646",
+     "_sIconUrl": "https://images.gamebanana.com/img/ico/tools/68bc15e737261.png",
+     "_sDownloadUrl": "deadlock-mod-manager:https://gamebanana.com/mmdl/1857058,Mod,730155"
+    }
+   ]
+  },
+  {
+   "_idRow": 1857056,
+   "_sFile": "kurumi_over_paradox_schooluniform.zip",
+   "_nFilesize": 18572847,
+   "_tsDateAdded": 1792527227,
+   "_nDownloadCount": 724,
+   "_sDownloadUrl": "https://gamebanana.com/dl/1857056",
+   "_sMd5Checksum": "25ad0c0997cf5931314df4d281b54c78",
+   "_sAnalysisState": "done",
+   "_sAnalysisResult": "ok",
+   "_sAnalysisResultVerbose": "File passed preliminary analysis",
+   "_sAvState": "done",
+   "_sAvResult": "clean",
+   "_bIsArchived": true,
+   "_bHasContents": true,
+   "_sDescription": "School Uniform",
+   "_aModManagerIntegrations": [
+    {
+     "_idToolRow": 20646,
+     "_bSupportsRemoteInstall": true,
+     "_aGameRowIds": [
+      20948
+     ],
+     "_sModManagerAlias": "DeadlockModManager",
+     "_sInstallerName": "Deadlock Mod Manager",
+     "_idSubmitterRow": 4765184,
+     "_sInstallerUrl": "https://gamebanana.com/tools/20646",
+     "_sIconUrl": "https://images.gamebanana.com/img/ico/tools/68bc15e737261.png",
+     "_sDownloadUrl": "deadlock-mod-manager:https://gamebanana.com/mmdl/1857056,Mod,730155"
+    }
+   ]
+  },
+  {
+   "_idRow": 1857057,
+   "_sFile": "kurumi_over_paradox_swimsuit.zip",
+   "_nFilesize": 18687192,
+   "_tsDateAdded": 1792527227,
+   "_nDownloadCount": 1600,
+   "_sDownloadUrl": "https://gamebanana.com/dl/1857057",
+   "_sMd5Checksum": "b5f715e7c36f2bf4b8abaae9d65d2c2f",
+   "_sAnalysisState": "done",
+   "_sAnalysisResult": "ok",
+   "_sAnalysisResultVerbose": "File passed preliminary analysis",
+   "_sAvState": "done",
+   "_sAvResult": "clean",
+   "_bIsArchived": true,
+   "_bHasContents": true,
+   "_sDescription": "Swimsuit",
+   "_aModManagerIntegrations": [
+    {
+     "_idToolRow": 20646,
+     "_bSupportsRemoteInstall": true,
+     "_aGameRowIds": [
+      20948
+     ],
+     "_sModManagerAlias": "DeadlockModManager",
+     "_sInstallerName": "Deadlock Mod Manager",
+     "_idSubmitterRow": 4765184,
+     "_sInstallerUrl": "https://gamebanana.com/tools/20646",
+     "_sIconUrl": "https://images.gamebanana.com/img/ico/tools/68bc15e737261.png",
+     "_sDownloadUrl": "deadlock-mod-manager:https://gamebanana.com/mmdl/1857057,Mod,730155"
+    }
+   ]
+  },
+  {
+   "_idRow": 1857059,
+   "_sFile": "kurumi_over_paradox_weddingdress.zip",
+   "_nFilesize": 19434448,
+   "_tsDateAdded": 1792527231,
+   "_nDownloadCount": 1604,
+   "_sDownloadUrl": "https://gamebanana.com/dl/1857059",
+   "_sMd5Checksum": "ff72954c7eb3cc8746f647cbd9f106af",
+   "_sAnalysisState": "done",
+   "_sAnalysisResult": "ok",
+   "_sAnalysisResultVerbose": "File passed preliminary analysis",
+   "_sAvState": "done",
+   "_sAvResult": "clean",
+   "_bIsArchived": true,
+   "_bHasContents": true,
+   "_sDescription": "Wedding Dress",
+   "_aModManagerIntegrations": [
+    {
+     "_idToolRow": 20646,
+     "_bSupportsRemoteInstall": true,
+     "_aGameRowIds": [
+      20948
+     ],
+     "_sModManagerAlias": "DeadlockModManager",
+     "_sInstallerName": "Deadlock Mod Manager",
+     "_idSubmitterRow": 4765184,
+     "_sInstallerUrl": "https://gamebanana.com/tools/20646",
+     "_sIconUrl": "https://images.gamebanana.com/img/ico/tools/68bc15e737261.png",
+     "_sDownloadUrl": "deadlock-mod-manager:https://gamebanana.com/mmdl/1857059,Mod,730155"
+    }
+   ]
+  },
+  {
+   "_idRow": 1857060,
+   "_sFile": "kurumi_over_paradox_blackdress.zip",
+   "_nFilesize": 19537243,
+   "_tsDateAdded": 1792527233,
+   "_nDownloadCount": 2088,
+   "_sDownloadUrl": "https://gamebanana.com/dl/1857060",
+   "_sMd5Checksum": "b683d18b956ccb71ea9f9ac17d34d2d4",
+   "_sAnalysisState": "done",
+   "_sAnalysisResult": "ok",
+   "_sAnalysisResultVerbose": "File passed preliminary analysis",
+   "_sAvState": "done",
+   "_sAvResult": "clean",
+   "_bIsArchived": true,
+   "_bHasContents": true,
+   "_sDescription": "Black Dress",
+   "_aModManagerIntegrations": [
+    {
+     "_idToolRow": 20646,
+     "_bSupportsRemoteInstall": true,
+     "_aGameRowIds": [
+      20948
+     ],
+     "_sModManagerAlias": "DeadlockModManager",
+     "_sInstallerName": "Deadlock Mod Manager",
+     "_idSubmitterRow": 4765184,
+     "_sInstallerUrl": "https://gamebanana.com/tools/20646",
+     "_sIconUrl": "https://images.gamebanana.com/img/ico/tools/68bc15e737261.png",
+     "_sDownloadUrl": "deadlock-mod-manager:https://gamebanana.com/mmdl/1857060,Mod,730155"
+    }
+   ]
+  },
+  {
+   "_idRow": 1857061,
+   "_sFile": "kurumi_over_paradox_lingerie.zip",
+   "_nFilesize": 19820048,
+   "_tsDateAdded": 1792527234,
+   "_nDownloadCount": 1897,
+   "_sDownloadUrl": "https://gamebanana.com/dl/1857061",
+   "_sMd5Checksum": "7f5aee2d1b654f576c923f5383d6e2cb",
+   "_sAnalysisState": "done",
+   "_sAnalysisResult": "ok",
+   "_sAnalysisResultVerbose": "File passed preliminary analysis",
+   "_sAvState": "done",
+   "_sAvResult": "clean",
+   "_bIsArchived": true,
+   "_bHasContents": true,
+   "_sDescription": "Lingerie",
+   "_aModManagerIntegrations": [
+    {
+     "_idToolRow": 20646,
+     "_bSupportsRemoteInstall": true,
+     "_aGameRowIds": [
+      20948
+     ],
+     "_sModManagerAlias": "DeadlockModManager",
+     "_sInstallerName": "Deadlock Mod Manager",
+     "_idSubmitterRow": 4765184,
+     "_sInstallerUrl": "https://gamebanana.com/tools/20646",
+     "_sIconUrl": "https://images.gamebanana.com/img/ico/tools/68bc15e737261.png",
+     "_sDownloadUrl": "deadlock-mod-manager:https://gamebanana.com/mmdl/1857061,Mod,730155"
+    }
+   ]
+  },
+  {
+   "_idRow": 1865201,
+   "_sFile": "kurumi_over_paradox_petaldress.zip",
+   "_nFilesize": 20685156,
+   "_tsDateAdded": 1793055946,
+   "_nDownloadCount": 1273,
+   "_sDownloadUrl": "https://gamebanana.com/dl/1865201",
+   "_sMd5Checksum": "c352139ef4797fb9372f0d8a393b9fab",
+   "_sAnalysisState": "done",
+   "_sAnalysisResult": "ok",
+   "_sAnalysisResultVerbose": "File passed preliminary analysis",
+   "_sAvState": "done",
+   "_sAvResult": "clean",
+   "_bIsArchived": true,
+   "_bHasContents": true,
+   "_sDescription": "Petal Dress",
+   "_aModManagerIntegrations": [
+    {
+     "_idToolRow": 20646,
+     "_bSupportsRemoteInstall": true,
+     "_aGameRowIds": [
+      20948
+     ],
+     "_sModManagerAlias": "DeadlockModManager",
+     "_sInstallerName": "Deadlock Mod Manager",
+     "_idSubmitterRow": 4765184,
+     "_sInstallerUrl": "https://gamebanana.com/tools/20646",
+     "_sIconUrl": "https://images.gamebanana.com/img/ico/tools/68bc15e737261.png",
+     "_sDownloadUrl": "deadlock-mod-manager:https://gamebanana.com/mmdl/1865201,Mod,730155"
+    }
+   ]
+  },
+  {
+   "_idRow": 1865203,
+   "_sFile": "kurumi_over_paradox_schooluniform_0efbf.zip",
+   "_nFilesize": 18424787,
+   "_tsDateAdded": 1793055977,
+   "_nDownloadCount": 925,
+   "_sDownloadUrl": "https://gamebanana.com/dl/1865203",
+   "_sMd5Checksum": "6eb933e0b800e4875f5f4e0d4eb5873b",
+   "_sAnalysisState": "done",
+   "_sAnalysisResult": "ok",
+   "_sAnalysisResultVerbose": "File passed preliminary analysis",
+   "_sAvState": "done",
+   "_sAvResult": "clean",
+   "_bIsArchived": true,
+   "_bHasContents": true,
+   "_sVersion": "2.0",
+   "_sDescription": "School Uniform (2.0)",
+   "_aModManagerIntegrations": [
+    {
+     "_idToolRow": 20646,
+     "_bSupportsRemoteInstall": true,
+     "_aGameRowIds": [
+      20948
+     ],
+     "_sModManagerAlias": "DeadlockModManager",
+     "_sInstallerName": "Deadlock Mod Manager",
+     "_idSubmitterRow": 4765184,
+     "_sInstallerUrl": "https://gamebanana.com/tools/20646",
+     "_sIconUrl": "https://images.gamebanana.com/img/ico/tools/68bc15e737261.png",
+     "_sDownloadUrl": "deadlock-mod-manager:https://gamebanana.com/mmdl/1865203,Mod,730155"
+    }
+   ]
+  }
+ ],
+ "_aFiles": [
+  {
+   "_idRow": 1892616,
+   "_sFile": "kurumi_over_paradox_pgr.zip",
+   "_nFilesize": 22851562,
+   "_tsDateAdded": 1794869486,
+   "_nDownloadCount": 16,
+   "_sDownloadUrl": "https://gamebanana.com/dl/1892616",
+   "_sMd5Checksum": "0cc5d63cd4fb758baf69b2e1604f5c3d",
+   "_sAnalysisState": "done",
+   "_sAnalysisResult": "ok",
+   "_sAnalysisResultVerbose": "File passed preliminary analysis",
+   "_sAvState": "done",
+   "_sAvResult": "clean",
+   "_bIsArchived": false,
+   "_bHasContents": true,
+   "_sDescription": "Punishing Gray Raven model",
+   "_aModManagerIntegrations": [
+    {
+     "_idToolRow": 20646,
+     "_bSupportsRemoteInstall": true,
+     "_aGameRowIds": [
+      20948
+     ],
+     "_sModManagerAlias": "DeadlockModManager",
+     "_sInstallerName": "Deadlock Mod Manager",
+     "_idSubmitterRow": 4765184,
+     "_sInstallerUrl": "https://gamebanana.com/tools/20646",
+     "_sIconUrl": "https://images.gamebanana.com/img/ico/tools/68bc15e737261.png",
+     "_sDownloadUrl": "deadlock-mod-manager:https://gamebanana.com/mmdl/1892616,Mod,730155"
+    }
+   ]
+  },
+  {
+   "_idRow": 1874876,
+   "_sFile": "kurumi_over_paradox_spiritdress_7bd80.zip",
+   "_nFilesize": 19268652,
+   "_tsDateAdded": 1793678162,
+   "_nDownloadCount": 2755,
+   "_sDownloadUrl": "https://gamebanana.com/dl/1874876",
+   "_sMd5Checksum": "de02e170f0d89ef80eb04d9177f6c919",
+   "_sAnalysisState": "done",
+   "_sAnalysisResult": "ok",
+   "_sAnalysisResultVerbose": "File passed preliminary analysis",
+   "_sAvState": "done",
+   "_sAvResult": "clean",
+   "_bIsArchived": false,
+   "_bHasContents": true,
+   "_sDescription": "Spirit Dress",
+   "_aModManagerIntegrations": [
+    {
+     "_idToolRow": 20646,
+     "_bSupportsRemoteInstall": true,
+     "_aGameRowIds": [
+      20948
+     ],
+     "_sModManagerAlias": "DeadlockModManager",
+     "_sInstallerName": "Deadlock Mod Manager",
+     "_idSubmitterRow": 4765184,
+     "_sInstallerUrl": "https://gamebanana.com/tools/20646",
+     "_sIconUrl": "https://images.gamebanana.com/img/ico/tools/68bc15e737261.png",
+     "_sDownloadUrl": "deadlock-mod-manager:https://gamebanana.com/mmdl/1874876,Mod,730155"
+    }
+   ]
+  },
+  {
+   "_idRow": 1874873,
+   "_sFile": "kurumi_over_paradox_blackdress_7bfcf.zip",
+   "_nFilesize": 19206041,
+   "_tsDateAdded": 1793678161,
+   "_nDownloadCount": 1980,
+   "_sDownloadUrl": "https://gamebanana.com/dl/1874873",
+   "_sMd5Checksum": "ad2accdb2ce0d35fcadba7df0c74561e",
+   "_sAnalysisState": "done",
+   "_sAnalysisResult": "ok",
+   "_sAnalysisResultVerbose": "File passed preliminary analysis",
+   "_sAvState": "done",
+   "_sAvResult": "clean",
+   "_bIsArchived": false,
+   "_bHasContents": true,
+   "_sDescription": "Black Dress",
+   "_aModManagerIntegrations": [
+    {
+     "_idToolRow": 20646,
+     "_bSupportsRemoteInstall": true,
+     "_aGameRowIds": [
+      20948
+     ],
+     "_sModManagerAlias": "DeadlockModManager",
+     "_sInstallerName": "Deadlock Mod Manager",
+     "_idSubmitterRow": 4765184,
+     "_sInstallerUrl": "https://gamebanana.com/tools/20646",
+     "_sIconUrl": "https://images.gamebanana.com/img/ico/tools/68bc15e737261.png",
+     "_sDownloadUrl": "deadlock-mod-manager:https://gamebanana.com/mmdl/1874873,Mod,730155"
+    }
+   ]
+  },
+  {
+   "_idRow": 1874874,
+   "_sFile": "kurumi_over_paradox_schooluniform_d13aa.zip",
+   "_nFilesize": 18261521,
+   "_tsDateAdded": 1793678161,
+   "_nDownloadCount": 1637,
+   "_sDownloadUrl": "https://gamebanana.com/dl/1874874",
+   "_sMd5Checksum": "3c2b0f187b771b87c6b0a82bd343392d",
+   "_sAnalysisState": "done",
+   "_sAnalysisResult": "ok",
+   "_sAnalysisResultVerbose": "File passed preliminary analysis",
+   "_sAvState": "done",
+   "_sAvResult": "clean",
+   "_bIsArchived": false,
+   "_bHasContents": true,
+   "_sDescription": "School Uniform",
+   "_aModManagerIntegrations": [
+    {
+     "_idToolRow": 20646,
+     "_bSupportsRemoteInstall": true,
+     "_aGameRowIds": [
+      20948
+     ],
+     "_sModManagerAlias": "DeadlockModManager",
+     "_sInstallerName": "Deadlock Mod Manager",
+     "_idSubmitterRow": 4765184,
+     "_sInstallerUrl": "https://gamebanana.com/tools/20646",
+     "_sIconUrl": "https://images.gamebanana.com/img/ico/tools/68bc15e737261.png",
+     "_sDownloadUrl": "deadlock-mod-manager:https://gamebanana.com/mmdl/1874874,Mod,730155"
+    }
+   ]
+  },
+  {
+   "_idRow": 1874875,
+   "_sFile": "kurumi_over_paradox_swimsuit_aba7b.zip",
+   "_nFilesize": 18427291,
+   "_tsDateAdded": 1793678161,
+   "_nDownloadCount": 1654,
+   "_sDownloadUrl": "https://gamebanana.com/dl/1874875",
+   "_sMd5Checksum": "9febc921bc1ee274b8614477efe3abdf",
+   "_sAnalysisState": "done",
+   "_sAnalysisResult": "ok",
+   "_sAnalysisResultVerbose": "File passed preliminary analysis",
+   "_sAvState": "done",
+   "_sAvResult": "clean",
+   "_bIsArchived": false,
+   "_bHasContents": true,
+   "_sDescription": "Swimsuit",
+   "_aModManagerIntegrations": [
+    {
+     "_idToolRow": 20646,
+     "_bSupportsRemoteInstall": true,
+     "_aGameRowIds": [
+      20948
+     ],
+     "_sModManagerAlias": "DeadlockModManager",
+     "_sInstallerName": "Deadlock Mod Manager",
+     "_idSubmitterRow": 4765184,
+     "_sInstallerUrl": "https://gamebanana.com/tools/20646",
+     "_sIconUrl": "https://images.gamebanana.com/img/ico/tools/68bc15e737261.png",
+     "_sDownloadUrl": "deadlock-mod-manager:https://gamebanana.com/mmdl/1874875,Mod,730155"
+    }
+   ]
+  },
+  {
+   "_idRow": 1874877,
+   "_sFile": "kurumi_over_paradox_lingerie_2890b.zip",
+   "_nFilesize": 19703140,
+   "_tsDateAdded": 1793678162,
+   "_nDownloadCount": 1816,
+   "_sDownloadUrl": "https://gamebanana.com/dl/1874877",
+   "_sMd5Checksum": "4ece03b409d2c395e81f4caf9ff7a6df",
+   "_sAnalysisState": "done",
+   "_sAnalysisResult": "ok",
+   "_sAnalysisResultVerbose": "File passed preliminary analysis",
+   "_sAvState": "done",
+   "_sAvResult": "clean",
+   "_bIsArchived": false,
+   "_bHasContents": true,
+   "_sDescription": "Lingerie",
+   "_aModManagerIntegrations": [
+    {
+     "_idToolRow": 20646,
+     "_bSupportsRemoteInstall": true,
+     "_aGameRowIds": [
+      20948
+     ],
+     "_sModManagerAlias": "DeadlockModManager",
+     "_sInstallerName": "Deadlock Mod Manager",
+     "_idSubmitterRow": 4765184,
+     "_sInstallerUrl": "https://gamebanana.com/tools/20646",
+     "_sIconUrl": "https://images.gamebanana.com/img/ico/tools/68bc15e737261.png",
+     "_sDownloadUrl": "deadlock-mod-manager:https://gamebanana.com/mmdl/1874877,Mod,730155"
+    }
+   ]
+  },
+  {
+   "_idRow": 1874879,
+   "_sFile": "kurumi_over_paradox_petaldress_d69dc.zip",
+   "_nFilesize": 20686102,
+   "_tsDateAdded": 1793678163,
+   "_nDownloadCount": 1774,
+   "_sDownloadUrl": "https://gamebanana.com/dl/1874879",
+   "_sMd5Checksum": "d7edb6619b5b9308e9977628f4436f48",
+   "_sAnalysisState": "done",
+   "_sAnalysisResult": "ok",
+   "_sAnalysisResultVerbose": "File passed preliminary analysis",
+   "_sAvState": "done",
+   "_sAvResult": "clean",
+   "_bIsArchived": false,
+   "_bHasContents": true,
+   "_sDescription": "Petal Dress",
+   "_aModManagerIntegrations": [
+    {
+     "_idToolRow": 20646,
+     "_bSupportsRemoteInstall": true,
+     "_aGameRowIds": [
+      20948
+     ],
+     "_sModManagerAlias": "DeadlockModManager",
+     "_sInstallerName": "Deadlock Mod Manager",
+     "_idSubmitterRow": 4765184,
+     "_sInstallerUrl": "https://gamebanana.com/tools/20646",
+     "_sIconUrl": "https://images.gamebanana.com/img/ico/tools/68bc15e737261.png",
+     "_sDownloadUrl": "deadlock-mod-manager:https://gamebanana.com/mmdl/1874879,Mod,730155"
+    }
+   ]
+  },
+  {
+   "_idRow": 1874878,
+   "_sFile": "kurumi_over_paradox_weddingdress_b34bb.zip",
+   "_nFilesize": 19200156,
+   "_tsDateAdded": 1793678162,
+   "_nDownloadCount": 1699,
+   "_sDownloadUrl": "https://gamebanana.com/dl/1874878",
+   "_sMd5Checksum": "7127aae3347d8fb7984823c3aa66077d",
+   "_sAnalysisState": "done",
+   "_sAnalysisResult": "ok",
+   "_sAnalysisResultVerbose": "File passed preliminary analysis",
+   "_sAvState": "done",
+   "_sAvResult": "clean",
+   "_bIsArchived": false,
+   "_bHasContents": true,
+   "_sDescription": "Wedding Dress",
+   "_aModManagerIntegrations": [
+    {
+     "_idToolRow": 20646,
+     "_bSupportsRemoteInstall": true,
+     "_aGameRowIds": [
+      20948
+     ],
+     "_sModManagerAlias": "DeadlockModManager",
+     "_sInstallerName": "Deadlock Mod Manager",
+     "_idSubmitterRow": 4765184,
+     "_sInstallerUrl": "https://gamebanana.com/tools/20646",
+     "_sIconUrl": "https://images.gamebanana.com/img/ico/tools/68bc15e737261.png",
+     "_sDownloadUrl": "deadlock-mod-manager:https://gamebanana.com/mmdl/1874878,Mod,730155"
+    }
+   ]
+  }
+ ],
+ "_nSubscriberCount": 2,
+ "_bGenerateTableOfContents": false,
+ "_sText": "Kurumi Tokisaki is now in Deadlock. Obvious model replacement mod given the circumstances<br><br>Update Features:<br>New model from Punishing Gray Raven. Custom pose as well.<br>Hair Fixed. Now looks like actual hair.<br>New Outfit/Variant. Petal Dress<br>She now has her flintlock rifle/pistol over paradox's gun.<br>Fixed school uniform variants strange clipping<br><br>Features:<br>Voice Acting/Sound Effects<br>6 Variants/Outfits<br>Icons<br><br>Model from:&nbsp;https://www.deviantart.com/dangel-deviliono/art/Kurumi-pack---ACGVR-776138422",
+ "_bIsObsolete": false,
+ "_nLikeCount": 10,
+ "_nViewCount": 6265,
+ "_sVersion": "1.2",
+ "_bAcceptsDonations": false,
+ "_bShowRipePromo": true,
+ "_aSubmitter": {
+  "_idRow": 6020123,
+  "_sName": "10385",
+  "_sAvatarUrl": "https://images.gamebanana.com/static/img/defaults/avatar.gif",
+  "_sProfileUrl": "https://gamebanana.com/members/6020123"
+ },
+ "_bFollowLinks": true,
+ "_aCategory": {
+  "_idRow": 33320,
+  "_sName": "Paradox",
+  "_sModelName": "ModCategory",
+  "_sProfileUrl": "https://gamebanana.com/mods/cats/33320",
+  "_sIconUrl": "https://images.gamebanana.com/img/ico/ModCategory/6931f6b850b03.png",
+  "_bIsObsolete": false
+ },
+ "_aSuperCategory": {
+  "_idRow": 33295,
+  "_sName": "Skins",
+  "_sModelName": "ModCategory",
+  "_sProfileUrl": "https://gamebanana.com/mods/cats/33295",
+  "_sIconUrl": ""
+ }
+}

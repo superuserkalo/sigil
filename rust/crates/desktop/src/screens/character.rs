@@ -1,15 +1,15 @@
-//! Character: reference-to-mesh tasks, stopped at a verified artifact.
+//! Character: prompt or reference image to a mesh, one task per character.
 //!
-//! `deadlock_core::character` owns the task pipeline. This screen creates a
-//! task, polls it, imports the GLB and shows the compile requirements. It never
-//! claims the mesh is in game: the record carries `source2Compile: required`
-//! and `inGameReady: false` until a real compile and an in-game check happen.
+//! `deadlock_core::character` owns the task pipeline. This screen creates a task, advances it,
+//! imports the GLB and lists each stage and whether this machine can run it. A mesh is never
+//! marked ready for the game: a Source 2 compile and an in-game check always remain.
 
 use rune::{Color, El, ScrollSpec, TextEdit, col, el, row, spacer, text};
 
 use crate::app::State;
-use crate::model::Screen;
-use crate::ui::{ActionKind, BODY, BODY_MED, CHAT, LABEL, MONO, SMALL, Tone, Ui};
+use crate::icons;
+use crate::screens::subpage;
+use crate::ui::{ActionKind, BODY, BODY_MED, H1, MONO, SMALL, Ui};
 
 #[derive(Clone)]
 pub struct StageRow {
@@ -94,6 +94,8 @@ pub struct View {
     pub consent: bool,
     pub busy: bool,
     pub last: Option<String>,
+    /// The task shown in the detail pane.
+    pub selected: usize,
 }
 
 impl Default for View {
@@ -111,588 +113,513 @@ impl Default for View {
             consent: false,
             busy: false,
             last: None,
+            selected: 0,
         }
     }
 }
 
 pub fn view(s: &State, u: &Ui) -> El {
     let v = &s.character;
-    let trailing = row()
-        .gap(8.0)
-        .center_y()
-        .child(if s.character_job.is_running() || v.busy {
-            u.status_chip("working", Tone::Warn)
-        } else if v.error.is_some() {
-            u.status_chip("read failed", Tone::Bad)
-        } else if v.loaded {
-            u.status_chip(
-                &format!("{} task(s)", v.rows.len()),
-                if v.rows.is_empty() { Tone::Quiet } else { Tone::Accent },
-            )
-        } else {
-            u.status_chip("not read", Tone::Quiet)
-        })
-        .child(
-            u.pill("Reload", "↻", ActionKind::Ghost)
-                .key("character-reload")
-                .on_press(|st: &mut State| crate::data::start_character_read(st)),
-        )
-        .child(
-            u.action(
-                if v.create_open { "Close form" } else { "New character" },
-                ActionKind::Primary,
-            )
-            .key("character-new")
-            .on_press(|st: &mut State| st.character.create_open = !st.character.create_open),
+    let working = s.character_job.is_running() || v.busy;
+
+    let mut actions = row().gap(8.0).center_y().child(
+        u.icon_button(&icons::REFRESH_CW, "Reload")
+            .key("character-reload")
+            .cursor(rune::Cursor::Pointer)
+            .on_press(|st: &mut State| crate::data::start_character_read(st)),
+    );
+    if !v.create_open {
+        actions = actions.child(
+            u.icon_action(&icons::PLUS, "New character", ActionKind::Primary)
+                .key("character-new")
+                .cursor(rune::Cursor::Pointer)
+                .on_press(|st: &mut State| st.character.create_open = true),
         );
+    }
 
     let detail = if let Some(error) = &v.error {
         error.clone()
-    } else if !v.loaded {
-        "Reading generated character tasks from the workspace.".to_string()
-    } else {
+    } else if working {
+        "Working".to_string()
+    } else if v.loaded && !v.rows.is_empty() {
         format!(
-            "{} · {} stage graph · stopped at a GLB asset · a Source 2 compile and an in-game check are always required",
-            v.workspace,
-            deadlock_core::character::stage_graph().len()
-        )
-    };
-
-    let mut page = col()
-        .key("character-page")
-        .grow(1.0)
-        .h_full()
-        .min_h(0.0)
-        .px(24.0)
-        .pt(18.0)
-        .pb(16.0)
-        .gap(13.0)
-        .child(u.glow(
-            "character-glow",
-            [0.2, 0.02],
-            (700.0, 420.0),
-            u.glow_cool,
-        ))
-        .child(u.page_head(
-            Screen::Character.kicker(),
-            "Character",
-            &detail,
-            Some(trailing),
-        ));
-
-    if let Some(last) = &v.last {
-        page = page.child(result_strip(u, last));
-    }
-    if v.create_open {
-        page = page.child(create_panel(s, u));
-    }
-
-    let body = if !v.loaded && s.character_job.is_running() {
-        u.note("Reading generated/characters.")
-    } else if v.rows.is_empty() {
-        u.empty_state(
-            "◭",
-            "No character tasks",
-            "A task takes a prompt or a reference image to a mesh provider, downloads the GLB and records the compile work that remains.",
-            Some(
-                u.action("Start a character", ActionKind::Secondary)
-                    .on_press(|st: &mut State| st.character.create_open = true),
-            ),
+            "{} task{}",
+            v.rows.len(),
+            if v.rows.len() == 1 { "" } else { "s" }
         )
     } else {
-        let mut rows = col().w_full().gap(10.0);
-        for (index, row) in v.rows.iter().enumerate() {
-            rows = rows.child(card(s, u, index, row));
-        }
-        col()
-            .key("character-scroll")
-            .grow(1.0)
-            .min_h(0.0)
-            .scroll(ScrollSpec {
-                stick_bottom: false,
-            })
-            .child(rows)
+        String::new()
     };
+    let mut head =
+        col()
+            .w_full()
+            .gap(16.0)
+            .child(subpage::head(u, "Character", &detail, Some(actions)));
+    if let Some(last) = &v.last {
+        head = head.child(result_line(u, last));
+    }
 
-    page.child(body)
+    if v.create_open {
+        return subpage::page("character", head, create_form(s, u));
+    }
+
+    if v.rows.is_empty() {
+        let body = if !v.loaded && s.character_job.is_running() {
+            el()
+        } else {
+            u.empty_state(
+                "",
+                "No characters yet",
+                "Describe a character or pick a reference image, and Sigil turns it into a mesh.",
+                Some(
+                    u.action("New character", ActionKind::Secondary)
+                        .cursor(rune::Cursor::Pointer)
+                        .on_press(|st: &mut State| st.character.create_open = true),
+                ),
+            )
+        };
+        return subpage::page("character", head, body);
+    }
+
+    let selected = v.selected.min(v.rows.len() - 1);
+    subpage::fixed_page(
+        "character",
+        head,
+        row()
+            .key("character-body")
+            .w_full()
+            .min_h(0.0)
+            .child(task_list(u, &v.rows, selected))
+            .child(task_detail(s, u, selected, &v.rows[selected])),
+    )
 }
 
-fn result_strip(u: &Ui, message: &str) -> El {
+fn result_line(u: &Ui, message: &str) -> El {
     let bad = message.contains("not ")
         || message.contains("could not")
         || message.contains("failed")
-        || message.contains("refus")
-        || message.contains("required");
-    row()
+        || message.contains("refus");
+    text(message.to_string())
         .key("character-result")
-        .w_full()
-        .padding(10.0)
-        .gap(10.0)
-        .items_start()
-        .radius(9.0)
-        .fill(if bad {
-            u.amber.alpha(0.06)
-        } else {
-            u.teal.alpha(0.06)
-        })
-        .border(
-            1.0,
-            if bad {
-                u.amber.alpha(0.20)
-            } else {
-                u.teal.alpha(0.18)
-            },
-        )
-        .child(u.dot(if bad { Tone::Warn } else { Tone::Ok }))
-        .child(text(message.to_string()).font(SMALL).color(u.muted).wrap())
+        .font(BODY)
+        .color(if bad { u.amber } else { u.muted })
+        .wrap()
 }
 
-fn create_panel(s: &State, u: &Ui) -> El {
+fn create_form(s: &State, u: &Ui) -> El {
     let v = &s.character;
     let has_prompt = !v.prompt.text.trim().is_empty();
     let needs_consent = !v.reference.text.trim().is_empty() && !v.consent;
     let ready = has_prompt && !needs_consent && !v.busy;
 
-    row()
+    let input = |value: &TextEdit,
+                 key: &str,
+                 label: &str,
+                 placeholder: &str,
+                 edit: fn(&mut State) -> &mut TextEdit| {
+        row()
+            .grow(1.0)
+            .min_w(0.0)
+            .h(32.0)
+            .px(10.0)
+            .center_y()
+            .radius(crate::ui::r(8.0))
+            .fill(u.well)
+            .border(1.0, u.hair)
+            .child(
+                rune::text_input(value, BODY)
+                    .key(key.to_string())
+                    .label(label.to_string())
+                    .single_line()
+                    .grow(1.0)
+                    .min_w(0.0)
+                    .color(u.ink)
+                    .placeholder(placeholder.to_string(), u.faint)
+                    .caret(u.accent, u.accent.alpha(0.20))
+                    .on_edit(edit),
+            )
+    };
+
+    let prompt = row()
+        .grow(1.0)
+        .min_w(0.0)
+        .min_h(80.0)
+        .padding(10.0)
+        .radius(crate::ui::r(8.0))
+        .fill(u.well)
+        .border(1.0, u.hair)
+        .child(
+            rune::text_input(&v.prompt, BODY)
+                .key("character-prompt")
+                .label("Character prompt")
+                .grow(1.0)
+                .min_w(0.0)
+                .min_h(60.0)
+                .color(u.ink)
+                .placeholder(
+                    "A slim pilot in a green coat, worn leather, stylized proportions",
+                    u.faint,
+                )
+                .caret(u.accent, u.accent.alpha(0.20))
+                .on_edit(|st: &mut State| &mut st.character.prompt),
+        );
+
+    let consent = row()
+        .grow(1.0)
+        .gap(12.0)
+        .center_y()
+        .child(
+            u.toggle(v.consent)
+                .key("character-consent")
+                .label("Allow uploading the reference image")
+                .cursor(rune::Cursor::Pointer)
+                .on_press(|st: &mut State| st.character.consent = !st.character.consent),
+        )
+        .child(
+            text("Send the reference image to the mesh provider")
+                .font(BODY)
+                .color(u.prose),
+        );
+
+    let mut c = col()
         .key("character-create")
         .w_full()
+        .max_w(760.0)
+        .gap(8.0)
+        .child(u.section("New character"))
+        .child(
+            subpage::rows(u)
+                .child(form_row(u, "Prompt", prompt, true))
+                .child(form_row(
+                    u,
+                    "Reference image",
+                    input(
+                        &v.reference,
+                        "character-reference",
+                        "Reference image path",
+                        "Optional, full path to a PNG or JPG",
+                        |st| &mut st.character.reference,
+                    ),
+                    false,
+                ))
+                .child(form_row(
+                    u,
+                    "Hero",
+                    input(
+                        &v.hero,
+                        "character-hero",
+                        "Target hero",
+                        "Optional, for example billy",
+                        |st| &mut st.character.hero,
+                    ),
+                    false,
+                ))
+                .child(form_row(
+                    u,
+                    "Style",
+                    input(
+                        &v.style,
+                        "character-style",
+                        "Style",
+                        "Stylized game character",
+                        |st| &mut st.character.style,
+                    ),
+                    false,
+                ))
+                .child(form_row(u, "Upload", consent, false)),
+        );
+    if needs_consent {
+        c = c.child(
+            text("Allow the upload to use a reference image, or clear the path.")
+                .font(BODY)
+                .color(u.amber)
+                .pt(4.0),
+        );
+    }
+    c.child(
+        row()
+            .w_full()
+            .pt(8.0)
+            .gap(8.0)
+            .child(spacer())
+            .child(
+                u.action("Cancel", ActionKind::Ghost)
+                    .key("character-cancel")
+                    .cursor(rune::Cursor::Pointer)
+                    .on_press(|st: &mut State| st.character.create_open = false),
+            )
+            .child(
+                u.action("Create", ActionKind::Primary)
+                    .key("character-create-task")
+                    .disabled(!ready)
+                    .opacity(if ready { 1.0 } else { 0.45 })
+                    .cursor(rune::Cursor::Pointer)
+                    .on_press(|st: &mut State| crate::data::create_character_task(st)),
+            ),
+    )
+}
+
+fn form_row(u: &Ui, label: &str, control: El, top: bool) -> El {
+    let r = row()
+        .w_full()
+        .min_h(48.0)
+        .py(8.0)
         .gap(16.0)
-        .items_start()
-        .padding(16.0)
-        .radius(14.0)
-        .fill(Color::WHITE.alpha(0.03))
-        .border(1.0, u.violet.alpha(0.16))
+        .border_sides([0.0, 0.0, 1.0, 0.0], u.hair);
+    let r = if top { r.items_start() } else { r.center_y() };
+    r.child(
+        text(label.to_string())
+            .font(BODY)
+            .color(u.muted)
+            .w(140.0)
+            .mt(if top { 6.0 } else { 0.0 }),
+    )
+    .child(control)
+}
+
+fn status_text(u: &Ui, status: &str) -> (&'static str, Color) {
+    match status {
+        "SUCCEEDED" => ("Mesh ready", u.muted),
+        "FAILED" => ("Failed", u.rose),
+        "CANCELED" => ("Canceled", u.muted),
+        "IN_PROGRESS" => ("Generating", u.ink),
+        "PENDING" => ("Queued", u.muted),
+        _ => ("Not started", u.muted),
+    }
+}
+
+fn task_list(u: &Ui, rows: &[Row], selected: usize) -> El {
+    let mut list = col()
+        .key("character-list-inner")
+        .w_full()
+        .pr(12.0)
+        .pb(24.0)
+        .gap(2.0);
+    for (index, item) in rows.iter().enumerate() {
+        let on = index == selected;
+        let (status, color) = status_text(u, &item.status);
+        list = list.child(
+            col()
+                .key(format!("character-{}", item.slug))
+                .w_full()
+                .h(56.0)
+                .px(12.0)
+                .gap(2.0)
+                .justify_center()
+                .radius(crate::ui::r(8.0))
+                .fill(if on { u.selected } else { Color::TRANSPARENT })
+                .hover(u.hover)
+                .focusable(true)
+                .role("button")
+                .label(item.prompt.clone())
+                .cursor(rune::Cursor::Pointer)
+                .on_press(move |st: &mut State| st.character.selected = index)
+                .child(
+                    text(item.prompt.clone())
+                        .font(BODY_MED)
+                        .color(if on { u.ink } else { u.prose })
+                        .truncate(),
+                )
+                .child(
+                    row()
+                        .w_full()
+                        .gap(8.0)
+                        .child(text(item.created.clone()).font(SMALL).color(u.faint))
+                        .child(spacer())
+                        .child(text(status).font(SMALL).color(color)),
+                ),
+        );
+    }
+    col()
+        .key("character-list")
+        .w(320.0)
+        .h_full()
+        .min_h(0.0)
+        .border_sides([0.0, 1.0, 0.0, 0.0], u.hair)
         .child(
             col()
                 .grow(1.0)
-                .min_w(0.0)
-                .gap(10.0)
-                .child(
-                    row()
-                        .w_full()
-                        .gap(9.0)
-                        .center_y()
-                        .child(u.eyebrow("NEW TASK"))
-                        .child(spacer())
-                        .child(u.chip(
-                            "inGameReady false by design",
-                            u.amber,
-                            u.amber.alpha(0.10),
-                        )),
-                )
-                .child(u.field_label("PROMPT"))
-                .child(
-                    rune::text_input(&v.prompt, CHAT)
-                        .key("character-prompt")
-                        .label("Character prompt")
-                        .grow(1.0)
-                        .min_h(64.0)
-                        .color(u.ink)
-                        .placeholder(
-                            "a slim pilot in a green coat, worn leather, stylized proportions",
-                            u.faint,
-                        )
-                        .caret(u.accent, u.accent.alpha(0.20))
-                        .on_edit(|st: &mut State| &mut st.character.prompt),
-                )
-                .child(
-                    row()
-                        .w_full()
-                        .gap(10.0)
-                        .items_start()
-                        .child(
-                            col()
-                                .grow(1.0)
-                                .gap(4.0)
-                                .child(u.field_label("REFERENCE IMAGE (OPTIONAL)"))
-                                .child(
-                                    rune::text_input(&v.reference, BODY)
-                                        .key("character-reference")
-                                        .label("Reference image path")
-                                        .single_line()
-                                        .color(u.ink)
-                                        .placeholder("/path/to/reference.png", u.faint)
-                                        .caret(u.accent, u.accent.alpha(0.20))
-                                        .on_edit(|st: &mut State| &mut st.character.reference),
-                                ),
-                        )
-                        .child(
-                            col()
-                                .w(150.0)
-                                .gap(4.0)
-                                .child(u.field_label("HERO"))
-                                .child(
-                                    rune::text_input(&v.hero, BODY)
-                                        .key("character-hero")
-                                        .label("Target hero")
-                                        .single_line()
-                                        .color(u.ink)
-                                        .placeholder("billy", u.faint)
-                                        .caret(u.accent, u.accent.alpha(0.20))
-                                        .on_edit(|st: &mut State| &mut st.character.hero),
-                                ),
-                        ),
-                )
-                .child(
-                    row()
-                        .w_full()
-                        .gap(10.0)
-                        .items_start()
-                        .child(
-                            col()
-                                .grow(1.0)
-                                .gap(4.0)
-                                .child(u.field_label("STYLE"))
-                                .child(
-                                    rune::text_input(&v.style, BODY)
-                                        .key("character-style")
-                                        .label("Style")
-                                        .single_line()
-                                        .color(u.ink)
-                                        .placeholder("stylized game character", u.faint)
-                                        .caret(u.accent, u.accent.alpha(0.20))
-                                        .on_edit(|st: &mut State| &mut st.character.style),
-                                ),
-                        )
-                        .child(
-                            col()
-                                .w(190.0)
-                                .gap(4.0)
-                                .child(u.field_label("REFERENCE UPLOAD"))
-                                .child(
-                                    row()
-                                        .h(30.0)
-                                        .gap(8.0)
-                                        .center_y()
-                                        .child(u.toggle(v.consent).label("Reference upload consent"))
-                                        .child(
-                                            text(if v.consent {
-                                                "consent recorded"
-                                            } else {
-                                                "not consented"
-                                            })
-                                            .font(SMALL)
-                                            .color(if v.consent { u.teal } else { u.muted }),
-                                        ),
-                                ),
-                        ),
-                )
-                .child(
-                    text("The reference image leaves this machine only with the consent toggle on. A task without a reference is text to 3D.")
-                        .font(LABEL)
-                        .color(u.faint)
-                        .wrap(),
-                ),
-        )
-        .child(
-            col()
-                .w(240.0)
-                .gap(9.0)
-                .padding(13.0)
-                .radius(12.0)
-                .fill(u.field)
-                .border(1.0, u.hair)
-                .child(text("What comes back").font(BODY_MED).color(u.ink))
-                .child(u.kv("Result", "GLB mesh", u.muted))
-                .child(u.kv("Record", "character.json", u.muted))
-                .child(u.kv("Compile", "required", u.amber))
-                .child(u.divider())
-                .child(
-                    text("No rig, no retarget, no vmdl or material compile, and no in-game check happens in this pipeline. The import records the work that remains.")
-                        .font(LABEL)
-                        .color(u.faint)
-                        .wrap(),
-                )
-                .child(
-                    u.action("Create task", ActionKind::Primary)
-                        .w_full()
-                        .disabled(!ready)
-                        .opacity(if ready { 1.0 } else { 0.45 })
-                        .on_press(|st: &mut State| crate::data::create_character_task(st)),
-                )
-                .child(if needs_consent {
-                    text("Turn on reference upload consent first.")
-                        .font(LABEL)
-                        .color(u.amber)
-                        .wrap()
-                } else {
-                    el()
-                }),
+                .min_h(0.0)
+                .scroll(ScrollSpec {
+                    stick_bottom: false,
+                })
+                .child(list),
         )
 }
 
-fn card(s: &State, u: &Ui, index: usize, item: &Row) -> El {
-    let tone = match item.status.as_str() {
-        "SUCCEEDED" => Tone::Ok,
-        "FAILED" | "CANCELED" => Tone::Bad,
-        "IN_PROGRESS" => Tone::Warn,
-        _ => Tone::Info,
-    };
-    let mut card = col()
-        .key(format!("character-{}", item.slug))
-        .w_full()
-        .gap(8.0)
-        .padding(14.0)
-        .radius(13.0)
-        .fill(Color::WHITE.alpha(0.024))
-        .border(
-            1.0,
-            if item.status == "SUCCEEDED" {
-                u.teal.alpha(0.16)
+fn task_detail(s: &State, u: &Ui, index: usize, item: &Row) -> El {
+    let (status, status_color) = status_text(u, &item.status);
+    let busy = s.character.busy;
+    let can_import = item.status == "SUCCEEDED";
+
+    let mut facts = subpage::rows(u)
+        .child(subpage::kv(
+            u,
+            "Status",
+            row()
+                .gap(8.0)
+                .child(text(status).font(BODY).color(status_color))
+                .child(text(item.stage.clone()).font(BODY).color(u.faint)),
+        ))
+        .child(subpage::kv(
+            u,
+            "Provider",
+            subpage::val(u, item.provider.clone()),
+        ))
+        .child(subpage::kv(
+            u,
+            "Backend",
+            subpage::val(u, item.backend.clone()),
+        ))
+        .child(subpage::kv(
+            u,
+            "Mesh",
+            if item.imported {
+                subpage::val(
+                    u,
+                    if item.model_bytes > 0 {
+                        format!("GLB, {}", crate::model::format_size(item.model_bytes))
+                    } else {
+                        "GLB".to_string()
+                    },
+                )
             } else {
-                u.hair
+                text("Not imported yet").font(BODY).color(u.muted)
             },
-        )
+        ));
+    if let Some(hero) = &item.hero {
+        facts = facts.child(subpage::kv(u, "Hero", subpage::val(u, hero.clone())));
+    }
+    if let Some(reference) = &item.reference {
+        facts = facts.child(subpage::kv(
+            u,
+            "Reference",
+            text(reference.clone()).font(MONO).color(u.prose).truncate(),
+        ));
+    }
+    facts = facts.child(subpage::kv(
+        u,
+        "Created",
+        text(item.created.clone()).font(BODY).color(u.muted),
+    ));
+
+    let mut stages = subpage::rows(u);
+    for stage in &item.stages {
+        stages = stages.child(stage_line(u, stage));
+    }
+
+    let mut page = col()
+        .key("character-detail-body")
+        .max_w(800.0)
+        .pl(32.0)
+        .pr(8.0)
+        .pb(32.0)
+        .gap(24.0)
         .child(
             row()
                 .w_full()
-                .gap(10.0)
+                .gap(16.0)
                 .items_start()
                 .child(
                     col()
                         .grow(1.0)
                         .min_w(0.0)
-                        .gap(3.0)
+                        .gap(4.0)
+                        .child(text(item.prompt.clone()).font(H1).color(u.ink).wrap())
                         .child(
-                            text(item.prompt.clone())
-                                .font(BODY_MED)
-                                .color(u.ink)
-                                .wrap(),
-                        )
-                        .child(
-                            text(format!(
-                                "{} · {} · created {}",
-                                item.slug, item.provider, item.created
-                            ))
-                            .font(LABEL)
-                            .color(u.faint)
-                            .truncate(),
+                            text(item.slug.clone())
+                                .font(SMALL)
+                                .color(u.faint)
+                                .truncate(),
                         ),
                 )
-                .child(u.status_chip(&item.status.to_lowercase(), tone))
-                .child(u.chip(
-                    if item.stage.is_empty() {
-                        "stage unknown"
-                    } else {
-                        &item.stage
-                    },
-                    u.violet,
-                    u.violet.alpha(0.10),
-                )),
-        );
-
-    card = card.child(stage_rail(u, item));
-
-    let unsupported: Vec<&StageRow> = item
-        .stages
-        .iter()
-        .filter(|stage| stage.state == "unsupported")
-        .collect();
-    if let Some(first) = unsupported.first() {
-        card = card.child(
-            row()
-                .w_full()
-                .gap(10.0)
-                .items_start()
-                .padding(9.0)
-                .radius(8.0)
-                .fill(u.amber.alpha(0.05))
-                .border(1.0, u.amber.alpha(0.16))
-                .child(u.dot(Tone::Warn))
                 .child(
-                    col()
-                        .grow(1.0)
-                        .gap(2.0)
+                    row()
+                        .gap(8.0)
                         .child(
-                            text(format!("{} is unsupported on this machine", first.title))
-                                .font(SMALL)
-                                .color(u.muted),
+                            u.action("Advance", ActionKind::Secondary)
+                                .key(format!("character-advance-{}", item.slug))
+                                .disabled(busy)
+                                .cursor(rune::Cursor::Pointer)
+                                .on_press(move |st: &mut State| {
+                                    crate::data::advance_character(st, index)
+                                }),
                         )
                         .child(
-                            text(
-                                first
-                                    .note
-                                    .clone()
-                                    .unwrap_or_else(|| "No backend is configured for this stage.".to_string()),
-                            )
-                            .font(LABEL)
-                            .color(u.faint)
-                            .wrap(),
+                            u.action("Import mesh", ActionKind::Secondary)
+                                .key(format!("character-import-{}", item.slug))
+                                .disabled(busy || !can_import)
+                                .opacity(if can_import { 1.0 } else { 0.45 })
+                                .cursor(rune::Cursor::Pointer)
+                                .on_press(move |st: &mut State| {
+                                    crate::data::import_character_asset(st, index)
+                                }),
                         ),
                 ),
         );
-    }
-
-    let mut meta = row().w_full().gap(8.0).center_y();
-    if item.imported {
-        meta = meta.child(u.status_chip("GLB imported", Tone::Ok));
-        if item.model_bytes > 0 {
-            meta = meta.child(u.chip(
-                &crate::model::format_size(item.model_bytes),
-                u.muted,
-                Color::WHITE.alpha(0.04),
-            ));
-        }
-    } else {
-        meta = meta.child(u.status_chip("no asset yet", Tone::Quiet));
-    }
-    meta = meta.child(u.status_chip("compile required", Tone::Warn));
-    meta = meta.child(u.status_chip("not in game", Tone::Quiet));
-    if let Some(hero) = &item.hero {
-        meta = meta.child(u.chip(hero, u.faint, Color::WHITE.alpha(0.04)));
-    }
-    if let Some(reference) = &item.reference {
-        meta = meta.child(
-            text(reference.clone())
-                .font(MONO)
-                .color(u.faint)
-                .grow(1.0)
-                .truncate(),
-        );
-    } else {
-        meta = meta.child(spacer());
-    }
-    card = card.child(meta);
-
     if let Some(error) = &item.error {
-        card = card.child(
-            text(error.clone())
-                .font(SMALL)
-                .color(u.rose)
-                .wrap(),
-        );
+        page = page.child(text(error.clone()).font(BODY).color(u.rose).wrap());
     }
-
-    card.child(
-        row()
-            .w_full()
-            .pt(8.0)
-            .gap(8.0)
-            .center_y()
-            .border_sides([1.0, 0.0, 0.0, 0.0], u.hair)
-            .child(
-                text("source2Compile: required · inGameReady: false")
-                    .font(MONO)
-                    .color(u.amber.alpha(0.85))
-                    .grow(1.0)
-                    .truncate(),
-            )
-            .child(
-                u.action("Advance", ActionKind::Secondary)
-                    .key(format!("character-advance-{}", item.slug))
-                    .disabled(s.character.busy)
-                    .on_press(move |st: &mut State| crate::data::advance_character(st, index)),
-            )
-            .child(
-                u.action("Import", ActionKind::Primary)
-                    .key(format!("character-import-{}", item.slug))
-                    .disabled(s.character.busy || item.status != "SUCCEEDED")
-                    .opacity(if item.status == "SUCCEEDED" { 1.0 } else { 0.45 })
-                    .on_press(move |st: &mut State| crate::data::import_character_asset(st, index)),
-            ),
-    )
-}
-
-fn stage_rail(u: &Ui, item: &Row) -> El {
-    let mut rail = row().w_full().gap(3.0);
-    for stage in &item.stages {
-        let color = stage_color(u, &stage.state);
-        rail = rail.child(
-            col()
-                .grow(1.0)
-                .min_w(0.0)
-                .gap(3.0)
-                .child(el().w_full().h(5.0).radius(2.5).fill(color.alpha(0.85)))
-                .child(
-                    text(short_stage(&stage.id))
-                        .font(LABEL)
-                        .color(if stage.state == "unsupported" {
-                            u.amber
-                        } else {
-                            u.faint
-                        })
-                        .truncate(),
-                ),
-        );
-    }
-    let succeeded = item
-        .stages
-        .iter()
-        .filter(|stage| stage.state == "succeeded")
-        .count();
-    let unsupported = item
-        .stages
-        .iter()
-        .filter(|stage| stage.state == "unsupported")
-        .count();
-    col()
-        .w_full()
-        .gap(5.0)
-        .child(rail)
+    page = page
+        .child(facts)
         .child(
-            row()
+            col()
                 .w_full()
                 .gap(8.0)
-                .center_y()
-                .child(u.chip(
-                    &format!("{succeeded}/{} stages", item.stages.len()),
-                    u.teal,
-                    u.teal.alpha(0.10),
-                ))
-                .child(u.chip(
-                    &format!("{unsupported} unsupported"),
-                    if unsupported == 0 { u.faint } else { u.amber },
-                    Color::WHITE.alpha(0.04),
-                ))
-                .child(u.chip(
-                    &format!("backend {}", item.backend),
-                    u.violet,
-                    u.violet.alpha(0.10),
-                ))
-                .child(spacer())
-                .child(
-                    text(
-                        item.stages
-                            .iter()
-                            .find(|stage| stage.state == "unsupported")
-                            .map(|stage| format!("next: {}", stage.title))
-                            .unwrap_or_else(|| "all stages resolved".to_string()),
-                    )
-                    .font(LABEL)
-                    .color(u.faint),
-                ),
+                .child(subpage::group_head(u, "Stages", ""))
+                .child(stages),
         )
+        .child(
+            text("The mesh still needs a Source 2 compile and a check in game.")
+                .font(SMALL)
+                .color(u.faint)
+                .wrap(),
+        );
+
+    col()
+        .key("character-detail")
+        .grow(1.0)
+        .min_w(0.0)
+        .h_full()
+        .min_h(0.0)
+        .scroll(ScrollSpec {
+            stick_bottom: false,
+        })
+        .child(page)
 }
 
-fn stage_color(u: &Ui, state: &str) -> Color {
-    match state {
-        "succeeded" => u.teal,
-        "running" => u.amber,
-        "failed" => u.rose,
-        "unsupported" => u.amber,
-        "pending" => u.violet,
-        _ => u.faint,
-    }
-}
-
-fn short_stage(id: &str) -> String {
-    match id {
-        "prepare_reference" => "prep".to_string(),
-        "generate_views" => "views".to_string(),
-        "reconstruct" => "mesh".to_string(),
-        "cleanup" => "weld".to_string(),
-        "uv_bake" => "uv".to_string(),
-        "pbr_synthesize" => "pbr".to_string(),
-        "retopo" => "retopo".to_string(),
-        "rig" => "rig".to_string(),
-        "animate_retarget" => "anim".to_string(),
-        "source2_map" => "s2".to_string(),
-        "export" => "glb".to_string(),
-        other => other.chars().take(5).collect(),
-    }
-}
-
-#[allow(dead_code)]
-fn _tone_bg(u: &Ui, tone: Tone) -> Color {
-    tone.bg(u)
+/// One stage on one line: its name, whether this machine can run it, and a short note.
+fn stage_line(u: &Ui, stage: &StageRow) -> El {
+    let (state, color) = match stage.state.as_str() {
+        "succeeded" => ("Done", u.muted),
+        "running" => ("Running", u.ink),
+        "failed" => ("Failed", u.rose),
+        "unsupported" => ("Not available", u.amber),
+        "pending" => ("Waiting", u.muted),
+        "skipped" => ("Skipped", u.faint),
+        _ => ("Waiting", u.muted),
+    };
+    row()
+        .key(format!("stage-{}", stage.id))
+        .w_full()
+        .h(44.0)
+        .gap(16.0)
+        .center_y()
+        .border_sides([0.0, 0.0, 1.0, 0.0], u.hair)
+        .child(
+            text(stage.title.clone())
+                .font(BODY)
+                .color(u.ink)
+                .w(140.0)
+                .truncate(),
+        )
+        .child(text(state).font(BODY).color(color).w(104.0))
+        .child(
+            text(stage.note.clone().unwrap_or_default())
+                .font(SMALL)
+                .color(u.faint)
+                .grow(1.0)
+                .min_w(0.0)
+                .truncate(),
+        )
 }

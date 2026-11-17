@@ -14,6 +14,8 @@ pub enum Screen {
     Updates,
     Profiles,
     Autoexec,
+    Performance,
+    Servers,
     Crosshair,
     Stats,
     Locker,
@@ -34,7 +36,7 @@ impl Screen {
     pub fn searches(self) -> bool {
         matches!(
             self,
-            Screen::Installed | Screen::Browse | Screen::Conflicts
+            Screen::Installed | Screen::Browse | Screen::Conflicts | Screen::Servers
         )
     }
 
@@ -46,6 +48,8 @@ impl Screen {
                 | Screen::Conflicts
                 | Screen::Updates
                 | Screen::Autoexec
+                | Screen::Performance
+                | Screen::Servers
                 | Screen::Crosshair
                 | Screen::Profiles
                 | Screen::Stats
@@ -61,6 +65,8 @@ impl Screen {
             Screen::Updates => "updates",
             Screen::Profiles => "profiles",
             Screen::Autoexec => "autoexec",
+            Screen::Performance => "performance",
+            Screen::Servers => "servers",
             Screen::Crosshair => "crosshair",
             Screen::Stats => "stats",
             Screen::Locker => "locker",
@@ -81,10 +87,12 @@ impl Screen {
         match self {
             Screen::Installed => "Installed",
             Screen::Browse => "Browse",
-            Screen::Conflicts => "Conflicts",
+            Screen::Conflicts => "Overlap",
             Screen::Updates => "Updates",
             Screen::Profiles => "Profiles",
             Screen::Autoexec => "Autoexec",
+            Screen::Performance => "Performance",
+            Screen::Servers => "Servers",
             Screen::Crosshair => "Crosshair",
             Screen::Stats => "Stats",
             Screen::Locker => "Locker",
@@ -109,6 +117,8 @@ impl Screen {
             Screen::Updates => "PATCH FEED AND BASELINES",
             Screen::Profiles => "SAVED SLOT SETS",
             Screen::Autoexec => "GAME CONFIG",
+            Screen::Performance => "GAME CONFIG",
+            Screen::Servers => "COMMUNITY SERVERS",
             Screen::Crosshair => "AIM RETICLE",
             Screen::Stats => "DEADLOCK API AND LOCAL DEMOS",
             Screen::Locker => "HERO ASSETS",
@@ -127,25 +137,54 @@ impl Screen {
 
     pub fn subtitle(self) -> &'static str {
         match self {
-            Screen::Installed => "Addon slots on disk, with the files the game loads",
-            Screen::Browse => "The public Deadlock mod feed, read only",
-            Screen::Conflicts => "Game paths that more than one enabled slot replaces",
-            Screen::Updates => "Project baselines against the current patch feed",
-            Screen::Profiles => "Named sets of enabled slots, captured and restored",
-            Screen::Autoexec => "The game config file, read and edited behind approval",
-            Screen::Crosshair => "The reticle convars, with a live geometry preview",
-            Screen::Stats => "Rank, heroes, matches and heatmaps from the API, depth from demos",
-            Screen::Locker => "Hero renders and asset paths resolved from the local game",
-            Screen::Launch => "Modded, vanilla and the restore path",
-            Screen::Agent => "Plan, stage and validate with the project in context",
-            Screen::Projects => "One workspace per mod, with targets and history",
-            Screen::Index => "Exact paths from the installed game, read only",
-            Screen::Patches => "Steam news, with the targets each note touches",
-            Screen::Impact => "What a patch does to the selected project",
-            Screen::Release => "Latest build, deploy plan and the queue after an update",
-            Screen::Toolchain => "External decompile and compile tools, with real availability",
-            Screen::Character => "Reference to mesh pipeline, stopped at a verified artifact",
-            Screen::Settings => "Providers, paths and safety, nothing secret on screen",
+            Screen::Installed => "",
+            Screen::Browse => "",
+            Screen::Conflicts => "Files more than one enabled mod replaces. The lower slot wins.",
+            Screen::Updates => "Mods and projects to check after a game update.",
+            Screen::Profiles => "Save which mods are on, and switch between sets.",
+            Screen::Autoexec => "Commands the game runs every time it starts.",
+            Screen::Performance => "Community configs that trade visual detail for frame rate.",
+            Screen::Servers => "Community servers running Deadworks.",
+            Screen::Crosshair => "Tune your crosshair and see it against the game.",
+            Screen::Stats => "Rank, heroes and recent matches.",
+            Screen::Locker => "",
+            Screen::Launch => "Start the game with or without mods.",
+            Screen::Agent => "",
+            Screen::Projects => "Mods you are making.",
+            Screen::Index => "Every file path in your game install.",
+            Screen::Patches => "Official patch notes.",
+            Screen::Impact => "What the latest patch changes in this mod.",
+            Screen::Release => "Build, check and install this mod.",
+            Screen::Toolchain => "Tools that compile and decompile game files.",
+            Screen::Character => "Turn a reference into a character model.",
+            Screen::Settings => "Game, models and maintenance.",
+        }
+    }
+
+    pub fn icon(self) -> &'static rune::Icon {
+        use crate::icons as i;
+        match self {
+            Screen::Installed => &i::LAYERS,
+            Screen::Browse => &i::COMPASS,
+            Screen::Conflicts => &i::GIT_COMPARE,
+            Screen::Updates => &i::REFRESH_CW,
+            Screen::Profiles => &i::BOOKMARK,
+            Screen::Autoexec => &i::SQUARE_TERMINAL,
+            Screen::Performance => &i::GAUGE,
+            Screen::Servers => &crate::screens::servers::SERVER_ICON,
+            Screen::Crosshair => &i::CROSSHAIR,
+            Screen::Stats => &i::CHART_LINE,
+            Screen::Locker => &i::SHIRT,
+            Screen::Launch => &i::PLAY,
+            Screen::Agent => &i::SPARKLES,
+            Screen::Projects => &i::FOLDER,
+            Screen::Index => &i::SEARCH,
+            Screen::Patches => &i::FILE,
+            Screen::Impact => &i::ZAP,
+            Screen::Release => &i::PACKAGE,
+            Screen::Toolchain => &i::WRENCH,
+            Screen::Character => &i::USER,
+            Screen::Settings => &i::SETTINGS,
         }
     }
 
@@ -157,6 +196,8 @@ impl Screen {
             Screen::Updates => "⟳",
             Screen::Profiles => "☰",
             Screen::Autoexec => "≡",
+            Screen::Performance => "≡",
+            Screen::Servers => "",
             Screen::Crosshair => "✛",
             Screen::Stats => "◉",
             Screen::Locker => "◐",
@@ -175,32 +216,34 @@ impl Screen {
 
     pub fn shortcut(self) -> &'static str {
         match self {
-            Screen::Installed => "CMD 1",
-            Screen::Browse => "CMD 2",
-            Screen::Conflicts => "CMD 3",
-            Screen::Updates => "CMD 4",
-            Screen::Profiles => "CMD P",
-            Screen::Autoexec => "CMD E",
-            Screen::Crosshair => "CMD X",
-            Screen::Stats => "CMD 5",
-            Screen::Locker => "CMD 6",
-            Screen::Launch => "CMD L",
-            Screen::Agent => "CMD 7",
-            Screen::Projects => "CMD 8",
-            Screen::Index => "CMD 9",
-            Screen::Patches => "CMD 0",
+            Screen::Installed => "⌘2",
+            Screen::Browse => "⌘1",
+            Screen::Conflicts => "⌘3",
+            Screen::Updates => "⌘4",
+            Screen::Profiles => "⌘P",
+            Screen::Autoexec => "⌘E",
+            Screen::Performance => "",
+            Screen::Servers => "",
+            Screen::Crosshair => "⌘X",
+            Screen::Stats => "⌘5",
+            Screen::Locker => "⌘6",
+            Screen::Launch => "⌘L",
+            Screen::Agent => "⌘7",
+            Screen::Projects => "⌘8",
+            Screen::Index => "⌘9",
+            Screen::Patches => "",
             Screen::Impact => "",
             Screen::Release => "",
             Screen::Toolchain => "",
             Screen::Character => "",
-            Screen::Settings => "CMD ,",
+            Screen::Settings => "⌘,",
         }
     }
 
     pub fn from_command(c: char) -> Option<Screen> {
         match c {
-            '1' => Some(Screen::Installed),
-            '2' => Some(Screen::Browse),
+            '1' => Some(Screen::Browse),
+            '2' => Some(Screen::Installed),
             '3' => Some(Screen::Conflicts),
             '4' => Some(Screen::Updates),
             '5' => Some(Screen::Stats),
@@ -208,7 +251,6 @@ impl Screen {
             '7' => Some(Screen::Agent),
             '8' => Some(Screen::Projects),
             '9' => Some(Screen::Index),
-            '0' => Some(Screen::Patches),
             'p' => Some(Screen::Profiles),
             'e' => Some(Screen::Autoexec),
             'x' => Some(Screen::Crosshair),
@@ -373,6 +415,7 @@ pub fn format_count(value: u64) -> String {
 }
 
 /// One slot in `game/citadel/addons`, as `list_installed` reports it.
+#[derive(Clone)]
 pub struct AddonRow {
     pub slot: u8,
     pub file: String,
@@ -394,10 +437,7 @@ impl AddonRow {
     pub fn entries_label(&self) -> String {
         match self.entry_count {
             Some(0) => "no entries".to_string(),
-            Some(count) => format!(
-                "{count} entr{}",
-                if count == 1 { "y" } else { "ies" }
-            ),
+            Some(count) => format!("{count} entr{}", if count == 1 { "y" } else { "ies" }),
             None => "entries unknown".to_string(),
         }
     }
@@ -474,7 +514,10 @@ impl AddonLibrary {
     }
 
     pub fn chunk_count(&self) -> usize {
-        self.addons.iter().map(|addon| addon.chunk_files.len()).sum()
+        self.addons
+            .iter()
+            .map(|addon| addon.chunk_files.len())
+            .sum()
     }
 
     pub fn total_bytes(&self) -> u64 {
@@ -507,6 +550,23 @@ pub struct BrowseCard {
     pub profile_url: String,
     pub thumbnail_url: Option<String>,
     pub version: Option<String>,
+    /// Unix seconds GameBanana first published the mod. Zero when unknown.
+    pub added_ts: i64,
+    /// Unix seconds of the latest change GameBanana reports. Zero when unknown.
+    pub updated_ts: i64,
+    /// Mature content: the card blurs its image until the player reveals it.
+    pub nsfw: bool,
+    /// `Mod` or `Sound`.
+    pub model: String,
+    /// A sound's sample, opened from the card.
+    pub audio_url: Option<String>,
+    /// GameBanana featured it.
+    pub featured: bool,
+    pub comments: u64,
+    /// The submitter's member id, for "more from this creator".
+    pub author_id: u64,
+    /// The creator marked it obsolete.
+    pub obsolete: bool,
 }
 
 impl BrowseCard {
@@ -522,7 +582,10 @@ impl BrowseCard {
         let updated = if self.updated_at.is_empty() {
             "update date unknown".to_string()
         } else {
-            format!("updated {}", self.updated_at.chars().take(10).collect::<String>())
+            format!(
+                "updated {}",
+                self.updated_at.chars().take(10).collect::<String>()
+            )
         };
         format!(
             "{updated} · {} likes · {} views",
@@ -540,6 +603,9 @@ impl BrowseCard {
 }
 
 pub struct BrowsePageView {
+    /// The browse query this page was read for (`screens::browse::query_key`), so a page
+    /// that lands after the filters changed is dropped.
+    pub key: u64,
     pub page: usize,
     pub per_page: usize,
     pub total: usize,
@@ -1498,10 +1564,7 @@ pub fn demo_addon_library() -> AddonLibrary {
             slot: 5,
             file: "pak05_dir.vpk".to_string(),
             size_bytes: 30_838_784,
-            chunk_files: vec![
-                "pak05_000.vpk".to_string(),
-                "pak05_001.vpk".to_string(),
-            ],
+            chunk_files: vec!["pak05_000.vpk".to_string(), "pak05_001.vpk".to_string()],
             entry_count: Some(212),
             enabled: true,
         },

@@ -1,0 +1,64 @@
+{
+ "_aMetadata": {
+  "_nRecordCount": 5,
+  "_nPerpage": 15,
+  "_bIsComplete": true
+ },
+ "_aRecords": [
+  {
+   "_idRow": 14081011,
+   "_tsDateAdded": 1793726010,
+   "_sText": "<p>just asking could you use the pgr model ? it so much better</p>",
+   "_aPoster": {
+    "_idRow": 1338048,
+    "_sName": "HydrogenGT",
+    "_sAvatarUrl": "https://images.gamebanana.com/img/av/6a9ca047b6d8c.jpg",
+    "_sProfileUrl": "https://gamebanana.com/members/1338048"
+   }
+  },
+  {
+   "_idRow": 14063749,
+   "_tsDateAdded": 1793284048,
+   "_sText": "<p>[BUG] The \"resources\" file in the mod causes Nurse Harrow abilities 2 and 4 to be visually bugged and its information unreadable. </p><p>Eg: Nurse's ability 4 will show up as \"#Modifier_Nurse_Fear...\"</p>",
+   "_aPoster": {
+    "_idRow": 5311612,
+    "_sName": "vol851",
+    "_sAvatarUrl": "https://images.gamebanana.com/static/img/defaults/avatar.gif",
+    "_sProfileUrl": "https://gamebanana.com/members/5311612"
+   }
+  },
+  {
+   "_idRow": 14051196,
+   "_tsDateAdded": 1792943292,
+   "_sText": "<p>visually breaks nurse harrow's 2 and 4 with another skin mod I'm using with her for some reason. <br>Her two shows #Modifer_Nurse_Adrenaline_Rush_Buff as one example</p><p><br></p>",
+   "_aPoster": {
+    "_idRow": 5304721,
+    "_sName": "DistantNeko",
+    "_sAvatarUrl": "https://images.gamebanana.com/static/img/defaults/avatar.gif",
+    "_sProfileUrl": "https://gamebanana.com/members/5304721"
+   }
+  },
+  {
+   "_idRow": 14036632,
+   "_tsDateAdded": 1792545685,
+   "_sText": "<p>It looks amazing but it would be even cooler if you changed her gun to kurumi’s gun</p>",
+   "_aPoster": {
+    "_idRow": 3294651,
+    "_sName": "Hunter2145z",
+    "_sAvatarUrl": "https://images.gamebanana.com/static/img/defaults/avatar.gif",
+    "_sProfileUrl": "https://gamebanana.com/members/3294651"
+   }
+  },
+  {
+   "_idRow": 14036036,
+   "_tsDateAdded": 1792531020,
+   "_sText": "<p>banger!!!</p>",
+   "_aPoster": {
+    "_idRow": 1338048,
+    "_sName": "HydrogenGT",
+    "_sAvatarUrl": "https://images.gamebanana.com/img/av/6a9ca047b6d8c.jpg",
+    "_sProfileUrl": "https://gamebanana.com/members/1338048"
+   }
+  }
+ ]
+}

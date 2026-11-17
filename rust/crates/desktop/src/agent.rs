@@ -12,8 +12,7 @@ use std::{
     collections::HashMap,
     env,
     io::{BufRead, BufReader, Write},
-    path::{Path, PathBuf},
-    process::{Child, ChildStdin, Command, Stdio},
+    process::{Child, ChildStdin, Stdio},
     sync::mpsc::{self, Receiver, Sender, TryRecvError},
     thread,
     time::{Duration, Instant},
@@ -133,7 +132,7 @@ pub enum AgentEvent {
 /// The live connection to `dah-agent`.
 pub struct AgentLink {
     pub status: AgentStatus,
-    pub binary: Option<PathBuf>,
+    pub binary: Option<String>,
     pub provider: String,
     pub model: Option<String>,
     pub base_url: Option<String>,
@@ -161,7 +160,9 @@ impl AgentLink {
     pub fn start(wake: Waker) -> AgentLink {
         // `<data>/host.json` wins over the environment. The Settings screen and
         // `dah auth use` write it after a subscription sign-in.
-        let host = deadlock_core::subscription::load_host_config().ok().flatten();
+        let host = deadlock_core::subscription::load_host_config()
+            .ok()
+            .flatten();
         let provider = host
             .as_ref()
             .map(|host| host.provider.clone())
@@ -227,10 +228,10 @@ impl AgentLink {
             Ok(binary) => binary,
             Err(message) => return AgentLink::config_error(link, &message),
         };
-        link.binary = Some(binary.clone());
+        link.binary = Some(binary.label());
         link.configured = true;
 
-        let mut command = Command::new(&binary);
+        let mut command = binary.command();
         command
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -247,8 +248,8 @@ impl AgentLink {
             Err(error) => {
                 link.status = AgentStatus::Error;
                 link.error = Some(format!(
-                    "Could not start {}: {error}. Build it with `cargo build -p dah-agent`.",
-                    binary.display()
+                    "Could not start {}: {error}.",
+                    binary.label()
                 ));
                 return link;
             }
@@ -348,7 +349,7 @@ impl AgentLink {
             return "demo fixture, no process".to_string();
         }
         match &self.binary {
-            Some(path) => path.display().to_string(),
+            Some(label) => label.clone(),
             None => "not found".to_string(),
         }
     }
@@ -600,95 +601,9 @@ impl Drop for AgentLink {
     }
 }
 
-/// Resolve the host binary: DAH_AGENT_BIN, a sibling of this executable, a debug build above
-/// the working directory or the executable, then PATH.
-fn resolve_binary() -> Result<PathBuf, String> {
-    let name = if cfg!(windows) {
-        "dah-agent.exe"
-    } else {
-        "dah-agent"
-    };
-    let mut searched: Vec<PathBuf> = Vec::new();
-
-    if let Some(value) = env::var_os("DAH_AGENT_BIN") {
-        let path = PathBuf::from(value);
-        if path.is_file() {
-            return Ok(path);
-        }
-        return Err(format!(
-            "DAH_AGENT_BIN points at {}, which is not a file. Build the host with `cargo build -p dah-agent` or correct the variable.",
-            path.display()
-        ));
-    }
-
-    if let Ok(exe) = env::current_exe()
-        && let Some(dir) = exe.parent()
-    {
-        let sibling = dir.join(name);
-        if sibling.is_file() {
-            return Ok(sibling);
-        }
-        searched.push(sibling);
-        for ancestor in dir.ancestors().skip(1) {
-            let candidate = ancestor.join("rust/target/debug").join(name);
-            if candidate.is_file() {
-                return Ok(candidate);
-            }
-            searched.push(candidate);
-        }
-    }
-
-    if let Ok(cwd) = env::current_dir() {
-        for ancestor in cwd.ancestors() {
-            let candidate = ancestor.join("rust/target/debug").join(name);
-            if candidate.is_file() {
-                return Ok(candidate);
-            }
-            searched.push(candidate);
-        }
-    }
-
-    if let Some(path) = find_on_path(name) {
-        return Ok(path);
-    }
-
-    let mut message = format!(
-        "The dah-agent binary was not found. Build it with `cargo build -p dah-agent` or set DAH_AGENT_BIN. Searched {} and PATH",
-        searched
-            .first()
-            .map(|path| path.display().to_string())
-            .unwrap_or_else(|| "the app directory".to_string())
-    );
-    message.push('.');
-    Err(message)
-}
-
-fn find_on_path(name: &str) -> Option<PathBuf> {
-    let path = env::var_os("PATH")?;
-    for dir in env::split_paths(&path) {
-        let candidate = dir.join(name);
-        if is_executable(&candidate) {
-            return Some(candidate);
-        }
-    }
-    None
-}
-
-fn is_executable(path: &Path) -> bool {
-    if !path.is_file() {
-        return false;
-    }
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        path.metadata()
-            .map(|meta| meta.permissions().mode() & 0o111 != 0)
-            .unwrap_or(false)
-    }
-    #[cfg(not(unix))]
-    {
-        true
-    }
+/// The host: `DAH_AGENT_BIN`, else this executable as `agent-host` (`crate::helpers`).
+fn resolve_binary() -> Result<crate::helpers::Helper, String> {
+    crate::helpers::agent_host()
 }
 
 fn spawn_stdout_reader(stdout: std::process::ChildStdout, tx: Sender<AgentEvent>, wake: Waker) {

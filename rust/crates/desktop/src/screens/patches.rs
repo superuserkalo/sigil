@@ -1,80 +1,73 @@
-//! Patches: the official Steam news list, new badges and the selected note with its impact summary.
+//! Patches: official notes from Steam news on the left, the selected note on the right.
 
-use rune::tok::motion;
-use rune::{Color, El, ScrollSpec, col, el, row, spacer, text};
+use rune::{Color, El, ScrollSpec, col, el, row, text};
 
 use crate::app::State;
+use crate::icons;
 use crate::model::{PatchNote, Screen};
-use crate::ui::{ActionKind, BODY, BODY_MED, H1, LABEL, MONO, SMALL, Tone, Ui};
+use crate::screens::subpage;
+use crate::ui::{ActionKind, BODY, BODY_MED, H1, MONO, SMALL, Ui};
 
 pub fn view(s: &State, u: &Ui) -> El {
     let new_count = s.patches.iter().filter(|p| p.is_new).count();
-    let trailing = row()
-        .gap(8.0)
-        .center_y()
-        .child(u.status_chip(
-            &format!("{} new", new_count),
-            if new_count > 0 { Tone::Accent } else { Tone::Quiet },
-        ))
-        .child(u.action("Refresh feed", ActionKind::Secondary).on_press(|st: &mut State| {
-            st.status =
-                "Patch feed is not connected in this build. Showing the local cache; no network request was made."
-                    .to_string();
-        }));
+    let actions = row().gap(8.0).center_y().child(
+        u.icon_action(&icons::REFRESH_CW, "Refresh", ActionKind::Secondary)
+            .key("patches-refresh")
+            .cursor(rune::Cursor::Pointer)
+            .on_press(|st: &mut State| {
+                st.status = "Refreshing the patch feed is not available yet.".to_string();
+            }),
+    );
+    let detail = if s.patches.is_empty() {
+        String::new()
+    } else if new_count > 0 {
+        format!("{} notes, {} new", s.patches.len(), new_count)
+    } else {
+        format!("{} notes", s.patches.len())
+    };
+    let head = subpage::head(u, "Patches", &detail, Some(actions));
 
-    col()
-        .key("patches-page")
-        .grow(1.0)
-        .h_full()
-        .min_h(0.0)
-        .px(24.0)
-        .pt(20.0)
-        .pb(18.0)
-        .gap(14.0)
-        .child(u.page_head(
-            Screen::Patches.kicker(),
-            "Patches",
-            "Official Deadlock notes from Steam news, paired with the targets each note touches.",
-            Some(trailing),
-        ))
-        .child(
-            row()
-                .key("patches-body")
-                .grow(1.0)
-                .min_h(0.0)
-                .gap(16.0)
-                .child(list(s, u))
-                .child(detail(s, u)),
-        )
+    if s.patches.is_empty() {
+        return subpage::page(
+            "patches",
+            head,
+            u.empty_state(
+                "",
+                "No patch notes yet",
+                "Official notes from Steam news show up here after a refresh.",
+                None,
+            ),
+        );
+    }
+
+    subpage::fixed_page(
+        "patches",
+        head,
+        row()
+            .key("patches-body")
+            .w_full()
+            .min_h(0.0)
+            .child(list(s, u))
+            .child(detail_pane(s, u)),
+    )
 }
 
 fn list(s: &State, u: &Ui) -> El {
-    let mut rows = col().key("patch-list-inner").w_full().gap(5.0).padding(8.0);
-    if s.patches.is_empty() {
-        rows = rows.child(
-            col()
-                .padding(14.0)
-                .gap(4.0)
-                .child(text("No patch notes").font(BODY_MED).color(u.muted))
-                .child(
-                    text("The feed has not been fetched. Cached notes appear here.")
-                        .font(SMALL)
-                        .color(u.faint)
-                        .wrap(),
-                ),
-        );
-    } else {
-        for (i, p) in s.patches.iter().enumerate() {
-            rows = rows.child(note_row(s, u, i, p));
-        }
+    let mut rows = col()
+        .key("patch-list-inner")
+        .w_full()
+        .pr(12.0)
+        .pb(24.0)
+        .gap(2.0);
+    for (i, p) in s.patches.iter().enumerate() {
+        rows = rows.child(note_row(s, u, i, p));
     }
-
-    u.panel()
+    col()
         .key("patch-list")
-        .w(360.0)
+        .w(320.0)
         .h_full()
         .min_h(0.0)
-        .child(u.panel_header("STEAM NEWS", &format!("{} notes", s.patches.len())))
+        .border_sides([0.0, 1.0, 0.0, 0.0], u.hair)
         .child(
             col()
                 .grow(1.0)
@@ -88,310 +81,200 @@ fn list(s: &State, u: &Ui) -> El {
 
 fn note_row(s: &State, u: &Ui, i: usize, p: &PatchNote) -> El {
     let on = i == s.selected_patch;
-    let title = p.title.clone();
-    let press_title = title.clone();
+    let mut meta = vec![p.date.clone()];
+    if !p.build.is_empty() {
+        meta.push(p.build.clone());
+    }
+    if !p.changed.is_empty() {
+        meta.push(plural(p.changed.len(), "change"));
+    }
+    let mut top = row().w_full().gap(8.0).center_y().child(
+        text(p.title.clone())
+            .font(BODY_MED)
+            .color(if on { u.ink } else { u.prose })
+            .grow(1.0)
+            .min_w(0.0)
+            .truncate(),
+    );
+    if p.is_new {
+        top = top.child(text("New").font(SMALL).color(u.muted));
+    }
     col()
         .key(format!("patch-{i}"))
         .w_full()
-        .padding(11.0)
-        .gap(6.0)
-        .radius(8.0)
-        .fill(if on {
-            u.accent.alpha(0.10)
-        } else {
-            Color::TRANSPARENT
-        })
-        .border(
-            1.0,
-            if on {
-                u.accent.alpha(0.22)
-            } else {
-                Color::TRANSPARENT
-            },
-        )
-        .hover(Color::WHITE.alpha(0.035))
-        .press(Color::WHITE.alpha(0.05))
+        .h(56.0)
+        .px(12.0)
+        .gap(2.0)
+        .justify_center()
+        .radius(crate::ui::r(8.0))
+        .fill(if on { u.selected } else { Color::TRANSPARENT })
+        .hover(u.hover)
         .focusable(true)
         .role("button")
-        .label(title.clone())
-        .motion(motion::SNAPPY)
+        .label(p.title.clone())
+        .cursor(rune::Cursor::Pointer)
         .on_press(move |st: &mut State| {
             st.selected_patch = i;
-            st.status = format!("Opened {press_title}.");
         })
+        .child(top)
         .child(
-            row()
-                .w_full()
-                .gap(7.0)
-                .center_y()
-                .child(text(p.date.clone()).font(SMALL).color(u.faint))
-                .child(spacer())
-                .child(if p.is_new {
-                    u.chip("NEW", u.accent_ink, u.accent)
-                } else if p.build.is_empty() {
-                    el().h(0.0)
-                } else {
-                    u.chip(&p.build, u.faint, Color::WHITE.alpha(0.035))
-                }),
+            text(meta.join("  ·  "))
+                .font(SMALL)
+                .color(u.faint)
+                .truncate(),
         )
-        .child(
-            text(title)
-                .font(BODY_MED)
-                .color(if on { u.ink } else { u.muted })
-                .max_lines(2)
-                .wrap(),
-        )
-        .child({
-            let mut meta = row()
-                .w_full()
-                .gap(6.0)
-                .center_y()
-                .child(if p.build.is_empty() {
-                    text("cached note").font(MONO).color(u.faint)
-                } else {
-                    text(p.build.clone()).font(MONO).color(u.faint)
-                });
-            if !p.changed.is_empty() {
-                meta = meta
-                    .child(text("·").font(SMALL).color(u.faint).a11y_hidden())
-                    .child(
-                        text(format!(
-                            "{} change{}",
-                            p.changed.len(),
-                            if p.changed.len() == 1 { "" } else { "s" }
-                        ))
-                        .font(SMALL)
-                        .color(u.faint),
-                    );
-            }
-            meta
-        })
 }
 
-fn detail(s: &State, u: &Ui) -> El {
+fn detail_pane(s: &State, u: &Ui) -> El {
     let Some(note) = s.selected_note() else {
         return col()
             .key("patch-detail")
             .grow(1.0)
             .h_full()
-            .min_h(0.0)
             .child(u.empty_state(
-                "❐",
-                "No note selected",
-                "Patch notes from the official Steam feed appear here with a target correlation.",
+                "",
+                "Pick a note",
+                "Select a patch note on the left to read it.",
                 None,
             ));
     };
 
-    let changed = if note.changed.is_empty() {
-        u.note(
-            "This feed note has no parsed target summary. Read the body, then correlate it with the project.",
-        )
-    } else {
-        let mut block = col()
-            .key("what-changed")
-            .w_full()
-            .gap(7.0)
-            .padding(13.0)
-            .radius(8.0)
-            .fill(u.accent.alpha(0.055))
-            .border(1.0, u.accent.alpha(0.16))
-            .child(
-                row()
-                    .w_full()
-                    .gap(8.0)
-                    .center_y()
-                    .child(text("WHAT CHANGED").font(LABEL).color(u.accent))
-                    .child(spacer())
-                    .child(
-                        text(format!("{} targets", note.changed.len()))
-                            .font(SMALL)
-                            .color(u.faint),
-                    ),
-            );
-        for c in &note.changed {
-            block = block.child(
-                row()
-                    .w_full()
-                    .gap(8.0)
-                    .items_start()
-                    .child(
-                        el().w(2.0)
-                            .h(13.0)
-                            .radius(1.0)
-                            .fill(u.accent.alpha(0.7))
-                            .mt(2.0)
-                            .a11y_hidden(),
-                    )
-                    .child(text(c.clone()).font(SMALL).color(u.muted).grow(1.0).wrap()),
-            );
-        }
-        block
-    };
-
-    let mut body = col().key("patch-copy").w_full().gap(9.0);
-    for para in &note.body {
-        body = body.child(
-            text(para.clone())
-                .font(BODY)
-                .color(u.prose)
-                .wrap()
-                .selectable(true),
-        );
+    let mut meta = vec![note.date.clone()];
+    if !note.build.is_empty() {
+        meta.push(format!("Build {}", note.build));
     }
 
-    let page = col()
+    let mut page = col()
         .key("patch-detail-body")
-        .w_full()
-        .gap(16.0)
-        .padding(20.0)
+        .max_w(800.0)
+        .pl(32.0)
+        .pr(8.0)
+        .pb(32.0)
+        .gap(24.0)
         .child(
-            row()
+            col()
                 .w_full()
-                .gap(8.0)
-                .center_y()
-                .child(u.status_chip("official", Tone::Quiet))
-                .child(text(note.source.clone()).font(SMALL).color(u.faint))
-                .child(spacer())
+                .gap(4.0)
+                .child(text(note.title.clone()).font(H1).color(u.ink).wrap())
                 .child(
-                    text(if note.build.is_empty() {
-                        "cached feed".to_string()
-                    } else {
-                        format!("build {}", note.build)
-                    })
-                    .font(MONO)
-                    .color(u.faint),
-                ),
-        )
-        .child(text(note.title.clone()).font(H1).color(u.ink).wrap())
-        .child(
-            row()
-                .gap(8.0)
-                .center_y()
-                .child(text(note.date.clone()).font(MONO).color(u.muted))
-                .child(text("·").font(SMALL).color(u.faint).a11y_hidden())
-                .child(
-                    text(if note.is_new {
-                        "new since last visit"
-                    } else {
-                        "seen"
-                    })
-                    .font(SMALL)
-                    .color(if note.is_new { u.accent } else { u.faint }),
-                ),
-        )
-        .child(changed)
-        .child(body)
-        .child(touched(s, u, note))
-        .child(u.divider())
-        .child(
-            row()
-                .w_full()
-                .gap(8.0)
-                .center_y()
-                .child(
-                    text("Correlation uses the cached index and the last impact check.")
+                    text(meta.join("  ·  "))
                         .font(SMALL)
                         .color(u.faint)
-                        .grow(1.0)
-                        .wrap(),
-                )
-                .child(
-                    u.action("Correlate with project", ActionKind::Secondary)
-                        .on_press(|st: &mut State| {
-                            st.screen = Screen::Impact;
-                            st.status =
-                                "Correlation opened from the cached note. No game files were read."
-                                    .to_string();
-                        }),
+                        .truncate(),
                 ),
         );
+
+    if !note.changed.is_empty() {
+        let mut list = col().w_full().gap(8.0).child(u.section("What changed"));
+        for c in &note.changed {
+            list = list.child(
+                row()
+                    .w_full()
+                    .gap(10.0)
+                    .items_start()
+                    .child(
+                        el().size(4.0, 4.0)
+                            .radius(2.0)
+                            .fill(u.faint)
+                            .mt(8.0)
+                            .a11y_hidden(),
+                    )
+                    .child(
+                        text(c.clone())
+                            .font(BODY)
+                            .color(u.prose)
+                            .grow(1.0)
+                            .min_w(0.0)
+                            .wrap(),
+                    ),
+            );
+        }
+        page = page.child(list);
+    }
+
+    if !note.body.is_empty() {
+        let mut body = col().key("patch-copy").w_full().gap(8.0);
+        for para in &note.body {
+            body = body.child(
+                text(para.clone())
+                    .font(BODY)
+                    .color(u.prose)
+                    .wrap()
+                    .selectable(true),
+            );
+        }
+        page = page.child(body);
+    }
+
+    page = page.child(touched(s, u, note));
 
     col()
         .key("patch-detail")
         .grow(1.0)
+        .min_w(0.0)
         .h_full()
         .min_h(0.0)
-        .child(
-            u.panel().grow(1.0).min_h(0.0).child(
-                col()
-                    .key("patch-detail-scroll")
-                    .grow(1.0)
-                    .min_h(0.0)
-                    .scroll(ScrollSpec {
-                        stick_bottom: false,
-                    })
-                    .child(page),
-            ),
-        )
+        .scroll(ScrollSpec {
+            stick_bottom: false,
+        })
+        .child(page)
 }
 
 fn touched(s: &State, u: &Ui, note: &PatchNote) -> El {
+    let project = s.project().map(|p| p.name.clone());
+    let mut section = col().w_full().gap(8.0).child(
+        row()
+            .w_full()
+            .gap(8.0)
+            .center_y()
+            .child(u.section("Paths touched"))
+            .child(
+                text(note.targets.len().to_string())
+                    .font(BODY)
+                    .color(u.faint),
+            ),
+    );
     if note.targets.is_empty() {
-        return el().h(0.0);
-    }
-    let mut rows = col().key("touched-list").w_full();
-    for (i, path) in note.targets.iter().enumerate() {
-        if i > 0 {
-            rows = rows.child(u.divider());
+        section = section.child(
+            text("No paths were matched to this note.")
+                .font(BODY)
+                .color(u.muted),
+        );
+    } else {
+        let mut rows = subpage::rows(u);
+        for path in &note.targets {
+            rows = rows.child(
+                row()
+                    .w_full()
+                    .h(40.0)
+                    .center_y()
+                    .border_sides([0.0, 0.0, 1.0, 0.0], u.hair)
+                    .child(
+                        text(path.clone())
+                            .font(MONO)
+                            .color(u.ink)
+                            .grow(1.0)
+                            .min_w(0.0)
+                            .truncate(),
+                    ),
+            );
         }
-        rows = rows.child(
-            row()
-                .w_full()
-                .h(35.0)
-                .px(14.0)
-                .gap(8.0)
-                .center_y()
-                .child(u.dot(Tone::Warn))
-                .child(
-                    text(path.clone())
-                        .font(MONO)
-                        .color(u.ink)
-                        .grow(1.0)
-                        .truncate(),
-                )
-                .child(u.chip("review", u.amber, u.amber.alpha(0.11))),
-        );
+        section = section.child(rows);
     }
+    let label = match &project {
+        Some(name) => format!("Check impact on {name}"),
+        None => "Check impact".to_string(),
+    };
+    section.child(
+        row().w_full().pt(8.0).child(
+            u.action(&label, ActionKind::Secondary)
+                .key("patch-check-impact")
+                .cursor(rune::Cursor::Pointer)
+                .on_press(|st: &mut State| st.go(Screen::Impact)),
+        ),
+    )
+}
 
-    let project = s
-        .project()
-        .map_or("No project open".to_string(), |p| p.name.clone());
-    let target_panel = u
-        .panel()
-        .key("touched")
-        .grow(1.0)
-        .min_w(0.0)
-        .child(u.panel_header("TARGETS TOUCHED", &format!("{} paths", note.targets.len())))
-        .child(rows);
-
-    let project_panel = u
-        .panel()
-        .key("patch-project")
-        .w(252.0)
-        .padding(13.0)
-        .gap(6.0)
-        .child(text("PROJECT CONTEXT").font(LABEL).color(u.faint))
-        .child(text(project).font(BODY_MED).color(u.ink).truncate())
-        .child(
-            text("Review the impacted paths before the next pack.")
-                .font(SMALL)
-                .color(u.faint)
-                .wrap(),
-        )
-        .child(
-            u.action("Review impact", ActionKind::Ghost)
-                .on_press(|st: &mut State| {
-                    st.screen = Screen::Impact;
-                    st.status =
-                        "Opened impact from the patch note. No game files were read.".to_string();
-                }),
-        );
-
-    row()
-        .w_full()
-        .gap(10.0)
-        .items_start()
-        .child(target_panel)
-        .child(project_panel)
+fn plural(n: usize, word: &str) -> String {
+    format!("{n} {word}{}", if n == 1 { "" } else { "s" })
 }

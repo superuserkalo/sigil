@@ -1,24 +1,19 @@
-//! Release: the latest build, the deploy plan, the publish handoff and the
-//! review queue. Every value on this screen comes from a read. Install,
-//! gameinfo repair and account handling stay user and app actions; uploading is
-//! a browser handoff that the user approves, never an API upload.
+//! Release: the latest build, the install plan, the GameBanana handoff and the review queue.
+//!
+//! Every value on this screen comes from a read. Publishing is a browser handoff the user approves
+//! in the dialog below; the app never uploads the archive itself.
 
 use std::path::Path;
 
-use rune::{
-    Color, El, Key, KeyEvent, ScrollSpec, Spring, TextEdit, Transition, Vec2, col, el, row, spacer,
-    text,
-};
+use rune::{Color, El, Key, KeyEvent, TextEdit, col, el, icon, row, spacer, text};
 
 use crate::app::State;
 use crate::data;
-use crate::model::{
-    DeployPlanView, ReleaseDialog, ReleaseInfo, ReviewItem, Screen, UploadInfo,
-};
+use crate::icons;
+use crate::model::{DeployPlanView, ReleaseDialog, ReleaseInfo, ReviewItem, Screen, UploadInfo};
 use crate::publish::PublishAction;
-use crate::ui::{
-    ActionKind, BODY_MED, H1, HERO, LABEL, LEAD, MONO, MONO_MED, RAIL_W, SMALL, Tone, Ui,
-};
+use crate::screens::subpage;
+use crate::ui::{ActionKind, BODY, BODY_MED, H1, MONO, MONO_MED, SMALL, Ui};
 
 const PROMPT_VALIDATE: &str = "Validate and release this project. Read project.json, check every target against the game index, validate the staging payload and prepare builds/<version> with its release manifest. List every warning before packing. Do not write to the game install, edit gameinfo.gi or upload anything.";
 
@@ -29,698 +24,460 @@ const PROMPT_MIGRATE: &str = "Migrate the moved paths for this project. Use the 
 const SUBMIT_PAGE: &str = "https://gamebanana.com/mods/submit";
 
 pub fn view(s: &State, u: &Ui) -> El {
-    let trailing = row().gap(9.0).center_y().child(release_status(s, u)).child(
-        u.pill("Rescan", "↻", ActionKind::Ghost)
+    let mut actions = row().gap(8.0).center_y().child(
+        u.icon_button(&icons::REFRESH_CW, "Rescan")
             .key("release-rescan")
+            .cursor(rune::Cursor::Pointer)
             .on_press(|st: &mut State| rescan(st)),
     );
-
-    let mut page = col()
-        .key("release-page")
-        .grow(1.0)
-        .h_full()
-        .min_h(0.0)
-        .px(26.0)
-        .pt(20.0)
-        .pb(18.0)
-        .gap(16.0)
-        .child(u.glow(
-            "release-glow-warm",
-            [0.16, 0.02],
-            (760.0, 520.0),
-            u.glow_warm,
-        ))
-        .child(u.glow(
-            "release-glow-cool",
-            [0.92, 0.06],
-            (620.0, 460.0),
-            u.glow_cool,
-        ))
-        .child(head(u, Some(trailing)));
-
-    if let Some(info) = &s.release.info {
-        page = page.child(hero(s, u, info));
-    } else {
-        page = page.child(no_release(s, u));
+    if s.release.info.is_some() {
+        actions = actions.child(
+            u.icon_action(
+                &icons::EXTERNAL_LINK,
+                "Publish to GameBanana",
+                ActionKind::Primary,
+            )
+            .key("publish-handoff")
+            .cursor(rune::Cursor::Pointer)
+            .on_press(|st: &mut State| open_approval(st)),
+        );
     }
 
-    let left = col()
-        .key("release-left")
-        .grow(1.0)
-        .min_w(0.0)
-        .min_h(0.0)
-        .scroll(ScrollSpec {
-            stick_bottom: false,
-        })
-        .gap(14.0)
-        .child(deploy_panel(s, u))
-        .child(review_panel(s, u));
+    let mut detail = Vec::new();
+    if let Some(project) = s.project() {
+        detail.push(project.name.clone());
+    }
+    if let Some(info) = &s.release.info {
+        detail.push(format!("v{}", info.version));
+    }
+    if s.publish_job.is_running() {
+        detail.push("Publishing".to_string());
+    }
 
-    let right = col()
-        .key("release-right")
-        .w(RAIL_W)
-        .min_h(0.0)
-        .scroll(ScrollSpec {
-            stick_bottom: false,
-        })
-        .gap(14.0)
-        .child(upload_panel(s, u))
-        .child(action_panel(u))
-        .child(guard_panel(u));
+    let mut body = col().w_full().gap(32.0);
+    body = match &s.release.info {
+        Some(info) => body.child(build_section(u, info)),
+        None => body.child(no_release(s, u)),
+    };
+    body = body
+        .child(plan_section(s, u))
+        .child(publish_section(s, u))
+        .child(review_section(s, u))
+        .child(agent_section(u));
 
-    page.child(
-        row()
-            .key("release-body")
-            .grow(1.0)
-            .min_h(0.0)
-            .gap(18.0)
-            .child(left)
-            .child(right),
+    subpage::page(
+        "release",
+        subpage::head(u, "Release", &detail.join("  ·  "), Some(actions)),
+        body,
     )
 }
 
-fn head(u: &Ui, trailing: Option<El>) -> El {
-    let mut left = col().grow(1.0).gap(7.0).max_w(760.0);
-    left = left
-        .child(u.eyebrow(Screen::Release.kicker()))
-        .child(text("Release").font(HERO).color(u.ink))
-        .child(
-            text("One latest build, one deliberate handoff. Read the deploy plan, then publish when the archive is right.")
-                .font(LEAD)
-                .color(u.muted)
-                .wrap(),
-        );
-    let mut r = row().w_full().gap(20.0).items_end().child(left);
+fn section(u: &Ui, title: &str, meta: &str, trailing: Option<El>) -> El {
+    let mut r = row()
+        .w_full()
+        .h(32.0)
+        .gap(6.0)
+        .center_y()
+        .child(u.section(title));
+    if !meta.is_empty() {
+        r = r.child(text(meta.to_string()).font(BODY).color(u.faint));
+    }
     if let Some(t) = trailing {
-        r = r.child(t);
+        r = r.child(spacer()).child(t);
     }
     r
 }
 
-fn release_status(s: &State, u: &Ui) -> El {
-    if s.project().is_none() {
-        return u.status_chip("no project open", Tone::Quiet);
-    }
-    if s.release.lookup_error.is_some() {
-        return u.status_chip("release read failed", Tone::Bad);
-    }
-    if s.publish_job.is_running() {
-        return u.status_chip("publish running", Tone::Warn);
-    }
-    match &s.release.info {
-        Some(info) => u.status_chip(&format!("release v{}", info.version), Tone::Ok),
-        None => u.status_chip("no release", Tone::Quiet),
-    }
+fn kv_text(u: &Ui, key: &str, value: impl Into<String>, color: Color) -> El {
+    subpage::kv(
+        u,
+        key,
+        text(value.into()).font(BODY).color(color).wrap_anywhere(),
+    )
 }
 
-fn upload_tone(upload: Option<&UploadInfo>) -> Tone {
-    upload
-        .map(|upload| upload.state_tone().tone())
-        .unwrap_or(Tone::Quiet)
+fn kv_mono(u: &Ui, key: &str, value: impl Into<String>, color: Color) -> El {
+    subpage::kv(
+        u,
+        key,
+        text(value.into())
+            .font(MONO)
+            .color(color)
+            .wrap_anywhere()
+            .selectable(true),
+    )
 }
 
-fn upload_label(upload: Option<&UploadInfo>) -> String {
-    upload
-        .map(UploadInfo::state_label)
-        .unwrap_or_else(|| "none".to_string())
-}
-
-fn hero(s: &State, u: &Ui, info: &ReleaseInfo) -> El {
-    let upload = s.release.upload.as_ref();
-    let tone = upload_tone(upload);
-    let state = upload_label(upload);
-
-    let mut metrics = row().gap(8.0).center_y();
-    metrics = metrics
-        .child(u.chip(
-            &format!("slot {:02}", info.slot),
-            u.accent,
-            u.accent.alpha(0.12),
-        ))
-        .child(u.chip(
-            &format!("{} entries", info.entries),
-            u.violet,
-            u.violet.alpha(0.10),
-        ))
-        .child(u.chip(&info.size_label(), u.teal, u.teal.alpha(0.10)));
-    if !info.vpk_present {
-        metrics = metrics.child(u.status_chip("vpk missing", Tone::Bad));
-    }
-
-    let publish = u
-        .pill("Publish to GameBanana", "↗", ActionKind::Primary)
-        .key("publish-handoff")
-        .on_press(|st: &mut State| open_approval(st));
-
-    let notes = info
-        .notes
-        .clone()
-        .unwrap_or_else(|| "No release note recorded.".to_string());
-
-    let mut body = col()
+/// A line that names a real problem: an icon in the state colour, then the message.
+fn problem(u: &Ui, color: Color, message: impl Into<String>) -> El {
+    row()
         .w_full()
-        .padding(24.0)
-        .gap(18.0)
+        .gap(10.0)
+        .items_start()
         .child(
-            row()
-                .w_full()
-                .gap(22.0)
-                .items_end()
-                .child(
-                    col()
-                        .grow(1.0)
-                        .min_w(0.0)
-                        .gap(9.0)
-                        .child(u.eyebrow("LATEST RELEASE"))
-                        .child(
-                            row()
-                                .gap(12.0)
-                                .center_y()
-                                .child(text(format!("v{}", info.version)).font(HERO).color(u.ink))
-                                .child(metrics),
-                        )
-                        .child(text(notes).font(LEAD).color(u.muted).max_w(620.0).wrap()),
-                )
-                .child(
-                    col()
-                        .gap(9.0)
-                        .items_end()
-                        .child(publish)
-                        .child(u.status_chip(&format!("publish {state}"), tone)),
-                ),
-        )
-        .child(u.divider())
-        .child(
-            row()
-                .w_full()
-                .gap(18.0)
-                .items_start()
-                .child(fact_col(
-                    u,
-                    "VPK",
-                    &info.file_label(),
-                    if info.vpk_present { u.ink } else { u.rose },
-                ))
-                .child(fact_col(u, "CHUNKS", &info.chunks_label(), u.muted))
-                .child(fact_col(
-                    u,
-                    "CREATED",
-                    &short_stamp(&info.created_at),
-                    u.muted,
-                ))
-                .child(fact_col(
-                    u,
-                    "BASELINE",
-                    &match &info.baseline_captured_at {
-                        Some(stamp) => short_stamp(stamp),
-                        None => "not recorded".to_string(),
-                    },
-                    if info.baseline_captured_at.is_some() {
-                        u.muted
-                    } else {
-                        u.amber
-                    },
-                )),
+            el().size(20.0, 20.0).center().child(
+                icon(&icons::TRIANGLE_ALERT, 14.0)
+                    .color(color)
+                    .a11y_hidden(),
+            ),
         )
         .child(
-            text(info.dir.clone())
-                .font(MONO)
-                .color(u.faint)
-                .wrap_anywhere(),
-        );
-
-    if !info.vpk_present {
-        body = body.child(
-            u.note("The release manifest lists a VPK that is not in its folder. Re-run the release before publishing."),
-        );
-    }
-
-    u.glass_shell()
-        .key("release-lead")
-        .w_full()
-        .padding(1.0)
-        .child(u.glass_core().w_full().child(body))
+            text(message.into())
+                .font(BODY)
+                .color(u.prose)
+                .grow(1.0)
+                .min_w(0.0)
+                .wrap(),
+        )
 }
 
-fn fact_col(u: &Ui, label: &str, value: &str, tone: Color) -> El {
-    col()
-        .grow(1.0)
-        .min_w(0.0)
-        .gap(4.0)
-        .child(text(label).font(LABEL).color(u.faint))
-        .child(
-            text(value)
-                .font(SMALL)
-                .color(tone)
-                .wrap_anywhere()
-                .selectable(true),
-        )
+fn build_section(u: &Ui, info: &ReleaseInfo) -> El {
+    let mut rows =
+        subpage::rows(u).child(kv_text(u, "Version", format!("v{}", info.version), u.ink));
+    if let Some(notes) = &info.notes {
+        rows = rows.child(kv_text(u, "Notes", notes.clone(), u.prose));
+    }
+    rows = rows
+        .child(kv_mono(
+            u,
+            "VPK",
+            info.vpk_file.clone(),
+            if info.vpk_present { u.ink } else { u.rose },
+        ))
+        .child(kv_text(u, "Slot", format!("{:02}", info.slot), u.ink))
+        .child(kv_text(
+            u,
+            "Contents",
+            format!("{} entries, {}", info.entries, info.size_label()),
+            u.ink,
+        ));
+    if !info.chunk_files.is_empty() {
+        rows = rows.child(kv_mono(u, "Chunks", info.chunks_label(), u.muted));
+    }
+    rows = rows
+        .child(kv_text(
+            u,
+            "Created",
+            short_stamp(&info.created_at),
+            u.muted,
+        ))
+        .child(match &info.baseline_captured_at {
+            Some(stamp) => kv_text(u, "Baseline", short_stamp(stamp), u.muted),
+            None => kv_text(u, "Baseline", "Not recorded", u.amber),
+        })
+        .child(kv_mono(u, "Folder", info.dir.clone(), u.muted));
+
+    let mut c = col()
+        .key("release-build")
+        .w_full()
+        .gap(8.0)
+        .child(section(u, "Latest build", "", None))
+        .child(rows);
+    if !info.vpk_present {
+        c = c.child(el().h(4.0)).child(problem(
+            u,
+            u.rose,
+            "The VPK is missing from the release folder. Release again before publishing.",
+        ));
+    }
+    c
 }
 
 fn no_release(s: &State, u: &Ui) -> El {
-    let detail = s.release.lookup_error.clone().unwrap_or_else(|| {
-        "A release is a packed staging folder plus builds/<version>/release.json. Capture a baseline, then run `dah mod release` or ask the agent to validate and release."
-            .to_string()
-    });
-    u.glass_shell()
-        .key("release-lead")
+    let detail = s
+        .release
+        .lookup_error
+        .clone()
+        .unwrap_or_else(|| "Ask the agent to validate and release this project.".to_string());
+    col()
+        .key("release-build")
         .w_full()
-        .padding(1.0)
+        .gap(8.0)
+        .child(section(u, "Latest build", "", None))
         .child(
-            u.glass_core()
+            col()
                 .w_full()
-                .padding(24.0)
-                .gap(14.0)
+                .py(16.0)
+                .gap(12.0)
+                .border_sides([1.0, 0.0, 1.0, 0.0], u.hair)
                 .child(
-                    row()
+                    col()
                         .w_full()
-                        .gap(14.0)
-                        .items_start()
-                        .child(u.glyph_box("◈", Tone::Quiet, 38.0))
-                        .child(
-                            col()
-                                .grow(1.0)
-                                .gap(6.0)
-                                .child(text("No release for this project").font(H1).color(u.ink))
-                                .child(text(detail).font(LEAD).color(u.muted).wrap()),
-                        ),
+                        .gap(2.0)
+                        .child(text("No release yet").font(BODY_MED).color(u.ink))
+                        .child(text(detail).font(BODY).color(u.muted).wrap()),
                 )
                 .child(
                     row()
-                        .w_full()
-                        .gap(9.0)
+                        .gap(8.0)
                         .child(
-                            u.pill("Validate and release", "↗", ActionKind::Primary)
+                            u.action("Validate and release", ActionKind::Primary)
                                 .key("release-validate")
+                                .cursor(rune::Cursor::Pointer)
                                 .on_press(|st: &mut State| ask(st, PROMPT_VALIDATE)),
                         )
                         .child(
-                            u.pill("Plan the deploy", "◎", ActionKind::Secondary)
+                            u.action("Plan the deploy", ActionKind::Secondary)
+                                .cursor(rune::Cursor::Pointer)
                                 .on_press(|st: &mut State| ask(st, PROMPT_PLAN)),
                         ),
                 ),
         )
 }
 
-fn deploy_panel(s: &State, u: &Ui) -> El {
-    u.glass_shell()
+fn plan_section(s: &State, u: &Ui) -> El {
+    let meta = s
+        .release
+        .plan
+        .as_ref()
+        .map(|p| format!("{} entries", p.entry_count))
+        .unwrap_or_default();
+    let head = section(u, "Install plan", &meta, None);
+    let body = match (&s.release.plan, &s.release.plan_error) {
+        (Some(plan), _) => plan_body(u, plan),
+        (None, Some(error)) => col()
+            .w_full()
+            .gap(8.0)
+            .child(problem(u, u.rose, "The install plan could not be read."))
+            .child(
+                text(error.clone())
+                    .font(SMALL)
+                    .color(u.muted)
+                    .pl(30.0)
+                    .wrap(),
+            ),
+        (None, None) => {
+            let detail = if s.release.info.is_none() {
+                "Release this project first."
+            } else if !s.game_detected {
+                "Deadlock was not found. Set the game folder in Settings."
+            } else {
+                "Rescan to compare this release with your installed mods."
+            };
+            let mut actions = row().gap(8.0).child(
+                u.action("Rescan", ActionKind::Secondary)
+                    .cursor(rune::Cursor::Pointer)
+                    .on_press(|st: &mut State| rescan(st)),
+            );
+            if s.release.info.is_some() && !s.game_detected {
+                actions = actions.child(
+                    u.action("Open Settings", ActionKind::Ghost)
+                        .cursor(rune::Cursor::Pointer)
+                        .on_press(|st: &mut State| st.go(Screen::Settings)),
+                );
+            }
+            col()
+                .w_full()
+                .py(16.0)
+                .gap(12.0)
+                .border_sides([1.0, 0.0, 1.0, 0.0], u.hair)
+                .child(text(detail).font(BODY).color(u.muted).wrap())
+                .child(actions)
+        }
+    };
+    col()
         .key("release-deploy")
         .w_full()
-        .padding(1.0)
-        .child(
-            u.glass_core()
-                .w_full()
-                .child(section_head(u, "DEPLOY PLAN", "read only"))
-                .child(match (&s.release.plan, &s.release.plan_error) {
-                    (Some(plan), _) => plan_body(s, u, plan),
-                    (None, Some(error)) => col().w_full().padding(16.0).gap(10.0).child(
-                        row()
-                            .w_full()
-                            .gap(10.0)
-                            .items_start()
-                            .child(u.glyph_box("!", Tone::Bad, 30.0))
-                            .child(
-                                col()
-                                    .grow(1.0)
-                                    .gap(4.0)
-                                    .child(
-                                        text("The deploy plan could not be read")
-                                            .font(BODY_MED)
-                                            .color(u.ink),
-                                    )
-                                    .child(text(error.clone()).font(SMALL).color(u.muted).wrap()),
-                            ),
-                    ),
-                    (None, None) => {
-                        let detail = if s.release.info.is_none() {
-                            "A plan follows the latest release. Pack and release this project first."
-                        } else if !s.game_detected {
-                            "No Deadlock install was found. A plan reads game/citadel/addons and gameinfo.gi, so it needs the install path."
-                        } else {
-                            "No plan has been read yet. Rescan to compare the release with addons and gameinfo.gi."
-                        };
-                        col()
-                            .w_full()
-                            .padding(16.0)
-                            .gap(10.0)
-                            .child(
-                                row()
-                                    .w_full()
-                                    .gap(11.0)
-                                    .items_start()
-                                    .child(u.glyph_box("◎", Tone::Quiet, 30.0))
-                                    .child(
-                                        text(detail)
-                                            .font(SMALL)
-                                            .color(u.muted)
-                                            .grow(1.0)
-                                            .wrap(),
-                                    ),
-                            )
-                            .child(
-                                row()
-                                    .gap(8.0)
-                                    .child(
-                                        u.pill("Rescan release", "↻", ActionKind::Secondary)
-                                            .on_press(|st: &mut State| rescan(st)),
-                                    )
-                                    .child(if s.release.info.is_some() && !s.game_detected {
-                                        u.action("Open Settings", ActionKind::Ghost).on_press(
-                                            |st: &mut State| st.screen = Screen::Settings,
-                                        )
-                                    } else {
-                                        el().w(0.0)
-                                    }),
-                            )
-                    }
-                }),
-        )
+        .gap(8.0)
+        .child(head)
+        .child(body)
 }
 
-fn section_head(u: &Ui, title: &str, meta: &str) -> El {
-    row()
-        .w_full()
-        .px(18.0)
-        .pt(15.0)
-        .pb(12.0)
-        .gap(10.0)
-        .items_center()
-        .child(text(title).font(LABEL).color(u.faint))
-        .child(spacer())
-        .child(text(meta).font(SMALL).color(u.faint))
-        .child(u.divider().absolute(0.0, 40.0))
-}
-
-fn plan_body(s: &State, u: &Ui, plan: &DeployPlanView) -> El {
-    let mut body = col()
-        .w_full()
-        .padding(18.0)
-        .gap(3.0)
-        .child(
-            row()
-                .w_full()
-                .gap(8.0)
-                .center_y()
-                .child(u.status_chip(&format!("target slot {:02}", plan.slot), Tone::Accent))
-                .child(u.status_chip(
-                    if plan.replace_required {
-                        "replace required"
-                    } else {
-                        "fresh slot"
-                    },
-                    if plan.replace_required {
-                        Tone::Warn
-                    } else {
-                        Tone::Ok
-                    },
-                ))
-                .child(u.status_chip(
-                    if plan.gameinfo_repair {
-                        "gameinfo repair"
-                    } else {
-                        "gameinfo ok"
-                    },
-                    if plan.gameinfo_repair {
-                        Tone::Bad
-                    } else {
-                        Tone::Ok
-                    },
-                ))
-                .child(spacer())
-                .child(
-                    text(format!("{} entries", plan.entry_count))
-                        .font(SMALL)
-                        .color(u.faint),
-                ),
-        )
-        .child(u.divider().mt(8.0).mb(6.0))
-        .child(u.kv("Target", &plan.target, u.ink))
-        .child(u.kv(
-            "Replacement",
-            if plan.replace_required {
-                "an addon file already occupies this slot"
-            } else {
-                "the slot is free"
-            },
-            if plan.replace_required {
-                u.amber
-            } else {
-                u.muted
-            },
-        ))
-        .child(u.kv(
-            "Gameinfo",
-            if plan.gameinfo_repair {
-                "SearchPaths needs `Game citadel/addons` above `Game citadel`"
-            } else {
-                "SearchPaths already lists citadel/addons"
-            },
-            if plan.gameinfo_repair {
-                u.rose
-            } else {
-                u.muted
-            },
-        ));
-
+fn plan_body(u: &Ui, plan: &DeployPlanView) -> El {
+    let mut rows = subpage::rows(u)
+        .child(kv_mono(u, "Target", plan.target.clone(), u.ink))
+        .child(if plan.replace_required {
+            kv_text(u, "Replaces", "A file already uses this slot", u.amber)
+        } else {
+            kv_text(u, "Replaces", "Nothing, the slot is free", u.muted)
+        })
+        .child(if plan.gameinfo_repair {
+            kv_text(u, "gameinfo.gi", "Needs the citadel/addons line", u.rose)
+        } else {
+            kv_text(u, "gameinfo.gi", "Ready", u.muted)
+        });
     if !plan.chunk_targets.is_empty() {
-        body = body.child(u.kv("Chunk targets", &plan.chunk_targets.join(", "), u.muted));
+        rows = rows.child(kv_mono(u, "Chunks", plan.chunk_targets.join(", "), u.muted));
     }
 
-    body = body.child(
-        row()
-            .w_full()
-            .gap(7.0)
-            .center_y()
-            .pt(12.0)
-            .child(text("LOWER SLOT CONFLICTS").font(LABEL).color(u.faint))
-            .child(spacer())
-            .child(
-                text(format!("{}", plan.conflicts.len()))
-                    .font(SMALL)
-                    .color(u.faint),
-            ),
-    );
+    let mut c = col().w_full().gap(8.0).child(rows);
 
-    if plan.conflicts.is_empty() {
-        body = body.child(u.note(
-            "No lower slot ships a path from this release. The full payload reaches the game.",
-        ));
-    } else {
+    if !plan.conflicts.is_empty() {
+        let mut list = subpage::rows(u);
         for (i, conflict) in plan.conflicts.iter().enumerate() {
             let mut paths = col().w_full().gap(2.0);
             for path in conflict.paths.iter().take(4) {
-                paths = paths.child(text(path.clone()).font(MONO).color(u.muted).wrap_anywhere());
+                paths = paths.child(text(path.clone()).font(MONO).color(u.faint).truncate());
             }
             if conflict.paths.len() > 4 {
                 paths = paths.child(
-                    text(format!("and {} more path(s)", conflict.paths.len() - 4))
+                    text(format!("and {} more", conflict.paths.len() - 4))
                         .font(SMALL)
                         .color(u.faint),
                 );
             }
-            body = body.child(
+            list = list.child(
                 col()
                     .key(format!("deploy-conflict-{i}"))
                     .w_full()
-                    .padding(12.0)
-                    .gap(5.0)
-                    .radius(12.0)
-                    .fill(u.amber.alpha(0.055))
-                    .border(1.0, u.amber.alpha(0.18))
+                    .py(12.0)
+                    .gap(6.0)
+                    .border_sides([0.0, 0.0, 1.0, 0.0], u.hair)
                     .child(
                         row()
                             .w_full()
-                            .gap(8.0)
+                            .gap(12.0)
                             .center_y()
-                            .child(u.chip(
-                                &format!("slot {}", conflict.slot_label()),
-                                u.amber,
-                                u.amber.alpha(0.12),
-                            ))
+                            .child(
+                                text(conflict.slot_label())
+                                    .font(MONO)
+                                    .color(u.amber)
+                                    .w(20.0),
+                            )
                             .child(
                                 text(conflict.file.clone())
                                     .font(MONO_MED)
                                     .color(u.ink)
                                     .grow(1.0)
+                                    .min_w(0.0)
                                     .truncate(),
                             )
-                            .child(text(conflict.paths_label()).font(SMALL).color(u.faint)),
+                            .child(text(conflict.paths_label()).font(SMALL).color(u.muted)),
                     )
-                    .child(paths),
+                    .child(paths.pl(32.0)),
             );
         }
+        c = c
+            .child(el().h(8.0))
+            .child(subpage::group_head(
+                u,
+                "Lower slots that win",
+                &plan.conflicts.len().to_string(),
+            ))
+            .child(list);
     }
 
     if !plan.warnings.is_empty() {
-        body = body.child(
-            row()
-                .w_full()
-                .gap(7.0)
-                .center_y()
-                .pt(12.0)
-                .child(text("WARNINGS").font(LABEL).color(u.faint))
-                .child(spacer())
-                .child(
-                    text(format!("{}", plan.warnings.len()))
-                        .font(SMALL)
-                        .color(u.faint),
-                ),
-        );
+        let mut list = col().w_full().gap(8.0);
         for warning in &plan.warnings {
-            body = body.child(
-                row()
-                    .w_full()
-                    .gap(9.0)
-                    .items_start()
-                    .py(4.0)
-                    .child(
-                        el().size(5.0, 5.0)
-                            .radius(3.0)
-                            .fill(u.amber.alpha(0.8))
-                            .mt(6.0),
-                    )
-                    .child(
-                        text(warning.clone())
-                            .font(SMALL)
-                            .color(u.muted)
-                            .grow(1.0)
-                            .wrap(),
-                    ),
-            );
+            list = list.child(problem(u, u.amber, warning.clone()));
         }
+        c = c
+            .child(el().h(8.0))
+            .child(subpage::group_head(
+                u,
+                "Warnings",
+                &plan.warnings.len().to_string(),
+            ))
+            .child(list);
     }
 
-    body = body.child(
-        row()
-            .w_full()
-            .gap(7.0)
-            .center_y()
-            .pt(12.0)
-            .child(text("RELEASE ENTRIES").font(LABEL).color(u.faint))
-            .child(spacer())
-            .child(text("from the release VPK").font(SMALL).color(u.faint)),
-    );
-
+    let mut files = subpage::rows(u);
     if plan.entry_preview.is_empty() {
-        body = body.child(
-            text("The release VPK is missing, so its entry list is unknown.")
-                .font(SMALL)
-                .color(u.amber)
-                .wrap(),
+        files = files.child(
+            row().w_full().h(36.0).center_y().child(
+                text("The release VPK is missing.")
+                    .font(BODY)
+                    .color(u.amber),
+            ),
         );
     } else {
         for path in &plan.entry_preview {
-            body = body.child(text(path.clone()).font(MONO).color(u.muted).wrap_anywhere());
+            files = files.child(
+                row()
+                    .w_full()
+                    .h(36.0)
+                    .center_y()
+                    .border_sides([0.0, 0.0, 1.0, 0.0], u.hair)
+                    .child(text(path.clone()).font(MONO).color(u.prose).truncate()),
+            );
         }
         if plan.entry_count > plan.entry_preview.len() {
-            body = body.child(
-                text(format!(
-                    "and {} more entry(s)",
-                    plan.entry_count - plan.entry_preview.len()
-                ))
-                .font(SMALL)
-                .color(u.faint),
+            files = files.child(
+                row().w_full().h(36.0).center_y().child(
+                    text(format!(
+                        "and {} more",
+                        plan.entry_count - plan.entry_preview.len()
+                    ))
+                    .font(SMALL)
+                    .color(u.faint),
+                ),
             );
         }
     }
-
-    body = body.child(u.note(if s.game_detected {
-        "A plan is a proposal. The copy, the gameinfo repair and the launch are approval-gated app actions."
-    } else {
-        "The plan was read before the install disappeared. Rescan to confirm the target."
-    }));
-
-    body
+    c.child(el().h(8.0))
+        .child(subpage::group_head(
+            u,
+            "Files",
+            &plan.entry_count.to_string(),
+        ))
+        .child(files)
 }
 
-/// The publish status capsule: one state badge, the archive hash and the
-/// durable record, with no dense table.
-fn upload_panel(s: &State, u: &Ui) -> El {
-    let upload = s.release.upload.as_ref();
-    let tone = upload_tone(upload);
-    let state = upload_label(upload);
+fn state_text(upload: &UploadInfo) -> String {
+    match upload.state.as_str() {
+        "awaiting_user" => "Waiting for your upload".to_string(),
+        "recorded" => "Recorded".to_string(),
+        "verified" => "Verified".to_string(),
+        _ => upload.state_label(),
+    }
+}
 
-    let mut body = col().w_full().padding(16.0).gap(11.0).child(
-        row()
+fn publish_section(s: &State, u: &Ui) -> El {
+    let upload = s.release.upload.as_ref();
+    let mut c =
+        col()
+            .key("release-upload")
             .w_full()
             .gap(8.0)
-            .center_y()
-            .child(u.dot(tone))
-            .child(text("PUBLISH STATUS").font(LABEL).color(u.faint))
-            .child(spacer())
-            .child(u.status_chip(&state, tone)),
-    );
+            .child(section(u, "Publishing", "", None));
 
     if let Some(error) = &s.release.upload_error {
-        body = body.child(
-            col()
-                .w_full()
-                .padding(12.0)
-                .gap(4.0)
-                .radius(12.0)
-                .fill(u.rose.alpha(0.06))
-                .border(1.0, u.rose.alpha(0.20))
-                .child(
-                    text("upload.json could not be read")
-                        .font(BODY_MED)
-                        .color(u.ink),
-                )
-                .child(text(error.clone()).font(SMALL).color(u.muted).wrap()),
-        );
+        c = c.child(problem(
+            u,
+            u.rose,
+            format!("upload.json could not be read: {error}"),
+        ));
     }
 
     match upload {
         Some(upload) => {
-            body = body
-                .child(
-                    row()
-                        .w_full()
-                        .gap(11.0)
-                        .items_start()
-                        .child(u.glyph_box("▣", Tone::Accent, 32.0))
-                        .child(
-                            col()
-                                .grow(1.0)
-                                .min_w(0.0)
-                                .gap(3.0)
-                                .child(
-                                    text(upload.archive_file.clone())
-                                        .font(MONO_MED)
-                                        .color(u.ink)
-                                        .wrap_anywhere(),
-                                )
-                                .child(
-                                    text(upload.archive_size_label()).font(SMALL).color(u.faint),
-                                ),
-                        ),
-                )
-                .child(u.field_label("SHA-256"))
-                .child(
-                    u.well_field().w_full().padding(10.0).child(
-                        text(upload.archive_sha256.clone())
-                            .font(MONO)
-                            .color(u.prose)
-                            .wrap_anywhere()
-                            .selectable(true),
-                    ),
-                );
-
-            if let Some(url) = &upload.submission_url {
-                body = body.child(u.field_label("SUBMISSION URL")).child(
-                    text(url.clone())
-                        .font(MONO)
-                        .color(u.teal)
-                        .wrap_anywhere()
-                        .selectable(true),
-                );
-            } else if upload.pending() {
-                body = body.child(text(
-                    "The handoff is recorded. Upload the archive, then confirm the submission URL here.",
-                )
-                .font(SMALL)
-                .color(u.faint)
-                .wrap());
-            }
+            let mut rows = subpage::rows(u)
+                .child(kv_text(u, "Status", state_text(upload), u.ink))
+                .child(kv_mono(u, "Archive", upload.archive_file.clone(), u.ink))
+                .child(kv_text(u, "Size", upload.archive_size_label(), u.muted))
+                .child(kv_mono(
+                    u,
+                    "SHA-256",
+                    upload.archive_sha256.clone(),
+                    u.prose,
+                ));
+            rows = rows.child(match &upload.submission_url {
+                Some(url) => kv_mono(u, "Page", url.clone(), u.ink),
+                None => kv_text(u, "Page", "Not confirmed yet", u.muted),
+            });
+            rows = rows
+                .child(kv_text(
+                    u,
+                    "Handed off",
+                    upload
+                        .created_at
+                        .as_deref()
+                        .map(short_stamp)
+                        .unwrap_or_else(|| "Not recorded".to_string()),
+                    u.muted,
+                ))
+                .child(kv_text(
+                    u,
+                    "Confirmed",
+                    upload
+                        .confirmed_at
+                        .as_deref()
+                        .map(short_stamp)
+                        .unwrap_or_else(|| "Not yet".to_string()),
+                    u.muted,
+                ));
+            c = c.child(rows);
         }
         None => {
             let archive = s
@@ -728,444 +485,234 @@ fn upload_panel(s: &State, u: &Ui) -> El {
                 .publish
                 .as_ref()
                 .and_then(|publish| publish.archive_file.clone());
-            body = body
-                .child(text("No handoff has been approved yet.").font(BODY_MED).color(u.muted))
-                .child(
-                    text(match archive {
-                        Some(file) => format!(
-                            "{file} is prepared. Publish opens the approval dialog, records the handoff and hands the page to your browser."
-                        ),
-                        None => "Publish prepares the browser handoff. Run `dah publish prepare` first if the archive is missing.".to_string(),
-                    })
-                    .font(SMALL)
-                    .color(u.faint)
-                    .wrap(),
-                );
+            c = c.child(
+                subpage::rows(u)
+                    .child(kv_text(u, "Status", "Not published", u.muted))
+                    .child(match archive {
+                        Some(file) => kv_mono(u, "Archive", file, u.ink),
+                        None => kv_text(u, "Archive", "Not prepared", u.muted),
+                    }),
+            );
         }
     }
 
-    let confirm = u
-        .action("Confirm submission URL", ActionKind::Secondary)
-        .w_full()
-        .on_press(|st: &mut State| open_confirm(st));
-    let refresh = u
-        .action("Refresh upload status", ActionKind::Ghost)
-        .w_full()
-        .on_press(|st: &mut State| refresh_upload(st));
-
-    body = body.child(u.divider()).child(confirm).child(refresh).child(
-        text(if s.publish_job.is_running() {
-            "A publish command is running in the background. Its output lands in the status line."
-        } else {
-            "Confirm re-checks the archive hash and verifies the page names this project."
-        })
-        .font(SMALL)
-        .color(u.faint)
-        .wrap(),
-    );
-
-    if let Some(upload) = upload {
-        body = body
-            .child(u.divider())
+    c.child(
+        row()
+            .w_full()
+            .pt(8.0)
+            .gap(8.0)
             .child(
-                row()
-                    .w_full()
-                    .gap(14.0)
-                    .items_start()
-                    .child(fact_col(
-                        u,
-                        "CREATED",
-                        &upload
-                            .created_at
-                            .as_deref()
-                            .map(short_stamp)
-                            .unwrap_or_else(|| "not recorded".to_string()),
-                        u.muted,
-                    ))
-                    .child(fact_col(
-                        u,
-                        "CONFIRMED",
-                        &upload
-                            .confirmed_at
-                            .as_deref()
-                            .map(short_stamp)
-                            .unwrap_or_else(|| "not confirmed".to_string()),
-                        if upload.verified { u.teal } else { u.amber },
-                    )),
+                u.action("Confirm submission URL", ActionKind::Secondary)
+                    .key("release-open-confirm")
+                    .cursor(rune::Cursor::Pointer)
+                    .on_press(|st: &mut State| open_confirm(st)),
             )
             .child(
-                text(upload.record_path.clone())
-                    .font(MONO)
-                    .color(u.faint)
-                    .wrap_anywhere(),
-            );
-    }
-
-    u.glass_shell()
-        .key("release-upload")
-        .w_full()
-        .padding(1.0)
-        .child(u.glass_core().w_full().child(body))
+                u.action("Refresh", ActionKind::Ghost)
+                    .key("release-refresh-upload")
+                    .cursor(rune::Cursor::Pointer)
+                    .on_press(|st: &mut State| refresh_upload(st)),
+            ),
+    )
 }
 
-fn review_panel(s: &State, u: &Ui) -> El {
+fn review_section(s: &State, u: &Ui) -> El {
     let queue = s.release.review.as_ref();
-    let meta = match queue {
-        Some(queue) => queue.summary(),
-        None => "not scanned".to_string(),
-    };
+    let meta = queue.map(|q| q.summary()).unwrap_or_default();
+    let run = u
+        .icon_action(&icons::REFRESH_CW, "Run", ActionKind::Ghost)
+        .key("release-run-queue")
+        .mr(-12.0)
+        .cursor(rune::Cursor::Pointer)
+        .on_press(|st: &mut State| scan_queue(st));
+    let mut c = col().key("release-review").w_full().gap(8.0).child(section(
+        u,
+        "Review queue",
+        &meta,
+        Some(run),
+    ));
 
-    let head = row()
-        .w_full()
-        .gap(8.0)
-        .center_y()
-        .child(
-            u.pill("Run review queue", "↻", ActionKind::Secondary)
-                .on_press(|st: &mut State| scan_queue(st)),
-        )
-        .child(spacer());
-
-    let mut body = col().w_full().padding(18.0).gap(11.0).child(head);
-
-    if let Some(queue) = queue {
-        body = body.child(
-            row()
+    let Some(queue) = queue else {
+        return c.child(
+            col()
                 .w_full()
-                .gap(8.0)
-                .items_start()
-                .child(text("WORKSPACE").font(LABEL).color(u.faint).w(80.0).mt(2.0))
+                .py(16.0)
+                .border_sides([1.0, 0.0, 1.0, 0.0], u.hair)
                 .child(
-                    text(queue.workspace.clone())
-                        .font(MONO)
+                    text("Run the queue to check every project against the current game files.")
+                        .font(BODY)
                         .color(u.muted)
-                        .grow(1.0)
-                        .wrap_anywhere(),
-                ),
-        );
-        body = body.child(
-            row()
-                .w_full()
-                .gap(8.0)
-                .items_start()
-                .child(text("CATALOG").font(LABEL).color(u.faint).w(80.0).mt(2.0))
-                .child(
-                    text(queue.catalog_label.clone())
-                        .font(SMALL)
-                        .color(u.muted)
-                        .grow(1.0)
                         .wrap(),
                 ),
         );
+    };
 
-        if let Some(error) = &queue.error {
-            body = body.child(
-                row()
-                    .w_full()
-                    .gap(10.0)
-                    .items_start()
-                    .padding(12.0)
-                    .radius(12.0)
-                    .fill(u.rose.alpha(0.05))
-                    .border(1.0, u.rose.alpha(0.20))
-                    .child(u.glyph_box("!", Tone::Bad, 26.0))
-                    .child(
-                        text(error.clone())
-                            .font(SMALL)
-                            .color(u.muted)
-                            .grow(1.0)
-                            .wrap(),
-                    ),
-            );
-        }
-
-        if queue.items.is_empty() {
-            body = body.child(
-                col()
-                    .w_full()
-                    .padding(14.0)
-                    .gap(5.0)
-                    .child(text("No mod projects in this workspace").font(BODY_MED).color(u.muted))
-                    .child(
-                        text("The queue reads <workspace>/mods/*/project.json and <workspace>/project.json. Create a project, then scan again.")
-                            .font(SMALL)
-                            .color(u.faint)
-                            .wrap(),
-                    ),
-            );
-        } else {
-            for (i, item) in queue.items.iter().enumerate() {
-                body = body.child(review_card(u, i, item));
-            }
-        }
-
-        body = body.child(u.note(
-            "The queue mirrors `dah watch`: one read-only pass, baseline diffs against the catalog, no project file is written.",
-        ));
-    } else {
-        body = body
-            .child(
-                col()
-                    .w_full()
-                    .padding(14.0)
-                    .gap(5.0)
-                    .child(text("The queue has not run yet").font(BODY_MED).color(u.muted))
-                    .child(
-                        text("It loads the game catalog, so it runs on an explicit scan rather than every frame. Local scenes run it once when they load.")
-                            .font(SMALL)
-                            .color(u.faint)
-                            .wrap(),
-                    ),
-            )
-            .child(
-                row()
-                    .gap(8.0)
-                    .child(
-                        u.pill("Run review queue", "↻", ActionKind::Primary)
-                            .on_press(|st: &mut State| scan_queue(st)),
-                    )
-                    .child(
-                        u.action("Open Settings", ActionKind::Ghost)
-                            .on_press(|st: &mut State| st.screen = Screen::Settings),
-                    ),
-            );
+    if let Some(error) = &queue.error {
+        c = c.child(problem(u, u.rose, error.clone()));
     }
-
-    u.glass_shell()
-        .key("release-review")
-        .w_full()
-        .padding(1.0)
-        .child(
-            u.glass_core()
+    if queue.items.is_empty() {
+        return c.child(
+            col()
                 .w_full()
-                .child(section_head(u, "REVIEW QUEUE", &meta))
-                .child(body),
-        )
+                .py(16.0)
+                .border_sides([1.0, 0.0, 1.0, 0.0], u.hair)
+                .child(
+                    text("No projects in this workspace.")
+                        .font(BODY)
+                        .color(u.muted),
+                ),
+        );
+    }
+    let mut list = subpage::rows(u);
+    for (i, item) in queue.items.iter().enumerate() {
+        list = list.child(review_row(u, i, item));
+    }
+    c.child(list).child(
+        text(queue.workspace.clone())
+            .font(SMALL)
+            .color(u.faint)
+            .pt(4.0)
+            .truncate(),
+    )
 }
 
-fn review_card(u: &Ui, i: usize, item: &ReviewItem) -> El {
-    let tone = review_tone(item);
-    let mut card = col()
+/// One project in the review queue. The Updates screen shows the same rows.
+pub fn review_row(u: &Ui, i: usize, item: &ReviewItem) -> El {
+    let (state, color) = review_state(u, item);
+    let mut meta = vec![format!("v{}", item.version)];
+    if item.slot.is_some() {
+        meta.push(format!("slot {}", item.slot_label()));
+    }
+    col()
         .key(format!("review-{i}"))
         .w_full()
-        .padding(13.0)
+        .py(12.0)
         .gap(6.0)
-        .radius(14.0)
-        .fill(Color::WHITE.alpha(0.022))
-        .border(1.0, tone.fg(u).alpha(0.14))
+        .border_sides([0.0, 0.0, 1.0, 0.0], u.hair)
         .child(
             row()
                 .w_full()
-                .gap(9.0)
+                .gap(12.0)
                 .center_y()
-                .child(u.dot(tone))
                 .child(
                     text(item.label())
                         .font(BODY_MED)
                         .color(u.ink)
-                        .grow(1.0)
+                        .min_w(0.0)
                         .truncate(),
                 )
-                .child(u.chip(
-                    &format!("slot {}", item.slot_label()),
-                    u.accent,
-                    u.accent.alpha(0.11),
-                ))
-                .child(u.status_chip(
-                    if item.needs_review() {
-                        "needs review"
-                    } else {
-                        "clean"
-                    },
-                    tone,
-                )),
+                .child(text(meta.join("  ·  ")).font(SMALL).color(u.faint))
+                .child(spacer())
+                .child(text(state).font(BODY).color(color)),
         )
-        .child(
+        .child(review_lines(u, item))
+}
+
+/// The counts, moves, warnings and error under a review row.
+pub fn review_lines(u: &Ui, item: &ReviewItem) -> El {
+    let mut c = col().w_full().gap(4.0);
+    let counts = counts_label(item);
+    if !counts.is_empty() {
+        c = c.child(text(counts).font(SMALL).color(u.muted));
+    }
+    for migration in &item.migrations {
+        c = c.child(
             row()
                 .w_full()
-                .gap(8.0)
+                .gap(6.0)
                 .center_y()
-                .child(text(format!("v{}", item.version)).font(MONO).color(u.faint))
-                .child(text("·").font(SMALL).color(u.faint).a11y_hidden())
-                .child(
-                    text(item.path.clone())
-                        .font(MONO)
-                        .color(u.faint)
-                        .grow(1.0)
-                        .truncate(),
-                ),
-        );
-
-    let mut counts = row().w_full().gap(6.0).center_y().items_center();
-    counts = counts.child(text("TARGETS").font(LABEL).color(u.faint));
-    if item.changed > 0 {
-        counts = counts.child(u.status_chip(&format!("changed {}", item.changed), Tone::Warn));
-    }
-    if item.missing > 0 {
-        counts = counts.child(u.status_chip(&format!("missing {}", item.missing), Tone::Bad));
-    }
-    if item.moved > 0 {
-        counts = counts.child(u.status_chip(&format!("moved {}", item.moved), Tone::Info));
-    }
-    if item.unbaselined > 0 {
-        counts =
-            counts.child(u.status_chip(&format!("unbaselined {}", item.unbaselined), Tone::Quiet));
-    }
-    if item.unchanged > 0 {
-        counts = counts.child(
-            text(format!("{} unchanged", item.unchanged))
-                .font(SMALL)
-                .color(u.faint),
-        );
-    }
-    if !item.needs_review() {
-        counts = counts.child(u.status_chip("all targets match the baseline", Tone::Ok));
-    }
-    card = card.child(counts);
-
-    for migration in &item.migrations {
-        card = card.child(
-            col()
-                .w_full()
-                .gap(3.0)
-                .padding(10.0)
-                .radius(10.0)
-                .fill(u.violet.alpha(0.055))
-                .child(
-                    row()
-                        .gap(7.0)
-                        .center_y()
-                        .child(u.chip("move", u.violet, u.violet.alpha(0.12)))
-                        .child(
-                            text("the manifest still points at the old path")
-                                .font(SMALL)
-                                .color(u.muted),
-                        ),
-                )
                 .child(
                     text(migration.from.clone())
                         .font(MONO)
                         .color(u.faint)
-                        .wrap_anywhere(),
+                        .truncate(),
                 )
                 .child(
-                    text(format!("→ {}", migration.to))
+                    icon(&icons::CHEVRON_RIGHT, 12.0)
+                        .color(u.faint)
+                        .a11y_hidden(),
+                )
+                .child(
+                    text(migration.to.clone())
                         .font(MONO)
-                        .color(u.teal)
-                        .wrap_anywhere(),
+                        .color(u.prose)
+                        .truncate(),
                 ),
         );
     }
-
     for warning in &item.warnings {
-        card = card.child(
-            row()
-                .w_full()
-                .gap(9.0)
-                .items_start()
-                .child(
-                    el().size(5.0, 5.0)
-                        .radius(3.0)
-                        .fill(u.amber.alpha(0.8))
-                        .mt(6.0),
-                )
-                .child(
-                    text(warning.clone())
-                        .font(SMALL)
-                        .color(u.muted)
-                        .grow(1.0)
-                        .wrap(),
-                ),
-        );
+        c = c.child(text(warning.clone()).font(SMALL).color(u.amber).wrap());
     }
-
     if let Some(error) = &item.error {
-        card = card.child(
-            row()
-                .w_full()
-                .gap(9.0)
-                .items_start()
-                .child(u.chip("check failed", u.rose, u.rose.alpha(0.12)))
-                .child(
-                    text(error.clone())
-                        .font(SMALL)
-                        .color(u.muted)
-                        .grow(1.0)
-                        .wrap(),
-                ),
+        c = c.child(
+            text(format!("Check failed: {error}"))
+                .font(SMALL)
+                .color(u.rose)
+                .wrap(),
         );
     }
-
-    card
+    c
 }
 
-fn action_panel(u: &Ui) -> El {
-    u.glass_shell()
+pub fn counts_label(item: &ReviewItem) -> String {
+    let mut parts = Vec::new();
+    if item.changed > 0 {
+        parts.push(format!("{} changed", item.changed));
+    }
+    if item.missing > 0 {
+        parts.push(format!("{} missing", item.missing));
+    }
+    if item.moved > 0 {
+        parts.push(format!("{} moved", item.moved));
+    }
+    if item.unbaselined > 0 {
+        parts.push(format!("{} without a baseline", item.unbaselined));
+    }
+    if item.unchanged > 0 {
+        parts.push(format!("{} unchanged", item.unchanged));
+    }
+    parts.join(", ")
+}
+
+pub fn review_state(u: &Ui, item: &ReviewItem) -> (&'static str, Color) {
+    if item.error.is_some() {
+        ("Check failed", u.rose)
+    } else if item.missing > 0 {
+        ("Needs review", u.rose)
+    } else if item.needs_review() {
+        ("Needs review", u.amber)
+    } else {
+        ("Up to date", u.muted)
+    }
+}
+
+fn agent_section(u: &Ui) -> El {
+    col()
         .key("release-actions")
         .w_full()
-        .padding(1.0)
+        .gap(8.0)
+        .child(section(u, "Ask the agent", "", None))
         .child(
-            u.glass_core()
+            row()
                 .w_full()
-                .padding(18.0)
-                .gap(9.0)
-                .child(text("AGENT ACTIONS").font(LABEL).color(u.faint))
+                .gap(8.0)
+                .flex_wrap()
                 .child(
-                    u.action("Validate and release this project", ActionKind::Primary)
-                        .w_full()
+                    u.action("Validate and release", ActionKind::Secondary)
+                        .cursor(rune::Cursor::Pointer)
                         .on_press(|st: &mut State| ask(st, PROMPT_VALIDATE)),
                 )
                 .child(
                     u.action("Plan the deploy", ActionKind::Secondary)
-                        .w_full()
+                        .cursor(rune::Cursor::Pointer)
                         .on_press(|st: &mut State| ask(st, PROMPT_PLAN)),
                 )
                 .child(
                     u.action("Migrate moved paths", ActionKind::Secondary)
-                        .w_full()
+                        .cursor(rune::Cursor::Pointer)
                         .on_press(|st: &mut State| ask(st, PROMPT_MIGRATE)),
-                )
-                .child(u.note(
-                    "Each action opens an agent prompt with the open project in context. It does not run a game write.",
-                )),
-        )
-}
-
-fn guard_panel(u: &Ui) -> El {
-    let rows = [
-        ("Install copy", "app action, approval required"),
-        ("gameinfo.gi repair", "app action, approval required"),
-        ("GameBanana account", "your browser and your account"),
-        ("Archive upload", "your handoff, not an API upload"),
-    ];
-    let mut body = col()
-        .w_full()
-        .padding(18.0)
-        .gap(8.0)
-        .child(text("WRITE BOUNDARY").font(LABEL).color(u.faint));
-    for (name, detail) in rows {
-        body = body.child(
-            row()
-                .w_full()
-                .gap(10.0)
-                .items_start()
-                .child(el().size(5.0, 5.0).radius(3.0).fill(u.faint).mt(6.0))
-                .child(
-                    col()
-                        .grow(1.0)
-                        .gap(1.0)
-                        .child(text(name).font(SMALL).color(u.ink))
-                        .child(text(detail).font(SMALL).color(u.faint)),
                 ),
-        );
-    }
-    body = body.child(u.note(
-        "Publishing records a browser handoff in upload.json and opens the GameBanana page. The app never receives your password or uploads the archive itself.",
-    ));
-    u.glass_shell()
-        .key("release-guard")
-        .w_full()
-        .padding(1.0)
-        .child(u.glass_core().w_full().child(body))
+        )
 }
 
 fn ask(st: &mut State, prompt: &str) {
@@ -1176,45 +723,23 @@ fn ask(st: &mut State, prompt: &str) {
     st.ask_agent(format!("{prompt}\n\nProject: {label}."));
 }
 
-/// Re-read the release and the plan. A demo scene keeps its fixture so the
-/// snapshot stays hermetic; a local scene reads the workspace.
+/// Re-read the release and the plan. A demo scene keeps its data so the snapshot stays hermetic.
 fn rescan(st: &mut State) {
     if st.demo {
-        st.status =
-            "Demo fixture: the release read stays on the fixture. Nothing was written.".to_string();
+        st.status = "Demo data does not rescan.".to_string();
         return;
     }
     data::refresh_release(st);
-    st.status =
-        "Release and deploy reads refreshed from the workspace and the game install. Nothing was written."
-            .to_string();
+    st.status = "Release rescanned.".to_string();
 }
 
-/// Load the review queue. This is the only read on this screen that can touch
-/// the game catalog, so it stays behind a press or a local scene load.
+/// Load the review queue. It reads the game catalog, so it runs on a press, not every frame.
 fn scan_queue(st: &mut State) {
     if st.demo {
-        st.status = "Demo fixture: the queue stays on the fixture. Nothing was read or written."
-            .to_string();
+        st.status = "Demo data does not rescan.".to_string();
         return;
     }
     crate::data::start_review_scan(st);
-}
-
-fn review_tone(item: &ReviewItem) -> Tone {
-    if item.error.is_some() || item.missing > 0 {
-        Tone::Bad
-    } else if item.changed > 0
-        || item.unbaselined > 0
-        || !item.migrations.is_empty()
-        || !item.warnings.is_empty()
-    {
-        Tone::Warn
-    } else if item.moved > 0 {
-        Tone::Info
-    } else {
-        Tone::Ok
-    }
 }
 
 fn short_stamp(value: &str) -> String {
@@ -1239,8 +764,7 @@ fn open_confirm(st: &mut State) {
 fn start_upload(st: &mut State) {
     st.release_dialog = ReleaseDialog::None;
     if st.demo {
-        st.status =
-            "Demo fixture: no publish command was run and no browser page was opened.".to_string();
+        st.status = "Demo data: nothing was published.".to_string();
         return;
     }
     let workspace = st.paths.workspace.clone();
@@ -1249,11 +773,7 @@ fn start_upload(st: &mut State) {
         .publish_job
         .start(PublishAction::Upload, Path::new(&workspace), None, wake)
     {
-        Ok(()) => {
-            st.status =
-                "Approved the handoff. Running `dah publish upload --approve --open` in the background."
-                    .to_string()
-        }
+        Ok(()) => st.status = "Opening GameBanana in your browser.".to_string(),
         Err(error) => st.status = error,
     }
 }
@@ -1261,12 +781,12 @@ fn start_upload(st: &mut State) {
 fn start_confirm(st: &mut State) {
     let url = st.confirm_url.text.trim().to_string();
     if url.is_empty() {
-        st.status = "Enter the GameBanana submission URL before confirming.".to_string();
+        st.status = "Enter the GameBanana page URL first.".to_string();
         return;
     }
     st.release_dialog = ReleaseDialog::None;
     if st.demo {
-        st.status = "Demo fixture: no confirm command was run and no page was fetched.".to_string();
+        st.status = "Demo data: nothing was confirmed.".to_string();
         return;
     }
     let workspace = st.paths.workspace.clone();
@@ -1277,82 +797,33 @@ fn start_confirm(st: &mut State) {
         Some(&url),
         wake,
     ) {
-        Ok(()) => {
-            st.status = if crate::publish::is_local_http(&url) {
-                "Recording the local test submission. Running `dah publish confirm --allow-http` in the background."
-                    .to_string()
-            } else {
-                "Recording the submission. Running `dah publish confirm` in the background."
-                    .to_string()
-            }
-        }
+        Ok(()) => st.status = "Checking the submission page.".to_string(),
         Err(error) => st.status = error,
     }
 }
 
 fn refresh_upload(st: &mut State) {
     if st.demo {
-        st.status =
-            "Demo fixture: the upload state stays on the fixture. No file was read.".to_string();
+        st.status = "Demo data does not rescan.".to_string();
         return;
     }
     data::refresh_upload(st);
     st.status = match &st.release.upload {
-        Some(upload) => format!(
-            "Upload status refreshed from upload.json: {}{}.",
-            upload.state_label(),
-            upload
-                .submission_url
-                .as_ref()
-                .map(|url| format!(" · {url}"))
-                .unwrap_or_default()
-        ),
-        None => "No upload.json in the publish folder, so the state is none.".to_string(),
+        Some(upload) => format!("Publishing status: {}.", state_text(upload)),
+        None => "Not published yet.".to_string(),
     };
 }
 
-// The modal layer is mounted at the window root so the scrim dims the whole
-// canvas and the dialog never clips inside a scroll region.
+// The modal layer is mounted at the window root so the scrim dims the whole canvas and the
+// dialog never clips inside a scroll region.
 
 pub fn dialog(s: &State, u: &Ui) -> Option<El> {
-    let which = s.release_dialog;
-    if which == ReleaseDialog::None {
-        return None;
-    }
-    let content = match which {
+    let content = match s.release_dialog {
         ReleaseDialog::ApproveUpload => approval_dialog(s, u),
         ReleaseDialog::ConfirmUrl => confirm_dialog(s, u),
         ReleaseDialog::None => return None,
     };
-    let scrim = el()
-        .key("release-modal-scrim")
-        .absolute(0.0, 0.0)
-        .w_full()
-        .h_full()
-        .fill(Color::BLACK.alpha(0.68))
-        .radial_gradient(
-            [0.5, 0.28],
-            [760.0, 520.0],
-            [(0.0, u.accent.alpha(0.055)), (1.0, Color::TRANSPARENT)],
-        )
-        .transition(Transition::opacity())
-        .a11y_hidden();
-    Some(
-        el().key("release-modal-layer")
-            .absolute(0.0, 0.0)
-            .w_full()
-            .h_full()
-            .child(scrim)
-            .child(
-                el().key("release-modal-center")
-                    .absolute(0.0, 0.0)
-                    .w_full()
-                    .h_full()
-                    .padding(34.0)
-                    .center()
-                    .child(content),
-            ),
-    )
+    Some(u.modal_layer("release-modal-layer", content))
 }
 
 fn modal_frame(u: &Ui, key: &str, title: &str, inner: El) -> El {
@@ -1360,11 +831,9 @@ fn modal_frame(u: &Ui, key: &str, title: &str, inner: El) -> El {
         .key(key)
         .role("dialog")
         .label(title)
-        .w(600.0)
-        .max_w(600.0)
-        .padding(1.0)
-        .transition(Transition::scale_anchor(0.97, Vec2::new(0.5, 0.5)))
-        .token_motion(Spring::snappy(0.34, 0.12))
+        .w(480.0)
+        .padding(24.0)
+        .gap(16.0)
         .modal(true, |st: &mut State| {
             st.release_dialog = ReleaseDialog::None
         })
@@ -1376,13 +845,17 @@ fn modal_frame(u: &Ui, key: &str, title: &str, inner: El) -> El {
                 false
             }
         })
-        .child(
-            u.dialog_core()
-                .w_full()
-                .padding(28.0)
-                .gap(20.0)
-                .child(inner),
-        )
+        .child(inner)
+}
+
+fn dialog_kv(u: &Ui, key: &str, value: El) -> El {
+    row()
+        .w_full()
+        .py(6.0)
+        .gap(16.0)
+        .items_start()
+        .child(text(key.to_string()).font(BODY).color(u.muted).w(88.0))
+        .child(value.grow(1.0).min_w(0.0))
 }
 
 fn approval_dialog(s: &State, u: &Ui) -> El {
@@ -1392,14 +865,14 @@ fn approval_dialog(s: &State, u: &Ui) -> El {
     let project = s
         .project()
         .map(|project| project.name.clone())
-        .unwrap_or_else(|| "the open project".to_string());
+        .unwrap_or_else(|| "The open project".to_string());
     let version = info
         .map(|info| format!("v{}", info.version))
-        .unwrap_or_else(|| "no release".to_string());
+        .unwrap_or_else(|| "No release".to_string());
     let archive = upload
         .map(|upload| upload.archive_file.clone())
         .or_else(|| publish.and_then(|publish| publish.archive_file.clone()))
-        .unwrap_or_else(|| "archive not prepared".to_string());
+        .unwrap_or_else(|| "Not prepared".to_string());
     let bytes = upload
         .map(|upload| upload.archive_bytes)
         .or_else(|| publish.and_then(|publish| publish.archive_bytes))
@@ -1407,120 +880,81 @@ fn approval_dialog(s: &State, u: &Ui) -> El {
     let sha = upload
         .map(|upload| upload.archive_sha256.clone())
         .or_else(|| publish.and_then(|publish| publish.archive_sha256.clone()))
-        .unwrap_or_else(|| "not recorded".to_string());
+        .unwrap_or_else(|| "Not recorded".to_string());
     let submit = upload
         .map(UploadInfo::submit_label)
         .unwrap_or_else(|| SUBMIT_PAGE.to_string());
+    let size = if bytes > 0 {
+        crate::model::format_size(bytes)
+    } else {
+        "Not recorded".to_string()
+    };
 
     let body = col()
         .w_full()
-        .gap(20.0)
+        .gap(16.0)
         .child(
-            row()
+            col()
                 .w_full()
-                .gap(12.0)
-                .items_start()
+                .gap(4.0)
+                .child(text("Publish to GameBanana").font(H1).color(u.ink))
                 .child(
-                    col()
-                        .grow(1.0)
-                        .gap(7.0)
-                        .child(u.eyebrow(&format!("{project} · {version}")))
-                        .child(text("Publish to GameBanana").font(H1).color(u.ink))
-                        .child(
-                            text("One deliberate step. The app records the handoff and opens the submission page. You choose the archive and sign in yourself.")
-                                .font(LEAD)
-                                .color(u.muted)
-                                .wrap(),
-                        ),
-                )
-                .child(u.glyph_box("◈", Tone::Accent, 42.0)),
+                    text("Sigil saves this handoff and opens the submission page. You upload the archive and sign in yourself.")
+                        .font(BODY)
+                        .color(u.muted)
+                        .wrap(),
+                ),
         )
         .child(
             col()
                 .w_full()
-                .gap(2.0)
-                .child(u.kv("Project", &project, u.ink))
-                .child(u.kv("Version", &version, u.ink))
-                .child(u.kv("Archive", &archive, u.ink))
-                .child(u.kv(
-                    "Size",
-                    &if bytes > 0 {
-                        crate::model::format_size(bytes)
-                    } else {
-                        "not recorded".to_string()
-                    },
-                    u.muted,
-                )),
-        )
-        .child(
-            col().w_full().gap(6.0).child(u.field_label("SHA-256")).child(
-                u.well_field().w_full().padding(11.0).child(
+                .child(dialog_kv(u, "Project", text(project).font(BODY).color(u.ink)))
+                .child(dialog_kv(u, "Version", text(version).font(BODY).color(u.ink)))
+                .child(dialog_kv(
+                    u,
+                    "Archive",
+                    text(archive).font(BODY).color(u.ink).wrap_anywhere(),
+                ))
+                .child(dialog_kv(u, "Size", text(size).font(BODY).color(u.muted)))
+                .child(dialog_kv(
+                    u,
+                    "SHA-256",
                     text(sha)
                         .font(MONO)
                         .color(u.prose)
                         .wrap_anywhere()
                         .selectable(true),
-                ),
-            ),
-        )
-        .child(
-            col()
-                .w_full()
-                .gap(6.0)
-                .child(u.field_label("SUBMIT URL"))
-                .child(
+                ))
+                .child(dialog_kv(
+                    u,
+                    "Page",
                     text(submit)
                         .font(MONO)
-                        .color(u.teal)
+                        .color(u.prose)
                         .wrap_anywhere()
                         .selectable(true),
-                ),
+                )),
         )
         .child(
             row()
                 .w_full()
-                .gap(11.0)
-                .items_start()
-                .padding(13.0)
-                .radius(14.0)
-                .fill(u.amber.alpha(0.055))
-                .border(1.0, u.amber.alpha(0.17))
-                .child(u.glyph_box("!", Tone::Warn, 28.0))
-                .child(
-                    col()
-                        .grow(1.0)
-                        .gap(3.0)
-                        .child(
-                            text("This records the handoff and opens your browser")
-                                .font(BODY_MED)
-                                .color(u.ink),
-                        )
-                        .child(
-                            text("upload.json gains the archive hash, submit URL and timestamp. Nothing is uploaded by the app, and no GameBanana password or session is read.")
-                                .font(SMALL)
-                                .color(u.muted)
-                                .wrap(),
-                        ),
-                ),
-        )
-        .child(
-            row()
-                .w_full()
-                .gap(10.0)
+                .pt(8.0)
+                .gap(8.0)
                 .center_y()
+                .child(spacer())
                 .child(
-                    u.pill("Approve handoff", "↗", ActionKind::Primary)
-                        .key("approve-handoff")
-                        .on_press(|st: &mut State| start_upload(st)),
-                )
-                .child(
-                    u.pill("Cancel", "esc", ActionKind::Ghost)
+                    u.action("Cancel", ActionKind::Ghost)
                         .key("cancel-handoff")
                         .autofocus()
-                        .on_press(|st: &mut State| st.release_dialog = ReleaseDialog::None),
+                        .cursor(rune::Cursor::Pointer)
+        .on_press(|st: &mut State| st.release_dialog = ReleaseDialog::None),
                 )
-                .child(spacer())
-                .child(text("Esc cancels").font(SMALL).color(u.faint)),
+                .child(
+                    u.action("Approve and open", ActionKind::Primary)
+                        .key("approve-handoff")
+                        .cursor(rune::Cursor::Pointer)
+        .on_press(|st: &mut State| start_upload(st)),
+                ),
         );
 
     modal_frame(u, "release-approval-dialog", "Publish to GameBanana", body)
@@ -1532,7 +966,6 @@ fn confirm_dialog(s: &State, u: &Ui) -> El {
         .label("Submission URL")
         .single_line()
         .w_full()
-        .padding(11.0)
         .color(u.ink)
         .placeholder("https://gamebanana.com/mods/123456", u.faint)
         .caret(u.accent, u.accent.alpha(0.22))
@@ -1542,70 +975,50 @@ fn confirm_dialog(s: &State, u: &Ui) -> El {
 
     let body = col()
         .w_full()
-        .gap(20.0)
-        .child(
-            row()
-                .w_full()
-                .gap(12.0)
-                .items_start()
-                .child(
-                    col()
-                        .grow(1.0)
-                        .gap(7.0)
-                        .child(u.eyebrow(&format!(
-                            "{} · {}",
-                            s.project()
-                                .map(|project| project.name.clone())
-                                .unwrap_or_else(|| "the open project".to_string()),
-                            s.release
-                                .info
-                                .as_ref()
-                                .map(|info| format!("v{}", info.version))
-                                .unwrap_or_else(|| "no release".to_string())
-                        )))
-                        .child(text("Confirm the submission URL").font(H1).color(u.ink))
-                        .child(
-                            text("Paste the GameBanana page that now hosts this build. The CLI re-checks the archive hash and verifies the page names your project.")
-                                .font(LEAD)
-                                .color(u.muted)
-                                .wrap(),
-                        ),
-                )
-                .child(u.glyph_box("✓", Tone::Ok, 42.0)),
-        )
+        .gap(16.0)
         .child(
             col()
                 .w_full()
-                .gap(7.0)
-                .child(u.field_label("SUBMISSION URL"))
-                .child(u.well_field().w_full().child(field)),
+                .gap(4.0)
+                .child(text("Confirm the submission").font(H1).color(u.ink))
+                .child(
+                    text("Paste the GameBanana page for this build. Sigil checks the archive and that the page names your project.")
+                        .font(BODY)
+                        .color(u.muted)
+                        .wrap(),
+                ),
         )
-        .child(u.note(
-            "https://gamebanana.com/mods/<id> is the public form. A local test server at http://127.0.0.1: or http://localhost: adds --allow-http; every other URL fails the CLI check.",
-        ))
         .child(
             row()
                 .w_full()
-                .gap(10.0)
+                .h(32.0)
+                .px(10.0)
                 .center_y()
-                .child(
-                    u.pill("Record and verify", "✓", ActionKind::Primary)
-                        .key("confirm-submission")
-                        .on_press(|st: &mut State| start_confirm(st)),
-                )
-                .child(
-                    u.pill("Cancel", "esc", ActionKind::Ghost)
-                        .key("cancel-confirm")
-                        .on_press(|st: &mut State| st.release_dialog = ReleaseDialog::None),
-                )
+                .radius(crate::ui::r(8.0))
+                .fill(u.well)
+                .border(1.0, u.hair_strong)
+                .child(field.grow(1.0).min_w(0.0)),
+        )
+        .child(
+            row()
+                .w_full()
+                .pt(8.0)
+                .gap(8.0)
+                .center_y()
                 .child(spacer())
-                .child(text("Esc cancels").font(SMALL).color(u.faint)),
+                .child(
+                    u.action("Cancel", ActionKind::Ghost)
+                        .key("cancel-confirm")
+                        .cursor(rune::Cursor::Pointer)
+        .on_press(|st: &mut State| st.release_dialog = ReleaseDialog::None),
+                )
+                .child(
+                    u.action("Confirm", ActionKind::Primary)
+                        .key("confirm-submission")
+                        .cursor(rune::Cursor::Pointer)
+        .on_press(|st: &mut State| start_confirm(st)),
+                ),
         );
 
-    modal_frame(
-        u,
-        "release-confirm-dialog",
-        "Confirm the submission URL",
-        body,
-    )
+    modal_frame(u, "release-confirm-dialog", "Confirm the submission", body)
 }

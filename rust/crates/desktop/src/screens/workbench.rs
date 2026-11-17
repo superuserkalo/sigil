@@ -1,412 +1,393 @@
-//! Workbench: one conversation canvas, a quiet context rail and the prompt
-//! composer anchored at the bottom. Tool calls stay compact; approvals appear
-//! inline, in the conversation, where the run paused.
+//! Agent: the embedded conversation. A narrow column of mods on the left, the thread in the
+//! middle, and one composer pinned under it. Tool calls read as a quiet work log; an approval
+//! sits on top of the composer until it is answered.
 
-use rune::tok::motion;
-use rune::{Color, El, ScrollSpec, col, el, row, spacer, text};
+use std::time::{SystemTime, UNIX_EPOCH};
+
+use rune::{Color, El, ScrollSpec, TextEdit, TextStyle, col, el, icon, oklch, row, spacer, text};
 
 use crate::agent::{AgentStatus, Pause};
 use crate::app::State;
-use crate::model::{Message, Role, RunState, Screen, ToolRun};
-use crate::ui::{
-    ActionKind, BODY_MED, CHAT, HERO, LABEL, LEAD, MONO, MONO_MED, RAIL_W, SMALL, Tone, Ui,
-};
+use crate::icons;
+use crate::model::{self, Message, Project, Role, RunState, Screen, ToolRun};
+use crate::ui::{ActionKind, BODY, BODY_MED, CHAT, MONO, NAV, SMALL, Ui};
+
+const THREADS_W: f32 = 240.0;
+const THREAD_MAX: f32 = 736.0;
+const GUTTER: f32 = 20.0;
+const HEADLINE: TextStyle = TextStyle::new(24.0, 400.0).lh(32.0).tracking(-0.2);
+
+const SUGGESTIONS: [&str; 4] = [
+    "Recolor Infernus in ash and ember",
+    "Make my crosshair a small dot",
+    "Find every file for Haze's model",
+    "Check which of my mods broke in the last patch",
+];
 
 pub fn view(s: &State, u: &Ui) -> El {
-    let project = s.project();
-    let title = match project {
-        Some(p) => p.name.clone(),
-        None => "General session".to_string(),
-    };
-    let detail = match project {
-        Some(p) => format!(
-            "A working conversation for {}. Tools stage and validate, and only the app writes, behind your approval.",
-            p.name
-        ),
-        None => {
-            "Open a project for scoped paths, or ask a general question about Deadlock modding."
-                .to_string()
-        }
-    };
-    let trailing = row()
-        .gap(9.0)
-        .center_y()
-        .child(u.status_chip(
-            &format!("host {}", s.agent.status.label()),
-            status_tone(s.agent.status),
-        ))
-        .child(
-            u.pill("New session", "＋", ActionKind::Ghost)
-                .key("new-session")
-                .on_press(|st: &mut State| st.begin_session()),
-        );
+    row()
+        .key("agent-surface")
+        .w_full()
+        .h_full()
+        .min_h(0.0)
+        .child(threads(s, u))
+        .child(conversation(s, u))
+}
 
-    let mut column = col()
-        .key("feed-column")
+// The left column: new mod, the mods being made, then the workshop links.
+
+fn threads(s: &State, u: &Ui) -> El {
+    let mut list = col().key("agent-mods").w_full().gap(2.0);
+    if s.projects.is_empty() {
+        list = list.child(
+            text("No mods yet")
+                .font(BODY)
+                .color(u.faint)
+                .px(10.0)
+                .py(8.0),
+        );
+    } else {
+        for (i, p) in s.projects.iter().enumerate() {
+            list = list.child(project_row(s, u, i, p));
+        }
+    }
+
+    let links = [
+        (&icons::SEARCH, "Game index", Screen::Index),
+        (&icons::HISTORY, "Patch notes", Screen::Patches),
+        (&icons::GIT_COMPARE, "Impact", Screen::Impact),
+        (&icons::PACKAGE, "Release", Screen::Release),
+        (&icons::WRENCH, "Toolchain", Screen::Toolchain),
+        (&icons::USER, "Character", Screen::Character),
+    ];
+    let mut tools = col().key("agent-links").w_full().gap(0.0);
+    for (glyph, label, screen) in links {
+        tools = tools.child(link_row(u, glyph, label, screen));
+    }
+
+    col()
+        .key("agent-threads")
+        .w(THREADS_W)
+        .h_full()
+        .min_h(0.0)
+        .fill(oklch(0.158, 0.002, 286.0))
+        .border_sides([0.0, 1.0, 0.0, 0.0], u.hair)
+        .px(8.0)
+        .pt(8.0)
+        .pb(12.0)
+        .child(
+            row()
+                .key("agent-new-mod")
+                .w_full()
+                .h(36.0)
+                .px(10.0)
+                .gap(10.0)
+                .center_y()
+                .radius(crate::ui::r(8.0))
+                .hover(u.hover)
+                .press(Color::WHITE.alpha(0.06))
+                .focusable(true)
+                .role("button")
+                .label("New mod")
+                .cursor(rune::Cursor::Pointer)
+                .on_press(|st: &mut State| {
+                    st.selected_project = st.projects.len();
+                    st.open_tool_groups.clear();
+                    st.begin_session();
+                })
+                .child(icon(&icons::SQUARE_PEN, 16.0).color(u.muted).a11y_hidden())
+                .child(text("New mod").font(NAV).color(u.ink).a11y_hidden()),
+        )
+        .child(
+            row()
+                .w_full()
+                .h(28.0)
+                .mt(12.0)
+                .pl(10.0)
+                .pr(4.0)
+                .center_y()
+                .child(text("Projects").font(SMALL).color(u.faint))
+                .child(spacer())
+                .child(
+                    row()
+                        .key("agent-all-mods")
+                        .h(24.0)
+                        .px(6.0)
+                        .center_y()
+                        .radius(crate::ui::r(6.0))
+                        .hover(u.hover)
+                        .focusable(true)
+                        .role("button")
+                        .label("All projects")
+                        .cursor(rune::Cursor::Pointer)
+                        .on_press(|st: &mut State| st.go(Screen::Projects))
+                        .child(text("All").font(SMALL).color(u.faint).a11y_hidden()),
+                ),
+        )
+        .child(
+            col()
+                .key("agent-mods-scroll")
+                .w_full()
+                .grow(1.0)
+                .min_h(0.0)
+                .scroll(ScrollSpec {
+                    stick_bottom: false,
+                })
+                .child(list),
+        )
+        .child(tools)
+}
+
+fn project_row(s: &State, u: &Ui, i: usize, p: &Project) -> El {
+    let on = i == s.selected_project;
+    let mut r = row()
+        .key(format!("agent-mod-{i}"))
+        .w_full()
+        .h(36.0)
+        .px(10.0)
+        .gap(8.0)
+        .center_y()
+        .radius(crate::ui::r(8.0))
+        .focusable(true)
+        .role("button")
+        .label(p.name.clone())
+        .checked(on)
+        .cursor(rune::Cursor::Pointer)
+        .on_press(move |st: &mut State| st.selected_project = i)
+        .child(
+            text(p.name.clone())
+                .font(NAV)
+                .color(if on { u.ink } else { u.prose })
+                .grow(1.0)
+                .min_w(0.0)
+                .truncate()
+                .a11y_hidden(),
+        );
+    r = if on {
+        r.fill(u.selected)
+    } else {
+        r.hover(u.hover)
+    };
+    if let Some(ago) = relative(&p.updated) {
+        r = r.child(text(ago).font(SMALL).color(u.faint).a11y_hidden());
+    }
+    r
+}
+
+fn link_row(u: &Ui, glyph: &'static rune::Icon, label: &'static str, screen: Screen) -> El {
+    row()
+        .key(format!("agent-link-{label}"))
+        .w_full()
+        .h(32.0)
+        .px(10.0)
+        .gap(10.0)
+        .center_y()
+        .radius(crate::ui::r(8.0))
+        .hover(u.hover)
+        .focusable(true)
+        .role("button")
+        .label(label)
+        .cursor(rune::Cursor::Pointer)
+        .on_press(move |st: &mut State| st.go(screen))
+        .child(icon(glyph, 16.0).color(u.faint).a11y_hidden())
+        .child(text(label).font(BODY).color(u.muted).a11y_hidden())
+}
+
+// The conversation column.
+
+fn conversation(s: &State, u: &Ui) -> El {
+    let empty = !s
+        .messages
+        .iter()
+        .any(|m| m.role == Role::User || m.role == Role::Tool);
+    let title = s
+        .project()
+        .map(|p| p.name.clone())
+        .unwrap_or_else(|| "New mod".to_string());
+
+    let head = row()
+        .key("agent-head")
+        .w_full()
+        .h(44.0)
+        .px(GUTTER)
+        .center_y()
+        .child(text(title).font(BODY_MED).color(u.ink).truncate());
+
+    let body = if empty {
+        centred(empty_state(s, u))
+            .key("agent-empty")
+            .grow(1.0)
+            .min_h(0.0)
+            .pb(48.0)
+            .justify_center()
+    } else {
+        col()
+            .key("agent-transcript")
+            .w_full()
+            .grow(1.0)
+            .min_h(0.0)
+            .scroll(ScrollSpec { stick_bottom: true })
+            .child(centred(transcript(s, u)))
+    };
+
+    let mut dock = col().w_full().gap(8.0);
+    if !empty && let Some(line) = notice(s, u) {
+        dock = dock.child(line);
+    }
+    if let Some(pause) = &s.agent.pause {
+        dock = dock.child(approval(s, u, pause));
+    }
+    dock = dock.child(composer(s, u));
+
+    col()
+        .key("agent-conversation")
         .grow(1.0)
         .h_full()
         .min_w(0.0)
         .min_h(0.0)
-        .gap(13.0)
-        .child(session_strip(s, u));
-    if let Some(error) = &s.agent.error {
-        column = column.child(host_error_card(s, u, error));
-    }
-    column = column.child(feed(s, u));
-    if let Some(pause) = &s.agent.pause {
-        column = column.child(pause_card(s, u, pause));
-    }
-    column = column.child(composer(s, u));
+        .child(head)
+        .child(body)
+        .child(centred(dock).key("agent-dock").pb(16.0))
+}
 
+/// Centre a column at the thread width with the side gutter.
+fn centred(inner: El) -> El {
     col()
-        .key("workbench-page")
-        .grow(1.0)
-        .h_full()
-        .min_h(0.0)
-        .px(26.0)
-        .pt(20.0)
-        .pb(16.0)
-        .gap(16.0)
-        .child(u.glow(
-            "workbench-glow-warm",
-            [0.20, 0.0],
-            (700.0, 480.0),
-            u.glow_warm,
-        ))
-        .child(u.glow(
-            "workbench-glow-cool",
-            [0.88, 0.10],
-            (640.0, 520.0),
-            u.glow_cool,
-        ))
-        .child(head(u, &title, &detail, trailing))
-        .child(
-            row()
-                .key("workbench-body")
-                .grow(1.0)
-                .min_h(0.0)
-                .gap(18.0)
-                .child(column)
-                .child(rail(s, u)),
-        )
-}
-
-fn head(u: &Ui, title: &str, detail: &str, trailing: El) -> El {
-    row()
         .w_full()
-        .gap(20.0)
-        .items_end()
-        .child(
-            col()
-                .grow(1.0)
-                .gap(7.0)
-                .max_w(760.0)
-                .child(u.eyebrow(Screen::Agent.kicker()))
-                .child(text(title).font(HERO).color(u.ink))
-                .child(text(detail).font(LEAD).color(u.muted).wrap()),
-        )
-        .child(trailing)
+        .px(GUTTER)
+        .items_center()
+        .child(inner.w_full().max_w(THREAD_MAX))
 }
 
-fn status_tone(status: AgentStatus) -> Tone {
-    match status {
-        AgentStatus::Ready => Tone::Ok,
-        AgentStatus::Running => Tone::Warn,
-        AgentStatus::Paused => Tone::Warn,
-        AgentStatus::Starting => Tone::Info,
-        AgentStatus::Error => Tone::Bad,
-        AgentStatus::Stopped => Tone::Quiet,
+fn host_ready(s: &State) -> bool {
+    s.agent.demo || (s.agent.configured && s.agent.status != AgentStatus::Error)
+}
+
+fn empty_state(s: &State, u: &Ui) -> El {
+    let mut c = col().w_full().gap(0.0).items_center().child(
+        text("What should we make?")
+            .font(HEADLINE)
+            .color(u.ink)
+            .align(rune::Align::Center),
+    );
+    if !s.agent.demo && !s.agent.configured {
+        return c
+            .child(
+                text("Sign in to a model in Settings")
+                    .font(CHAT)
+                    .color(u.muted)
+                    .mt(8.0),
+            )
+            .child(
+                u.action("Open Settings", ActionKind::Secondary)
+                    .key("agent-open-settings")
+                    .mt(20.0)
+                    .cursor(rune::Cursor::Pointer)
+                    .on_press(|st: &mut State| st.go(Screen::Settings)),
+            );
     }
-}
-
-fn session_strip(s: &State, u: &Ui) -> El {
-    let tone = status_tone(s.agent.status);
-    let mut strip = row()
-        .key("session-strip")
-        .w_full()
-        .min_h(34.0)
-        .px(12.0)
-        .py(6.0)
-        .gap(9.0)
-        .center_y()
-        .child(u.dot(tone))
-        .child(text("SESSION").font(LABEL).color(u.faint))
-        .child(u.status_chip(s.agent.status.label(), tone));
-    if s.publish_job.is_running()
-        && let Some(label) = s.publish_job.label()
-    {
-        strip = strip.child(u.chip(&format!("{label} running"), u.amber, u.amber.alpha(0.10)));
+    if !host_ready(s) {
+        return c
+            .child(text("The agent stopped").font(CHAT).color(u.muted).mt(8.0))
+            .child(
+                u.action("Restart", ActionKind::Secondary)
+                    .key("agent-restart")
+                    .mt(20.0)
+                    .cursor(rune::Cursor::Pointer)
+                    .on_press(|st: &mut State| st.restart_host()),
+            );
     }
-    strip = strip
-        .child(
-            text(if s.agent.demo {
-                "Demo fixture, no host process".to_string()
-            } else {
-                s.agent.provider_label()
-            })
-            .font(MONO)
-            .color(if s.agent.demo || s.agent.configured {
-                u.muted
-            } else {
-                u.rose
-            })
-            .grow(1.0)
-            .min_w(0.0)
-            .truncate(),
-        )
-        .child(
-            text(format!("session {}", s.agent.session_label()))
-                .font(MONO)
-                .color(u.faint)
-                .truncate(),
-        );
-    u.glass_shell()
-        .w_full()
-        .padding(1.0)
-        .child(u.glass_core().w_full().child(strip))
-}
-
-fn host_error_card(s: &State, u: &Ui, error: &str) -> El {
-    let mut card = col()
-        .key("host-error")
-        .w_full()
-        .gap(7.0)
-        .padding(14.0)
-        .radius(14.0)
-        .fill(u.rose.alpha(0.055))
-        .border(1.0, u.rose.alpha(0.20))
-        .child(
+    let mut list = col().key("agent-suggestions").w(440.0).mt(28.0).gap(2.0);
+    for (n, line) in SUGGESTIONS.iter().enumerate() {
+        let fill = line.to_string();
+        list = list.child(
             row()
-                .gap(9.0)
-                .center_y()
-                .child(u.status_chip("HOST ERROR", Tone::Bad))
-                .child(
-                    text(if s.agent.configured {
-                        "The host is not answering."
-                    } else {
-                        "The host is not configured."
-                    })
-                    .font(SMALL)
-                    .color(u.muted),
-                )
-                .child(spacer())
-                .child(
-                    u.action("Restart host", ActionKind::Ghost)
-                        .on_press(|st: &mut State| st.restart_host()),
-                ),
-        )
-        .child(text(error).font(SMALL).color(u.ink).wrap().selectable(true));
-    if !s.agent.configured {
-        card = card.child(
-            text("Required: DAH_AGENT_MODEL. Optional: DAH_AGENT_PROVIDER (openai, anthropic, chat), DAH_AGENT_BASE_URL, DAH_AGENT_API_KEY.")
-                .font(MONO)
-                .color(u.faint)
-                .wrap_anywhere(),
-        );
-    }
-    card
-}
-
-fn pause_card(s: &State, u: &Ui, pause: &Pause) -> El {
-    let inner = col()
-        .w_full()
-        .padding(18.0)
-        .gap(13.0)
-        .child(
-            row()
+                .key(format!("agent-suggestion-{n}"))
                 .w_full()
+                .h(40.0)
+                .px(12.0)
                 .gap(10.0)
                 .center_y()
-                .child(u.glyph_box("!", Tone::Warn, 30.0))
+                .radius(crate::ui::r(8.0))
+                .hover(u.hover)
+                .press(Color::WHITE.alpha(0.06))
+                .focusable(true)
+                .role("button")
+                .label(*line)
+                .cursor(rune::Cursor::Pointer)
+                .on_press(move |st: &mut State| st.composer = TextEdit::new(fill.clone()))
+                .child(icon(&icons::ARROW_UP, 16.0).color(u.faint).a11y_hidden())
                 .child(
-                    col()
-                        .grow(1.0)
-                        .gap(2.0)
-                        .child(text("APPROVAL REQUIRED").font(LABEL).color(u.amber))
-                        .child(
-                            text(format!("{} is paused before it runs", pause.tool_name))
-                                .font(BODY_MED)
-                                .color(u.ink),
-                        ),
-                )
-                .child(u.chip(&pause.tool_name, u.amber, u.amber.alpha(0.12)))
-                .child(
-                    text(format!("call {}", pause.tool_call_id))
-                        .font(MONO)
-                        .color(u.faint),
-                ),
-        )
-        .child(
-            col()
-                .w_full()
-                .gap(6.0)
-                .child(u.field_label("PAYLOAD"))
-                .child(
-                    u.well_field().w_full().padding(11.0).child(
-                        text(pause.payload_text())
-                            .font(MONO)
-                            .color(u.prose)
-                            .wrap_anywhere()
-                            .selectable(true),
-                    ),
-                ),
-        )
-        .child(
-            row()
-                .w_full()
-                .gap(10.0)
-                .center_y()
-                .child(
-                    u.pill("Approve", "✓", ActionKind::Primary)
-                        .key("approve")
-                        .autofocus()
-                        .on_press(|st: &mut State| st.approve_pause()),
-                )
-                .child(
-                    u.pill("Deny", "esc", ActionKind::Ghost)
-                        .key("deny")
-                        .on_press(|st: &mut State| st.deny_pause()),
-                )
-                .child(spacer())
-                .child(
-                    text(if s.agent.demo {
-                        "Demo fixture: no resume is sent."
-                    } else {
-                        "Approve resumes with a result. Deny resumes with an error."
-                    })
-                    .font(SMALL)
-                    .color(u.faint),
+                    text(*line)
+                        .font(CHAT)
+                        .color(u.prose)
+                        .truncate()
+                        .a11y_hidden(),
                 ),
         );
+    }
+    c = c.child(list);
+    c
+}
 
-    u.glass_shell()
-        .key("approval-card")
+fn transcript(s: &State, u: &Ui) -> El {
+    let welcome = model::welcome_messages()
+        .into_iter()
+        .next()
+        .map(|m| m.body)
+        .unwrap_or_default();
+    let mut list = col()
+        .key("agent-thread")
         .w_full()
-        .padding(1.0)
-        .child(
-            u.glass_core()
-                .w_full()
-                .fill(u.amber.alpha(0.035))
-                .border(1.0, u.amber.alpha(0.22))
-                .child(inner),
-        )
-}
-
-fn feed(s: &State, u: &Ui) -> El {
-    let mut list = col().key("feed").w_full().gap(22.0).pb(8.0);
-    if !s.demo && s.messages.len() <= 1 {
-        list = list.child(start_strip(u));
+        .pt(8.0)
+        .pb(24.0)
+        .gap(16.0);
+    let msgs = &s.messages;
+    let mut i = 0;
+    while i < msgs.len() {
+        let m = &msgs[i];
+        match m.role {
+            Role::Tool => {
+                let start = i;
+                while i < msgs.len() && msgs[i].role == Role::Tool {
+                    i += 1;
+                }
+                list = list.child(work_log(s, u, start, &msgs[start..i]));
+                continue;
+            }
+            Role::User => list = list.child(user_message(u, i, m)),
+            Role::Assistant => {
+                if !m.body.trim().is_empty() && m.body != welcome {
+                    list = list.child(assistant_message(u, i, m));
+                }
+            }
+        }
+        i += 1;
     }
-    for (i, m) in s.messages.iter().enumerate() {
-        list = list.child(message(s, u, i, m));
+    if running(s) {
+        list = list.child(working(s, u));
     }
-    u.glass_shell()
-        .key("transcript-shell")
-        .grow(1.0)
-        .min_h(0.0)
-        .padding(1.0)
-        .child(
-            u.glass_core().grow(1.0).min_h(0.0).child(
-                col()
-                    .key("transcript")
-                    .grow(1.0)
-                    .min_h(0.0)
-                    .padding(18.0)
-                    .clip_soft(14.0)
-                    .scroll(ScrollSpec { stick_bottom: true })
-                    .child(list),
-            ),
-        )
+    list
 }
 
-fn start_strip(u: &Ui) -> El {
-    row()
-        .key("start-strip")
-        .w_full()
-        .gap(10.0)
-        .child(start_card(
-            u,
-            "▤",
-            "Open a project",
-            "Give the agent a manifest, slot and target list.",
-            |st: &mut State| st.screen = Screen::Projects,
-        ))
-        .child(start_card(
-            u,
-            "⌕",
-            "Build the game index",
-            "Find exact paths before staging anything.",
-            |st: &mut State| {
-                st.screen = Screen::Index;
-                st.status = "Index build is a CLI action: run `pnpm dah index` after setting the game path."
-                    .to_string();
-            },
-        ))
-        .child(start_card(
-            u,
-            "⚙",
-            "Configure a provider",
-            "BYOK keys stay in the OS store, never in this window.",
-            |st: &mut State| st.screen = Screen::Settings,
-        ))
+fn running(s: &State) -> bool {
+    s.agent.pause.is_none()
+        && (s.agent.status == AgentStatus::Running
+            || s.tools.iter().any(|t| t.state == RunState::Running))
 }
 
-fn start_card(u: &Ui, glyph: &str, title: &str, detail: &str, press: fn(&mut State)) -> El {
-    col()
-        .grow(1.0)
-        .gap(7.0)
-        .padding(13.0)
-        .radius(13.0)
-        .fill(Color::WHITE.alpha(0.022))
-        .border(1.0, Color::WHITE.alpha(0.05))
-        .hover(Color::WHITE.alpha(0.045))
-        .press(Color::WHITE.alpha(0.06))
-        .press_scale(0.985)
-        .focusable(true)
-        .role("button")
-        .label(title)
-        .motion(motion::SNAPPY)
-        .on_press(press)
-        .child(
-            row()
-                .gap(8.0)
-                .center_y()
-                .child(u.glyph_box(glyph, Tone::Quiet, 26.0))
-                .child(text(title).font(BODY_MED).color(u.ink)),
-        )
-        .child(text(detail).font(SMALL).color(u.faint).wrap())
-}
-
-fn message(s: &State, u: &Ui, idx: usize, m: &Message) -> El {
-    match m.role {
-        Role::User => user_row(u, idx, m),
-        Role::Assistant => assistant_row(s, u, idx, m),
-        Role::Tool => tool_row(s, u, idx, m.tool.as_ref()),
-    }
-}
-
-fn user_row(u: &Ui, idx: usize, m: &Message) -> El {
+fn user_message(u: &Ui, idx: usize, m: &Message) -> El {
     row()
         .key(format!("msg-{idx}"))
         .w_full()
-        .gap(12.0)
-        .items_start()
         .child(spacer())
         .child(
             col()
-                .max_w(620.0)
-                .gap(6.0)
-                .padding(14.0)
-                .radius(16.0)
-                .fill(Color::WHITE.alpha(0.035))
-                .border(1.0, Color::WHITE.alpha(0.055))
-                .child(
-                    row()
-                        .gap(8.0)
-                        .center_y()
-                        .child(text("You").font(BODY_MED).color(u.ink))
-                        .child(text(m.meta.clone()).font(SMALL).color(u.faint)),
-                )
+                .max_w(THREAD_MAX * 0.8)
+                .px(16.0)
+                .py(12.0)
+                .radius(18.0)
+                .fill(Color::WHITE.alpha(0.04))
                 .child(
                     text(m.body.clone())
                         .font(CHAT)
@@ -417,450 +398,515 @@ fn user_row(u: &Ui, idx: usize, m: &Message) -> El {
         )
 }
 
-fn assistant_row(s: &State, u: &Ui, idx: usize, m: &Message) -> El {
-    let mut meta = row()
-        .gap(8.0)
-        .center_y()
-        .child(text("Agent").font(BODY_MED).color(u.ink));
-    if let Some(model) = &m.model {
-        meta = meta.child(u.chip(model, u.teal, u.teal.alpha(0.10)));
-    }
-    meta = meta.child(text(m.meta.clone()).font(SMALL).color(u.faint));
-    let mut body = col()
-        .grow(1.0)
-        .min_w(0.0)
-        .gap(7.0)
-        .max_w(760.0)
-        .child(meta)
-        .child(
-            text(m.body.clone())
-                .font(CHAT)
-                .color(u.prose)
-                .wrap()
-                .selectable(true),
-        );
-    if s.tools.iter().any(|t| t.state == RunState::Running) && idx + 1 == s.messages.len() {
-        body = body.child(
-            row()
-                .gap(7.0)
-                .center_y()
-                .child(pulse_dot(u, s.pulse))
-                .child(text("Working").font(SMALL).color(u.amber)),
-        );
-    }
-    row()
-        .key(format!("msg-{idx}"))
-        .w_full()
-        .gap(0.0)
-        .items_start()
-        .child(body)
+fn assistant_message(u: &Ui, idx: usize, m: &Message) -> El {
+    col().key(format!("msg-{idx}")).w_full().child(
+        text(m.body.clone())
+            .font(CHAT)
+            .color(u.prose)
+            .wrap()
+            .selectable(true),
+    )
 }
 
-fn tool_row(_s: &State, u: &Ui, idx: usize, tool: Option<&ToolRun>) -> El {
-    let Some(tool) = tool else {
-        return el().key(format!("msg-{idx}")).h(0.0);
-    };
-    let tone = run_tone(tool.state);
-    let mut head = row()
-        .px(12.0)
-        .pt(7.0)
-        .gap(8.0)
-        .center_y()
-        .child(text("▸").font(MONO).color(tone.fg(u)).a11y_hidden())
-        .child(text(tool.name.clone()).font(MONO_MED).color(u.ink))
-        .child(u.status_chip(tool.state.label(), tone))
-        .child(spacer());
-    if !tool.duration.is_empty() {
-        head = head.child(
-            text(tool.duration.clone())
-                .font(SMALL)
-                .color(u.faint)
-                .w(46.0)
-                .align(rune::Align::End),
-        );
+/// Consecutive tool calls. One call is one line; several fold under "Ran N tools" unless one of
+/// them is still running, in which case the lines stay open so the work is visible.
+fn work_log(s: &State, u: &Ui, start: usize, msgs: &[Message]) -> El {
+    let tools: Vec<&ToolRun> = msgs.iter().filter_map(|m| m.tool.as_ref()).collect();
+    let live = tools.iter().any(|t| t.state != RunState::Done);
+    let mut log = col().key(format!("msg-{start}")).w_full().gap(0.0);
+    if tools.len() < 2 || live {
+        for (n, t) in tools.iter().enumerate() {
+            log = log.child(tool_line(u, &format!("tool-{start}-{n}"), t));
+        }
+        return log;
     }
-    let mut card = col()
-        .grow(1.0)
-        .min_w(0.0)
-        .gap(5.0)
-        .py(6.0)
-        .radius(12.0)
-        .fill(Color::WHITE.alpha(0.018))
-        .border(1.0, Color::WHITE.alpha(0.04))
-        .child(head);
-    if !tool.args.is_empty() {
-        card = card.child(
-            text(tool.args.clone())
-                .font(MONO)
-                .color(u.faint)
-                .px(12.0)
-                .wrap_anywhere(),
-        );
+    let open = s.open_tool_groups.contains(&start);
+    let failed = tools.iter().filter(|t| failed(t)).count();
+    let mut summary = format!("Ran {} tools", tools.len());
+    if failed > 0 {
+        summary.push_str(&format!(", {failed} failed"));
     }
-    card = card.child(
+    log = log.child(
         row()
-            .px(12.0)
-            .pb(6.0)
+            .key(format!("tools-{start}"))
+            .h(24.0)
             .gap(8.0)
-            .items_center()
-            .child(u.dot(tone))
+            .pr(8.0)
+            .center_y()
+            .radius(crate::ui::r(6.0))
+            .focusable(true)
+            .role("button")
+            .label(summary.clone())
+            .expanded(open)
+            .cursor(rune::Cursor::Pointer)
+            .on_press(move |st: &mut State| {
+                if let Some(at) = st.open_tool_groups.iter().position(|g| *g == start) {
+                    st.open_tool_groups.remove(at);
+                } else {
+                    st.open_tool_groups.push(start);
+                }
+            })
             .child(
-                text(tool.result.clone())
-                    .font(SMALL)
-                    .color(u.muted)
-                    .grow(1.0)
-                    .wrap(),
-            ),
+                icon(
+                    if open {
+                        &icons::CHEVRON_DOWN
+                    } else {
+                        &icons::CHEVRON_RIGHT
+                    },
+                    16.0,
+                )
+                .color(u.faint)
+                .a11y_hidden(),
+            )
+            .child(text(summary).font(BODY).color(u.muted).a11y_hidden()),
     );
-    row()
-        .key(format!("msg-{idx}"))
-        .w_full()
-        .gap(13.0)
-        .items_start()
-        .child(el().w(30.0).h(1.0))
-        .child(card)
+    if open {
+        let mut lines = col().w_full().pl(24.0);
+        for (n, t) in tools.iter().enumerate() {
+            lines = lines.child(tool_line(u, &format!("tool-{start}-{n}"), t));
+        }
+        log = log.child(lines);
+    }
+    log
 }
 
-fn run_tone(state: RunState) -> Tone {
-    match state {
-        RunState::Done => Tone::Ok,
-        RunState::Running => Tone::Warn,
-        RunState::Queued => Tone::Quiet,
+fn tool_line(u: &Ui, key: &str, t: &ToolRun) -> El {
+    let bad = failed(t);
+    let (done, live) = tool_label(&t.name);
+    let (glyph, tint) = if bad {
+        (&icons::CIRCLE_X, u.rose)
+    } else if t.state == RunState::Running {
+        (&icons::LOADER, u.muted)
+    } else {
+        (tool_icon(&t.name), u.faint)
+    };
+    let label = match t.state {
+        RunState::Running => format!("{live}..."),
+        RunState::Queued => live,
+        RunState::Done => done,
+    };
+    let mut r = row()
+        .key(key.to_string())
+        .w_full()
+        .h(24.0)
+        .gap(8.0)
+        .center_y()
+        .child(icon(glyph, 16.0).color(tint).a11y_hidden())
+        .child(text(label).font(BODY).color(u.muted));
+    match result_hint(t) {
+        Some(hint) => {
+            r = r.child(
+                text(hint)
+                    .font(BODY)
+                    .color(u.faint)
+                    .grow(1.0)
+                    .min_w(0.0)
+                    .truncate(),
+            )
+        }
+        None => r = r.child(spacer()),
+    }
+    if !t.duration.is_empty() && t.state == RunState::Done {
+        r = r.child(text(t.duration.clone()).font(SMALL).color(u.faint));
+    }
+    r
+}
+
+/// The first line of a tool result, unless it is structured output.
+fn result_hint(t: &ToolRun) -> Option<String> {
+    if t.state != RunState::Done {
+        return None;
+    }
+    let line = t.result.lines().next().unwrap_or("").trim();
+    if line.is_empty()
+        || line == "Done."
+        || line == "Running"
+        || line.starts_with('{')
+        || line.starts_with('[')
+    {
+        return None;
+    }
+    Some(line.trim_end_matches('.').to_string())
+}
+
+fn failed(t: &ToolRun) -> bool {
+    let lower = t.result.trim_start().to_lowercase();
+    t.state == RunState::Done
+        && (lower.starts_with("tool failed")
+            || lower.starts_with("error")
+            || lower.starts_with("denied"))
+}
+
+/// Past and present tense labels for the tools the host exposes. Unknown tools fall back to
+/// their name in words.
+fn tool_label(name: &str) -> (String, String) {
+    let pair = match name {
+        "read_project" | "watch_projects" => ("Read project", "Reading project"),
+        "game_status" | "read_game_status" => ("Checked the game", "Checking the game"),
+        "game_index" => ("Built the game index", "Building the game index"),
+        "search_paths" => ("Searched paths", "Searching paths"),
+        "extract_paths" => ("Extracted files", "Extracting files"),
+        "project_check" => ("Checked the mod", "Checking the mod"),
+        "project_validate" => ("Validated the mod", "Validating the mod"),
+        "validate_payload" => ("Validated payload", "Validating payload"),
+        "project_pack" | "pack_vpk" => ("Packed the mod", "Packing the mod"),
+        "project_release" => ("Prepared a release", "Preparing a release"),
+        "project_migrate" => ("Moved paths", "Moving paths"),
+        "deploy_plan" | "install_plan" => ("Planned the install", "Planning the install"),
+        "deploy_apply" | "install_addon" => ("Installed into the game", "Install into the game"),
+        "install_status" => ("Checked installed mods", "Checking installed mods"),
+        "publish_prepare" => ("Prepared the upload", "Preparing the upload"),
+        "publish_upload" => ("Published", "Publish to GameBanana"),
+        "patch_notes" => ("Read patch notes", "Reading patch notes"),
+        "player_stats" => ("Read player stats", "Reading player stats"),
+        "player_heatmap" => ("Read the heatmap", "Reading the heatmap"),
+        "hero_performance" => ("Read hero stats", "Reading hero stats"),
+        "launch_status" => ("Checked launch options", "Checking launch options"),
+        "game_launch" => ("Launched the game", "Launch the game"),
+        "gameinfo_repair" => ("Repaired gameinfo.gi", "Repair gameinfo.gi"),
+        "toolchain_status" => ("Checked the toolchain", "Checking the toolchain"),
+        "demo_matches" => ("Listed matches", "Listing matches"),
+        "demo_import" => ("Imported a demo", "Importing a demo"),
+        "demo_review_prompt" => ("Read the match", "Reading the match"),
+        "demo_review_write" => ("Wrote the review", "Writing the review"),
+        "profiles_list" => ("Listed profiles", "Listing profiles"),
+        "locker_heroes" => ("Read heroes", "Reading heroes"),
+        "recolor_brief" => ("Drafted the recolor", "Drafting the recolor"),
+        _ => {
+            let words = name.replace('_', " ");
+            let mut chars = words.chars();
+            let words = match chars.next() {
+                Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+                None => "Tool".to_string(),
+            };
+            return (words.clone(), words);
+        }
+    };
+    (pair.0.to_string(), pair.1.to_string())
+}
+
+fn tool_icon(name: &str) -> &'static rune::Icon {
+    if name.contains("search") || name.contains("index") {
+        &icons::SEARCH
+    } else if name.contains("validate") || name.contains("check") {
+        &icons::CIRCLE_CHECK
+    } else if name.contains("pack") || name.contains("release") {
+        &icons::PACKAGE
+    } else if name.contains("extract") {
+        &icons::DOWNLOAD
+    } else if name.contains("deploy") || name.contains("install") {
+        &icons::FOLDER_OPEN
+    } else if name.contains("launch") {
+        &icons::PLAY
+    } else if name.contains("stats") || name.contains("heatmap") || name.contains("performance") {
+        &icons::CHART_LINE
+    } else if name.contains("publish") {
+        &icons::GLOBE
+    } else if name.contains("recolor") {
+        &icons::SPARKLES
+    } else if name.contains("read")
+        || name.contains("status")
+        || name.contains("notes")
+        || name.contains("list")
+        || name.contains("project")
+    {
+        &icons::FILE
+    } else {
+        &icons::WRENCH
     }
 }
 
-fn pulse_dot(u: &Ui, pulse: f32) -> El {
-    el().size(7.0, 7.0)
-        .radius(4.0)
-        .fill(u.amber.alpha(0.35 + 0.65 * pulse))
-        .a11y_hidden()
+fn working(s: &State, u: &Ui) -> El {
+    let secs = s
+        .run_started
+        .map(|t| t.elapsed().as_secs())
+        .unwrap_or_else(|| parse_elapsed(&s.elapsed));
+    let shade = u.muted.alpha(0.55 + 0.45 * s.pulse);
+    row().key("agent-working").h(24.0).center_y().child(
+        text(format!("Working for {}:{:02}", secs / 60, secs % 60))
+            .font(CHAT)
+            .color(shade),
+    )
+}
+
+/// `2m 14s` or `9s` back to seconds.
+fn parse_elapsed(label: &str) -> u64 {
+    let mut total = 0;
+    for part in label.split_whitespace() {
+        if let Some(m) = part.strip_suffix('m') {
+            total += m.parse::<u64>().unwrap_or(0) * 60;
+        } else if let Some(sec) = part.strip_suffix('s') {
+            total += sec.parse::<u64>().unwrap_or(0);
+        }
+    }
+    total
+}
+
+/// One calm line above the composer when the conversation cannot continue.
+fn notice(s: &State, u: &Ui) -> Option<El> {
+    if s.agent.demo {
+        return None;
+    }
+    let (line, action) = if !s.agent.configured {
+        (
+            "Sign in to a model in Settings",
+            u.action("Open Settings", ActionKind::Ghost)
+                .cursor(rune::Cursor::Pointer)
+                .on_press(|st: &mut State| st.go(Screen::Settings)),
+        )
+    } else if s.agent.status == AgentStatus::Error || s.agent.status == AgentStatus::Stopped {
+        (
+            "The agent stopped",
+            u.action("Restart", ActionKind::Ghost)
+                .cursor(rune::Cursor::Pointer)
+                .on_press(|st: &mut State| st.restart_host()),
+        )
+    } else {
+        return None;
+    };
+    Some(
+        row()
+            .key("agent-notice")
+            .w_full()
+            .h(32.0)
+            .pl(16.0)
+            .gap(8.0)
+            .center_y()
+            .child(text(line).font(BODY).color(u.muted))
+            .child(spacer())
+            .child(action),
+    )
+}
+
+fn approval(_s: &State, u: &Ui, pause: &Pause) -> El {
+    let (_, ask) = tool_label(&pause.tool_name);
+    let payload = payload_summary(&pause.payload);
+    col()
+        .key("agent-approval")
+        .w_full()
+        .px(16.0)
+        .py(12.0)
+        .gap(8.0)
+        .radius(crate::ui::r(12.0))
+        .fill(u.amber.alpha(0.08))
+        .border(1.0, u.amber.alpha(0.28))
+        .role("alert")
+        .label(format!("Approval needed: {ask}"))
+        .child(
+            row()
+                .w_full()
+                .gap(8.0)
+                .center_y()
+                .child(
+                    icon(&icons::TRIANGLE_ALERT, 16.0)
+                        .color(u.amber)
+                        .a11y_hidden(),
+                )
+                .child(text("Approval needed").font(BODY_MED).color(u.ink))
+                .child(text(ask).font(BODY).color(u.muted).truncate()),
+        )
+        .child(
+            text(payload)
+                .font(MONO)
+                .color(u.muted)
+                .wrap_anywhere()
+                .max_lines(3)
+                .selectable(true),
+        )
+        .child(
+            row()
+                .w_full()
+                .gap(8.0)
+                .pt(4.0)
+                .center_y()
+                .child(spacer())
+                .child(
+                    u.action("Deny", ActionKind::Secondary)
+                        .key("deny")
+                        .cursor(rune::Cursor::Pointer)
+                        .on_press(|st: &mut State| st.deny_pause()),
+                )
+                .child(
+                    u.action("Approve", ActionKind::Primary)
+                        .key("approve")
+                        .autofocus()
+                        .cursor(rune::Cursor::Pointer)
+                        .on_press(|st: &mut State| st.approve_pause()),
+                ),
+        )
+}
+
+/// `slot 12  to game/citadel/addons/pak12_dir.vpk` rather than raw JSON: top level keys and
+/// plain values, nested values compacted.
+fn payload_summary(value: &serde_json::Value) -> String {
+    use serde_json::Value;
+    let plain = |v: &Value| match v {
+        Value::String(s) => s.clone(),
+        other => other.to_string(),
+    };
+    match value {
+        Value::Object(map) => map
+            .iter()
+            .map(|(k, v)| format!("{}:\u{a0}{}", k.replace('_', " "), plain(v)))
+            .collect::<Vec<_>>()
+            .join("   "),
+        other => plain(other),
+    }
 }
 
 fn composer(s: &State, u: &Ui) -> El {
-    let field = rune::text_input(&s.composer, CHAT)
-        .key("composer")
-        .label("Prompt")
-        .grow(1.0)
-        .min_h(26.0)
-        .max_h(104.0)
-        .color(u.ink)
-        .placeholder("Ask the agent, or describe the mod you want", u.faint)
-        .caret(u.accent, u.accent.alpha(0.22))
-        .on_edit(|st: &mut State| &mut st.composer)
-        .on_submit(|st: &mut State, _| st.send_prompt());
-
-    let ready = !s.composer.text.trim().is_empty() && s.agent.status == AgentStatus::Ready;
-    let running = s.agent.status == AgentStatus::Running;
-    let action = if running {
-        u.pill("Stop", "■", ActionKind::Secondary)
-            .key("abort")
-            .on_press(|st: &mut State| st.abort_run())
+    let paused = s.agent.pause.is_some();
+    let field = if paused {
+        rune::text_input(&TextEdit::new(""), CHAT)
+            .key("composer-paused")
+            .label("Prompt")
+            .disabled(true)
+            .placeholder("Resolve this approval to continue", u.faint)
     } else {
-        let mut send = u
-            .pill("Send", "↑", ActionKind::Primary)
+        rune::text_input(&s.composer, CHAT)
+            .key("composer")
+            .label("Prompt")
+            .color(u.ink)
+            .placeholder("Describe the mod you want", u.faint)
+            .caret(u.accent, u.accent.alpha(0.22))
+            .on_edit(|st: &mut State| &mut st.composer)
+            .on_submit(|st: &mut State, _| st.send_prompt())
+    }
+    .w_full()
+    .min_h(48.0)
+    .max_h(192.0);
+
+    let busy = running(s);
+    let can_send = !paused && !s.composer.text.trim().is_empty() && host_ready(s);
+    let action = if busy {
+        round_button(
+            u,
+            &icons::SQUARE_STOP,
+            "Stop",
+            Color::WHITE.alpha(0.10),
+            u.ink,
+        )
+        .key("abort")
+        .cursor(rune::Cursor::Pointer)
+        .on_press(|st: &mut State| st.abort_run())
+    } else if can_send {
+        round_button(u, &icons::ARROW_UP, "Send", u.accent, u.accent_ink)
             .key("send")
-            .on_press(|st: &mut State| st.send_prompt());
-        if !ready {
-            send = send.opacity(0.52);
-        }
-        send
+            .cursor(rune::Cursor::Pointer)
+            .on_press(|st: &mut State| st.send_prompt())
+    } else {
+        round_button(
+            u,
+            &icons::ARROW_UP,
+            "Send",
+            Color::WHITE.alpha(0.06),
+            u.faint,
+        )
+        .key("send")
+        .disabled(true)
     };
 
-    let inner = col()
-        .w_full()
-        .padding(14.0)
-        .gap(9.0)
-        .child(
-            row()
-                .w_full()
-                .gap(12.0)
-                .items_end()
-                .child(field)
-                .child(action),
-        )
-        .child(
-            row()
-                .w_full()
-                .gap(8.0)
-                .center_y()
-                .child(u.dot(status_tone(s.agent.status)))
-                .child(
-                    text(if s.agent.demo {
-                        format!(
-                            "{}. Demo fixture, no host process.",
-                            s.agent.provider_label()
-                        )
-                    } else if s.agent.configured {
-                        format!(
-                            "{} · host {}",
-                            s.agent.provider_label(),
-                            s.agent.status.label()
-                        )
-                    } else {
-                        "Agent host not configured".to_string()
-                    })
-                    .font(SMALL)
-                    .color(u.faint),
-                )
-                .child(text("·").font(SMALL).color(u.faint).a11y_hidden())
-                .child(text("Enter sends").font(SMALL).color(u.faint))
-                .child(spacer())
-                .child(
-                    text("Tools never write to the game install")
-                        .font(SMALL)
-                        .color(u.faint),
-                ),
-        );
-
-    u.glass_shell()
-        .key("composer-card")
-        .w_full()
-        .padding(1.0)
-        .child(
-            u.glass_core()
-                .w_full()
-                .fill(Color::WHITE.alpha(0.028))
-                .child(inner),
-        )
-}
-
-fn rail(s: &State, u: &Ui) -> El {
-    let tone = status_tone(s.agent.status);
-    let project = s.project();
-
-    let mut model = col().w_full().gap(9.0).child(
-        row()
-            .gap(8.0)
-            .center_y()
-            .child(text("MODEL").font(LABEL).color(u.faint))
-            .child(spacer())
-            .child(u.dot(tone))
-            .child(u.status_chip(s.agent.status.label(), tone)),
-    );
-    model = model
-        .child(
-            text(if s.agent.demo {
-                "Demo fixture: no host process".to_string()
-            } else {
-                s.agent.provider_label()
-            })
-            .font(MONO)
-            .color(if s.agent.configured || s.agent.demo {
-                u.teal
-            } else {
-                u.rose
-            })
-            .wrap_anywhere(),
-        )
-        .child(
-            row()
-                .gap(8.0)
-                .child(text("usage").font(SMALL).color(u.faint))
-                .child(spacer())
-                .child(
-                    text(s.agent.usage_label())
-                        .font(SMALL)
-                        .color(u.muted)
-                        .truncate(),
-                ),
-        )
-        .child(
-            row()
-                .gap(8.0)
-                .child(text("session").font(SMALL).color(u.faint))
-                .child(spacer())
-                .child(
-                    text(s.agent.session_label())
-                        .font(MONO)
-                        .color(u.muted)
-                        .truncate(),
-                ),
-        );
-
-    let mut context = col()
-        .w_full()
-        .gap(8.0)
-        .child(text("CONTEXT").font(LABEL).color(u.faint));
-    match project {
-        Some(p) => {
-            context = context
-                .child(text(p.name.clone()).font(BODY_MED).color(u.ink))
-                .child(text(p.summary.clone()).font(SMALL).color(u.faint).wrap())
-                .child(
-                    row()
-                        .gap(6.0)
-                        .child(u.chip(
-                            &format!("slot {:02}", p.slot),
-                            u.accent,
-                            u.accent.alpha(0.11),
-                        ))
-                        .child(u.chip(
-                            &format!("{} targets", p.targets.len()),
-                            u.violet,
-                            u.violet.alpha(0.10),
-                        )),
-                );
-        }
-        None => {
-            context = context.child(
-                text("No project is open. The session is unscoped, so game paths are guesses.")
-                    .font(SMALL)
-                    .color(u.muted)
-                    .wrap(),
-            );
-        }
-    }
-    context = context
-        .child(u.divider().mt(4.0))
-        .child(boundary_row(u, "Staging folder", "agent", Tone::Ok))
-        .child(boundary_row(u, "Game install", "approval", Tone::Warn))
-        .child(boundary_row(u, "Publish", "approval", Tone::Warn));
-
-    let mut timeline = col().key("timeline-list").w_full().gap(0.0);
-    if s.tools.is_empty() {
-        timeline = timeline.padding(2.0).child(
-            text("No tools have run in this session.")
-                .font(SMALL)
-                .color(u.faint)
-                .wrap(),
-        );
-    } else {
-        for (i, run) in s.tools.iter().enumerate() {
-            if i > 0 {
-                timeline = timeline.child(u.divider());
-            }
-            timeline = timeline.child(timeline_row(s, u, run));
-        }
-    }
-
-    let timeline_block = col()
-        .w_full()
-        .gap(6.0)
-        .child(
-            row()
-                .w_full()
-                .gap(8.0)
-                .center_y()
-                .child(text("TOOL TIMELINE").font(LABEL).color(u.faint))
-                .child(spacer())
-                .child(
-                    text(format!("{} calls", s.tools.len()))
-                        .font(SMALL)
-                        .color(u.faint),
-                ),
-        )
-        .child(
-            col()
-                .w_full()
-                .scroll(ScrollSpec {
-                    stick_bottom: false,
-                })
-                .child(timeline),
-        );
-
-    let stats = row()
-        .w_full()
-        .gap(8.0)
+    let model = s
+        .agent
+        .model
+        .clone()
+        .filter(|m| !m.trim().is_empty())
+        .unwrap_or_else(|| "Choose a model".to_string());
+    let picker = row()
+        .key("agent-model")
+        .h(28.0)
+        .pl(8.0)
+        .pr(6.0)
+        .gap(4.0)
         .center_y()
+        .radius(crate::ui::r(8.0))
+        .hover(u.hover)
+        .focusable(true)
+        .role("button")
+        .label(format!("Model: {model}"))
+        .cursor(rune::Cursor::Pointer)
+        .on_press(|st: &mut State| st.go(Screen::Settings))
+        .child(text(model).font(BODY).color(u.muted).a11y_hidden())
         .child(
-            text(format!("{} messages", s.messages.len()))
-                .font(SMALL)
-                .color(u.muted),
-        )
-        .child(text("·").font(SMALL).color(u.faint).a11y_hidden())
-        .child(
-            text(format!("{} tools", s.tools.len()))
-                .font(SMALL)
-                .color(u.muted),
-        )
-        .child(text("·").font(SMALL).color(u.faint).a11y_hidden())
-        .child(text(s.elapsed.clone()).font(SMALL).color(u.muted))
-        .child(spacer())
-        .child(text("this session").font(SMALL).color(u.faint));
-
-    let body = col()
-        .w_full()
-        .padding(16.0)
-        .gap(14.0)
-        .child(model)
-        .child(u.divider())
-        .child(context)
-        .child(u.divider())
-        .child(timeline_block)
-        .child(u.divider())
-        .child(stats)
-        .child(
-            text("The running tool drives this timeline. No tool writes to the game install.")
-                .font(SMALL)
+            icon(&icons::CHEVRON_DOWN, 14.0)
                 .color(u.faint)
-                .wrap(),
+                .a11y_hidden(),
         );
 
     col()
-        .key("rail")
-        .w(RAIL_W)
-        .h_full()
-        .min_h(0.0)
-        .gap(12.0)
+        .key("composer-box")
+        .w_full()
+        .radius(22.0)
+        .fill(u.raised)
+        .border(1.0, Color::WHITE.alpha(0.06))
+        .px(16.0)
+        .pt(14.0)
+        .pb(12.0)
+        .gap(8.0)
+        .child(field)
         .child(
-            u.glass_shell()
-                .key("context-rail")
+            row()
                 .w_full()
-                .grow(1.0)
-                .min_h(0.0)
-                .padding(1.0)
-                .child(
-                    u.glass_core()
-                        .w_full()
-                        .grow(1.0)
-                        .min_h(0.0)
-                        .scroll(ScrollSpec {
-                            stick_bottom: false,
-                        })
-                        .child(body),
-                ),
+                .gap(8.0)
+                .center_y()
+                .child(picker.ml(-8.0))
+                .child(spacer())
+                .child(action),
         )
 }
 
-fn boundary_row(u: &Ui, label: &str, state: &str, tone: Tone) -> El {
-    row()
-        .w_full()
-        .gap(8.0)
-        .center_y()
-        .child(text(label).font(SMALL).color(u.muted).grow(1.0))
-        .child(u.chip(state, tone.fg(u), tone.bg(u)))
+fn round_button(_u: &Ui, glyph: &'static rune::Icon, label: &str, fill: Color, ink: Color) -> El {
+    el().size(32.0, 32.0)
+        .radius(16.0)
+        .center()
+        .fill(fill)
+        .hover(Color::WHITE.alpha(0.10))
+        .press(Color::WHITE.alpha(0.08))
+        .focusable(true)
+        .role("button")
+        .label(label)
+        .child(icon(glyph, 16.0).color(ink).a11y_hidden())
 }
 
-fn timeline_row(s: &State, u: &Ui, run: &ToolRun) -> El {
-    let tone = run_tone(run.state);
-    let dot = if run.state == RunState::Running {
-        pulse_dot(u, s.pulse)
-    } else {
-        u.dot(tone)
-    };
-    let mut r = row()
-        .w_full()
-        .h(32.0)
-        .px(2.0)
-        .gap(8.0)
-        .center_y()
-        .child(dot)
-        .child(
-            text(run.name.clone())
-                .font(MONO)
-                .color(u.ink)
-                .grow(1.0)
-                .truncate(),
-        )
-        .child(text(run.state.label()).font(LABEL).color(tone.fg(u)));
-    if !run.duration.is_empty() {
-        r = r.child(
-            text(run.duration.clone())
-                .font(SMALL)
-                .color(u.faint)
-                .w(38.0)
-                .align(rune::Align::End),
-        );
+/// `2026-11-15 18:04` (UTC) as `now`, `5m`, `3h`, `2d`, `3w`, or nothing when it does not parse.
+pub(crate) fn relative(stamp: &str) -> Option<String> {
+    let stamp = stamp.trim();
+    let date = stamp.get(0..10)?;
+    let mut parts = date.split('-');
+    let y: i64 = parts.next()?.parse().ok()?;
+    let m: i64 = parts.next()?.parse().ok()?;
+    let d: i64 = parts.next()?.parse().ok()?;
+    let (mut hh, mut mm) = (0i64, 0i64);
+    if let Some(time) = stamp.get(11..16) {
+        let mut t = time.split(':');
+        hh = t.next().and_then(|v| v.parse().ok()).unwrap_or(0);
+        mm = t.next().and_then(|v| v.parse().ok()).unwrap_or(0);
     }
-    r
+    let then = days_from_civil(y, m, d) * 86_400 + hh * 3_600 + mm * 60;
+    let now = SystemTime::now().duration_since(UNIX_EPOCH).ok()?.as_secs() as i64;
+    let diff = (now - then).max(0);
+    Some(if diff < 60 {
+        "now".to_string()
+    } else if diff < 3_600 {
+        format!("{}m", diff / 60)
+    } else if diff < 86_400 {
+        format!("{}h", diff / 3_600)
+    } else if diff < 7 * 86_400 {
+        format!("{}d", diff / 86_400)
+    } else if diff < 60 * 86_400 {
+        format!("{}w", diff / (7 * 86_400))
+    } else {
+        format!("{}mo", diff / (30 * 86_400))
+    })
+}
+
+/// Days since 1970-01-01 for a proleptic Gregorian date.
+fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
+    let y = if m <= 2 { y - 1 } else { y };
+    let era = if y >= 0 { y } else { y - 399 } / 400;
+    let yoe = y - era * 400;
+    let mp = (m + 9) % 12;
+    let doy = (153 * mp + 2) / 5 + d - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    era * 146_097 + doe - 719_468
 }

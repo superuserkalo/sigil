@@ -6,9 +6,11 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::Instant;
 
+use crate::screens::settings::i18n::tr;
 use rune::tok::motion;
 use rune::{
-    Color, Cx, El, ImageCache, Key, KeyEvent, Pixels, TextEdit, Tx, Waker, col, el, row, text,
+    Color, Cx, El, ImageCache, Key, KeyEvent, Pixels, TextEdit, Tx, Waker, col, el, row, spacer,
+    text,
 };
 use serde_json::Value;
 
@@ -16,16 +18,18 @@ use crate::agent::{
     self, AgentEvent, AgentLink, AgentStatus, CommandKind, HostError, Pause, ResultEnvelope,
 };
 use crate::data::ThumbCrew;
+use crate::icons;
 use crate::jobs::Job;
 use crate::model::{
     self, AddonLibrary, BrowseState, Catalog, ImpactReport, IndexRow, Message, PatchNote, Paths,
-    Project, ProjectState, Provider, ProviderState, ReleaseDialog, ReleaseState, ReviewQueue, Role,
+    Project, Provider, ProviderState, ReleaseDialog, ReleaseState, ReviewQueue, Role,
     Screen, ToolRun,
 };
 use crate::publish::PublishJob;
 use crate::screens;
 use crate::ui::{
-    ActionKind, BODY, BODY_MED, H2, HEADER_H, LABEL, SIDEBAR_W, SMALL, STATUS_H, Tone, Ui,
+    ActionKind, BODY, BODY_MED, LABEL, MICRO, NAV, PAGE_X, SIDEBAR_W, SMALL, TITLEBAR_H, Tone,
+    Ui, WORDMARK,
 };
 
 pub struct State {
@@ -49,13 +53,14 @@ pub struct State {
     pub publish_job: PublishJob,
     pub messages: Vec<Message>,
     pub tools: Vec<ToolRun>,
+    /// Agent transcript: tool groups the user expanded, keyed by the first message index.
+    pub open_tool_groups: Vec<usize>,
     pub composer: TextEdit,
     pub providers: Vec<Provider>,
     pub local_endpoint: TextEdit,
     pub paths: Paths,
-    pub confirm_writes: bool,
-    pub auto_recheck: bool,
-    pub check_updates: bool,
+    /// The saved settings (`settings.json`), see `crate::prefs`.
+    pub prefs: crate::prefs::Prefs,
     pub status: String,
     pub pulse: f32,
     pub game_detected: bool,
@@ -65,6 +70,8 @@ pub struct State {
     pub model_label: String,
     pub elapsed: String,
     pub agent: AgentLink,
+    /// The agent host starts when Agent first opens, not at launch: it is a second process.
+    pub host_started: bool,
     pub wake: Option<Waker>,
     pub streaming: Option<usize>,
     pub run_started: Option<Instant>,
@@ -72,10 +79,12 @@ pub struct State {
     pub addons: AddonLibrary,
     pub addon_job: Job<AddonLibrary>,
     pub installed_query: TextEdit,
+    pub installed: screens::installed::View,
     pub browse: BrowseState,
     pub browse_job: Job<model::BrowsePageView>,
     pub browse_query: TextEdit,
     pub install: screens::browse::InstallView,
+    pub browse_view: screens::browse::View,
     pub install_job: Job<screens::browse::InstallOutcome>,
     pub conflicts_query: TextEdit,
     pub images: Option<ImageCache>,
@@ -84,6 +93,8 @@ pub struct State {
     pub thumb_crew: ThumbCrew,
     pub review_job: Job<ReviewQueue>,
     pub launch_dialog: bool,
+    /// The launch confirm is for a vanilla run (mods set aside first).
+    pub launch_vanilla: bool,
     pub addon_dialog: Option<(u8, bool)>,
     pub watch: Option<model::WatchState>,
     pub capabilities: Vec<(String, String)>,
@@ -108,12 +119,22 @@ pub struct State {
     pub toolchain_job: Job<deadlock_core::toolchain::ToolchainStatus>,
     pub character: screens::character::View,
     pub character_job: Job<screens::character::Load>,
+    pub signin: crate::signin::Flow,
+    pub settings: screens::settings::View,
+    pub performance: screens::performance::View,
+    pub servers: screens::servers::View,
+    /// Toasts (`crate::notify`). `status` above feeds it: a line written there becomes a toast.
+    pub notices: crate::notify::Notices<State>,
+    /// The gameinfo.gi banner (`crate::banner`).
+    pub gameinfo: crate::banner::Banner,
+    /// Drag, zoom, the shortcuts sheet, What's new and the background blur (`crate::shell`).
+    pub shell: crate::shell::Shell,
 }
 
 impl Default for State {
     fn default() -> Self {
         State {
-            screen: Screen::Installed,
+            screen: Screen::Browse,
             demo: false,
             projects: Vec::new(),
             selected_project: 0,
@@ -133,13 +154,12 @@ impl Default for State {
             publish_job: PublishJob::default(),
             messages: model::welcome_messages(),
             tools: Vec::new(),
+            open_tool_groups: Vec::new(),
             composer: TextEdit::new(""),
             providers: model::default_providers(),
             local_endpoint: TextEdit::new(""),
             paths: model::empty_paths(),
-            confirm_writes: true,
-            auto_recheck: true,
-            check_updates: false,
+            prefs: crate::prefs::Prefs::default(),
             status: String::new(),
             pulse: 0.0,
             game_detected: false,
@@ -149,6 +169,7 @@ impl Default for State {
             model_label: "No model".to_string(),
             elapsed: "0s".to_string(),
             agent: AgentLink::disconnected(),
+            host_started: false,
             wake: None,
             streaming: None,
             run_started: None,
@@ -156,18 +177,21 @@ impl Default for State {
             addons: AddonLibrary::default(),
             addon_job: Job::default(),
             installed_query: TextEdit::new(""),
+            installed: screens::installed::View::default(),
             browse: BrowseState::default(),
             browse_job: Job::default(),
             browse_query: TextEdit::new(""),
             install: screens::browse::InstallView::default(),
+            browse_view: screens::browse::View::default(),
             install_job: Job::default(),
             conflicts_query: TextEdit::new(""),
             images: None,
             thumbnails: HashMap::new(),
             pending_thumbs: Vec::new(),
-            thumb_crew: ThumbCrew::default(),
+            thumb_crew: ThumbCrew::shrinking(),
             review_job: Job::default(),
             launch_dialog: false,
+            launch_vanilla: false,
             addon_dialog: None,
             watch: None,
             capabilities: Vec::new(),
@@ -192,6 +216,13 @@ impl Default for State {
             toolchain_job: Job::default(),
             character: screens::character::View::default(),
             character_job: Job::default(),
+            signin: crate::signin::Flow::default(),
+            settings: screens::settings::View::default(),
+            performance: screens::performance::View::default(),
+            servers: screens::servers::View::default(),
+            notices: crate::notify::Notices::default(),
+            gameinfo: crate::banner::Banner::default(),
+            shell: crate::shell::Shell::default(),
         }
     }
 }
@@ -251,8 +282,8 @@ impl State {
         self.addons = model::demo_addon_library();
         self.model_label = "qwen3-coder-30b".to_string();
         self.elapsed = "2m 14s".to_string();
-        self.status = "Demo fixture loaded. Nothing on this screen reads or writes a game install."
-            .to_string();
+        // Demo data replaces whatever the real discovery said at startup.
+        self.status.clear();
     }
 
     pub fn load_empty(&mut self) {
@@ -269,6 +300,23 @@ impl State {
     /// Move to a screen and start the read that screen needs. Library screens
     /// fetch on first entry rather than on every frame.
     pub fn go(&mut self, screen: Screen) {
+        // Settings is a sheet over the current page, not a page.
+        if screen == Screen::Settings {
+            screens::settings::open(self);
+            return;
+        }
+        self.settings.open = false;
+        if under_agent(screen) {
+            self.ensure_host();
+        }
+        // A page lets go of its images when it is left; it decodes them again on return.
+        if self.screen != screen {
+            match self.screen {
+                Screen::Locker => crate::data::release_locker_art(self),
+                Screen::Installed => screens::installed::release_previews(self),
+                _ => {}
+            }
+        }
         self.screen = screen;
         self.status.clear();
         match screen {
@@ -293,8 +341,22 @@ impl State {
                 }
                 crate::data::start_profile_list(self);
             }
+            Screen::Servers => {
+                if !screens::servers::loaded(self) {
+                    screens::servers::start_list(self);
+                }
+            }
+            Screen::Performance => {
+                if !self.performance.loaded && !self.performance.read_job.is_running() {
+                    screens::performance::start_read(self);
+                }
+            }
             Screen::Autoexec => {
-                if !self.autoexec.loaded && !self.autoexec_job.is_running() {
+                // Reload on every visit unless there are edits to keep: the page has no
+                // reload button, and the crosshair page writes the same file.
+                let fresh = !self.autoexec.loaded
+                    || (!self.demo && !self.autoexec.dirty(&self.autoexec_original));
+                if fresh && !self.autoexec_job.is_running() {
                     crate::data::start_autoexec_read(self);
                 }
             }
@@ -309,6 +371,8 @@ impl State {
             Screen::Locker => {
                 if !self.locker.loaded && !self.locker_job.is_running() {
                     crate::data::start_locker_load(self);
+                } else if self.locker.loaded {
+                    crate::data::request_locker_grid(self);
                 }
             }
             Screen::Launch => {
@@ -326,9 +390,6 @@ impl State {
                     crate::data::start_character_read(self);
                 }
             }
-            Screen::Settings => {
-                crate::data::refresh_subscriptions(self);
-            }
             _ => {}
         }
     }
@@ -338,9 +399,15 @@ impl State {
     pub fn launch_modded(&mut self) {
         self.launch_dialog = false;
         if rune::is_headless() {
-            self.status =
-                "Headless run: the launch request was not sent to Steam.".to_string();
+            self.status = "Headless run: the launch request was not sent to Steam.".to_string();
             return;
+        }
+        // Locker's "shuffle on launch" puts a new skin set in place before Steam starts.
+        if crate::data::shuffle_before_launch(self) {
+            crate::notify::push(
+                self,
+                crate::notify::Notice::success(tr("Locker skins shuffled")),
+            );
         }
         let spawn = |program: &str, args: &[&str]| {
             std::process::Command::new(program)
@@ -358,15 +425,14 @@ impl State {
         let opened = spawn("xdg-open", &[target]);
         match opened {
             Ok(()) => {
+                self.settings.launched = true;
+                let on = self.addons.enabled_count();
                 self.status = format!(
-                    "Asked Steam to launch Deadlock with {} addon{} enabled. The app wrote nothing.",
-                    self.addons.enabled_count(),
-                    if self.addons.enabled_count() == 1 {
-                        ""
-                    } else {
-                        "s"
-                    }
-                )
+                    "Starting Deadlock with {on} mod{} on.",
+                    if on == 1 { "" } else { "s" }
+                );
+                // A game update can land with the launch; look at gameinfo.gi again.
+                crate::banner::recheck(self);
             }
             Err(error) => self.status = format!("Steam could not be opened: {error}"),
         }
@@ -374,9 +440,21 @@ impl State {
 
     /// Start the Rust host for the real scenes and the window. Demo scenes get a labelled
     /// fixture link instead of a process, so snapshots stay hermetic.
+    /// Start the host the first time anything needs it.
+    pub fn ensure_host(&mut self) {
+        // Experimental and off by default: no host process unless the Agent flag is on.
+        if !self.host_started && (self.demo || self.prefs.flag("agent")) {
+            self.start_host();
+        }
+    }
+
     pub fn start_host(&mut self) {
+        self.host_started = true;
         if self.demo {
-            self.agent = AgentLink::demo();
+            // A scene may have staged its own fixture link (a paused approval); keep it.
+            if !self.agent.demo {
+                self.agent = AgentLink::demo();
+            }
             return;
         }
         // A headless render must not spawn the sidecar: its state would depend on
@@ -397,13 +475,8 @@ impl State {
             && let Some(error) = &self.agent.error
         {
             self.status = error.clone();
-        } else if self.agent.configured {
-            self.status = format!(
-                "Agent host starting: {} from {}.",
-                self.agent.provider_label(),
-                self.agent.binary_label()
-            );
         }
+        // A healthy start says nothing: the Agent page shows the host's state.
     }
 
     pub fn restart_host(&mut self) {
@@ -462,6 +535,7 @@ impl State {
     }
 
     pub fn send_prompt(&mut self) {
+        self.ensure_host();
         let body = self.composer.text.trim().to_string();
         if body.is_empty() {
             self.status = "Type a prompt before sending.".to_string();
@@ -507,12 +581,8 @@ impl State {
         self.streaming = None;
         self.run_started = Some(Instant::now());
         self.elapsed = "0s".to_string();
-        if self.agent.prompt(&body) {
-            self.status = format!(
-                "Sent to {}. Streaming events into the transcript.",
-                self.agent.provider_label()
-            );
-        } else {
+        // The transcript shows the run, so a sent prompt needs no toast.
+        if !self.agent.prompt(&body) {
             self.status = self
                 .agent
                 .error
@@ -622,10 +692,6 @@ impl State {
                 if self.agent.status == AgentStatus::Starting && line.contains("host ready") {
                     self.apply_host_config();
                     self.agent.state();
-                    self.status = format!(
-                        "Agent host ready: {}. Send a prompt when you are ready.",
-                        self.agent.provider_label()
-                    );
                 }
                 self.agent.diagnostic = Some(line);
             }
@@ -1020,8 +1086,22 @@ fn duration_label(start: Instant) -> String {
 }
 
 pub fn view(s: &State, cx: &mut Cx<State>) -> El {
+    crate::ui::set_look(s.prefs.theme, s.prefs.accent_color());
+    // Settings > Appearance > Personalize: a custom palette and corner radius, off by default.
+    screens::settings::personalize::apply(s);
+    // Zoom from the shortcuts, times the density chosen in Appearance (100% by default).
+    cx.zoom(s.prefs.zoom * crate::ui::density());
+    // Thumbnails decode at the pixels a card covers: the screen scale times the zoom.
+    crate::data::set_pixel_scale(cx.env().scale * s.prefs.zoom * crate::ui::density());
+    let window = cx
+        .layout_size("root")
+        .map_or((1360.0, 860.0), |size| (size[0], size[1]));
     let u = Ui::new();
     cx.foreground(u.ink);
+    cx.caption_color(u.muted);
+    let insets = cx.chrome_insets();
+    // A status line a handler wrote since the last poll becomes a toast on the next one.
+    crate::notify::needs_poll(s);
     let body = match s.screen {
         Screen::Installed => screens::installed::view(s, &u),
         Screen::Browse => screens::browse::view(s, &u),
@@ -1029,6 +1109,8 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
         Screen::Updates => screens::updates::view(s, &u),
         Screen::Profiles => screens::profiles::view(s, &u),
         Screen::Autoexec => screens::autoexec::view(s, &u),
+        Screen::Performance => screens::performance::view(s, &u),
+        Screen::Servers => screens::servers::view(s, &u),
         Screen::Crosshair => screens::crosshair::view(s, &u),
         Screen::Stats => screens::stats::view(s, &u),
         Screen::Locker => screens::locker::view(s, &u),
@@ -1041,24 +1123,50 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
         Screen::Release => screens::release::view(s, &u),
         Screen::Toolchain => screens::toolchain::view(s, &u),
         Screen::Character => screens::character::view(s, &u),
-        Screen::Settings => screens::settings::view(s, &u),
+        // Settings opens as a sheet; a stale Settings screen shows the library under it.
+        Screen::Settings => screens::installed::view(s, &u),
     };
+    let mut main = col()
+        .key("main")
+        .grow(1.0)
+        .h_full()
+        .min_w(0.0)
+        .child(titlebar(s, &u, insets));
+    if let Some(banner) = crate::banner::view(s, &u) {
+        main = main.child(banner);
+    }
     let mut root = row()
         .key("root")
         .w_full()
         .h_full()
         .fill(u.bg)
-        .child(sidebar(s, &u))
-        .child(
-            col()
-                .key("main")
-                .grow(1.0)
-                .h_full()
-                .min_w(0.0)
-                .child(header(s, &u))
-                .child(body)
-                .child(status_bar(s, &u)),
-        );
+        // Files dropped on a page without its own target import from anywhere in the window.
+        .accepts_extensions(&crate::shell::MODS)
+        .on_drop_files(|st: &mut State, files: &[PathBuf], _tx: &mut Tx| {
+            crate::shell::dropped(st, files)
+        })
+        .on_drop_hover(|st: &mut State, over: bool, _tx: &mut Tx| st.shell.drop_hover = over)
+        // Back in front: a game update or Steam's file check may have reset gameinfo.gi.
+        .on_window_focus(|st: &mut State, focused: bool, _tx: &mut Tx| {
+            if focused {
+                crate::banner::recheck(st);
+            }
+        })
+        .child(sidebar(s, &u, insets))
+        .child(main.child(col().key("page").grow(1.0).min_h(0.0).w_full().child(body)));
+    // Personalize: the background image and glow, painted under the sidebar and pages.
+    if let Some(backdrop) = screens::settings::personalize::backdrop(s, &u, window) {
+        root = root.child(backdrop);
+    }
+    if let Some(menu) = screens::installed::overlay(s, &u) {
+        root = root.child(menu);
+    }
+    if let Some(menu) = screens::browse::overlay(s, &u) {
+        root = root.child(menu);
+    }
+    if let Some(menu) = screens::servers::overlay(s, &u) {
+        root = root.child(menu);
+    }
     if s.launch_dialog {
         root = root.child(u.modal_layer("launch-run-modal", launch_layer(s, &u)));
     }
@@ -1066,12 +1174,16 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
         ("browse-modal", screens::browse::dialog(s, &u)),
         ("profiles-modal", screens::profiles::dialog(s, &u)),
         ("autoexec-modal", screens::autoexec::dialog(s, &u)),
+        ("performance-modal", screens::performance::dialog(s, &u)),
+        ("servers-modal", screens::servers::dialog(s, &u)),
         ("launch-modal", screens::launch::dialog(s, &u)),
         ("toolchain-modal", screens::toolchain::dialog(s, &u)),
         ("addon-modal", screens::installed::dialog(s, &u)),
         ("review-modal", screens::stats::dialog(s, &u)),
         ("crosshair-modal", screens::crosshair::dialog(s, &u)),
         ("recolor-modal", screens::locker::dialog(s, &u)),
+        ("gameinfo-modal", crate::banner::dialog(s, &u)),
+        ("shell-modal", crate::shell::whats_new_dialog(s, &u).or_else(|| crate::shell::shortcuts_dialog(s, &u))),
     ] {
         if let Some(layer) = layer {
             root = root.child(u.modal_layer(key, layer));
@@ -1082,374 +1194,377 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
     {
         root = root.child(layer);
     }
+    if let Some(sheet) = screens::settings::modal(s, &u, window) {
+        root = root.child(sheet);
+    }
+    // A drag anywhere in the window, over any dialog, shows the same target.
+    if s.shell.drop_hover {
+        root = root.child(crate::shell::drop_veil(&u));
+    }
+    // Toasts sit above everything, dialogs included, as Grimoire's do.
+    if let Some(toasts) = crate::notify::region(s, &u) {
+        root = root.child(toasts);
+    }
     root
 }
 
-fn sidebar(s: &State, u: &Ui) -> El {
-    let mut library = col().w_full().gap(1.0);
-    for screen in [
-        Screen::Installed,
-        Screen::Browse,
-        Screen::Conflicts,
-        Screen::Updates,
-    ] {
-        library = library.child(nav_item(s, u, screen));
+/// The primary places, in Grimoire's order. Everything else is reached from inside a place.
+const PLACES: [Screen; 10] = [
+    Screen::Browse,
+    Screen::Installed,
+    Screen::Locker,
+    Screen::Crosshair,
+    Screen::Autoexec,
+    Screen::Performance,
+    Screen::Stats,
+    Screen::Conflicts,
+    Screen::Profiles,
+    Screen::Servers,
+];
+
+/// Screens that live under the Agent place, so it stays selected while one is open.
+pub fn under_agent(screen: Screen) -> bool {
+    matches!(
+        screen,
+        Screen::Agent
+            | Screen::Projects
+            | Screen::Index
+            | Screen::Patches
+            | Screen::Impact
+            | Screen::Release
+            | Screen::Toolchain
+            | Screen::Character
+    )
+}
+
+fn sidebar(s: &State, u: &Ui, insets: rune::ChromeInsets) -> El {
+    let mut nav = col().key("nav").w_full().px(8.0).gap(2.0);
+    for screen in PLACES {
+        if screen == Screen::Servers && !s.prefs.flag("servers") {
+            continue;
+        }
+        nav = nav.child(nav_item(s, u, screen));
+    }
+    if s.prefs.flag("agent") {
+        nav = nav.child(el().h(12.0)).child(nav_item(s, u, Screen::Agent));
     }
 
-    let mut modding = col().w_full().gap(1.0);
-    for screen in [
-        Screen::Profiles,
-        Screen::Autoexec,
-        Screen::Crosshair,
-        Screen::Stats,
-        Screen::Locker,
-        Screen::Launch,
-    ] {
-        modding = modding.child(nav_item(s, u, screen));
-    }
-
-    let mut workbench = col().w_full().gap(1.0);
-    for screen in [
-        Screen::Agent,
-        Screen::Projects,
-        Screen::Index,
-        Screen::Patches,
-        Screen::Impact,
-        Screen::Release,
-    ] {
-        workbench = workbench.child(nav_item(s, u, screen));
-    }
-
-    let mut foundry = col().w_full().gap(1.0);
-    for screen in [Screen::Toolchain, Screen::Character] {
-        foundry = foundry.child(nav_item(s, u, screen));
-    }
-
-    let project_line = match s.project() {
-        Some(project) => project.name.clone(),
-        None => "No project open".to_string(),
+    // The wordmark clears the traffic lights on macOS and sits on the 16 point edge elsewhere.
+    let brand_left = if insets.leading > 0.0 {
+        insets.leading + 12.0
+    } else {
+        18.0
     };
-    let project_tone = match s.project().map(|project| project.state) {
-        Some(ProjectState::Ready) => Tone::Ok,
-        Some(ProjectState::Attention) => Tone::Warn,
-        Some(ProjectState::Draft) | None => Tone::Quiet,
-    };
-    let provider_label = match s.provider() {
-        Some(provider) => provider.name.clone(),
-        None => "No provider".to_string(),
-    };
-
     col()
         .key("sidebar")
         .w(SIDEBAR_W)
         .h_full()
-        .fill(u.sidebar)
+        .fill(screens::settings::personalize::sidebar_fill(s, u))
         .border_sides([0.0, 1.0, 0.0, 0.0], u.hair)
-        .pt(24.0)
         .child(
             row()
                 .key("brand")
-                .h(38.0)
-                .px(16.0)
-                .gap(9.0)
-                .center_y()
-                .child(u.glyph_box("◆", Tone::Accent, 26.0))
-                .child(
-                    col()
-                        .gap(0.0)
-                        .child(text("DEADLOCK").font(H2).color(u.ink))
-                        .child(text("MOD MANAGER").font(LABEL).color(u.faint)),
-                ),
-        )
-        .child(
-            col()
-                .key("sidebar-status")
                 .w_full()
-                .px(16.0)
-                .pt(12.0)
-                .pb(10.0)
-                .gap(4.0)
-                .child(
-                    row()
-                        .w_full()
-                        .gap(7.0)
-                        .center_y()
-                        .child(u.dot(project_tone))
-                        .child(
-                            text(project_line)
-                                .font(SMALL)
-                                .color(u.muted)
-                                .grow(1.0)
-                                .truncate(),
-                        ),
-                )
-                .child(
-                    row()
-                        .w_full()
-                        .gap(7.0)
-                        .center_y()
-                        .child(u.dot(s.game_tone()))
-                        .child(
-                            text(s.game_label.clone())
-                                .font(LABEL)
-                                .color(u.faint)
-                                .grow(1.0)
-                                .truncate(),
-                        ),
-                ),
+                .h(TITLEBAR_H)
+                .pl(brand_left)
+                .pr(12.0)
+                .center_y()
+                .window_drag()
+                .child(text("Sigil").font(WORDMARK).color(u.ink)),
         )
-        .child(u.divider())
         .child(
             col()
-                .key("nav")
+                .key("nav-scroll")
+                .w_full()
                 .grow(1.0)
                 .min_h(0.0)
-                .px(10.0)
-                .gap(1.0)
+                .pt(8.0)
                 .scroll(rune::ScrollSpec {
                     stick_bottom: false,
                 })
-                .child(section_gap(u, "LIBRARY", 6.0))
-                .child(library)
-                .child(el().h(12.0))
-                .child(section_gap(u, "MODDING", 6.0))
-                .child(modding)
-                .child(el().h(12.0))
-                .child(section_gap(u, "WORKBENCH", 6.0))
-                .child(workbench)
-                .child(el().h(12.0))
-                .child(section_gap(u, "FOUNDRY", 6.0))
-                .child(foundry),
+                .child(nav),
         )
         .child(
             col()
                 .key("sidebar-foot")
                 .w_full()
-                .px(10.0)
-                .pb(12.0)
+                .px(8.0)
+                .pt(8.0)
+                .pb(8.0)
                 .gap(4.0)
-                .child(u.divider().mb(6.0))
-                .child(launch_item(s, u))
-                .child(nav_item(s, u, Screen::Settings))
-                .child(
-                    row()
-                        .w_full()
-                        .px(9.0)
-                        .pt(8.0)
-                        .gap(6.0)
-                        .center_y()
-                        .child(
-                            text(provider_label)
-                                .font(LABEL)
-                                .color(u.faint)
-                                .grow(1.0)
-                                .truncate(),
-                        )
-                        .child(text("RUST · RUNE").font(LABEL).color(u.faint)),
-                ),
+                .border_sides([1.0, 0.0, 0.0, 0.0], u.hair)
+                // The game is up: a line that stops it, on the Launch page.
+                .children(screens::launch::sidebar_state(s, u))
+                .child(if s.prefs.single_launch {
+                    // Personalize's art for the one button too, from the surface it will use.
+                    screens::settings::personalize::launch_art(
+                        s,
+                        u,
+                        screens::settings::tabs::single_launch(s, u),
+                        s.settings.launch_vanilla_pick,
+                    )
+                } else {
+                    screens::settings::personalize::launch_art(s, u, launch_modded(s, u), false)
+                })
+                .child(if s.prefs.single_launch {
+                    el()
+                } else {
+                    screens::settings::personalize::launch_art(s, u, launch_vanilla(u), true)
+                })
+                .child(el().h(4.0))
+                .child(settings_item(s, u)),
         )
 }
 
-fn section_gap(u: &Ui, label: &str, bottom: f32) -> El {
-    col()
+fn nav_row(u: &Ui, key: String, on: bool) -> El {
+    row()
+        .key(key)
         .w_full()
-        .px(9.0)
-        .pt(4.0)
-        .pb(bottom)
-        .child(text(label).font(LABEL).color(u.faint))
+        .h(34.0)
+        .px(10.0)
+        .gap(10.0)
+        .center_y()
+        .radius(crate::ui::r(8.0))
+        .fill(if on { u.selected } else { Color::TRANSPARENT })
+        .hover(if on { u.selected } else { u.hover })
+        .press(Color::WHITE.alpha(0.06))
+        .focusable(true)
 }
 
 fn nav_item(s: &State, u: &Ui, screen: Screen) -> El {
-    let on = s.screen == screen;
-    let count = nav_count(s, screen);
-    let mut r = row()
-        .key(format!("nav-{}", screen.key()))
-        .h(32.0)
-        .px(9.0)
-        .gap(9.0)
-        .center_y()
-        .radius(6.0)
-        .fill(if on {
-            u.accent.alpha(0.09)
-        } else {
-            Color::TRANSPARENT
-        })
-        .hover(Color::WHITE.alpha(0.04))
-        .press(Color::WHITE.alpha(0.055))
-        .focusable(true)
+    let on = if screen == Screen::Agent {
+        under_agent(s.screen)
+    } else {
+        s.screen == screen
+    };
+    let mut r = nav_row(u, format!("nav-{}", screen.key()), on)
         .role("tab")
-        .label(format!("{} ({})", screen.title(), screen.shortcut()))
+        .label(tr(screen.title()))
         .checked(on)
-        .motion(motion::SNAPPY)
-        .on_press(move |st: &mut State| st.go(screen));
-    if on {
-        r = r.child(
-            el().w(2.0)
-                .h(16.0)
-                .radius(1.0)
-                .fill(u.accent)
-                .absolute(0.0, 8.0)
-                .a11y_hidden(),
-        );
-    }
-    r = r
+        .cursor(rune::Cursor::Pointer)
+        .on_press(move |st: &mut State| st.go(screen))
         .child(
-            text(screen.glyph())
-                .font(BODY)
-                .w(16.0)
-                .color(if on { u.accent } else { u.faint })
+            rune::icon(screen.icon(), 16.0)
+                .color(if on { u.ink } else { u.muted })
                 .a11y_hidden(),
         )
         .child(
-            text(screen.title())
-                .font(if on { BODY_MED } else { BODY })
-                .color(if on { u.ink } else { u.muted })
+            text(tr(screen.title()))
+                .font(NAV)
+                .color(if on { u.ink } else { u.prose })
                 .grow(1.0)
                 .truncate(),
         );
-    let shortcut = screen.shortcut();
-    match count {
-        Some((label, tone)) => r.child(text(label).font(LABEL).color(tone.fg(u))),
-        None if shortcut.is_empty() => r,
-        None => r.child(text(shortcut).font(LABEL).color(if on {
-            u.accent.alpha(0.85)
-        } else {
-            u.faint
-        })),
+    if let Some((label, warn)) = nav_count(s, screen) {
+        r = r.child(
+            text(label)
+                .font(MICRO)
+                .color(if warn { u.amber } else { u.faint }),
+        );
     }
+    // Personalize: art behind the active tab, off by default.
+    screens::settings::personalize::tab_art(s, u, r, on)
 }
 
-/// A live count for the library items. `None` means the scan has not run, so
-/// the shortcut is shown instead of a number the shell does not have.
-fn nav_count(s: &State, screen: Screen) -> Option<(String, Tone)> {
+/// A live count. `None` means the scan has not run, so nothing is shown rather than a number
+/// the shell does not have.
+fn nav_count(s: &State, screen: Screen) -> Option<(String, bool)> {
+    if !s.addons.scanned || s.addons.error.is_some() {
+        return None;
+    }
     match screen {
-        Screen::Installed if s.addons.scanned && s.addons.error.is_none() => Some((
-            s.addons.addons.len().to_string(),
-            if s.addons.addons.is_empty() {
-                Tone::Quiet
-            } else {
-                Tone::Accent
-            },
-        )),
-        Screen::Conflicts if s.addons.scanned && s.addons.error.is_none() => {
-            let count = s.addons.conflicts.len();
-            Some((
-                count.to_string(),
-                if count > 0 { Tone::Warn } else { Tone::Quiet },
-            ))
+        Screen::Installed if !s.addons.addons.is_empty() => {
+            Some((s.addons.addons.len().to_string(), false))
         }
-        Screen::Updates if s.release.review.is_some() => {
-            let count = s
-                .release
-                .review
-                .as_ref()
-                .map(|queue| queue.review_count())
-                .unwrap_or(0);
-            Some((
-                count.to_string(),
-                if count > 0 { Tone::Warn } else { Tone::Quiet },
-            ))
+        Screen::Conflicts => {
+            let count = screens::conflicts::badge_count(s);
+            (count > 0).then(|| (count.to_string(), true))
         }
         _ => None,
     }
 }
 
-fn launch_item(s: &State, u: &Ui) -> El {
+fn launch_modded(s: &State, u: &Ui) -> El {
+    let enabled = s.addons.enabled_count();
     row()
         .key("launch-modded")
+        .w_full()
         .h(36.0)
-        .px(9.0)
-        .gap(9.0)
+        .px(12.0)
+        .gap(10.0)
         .center_y()
-        .radius(6.0)
-        .fill(u.accent.alpha(0.08))
-        .border(1.0, u.accent.alpha(0.16))
-        .hover(u.accent.alpha(0.14))
-        .press(u.accent.alpha(0.20))
-        .press_scale(0.985)
+        .radius(crate::ui::r(8.0))
+        .fill(u.accent)
+        .hover(Color::WHITE.alpha(0.10))
+        .press(Color::BLACK.alpha(0.08))
         .focusable(true)
         .role("button")
-        .label("Launch Modded")
-        .motion(motion::SNAPPY)
-        .on_press(|st: &mut State| st.launch_dialog = true)
+        .label(tr("Launch modded"))
+        .cursor(rune::Cursor::Pointer)
+        .on_press_tx(|st: &mut State, tx: &mut Tx| ask_or_launch(st, tx, false))
         .child(
-            text("▶")
-                .font(BODY)
-                .w(16.0)
-                .color(u.accent)
+            rune::icon(&icons::PLAY, 14.0)
+                .color(u.accent_ink)
                 .a11y_hidden(),
         )
         .child(
-            text("Launch Modded")
+            text(tr("Launch modded"))
                 .font(BODY_MED)
-                .color(u.ink)
+                .color(u.accent_ink)
                 .grow(1.0),
         )
-        .child(if s.game_detected {
-            text("STEAM").font(LABEL).color(u.accent.alpha(0.75))
+        .child(if s.addons.scanned && enabled > 0 {
+            text(enabled.to_string())
+                .font(MICRO)
+                .color(u.accent_ink.alpha(0.7))
         } else {
-            text("NO GAME").font(LABEL).color(u.faint)
+            el()
         })
 }
 
-fn header(s: &State, u: &Ui) -> El {
-    let mut chips = row().gap(8.0).center_y();
-    if s.demo {
-        chips = chips.child(u.chip("DEMO DATA", u.accent_ink, u.accent));
-    }
-    if s.agent.pause.is_some() {
-        chips = chips.child(u.status_chip("approval paused", Tone::Warn));
-    }
-    chips = chips.child(
-        row()
-            .gap(6.0)
-            .center_y()
-            .child(u.dot(s.game_tone()))
-            .child(
-                text(if s.game_detected {
-                    s.game_label.clone()
-                } else {
-                    "No game install".to_string()
-                })
-                .font(SMALL)
-                .color(u.muted)
-                .max_w(230.0)
-                .truncate(),
-            ),
-    );
-    if !s.screen.is_library() {
-        chips = chips.child(u.status_chip(
-            if s.provider_ready() {
-                "provider ready"
-            } else {
-                "no provider"
-            },
-            s.provider_tone(),
-        ));
-    }
+/// The single launch button in the sidebar (Settings, General).
+pub fn launch_from_settings(st: &mut State, tx: &mut Tx, vanilla: bool) {
+    ask_or_launch(st, tx, vanilla);
+}
 
-    let mut bar = row()
-        .key("header")
+/// The sidebar launches at once unless "Ask before launching" is on in Settings.
+fn ask_or_launch(st: &mut State, tx: &mut Tx, vanilla: bool) {
+    if st.prefs.confirm_launch {
+        st.launch_vanilla = vanilla;
+        st.launch_dialog = true;
+        return;
+    }
+    launch_from_sidebar(st, vanilla);
+    if st.settings.launched {
+        screens::settings::after_launch(st, tx);
+    }
+}
+
+/// The sidebar launches at once: the press is the user's explicit request. Vanilla sets
+/// the mods aside first; modded puts back mods a vanilla run set aside.
+fn launch_from_sidebar(st: &mut State, vanilla: bool) {
+    use crate::screens::launch::Dialog;
+    let stashed = deadlock_core::launch::stash_status(&crate::data::data_dir()).is_some();
+    if vanilla {
+        if stashed {
+            // Already vanilla on disk: only start the game.
+            st.launch_modded();
+        } else {
+            crate::data::run_launch(st, Dialog::Vanilla);
+        }
+    } else {
+        if stashed {
+            crate::data::run_launch(st, Dialog::Restore);
+        }
+        st.launch_modded();
+    }
+    if let Some(line) = st.launch.last.clone() {
+        st.status = line;
+    }
+}
+
+fn launch_vanilla(u: &Ui) -> El {
+    row()
+        .key("launch-vanilla")
         .w_full()
-        .h(HEADER_H)
-        .px(22.0)
+        .h(32.0)
+        .px(12.0)
+        .gap(10.0)
+        .center_y()
+        .radius(crate::ui::r(8.0))
+        .hover(u.hover)
+        .press(Color::WHITE.alpha(0.06))
+        .focusable(true)
+        .role("button")
+        .label(tr("Launch vanilla"))
+        .cursor(rune::Cursor::Pointer)
+        .on_press_tx(|st: &mut State, tx: &mut Tx| ask_or_launch(st, tx, true))
+        .child(rune::icon(&icons::PLAY, 14.0).color(u.faint).a11y_hidden())
+        .child(text(tr("Launch vanilla")).font(BODY).color(u.muted).grow(1.0))
+}
+
+fn settings_item(s: &State, u: &Ui) -> El {
+    let on = s.settings.open;
+    nav_row(u, "nav-settings".to_string(), on)
+        .role("tab")
+        .label(tr("Settings"))
+        .checked(on)
+        .cursor(rune::Cursor::Pointer)
+        .on_press(|st: &mut State| st.go(Screen::Settings))
+        .child(
+            rune::icon(&icons::SETTINGS, 16.0)
+                .color(if on { u.ink } else { u.muted })
+                .a11y_hidden(),
+        )
+        .child(
+            text(tr("Settings"))
+                .font(NAV)
+                .color(if on { u.ink } else { u.prose })
+                .grow(1.0),
+        )
+        // An update is downloaded and ready: a dot before the version (crate::updater).
+        .children(crate::updater::sidebar_badge(s, u))
+        .child(
+            text(concat!("v", env!("CARGO_PKG_VERSION")))
+                .font(MICRO)
+                .color(u.faint),
+        )
+}
+
+/// The band across the top of the content. It moves the window, holds the search for the
+/// screens that search, and reports a problem only when there is one. Windows caption buttons
+/// sit over its trailing edge.
+fn titlebar(s: &State, u: &Ui, insets: rune::ChromeInsets) -> El {
+    let mut bar = row()
+        .key("titlebar")
+        .w_full()
+        .h(TITLEBAR_H)
+        .pl(PAGE_X)
+        .pr(insets.trailing + 12.0)
         .gap(12.0)
         .center_y()
-        .fill(u.bg)
-        .border_sides([0.0, 0.0, 1.0, 0.0], u.hair)
-        .window_drag()
-        .child(text(s.screen.title()).font(H2).color(u.ink))
-        .child(
-            text(s.screen.subtitle())
-                .font(SMALL)
-                .color(u.faint)
-                .grow(1.0)
-                .truncate(),
+        .window_drag();
+    if s.demo {
+        bar = bar.child(text("Demo data").font(SMALL).color(u.accent));
+    }
+    bar = bar.child(spacer());
+    bar = bar.child(screens::profiles::titlebar_switcher(s, u));
+    let review = s
+        .release
+        .review
+        .as_ref()
+        .map(|queue| queue.review_count())
+        .unwrap_or(0);
+    if review > 0 && s.screen != Screen::Updates {
+        bar = bar.child(
+            u.icon_action(
+                &icons::REFRESH_CW,
+                &format!("{review} to check after the update"),
+                ActionKind::Ghost,
+            )
+            .key("titlebar-updates")
+            .cursor(rune::Cursor::Pointer)
+            .on_press(|st: &mut State| st.go(Screen::Updates)),
         );
+    }
+    if s.agent.pause.is_some() && !under_agent(s.screen) {
+        bar = bar.child(
+            u.action("Approval waiting", ActionKind::Secondary)
+                .key("titlebar-approval")
+                .cursor(rune::Cursor::Pointer)
+                .on_press(|st: &mut State| st.go(Screen::Agent)),
+        );
+    }
     if s.screen.searches() {
         bar = bar.child(search(s, u));
     }
-    bar.child(chips)
+    bar = bar.child(
+        u.icon_button(&icons::KEYBOARD, &tr("Keyboard shortcuts"))
+            .key("titlebar-shortcuts")
+            .cursor(rune::Cursor::Pointer)
+            .on_press(|st: &mut State| st.shell.shortcuts = true),
+    );
+    bar
 }
 
 fn search(s: &State, u: &Ui) -> El {
@@ -1464,12 +1579,20 @@ fn search(s: &State, u: &Ui) -> El {
             .on_edit(|st: &mut State| &mut st.installed_query),
         Screen::Browse => rune::text_input(&s.browse_query, SMALL)
             .key("search-browse")
-            .label("Filter this GameBanana page")
+            .label("Search GameBanana")
             .single_line()
             .color(u.ink)
-            .placeholder("Filter this page", u.faint)
+            .placeholder("Search GameBanana", u.faint)
             .caret(u.accent, u.accent.alpha(0.20))
             .on_edit(|st: &mut State| &mut st.browse_query),
+        Screen::Servers => rune::text_input(&s.servers.query, SMALL)
+            .key("search-servers")
+            .label("Search servers")
+            .single_line()
+            .color(u.ink)
+            .placeholder("Search servers or maps", u.faint)
+            .caret(u.accent, u.accent.alpha(0.20))
+            .on_edit(|st: &mut State| &mut st.servers.query),
         _ => rune::text_input(&s.conflicts_query, SMALL)
             .key("search-conflicts")
             .label("Search conflicting paths")
@@ -1482,119 +1605,79 @@ fn search(s: &State, u: &Ui) -> El {
     u.search_shell(field)
 }
 
-fn status_bar(s: &State, u: &Ui) -> El {
-    let lower = s.status.to_lowercase();
-    let tone = if s.status.is_empty() {
-        Tone::Quiet
-    } else if lower.contains("not ")
-        || lower.contains("no ")
-        || lower.contains("blocked")
-        || lower.contains("failed")
-        || lower.contains("error")
-        || lower.contains("could not")
-    {
-        Tone::Warn
-    } else {
-        Tone::Info
-    };
-    row()
-        .key("statusbar")
-        .w_full()
-        .h(STATUS_H)
-        .px(14.0)
-        .gap(8.0)
-        .center_y()
-        .fill(u.sidebar)
-        .border_sides([1.0, 0.0, 0.0, 0.0], u.hair)
-        .child(u.dot(tone))
-        .child(
-            text(if s.status.is_empty() {
-                "Ready. Tools propose, the app writes.".to_string()
-            } else {
-                s.status.clone()
-            })
-            .font(SMALL)
-            .color(u.muted)
-            .grow(1.0)
-            .truncate(),
-        )
-        .child(text("APPROVAL GATED").font(LABEL).color(u.faint))
-        .child(text("·").font(LABEL).color(u.faint).a11y_hidden())
-        .child(text("NO TELEMETRY").font(LABEL).color(u.faint))
-}
-
-/// The launch approval. Opening Steam is the only thing it does; the app never
-/// renames or copies an addon here.
+/// The launch confirm. Opening Steam is the only thing it does; the app never renames or copies
+/// an addon here.
 fn launch_layer(s: &State, u: &Ui) -> El {
-    let addons = if !s.addons.scanned {
-        "The addon folder has not been read yet.".to_string()
-    } else if s.addons.addons.is_empty() {
-        "No addon files were found. The game launches with its own assets.".to_string()
+    let mods = if !s.addons.scanned {
+        String::new()
+    } else if s.addons.enabled_count() == 0 {
+        "No mods are on. The game starts as it ships.".to_string()
     } else {
-        format!(
-            "{} addon{} in the folder, {} enabled.",
-            s.addons.addons.len(),
-            if s.addons.addons.len() == 1 { "" } else { "s" },
-            s.addons.enabled_count()
-        )
+        let on = s.addons.enabled_count();
+        format!("{on} mod{} on.", if on == 1 { "" } else { "s" })
     };
-    let body = col()
+    let vanilla = s.launch_vanilla;
+    let mut body = col()
         .w_full()
-        .gap(16.0)
+        .gap(8.0)
         .child(
-            row()
-                .w_full()
-                .gap(12.0)
-                .items_start()
-                .child(
-                    col()
-                        .grow(1.0)
-                        .gap(6.0)
-                        .child(u.eyebrow("APP ACTION · STEAM"))
-                        .child(text("Launch Deadlock").font(H2).color(u.ink))
-                        .child(
-                            text("Steam starts the game with the addon folder as it sits on disk. Nothing is copied, renamed or repaired.")
-                                .font(SMALL)
-                                .color(u.muted)
-                                .wrap(),
-                        ),
-                )
-                .child(u.glyph_box("▶", Tone::Accent, 38.0)),
-        )
-        .child(u.divider())
-        .child(u.kv("Game", &s.paths.game, u.ink))
-        .child(u.kv("Addons", &addons, u.muted))
-        .child(u.kv(
-            "gameinfo.gi",
-            if s.game_label.contains("addons missing") {
-                "the addons folder is missing from the install"
+            text(if vanilla {
+                "Launch without mods"
             } else {
-                "read by the game only when SearchPaths lists citadel/addons"
-            },
-            u.faint,
-        ))
+                "Launch Deadlock"
+            })
+            .font(crate::ui::H1)
+            .color(u.ink),
+        )
         .child(
-            row()
-                .w_full()
-                .gap(9.0)
-                .child(
-                    u.action("Cancel", ActionKind::Ghost)
-                        .grow(1.0)
-                        .on_press(|st: &mut State| st.launch_dialog = false),
-                )
-                .child(
-                    u.action("Launch through Steam", ActionKind::Primary)
-                        .grow(1.0)
-                        .on_press(|st: &mut State| st.launch_modded()),
-                ),
+            text(if vanilla {
+                "Sigil sets your mods aside, then Steam starts the game as it ships."
+            } else {
+                "Steam starts the game with your mods as they are."
+            })
+                .font(BODY)
+                .color(u.muted)
+                .wrap(),
         );
-    let frame = u
-        .dialog_shell()
+    if !mods.is_empty() && !vanilla {
+        body = body.child(text(mods).font(BODY).color(u.muted));
+    }
+    if s.game_label.contains("addons missing") {
+        body = body.child(
+            text("The game is not set up to load mods yet. Repair it in Settings first.")
+                .font(BODY)
+                .color(u.amber)
+                .wrap(),
+        );
+    }
+    body = body.child(el().h(12.0)).child(
+        row()
+            .w_full()
+            .gap(8.0)
+            .child(spacer())
+            .child(
+                u.action("Cancel", ActionKind::Ghost)
+                    .cursor(rune::Cursor::Pointer)
+                    .on_press(|st: &mut State| st.launch_dialog = false),
+            )
+            .child(
+                u.icon_action(&icons::PLAY, "Launch", ActionKind::Primary)
+                    .cursor(rune::Cursor::Pointer)
+                    .on_press_tx(move |st: &mut State, tx: &mut Tx| {
+                        st.launch_dialog = false;
+                        launch_from_sidebar(st, vanilla);
+                        if st.settings.launched {
+                            screens::settings::after_launch(st, tx);
+                        }
+                    }),
+            ),
+    );
+    u.dialog_shell()
         .key("launch-dialog")
         .role("dialog")
-        .label("Launch Deadlock through Steam")
-        .w(480.0)
-        .padding(1.0)
+        .label("Launch Deadlock")
+        .w(440.0)
+        .padding(24.0)
         .modal(true, |st: &mut State| st.launch_dialog = false)
         .on_key(|st: &mut State, ev: &KeyEvent, _| {
             if ev.key == Key::Escape {
@@ -1604,26 +1687,7 @@ fn launch_layer(s: &State, u: &Ui) -> El {
                 false
             }
         })
-        .child(u.dialog_core().w_full().padding(24.0).child(body));
-    el().key("launch-modal")
-        .absolute(0.0, 0.0)
-        .w_full()
-        .h_full()
-        .child(
-            el().absolute(0.0, 0.0)
-                .w_full()
-                .h_full()
-                .fill(Color::BLACK.alpha(0.68))
-                .a11y_hidden(),
-        )
-        .child(
-            el().absolute(0.0, 0.0)
-                .w_full()
-                .h_full()
-                .padding(34.0)
-                .center()
-                .child(frame),
-        )
+        .child(body)
 }
 
 /// Start the agent host and the library readers once, after Rune has applied
@@ -1632,19 +1696,42 @@ pub fn setup(s: &mut State, waker: Waker) {
     s.wake = Some(waker.clone());
     s.images = Some(ImageCache::new(waker));
     preload_thumbnails(s);
-    s.start_host();
     if s.demo || rune::is_headless() {
+        // Scenes get their fixture link (or none) as before.
+        s.start_host();
         return;
+    }
+    // The agent host is a second process: it starts when Agent opens (`go`).
+    if under_agent(s.screen) {
+        s.ensure_host();
     }
     if !s.addons.scanned {
         crate::data::start_addon_scan(s);
     }
+    // The titlebar switcher shows the active profile before Profiles is ever opened.
+    if !s.profiles.loaded && !s.profiles_job.is_running() {
+        crate::data::start_profile_list(s);
+    }
+    // The process monitor behind the sidebar running row and the download queue.
+    crate::data::start_launch_read(s);
     if s.screen == Screen::Browse && s.browse.page.is_none() {
         crate::data::start_browse_fetch(s, 1);
     }
     if s.screen == Screen::Updates && s.release.review.is_none() {
         crate::data::start_review_scan(s);
     }
+    // The startup page from Settings: run the read it needs, keeping a discovery warning.
+    if !matches!(s.screen, Screen::Browse | Screen::Installed | Screen::Updates) {
+        let status = std::mem::take(&mut s.status);
+        let screen = s.screen;
+        s.go(screen);
+        if s.status.is_empty() {
+            s.status = status;
+        }
+    }
+    screens::settings::on_startup(s);
+    crate::shell::on_startup(s);
+    crate::banner::recheck(s);
 }
 
 /// A headless scene fetches thumbnails before `setup` because there is no
@@ -1665,7 +1752,15 @@ fn preload_thumbnails(s: &mut State) {
 }
 
 pub fn poll(s: &mut State, t: f64, _tx: &mut Tx) -> bool {
-    let mut changed = false;
+    let mut changed = crate::signin::poll(s);
+    changed |= screens::performance::poll(s);
+    changed |= screens::servers::poll(s, t, _tx);
+    changed |= screens::profiles::poll(s);
+    changed |= screens::installed::poll(s);
+    changed |= screens::stats::poll(s);
+    changed |= screens::browse::poll(s, _tx);
+    changed |= screens::crosshair::poll(s, _tx);
+    changed |= screens::settings::poll(s, _tx);
     while let Some(event) = s.agent.try_event() {
         s.apply_agent_event(event);
         changed = true;
@@ -1757,6 +1852,10 @@ pub fn poll(s: &mut State, t: f64, _tx: &mut Tx) -> bool {
         }
         changed = true;
     }
+    changed |= crate::banner::poll(s);
+    changed |= crate::shell::poll(s);
+    // Last, so a status line any poll above wrote becomes a toast this frame.
+    changed |= crate::notify::poll(s, t, _tx);
     if let Some(start) = s.run_started {
         let label = elapsed_label(start.elapsed().as_secs());
         if label != s.elapsed {
@@ -1782,6 +1881,10 @@ fn elapsed_label(seconds: u64) -> String {
 }
 
 pub fn on_key(s: &mut State, ev: &KeyEvent, tx: &mut Tx) -> bool {
+    // The shortcuts sheet, zoom, and the mods folder. These win over the screen chords.
+    if crate::shell::on_key(s, ev, tx) {
+        return true;
+    }
     if let Key::Command(c) = ev.key
         && let Some(screen) = Screen::from_command(c)
     {
@@ -1838,14 +1941,11 @@ pub fn scene_recolor(s: &mut State) {
         .heroes
         .iter()
         .find(|hero| {
-            s.locker
-                .pinned
-                .as_deref()
-                .is_some_and(|pinned| {
-                    let key = deadlock_core::locker::hero_asset_key(pinned);
-                    deadlock_core::locker::hero_asset_key(&hero.codename) == key
-                        || deadlock_core::locker::hero_asset_key(&hero.display_name) == key
-                })
+            s.locker.pinned.as_deref().is_some_and(|pinned| {
+                let key = deadlock_core::locker::hero_asset_key(pinned);
+                deadlock_core::locker::hero_asset_key(&hero.codename) == key
+                    || deadlock_core::locker::hero_asset_key(&hero.display_name) == key
+            })
         })
         .or_else(|| {
             s.locker.heroes.iter().find(|hero| {
@@ -1978,9 +2078,54 @@ pub fn scene_demo_agent(s: &mut State) {
     s.screen = Screen::Agent;
 }
 
+pub fn scene_agent_approval(s: &mut State) {
+    s.load_demo();
+    s.screen = Screen::Agent;
+    s.agent = AgentLink::demo();
+    s.agent.status = AgentStatus::Paused;
+    s.agent.pause = Some(Pause {
+        tool_call_id: "call-demo-deploy".to_string(),
+        tool_name: "deploy_apply".to_string(),
+        payload: serde_json::json!({
+            "slot": 12,
+            "file": "pak12_dir.vpk",
+            "from": ".dah/staging/ashfall-012/pak12_dir.vpk",
+            "to": "game/citadel/addons/pak12_dir.vpk"
+        }),
+    });
+}
+
 pub fn scene_demo_installed(s: &mut State) {
     s.load_demo();
     s.screen = Screen::Installed;
+    screens::installed::stage_demo(s);
+}
+
+pub fn scene_installed_menu(s: &mut State) {
+    scene_demo_installed(s);
+    s.installed.menu = Some(screens::installed::Menu::Card(2));
+    s.installed.hovered = Some(2);
+}
+
+pub fn scene_installed_import_menu(s: &mut State) {
+    scene_demo_installed(s);
+    screens::import::stage_demo_sources(s);
+    s.installed.menu = Some(screens::installed::Menu::Import);
+}
+
+pub fn scene_installed_import(s: &mut State) {
+    scene_demo_installed(s);
+    let thumbs = screens::installed::demo_thumbs(s, 5);
+    screens::import::stage_demo_review(s, &thumbs);
+}
+
+pub fn scene_installed_empty(s: &mut State) {
+    screens::installed::stage_empty(s);
+}
+
+pub fn scene_installed_empty_menu(s: &mut State) {
+    screens::installed::stage_empty(s);
+    s.installed.menu = Some(screens::installed::Menu::Managers);
 }
 
 pub fn scene_demo_conflicts(s: &mut State) {
@@ -2053,8 +2198,125 @@ pub fn scene_local_release(s: &mut State) {
 }
 
 pub fn scene_settings(s: &mut State) {
+    screens::settings::scene_tab(s, screens::settings::Tab::Game);
+}
+
+pub fn scene_settings_models(s: &mut State) {
+    screens::settings::scene_tab(s, screens::settings::Tab::Models);
+}
+
+pub fn scene_settings_signin(s: &mut State) {
+    scene_settings_models(s);
+    crate::signin::start(s, "codex");
+}
+
+pub fn scene_settings_advanced(s: &mut State) {
+    screens::settings::scene_tab(s, screens::settings::Tab::Storage);
+}
+
+fn scene_settings_backups(s: &mut State) {
+    screens::settings::scene_tab(s, screens::settings::Tab::Backups);
+}
+
+fn scene_settings_general(s: &mut State) {
+    screens::settings::scene_tab(s, screens::settings::Tab::General);
+}
+
+fn scene_settings_appearance(s: &mut State) {
+    screens::settings::scene_tab(s, screens::settings::Tab::Appearance);
+}
+
+fn scene_settings_mods(s: &mut State) {
+    screens::settings::scene_tab(s, screens::settings::Tab::Mods);
+}
+
+fn scene_settings_privacy(s: &mut State) {
+    screens::settings::scene_tab(s, screens::settings::Tab::Privacy);
+}
+
+fn scene_settings_updates(s: &mut State) {
+    screens::settings::scene_tab(s, screens::settings::Tab::About);
+}
+
+fn scene_settings_integrations(s: &mut State) {
+    screens::settings::scene_tab(s, screens::settings::Tab::Integrations);
+}
+
+fn scene_settings_network(s: &mut State) {
+    screens::settings::scene_tab(s, screens::settings::Tab::Network);
+}
+
+fn scene_settings_logs(s: &mut State) {
+    screens::settings::scene_tab(s, screens::settings::Tab::Logs);
+}
+
+fn scene_settings_experimental(s: &mut State) {
+    screens::settings::scene_tab(s, screens::settings::Tab::Experimental);
+}
+
+fn scene_settings_search(s: &mut State) {
+    screens::settings::scene_tab(s, screens::settings::Tab::Game);
+    s.settings.search = rune::TextEdit::new("disc");
+}
+
+fn scene_settings_sharing(s: &mut State) {
+    screens::settings::scene_tab(s, screens::settings::Tab::Privacy);
+    s.prefs.share_matches = true;
+    s.prefs.single_launch = true;
+    s.prefs.transparent_sidebar = true;
+    s.settings.sharing.record = Some(screens::settings::sharing::demo_record());
+    s.settings.sharing.last = Some(Ok((14, 3)));
+}
+
+fn scene_single_launch(s: &mut State) {
     s.load_demo();
-    s.screen = Screen::Settings;
+    s.screen = Screen::Installed;
+    s.prefs.single_launch = true;
+    s.prefs.transparent_sidebar = true;
+}
+
+fn scene_settings_german(s: &mut State) {
+    s.prefs.language = screens::settings::i18n::Lang::German;
+    screens::settings::i18n::set(s.prefs.language);
+    screens::settings::scene_tab(s, screens::settings::Tab::General);
+}
+
+fn scene_settings_about(s: &mut State) {
+    screens::settings::scene_tab(s, screens::settings::Tab::About);
+}
+
+fn scene_settings_confirm(s: &mut State) {
+    scene_settings(s);
+    s.settings.confirm = Some(screens::settings::Confirm::LaunchOptions(
+        "-novid +fps_max 240".into(),
+    ));
+}
+
+fn scene_settings_light(s: &mut State) {
+    scene_settings_appearance(s);
+    s.prefs.theme = crate::ui::Theme::Light;
+}
+
+fn scene_light_installed(s: &mut State) {
+    scene_demo_installed(s);
+    s.prefs.theme = crate::ui::Theme::Light;
+}
+
+fn scene_light_browse(s: &mut State) {
+    screens::browse::scene_fixture(s);
+    s.prefs.theme = crate::ui::Theme::Light;
+}
+
+fn scene_midnight_installed(s: &mut State) {
+    scene_demo_installed(s);
+    s.prefs.theme = crate::ui::Theme::Midnight;
+    s.prefs.accent = crate::prefs::Accent::Preset("azure");
+}
+
+fn scene_mocha_browse(s: &mut State) {
+    screens::browse::scene_fixture(s);
+    s.prefs.theme = crate::ui::Theme::Mocha;
+    s.prefs.accent = crate::prefs::Accent::Preset("emerald");
 }
 
 pub fn scene_launch_approval(s: &mut State) {
@@ -2082,25 +2344,141 @@ pub fn scene_local_patches(s: &mut State) {
 pub fn scenes() -> &'static [(&'static str, fn(&mut State))] {
     &[
         ("installed", scene_installed),
+        ("notify-stack", crate::notify::scene_stack),
+        ("notify-undo", crate::notify::scene_undo),
+        ("notify-banner", crate::notify::scene_with_banner),
+        ("shell-shortcuts", crate::shell::scene_shortcuts),
+        ("shell-whats-new", crate::shell::scene_whats_new),
+        ("shell-drop", crate::shell::scene_drop),
+        ("shell-background", crate::shell::scene_background),
+        ("shell-density", crate::shell::scene_density),
+        ("gameinfo-banner", crate::banner::scene_banner),
+        ("gameinfo-fix", crate::banner::scene_fix),
         ("browse", scene_browse),
         ("install", scene_install),
+        ("browse-fixture", screens::browse::scene_fixture),
+        ("browse-details", screens::browse::scene_details),
+        ("browse-docked", screens::browse::scene_docked),
+        ("browse-filters", screens::browse::scene_filters),
+        ("browse-hero-menu", screens::browse::scene_hero_menu),
+        ("browse-sort-menu", screens::browse::scene_sort_menu),
+        ("browse-more-menu", screens::browse::scene_more_menu),
+        ("browse-category-menu", screens::browse::scene_category_menu),
+        ("browse-favorites-empty", screens::browse::scene_favorites_empty),
+        ("browse-live-filtered", screens::browse::scene_live_filtered),
+        ("browse-live-sounds", screens::browse::scene_live_sounds),
+        ("browse-filters-exclude", screens::browse::scene_filters_exclude),
+        ("browse-date-menu", screens::browse::scene_date_menu),
+        ("browse-view-menu", screens::browse::scene_view_menu),
+        ("browse-context", screens::browse::scene_context_menu),
+        ("browse-list", screens::browse::scene_list),
+        ("browse-paged", screens::browse::scene_paged),
+        ("browse-dashboard", screens::browse::scene_dashboard),
+        ("browse-mirror", screens::browse::scene_mirror),
+        ("browse-collections", screens::browse::scene_collections),
+        ("browse-collection-open", screens::browse::scene_collection_open),
+        ("browse-maps", screens::browse::scene_maps),
+        ("browse-combined", screens::browse::scene_combined),
+        ("browse-details-extras", screens::browse::scene_details_extras),
+        ("browse-hero-picker", screens::browse::scene_hero_picker),
+        ("browse-hidden", screens::browse::scene_hidden),
+        ("browse-ignored", screens::browse::scene_ignored),
+        ("browse-vpk", screens::browse::scene_vpk_picker),
+        ("browse-audio", screens::browse::scene_audio),
+        ("browse-sounds", screens::browse::scene_sounds),
         ("toggle", scene_toggle),
         ("review", scene_review),
         ("recolor", scene_recolor),
         ("conflicts", scene_conflicts),
         ("updates", scene_updates),
         ("profiles", scene_profiles),
+        ("profiles-list", screens::profiles::scene_list),
+        ("profiles-apply", screens::profiles::scene_apply),
+        ("profiles-export", screens::profiles::scene_export),
+        ("profiles-import", screens::profiles::scene_import),
+        ("profiles-import-input", screens::profiles::scene_import_input),
+        ("profiles-create", screens::profiles::scene_create),
         ("autoexec", scene_autoexec),
+        ("autoexec-file", screens::autoexec::scene_file),
+        ("autoexec-presets", screens::autoexec::scene_presets),
+        ("autoexec-empty", screens::autoexec::scene_empty),
+        ("autoexec-clear", screens::autoexec::scene_clear),
+        ("autoexec-conflict", screens::autoexec::scene_conflict),
+        ("autoexec-launch", screens::autoexec::scene_launch),
         ("crosshair", scene_crosshair),
         ("crosshair-apply", scene_crosshair_apply),
+        ("crosshair-presets", screens::crosshair::scene_presets),
+        ("crosshair-preset-name", screens::crosshair::scene_preset_name),
+        ("crosshair-import", screens::crosshair::scene_import),
+        ("crosshair-pinned", screens::crosshair::scene_pinned),
+        ("crosshair-colour", screens::crosshair::scene_colour),
+        ("crosshair-remove", screens::crosshair::scene_remove),
         ("stats", scene_stats),
+        ("stats-profile", screens::stats::scene_profile),
+        ("stats-drill", screens::stats::scene_drill),
+        ("stats-entry", screens::stats::scene_entry),
+        ("stats-board", screens::stats::scene_board),
+        ("stats-people", screens::stats::scene_people),
+        ("stats-tracked", screens::stats::scene_tracked),
         ("locker", scene_locker),
+        ("locker-hero", screens::locker::scene_hero),
+        ("locker-browse-hero", screens::locker::scene_browse_hero),
+        ("locker-list", screens::locker::scene_list),
+        ("locker-starred", screens::locker::scene_starred),
+        ("locker-search", screens::locker::scene_search),
+        ("locker-sounds", screens::locker::scene_sounds),
+        ("locker-card", screens::locker::scene_card),
+        ("locker-shuffle", screens::locker::scene_shuffle),
+        ("locker-applied", screens::locker::scene_applied),
+        ("locker-global", screens::locker::scene_global),
         ("launch", scene_launch),
+        ("launch-page", screens::launch::scene_page),
+        ("launch-running", screens::launch::scene_running),
+        ("launch-crash", screens::launch::scene_crash),
+        ("launch-checklist", screens::launch::scene_checklist),
+        ("launch-stop", screens::launch::scene_stop),
+        ("launch-vanilla", screens::launch::scene_vanilla),
+        ("launch-downloads", screens::launch::scene_downloads),
+        ("launch-downloads-review", screens::launch::scene_downloads_review),
+        ("conflicts-resolve", screens::conflicts::scene_resolve),
+        ("conflicts-ignored", screens::conflicts::scene_ignored),
         ("toolchain", scene_toolchain),
         ("character", scene_character),
         ("agent", scene_agent),
         ("demo-agent", scene_demo_agent),
+        ("agent-approval", scene_agent_approval),
         ("demo-installed", scene_demo_installed),
+        ("installed-menu", scene_installed_menu),
+        ("installed-bulk", screens::installed::scene_bulk),
+        ("installed-source-menu", screens::installed::scene_source_menu),
+        ("installed-drop", screens::installed::scene_drop),
+        ("installed-select", screens::installed::scene_select),
+        ("installed-delete", screens::installed::scene_delete),
+        ("installed-reorder", screens::installed::scene_reorder),
+        ("installed-updates", screens::installed::scene_updates),
+        ("installed-update-all", screens::installed::scene_update_all),
+        ("installed-card-menu", screens::installed::scene_card_menu),
+        ("installed-trash", screens::installed::scene_trash),
+        ("installed-filters", screens::installed::scene_filters),
+        ("installed-list", screens::installed::scene_list),
+        ("installed-variants", screens::installed::scene_variants),
+        ("installed-tags", screens::installed::scene_tags),
+        ("installed-lists", screens::installed::scene_lists),
+        ("installed-edit", screens::installed::scene_edit),
+        ("installed-card-more", screens::installed::scene_card_more),
+        ("installed-tools-menu", screens::installed::scene_tools_menu),
+        ("installed-safety", screens::installed::scene_safety),
+        ("installed-identify", screens::installed::scene_identify),
+        ("installed-health", screens::installed::scene_health),
+        ("installed-merge", screens::installed::scene_merge),
+        ("installed-solo", screens::installed::scene_solo),
+        ("installed-bisect", screens::installed::scene_bisect),
+        ("installed-recap", screens::installed::scene_recap),
+        ("installed-fonts", screens::installed::scene_fonts),
+        ("installed-import-menu", scene_installed_import_menu),
+        ("installed-import", scene_installed_import),
+        ("installed-empty", scene_installed_empty),
+        ("installed-empty-menu", scene_installed_empty_menu),
         ("demo-conflicts", scene_demo_conflicts),
         ("demo-updates", scene_demo_updates),
         ("projects", scene_projects),
@@ -2112,6 +2490,81 @@ pub fn scenes() -> &'static [(&'static str, fn(&mut State))] {
         ("release-approval", scene_release_approval),
         ("release-confirm", scene_release_confirm),
         ("settings", scene_settings),
+        ("performance", scene_performance),
+        ("servers", scene_servers),
+        ("servers-detail", scene_servers_detail),
+        ("servers-join", scene_servers_join),
+        ("servers-join-progress", scene_servers_join_progress),
+        ("servers-live", scene_servers_live),
+        ("servers-filters", scene_servers_filters),
+        ("servers-favorites", scene_servers_favorites),
+        ("servers-menu", scene_servers_menu),
+        ("servers-connect", scene_servers_connect),
+        ("servers-maps", scene_servers_maps),
+        ("servers-map-detail", scene_servers_map_detail),
+        ("servers-map-unresolved", scene_servers_map_unresolved),
+        ("profiles-snapshots", scene_profiles_snapshots),
+        ("profiles-snapshot-restore", scene_profiles_snapshot_restore),
+        ("profiles-titlebar", scene_profiles_titlebar),
+        ("performance-on", scene_performance_on),
+        ("performance-apply", scene_performance_apply),
+        ("performance-detail", scene_performance_detail),
+        ("performance-detail-on", scene_performance_detail_on),
+        ("performance-offline", scene_performance_offline),
+        ("performance-fetching", scene_performance_fetching),
+        ("performance-first-offline", scene_performance_first_offline),
+        ("performance-editor", scene_performance_editor),
+        ("performance-editor-history", scene_performance_editor_history),
+        ("performance-import", scene_performance_import),
+        ("performance-import-paste", scene_performance_import_paste),
+        ("performance-edit-value", scene_performance_edit_value),
+        ("performance-hosted-files", scene_performance_hosted_files),
+        ("performance-hosted-review", scene_performance_hosted_review),
+        ("settings-models", scene_settings_models),
+        ("settings-signin", scene_settings_signin),
+        ("settings-advanced", scene_settings_advanced),
+        ("settings-storage", scene_settings_advanced),
+        ("settings-backups", scene_settings_backups),
+        ("settings-general", scene_settings_general),
+        ("settings-appearance", scene_settings_appearance),
+        ("settings-mods", scene_settings_mods),
+        ("settings-privacy", scene_settings_privacy),
+        ("settings-updates", scene_settings_updates),
+        ("settings-about", scene_settings_about),
+        ("settings-integrations", scene_settings_integrations),
+        ("settings-network", scene_settings_network),
+        ("settings-logs", scene_settings_logs),
+        ("settings-experimental", scene_settings_experimental),
+        ("settings-search", scene_settings_search),
+        ("settings-german", scene_settings_german),
+        ("settings-sharing", scene_settings_sharing),
+        ("single-launch", scene_single_launch),
+        ("settings-confirm", scene_settings_confirm),
+        ("settings-light", scene_settings_light),
+        ("parity-game", |s| screens::settings::extra::scene_parity(s, screens::settings::Tab::Game)),
+        ("parity-backups", |s| screens::settings::extra::scene_parity(s, screens::settings::Tab::Backups)),
+        ("parity-mods", |s| screens::settings::extra::scene_parity(s, screens::settings::Tab::Mods)),
+        ("parity-general", |s| screens::settings::extra::scene_parity(s, screens::settings::Tab::General)),
+        ("parity-integrations", |s| screens::settings::extra::scene_parity(s, screens::settings::Tab::Integrations)),
+        ("parity-network", |s| screens::settings::extra::scene_parity(s, screens::settings::Tab::Network)),
+        ("parity-logs", |s| screens::settings::extra::scene_parity(s, screens::settings::Tab::Logs)),
+        ("parity-storage", |s| screens::settings::extra::scene_parity(s, screens::settings::Tab::Storage)),
+        ("parity-experimental", |s| screens::settings::extra::scene_parity(s, screens::settings::Tab::Experimental)),
+        ("parity-templates", |s| screens::settings::extra::scene_dialog(s, "templates")),
+        ("parity-editor", |s| screens::settings::extra::scene_dialog(s, "editor")),
+        ("parity-crash", |s| screens::settings::extra::scene_dialog(s, "crash")),
+        ("parity-recovery", |s| screens::settings::extra::scene_dialog(s, "recovery")),
+        ("parity-source", |s| screens::settings::extra::scene_dialog(s, "source")),
+        ("parity-source-add", |s| screens::settings::extra::scene_dialog(s, "source-add")),
+        ("parity-forge", |s| screens::settings::extra::scene_dialog(s, "forge")),
+        ("parity-onboarding", |s| screens::settings::extra::scene_dialog(s, "onboarding")),
+        ("parity-scripts", |s| screens::settings::extra::scene_dialog(s, "scripts")),
+        ("parity-mods2", |s| screens::settings::extra::scene_dialog(s, "mods2")),
+        ("parity-mods3", |s| screens::settings::extra::scene_dialog(s, "mods3")),
+        ("light-installed", scene_light_installed),
+        ("light-browse", scene_light_browse),
+        ("midnight-installed", scene_midnight_installed),
+        ("mocha-browse", scene_mocha_browse),
         ("launch-approval", scene_launch_approval),
         ("empty", scene_empty),
         ("local", scene_local_agent),
@@ -2147,4 +2600,145 @@ pub fn filter_chip(u: &Ui, label: &str, on: bool) -> El {
                 .color(if on { u.accent } else { u.muted })
                 .a11y_hidden(),
         )
+}
+
+fn servers_scene_base(s: &mut State) {
+    s.load_demo();
+    s.screen = Screen::Servers;
+    s.game_detected = true;
+}
+
+pub fn scene_servers(s: &mut State) {
+    servers_scene_base(s);
+    screens::servers::scene(s);
+}
+
+pub fn scene_servers_detail(s: &mut State) {
+    servers_scene_base(s);
+    screens::servers::scene_detail(s);
+}
+
+pub fn scene_servers_join(s: &mut State) {
+    servers_scene_base(s);
+    screens::servers::scene_join(s);
+}
+
+pub fn scene_servers_join_progress(s: &mut State) {
+    servers_scene_base(s);
+    screens::servers::scene_join_progress(s);
+}
+
+pub fn scene_servers_live(s: &mut State) {
+    servers_scene_base(s);
+    screens::servers::scene_live(s);
+}
+
+pub fn scene_servers_filters(s: &mut State) {
+    servers_scene_base(s);
+    screens::servers::scene_filters(s);
+}
+
+pub fn scene_servers_favorites(s: &mut State) {
+    servers_scene_base(s);
+    screens::servers::scene_favorites(s);
+}
+
+pub fn scene_servers_menu(s: &mut State) {
+    servers_scene_base(s);
+    screens::servers::scene_menu(s);
+}
+
+pub fn scene_servers_connect(s: &mut State) {
+    servers_scene_base(s);
+    screens::servers::scene_connect(s);
+}
+
+pub fn scene_servers_maps(s: &mut State) {
+    servers_scene_base(s);
+    s.servers.tab = screens::servers::Tab::Maps;
+    screens::servers_maps::scene(s);
+}
+
+pub fn scene_servers_map_detail(s: &mut State) {
+    servers_scene_base(s);
+    s.servers.tab = screens::servers::Tab::Maps;
+    screens::servers_maps::scene_detail(s);
+}
+
+pub fn scene_servers_map_unresolved(s: &mut State) {
+    servers_scene_base(s);
+    s.servers.tab = screens::servers::Tab::Maps;
+    screens::servers_maps::scene_unresolved(s);
+}
+
+pub fn scene_profiles_snapshots(s: &mut State) {
+    screens::profiles::scene_snapshots(s);
+}
+
+pub fn scene_profiles_snapshot_restore(s: &mut State) {
+    screens::profiles::scene_snapshot_restore(s);
+}
+
+pub fn scene_profiles_titlebar(s: &mut State) {
+    screens::profiles::scene_titlebar(s);
+}
+
+pub fn scene_performance(s: &mut State) {
+    screens::performance::scene(s, "performance");
+}
+
+pub fn scene_performance_on(s: &mut State) {
+    screens::performance::scene(s, "performance-on");
+}
+
+pub fn scene_performance_apply(s: &mut State) {
+    screens::performance::scene(s, "performance-apply");
+}
+
+pub fn scene_performance_detail(s: &mut State) {
+    screens::performance::scene(s, "performance-detail");
+}
+
+pub fn scene_performance_detail_on(s: &mut State) {
+    screens::performance::scene(s, "performance-detail-on");
+}
+
+pub fn scene_performance_offline(s: &mut State) {
+    screens::performance::scene(s, "performance-offline");
+}
+
+pub fn scene_performance_fetching(s: &mut State) {
+    screens::performance::scene(s, "performance-fetching");
+}
+
+pub fn scene_performance_first_offline(s: &mut State) {
+    screens::performance::scene(s, "performance-first-offline");
+}
+
+pub fn scene_performance_editor(s: &mut State) {
+    screens::performance::scene(s, "performance-editor");
+}
+
+pub fn scene_performance_editor_history(s: &mut State) {
+    screens::performance::scene(s, "performance-editor-history");
+}
+
+pub fn scene_performance_import(s: &mut State) {
+    screens::performance::scene(s, "performance-import");
+}
+
+pub fn scene_performance_import_paste(s: &mut State) {
+    screens::performance::scene(s, "performance-import-paste");
+}
+
+pub fn scene_performance_edit_value(s: &mut State) {
+    screens::performance::scene(s, "performance-edit-value");
+}
+
+pub fn scene_performance_hosted_files(s: &mut State) {
+    screens::performance::scene(s, "performance-hosted-files");
+}
+
+pub fn scene_performance_hosted_review(s: &mut State) {
+    screens::performance::scene(s, "performance-hosted-review");
 }
