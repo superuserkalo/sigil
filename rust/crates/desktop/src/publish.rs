@@ -7,9 +7,7 @@
 //! records the handoff and `--open` hands the page to the user's browser.
 
 use std::{
-    env,
-    path::{Path, PathBuf},
-    process::Command,
+    path::Path,
     sync::mpsc::{self, Receiver, TryRecvError},
     thread,
 };
@@ -153,7 +151,7 @@ impl PublishJob {
         let spawned = thread::Builder::new()
             .name("dah-publish".to_string())
             .spawn(move || {
-                let outcome = match Command::new(&binary_for_thread).args(&args).output() {
+                let outcome = match binary_for_thread.command().args(&args).output() {
                     Ok(output) => PublishOutcome {
                         action: action_for_thread,
                         ok: output.status.success(),
@@ -169,8 +167,8 @@ impl PublishJob {
                         stdout: String::new(),
                         stderr: String::new(),
                         spawn_error: Some(format!(
-                            "Could not run {}: {error}. Build it with `cargo build -p dah-rs` or set DAH_RS_BIN.",
-                            binary_for_thread.display()
+                            "Could not run {}: {error}.",
+                            binary_for_thread.label()
                         )),
                     },
                 };
@@ -222,83 +220,9 @@ pub fn is_local_http(url: &str) -> bool {
     url.starts_with("http://127.0.0.1:") || url.starts_with("http://localhost:")
 }
 
-/// Resolve `dah` the way the agent host resolves `dah-agent`: DAH_RS_BIN, a
-/// sibling of this executable, a debug build above the executable or working
-/// directory, then PATH.
-fn resolve_binary() -> Result<PathBuf, String> {
-    let name = if cfg!(windows) { "dah.exe" } else { "dah" };
-
-    if let Some(value) = env::var_os("DAH_RS_BIN") {
-        let path = PathBuf::from(value);
-        if path.is_file() {
-            return Ok(path);
-        }
-        return Err(format!(
-            "DAH_RS_BIN points at {}, which is not a file. Build the CLI with `cargo build -p dah-rs` or correct the variable.",
-            path.display()
-        ));
-    }
-
-    if let Ok(exe) = env::current_exe()
-        && let Some(dir) = exe.parent()
-    {
-        let sibling = dir.join(name);
-        if sibling.is_file() {
-            return Ok(sibling);
-        }
-        for ancestor in dir.ancestors().skip(1) {
-            let candidate = ancestor.join("rust/target/debug").join(name);
-            if candidate.is_file() {
-                return Ok(candidate);
-            }
-        }
-    }
-
-    if let Ok(cwd) = env::current_dir() {
-        for ancestor in cwd.ancestors() {
-            let candidate = ancestor.join("rust/target/debug").join(name);
-            if candidate.is_file() {
-                return Ok(candidate);
-            }
-        }
-    }
-
-    if let Some(path) = find_on_path(name) {
-        return Ok(path);
-    }
-
-    Err(
-        "The dah binary was not found. Build it with `cargo build -p dah-rs`, set DAH_RS_BIN, or add it to PATH."
-            .to_string(),
-    )
-}
-
-fn find_on_path(name: &str) -> Option<PathBuf> {
-    let path = env::var_os("PATH")?;
-    for dir in env::split_paths(&path) {
-        let candidate = dir.join(name);
-        if is_executable(&candidate) {
-            return Some(candidate);
-        }
-    }
-    None
-}
-
-fn is_executable(path: &Path) -> bool {
-    if !path.is_file() {
-        return false;
-    }
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        path.metadata()
-            .map(|meta| meta.permissions().mode() & 0o111 != 0)
-            .unwrap_or(false)
-    }
-    #[cfg(not(unix))]
-    {
-        true
-    }
+/// The CLI: `DAH_RS_BIN`, else this executable as `cli` (`crate::helpers`).
+fn resolve_binary() -> Result<crate::helpers::Helper, String> {
+    crate::helpers::cli()
 }
 
 /// The last lines the user needs, collapsed onto one status line.

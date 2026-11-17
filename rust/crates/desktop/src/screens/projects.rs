@@ -1,411 +1,330 @@
-//! Projects: the project list and the selected project manifest.
+//! Projects: the mods being made. A list on the left, the selected project on the right as
+//! plain rows: its facts, the exact paths it replaces, references and history.
 
-use rune::tok::motion;
-use rune::{Color, El, ScrollSpec, col, el, row, spacer, text};
+use rune::{El, ScrollSpec, col, row, text};
 
 use crate::app::State;
 use crate::model::{Project, ProjectState, Screen};
-use crate::ui::{ActionKind, BODY_MED, H1, LABEL, MONO, MONO_MED, SMALL, Tone, Ui};
+use crate::screens::workbench::relative;
+use crate::ui::{ActionKind, BODY, BODY_MED, H1, MONO, PAGE_TOP, PAGE_X, SMALL, Ui, sentence};
+
+const LIST_W: f32 = 280.0;
 
 pub fn view(s: &State, u: &Ui) -> El {
-    let count = if s.projects.is_empty() {
-        "no projects".to_string()
-    } else {
-        format!(
-            "{} project{}",
-            s.projects.len(),
-            if s.projects.len() == 1 { "" } else { "s" }
-        )
+    let detail = match s.projects.len() {
+        0 => String::new(),
+        1 => "1 project".to_string(),
+        n => format!("{n} projects"),
     };
-    let trailing = row()
-        .gap(8.0)
-        .center_y()
-        .child(u.status_chip(
-            &count,
-            if s.projects.is_empty() { Tone::Quiet } else { Tone::Info },
-        ))
-        .child(u.action("New project", ActionKind::Secondary).on_press(|st: &mut State| {
-            st.status = "Project creation is an app action: it writes a manifest into the workspace. This build does not write."
-                .to_string();
-        }));
+    let actions = row().gap(8.0).center_y().child(
+        u.action("New mod", ActionKind::Secondary)
+            .key("projects-new")
+            .cursor(rune::Cursor::Pointer)
+            .on_press(|st: &mut State| {
+                st.selected_project = st.projects.len();
+                st.open_tool_groups.clear();
+                st.begin_session();
+                st.go(Screen::Agent);
+            }),
+    );
+
+    let body = if s.projects.is_empty() {
+        u.empty_state(
+            "",
+            "No projects yet",
+            "Ask the agent for a mod and it starts one here.",
+            Some(
+                u.action("Open Agent", ActionKind::Secondary)
+                    .cursor(rune::Cursor::Pointer)
+                    .on_press(|st: &mut State| st.go(Screen::Agent)),
+            ),
+        )
+    } else {
+        row()
+            .key("projects-body")
+            .w_full()
+            .gap(32.0)
+            .items_start()
+            .child(list(s, u))
+            .child(detail_pane(s, u))
+    };
 
     col()
-        .key("projects-page")
-        .grow(1.0)
-        .h_full()
-        .min_h(0.0)
-        .px(24.0)
-        .pt(20.0)
-        .pb(18.0)
-        .gap(14.0)
-        .child(u.page_head(
-            Screen::Projects.kicker(),
-            "Projects",
-            "Each project is one workspace: a manifest, a slot and the exact paths it replaces.",
-            Some(trailing),
-        ))
-        .child(
-            row()
-                .key("projects-body")
-                .grow(1.0)
-                .min_h(0.0)
-                .gap(16.0)
-                .child(list(s, u))
-                .child(detail(s, u)),
-        )
-}
-
-fn list(s: &State, u: &Ui) -> El {
-    let meta = if s.projects.is_empty() {
-        "empty".to_string()
-    } else {
-        format!("{} total", s.projects.len())
-    };
-    let mut rows = col()
-        .key("project-list-inner")
+        .key("projects-scroll")
         .w_full()
-        .gap(5.0)
-        .padding(8.0);
-    if s.projects.is_empty() {
-        rows = rows.child(
-            col()
-                .padding(14.0)
-                .gap(4.0)
-                .child(text("No projects yet").font(BODY_MED).color(u.muted))
-                .child(
-                    text("A manifest appears here once the workspace has one.")
-                        .font(SMALL)
-                        .color(u.faint)
-                        .wrap(),
-                ),
-        );
-    } else {
-        for (i, p) in s.projects.iter().enumerate() {
-            rows = rows.child(project_row(s, u, i, p));
-        }
-    }
-
-    u.panel()
-        .key("project-list")
-        .w(300.0)
-        .h_full()
-        .min_h(0.0)
-        .child(u.panel_header("WORKSPACE", &meta))
-        .child(
-            col()
-                .key("project-list-scroll")
-                .grow(1.0)
-                .min_h(0.0)
-                .scroll(ScrollSpec {
-                    stick_bottom: false,
-                })
-                .child(rows),
-        )
-}
-
-fn project_row(s: &State, u: &Ui, i: usize, p: &Project) -> El {
-    let on = i == s.selected_project;
-    let name = p.name.clone();
-    let press_name = name.clone();
-    let version = p.version.clone();
-    let updated = p.updated.clone();
-    let summary = p.summary.clone();
-    let slot = p.slot_label();
-    col()
-        .key(format!("project-{i}"))
-        .w_full()
-        .padding(11.0)
-        .gap(5.0)
-        .radius(8.0)
-        .fill(if on {
-            u.accent.alpha(0.10)
-        } else {
-            Color::TRANSPARENT
-        })
-        .border(
-            1.0,
-            if on {
-                u.accent.alpha(0.22)
-            } else {
-                Color::TRANSPARENT
-            },
-        )
-        .hover(Color::WHITE.alpha(0.035))
-        .press(Color::WHITE.alpha(0.05))
-        .focusable(true)
-        .role("button")
-        .label(name.clone())
-        .motion(motion::SNAPPY)
-        .on_press(move |st: &mut State| {
-            st.selected_project = i;
-            st.status = format!("Selected {press_name}.");
-        })
-        .child(
-            row()
-                .w_full()
-                .gap(8.0)
-                .center_y()
-                .child(u.dot(project_tone(p.state)))
-                .child(
-                    text(name)
-                        .font(BODY_MED)
-                        .color(if on { u.ink } else { u.muted })
-                        .grow(1.0)
-                        .truncate(),
-                )
-                .child(u.chip(&slot, u.accent, u.accent.alpha(0.12))),
-        )
-        .child(
-            row()
-                .w_full()
-                .gap(8.0)
-                .center_y()
-                .child(text(version).font(MONO).color(u.faint))
-                .child(text("·").font(SMALL).color(u.faint).a11y_hidden())
-                .child(text(updated).font(SMALL).color(u.faint).truncate())
-                .child(spacer()),
-        )
-        .child(text(summary).font(SMALL).color(u.faint).max_lines(2).wrap())
-}
-
-fn detail(s: &State, u: &Ui) -> El {
-    let Some(p) = s.project() else {
-        return col()
-            .key("project-detail")
-            .grow(1.0)
-            .h_full()
-            .min_h(0.0)
-            .child(u.empty_state(
-                "▤",
-                "No project open",
-                "The workbench reads manifests from the workspace. Set a workspace path in Settings, then open a project.",
-                Some(
-                    u.action("Go to Settings", ActionKind::Secondary)
-                        .on_press(|st: &mut State| st.screen = Screen::Settings),
-                ),
-            ));
-    };
-
-    let mut scroll = col()
-        .key("project-detail")
-        .grow(1.0)
         .h_full()
         .min_h(0.0)
         .scroll(ScrollSpec {
             stick_bottom: false,
         })
-        .gap(14.0)
-        .child(hero(s, u, p))
-        .child(stats(u, p));
-
-    scroll = scroll.child(manifest(u, p));
-    scroll = scroll.child(
-        row()
-            .w_full()
-            .gap(14.0)
-            .items_start()
-            .child(references(u, p))
-            .child(history(u, p)),
-    );
-    scroll = scroll.child(u.note(
-        "Payload rule: compiled _c files only, at exact game paths. Source assets, scripts/*.vdata_c and .vnmskel_c are rejected.",
-    ));
-    scroll
+        .child(
+            col()
+                .key("projects-page")
+                .w_full()
+                .px(PAGE_X)
+                .pt(PAGE_TOP)
+                .pb(32.0)
+                .gap(16.0)
+                .child(u.page_head("", "Projects", &detail, Some(actions)))
+                .child(body),
+        )
 }
 
-fn hero(s: &State, u: &Ui, p: &Project) -> El {
-    let name = p.name.clone();
-    u.panel()
-        .key("project-hero")
-        .padding(16.0)
+fn list(s: &State, u: &Ui) -> El {
+    let mut rows = col().key("project-list").w(LIST_W).gap(2.0);
+    for (i, p) in s.projects.iter().enumerate() {
+        rows = rows.child(project_row(s, u, i, p));
+    }
+    rows
+}
+
+fn project_row(s: &State, u: &Ui, i: usize, p: &Project) -> El {
+    let on = i == s.selected_project;
+    let mut meta = format!("v{}", p.version);
+    if p.slot != 0 {
+        meta.push_str(&format!("  ·  slot {}", p.slot_label()));
+    }
+    let mut r = row()
+        .key(format!("project-{i}"))
+        .w_full()
+        .h(52.0)
+        .px(12.0)
+        .gap(12.0)
+        .center_y()
+        .radius(crate::ui::r(8.0))
+        .focusable(true)
+        .role("button")
+        .label(p.name.clone())
+        .checked(on)
+        .cursor(rune::Cursor::Pointer)
+        .on_press(move |st: &mut State| st.selected_project = i)
         .child(
-            row()
-                .w_full()
-                .gap(14.0)
-                .items_center()
-                .child(u.glyph_box("◆", Tone::Accent, 42.0))
+            col()
+                .grow(1.0)
+                .min_w(0.0)
+                .gap(2.0)
                 .child(
-                    col()
-                        .grow(1.0)
-                        .gap(5.0)
-                        .child(
-                            row()
-                                .gap(9.0)
-                                .center_y()
-                                .child(text(name.clone()).font(H1).color(u.ink))
-                                .child(u.chip(
-                                    &format!("slot {}", p.slot_label()),
-                                    u.accent,
-                                    u.accent.alpha(0.13),
-                                ))
-                                .child(u.status_chip(p.state.label(), project_tone(p.state))),
-                        )
-                        .child(text(p.summary.clone()).font(SMALL).color(u.muted).wrap()),
+                    text(p.name.clone())
+                        .font(BODY_MED)
+                        .color(if on { u.ink } else { u.prose })
+                        .truncate(),
                 )
-                .child(
-                    row()
-                        .gap(7.0)
-                        .center_y()
-                        .child(
-                            u.action("Check", ActionKind::Primary).on_press(|st: &mut State| {
-                                let name = st.project().map_or("the project".to_string(), |p| p.name.clone());
-                                st.screen = Screen::Impact;
-                                st.status = format!(
-                                    "Compatibility check ran for {name} against the cached game index. No game files were touched."
-                                );
-                            }),
-                        )
-                        .child(
-                            u.action("Open session", ActionKind::Secondary)
-                                .on_press(|st: &mut State| st.go(Screen::Agent)),
-                        )
-                        .child(
-                            u.action("Reveal", ActionKind::Ghost).on_press(|st: &mut State| {
-                                st.status =
-                                    "Reveal is an app action. This build does not open a file manager."
-                                        .to_string();
-                            }),
-                        ),
-                ),
+                .child(text(meta).font(SMALL).color(u.faint).truncate()),
+        );
+    r = if on {
+        r.fill(u.selected)
+    } else {
+        r.hover(u.hover)
+    };
+    if p.state == ProjectState::Attention {
+        r = r.child(u.dot(crate::ui::Tone::Warn));
+    }
+    if let Some(ago) = relative(&p.updated) {
+        r = r.child(text(ago).font(SMALL).color(u.faint));
+    }
+    r
+}
+
+fn detail_pane(s: &State, u: &Ui) -> El {
+    let Some(p) = s.project() else {
+        return col()
+            .key("project-detail")
+            .grow(1.0)
+            .min_w(0.0)
+            .child(u.empty_state(
+                "",
+                "Pick a project",
+                "Its paths, references and history show up here.",
+                None,
+            ));
+    };
+
+    let head = row()
+        .w_full()
+        .gap(16.0)
+        .items_start()
+        .child(
+            col()
+                .grow(1.0)
+                .min_w(0.0)
+                .gap(4.0)
+                .child(text(p.name.clone()).font(H1).color(u.ink).truncate())
+                .child(text(p.summary.clone()).font(BODY).color(u.muted).wrap()),
         )
         .child(
             row()
-                .w_full()
-                .pt(10.0)
                 .gap(8.0)
                 .center_y()
-                .child(text(format!("v{}", p.version)).font(MONO).color(u.faint))
-                .child(text("·").font(SMALL).color(u.faint).a11y_hidden())
-                .child(text(format!("updated {}", p.updated)).font(SMALL).color(u.faint))
-                .child(spacer())
-                .child(text(if s.demo { "DEMO PROJECT" } else { "" }).font(LABEL).color(u.accent)),
-        )
+                .child(
+                    u.action("Check", ActionKind::Secondary)
+                        .key("project-check")
+                        .cursor(rune::Cursor::Pointer)
+                        .on_press(|st: &mut State| st.go(Screen::Impact)),
+                )
+                .child(
+                    u.action("Open in Agent", ActionKind::Primary)
+                        .key("project-open-agent")
+                        .cursor(rune::Cursor::Pointer)
+                        .on_press(|st: &mut State| st.go(Screen::Agent)),
+                ),
+        );
+
+    let state_color = match p.state {
+        ProjectState::Attention => u.amber,
+        _ => u.prose,
+    };
+    let state_label = match p.state {
+        ProjectState::Ready => "Ready",
+        ProjectState::Attention => "Needs a look",
+        ProjectState::Draft => "Draft",
+    };
+    let facts = col()
+        .w_full()
+        .child(u.kv("Version", &p.version, u.prose))
+        .child(u.kv("Slot", &p.slot_file(), u.prose))
+        .child(u.kv("Updated", &p.updated, u.prose))
+        .child(u.kv("State", state_label, state_color));
+
+    col()
+        .key("project-detail")
+        .grow(1.0)
+        .min_w(0.0)
+        .gap(24.0)
+        .child(col().w_full().gap(16.0).child(head).child(facts))
+        .child(targets(u, p))
+        .child(references(u, p))
+        .child(history(u, p))
 }
 
-fn stats(u: &Ui, p: &Project) -> El {
+fn section_head(u: &Ui, title: &str, count: usize) -> El {
     row()
         .w_full()
-        .gap(9.0)
-        .child(u.stat(p.slot_label(), "ADDON SLOT", Tone::Accent))
-        .child(u.stat(format!("{}", p.targets.len()), "TARGETS", Tone::Info))
-        .child(u.stat(format!("{}", p.references.len()), "REFERENCES", Tone::Quiet))
-        .child(u.stat(
-            p.history.first().map_or("none", |h| h.date.as_str()),
-            "LAST CHANGE",
-            Tone::Ok,
-        ))
+        .h(32.0)
+        .gap(6.0)
+        .center_y()
+        .child(text(title.to_string()).font(BODY_MED).color(u.muted))
+        .child(text(count.to_string()).font(BODY).color(u.faint))
 }
 
-fn manifest(u: &Ui, p: &Project) -> El {
-    let mut body = col().key("targets").w_full();
-    body = body.child(u.table_head(&[("PATH", 0.0), ("KIND", 74.0), ("STATE", 88.0)]));
+fn hair_row(u: &Ui, h: f32) -> El {
+    row()
+        .w_full()
+        .h(h)
+        .gap(16.0)
+        .center_y()
+        .border_sides([0.0, 0.0, 1.0, 0.0], u.hair)
+}
+
+fn targets(u: &Ui, p: &Project) -> El {
+    let mut rows = col().w_full().border_sides([1.0, 0.0, 0.0, 0.0], u.hair);
+    if p.targets.is_empty() {
+        rows =
+            rows.child(hair_row(u, 44.0).child(text("No targets yet").font(BODY).color(u.faint)));
+    }
     for (i, t) in p.targets.iter().enumerate() {
-        let tone = t.status.tone();
-        if i > 0 {
-            body = body.child(u.divider());
-        }
-        body = body.child(
-            row()
-                .w_full()
-                .h(37.0)
-                .px(14.0)
-                .gap(12.0)
-                .center_y()
+        let state = t.status.tone().fg(u);
+        let state_color = match t.status.tone() {
+            crate::ui::Tone::Warn | crate::ui::Tone::Bad => state,
+            _ => u.faint,
+        };
+        rows = rows.child(
+            hair_row(u, 44.0)
+                .key(format!("target-{i}"))
                 .child(
                     text(t.path.clone())
                         .font(MONO)
                         .color(u.ink)
                         .grow(1.0)
-                        .truncate(),
+                        .min_w(0.0)
+                        .truncate_head(),
                 )
-                .child(text(t.kind.clone()).font(SMALL).color(u.faint).w(74.0))
-                .child(el().w(88.0).child(u.status_chip(t.status.label(), tone))),
+                .child(text(sentence(&t.kind)).font(SMALL).color(u.faint).w(72.0))
+                .child(
+                    text(capital(t.status.label()))
+                        .font(SMALL)
+                        .color(state_color)
+                        .w(80.0)
+                        .align(rune::Align::End),
+                ),
         );
     }
-
-    u.panel()
-        .key("manifest")
+    col()
+        .key("targets")
         .w_full()
-        .child(u.panel_header("MANIFEST TARGETS", &format!("{} paths", p.targets.len())))
-        .child(body)
+        .child(section_head(u, "Targets", p.targets.len()))
+        .child(rows)
 }
 
 fn references(u: &Ui, p: &Project) -> El {
-    let mut body = col().w_full().gap(0.0).padding(12.0);
+    let mut rows = col().w_full().border_sides([1.0, 0.0, 0.0, 0.0], u.hair);
     if p.references.is_empty() {
-        body = body.child(text("No references declared.").font(SMALL).color(u.faint));
-    } else {
-        for r in &p.references {
-            body = body.child(
-                row()
-                    .w_full()
-                    .h(30.0)
-                    .gap(8.0)
-                    .center_y()
-                    .child(text("▸").font(LABEL).color(u.faint).a11y_hidden())
-                    .child(
-                        text(r.vpk.clone())
-                            .font(MONO)
-                            .color(u.ink)
-                            .grow(1.0)
-                            .truncate(),
-                    )
-                    .child(u.chip(&r.mode, u.faint, Color::WHITE.alpha(0.035))),
-            );
-        }
+        rows = rows.child(hair_row(u, 44.0).child(text("None").font(BODY).color(u.faint)));
     }
-    u.panel()
+    for r in &p.references {
+        rows = rows.child(
+            hair_row(u, 44.0)
+                .child(
+                    text(r.vpk.clone())
+                        .font(MONO)
+                        .color(u.ink)
+                        .grow(1.0)
+                        .min_w(0.0)
+                        .truncate(),
+                )
+                .child(text(capital(&r.mode)).font(SMALL).color(u.faint)),
+        );
+    }
+    col()
         .key("references")
-        .grow(0.46)
-        .child(u.panel_header("REFERENCES", &format!("{} vpk", p.references.len())))
-        .child(body)
+        .w_full()
+        .child(section_head(u, "References", p.references.len()))
+        .child(rows)
 }
 
 fn history(u: &Ui, p: &Project) -> El {
-    let mut body = col().w_full().gap(0.0).padding(12.0);
+    let mut rows = col().w_full().border_sides([1.0, 0.0, 0.0, 0.0], u.hair);
     if p.history.is_empty() {
-        body = body.child(text("No history yet.").font(SMALL).color(u.faint));
-    } else {
-        for (i, h) in p.history.iter().enumerate() {
-            body = body.child(
-                row()
-                    .w_full()
-                    .gap(9.0)
-                    .py(7.0)
-                    .items_start()
-                    .child(
-                        el().size(5.0, 5.0)
-                            .radius(3.0)
-                            .fill(if i == 0 { u.accent } else { u.faint })
-                            .mt(6.0),
-                    )
-                    .child(
-                        col()
-                            .grow(1.0)
-                            .gap(1.0)
-                            .child(
-                                row()
-                                    .gap(8.0)
-                                    .center_y()
-                                    .child(text(h.version.clone()).font(MONO_MED).color(u.ink))
-                                    .child(text(h.date.clone()).font(SMALL).color(u.faint)),
-                            )
-                            .child(text(h.note.clone()).font(SMALL).color(u.muted).wrap()),
-                    ),
-            );
-        }
+        rows =
+            rows.child(hair_row(u, 44.0).child(text("No history yet").font(BODY).color(u.faint)));
     }
-    u.panel()
+    for h in &p.history {
+        rows = rows.child(
+            row()
+                .w_full()
+                .py(12.0)
+                .gap(16.0)
+                .items_start()
+                .border_sides([0.0, 0.0, 1.0, 0.0], u.hair)
+                .child(
+                    text(h.version.clone())
+                        .font(MONO)
+                        .color(u.ink)
+                        .w(96.0)
+                        .mt(1.0)
+                        .truncate(),
+                )
+                .child(
+                    text(h.note.clone())
+                        .font(BODY)
+                        .color(u.muted)
+                        .grow(1.0)
+                        .min_w(0.0)
+                        .wrap(),
+                )
+                .child(text(h.date.clone()).font(SMALL).color(u.faint).mt(2.0)),
+        );
+    }
+    col()
         .key("history")
-        .grow(0.54)
-        .child(u.panel_header("HISTORY", &format!("{} entries", p.history.len())))
-        .child(body)
+        .w_full()
+        .child(section_head(u, "History", p.history.len()))
+        .child(rows)
 }
 
-fn project_tone(state: ProjectState) -> Tone {
-    match state {
-        ProjectState::Ready => Tone::Ok,
-        ProjectState::Attention => Tone::Warn,
-        ProjectState::Draft => Tone::Quiet,
+fn capital(s: &str) -> String {
+    let mut chars = s.chars();
+    match chars.next() {
+        Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+        None => String::new(),
     }
 }

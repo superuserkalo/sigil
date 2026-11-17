@@ -1,0 +1,461 @@
+[
+ {
+  "id": 47611,
+  "name": "Animations",
+  "iconUrl": "https://images.gamebanana.com/img/ico/ModCategory/6a64e45dd9812.png",
+  "count": 31,
+  "children": []
+ },
+ {
+  "id": 33331,
+  "name": "Gameplay Modifications",
+  "iconUrl": null,
+  "count": 40,
+  "children": []
+ },
+ {
+  "id": 31713,
+  "name": "HUD",
+  "iconUrl": null,
+  "count": 884,
+  "children": [
+   {
+    "id": 44745,
+    "name": "Character HUD",
+    "iconUrl": "https://images.gamebanana.com/img/ico/ModCategory/69d53d7008c15.png",
+    "count": 373,
+    "children": []
+   },
+   {
+    "id": 44746,
+    "name": "Items HUD",
+    "iconUrl": "https://images.gamebanana.com/img/ico/ModCategory/69d53afad4714.png",
+    "count": 125,
+    "children": []
+   },
+   {
+    "id": 44748,
+    "name": "Gameplay",
+    "iconUrl": null,
+    "count": 52,
+    "children": []
+   },
+   {
+    "id": 49794,
+    "name": "Cursors",
+    "iconUrl": "https://images.gamebanana.com/img/ico/ModCategory/6ac00c7c00c7c.png",
+    "count": 7,
+    "children": []
+   }
+  ]
+ },
+ {
+  "id": 37225,
+  "name": "Maps",
+  "iconUrl": null,
+  "count": 47,
+  "children": []
+ },
+ {
+  "id": 33154,
+  "name": "Model Replacement",
+  "iconUrl": null,
+  "count": 668,
+  "children": [
+   {
+    "id": 41651,
+    "name": "Breakables",
+    "iconUrl": null,
+    "count": 50,
+    "children": []
+   },
+   {
+    "id": 41656,
+    "name": "Spirit Urn",
+    "iconUrl": null,
+    "count": 38,
+    "children": []
+   },
+   {
+    "id": 41868,
+    "name": "Soul Container",
+    "iconUrl": null,
+    "count": 365,
+    "children": []
+   },
+   {
+    "id": 44206,
+    "name": "Hideout",
+    "iconUrl": null,
+    "count": 62,
+    "children": []
+   },
+   {
+    "id": 44391,
+    "name": "Sinner's Sacrifice",
+    "iconUrl": "https://images.gamebanana.com/img/ico/ModCategory/69c2576bb1b14.png",
+    "count": 12,
+    "children": []
+   },
+   {
+    "id": 44691,
+    "name": "NPCs",
+    "iconUrl": null,
+    "count": 52,
+    "children": []
+   },
+   {
+    "id": 44699,
+    "name": "Active Items",
+    "iconUrl": "https://images.gamebanana.com/img/ico/ModCategory/69d283efc3c90.png",
+    "count": 10,
+    "children": []
+   },
+   {
+    "id": 45979,
+    "name": "Rejuvenator",
+    "iconUrl": "https://images.gamebanana.com/img/ico/ModCategory/6a137c5299a3e.png",
+    "count": 1,
+    "children": []
+   }
+  ]
+ },
+ {
+  "id": 31710,
+  "name": "Other/Misc",
+  "iconUrl": null,
+  "count": 163,
+  "children": []
+ },
+ {
+  "id": 46154,
+  "name": "Quality of Life/Fixes",
+  "iconUrl": null,
+  "count": 172,
+  "children": [
+   {
+    "id": 44749,
+    "name": "Accessibility",
+    "iconUrl": "https://images.gamebanana.com/img/ico/ModCategory/69d53e9228dba.png",
+    "count": 20,
+    "children": []
+   }
+  ]
+ },
+ {
+  "id": 33295,
+  "name": "Skins",
+  "iconUrl": null,
+  "count": 4257,
+  "children": [
+   {
+    "id": 33306,
+    "name": "Abrams",
+    "iconUrl": "https://images.gamebanana.com/img/ico/ModCategory/6931c832e8ce3.png",
+    "count": 114,
+    "children": []
+   },
+   {
+    "id": 33307,
+    "name": "Bebop",
+    "iconUrl": "https://images.gamebanana.com/img/ico/ModCategory/6931c85b5ee05.png",
+    "count": 75,
+    "children": []
+   },
+   {
+    "id": 33308,
+    "name": "Dynamo",
+    "iconUrl": "https://images.gamebanana.com/img/ico/ModCategory/6931c8b822e51.png",
+    "count": 63,
+    "children": []
+   },
+   {
+    "id": 33310,
+    "name": "Grey Talon",
+    "iconUrl": "https://images.gamebanana.com/img/ico/ModCategory/6931c8bf0357a.png",
+    "count": 55,
+    "children": []
+   },
+   {
+    "id": 33311,
+    "name": "Haze",
+    "iconUrl": "https://images.gamebanana.com/img/ico/ModCategory/6931c8c7169c5.png",
+    "count": 169,
+    "children": []
+   },
+   {
+    "id": 33312,
+    "name": "Infernus",
+    "iconUrl": "https://images.gamebanana.com/img/ico/ModCategory/6931c95d8ee78.png",
+    "count": 78,
+    "children": []
+   },
+   {
+    "id": 33313,
+    "name": "Ivy",
+    "iconUrl": "https://images.gamebanana.com/img/ico/ModCategory/6931c96a103ca.png",
+    "count": 93,
+    "children": []
+   },
+   {
+    "id": 33314,
+    "name": "Kelvin",
+    "iconUrl": "https://images.gamebanana.com/img/ico/ModCategory/6931c9779d153.png",
+    "count": 37,
+    "children": []
+   },
+   {
+    "id": 33315,
+    "name": "Lady Geist",
+    "iconUrl": "https://images.gamebanana.com/img/ico/ModCategory/6931c9806d29c.png",
+    "count": 72,
+    "children": []
+   },
+   {
+    "id": 33316,
+    "name": "Lash",
+    "iconUrl": "https://images.gamebanana.com/img/ico/ModCategory/6931c98bd965b.png",
+    "count": 150,
+    "children": []
+   },
+   {
+    "id": 33317,
+    "name": "McGinnis",
+    "iconUrl": "https://images.gamebanana.com/img/ico/ModCategory/6931c996d0b36.png",
+    "count": 57,
+    "children": []
+   },
+   {
+    "id": 33318,
+    "name": "Mirage",
+    "iconUrl": "https://images.gamebanana.com/img/ico/ModCategory/6931caad9628c.png",
+    "count": 41,
+    "children": []
+   },
+   {
+    "id": 33319,
+    "name": "Mo & Krill",
+    "iconUrl": "https://images.gamebanana.com/img/ico/ModCategory/6931cac9ac65a.png",
+    "count": 43,
+    "children": []
+   },
+   {
+    "id": 33320,
+    "name": "Paradox",
+    "iconUrl": "https://images.gamebanana.com/img/ico/ModCategory/6931f6b850b03.png",
+    "count": 68,
+    "children": []
+   },
+   {
+    "id": 33321,
+    "name": "Pocket",
+    "iconUrl": "https://images.gamebanana.com/img/ico/ModCategory/6931f6ef1cfc4.png",
+    "count": 85,
+    "children": []
+   },
+   {
+    "id": 33322,
+    "name": "Seven",
+    "iconUrl": "https://images.gamebanana.com/img/ico/ModCategory/6931f6b03f865.png",
+    "count": 79,
+    "children": []
+   },
+   {
+    "id": 33323,
+    "name": "Shiv",
+    "iconUrl": "https://images.gamebanana.com/img/ico/ModCategory/6931cadc53d49.png",
+    "count": 97,
+    "children": []
+   },
+   {
+    "id": 33324,
+    "name": "Vindicta",
+    "iconUrl": "https://images.gamebanana.com/img/ico/ModCategory/6931caff46b6a.png",
+    "count": 113,
+    "children": []
+   },
+   {
+    "id": 33325,
+    "name": "Viscous",
+    "iconUrl": "https://images.gamebanana.com/img/ico/ModCategory/6931f6868160b.png",
+    "count": 61,
+    "children": []
+   },
+   {
+    "id": 33326,
+    "name": "Warden",
+    "iconUrl": "https://images.gamebanana.com/img/ico/ModCategory/6931cb1076f74.png",
+    "count": 45,
+    "children": []
+   },
+   {
+    "id": 33327,
+    "name": "Wraith",
+    "iconUrl": "https://images.gamebanana.com/img/ico/ModCategory/6931cb16eabd3.png",
+    "count": 75,
+    "children": []
+   },
+   {
+    "id": 33328,
+    "name": "Yamato",
+    "iconUrl": "https://images.gamebanana.com/img/ico/ModCategory/6931cb1d2667d.png",
+    "count": 88,
+    "children": []
+   },
+   {
+    "id": 33330,
+    "name": "Vyper",
+    "iconUrl": "https://images.gamebanana.com/img/ico/ModCategory/6931cb087808a.png",
+    "count": 57,
+    "children": []
+   },
+   {
+    "id": 36472,
+    "name": "Holliday",
+    "iconUrl": "https://images.gamebanana.com/img/ico/ModCategory/6931c94f0e807.png",
+    "count": 92,
+    "children": []
+   },
+   {
+    "id": 36529,
+    "name": "Sinclair",
+    "iconUrl": "https://images.gamebanana.com/img/ico/ModCategory/6931cae59ae92.png",
+    "count": 80,
+    "children": []
+   },
+   {
+    "id": 39672,
+    "name": "Paige",
+    "iconUrl": "https://images.gamebanana.com/img/ico/ModCategory/6931cad4142cd.png",
+    "count": 144,
+    "children": []
+   },
+   {
+    "id": 39980,
+    "name": "Victor",
+    "iconUrl": "https://images.gamebanana.com/img/ico/ModCategory/6931caf16bb63.png",
+    "count": 70,
+    "children": []
+   },
+   {
+    "id": 40060,
+    "name": "Doorman",
+    "iconUrl": "https://images.gamebanana.com/img/ico/ModCategory/68e0625323b4b.png",
+    "count": 128,
+    "children": []
+   },
+   {
+    "id": 41313,
+    "name": "Mina",
+    "iconUrl": "https://images.gamebanana.com/img/ico/ModCategory/6931f6e6d2f2f.png",
+    "count": 185,
+    "children": []
+   },
+   {
+    "id": 41491,
+    "name": "Billy",
+    "iconUrl": "https://images.gamebanana.com/img/ico/ModCategory/6931461e41ba5.png",
+    "count": 124,
+    "children": []
+   },
+   {
+    "id": 41492,
+    "name": "Drifter",
+    "iconUrl": "https://images.gamebanana.com/img/ico/ModCategory/693146963ef0d.png",
+    "count": 119,
+    "children": []
+   },
+   {
+    "id": 41649,
+    "name": "Calico",
+    "iconUrl": "https://images.gamebanana.com/img/ico/ModCategory/6939c08760e24.png",
+    "count": 71,
+    "children": []
+   },
+   {
+    "id": 42671,
+    "name": "Silver",
+    "iconUrl": "https://images.gamebanana.com/img/ico/ModCategory/69959995e5b24.png",
+    "count": 139,
+    "children": []
+   },
+   {
+    "id": 42672,
+    "name": "Celeste",
+    "iconUrl": "https://images.gamebanana.com/img/ico/ModCategory/6995a3dc48ed5.png",
+    "count": 161,
+    "children": []
+   },
+   {
+    "id": 42673,
+    "name": "Apollo",
+    "iconUrl": "https://images.gamebanana.com/img/ico/ModCategory/69959c6942f93.png",
+    "count": 141,
+    "children": []
+   },
+   {
+    "id": 42674,
+    "name": "Graves",
+    "iconUrl": "https://images.gamebanana.com/img/ico/ModCategory/69959cf637664.png",
+    "count": 129,
+    "children": []
+   },
+   {
+    "id": 42675,
+    "name": "Rem",
+    "iconUrl": "https://images.gamebanana.com/img/ico/ModCategory/69959cdaca091.png",
+    "count": 155,
+    "children": []
+   },
+   {
+    "id": 42676,
+    "name": "Venator",
+    "iconUrl": "https://images.gamebanana.com/img/ico/ModCategory/69959cccd7a2b.png",
+    "count": 107,
+    "children": []
+   },
+   {
+    "id": 49629,
+    "name": "Rat King",
+    "iconUrl": "https://images.gamebanana.com/img/ico/ModCategory/6ac07f7385a1a.png",
+    "count": 184,
+    "children": []
+   },
+   {
+    "id": 49630,
+    "name": "Deadman Danny",
+    "iconUrl": "https://images.gamebanana.com/img/ico/ModCategory/6ad22aa72d0b1.png",
+    "count": 71,
+    "children": []
+   },
+   {
+    "id": 49631,
+    "name": "Violet",
+    "iconUrl": "https://images.gamebanana.com/img/ico/ModCategory/6abe79a1da42c.png",
+    "count": 98,
+    "children": []
+   },
+   {
+    "id": 49632,
+    "name": "Baba",
+    "iconUrl": "https://images.gamebanana.com/img/ico/ModCategory/6ac7cbef3c355.png",
+    "count": 31,
+    "children": []
+   },
+   {
+    "id": 49633,
+    "name": "Nurse Harrow",
+    "iconUrl": "https://images.gamebanana.com/img/ico/ModCategory/6abe7961bb49f.png",
+    "count": 62,
+    "children": []
+   },
+   {
+    "id": 49634,
+    "name": "Solomon",
+    "iconUrl": "https://images.gamebanana.com/img/ico/ModCategory/6acb0ce1db6ea.png",
+    "count": 47,
+    "children": []
+   }
+  ]
+ }
+]

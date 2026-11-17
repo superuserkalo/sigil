@@ -1,0 +1,743 @@
+//! Sigil's own settings: one JSON object in `<data>/settings.json`, written atomically.
+//!
+//! Every field reads on its own with a fallback, so a value from an older or newer build, or a
+//! hand edit gone wrong, costs that one setting and not the rest. Headless runs (snapshots,
+//! scenes) never read or write the file, so a scene renders the defaults.
+
+use std::collections::BTreeMap;
+use std::fs;
+use std::path::PathBuf;
+
+use deadlock_core::gamebanana::BrowseSort;
+use rune::Color;
+use serde_json::{Map, Value, json};
+
+use crate::model::Screen;
+use crate::screens::settings::i18n::Lang;
+use crate::screens::settings::log::Level;
+use crate::ui::Theme;
+
+pub const FILE_NAME: &str = "settings.json";
+
+/// The interface sizes offered, as a page zoom.
+pub const ZOOMS: [f32; 4] = [0.9, 1.0, 1.1, 1.25];
+
+/// Screens Sigil can open on.
+pub const STARTUP_SCREENS: [Screen; 5] = [
+    Screen::Browse,
+    Screen::Installed,
+    Screen::Locker,
+    Screen::Stats,
+    Screen::Agent,
+];
+
+/// What happens to Sigil once Steam has been asked to start the game.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum OnLaunch {
+    #[default]
+    Stay,
+    Minimize,
+    Close,
+}
+
+impl OnLaunch {
+    pub const ALL: [OnLaunch; 3] = [OnLaunch::Stay, OnLaunch::Minimize, OnLaunch::Close];
+
+    pub fn id(self) -> &'static str {
+        match self {
+            OnLaunch::Stay => "stay",
+            OnLaunch::Minimize => "minimize",
+            OnLaunch::Close => "close",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            OnLaunch::Stay => "Stay open",
+            OnLaunch::Minimize => "Minimize",
+            OnLaunch::Close => "Quit Sigil",
+        }
+    }
+}
+
+/// How Browse treats mods GameBanana marks as mature.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum Mature {
+    Show,
+    #[default]
+    Blur,
+    Hide,
+}
+
+impl Mature {
+    pub const ALL: [Mature; 3] = [Mature::Show, Mature::Blur, Mature::Hide];
+
+    pub fn id(self) -> &'static str {
+        match self {
+            Mature::Show => "show",
+            Mature::Blur => "blur",
+            Mature::Hide => "hide",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Mature::Show => "Show",
+            Mature::Blur => "Blur",
+            Mature::Hide => "Hide",
+        }
+    }
+}
+
+pub const SORTS: [BrowseSort; 3] = [BrowseSort::Default, BrowseSort::New, BrowseSort::Updated];
+
+pub fn sort_label(sort: BrowseSort) -> &'static str {
+    match sort {
+        BrowseSort::Default => "Popular now",
+        BrowseSort::New => "Newest",
+        BrowseSort::Updated => "Recently updated",
+    }
+}
+
+/// An accent: the theme's own (ember), one of the presets, or a colour the user typed.
+#[derive(Clone, PartialEq, Debug, Default)]
+pub enum Accent {
+    #[default]
+    Theme,
+    Preset(&'static str),
+    Custom(String),
+}
+
+/// Preset accents, base colour. The values follow Grimoire's accent presets (MIT).
+pub const ACCENTS: [(&str, &str, &str); 8] = [
+    ("ember", "Ember", ""),
+    ("amber", "Amber", "#f59e0b"),
+    ("crimson", "Crimson", "#ef4444"),
+    ("rose", "Rose", "#ec4899"),
+    ("violet", "Violet", "#8b5cf6"),
+    ("azure", "Azure", "#3b82f6"),
+    ("cyan", "Cyan", "#06b6d4"),
+    ("emerald", "Emerald", "#10b981"),
+];
+
+impl Accent {
+    pub fn id(&self) -> String {
+        match self {
+            Accent::Theme => "ember".to_string(),
+            Accent::Preset(id) => (*id).to_string(),
+            Accent::Custom(hex) => hex.clone(),
+        }
+    }
+
+    fn from_id(id: &str) -> Accent {
+        if id == "ember" || id.is_empty() {
+            return Accent::Theme;
+        }
+        if let Some((key, _, _)) = ACCENTS.iter().find(|(key, _, _)| *key == id) {
+            return Accent::Preset(key);
+        }
+        match parse_hex(id) {
+            Some(_) => Accent::Custom(id.to_lowercase()),
+            None => Accent::Theme,
+        }
+    }
+
+    /// The colour to paint with. None means the theme's own accent.
+    pub fn color(&self) -> Option<Color> {
+        match self {
+            Accent::Theme => None,
+            Accent::Preset(id) => ACCENTS
+                .iter()
+                .find(|(key, _, _)| key == id)
+                .and_then(|(_, _, hex)| parse_hex(hex)),
+            Accent::Custom(hex) => parse_hex(hex),
+        }
+    }
+}
+
+/// `#rgb` or `#rrggbb`, with or without the hash.
+pub fn parse_hex(s: &str) -> Option<Color> {
+    let s = s.trim();
+    let body = s.strip_prefix('#').unwrap_or(s);
+    if !(body.len() == 6 || body.len() == 3) || !body.chars().all(|c| c.is_ascii_hexdigit()) {
+        return None;
+    }
+    rune::color::hex(&format!("#{body}"))
+}
+
+/// How absolute dates read.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum DateFormat {
+    #[default]
+    Iso,
+    DayFirst,
+    MonthFirst,
+}
+
+impl DateFormat {
+    pub const ALL: [DateFormat; 3] = [DateFormat::Iso, DateFormat::DayFirst, DateFormat::MonthFirst];
+
+    pub fn id(self) -> &'static str {
+        match self {
+            DateFormat::Iso => "iso",
+            DateFormat::DayFirst => "dmy",
+            DateFormat::MonthFirst => "mdy",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            DateFormat::Iso => "2026-11-17",
+            DateFormat::DayFirst => "17/11/2026",
+            DateFormat::MonthFirst => "11/17/2026",
+        }
+    }
+
+    /// Format a civil date.
+    pub fn format(self, y: i64, m: u32, d: u32) -> String {
+        match self {
+            DateFormat::Iso => format!("{y:04}-{m:02}-{d:02}"),
+            DateFormat::DayFirst => format!("{d:02}/{m:02}/{y:04}"),
+            DateFormat::MonthFirst => format!("{m:02}/{d:02}/{y:04}"),
+        }
+    }
+}
+
+/// Which releases the update check reads.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum Channel {
+    #[default]
+    Stable,
+    Preview,
+}
+
+impl Channel {
+    pub const ALL: [Channel; 2] = [Channel::Stable, Channel::Preview];
+
+    pub fn id(self) -> &'static str {
+        match self {
+            Channel::Stable => "stable",
+            Channel::Preview => "preview",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Channel::Stable => "Stable",
+            Channel::Preview => "Preview",
+        }
+    }
+}
+
+/// An experimental feature: id, title, one line, default.
+pub struct Flag {
+    pub id: &'static str,
+    pub title: &'static str,
+    pub line: &'static str,
+    pub default: bool,
+}
+
+/// Every flag Sigil reads. A flag read by id that is not listed here is off.
+pub const FLAGS: [Flag; 3] = [
+    Flag {
+        id: "servers",
+        title: "Servers",
+        line: "Shows the Deadworks community server browser in the sidebar.",
+        default: true,
+    },
+    Flag {
+        id: "agent",
+        title: "Agent",
+        line: "Shows the agent and its mod-building tools in the sidebar. Experimental: it runs a second Sigil process while on.",
+        default: false,
+    },
+    Flag {
+        id: "docked_details",
+        title: "Docked mod details",
+        line: "Opens a mod from Browse in a panel beside the grid instead of over it.",
+        default: false,
+    },
+];
+
+/// Intervals offered for background work, in minutes. 0 means never.
+pub const CATALOG_MINUTES: [u32; 4] = [0, 15, 30, 60];
+pub const UPDATE_HOURS: [u32; 3] = [0, 6, 24];
+pub const SHARE_MINUTES: [u32; 3] = [15, 30, 60];
+
+/// Custom accents remembered in Appearance.
+pub const CUSTOM_ACCENTS_KEEP: usize = 6;
+
+#[derive(Clone, PartialEq)]
+pub struct Prefs {
+    pub theme: Theme,
+    pub accent: Accent,
+    pub zoom: f32,
+    pub startup: Screen,
+    pub on_launch: OnLaunch,
+    pub confirm_launch: bool,
+    pub land_disabled: bool,
+    pub mature: Mature,
+    pub browse_sort: BrowseSort,
+    /// A Deadlock folder chosen by hand. None means Steam discovery.
+    pub game_dir: Option<String>,
+    pub allow_stats: bool,
+    pub allow_share_codes: bool,
+    pub check_updates: bool,
+    // --- round 3 ---
+    pub language: Lang,
+    pub date_format: DateFormat,
+    pub start_minimized: bool,
+    pub log_level: Level,
+    pub discord: bool,
+    /// Show which page and the mod count; off shows only "Using Sigil".
+    pub discord_details: bool,
+    pub discord_mods: bool,
+    pub share_matches: bool,
+    pub share_minutes: u32,
+    pub offline: bool,
+    pub update_hours: u32,
+    pub catalog_minutes: u32,
+    pub proxy: Option<String>,
+    pub channel: Channel,
+    pub custom_accents: Vec<String>,
+    pub transparent_sidebar: bool,
+    pub single_launch: bool,
+    /// Flags the user changed; the rest read their default from `FLAGS`.
+    pub flags: BTreeMap<String, bool>,
+    pub steam_account: Option<u32>,
+    /// A GameBanana member id and the name shown for it.
+    pub gamebanana: Option<(u64, String)>,
+    /// Confirm dialogs the user turned off with "Don't ask again", by id (`installed.delete`).
+    pub skip_confirm: std::collections::BTreeSet<String>,
+    /// Settings > Appearance > Personalize. All off by default.
+    pub personal: crate::ui::personalize::Personal,
+}
+
+impl Default for Prefs {
+    fn default() -> Self {
+        Prefs {
+            theme: Theme::Dark,
+            accent: Accent::Theme,
+            zoom: 1.0,
+            startup: Screen::Browse,
+            on_launch: OnLaunch::Stay,
+            confirm_launch: false,
+            land_disabled: true,
+            mature: Mature::Blur,
+            browse_sort: BrowseSort::Default,
+            game_dir: None,
+            allow_stats: true,
+            allow_share_codes: true,
+            check_updates: false,
+            language: Lang::System,
+            date_format: DateFormat::Iso,
+            start_minimized: false,
+            log_level: Level::Info,
+            discord: false,
+            discord_details: true,
+            discord_mods: true,
+            share_matches: false,
+            share_minutes: 30,
+            offline: false,
+            update_hours: 0,
+            catalog_minutes: 0,
+            proxy: None,
+            channel: Channel::Stable,
+            custom_accents: Vec::new(),
+            transparent_sidebar: false,
+            single_launch: false,
+            flags: BTreeMap::new(),
+            skip_confirm: Default::default(),
+            steam_account: None,
+            gamebanana: None,
+            personal: Default::default(),
+        }
+    }
+}
+
+pub fn path() -> PathBuf {
+    crate::data::data_dir().join(FILE_NAME)
+}
+
+impl Prefs {
+    /// Read the settings file. A missing or unreadable file gives the defaults; a headless run
+    /// always does.
+    pub fn load() -> Prefs {
+        if rune::is_headless() {
+            return Prefs::default();
+        }
+        match fs::read_to_string(path()) {
+            Ok(text) => Prefs::from_json(&text),
+            Err(_) => Prefs::default(),
+        }
+    }
+
+    pub fn from_json(text: &str) -> Prefs {
+        let d = Prefs::default();
+        let Ok(Value::Object(map)) = serde_json::from_str::<Value>(text) else {
+            return d;
+        };
+        let s = |key: &str| map.get(key).and_then(Value::as_str);
+        let b = |key: &str, default: bool| map.get(key).and_then(Value::as_bool).unwrap_or(default);
+        let n = |key: &str, allowed: &[u32], default: u32| {
+            map.get(key)
+                .and_then(Value::as_u64)
+                .map(|v| v as u32)
+                .filter(|v| allowed.contains(v))
+                .unwrap_or(default)
+        };
+        Prefs {
+            theme: s("theme").and_then(Theme::from_id).unwrap_or(d.theme),
+            accent: s("accent").map(Accent::from_id).unwrap_or(d.accent),
+            zoom: map
+                .get("zoom")
+                .and_then(Value::as_f64)
+                .map(|z| z as f32)
+                .filter(|z| ZOOMS.iter().any(|known| (known - z).abs() < 0.001))
+                .unwrap_or(d.zoom),
+            startup: s("startup")
+                .and_then(|id| STARTUP_SCREENS.into_iter().find(|screen| screen.key() == id))
+                .unwrap_or(d.startup),
+            on_launch: s("on_launch")
+                .and_then(|id| OnLaunch::ALL.into_iter().find(|o| o.id() == id))
+                .unwrap_or(d.on_launch),
+            confirm_launch: b("confirm_launch", d.confirm_launch),
+            land_disabled: b("land_disabled", d.land_disabled),
+            mature: s("mature")
+                .and_then(|id| Mature::ALL.into_iter().find(|m| m.id() == id))
+                .unwrap_or(d.mature),
+            browse_sort: s("browse_sort")
+                .and_then(|id| SORTS.into_iter().find(|sort| sort.query() == id))
+                .unwrap_or(d.browse_sort),
+            game_dir: s("game_dir")
+                .map(str::trim)
+                .filter(|dir| !dir.is_empty())
+                .map(str::to_string),
+            allow_stats: b("allow_stats", d.allow_stats),
+            allow_share_codes: b("allow_share_codes", d.allow_share_codes),
+            check_updates: b("check_updates", d.check_updates),
+            language: s("language").and_then(Lang::from_id).unwrap_or(d.language),
+            date_format: s("date_format")
+                .and_then(|id| DateFormat::ALL.into_iter().find(|f| f.id() == id))
+                .unwrap_or(d.date_format),
+            start_minimized: b("start_minimized", d.start_minimized),
+            log_level: s("log_level").and_then(Level::from_id).unwrap_or(d.log_level),
+            discord: b("discord", d.discord),
+            discord_details: b("discord_details", d.discord_details),
+            discord_mods: b("discord_mods", d.discord_mods),
+            share_matches: b("share_matches", d.share_matches),
+            share_minutes: n("share_minutes", &SHARE_MINUTES, d.share_minutes),
+            offline: b("offline", d.offline),
+            update_hours: n("update_hours", &UPDATE_HOURS, d.update_hours),
+            catalog_minutes: n("catalog_minutes", &CATALOG_MINUTES, d.catalog_minutes),
+            proxy: s("proxy")
+                .map(str::trim)
+                .filter(|p| deadlock_core::net::validate_proxy(p).is_ok())
+                .map(str::to_string),
+            channel: s("channel")
+                .and_then(|id| Channel::ALL.into_iter().find(|c| c.id() == id))
+                .unwrap_or(d.channel),
+            custom_accents: map
+                .get("custom_accents")
+                .and_then(Value::as_array)
+                .map(|list| {
+                    list.iter()
+                        .filter_map(Value::as_str)
+                        .filter(|hex| parse_hex(hex).is_some())
+                        .take(CUSTOM_ACCENTS_KEEP)
+                        .map(str::to_lowercase)
+                        .collect()
+                })
+                .unwrap_or_default(),
+            transparent_sidebar: b("transparent_sidebar", d.transparent_sidebar),
+            single_launch: b("single_launch", d.single_launch),
+            flags: map
+                .get("flags")
+                .and_then(Value::as_object)
+                .map(|o| {
+                    o.iter()
+                        .filter(|(k, _)| FLAGS.iter().any(|f| f.id == k.as_str()))
+                        .filter_map(|(k, v)| Some((k.clone(), v.as_bool()?)))
+                        .collect()
+                })
+                .unwrap_or_default(),
+            steam_account: map
+                .get("steam_account")
+                .and_then(Value::as_u64)
+                .and_then(|v| u32::try_from(v).ok())
+                .filter(|v| *v > 0),
+            gamebanana: map.get("gamebanana").and_then(|g| {
+                let id = g.get("id")?.as_u64().filter(|id| *id > 0)?;
+                let name = g.get("name").and_then(Value::as_str).unwrap_or("").to_string();
+                Some((id, name))
+            }),
+            skip_confirm: map
+                .get("skip_confirm")
+                .and_then(Value::as_array)
+                .map(|a| a.iter().filter_map(Value::as_str).map(str::to_string).collect())
+                .unwrap_or_default(),
+            personal: crate::ui::personalize::Personal::from_value(map.get("personalize")),
+        }
+    }
+
+    /// An experimental flag: the user's choice, else its default.
+    pub fn flag(&self, id: &str) -> bool {
+        self.flags
+            .get(id)
+            .copied()
+            .unwrap_or_else(|| FLAGS.iter().find(|f| f.id == id).is_some_and(|f| f.default))
+    }
+
+    /// Flip a flag, dropping the entry when it matches the default.
+    pub fn toggle_flag(&mut self, id: &str) {
+        let on = !self.flag(id);
+        let default = FLAGS.iter().find(|f| f.id == id).is_some_and(|f| f.default);
+        if on == default {
+            self.flags.remove(id);
+        } else {
+            self.flags.insert(id.to_string(), on);
+        }
+    }
+
+    /// Remember a custom accent, newest first.
+    pub fn remember_accent(&mut self, hex: &str) {
+        let hex = hex.to_lowercase();
+        self.custom_accents.retain(|h| *h != hex);
+        self.custom_accents.insert(0, hex);
+        self.custom_accents.truncate(CUSTOM_ACCENTS_KEEP);
+    }
+
+    pub fn to_json(&self) -> String {
+        let mut map = Map::new();
+        map.insert("schema".into(), json!(1));
+        map.insert("theme".into(), json!(self.theme.id()));
+        map.insert("accent".into(), json!(self.accent.id()));
+        map.insert("zoom".into(), json!(self.zoom));
+        map.insert("startup".into(), json!(self.startup.key()));
+        map.insert("on_launch".into(), json!(self.on_launch.id()));
+        map.insert("confirm_launch".into(), json!(self.confirm_launch));
+        map.insert("land_disabled".into(), json!(self.land_disabled));
+        map.insert("mature".into(), json!(self.mature.id()));
+        map.insert("browse_sort".into(), json!(self.browse_sort.query()));
+        map.insert(
+            "game_dir".into(),
+            self.game_dir.as_ref().map_or(Value::Null, |dir| json!(dir)),
+        );
+        map.insert("allow_stats".into(), json!(self.allow_stats));
+        map.insert("allow_share_codes".into(), json!(self.allow_share_codes));
+        map.insert("check_updates".into(), json!(self.check_updates));
+        map.insert("language".into(), json!(self.language.id()));
+        map.insert("date_format".into(), json!(self.date_format.id()));
+        map.insert("start_minimized".into(), json!(self.start_minimized));
+        map.insert("log_level".into(), json!(self.log_level.id()));
+        map.insert("discord".into(), json!(self.discord));
+        map.insert("discord_details".into(), json!(self.discord_details));
+        map.insert("discord_mods".into(), json!(self.discord_mods));
+        map.insert("share_matches".into(), json!(self.share_matches));
+        map.insert("share_minutes".into(), json!(self.share_minutes));
+        map.insert("offline".into(), json!(self.offline));
+        map.insert("update_hours".into(), json!(self.update_hours));
+        map.insert("catalog_minutes".into(), json!(self.catalog_minutes));
+        map.insert(
+            "proxy".into(),
+            self.proxy.as_ref().map_or(Value::Null, |p| json!(p)),
+        );
+        map.insert("channel".into(), json!(self.channel.id()));
+        map.insert("custom_accents".into(), json!(self.custom_accents));
+        map.insert("transparent_sidebar".into(), json!(self.transparent_sidebar));
+        map.insert("single_launch".into(), json!(self.single_launch));
+        map.insert("flags".into(), json!(self.flags));
+        map.insert("skip_confirm".into(), json!(self.skip_confirm));
+        map.insert("personalize".into(), self.personal.to_value());
+        map.insert(
+            "steam_account".into(),
+            self.steam_account.map_or(Value::Null, |a| json!(a)),
+        );
+        map.insert(
+            "gamebanana".into(),
+            self.gamebanana
+                .as_ref()
+                .map_or(Value::Null, |(id, name)| json!({"id": id, "name": name})),
+        );
+        serde_json::to_string_pretty(&Value::Object(map)).unwrap_or_default() + "\n"
+    }
+
+    /// Write the file through a temporary sibling. Headless runs write nothing.
+    pub fn save(&self) -> Result<(), String> {
+        if rune::is_headless() {
+            return Ok(());
+        }
+        let path = path();
+        if let Some(dir) = path.parent() {
+            fs::create_dir_all(dir).map_err(|error| error.to_string())?;
+        }
+        let partial = path.with_file_name(format!("{FILE_NAME}.{}.tmp", std::process::id()));
+        fs::write(&partial, self.to_json()).map_err(|error| error.to_string())?;
+        fs::rename(&partial, &path).map_err(|error| {
+            let _ = fs::remove_file(&partial);
+            error.to_string()
+        })
+    }
+
+    pub fn accent_color(&self) -> Option<Color> {
+        self.accent.color()
+    }
+}
+
+/// Change a setting, save, and report a failed write in the status line.
+pub fn edit(st: &mut crate::app::State, change: impl FnOnce(&mut Prefs)) {
+    change(&mut st.prefs);
+    if let Err(error) = st.prefs.save() {
+        st.settings.message = Some((
+            crate::screens::settings::i18n::fill(
+                crate::screens::settings::i18n::tr("Settings could not be saved: {}"),
+                &[&error],
+            ),
+            true,
+        ));
+    }
+}
+
+/// Point Steam discovery at the chosen folder for every reader, the core's included. Called
+/// at startup and when the folder changes in Settings.
+pub fn apply_game_dir(prefs: &Prefs) {
+    // The core reads `DAH_GAME_DIR` when no folder is passed. A user's own environment wins
+    // at startup; after that Settings owns the value.
+    if game_dir_from_env() {
+        return;
+    }
+    // SAFETY: Rust's own env access is locked; the core reads this variable only through
+    // `std::env::var_os`, at the start of a discovery.
+    unsafe {
+        match &prefs.game_dir {
+            Some(dir) => std::env::set_var("DAH_GAME_DIR", dir),
+            None => std::env::remove_var("DAH_GAME_DIR"),
+        }
+    }
+}
+
+/// True when `DAH_GAME_DIR` came from the user's environment, so Settings cannot change it.
+pub fn game_dir_from_env() -> bool {
+    static FROM_USER: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *FROM_USER.get_or_init(|| std::env::var_os("DAH_GAME_DIR").is_some())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn round_trips_every_field() {
+        let prefs = Prefs {
+            theme: Theme::Light,
+            accent: Accent::Custom("#12ab34".into()),
+            zoom: 1.1,
+            startup: Screen::Locker,
+            on_launch: OnLaunch::Minimize,
+            confirm_launch: true,
+            land_disabled: false,
+            mature: Mature::Hide,
+            browse_sort: BrowseSort::Updated,
+            game_dir: Some("/games/Deadlock".into()),
+            allow_stats: false,
+            allow_share_codes: false,
+            check_updates: true,
+            language: Lang::German,
+            date_format: DateFormat::DayFirst,
+            start_minimized: true,
+            log_level: Level::Debug,
+            discord: true,
+            discord_details: false,
+            discord_mods: false,
+            share_matches: true,
+            share_minutes: 60,
+            offline: true,
+            update_hours: 24,
+            catalog_minutes: 30,
+            proxy: Some("http://127.0.0.1:7890".into()),
+            channel: Channel::Preview,
+            custom_accents: vec!["#12ab34".into(), "#abc".into()],
+            transparent_sidebar: true,
+            single_launch: true,
+            flags: [("servers".to_string(), false), ("docked_details".to_string(), true)]
+                .into_iter()
+                .collect(),
+            steam_account: Some(81_220_464),
+            gamebanana: Some((6_020_123, "Kalo".into())),
+            skip_confirm: ["installed.delete".to_string()].into_iter().collect(),
+            personal: {
+                let mut p = crate::ui::personalize::Personal::default();
+                p.theme = Some(crate::ui::personalize::ThemePick::Preset("brass"));
+                p.glow.on = true;
+                p.radius = crate::ui::personalize::Radius::Sharp;
+                p
+            },
+        };
+        assert!(Prefs::from_json(&prefs.to_json()) == prefs);
+    }
+
+    /// A settings.json from before Personalize loads every old field and leaves
+    /// Personalize off.
+    #[test]
+    fn old_settings_without_personalize_still_load() {
+        let old = r##"{"schema":1,"theme":"midnight","accent":"#12ab34","zoom":1.1,"transparent_sidebar":true,"custom_accents":["#12ab34"]}"##;
+        let p = Prefs::from_json(old);
+        assert!(p.theme == Theme::Midnight);
+        assert_eq!(p.accent, Accent::Custom("#12ab34".into()));
+        assert!(p.transparent_sidebar);
+        assert_eq!(p.personal, crate::ui::personalize::Personal::default());
+        assert!(p.personal.palette().is_none());
+        let back = Prefs::from_json(&p.to_json());
+        assert!(back == p);
+    }
+
+    #[test]
+    fn bad_values_fall_back_one_by_one() {
+        let prefs = Prefs::from_json(
+            r#"{"theme":"plaid","accent":"violet","zoom":3,"startup":"settings","mature":7,"allow_stats":false}"#,
+        );
+        let d = Prefs::default();
+        assert!(prefs.theme == d.theme);
+        assert_eq!(prefs.accent, Accent::Preset("violet"));
+        assert_eq!(prefs.zoom, d.zoom);
+        assert!(prefs.startup == d.startup);
+        assert_eq!(prefs.mature, d.mature);
+        assert!(!prefs.allow_stats);
+        assert!(Prefs::from_json("not json") == d);
+    }
+
+    #[test]
+    fn flags_read_defaults_and_store_only_changes() {
+        let mut p = Prefs::default();
+        assert!(p.flag("servers"));
+        assert!(!p.flag("docked_details"));
+        assert!(!p.flag("no-such-flag"));
+        p.toggle_flag("servers");
+        assert!(!p.flag("servers"));
+        p.toggle_flag("servers");
+        assert!(p.flags.is_empty(), "back at the default, nothing is stored");
+        let back = Prefs::from_json(r#"{"flags":{"servers":false,"bogus":true},"share_minutes":7}"#);
+        assert!(!back.flag("servers"));
+        assert!(!back.flags.contains_key("bogus"));
+        assert_eq!(back.share_minutes, 30);
+    }
+
+    #[test]
+    fn custom_accents_keep_the_newest_few() {
+        let mut p = Prefs::default();
+        for i in 0..8 {
+            p.remember_accent(&format!("#00000{i}"));
+        }
+        p.remember_accent("#000003");
+        assert_eq!(p.custom_accents.len(), CUSTOM_ACCENTS_KEEP);
+        assert_eq!(p.custom_accents[0], "#000003");
+    }
+
+    #[test]
+    fn hex_accepts_short_and_long_forms() {
+        assert!(parse_hex("#abc").is_some());
+        assert!(parse_hex("a1b2c3").is_some());
+        assert!(parse_hex("#ggg").is_none());
+        assert!(parse_hex("#12345").is_none());
+    }
+}

@@ -5,7 +5,30 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
-rune = { path = "../../../vendor/rune/crates/rune", features = ["tooling"] }
+rune = { path = "../../../vendor/rune/crates/rune", features = ["tooling", "native-file-dialog"] }
 deadlock-core = { path = "../deadlock-core" }
+# Folded helpers: `Sigil cli ...` runs the dah CLI and `Sigil agent-host` the TinyAgent host.
+dah-rs = { path = "../dah-rs" }
+dah-agent = { path = "../agent-host" }
 serde_json = { workspace = true }
 ureq = { workspace = true }
+# Self-update (src/updater.rs): Ed25519 verify through ring (already linked for rustls), sha256,
+# base64 and the ZIP reader. All four are already in the workspace lock; no new crate.
+ring = "0.17"
+sha2 = "0.10"
+base64 = "0.22"
+# Personalize: decode and scale a chosen background or art image on a worker. Same version and
+# features Rune already links, so no new crate.
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
+zip = { version = "2", default-features = false, features = ["deflate"] }
+# Settings > About shows the Rust heap beside the process total (src/memory.rs): the counting
+# allocator from Rune's own process watcher. libc only.
+procwatch = { path = "../../../vendor/rune/crates/procwatch" }
+# Sound previews (screens/browse/audio.rs). Playback plus the MP3 decoder GameBanana serves
+# its samples in; no recording, no other formats.
+rodio = { version = "0.23", default-features = false, features = ["playback", "mp3"] }
+
+# "Install with Sigil" links (src/deeplink.rs): the per-user HKCU\Software\Classes\sigil handler.
+# The same windows-sys Rune already links; no new crate.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Security", "Win32_System_Registry", "Win32_System_ProcessStatus", "Win32_System_Threading"] }
