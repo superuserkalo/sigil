@@ -130,7 +130,7 @@ fn save_bypass(st: &mut State) {
 
 /// One request to `url` through the current proxy: the time to an answer, or the reason.
 pub fn probe(url: &str) -> Result<u128, String> {
-    let agent = deadlock_core::net::with_proxy(ureq::Agent::config_builder())
+    let agent = deadlock_core::net::with_proxy(deadlock_core::net::builder())
         .middleware(deadlock_core::net::gate)
         .timeout_global(Some(Duration::from_secs(8)))
         .http_status_as_error(false)

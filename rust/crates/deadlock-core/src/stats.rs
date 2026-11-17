@@ -576,7 +576,7 @@ impl StatsClient {
 
     fn with_cache_dir(dir: Option<PathBuf>) -> Self {
         Self {
-            agent: ureq::Agent::config_builder()
+            agent: crate::net::builder()
                 .middleware(crate::net::gate)
                 .timeout_global(Some(Duration::from_secs(REQUEST_TIMEOUT_SECONDS)))
                 .http_status_as_error(false)

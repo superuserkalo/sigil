@@ -2028,7 +2028,7 @@ pub fn parse_mod_files(mod_id: u64, body: &str) -> Result<ModFiles> {
 /// Look a mod up on GameBanana. Network: `gamebanana.com`, on the allowlist.
 pub fn fetch_mod_files(mod_id: u64) -> Result<ModFiles> {
     let url = format!("{GAMEBANANA_API}/{mod_id}?_csvProperties=_idRow,_sName,_bIsNsfw,_aFiles");
-    let agent = ureq::Agent::config_builder()
+    let agent = crate::net::builder()
         .middleware(crate::net::gate)
         .timeout_global(Some(Duration::from_secs(API_TIMEOUT_SECONDS)))
         .http_status_as_error(false)

@@ -54,7 +54,7 @@ pub fn fetch_patch_notes(count: usize) -> Result<Vec<PatchNote>> {
     );
 
     crate::net::check().map_err(Error::Network)?;
-    let mut response = ureq::get(&url)
+    let mut response = crate::net::get(&url)
         .header("User-Agent", "dah/0.0.0")
         .call()
         .map_err(|error| Error::Network(format!("Steam news request failed: {error}")))?;

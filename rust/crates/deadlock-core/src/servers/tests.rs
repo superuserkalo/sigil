@@ -711,7 +711,7 @@ fn connect_passwords_are_allowlisted() {
 #[test]
 fn guarded_resolver_refuses_local_addresses() {
     use ureq::unversioned::resolver::Resolver;
-    let config = ureq::Agent::config_builder().build();
+    let config = crate::net::builder().build();
     let resolve = |url: &str, allow_private: bool| {
         let uri: ureq::http::Uri = url.parse().unwrap();
         GuardedResolver { allow_private }.resolve(

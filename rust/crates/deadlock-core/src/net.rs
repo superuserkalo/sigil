@@ -63,9 +63,26 @@ pub fn gate(
     next.handle(request)
 }
 
+/// Every HTTPS client's starting configuration: certificates are checked against the operating
+/// system's trust store, as a browser does, not only a bundled list. Antivirus HTTPS scanning
+/// (Avast, AVG, Kaspersky, ESET, Bitdefender) re-signs traffic with a root it adds to that store,
+/// so with the bundled list alone every request failed on those machines.
+pub fn builder() -> ureq::config::ConfigBuilder<ureq::typestate::AgentScope> {
+    ureq::Agent::config_builder().tls_config(
+        ureq::tls::TlsConfig::builder()
+            .root_certs(ureq::tls::RootCerts::PlatformVerifier)
+            .build(),
+    )
+}
+
+/// A one-off GET with the shared TLS setup, in place of `ureq::get`.
+pub fn get(url: &str) -> ureq::RequestBuilder<ureq::typestate::WithoutBody> {
+    builder().build().new_agent().get(url)
+}
+
 /// An agent with the gate and a global timeout, for new call sites.
 pub fn agent(timeout: std::time::Duration) -> ureq::Agent {
-    ureq::Agent::config_builder()
+    builder()
         .middleware(gate)
         .timeout_global(Some(timeout))
         .build()

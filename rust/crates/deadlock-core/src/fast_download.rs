@@ -229,7 +229,7 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("sigil-ranges-{}", std::process::id()));
         fs::create_dir_all(&dir).unwrap();
         let path = dir.join("file.bin");
-        let agent: ureq::Agent = ureq::Agent::config_builder().build().into();
+        let agent: ureq::Agent = crate::net::builder().build().into();
         let (bytes, sha) = fetch_ranges(&agent, &url, "test", &path, total as u64, 4).unwrap();
         assert_eq!(bytes, total as u64);
         assert_eq!(fs::read(&path).unwrap(), body);

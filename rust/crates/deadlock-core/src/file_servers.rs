@@ -99,7 +99,7 @@ pub fn parse_directory(body: &str) -> Result<Directory> {
 }
 
 fn agent(timeout: u64) -> ureq::Agent {
-    crate::net::with_proxy(ureq::Agent::config_builder())
+    crate::net::with_proxy(crate::net::builder())
         .middleware(crate::net::gate)
         .timeout_global(Some(Duration::from_secs(timeout)))
         .max_redirects(0)

@@ -5017,7 +5017,7 @@ impl MeshReport {
 // ---------------------------------------------------------------------------
 
 fn http_agent(timeout_seconds: u64) -> ureq::Agent {
-    ureq::Agent::config_builder()
+    crate::net::builder()
         .middleware(crate::net::gate)
         .timeout_global(Some(Duration::from_secs(timeout_seconds)))
         // Read the provider error body instead of losing it to a status error.

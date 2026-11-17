@@ -366,7 +366,7 @@ pub fn decode_share_code(code: &str, current: &Crosshair) -> Result<Crosshair> {
 
 fn share_api_get(url: &str, query: Vec<(&'static str, String)>) -> Result<String> {
     use std::time::Duration;
-    let agent = ureq::Agent::config_builder()
+    let agent = crate::net::builder()
         .middleware(crate::net::gate)
         .timeout_global(Some(Duration::from_secs(20)))
         .http_status_as_error(false)

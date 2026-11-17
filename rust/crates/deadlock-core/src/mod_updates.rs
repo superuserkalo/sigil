@@ -172,7 +172,7 @@ pub fn check_all(
 /// Read a mod's file list from the public API.
 pub fn fetch_remote_mod(mod_id: u64) -> Result<RemoteMod> {
     let url = format!("{API_BASE}/{mod_id}?_csvProperties=_idRow,_aFiles");
-    let agent = crate::net::with_proxy(ureq::Agent::config_builder())
+    let agent = crate::net::with_proxy(crate::net::builder())
         .middleware(crate::net::gate)
         .timeout_global(Some(Duration::from_secs(TIMEOUT_SECONDS)))
         .http_status_as_error(false)
