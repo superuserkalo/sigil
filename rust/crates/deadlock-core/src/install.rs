@@ -13,13 +13,13 @@
 //!
 //! Network access is limited to the GameBanana download hosts plus an explicit
 //! local mirror, HTTPS only unless the mirror names `http://` itself. There is
-//! no shell: the 7z and rar backends are resolved binaries run with an argument
-//! array, never through a shell and never downloaded on demand.
+//! no shell: a fallback 7z or unrar backend is a resolved binary run with an
+//! argument array, never through a shell and never downloaded on demand.
 //!
-//! Formats: ZIP is read in process (stored and deflate). 7z and rar need
-//! `DAH_7Z` / `DAH_UNRAR` or the tool on `PATH`; when it is missing the error
-//! names the format and the tool. That gap is real: Deadlock uploads on
-//! GameBanana are commonly `.7z`.
+//! Formats: ZIP, 7z (sevenz-rust2) and RAR (RARLAB's UnRAR through the unrar
+//! crate) are all read in process, so a player needs no 7-Zip or WinRAR. A tool
+//! from `DAH_7Z` / `DAH_UNRAR` or `PATH` is only tried when the built-in reader
+//! fails (an unusual method). Many GameBanana uploads are `.rar` or `.7z`.
 
 use std::collections::BTreeSet;
 use std::env;
@@ -524,7 +524,7 @@ pub fn download(url: &str, destination_dir: &Path, policy: &DownloadPolicy) -> R
 
     fs::create_dir_all(destination_dir)?;
 
-    let agent = crate::net::with_proxy(ureq::Agent::config_builder())
+    let agent = crate::net::with_proxy(crate::net::builder())
         .middleware(crate::net::gate)
         .timeout_global(Some(Duration::from_secs(policy.timeout_seconds)))
         .max_redirects(0)
@@ -913,7 +913,7 @@ pub fn parse_mod_profile(body: &str) -> Result<GameBananaFile> {
 pub fn fetch_gamebanana_file(mod_id: u64) -> Result<GameBananaFile> {
     let url = format!("{GAMEBANANA_PROFILE_URL}/{mod_id}/ProfilePage");
 
-    let agent = crate::net::with_proxy(ureq::Agent::config_builder())
+    let agent = crate::net::with_proxy(crate::net::builder())
         .middleware(crate::net::gate)
         .timeout_global(Some(Duration::from_secs(API_TIMEOUT_SECONDS)))
         .http_status_as_error(false)
@@ -1124,12 +1124,26 @@ pub fn extract_archive(
 
     let result = match format {
         ArchiveFormat::Zip => extract_zip(archive, destination, limits),
-        ArchiveFormat::SevenZip | ArchiveFormat::Rar => match tools.for_format(format) {
-            Some(tool) => extract_with_tool(format, tool, archive, destination, limits),
-            None => Err(backend_unavailable(format)),
-        },
+        // Built in, as for ZIP: no 7-Zip, WinRAR or unrar needed. A tool on PATH (or DAH_7Z /
+        // DAH_UNRAR) is only a fallback for a method the built-in reader lacks.
+        ArchiveFormat::SevenZip | ArchiveFormat::Rar => {
+            let built_in = match format {
+                ArchiveFormat::SevenZip => extract_7z(archive, destination, limits),
+                _ => extract_rar(archive, destination, limits),
+            };
+            match (built_in, tools.for_format(format)) {
+                (Ok(done), _) => Ok(done),
+                (Err(error), Some(tool)) => {
+                    let _ = fs::remove_dir_all(destination);
+                    fs::create_dir_all(destination)?;
+                    extract_with_tool(format, tool, archive, destination, limits)
+                        .map_err(|tool_error| Error::msg(format!("{error} The {} fallback also failed: {tool_error}", format.tool_name())))
+                }
+                (Err(error), None) => Err(error),
+            }
+        }
         ArchiveFormat::Unknown => Err(Error::msg(format!(
-            "Could not identify the archive format of {}. Supported formats are .zip (built in), .7z and .rar (external tools).",
+            "Could not identify the archive format of {}. Sigil opens .zip, .7z and .rar mods.",
             archive.display()
         ))),
     };
@@ -1253,6 +1267,163 @@ fn extract_zip(
 
     files.sort();
     Ok((files, total))
+}
+
+/// An archive's entry name with `/` separators (7z and RAR store the creator's separator).
+fn portable_name(raw: &str) -> String {
+    raw.replace('\\', "/")
+}
+
+/// A .7z mod, in process (sevenz-rust2). Each name goes through [`safe_entry_path`]; the entry
+/// count and the bytes written are capped while writing, not after.
+fn extract_7z(archive: &Path, destination: &Path, limits: &ExtractLimits) -> Result<(Vec<String>, u64)> {
+    let mut reader = sevenz_rust2::ArchiveReader::open(archive, sevenz_rust2::Password::empty())
+        .map_err(|error| match error {
+            sevenz_rust2::Error::PasswordRequired => Error::msg(format!(
+                "{} is password protected, so Sigil cannot open it.",
+                archive.display()
+            )),
+            other => Error::msg(format!("{} is not a readable 7z archive: {other}", archive.display())),
+        })?;
+    let mut files: Vec<String> = Vec::new();
+    let mut total: u64 = 0;
+    let mut refused: Option<Error> = None;
+    let outcome = reader.for_each_entries(|entry, data| {
+        if entry.is_directory() {
+            return Ok(true);
+        }
+        if files.len() >= limits.max_entries {
+            refused = Some(Error::msg(format!(
+                "{} holds more than {} files, above the cap.",
+                archive.display(),
+                limits.max_entries
+            )));
+            return Ok(false);
+        }
+        let name = portable_name(entry.name());
+        let path = match safe_entry_path(destination, &name) {
+            Ok(path) => path,
+            Err(error) => {
+                refused = Some(error);
+                return Ok(false);
+            }
+        };
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        let mut out = File::create(&path)?;
+        let room = limits.max_total_bytes.saturating_sub(total);
+        total += std::io::copy(&mut data.take(room + 1), &mut out)?;
+        if total > limits.max_total_bytes {
+            refused = Some(Error::msg(format!(
+                "{} unpacks to more than {} bytes, above the cap.",
+                archive.display(),
+                limits.max_total_bytes
+            )));
+            return Ok(false);
+        }
+        files.push(name);
+        Ok(true)
+    });
+    if let Some(error) = refused {
+        return Err(error);
+    }
+    outcome.map_err(|error| match error {
+        // AES is the only 7z cipher, and it means a password.
+        sevenz_rust2::Error::PasswordRequired | sevenz_rust2::Error::MaybeBadPassword(_) => Error::msg(format!(
+            "{} is password protected, so Sigil cannot open it.",
+            archive.display()
+        )),
+        sevenz_rust2::Error::UnsupportedCompressionMethod(method) if method.contains("AES") => Error::msg(format!(
+            "{} is password protected, so Sigil cannot open it.",
+            archive.display()
+        )),
+        other => Error::msg(format!("Could not extract {}: {other}", archive.display())),
+    })?;
+    // The same tree check as a tool's output: no links, nothing outside, caps.
+    verify_tree("7z", archive, destination, limits)
+}
+
+/// A .rar mod, in process (the unrar crate builds RARLAB's UnRAR library). Names go through
+/// [`safe_entry_path`] and each file is written to the path that returns, never to the name
+/// the archive gives; directories, split volumes and encrypted entries are not followed.
+fn extract_rar(archive: &Path, destination: &Path, limits: &ExtractLimits) -> Result<(Vec<String>, u64)> {
+    let fail = |error: unrar::error::UnrarError| {
+        Error::msg(format!("Could not extract {}: {error}", archive.display()))
+    };
+    let mut open = unrar::Archive::new(archive).open_for_processing().map_err(fail)?;
+    let mut count = 0usize;
+    let mut declared: u64 = 0;
+    while let Some(header) = open.read_header().map_err(fail)? {
+        let entry = header.entry();
+        if entry.is_encrypted() {
+            return Err(Error::msg(format!(
+                "{} is password protected, so Sigil cannot open it.",
+                archive.display()
+            )));
+        }
+        if entry.is_split_before() {
+            return Err(Error::msg(format!(
+                "{} is one part of a multi-part RAR; Sigil needs the whole archive.",
+                archive.display()
+            )));
+        }
+        if entry.is_directory() {
+            open = header.skip().map_err(fail)?;
+            continue;
+        }
+        count += 1;
+        declared = declared.saturating_add(entry.unpacked_size);
+        if count > limits.max_entries || declared > limits.max_total_bytes {
+            return Err(Error::msg(format!(
+                "{} is larger than Sigil unpacks ({} files or {} bytes at most).",
+                archive.display(),
+                limits.max_entries,
+                limits.max_total_bytes
+            )));
+        }
+        let name = portable_name(&entry.filename.to_string_lossy());
+        let path = safe_entry_path(destination, &name)?;
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        open = header.extract_to(&path).map_err(fail)?;
+    }
+    // Sizes the archive declares can lie: the written tree is checked again.
+    verify_tree("RAR", archive, destination, limits)
+}
+
+/// The files under `destination` after an extract, with the caps and the no-links rule applied
+/// to what was actually written. `what` names the extractor in an error.
+fn verify_tree(
+    what: &str,
+    archive: &Path,
+    destination: &Path,
+    limits: &ExtractLimits,
+) -> Result<(Vec<String>, u64)> {
+    let files = walk_tree(destination)?;
+    if files.len() > limits.max_entries {
+        return Err(Error::msg(format!(
+            "{what} extracted {} entries from {}, above the {} entry cap.",
+            files.len(),
+            archive.display(),
+            limits.max_entries
+        )));
+    }
+    let mut total: u64 = 0;
+    for (_, size) in &files {
+        total += size;
+        if total > limits.max_total_bytes {
+            return Err(Error::msg(format!(
+                "{what} extracted more than {} bytes from {}, above the cap.",
+                limits.max_total_bytes,
+                archive.display()
+            )));
+        }
+    }
+    let mut paths: Vec<String> = files.into_iter().map(|(path, _)| path).collect();
+    paths.sort();
+    Ok((paths, total))
 }
 
 fn extract_with_tool(
@@ -4040,7 +4211,7 @@ mod tests {
     }
 
     #[test]
-    fn seven_zip_and_rar_name_the_missing_backend() {
+    fn broken_7z_and_rar_fail_cleanly_without_a_tool() {
         let root = scratch("backends");
         let limits = ExtractLimits::default();
         let tools = ToolPaths::default();
@@ -4050,10 +4221,8 @@ mod tests {
         let text = extract_archive(&seven, &root.join("out-7z"), &limits, &tools)
             .unwrap_err()
             .to_string();
-        assert!(text.contains("Archive backend unavailable"), "{text}");
-        assert!(text.contains("7Z"), "{text}");
-        assert!(text.contains("7z"), "{text}");
-        assert!(text.contains("DAH_7Z"), "{text}");
+        assert!(text.contains("mod.7z"), "{text}");
+        assert!(!text.contains("PATH"), "the built-in reader needs no tool: {text}");
         assert!(!root.join("out-7z").exists());
 
         let rar = root.join("mod.rar");
@@ -4061,9 +4230,9 @@ mod tests {
         let text = extract_archive(&rar, &root.join("out-rar"), &limits, &tools)
             .unwrap_err()
             .to_string();
-        assert!(text.contains("RAR"), "{text}");
-        assert!(text.contains("unrar"), "{text}");
-        assert!(text.contains("DAH_UNRAR"), "{text}");
+        assert!(text.contains("mod.rar"), "{text}");
+        assert!(!text.contains("PATH"), "{text}");
+        assert!(!root.join("out-rar").exists());
 
         assert_eq!(detect_archive_format(&seven), ArchiveFormat::SevenZip);
         assert_eq!(detect_archive_format(&rar), ArchiveFormat::Rar);
@@ -4923,5 +5092,73 @@ mod tests {
         assert_eq!(choices[0].chunks, 2);
         assert_eq!(choices[1].bytes, 200);
         assert_eq!(choices[1].chunks, 0);
+    }
+}
+
+#[cfg(test)]
+mod archive_tests {
+    use super::*;
+
+    fn fixture(name: &str) -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/archives").join(name)
+    }
+
+    fn scratch(tag: &str) -> PathBuf {
+        let dir = env::temp_dir().join(format!("sigil-archive-{tag}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        dir
+    }
+
+    /// No tool on PATH, so only the built-in readers run.
+    fn no_tools() -> ToolPaths {
+        ToolPaths { seven_zip: None, unrar: None }
+    }
+
+    fn extracts(name: &str) -> ExtractReport {
+        let out = scratch(name);
+        let report = extract_archive(&fixture(name), &out, &ExtractLimits::default(), &no_tools())
+            .unwrap_or_else(|error| panic!("{name}: {error}"));
+        assert!(!report.files.is_empty(), "{name} extracted nothing");
+        for file in &report.files {
+            let path = out.join(file);
+            assert!(path.is_file(), "{name}: {file} missing");
+            assert!(path.starts_with(&out));
+        }
+        let _ = fs::remove_dir_all(&out);
+        report
+    }
+
+    #[test]
+    fn seven_zip_and_rar_open_without_any_tool() {
+        assert_eq!(extracts("two_files_with_content_lzma.7z").format, ArchiveFormat::SevenZip);
+        assert_eq!(extracts("solid.7z").format, ArchiveFormat::SevenZip);
+        assert_eq!(extracts("solid.rar").format, ArchiveFormat::Rar);
+        assert_eq!(extracts("unicode.rar").format, ArchiveFormat::Rar);
+    }
+
+    #[test]
+    fn a_password_protected_7z_says_so() {
+        let out = scratch("encrypted");
+        let error = extract_archive(&fixture("encrypted.7z"), &out, &ExtractLimits::default(), &no_tools())
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("password") || error.contains("Password"), "{error}");
+        assert!(!out.exists(), "a failed extract removes its folder");
+    }
+
+    #[test]
+    fn the_byte_cap_holds_for_7z_and_rar() {
+        let tight = ExtractLimits { max_total_bytes: 1, ..ExtractLimits::default() };
+        for name in ["two_files_with_content_lzma.7z", "solid.rar"] {
+            let out = scratch(&format!("cap-{name}"));
+            let result = extract_archive(&fixture(name), &out, &tight, &no_tools());
+            assert!(result.is_err(), "{name} passed a 1 byte cap");
+            assert!(!out.exists());
+        }
+    }
+
+    #[test]
+    fn archive_names_use_forward_slashes() {
+        assert_eq!(portable_name("materials\\hud\\a.vtex_c"), "materials/hud/a.vtex_c");
     }
 }
