@@ -21,7 +21,17 @@ sha1 = "0.10"
 getrandom = "0.3"
 base64 = "0.22"
 zip = { version = "2", default-features = false, features = ["deflate"] }
+# .7z and .rar mods open in process, as Deadlock Mod Manager does: no 7-Zip, WinRAR or
+# unrar on PATH. sevenz-rust2 is pure Rust (Apache-2.0); unrar builds RARLAB's UnRAR source
+# (freeware licence: extraction only, see THIRD_PARTY_NOTICES.md).
+sevenz-rust2 = { version = "0.21", default-features = false, features = ["bzip2", "deflate", "ppmd", "zstd"] }
+unrar = "0.5.8"
 # Deadworks server content arrives as zstd or bzip2. Both are already in the workspace lock
 # through `zip` in `dah-rs`, so this adds no new crate.
 zstd = "0.13"
 bzip2 = "0.5"
+
+# Windows: Steam's and Deadlock's install paths from the registry, and the fixed drives to look
+# for Steam libraries on (discovery.rs). The same windows-sys the desktop app links.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_System_Registry", "Win32_Storage_FileSystem"] }

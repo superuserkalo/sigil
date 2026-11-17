@@ -29,6 +29,11 @@ export SIGIL_ART_DIR="$art"
 
 echo "== build windows =="
 export RUSTFLAGS="${RUSTFLAGS:-} -C target-feature=+crt-static"
+# The RAR reader builds RARLAB's UnRAR (C++). cargo-xwin compiles it with the host clang, older
+# than the MSVC STL expects, and clang (unlike cl.exe) wants the SSSE3 and AES intrinsics UnRAR
+# uses enabled. Every CPU Deadlock runs on has both. A build on Windows with cl.exe needs none
+# of this.
+export CL="${CL:-} /D_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH -mssse3 -maes"
 cargo xwin build --manifest-path rust/Cargo.toml --release --target "$target" \
   -p dah-desktop
 

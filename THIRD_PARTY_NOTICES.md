@@ -136,6 +136,24 @@ for redistribution.
 - Use: local Windows toolchain for `resourcecompiler.exe`. Never redistributed, never downloaded by
   this app. The user installs it themselves.
 
+**UnRAR (through the `unrar` crate)**
+- Source: https://www.rarlab.com/rar_add.htm, bound by https://github.com/muja/unrar.rs
+- License: the `unrar` crate is MIT OR Apache-2.0. The UnRAR source it builds is freeware under
+  RARLAB's licence, whose required paragraph follows.
+- Use: opens `.rar` mods in process, so no WinRAR or unrar is needed. Built into Sigil.
+
+> UnRAR source code may be used in any software to handle RAR archives without limitations free of
+> charge, but cannot be used to develop RAR (WinRAR) compatible archiver and to re-create RAR
+> compression algorithm, which is proprietary. Distribution of modified UnRAR source code in
+> separate form or as a part of other software is permitted, provided that full text of this
+> paragraph, starting from "UnRAR source code" words, is included in license, or in documentation
+> if license is not available, and in source code comments of resulting package.
+
+**sevenz-rust2**
+- Source: https://github.com/hasenbanck/sevenz-rust2
+- License: Apache-2.0
+- Use: opens `.7z` mods in process, so no 7-Zip is needed. Built into Sigil.
+
 ## Data and services
 
 **GameTracking-Deadlock**
