@@ -260,6 +260,20 @@ pub fn read_game_info_status(gameinfo_path: &Path) -> Result<GameInfoStatus> {
         }
     }
 
+    // A Sigil profile with its own folder replaces the plain line with a marked block that
+    // mounts `citadel/addons/sigil-<slug>`. Mods load from there, so the search path is set.
+    if crate::profiles::profile_block_folder(&text).is_some() {
+        let line = text
+            .lines()
+            .position(|line| line.trim() == crate::profiles::PROFILE_BLOCK_BEGIN)
+            .map(|index| index + 1);
+        return Ok(GameInfoStatus {
+            present: true,
+            addons_search_path: true,
+            line,
+        });
+    }
+
     Ok(GameInfoStatus {
         present: true,
         addons_search_path: false,
@@ -502,3 +516,27 @@ fn is_directory(path: &Path) -> Result<bool> {
         Err(error) => Err(error.into()),
     }
 }
+
+#[cfg(test)]
+mod profile_block_tests {
+    use super::read_game_info_status;
+
+    #[test]
+    fn a_mounted_profile_block_counts_as_the_addons_search_path() {
+        let dir = std::env::temp_dir().join(format!("dah-gi-profile-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("gameinfo.gi");
+        std::fs::write(
+            &path,
+            "SearchPaths\n{\n\t// sigil:profile-begin\n\tGame\t\tcitadel/addons/sigil-ranked\n\t// sigil:profile-end\n\tGame\t\tcitadel\n}\n",
+        )
+        .unwrap();
+        let status = read_game_info_status(&path).unwrap();
+        assert!(status.addons_search_path);
+        assert_eq!(status.line, Some(3));
+        std::fs::write(&path, "SearchPaths\n{\n\tGame\t\tcitadel\n}\n").unwrap();
+        assert!(!read_game_info_status(&path).unwrap().addons_search_path);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+}
+

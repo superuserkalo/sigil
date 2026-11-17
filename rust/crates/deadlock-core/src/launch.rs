@@ -21,6 +21,8 @@ use std::fs;
 use std::io::Read;
 use std::path::{Component, Path, PathBuf};
 use std::process::Command;
+use std::thread::sleep;
+use std::time::Duration;
 
 use chrono::Utc;
 use regex::Regex;
@@ -31,7 +33,7 @@ use crate::discovery::{
     DEADLOCK_APP_ID, DeadlockInstall, InstallDiscoveryOptions, discover_deadlock_install,
 };
 use crate::error::{Error, Result};
-use crate::util::{now_iso, write_atomic};
+use crate::util::{now_iso, unix_seconds_to_iso, write_atomic};
 
 /// Steam hands the URL to the installed Deadlock client.
 pub const STEAM_RUN_URL: &str = "steam://rungameid/1422450";
@@ -800,4 +802,440 @@ fn normalize(path: &Path) -> PathBuf {
     }
 
     output
+}
+
+// ---------------------------------------------------------------------------
+// The running game
+// ---------------------------------------------------------------------------
+//
+// Steam starts the game, so the app never owns the process. Two things make the running state
+// work anyway: a small marker under the app data directory written when Sigil asks Steam to
+// start the game, and a process table check. The marker carries the mode and the start time, so
+// a crash dump can be told apart from one left by an earlier session.
+
+/// Marker file under the app data directory.
+pub const LAUNCH_STATE_NAME: &str = "launch-state.json";
+
+/// Schema version written to the marker.
+pub const LAUNCH_STATE_SCHEMA: u32 = 1;
+
+/// Launch mode a marker carries when the game was started outside Sigil.
+pub const MODE_UNKNOWN: &str = "unknown";
+
+/// How long a graceful stop waits before it forces the process.
+pub const STOP_GRACE: Duration = Duration::from_secs(8);
+
+/// The last launch Sigil asked Steam for. App data only, never the game folder.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct LaunchMarker {
+    pub schema: u32,
+    /// [`MODE_MODDED`], [`MODE_VANILLA`] or [`MODE_UNKNOWN`].
+    pub mode: String,
+    pub started_at: String,
+    /// Unix seconds, for comparing against a dump's modified time.
+    pub started_secs: i64,
+    pub exited_at: Option<String>,
+    pub exit_secs: Option<i64>,
+    /// The dump the player acknowledged, in unix seconds. A newer dump is a new advisory.
+    pub acknowledged_secs: Option<i64>,
+}
+
+impl LaunchMarker {
+    /// True when the marker describes a run that has not been seen ending yet.
+    pub fn open(&self) -> bool {
+        self.exit_secs.is_none()
+    }
+}
+
+/// Where the marker lives.
+pub fn launch_state_path(data_dir: &Path) -> PathBuf {
+    data_dir.join(LAUNCH_STATE_NAME)
+}
+
+/// The marker, or None when Sigil has never launched the game from this data directory.
+pub fn read_marker(data_dir: &Path) -> Option<LaunchMarker> {
+    let text = fs::read_to_string(launch_state_path(data_dir)).ok()?;
+    let marker: LaunchMarker = serde_json::from_str(&text).ok()?;
+    (marker.schema == LAUNCH_STATE_SCHEMA).then_some(marker)
+}
+
+/// Write the marker for a run that is about to start. App data write.
+pub fn record_launch(data_dir: &Path, mode: &str) -> Result<LaunchMarker> {
+    let mode = match mode {
+        MODE_MODDED | MODE_VANILLA | MODE_UNKNOWN => mode,
+        other => {
+            return Err(Error::msg(format!(
+                "{other:?} is not a launch mode. Use {MODE_MODDED}, {MODE_VANILLA} or {MODE_UNKNOWN}."
+            )));
+        }
+    };
+    let now = Utc::now();
+    let marker = LaunchMarker {
+        schema: LAUNCH_STATE_SCHEMA,
+        mode: mode.to_string(),
+        started_at: now_iso(),
+        started_secs: now.timestamp(),
+        exited_at: None,
+        exit_secs: None,
+        acknowledged_secs: read_marker(data_dir).and_then(|old| old.acknowledged_secs),
+    };
+    store_marker(data_dir, &marker)?;
+    Ok(marker)
+}
+
+/// Close an open marker once the process is gone. Returns the marker as it stands now.
+pub fn record_exit(data_dir: &Path) -> Result<Option<LaunchMarker>> {
+    let Some(mut marker) = read_marker(data_dir) else {
+        return Ok(None);
+    };
+    if !marker.open() {
+        return Ok(Some(marker));
+    }
+    let now = Utc::now();
+    marker.exited_at = Some(unix_seconds_to_iso(now.timestamp()));
+    marker.exit_secs = Some(now.timestamp());
+    store_marker(data_dir, &marker)?;
+    Ok(Some(marker))
+}
+
+/// Remember that the player read the advisory for this dump. App data write.
+pub fn acknowledge_crash(data_dir: &Path, dump_secs: i64) -> Result<()> {
+    let mut marker = read_marker(data_dir).unwrap_or(LaunchMarker {
+        schema: LAUNCH_STATE_SCHEMA,
+        mode: MODE_UNKNOWN.to_string(),
+        started_at: String::new(),
+        started_secs: 0,
+        exited_at: None,
+        exit_secs: None,
+        acknowledged_secs: None,
+    });
+    marker.acknowledged_secs = Some(dump_secs);
+    store_marker(data_dir, &marker)
+}
+
+fn store_marker(data_dir: &Path, marker: &LaunchMarker) -> Result<()> {
+    let mut text = serde_json::to_string_pretty(marker)?;
+    text.push('\n');
+    write_atomic(&launch_state_path(data_dir), text.as_bytes())
+}
+
+/// One answer of the process check.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GameProcess {
+    pub running: bool,
+    /// Every process id that looks like Deadlock.
+    pub pids: Vec<u32>,
+    /// Set when the process list itself could not be read, so "not running" is not a fact.
+    pub problem: Option<String>,
+}
+
+impl GameProcess {
+    pub fn count(&self) -> usize {
+        self.pids.len()
+    }
+
+    /// `1` or `2` processes, or an empty string when none.
+    pub fn count_label(&self) -> String {
+        match self.pids.len() {
+            0 => String::new(),
+            1 => "1 process".to_string(),
+            n => format!("{n} processes"),
+        }
+    }
+}
+
+/// Process ids from `pgrep` output: one number a line.
+pub fn parse_pids(text: &str) -> Vec<u32> {
+    let mut pids: Vec<u32> = text
+        .lines()
+        .filter_map(|line| line.trim().parse::<u32>().ok())
+        .filter(|pid| *pid > 0)
+        .collect();
+    pids.sort_unstable();
+    pids.dedup();
+    pids
+}
+
+/// Process ids from `tasklist /NH /FI "IMAGENAME eq deadlock.exe"` output.
+///
+/// A row is `deadlock.exe   1234 Console   1   120,000 K`, and a machine with no match prints
+/// `INFO: No tasks are running...` instead, which has no number in the second column.
+pub fn parse_tasklist_pids(text: &str) -> Vec<u32> {
+    let mut pids: Vec<u32> = text
+        .lines()
+        .filter(|line| line.to_ascii_lowercase().contains("deadlock.exe"))
+        .filter_map(|line| line.split_whitespace().nth(1))
+        .filter_map(|value| value.replace(',', "").parse::<u32>().ok())
+        .collect();
+    pids.sort_unstable();
+    pids.dedup();
+    pids
+}
+
+/// Read the process table for Deadlock. Reads only; nothing is started or stopped.
+pub fn read_game_process() -> GameProcess {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        let output = Command::new("tasklist")
+            .args(["/NH", "/FI", "IMAGENAME eq deadlock.exe"])
+            .creation_flags(0x0800_0000)
+            .output();
+        return match output {
+            Ok(output) => {
+                let pids = parse_tasklist_pids(&String::from_utf8_lossy(&output.stdout));
+                GameProcess {
+                    running: !pids.is_empty(),
+                    pids,
+                    problem: None,
+                }
+            }
+            Err(error) => GameProcess {
+                running: false,
+                pids: Vec::new(),
+                problem: Some(format!("Could not read the task list: {error}")),
+            },
+        };
+    }
+    #[cfg(not(windows))]
+    {
+        let output = Command::new("pgrep").args(["-if", r"deadlock\.exe"]).output();
+        match output {
+            Ok(output) if output.status.success() || output.status.code() == Some(1) => {
+                let pids = parse_pids(&String::from_utf8_lossy(&output.stdout));
+                GameProcess {
+                    running: !pids.is_empty(),
+                    pids,
+                    problem: None,
+                }
+            }
+            Ok(output) => GameProcess {
+                running: false,
+                pids: Vec::new(),
+                problem: Some(format!("pgrep exited with {}", output.status)),
+            },
+            Err(error) => GameProcess {
+                running: false,
+                pids: Vec::new(),
+                problem: Some(format!("Could not look for the game process: {error}")),
+            },
+        }
+    }
+}
+
+/// What an approved stop did.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StopReport {
+    pub pids: Vec<u32>,
+    /// True when the game ignored the graceful request and was ended outright.
+    pub forced: bool,
+    /// Processes still there after the forced attempt.
+    pub remaining: Vec<u32>,
+}
+
+impl StopReport {
+    pub fn stopped(&self) -> bool {
+        self.remaining.is_empty()
+    }
+}
+
+/// Quit Deadlock. A process action, so it requires `approve`.
+///
+/// The graceful request is the same one closing the window sends; a game that ignores it is
+/// ended outright after [`STOP_GRACE`]. When nothing is running the report is empty and no
+/// command is run.
+pub fn stop_game(approve: bool) -> Result<StopReport> {
+    if !approve {
+        return Err(Error::msg(
+            "Stopping Deadlock was not approved. Nothing was stopped.",
+        ));
+    }
+    let before = read_game_process();
+    if before.pids.is_empty() {
+        return Ok(StopReport {
+            pids: Vec::new(),
+            forced: false,
+            remaining: Vec::new(),
+        });
+    }
+
+    request_close(&before.pids)?;
+
+    // Wait for a clean exit before forcing anything.
+    let deadline = std::time::Instant::now() + STOP_GRACE;
+    while std::time::Instant::now() < deadline {
+        if read_game_process().pids.is_empty() {
+            return Ok(StopReport {
+                pids: before.pids,
+                forced: false,
+                remaining: Vec::new(),
+            });
+        }
+        sleep(Duration::from_millis(250));
+    }
+
+    let remaining = read_game_process().pids;
+    if !remaining.is_empty() {
+        force_close(&remaining)?;
+    }
+    sleep(Duration::from_millis(500));
+    Ok(StopReport {
+        pids: before.pids,
+        forced: true,
+        remaining: read_game_process().pids,
+    })
+}
+
+#[cfg(windows)]
+fn request_close(pids: &[u32]) -> Result<()> {
+    for pid in pids {
+        let status = Command::new("taskkill")
+            .args(["/PID", &pid.to_string()])
+            .status()
+            .map_err(|error| Error::msg(format!("Could not ask process {pid} to close: {error}")))?;
+        if !status.success() {
+            // The game may already be gone, or the window refused; the wait and force below
+            // decide.
+        }
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn force_close(pids: &[u32]) -> Result<()> {
+    for pid in pids {
+        let status = Command::new("taskkill")
+            .args(["/F", "/PID", &pid.to_string()])
+            .status()
+            .map_err(|error| Error::msg(format!("Could not end process {pid}: {error}")))?;
+        if !status.success() {
+            return Err(Error::msg(format!(
+                "taskkill could not end process {pid}. Close the game from Steam."
+            )));
+        }
+    }
+    Ok(())
+}
+
+#[cfg(not(windows))]
+fn request_close(pids: &[u32]) -> Result<()> {
+    for pid in pids {
+        let status = Command::new("kill")
+            .args(["-TERM", &pid.to_string()])
+            .status()
+            .map_err(|error| Error::msg(format!("Could not ask process {pid} to close: {error}")))?;
+        if !status.success() {
+            return Err(Error::msg(format!(
+                "kill could not ask process {pid} to close. Stop the game from Steam."
+            )));
+        }
+    }
+    Ok(())
+}
+
+#[cfg(not(windows))]
+fn force_close(pids: &[u32]) -> Result<()> {
+    for pid in pids {
+        let status = Command::new("kill")
+            .args(["-KILL", &pid.to_string()])
+            .status()
+            .map_err(|error| Error::msg(format!("Could not end process {pid}: {error}")))?;
+        if !status.success() {
+            return Err(Error::msg(format!(
+                "kill could not end process {pid}. Stop the game from Steam."
+            )));
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn scratch(name: &str) -> PathBuf {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../../.scratch/launch-test")
+            .join(format!("{name}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        root
+    }
+
+    #[test]
+    fn pgrep_output_becomes_sorted_unique_pids() {
+        assert_eq!(parse_pids("2210\n4410\n2210\n"), vec![2210, 4410]);
+        assert!(parse_pids("").is_empty());
+        assert!(parse_pids("pgrep: no matching processes").is_empty());
+    }
+
+    #[test]
+    fn tasklist_rows_carry_the_pid_and_no_tasks_prints_none() {
+        let text = "deadlock.exe   2210 Console  1  1,204,000 K\r\n";
+        assert_eq!(parse_tasklist_pids(text), vec![2210]);
+        assert!(parse_tasklist_pids("INFO: No tasks are running which match the specified criteria.\r\n").is_empty());
+    }
+
+    #[test]
+    fn the_marker_round_trips_and_closes_once() {
+        let dir = scratch("marker");
+        assert!(read_marker(&dir).is_none());
+        let started = record_launch(&dir, MODE_MODDED).unwrap();
+        assert!(started.open());
+        assert_eq!(read_marker(&dir).unwrap().mode, MODE_MODDED);
+        let closed = record_exit(&dir).unwrap().unwrap();
+        assert!(!closed.open());
+        assert!(closed.exit_secs.is_some());
+        // A second exit keeps the first time.
+        let again = record_exit(&dir).unwrap().unwrap();
+        assert_eq!(again.exit_secs, closed.exit_secs);
+        assert!(record_launch(&dir, "party").is_err());
+        acknowledge_crash(&dir, 1_700_000_000).unwrap();
+        assert_eq!(read_marker(&dir).unwrap().acknowledged_secs, Some(1_700_000_000));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn stopping_without_approval_touches_nothing() {
+        let error = stop_game(false).unwrap_err().to_string();
+        assert!(error.contains("not approved"), "{error}");
+    }
+}
+
+/// `15 Nov, 20:45` for a unix time, in the machine's local zone.
+pub fn clock_label(seconds: i64) -> String {
+    use chrono::{Local, TimeZone};
+    match Local.timestamp_opt(seconds, 0).single() {
+        Some(time) => time.format("%-d %b, %H:%M").to_string(),
+        None => String::new(),
+    }
+}
+
+/// `12 minutes ago`, for the running row and the crash advisory.
+pub fn since_label(seconds: i64, now: i64) -> String {
+    let seconds = (now - seconds).max(0);
+    match seconds {
+        0..=45 => "just now".to_string(),
+        46..=5_400 => format!("{} min ago", (seconds + 30) / 60),
+        5_401..=129_600 => {
+            let hours = (seconds + 1_800) / 3_600;
+            format!("{hours} h ago")
+        }
+        _ => {
+            let days = (seconds + 43_200) / 86_400;
+            format!("{days} d ago")
+        }
+    }
+}
+
+/// The word for a launch mode, as the running row reads it.
+pub fn mode_label(mode: &str) -> &'static str {
+    match mode {
+        MODE_MODDED => "modded",
+        MODE_VANILLA => "vanilla",
+        _ => "started outside Sigil",
+    }
 }

@@ -53,6 +53,7 @@ pub fn fetch_patch_notes(count: usize) -> Result<Vec<PatchNote>> {
         crate::discovery::DEADLOCK_APP_ID
     );
 
+    crate::net::check().map_err(Error::Network)?;
     let mut response = ureq::get(&url)
         .header("User-Agent", "dah/0.0.0")
         .call()

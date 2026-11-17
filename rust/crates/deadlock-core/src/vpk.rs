@@ -191,13 +191,19 @@ pub fn read_vpk_entry_data(directory: &VpkDirectory, entry: &VpkEntry) -> Result
 /// Chunk path for an archive index. The caller must reject `VPK_DIRECTORY_ARCHIVE`.
 pub fn chunk_path_for(directory_path: &Path, archive_index: u16) -> PathBuf {
     let raw = directory_path.to_string_lossy();
-    let lowered = raw.to_ascii_lowercase();
-    let stem = if lowered.ends_with("_dir.vpk") {
-        &raw[..raw.len() - "_dir.vpk".len()]
-    } else if lowered.ends_with(".vpk") {
-        &raw[..raw.len() - ".vpk".len()]
+    // A slot that is switched off is `pakNN_dir.vpk.disabled`; its chunks keep the plain name.
+    let visible = if raw.to_ascii_lowercase().ends_with(".disabled") {
+        &raw[..raw.len() - ".disabled".len()]
     } else {
         raw.as_ref()
+    };
+    let lowered = visible.to_ascii_lowercase();
+    let stem = if lowered.ends_with("_dir.vpk") {
+        &visible[..visible.len() - "_dir.vpk".len()]
+    } else if lowered.ends_with(".vpk") {
+        &visible[..visible.len() - ".vpk".len()]
+    } else {
+        visible
     };
 
     PathBuf::from(format!("{stem}_{archive_index:03}.vpk"))

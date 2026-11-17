@@ -483,6 +483,7 @@ pub fn generate_review(facts: &ReviewFacts, config: &ModelConfig) -> Result<Stri
     });
 
     let agent = ureq::Agent::config_builder()
+        .middleware(crate::net::gate)
         .timeout_global(Some(Duration::from_secs(config.timeout_seconds.max(5))))
         .build()
         .new_agent();

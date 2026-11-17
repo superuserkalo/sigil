@@ -79,6 +79,31 @@ impl PayloadIssue {
     }
 }
 
+/// Settings > Mods > Allow script mods: gameplay data (`scripts/*.vdata_c`) and skeletons
+/// (`*.vnmskel_c`) become warnings the install review shows instead of errors. Off by default.
+/// Only installs (no staging folder) read it; the agent's staging checks stay strict.
+#[cfg_attr(test, allow(dead_code))]
+static ALLOW_SCRIPTS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+#[cfg(test)]
+thread_local! {
+    static TEST_ALLOW: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+pub fn set_allow_scripts(allow: bool) {
+    #[cfg(test)]
+    TEST_ALLOW.with(|c| c.set(allow));
+    #[cfg(not(test))]
+    ALLOW_SCRIPTS.store(allow, std::sync::atomic::Ordering::SeqCst);
+}
+
+pub fn allow_scripts() -> bool {
+    #[cfg(test)]
+    return TEST_ALLOW.with(std::cell::Cell::get);
+    #[cfg(not(test))]
+    ALLOW_SCRIPTS.load(std::sync::atomic::Ordering::SeqCst)
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct PayloadOptions {
     /// Staging folder name that must not appear as the first path segment.
@@ -177,12 +202,23 @@ pub fn validate_payload(entries: &[String], options: &PayloadOptions) -> Vec<Pay
             rejected = true;
         }
 
+        let scripts_allowed = options.staging_folder.is_none() && allow_scripts();
+
         if lowered.ends_with(".vnmskel_c") {
-            issues.push(PayloadIssue::error(
-                "skeleton",
-                entry,
-                "Skeletons break hero animations and are not allowed in a mod.",
-            ));
+            if scripts_allowed {
+                issues.push(PayloadIssue {
+                    severity: Severity::Warning,
+                    code: "skeleton",
+                    entry: Some(entry.to_string()),
+                    message: "Script mod: replaces a skeleton, which can break hero animations.".to_string(),
+                });
+            } else {
+                issues.push(PayloadIssue::error(
+                    "skeleton",
+                    entry,
+                    "Skeletons break hero animations and are not allowed in a mod.",
+                ));
+            }
             rejected = true;
         }
 
@@ -191,11 +227,20 @@ pub fn validate_payload(entries: &[String], options: &PayloadOptions) -> Vec<Pay
             .is_some_and(|segment| segment.eq_ignore_ascii_case("scripts"))
             && lowered.ends_with(".vdata_c")
         {
-            issues.push(PayloadIssue::error(
-                "gameplay_data",
-                entry,
-                "Gameplay data is not cosmetic, goes stale after updates and is not allowed in a mod.",
-            ));
+            if scripts_allowed {
+                issues.push(PayloadIssue {
+                    severity: Severity::Warning,
+                    code: "gameplay_data",
+                    entry: Some(entry.to_string()),
+                    message: "Script mod: changes gameplay data, which goes stale after game updates.".to_string(),
+                });
+            } else {
+                issues.push(PayloadIssue::error(
+                    "gameplay_data",
+                    entry,
+                    "Gameplay data is not cosmetic, goes stale after updates and is not allowed in a mod.",
+                ));
+            }
             rejected = true;
         }
 
@@ -372,5 +417,18 @@ mod tests {
             format_payload_issues(&clean),
             "Payload is valid. Every entry is a compiled file at a safe game path."
         );
+    }
+
+    #[test]
+    fn script_mods_turn_into_warnings_only_when_allowed() {
+        let entries = vec!["scripts/heroes.vdata_c".to_string(), "models/a.vnmskel_c".to_string()];
+        assert!(has_errors(&validate_payload(&entries, &PayloadOptions::default())));
+        set_allow_scripts(true);
+        let issues = validate_payload(&entries, &PayloadOptions::default());
+        let staged = validate_payload(&entries, &PayloadOptions { staging_folder: Some("staging".into()) });
+        set_allow_scripts(false);
+        assert!(!has_errors(&issues), "{issues:?}");
+        assert_eq!(issues.iter().filter(|i| i.severity == Severity::Warning).count(), 2);
+        assert!(has_errors(&staged), "agent staging stays strict");
     }
 }

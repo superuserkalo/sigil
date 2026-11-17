@@ -707,6 +707,7 @@ fn now_unix() -> i64 {
 fn post_form(url: &str, params: &[(&str, String)]) -> Result<(u16, String)> {
     let body = form_encode(params);
     let agent = ureq::Agent::config_builder()
+        .middleware(crate::net::gate)
         .timeout_global(Some(Duration::from_secs(HTTP_TIMEOUT_SECONDS)))
         .build()
         .new_agent();

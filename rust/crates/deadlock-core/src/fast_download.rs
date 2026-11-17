@@ -1,0 +1,241 @@
+//! "Faster downloads": a large file fetched as several byte ranges at once, then joined and
+//! hashed. Deadlock Mod Manager splits files of 8 MiB or more into 4 ranges (behaviour only;
+//! this is Sigil's own code). Anything unexpected (no 206, a wrong `Content-Range`, a short
+//! part) makes the caller fall back to one stream, so the setting can never break a download.
+
+use std::fs::{self, File};
+use std::io::{Read, Write};
+use std::path::{Path, PathBuf};
+
+use sha2::{Digest, Sha256};
+
+use crate::error::{Error, Result};
+
+/// Files smaller than this download in one stream.
+pub const MIN_SPLIT_BYTES: u64 = 8 * 1024 * 1024;
+
+/// The ranges, inclusive, for `total` bytes in `parts` pieces. Empty when not worth splitting.
+pub fn plan(total: u64, parts: u32) -> Vec<(u64, u64)> {
+    if parts < 2 || total < MIN_SPLIT_BYTES {
+        return Vec::new();
+    }
+    let parts = u64::from(parts.min(16));
+    let size = total.div_ceil(parts);
+    let mut out = Vec::new();
+    let mut start = 0;
+    while start < total {
+        let end = (start + size - 1).min(total - 1);
+        out.push((start, end));
+        start = end + 1;
+    }
+    out
+}
+
+/// Whether a response allows ranges, and its length, from its headers.
+pub fn splittable(accept_ranges: Option<&str>, length: Option<u64>, parts: u32) -> Option<u64> {
+    let ranges = accept_ranges.is_some_and(|v| v.trim().eq_ignore_ascii_case("bytes"));
+    let length = length?;
+    (ranges && !plan(length, parts).is_empty()).then_some(length)
+}
+
+/// `bytes 0-99/1000` matches the range asked for and the total.
+pub fn content_range_ok(header: &str, start: u64, end: u64, total: u64) -> bool {
+    let Some(rest) = header.trim().strip_prefix("bytes ") else {
+        return false;
+    };
+    let Some((span, size)) = rest.split_once('/') else {
+        return false;
+    };
+    let Some((a, b)) = span.split_once('-') else {
+        return false;
+    };
+    a.trim().parse::<u64>().ok() == Some(start)
+        && b.trim().parse::<u64>().ok() == Some(end)
+        && (size.trim() == "*" || size.trim().parse::<u64>().ok() == Some(total))
+}
+
+fn part_path(path: &Path, index: usize) -> PathBuf {
+    let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    path.with_file_name(format!("{name}.part{index}"))
+}
+
+/// Fetch `url` into `path` in ranges with `agent`. Returns the bytes written and their
+/// sha256. On any error every part file is removed and nothing is left at `path`.
+pub fn fetch_ranges(
+    agent: &ureq::Agent,
+    url: &str,
+    user_agent: &str,
+    path: &Path,
+    total: u64,
+    parts: u32,
+) -> Result<(u64, String)> {
+    let ranges = plan(total, parts);
+    if ranges.is_empty() {
+        return Err(Error::msg("Not worth splitting."));
+    }
+    let cleanup = |count: usize| {
+        for i in 0..count {
+            let _ = fs::remove_file(part_path(path, i));
+        }
+    };
+    let results: Vec<Result<()>> = std::thread::scope(|scope| {
+        let handles: Vec<_> = ranges
+            .iter()
+            .enumerate()
+            .map(|(index, (start, end))| {
+                let (start, end) = (*start, *end);
+                let part = part_path(path, index);
+                scope.spawn(move || -> Result<()> {
+                    let mut response = agent
+                        .get(url)
+                        .header("User-Agent", user_agent)
+                        .header("Range", &format!("bytes={start}-{end}"))
+                        .call()
+                        .map_err(|e| Error::Network(e.to_string()))?;
+                    if response.status().as_u16() != 206 {
+                        return Err(Error::Network(format!("range answered HTTP {}", response.status())));
+                    }
+                    let header = response
+                        .headers()
+                        .get("content-range")
+                        .and_then(|v| v.to_str().ok())
+                        .unwrap_or("")
+                        .to_string();
+                    if !content_range_ok(&header, start, end, total) {
+                        return Err(Error::Network(format!("unexpected Content-Range {header:?}")));
+                    }
+                    let mut file = File::create(&part)?;
+                    let mut reader = response.body_mut().with_config().limit(end - start + 1).reader();
+                    let copied = std::io::copy(&mut reader, &mut file)?;
+                    if copied != end - start + 1 {
+                        return Err(Error::Network(format!("range {start}-{end} came back short")));
+                    }
+                    Ok(())
+                })
+            })
+            .collect();
+        handles
+            .into_iter()
+            .map(|h| h.join().unwrap_or_else(|_| Err(Error::msg("A download part stopped."))))
+            .collect()
+    });
+    if let Some(Err(error)) = results.into_iter().find(|r| r.is_err()) {
+        cleanup(ranges.len());
+        return Err(error);
+    }
+    let joined = (|| -> Result<(u64, String)> {
+        let partial = path.with_extension("joining");
+        let mut out = File::create(&partial)?;
+        let mut hasher = Sha256::new();
+        let mut written = 0;
+        let mut buffer = vec![0u8; 256 * 1024];
+        for index in 0..ranges.len() {
+            let mut part = File::open(part_path(path, index))?;
+            loop {
+                let read = part.read(&mut buffer)?;
+                if read == 0 {
+                    break;
+                }
+                out.write_all(&buffer[..read])?;
+                hasher.update(&buffer[..read]);
+                written += read as u64;
+            }
+        }
+        out.flush()?;
+        drop(out);
+        if written != total {
+            let _ = fs::remove_file(&partial);
+            return Err(Error::Network(format!("joined {written} of {total} bytes")));
+        }
+        let _ = fs::remove_file(path);
+        fs::rename(&partial, path)?;
+        let digest = hasher.finalize();
+        Ok((written, digest.iter().map(|b| format!("{b:02x}")).collect()))
+    })();
+    cleanup(ranges.len());
+    joined
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::{BufRead, BufReader};
+    use std::net::TcpListener;
+
+    #[test]
+    fn plans_cover_every_byte_once() {
+        assert!(plan(1000, 4).is_empty(), "small files stay one stream");
+        assert!(plan(MIN_SPLIT_BYTES * 2, 1).is_empty());
+        let total = MIN_SPLIT_BYTES + 3;
+        let ranges = plan(total, 4);
+        assert_eq!(ranges.len(), 4);
+        assert_eq!(ranges[0].0, 0);
+        assert_eq!(ranges.last().unwrap().1, total - 1);
+        for pair in ranges.windows(2) {
+            assert_eq!(pair[0].1 + 1, pair[1].0);
+        }
+    }
+
+    #[test]
+    fn content_range_must_match() {
+        assert!(content_range_ok("bytes 0-99/1000", 0, 99, 1000));
+        assert!(content_range_ok("bytes 0-99/*", 0, 99, 1000));
+        assert!(!content_range_ok("bytes 0-98/1000", 0, 99, 1000));
+        assert!(!content_range_ok("0-99/1000", 0, 99, 1000));
+        assert_eq!(splittable(Some("bytes"), Some(MIN_SPLIT_BYTES), 4), Some(MIN_SPLIT_BYTES));
+        assert_eq!(splittable(Some("none"), Some(MIN_SPLIT_BYTES), 4), None);
+    }
+
+    /// A tiny HTTP server that answers Range requests for `body`.
+    fn serve(body: Vec<u8>) -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            for stream in listener.incoming().flatten() {
+                let body = body.clone();
+                std::thread::spawn(move || {
+                    let mut reader = BufReader::new(stream.try_clone().unwrap());
+                    let mut range = None;
+                    loop {
+                        let mut line = String::new();
+                        if reader.read_line(&mut line).unwrap_or(0) == 0 || line == "\r\n" {
+                            break;
+                        }
+                        if let Some(v) = line.to_ascii_lowercase().strip_prefix("range: bytes=") {
+                            let (a, b) = v.trim().split_once('-').unwrap();
+                            range = Some((a.parse::<usize>().unwrap(), b.parse::<usize>().unwrap()));
+                        }
+                    }
+                    let mut stream = stream;
+                    let (a, b) = range.unwrap();
+                    let head = format!(
+                        "HTTP/1.1 206 Partial Content\r\nContent-Range: bytes {a}-{b}/{}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                        body.len(),
+                        b - a + 1
+                    );
+                    let _ = stream.write_all(head.as_bytes());
+                    let _ = stream.write_all(&body[a..=b]);
+                });
+            }
+        });
+        format!("http://{addr}/file.bin")
+    }
+
+    #[test]
+    fn ranges_join_into_the_same_bytes() {
+        let total = MIN_SPLIT_BYTES as usize + 777;
+        let body: Vec<u8> = (0..total).map(|i| (i % 251) as u8).collect();
+        let url = serve(body.clone());
+        let dir = std::env::temp_dir().join(format!("sigil-ranges-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("file.bin");
+        let agent: ureq::Agent = ureq::Agent::config_builder().build().into();
+        let (bytes, sha) = fetch_ranges(&agent, &url, "test", &path, total as u64, 4).unwrap();
+        assert_eq!(bytes, total as u64);
+        assert_eq!(fs::read(&path).unwrap(), body);
+        let expected: String = Sha256::digest(&body).iter().map(|b| format!("{b:02x}")).collect();
+        assert_eq!(sha, expected);
+        assert!(!part_path(&path, 0).exists());
+        let _ = fs::remove_dir_all(&dir);
+    }
+}
