@@ -42,6 +42,12 @@ pub fn dialog(s: &State, u: &Ui) -> Option<El> {
             );
         }
     }
+    // The details' file menu, over the modal it drops from.
+    if !v.docked
+        && let Some(menu) = super::quick::files_menu(s, u)
+    {
+        layers.push(menu);
+    }
     if s.install.open {
         let install = install_dialog(s, u);
         layers.push(if layers.is_empty() {
@@ -405,6 +411,11 @@ pub(crate) fn details_info(s: &State, u: &Ui, d: &Details) -> El {
         c = c.child(notice);
     }
 
+    // Install at once: the newest file, the others from the chevron beside it.
+    if let Some(install) = super::quick::details_install(s, u, d, profile) {
+        c = c.child(install);
+    }
+
     if let Some(status) = status_row(s, u, d) {
         c = c.child(status);
     }
@@ -520,14 +531,8 @@ pub(crate) fn status_row(s: &State, u: &Ui, d: &Details) -> Option<El> {
         let id = d.id;
         let name = d.name.clone();
         r = r.child(tag(u, &format!("Update: {}", file.file_name)));
-        r = r.child(
-            u.action("Update", ActionKind::Secondary)
-                .key("details-update")
-                .cursor(rune::Cursor::Pointer)
-                .on_press(move |st: &mut State| {
-                    st.install = InstallView::for_mod(id, &name);
-                }),
-        );
+        // The Install button above turns into Update; this tag says which file is new.
+        let _ = (id, name);
         if ignored {
             r = r.child(tag(u, "Updates ignored"));
         } else {
@@ -650,7 +655,7 @@ pub(crate) fn requirements_section(s: &State, u: &Ui, d: &Details) -> El {
                     .key(format!("requirement-install-{id}"))
                     .cursor(rune::Cursor::Pointer)
                     .on_press(move |st: &mut State| {
-                        st.install = InstallView::for_mod(id, &install_name);
+                        super::quick::press(st, id, &install_name);
                     }),
             );
         }

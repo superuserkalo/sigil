@@ -118,48 +118,12 @@ pub(crate) fn file_card(s: &State, u: &Ui, d: &Details, file: &ModFile, only: bo
     }
     middle = middle.child(meta);
 
-    let id = d.id;
-    let section = d.section;
-    let name = d.name.clone();
-    let file_name = file.name.clone();
-    let url = file.download_url.clone();
-    let busy = s.install.open && s.install.mod_id == id && s.install.busy;
-    let install = row()
-        .key(format!("file-install-{}", file.id))
-        .h(36.0)
-        .min_w(110.0)
-        .px(16.0)
-        .gap(8.0)
-        .center()
-        .radius(crate::ui::r(8.0))
-        .fill(u.accent.alpha(0.10))
-        .border(1.0, u.accent.alpha(0.55))
-        .hover(u.accent.alpha(0.18))
-        .press(u.accent.alpha(0.24))
-        .focusable(true)
-        .role("button")
-        .label(format!("Install {}", file.name))
-        .cursor(rune::Cursor::Pointer)
-        .on_press(move |st: &mut State| {
-            let mut view = InstallView::for_mod(id, &name);
-            // The mod id installs its newest file; any other file, and every sound or WiP
-            // file, goes by its own link.
-            if (!only || section != BrowseSection::Mods) && !url.is_empty() {
-                view.target = url.clone();
-            }
-            view.file = Some(file_name.clone());
-            // A file the player picked is not a one-click install.
-            view.one_click = false;
-            view.vpk = None;
-            st.install = view;
-        })
-        .child(icon(&icons::DOWNLOAD, 16.0).color(u.ink).a11y_hidden())
-        .child(
-            text(if busy { "Installing" } else { "Install" })
-                .font(BODY_MED)
-                .color(u.ink)
-                .a11y_hidden(),
-        );
+    // This file's own state while it installs; the press installs it at once.
+    let install = match d.profile.as_ref() {
+        Some(profile) => super::super::quick::file_button(s, u, d, profile, file),
+        None => el(),
+    };
+    let _ = only;
 
     row()
         .key(format!("file-{}", file.id))

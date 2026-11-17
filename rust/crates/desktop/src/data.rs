@@ -948,7 +948,7 @@ pub fn queue_images(state: &mut State, urls: Vec<String>, urgent: bool) {
 fn thumb_agent() -> &'static ureq::Agent {
     static AGENT: std::sync::OnceLock<ureq::Agent> = std::sync::OnceLock::new();
     AGENT.get_or_init(|| {
-        ureq::Agent::config_builder()
+        deadlock_core::net::builder()
             .timeout_global(Some(Duration::from_secs(THUMB_TIMEOUT_SECONDS)))
             .build()
             .new_agent()
@@ -3718,6 +3718,13 @@ pub fn apply_install_outcome(state: &mut State, outcome: crate::screens::browse:
         state.status = applied;
         scan_addons_now(state);
         start_addon_scan(state);
+        // Browse and Installed show the new slot now, not after the next rescan.
+        state.installed.library = deadlock_core::import::read_library(
+            &deadlock_core::import::library_path(&data_dir()),
+        )
+        .unwrap_or_default();
+        state.installed.library_sig = None;
+        crate::screens::browse::quick::refresh_owned(state);
     }
     if let Some(error) = outcome.error {
         state.install.log = Some(error.clone());

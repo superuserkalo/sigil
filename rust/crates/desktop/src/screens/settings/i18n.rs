@@ -211,6 +211,7 @@ mod tests {
             include_str!("tools.rs"),
             include_str!("tray.rs"),
             include_str!("watch.rs"),
+            include_str!("../browse/quick.rs"),
         ];
         let table: std::collections::HashSet<&str> = locales::DE
             .iter()

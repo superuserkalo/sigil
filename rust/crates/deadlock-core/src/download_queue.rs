@@ -51,6 +51,9 @@ pub const READ_BUFFER: usize = 64 * 1024;
 /// How long the worker waits between checks when there is nothing to do.
 pub const IDLE: Duration = Duration::from_millis(200);
 
+/// The shortest gap between two progress wakes of the UI while an archive streams.
+pub const PROGRESS_WAKE: Duration = Duration::from_millis(150);
+
 /// A ZIP bigger than this is scanned by name only when it is a ZIP; other formats are not
 /// unpacked for the scan.
 pub const SCAN_MAX_BYTES: u64 = 512 * 1024 * 1024;
@@ -220,6 +223,14 @@ impl Item {
                 .unwrap_or_else(|| "The download stopped.".to_string()),
             State::Cancelled => "Removed from the queue.".to_string(),
         }
+    }
+
+    /// When the row was added, in Unix milliseconds. Lets a caller that sent an `Add` find
+    /// its row among older ones for the same target.
+    pub fn added_ms(&self) -> Option<i64> {
+        chrono::DateTime::parse_from_rfc3339(&self.added_at)
+            .ok()
+            .map(|at| at.timestamp_millis())
     }
 
     /// A download that already has bytes on disk can resume instead of starting over.
@@ -573,7 +584,7 @@ pub struct Fetched {
 }
 
 fn agent(policy: &DownloadPolicy) -> ureq::Agent {
-    crate::net::with_proxy(ureq::Agent::config_builder())
+    crate::net::with_proxy(crate::net::builder())
         .middleware(crate::net::gate)
         .timeout_global(Some(Duration::from_secs(policy.timeout_seconds)))
         .max_redirects(0)
@@ -1048,6 +1059,9 @@ fn worker(
     notify();
 
     let mut control: Option<Arc<Control>> = None;
+    // Commands that arrived while an archive streamed and belong to the queue loop: an Add for
+    // another mod, a Retry, a Remove, a Pause of a waiting row.
+    let mut deferred: Vec<Command> = Vec::new();
     loop {
         match rx.recv_timeout(IDLE) {
             Ok(command) => match apply(&command, &mut queue, &shared, &mut control) {
@@ -1070,9 +1084,26 @@ fn worker(
         let Some(id) = queue.next_runnable() else {
             continue;
         };
-        run_item(&data_dir, &workspace, &shared, &rx, &mut queue, &id, &mut control, &wake);
+        run_item(
+            &data_dir,
+            &workspace,
+            &shared,
+            &rx,
+            &mut queue,
+            &id,
+            &mut control,
+            &wake,
+            &mut deferred,
+        );
+        for command in std::mem::take(&mut deferred) {
+            if apply(&command, &mut queue, &shared, &mut control) == Flow::Stop {
+                let _ = store_queue(&data_dir, &queue);
+                return;
+            }
+        }
         publish(&shared, &queue);
         let _ = store_queue(&data_dir, &queue);
+        notify();
     }
 }
 
@@ -1166,6 +1197,7 @@ fn run_item(
     id: &str,
     control: &mut Option<Arc<Control>>,
     wake: &Option<Wake>,
+    deferred: &mut Vec<Command>,
 ) {
     let Some(item) = queue.get(id).cloned() else {
         return;
@@ -1181,6 +1213,11 @@ fn run_item(
         }
     };
     set_state(State::Running);
+    // The master copy says Running too, or the publish below would show the row waiting again
+    // until the first bytes arrive.
+    if let Some(live) = queue.get_mut(id) {
+        live.state = State::Running;
+    }
     publish(shared, queue);
     if let Some(wake) = wake {
         wake();
@@ -1231,10 +1268,16 @@ fn run_item(
     // Progress, pause, cancel and new commands all flow through this closure.
     let progress_shared = Arc::clone(shared);
     let progress_control = Arc::clone(&item_control);
+    let progress_wake = wake.clone();
+    let pending = &mut *deferred;
+    let mut last_wake: Option<Instant> = None;
     let mut progress = move |done: u64, total: Option<u64>| {
-        // Commands that arrive mid-stream are handled here so Pause and Cancel act at once.
+        // Commands that arrive mid-stream are handled here so Pause and Cancel act at once;
+        // the rest wait for the queue loop instead of being lost.
         while let Ok(command) = rx.try_recv() {
-            handle_mid_stream(&command, &progress_control);
+            if handle_mid_stream(&command, id, &progress_control) {
+                pending.push(command);
+            }
         }
         if let Ok(mut slot) = progress_shared.lock()
             && let Some(live) = slot.get_mut(id)
@@ -1248,6 +1291,13 @@ fn run_item(
             } else {
                 State::Running
             };
+        }
+        // A few repaints a second, so a progress bar moves without a frame per chunk.
+        if last_wake.is_none_or(|at| at.elapsed() >= PROGRESS_WAKE)
+            && let Some(wake) = &progress_wake
+        {
+            last_wake = Some(Instant::now());
+            wake();
         }
     };
 
@@ -1272,7 +1322,9 @@ fn run_item(
     );
     // Commands left over after the stream finished.
     while let Ok(command) = rx.try_recv() {
-        handle_mid_stream(&command, &item_control);
+        if handle_mid_stream(&command, id, &item_control) {
+            deferred.push(command);
+        }
     }
     *control = None;
 
@@ -1304,16 +1356,32 @@ fn run_item(
     }
 }
 
-/// Commands that are safe to honour while an archive is streaming. The rest wait for the
-/// queue loop, which owns the item list.
-fn handle_mid_stream(command: &Command, control: &Control) {
+/// Commands that are safe to honour while archive `id` is streaming. True when the command
+/// also needs the queue loop, which owns the item list: an Add or a Retry, a command for
+/// another row, a whole-queue pause and a shutdown.
+fn handle_mid_stream(command: &Command, id: &str, control: &Control) -> bool {
     match command {
-        Command::Pause(_) => control.pause(true),
-        Command::Resume(_) => control.pause(false),
-        Command::Cancel(_) => control.cancel(),
-        Command::Shutdown => control.cancel(),
-        Command::PauseAll(paused) => control.pause(*paused),
-        Command::Add(_) | Command::Retry(_) | Command::Remove(_) | Command::ClearFinished => {}
+        Command::Pause(target) if target == id => {
+            control.pause(true);
+            false
+        }
+        Command::Resume(target) if target == id => {
+            control.pause(false);
+            false
+        }
+        Command::Cancel(target) if target == id => {
+            control.cancel();
+            false
+        }
+        Command::Shutdown => {
+            control.cancel();
+            true
+        }
+        Command::PauseAll(paused) => {
+            control.pause(*paused);
+            true
+        }
+        _ => true,
     }
 }
 
