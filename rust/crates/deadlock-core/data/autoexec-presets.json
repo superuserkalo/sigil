@@ -1,0 +1,174 @@
+{
+ "source": "Grimoire src/components/autoexec/commandPresets.ts and src/locales/en/translation.json (MIT, Copyright (c) 2025 esoc)",
+ "categories": [
+  {
+   "id": "performance",
+   "name": "Performance",
+   "presets": [
+    {
+     "id": "uncapFps",
+     "name": "Uncap FPS",
+     "description": "Remove framerate limit",
+     "command": "fps_max 0"
+    },
+    {
+     "id": "capFps144",
+     "name": "Cap FPS 144",
+     "description": "Cap to 144 FPS",
+     "command": "fps_max 144"
+    },
+    {
+     "id": "capFps240",
+     "name": "Cap FPS 240",
+     "description": "Cap to 240 FPS",
+     "command": "fps_max 240"
+    },
+    {
+     "id": "lowLatencyNvidia",
+     "name": "Low latency (Nvidia)",
+     "description": "Enable Nvidia Reflex low latency",
+     "command": "r_low_latency 2"
+    },
+    {
+     "id": "engineLowLatency",
+     "name": "Engine low latency",
+     "description": "Reduce input lag",
+     "command": "engine_low_latency_sleep_after_client_tick true"
+    }
+   ]
+  },
+  {
+   "id": "network",
+   "name": "Network",
+   "presets": [
+    {
+     "id": "maxNetworkRate",
+     "name": "Max network rate",
+     "description": "Maximum network update rate",
+     "command": "rate 1000000"
+    }
+   ]
+  },
+  {
+   "id": "hud",
+   "name": "HUD and UI",
+   "presets": [
+    {
+     "id": "newHealthBars",
+     "name": "New health bars",
+     "description": "Enable new-style health bars",
+     "command": "citadel_unit_status_use_new true"
+    },
+    {
+     "id": "hideHud",
+     "name": "Hide HUD",
+     "description": "Hide the entire HUD",
+     "command": "citadel_hud_visible false"
+    },
+    {
+     "id": "showHud",
+     "name": "Show HUD",
+     "description": "Show the HUD",
+     "command": "citadel_hud_visible true"
+    },
+    {
+     "id": "disablePostMatchSurvey",
+     "name": "Disable post-match survey",
+     "description": "Skip the survey after matches",
+     "command": "deadlock_post_match_survey_disabled true"
+    },
+    {
+     "id": "offscreenDamageIndicator",
+     "name": "Offscreen damage indicators",
+     "description": "Turn on the game's own off-screen damage indicators (a built-in HUD option)",
+     "command": "citadel_damage_offscreen_indicator_disabled false"
+    }
+   ]
+  },
+  {
+   "id": "minimap",
+   "name": "Minimap",
+   "presets": [
+    {
+     "id": "fasterMinimap",
+     "name": "Faster minimap",
+     "description": "Update minimap at 60Hz",
+     "command": "minimap_update_rate_hz 60"
+    },
+    {
+     "id": "largerClickRadius",
+     "name": "Larger click radius",
+     "description": "Easier to click units on minimap",
+     "command": "citadel_minimap_unit_click_radius 200"
+    },
+    {
+     "id": "largerPlayerIcons",
+     "name": "Larger player icons",
+     "description": "Bigger player icons on minimap",
+     "command": "citadel_minimap_player_width 6.5"
+    },
+    {
+     "id": "largerLocalPlayerIcon",
+     "name": "Larger local player icon",
+     "description": "Make your own minimap icon larger",
+     "command": "citadel_minimap_local_player_width 10.0"
+    },
+    {
+     "id": "thickerZiplines",
+     "name": "Thicker ziplines",
+     "description": "More visible ziplines",
+     "command": "citadel_minimap_zip_line_thickness 2"
+    }
+   ]
+  },
+  {
+   "id": "matchmaking",
+   "name": "Matchmaking",
+   "presets": [
+    {
+     "id": "soloQueueOnly",
+     "name": "Solo queue only",
+     "description": "Prefer matches with solo players",
+     "command": "mm_prefer_solo_only 1"
+    },
+    {
+     "id": "naRegion",
+     "name": "NA region",
+     "description": "Force North America servers",
+     "command": "citadel_region_override 0"
+    },
+    {
+     "id": "euRegion",
+     "name": "EU region",
+     "description": "Force Europe servers",
+     "command": "citadel_region_override 1"
+    },
+    {
+     "id": "asiaRegion",
+     "name": "Asia region",
+     "description": "Force Asia servers",
+     "command": "citadel_region_override 2"
+    },
+    {
+     "id": "autoRegion",
+     "name": "Auto region",
+     "description": "Automatic region selection",
+     "command": "citadel_region_override -1"
+    }
+   ]
+  },
+  {
+   "id": "mouse",
+   "name": "Mouse",
+   "presets": [
+    {
+     "id": "adsSensitivity",
+     "name": "1:1 ADS sensitivity",
+     "description": "Match ADS to hip-fire sensitivity",
+     "command": "zoom_sensitivity_ratio 0.818933027098955175"
+    }
+   ]
+  }
+ ],
+ "note": "Names are in sentence case for Sigil; commands and descriptions are as upstream."
+}

@@ -16,6 +16,12 @@ ureq.workspace = true
 # Install pipeline: sha256 for downloads and the ZIP reader. Both are already
 # in the workspace lock through `dah-rs`, so this adds no new crate.
 sha2 = "0.10"
+# Git blob hashes for fetched performance configs. Already in the lock.
+sha1 = "0.10"
 getrandom = "0.3"
 base64 = "0.22"
 zip = { version = "2", default-features = false, features = ["deflate"] }
+# Deadworks server content arrives as zstd or bzip2. Both are already in the workspace lock
+# through `zip` in `dah-rs`, so this adds no new crate.
+zstd = "0.13"
+bzip2 = "0.5"

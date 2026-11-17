@@ -196,6 +196,13 @@ pub struct InstallRequest {
     pub slot: Option<u8>,
     /// Replace an occupied slot instead of refusing.
     pub force: bool,
+    /// The install started from a single press (Browse, a `sigil:` link). Archives that
+    /// carry a `.disable_gb1click` marker refuse this, as their creator asked.
+    #[serde(default)]
+    pub one_click: bool,
+    /// One `pakNN_dir.vpk` inside an archive that holds several.
+    #[serde(default)]
+    pub vpk: Option<String>,
     pub workspace: PathBuf,
 }
 
@@ -208,6 +215,8 @@ impl InstallRequest {
             source,
             slot: None,
             force: false,
+            one_click: false,
+            vpk: None,
             workspace,
         })
     }
@@ -219,6 +228,16 @@ impl InstallRequest {
 
     pub fn with_force(mut self, force: bool) -> Self {
         self.force = force;
+        self
+    }
+
+    pub fn with_one_click(mut self, one_click: bool) -> Self {
+        self.one_click = one_click;
+        self
+    }
+
+    pub fn with_vpk(mut self, vpk: Option<String>) -> Self {
+        self.vpk = vpk;
         self
     }
 }
@@ -505,7 +524,8 @@ pub fn download(url: &str, destination_dir: &Path, policy: &DownloadPolicy) -> R
 
     fs::create_dir_all(destination_dir)?;
 
-    let agent = ureq::Agent::config_builder()
+    let agent = crate::net::with_proxy(ureq::Agent::config_builder())
+        .middleware(crate::net::gate)
         .timeout_global(Some(Duration::from_secs(policy.timeout_seconds)))
         .max_redirects(0)
         .max_redirects_will_error(false)
@@ -515,15 +535,28 @@ pub fn download(url: &str, destination_dir: &Path, policy: &DownloadPolicy) -> R
 
     let mut response = None;
 
+    // Settings > Mods > Download server: a file-server redirect goes to the chosen server
+    // first; if that one fails, the server GameBanana picked is tried (crate::net::route_download).
+    let mut unrouted: Option<WebUrl> = None;
+
     for _ in 0..=MAX_REDIRECTS {
-        let mut attempt = agent
+        let called = agent
             .get(&current.to_string())
             .header("User-Agent", GAMEBANANA_USER_AGENT)
             .header("Accept", "application/octet-stream, */*")
-            .call()
-            .map_err(|error| {
-                Error::Network(format!("Download request to {current} failed: {error}"))
-            })?;
+            .call();
+        let mut attempt = match called {
+            Ok(attempt) if !(unrouted.is_some() && attempt.status().as_u16() >= 400) => attempt,
+            result => match unrouted.take() {
+                Some(original) => {
+                    current = original;
+                    continue;
+                }
+                None => result.map_err(|error| {
+                    Error::Network(format!("Download request to {current} failed: {error}"))
+                })?,
+            },
+        };
 
         let status = attempt.status().as_u16();
 
@@ -541,7 +574,16 @@ pub fn download(url: &str, destination_dir: &Path, policy: &DownloadPolicy) -> R
 
             let next = resolve_location(&current, &location)?;
             policy.check(&next)?;
-            current = next;
+            let routed = WebUrl::parse(&crate::net::route_download(&next.to_string()))
+                .ok()
+                .filter(|routed| *routed != next && policy.allows(routed));
+            match routed {
+                Some(routed) => {
+                    unrouted = Some(next);
+                    current = routed;
+                }
+                None => current = next,
+            }
             continue;
         }
 
@@ -584,6 +626,37 @@ pub fn download(url: &str, destination_dir: &Path, policy: &DownloadPolicy) -> R
     let partial_path = destination_dir.join(format!("{file_name}.part"));
 
     let _ = fs::remove_file(&partial_path);
+
+    // Settings > Network > Faster downloads: a large file that allows ranges comes in parts
+    // (crate::fast_download). Any failure falls back to the one stream below.
+    let ranged = crate::fast_download::splittable(
+        response.headers().get("accept-ranges").and_then(|v| v.to_str().ok()),
+        response
+            .headers()
+            .get("content-length")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.parse::<u64>().ok()),
+        crate::net::download_parts(),
+    );
+    if let Some(total) = ranged
+        && let Ok((bytes, sha256)) = crate::fast_download::fetch_ranges(
+            &agent,
+            &final_url.to_string(),
+            GAMEBANANA_USER_AGENT,
+            &final_path,
+            total,
+            crate::net::download_parts(),
+        )
+    {
+        return Ok(DownloadReport {
+            requested_url: url.to_string(),
+            final_url: final_url.to_string(),
+            path: final_path,
+            file_name,
+            bytes,
+            sha256,
+        });
+    }
 
     let mut file = File::create(&partial_path)?;
     let mut hasher = Sha256::new();
@@ -840,7 +913,8 @@ pub fn parse_mod_profile(body: &str) -> Result<GameBananaFile> {
 pub fn fetch_gamebanana_file(mod_id: u64) -> Result<GameBananaFile> {
     let url = format!("{GAMEBANANA_PROFILE_URL}/{mod_id}/ProfilePage");
 
-    let agent = ureq::Agent::config_builder()
+    let agent = crate::net::with_proxy(ureq::Agent::config_builder())
+        .middleware(crate::net::gate)
         .timeout_global(Some(Duration::from_secs(API_TIMEOUT_SECONDS)))
         .http_status_as_error(false)
         .build()
@@ -1496,7 +1570,11 @@ struct Candidate {
 const GAME_PATH_PREFIXES: [&str; 4] = ["game/citadel/", "citadel/", "game/", ""];
 
 /// Walk an extracted tree and group it into one VPK or one compiled tree.
-fn classify_extracted(extracted: &Path, limits: &ExtractLimits) -> Result<Candidate> {
+fn classify_extracted(
+    extracted: &Path,
+    limits: &ExtractLimits,
+    chosen_vpk: Option<&str>,
+) -> Result<Candidate> {
     let files = walk_tree(extracted)?;
 
     if files.len() > limits.max_entries {
@@ -1520,10 +1598,26 @@ fn classify_extracted(extracted: &Path, limits: &ExtractLimits) -> Result<Candid
         .filter(|(path, _)| is_pak_dir_file(path))
         .collect();
 
+    if let Some(chosen) = chosen_vpk.map(str::trim).filter(|vpk| !vpk.is_empty()) {
+        let picked = vpks
+            .iter()
+            .find(|(path, _)| path.eq_ignore_ascii_case(chosen) || path.ends_with(&format!("/{chosen}")))
+            .ok_or_else(|| {
+                Error::msg(format!(
+                    "The archive has no VPK called {chosen}. It ships: {}.",
+                    vpks.iter()
+                        .map(|(path, _)| path.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ))
+            })?;
+        return classify_vpk(extracted, &picked.0, &files);
+    }
+
     if vpks.len() > 1 {
         let names: Vec<&str> = vpks.iter().map(|(path, _)| path.as_str()).collect();
         return Err(Error::msg(format!(
-            "The archive ships more than one pakNN_dir.vpk ({}). dah install refuses to guess which one is the mod. Extract the one you want and plan it as a local file.",
+            "The archive ships more than one pakNN_dir.vpk ({}). Choose the one you want.",
             names.join(", ")
         )));
     }
@@ -1853,20 +1947,19 @@ impl Default for PlanOptions {
     }
 }
 
-/// Download, extract, validate and plan. Writes only inside the workspace.
-pub fn plan_install(request: &InstallRequest, options: &PlanOptions) -> Result<InstallPlan> {
-    let game_root = resolve_game_root(options.game_root.clone())?;
-    let addons = addons_dir(&game_root);
-    let gameinfo = gameinfo_path(&game_root);
+/// One downloaded and extracted archive, shared by the plan and the VPK picker.
+struct Prepared {
+    cache: PathBuf,
+    download: DownloadReport,
+    extracted: PathBuf,
+    extract: ExtractReport,
+    gamebanana: Option<GameBananaFile>,
+    warnings: Vec<String>,
+}
 
-    if let Some(slot) = request.slot
-        && !(1..=99).contains(&slot)
-    {
-        return Err(Error::msg(format!(
-            "Slot {slot} is outside 1 to 99. Addon slots are pak01_dir.vpk to pak99_dir.vpk."
-        )));
-    }
-
+/// Fetch the archive inside the workspace, extract it, and refuse an archive that asks for
+/// no one-click installs when this request is one.
+fn prepare_archive(request: &InstallRequest, options: &PlanOptions) -> Result<Prepared> {
     let cache = download_dir(&request.workspace, &request.source);
     fs::create_dir_all(&cache)?;
 
@@ -1930,8 +2023,121 @@ pub fn plan_install(request: &InstallRequest, options: &PlanOptions) -> Result<I
 
     let extracted = cache.join("extracted");
     let extract = extract_archive(&fetched.path, &extracted, &options.limits, &options.tools)?;
+    refuse_one_click_marker(&extracted, request.one_click)?;
 
-    let candidate = classify_extracted(&extracted, &options.limits)?;
+    Ok(Prepared {
+        cache,
+        download: fetched,
+        extracted,
+        extract,
+        gamebanana,
+        warnings,
+    })
+}
+
+/// The marker files creators put in an archive to say "no one-click installs".
+pub const ONE_CLICK_MARKERS: [&str; 2] = [".disable_gb1click", ".disable_gb1click_sigil"];
+
+/// The display name of a marker file, lower case, or None for any other entry.
+pub fn one_click_marker(file_name: &str) -> Option<&'static str> {
+    let name = file_name.rsplit('/').next().unwrap_or(file_name);
+    ONE_CLICK_MARKERS
+        .iter()
+        .find(|marker| name.eq_ignore_ascii_case(marker))
+        .copied()
+}
+
+/// An archive with a marker refuses a one-click install. Extracting it by hand and
+/// importing the file stays allowed, which is what the marker asks for.
+fn refuse_one_click_marker(extracted: &Path, one_click: bool) -> Result<()> {
+    if !one_click {
+        return Ok(());
+    }
+    let files = walk_tree(extracted)?;
+    for (relative, _) in &files {
+        if one_click_marker(relative).is_some() {
+            return Err(Error::msg(
+                "This creator does not allow one-click installs. Download the file from GameBanana, then import it from Installed. Nothing was installed.",
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// One `pakNN_dir.vpk` an archive ships, for the picker that follows a multi-mod download.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VpkChoice {
+    /// Path inside the archive, which is what the plan takes back.
+    pub path: String,
+    /// The directory VPK plus its chunk files.
+    pub bytes: u64,
+    pub chunks: usize,
+}
+
+impl VpkChoice {
+    /// The file name without folders, for a row.
+    pub fn name(&self) -> &str {
+        self.path.rsplit('/').next().unwrap_or(&self.path)
+    }
+}
+
+/// Every VPK an archive holds, without planning one. Reads the cached download, so the
+/// picker never downloads twice.
+pub fn vpk_choices(request: &InstallRequest, options: &PlanOptions) -> Result<Vec<VpkChoice>> {
+    let prepared = prepare_archive(request, options)?;
+    let files = walk_tree(&prepared.extracted)?;
+    Ok(collect_vpk_choices(&files))
+}
+
+fn collect_vpk_choices(files: &[(String, u64)]) -> Vec<VpkChoice> {
+    let mut choices = Vec::new();
+    for (relative, bytes) in files.iter().filter(|(path, _)| is_pak_dir_file(path)) {
+        let digits = relative
+            .rsplit('/')
+            .next()
+            .and_then(|name| name.get(3..5))
+            .unwrap_or("");
+        let chunks: Vec<&(String, u64)> = files
+            .iter()
+            .filter(|(path, _)| is_chunk_for(path, digits))
+            .collect();
+        let total = bytes + chunks.iter().map(|(_, size)| *size).sum::<u64>();
+        choices.push(VpkChoice {
+            path: relative.clone(),
+            bytes: total,
+            chunks: chunks.len(),
+        });
+    }
+    choices.sort_by(|a, b| a.path.cmp(&b.path));
+    choices
+}
+
+/// Download, extract, validate and plan. Writes only inside the workspace.
+pub fn plan_install(request: &InstallRequest, options: &PlanOptions) -> Result<InstallPlan> {
+    if let Some(slot) = request.slot
+        && !(1..=99).contains(&slot)
+    {
+        return Err(Error::msg(format!(
+            "Slot {slot} is outside 1 to 99. Addon slots are pak01_dir.vpk to pak99_dir.vpk."
+        )));
+    }
+
+    let prepared = prepare_archive(request, options)?;
+    let game_root = resolve_game_root(options.game_root.clone())?;
+    let addons = addons_dir(&game_root);
+    let gameinfo = gameinfo_path(&game_root);
+    let Prepared {
+        cache,
+        download: fetched,
+        extracted,
+        extract,
+        gamebanana,
+        mut warnings,
+        ..
+    } = prepared;
+
+    let candidate = classify_extracted(&extracted, &options.limits, request.vpk.as_deref())?;
     warnings.extend(extract.warnings);
     warnings.extend(candidate.warnings.clone());
 
@@ -2105,7 +2311,9 @@ fn choose_slot(
     payload_entries: usize,
 ) -> Result<(u8, Vec<PathBuf>, bool, Vec<String>)> {
     let status = read_addons_status(addons)?;
-    let used: BTreeSet<u8> = status.slots.iter().map(|slot| slot.slot).collect();
+    // A disabled slot or a slot with only chunk files left is still taken: the
+    // lowest free slot must hold none of its names.
+    let used = occupied_slots(addons)?;
 
     let slot = match requested {
         Some(value) => value,
@@ -2320,13 +2528,36 @@ pub struct InstallRecord {
     pub gameinfo_repaired: bool,
 }
 
-/// Copy an approved plan into `game/citadel/addons`.
+/// How an approved plan lands in the addon folder.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ApplyOptions {
+    /// Write the directory file as `pakNN_dir.vpk.disabled`, the same name the
+    /// enable switch renames from. The game ignores it until the user turns the
+    /// slot on. Chunk files keep their `pakNN_MMM.vpk` names either way.
+    pub land_disabled: bool,
+}
+
+/// Copy an approved plan into `game/citadel/addons`, enabled. The CLI path.
 ///
 /// Refuses without `approve`, when the plan is stale, when the recorded game
 /// root disappeared, or when the artifact no longer matches the plan's file
 /// list. Existing files are backed up under
 /// `<workspace>/.dah/install/backups/<stamp>/` before anything is replaced.
 pub fn apply_install(plan: &InstallPlan, approve: bool) -> Result<InstallRecord> {
+    apply_install_with(plan, approve, ApplyOptions::default())
+}
+
+/// [`apply_install`] with a choice of landing name.
+///
+/// Game install write. With `land_disabled` the directory VPK is written as
+/// `pakNN_dir.vpk.disabled` and an enabled `pakNN_dir.vpk` already in the slot
+/// is backed up and removed, so the slot ends with exactly one name. Sigil's
+/// Browse install uses this so a new mod stays off until the user enables it.
+pub fn apply_install_with(
+    plan: &InstallPlan,
+    approve: bool,
+    options: ApplyOptions,
+) -> Result<InstallRecord> {
     if !approve {
         return Err(Error::msg(format!(
             "Install of slot {:02} into {} was not approved. Nothing was written. Re-run with --approve.",
@@ -2376,15 +2607,22 @@ pub fn apply_install(plan: &InstallPlan, approve: bool) -> Result<InstallRecord>
 
     fs::create_dir_all(&plan.addons_dir)?;
 
+    let destination = if options.land_disabled {
+        plan.addons_dir
+            .join(format!("{slot_file}{}", crate::addons::DISABLED_SUFFIX))
+    } else {
+        plan.target.clone()
+    };
+
     let backups = backup_existing(plan)?;
-    let removed_files = remove_disabled_slot_file(plan)?;
+    let removed_files = remove_other_slot_name(plan, &destination)?;
 
     let (written, chunk_files) = match &plan.artifact {
         InstallArtifact::Vpk {
             dir_path,
             chunk_paths,
-        } => deploy_archive_vpk(plan, dir_path, chunk_paths)?,
-        InstallArtifact::Staging { path } => deploy_staged(plan, path)?,
+        } => deploy_archive_vpk(plan, &destination, dir_path, chunk_paths)?,
+        InstallArtifact::Staging { path } => deploy_staged(plan, &destination, path)?,
     };
 
     let gameinfo_repaired = plan.gameinfo_repair
@@ -2395,9 +2633,14 @@ pub fn apply_install(plan: &InstallPlan, approve: bool) -> Result<InstallRecord>
     if !written.is_file() {
         return Err(Error::msg(format!(
             "Install wrote nothing to {}.",
-            plan.target.display()
+            destination.display()
         )));
     }
+
+    let written_name = written
+        .file_name()
+        .map(|value| value.to_string_lossy().into_owned())
+        .unwrap_or_else(|| slot_file.clone());
 
     let entry = InstallJournalEntry {
         schema: INSTALL_SCHEMA,
@@ -2409,8 +2652,8 @@ pub fn apply_install(plan: &InstallPlan, approve: bool) -> Result<InstallRecord>
         archive: plan.archive.clone(),
         archive_sha256: plan.archive_sha256.clone(),
         slot: plan.slot,
-        file: format_slot_file_name(plan.slot)?,
-        target: plan.target.clone(),
+        file: written_name,
+        target: written.clone(),
         chunk_files,
         entries: plan.files.len(),
         bytes: plan.bytes,
@@ -2427,27 +2670,77 @@ pub fn apply_install(plan: &InstallPlan, approve: bool) -> Result<InstallRecord>
 
     Ok(InstallRecord {
         entry,
-        target: plan.target.clone(),
+        target: written,
         backups,
         gameinfo_repaired,
     })
 }
 
-/// Remove the slot's `.disabled` file once it has been backed up.
+/// Remove the slot's other directory name once it has been backed up.
 ///
 /// Leaving both `pakNN_dir.vpk` and `pakNN_dir.vpk.disabled` behind would make
-/// the slot ambiguous for `dah addons enable`, so the disabled name goes away
-/// after the backup and the install writes the enabled one.
-fn remove_disabled_slot_file(plan: &InstallPlan) -> Result<Vec<String>> {
-    let name = format!("{}.disabled", format_slot_file_name(plan.slot)?);
-    let path = plan.addons_dir.join(&name);
+/// the slot ambiguous for `dah addons enable`, so the name the install does not
+/// write goes away after the backup. `keep` is the name being written.
+fn remove_other_slot_name(plan: &InstallPlan, keep: &Path) -> Result<Vec<String>> {
+    let enabled = format_slot_file_name(plan.slot)?;
+    let disabled = format!("{enabled}{}", crate::addons::DISABLED_SUFFIX);
+    let other = if keep.file_name().map(|name| name.to_string_lossy().into_owned())
+        == Some(disabled.clone())
+    {
+        enabled
+    } else {
+        disabled
+    };
+    let path = plan.addons_dir.join(&other);
 
     if !path.is_file() {
         return Ok(Vec::new());
     }
 
+    if !plan.replaced.iter().any(|replaced| replaced == &path) {
+        return Err(Error::msg(format!(
+            "{} appeared after planning and has no backup. Plan the install again.",
+            path.display()
+        )));
+    }
+
     fs::remove_file(&path)?;
-    Ok(vec![name])
+    Ok(vec![other])
+}
+
+/// Slots 01 to 99 that hold any name in `addons`: `pakNN_dir.vpk`,
+/// `pakNN_dir.vpk.disabled` or a `pakNN_MMM.vpk` chunk. Read only.
+pub fn occupied_slots(addons: &Path) -> Result<BTreeSet<u8>> {
+    let mut used = BTreeSet::new();
+
+    let entries = match fs::read_dir(addons) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(used),
+        Err(error) => return Err(error.into()),
+    };
+
+    for entry in entries.flatten() {
+        if !entry.path().is_file() {
+            continue;
+        }
+        let name = entry.file_name().to_string_lossy().to_ascii_lowercase();
+        if !name.is_ascii() || !name.starts_with("pak") || name.len() < "pak00_000.vpk".len() {
+            continue;
+        }
+        let Ok(slot) = name[3..5].parse::<u8>() else {
+            continue;
+        };
+        if !(1..=99).contains(&slot) {
+            continue;
+        }
+        let rest = &name[5..];
+        let is_dir = rest == "_dir.vpk" || rest == "_dir.vpk.disabled";
+        if is_dir || is_slot_chunk_name(&name, slot) {
+            used.insert(slot);
+        }
+    }
+
+    Ok(used)
 }
 
 fn verify_artifact(plan: &InstallPlan) -> Result<()> {
@@ -2530,10 +2823,10 @@ fn backup_existing(plan: &InstallPlan) -> Result<Vec<PathBuf>> {
 
 fn deploy_archive_vpk(
     plan: &InstallPlan,
+    destination: &Path,
     dir_path: &Path,
     chunk_paths: &[PathBuf],
 ) -> Result<(PathBuf, Vec<String>)> {
-    copy_into_place(dir_path, &plan.target)?;
 
     let mut chunk_files = Vec::new();
 
@@ -2545,24 +2838,29 @@ fn deploy_archive_vpk(
                 Error::msg(format!("Chunk {} has no file name.", chunk.display()))
             })?;
         let renamed = rename_chunk(&name, plan.slot)?;
-        let destination = plan.addons_dir.join(&renamed);
-        copy_into_place(chunk, &destination)?;
+        copy_into_place(chunk, &plan.addons_dir.join(&renamed))?;
         chunk_files.push(renamed);
     }
 
+    // The directory file goes last, so the game never sees a slot whose chunks
+    // are still being copied.
+    copy_into_place(dir_path, destination)?;
+
     chunk_files.sort();
-    Ok((plan.target.clone(), chunk_files))
+    Ok((destination.to_path_buf(), chunk_files))
 }
 
-fn deploy_staged(plan: &InstallPlan, staging: &Path) -> Result<(PathBuf, Vec<String>)> {
+fn deploy_staged(
+    plan: &InstallPlan,
+    destination: &Path,
+    staging: &Path,
+) -> Result<(PathBuf, Vec<String>)> {
     let build_dir = install_state_dir(&plan.workspace).join("build").join(&plan.id);
     let packed = pack_vpk(&PackOptions::new(
         staging.to_path_buf(),
         build_dir,
         format!("pak{:02}", plan.slot),
     ))?;
-
-    copy_into_place(&packed.dir_path, &plan.target)?;
 
     let mut chunk_files = Vec::new();
 
@@ -2571,13 +2869,14 @@ fn deploy_staged(plan: &InstallPlan, staging: &Path) -> Result<(PathBuf, Vec<Str
             .file_name()
             .map(|value| value.to_string_lossy().into_owned())
             .ok_or_else(|| Error::msg(format!("Chunk {} has no file name.", chunk.display())))?;
-        let destination = plan.addons_dir.join(&name);
-        copy_into_place(chunk, &destination)?;
+        copy_into_place(chunk, &plan.addons_dir.join(&name))?;
         chunk_files.push(name);
     }
 
+    copy_into_place(&packed.dir_path, destination)?;
+
     chunk_files.sort();
-    Ok((plan.target.clone(), chunk_files))
+    Ok((destination.to_path_buf(), chunk_files))
 }
 
 /// Remove chunk files of the slot that this install does not ship.
@@ -4136,6 +4435,105 @@ mod tests {
     }
 
     #[test]
+    fn land_disabled_writes_the_disabled_name_and_skips_taken_slots() {
+        let root = scratch("land-disabled");
+        let game_root = fake_game(&root);
+        let workspace = root.join("workspace");
+        let addons = addons_dir(&game_root);
+
+        // Slot 01 is off, slot 02 only has a stray chunk: neither is free.
+        fs::create_dir_all(&addons).unwrap();
+        fs::write(addons.join("pak01_dir.vpk.disabled"), b"user's disabled mod").unwrap();
+        fs::write(addons.join("pak02_000.vpk"), b"stray chunk").unwrap();
+        assert_eq!(
+            occupied_slots(&addons).unwrap().into_iter().collect::<Vec<_>>(),
+            vec![1, 2]
+        );
+
+        let archive = root.join("mod.zip");
+        fs::write(
+            &archive,
+            build_stored_zip(&[(
+                "citadel/materials/heroes/billy/billy_color.vmat_c",
+                b"new payload",
+                0o100644,
+            )]),
+        )
+        .unwrap();
+
+        let options = PlanOptions {
+            game_root: Some(game_root.clone()),
+            tools: ToolPaths::default(),
+            ..PlanOptions::default()
+        };
+        let request = InstallRequest::new(archive.display().to_string(), workspace.clone()).unwrap();
+        let plan = plan_install(&request, &options).unwrap();
+        assert_eq!(plan.slot, 3);
+        assert!(!plan.replace_required);
+
+        let record = apply_install_with(&plan, true, ApplyOptions { land_disabled: true }).unwrap();
+        let disabled = addons.join("pak03_dir.vpk.disabled");
+        assert!(disabled.is_file());
+        assert!(!addons.join("pak03_dir.vpk").exists());
+        assert_eq!(record.target, disabled);
+        assert_eq!(record.entry.file, "pak03_dir.vpk.disabled");
+        // The user's own disabled slot is untouched.
+        assert_eq!(fs::read(addons.join("pak01_dir.vpk.disabled")).unwrap(), b"user's disabled mod");
+
+        // The enable switch turns it on with the ordinary rename.
+        crate::addons::set_enabled(&game_root, 3, true, true).unwrap();
+        assert!(addons.join("pak03_dir.vpk").is_file());
+        assert!(!disabled.exists());
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn land_disabled_over_an_enabled_slot_backs_it_up_and_leaves_one_name() {
+        let root = scratch("land-disabled-force");
+        let game_root = fake_game(&root);
+        let workspace = root.join("workspace");
+        let addons = addons_dir(&game_root);
+
+        fs::create_dir_all(&addons).unwrap();
+        fs::write(addons.join("pak01_dir.vpk"), b"old enabled").unwrap();
+
+        let archive = root.join("mod.zip");
+        fs::write(
+            &archive,
+            build_stored_zip(&[(
+                "citadel/materials/heroes/billy/billy_color.vmat_c",
+                b"new payload",
+                0o100644,
+            )]),
+        )
+        .unwrap();
+        let options = PlanOptions {
+            game_root: Some(game_root.clone()),
+            tools: ToolPaths::default(),
+            ..PlanOptions::default()
+        };
+        let request = InstallRequest::new(archive.display().to_string(), workspace.clone())
+            .unwrap()
+            .with_slot(Some(1))
+            .with_force(true);
+        let plan = plan_install(&request, &options).unwrap();
+
+        let record = apply_install_with(&plan, true, ApplyOptions { land_disabled: true }).unwrap();
+        assert!(addons.join("pak01_dir.vpk.disabled").is_file());
+        assert!(!addons.join("pak01_dir.vpk").exists());
+        assert_eq!(record.entry.removed_files, vec!["pak01_dir.vpk".to_string()]);
+        assert!(
+            record
+                .backups
+                .iter()
+                .any(|path| path.to_string_lossy().ends_with("pak01_dir.vpk"))
+        );
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
     fn a_tree_without_compiled_files_installs_nothing() {
         let root = scratch("no-compiled");
         let game_root = fake_game(&root);
@@ -4406,5 +4804,124 @@ mod tests {
         assert_eq!(directory.entries.len(), 1);
 
         let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn one_click_markers_match_by_file_name() {
+        assert_eq!(one_click_marker("game/citadel/.disable_gb1click"), Some(".disable_gb1click"));
+        assert_eq!(one_click_marker(".disable_gb1click_sigil"), Some(".disable_gb1click_sigil"));
+        assert_eq!(one_click_marker("Game/Citadel/.DISABLE_GB1CLICK"), Some(".disable_gb1click"));
+        assert_eq!(one_click_marker("readme.txt"), None);
+    }
+
+    #[test]
+    fn an_archive_can_refuse_one_click_installs() {
+        let root = scratch("one-click");
+        let game_root = fake_game(&root);
+        let workspace = root.join("workspace");
+        fs::create_dir_all(&workspace).unwrap();
+        let entries: [(&str, &[u8], u32); 1] =
+            [(".disable_gb1click", b"no one-click installs", 0o644)];
+        let archive = root.join("marked.zip");
+        fs::write(&archive, build_stored_zip(&entries)).unwrap();
+
+        let options = PlanOptions {
+            game_root: Some(game_root.clone()),
+            tools: ToolPaths::default(),
+            ..PlanOptions::default()
+        };
+        let request = InstallRequest::new(archive.display().to_string(), workspace.clone())
+            .unwrap()
+            .with_one_click(true);
+        let error = plan_install(&request, &options).unwrap_err().to_string();
+        assert!(error.contains("does not allow one-click installs"), "{error}");
+
+        // The marker only stops the one-click path; the normal path reports the empty payload.
+        let request = InstallRequest::new(archive.display().to_string(), workspace).unwrap();
+        let error = plan_install(&request, &options).unwrap_err().to_string();
+        assert!(!error.contains("one-click"), "{error}");
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_multi_vpk_archive_is_listed_and_the_chosen_one_plans() {
+        let root = scratch("multi-vpk");
+        let game_root = fake_game(&root);
+        let workspace = root.join("workspace");
+        fs::create_dir_all(&workspace).unwrap();
+        let (dir_a, chunks_a) = make_vpk(
+            &root.join("build-a"),
+            "pak01",
+            &[("materials/heroes/billy/billy_color.vmat_c", b"one")],
+        );
+        let (dir_b, chunks_b) = make_vpk(
+            &root.join("build-b"),
+            "pak02",
+            &[("materials/heroes/haze/haze_color.vmat_c", b"two")],
+        );
+        let _ = fs::create_dir_all(root.join("build-a"));
+        let _ = fs::create_dir_all(root.join("build-b"));
+        let mut files: Vec<(String, Vec<u8>, u32)> = Vec::new();
+        for (path, mode) in [
+            (dir_a, 0o100644),
+            (dir_b, 0o100644),
+        ] {
+            let name = path.file_name().unwrap().to_string_lossy().to_string();
+            files.push((name, fs::read(path).unwrap(), mode));
+        }
+        for path in chunks_a.iter().chain(chunks_b.iter()) {
+            let name = path.file_name().unwrap().to_string_lossy().to_string();
+            files.push((name, fs::read(path).unwrap(), 0o100644));
+        }
+        let refs: Vec<(&str, &[u8], u32)> = files
+            .iter()
+            .map(|(name, bytes, mode)| (name.as_str(), bytes.as_slice(), *mode))
+            .collect();
+        let archive = root.join("both.zip");
+        fs::write(&archive, build_stored_zip(&refs)).unwrap();
+
+        let options = PlanOptions {
+            game_root: Some(game_root),
+            tools: ToolPaths::default(),
+            ..PlanOptions::default()
+        };
+        let request = InstallRequest::new(archive.display().to_string(), workspace.clone())
+            .unwrap()
+            .with_one_click(false);
+        let error = plan_install(&request, &options).unwrap_err().to_string();
+        assert!(error.contains("more than one pakNN_dir.vpk"), "{error}");
+
+        let choices = vpk_choices(&request, &options).unwrap();
+        assert_eq!(choices.len(), 2, "{choices:?}");
+        let chosen = choices
+            .iter()
+            .find(|choice| choice.name() == "pak02_dir.vpk")
+            .expect("the second VPK is listed");
+        let request = request.with_vpk(Some(chosen.path.clone()));
+        let plan = plan_install(&request, &options).unwrap();
+        assert_eq!(
+            plan.files,
+            vec!["materials/heroes/haze/haze_color.vmat_c".to_string()]
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn vpk_choices_count_chunks_and_bytes() {
+        let files = vec![
+            ("game/citadel/pak01_dir.vpk".to_string(), 100),
+            ("game/citadel/pak01_000.vpk".to_string(), 40),
+            ("game/citadel/pak01_001.vpk".to_string(), 60),
+            ("game/citadel/pak02_dir.vpk".to_string(), 200),
+            ("game/citadel/readme.txt".to_string(), 5),
+        ];
+        let choices = collect_vpk_choices(&files);
+        assert_eq!(choices.len(), 2);
+        assert_eq!(choices[0].name(), "pak01_dir.vpk");
+        assert_eq!(choices[0].bytes, 200);
+        assert_eq!(choices[0].chunks, 2);
+        assert_eq!(choices[1].bytes, 200);
+        assert_eq!(choices[1].chunks, 0);
     }
 }

@@ -336,7 +336,130 @@ pub fn set_enabled(
     })
 }
 
+/// Undo a set of enable or disable renames: each `to` name goes back to its `from` name.
+/// Game install write; refuses without `approve`. Every rename is checked first (the `to`
+/// file is there, the `from` name is free, both are directory names of the result's slot), so
+/// nothing moves when the folder changed since. Returns the reverted results.
+pub fn revert_toggles(
+    game_root: &Path,
+    results: &[AddonToggleResult],
+    approve: bool,
+) -> Result<Vec<AddonToggleResult>> {
+    if !approve {
+        return Err(Error::msg("Not approved: undo the switch. Nothing was renamed."));
+    }
+    let directory = addons_dir(game_root);
+    let enabled_name = |slot: u8| format!("pak{slot:02}_dir.vpk");
+    for result in results {
+        let names = [enabled_name(result.slot), format!("{}{DISABLED_SUFFIX}", enabled_name(result.slot))];
+        if !names.contains(&result.from) || !names.contains(&result.to) || result.from == result.to {
+            return Err(Error::msg(format!(
+                "{} to {} is not a switch of slot {:02}. Nothing was renamed.",
+                result.from, result.to, result.slot
+            )));
+        }
+        if !directory.join(&result.to).is_file() || directory.join(&result.from).exists() {
+            return Err(Error::msg(format!(
+                "Slot {:02} changed since the switch. Nothing was renamed.",
+                result.slot
+            )));
+        }
+    }
+    let mut reverted = Vec::new();
+    for result in results {
+        fs::rename(directory.join(&result.to), directory.join(&result.from))?;
+        reverted.push(AddonToggleResult {
+            slot: result.slot,
+            from: result.to.clone(),
+            to: result.from.clone(),
+        });
+    }
+    Ok(reverted)
+}
+
+/// What [`set_many`] did: the renames made (for an undo) and the slots that failed.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SetManyReport {
+    pub done: Vec<AddonToggleResult>,
+    pub failed: Vec<(u8, String)>,
+}
+
+/// GAME WRITE. Put several slots in a wanted state, each one the single rename of
+/// [`set_enabled`]. Slots already in that state are skipped quietly; a slot that fails stops
+/// nothing else. Refuses everything without `approve`. Used by solo test, the broken mod
+/// search, variant pickers and mod lists.
+pub fn set_many(game_root: &Path, wanted: &BTreeMap<u8, bool>, approve: bool) -> Result<SetManyReport> {
+    if !approve {
+        return Err(Error::msg("Not approved: switch several mods. Nothing was renamed."));
+    }
+    let installed = list_installed(game_root)?;
+    let mut report = SetManyReport::default();
+    for (&slot, &enable) in wanted {
+        match installed.iter().find(|addon| addon.slot == slot) {
+            None => report.failed.push((slot, format!("Slot {slot:02} is not installed."))),
+            Some(addon) if addon.enabled == enable => {}
+            Some(_) => match set_enabled(game_root, slot, enable, true) {
+                Ok(result) => report.done.push(result),
+                Err(error) => report.failed.push((slot, error.to_string())),
+            },
+        }
+    }
+    Ok(report)
+}
+
 fn parse_slot(capture: Option<regex::Match<'_>>) -> Option<u8> {
     let slot = capture?.as_str().parse::<u8>().ok()?;
     (1..=99).contains(&slot).then_some(slot)
+}
+
+#[cfg(test)]
+mod revert_tests {
+    use super::*;
+
+    #[test]
+    fn revert_toggles_undoes_a_bulk_switch() {
+        let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../../.scratch/addons-test")
+            .join(format!("revert-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let addons = addons_dir(&root);
+        fs::create_dir_all(&addons).unwrap();
+        fs::write(addons.join("pak01_dir.vpk"), "a").unwrap();
+        fs::write(addons.join("pak02_dir.vpk.disabled"), "b").unwrap();
+        let done = vec![
+            set_enabled(&root, 1, false, true).unwrap(),
+            set_enabled(&root, 2, true, true).unwrap(),
+        ];
+        assert!(revert_toggles(&root, &done, false).is_err());
+        let bogus = vec![AddonToggleResult { slot: 1, from: "../x".into(), to: "pak01_dir.vpk.disabled".into() }];
+        assert!(revert_toggles(&root, &bogus, true).is_err());
+        revert_toggles(&root, &done, true).unwrap();
+        assert!(addons.join("pak01_dir.vpk").is_file());
+        assert!(addons.join("pak02_dir.vpk.disabled").is_file());
+        // A second undo finds the folder changed and does nothing.
+        assert!(revert_toggles(&root, &done, true).is_err());
+    }
+
+    #[test]
+    fn set_many_switches_only_what_differs() {
+        let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../../.scratch/addons-test")
+            .join(format!("many-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let addons = addons_dir(&root);
+        fs::create_dir_all(&addons).unwrap();
+        fs::write(addons.join("pak01_dir.vpk"), "a").unwrap();
+        fs::write(addons.join("pak02_dir.vpk.disabled"), "b").unwrap();
+        fs::write(addons.join("pak03_dir.vpk"), "c").unwrap();
+        let wanted: BTreeMap<u8, bool> = [(1, false), (2, true), (3, true), (9, true)].into();
+        assert!(set_many(&root, &wanted, false).is_err());
+        assert!(addons.join("pak01_dir.vpk").is_file());
+        let report = set_many(&root, &wanted, true).unwrap();
+        assert_eq!(report.done.len(), 2);
+        assert_eq!(report.failed.len(), 1);
+        assert!(addons.join("pak01_dir.vpk.disabled").is_file());
+        assert!(addons.join("pak02_dir.vpk").is_file());
+        revert_toggles(&root, &report.done, true).unwrap();
+        assert!(addons.join("pak01_dir.vpk").is_file());
+    }
 }
