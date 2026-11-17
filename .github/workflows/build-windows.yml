@@ -1,48 +1,102 @@
 name: build-windows
 
+# A `v*` tag builds the Windows zip and its unsigned update manifest and attaches both to a DRAFT
+# release. Signing stays a local step with the private key, which never reaches CI: download
+# sigil-update.json, run scripts/sign-release.sh, upload the .sig, then publish the draft
+# (docs/runbooks/releasing.md). A run by hand only uploads the build as an artifact.
+
 on:
   workflow_dispatch:
   push:
     tags:
       - "v*"
 
+permissions:
+  contents: read
+
 jobs:
   windows-x64:
     runs-on: windows-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
 
       - uses: dtolnay/rust-toolchain@stable
 
-      - name: Vendor Rune and TinyAgent
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Vendor Rune, TinyAgent and the Grimoire art
         shell: bash
         run: |
           ./scripts/vendor-rune.sh
           ./scripts/vendor-tinyagent.sh
+          ./scripts/vendor-grimoire.sh
+
+      - name: Install cwebp
+        shell: bash
+        run: choco install webp --no-progress -y
 
       - name: Build
         shell: bash
         run: |
-          cargo build --manifest-path rust/Cargo.toml --release \
-            -p dah-desktop -p dah-agent -p dah-rs
+          # The Locker art is built into Sigil.exe (rust/crates/desktop/build.rs).
+          ./scripts/pack-locker-art.sh .scratch/locker-art
+          SIGIL_ART_DIR="$PWD/.scratch/locker-art" cargo build --manifest-path rust/Cargo.toml --release \
+            -p dah-desktop
 
-      - name: Stage bundle
+      - name: Stage bundle and manifest
+        id: stage
         shell: bash
         run: |
           set -euo pipefail
           version="$(sed -n 's/^version = "\(.*\)"/\1/p' rust/Cargo.toml | head -1)"
-          out="dist/DeadlockModManager-${version:-0.1.0}-windows-x64"
+          version="${version:-0.1.0}"
+          if [ "$GITHUB_REF_TYPE" = "tag" ] && [ "$GITHUB_REF_NAME" != "v$version" ]; then
+            echo "Tag $GITHUB_REF_NAME does not match the workspace version $version" >&2
+            exit 1
+          fi
+          name="Sigil-$version-windows-x64"
+          out="dist/$name"
           mkdir -p "$out"
-          cp rust/target/release/dah-desktop.exe "$out/Deadlock Mod Manager.exe"
-          cp rust/target/release/dah-agent.exe "$out/"
-          cp rust/target/release/dah.exe "$out/"
-          cp THIRD_PARTY_NOTICES.md README.md "$out/"
-          echo "Built $GITHUB_SHA on $GITHUB_RUN_ID" > "$out/BUILD.txt"
-          echo "$out" > dist/OUTDIR
+          # One file: the art and the notices are inside Sigil.exe.
+          cp rust/target/release/dah-desktop.exe "$out/Sigil.exe"
+          (cd dist && 7z a -tzip -mx=9 "$name.zip" "$name" > /dev/null)
+          node scripts/release-sign.mjs manifest dist/sigil-update.json \
+            --version "$version" --platform windows-x86_64 --zip "dist/$name.zip"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "name=$name" >> "$GITHUB_OUTPUT"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: DeadlockModManager-windows-x64
-          path: dist/DeadlockModManager-*-windows-x64/
+          name: Sigil-windows-x64
+          path: |
+            dist/Sigil-*-windows-x64.zip
+            dist/sigil-update.json
           if-no-files-found: error
+
+      - name: Attach to a draft release
+        if: github.ref_type == 'tag'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NAME: ${{ steps.stage.outputs.name }}
+          VERSION: ${{ steps.stage.outputs.version }}
+        run: |
+          set -euo pipefail
+          tag="$GITHUB_REF_NAME"
+          files=("dist/$NAME.zip" "dist/sigil-update.json")
+          if gh release view "$tag" > /dev/null 2>&1; then
+            # A release made on the maintainer's machine carries a zip its signed manifest
+            # names by hash; replacing it would break every update. Leave it alone.
+            echo "Release $tag already exists; the build stays an artifact."
+          else
+            pre=()
+            if [[ "$tag" == *-* ]]; then pre=(--prerelease); fi
+            gh release create "$tag" "${files[@]}" --draft "${pre[@]}" \
+              --title "Sigil $VERSION" \
+              --notes "Draft: sign sigil-update.json locally and upload sigil-update.json.sig before publishing."
+          fi

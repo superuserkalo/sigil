@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Build the Windows x64 bundle from macOS or Linux with cargo-xwin.
 #
-# The bundle is the desktop app, the Rust agent host and the CLI, plus notices.
+# The bundle is one file, Sigil.exe. The Locker art and the notices are built into it, and the
+# dah CLI (`Sigil.exe cli ...`) and the agent host (`Sigil.exe agent-host`) are folded in.
 # It never includes CSDK 12, game files, VPKs, keys or logs.
 set -euo pipefail
 
@@ -11,132 +12,33 @@ cd "$root"
 version="$(sed -n 's/^version = "\(.*\)"/\1/p' rust/Cargo.toml | head -1)"
 version="${version:-0.1.0}"
 target="x86_64-pc-windows-msvc"
-out="$root/.scratch/package/DeadlockModManager-$version-windows-x64"
-zip_path="$root/.scratch/package/DeadlockModManager-$version-windows-x64.zip"
+out="$root/.scratch/package/Sigil-$version-windows-x64"
+zip_path="$root/.scratch/package/Sigil-$version-windows-x64.zip"
 
 if ! command -v cargo-xwin >/dev/null 2>&1; then
   echo "cargo-xwin is required: cargo install cargo-xwin --locked" >&2
   exit 1
 fi
 
+echo "== art =="
+# Packed once, then built into the executable by rust/crates/desktop/build.rs.
+art="$root/.scratch/locker-art"
+rm -rf "$art"
+"$root/scripts/pack-locker-art.sh" "$art"
+export SIGIL_ART_DIR="$art"
+
 echo "== build windows =="
 export RUSTFLAGS="${RUSTFLAGS:-} -C target-feature=+crt-static"
 cargo xwin build --manifest-path rust/Cargo.toml --release --target "$target" \
-  -p dah-desktop -p dah-agent -p dah-rs
+  -p dah-desktop
 
 bindir="rust/target/$target/release"
 
 echo "== stage =="
 rm -rf "$out" "$zip_path"
 mkdir -p "$out"
-cp "$bindir/dah-desktop.exe" "$out/Deadlock Mod Manager.exe"
-cp "$bindir/dah-agent.exe" "$out/dah-agent.exe"
-cp "$bindir/dah.exe" "$out/dah.exe"
-cp THIRD_PARTY_NOTICES.md "$out/" 2>/dev/null || true
-cp README.md "$out/" 2>/dev/null || true
-
-cat > "$out/Sign in with ChatGPT.bat" <<'BAT'
-@echo off
-cd /d "%~dp0"
-echo Sign in with your ChatGPT subscription in the browser.
-dah.exe auth login codex
-if errorlevel 1 (
-  echo Sign-in failed. Check the message above.
-  pause
-  exit /b 1
-)
-set /p MODEL=Model id (for example gpt-5.6-luna):
-if "%MODEL%"=="" (
-  echo No model id entered. Run this again or open Settings.
-  pause
-  exit /b 1
-)
-dah.exe auth use codex --model "%MODEL%"
-pause
-BAT
-
-cat > "$out/Sign in with Grok.bat" <<'BAT'
-@echo off
-cd /d "%~dp0"
-echo Sign in with your SuperGrok or X Premium subscription in the browser.
-dah.exe auth login grok
-if errorlevel 1 (
-  echo Sign-in failed. Check the message above.
-  pause
-  exit /b 1
-)
-set /p MODEL=Model id (for example grok-4.5):
-if "%MODEL%"=="" (
-  echo No model id entered. Run this again or open Settings.
-  pause
-  exit /b 1
-)
-dah.exe auth use grok --model "%MODEL%"
-pause
-BAT
-
-cat > "$out/Start Deadlock Mod Manager.bat" <<'BAT'
-@echo off
-cd /d "%~dp0"
-start "" "Deadlock Mod Manager.exe"
-BAT
-
-cat > "$out/README-WINDOWS.txt" <<'TXT'
-Deadlock Mod Manager (Windows x64)
-
-Run
-  1. Unzip this folder anywhere you can write, for example Documents.
-  2. Double-click "Deadlock Mod Manager.exe".
-  3. If SmartScreen warns, choose More info, then Run anyway. The build is
-     unsigned.
-
-The app is a native window with an agent inside. It does not use a browser
-view or Electron.
-
-Subscriptions (no API key)
-  1. Run "Sign in with ChatGPT.bat" or "Sign in with Grok.bat".
-  2. Finish the sign-in in the browser. The script asks for the exact model id
-     your subscription exposes.
-  3. Start the app. Settings shows the account and lets you switch provider or
-     model.
-
-  The token is stored under %APPDATA%\DeadlockAgentHarness\auth and is never
-  shown in the window, the transcript or a log. Sign out from the app or with
-  `dah.exe auth logout codex`.
-
-Agent with an API key (optional)
-    set DAH_AGENT_PROVIDER=openai
-    set DAH_AGENT_MODEL=<the exact model id>
-    set DAH_AGENT_API_KEY=<your key>
-
-  Local OpenAI-compatible server:
-
-    set DAH_AGENT_PROVIDER=chat
-    set DAH_AGENT_BASE_URL=http://127.0.0.1:8080/v1
-    set DAH_AGENT_MODEL=<the model id>
-
-  The app works without an agent for the manager screens. There is no telemetry.
-
-Game
-  Install Deadlock through Steam. The app finds the install, the addon folder
-  and gameinfo.gi. It never writes to the game without an approval step.
-  No CSDK 12, compiler, VPK or game file is included.
-
-Data
-  %APPDATA%\DeadlockAgentHarness holds sessions, the workspace, caches and the
-  vanilla stash. A pending vanilla stash means the addon folder is empty:
-  restore before deleting that folder.
-
-Limits
-  This bundle was cross-compiled and has not been launched on Windows here.
-  The in-game deploy, launch and CSDK compile paths remain unverified. See
-  docs/runbooks/packaging.md.
-
-CLI
-  dah.exe is the headless surface: dah doctor, dah index, dah find, dah addons,
-  dah profiles, dah install, dah stats, dah demo, dah locker, dah crosshair,
-  dah character, dah mod, dah watch, dah publish.
-TXT
+cp "$bindir/dah-desktop.exe" "$out/Sigil.exe"
+# Everything (art, notices, the CLI and the agent host) lives inside Sigil.exe.
 
 echo "== zip =="
 (cd "$(dirname "$out")" && zip -qry "$zip_path" "$(basename "$out")")
@@ -149,3 +51,11 @@ else
   hash="$(sha256sum "$zip_path" | cut -d' ' -f1)"
 fi
 printf 'zip:    %s\nbytes:  %s\nsha256: %s\n' "$zip_path" "$size" "$hash"
+
+# The update manifest for this version: the zip's name, size and SHA-256. Unsigned here; sign it with scripts/sign-release.sh
+# (docs/runbooks/releasing.md).
+manifest="$root/.scratch/package/release-$version/sigil-update.json"
+mkdir -p "$(dirname "$manifest")"
+node "$root/scripts/release-sign.mjs" manifest "$manifest" --version "$version" \
+  --platform windows-x86_64 --zip "$zip_path"
+echo "manifest: $manifest (unsigned)"

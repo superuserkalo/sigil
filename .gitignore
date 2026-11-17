@@ -28,3 +28,6 @@ vendor/
 
 # Rust workspace build output
 rust/target/
+
+# Extra cargo target folders (cross-target checks)
+rust/target-*/
