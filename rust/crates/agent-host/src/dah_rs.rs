@@ -23,22 +23,47 @@ const SECRET_ENV: [&str; 3] = ["DAH_AGENT_API_KEY", "OPENAI_API_KEY", "ANTHROPIC
 
 pub struct DahRsCli {
     binary: String,
+    /// Words before the tool's own arguments: `cli` when the binary is Sigil itself.
+    prefix: Vec<String>,
+    label: String,
     workspace: PathBuf,
     data_dir: PathBuf,
 }
 
 impl DahRsCli {
-    pub fn new(configured: Option<String>, workspace: PathBuf, data_dir: PathBuf) -> Self {
-        let binary = configured.unwrap_or_else(|| default_binary(&workspace));
+    /// `DAH_RS_BIN` wins. Otherwise inside Sigil this executable runs as `<exe> cli ...`, and
+    /// the standalone host searches as before.
+    pub fn new(
+        configured: Option<String>,
+        launch: crate::CliLaunch,
+        workspace: PathBuf,
+        data_dir: PathBuf,
+    ) -> Self {
+        let own = (launch == crate::CliLaunch::SelfCli && configured.is_none())
+            .then(|| std::env::current_exe().ok())
+            .flatten();
+        let (binary, prefix) = match (configured, own) {
+            (Some(binary), _) => (binary, Vec::new()),
+            (None, Some(exe)) => (exe.to_string_lossy().into_owned(), vec!["cli".to_string()]),
+            (None, None) => (default_binary(&workspace), Vec::new()),
+        };
+        let label = if prefix.is_empty() {
+            binary.clone()
+        } else {
+            format!("{binary} {}", prefix.join(" "))
+        };
         Self {
             binary,
+            prefix,
+            label,
             workspace,
             data_dir,
         }
     }
 
+    /// The program and any subcommand, for the startup log line.
     pub fn binary(&self) -> &str {
-        &self.binary
+        &self.label
     }
 
     /// Run the CLI and return its compact JSON. A failure becomes a tool error
@@ -52,6 +77,7 @@ impl DahRsCli {
 
         let mut command = Command::new(&self.binary);
         command
+            .args(&self.prefix)
             .args(args)
             .current_dir(&self.workspace)
             .stdin(Stdio::null())
@@ -80,7 +106,7 @@ impl DahRsCli {
             Ok(Err(error)) if error.kind() == std::io::ErrorKind::NotFound => {
                 return Err(Error::Tool(format!(
                     "Could not run the dah-rs CLI at {}. Build it with `cargo build -p dah-rs` or set DAH_RS_BIN.",
-                    self.binary
+                    self.label
                 )));
             }
             Ok(Err(error)) => {
@@ -190,4 +216,31 @@ fn excerpt_block(stderr: &str, stdout: &str) -> String {
         block.push_str(&format!("\nstdout:\n{}", excerpt(stdout)));
     }
     block
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::CliLaunch;
+
+    #[test]
+    fn inside_sigil_the_cli_is_this_executable_with_cli() {
+        let exe = std::env::current_exe().expect("current exe");
+        let cli = DahRsCli::new(None, CliLaunch::SelfCli, PathBuf::from("."), PathBuf::from("."));
+        assert_eq!(cli.binary, exe.to_string_lossy());
+        assert_eq!(cli.prefix, vec!["cli".to_string()]);
+        assert!(cli.binary().ends_with(" cli"));
+    }
+
+    #[test]
+    fn dah_rs_bin_wins_over_the_folded_cli() {
+        let cli = DahRsCli::new(
+            Some("/opt/dah".to_string()),
+            CliLaunch::SelfCli,
+            PathBuf::from("."),
+            PathBuf::from("."),
+        );
+        assert_eq!(cli.binary(), "/opt/dah");
+        assert!(cli.prefix.is_empty());
+    }
 }
