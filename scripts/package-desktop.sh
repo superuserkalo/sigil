@@ -68,6 +68,7 @@ if [[ "$host" == *darwin* && -z "$target" ]]; then
   <key>CFBundleShortVersionString</key><string>$version</string>
   <key>CFBundleExecutable</key><string>dah-desktop</string>
   <key>CFBundlePackageType</key><string>APPL</string>
+  <key>CFBundleIconFile</key><string>Sigil</string>
   <key>LSMinimumSystemVersion</key><string>13.0</string>
   <key>NSHighResolutionCapable</key><true/>
   <!-- "Install with Sigil" links (rust/crates/desktop/src/deeplink.rs, docs/design/deep-links.md).
@@ -84,6 +85,7 @@ if [[ "$host" == *darwin* && -z "$target" ]]; then
 </plist>
 PLIST
   cp THIRD_PARTY_NOTICES.md "$app/Contents/Resources/" 2>/dev/null || true
+  cp rust/crates/desktop/assets/brand/Sigil.icns "$app/Contents/Resources/Sigil.icns"
   "$root/scripts/pack-locker-art.sh" "$app/Contents/Resources/locker"
 
   # The update zip: Sigil.app at the top, for the in-app updater. Its entry goes into the
