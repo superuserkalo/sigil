@@ -1,19 +1,19 @@
 # Packaging the workbench
 
 Status: draft. Verified on macOS only. Windows is not verified.
-Updated: 2026-11-16
+Updated: 2026-11-17
 
-The desktop app is a Rust binary plus a Node-free Rust sidecar (`dah-agent`) and the `dah` CLI.
-There is no Electron `node_modules` allowlist and no browser shell. Packaging has to carry three
-binaries and nothing else.
+The desktop app is one Rust executable. The `dah` CLI and the TinyAgent host are folded into it as
+subcommands: `dah-desktop cli ...` (`Sigil.exe cli ...` on Windows) and `dah-desktop agent-host`.
+The host still runs as its own child process with the same stdin and stdout JSONL protocol; only
+the file is shared. There is no Electron `node_modules` allowlist and no browser shell. Packaging
+carries one binary and its art.
 
 ## What ships
 
 | Artifact | Built from | Purpose |
 | --- | --- | --- |
-| `dah-desktop` | `rust/crates/desktop` | Native Rune workbench |
-| `dah-agent` | `rust/crates/agent-host` | TinyAgent v2 JSONL sidecar |
-| `dah` | `rust/crates/dah-rs` | CLI: doctor, index, release, deploy, stats, demo, install |
+| `dah-desktop` (`Sigil.exe`) | `rust/crates/desktop`, linking `rust/crates/dah-rs` and `rust/crates/agent-host` as libraries | Native Rune workbench; `cli` runs the CLI, `agent-host` the TinyAgent v2 JSONL host |
 | `THIRD_PARTY_NOTICES.md` | repo root | MIT attribution for Rune, TinyAgent, Grimoire and tools |
 | `manifest.json` | the script | Byte counts, SHA-256, included and excluded material |
 
@@ -29,21 +29,24 @@ scripts/package-windows.sh                 # Windows x64 via cargo-xwin
 
 The script refuses nothing silently: a missing binary fails the stage step, and the manifest records
 the target, the host, the timestamp and the itemised exclusions. On macOS it also assembles
-`Deadlock Mod Manager.app` with an `Info.plist` and the notices under `Resources`.
+`Sigil.app` with an `Info.plist`, the notices and the Locker art under `Resources`.
 
 Output: `.scratch/package/<target>-<version>/` plus a zip beside it. The Windows
-script stages `Deadlock Mod Manager.exe`, `dah-agent.exe`, `dah.exe`, the notices
-and a first-run README into
-`.scratch/package/DeadlockModManager-<version>-windows-x64.zip`. See
+script packs the Locker art into `.scratch/locker-art`, builds it into the executable
+(`SIGIL_ART_DIR`, read by `rust/crates/desktop/build.rs`) and zips `Sigil.exe` alone into
+`.scratch/package/Sigil-<version>-windows-x64.zip`. The first launch of a build unpacks its art
+once to `<app data>/art/<build id>` (`rust/crates/desktop/src/art.rs`); the notices are in
+Settings. See
 `docs/runbooks/windows.md`.
 
-## Sidecar resolution
+## Helper resolution
 
-The desktop starts `dah-agent` from:
-
-1. `DAH_AGENT_BIN`, when set.
-2. The folder that holds the desktop binary.
-3. `PATH`.
+The desktop starts the agent host from `DAH_AGENT_BIN` when set, else its own executable with
+`agent-host`. It runs the CLI (publish, sign-in) from `DAH_RS_BIN` when set, else its own
+executable with `cli`. A host started as `agent-host` runs its tools the same way: `DAH_RS_BIN`,
+else the same executable with `cli`. The standalone `dah` and `dah-agent` binaries still build
+(`cargo build -p dah-rs -p dah-agent`) for development and the CLI docs; the standalone host keeps
+its old search (a sibling `dah-rs` or `dah`, the repo debug build, then `PATH`).
 
 One process owns a session directory. Do not point two hosts at the same journals.
 
@@ -55,6 +58,7 @@ Run these on the machine that will use the build. The list is the honest state, 
 | --- | --- | --- |
 | Desktop opens, sidebar renders | verified | not verified |
 | Agent sidecar connects, provider set | verified headless and local SSE mock | not verified |
+| `cli` and `agent-host` subcommands of the one executable, host tool calls run `<exe> cli` | verified: `cli doctor`, and `agent-host` with a mock chat server running `game_status` | not verified (bundle builds and passes `verify-windows.sh`) |
 | Game discovery finds the install | not verified, no install on this machine | not verified |
 | Addon scan, profiles, autoexec | verified against a fake install tree | not verified |
 | Launch modded and vanilla | not verified, no Steam install here | not verified |
@@ -68,8 +72,13 @@ A build that fails a row above is not a release. Mark the row, do not skip it.
 
 ## Signing and updates
 
-No signing identity is configured. macOS will warn on an unsigned bundle. The update check reads the
-GitHub release feed only; it never downloads or executes an update automatically.
+No code-signing identity is configured. macOS will warn on an unsigned bundle and SmartScreen on
+the exe. Updates are signed separately: both packaging scripts also write an unsigned
+`.scratch/package/release-<version>/sigil-update.json` (the Windows zip with `assets: true`; on a
+Mac, `Sigil-<version>-macos-<arch>.zip` with `Sigil.app` at the top). Sign it with
+`scripts/sign-release.sh` before publishing. Sigil downloads and verifies an update when a check
+finds one and installs it only on "Restart to update" or the next launch. See
+`docs/runbooks/releasing.md`.
 
 ## Uninstall
 

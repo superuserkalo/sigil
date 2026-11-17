@@ -60,23 +60,25 @@ step yet: it runs through `tsx` or Node type stripping.
 
 These are product constraints, not preferences.
 
+- Build for parity. Sigil's goal is everything Grimoire and Deadlock Mod Manager offer, organised
+  better. Build what they have; never decline a feature for style or caution. Stop only for the
+  two rules on keys and telemetry below or a real account-security risk, and tell the owner.
+  Optional looks (themes, glow, art) are built and left off by default.
 - Never write to a game install from an agent tool. Tools produce a plan, a staging folder and
   validated output. Installing into `citadel/addons`, editing `gameinfo.gi`, launching the game,
-  and publishing are app actions behind an explicit approval gate.
+  and publishing are app actions the user triggers. A confirm dialog is a UX choice, not a rule:
+  "don't ask again" and one-click actions are fine.
 - The desktop UI is native Rust with Rune. Do not introduce an Electron renderer or a browser web
   view as the app shell. See `docs/decisions/0006-native-rust-rune-desktop.md`.
 - TinyAgent remains the agent host in a Node sidecar until the Rust implementation reaches protocol
   v2 with durable sessions, pause and resume. The UI never runs agent tools in its render loop.
-- A mod payload contains compiled `_c` files only, at exact game paths. Deny `scripts/*.vdata_c`,
-  `*.vnmskel_c`, source assets, tool caches and executables. `packages/deadlock-tools/src/validate.ts`
-  is the executable version of that rule. Do not weaken it in a prompt.
-- Cosmetic only. No gameplay data, no skeleton replacement, no feature that gives an advantage in
-  matchmaking.
 - BYOK keys live in the Rust app and never enter the UI transcript, tool output, logs or a commit.
   The CLI store is `chmod 600`; the desktop store uses the OS keychain.
 - No telemetry, no analytics, no heartbeat. Network calls come from a documented allowlist:
   model provider endpoints, `api.steampowered.com` for the official patch feed, GameBanana, and the
-  GitHub update check.
+  GitHub update check. Owner-approved opt-ins (2026-11-17), off by default: match data sharing
+  to `api.deadlock-api.com` (`/v1/matches/salts`), and Discord Rich Presence over the local
+  Discord IPC socket (no network).
 - Preserve MIT attribution for Rune, TinyAgent, Grimoire and every bundled community tool. See
   `THIRD_PARTY_NOTICES.md`. CSDK 12 has no license and is never redistributed.
 - No em dashes in code, UI strings, comments or docs. Use a colon, period or parentheses.
@@ -87,6 +89,9 @@ These are product constraints, not preferences.
 
 - One durable session per mod project. The root session is the general workbench. Sessions are
   JSONL journals under the app data directory.
+- The host runs as `Sigil agent-host` (the app's own executable, still a separate child process
+  speaking the same JSONL protocol); its tools run `Sigil cli ...`. `DAH_AGENT_BIN` and `DAH_RS_BIN`
+  point at standalone builds instead.
 - Tools call the Rust domain core through `dah-rs`. The payload validator is also implemented in the
   host for pure checks.
 - Mark a tool `idempotent: true` only for reads and pure computation. Writes, process launches and
@@ -163,7 +168,8 @@ clone. Keep it that way. `docs/README.md` is the index; every doc carries a stat
   arrays from the workspace.
 - External binaries are resolved from settings, never downloaded on demand from an arbitrary URL.
   Pin a version and a hash when one is added.
-- The desktop app is a Rust binary plus a Node sidecar. Packaging must bundle or locate the sidecar;
-  there is no Electron `node_modules` allowlist to lean on.
+- The desktop app is one Rust executable: the CLI (`cli`) and the agent host (`agent-host`) are
+  subcommands of it. Packaging ships that file and its art; there is no Electron `node_modules`
+  allowlist to lean on.
 - Game updates move hero folders and reset `gameinfo.gi`. A "worked yesterday" report is usually a
   path or SearchPaths regression, not an agent bug.

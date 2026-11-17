@@ -1,7 +1,7 @@
 # Deadlock player stats: API, derived metrics and visualizations
 
 Status: active. Researched and verified 2026-11-16 against the live API.
-Updated: 2026-11-16
+Updated: 2026-11-17
 
 This document records the public data source, the endpoints the workbench uses, the formulas behind
 every derived number, what the API does not expose, and the chart choices for the future Stats
@@ -63,6 +63,9 @@ Load shedding is documented and visible in practice:
 | `fetch_rank_names` | `GET /v1/assets/ranks` | Tier and tier name. |
 | `fetch_leaderboard` | `GET /v1/leaderboard/{region}` | Place, account name, possible account ids, top hero ids. |
 | `fetch_kill_heatmap` | `GET /v1/analytics/kill-death-stats?account_ids=...` | Kill and death positions, killer team, counts, for the API's default 30-day window. |
+| `fetch_peer_benchmarks` | `GET /v1/analytics/hero-stats?min_average_badge=&max_average_badge=&min_unix_timestamp=` | Per-hero wins, losses, matches, kills, deaths, assists and net worth for the player's rank tier (subranks 1 to 6) over the last 30 days. |
+| `search_players` | `GET /v1/players/steam-search?search_query=&limit=` | Steam profiles by name, for a pasted name or vanity link. Only profiles with recent matches come back. |
+| `fetch_map_objectives` | `GET /v1/assets/map` | `objective_positions` only: Guardians (`tier1`), Walkers (`tier2`), Patrons (`titan`) and bases (`core`) per team and lane. |
 
 `fetch_snapshot` composes the profile, rank, rank benchmark, hero rows and match window. It makes
 about seven requests. Hero names are best effort: if the 1.9 MB asset request fails, rows keep their
@@ -259,6 +262,138 @@ per layer or per fixed count scale, and pick a sequential palette with a colorba
 - A per-match map with paths. The data is asynchronous and not fetched.
 - A hero counter matrix from per-player enemy records. Those are player records.
 - A single "performance score". There is no published formula.
+
+## Stats screen
+
+Status: implemented in `rust/crates/desktop/src/screens/stats/`, verified with the fixture scenes
+`stats-profile`, `stats-drill`, `stats-entry`, `stats-board`, `stats-people` and `stats-tracked`
+(`dah-desktop --list-scenes`). Updated 2026-11-17.
+
+The screen loads one account with `fetch_snapshot(account, 200)`, then the peer benchmark, the
+kill and death raster and the map objectives. Match history has no paging, so 200 rows cost the
+same single request as 20 and give the rank chart and the form comparisons enough games.
+
+Order, top to bottom, and the rule each part follows:
+
+1. **The brief.** One headline for what changed and one "Next" item for what to work on, from
+   `deadlock_core::stats::insight::brief`. Up to two more notes, positive ones first.
+2. **Your last 20.** Win rate, KDA, deaths a match and souls a minute for the newest 20 matches,
+   against the matches before them in the window, with the tier average where the API has one and
+   a sparkline of the last 30 matches (rolling mean). Change carries an arrow and a signed number,
+   not colour alone. A change under 3 percent reads as level.
+3. **Progress.** Rank as a step line over the ranked matches in the window (badges are discrete),
+   or the rolling 20 match win rate shaded green above even and red below. Under it, the last 30
+   results as beads: a win stands up, a loss hangs down.
+4. **Heroes.** Sorted by matches. Win rate on a 0 to 100 track with its 95 percent Wilson range,
+   the rank tier's win rate on the hero as a tick (when that hero has at least 100 tier matches),
+   and the gap as a signed number. Heroes under 10 matches are dimmed and say "few".
+5. **Matches by sitting.** A sitting ends after a 3 hour break. Each sitting heads its matches with
+   the record and the rank points it moved. A row opens to the fields the history holds, the match
+   against the player's average on that hero, the way to the scoreboard for that match and the way
+   to a demo review.
+6. **The scoreboard.** Opened from a match row, on its own worker: both teams in net worth order,
+   each player's K/D/A, souls, damage and healing from the last sample, the rank badge the match was
+   played at, the MVP vote, the final build (items still held at the end, in shop order weapon,
+   vitality, spirit) and the soul lead every three minutes. One metadata response per match, kept
+   for a week because a finished match never changes. Player names come from one profile request
+   for the twelve account ids. Item names come from `/v1/assets/items/by-type/upgrade`; item art
+   would need `assets-bucket.deadlock-api.com`, which is not on the allowlist, so builds are text.
+7. **Players you meet.** Teammates and opponents with at least three shared matches, best teammates
+   by win rate (five games or more), frequent opponents by games, the win rate with and against
+   them, and a pin for rows that were queued in the same party. One press loads the three responses
+   (about 700 KB each); a row opens that player's page. Names are one profile request for the top
+   fifty rows.
+8. **Leaderboard.** Region (Europe, NAmerica, SAmerica, Asia, Oceania) and season from
+   `/v1/assets/ranked-seasons`. The region defaults to the profile's country. The player's row is the
+   entry whose `possible_account_ids` hold their account id; it is marked in place on the first page
+   and repeated under the list when it is further down. An empty current board falls back to the
+   previous season.
+9. **Where fights happen.** The 30 day kill and death raster on a 48 by 48 grid, drawn in the
+   minimap frame with a lane skeleton through the objectives. Deaths or kills, one layer at a time.
+   The three busiest areas (3 by 3 cell sums, kept 4 cells apart) are numbered and named after the
+   nearest objective: "Near the enemy Guardian, middle lane". The team for "your" and "the enemy"
+   comes from `killer_team` in the raster.
+
+World units map to the minimap frame with `left = (x + r) / 2r` and `top = (r - y) / 2r`,
+`r = 10752`. The camp positions in `/v1/assets/map` (world position and relative position side by
+side) confirm the transform. The earlier screen plotted y without the flip.
+
+### Insight rules
+
+`rust/crates/deadlock-core/src/stats/insight.rs`. Thresholds follow the Deadlock Mod Manager study
+(15 decided matches per side, 6 points of win rate) so a sentence never rests on a handful of games.
+
+| Insight | Fires when | Wording |
+| --- | --- | --- |
+| Rank move | The badge changed over the week ending at the newest ranked match. | "Up to Eternus 5 this week." |
+| Win streak | 3 or more wins in a row, unscored rows skipped. | "6 wins in a row." plus personal best and the last rank delta. |
+| Loss streak | 3 or more losses in a row. Always the "Next" item. | Quotes the player's own win rate after 3 straight losses (10 or more cases), else how often such runs happen. |
+| Form up or down | Newest 20 against the rest of the window, both 15 or more decided, gap 6 or more points. | "Winning 70% lately, up from 57%." |
+| Deaths up or down | Deaths a match changed by 15 percent (up) or 13 percent (down), 15 or more matches each side. | "Dying more: 6.4 a match over your last 20." |
+| Comfort or trap hero | A hero with 20 or more career matches, played in the last 60 days, 6 or more points above or below the career rate. | "Paradox is costing you." with the tier's rate on the hero. |
+| Long sittings | Games 3 and later of a sitting win 6 or more points less than games 1 and 2, 15 or more each. | "Long sittings cost you." |
+| Peer gap | A hero played 3 or more times in the last 20 whose career rate trails the tier's rate on it. | "Grey Talon trails your rank." |
+| Last sitting | Always, as the fallback headline. | "Last sitting: 4 W 2 L, +930 rank points." |
+
+"Next" is the focus item with the largest effect times the square root of its sample. A loss streak
+always wins, because it is the one the player can act on before the next queue.
+
+### Account entry
+
+`parse_account_input` accepts a SteamID3, a SteamID64 (minus `76561197960265728`), `[U:1:n]`, and
+`steamcommunity.com/profiles/<id64>` links. A `steamcommunity.com/id/<vanity>` link or a plain name
+becomes a `steam-search` query and the screen lists the matching active players to pick from.
+Resolving a vanity URL exactly needs a Steam Web API key, which the app does not hold.
+
+Loaded accounts are remembered, most recent first, in `stats-accounts.json` in the app data
+directory (account id and persona name only, at most six). The last one loads when the screen opens.
+The switcher in the page head lists them and can forget one.
+
+### Cache
+
+`deadlock_core::stats::cache::ResponseCache` keeps one file per request under the app data
+directory (`cache/stats`). A response inside its lifetime is used without a request; an older copy
+answers when the API cannot be reached and the page says "Showing an older copy". Manual refresh
+waits 60 seconds.
+
+| Endpoint | Lifetime |
+| --- | --- |
+| Match history, hero stats, kill and death raster | 10 minutes |
+| Rank | 30 minutes |
+| Rank distribution, peer benchmarks | 12 hours |
+| Teammates, opponents, leaderboard | 1 hour |
+| Steam profiles | 24 hours |
+| Match metadata, hero, rank, season and item assets, map | 7 days |
+
+### Tracked players
+
+The account field takes a SteamID3, a SteamID64, `[U:1:n]` and both profile link forms. Loading an
+account tracks it (at most six, primary first, in `stats-accounts.json`). One is the primary account
+and the page opens on it. `deadlock_core::steam_users` reads `config/loginusers.vdf` from the Steam
+roots discovery already knows, and the panel offers those accounts as a one-press add. Detection
+runs on the stats worker, never on the UI thread.
+
+### Fixture
+
+`rust/crates/desktop/fixtures/stats-profile.json` is a capture of the raw API responses for a public
+leaderboard account captured on 2026-11-17, with the name, account id and avatar
+replaced. Match history keeps 200 rows and the used fields; the kill and death raster is
+re-aggregated to 384 world unit cells and stored as `[x, y, killer_team, kills, deaths]` rows.
+`deadlock_core::stats::snapshot_from_bundle` parses it through the same code as a live load. The
+generator is a local script (`.scratch/ui-hill/stats2/make-fixture.py`).
+
+### Not done
+
+- Steam avatars are not shown: `avatars.steamstatic.com` is not on the network allowlist. The page
+  shows the persona initial.
+- Rank badge art from `/v1/assets/ranks` lives on `assets-bucket.deadlock-api.com`, also not on the
+  allowlist. Ranks are text.
+- Hero chip icons come from the local Grimoire art (`hero_portraits/chip-icons`). The packaging
+  script does not copy that folder yet, so a packaged build shows letters.
+- Item icons are not drawn, for the same reason: `assets-bucket.deadlock-api.com` is not on the
+  network allowlist.
+- The live match view is designed but not built: `docs/design/stats-live.md`.
+
 
 ## CLI surface
 
