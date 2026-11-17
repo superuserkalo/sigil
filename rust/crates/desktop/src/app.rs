@@ -29,7 +29,7 @@ use crate::publish::PublishJob;
 use crate::screens;
 use crate::ui::{
     ActionKind, BODY, BODY_MED, LABEL, MICRO, NAV, PAGE_X, SIDEBAR_W, SMALL, TITLEBAR_H, Tone,
-    Ui, WORDMARK,
+    Ui,
 };
 
 pub struct State {
@@ -1270,7 +1270,7 @@ fn sidebar(s: &State, u: &Ui, insets: rune::ChromeInsets) -> El {
                 .pr(12.0)
                 .center_y()
                 .window_drag()
-                .child(text("Sigil").font(WORDMARK).color(u.ink)),
+                .child(crate::brand::header(s, u)),
         )
         .child(
             col()
@@ -1695,6 +1695,7 @@ fn launch_layer(s: &State, u: &Ui) -> El {
 pub fn setup(s: &mut State, waker: Waker) {
     s.wake = Some(waker.clone());
     s.images = Some(ImageCache::new(waker));
+    crate::brand::load(s);
     preload_thumbnails(s);
     if s.demo || rune::is_headless() {
         // Scenes get their fixture link (or none) as before.

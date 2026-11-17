@@ -9,6 +9,7 @@
 mod agent;
 mod app;
 mod art;
+mod brand;
 mod banner;
 mod data;
 mod deeplink;
@@ -60,6 +61,7 @@ fn main() -> std::process::ExitCode {
         return code;
     }
     deeplink::startup();
+    brand::install_app_icon();
     let scenes: &'static [(&'static str, fn(&mut State))] =
         Box::leak(
             [app::scenes(), &deeplink::SCENES[..], &screens::settings::personalize::SCENES[..]]

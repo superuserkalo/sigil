@@ -1,0 +1,79 @@
+//! The Sigil mark and wordmark: the sidebar's header and the app icon.
+//!
+//! The cut-outs in `assets/brand` come from the logo (`logo-source.png`): light ink for dark
+//! themes, dark ink for light ones, 112 px tall so the header stays sharp at 2x. The app icon is
+//! `sigil.ico` built into Sigil.exe (`build.rs`) and `app-icon.png` for the macOS Dock.
+
+use rune::{El, SurfaceFit, el, row, text};
+
+use crate::app::State;
+use crate::ui::{Ui, WORDMARK};
+
+const MARK_LIGHT: &[u8] = include_bytes!("../assets/brand/mark-light.png");
+const MARK_DARK: &[u8] = include_bytes!("../assets/brand/mark-dark.png");
+const WORD_LIGHT: &[u8] = include_bytes!("../assets/brand/word-light.png");
+const WORD_DARK: &[u8] = include_bytes!("../assets/brand/word-dark.png");
+#[cfg(target_os = "macos")]
+const APP_ICON: &[u8] = include_bytes!("../assets/brand/app-icon.png");
+
+const MARK_LIGHT_KEY: &str = "sigil:brand/mark-light";
+const MARK_DARK_KEY: &str = "sigil:brand/mark-dark";
+const WORD_LIGHT_KEY: &str = "sigil:brand/word-light";
+const WORD_DARK_KEY: &str = "sigil:brand/word-dark";
+
+/// The wordmark's width over its height (248 by 112).
+const WORD_ASPECT: f32 = 248.0 / 112.0;
+const MARK_PT: f32 = 24.0;
+const WORD_PT: f32 = 19.0;
+
+/// The app icon for windows and the Dock. Call before `run`.
+pub fn install_app_icon() {
+    if rune::is_headless() {
+        return;
+    }
+    // Windows: the icon resource `build.rs` links in (Explorer shows the same one).
+    #[cfg(target_os = "windows")]
+    rune::set_app_icon_resource(1);
+    #[cfg(target_os = "macos")]
+    let _ = rune::set_app_icon(APP_ICON);
+}
+
+/// Queue the header's images; `setup` decodes them with the other startup images. About 50 KB
+/// decoded each, kept for the whole run.
+pub fn load(st: &mut State) {
+    for (key, bytes) in [
+        (MARK_LIGHT_KEY, MARK_LIGHT),
+        (MARK_DARK_KEY, MARK_DARK),
+        (WORD_LIGHT_KEY, WORD_LIGHT),
+        (WORD_DARK_KEY, WORD_DARK),
+    ] {
+        if !st.thumbnails.contains_key(key) {
+            st.pending_thumbs.push((key.to_string(), bytes.to_vec()));
+        }
+    }
+}
+
+/// The mark and the wordmark in the theme's ink; the plain name until they decode.
+pub fn header(s: &State, u: &Ui) -> El {
+    let dark_theme = (u.ink.r + u.ink.g + u.ink.b) / 3.0 > 0.5;
+    let (mark, word) = if dark_theme {
+        (MARK_LIGHT_KEY, WORD_LIGHT_KEY)
+    } else {
+        (MARK_DARK_KEY, WORD_DARK_KEY)
+    };
+    match (s.thumbnails.get(mark), s.thumbnails.get(word)) {
+        (Some(mark), Some(word)) => row()
+            .key("brand-lockup")
+            .gap(8.0)
+            .center_y()
+            .label("Sigil")
+            .child(el().key("brand-mark").size(MARK_PT, MARK_PT).pixels_fit(mark, SurfaceFit::Fit))
+            .child(
+                el().key("brand-word")
+                    .size(WORD_PT * WORD_ASPECT, WORD_PT)
+                    .pixels_fit(word, SurfaceFit::Fit)
+                    .a11y_hidden(),
+            ),
+        _ => text("Sigil").font(WORDMARK).color(u.ink),
+    }
+}
