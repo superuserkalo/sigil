@@ -9,7 +9,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.1.1"
+version = "0.1.2"
 edition = "2024"
 license = "MIT"
 
@@ -45,3 +45,12 @@ inherits = "release"
 codegen-units = 16
 lto = false
 incremental = true
+
+# Debug builds: line tables for our crates and no debug info for dependencies keep
+# target/debug a fraction of its size (it reached 76 GB with full debug info); backtraces still
+# name files and lines.
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false
