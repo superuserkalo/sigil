@@ -1,7 +1,7 @@
 # Architecture
 
 Status: draft. Boundaries below are proposals until recorded in `docs/decisions/`.
-Updated: 2026-11-16
+Updated: 2026-11-17
 
 This document is the map. The executable rules live in code, especially
 `packages/deadlock-tools/src/validate.ts` and the approval hooks in the agent host.
@@ -104,7 +104,8 @@ writes. The choice is recorded in `docs/decisions/0007-tinyagent-host.md`; the e
 choice is superseded.
 
 TinyAgent's Rust implementation is protocol v2 in `rust/crates/tinyagent`. `rust/crates/agent-host`
-(`dah-agent`) is the host the Rune app spawns. The TypeScript host is a reference implementation
+is the host the Rune app spawns, as its own executable with the `agent-host` subcommand (a separate
+child process; see `decisions/0010-one-executable.md`). The TypeScript host is a reference implementation
 only. fx remains an optional external lane, not a dependency.
 
 One app instance owns the session directory. Do not point two hosts at the same journal directory.
@@ -268,11 +269,141 @@ Enforced in code:
 3. **Slot rules.** Only `pak01_dir.vpk` through `pak99_dir.vpk` in the addons folder. A target slot
    that already exists requires an explicit replace decision.
 4. **`gameinfo.gi` scope.** Only the `SearchPaths` block is allowed to change. The app backs up the
-   file, records the exact edit, and can restore Valve's version. Anything else is refused.
+   file, records the exact edit, and can restore Valve's version. Anything else is refused. One
+   exception: a Performance config edits ConVars and engine sections on the user's Apply, with every
+   line tagged `sigil-perf` so Turn off restores the file byte for byte
+   (`deadlock_core::performance`). It never touches `FileSystem`/`SearchPaths`.
+   Joining a Deadworks server adds up to five marked `SearchPaths` lines (`Game
+   citadel/deadworks_mods`, `addonroot citadel/deadworks_addons`, and `Mod`/`Write citadel` when
+   absent) after the user confirms, with a backup (`deadlock_core::servers`).
 5. **Secrets.** Decrypted keys exist only in main. The agent host receives provider auth through a
    narrow handshake, not the transcript. Tool output and logs are scrubbed for known key shapes.
-6. **Network allowlist.** Provider endpoints, `api.steampowered.com`, `api.deadlock-api.com`, GameBanana, and the GitHub update check. No other
+6. **Network allowlist.** Provider endpoints, `api.steampowered.com`, `api.deadlock-api.com`, GameBanana, the GitHub update check and signed update download, Deadworks for Servers, and the local Discord IPC socket. No other
    outbound calls from tools without a documented allowlist entry.
+   - `gamebanana.com/apiv11`, `images.gamebanana.com` and `files.gamebanana.com`: Browse.
+     Anonymous GETs, no key, no user data: `Game/20948/Subfeed?_nPage=N&_csvModelInclusions=Mod|Sound|Wip`
+     for the mixed feed, `<Model>/Index` (`_aFilters[Generic_Game|Generic_Category|Generic_Name|Generic_WasFeatured|Generic_Submitter]`,
+     `_sSort=Generic_*`) once a filter, a search or another order is picked (the next page as the
+     grid scrolls near its end), `<Model>/Categories` and `<Model>Category/<id>/SubCategories`
+     for the category and hero pickers (once per session), `Game/20948/TopSubs` for the
+     dashboard rails, `Collection/Index?_aFilters[Generic_Game]=20948` for the Collections tab,
+     `Collection/<id>/Items` when a collection opens, `<Model>/<id>/ProfilePage`, `Posts` and
+     `Updates` when a submission is opened (plus later `Posts` and `Updates` pages on Load more),
+     `Mod/<id>?_csvProperties=_aRequirements` for the requirements panel, and preview images,
+     hero portraits and avatars. `<Model>` is `Mod`, `Sound` or `Wip`. The search text the player
+     types goes to GameBanana as the name filter. Images are cached under the app data directory
+     (`cache/images`). A sound's sample downloads only when the player presses Play, into memory
+     for the preview player; nothing is written to disk. Favorites (`browse/favorites.json`) and
+     hidden items, ignored updates, filters and view options (`browse/state.json`) stay local.
+   - `gamebanana.com/apiv11` background catalog sync: Browse keeps a bounded local index under
+     `browse/mirror/` (`entries.jsonl`, `meta.json`, 40,000 rows and 24 MB caps). Every five
+     minutes while Browse is open it reads two `<Model>/Index?_sSort=Generic_Newest` pages per section,
+     walks back through the catalog incrementally and prunes the oldest rows. The index answers
+     offline browse, the creator rail and custom date ranges. It runs only while Browse is open,
+     stops in offline mode, and sends nothing but the public page and filter parameters.
+   - `gamebanana.com/apiv11/Mod/<id>?_csvProperties=_idRow,_aFiles`: Installed update checks. One
+     anonymous GET per installed GameBanana mod when Installed opens, at most every six hours
+     (cached in `mod-updates.json` in the app data directory), or on "Check for updates". The
+     request carries only the public mod id. An update downloads through the install pipeline.
+   - `api.github.com` and `raw.githubusercontent.com`: Performance configs. Anonymous GETs of public
+     files, no user data. `api.github.com` resolves the newest release of
+     `Sqooky/OptimizationLock` (newest commit) and `dacooderr/OptiLock` (latest release tag) and
+     lists the files at that commit; `raw.githubusercontent.com` serves the config files at that
+     commit, each checked against its git blob hash. Valve's convar list
+     (`SteamTracking/GameTracking-Deadlock`, `DumpSource2/convars.txt`) comes from the same hosts.
+     Runs when the Performance page opens and the cache is older than 12 hours, or on the refresh
+     button. Results are cached under the app data directory (`performance/`), so the page works
+     offline after the first fetch.
+     `api.github.com` also serves the update check: one anonymous GET of
+     `/repos/superuserkalo/sigil/releases/latest` (Stable) or `releases?per_page=10` (Preview),
+     from Settings > About and updates, at startup when the user turned "Check for Sigil updates"
+     on (off by default), or on the interval chosen beside it. No identifier, cookie or install id
+     is sent; the User-Agent is `sigil-updater`.
+   - `github.com/superuserkalo/sigil/releases/download/...`: Sigil updates. When the check finds a
+     newer release, Sigil fetches `sigil-update.json` and its `.sig` (a few KB) and, if the
+     Ed25519 signature verifies against the key compiled into Sigil, downloads this platform's zip
+     into the app data directory (`updates/`). GitHub answers these with a redirect to its release
+     asset host (`release-assets.githubusercontent.com`, formerly `objects.githubusercontent.com`),
+     which serves the file. Only URLs under the repository's release download path are fetched.
+     Size and SHA-256 are checked against the signed manifest before anything is staged; the swap
+     happens only on "Restart to update" or the next launch, and never touches the game install.
+     Offline mode blocks all of it. See `docs/runbooks/releasing.md`.
+   - `api.deadlock-api.com`: Stats (public match and player data for the account the user enters)
+     and Crosshair share codes. "Copy code" sends only the crosshair convar values, as a GET to
+     `/v1/crosshair/settings/code`, and only when the user presses it. Import sends a pasted
+     `DL.` code to `/v1/crosshair/code/settings` only when the text has the shape of a code and
+     the user presses Import; pasted console commands are parsed locally. Both follow the
+     share codes switch in Settings > Privacy.
+     Match data sharing (opt-in, off by default, owner-approved 2026-11-17): Settings > Privacy >
+     "Share match data with deadlock-api". While on, Sigil reads the first 512 bytes of each file
+     in Steam's HTTP cache (`<Steam>/appcache/httpcache`), keeps URLs shaped
+     `replayN.valve.net/1422450/<match>_<salt>.(meta|dem).bz2`, and POSTs the documented
+     `/v1/matches/salts` body: `match_id`, `cluster_id`, `metadata_salt` or `replay_salt`, and
+     `username: "Sigil"`. No account id, Steam login, file or other data is sent. It runs every
+     15, 30 or 60 minutes while Sigil is open, or on "Share now"; each batch is logged in
+     `<data>/match-sharing.json` and shown in Settings; "Forget" deletes that log.
+     `deadlock_core::salts` holds the scan and the request.
+   - `gamebanana.com/apiv11/Member/<id>/ProfilePage`: one anonymous GET when the user links a
+     GameBanana account in Settings > Integrations, to read the public member name. The member
+     id is stored in `settings.json`.
+   - The release check also reads `/repos/<owner>/<repo>/releases?per_page=1` when the user picks
+     the Preview channel in Settings > About and updates.
+   - Discord Rich Presence (opt-in, off by default, owner-approved 2026-11-17): no network. Sigil
+     writes to the local Discord client's IPC socket (`discord-ipc-N` in `$XDG_RUNTIME_DIR`,
+     `$TMPDIR`, `$TMP`, `$TEMP` or `/tmp`; the named pipe `\\?\pipe\discord-ipc-N` on Windows):
+     a HANDSHAKE with Sigil's application id, then SET_ACTIVITY with the page the user is on,
+     optionally the enabled mod count and whether the game runs modded or vanilla, and a session
+     start time. "Show what you are doing" off sends only "Using Sigil". Discord itself shows the
+     activity to the user's friends. See `screens/settings/discord.rs`.
+   - Offline mode (Settings > Network) blocks every request the core makes: each `ureq::Agent` in
+     `deadlock-core` carries `net::gate` as middleware, and `DAH_OFFLINE=1` carries the switch
+     to the helper processes Sigil starts. Not covered yet: the agent host's model provider
+     calls (`rust/crates/agent-host`, `apps/agent-host`), subscription sign-in
+     (`desktop/src/signin.rs`) and publish (`desktop/src/publish.rs`), which do not go through
+     the core gate.
+   - An HTTP proxy from Settings > Network applies to GameBanana browsing and mod downloads
+     (`net::with_proxy`). Without one, ureq honours `HTTPS_PROXY` from the environment.
+   - `api.deadworks.net`: Servers. Anonymous GETs, no user data: `/api/steam/servers?deadworks=1`
+     (Steam's server list for Deadlock, filtered to Deadworks servers) and `/api/servers` (the
+     Deadworks registry: country, version, roster) when the Servers page opens or on Refresh;
+     `/api/bootstrap` and the UI pack it names (`/api/bootstrap/v/<n>.vpk.bz2`) when the user
+     opens a join. See `docs/decisions/0009-deadworks-servers.md`.
+   - Listed Deadworks game servers, UDP: one A2S_INFO ping per listed server on the Servers page,
+     and an A2S_RULES query to the one server the user opens a join for.
+   - The download host a Deadworks server advertises (`dw_fastdl`, any host): only after the user
+     confirms a join that needs content, and the host is shown in the confirm dialog. Every
+     connection resolves through a guard that refuses loopback, private, link-local and reserved
+     addresses (unless the game server itself is local), at most five redirects, 4 GiB per file and
+     16 GiB per join, VPK checks before anything is installed.
+   - GameBanana file servers (parity round, 2026-11-17): `gamebanana.com/apiv11/Util/Fileservers`
+     (the server directory, when Settings > Mods opens or on Refresh status), and a speed test on
+     "Test now" only: the newest file of GameBanana's top Deadlock mod (`Mod/Index`, its
+     `ProfilePage`, a HEAD of `gamebanana.com/dl/<id>`) and a 256 KiB range read from at most
+     three `filecacheN.gamebanana.com` servers. A chosen or fastest server rewrites download
+     redirects to that `*.gamebanana.com` host (`net::route_download`), falling back to the one
+     GameBanana picked. "Faster downloads" sends parallel Range requests to the same host.
+   - `gamebanana.com/apiv11/Mod/<id>?_csvProperties=_aRequirements`: one anonymous GET when the
+     install panel opens for a mod and "Show what a mod needs" is on.
+   - A mod source the user adds (Settings > Mods > Sources): the descriptor URL the user pastes
+     and only the `api`, `downloads` and `media` origins it declares, https only, never a private
+     or local address. Sigil shows every origin and asks before the source is saved; it syncs
+     only on add or Sync again, and downloads only when the user presses Install. Nothing about
+     the user is sent.
+   - Connection diagnostics and Test connection (Settings > Network, on a press only): HEAD
+     requests to GameBanana, `files.gamebanana.com`, `api.deadlock-api.com`, `api.github.com`,
+     `raw.githubusercontent.com` and `api.deadworks.net`, through the proxy when one is set.
+   - `api.github.com/repos/superuserkalo/sigil/contributors`: one anonymous GET when About >
+     Contributors opens.
+   - The proxy sign-in (Settings > Network) is kept in the OS keychain (macOS `security`,
+     Windows Credential Manager, Secret Service through `secret-tool`); only the user name is in
+     `options.json`. A bypass list skips the proxy for the hosts it names.
+   - DeadlockForge 1-click installs (opt-in, off by default): an inbound HTTP listener on
+     `127.0.0.1` ports 43110 to 43114, no outbound call. It answers only the
+     `https://deadlockforge.net` and `https://www.deadlockforge.net` origins with a loopback
+     `Host`, takes one VPK (1 KiB to 512 MiB, VPK magic checked), and installs nothing until the
+     user presses Install in Sigil.
+   - Stat sites (Settings > Integrations: Statlocker, DeadChaps, Buildlock, DLTV, EDL) open in
+     the system browser on a press; Sigil makes no request to them.
 7. **Exec allowlist.** The desktop wraps `bash` with a workspace boundary and a binary allowlist.
    The CLI keeps the plain tool for local development until the wrapper lands.
 8. **Untrusted input.** Mod descriptions, wiki pages and GameBanana metadata are data, not
@@ -419,6 +550,12 @@ Phase 0.5, native port (complete):
 - Rust TinyAgent protocol v2 crate: durable sessions, pause/resume, hooks, providers and events.
 - Done: the Rune app spawns `dah-agent` and streams turns, tool events and approvals.
 - Done: validate, pack, versioned release, deploy plan/apply, migration, watch and publish prepare.
+- Done (2026-11-17): Settings parity with Grimoire and Deadlock Mod Manager
+  (`docs/design/settings-parity.md`): search across categories, German UI strings, rotating
+  redacted log, offline mode and proxy in the core HTTP paths, start with the computer, Discord
+  Rich Presence (waits for the application id), opt-in match data sharing, Steam and GameBanana
+  links, experimental flags. Not verified on Windows or Linux yet: the login entry, the named
+  pipe and `tasklist`.
 
 Phase 1, read-only game introspection (in progress):
 
@@ -466,6 +603,9 @@ Phase 5, stats and the living catalog (in progress):
   autoexec block; applied through the same approval and backup path.
 - Done: Locker hero roster from the catalog merged with Grimoire art, a pinned
   project hero, and recolor briefs with exact targets and the remaining steps.
+- Done: Servers: Deadworks list with pings, filters and a confirmed join (gameinfo.gi lines, UI
+  pack, server content, `steam://connect`). Verified with unit tests and a live list, rules query,
+  UI pack and addon install into a scratch root. Not verified: a full join on Windows.
 - Next: real `.dem` files from a live match; positions need a serializer-aware extractor.
 - Next: verify 7z and rar extraction on a machine with those tools.
 
@@ -478,10 +618,12 @@ Phase 6, character generation (in progress):
 
 Phase 7, packaging:
 
-- Done: `scripts/package-desktop.sh` stages the desktop, the sidecar, the CLI and a manifest with
+- Done: `scripts/package-desktop.sh` stages the one executable (the CLI and agent host are folded
+  in as subcommands, decision 0010) and a manifest with
   byte counts, SHA-256 and the excluded material. A macOS bundle is assembled and the release
   build was produced on this machine.
-- Next: sign the macOS bundle, produce a Windows build on Windows, verify the sidecar lookup.
+- Next: sign the macOS bundle, produce a Windows build on Windows, run `Sigil.exe cli doctor` and
+  the `agent-host` child on Windows.
 - Acceptance: a clean machine runs the app, finds the game, deploys a mod and restores vanilla.
 
 ## Open questions
@@ -497,8 +639,8 @@ Phase 7, packaging:
   clear license and a pinned hash.
 - Which GameBanana upload flow is acceptable: browser handoff, API key, or a prepared zip only?
 - Do we keep Grimoire's social features, and does the fork inherit its companion server?
-- How does the Rust app package or locate the Node agent sidecar without requiring a separate Node
-  install?
+- Answered (decision 0010): the agent host is Rust and ships inside the app executable as the
+  `agent-host` subcommand, so there is no Node install and no sidecar file to locate.
 - How much of the prompt and knowledge pack ships in the app versus being read from `docs/`?
 - What is the minimum viable visual verification after deploy?
 

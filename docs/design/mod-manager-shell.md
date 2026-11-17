@@ -1,46 +1,45 @@
 # Mod-manager shell
 
-Status: draft. Product direction for the native Rune app.
+Status: draft. Product direction for the native Rune app, Sigil.
 Updated: 2026-11-16
 
-The app is a Deadlock mod manager with an agent inside it. It is not an agent demo and it is not a
-reskin of the old Grimoire window. The mod-manager surfaces are primary; the agent is a persistent
-tool that works on the selected mod or project.
+The app is Sigil: a Deadlock mod manager with an agent inside it. The mod-manager surfaces are
+primary; the agent is one place in the same window, shaped like a coding-agent desktop app. The
+visual north star is Grimoire's layout with more restraint: no cards around groups, hairline rows,
+one ember accent for the primary action, an on switch or focus.
+
+## Window
+
+- A custom titlebar, 40 points, drawn by the app (`rune::Titlebar`). macOS keeps its traffic
+  lights over the sidebar band; Windows gets Rune-drawn caption buttons at the trailing edge.
+- The titlebar band over the content holds the search for screens that search and a single line
+  when something needs attention. No status bar, no stack or safety chips.
 
 ## Sidebar
 
-The shipped order. Every item below has a real core read or a gated app action.
+Flat, no section headings, in this order:
 
 ```text
-LIBRARY
-  Installed        addon slots, enable/disable, conflicts, open folder
-  Browse           GameBanana catalog, filter, install pipeline
-  Conflicts        game paths more than one enabled slot replaces
-  Updates          patch feed, stale baselines, broken projects
+Installed      addon slots, on and off switch per row, overlaps button
+Browse         GameBanana catalog, install pipeline
+Locker         hero art grid, hero detail, recolor briefs
+Crosshair      reticle editor with a live preview
+Autoexec       the game config file
+Stats          rank, heroes, matches
+Overlap        game paths more than one enabled slot replaces
+Profiles       saved sets of enabled slots
 
-MODDING
-  Profiles         capture and apply named sets of enabled slots
-  Autoexec         read the game config, write behind approval
-  Crosshair        reticle convars with a live HUD geometry preview
-  Stats            rank, career, heroes, matches, heatmap
-  Locker           hero renders, catalog paths and recolor briefs
-  Launch           modded launch, vanilla stash, restore
+Agent          conversation, projects, approvals
 
-WORKBENCH
-  Agent            conversation, tools, approvals
-  Projects         mod workspaces and manifests
-  Game Index       exact VPK paths, search and extract
-  Patches          official posts and changes
-  Impact           what a patch breaks
-  Release          pack, deploy plan, publish
-
-FOUNDRY
-  Toolchain        decompile and compile tools with real availability
-  Character        reference or prompt to a verified GLB, compile plan
-
-SETTINGS
-  Settings         providers, paths, safety, nothing secret on screen
+(footer)
+Launch modded  primary action
+Launch vanilla
+Settings       game, models and sign-in, advanced; app version
 ```
+
+Projects, Game Index, Patches, Impact, Release, Toolchain and Character live inside the Agent place
+(its left column links to them) and keep their keyboard shortcuts. Updates surfaces as a banner, not
+a nav item. Selection is a neutral fill; there is no accent bar and no layout motion.
 
 A sidebar item appears only when it has a real data source and a real action. There is no
 "coming soon" state. When a backend is unavailable, the screen says which backend, why, and what
@@ -58,7 +57,7 @@ would make it available, and keeps every action that does not need it.
 | Autoexec | `autoexec::read_autoexec`, approved `write_autoexec` with a backup |
 | Stats | `stats::StatsClient`: player, rank, career, heroes, matches, heatmap |
 | Locker | `locker::discover_heroes_with_assets`, local art root, never copied |
-| Launch | `launch::launch_modded`, `launch_vanilla`, `restore_vanilla`, `stash_status` |
+| Launch | `launch::launch_modded`, `launch_vanilla`, `restore_vanilla`, `stash_status`, `read_game_process`, approved `stop_game`, the launch marker (`record_launch`, `record_exit`, `acknowledge_crash`), `impact` crash suspects and ignores, `download_queue` |
 | Game Index | citadel, core and map VPK catalog |
 | Patches | Steam news cache |
 | Impact | project baseline + catalog + patch correlation |
@@ -67,17 +66,23 @@ would make it available, and keeps every action that does not need it.
 | Character | `character::character_status`, create, refresh, import |
 | Agent | TinyAgent JSONL host |
 
-## Servers, and why there is no screen
+## Servers
 
-Deadlock is matchmade. Valve ships no public server browser and no joinable
-dedicated servers for the base game. The only server directory in this space is
-the community Deadworks relay, which needs a third-party service, a content
-manifest download, VPK safety gating and a `gameinfo.gi` search path. Shipping a
-Servers screen would mean adding a third-party host to the network allowlist and
-a new safety boundary, so it is a decision record, not a sidebar item. Until that
-exists, no Servers screen ships. The requested surface is covered elsewhere:
-region and rank context is on Stats, and the game's own matchmaking is the only
-supported join path.
+Deadlock is matchmade and Valve ships no server browser. Deadworks community servers are the one
+joinable directory, so Servers is a sidebar place after Profiles. What held it back (a third-party
+host, content from hosts a server picks, and `gameinfo.gi` and content writes) is settled in
+`docs/decisions/0009-deadworks-servers.md`:
+
+- The list comes from `api.deadworks.net` (Steam's list for Deadlock filtered to Deadworks, plus the
+  registry), now on the network allowlist. Pings are A2S over UDP to each listed server.
+- The table follows Grimoire's page: status dot, name with country and Deadworks version, map,
+  players, ping and a Join button per row; search in the title bar, a map filter and a "Has space"
+  switch. A row opens the server's detail with its address and who is playing.
+- Join is a read-only check, then a confirm that lists every write (the `gameinfo.gi` lines, the
+  Deadworks UI pack, each download with its size and host), then the writes on a worker with a
+  progress bar, then `steam://connect`. Nothing touches the game folder before the confirm.
+- Server content is checked before it lands: hash and size against what the server advertises,
+  VPK checks, caps, and a resolver that refuses local and private addresses.
 
 ## Layout rules
 

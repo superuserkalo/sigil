@@ -1,0 +1,339 @@
+# Feature parity: Grimoire and Deadlock Mod Manager
+
+Status: audit 2026-11-17, updated the same day. Browse and mod details are built, including a
+bounded local catalog mirror (JSONL, no new crate, no SQLite), the inline sound player and the
+multi-VPK picker. The Installed page has its first round. The global shell has its round: drop
+anywhere, zoom chords, the shortcuts sheet, What's new after an update, the tray, density, and a
+pre-blurred background. What is left is listed below each table. Settings is covered in
+`settings-parity.md`.
+
+Sigil must have everything Grimoire (G, `vendor/grimoire`, MIT) and Deadlock Mod Manager (D,
+`vendor/dmm`, GPL-3.0) offer a player, organised better. G code and copy may be ported; D is
+studied for behaviour only and reimplemented.
+
+How to read the tables:
+
+- **Source**: G, D or G+D.
+- **Sigil**: has, partial or missing. "Has" means it works today, not that a stub exists.
+- **Effort**: S (under a day), M (a few days), L (a week or more).
+- **Priority**: P1 (players notice it is missing), P2 (expected by power users), P3 (nice to have
+  or niche). Items that conflict with Sigil's rules are marked "won't" with the reason.
+
+Two architectural differences drive many rows:
+
+1. Both apps mirror the GameBanana catalog into a local SQLite + FTS5 database. That is how they
+   offer an A to Z sort, "added in the last N days", hero filters on sounds and author search.
+   Sigil reads `apiv11` live and gets most of the same through the server's own filters (see the
+   endpoint notes under Browse). A local mirror stays an option (L, P3).
+2. D talks to its own backend (`api.deadlockmods.app`) for announcements, shared profiles, cloud
+   backups, community crosshairs, the server list and analytics. Sigil has no backend and no
+   telemetry; those rows are marked accordingly.
+
+## Summary
+
+| Area | Has | Partial | Missing | Won't |
+| --- | ---: | ---: | ---: | ---: |
+| Browse | 37 | 0 | 0 | 0 |
+| Mod details | 19 | 0 | 1 | 0 |
+| Installed | 29 | 3 | 0 | 0 |
+| Locker | 9 | 1 | 1 | 0 |
+| Crosshair | 9 | 0 | 0 | 1 |
+| Autoexec | 4 | 1 | 0 | 0 |
+| Performance | 8 | 0 | 0 | 0 |
+| Stats | 6 | 0 | 1 | 0 |
+| Profiles | 9 | 0 | 0 | 1 |
+| Servers | 8 | 0 | 0 | 1 |
+| Launch | 7 | 0 | 0 | 0 |
+| Overlap | 6 | 0 | 0 | 0 |
+| Downloads | 5 | 0 | 0 | 0 |
+| Global shell | 15 | 0 | 3 | 2 |
+| **Total** | 171 | 5 | 6 | 5 |
+
+## Browse
+
+Endpoints, verified with curl against the live API on 2026-11-17 (Deadlock game id 20948):
+
+- `Game/20948/Subfeed?_nPage=N&_sSort=default&_csvModelInclusions=Mod|Sound|Wip`: the plain
+  "popular now" feed, 15 rows a page. It ignores category filters.
+- `Mod|Sound|Wip/Index?_nPage=N&_nPerpage=50&_sSort=<alias>` with
+  `_aFilters[Generic_Game]=20948`, `[Generic_Category]=<id>` (a root includes its children),
+  `[Generic_Name]=contains,<text>`, `[Generic_WasFeatured]=true`, `[Generic_Submitter]=<id>`.
+  Accepted sorts: `Generic_Newest`, `Oldest`, `LatestModified`, `LatestUpdated`, `NewAndUpdated`,
+  `MostLiked`, `MostViewed`, `MostDownloaded`, `MostCommented`, `LatestComment`,
+  `Alphabetically`, `ReverseAlphabetically`. Rejected: `HighestRated`, `MostSubscribed`,
+  `Default`, and any date filter (`Generic_DateAdded`, `Generic_Period`: `UNKNOWN_FILTER`).
+  Index rows carry no download count even when `_csvProperties` asks for it.
+- `Util/Search/Results` (G's search) ignores `Generic_Category`, `_sSort` and `_nPerpage` (always
+  15 rows), so Sigil searches through `Index` + `Generic_Name` instead, which honours them all.
+- `Mod/Categories?_idGameRow=20948&_sSort=a_to_z&_bShowEmpty=true` and
+  `ModCategory/<id>/SubCategories` (ids only in `_sUrl`). Skins has 44 hero children with
+  portraits; there is a third level under some heroes. Sounds: `Sound/Categories`.
+- `Game/20948/TopSubs`: 3 per period (today, week, month, 3month, 6month, year, alltime).
+- `Util/List/Featured?_idGameRow=20948`: featured list (not used; `Generic_WasFeatured` covers it).
+
+| Feature | Source | What it does | Sigil | Effort | Priority |
+| --- | --- | --- | --- | --- | --- |
+| Section switch | G+D | Mods, Sounds, WiPs | has (built) | S | P1 |
+| Collections tab | D | GameBanana collections, size buckets, download all | has (built: size buckets, item list, install all through the queue) | L | P3 |
+| Maps tab | D | Mods flagged as maps (experimental in D) | has (built: the Maps root category) | M | P3 |
+| Combined multi-section feed | G | Mods + sounds in one grid (mirror only) | has (built: the All tab; the plain feed is live, a filtered read uses the saved catalog) | M | P3 |
+| Category filter | G+D | Root categories with counts | has (built) | S | P1 |
+| Sub category / hero filter | G+D | Hero under Skins with portraits and type-ahead; type under HUD etc. | has (built) | S | P1 |
+| Hero filter on sounds | G+D | Hero name match on non-skin sections | has (built: hero picker and chip, name match) | S | P2 |
+| Include/exclude match mode | D | Invert category and hero filters | has (built: Match in Filters) | M | P3 |
+| Server-side search | G+D | Name search against the whole catalog, debounced | has (built, 350 ms) | S | P1 |
+| Paste id or link | D | A GameBanana id or URL opens that submission | has (built) | S | P2 |
+| Author results in search | D | Matching creators above the results | has (built: creator rail from the saved catalog) | M | P3 |
+| Sort: popular, newest, updated, liked, viewed, downloaded | G+D | Order picker | has (built), default from Settings | S | P1 |
+| Sort: most discussed, latest comment, A to Z | G (A-Z via mirror) | Extra orders | has (built, server side) | S | P2 |
+| Date window (added) | G+D | Any, day, week, month, 3 months | has (built: newest-first read to the cutoff, ordered locally) | M | P1 |
+| Date window (updated), custom range | D, G | Second date filter, from/to picker | has (built: Added or Updated, periods and a from/to range) | M | P3 |
+| NSFW hide / only / blur | G+D | Session filter over the app setting | has (built) | S | P1 |
+| Hide outdated | G+D | Before the Jan 22, 2026 path change, or obsolete | has (built) | S | P2 |
+| Installed / not installed | D | Library state filter | has (built) | S | P2 |
+| Featured | GameBanana | Only featured submissions | has (built) | S | P2 |
+| Top this week strip | GameBanana (D has a dashboard carousel) | Three top picks over the plain feed | has (built) | S | P2 |
+| D dashboard: trending rails, browse by hero rail, announcements | D | Landing page | has rails (trending week and month, browse by hero); announcements need D's backend | M | P3 |
+| Favorites | D | Star on cards and details, favorites view with count | has (built, local file) | S | P1 |
+| Hidden mods and creators | G | Hide with management list | has (built: persisted, management list in Filters) | S | P2 |
+| Artist mode | G+D | Grid scoped to one creator | has (built: "More" in details, chip) | S | P2 |
+| Active filter chips + clear all | D | Removable chips | has (built) | S | P1 |
+| State kept when opening a mod and coming back | G+D | Filters, results, scroll | has: details overlay or dock; filters kept for the session | S | P1 |
+| Filters kept across restarts | D | Persisted per store | has (built: browse/state.json) | S | P3 |
+| Infinite scroll, virtualized | G+D | Pages load near the end | has | - | - |
+| Numbered pagination option | D | Page numbers | has (built: View options) | S | P3 |
+| Keep old results dimmed while loading | D | No flash to skeleton | has (built) | S | P2 |
+| Grid / list view, card size | G | Layout options | has (built: grid or list, three card sizes, persisted) | M | P3 |
+| Card: likes, views, author, age, install | G+D | Card facts | has | - | - |
+| Card: installed state | G+D | Installed badge | has (built: "Installed" replaces Install) | S | P1 |
+| Card: downloads | D | Download count | has (built: the mod page's count is kept in the saved catalog) | M | P3 |
+| Sound preview | G+D | Inline player, one at a time, volume | has (built: rodio player, one sample, volume in View options) | M | P2 |
+| Hover prefetch of details | D | 250 ms hover prefetch | has (built: profile cached after 250 ms) | S | P3 |
+| Card context menu: copy image / link | G | Right click | has (built: open, copy link, copy image link, install, hide mod and creator) | S | P3 |
+| Catalog sync indicator / local mirror | G+D | SQLite mirror | has (built: bounded JSONL index, background incremental sync, offline browse, author search, date ranges) | L | P3 |
+
+## Mod details
+
+| Feature | Source | What it does | Sigil | Effort | Priority |
+| --- | --- | --- | --- | --- | --- |
+| Modal or docked panel | G | Overlay or side dock | has | - | - |
+| Gallery and lightbox | G+D | Images, arrows, captions | has | - | - |
+| About text | G+D | Description | has (plain text, no inline links) | - | - |
+| Files list with per-file install | G+D | Name, size, downloads, date, description, archived | has | - | - |
+| Changelog | G+D | Updates | has (10) | - | - |
+| Comments | G+D | Posts | has (20) | - | - |
+| Artist card, hide creator, more from creator | G | Creator row | has | - | - |
+| Favorite | D | Star in the header | has (built) | S | P1 |
+| Sound sample | G+D | Audio preview | has (built: the inline player) | M | P2 |
+| Copy link, view on GameBanana | G | Header actions | has (built: copy icon in the header) | S | P3 |
+| Previous / next mod with arrow keys | G | Walk the grid | has (built: left and right in the details) | S | P2 |
+| Requirements panel | G+D | Required and recommended mods | has (built: requirements section, install and open) | M | P2 |
+| Installed / update / outdated tags, ignore updates | G+D | Status tags | has tags and ignore in Browse; Installed's update check needs the ignore hook | M | P2 |
+| Embedded videos | D | Video embeds | has (built: a Videos list; each opens in the browser) | M | P3 |
+| Donation / Ko-fi, socials | G+D | Support the creator | has (built: donation links from the creator profile) | S | P3 |
+| 3D model preview | D | three.js viewer | missing | L | P3 |
+| More comments / changelog paging | D | Load more | has (built) | S | P3 |
+| Hero detected and override | D | Hero picker | has (built: detected from the page, change in the picker) | M | P3 |
+| Withheld / obsolete notices | D | Notices | has (built: notice boxes for withheld, private and obsolete) | S | P3 |
+| Multi-VPK picker after download | G+D | Choose VPKs in an archive | has (built: plan lists the archive's VPKs and installs the chosen one) | M | P2 |
+
+## Installed
+
+| Feature | Source | What it does | Sigil | Effort | Priority |
+| --- | --- | --- | --- | --- | --- |
+| Enabled / disabled groups | G+D | Two sections | has | - | - |
+| Enable / disable one | G+D | Toggle | has | - | - |
+| Search | G+D | Name, author, slot | has | - | - |
+| Import local files | G+D | VPK and archives | has | - | - |
+| Import from G / D | G+D | Interchange | has | - | - |
+| Reveal in folder, open on GameBanana | G+D | Card menu | has | - | - |
+| Status filter (all / enabled / disabled) | G+D | Tabs with counts | has (built) | S | P1 |
+| Source filter (GameBanana / local / other managers / unknown) | G | Filter | has (built) | S | P2 |
+| Hero / category / tag filters | G+D | Filters | has (built: `mod_extras` stores hero, category, tags, a pin, an ignored update, a picture and a variant group; GameBanana metadata is fetched on the page and backfilled for older entries) | M | P2 |
+| Sort (load order, name, recently added, size) | G+D | Sort | has (built) | S | P1 |
+| Grid / list, card size | G+D | View options | has (built: Cards, Small cards, List) | S | P3 |
+| Multi-select, bulk enable / disable / delete | G+D | Selection mode | has (built: check box on hover, shift-click range, select all shown; bulk on, off, delete behind a confirm with "Don't ask again") | M | P1 |
+| Delete a mod | G+D | Remove the VPK | has (built: card menu and selection; files move to Sigil's trash with restore and Empty trash, `deadlock_core::trash`) | S | P1 |
+| Drag-and-drop install | G+D | Drop files on the window | has on Installed (built: drop veil, then the import review) | S | P1 |
+| Load order reorder | G+D | Drag to change pak number | partial (built: Load first, earlier, later in the card menu, two-pass renames with rollback, `deadlock_core::load_order`; no drag yet) | M | P1 |
+| Update checks + update all | G+D | Per-mod badge, batch update with backup | has (built: checked on open at most every 6 hours, Update chip and Update all; same slot, on or off kept, old files backed up; no ignore yet) | M | P1 |
+| Variant groups / mod options | G+D | Several files of one mod as one card | has (built: GameBanana files group by mod id, one card with the playing file, a picker with per-file switch, label rename, split and delete) | M | P2 |
+| Merge mods | G | One VPK from several | has (built: lowest free slot lands off, the lower slot wins, strict mode refuses a shared path, a sidecar record, unmerge to the trash) | L | P3 |
+| Mod lists / groups | G+D | Named groups, enable per group | has (built: a list from the selection, filter by list, turn on or off per list) | M | P3 |
+| Tags | G | User tags | has (built: tags per mod, a tag filter, tags in the editor) | M | P3 |
+| Solo test | G | Launch with only this mod | has (built: every other mod off, a line above the cards, Restore) | S | P2 |
+| Unknown VPK identification | G+D | Match CRCs to GameBanana | partial: embedded `addoninfo.txt` / `modinfo.json`, Sigil's sha256 identity store and the install journal, a pasted GameBanana link; no live archive CRC scan | L | P3 |
+| Mod safety scan | G | Scripts and executables in VPKs | has (built: `mod_safety` lists programs, scripts, pages and network calls inside a VPK, shown as a card button and a report; a warning, never a gate) | M | P2 |
+| Copy mod list | G+D | Clipboard export | has (built: slot, name, author, off mark, one a line) | S | P3 |
+| Find broken mod (bisect) | D | Halve the enabled set across launches | has (built: `deadlock_core::bisect`, an all-off launch first, still broken / works / not sure, restore all or leave the culprit off) | M | P3 |
+| Compatibility review / issues | G+D | Outdated, skeleton, data checks | partial: paths the game moved, removed or that are stale hero models / game data, plus the update chip; no vdata field diff against pak01 | L | P2 |
+| Recap dialogs after bulk actions | D | What changed | has (built: changed, failed with the reason, not tried, why it stopped) | S | P3 |
+| Global (always first) mods | G | Priority folder | has (built: "Always load first" moves the mod to the lowest slot of its group and keeps it there; Locker > General also mounts `citadel/grimoire` for hand-placed VPKs, with a backup and tests) | M | P3 |
+| Edit local mod (name, image, NSFW) | G | Metadata editor | has (built: name, a picture copied into Sigil's data folder, a mature flag; GameBanana entries too) | S | P3 |
+| Fonts prompt | D | Install shipped fonts | has (built: `deadlock_core::fonts` copies `panorama/fonts` files, adds a `<fontpattern>` block per mod with a config backup, and removes both; offered from the card) | S | P3 |
+| Pinned favorites in disabled list | G | Pin | has (built: pinned mods sort to the top of the disabled group) | S | P3 |
+| 99 enabled limit warning | G | Toast at the slot cap | has (built: a warning when 99 mods are on) | S | P2 |
+
+## Locker
+
+| Feature | Source | What it does | Sigil | Effort | Priority |
+| --- | --- | --- | --- | --- | --- |
+| Hero grid and hero page | G+D | Roster with installed skins | has | - | - |
+| Recolor | G | Ability and skin colors | has | - | - |
+| General categories | G | Soul containers, urns, hideout, icons | has | - | - |
+| Hero favorites, type-ahead, prev/next | G | Navigation | has (built: star on cards, list rows and the hero page, Starred filter, hero search over names and aliases, list view, prev/next walk the filtered list) | S | P3 |
+| Skin variants, equip, reorder | G+D | Per-hero load order | has (built: skins in load order, Equip turns the others off, arrows move a skin within the hero's numbers, `deadlock_core::locker`) | M | P2 |
+| Shuffle on launch | G+D | Random skin per hero | partial (built: per-hero switch, seeded pick, Shuffle now; the launch handler must call `data::shuffle_before_launch`, hook in the round report) | M | P2 |
+| Browse skins for this hero | G+D | Jump to Browse with the hero filter | has | - | - |
+| Ability sounds | G | Per-ability sound mod | has (built: `sounds/abilities` classification by `aN` token, hero page Sounds section, one sound per ability) | M | P3 |
+| Custom hero cards | G | Portrait upload and crop | has (built: PNG/JPEG/WebP copy in app data, crop slider, remove) | M | P3 |
+| 3D hero viewer | G+D | Posed model | missing (`docs/design/locker-3d.md`: Rune has no mesh or depth pass) | L | P3 |
+| Locker overrides review | G | Remove applied cards, sounds, colors | has (built: Locker changes dialog for cards, shuffle, sound mods and recolor briefs) | S | P3 |
+
+## Crosshair
+
+| Feature | Source | What it does | Sigil | Effort | Priority |
+| --- | --- | --- | --- | --- | --- |
+| Editor with live preview over scenes | G+D | Lines, dot, color, game | has | - | - |
+| Apply to autoexec with backup | G+D | Managed block | has | - | - |
+| Share codes | G | Encode and decode | has | - | - |
+| Copy console commands | G | Clipboard | has | - | - |
+| Presets: save, apply, delete | G+D | Built-in and saved presets, rename, live mini reticles | has | - | - |
+| Import from game config / paste | G+D | Share code, console line, cfg or vcfg paste | has | - | - |
+| Pin window always on top | G | Always on top | has (Crosshair "Pin window" calls `shell::set_always_on_top`; shell state, survives a recreated window) | - | - |
+| Custom colour and outline colour | G | RGB sliders, outline colour | has (Color group: Red, Green, Blue, outline colour and its RGB) | - | - |
+| Remove from autoexec | G | Clear the active crosshair | has (backup, toast with Undo) | - | - |
+| Community library | D | Needs D's backend | won't (no backend) | - | - |
+
+## Autoexec
+
+| Feature | Source | What it does | Sigil | Effort | Priority |
+| --- | --- | --- | --- | --- | --- |
+| Edit commands, keep unknown lines | G+D | Blocks | has | - | - |
+| Command library by category | G | Premade commands | has | - | - |
+| Save with backup | G+D | Write the cfg | has | - | - |
+| Steam launch options | G | Written to localconfig at launch | partial: Autoexec saves them and Write to Steam now writes them; the launch buttons still need the `autoexec::sync_launch_options` hook (line in the round report) | M | P2 |
+| Open in external editor | D | Editor handoff | has (Edit in editor, the editor chosen in Settings) | - | - |
+
+## Performance
+
+| Feature | Source | What it does | Sigil | Effort | Priority |
+| --- | --- | --- | --- | --- | --- |
+| Community configs with tiers | G+D | gameinfo.gi presets | has | - | - |
+| Version picker, newest from GitHub | G | Versions | has | - | - |
+| Author convar switches | G | Visibility and camera opt-ins | has (owner exception) | - | - |
+| Restore backup | G+D | Undo | has | - | - |
+| Video settings changes (video.txt) | D | Keep, adopt, restore | has (Write adopts, Keep forgets the record, Restore puts yours back) | M | P3 |
+| Convar editor and history | D | Search and edit convars | has (search, value edit, per-config history, resets; writes through `apply_to_install`) | M | P3 |
+| Import / export a config | D | File exchange | has (export .cfg or clipboard, import paste or file with review, writes through the same edits) | S | P3 |
+| GameBanana configs (7 items) | D | Download, file pick, review, license | has (page, file list, archive review with variant picker, license shown) | M | P3 |
+
+## Stats
+
+| Feature | Source | What it does | Sigil | Effort | Priority |
+| --- | --- | --- | --- | --- | --- |
+| Overview: rank, win rate, heroes | G+D | Player summary | has | - | - |
+| Matches list | G+D | Recent matches | has | - | - |
+| Tracked players, detect Steam users | G | Tracked accounts from `loginusers.vdf`, manual add, a primary account and a switcher | has | S | P2 |
+| Match detail scoreboard | G+D | Both teams, final builds, souls over time, damage and healing | has | M | P2 |
+| Social: teammates, opponents | G | Best teammates, frequent opponents, win rate with and against, premade flag | has | M | P3 |
+| Leaderboard | G | Region and season, the player's place marked | has | S | P3 |
+| Live match view | D | Needs `-condebug` plus a HUD bridge mod; designed in `docs/design/stats-live.md` | missing | L | P3 |
+
+## Profiles
+
+| Feature | Source | What it does | Sigil | Effort | Priority |
+| --- | --- | --- | --- | --- | --- |
+| Save, apply, rename, delete | G+D | Mod setups | has | - | - |
+| Include autoexec / crosshair | G | Extra state | has | - | - |
+| Share code and file export | G+D | `mp1:` code | has | - | - |
+| Import with variant resolution | G+D | Code or file | has | - | - |
+| Snapshots (automatic recovery points) | G | Before updates and applies | has (`profiles/snapshots.rs`: a JSON manifest of slots, GameBanana ids and fingerprints in the app data dir; sections with Restore, delete and bulk delete; taken before applies, profile updates and imports) | M | P2 |
+| Profile switcher in the titlebar | D | One-click switch | has (`profiles::titlebar_switcher`: the active profile and a menu of saved ones) | S | P3 |
+| Separate addons folder per profile | D | Isolation | has (`profiles/isolation.rs`: copies into `citadel/addons/sigil-<slug>`, mounts it through a marked `gameinfo.gi` block with a backup) | M | P3 |
+| Cloud backup / Discover publishing | G+D | Needs a backend and sign-in | won't (no backend, opt-in only if ever) | - | - |
+| Undo a profile switch | - | Sigil extra | has (apply returns the slot changes, the autoexec backup and the previous profile; the toast's Undo puts them back) | S | - |
+| File pickers for import and export | - | Sigil extra | has (Rune `file_dialog`; export writes where the player picks) | S | - |
+
+## Servers
+
+| Feature | Source | What it does | Sigil | Effort | Priority |
+| --- | --- | --- | --- | --- | --- |
+| List with ping, players, password | G+D | Server browser | has | - | - |
+| Search | G+D | Name and map | has | - | - |
+| Join with content plan and confirm | G+D | Downloads required content | has | - | - |
+| Filters: has space, password | G+D | Filters | has | - | - |
+| Region and map filters, sortable columns | G+D | Filters | has (region grouped by continent, game mode, map, password; every column sorts ascending, descending, off with missing values last) | S | P2 |
+| Removable filter chips | D | Chips | has (one chip per filter, Clear (N)) | S | P3 |
+| Valve relay region picker (firewall) | D | Server picker | won't (owner decision 2026-11-17: admin firewall change) | L | P3 |
+| Favorites, recent servers, direct connect | - | Sigil extras | has (`.dah/servers.json`; favorites and recent scopes, address dialog that runs the same join check) | M | - |
+| Maps view and Launch map | D | Custom map help for custom/Deadworks servers | has (`servers_maps.rs`: GameBanana Maps category, console name from the description or installed VPK, copyable `map <name>`, Launch writes a managed autoexec block with a backup and starts the game) | M | P3 |
+
+## Launch
+
+| Feature | Source | What it does | Sigil | Effort | Priority |
+| --- | --- | --- | --- | --- | --- |
+| Launch modded / vanilla | G+D | Two buttons | has | - | - |
+| Vanilla stash and restore | G | Move mods aside | has | - | - |
+| Confirm dialogs | - | Sigil approval gate | has | - | - |
+| Running state, stop game | G+D | Detect and stop | has (`launch.rs` monitors the process table, Stop game behind a confirm, `deadlock_core::launch::stop_game`) | S | P2 |
+| Crash advisories from dumps | G+D | Likely culprit mod | has (`launch.rs` advisory: dump error text matched against shipped paths, else the newest install from before the crash; turn the mod off or dismiss) | M | P2 |
+| Launch checklist overlay | D | Steps before launch | has (`launch.rs`: gameinfo, overlaps and updates before a modded launch, with a fix per row and Launch anyway) | M | P3 |
+| Discord rich presence | G+D | Optional presence | has (`settings/discord.rs`; launch and stop set the running state at once, so presence switches without waiting for the 30 s check) | M | P3 |
+
+## Overlap
+
+| Feature | Source | What it does | Sigil | Effort | Priority |
+| --- | --- | --- | --- | --- | --- |
+| Pairs that touch the same files, winner | G+D | Report | has | - | - |
+| Grouped by kind with search | G | HUD, models, sounds | has | - | - |
+| Make X win (swap order), disable one | G+D | Resolve | has (`conflicts.rs`: pick a losing slot, then swap the two slot numbers through `load_order` with undo, or turn it off) | S | P1 |
+| Ignore pair / file / mod with restore | G+D | Ignore lists | has (`deadlock_core::impact` ignore list in app data, restore list at the bottom of Overlap) | M | P2 |
+| Sidebar badge with count | G | Badge | has (`conflicts::badge_count`, ignores excluded; mounting line in the wave report) | S | P3 |
+| Explainer | G+D | How it works | has (`conflicts.rs`, two lines above the table; the resolve dialog repeats it) | S | P3 |
+
+## Downloads
+
+| Feature | Source | What it does | Sigil | Effort | Priority |
+| --- | --- | --- | --- | --- | --- |
+| Install dialog with plan and approval | - | Sigil's gate | has | - | - |
+| Queue with progress | G+D | Several downloads | has (`download_queue.rs` queue on the Launch page: several archives, byte progress, states); Browse's install dialog still downloads inside its own job | M | P2 |
+| Pause, resume, cancel, retry | D | Queue controls | has (`download_queue.rs`: pause keeps the part file, resume continues with Range, cancel removes it, retry starts again) | M | P3 |
+| File server failover | G+D | Mirrors | has (`download_queue.rs` tries the GameBanana file servers in turn when the chosen host fails) | M | P3 |
+| Suspicious archive warning | G | Scan before install | has (`download_queue.rs` scans a ZIP's entry names, unpacks .7z/.rar within limits; the warning comes before the install dialog) | S | P2 |
+
+## Global shell
+
+| Feature | Source | What it does | Sigil | Effort | Priority |
+| --- | --- | --- | --- | --- | --- |
+| Custom titlebar and window controls | D | Chrome | has | - | - |
+| Per-page search in the titlebar | G+D | Search | has | - | - |
+| Keyboard: Cmd+number screens, quit, close | D | Shortcuts | has | - | - |
+| Update check | G+D | GitHub releases, opt-in at startup | has (Settings) | - | - |
+| Zoom shortcuts, settings shortcut, open mods folder | D | Ctrl+=, Ctrl+, Ctrl+M | has (built: Cmd plus, minus and 0 step the zoom, Cmd+, opens Settings, Shift+Cmd+M opens the mods folder) | S | P2 |
+| Toasts with undo | G+D | Notifications | has (`notify.rs`: bottom-right stack of 3, hover holds, Undo on slot toggle, crosshair apply, autoexec save, gameinfo fix) | M | P1 |
+| Drag-and-drop install anywhere | G+D | Drop overlay, import review | has (built: a drop on any page without its own target opens the import review; Installed keeps its page target) | S | P1 |
+| Deep links / 1-click install | G+D | `grimoire:` / `dlmm:` handler for GameBanana 1-Click | has: `sigil:` links open the mod with the file chosen and the Install dialog (see `deep-links.md`); GameBanana listing not requested yet | - | - |
+| GameBanana Remote Install | D | Pair and poll a queue | missing | M | P3 |
+| Onboarding | G+D | Game path, gameinfo fix, autoexec | has (built: first-run setup mounted as an overlay, and Show setup again in Settings) | M | P2 |
+| What's new dialog | D | Per-version notes | has (built: shown once per version after an update, from the release notes the update check already fetched) | S | P3 |
+| gameinfo.gi banner with fix | G+D | Reset after updates | has (`banner.rs`: every page, Fix behind a confirm, rechecked on startup, focus, launch, rescan) | S | P1 |
+| Sidebar badges (installed, overlap counts) | G+D | Counts | has (built: Installed count and the overlap count in amber) | S | P3 |
+| i18n | G+D | Languages | missing | L | P3 |
+| Theming | G+D | Themes and accent | has (Settings) | - | - |
+| Tray | D | Close to tray | has (built: Windows and Linux tray, default close still quits; macOS rows explain no tray backend) | S | P3 |
+| Single instance lock | G | One process | has (Rune pipe or socket; a lock and socket on macOS) | - | - |
+| Feature hints / coachmarks | D | Usage hints | missing | M | P3 |
+| Analytics | D | Consent-gated GA | won't (no telemetry) | - | - |
+| Announcements, feature flags | D | Needs D's backend | won't | - | - |
+
+## Next, by priority
+
+1. Installed: drag to reorder, a live archive CRC scan for unknown VPKs, a vdata diff in the
+   compatibility review, and a fonts prompt inside the install review (today it is on the card).
+2. Shell: the GameBanana 1-Click listing request (`deep-links.md`), i18n, coachmarks, and Undo
+   for profile apply and the Installed delete, update and reorder actions.
+3. Locker: "Browse skins for this hero" (sets the new hero filter), shuffle, variants.
+4. Crosshair presets; Overlap "make X win" and ignores.
+5. Browse leftovers: inline audio (needs an audio backend crate), requirements panel, prev/next
+   in details, download counts (from `ProfilePage` on open), persisted filters.
