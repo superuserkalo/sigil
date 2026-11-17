@@ -133,6 +133,24 @@ pub fn record_meta(path: &Path, mut meta: ModMeta) -> Result<()> {
     write_library(path, &library)
 }
 
+/// Fill in a missing preview for the mod in `slot`, only when that slot still holds the same mod
+/// (GameBanana id and file size): a lookup that lands late never touches a newer install.
+/// True when it wrote.
+pub fn set_thumbnail(path: &Path, slot: u8, size_bytes: u64, gamebanana_id: u64, url: &str) -> Result<bool> {
+    let mut library = read_library(path).unwrap_or_default();
+    let Some(entry) = library.mods.iter_mut().find(|m| {
+        m.slot == slot && m.size_bytes == size_bytes && m.gamebanana_id == Some(gamebanana_id)
+    }) else {
+        return Ok(false);
+    };
+    if entry.thumbnail_url.is_some() {
+        return Ok(false);
+    }
+    entry.thumbnail_url = Some(url.to_string());
+    write_library(path, &library)?;
+    Ok(true)
+}
+
 // ---------------------------------------------------------------------------
 // Detection
 // ---------------------------------------------------------------------------
@@ -1324,5 +1342,38 @@ mod tests {
         assert_eq!(pretty_name("glamorous_geist_dir.vpk"), "Glamorous geist");
         assert_eq!(pretty_name("pak03_dir.vpk"), "pak03_dir.vpk");
         assert_eq!(pretty_name("cool-mod.zip"), "Cool mod");
+    }
+}
+
+#[cfg(test)]
+mod thumbnail_tests {
+    use super::*;
+
+    #[test]
+    fn a_late_preview_only_fills_the_same_mod_in_its_slot() {
+        let dir = std::env::temp_dir().join(format!("sigil-thumb-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("library.json");
+        let meta = |slot: u8, size: u64, id: u64| ModMeta {
+            slot,
+            size_bytes: size,
+            name: "A mod".into(),
+            author: None,
+            thumbnail_url: None,
+            gamebanana_id: Some(id),
+            source: "browse".into(),
+            recorded_at: String::new(),
+        };
+        record_meta(&path, meta(3, 100, 42)).unwrap();
+        // Another mod took slot 3 since the lookup started: nothing is written.
+        assert!(!set_thumbnail(&path, 3, 100, 7, "https://images.gamebanana.com/a.jpg").unwrap());
+        assert!(!set_thumbnail(&path, 3, 999, 42, "https://images.gamebanana.com/a.jpg").unwrap());
+        // The same mod: filled once, then left alone.
+        assert!(set_thumbnail(&path, 3, 100, 42, "https://images.gamebanana.com/a.jpg").unwrap());
+        assert!(!set_thumbnail(&path, 3, 100, 42, "https://images.gamebanana.com/b.jpg").unwrap());
+        let library = read_library(&path).unwrap();
+        assert_eq!(library.mods[0].thumbnail_url.as_deref(), Some("https://images.gamebanana.com/a.jpg"));
+        let _ = fs::remove_dir_all(&dir);
     }
 }

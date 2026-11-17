@@ -589,12 +589,15 @@ fn install(work: Work) -> Result<Finished, String> {
     )
     .map_err(|e| e.to_string())?;
     let bytes = std::fs::metadata(&record.target).map(|m| m.len()).unwrap_or(0);
+    // The card or details showed no picture (a rail, a menu, a link): ask GameBanana, so the
+    // Installed card has one.
+    let thumbnail = work.thumbnail.clone().or_else(|| crate::screens::installed::preview_of(work.id));
     let meta = deadlock_core::import::ModMeta {
         slot: plan.slot,
         size_bytes: bytes,
         name: work.name.clone(),
         author: work.author,
-        thumbnail_url: work.thumbnail,
+        thumbnail_url: thumbnail,
         gamebanana_id: Some(work.id),
         source: "browse".to_string(),
         recorded_at: String::new(),
