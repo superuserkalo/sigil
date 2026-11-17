@@ -91,6 +91,8 @@ pub struct State {
     pub thumbnails: HashMap<String, Pixels>,
     pub pending_thumbs: Vec<(String, Vec<u8>)>,
     pub thumb_crew: ThumbCrew,
+    /// Windows: drops a system title bar that shows above Sigil's (`win_frame`).
+    pub frame_guard: crate::win_frame::Guard,
     pub review_job: Job<ReviewQueue>,
     pub launch_dialog: bool,
     /// The launch confirm is for a vanilla run (mods set aside first).
@@ -189,6 +191,7 @@ impl Default for State {
             thumbnails: HashMap::new(),
             pending_thumbs: Vec::new(),
             thumb_crew: ThumbCrew::shrinking(),
+            frame_guard: Default::default(),
             review_job: Job::default(),
             launch_dialog: false,
             launch_vanilla: false,
@@ -1753,6 +1756,7 @@ fn preload_thumbnails(s: &mut State) {
 }
 
 pub fn poll(s: &mut State, t: f64, _tx: &mut Tx) -> bool {
+    s.frame_guard.poll(_tx);
     let mut changed = crate::signin::poll(s);
     changed |= screens::performance::poll(s);
     changed |= screens::servers::poll(s, t, _tx);

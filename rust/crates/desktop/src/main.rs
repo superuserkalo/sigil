@@ -27,6 +27,7 @@ mod signin;
 mod single_instance;
 mod ui;
 mod updater;
+mod win_frame;
 
 use app::State;
 use rune::AppSpec;
