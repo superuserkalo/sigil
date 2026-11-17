@@ -54,6 +54,10 @@ pub struct View {
     /// URLs in the current thumbnail batch, and ones that failed (never asked again).
     pub batch: HashSet<String>,
     pub failed: HashSet<String>,
+    /// Previews looked up for installs recorded without one: `(slot, size, url)` written back.
+    pub preview_fill: crate::jobs::Job<Vec<(u8, u64, String)>>,
+    /// GameBanana ids already looked up this run, found or not.
+    pub preview_tried: HashSet<u64>,
     pub collapsed_enabled: bool,
     pub collapsed_disabled: bool,
     /// Cards, small cards or a list.
@@ -1908,8 +1912,68 @@ pub fn release_previews(st: &mut State) {
     st.installed.thumbs.clear();
 }
 
+/// A mod's first gallery image from its GameBanana page, for an Installed card recorded
+/// without a preview. Runs on a worker; `None` when the page or its images are missing.
+pub fn preview_of(id: u64) -> Option<String> {
+    let profile = deadlock_core::gamebanana::fetch_profile(deadlock_core::gamebanana::BrowseSection::Mods, id).ok()?;
+    profile.images.first().map(|image| image.url.clone()).filter(|url| allowed_image(url))
+}
+
+/// Installs recorded without a preview (from an older Sigil, or from a page that showed none)
+/// get one: up to eight GameBanana lookups per pass while Installed is open, each written back
+/// to the library only when the slot still holds that mod.
+fn fill_previews(st: &mut State) -> bool {
+    let mut changed = false;
+    if let Some(Ok(found)) = st.installed.preview_fill.try_take() {
+        for (slot, size, url) in found {
+            if let Some(meta) = st
+                .installed
+                .library
+                .mods
+                .iter_mut()
+                .find(|m| m.slot == slot && m.size_bytes == size && m.thumbnail_url.is_none())
+            {
+                meta.thumbnail_url = Some(url);
+                changed = true;
+            }
+        }
+    }
+    if st.demo || rune::is_headless() || st.screen != Screen::Installed || st.installed.preview_fill.is_running() {
+        return changed;
+    }
+    let wanted: Vec<(u8, u64, u64)> = st
+        .installed
+        .library
+        .mods
+        .iter()
+        .filter(|m| m.thumbnail_url.is_none())
+        .filter_map(|m| m.gamebanana_id.map(|id| (m.slot, m.size_bytes, id)))
+        .filter(|(_, _, id)| !st.installed.preview_tried.contains(id))
+        .take(8)
+        .collect();
+    if wanted.is_empty() {
+        return changed;
+    }
+    st.installed.preview_tried.extend(wanted.iter().map(|(_, _, id)| *id));
+    let library = deadlock_core::import::library_path(&crate::data::data_dir());
+    let wake = st.wake.clone();
+    st.installed.preview_fill.start(wake, move || {
+        let mut found = Vec::new();
+        for (slot, size, id) in wanted {
+            if let Some(url) = preview_of(id)
+                && deadlock_core::import::set_thumbnail(&library, slot, size, id, &url).unwrap_or(false)
+            {
+                found.push((slot, size, url));
+            }
+        }
+        Ok(found)
+    });
+    changed
+}
+
 pub fn poll(st: &mut State) -> bool {
-    let mut changed = offer_undo(st);
+    let mut changed = fill_previews(st);
+    changed |= offer_undo(st);
     changed |= importer::poll(st);
     changed |= notes::poll(st);
     changed |= tools::poll(st);
