@@ -11,6 +11,8 @@ pub struct Reading {
     pub heap: Option<u64>,
     /// The process's private memory (Windows commit, macOS physical footprint).
     pub process: Option<u64>,
+    /// Windows: the private working set, the number Task Manager's Memory column shows.
+    pub task_manager: Option<u64>,
     /// Decoded images held, and their estimated bytes with mips.
     pub images: (usize, u64),
 }
@@ -27,36 +29,134 @@ pub fn read(st: &State) -> Reading {
             bytes += u64::from(w) * u64::from(h) * 4 * 4 / 3;
         }
     }
-    Reading { heap, process: process_bytes(), images: (count, bytes) }
+    let (process, task_manager) = process_bytes();
+    Reading { heap, process, task_manager, images: (count, bytes) }
 }
 
+/// Committed private memory and the private working set.
 #[cfg(windows)]
-fn process_bytes() -> Option<u64> {
+fn process_bytes() -> (Option<u64>, Option<u64>) {
     use windows_sys::Win32::System::ProcessStatus::{
-        GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS, PROCESS_MEMORY_COUNTERS_EX,
+        GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS, PROCESS_MEMORY_COUNTERS_EX2,
     };
     use windows_sys::Win32::System::Threading::GetCurrentProcess;
-    let mut counters: PROCESS_MEMORY_COUNTERS_EX = unsafe { std::mem::zeroed() };
-    let size = std::mem::size_of::<PROCESS_MEMORY_COUNTERS_EX>() as u32;
+    let mut counters: PROCESS_MEMORY_COUNTERS_EX2 = unsafe { std::mem::zeroed() };
+    let size = std::mem::size_of::<PROCESS_MEMORY_COUNTERS_EX2>() as u32;
+    counters.cb = size;
     // SAFETY: the pseudo handle needs no closing; `counters` is `size` bytes.
     let ok = unsafe {
         GetProcessMemoryInfo(
             GetCurrentProcess(),
-            (&mut counters as *mut PROCESS_MEMORY_COUNTERS_EX).cast::<PROCESS_MEMORY_COUNTERS>(),
+            (&mut counters as *mut PROCESS_MEMORY_COUNTERS_EX2).cast::<PROCESS_MEMORY_COUNTERS>(),
             size,
         )
     };
-    (ok != 0).then_some(counters.PrivateUsage as u64)
+    if ok == 0 {
+        return (None, None);
+    }
+    (Some(counters.PrivateUsage as u64), Some(counters.PrivateWorkingSetSize as u64))
 }
 
 #[cfg(target_os = "macos")]
-fn process_bytes() -> Option<u64> {
-    procwatch::usage().footprint
+fn process_bytes() -> (Option<u64>, Option<u64>) {
+    (procwatch::usage().footprint, None)
 }
 
 #[cfg(not(any(windows, target_os = "macos")))]
-fn process_bytes() -> Option<u64> {
-    None
+fn process_bytes() -> (Option<u64>, Option<u64>) {
+    (None, None)
+}
+
+/// A plain-text report for a bug report: the reading, and on Windows where the committed memory
+/// sits (private allocations by size, mapped sections, and each DLL's writable pages), from a walk
+/// of the address space with `VirtualQuery`. No paths beyond DLL names.
+pub fn report(st: &State) -> String {
+    let m = read(st);
+    let opt = |b: Option<u64>| b.map_or_else(|| "-".to_string(), mb);
+    let mut out = format!(
+        "Sigil {} memory on {}\nTask Manager (private working set): {}\nCommitted private: {}\nApp heap: {}\nImages: {} in {}\n",
+        crate::updater::VERSION,
+        std::env::consts::OS,
+        opt(m.task_manager),
+        opt(m.process),
+        opt(m.heap),
+        mb(m.images.1),
+        m.images.0,
+    );
+    out.push_str(&regions());
+    out
+}
+
+#[cfg(windows)]
+fn regions() -> String {
+    use std::collections::HashMap;
+    use windows_sys::Win32::System::LibraryLoader::GetModuleFileNameW;
+    use windows_sys::Win32::System::Memory::{
+        MEM_COMMIT, MEM_IMAGE, MEM_MAPPED, MEM_PRIVATE, MEMORY_BASIC_INFORMATION, PAGE_EXECUTE_READWRITE,
+        PAGE_EXECUTE_WRITECOPY, PAGE_READWRITE, PAGE_WRITECOPY, VirtualQuery,
+    };
+    let mut private: HashMap<usize, u64> = HashMap::new();
+    let mut mapped = 0u64;
+    let mut image: HashMap<usize, u64> = HashMap::new();
+    let mut at = 0usize;
+    loop {
+        let mut info: MEMORY_BASIC_INFORMATION = unsafe { std::mem::zeroed() };
+        // SAFETY: `info` is a MEMORY_BASIC_INFORMATION; any address is valid to query.
+        let n = unsafe {
+            VirtualQuery(at as *const _, &mut info, std::mem::size_of::<MEMORY_BASIC_INFORMATION>())
+        };
+        if n == 0 || info.RegionSize == 0 {
+            break;
+        }
+        if info.State == MEM_COMMIT {
+            let size = info.RegionSize as u64;
+            let writable = matches!(
+                info.Protect & 0xff,
+                PAGE_READWRITE | PAGE_WRITECOPY | PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY
+            );
+            match info.Type {
+                MEM_PRIVATE => *private.entry(info.AllocationBase as usize).or_default() += size,
+                MEM_MAPPED => mapped += size,
+                MEM_IMAGE if writable => *image.entry(info.AllocationBase as usize).or_default() += size,
+                _ => {}
+            }
+        }
+        let Some(next) = (info.BaseAddress as usize).checked_add(info.RegionSize) else { break };
+        at = next;
+    }
+    let total_private: u64 = private.values().sum();
+    let mut big: Vec<u64> = private.values().copied().filter(|&b| b >= 1 << 20).collect();
+    big.sort_unstable_by(|a, b| b.cmp(a));
+    let mut out = format!(
+        "Private commit: {} in {} allocations; mapped: {}\nLargest private allocations: {}\n",
+        mb(total_private),
+        private.len(),
+        mb(mapped),
+        big.iter().take(16).map(|&b| mb(b)).collect::<Vec<_>>().join(", "),
+    );
+    let mut dlls: Vec<(String, u64)> = image
+        .into_iter()
+        .map(|(base, bytes)| {
+            let mut name = [0u16; 260];
+            // SAFETY: `base` is a loaded module's base address; `name` holds 260 wide chars.
+            let len = unsafe { GetModuleFileNameW(base as _, name.as_mut_ptr(), name.len() as u32) };
+            let path = String::from_utf16_lossy(&name[..len as usize]);
+            let file = path.rsplit(['\\', '/']).next().unwrap_or("?").to_string();
+            (file, bytes)
+        })
+        .collect();
+    dlls.sort_unstable_by(|a, b| b.1.cmp(&a.1));
+    out.push_str("Writable DLL pages: ");
+    out.push_str(
+        &dlls.iter().take(10).map(|(n, b)| format!("{n} {}", mb(*b))).collect::<Vec<_>>().join(", "),
+    );
+    out.push('\n');
+    out
+}
+
+#[cfg(not(windows))]
+fn regions() -> String {
+    String::new()
 }
 
 /// "12.3 MB".

@@ -2700,25 +2700,34 @@ fn memory_row(s: &State, u: &Ui) -> El {
     let part = |label: &str, bytes: Option<u64>| {
         format!("{} {}", tr(label), bytes.map_or_else(|| "-".to_string(), crate::memory::mb))
     };
-    let line = format!(
-        "{} · {} · {} {} ({})",
-        part("Total", m.process),
-        part("App heap", m.heap),
-        tr("Images"),
-        crate::memory::mb(m.images.1),
-        m.images.0,
-    );
+    let mut parts = Vec::new();
+    if m.task_manager.is_some() {
+        parts.push(part("Task Manager", m.task_manager));
+    }
+    parts.push(part("Committed", m.process));
+    parts.push(part("App heap", m.heap));
+    parts.push(format!("{} {} ({})", tr("Images"), crate::memory::mb(m.images.1), m.images.0));
+    let line = parts.join(" · ");
     col()
         .key("settings-memory")
         .w_full()
-        .gap(4.0)
+        .gap(8.0)
         .py(12.0)
         .child(text(line).font(BODY).color(u.ink).wrap())
         .child(
-            text(tr("Total is what Task Manager shows. The rest beyond the heap is the graphics driver, the window and system libraries."))
+            text(tr("Beyond the app heap is the graphics driver, the window and system libraries. Copy the report to send it with a bug report."))
                 .font(SMALL)
                 .color(u.muted)
                 .wrap(),
+        )
+        .child(
+            row().child(
+                button(u, "settings-memory-copy", "Copy memory report", ActionKind::Secondary)
+                    .on_press_tx(|st: &mut State, tx: &mut Tx| {
+                        tx.copy(crate::memory::report(st));
+                        say(st, tr("Memory report copied.").to_string(), false);
+                    }),
+            ),
         )
 }
 
