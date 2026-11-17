@@ -1404,6 +1404,21 @@ pub fn install_entry(
     accept_mismatch: bool,
     on_bytes: &mut dyn FnMut(u64, Option<u64>),
 ) -> Result<EntryOutcome> {
+    install_entry_capped(game_root, fastdl, entry, allow_private, accept_mismatch, MAX_FILE_BYTES, on_bytes)
+}
+
+/// [`install_entry`] with at most `max_bytes` downloaded and at most `max_bytes` decoded, so a
+/// join can hold the whole server to [`MAX_JOIN_BYTES`] by what it actually writes rather than
+/// by the sizes the server advertises.
+fn install_entry_capped(
+    game_root: &Path,
+    fastdl: &str,
+    entry: &ContentEntry,
+    allow_private: bool,
+    accept_mismatch: bool,
+    max_bytes: u64,
+    on_bytes: &mut dyn FnMut(u64, Option<u64>),
+) -> Result<EntryOutcome> {
     if !valid_content_name(&entry.name) || !valid_hash(&entry.hash) {
         return Err(Error::msg(format!("Refused an invalid content name: {}", entry.name)));
     }
@@ -1430,7 +1445,7 @@ pub fn install_entry(
             &content_url(fastdl, entry, "zst"),
             &compressed,
             allow_private,
-            MAX_FILE_BYTES,
+            max_bytes,
             on_bytes,
         )?;
         if matches!(fetched, Fetched::Missing) {
@@ -1438,7 +1453,7 @@ pub fn install_entry(
                 &content_url(fastdl, entry, "bz2"),
                 &compressed,
                 allow_private,
-                MAX_FILE_BYTES,
+                max_bytes,
                 on_bytes,
             )?;
         }
@@ -1448,7 +1463,7 @@ pub fn install_entry(
                 entry.file_name()
             )));
         }
-        let decoded = decode_vpk(&compressed, &part, MAX_FILE_BYTES)?;
+        let decoded = decode_vpk(&compressed, &part, max_bytes)?;
         remove_quiet(&compressed);
         let size_ok = entry.size.is_none_or(|s| s == decoded.bytes);
         let hash_ok = decoded.sha256.starts_with(&entry.hash);
@@ -2108,7 +2123,13 @@ pub fn prepare_join(
     }
     let fastdl = check.plan.fastdl.clone().unwrap_or_default();
     let count = downloads.len();
+    // The advertised sizes are the server's word; the cap holds on what is actually written.
+    let mut remaining = MAX_JOIN_BYTES;
+    let paths = deadworks_paths(game_root);
     for (index, item) in downloads.into_iter().enumerate() {
+        if remaining == 0 {
+            return Err(Error::msg("This server needs more than 16 GB of downloads. Sigil stops there."));
+        }
         let accept = accept_mismatch.contains(&item.entry.key());
         let line = if count > 1 {
             format!("Downloading {} ({} of {count})", item.entry.name, index + 1)
@@ -2116,12 +2137,13 @@ pub fn prepare_join(
             format!("Downloading {}", item.entry.name)
         };
         let advertised = item.entry.size;
-        let outcome = install_entry(
+        let outcome = install_entry_capped(
             game_root,
             &fastdl,
             &item.entry,
             check.allow_private,
             accept,
+            remaining.min(MAX_FILE_BYTES),
             &mut |done, total| {
                 on_progress(JoinProgress {
                     line: line.clone(),
@@ -2131,6 +2153,11 @@ pub fn prepare_join(
                 })
             },
         )?;
+        let written = match &outcome {
+            EntryOutcome::Installed => fs::metadata(paths.dest(&item.entry)).map_or(0, |m| m.len()),
+            EntryOutcome::Mismatch { got_bytes, .. } => *got_bytes,
+        };
+        remaining = remaining.saturating_sub(written);
         match outcome {
             EntryOutcome::Installed => report.installed.push(item.entry.key()),
             EntryOutcome::Mismatch { got_hash, .. } => {
