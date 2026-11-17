@@ -9,7 +9,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 license = "MIT"
 
@@ -32,3 +32,16 @@ winit = { path = "../vendor/rune/vendor/winit" }
 parley_engine = { path = "../vendor/rune/vendor/parley_engine" }
 accesskit_windows = { path = "../vendor/rune/vendor/accesskit_windows" }
 accesskit_macos = { path = "../vendor/rune/vendor/accesskit_macos" }
+
+# Shipped builds: one codegen unit and fat LTO (docs/runbooks/performance.md).
+[profile.release]
+codegen-units = 1
+lto = "fat"
+
+# Release code without fat LTO, for measuring memory and frame behaviour quickly. Ship builds
+# use `release`.
+[profile.fastrel]
+inherits = "release"
+codegen-units = 16
+lto = false
+incremental = true
