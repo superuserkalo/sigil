@@ -174,7 +174,7 @@ pub fn reset_records(st: &mut State) {
 }
 
 pub fn wipe_data(st: &mut State) {
-    if st.install_job.is_running() {
+    if crate::screens::browse::quick::installs_busy(st) {
         return say(st, tr("Wait for the current download to finish."), true);
     }
     let data = crate::data::data_dir();

@@ -553,3 +553,135 @@ pub fn scene_audio(s: &mut State) {
         s.browse_view.audio.volume = 0.65;
     }
 }
+
+// --- one-press installs ------------------------------------------------------------------
+
+/// The fixture grid's first `n` mod cards, as (id, name).
+fn first_mods(s: &State, n: usize) -> Vec<(u64, String)> {
+    s.browse
+        .page
+        .as_ref()
+        .map(|page| {
+            page.mods
+                .iter()
+                .filter(|card| card.model.eq_ignore_ascii_case("mod"))
+                .take(n)
+                .map(|card| (card.id, card.name.clone()))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Mod `id` installed in `slot` with a newer file on GameBanana since.
+fn stage_update(s: &mut State, id: u64, name: &str, slot: u8) {
+    use deadlock_core::mod_updates::{RemoteFile, RemoteMod};
+    s.installed.library.mods.push(deadlock_core::import::ModMeta {
+        slot,
+        size_bytes: 1,
+        name: name.to_string(),
+        author: None,
+        thumbnail_url: None,
+        gamebanana_id: Some(id),
+        source: "browse".into(),
+        recorded_at: "2025-01-01T00:00:00Z".into(),
+    });
+    s.installed.updates.cache.mods.insert(
+        id,
+        RemoteMod {
+            files: vec![RemoteFile {
+                file_id: 1,
+                file_name: "newer.zip".into(),
+                added: 1_790_000_000,
+                archived: false,
+            }],
+        },
+    );
+}
+
+/// The grid with the first card downloading at 40% and the second untouched: one press
+/// changes one card.
+pub fn scene_install_downloading(s: &mut State) {
+    scene_with(s, |_| {});
+    if let Some((id, name)) = first_mods(s, 1).into_iter().next() {
+        super::quick::stage(s, id, &name, super::quick::Step::Downloading(Some(0.4)));
+    }
+}
+
+/// The grid with the first card installing and the rest as they were.
+pub fn scene_install_installing(s: &mut State) {
+    scene_with(s, |_| {});
+    if let Some((id, name)) = first_mods(s, 1).into_iter().next() {
+        super::quick::stage(s, id, &name, super::quick::Step::Installing);
+    }
+}
+
+/// The grid with the first card installed.
+pub fn scene_install_installed(s: &mut State) {
+    scene_with(s, |_| {});
+    if let Some((id, name)) = first_mods(s, 1).into_iter().next() {
+        super::quick::stage(s, id, &name, super::quick::Step::Done);
+    }
+}
+
+/// The grid with the first card installed and a newer file out.
+pub fn scene_install_update(s: &mut State) {
+    scene_with(s, |_| {});
+    if let Some((id, name)) = first_mods(s, 1).into_iter().next() {
+        stage_update(s, id, &name, 4);
+    }
+}
+
+/// Every state at once: downloading, installing, installed, update, queued, failed, and an
+/// untouched card.
+pub fn scene_install_mixed(s: &mut State) {
+    scene_with(s, |_| {});
+    let mods = first_mods(s, 7);
+    use super::quick::Step;
+    let steps = [
+        Some(Step::Downloading(Some(0.4))),
+        Some(Step::Installing),
+        Some(Step::Done),
+        None,
+        Some(Step::Queued),
+        Some(Step::Failed("GameBanana returned HTTP 503 for this file.".into())),
+    ];
+    for (index, (id, name)) in mods.iter().enumerate() {
+        match steps.get(index) {
+            Some(Some(step)) => super::quick::stage(s, *id, name, step.clone()),
+            Some(None) => stage_update(s, *id, name, 6),
+            None => {}
+        }
+    }
+}
+
+/// The list layout with the same states.
+pub fn scene_install_list(s: &mut State) {
+    scene_install_mixed(s);
+    s.browse_view.layout = Layout::List;
+}
+
+/// The details with its Install button downloading.
+pub fn scene_install_details(s: &mut State) {
+    scene_details(s);
+    if let Some(d) = s.browse_view.details.as_ref() {
+        let (id, name) = (d.id, d.name.clone());
+        super::quick::stage(s, id, &name, super::quick::Step::Downloading(Some(0.4)));
+    }
+}
+
+/// The details installed.
+pub fn scene_install_details_done(s: &mut State) {
+    scene_details(s);
+    if let Some(d) = s.browse_view.details.as_ref() {
+        let (id, name) = (d.id, d.name.clone());
+        super::quick::stage(s, id, &name, super::quick::Step::Done);
+    }
+}
+
+/// The details' file menu open beside its Install button.
+pub fn scene_install_files_menu(s: &mut State) {
+    scene_details(s);
+    if let Some(d) = s.browse_view.details.as_ref() {
+        s.browse_view.installs.files_menu = Some(d.id);
+    }
+}

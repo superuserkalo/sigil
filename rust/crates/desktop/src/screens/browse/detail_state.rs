@@ -266,6 +266,8 @@ pub(crate) fn start_details_fetch(st: &mut State) {
 /// titlebar search once typing pauses. Called from `app::poll`.
 pub fn poll(st: &mut State, tx: &mut Tx) -> bool {
     let mut changed = poll_search(st, tx);
+    // One-press installs: queue rows, the install worker, Installed and Update states.
+    changed |= super::quick::poll(st);
     if st.screen == Screen::Browse {
         // All guard themselves: one read per session, none while one runs.
         start_top(st);
@@ -746,14 +748,9 @@ pub(crate) fn step_details(st: &mut State, next: bool) {
     }
 }
 
-/// The slot the mod sits in, from the library store.
+/// The slot the mod sits in, from the library store and the install journal.
 pub(crate) fn installed_slot(s: &State, id: u64) -> Option<u8> {
-    s.installed
-        .library
-        .mods
-        .iter()
-        .find(|meta| meta.gamebanana_id == Some(id))
-        .map(|meta| meta.slot)
+    super::quick::owned_slot(s, id)
 }
 
 /// A newer GameBanana file than the installed one, from the update check's last read. None

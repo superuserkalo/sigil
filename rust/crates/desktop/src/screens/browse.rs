@@ -6,8 +6,9 @@
 //!
 //! A card opens the mod details view, a port of Grimoire's `ModDetailsModal` (MIT): gallery on
 //! the left; category, files, artist, about, changelog and comments on the right. Install on a
-//! card or a file opens the install dialog, where Download plans the install in the workspace
-//! and Install is the user's explicit approval to write the planned slot.
+//! card, a list row, the details or a file installs at once (`quick`): the press is the
+//! approval, and each mod's button shows its own download, install and Installed state. The
+//! install dialog stays for archives that hold several mods and for the Downloads page.
 
 use std::borrow::Cow;
 use std::collections::HashSet;
@@ -47,6 +48,7 @@ mod install;
 pub mod page;
 mod panels;
 mod persist;
+pub mod quick;
 mod scenes;
 pub mod store;
 
@@ -409,6 +411,8 @@ pub struct View {
     pub ignored_updates: Vec<u64>,
     /// The last update check's cache, read when a mod page opens so its tags can show.
     pub update_cache: Option<deadlock_core::mod_updates::UpdateCache>,
+    /// One-press installs, per mod, and which mods are installed.
+    pub installs: quick::Installs,
 }
 
 /// One page of collections.
@@ -1062,21 +1066,14 @@ fn start_top(st: &mut State) {
 }
 
 fn is_installed(s: &State, id: u64) -> bool {
-    s.installed
-        .library
-        .mods
-        .iter()
-        .any(|meta| meta.gamebanana_id == Some(id))
+    quick::owned_slot(s, id).is_some()
 }
 
-/// The installed GameBanana mod ids, from the library store.
+/// The installed GameBanana mod ids, from the library store and the install journal.
 fn installed_ids(s: &State) -> HashSet<u64> {
-    s.installed
-        .library
-        .mods
-        .iter()
-        .filter_map(|meta| meta.gamebanana_id)
-        .collect()
+    let mut ids: HashSet<u64> = s.browse_view.installs.owned.keys().copied().collect();
+    ids.extend(s.installed.library.mods.iter().filter_map(|meta| meta.gamebanana_id));
+    ids
 }
 
 /// A pasted GameBanana id or link: `741478`, `gamebanana.com/mods/741478`,

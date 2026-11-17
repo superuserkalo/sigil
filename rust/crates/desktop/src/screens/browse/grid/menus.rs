@@ -13,6 +13,12 @@ pub fn overlay(s: &State, u: &Ui) -> Option<El> {
     if s.browse_view.context.is_some() {
         return context_menu(s, u);
     }
+    // The docked details' file menu; the modal mounts its own over the dialog.
+    if s.browse_view.docked
+        && let Some(menu) = super::super::quick::files_menu(s, u)
+    {
+        return Some(menu);
+    }
     let menu = s.browse_view.menu?;
     let f = &s.browse_view.filters;
     let (align, width) = match menu {
@@ -618,18 +624,24 @@ pub(crate) fn context_menu(s: &State, u: &Ui) -> Option<El> {
     }
     items = items.child(el().w_full().h(1.0).my(4.0).fill(u.hair));
     if is_mod {
+        // The menu says what the card's button would do now.
+        let state = super::super::quick::button(s, id);
+        let label = match state {
+            super::super::quick::Button::Installed => crate::screens::settings::i18n::tr("Open Installed").to_string(),
+            other => other.label(),
+        };
         items = items.child(
             menu_item(
                 u,
                 "ctx-install",
                 Some(icon(&icons::DOWNLOAD, 14.0).color(u.muted).a11y_hidden()),
-                "Install",
+                &label,
                 "",
                 false,
             )
             .on_press(move |st: &mut State| {
-                st.install = InstallView::for_mod(id, &install_name);
                 st.browse_view.context = None;
+                super::super::quick::press(st, id, &install_name);
             }),
         );
     }
@@ -928,45 +940,31 @@ pub(crate) fn list_row(s: &State, u: &Ui, card: &BrowseCard) -> El {
     let id = card.id;
     let veil = veiled(s, id, card.nsfw);
     let age = gamebanana::relative_age(card.updated_ts, gamebanana::now_unix());
-    let name = card.name.clone();
     let is_mod = card.model.eq_ignore_ascii_case("mod");
-    let owned = is_mod && is_installed(s, id);
     let playing = s.browse_view.audio.playing == Some(id);
-    let (glyph, word) = if owned {
-        (&icons::CHECK, "Installed")
+    let install = if is_mod {
+        // The row reads its own mod's state, so one install never changes another row.
+        let state = super::super::quick::button(s, id);
+        super::super::quick::button_el(
+            u,
+            &state,
+            format!("list-install-{id}"),
+            id,
+            &card.name,
+            super::super::quick::Size::Row,
+        )
     } else {
-        (&icons::DOWNLOAD, "Install")
+        super::super::quick::button_el(
+            u,
+            &super::super::quick::Button::Install,
+            format!("list-install-{id}"),
+            id,
+            &card.name,
+            super::super::quick::Size::Row,
+        )
+        .on_press(move |st: &mut State| open_details(st, id))
     };
-    let install_name = name.clone();
-    let install = row()
-        .key(format!("list-install-{id}"))
-        .h(32.0)
-        .pl(10.0)
-        .pr(12.0)
-        .gap(6.0)
-        .center()
-        .radius(crate::ui::r(8.0))
-        .fill(if owned { Color::TRANSPARENT } else { Color::WHITE.alpha(0.035) })
-        .border(1.0, if owned { u.hair } else { u.hair_strong })
-        .hover(u.hover)
-        .focusable(true)
-        .role("button")
-        .label(format!("{word} {name}"))
-        .cursor(rune::Cursor::Pointer)
-        .on_press(move |st: &mut State| {
-            if is_mod {
-                st.install = InstallView::for_mod(id, &install_name);
-            } else {
-                open_details(st, id);
-            }
-        })
-        .child(icon(glyph, 14.0).color(if owned { u.muted } else { u.ink }).a11y_hidden())
-        .child(
-            text(word)
-                .font(LABEL)
-                .color(if owned { u.muted } else { u.ink })
-                .a11y_hidden(),
-        );
+    let status = is_mod.then(|| super::super::quick::status_line(s, u, id)).flatten();
 
     let saved = is_favorite(s, &card.model, id);
     let favorite = Favorite::from_card(card);
@@ -1065,7 +1063,7 @@ pub(crate) fn list_row(s: &State, u: &Ui, card: &BrowseCard) -> El {
                     .color(if outdated(card) { u.amber } else { u.muted })
                     .truncate(),
                 )
-                .child(stats),
+                .child(status.unwrap_or(stats)),
         )
         .child(spacer());
     if let Some(audio) = audio {

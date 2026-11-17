@@ -229,7 +229,7 @@ pub fn section_el(s: &State, u: &Ui) -> El {
         disabled(
             button(u, "settings-servers-test-run", if testing { "Testing" } else { "Test now" }, ActionKind::Secondary)
                 .on_press(run_test),
-            testing || s.prefs.offline || s.install_job.is_running(),
+            testing || s.prefs.offline || crate::screens::browse::quick::installs_busy(s),
         ),
     ));
     rows.push(toggle_row(
@@ -303,7 +303,7 @@ fn start_move(st: &mut State, to: Option<PathBuf>) {
     if st.demo || rune::is_headless() {
         return say(st, tr("Demo data: nothing was changed."), false);
     }
-    if st.install_job.is_running() {
+    if crate::screens::browse::quick::installs_busy(st) {
         return say(st, tr("Wait for the current download to finish."), true);
     }
     let cache = download_cache_dir();

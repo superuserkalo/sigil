@@ -3282,7 +3282,7 @@ fn gamebanana_ids(s: &State) -> Vec<u64> {
 
 /// Read the cache once; check GameBanana when it is six hours old, a mod is new to it, or
 /// `force` (the menu's "Check for updates"). Never in the demo or a headless run.
-fn check_updates(st: &mut State, force: bool) {
+pub(crate) fn check_updates(st: &mut State, force: bool) {
     if st.demo || rune::is_headless() || !st.addons.scanned {
         return;
     }

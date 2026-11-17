@@ -605,6 +605,27 @@ pub const DE: &[(&str, &str)] = &[
     ("{} file shipped by more than one mod. The lower slot wins.", "{} Datei wird von mehr als einem Mod mitgeliefert. Der niedrigere Slot gewinnt."),
     ("{} file · {}", "{} Datei · {}"),
     ("{} {}", "{} {}"),
+    // Browse: one-press installs (screens/browse/quick.rs)
+    ("Choose another file", "Andere Datei wählen"),
+    ("Downloading", "Wird heruntergeladen"),
+    ("Downloading {}%", "Wird heruntergeladen {}%"),
+    ("Downloading {}.", "{} wird heruntergeladen."),
+    ("Install {}", "{} installieren"),
+    ("It is switched off. Turn it on in Installed.", "Der Mod ist ausgeschaltet. Schalte ihn unter Installiert ein."),
+    ("Installed {}", "{} installiert"),
+    ("Installed {}.", "{} installiert."),
+    ("Open Installed", "Installiert öffnen"),
+    ("Paused", "Pausiert"),
+    ("Paused at {}%", "Pausiert bei {}%"),
+    ("Queued", "In der Warteschlange"),
+    ("Waiting for its turn", "Wartet, bis es dran ist"),
+    ("Set the game folder in Settings to install.", "Lege den Spielordner in den Einstellungen fest, um zu installieren."),
+    ("Slot {}. It is switched off: turn it on in Installed.", "Slot {}. Der Mod ist ausgeschaltet: Schalte ihn unter Installiert ein."),
+    ("Slot {}. It loads the next time you start Deadlock.", "Slot {}. Er wird beim nächsten Start von Deadlock geladen."),
+    ("The download stopped.", "Der Download wurde angehalten."),
+    ("The update could not start. Open Installed to see why.", "Das Update konnte nicht starten. Öffne Installiert, um den Grund zu sehen."),
+    ("Update", "Aktualisieren"),
+    ("{} was not installed", "{} wurde nicht installiert"),
 ];
 
 /// Literals in the routed files that read like words but are not UI text: names, file and

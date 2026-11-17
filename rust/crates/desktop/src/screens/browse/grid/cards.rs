@@ -136,48 +136,41 @@ pub(crate) fn card_el(s: &State, u: &Ui, card: &BrowseCard, card_w: f32) -> El {
                 .color(if outdated(card) { u.amber } else { u.faint }),
         );
 
-    let name = card.name.clone();
     let is_mod = card.model.eq_ignore_ascii_case("mod");
-    let owned = is_mod && is_installed(s, id);
-    let (glyph, word) = if owned {
-        (&icons::CHECK, "Installed")
+    let size = if card_w >= CARD_LABEL_MIN {
+        super::super::quick::Size::Card
     } else {
-        (&icons::DOWNLOAD, "Install")
+        super::super::quick::Size::Icon
     };
-    let ink = if owned { u.muted } else { u.ink };
-    let install = if card_w >= CARD_LABEL_MIN {
-        row()
-            .h(28.0)
-            .pl(8.0)
-            .pr(10.0)
-            .gap(6.0)
-            .center()
-            .child(icon(glyph, 14.0).color(ink).a11y_hidden())
-            .child(text(word).font(LABEL).color(ink).a11y_hidden())
+    let install = if is_mod {
+        // Each card reads its own mod's state, so one install never changes another card.
+        let state = super::super::quick::button(s, id);
+        super::super::quick::button_el(u, &state, format!("install-{id}"), id, &card.name, size)
     } else {
-        el().size(28.0, 28.0)
-            .center()
-            .child(icon(glyph, 14.0).color(ink).a11y_hidden())
+        // Sounds and WiPs install by file link: the details list their files.
+        super::super::quick::button_el(
+            u,
+            &super::super::quick::Button::Install,
+            format!("install-{id}"),
+            id,
+            &card.name,
+            size,
+        )
+        .on_press(move |st: &mut State| open_details(st, id))
     };
-    let install = install
-        .key(format!("install-{id}"))
-        .radius(crate::ui::r(8.0))
-        .fill(if owned { Color::TRANSPARENT } else { Color::WHITE.alpha(0.035) })
-        .border(1.0, if owned { u.hair } else { u.hair_strong })
-        .hover(u.hover)
-        .press(Color::WHITE.alpha(0.08))
-        .focusable(true)
-        .role("button")
-        .label(format!("{word} {}", card.name))
-        .cursor(rune::Cursor::Pointer)
-        .on_press(move |st: &mut State| {
-            if is_mod {
-                st.install = InstallView::for_mod(id, &name);
-            } else {
-                // Sounds and WiPs install by file link: the details list their files.
-                open_details(st, id);
-            }
-        });
+    // While this mod installs, or after it failed, its own state takes the byline's place.
+    let byline = match is_mod.then(|| super::super::quick::status_line(s, u, id)).flatten() {
+        Some(line) => line,
+        None => byline,
+    };
+    if is_mod {
+        if let Some(bar) = super::super::quick::image_bar(s, u, id) {
+            frame = frame.child(bar);
+        }
+        if !veil && let Some(badge) = super::super::quick::installed_badge(s, id) {
+            frame = frame.child(badge);
+        }
+    }
 
     let saved = is_favorite(s, &card.model, id);
     let favorite = Favorite::from_card(card);

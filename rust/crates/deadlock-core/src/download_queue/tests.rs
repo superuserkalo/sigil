@@ -325,3 +325,32 @@ fn cancelling_removes_the_partial_file() {
     assert!(!part_path(&path).exists());
     let _ = fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn commands_for_other_rows_wait_for_the_queue_loop_instead_of_being_lost() {
+    let control = Control::new();
+    // An Add for another mod while an archive streams must reach the queue loop.
+    assert!(handle_mid_stream(&Command::Add("715100".into()), "d1", &control));
+    assert!(handle_mid_stream(&Command::Retry("d2".into()), "d1", &control));
+    assert!(handle_mid_stream(&Command::Remove("d2".into()), "d1", &control));
+    // Pausing or cancelling another row leaves the running one alone.
+    assert!(handle_mid_stream(&Command::Pause("d2".into()), "d1", &control));
+    assert!(handle_mid_stream(&Command::Cancel("d2".into()), "d1", &control));
+    assert!(!control.paused() && !control.cancelled());
+    // The running row's own controls act at once and are done with.
+    assert!(!handle_mid_stream(&Command::Pause("d1".into()), "d1", &control));
+    assert!(control.paused());
+    assert!(!handle_mid_stream(&Command::Resume("d1".into()), "d1", &control));
+    assert!(!control.paused());
+    assert!(!handle_mid_stream(&Command::Cancel("d1".into()), "d1", &control));
+    assert!(control.cancelled());
+}
+
+#[test]
+fn a_row_knows_when_it_was_added() {
+    let before = Utc::now().timestamp_millis();
+    let item = Item::new("d1".into(), "715100".into());
+    let after = Utc::now().timestamp_millis();
+    let added = item.added_ms().unwrap();
+    assert!(before <= added && added <= after);
+}

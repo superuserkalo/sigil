@@ -1,7 +1,6 @@
 //! The Collections tab: GameBanana collections for Deadlock, their items, and the queue that
 //! installs a whole collection one mod at a time.
 
-use super::install::InstallView;
 use super::*;
 
 /// How many collections a page asks for. GameBanana serves 15 a page whatever is asked.
@@ -175,14 +174,18 @@ pub(crate) fn queue_collection(st: &mut State, all: bool) {
         return;
     }
     st.browse_view.collection = None;
-    st.browse_view.queue_total = queue.len();
-    st.browse_view.queue_done = 0;
-    st.browse_view.queue = queue;
-    st.status = format!(
-        "Installing {} from {name}.",
-        plural(st.browse_view.queue_total, "mod", "mods")
-    );
-    super::install::start_next_in_queue(st);
+    // Each mod goes through the download queue on its own card; they install one at a time.
+    let total = queue.len();
+    for (id, mod_name) in queue {
+        if matches!(
+            super::quick::button(st, id),
+            super::quick::Button::Install | super::quick::Button::Retry(_)
+        ) {
+            st.browse_view.installs.items.remove(&id);
+            super::quick::start(st, id, &mod_name, id.to_string(), None, Vec::new());
+        }
+    }
+    st.status = format!("Installing {} from {name}.", plural(total, "mod", "mods"));
 }
 
 /// The Collections tab body: bucket chips and the collection cards.
@@ -442,15 +445,16 @@ pub(crate) fn collection_dialog(s: &State, u: &Ui) -> Option<El> {
         if !is_mod {
             row = row.child(text(card.model.clone()).font(SMALL).color(u.faint));
         } else {
-            row = row.child(
-                u.icon_button(&icons::DOWNLOAD, "Install this mod")
-                    .key(format!("collection-install-{id}"))
-                    .cursor(rune::Cursor::Pointer)
-                    .on_press(move |st: &mut State| {
-                        st.install = InstallView::for_mod(id, &name);
-                        st.browse_view.collection = None;
-                    }),
-            );
+            // The mod's own install state, as on its card.
+            let state = super::quick::button(s, id);
+            row = row.child(super::quick::button_el(
+                u,
+                &state,
+                format!("collection-install-{id}"),
+                id,
+                &name,
+                super::quick::Size::Row,
+            ));
         }
         rows = rows.child(row);
         if index < last {

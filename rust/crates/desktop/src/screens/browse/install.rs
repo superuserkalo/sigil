@@ -387,6 +387,8 @@ pub(crate) fn install_dialog(s: &State, u: &Ui) -> El {
                     .on_press(move |st: &mut State| {
                         st.install.vpk = Some(path.clone());
                         st.install.plan = None;
+                        // Picking is the choice and the approval: plan, then write at once.
+                        st.install.auto = true;
                         crate::data::start_install_plan(st);
                     })
                     .child(icon(&FILE_ARCHIVE, 16.0).color(u.muted).a11y_hidden())
