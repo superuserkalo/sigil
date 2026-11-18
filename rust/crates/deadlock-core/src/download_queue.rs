@@ -36,6 +36,10 @@ use crate::install::{
 };
 use crate::util::write_atomic;
 
+mod speed;
+pub use speed::{SLOW_BPS, SLOW_GAP, SLOW_HOLD, SPEED_SAMPLE};
+use speed::Rate;
+
 /// Queue file under the app data directory.
 pub const QUEUE_NAME: &str = "download-queue.json";
 
@@ -167,6 +171,10 @@ pub struct Item {
     pub added_at: String,
     pub finished_at: Option<String>,
     pub scan: ScanReport,
+    /// Speed and the slow window while this row streams. Cleared on a new run and never saved:
+    /// a speed from the last launch means nothing.
+    #[serde(skip)]
+    rate: Rate,
 }
 
 impl Item {
@@ -188,12 +196,50 @@ impl Item {
             added_at: Utc::now().to_rfc3339(),
             finished_at: None,
             scan: ScanReport::default(),
+            rate: Rate::default(),
         }
     }
 
     /// `0.4` to `1.0`, or None while the size is unknown.
     pub fn fraction(&self) -> Option<f32> {
         (self.bytes_total > 0).then(|| (self.bytes_done as f32 / self.bytes_total as f32).min(1.0))
+    }
+
+    /// The smoothed speed in bytes a second while the row streams.
+    ///
+    /// None before the first sample lands, and None for a row that is not running: a paused,
+    /// finished or cancelled row has no current speed. The number is lightly averaged, so it
+    /// does not jump on every chunk.
+    pub fn speed_bps(&self) -> Option<u64> {
+        if self.state == State::Running {
+            self.rate.bps()
+        } else {
+            None
+        }
+    }
+
+    /// Whole seconds left at the smoothed speed, rounded up.
+    ///
+    /// None when the row is not running, when the total size is unknown ([`Item::bytes_total`]
+    /// is zero), when nothing is left, or before the first speed sample. A caller that wants a
+    /// label can format the pair, but the queue only hands out the number.
+    pub fn eta_secs(&self) -> Option<u64> {
+        if self.state != State::Running
+            || self.bytes_total == 0
+            || self.bytes_done >= self.bytes_total
+        {
+            return None;
+        }
+        let bps = self.speed_bps().filter(|bps| *bps > 0)?;
+        Some((self.bytes_total - self.bytes_done).div_ceil(bps))
+    }
+
+    /// True when the smoothed speed stayed under [`SLOW_BPS`] for [`SLOW_HOLD`] during this
+    /// run. One slow chunk is not enough, and the flag clears as soon as the speed recovers.
+    pub fn is_slow(&self) -> bool {
+        // 97 percent done: it finishes before a notice would help (Deadlock Mod Manager's rule).
+        let nearly_done = self.bytes_total > 0 && self.bytes_done * 100 >= self.bytes_total * 97;
+        self.state == State::Running && self.rate.slow() && !nearly_done
     }
 
     /// The line under the name: what the row is doing right now.
@@ -344,6 +390,7 @@ impl Queue {
                 item.finished_at = None;
                 item.bytes_done = 0;
                 item.scan = ScanReport::default();
+                item.rate = Rate::default();
                 true
             }
             _ => false,
@@ -395,6 +442,34 @@ impl Queue {
         let before = self.items.len();
         self.items.retain(|item| item.id != id);
         self.items.len() != before
+    }
+
+    /// Move a waiting row to `index`, counted in the whole item list and clamped to the end.
+    ///
+    /// Only a row that has not started can move: a running row is already streaming and a
+    /// finished one is history, so both are refused with an error and keep their place. A
+    /// paused row counts as started too, because it already has bytes on disk.
+    pub fn move_to(&mut self, id: &str, index: usize) -> Result<()> {
+        let Some(from) = self.items.iter().position(|item| item.id == id) else {
+            return Err(Error::msg(format!("There is no download {id} in the queue.")));
+        };
+        match self.items[from].state {
+            State::Queued => {}
+            State::Running => {
+                return Err(Error::msg(
+                    "A download that is running keeps its place in the queue.",
+                ));
+            }
+            _ => {
+                return Err(Error::msg(
+                    "Only a waiting download can be moved. This one has already started or finished.",
+                ));
+            }
+        }
+        let item = self.items.remove(from);
+        let to = index.min(self.items.len());
+        self.items.insert(to, item);
+        Ok(())
     }
 
     /// Drop every finished row. True when something went.
@@ -949,6 +1024,9 @@ pub enum Command {
     ClearFinished,
     /// Pause or resume the whole queue.
     PauseAll(bool),
+    /// Move a waiting row to `index` in the list ([`Queue::move_to`]). A running or finished
+    /// row stays where it is.
+    MoveTo { id: String, index: usize },
     Shutdown,
 }
 
@@ -1172,6 +1250,7 @@ fn apply(
             }
             changed = true;
         }
+        Command::MoveTo { id, index } => changed = queue.move_to(id, *index).is_ok(),
         Command::Shutdown => return Flow::Stop,
     }
     if changed {
@@ -1217,6 +1296,7 @@ fn run_item(
     // until the first bytes arrive.
     if let Some(live) = queue.get_mut(id) {
         live.state = State::Running;
+        live.rate = Rate::default();
     }
     publish(shared, queue);
     if let Some(wake) = wake {
@@ -1271,6 +1351,9 @@ fn run_item(
     let progress_wake = wake.clone();
     let pending = &mut *deferred;
     let mut last_wake: Option<Instant> = None;
+    // One clock for the whole transfer: speed is bytes over time since this call, so the
+    // window never spans the resolve that came before it.
+    let started = Instant::now();
     let mut progress = move |done: u64, total: Option<u64>| {
         // Commands that arrive mid-stream are handled here so Pause and Cancel act at once;
         // the rest wait for the queue loop instead of being lost.
@@ -1283,6 +1366,7 @@ fn run_item(
             && let Some(live) = slot.get_mut(id)
         {
             live.bytes_done = done;
+            live.rate.observe(done, started.elapsed());
             if let Some(total) = total.filter(|total| *total > 0) {
                 live.bytes_total = total;
             }
