@@ -12,8 +12,8 @@ Status words: **Had it** (Sigil had it before this round), **Built now**, **Buil
 | --- | --- | --- |
 | Items | 159 | 232 |
 | Had it | 27 | 42 |
-| Built now | 76 | 115 |
-| Built, hook pending | 5 | 3 |
+| Built now | 81 | 115 |
+| Built, hook pending | 0 | 3 |
 | Elsewhere in Sigil | 35 | 27 |
 | Needs a backend | 8 | 6 |
 | Declined (rule) | 5 | 38 |
@@ -90,17 +90,17 @@ Grouped by task, thirteen categories in three groups, a search field over all of
 | 53 | Appearance | Transparent sidebar | Sidebar on the page background | Built now | Appearance > Transparent sidebar |
 | 54 | Appearance | Language | App language | Built now | General > Language (System, English, Deutsch) |
 | 55 | Appearance | Date format | MM/DD or DD/MM | Built now | General > Dates (ISO, day first, month first) |
-| 56 | Preferences | Expand Locker cards | Locker list expanded | Built, hook pending | Mods > Preferences; the Locker reads `options::locker_expanded()` once its owner adds the hook |
-| 57 | Preferences | Open mod page on multi-file click | Installed click behaviour | Built, hook pending | Mods > Preferences; Installed reads `options::installed_open_page()` once its owner adds the hook |
+| 56 | Preferences | Expand Locker cards | Locker list expanded | Built now | Mods > Preferences; the Locker opens expanded (`options::locker_expanded()`) |
+| 57 | Preferences | Open mod page on multi-file click | Installed click behaviour | Built now | Mods > Preferences; a multi-file card in Installed opens its mod page |
 | 58 | Preferences | Confirm before updating a profile | Profile overwrite confirm | Built now | Mods > Preferences; Profiles skips the overwrite confirm when it is off |
 | 59 | Preferences | Prompt for optional requirements | Requirements dialog | Built now | Mods > Preferences > Show what a mod needs; Browse's install panel lists GameBanana `_aRequirements` |
 | 60 | Preferences | Ignore overlap by default | Hide overlaps | Built now | Mods > Preferences; the Overlap page shows an empty state with Show overlap |
 | 61 | Preferences | Keep removed files 24 h | Backup replaced mods | Had it | Every replace keeps a backup; Backups lists it |
 | 62 | Preferences | Switch variants | Disable old variant | Built now | Mods > Preferences; Browse installs turn off other files of the same mod (`mod_data::switch_variants`) |
 | 63 | Preferences | Enable mods after download | Auto-enable | Had it | Mods > New mods start turned off |
-| 64 | Preferences | Match remaining update files | Update pairing | Built, hook pending | Mods > Preferences; the updates flow reads `options::match_update_files()` once its owner adds the hook |
-| 65 | Preferences | Skip replacement confirmation | No confirm on replace | Built, hook pending | Mods > Preferences > Replace without asking; the updates flow reads `options::skip_replace_confirm()` once its owner adds the hook |
-| 66 | Preferences | Swap Install and Replace | Button order | Built, hook pending | Mods > Preferences > Replace first; the updates flow reads `options::swap_install_replace()` once its owner adds the hook |
+| 64 | Preferences | Match remaining update files | Update pairing | Built now | Mods > Preferences; updates pair the remaining files of a multi-file mod |
+| 65 | Preferences | Skip replacement confirmation | No confirm on replace | Built now | Mods > Preferences > Replace without asking; Browse replaces with no confirm |
+| 66 | Preferences | Swap Install and Replace | Button order | Built now | Mods > Preferences > Replace first; Browse shows Replace before Install |
 | 67 | Preferences | DeadlockForge 1-click | Localhost bridge | Built now | Integrations > DeadlockForge: 127.0.0.1 listener (Grimoire's protocol), every install confirmed in Sigil, off by default |
 | 68 | Preferences | Forge listening status | Bridge status | Built now | Integrations > DeadlockForge status line (port or Not listening) |
 | 69 | Preferences | Discord Rich Presence | Activity on Discord | Built now | Integrations > Discord (needs the app id) |
