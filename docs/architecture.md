@@ -278,7 +278,7 @@ Enforced in code:
    absent) after the user confirms, with a backup (`deadlock_core::servers`).
 5. **Secrets.** Decrypted keys exist only in main. The agent host receives provider auth through a
    narrow handshake, not the transcript. Tool output and logs are scrubbed for known key shapes.
-6. **Network allowlist.** Provider endpoints, `api.steampowered.com`, `api.deadlock-api.com`, GameBanana, the GitHub update check and signed update download, Deadworks for Servers, and the local Discord IPC socket. No other
+6. **Network allowlist.** Provider endpoints, `api.steampowered.com`, `api.deadlock-api.com`, GameBanana, the GitHub update check and signed update download, Deadworks for Servers, the local Discord IPC socket, and Sigil's own telemetry Worker (opt-in, off by default). No other
    outbound calls from tools without a documented allowlist entry.
    - `gamebanana.com/apiv11`, `images.gamebanana.com` and `files.gamebanana.com`: Browse.
      Anonymous GETs, no key, no user data: `Game/20948/Subfeed?_nPage=N&_csvModelInclusions=Mod|Sound|Wip`
@@ -373,6 +373,27 @@ Enforced in code:
      optionally the enabled mod count and whether the game runs modded or vanilla, and a session
      start time. "Show what you are doing" off sends only "Using Sigil". Discord itself shows the
      activity to the user's friends. See `screens/settings/discord.rs`.
+   - Sigil's telemetry Worker (opt-in, off by default, owner-approved 2026-11-18): the one host in
+     `deadlock_core::telemetry` (`ENDPOINT`, `https://sigil-telemetry.invalid` until the owner
+     swaps in the deployed URL). Nothing is sent until the player agrees in the first-start
+     dialog, and each kind has its own switch in Settings > Privacy:
+     - `POST /v1/events`, with usage consent: `installId` (a random UUID kept in
+       `<data>/telemetry/install-id`, not a machine id), app version, OS and up to 50 allowlisted
+       events (`name`, optional `page`, `ts`). Queued locally, 500 events, oldest dropped.
+     - `POST /v1/crash`, with crash consent: `installId`, version, OS, the panic message and a
+       backtrace. The panic hook writes a scrubbed file locally first, with or without consent.
+     - `POST /v1/diagnostics`, only when the player presses Send: `installId`, version, OS, a
+       summary and a scrubbed log tail under the Worker's 1 MB cap. The Worker answers with a
+       reference code.
+     - `GET /v1/identify?sha256=<64 hex>&size=<n>`, with hash lookup consent: the hash and size
+       only; the Worker returns GameBanana mod and file ids. No install id is sent and nothing is
+       stored about the caller.
+     - `POST /v1/hashes`, with hash lookup consent: the sha256, size and GameBanana mod and file
+       ids of a file just installed, so a later lookup can identify it.
+     Every request carries `x-sigil-client: 1` and `x-sigil-version`, goes through `net::gate`
+     (so Offline mode blocks it) and has a short timeout. Failures are one log line. Home paths,
+     user names, keys, tokens, emails and Steam ids are scrubbed on the device and again by the
+     Worker. See `docs/decisions/0014-opt-in-telemetry.md`.
    - Offline mode (Settings > Network) blocks every request the core makes: each `ureq::Agent` in
      `deadlock-core` carries `net::gate` as middleware, and `DAH_OFFLINE=1` carries the switch
      to the helper processes Sigil starts. Not covered yet: the agent host's model provider

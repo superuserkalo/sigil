@@ -497,7 +497,7 @@ pub fn overlay(s: &State, u: &Ui) -> Option<El> {
                         .py(6.0)
                         .gap(10.0)
                         .center_y()
-                        .child(audio_slider(s, u))
+                        .child(audio_slider(s, u, "browse-audio-volume"))
                         .child(
                             text(format!("{}%", (s.browse_view.audio.volume * 100.0).round() as i32))
                                 .font(SMALL)
@@ -697,13 +697,14 @@ pub(crate) fn context_menu(s: &State, u: &Ui) -> Option<El> {
     )
 }
 
-/// The 120 point preview volume control in the view menu.
-pub(crate) fn audio_slider(s: &State, u: &Ui) -> El {
+/// The 120 point preview volume control. The view menu and the status bar both draw it; they
+/// move the one volume every preview plays at.
+pub(crate) fn audio_slider(s: &State, u: &Ui, key: &str) -> El {
     let width = 120.0;
     let frac = s.browse_view.audio.volume.clamp(0.0, 1.0);
     let knob = 14.0;
     let track_y = 10.0;
-    el().key("browse-audio-volume")
+    el().key(key.to_string())
         .w(width)
         .h(24.0)
         .focusable(true)

@@ -5,7 +5,7 @@
 //! that player's page, so a name on the scoreboard becomes a history.
 
 use deadlock_core::stats::social::{PlayerRecord, Social};
-use rune::{El, col, el, icon, row, spacer, text};
+use rune::{El, col, icon, row, spacer, text};
 
 use crate::app::State;
 use crate::icons;
@@ -222,7 +222,12 @@ fn person_row(u: &Ui, record: &PlayerRecord, against: bool) -> El {
                 .label(tr("Queued together")),
         );
     }
-    r.child(el().w(4.0))
+    r.child(statlocker_link(
+        u,
+        format!("stats-person-statlocker-{account_id}"),
+        statlocker_profile_url(account_id),
+        tr("Open on Statlocker"),
+    ))
 }
 
 /// The rate. Wins are the player's wins in the shared games, in both lists, so a

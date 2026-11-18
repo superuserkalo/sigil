@@ -30,6 +30,7 @@ pub mod sharing;
 pub mod sources;
 pub mod support;
 pub mod tabs;
+pub mod telemetry;
 pub mod templates;
 pub mod tools;
 pub mod tray;
@@ -239,6 +240,8 @@ pub struct View {
     pub extra: extra::Extra,
     /// Appearance > Personalize: the theme builder's draft, imports, the art picker.
     pub personalize: personalize::View,
+    /// Opt-in telemetry: consent, the flush worker, Send diagnostics (`telemetry.rs`).
+    pub telemetry: telemetry::Telemetry,
 }
 
 // --- open, close, poll ---------------------------------------------------------
@@ -311,6 +314,7 @@ pub fn poll(st: &mut State, tx: &mut Tx) -> bool {
     changed |= tabs::background(st, tx);
     changed |= extra::poll(st, tx);
     changed |= personalize::poll(st);
+    changed |= telemetry::poll(st);
     changed
 }
 
@@ -348,6 +352,7 @@ pub fn on_startup(st: &mut State) {
         std::env::consts::ARCH
     ));
     install_panic_log();
+    telemetry::on_startup(st);
     if st.prefs.check_updates && !st.prefs.offline && !st.demo && !rune::is_headless() {
         st.settings.last_update_check = Some(Instant::now());
         start_update_check(st);
@@ -371,7 +376,7 @@ pub fn apply_offline(offline: bool) {
 /// Flags that change state another screen owns.
 pub fn apply_flags(st: &mut State) {
     st.browse_view.docked = st.prefs.flag("docked_details");
-    if !st.prefs.flag("servers") && st.screen == Screen::Servers {
+    if !st.prefs.page_on(st.screen) {
         st.screen = Screen::Browse;
     }
     if !st.prefs.flag("agent") && crate::app::under_agent(st.screen) {
@@ -431,6 +436,7 @@ pub fn modal(s: &State, u: &Ui, window: (f32, f32)) -> Option<El> {
                 .w_full()
                 .gap(LIST_GAP)
                 .child(tabs::general(s, u))
+                .child(tabs::pages(s, u))
                 .child(tray::rows(s, u))
                 .child(extra::editor_row(s, u))
                 .child(onboarding::rows(s, u)),
@@ -447,7 +453,11 @@ pub fn modal(s: &State, u: &Ui, window: (f32, f32)) -> Option<El> {
                 .gap(LIST_GAP)
                 .child(tabs::network(s, u))
                 .child(netx::diagnostics_section(s, u)),
-            Tab::Logs => tabs::logs(s, u),
+            Tab::Logs => col()
+                .w_full()
+                .gap(LIST_GAP)
+                .child(tabs::logs(s, u))
+                .child(section(u, "Send to Sigil", vec![telemetry::diagnostics_row(s, u)])),
             Tab::Storage => storage(s, u),
             Tab::Experimental => col()
                 .w_full()
@@ -1577,6 +1587,14 @@ fn appearance(s: &State, u: &Ui) -> El {
                 "The sidebar sits on the page background, without its own panel.",
                 s.prefs.transparent_sidebar,
                 |st| prefs::edit(st, |p| p.transparent_sidebar = !p.transparent_sidebar),
+            ),
+            toggle_row(
+                u,
+                "settings-status-bar",
+                "Status bar",
+                "A quiet line under every page: the game, the catalog, downloads, your profile, the preview volume and updates.",
+                s.prefs.status_bar,
+                |st| prefs::edit(st, |p| p.status_bar = !p.status_bar),
             )])
             .collect(),
         ))
@@ -1793,7 +1811,11 @@ fn mods(s: &State, u: &Ui) -> El {
 
 // --- privacy ---------------------------------------------------------------------
 
-const HOSTS: [(&str, &str); 7] = [
+const HOSTS: [(&str, &str); 8] = [
+    (
+        "Sigil's telemetry server",
+        "Only what you turn on under Help improve Sigil: usage events, crash reports, unknown-mod lookups, and diagnostics when you press Send.",
+    ),
     (
         "gamebanana.com",
         "Browse: the catalog, mod pages, previews and the files you install. Your public name when you link your account.",
@@ -1850,12 +1872,13 @@ fn privacy(s: &State, u: &Ui) -> El {
         .w_full()
         .gap(28.0)
         .child(
-            text(tr("Sigil has no telemetry, analytics or crash reporting. It goes online only for the features below, and never sends anything about you on its own."))
+            text(tr("Sigil goes online only for the features below. Usage events, crash reports and lookups go to Sigil's own server only when you turn them on."))
                 .font(BODY)
                 .color(u.prose)
                 .wrap()
                 .w_full(),
         )
+        .child(telemetry::privacy_section(s, u))
         .child(tabs::match_sharing(s, u))
         .child(section(
             u,

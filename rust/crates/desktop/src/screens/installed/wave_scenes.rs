@@ -179,3 +179,27 @@ pub fn slow_toast(s: &mut State) {
     crate::screens::launch::scene_downloads_slow(s);
     crate::screens::downloads::poll(s);
 }
+
+/// Wave 3: slot 04's page lists slot 02 as a requirement, so 02 loads first and hides it. The
+/// order mark is on 04 and its popover is open.
+pub fn order_fix(s: &mut State) {
+    base(s);
+    let id_of = |s: &State, slot: u8| {
+        s.addons
+            .addons
+            .iter()
+            .find(|a| a.slot == slot)
+            .and_then(|a| super::meta_for(s, a))
+            .and_then(|meta| meta.gamebanana_id)
+    };
+    if let (Some(base_id), Some(overlay_id)) = (id_of(s, 2), id_of(s, 4)) {
+        let need = deadlock_core::requirements::Requirement {
+            name: "Base skin".to_string(),
+            url: format!("https://gamebanana.com/mods/{base_id}"),
+            mod_id: Some(base_id),
+        };
+        s.installed.gates.known.insert(overlay_id, (0, vec![need]));
+    }
+    super::req_order::refresh(s);
+    s.installed.menu = Some(Menu::Order(4));
+}

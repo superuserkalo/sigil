@@ -20,6 +20,12 @@
 //! crate) are all read in process, so a player needs no 7-Zip or WinRAR. A tool
 //! from `DAH_7Z` / `DAH_UNRAR` or `PATH` is only tried when the built-in reader
 //! fails (an unusual method). Many GameBanana uploads are `.rar` or `.7z`.
+//!
+//! A Browse install can be stopped while it runs: [`PlanOptions::cancel`] carries a flag the app
+//! sets, and the download, extract and validate stages check it between chunks and entries. A
+//! cancelled run deletes its partial archive and its half-extracted folder, never stores a plan
+//! and never writes a game file. [`is_cancelled`] tells the app to show "Cancelled" instead of an
+//! error line.
 
 use std::collections::BTreeSet;
 use std::env;
@@ -27,6 +33,8 @@ use std::fs::{self, File};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
@@ -85,6 +93,40 @@ const GAMEBANANA_USER_AGENT: &str = "dah/0.0.0";
 const API_TIMEOUT_SECONDS: u64 = 30;
 const BODY_SNIPPET_CHARS: usize = 200;
 const READ_BUFFER_BYTES: usize = 64 * 1024;
+
+// ---------------------------------------------------------------------------
+// Cancellation
+// ---------------------------------------------------------------------------
+
+/// True when the app set the cancel flag for a running Browse install.
+///
+/// The same flag is read by every stage, so one store from the app stops the download, the
+/// extract or the validate that is running at that moment.
+fn cancelled(cancel: Option<&AtomicBool>) -> bool {
+    cancel.is_some_and(|flag| flag.load(Ordering::SeqCst))
+}
+
+/// Stop at the next safe point when the caller cancelled. A stage that writes removes what it
+/// wrote before it returns (see [`download_with_cancel`] and [`extract_archive_with_cancel`]).
+fn check_cancel(cancel: Option<&AtomicBool>) -> Result<()> {
+    if cancelled(cancel) {
+        return Err(Error::Cancelled);
+    }
+    Ok(())
+}
+
+/// True when `error` is [`Error::Cancelled`]. The app shows "Cancelled" for it instead of an
+/// error line, the same way the download queue shows its own cancelled state.
+///
+/// ```
+/// # use deadlock_core::error::Error;
+/// # use deadlock_core::install::is_cancelled;
+/// assert!(is_cancelled(&Error::Cancelled));
+/// assert!(!is_cancelled(&Error::msg("boom")));
+/// ```
+pub fn is_cancelled(error: &Error) -> bool {
+    matches!(error, Error::Cancelled)
+}
 
 // ---------------------------------------------------------------------------
 // Source
@@ -517,8 +559,28 @@ pub struct DownloadReport {
 ///
 /// The allowlist is checked before the request and again on every redirect.
 /// The body is capped at [`DownloadPolicy::max_bytes`]. Any failure removes the
-/// partial file.
+/// partial file. Callers that hand the player a stop button use
+/// [`download_with_cancel`].
 pub fn download(url: &str, destination_dir: &Path, policy: &DownloadPolicy) -> Result<DownloadReport> {
+    download_with_cancel(url, destination_dir, policy, None)
+}
+
+/// Download `url` into `destination_dir`, stopping when `cancel` is set.
+///
+/// The flag is read before the request, on every redirect, in the read loop after each chunk
+/// and once more before the finished file is renamed into place. On a cancel the `.part` file
+/// is deleted and [`Error::Cancelled`] is returned, so no later run can take a half file for a
+/// complete download. A cancellable download streams in one connection: the multi-range path in
+/// [`crate::fast_download`] has no cancel checks, and a stop button that waits for it would not
+/// be a stop button.
+pub fn download_with_cancel(
+    url: &str,
+    destination_dir: &Path,
+    policy: &DownloadPolicy,
+    cancel: Option<&AtomicBool>,
+) -> Result<DownloadReport> {
+    check_cancel(cancel)?;
+
     let mut current = WebUrl::parse(url)?;
     policy.check(&current)?;
 
@@ -540,6 +602,8 @@ pub fn download(url: &str, destination_dir: &Path, policy: &DownloadPolicy) -> R
     let mut unrouted: Option<WebUrl> = None;
 
     for _ in 0..=MAX_REDIRECTS {
+        check_cancel(cancel)?;
+
         let called = agent
             .get(&current.to_string())
             .header("User-Agent", GAMEBANANA_USER_AGENT)
@@ -628,7 +692,9 @@ pub fn download(url: &str, destination_dir: &Path, policy: &DownloadPolicy) -> R
     let _ = fs::remove_file(&partial_path);
 
     // Settings > Network > Faster downloads: a large file that allows ranges comes in parts
-    // (crate::fast_download). Any failure falls back to the one stream below.
+    // (crate::fast_download). Any failure falls back to the one stream below. A cancellable
+    // download skips the parts, because that path has no flag to read and would keep going
+    // after the player pressed stop.
     let ranged = crate::fast_download::splittable(
         response.headers().get("accept-ranges").and_then(|v| v.to_str().ok()),
         response
@@ -638,7 +704,8 @@ pub fn download(url: &str, destination_dir: &Path, policy: &DownloadPolicy) -> R
             .and_then(|v| v.parse::<u64>().ok()),
         crate::net::download_parts(),
     );
-    if let Some(total) = ranged
+    if cancel.is_none()
+        && let Some(total) = ranged
         && let Ok((bytes, sha256)) = crate::fast_download::fetch_ranges(
             &agent,
             &final_url.to_string(),
@@ -665,6 +732,12 @@ pub fn download(url: &str, destination_dir: &Path, policy: &DownloadPolicy) -> R
     let mut total: u64 = 0;
 
     loop {
+        if cancelled(cancel) {
+            drop(file);
+            let _ = fs::remove_file(&partial_path);
+            return Err(Error::Cancelled);
+        }
+
         let read = match reader.read(&mut buffer) {
             Ok(read) => read,
             Err(error) => {
@@ -702,6 +775,13 @@ pub fn download(url: &str, destination_dir: &Path, policy: &DownloadPolicy) -> R
 
     file.flush()?;
     drop(file);
+
+    // A cancel that lands after the last chunk still wins: the bytes are complete, but the plan
+    // was stopped, so the cache does not gain an archive for a run the player ended.
+    if cancelled(cancel) {
+        let _ = fs::remove_file(&partial_path);
+        return Err(Error::Cancelled);
+    }
 
     let _ = fs::remove_file(&final_path);
     fs::rename(&partial_path, &final_path)?;
@@ -1101,12 +1181,30 @@ pub struct ExtractReport {
 /// Every entry name is resolved with [`safe_entry_path`] before anything is
 /// written, symlinks and special files are rejected, and both the entry count
 /// and the uncompressed byte total are capped. A failed extract removes the
-/// destination tree.
+/// destination tree. Callers that hand the player a stop button use
+/// [`extract_archive_with_cancel`].
 pub fn extract_archive(
     archive: &Path,
     destination: &Path,
     limits: &ExtractLimits,
     tools: &ToolPaths,
+) -> Result<ExtractReport> {
+    extract_archive_with_cancel(archive, destination, limits, tools, None)
+}
+
+/// Extract `archive` into `destination`, stopping when `cancel` is set.
+///
+/// The flag is read before the first entry, between entries and between the chunks of a ZIP
+/// entry, so a stop lands in a fraction of a second even in a large archive. On a cancel the
+/// whole destination tree is removed and [`Error::Cancelled`] is returned: a half-extracted
+/// folder never survives to be classified or staged. An external `7z` or `unrar` helper cannot
+/// be interrupted while it runs; the flag is checked before it starts and after it returns.
+pub fn extract_archive_with_cancel(
+    archive: &Path,
+    destination: &Path,
+    limits: &ExtractLimits,
+    tools: &ToolPaths,
+    cancel: Option<&AtomicBool>,
 ) -> Result<ExtractReport> {
     if !archive.is_file() {
         return Err(Error::msg(format!(
@@ -1122,30 +1220,36 @@ pub fn extract_archive(
 
     let format = detect_archive_format(archive);
 
-    let result = match format {
-        ArchiveFormat::Zip => extract_zip(archive, destination, limits),
-        // Built in, as for ZIP: no 7-Zip, WinRAR or unrar needed. A tool on PATH (or DAH_7Z /
-        // DAH_UNRAR) is only a fallback for a method the built-in reader lacks.
-        ArchiveFormat::SevenZip | ArchiveFormat::Rar => {
-            let built_in = match format {
-                ArchiveFormat::SevenZip => extract_7z(archive, destination, limits),
-                _ => extract_rar(archive, destination, limits),
-            };
-            match (built_in, tools.for_format(format)) {
-                (Ok(done), _) => Ok(done),
-                (Err(error), Some(tool)) => {
-                    let _ = fs::remove_dir_all(destination);
-                    fs::create_dir_all(destination)?;
-                    extract_with_tool(format, tool, archive, destination, limits)
-                        .map_err(|tool_error| Error::msg(format!("{error} The {} fallback also failed: {tool_error}", format.tool_name())))
+    let result = if cancelled(cancel) {
+        Err(Error::Cancelled)
+    } else {
+        match format {
+            ArchiveFormat::Zip => extract_zip(archive, destination, limits, cancel),
+            // Built in, as for ZIP: no 7-Zip, WinRAR or unrar needed. A tool on PATH (or DAH_7Z /
+            // DAH_UNRAR) is only a fallback for a method the built-in reader lacks, and never a
+            // path out of a cancel.
+            ArchiveFormat::SevenZip | ArchiveFormat::Rar => {
+                let built_in = match format {
+                    ArchiveFormat::SevenZip => extract_7z(archive, destination, limits, cancel),
+                    _ => extract_rar(archive, destination, limits, cancel),
+                };
+                match (built_in, tools.for_format(format)) {
+                    (Ok(done), _) => Ok(done),
+                    (Err(error), _) if is_cancelled(&error) => Err(error),
+                    (Err(error), Some(tool)) => {
+                        let _ = fs::remove_dir_all(destination);
+                        fs::create_dir_all(destination)?;
+                        extract_with_tool(format, tool, archive, destination, limits, cancel)
+                            .map_err(|tool_error| Error::msg(format!("{error} The {} fallback also failed: {tool_error}", format.tool_name())))
+                    }
+                    (Err(error), None) => Err(error),
                 }
-                (Err(error), None) => Err(error),
             }
+            ArchiveFormat::Unknown => Err(Error::msg(format!(
+                "Could not identify the archive format of {}. Sigil opens .zip, .7z and .rar mods.",
+                archive.display()
+            ))),
         }
-        ArchiveFormat::Unknown => Err(Error::msg(format!(
-            "Could not identify the archive format of {}. Sigil opens .zip, .7z and .rar mods.",
-            archive.display()
-        ))),
     };
 
     match result {
@@ -1167,6 +1271,7 @@ fn extract_zip(
     archive: &Path,
     destination: &Path,
     limits: &ExtractLimits,
+    cancel: Option<&AtomicBool>,
 ) -> Result<(Vec<String>, u64)> {
     let file = File::open(archive)?;
     let mut zip = zip::ZipArchive::new(file)
@@ -1185,6 +1290,8 @@ fn extract_zip(
     let mut total: u64 = 0;
 
     for index in 0..zip.len() {
+        check_cancel(cancel)?;
+
         let mut entry = zip.by_index(index).map_err(|error| {
             Error::msg(format!(
                 "ZIP entry {index} of {} could not be read: {error}",
@@ -1241,6 +1348,10 @@ fn extract_zip(
         let mut buffer = [0u8; READ_BUFFER_BYTES];
 
         loop {
+            if cancelled(cancel) {
+                return Err(Error::Cancelled);
+            }
+
             let read = entry.read(&mut buffer).map_err(|error| {
                 Error::msg(format!(
                     "ZIP entry {raw_name} failed after {written} bytes: {error}"
@@ -1276,7 +1387,12 @@ fn portable_name(raw: &str) -> String {
 
 /// A .7z mod, in process (sevenz-rust2). Each name goes through [`safe_entry_path`]; the entry
 /// count and the bytes written are capped while writing, not after.
-fn extract_7z(archive: &Path, destination: &Path, limits: &ExtractLimits) -> Result<(Vec<String>, u64)> {
+fn extract_7z(
+    archive: &Path,
+    destination: &Path,
+    limits: &ExtractLimits,
+    cancel: Option<&AtomicBool>,
+) -> Result<(Vec<String>, u64)> {
     let mut reader = sevenz_rust2::ArchiveReader::open(archive, sevenz_rust2::Password::empty())
         .map_err(|error| match error {
             sevenz_rust2::Error::PasswordRequired => Error::msg(format!(
@@ -1289,6 +1405,10 @@ fn extract_7z(archive: &Path, destination: &Path, limits: &ExtractLimits) -> Res
     let mut total: u64 = 0;
     let mut refused: Option<Error> = None;
     let outcome = reader.for_each_entries(|entry, data| {
+        if cancelled(cancel) {
+            refused = Some(Error::Cancelled);
+            return Ok(false);
+        }
         if entry.is_directory() {
             return Ok(true);
         }
@@ -1347,7 +1467,12 @@ fn extract_7z(archive: &Path, destination: &Path, limits: &ExtractLimits) -> Res
 /// A .rar mod, in process (the unrar crate builds RARLAB's UnRAR library). Names go through
 /// [`safe_entry_path`] and each file is written to the path that returns, never to the name
 /// the archive gives; directories, split volumes and encrypted entries are not followed.
-fn extract_rar(archive: &Path, destination: &Path, limits: &ExtractLimits) -> Result<(Vec<String>, u64)> {
+fn extract_rar(
+    archive: &Path,
+    destination: &Path,
+    limits: &ExtractLimits,
+    cancel: Option<&AtomicBool>,
+) -> Result<(Vec<String>, u64)> {
     let fail = |error: unrar::error::UnrarError| {
         Error::msg(format!("Could not extract {}: {error}", archive.display()))
     };
@@ -1355,6 +1480,8 @@ fn extract_rar(archive: &Path, destination: &Path, limits: &ExtractLimits) -> Re
     let mut count = 0usize;
     let mut declared: u64 = 0;
     while let Some(header) = open.read_header().map_err(fail)? {
+        check_cancel(cancel)?;
+
         let entry = header.entry();
         if entry.is_encrypted() {
             return Err(Error::msg(format!(
@@ -1432,7 +1559,10 @@ fn extract_with_tool(
     archive: &Path,
     destination: &Path,
     limits: &ExtractLimits,
+    cancel: Option<&AtomicBool>,
 ) -> Result<(Vec<String>, u64)> {
+    check_cancel(cancel)?;
+
     if !tool.is_file() {
         return Err(Error::msg(format!(
             "Archive backend unavailable: {} is not a file, so {} archives cannot be extracted. Set {} to the binary path.",
@@ -1490,6 +1620,9 @@ fn extract_with_tool(
             last_lines(&text, 6)
         )));
     }
+
+    // The helper ran to the end; a stop that arrived meanwhile still removes its tree.
+    check_cancel(cancel)?;
 
     // The external tool does its own path handling, so the tree is checked
     // again here: no links, nothing outside the destination, caps enforced.
@@ -2098,14 +2231,36 @@ pub struct InstallPlan {
     pub plan_path: PathBuf,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// What one plan run may use: where the game is, what it may download, what it may unpack, and
+/// the flag that stops it.
+#[derive(Debug, Clone)]
 pub struct PlanOptions {
     /// Explicit game root. None means Steam discovery, then `DAH_GAME_DIR`.
     pub game_root: Option<PathBuf>,
     pub policy: DownloadPolicy,
     pub limits: ExtractLimits,
     pub tools: ToolPaths,
+    /// Set by the app to stop a running Browse install. None means the run cannot be
+    /// cancelled, which is what the CLI and the tests use.
+    ///
+    /// The same flag reaches the download, the extract and the validate stage. A cancelled run
+    /// returns [`Error::Cancelled`], leaves no plan file and writes no game file. Default None.
+    pub cancel: Option<Arc<AtomicBool>>,
 }
+
+impl PartialEq for PlanOptions {
+    /// Every setting is compared except the cancel flag: a flag is a handle the app keeps, not a
+    /// value two option sets agree on, and two runs with the same settings are the same run
+    /// whether or not one of them can be stopped.
+    fn eq(&self, other: &Self) -> bool {
+        self.game_root == other.game_root
+            && self.policy == other.policy
+            && self.limits == other.limits
+            && self.tools == other.tools
+    }
+}
+
+impl Eq for PlanOptions {}
 
 impl Default for PlanOptions {
     fn default() -> Self {
@@ -2114,6 +2269,7 @@ impl Default for PlanOptions {
             policy: DownloadPolicy::gamebanana(),
             limits: ExtractLimits::default(),
             tools: ToolPaths::from_environment(),
+            cancel: None,
         }
     }
 }
@@ -2130,7 +2286,14 @@ struct Prepared {
 
 /// Fetch the archive inside the workspace, extract it, and refuse an archive that asks for
 /// no one-click installs when this request is one.
+///
+/// Every stage takes the plan's cancel flag. A cancel deletes the partial archive (inside the
+/// download) or the half-extracted folder here, so a stopped run leaves nothing a later run
+/// could take for a finished download or a finished extract.
 fn prepare_archive(request: &InstallRequest, options: &PlanOptions) -> Result<Prepared> {
+    let cancel = options.cancel.as_deref();
+    check_cancel(cancel)?;
+
     let cache = download_dir(&request.workspace, &request.source);
     fs::create_dir_all(&cache)?;
 
@@ -2173,7 +2336,7 @@ fn prepare_archive(request: &InstallRequest, options: &PlanOptions) -> Result<Pr
                         sha256: sha256_file(path)?,
                     }
                 }
-                _ => download(&file.download_url, &cache, &options.policy)?,
+                _ => download_with_cancel(&file.download_url, &cache, &options.policy, cancel)?,
             };
 
             if let Some(expected) = file.size_bytes
@@ -2188,12 +2351,25 @@ fn prepare_archive(request: &InstallRequest, options: &PlanOptions) -> Result<Pr
             gamebanana = Some(file);
             report
         }
-        InstallSource::DirectUrl(url) => download(url, &cache, &options.policy)?,
+        InstallSource::DirectUrl(url) => download_with_cancel(url, &cache, &options.policy, cancel)?,
         InstallSource::LocalFile(path) => describe_local_file(path)?,
     };
 
+    // A stop between the download and the extract keeps the completed archive (the bytes are
+    // good and a retry can reuse them) but never starts the extract.
+    check_cancel(cancel)?;
+
     let extracted = cache.join("extracted");
-    let extract = extract_archive(&fetched.path, &extracted, &options.limits, &options.tools)?;
+    let extract =
+        extract_archive_with_cancel(&fetched.path, &extracted, &options.limits, &options.tools, cancel)?;
+
+    // A stop between the extract and the return removes the half tree, or the whole tree when
+    // the extract had just finished: a cancelled plan has no extracted folder behind it.
+    if cancelled(cancel) {
+        let _ = fs::remove_dir_all(&extracted);
+        return Err(Error::Cancelled);
+    }
+
     refuse_one_click_marker(&extracted, request.one_click)?;
 
     Ok(Prepared {
@@ -2332,6 +2508,8 @@ pub fn plan_install(request: &InstallRequest, options: &PlanOptions) -> Result<I
     }
 
     let prepared = prepare_archive(request, options)?;
+    let cancel = options.cancel.as_deref();
+    check_cancel(cancel)?;
     let game_root = resolve_game_root(options.game_root.clone())?;
     let addons = addons_dir(&game_root);
     let gameinfo = gameinfo_path(&game_root);
@@ -2344,6 +2522,9 @@ pub fn plan_install(request: &InstallRequest, options: &PlanOptions) -> Result<I
         mut warnings,
         ..
     } = prepared;
+
+    // A stop before validation: nothing has been written beyond the cache at this point.
+    check_cancel(cancel)?;
 
     let candidate = classify_extracted(&extracted, &options.limits, request.vpk.as_deref())?;
     warnings.extend(extract.warnings);
@@ -2401,6 +2582,9 @@ pub fn plan_install(request: &InstallRequest, options: &PlanOptions) -> Result<I
         ));
     }
 
+    // Staging copies the payload into the cache, so a stop checked here saves that work.
+    check_cancel(cancel)?;
+
     let artifact = match &candidate.artifact {
         CandidateArtifact::Tree { root } => {
             let staging = cache.join("staging");
@@ -2439,6 +2623,10 @@ pub fn plan_install(request: &InstallRequest, options: &PlanOptions) -> Result<I
 
     let mut files = candidate.payload.clone();
     files.sort();
+
+    // A stopped run stops before the plan file, so the app never offers to apply a plan the
+    // player cancelled.
+    check_cancel(cancel)?;
 
     let id = plan_id(&request.target);
     let plan_path = plans_dir(&request.workspace).join(format!("{id}.json"));
@@ -3964,12 +4152,59 @@ mod tests {
         format!("http://127.0.0.1:{port}")
     }
 
+    /// Serve one body in slow chunks and set `cancel` after `after_chunks` chunks, while the
+    /// client is still reading. The chunks keep flowing afterwards so a read that is waiting
+    /// wakes up and sees the flag, the way a player pressing stop mid-stream does.
+    fn serve_with_cancel(
+        body: Vec<u8>,
+        chunk: usize,
+        after_chunks: usize,
+        cancel: Arc<AtomicBool>,
+    ) -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { continue };
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(5)))
+                    .ok();
+
+                let mut buffer = [0u8; 4096];
+                let _ = stream.read(&mut buffer);
+
+                let head = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nContent-Type: application/zip\r\nConnection: close\r\n\r\n",
+                    body.len()
+                );
+                if stream.write_all(head.as_bytes()).is_err() {
+                    continue;
+                }
+
+                for (index, piece) in body.chunks(chunk).enumerate() {
+                    if index == after_chunks {
+                        cancel.store(true, Ordering::SeqCst);
+                    }
+                    if stream.write_all(piece).is_err() {
+                        break;
+                    }
+                    let _ = stream.flush();
+                    std::thread::sleep(Duration::from_millis(2));
+                }
+            }
+        });
+
+        format!("http://127.0.0.1:{port}")
+    }
+
     fn plan_options(game_root: &Path, origin: &str) -> PlanOptions {
         PlanOptions {
             game_root: Some(game_root.to_path_buf()),
             policy: DownloadPolicy::gamebanana().with_mirror(origin).unwrap(),
             limits: ExtractLimits::default(),
             tools: ToolPaths::default(),
+            cancel: None,
         }
     }
 
@@ -5174,6 +5409,204 @@ mod tests {
         assert_eq!(choices[0].chunks, 2);
         assert_eq!(choices[1].bytes, 200);
         assert_eq!(choices[1].chunks, 0);
+    }
+
+    // ------------------------------------------------------------------
+    // Cancellation
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn the_cancel_error_is_recognised_and_reads_plainly() {
+        assert!(is_cancelled(&Error::Cancelled));
+        assert_eq!(
+            Error::Cancelled.to_string(),
+            "Cancelled. Nothing was installed."
+        );
+        assert!(!is_cancelled(&Error::msg("boom")));
+        assert!(!is_cancelled(&Error::Network("offline".to_string())));
+    }
+
+    #[test]
+    fn a_cancel_flag_stops_a_download_and_leaves_no_partial_file() {
+        let root = scratch("cancel-download");
+        let cache = root.join("cache");
+        let body: Vec<u8> = (0..600_000).map(|index| (index % 251) as u8).collect();
+        let flag = Arc::new(AtomicBool::new(false));
+        let origin = serve_with_cancel(body, 16 * 1024, 2, Arc::clone(&flag));
+        let policy = DownloadPolicy::gamebanana().with_mirror(&origin).unwrap();
+
+        let error = download_with_cancel(
+            &format!("{origin}/mod.zip"),
+            &cache,
+            &policy,
+            Some(flag.as_ref()),
+        )
+        .unwrap_err();
+
+        assert!(is_cancelled(&error), "{error}");
+        assert!(flag.load(Ordering::SeqCst), "the server set the flag mid-stream");
+        assert!(!cache.join("mod.zip").exists(), "a cancelled download leaves no archive");
+        assert!(!cache.join("mod.zip.part").exists(), "a cancelled download leaves no part file");
+        let left: Vec<PathBuf> = fs::read_dir(&cache)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .collect();
+        assert!(left.is_empty(), "the cache holds no entry a later run could reuse: {left:?}");
+
+        // A flag that is already set stops before the socket opens and creates nothing.
+        let early = root.join("early");
+        let already = Arc::new(AtomicBool::new(true));
+        let error = download_with_cancel(
+            &format!("{origin}/mod.zip"),
+            &early,
+            &policy,
+            Some(already.as_ref()),
+        )
+        .unwrap_err();
+        assert!(is_cancelled(&error), "{error}");
+        assert!(!early.exists(), "a cancel before the request creates no folder");
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_cancel_flag_stops_an_extract_and_removes_the_folder() {
+        let root = scratch("cancel-extract");
+        let mut files: Vec<(String, Vec<u8>)> = Vec::new();
+        for index in 0..64 {
+            files.push((
+                format!("citadel/materials/heroes/billy/file-{index:02}.vmat_c"),
+                format!("payload {index}").into_bytes(),
+            ));
+        }
+        let refs: Vec<(&str, &[u8], u32)> = files
+            .iter()
+            .map(|(name, bytes)| (name.as_str(), bytes.as_slice(), 0o100644))
+            .collect();
+        let archive = root.join("many.zip");
+        fs::write(&archive, build_stored_zip(&refs)).unwrap();
+
+        let flag = Arc::new(AtomicBool::new(true));
+        let destination = root.join("out");
+        let error = extract_archive_with_cancel(
+            &archive,
+            &destination,
+            &ExtractLimits::default(),
+            &ToolPaths::default(),
+            Some(flag.as_ref()),
+        )
+        .unwrap_err();
+
+        assert!(is_cancelled(&error), "{error}");
+        assert!(!destination.exists(), "a cancelled extract removes its folder");
+        assert_eq!(files.len(), 64, "the fixture keeps the archive realistic");
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_cancel_flag_between_entries_leaves_no_half_extracted_tree() {
+        let root = scratch("cancel-mid-extract");
+        let payload = b"vmat payload".to_vec();
+        let names: Vec<String> = (0..4_000)
+            .map(|index| format!("citadel/files/entry-{index:04}.vmat_c"))
+            .collect();
+        let refs: Vec<(&str, &[u8], u32)> = names
+            .iter()
+            .map(|name| (name.as_str(), payload.as_slice(), 0o100644))
+            .collect();
+        let archive = root.join("many.zip");
+        fs::write(&archive, build_stored_zip(&refs)).unwrap();
+
+        let destination = root.join("out");
+        let first = destination.join("citadel/files/entry-0000.vmat_c");
+        let flag = Arc::new(AtomicBool::new(false));
+        let seen = Arc::new(AtomicBool::new(false));
+        let watcher = {
+            let flag = Arc::clone(&flag);
+            let seen = Arc::clone(&seen);
+            std::thread::spawn(move || {
+                // The first entry on disk proves the loop is running, so the flag lands
+                // between entries rather than before the first one.
+                while !first.exists() {
+                    std::hint::spin_loop();
+                }
+                seen.store(true, Ordering::SeqCst);
+                flag.store(true, Ordering::SeqCst);
+            })
+        };
+
+        let result = extract_archive_with_cancel(
+            &archive,
+            &destination,
+            &ExtractLimits::default(),
+            &ToolPaths::default(),
+            Some(flag.as_ref()),
+        );
+        watcher.join().unwrap();
+
+        assert!(seen.load(Ordering::SeqCst), "the extract started before the flag was set");
+        let error = result.unwrap_err();
+        assert!(is_cancelled(&error), "{error}");
+        assert!(!destination.exists(), "a cancelled extract removes its half tree");
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_cancelled_plan_writes_no_plan_and_no_game_file() {
+        let root = scratch("cancel-plan");
+        let game_root = fake_game(&root);
+        let workspace = root.join("workspace");
+
+        // Big enough to stream in several chunks, so the flag lands mid-download.
+        let mut files: Vec<(String, Vec<u8>)> = Vec::new();
+        for index in 0..40 {
+            files.push((
+                format!("citadel/materials/heroes/billy/file-{index:02}.vmat_c"),
+                vec![b'x'; 4 * 1024],
+            ));
+        }
+        let refs: Vec<(&str, &[u8], u32)> = files
+            .iter()
+            .map(|(name, bytes)| (name.as_str(), bytes.as_slice(), 0o100644))
+            .collect();
+        let zip = build_stored_zip(&refs);
+        assert!(zip.len() > 3 * 8192, "the fixture needs more than three chunks");
+
+        let flag = Arc::new(AtomicBool::new(false));
+        let origin = serve_with_cancel(zip, 8192, 2, Arc::clone(&flag));
+        let policy = DownloadPolicy::gamebanana().with_mirror(&origin).unwrap();
+        let request = InstallRequest::new(format!("{origin}/mod.zip"), workspace.clone()).unwrap();
+        let options = PlanOptions {
+            game_root: Some(game_root.clone()),
+            policy,
+            limits: ExtractLimits::default(),
+            tools: ToolPaths::default(),
+            cancel: Some(Arc::clone(&flag)),
+        };
+
+        let error = plan_install(&request, &options).unwrap_err();
+        assert!(is_cancelled(&error), "{error}");
+        assert!(flag.load(Ordering::SeqCst), "the server set the flag mid-stream");
+
+        // Nothing reached the game and no plan was stored for the app to offer.
+        assert!(!addons_dir(&game_root).join("pak01_dir.vpk").exists());
+        let present: Vec<PathBuf> = fs::read_dir(addons_dir(&game_root))
+            .map(|entries| entries.map(|entry| entry.unwrap().path()).collect())
+            .unwrap_or_default();
+        assert!(present.is_empty(), "the addons folder stays empty: {present:?}");
+        assert!(!plans_dir(&workspace).exists(), "a cancelled plan is never stored");
+        let cache = download_dir(&workspace, &request.source);
+        let left: Vec<PathBuf> = fs::read_dir(&cache)
+            .map(|entries| entries.map(|entry| entry.unwrap().path()).collect())
+            .unwrap_or_default();
+        assert!(
+            left.is_empty(),
+            "no archive, part file or extracted folder survives: {left:?}"
+        );
+
+        let _ = fs::remove_dir_all(&root);
     }
 }
 

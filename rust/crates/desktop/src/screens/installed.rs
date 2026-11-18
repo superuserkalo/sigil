@@ -17,6 +17,8 @@ mod layout;
 mod notes;
 mod order;
 mod overlap;
+pub mod repair;
+mod req_order;
 mod search;
 mod tools;
 pub mod update_match;
@@ -80,6 +82,8 @@ pub struct View {
     pub recap: Option<search::Recap>,
     /// Safety scan, identification, compatibility, merge and fonts.
     pub tools: tools::Tools,
+    /// Compatibility repairs: the dry run, the records Revert reads, the work (`repair.rs`).
+    pub repairs: repair::Repairs,
     /// The card under the pointer, which shows its "more" button.
     pub hovered: Option<u8>,
     pub menu: Option<Menu>,
@@ -114,6 +118,8 @@ pub struct View {
     pub drag: Option<drag::Dragging>,
     /// Enabled slots that share game paths with other enabled mods, from the last scan.
     pub overlaps: overlap::Overlaps,
+    /// Mods that load after a mod their GameBanana page requires, so it hides them.
+    pub order_problems: Vec<deadlock_core::requirements::OrderProblem>,
     /// The open load order dialog.
     pub order: Option<order::OrderDialog>,
     /// `last_undo` was just set: the next poll turns the status line into a toast with Undo.
@@ -305,6 +311,8 @@ pub enum Menu {
     More,
     /// Who one card overlaps, from its overlap badge.
     Overlap(u8),
+    /// Why one card loads too late for the mod it needs, and Fix it.
+    Order(u8),
 }
 
 /// The mods the page shows: search, source and group applied, in the chosen order.
@@ -350,7 +358,7 @@ fn shown_addons(s: &State) -> Vec<&AddonRow> {
     shown
 }
 
-pub(super) fn display_name(s: &State, addon: &AddonRow) -> String {
+pub(crate) fn display_name(s: &State, addon: &AddonRow) -> String {
     meta_for(s, addon)
         .map(|meta| meta.name.clone())
         .unwrap_or_else(|| slot_file_name(addon))
@@ -694,14 +702,22 @@ fn apply_bulk(st: &mut State, enable: bool) {
     if crate::screens::settings::watch::refuse_while_running(st) {
         return;
     }
-    let Some(game_root) = st.game_root.clone() else {
-        st.status = "Set the game folder in Settings first.".to_string();
-        return;
-    };
     let targets: Vec<(u8, String)> = bulk_targets(st, enable)
         .into_iter()
         .map(|addon| (addon.slot, display_name(st, addon)))
         .collect();
+    switch_slots(st, targets, enable);
+    st.installed.selected.clear();
+}
+
+/// Turn these slots on or off in one pass: the same single rename the card switch does
+/// (`deadlock_core::addons::set_many`), reported once in a recap and put behind Undo. The
+/// caller has already checked demo mode and a running game. Returns the slots that changed.
+pub(super) fn switch_slots(st: &mut State, targets: Vec<(u8, String)>, enable: bool) -> Vec<u8> {
+    let Some(game_root) = st.game_root.clone() else {
+        st.status = "Set the game folder in Settings first.".to_string();
+        return Vec::new();
+    };
     let wanted: BTreeMap<u8, bool> = targets.iter().map(|(slot, _)| (*slot, enable)).collect();
     let names: BTreeMap<u8, String> = targets.into_iter().collect();
     let mut recap = search::Recap::new(if enable {
@@ -709,8 +725,10 @@ fn apply_bulk(st: &mut State, enable: bool) {
     } else {
         format!("Turned off {} mods", wanted.len())
     });
+    let mut changed = Vec::new();
     match deadlock_core::addons::set_many(&game_root, &wanted, true) {
         Ok(report) => {
+            changed = report.done.iter().map(|done| done.slot).collect();
             for done in &report.done {
                 recap
                     .done
@@ -737,8 +755,8 @@ fn apply_bulk(st: &mut State, enable: bool) {
     if recap.any() {
         st.installed.recap = Some(recap);
     }
-    st.installed.selected.clear();
     rescan(st);
+    changed
 }
 
 pub(super) fn open_menu(st: &mut State, menu: Menu) {
@@ -1156,6 +1174,9 @@ fn warning_buttons(s: &State, u: &Ui, addon: &AddonRow) -> Vec<El> {
     if let Some(badge) = enable::hidden_badge(s, u, addon.slot) {
         buttons.push(badge);
     }
+    if let Some(badge) = req_order::badge(s, u, addon.slot, true) {
+        buttons.push(badge);
+    }
     if let Some(badge) = overlap::badge(s, u, addon.slot, true) {
         buttons.push(badge);
     }
@@ -1384,6 +1405,7 @@ pub fn overlay(s: &State, u: &Ui) -> Option<El> {
         Menu::List => ("installed-list".to_string(), Align::Start, 240.0),
         Menu::More => ("installed-bulk".to_string(), Align::End, 260.0),
         Menu::Overlap(slot) => (format!("installed-overlap-{slot:02}"), Align::End, 340.0),
+        Menu::Order(slot) => (format!("installed-order-{slot:02}"), Align::End, 340.0),
     };
     let mut items: Vec<El> = Vec::new();
 
@@ -1696,6 +1718,7 @@ pub fn overlay(s: &State, u: &Ui) -> Option<El> {
             items.extend(notes::menu_rows(s, u, menu));
         }
         Menu::Overlap(slot) => items = overlap::menu_items(s, u, slot),
+        Menu::Order(slot) => items = req_order::menu_items(s, u, slot),
         Menu::More => {
             let shown = shown_addons(s);
             let picked = !s.installed.selected.is_empty();
@@ -2067,6 +2090,8 @@ pub fn poll(st: &mut State) -> bool {
     changed |= enable::poll(st);
     changed |= enable::refresh_hidden(st);
     changed |= overlap::refresh(st);
+    changed |= req_order::refresh(st);
+    changed |= repair::poll(st);
 
     if !st.demo && st.addons.scanned {
         let sig: Vec<(u8, u64)> = st
@@ -2228,6 +2253,8 @@ fn stage_extras(st: &mut State) {
         id: "demo-comp".to_string(),
         name: "Comp".to_string(),
         members: vec!["demo-02".to_string(), "demo-03".to_string(), "demo-07".to_string()],
+        random_each_launch: false,
+        last_pick: None,
     });
     st.installed.notes.extras = extras;
 }
@@ -2707,6 +2734,7 @@ pub fn scene_health(s: &mut State) {
             },
         ],
         running: false,
+        confirm_off: false,
         error: None,
         job: Job::default(),
         checked: 7,
@@ -3347,7 +3375,23 @@ pub(super) fn apply_order(st: &mut State, group: &[u8], wanted: &[u8]) {
 /// The renames that give `group` the order `wanted`, or `None` with the reason in the status
 /// line (or nothing to do).
 fn plan_order(st: &mut State, group: &[u8], wanted: &[u8]) -> Option<ReorderPlan> {
-    let moves = load_order::moves_for_order(group, wanted);
+    plan_moves(st, load_order::moves_for_order(group, wanted))
+}
+
+/// Apply slot moves through the same plan, renames, library remap and Undo as a drag. The
+/// requirement order fix uses it.
+pub(super) fn apply_moves(st: &mut State, moves: Vec<load_order::SlotMove>) {
+    if st.demo {
+        st.status = "Demo library: nothing was changed.".to_string();
+        return;
+    }
+    if let Some(plan) = plan_moves(st, moves) {
+        reorder(st, plan);
+    }
+}
+
+/// The renames for `moves`, or `None` with the reason in the status line (or nothing to do).
+fn plan_moves(st: &mut State, moves: Vec<load_order::SlotMove>) -> Option<ReorderPlan> {
     if moves.is_empty() {
         return None;
     }
@@ -3462,6 +3506,16 @@ fn variant_slots<'a>(s: &'a State, id: u64) -> Vec<&'a AddonRow> {
 }
 
 /// Slots with an update, in load order, not already queued or running.
+/// The notes and lists store (`mod_extras`), for the launch's random lists.
+pub fn extras_path() -> PathBuf {
+    notes::extras_file()
+}
+
+/// How many installed mods have an update waiting, for the status bar and Browse's strip.
+pub fn pending_update_count(s: &State) -> usize {
+    available_updates(s).len()
+}
+
 fn available_updates(s: &State) -> Vec<u8> {
     let updates = &s.installed.updates;
     s.addons
@@ -4158,6 +4212,11 @@ pub fn scene_trash(s: &mut State) {
 }
 
 /// Updates on GameBanana for slots 02, 04 and 07 of the demo library.
+/// The update fixture, for scenes outside this page (Browse's quick stats strip).
+pub fn stage_updates_for_scene(s: &mut State) {
+    stage_updates(s);
+}
+
 fn stage_updates(s: &mut State) {
     let now = deadlock_core::gamebanana::now_unix();
     let mut cache = UpdateCache {

@@ -200,6 +200,41 @@ pub const DE: &[(&str, &str)] = &[
     ("{}% against them", "{} Prozent gegen sie"),
     ("{}% with them", "{} Prozent mit ihnen"),
     ("{}, every match, both sides of the map", "{}, jedes Match, beide Seiten der Karte"),
+    // Wave 3: filter, Items, Party
+    ("Show", "Zeigen"),
+    ("Ranked and unranked", "Ranked und Unranked"),
+    ("Any time", "Jederzeit"),
+    ("Last 7 days", "Letzte 7 Tage"),
+    ("Last 30 days", "Letzte 30 Tage"),
+    ("Last 90 days", "Letzte 90 Tage"),
+    ("Filters Matches, Items and Party", "Filtert Matches, Items und Party"),
+    ("Items", "Items"),
+    ("Your win rate with each item against everyone's, and when you buy it", "Deine Siegquote mit jedem Item gegen die aller anderen, und wann du es kaufst"),
+    ("Show items", "Items zeigen"),
+    ("Loading items", "Items werden geladen"),
+    ("No item has five matches in this filter yet.", "Noch kein Item hat fünf Matches in diesem Filter."),
+    ("Item", "Item"),
+    ("Against everyone", "Gegen alle"),
+    ("Bought at", "Gekauft bei"),
+    ("Than everyone", "Als alle"),
+    ("Item timeline", "Item-Verlauf"),
+    ("Items in the order you bought them", "Items in der Reihenfolge, in der du sie gekauft hast"),
+    ("Loading the item timeline", "Item-Verlauf wird geladen"),
+    ("No purchases were recorded for you in this match.", "Für dich wurden in diesem Match keine Käufe erfasst."),
+    ("sold", "verkauft"),
+    ("Load a player first.", "Lade zuerst einen Spieler."),
+    ("Party", "Party"),
+    ("Every lineup your party can queue, from each member's most played heroes", "Jede Aufstellung, die deine Party spielen kann, aus den meistgespielten Helden jedes Mitglieds"),
+    ("Track a friend's account or show the players you meet; premades and tracked players can join the party here.", "Verfolge das Konto eines Freundes oder zeige die Spieler, die du triffst; Premades und verfolgte Spieler können hier der Party beitreten."),
+    ("Pick at least one other player for the party.", "Wähle mindestens einen weiteren Spieler für die Party."),
+    ("Rate lineups", "Aufstellungen bewerten"),
+    ("Rating lineups", "Aufstellungen werden bewertet"),
+    ("No lineup to rate: the party has no heroes in this filter.", "Keine Aufstellung zu bewerten: Die Party hat in diesem Filter keine Helden."),
+    ("Lineup", "Aufstellung"),
+    ("about {}", "etwa {}"),
+    ("Across these lineups the party wins about {}% of its games. Grey rows have few matches behind them.", "Über diese Aufstellungen gewinnt die Party etwa {} Prozent ihrer Spiele. Graue Zeilen beruhen auf wenigen Matches."),
+    ("Open on Statlocker", "Auf Statlocker öffnen"),
+    ("The page could not be opened: {}", "Die Seite ließ sich nicht öffnen: {}"),
     ("\u{00b7} \u{00b7} \u{00b7}", "\u{00b7} \u{00b7} \u{00b7}"),
 ];
 
@@ -267,7 +302,8 @@ pub fn routed(source: &str) -> Vec<String> {
 mod tests {
     use super::*;
 
-    const SOURCES: [&str; 9] = [
+    const SOURCES: [&str; 10] = [
+        include_str!("more.rs"),
         include_str!("mod.rs"),
         include_str!("brief.rs"),
         include_str!("heroes.rs"),

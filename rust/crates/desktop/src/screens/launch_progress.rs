@@ -27,6 +27,10 @@ pub const WAIT_FOR_GAME: Duration = Duration::from_secs(180);
 pub enum Step {
     /// Put back the mods a vanilla launch set aside.
     Restore,
+    /// Roll the random mod lists and the Locker's skin shuffle (`launch_extras`).
+    Roll,
+    /// Repair enabled mods for the current game build, when Settings asks (`installed::repair`).
+    Repair,
     /// Write the saved launch options into Steam.
     LaunchOptions,
     /// Hand the game to Steam with the mods as they are (the sidebar button).
@@ -45,6 +49,8 @@ impl Step {
     fn label(self) -> &'static str {
         match self {
             Step::Restore => "Putting your mods back",
+            Step::Roll => "Rolling random mods",
+            Step::Repair => "Repairing mods for this game build",
             Step::LaunchOptions => "Writing launch options to Steam",
             Step::OpenSteam | Step::PageModded | Step::VanillaStashed => "Opening Steam",
             Step::Vanilla => "Setting mods aside and opening Steam",
@@ -74,7 +80,7 @@ pub struct Progress {
 }
 
 /// The steps of a launch: from the sidebar (`page` false) or the Launch page.
-pub fn plan(vanilla: bool, stashed: bool, page: bool) -> Vec<Step> {
+pub fn plan(vanilla: bool, stashed: bool, page: bool, repair: bool) -> Vec<Step> {
     let mut steps = Vec::new();
     if vanilla {
         steps.push(Step::LaunchOptions);
@@ -83,6 +89,10 @@ pub fn plan(vanilla: bool, stashed: bool, page: bool) -> Vec<Step> {
         if stashed {
             steps.push(Step::Restore);
         }
+        if repair {
+            steps.push(Step::Repair);
+        }
+        steps.push(Step::Roll);
         steps.push(Step::LaunchOptions);
         steps.push(if page { Step::PageModded } else { Step::OpenSteam });
     }
@@ -90,13 +100,24 @@ pub fn plan(vanilla: bool, stashed: bool, page: bool) -> Vec<Step> {
     steps
 }
 
-/// Start a launch. The press is the approval; the steps run from the next poll on.
+/// Start a launch. A modded one first asks about map mods when any are on
+/// (`launch_extras::ask_first`); the answer starts it through [`begin_checked`].
 pub fn begin(st: &mut State, vanilla: bool, page: bool) {
+    if !vanilla && crate::screens::launch_extras::ask_first(st, page) {
+        return;
+    }
+    begin_checked(st, vanilla, page);
+}
+
+/// Start a launch with every question answered. The press is the approval; the steps run from
+/// the next poll on.
+pub fn begin_checked(st: &mut State, vanilla: bool, page: bool) {
+    crate::screens::settings::telemetry::event(st, if vanilla { "launch:vanilla" } else { "launch:modded" }, None);
     let stashed = deadlock_core::launch::stash_status(&crate::data::data_dir()).is_some();
     st.launch_dialog = false;
     st.launch.dialog = Dialog::None;
     st.launch.progress = Some(Progress {
-        steps: plan(vanilla, stashed, page),
+        steps: plan(vanilla, stashed, page, crate::screens::settings::options::get().repair_before_launch),
         at: 0,
         vanilla,
         hidden: false,
@@ -116,6 +137,24 @@ pub fn poll(st: &mut State, tx: &mut Tx) -> bool {
     };
     if step == Step::Waiting {
         return wait(st, tx, &progress);
+    }
+    // The repair runs on a worker: start it, then hold this step until it is done.
+    if step == Step::Repair {
+        if !st.launch_extras.repairing {
+            st.launch_extras.repairing = true;
+            if crate::screens::installed::repair::start_before_launch(st) {
+                tx.wake_after(Duration::from_millis(250));
+                return true;
+            }
+        } else if st.installed.repairs.work.is_running() {
+            tx.wake_after(Duration::from_millis(250));
+            return false;
+        }
+        st.launch_extras.repairing = false;
+        if let Some(p) = st.launch.progress.as_mut() {
+            p.at += 1;
+        }
+        return true;
     }
     run(st, step);
     if let Some(p) = st.launch.progress.as_mut() {
@@ -141,6 +180,8 @@ pub fn poll(st: &mut State, tx: &mut Tx) -> bool {
 fn run(st: &mut State, step: Step) {
     match step {
         Step::Restore => crate::data::run_launch(st, Dialog::Restore),
+        Step::Roll => crate::screens::launch_extras::roll_before_launch(st),
+        Step::Repair => {}
         Step::LaunchOptions => crate::screens::autoexec::sync_launch_options(st),
         Step::OpenSteam | Step::VanillaStashed => st.launch_modded(),
         Step::PageModded => crate::data::run_launch(st, Dialog::Modded),
@@ -293,7 +334,7 @@ pub fn overlay(s: &State, u: &Ui) -> Option<El> {
 
 /// A launch stopped at `step`, for the scenes.
 pub fn stage(st: &mut State, vanilla: bool, at: usize) {
-    let steps = plan(vanilla, false, false);
+    let steps = plan(vanilla, false, false, false);
     st.launch.progress = Some(Progress {
         at: at.min(steps.len() - 1),
         steps,
@@ -311,7 +352,7 @@ mod tests {
     #[test]
     fn launch_options_are_written_before_steam_gets_the_game() {
         for (vanilla, stashed, page) in [(false, false, false), (false, true, true), (true, false, false), (true, true, false)] {
-            let steps = plan(vanilla, stashed, page);
+            let steps = plan(vanilla, stashed, page, true);
             let options = steps.iter().position(|s| *s == Step::LaunchOptions).unwrap();
             let steam = steps.iter().position(|s| s.hands_off()).unwrap();
             assert!(options < steam, "{steps:?}");
@@ -321,9 +362,9 @@ mod tests {
 
     #[test]
     fn a_stash_is_put_back_before_a_modded_launch() {
-        assert_eq!(plan(false, true, false), vec![Step::Restore, Step::LaunchOptions, Step::OpenSteam, Step::Waiting]);
-        assert_eq!(plan(true, true, false), vec![Step::LaunchOptions, Step::VanillaStashed, Step::Waiting]);
-        assert_eq!(plan(false, false, true), vec![Step::LaunchOptions, Step::PageModded, Step::Waiting]);
+        assert_eq!(plan(false, true, false, false), vec![Step::Restore, Step::Roll, Step::LaunchOptions, Step::OpenSteam, Step::Waiting]);
+        assert_eq!(plan(true, true, false, false), vec![Step::LaunchOptions, Step::VanillaStashed, Step::Waiting]);
+        assert_eq!(plan(false, false, true, false), vec![Step::Roll, Step::LaunchOptions, Step::PageModded, Step::Waiting]);
     }
 
     #[test]

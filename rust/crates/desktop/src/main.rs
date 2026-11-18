@@ -26,6 +26,7 @@ mod screens;
 mod shell;
 mod signin;
 mod single_instance;
+mod statusbar;
 mod ui;
 mod updater;
 mod win_frame;

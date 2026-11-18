@@ -53,6 +53,7 @@ pub mod quick;
 pub mod replace;
 mod scenes;
 pub mod store;
+pub mod strip;
 
 use self::collections::*;
 pub(crate) use self::detail_state::*;

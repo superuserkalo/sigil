@@ -410,6 +410,9 @@ pub fn list_row(s: &State, u: &Ui, card: &Group) -> El {
     for chip in notes::card_chips(s, u, addon) {
         chips = chips.child(chip);
     }
+    if let Some(badge) = super::req_order::badge(s, u, slot, false) {
+        chips = chips.child(badge);
+    }
     if let Some(badge) = super::overlap::badge(s, u, slot, false) {
         chips = chips.child(badge);
     }

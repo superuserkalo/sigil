@@ -359,8 +359,8 @@ pub(crate) fn active_chips(s: &State, u: &Ui) -> Option<El> {
     )
 }
 
-/// The landing dashboard over the plain catalog: trending rails and browse by hero. No
-/// announcements; nothing here needs a server of Sigil's own.
+/// The landing dashboard over the plain catalog: the quick stats strip, trending rails and
+/// browse by hero. No announcements; nothing here needs a server of Sigil's own.
 pub(crate) fn dashboard(s: &State, u: &Ui) -> Option<El> {
     let f = &s.browse_view.filters;
     let plain = matches!(s.browse_view.tab, Tab::Mods | Tab::All)
@@ -371,21 +371,18 @@ pub(crate) fn dashboard(s: &State, u: &Ui) -> Option<El> {
     if !plain {
         return None;
     }
-    let mut rails = col().key("browse-dashboard").w_full().gap(20.0);
-    let mut any = false;
+    // DMM's quick stats strip: always on the plain landing, each number a shortcut.
+    let mut rails = col().key("browse-dashboard").w_full().gap(20.0).child(super::strip::view(s, u));
     if let Some(rail) = trending_rail(s, u, "week", "Trending this week") {
         rails = rails.child(rail);
-        any = true;
     }
     if let Some(rail) = trending_rail(s, u, "month", "Popular this month") {
         rails = rails.child(rail);
-        any = true;
     }
     if let Some(rail) = hero_rail(s, u) {
         rails = rails.child(rail);
-        any = true;
     }
-    any.then(|| rails.child(el().h(4.0)))
+    Some(rails.child(el().h(4.0)))
 }
 
 pub(crate) fn trending_rail(s: &State, u: &Ui, period: &str, title: &str) -> Option<El> {

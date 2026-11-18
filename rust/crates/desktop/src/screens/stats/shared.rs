@@ -2,7 +2,7 @@
 //! and the two chart primitives. Nothing here reads state or the network.
 
 use deadlock_core::stats::{HeroPerformance, StatsSnapshot};
-use rune::{Color, El, Shape, SurfaceFit, TextStyle, canvas, col, el, icon, row, text};
+use rune::{Color, El, Shape, SurfaceFit, TextStyle, Tx, canvas, col, el, icon, row, text};
 
 use crate::app::State;
 use crate::icons;
@@ -238,4 +238,33 @@ pub(super) fn data_row(key: String, u: &Ui, h: f32) -> El {
 
 pub(super) fn num(value: String, w: f32, color: Color) -> El {
     cell(text(value).font(TNUM).color(color).align(rune::Align::End), w)
+}
+
+// --- Statlocker -----------------------------------------------------------------
+
+/// A player's page on Statlocker (Grimoire's `statlocker.ts`, MIT). A link the browser opens;
+/// Sigil never calls Statlocker itself.
+pub(super) fn statlocker_profile_url(account_id: u64) -> String {
+    format!("https://statlocker.gg/profile/{account_id}")
+}
+
+/// A match's page on Statlocker.
+pub(super) fn statlocker_match_url(match_id: u64) -> String {
+    format!("https://statlocker.gg/match/{match_id}")
+}
+
+/// Hand a Statlocker page to the browser. A failure becomes a toast.
+pub(super) fn open_statlocker(st: &mut State, tx: &mut Tx, url: &str) {
+    if let Err(error) = tx.open_url(url) {
+        st.status = crate::screens::settings::i18n::fill(tr("The page could not be opened: {}"), &[&error.to_string()]);
+    }
+}
+
+/// A small link button that opens `url` on Statlocker.
+pub(super) fn statlocker_link(u: &Ui, key: String, url: String, label: &str) -> El {
+    u.icon_button(&icons::EXTERNAL_LINK, label)
+        .key(key)
+        .role("link")
+        .cursor(rune::Cursor::Pointer)
+        .on_press_tx(move |st: &mut State, tx: &mut Tx| open_statlocker(st, tx, &url))
 }

@@ -33,6 +33,8 @@ pub const INDEX: &[Entry] = &[
     e(Tab::Mods, "New mods start turned off", "Installs land off until you switch them on.", "enable after download install"),
     e(Tab::Mods, "Order", "How the GameBanana catalog is sorted.", "sort browse popular newest"),
     e(Tab::Mods, "Mature content", "Mods GameBanana marks as mature.", "nsfw blur hide 18+"),
+    e(Tab::Mods, "Fix mods automatically before launch", "Repairs mods made for an older game build.", "compatibility repair heal fix update cameras sounds"),
+    e(Tab::Mods, "Warn about map mods at launch", "Asks whether to turn map mods off first.", "map maps matchmaking launch warning"),
     e(Tab::Mods, "Hidden mods and creators", "Mods and creators you hid in Browse.", "hidden blocked authors show again"),
     // General
     e(Tab::General, "Language", "The language Sigil's pages use.", "language deutsch english locale translation"),
@@ -42,12 +44,15 @@ pub const INDEX: &[Entry] = &[
     e(Tab::General, "Start minimized", "Waits in the Dock or taskbar at sign-in.", "tray hidden background"),
     e(Tab::General, "When the game starts", "Stay open, minimize or quit.", "launch close minimize"),
     e(Tab::General, "Ask before launching", "A confirm before Steam starts the game.", "confirm launch dialog"),
+    e(Tab::General, "Mods only", "Turns every optional page off at once.", "minimal pages features hide sidebar"),
+    e(Tab::General, "Pages", "Turn Locker, Crosshair, Autoexec, Performance, Stats or Servers off.", "features hide sidebar minimal locker crosshair autoexec performance stats servers"),
     e(Tab::General, "One launch button", "A single launch button with a modded or vanilla switch.", "combine launch vanilla modded"),
     // Appearance
     e(Tab::Appearance, "Theme", "Dark, light and the rest.", "dark light oled colors"),
     e(Tab::Appearance, "Accent colour", "The colour of the main action and switches.", "accent color colour custom hex"),
     e(Tab::Appearance, "Interface size", "Scales text, icons and spacing.", "zoom scale font size"),
     e(Tab::Appearance, "Transparent sidebar", "The sidebar sits on the page background.", "sidebar background"),
+    e(Tab::Appearance, "Status bar", "A quiet line under every page.", "bottom bar footer downloads volume catalog profile"),
     // Integrations
     e(Tab::Integrations, "Discord Rich Presence", "Shows what you do in Sigil on Discord.", "discord rpc status activity"),
     e(Tab::Integrations, "Show what you are doing", "Off shows only that you use Sigil.", "discord details privacy"),
@@ -58,6 +63,11 @@ pub const INDEX: &[Entry] = &[
     e(Tab::Integrations, "Profile share codes", "Send a mod setup as a code.", "share profile code friend"),
     e(Tab::Integrations, "Community gallery", "Publishing profiles needs a service.", "social discover publish like"),
     // Privacy
+    e(Tab::Privacy, "Usage events", "Pages and main actions, when you turn it on.", "telemetry analytics usage help improve"),
+    e(Tab::Privacy, "Crash reports", "Scrubbed crash reports, when you turn it on.", "telemetry crash report"),
+    e(Tab::Privacy, "Unknown-mod lookup", "Look up a mod file's hash to name it.", "telemetry identify hash lookup unknown"),
+    e(Tab::Privacy, "What Sigil sends", "Every field, where it goes, how long it is kept.", "telemetry privacy data"),
+    e(Tab::Logs, "Send diagnostics", "Send scrubbed logs and get a reference code.", "telemetry support bug report diagnostics send"),
     e(Tab::Privacy, "Player stats", "Public match data for the account you enter.", "deadlock-api stats"),
     e(Tab::Privacy, "Crosshair share codes", "Sends crosshair values to make a code.", "crosshair code"),
     e(Tab::Privacy, "Share match data with deadlock-api", "Match ids and keys from Steam's cache.", "salts ingest match data contribute community"),
@@ -88,7 +98,6 @@ pub const INDEX: &[Entry] = &[
     e(Tab::Storage, "Rescan", "Find the game again.", "rescan refresh detect"),
     e(Tab::Storage, "Reset settings", "Every setting back to its default.", "reset defaults"),
     // Experimental
-    e(Tab::Experimental, "Servers", "The Deadworks server browser.", "experimental deadworks servers"),
     e(Tab::Experimental, "Agent", "The agent and its mod-building tools.", "experimental agent ai"),
     e(Tab::Experimental, "Docked mod details", "Mod details beside the grid.", "experimental browse dock panel"),
     // About
@@ -240,6 +249,7 @@ mod tests {
             include_str!("netx.rs"),
             include_str!("forge.rs"),
             include_str!("templates.rs"),
+            include_str!("telemetry.rs"),
         ]
         .concat();
         for entry in INDEX {

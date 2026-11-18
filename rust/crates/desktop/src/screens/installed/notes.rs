@@ -671,6 +671,8 @@ fn lists_dialog(s: &State, u: &Ui) -> El {
         let id_show = id.clone();
         let id_on = id.clone();
         let id_off = id.clone();
+        let id_random = id.clone();
+        let random = entry.random_each_launch;
         let name = entry.name.clone();
         list = list.child(
             row()
@@ -687,10 +689,33 @@ fn lists_dialog(s: &State, u: &Ui) -> El {
                         .gap(2.0)
                         .child(text(name.clone()).font(BODY_MED).color(u.ink).truncate())
                         .child(
-                            text(format!("{members} mod{}", if members == 1 { "" } else { "s" }))
-                                .font(SMALL)
-                                .color(u.faint),
+                            text(if random {
+                                crate::screens::settings::i18n::fill(
+                                    crate::screens::settings::i18n::tr("{} mods, random each launch"),
+                                    &[&members.to_string()],
+                                )
+                            } else {
+                                format!("{members} mod{}", if members == 1 { "" } else { "s" })
+                            })
+                            .font(SMALL)
+                            .color(u.faint)
+                            .truncate(),
                         ),
+                )
+                // Deadlock Mod Manager 2.4: one member on at random each launch.
+                .child(
+                    row()
+                        .key(format!("list-random-{}", entry.id))
+                        .gap(6.0)
+                        .center_y()
+                        .focusable(true)
+                        .role("switch")
+                        .checked(random)
+                        .label(crate::screens::settings::i18n::tr("One at random each launch"))
+                        .cursor(rune::Cursor::Pointer)
+                        .on_press(move |st: &mut State| toggle_random(st, &id_random))
+                        .child(text(crate::screens::settings::i18n::tr("Random")).font(SMALL).color(u.muted).a11y_hidden())
+                        .child(u.toggle(random).a11y_hidden()),
                 )
                 .child(
                     u.action("Show", ActionKind::Ghost)
@@ -1081,6 +1106,23 @@ pub fn lists_switch(st: &mut State, id: &str, enable: bool) {
             }
         ),
     );
+}
+
+/// Turn "One at random each launch" on or off for a list. A modded launch then turns one of its
+/// members on and the rest off (`screens::launch_extras`).
+fn toggle_random(st: &mut State, id: &str) {
+    let flip = |extras: &mut mod_extras::Extras| {
+        if let Some(list) = extras.lists.iter_mut().find(|l| l.id == id) {
+            list.random_each_launch = !list.random_each_launch;
+        }
+    };
+    if st.demo {
+        flip(&mut st.installed.notes.extras);
+        return;
+    }
+    let path = extras_file();
+    let _ = mod_extras::edit_extras(&path, flip);
+    st.installed.notes.extras = mod_extras::read_extras(&path).unwrap_or_default();
 }
 
 fn delete_list(st: &mut State, id: &str) {
