@@ -479,7 +479,7 @@ pub fn scene_vpk_picker(s: &mut State) {
                 chunks: 1,
             },
         ];
-        s.install.log = Some("This archive holds 2 mods. Choose the one you want.".into());
+        s.install.log = Some("This archive holds 2 files. Each is checked; uncheck the ones you do not want.".into());
         s.install.tone = Tone::Info;
     }
 }
@@ -684,4 +684,94 @@ pub fn scene_install_files_menu(s: &mut State) {
     if let Some(d) = s.browse_view.details.as_ref() {
         s.browse_view.installs.files_menu = Some(d.id);
     }
+}
+
+// --- parity wave: Enable, Replace and the multi-file picker ----------------------------------
+
+/// Mod `id` installed in `slot`, on or off, as a scanned addon folder shows it.
+fn stage_installed(s: &mut State, id: u64, name: &str, slot: u8, enabled: bool) {
+    s.installed.library.mods.push(deadlock_core::import::ModMeta {
+        slot,
+        size_bytes: 1,
+        name: name.to_string(),
+        author: None,
+        thumbnail_url: None,
+        gamebanana_id: Some(id),
+        source: "browse".into(),
+        recorded_at: "2026-11-01T00:00:00Z".into(),
+    });
+    s.addons.scanned = true;
+    s.addons.addons.retain(|addon| addon.slot != slot);
+    s.addons.addons.push(crate::model::AddonRow {
+        slot,
+        file: if enabled { format!("pak{slot:02}_dir.vpk") } else { format!("pak{slot:02}_dir.vpk.disabled") },
+        size_bytes: 1,
+        chunk_files: Vec::new(),
+        entry_count: None,
+        enabled,
+    });
+    // The page's poll rereads the library when the folder changes; this one is the fixture.
+    s.installed.library_sig = Some(s.addons.addons.iter().map(|a| (a.slot, a.size_bytes)).collect());
+    super::quick::refresh_owned(s);
+}
+
+/// The grid with the first card installed but switched off (Enable) and the second on.
+pub fn scene_install_enable(s: &mut State) {
+    scene_with(s, |_| {});
+    let mods = first_mods(s, 2);
+    for (n, (id, name)) in mods.iter().enumerate() {
+        stage_installed(s, *id, name, 30 + n as u8, n == 1);
+    }
+}
+
+/// The details of a mod with two files installed: each file row offers Install and Replace,
+/// and the Replace confirm asks which installed file it replaces.
+pub fn scene_replace(s: &mut State) {
+    scene_details(s);
+    let Some((id, name)) = s.browse_view.details.as_ref().map(|d| (d.id, d.name.clone())) else {
+        return;
+    };
+    stage_installed(s, id, &name, 6, true);
+    stage_installed(s, id, &name, 8, false);
+    let file = s
+        .browse_view
+        .details
+        .as_ref()
+        .and_then(|d| d.profile.as_ref())
+        .and_then(|p| p.files.first())
+        .map(|f| (f.id, f.name.clone(), f.download_url.clone()));
+    if let Some((file_id, file_name, target)) = file {
+        s.browse_view.replace = Some(super::replace::Pending {
+            id,
+            name,
+            target,
+            file_id,
+            file_name,
+            slots: vec![6, 8],
+            chosen: 6,
+            dont_ask: false,
+        });
+    }
+}
+
+/// The same details with Settings' "Replace first": Replace is the main button on each file.
+pub fn scene_replace_first(s: &mut State) {
+    scene_replace(s);
+    s.browse_view.replace = None;
+    crate::screens::settings::options::set(crate::screens::settings::options::Options {
+        swap_install_replace: true,
+        ..Default::default()
+    });
+}
+
+/// The multi-file picker with three files, one unchecked and the order changed.
+pub fn scene_vpk_unchecked(s: &mut State) {
+    scene_vpk_picker(s);
+    s.install.vpks.push(VpkChoice {
+        path: "voice/pak01_dir.vpk".into(),
+        bytes: 3_400_000,
+        chunks: 0,
+    });
+    s.install.vpks.swap(1, 2);
+    s.install.unchecked.insert("pak02_dir.vpk".into());
 }

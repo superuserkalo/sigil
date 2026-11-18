@@ -84,7 +84,6 @@ pub fn on_startup(st: &mut State) {
     super::netx::on_startup();
     super::pages::apply();
     super::onboarding::on_startup(st);
-    super::forge::sync(st);
 }
 
 /// What a tab reads when it opens.
@@ -114,7 +113,6 @@ pub fn poll(st: &mut State, tx: &mut Tx) -> bool {
     changed |= super::sources::poll(st);
     changed |= super::netx::poll(st);
     changed |= super::tools::poll(st);
-    changed |= super::forge::poll(st);
     changed |= super::onboarding::poll_tips(st);
     if let Some(result) = st.settings.extra.contributors_job.try_take() {
         st.settings.extra.contributors = Some(result);
@@ -125,9 +123,7 @@ pub fn poll(st: &mut State, tx: &mut Tx) -> bool {
         changed = true;
     }
     changed |= poll_requirements(st);
-    if st.settings.extra.forge.pending.is_some() || options::get().forge {
-        tx.wake_after(std::time::Duration::from_secs(2));
-    }
+    let _ = tx;
     changed
 }
 
@@ -228,9 +224,6 @@ fn confirm(u: &Ui, key: &str, title: &str, body: &str, go: &str, danger: bool, r
 
 /// The open dialog, if any. Shown above the settings sheet, or alone when it is closed.
 pub fn dialog(s: &State, u: &Ui) -> Option<El> {
-    if let Some(forge) = super::forge::dialog(s, u) {
-        return Some(forge);
-    }
     let d = s.settings.extra.dialog.as_ref()?;
     Some(match d {
         Dialog::Editor => editor_dialog(s, u),
@@ -628,7 +621,7 @@ pub fn scene_content(s: &State, u: &Ui, tab: Tab) -> Option<El> {
             .child(super::tray::rows(s, u))
             .child(editor_row(s, u))
             .child(super::onboarding::rows(s, u)),
-        Tab::Integrations => c.child(trackers(s, u)).child(super::forge::section_el(s, u)),
+        Tab::Integrations => c.child(trackers(s, u)),
         Tab::Network => c
             .child(section(u, "Proxy", super::netx::proxy_rows(s, u)))
             .child(super::netx::diagnostics_section(s, u)),
@@ -750,18 +743,6 @@ pub fn scene_dialog(s: &mut State, which: &str) {
             scene_dialog(s, "source");
             let synced = s.settings.extra.sources.synced.values().next().cloned().expect("demo");
             s.settings.extra.dialog = Some(Dialog::SourceAdd(Box::new(synced)));
-        }
-        "forge" => {
-            s.settings.open = false;
-            s.settings.extra.forge.pending = Some(super::forge::Request {
-                name: "Neon Seven".into(),
-                author: "forge-user".into(),
-                kind: "texture".into(),
-                bytes: 4_812_000,
-                origin: "https://deadlockforge.net".into(),
-                path: PathBuf::from("forge-1.vpk"),
-                at: std::time::Instant::now(),
-            });
         }
         "onboarding" => {
             s.settings.open = false;

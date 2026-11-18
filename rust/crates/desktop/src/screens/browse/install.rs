@@ -108,8 +108,12 @@ pub struct InstallView {
     pub auto: bool,
     /// One VPK chosen from an archive that holds several.
     pub vpk: Option<String>,
-    /// The VPKs the archive holds, read after a plan refused to choose.
+    /// The VPKs the archive holds, read after a plan refused to choose, in install order.
     pub vpks: Vec<VpkChoice>,
+    /// Files of `vpks` the player unchecked. Every file starts checked.
+    pub unchecked: std::collections::BTreeSet<String>,
+    /// The checked files going in (`multi`).
+    pub multi: Job<super::multi::Done>,
 }
 
 impl Default for InstallView {
@@ -130,6 +134,8 @@ impl Default for InstallView {
             auto: false,
             vpk: None,
             vpks: Vec::new(),
+            unchecked: std::collections::BTreeSet::new(),
+            multi: Job::default(),
         }
     }
 }
@@ -361,60 +367,9 @@ pub(crate) fn install_dialog(s: &State, u: &Ui) -> El {
     {
         install = install.child(needs);
     }
-    // Several mods in one archive: the plan cannot choose, so the picker does.
-    if !v.vpks.is_empty() {
-        install = install.child(label(u, "Mods in this archive").mb(4.0));
-        for choice in &v.vpks {
-            let path = choice.path.clone();
-            let selected = v.vpk.as_deref() == Some(path.as_str());
-            install = install.child(
-                row()
-                    .key(format!("vpk-choice-{}", choice.name()))
-                    .w_full()
-                    .min_h(44.0)
-                    .px(10.0)
-                    .py(6.0)
-                    .gap(10.0)
-                    .center_y()
-                    .radius(crate::ui::r(8.0))
-                    .fill(if selected { u.accent.alpha(0.10) } else { Color::WHITE.alpha(0.02) })
-                    .border(1.0, if selected { u.accent.alpha(0.5) } else { u.hair_strong })
-                    .hover(u.hover)
-                    .focusable(true)
-                    .role("button")
-                    .label(format!("Install {}", choice.name()))
-                    .cursor(rune::Cursor::Pointer)
-                    .on_press(move |st: &mut State| {
-                        st.install.vpk = Some(path.clone());
-                        st.install.plan = None;
-                        // Picking is the choice and the approval: plan, then write at once.
-                        st.install.auto = true;
-                        crate::data::start_install_plan(st);
-                    })
-                    .child(icon(&FILE_ARCHIVE, 16.0).color(u.muted).a11y_hidden())
-                    .child(
-                        col()
-                            .grow(1.0)
-                            .min_w(0.0)
-                            .gap(2.0)
-                            .child(text(choice.name().to_string()).font(BODY).color(u.ink).truncate())
-                            .child(
-                                text(format!(
-                                    "{} · {}",
-                                    crate::model::format_size(choice.bytes),
-                                    plural(choice.chunks, "chunk", "chunks")
-                                ))
-                                .font(SMALL)
-                                .color(u.muted),
-                            ),
-                    )
-                    .child(if selected {
-                        icon(&icons::CHECK, 16.0).color(u.accent).a11y_hidden()
-                    } else {
-                        el()
-                    }),
-            );
-        }
+    // Several files in one archive: every one is checked, the player picks and orders them.
+    if let Some(picker) = super::multi::picker(s, u) {
+        install = install.child(picker);
     }
     let mut right = col().grow(1.0).min_w(0.0).gap(24.0).child(install);
 
@@ -551,7 +506,8 @@ pub(crate) fn install_dialog(s: &State, u: &Ui) -> El {
                     .cursor(rune::Cursor::Pointer)
                     .on_press(|st: &mut State| crate::data::start_install_apply(st)),
                 );
-        } else {
+        } else if v.vpks.len() < 2 {
+            // With several files the picker's own Install is the one action.
             actions = actions.child(
                 u.icon_action(
                     &icons::DOWNLOAD,

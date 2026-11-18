@@ -49,7 +49,7 @@ pub fn section_el(_s: &State, u: &Ui) -> El {
                 u,
                 "settings-pref-requirements",
                 "Show what a mod needs",
-                "Lists the other mods a GameBanana page says it needs, before you install.",
+                "Lists the other mods a GameBanana page says it needs, before you install and when you turn a mod on or off.",
                 o.prompt_requirements,
                 |st| options::edit(st, |o| o.prompt_requirements = !o.prompt_requirements),
             ),
@@ -68,6 +68,14 @@ pub fn section_el(_s: &State, u: &Ui) -> El {
                 "Installing another file of a mod turns the old one off and the new one on.",
                 o.switch_variants,
                 |st| options::edit(st, |o| o.switch_variants = !o.switch_variants),
+            ),
+            toggle_row(
+                u,
+                "settings-pref-hero",
+                "Warn about a second mod for one hero",
+                "Turning on another mod for a hero that already has one asks which to keep.",
+                o.hero_conflict_warning,
+                |st| options::edit(st, |o| o.hero_conflict_warning = !o.hero_conflict_warning),
             ),
             toggle_row(
                 u,

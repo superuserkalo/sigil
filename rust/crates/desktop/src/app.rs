@@ -1170,11 +1170,15 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
     if let Some(menu) = screens::servers::overlay(s, &u) {
         root = root.child(menu);
     }
+    if let Some(panel) = screens::downloads::panel(s, &u) {
+        root = root.child(panel);
+    }
     if s.launch_dialog {
         root = root.child(u.modal_layer("launch-run-modal", launch_layer(s, &u)));
     }
     for (key, layer) in [
         ("browse-modal", screens::browse::dialog(s, &u)),
+        ("browse-replace-modal", screens::browse::replace::dialog(s, &u)),
         ("profiles-modal", screens::profiles::dialog(s, &u)),
         ("autoexec-modal", screens::autoexec::dialog(s, &u)),
         ("performance-modal", screens::performance::dialog(s, &u)),
@@ -1196,6 +1200,9 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
         && let Some(layer) = screens::release::dialog(s, &u)
     {
         root = root.child(layer);
+    }
+    if let Some(card) = screens::launch_progress::overlay(s, &u) {
+        root = root.child(u.modal_layer("launch-progress-modal", card));
     }
     if let Some(sheet) = screens::settings::modal(s, &u, window) {
         root = root.child(sheet);
@@ -1437,33 +1444,16 @@ fn ask_or_launch(st: &mut State, tx: &mut Tx, vanilla: bool) {
         st.launch_dialog = true;
         return;
     }
+    let _ = tx;
     launch_from_sidebar(st, vanilla);
-    if st.settings.launched {
-        screens::settings::after_launch(st, tx);
-    }
 }
 
 /// The sidebar launches at once: the press is the user's explicit request. Vanilla sets
-/// the mods aside first; modded puts back mods a vanilla run set aside.
+/// the mods aside first; modded puts back mods a vanilla run set aside. The steps run through
+/// the launch progress overlay (`screens::launch_progress`), which also writes the saved launch
+/// options into Steam before Steam gets the game.
 fn launch_from_sidebar(st: &mut State, vanilla: bool) {
-    use crate::screens::launch::Dialog;
-    let stashed = deadlock_core::launch::stash_status(&crate::data::data_dir()).is_some();
-    if vanilla {
-        if stashed {
-            // Already vanilla on disk: only start the game.
-            st.launch_modded();
-        } else {
-            crate::data::run_launch(st, Dialog::Vanilla);
-        }
-    } else {
-        if stashed {
-            crate::data::run_launch(st, Dialog::Restore);
-        }
-        st.launch_modded();
-    }
-    if let Some(line) = st.launch.last.clone() {
-        st.status = line;
-    }
+    screens::launch_progress::begin(st, vanilla, false);
 }
 
 fn launch_vanilla(u: &Ui) -> El {
@@ -1532,6 +1522,10 @@ fn titlebar(s: &State, u: &Ui, insets: rune::ChromeInsets) -> El {
     }
     bar = bar.child(spacer());
     bar = bar.child(screens::profiles::titlebar_switcher(s, u));
+    // Downloads running: on every page, a press opens the list.
+    if let Some(downloads) = screens::downloads::indicator(s, u) {
+        bar = bar.child(downloads);
+    }
     let review = s
         .release
         .review
@@ -1666,12 +1660,9 @@ fn launch_layer(s: &State, u: &Ui) -> El {
             .child(
                 u.icon_action(&icons::PLAY, "Launch", ActionKind::Primary)
                     .cursor(rune::Cursor::Pointer)
-                    .on_press_tx(move |st: &mut State, tx: &mut Tx| {
+                    .on_press(move |st: &mut State| {
                         st.launch_dialog = false;
                         launch_from_sidebar(st, vanilla);
-                        if st.settings.launched {
-                            screens::settings::after_launch(st, tx);
-                        }
                     }),
             ),
     );
@@ -1766,6 +1757,7 @@ pub fn poll(s: &mut State, t: f64, _tx: &mut Tx) -> bool {
     changed |= screens::browse::poll(s, _tx);
     changed |= screens::crosshair::poll(s, _tx);
     changed |= screens::settings::poll(s, _tx);
+    changed |= screens::launch_progress::poll(s, _tx);
     while let Some(event) = s.agent.try_event() {
         s.apply_agent_event(event);
         changed = true;
@@ -2489,6 +2481,26 @@ pub fn scenes() -> &'static [(&'static str, fn(&mut State))] {
         ("installed-bisect", screens::installed::scene_bisect),
         ("installed-recap", screens::installed::scene_recap),
         ("installed-fonts", screens::installed::scene_fonts),
+        ("installed-hero-conflict", screens::installed::wave_scenes::hero),
+        ("installed-needs", screens::installed::wave_scenes::needs),
+        ("installed-breaks", screens::installed::wave_scenes::breaks),
+        ("installed-hidden-model", screens::installed::wave_scenes::hidden),
+        ("installed-drag", screens::installed::wave_scenes::dragging),
+        ("installed-drag-list", screens::installed::wave_scenes::dragging_list),
+        ("installed-variants-on", screens::installed::wave_scenes::variants_on),
+        ("installed-selection-actions", screens::installed::wave_scenes::selection),
+        ("installed-update-changelog", screens::installed::wave_scenes::changelog),
+        ("browse-install-enable", screens::browse::scene_install_enable),
+        ("browse-replace", screens::browse::scene_replace),
+        ("browse-replace-first", screens::browse::scene_replace_first),
+        ("browse-vpk-unchecked", screens::browse::scene_vpk_unchecked),
+        ("downloads-indicator", screens::launch::scene_downloads_indicator),
+        ("downloads-panel", screens::launch::scene_downloads_panel),
+        ("downloads-slow", screens::launch::scene_downloads_slow),
+        ("downloads-drag", screens::launch::scene_downloads_drag),
+        ("launch-progress", screens::launch::scene_progress),
+        ("launch-progress-waiting", screens::launch::scene_progress_waiting),
+        ("autoexec-flags", screens::autoexec::scene_flags),
         ("installed-import-menu", scene_installed_import_menu),
         ("installed-import", scene_installed_import),
         ("installed-empty", scene_installed_empty),
@@ -2570,7 +2582,6 @@ pub fn scenes() -> &'static [(&'static str, fn(&mut State))] {
         ("parity-recovery", |s| screens::settings::extra::scene_dialog(s, "recovery")),
         ("parity-source", |s| screens::settings::extra::scene_dialog(s, "source")),
         ("parity-source-add", |s| screens::settings::extra::scene_dialog(s, "source-add")),
-        ("parity-forge", |s| screens::settings::extra::scene_dialog(s, "forge")),
         ("parity-onboarding", |s| screens::settings::extra::scene_dialog(s, "onboarding")),
         ("parity-scripts", |s| screens::settings::extra::scene_dialog(s, "scripts")),
         ("parity-mods2", |s| screens::settings::extra::scene_dialog(s, "mods2")),

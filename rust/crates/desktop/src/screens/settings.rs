@@ -17,6 +17,7 @@ pub mod i18n;
 pub mod keychain;
 mod locales;
 mod locales_parity;
+mod locales_wave;
 pub mod log;
 pub mod netx;
 pub mod nsfw;
@@ -438,8 +439,7 @@ pub fn modal(s: &State, u: &Ui, window: (f32, f32)) -> Option<El> {
                 .w_full()
                 .gap(LIST_GAP)
                 .child(tabs::integrations(s, u))
-                .child(extra::trackers(s, u))
-                .child(forge::section_el(s, u)),
+                .child(extra::trackers(s, u)),
             Tab::Privacy => privacy(s, u),
             Tab::Models => models(s, u),
             Tab::Network => col()
@@ -2999,7 +2999,6 @@ fn run_confirm(st: &mut State, ask: Confirm) {
             downloads::apply();
             pages::apply();
             tray::sync();
-            forge::sync(st);
             deadlock_core::net::set_proxy_auth(None);
             deadlock_core::net::set_proxy_bypass(Vec::new());
             match saved {

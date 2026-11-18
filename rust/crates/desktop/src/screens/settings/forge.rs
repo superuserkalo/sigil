@@ -1,3 +1,5 @@
+//! Backlogged for this release (owner decision 2026-11-18): nothing starts this listener.
+#![allow(dead_code)]
 //! DeadlockForge 1-click installs: a local HTTP listener the DeadlockForge site sends a built
 //! VPK to. Ported from Grimoire's `forgeBridge.ts` (MIT): the same ports, paths, headers,
 //! origin and host checks, size limits, VPK magic, one install at a time with a cooldown.
@@ -19,7 +21,7 @@ use rune::{El, Waker, row, spacer, text};
 
 use super::i18n::{fill, tr};
 use super::options;
-use super::{button, say, section, toggle_row};
+use super::{button, say};
 use crate::app::State;
 use crate::ui::{ActionKind, SMALL, Ui};
 
@@ -325,16 +327,18 @@ fn handle(mut stream: TcpStream, shared: &Shared, port: u16, wake: Option<&Waker
     }
 }
 
-/// Start or stop the listener to match the option.
+/// Stops the older in-process listener if anything had started it. Nothing calls it while
+/// DeadlockForge installs are backlogged.
 pub fn sync(st: &mut State) {
-    let want = options::get().forge && !st.demo && !rune::is_headless();
-    let bridge = &mut st.settings.extra.forge;
-    if !want {
-        if let Some(shared) = bridge.shared.take() {
-            shared.stop.store(true, Ordering::SeqCst);
-        }
-        return;
+    if let Some(shared) = st.settings.extra.forge.shared.take() {
+        shared.stop.store(true, Ordering::SeqCst);
     }
+}
+
+/// The older listener, kept for its request checks and tests until it is removed.
+#[allow(dead_code)]
+fn start_legacy(st: &mut State) {
+    let bridge = &mut st.settings.extra.forge;
     if bridge.shared.is_some() {
         return;
     }
@@ -465,23 +469,6 @@ pub fn accept(st: &mut State) {
         let _ = std::fs::remove_file(&zip_path);
         result
     });
-}
-
-pub fn section_el(s: &State, u: &Ui) -> El {
-    let o = options::get();
-    let line = match (o.forge, s.settings.extra.forge.port()) {
-        (true, Some(port)) => fill(tr("Listening on 127.0.0.1:{}. Each install waits for you to confirm."), &[&port.to_string()]),
-        (true, None) => tr("Not listening.").to_string(),
-        (false, _) => tr("Lets deadlockforge.net send a mod it built straight to Sigil. You confirm each install.").to_string(),
-    };
-    section(
-        u,
-        "DeadlockForge",
-        vec![toggle_row(u, "settings-forge", "1-click installs", &line, o.forge, |st| {
-            options::edit(st, |o| o.forge = !o.forge);
-            sync(st);
-        })],
-    )
 }
 
 /// The confirm a site request opens, over whatever page is showing.

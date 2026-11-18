@@ -799,12 +799,12 @@ fn editor(s: &State, u: &Ui) -> El {
     }
     list = list.child(add_row(u));
 
-    col()
-        .key("autoexec-editor")
-        .w_full()
-        .gap(8.0)
-        .child(head)
-        .child(list)
+    let mut editor = col().key("autoexec-editor").w_full().gap(8.0).child(head);
+    // Commands the game no longer has, with a fix for each rename.
+    if let Some(flags) = crate::screens::autoexec_flags::notice(s, u) {
+        editor = editor.child(flags);
+    }
+    editor.child(list)
 }
 
 /// The quiet last row: a click adds a command at the end.
@@ -931,6 +931,9 @@ fn block_row(u: &Ui, block: &Block, index: usize, count: usize, drag: Option<(us
         })
         .child(grip(u, index, comment, dragging).key(format!("autoexec-grip-{id}")))
         .child(field);
+    if !comment && let Some(mark) = crate::screens::autoexec_flags::row_mark(u, id, &block.edit.text) {
+        r = r.child(mark);
+    }
     r = if comment {
         r.items_end().pb(6.0)
     } else {
@@ -1679,6 +1682,10 @@ fn launch_section(s: &State, u: &Ui) -> El {
                 .wrap(),
         )
         .child(row().w_full().gap(8.0).center_y().child(field).child(save));
+    // Flags and options the game no longer has, as typed.
+    if let Some(flags) = crate::screens::autoexec_flags::launch_notice(u, &launch.field.text) {
+        out = out.child(flags);
+    }
 
     let note = |key: &str, line: String, warn: bool| {
         row()
@@ -1869,4 +1876,15 @@ mod tests {
         assert_eq!(drop_index(&heights, 1, 999.0), 3);
         assert_eq!(drop_index(&heights, 3, -999.0), 0);
     }
+}
+
+/// `autoexec-flags`: a file with a renamed and a removed command, and a launch option the
+/// game no longer has.
+pub fn scene_flags(s: &mut State) {
+    scene_base(
+        s,
+        "// Performance\r\nfps_max 144\r\nanimgraph_enable_parallel_update 1\r\ncitadel_damage_text_lifetime 2\r\n\r\n// Binds\r\nbind \"F5\" \"toggleconsole\"\r\n",
+        true,
+    );
+    s.autoexec.launch.field = TextEdit::new("-novid +citadel_damage_text_lifetime 2");
 }

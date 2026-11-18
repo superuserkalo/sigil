@@ -13,6 +13,7 @@ mod brand;
 mod banner;
 mod data;
 mod deeplink;
+mod forge;
 mod helpers;
 mod icons;
 mod jobs;
