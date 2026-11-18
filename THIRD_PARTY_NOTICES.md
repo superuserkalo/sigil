@@ -104,10 +104,12 @@ for redistribution.
 
 ## Deadlock tooling
 
-**vpkmerge**
-- Source: https://github.com/Slush97/vpkmerge
-- License: MIT
-- Use: merge and split addon VPKs. Optional external binary.
+**vpkmerge (vpkmerge-core, morphic, its patched valve_pak)**
+- Source: https://github.com/Slush97/vpkmerge, pinned at df4158673f4e700b9dda4db76ed9f193440b24ba
+- License: MIT. Copyright (c) 2026 esoc.
+- Use: linked into Sigil.exe for compatibility repairs after game updates (KV3 resource
+  decoding and re-encoding, skeleton, sound, text and camera heals; ADR 0013). The standalone
+  binary stays an optional external tool for merging and splitting VPKs.
 
 **ValveResourceFormat / Source 2 Viewer**
 - Source: https://github.com/ValveResourceFormat/ValveResourceFormat
