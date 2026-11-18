@@ -44,7 +44,7 @@ const STALE_SECS: i64 = 7 * 24 * 60 * 60;
 /// Pages read per background pass.
 const BATCH: usize = 6;
 /// VPK directories read per background pass for their model heroes.
-const MODEL_BATCH: usize = 16;
+const MODEL_BATCH: usize = 64;
 
 /// The open question, if any.
 #[derive(Clone, Debug, PartialEq)]
@@ -61,6 +61,9 @@ pub enum Gate {
     },
     /// Turning `slot` off while the mods in `dependents` (slots) list it as a requirement.
     Breaks { slot: u16, dependents: Vec<u16> },
+    /// Grimoire's mod safety gate: `slot` ships programs, scripts or network calls and this
+    /// version is not trusted yet. `findings` are "Risk: path" lines.
+    Safety { slot: u16, findings: Vec<String> },
 }
 
 /// One slot file's model heroes, from the worker: `((slot, size), heroes)`.
@@ -291,6 +294,16 @@ fn dependents_of(st: &State, slot: u16) -> Vec<u16> {
 /// A switch press on one slot: ask first when something needs asking, else switch it.
 pub fn switch(st: &mut State, slot: u16, enable: bool) {
     st.installed.menu = None;
+    if enable && let Some(findings) = super::safety_gate::needs_review(st, slot) {
+        st.installed.gates.open = Some(Gate::Safety { slot, findings });
+        return;
+    }
+    switch_reviewed(st, slot, enable);
+}
+
+/// The switch after the safety gate: the hero and requirement questions, then the write.
+pub fn switch_reviewed(st: &mut State, slot: u16, enable: bool) {
+    st.installed.gates.open = None;
     if enable {
         let (others, heroes) = if options::hero_conflict_warning() {
             let all = facts(st);
@@ -453,10 +466,15 @@ fn poll_model_heroes(st: &mut State) -> bool {
         return changed;
     }
     st.installed.gates.model_tried.extend(wanted.iter().map(|(key, _)| *key));
+    // C2: the app data dir keeps a cache keyed by path, size and mtime, so a mod is read once,
+    // not on every launch.
+    let cache = crate::data::data_dir().join(deadlock_core::mod_heroes::HERO_CACHE_FILE);
     st.installed.gates.model_job.start(st.wake.clone(), move || {
+        let paths: Vec<PathBuf> = wanted.iter().map(|(_, path)| path.clone()).collect();
+        let found = deadlock_core::mod_heroes::model_heroes_cached(&cache, &paths);
         Ok(wanted
             .into_iter()
-            .filter_map(|(key, path)| deadlock_core::mod_heroes::model_heroes_in_vpk(&path).ok().map(|heroes| (key, heroes)))
+            .filter_map(|(key, path)| found.get(&path).cloned().map(|heroes| (key, heroes)))
             .collect())
     });
     changed
@@ -519,6 +537,7 @@ pub fn dialog(s: &State, u: &Ui) -> Option<El> {
         Gate::Hero { slot, hero, others } => hero_dialog(s, u, *slot, hero, others),
         Gate::Needs { slot, also_off, missing, with } => needs_dialog(s, u, *slot, also_off, missing, with),
         Gate::Breaks { slot, dependents } => breaks_dialog(s, u, *slot, dependents),
+        Gate::Safety { slot, findings } => super::safety_gate::dialog(s, u, *slot, findings),
     })
 }
 
@@ -555,7 +574,7 @@ fn mod_line(s: &State, u: &Ui, slot: u16, note: &str, strong: bool) -> El {
         .gap(12.0)
         .center_y()
         .border_sides([0.0, 0.0, 1.0, 0.0], u.hair)
-        .child(text(format!("{slot:02}")).font(MICRO).color(u.faint).w(20.0))
+        .child(text(deadlock_core::addons::slot_label(slot)).font(MICRO).color(u.faint).w(28.0))
         .child(
             text(name_of(s, slot))
                 .font(if strong { BODY_MED } else { BODY })

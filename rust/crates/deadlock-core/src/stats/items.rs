@@ -89,6 +89,31 @@ pub fn item_stats(account: u32, filter: &StatsFilter) -> Result<Vec<ItemStat>> {
     Ok(stats)
 }
 
+/// Global "best items" rows need at least this many matches, so a rare item with a lucky
+/// streak does not top the list.
+pub const MIN_GLOBAL_ITEM_SAMPLE: u64 = 500;
+
+/// Everyone's item rows inside `filter` (pass [`StatsFilter::since_last_patch`] for "this
+/// patch"), best win rate first. One request, shared with the player view's baseline through
+/// the response cache. Rows under [`MIN_GLOBAL_ITEM_SAMPLE`] matches are dropped.
+pub fn global_item_stats(filter: &StatsFilter) -> Result<Vec<ItemStat>> {
+    Ok(best_items(fetch_stats(None, filter)?, MIN_GLOBAL_ITEM_SAMPLE))
+}
+
+/// Rows with at least `min_matches`, by win rate (then matches, then id). The baseline fields
+/// equal the row's own, since these rows are the baseline.
+pub fn best_items(mut rows: Vec<ItemStat>, min_matches: u64) -> Vec<ItemStat> {
+    rows.retain(|row| row.matches >= min_matches);
+    rows.sort_by(|left, right| {
+        right
+            .win_rate_percent
+            .total_cmp(&left.win_rate_percent)
+            .then(right.matches.cmp(&left.matches))
+            .then(left.item_id.cmp(&right.item_id))
+    });
+    rows
+}
+
 /// One match's item purchases for one player, oldest first.
 ///
 /// The metadata body is large (about 900 KB) and never changes, so the cache
@@ -407,5 +432,24 @@ mod tests {
     fn a_player_the_match_does_not_name_is_an_error() {
         assert!(parse_item_timeline(METADATA, 99).is_err());
         assert!(parse_item_timeline("not json", 1).is_err());
+    }
+
+    #[test]
+    fn best_items_need_a_sample_and_lead_with_the_win_rate() {
+        let row = |id: u64, matches: u64, rate: f64| ItemStat {
+            item_id: id,
+            matches,
+            wins: 0,
+            losses: 0,
+            players: 0,
+            win_rate_percent: rate,
+            global_win_rate_percent: rate,
+            win_rate_delta_percent: 0.0,
+            avg_buy_time_s: 0.0,
+            global_avg_buy_time_s: 0.0,
+            buy_time_delta_s: 0.0,
+        };
+        let best = best_items(vec![row(1, 600, 51.0), row(2, 10, 90.0), row(3, 900, 55.0)], 500);
+        assert_eq!(best.iter().map(|r| r.item_id).collect::<Vec<_>>(), [3, 1]);
     }
 }

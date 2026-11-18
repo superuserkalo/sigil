@@ -28,11 +28,19 @@ pub const INDEX: &[Entry] = &[
     e(Tab::Game, "Addon folder", "Where installed mods live.", "addons vpk folder open"),
     e(Tab::Game, "autoexec.cfg", "Crosshairs and commands load from it.", "config cfg console"),
     e(Tab::Game, "Steam launch options", "Arguments Steam passes to Deadlock.", "launch args novid condebug"),
+    e(Tab::Game, "Common launch options", "Add known launch options with one press.", "launch options novid high dx11 vulkan windowed list"),
+    e(Tab::Game, "Vanilla launches without launch options", "Vanilla mode with no extra arguments.", "vanilla launch options arguments clean"),
     e(Tab::Backups, "Backups", "Copies Sigil keeps before it edits a game or Steam file.", "restore undo copy prune"),
     // Mods
     e(Tab::Mods, "New mods start turned off", "Installs land off until you switch them on.", "enable after download install"),
     e(Tab::Mods, "Order", "How the GameBanana catalog is sorted.", "sort browse popular newest"),
     e(Tab::Mods, "Mature content", "Mods GameBanana marks as mature.", "nsfw blur hide 18+"),
+    e(Tab::Mods, "Show mod update marks", "Update marks on cards and details.", "update badge badges marks newer"),
+    e(Tab::Appearance, "Seasonal themes", "A seasonal mark around the holidays.", "seasonal halloween christmas easter new year holiday theme"),
+    e(Tab::Appearance, "Easter eggs", "Rare jokes, off by default.", "easter eggs jokes fun secret"),
+    e(Tab::General, "Show feature tips", "Point out features you have not tried.", "tips hints did you know features"),
+    e(Tab::General, "Reset feature tips", "Show dismissed feature tips again.", "tips hints reset"),
+    e(Tab::Experimental, "Tour of experimental features", "What each experimental switch does.", "tour experimental features guide"),
     e(Tab::Mods, "Fix mods automatically before launch", "Repairs mods made for an older game build.", "compatibility repair heal fix update cameras sounds"),
     e(Tab::Mods, "Warn about map mods at launch", "Asks whether to turn map mods off first.", "map maps matchmaking launch warning"),
     e(Tab::Mods, "Hidden mods and creators", "Mods and creators you hid in Browse.", "hidden blocked authors show again"),
@@ -81,7 +89,9 @@ pub const INDEX: &[Entry] = &[
     e(Tab::Network, "Check for Sigil updates", "Asks GitHub for the newest release.", "update check github"),
     e(Tab::Network, "Update check", "How often, while Sigil is open.", "update interval background"),
     e(Tab::Network, "Refresh Browse", "Reloads the GameBanana page you are on.", "catalog refresh background interval"),
-    e(Tab::Network, "HTTP proxy", "Routes Browse and downloads through a proxy.", "proxy http download"),
+    e(Tab::Network, "Proxy server", "Routes Browse and downloads through an HTTP, HTTPS or SOCKS5 proxy.", "proxy http https socks socks5 download"),
+    e(Tab::Network, "Connection checklist", "Which connection or service fails, and how to fix it.", "diagnostics troubleshoot dns internet network check fix"),
+    e(Tab::Storage, "Saved catalog", "Mods saved for offline browsing, sync and wipe.", "catalog cache database mirror wipe sync offline"),
     // Logs
     e(Tab::Logs, "Log level", "How much Sigil writes to its log.", "logging debug verbose error"),
     e(Tab::Logs, "Log file", "Open the log or its folder.", "logs folder open"),
@@ -89,6 +99,10 @@ pub const INDEX: &[Entry] = &[
     e(Tab::Logs, "Crash dumps", "Deadlock's crash files.", "crash dump mdmp"),
     e(Tab::Logs, "Diagnostic report", "Version, system and recent log lines.", "bug report support"),
     e(Tab::Logs, "Open an issue", "Sigil's issue tracker on GitHub.", "bug github issue support"),
+    e(Tab::Logs, "Log source", "Sigil's log, crash dumps or both.", "logs crash dump combined source"),
+    e(Tab::Logs, "Copy logs", "The chosen log source, masked.", "logs copy clipboard crash"),
+    e(Tab::Logs, "Ask Sigil for help", "Hand the masked logs to Sigil's agent.", "ai help agent logs troubleshoot assistant"),
+    e(Tab::Logs, "Include the full log", "Up to 5 MB of log in the report.", "full log report bug"),
     // Storage
     e(Tab::Storage, "Data folder", "Where Sigil keeps its files.", "app data folder"),
     e(Tab::Storage, "Mod workspace", "Downloads, plans and builds.", "workspace folder"),
@@ -102,6 +116,7 @@ pub const INDEX: &[Entry] = &[
     e(Tab::Experimental, "Docked mod details", "Mod details beside the grid.", "experimental browse dock panel"),
     // About
     e(Tab::About, "Release channel", "Stable or preview builds.", "update channel nightly beta"),
+    e(Tab::About, "Going back to an earlier version", "Channel notes and older releases.", "rollback downgrade older version nightly preview stable"),
     e(Tab::About, "Open source", "The projects Sigil is built on.", "licenses credits notices"),
     // Parity round
     e(Tab::Game, "Steam folder", "A Steam folder Sigil reads first.", "custom steam path library"),
@@ -180,6 +195,15 @@ pub fn matches(query: &str) -> Vec<&'static Entry> {
         .collect()
 }
 
+/// Enter in the search field opens the first match's category, as DMM does.
+pub fn open_first(st: &mut State) {
+    if let Some(entry) = matches(&st.settings.search.text).first() {
+        let tab = entry.tab;
+        st.settings.search = rune::TextEdit::new("");
+        super::select(st, tab);
+    }
+}
+
 /// The results pane: one row per match, pressing it opens the category.
 pub fn results(s: &State, u: &Ui) -> El {
     let found = matches(&s.settings.search.text);
@@ -250,6 +274,9 @@ mod tests {
             include_str!("forge.rs"),
             include_str!("templates.rs"),
             include_str!("telemetry.rs"),
+            include_str!("logs_w4.rs"),
+            include_str!("misc_w4.rs"),
+            include_str!("diag_w4.rs"),
         ]
         .concat();
         for entry in INDEX {

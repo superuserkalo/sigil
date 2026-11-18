@@ -33,6 +33,7 @@ pub fn dialog(s: &State, u: &Ui) -> Option<El> {
         ("browse-hidden-overlay", super::panels::hidden_dialog(s, u)),
         ("browse-ignored-overlay", super::panels::ignored_dialog(s, u)),
         ("browse-hero-picker-overlay", super::panels::hero_picker_dialog(s, u)),
+        ("browse-paste-overlay", super::paste::dialog(s, u)),
     ] {
         if let Some(extra) = extra {
             layers.push(
@@ -46,6 +47,10 @@ pub fn dialog(s: &State, u: &Ui) -> Option<El> {
     if !v.docked
         && let Some(menu) = super::quick::files_menu(s, u)
     {
+        layers.push(menu);
+    }
+    // Wave 4: the image menu over a preview, the lightbox or a docked carousel.
+    if let Some(menu) = super::w4::image_menu(s, u) {
         layers.push(menu);
     }
     if s.install.open {
@@ -145,7 +150,7 @@ pub(crate) fn details_modal(s: &State, u: &Ui, d: &Details) -> El {
 pub(crate) fn details_sidebar(s: &State, u: &Ui, d: &Details) -> El {
     col()
         .key("browse-details-dock")
-        .w(SIDEBAR_W)
+        .w(super::w4::dock_width(s, SIDEBAR_W))
         .h_full()
         .fill(u.sidebar)
         .border_sides([0.0, 0.0, 0.0, 1.0], u.hair)
@@ -165,6 +170,8 @@ pub(crate) fn details_sidebar(s: &State, u: &Ui, d: &Details) -> El {
             _ => false,
         })
         .child(details_header(s, u, d, true))
+        // Wave 4: drag the left edge to resize (Grimoire), kept across launches.
+        .child(super::w4::dock_handle(s, u, SIDEBAR_W))
         .child(
             col()
                 .key("browse-details-dock-scroll")

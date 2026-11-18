@@ -11,16 +11,23 @@
 //! identification, compatibility review, merge, fonts). This file keeps the page, the cards,
 //! the menus and the writes the older rounds built.
 
+pub mod backups;
+pub mod checks;
+pub mod imprint;
+pub mod safety_gate;
+mod selection;
+pub mod list_sections;
+pub mod sound;
 mod drag;
 pub mod enable;
 mod layout;
 mod notes;
-mod order;
+pub mod order;
 mod overlap;
 pub mod repair;
 mod req_order;
 mod search;
-mod tools;
+pub mod tools;
 pub mod update_match;
 pub mod wave_scenes;
 
@@ -41,6 +48,7 @@ use crate::icons;
 use crate::jobs::Job;
 use crate::model::{AddonRow, Screen};
 use crate::screens::import as importer;
+use crate::screens::settings::i18n::{fill, tr};
 use crate::ui::{ActionKind, BODY, BODY_MED, H1, H2, LABEL, MICRO, PAGE_TOP, PAGE_X, SMALL, Ui};
 
 const GRID_GAP: f32 = 16.0;
@@ -120,6 +128,23 @@ pub struct View {
     pub overlaps: overlap::Overlaps,
     /// Mods that load after a mod their GameBanana page requires, so it hides them.
     pub order_problems: Vec<deadlock_core::requirements::OrderProblem>,
+    /// Update all's scope (DMM): every mod with an update, only the ones on, or only the off ones.
+    pub update_scope: UpdateScope,
+    /// Sound samples for sound mods' Play buttons (`sound.rs`).
+    pub sounds: sound::Sounds,
+    /// View > Sections by list (DMM's groups as sections).
+    pub by_list: bool,
+    /// Card style options (View): hide the details line, hide the slot chip.
+    pub hide_details: bool,
+    pub hide_slot: bool,
+    /// View imprint (Grimoire's card menu item).
+    pub imprint: imprint::Imprint,
+    /// Analyze addons and the HUD check (C11).
+    pub checks: checks::Checks,
+    /// The open Backups dialog of one slot (C10).
+    pub backups: Option<backups::Dialog>,
+    /// Game paths of the mods in an order problem, read on a worker (C6).
+    pub order_files: req_order::Files,
     /// The open load order dialog.
     pub order: Option<order::OrderDialog>,
     /// `last_undo` was just set: the next poll turns the status line into a toast with Undo.
@@ -140,6 +165,9 @@ pub struct TrashView {
 pub struct Updates {
     pub cache: UpdateCache,
     pub journal: Vec<InstallJournalEntry>,
+    /// Repaired files and the installed file each one replaced (C3), so a repaired mod keeps
+    /// its update check.
+    pub aliases: Vec<deadlock_core::compat_repair::RepairAlias>,
     /// The cache and the install journal were read from disk.
     pub loaded: bool,
     /// The GameBanana ids of the last check this session (or of a fresh cache).
@@ -149,6 +177,13 @@ pub struct Updates {
     pub queue: Vec<u16>,
     pub running: Option<u16>,
     pub job: Job<UpdateDone>,
+    /// Slots queued as a reinstall of the same file, not an update (A4).
+    pub reinstall: BTreeSet<u16>,
+    /// Reinstalls that clear the slot first ("Delete and reinstall", DMM's nuke): the worker
+    /// moves the slot's files to the trash, then installs into the empty slot.
+    pub nuke: BTreeSet<u16>,
+    /// Cancel for the running update's download and extract (A5); a fresh flag per update.
+    pub cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
     pub failed: BTreeMap<u16, String>,
     /// What a queued slot installs from, when it is not the mod's newest file: a file link for
     /// a matched variant, or a downloaded archive for a Replace from Browse.
@@ -160,6 +195,56 @@ pub struct Updates {
 
 /// What the trash worker made: the entries and the slots that failed.
 pub type TrashDone = (Vec<TrashEntry>, Vec<(u16, String)>);
+
+/// Which mods Update all takes (DMM's Only enabled / Only disabled).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum UpdateScope {
+    #[default]
+    All,
+    Enabled,
+    Disabled,
+}
+
+impl UpdateScope {
+    pub fn keeps(self, enabled: bool) -> bool {
+        match self {
+            UpdateScope::All => true,
+            UpdateScope::Enabled => enabled,
+            UpdateScope::Disabled => !enabled,
+        }
+    }
+}
+
+/// The Update all slots the scope keeps.
+fn scoped(s: &State, slots: &[u16]) -> Vec<u16> {
+    let scope = s.installed.update_scope;
+    slots
+        .iter()
+        .copied()
+        .filter(|slot| s.addons.addons.iter().find(|a| a.slot == *slot).is_some_and(|a| scope.keeps(a.enabled)))
+        .collect()
+}
+
+/// When the installed file of a mod was archived on GameBanana: the mod's current files, to
+/// pick a replacement from (DMM). `None` when the file is not archived or nothing replaces it.
+pub fn archived_choices(s: &State, addon: &AddonRow) -> Option<Vec<RemoteFile>> {
+    let meta = meta_for(s, addon)?;
+    let id = meta.gamebanana_id?;
+    let updates = &s.installed.updates;
+    let remote = updates.cache.mods.get(&id)?;
+    let base = mod_updates::baseline_for_repaired(&updates.journal, &updates.aliases, id, addon.size_bytes, None, &meta.recorded_at);
+    let file_id = base.file_id?;
+    let archived = remote.files.iter().any(|f| f.file_id == file_id && f.archived);
+    let current: Vec<RemoteFile> = remote.files.iter().filter(|f| !f.archived).cloned().collect();
+    (archived && !current.is_empty()).then_some(current)
+}
+
+/// Install `file` into the slot in place of the archived one, through the update queue.
+fn replace_archived(st: &mut State, slot: u16, file_id: u64) {
+    st.installed.menu = None;
+    st.installed.updates.targets.insert(slot, format!("https://gamebanana.com/dl/{file_id}"));
+    queue_updates(st, vec![slot]);
+}
 
 /// One finished update, from the worker.
 pub struct UpdateDone {
@@ -273,16 +358,19 @@ pub enum Sort {
     Name,
     Recent,
     Size,
+    /// By hero, A to Z, then name (A3); mods without a hero last.
+    Hero,
 }
 
 impl Sort {
-    const ALL: [Sort; 4] = [Sort::LoadOrder, Sort::Name, Sort::Recent, Sort::Size];
+    const ALL: [Sort; 5] = [Sort::LoadOrder, Sort::Name, Sort::Hero, Sort::Recent, Sort::Size];
     fn label(self) -> &'static str {
         match self {
             Sort::LoadOrder => "Load order",
             Sort::Name => "Name",
             Sort::Recent => "Recently added",
             Sort::Size => "Largest first",
+            Sort::Hero => "Hero",
         }
     }
 }
@@ -313,6 +401,8 @@ pub enum Menu {
     Overlap(u16),
     /// Why one card loads too late for the mod it needs, and Fix it.
     Order(u16),
+    /// The selection bar's More: group as one mod, add to a Locker category.
+    Selection,
 }
 
 /// The mods the page shows: search, source and group applied, in the chosen order.
@@ -344,6 +434,10 @@ fn shown_addons(s: &State) -> Vec<&AddonRow> {
             at(b).cmp(&at(a)).then(a.slot.cmp(&b.slot))
         }),
         Sort::Size => shown.sort_by_key(|addon| std::cmp::Reverse(addon.size_bytes)),
+        Sort::Hero => shown.sort_by_key(|addon| {
+            let hero = notes::extra(s, addon).hero.map(|h| h.to_lowercase());
+            (hero.is_none(), hero.unwrap_or_default(), display_name(s, addon).to_lowercase())
+        }),
     }
     // Pinned mods sit at the top of the disabled group, in the chosen order within it.
     shown.sort_by_key(|addon| {
@@ -383,7 +477,12 @@ pub fn view(s: &State, u: &Ui) -> El {
             ),
         )
     } else if let Some(error) = &s.addons.error {
-        u.empty_state("", "The addon folder could not be read", error, None)
+        u.empty_state(
+            "",
+            "The addon folder could not be read",
+            error,
+            Some(crate::notify::feedback::button(u, "installed-error-feedback", "The addon folder could not be read", error)),
+        )
     } else if !s.addons.scanned {
         loading(u)
     } else if s.addons.addons.is_empty() {
@@ -405,6 +504,12 @@ pub fn view(s: &State, u: &Ui) -> El {
                     }),
             ),
         )
+    } else if s.installed.by_list && !s.installed.notes.extras.lists.is_empty() {
+        list_sections::body(s, u, &shown, |members| {
+            let groups = layout::groups(s, members);
+            let refs: Vec<&layout::Group> = groups.iter().collect();
+            cards_block(s, u, &refs)
+        })
     } else {
         let mut list = col().w_full().gap(24.0).pb(32.0);
         if !enabled.is_empty() {
@@ -464,11 +569,33 @@ pub fn view(s: &State, u: &Ui) -> El {
             importer::open_local(st, mods);
         })
         .on_drop_hover(|st: &mut State, over: bool, _tx: &mut Tx| st.installed.drop_hover = over)
+        // Ctrl+A (Cmd+A) selects every mod the page shows, as a file manager does; a text field
+        // with focus keeps the chord for its own text.
+        .on_key(|st: &mut State, ev: &rune::KeyEvent, _tx: &mut Tx| select_all_key(st, ev))
         .child(scroll);
     if s.installed.drop_hover {
         root = root.child(drop_veil(u));
     }
     root
+}
+
+/// Installed's Ctrl+A (every mod the filters show, A3) and Escape (clear). True when used. `app::on_key` can call it too, so the chord
+/// works with nothing focused.
+pub fn select_all_key(st: &mut State, ev: &rune::KeyEvent) -> bool {
+    if st.screen != Screen::Installed || st.installed.menu.is_some() {
+        return false;
+    }
+    match ev.key {
+        rune::Key::Command('a') if !ev.mods.shift && !ev.mods.alt => {
+            select_all_shown(st);
+            true
+        }
+        rune::Key::Escape if !st.installed.selected.is_empty() => {
+            st.installed.selected.clear();
+            true
+        }
+        _ => false,
+    }
 }
 
 /// Mod files the import review reads.
@@ -736,7 +863,7 @@ pub(super) fn switch_slots(st: &mut State, targets: Vec<(u16, String)>, enable: 
             }
             for (slot, error) in &report.failed {
                 recap.failed.push((
-                    names.get(slot).cloned().unwrap_or_else(|| format!("Slot {slot:02}")),
+                    names.get(slot).cloned().unwrap_or_else(|| format!("Slot {}", deadlock_core::addons::slot_label(*slot))),
                     error.clone(),
                 ));
             }
@@ -879,10 +1006,16 @@ fn section(s: &State, u: &Ui, which: Section, cards: &[&layout::Group]) -> El {
                 .color(u.muted)
                 .a11y_hidden(),
         );
-    let mut c = col().w_full().gap(12.0).child(head);
+    let c = col().w_full().gap(12.0).child(head);
     if collapsed {
         return c;
     }
+    c.child(cards_block(s, u, cards))
+}
+
+/// A set of cards drawn the page's way: the grid, or the list rows.
+fn cards_block(s: &State, u: &Ui, cards: &[&layout::Group]) -> El {
+    let mut c = col().w_full();
     if s.installed.layout.is_cards() {
         let cols = s.installed.layout.columns();
         // One card and its gap, from the last layout, so a drag steps card by card.
@@ -944,6 +1077,10 @@ fn card_view(s: &State, u: &Ui, card: &layout::Group, pitch: [f32; 2], cols: usi
     } else if let Some(hero) = notes::extra(s, addon).hero {
         detail = format!("{detail}  ·  {hero}");
     }
+    // A3: when it was installed, from the install journal (or the library entry).
+    if !compact && let Some(date) = install_date(s, addon) {
+        detail = format!("{detail}  ·  {date}");
+    }
     let menu_open = s.installed.menu == Some(Menu::Card(slot));
     let hovered = s.installed.hovered == Some(slot);
     let selecting = !s.installed.selected.is_empty();
@@ -979,7 +1116,7 @@ fn card_view(s: &State, u: &Ui, card: &layout::Group, pitch: [f32; 2], cols: usi
         .fill(Color::BLACK.alpha(0.6))
         .a11y_hidden()
         .child(
-            text(format!("{slot:02}"))
+            text(deadlock_core::addons::slot_label(slot))
                 .font(MICRO)
                 .color(Color::WHITE.alpha(0.86)),
         );
@@ -1041,7 +1178,10 @@ fn card_view(s: &State, u: &Ui, card: &layout::Group, pitch: [f32; 2], cols: usi
                 .a11y_hidden(),
         );
     }
-    let mut bottom = row().w_full().gap(6.0).center_y().child(chip);
+    let mut bottom = row().w_full().gap(6.0).center_y();
+    if !s.installed.hide_slot {
+        bottom = bottom.child(chip);
+    }
     if let Some(update) = update_chip(s, u, addon) {
         bottom = bottom.child(update);
     }
@@ -1095,7 +1235,7 @@ fn card_view(s: &State, u: &Ui, card: &layout::Group, pitch: [f32; 2], cols: usi
             .color(if addon.enabled { u.ink } else { u.prose })
             .truncate(),
     );
-    if !compact {
+    if !compact && !s.installed.hide_details {
         text_col = text_col.child(text(detail).font(SMALL).color(u.faint).truncate());
     }
     let mut footer = row()
@@ -1115,6 +1255,9 @@ fn card_view(s: &State, u: &Ui, card: &layout::Group, pitch: [f32; 2], cols: usi
                 .cursor(rune::Cursor::Pointer)
                 .on_press(move |st: &mut State| layout::open_group(st, key.clone(), slot)),
         );
+    }
+    if let Some(play) = sound::button(s, u, addon) {
+        footer = footer.child(play);
     }
     footer = footer.child(el().w(2.0)).child(switch);
 
@@ -1270,10 +1413,14 @@ pub(super) fn check_box(u: &Ui, on: bool, on_image: bool) -> El {
 fn update_chip(s: &State, u: &Ui, addon: &AddonRow) -> Option<El> {
     let slot = addon.slot;
     let updates = &s.installed.updates;
+    let cancellable = updates.running == Some(slot) || updates.queue.contains(&slot);
     let (label, glyph, live) = if updates.running == Some(slot) {
-        ("Updating", &icons::LOADER, false)
+        (if update_cancelling(s) { tr("Cancelling") } else { tr("Updating") }, &icons::LOADER, false)
     } else if updates.queue.contains(&slot) {
-        ("Queued", &icons::HISTORY, false)
+        (tr("Queued"), &icons::HISTORY, false)
+    } else if !s.shell.w4.update_badges {
+        // Settings > Show mod update badges is off: no Update mark (a running update still shows).
+        return None;
     } else if update_for(s, addon).is_some() {
         if updates.failed.contains_key(&slot) {
             ("Update failed", &icons::TRIANGLE_ALERT, true)
@@ -1302,6 +1449,15 @@ fn update_chip(s: &State, u: &Ui, addon: &AddonRow) -> Option<El> {
             .role("button")
             .cursor(rune::Cursor::Pointer)
             .on_press(move |st: &mut State| queue_updates(st, vec![slot]));
+    } else if cancellable && !update_cancelling(s) {
+        chip = chip
+            .label(fill(tr("Cancel the update of {}"), &[&display_name(s, addon)]))
+            .hover(Color::BLACK.alpha(0.78))
+            .focusable(true)
+            .role("button")
+            .cursor(rune::Cursor::Pointer)
+            .on_press(move |st: &mut State| cancel_update(st, slot))
+            .child(icon(&icons::X, 11.0).color(Color::WHITE.alpha(0.75)).a11y_hidden());
     }
     let _ = u;
     Some(chip)
@@ -1406,6 +1562,7 @@ pub fn overlay(s: &State, u: &Ui) -> Option<El> {
         Menu::More => ("installed-bulk".to_string(), Align::End, 260.0),
         Menu::Overlap(slot) => (format!("installed-overlap-{slot:02}"), Align::End, 340.0),
         Menu::Order(slot) => (format!("installed-order-{slot:02}"), Align::End, 340.0),
+        Menu::Selection => ("installed-selection-more".to_string(), Align::End, 280.0),
     };
     let mut items: Vec<El> = Vec::new();
 
@@ -1432,6 +1589,24 @@ pub fn overlay(s: &State, u: &Ui) -> Option<El> {
                             }
                         }),
                 );
+            }
+            if let Some(files) = archived_choices(s, addon) {
+                // DMM: the installed file was archived; pick what replaces it.
+                items.push(menu_rule(u));
+                for file in files.into_iter().take(6) {
+                    let file_id = file.file_id;
+                    items.push(
+                        menu_item(
+                            u,
+                            &format!("menu-replace-{file_id}"),
+                            Some(&icons::ARROW_UP),
+                            &fill(tr("Replace with {}"), &[&file.file_name]),
+                            tr("the old file was archived"),
+                            s.installed.updates.running != Some(slot),
+                        )
+                        .on_press(move |st: &mut State| replace_archived(st, slot, file_id)),
+                    );
+                }
             }
             if let Some(update) = update_for(s, addon) {
                 if s.installed.updates.running != Some(slot) {
@@ -1562,6 +1737,25 @@ pub fn overlay(s: &State, u: &Ui) -> Option<El> {
                         st.installed.menu = Some(Menu::Tools(slot));
                     }),
             );
+            items.push(
+                menu_item(u, "menu-imprint", Some(&icons::FILE), "View imprint", "", true)
+                    .on_press(move |st: &mut State| imprint::open(st, slot)),
+            );
+            items.push(
+                menu_item(u, "menu-backups", Some(&icons::ROTATE_CCW), "Backups", "", true)
+                    .on_press(move |st: &mut State| backups::open(st, slot)),
+            );
+            if meta_for(s, addon).and_then(|meta| meta.gamebanana_id).is_some() {
+                let busy = s.installed.updates.running == Some(slot) || s.installed.updates.queue.contains(&slot);
+                items.push(
+                    menu_item(u, "menu-reinstall", Some(&icons::DOWNLOAD), "Reinstall", "", !busy)
+                        .on_press(move |st: &mut State| reinstall(st, slot)),
+                );
+                items.push(
+                    menu_item(u, "menu-nuke", Some(&icons::TRASH_2), "Delete and reinstall", "a clean copy", !busy)
+                        .on_press(move |st: &mut State| nuke_and_reinstall(st, slot)),
+                );
+            }
             items.push(menu_rule(u));
             let selected = s.installed.selected.contains(&slot);
             items.push(
@@ -1713,12 +1907,30 @@ pub fn overlay(s: &State, u: &Ui) -> Option<El> {
                     }),
                 );
             }
+            // Card style and sections (A3).
+            items.push(menu_rule(u));
+            let v = &s.installed;
+            for (key, label, on, flip) in [
+                ("menu-view-details", tr("Show the details line"), !v.hide_details, 0u8),
+                ("menu-view-slot", tr("Show the slot number"), !v.hide_slot, 1),
+                ("menu-view-by-list", tr("Sections by list"), v.by_list, 2),
+            ] {
+                items.push(
+                    menu_item(u, key, Some(if on { &icons::CHECK } else { &NO_ICON }), label, "", flip != 2 || !s.installed.notes.extras.lists.is_empty())
+                        .on_press(move |st: &mut State| match flip {
+                            0 => st.installed.hide_details = !st.installed.hide_details,
+                            1 => st.installed.hide_slot = !st.installed.hide_slot,
+                            _ => st.installed.by_list = !st.installed.by_list,
+                        }),
+                );
+            }
         }
         Menu::Hero | Menu::Category | Menu::Tag | Menu::List => {
             items.extend(notes::menu_rows(s, u, menu));
         }
         Menu::Overlap(slot) => items = overlap::menu_items(s, u, slot),
         Menu::Order(slot) => items = req_order::menu_items(s, u, slot),
+        Menu::Selection => items = selection::menu_items(s, u),
         Menu::More => {
             let shown = shown_addons(s);
             let picked = !s.installed.selected.is_empty();
@@ -1783,6 +1995,10 @@ pub fn overlay(s: &State, u: &Ui) -> Option<El> {
             items.push(
                 menu_item(u, "menu-merge-open", Some(&icons::LAYERS), "Merge mods", "one VPK from several", true)
                     .on_press(|st: &mut State| tools::open_merge(st)),
+            );
+            items.push(
+                menu_item(u, "menu-analyze", Some(&icons::WRENCH), "Analyze the addons folder", "and check HUD mods", true)
+                    .on_press(|st: &mut State| checks::open(st)),
             );
             items.push(
                 menu_item(u, "menu-search", Some(&icons::SEARCH), "Find a broken mod", "halve the set", true)
@@ -2082,7 +2298,6 @@ fn fill_previews(st: &mut State) -> bool {
 
 pub fn poll(st: &mut State) -> bool {
     let mut changed = fill_previews(st);
-    changed |= offer_undo(st);
     changed |= importer::poll(st);
     changed |= notes::poll(st);
     changed |= tools::poll(st);
@@ -2092,6 +2307,11 @@ pub fn poll(st: &mut State) -> bool {
     changed |= overlap::refresh(st);
     changed |= req_order::refresh(st);
     changed |= repair::poll(st);
+    changed |= checks::poll(st);
+    changed |= imprint::poll(st);
+    changed |= sound::poll(st);
+    crate::screens::conflicts::sync_scope(st);
+    changed |= crate::screens::locker::art::poll(st);
 
     if !st.demo && st.addons.scanned {
         let sig: Vec<(u16, u64)> = st
@@ -2308,7 +2528,7 @@ pub(super) fn addons_folder(s: &State) -> PathBuf {
 
 /// Reveal a file or folder in the system file manager. This is a read-only app
 /// action: no game file is renamed, copied or written.
-fn reveal(status: &mut String, path: PathBuf) {
+pub(super) fn reveal(status: &mut String, path: PathBuf) {
     if rune::is_headless() {
         *status = format!("Headless run: reveal was not sent for {}.", path.display());
         return;
@@ -2398,6 +2618,15 @@ pub fn dialog(s: &State, u: &Ui) -> Option<El> {
     if let Some(dialog) = order::dialog(s, u) {
         return Some(dialog);
     }
+    if let Some(dialog) = backups::dialog(s, u) {
+        return Some(dialog);
+    }
+    if let Some(dialog) = checks::dialog(s, u) {
+        return Some(dialog);
+    }
+    if let Some(dialog) = imprint::dialog(s, u) {
+        return Some(dialog);
+    }
     if s.installed.trash.open {
         return Some(trash_dialog(s, u));
     }
@@ -2412,7 +2641,7 @@ pub fn dialog(s: &State, u: &Ui) -> Option<El> {
     let name = addon
         .and_then(|addon| meta_for(s, addon))
         .map(|meta| meta.name.clone())
-        .unwrap_or_else(|| format!("slot {slot:02}"));
+        .unwrap_or_else(|| format!("slot {}", deadlock_core::addons::slot_label(slot)));
     let file = addon
         .map(|addon| addon.file.clone())
         .unwrap_or_else(|| format!("pak{slot:02}_dir.vpk"));
@@ -2476,7 +2705,7 @@ fn bulk_dialog(s: &State, u: &Ui, enable: bool) -> El {
                 .w_full()
                 .gap(8.0)
                 .center_y()
-                .child(text(format!("{:02}", addon.slot)).font(MICRO).color(u.faint).w(20.0))
+                .child(text(deadlock_core::addons::slot_label(addon.slot)).font(MICRO).color(u.faint).w(28.0))
                 .child(text(display_name(s, addon)).font(BODY).color(u.prose).truncate()),
         );
     }
@@ -2997,6 +3226,13 @@ fn selection_bar(s: &State, u: &Ui) -> El {
                     ask(st, Confirm::Delete(slots));
                 }),
         )
+        .child(
+            u.icon_button(&icons::ELLIPSIS, tr("More for the selection"))
+                .key("installed-selection-more")
+                .border(1.0, u.hair_strong)
+                .cursor(rune::Cursor::Pointer)
+                .on_press(|st: &mut State| open_menu(st, Menu::Selection)),
+        )
 }
 
 // --- writes ----------------------------------------------------------------------------
@@ -3110,7 +3346,10 @@ fn run_confirm(st: &mut State, confirm: Confirm) {
     match confirm {
         Confirm::Delete(slots) => delete(st, slots),
         Confirm::Reorder(plan) => reorder(st, plan),
-        Confirm::UpdateAll(slots) => queue_updates(st, slots),
+        Confirm::UpdateAll(slots) => {
+            let slots = scoped(st, &slots);
+            queue_updates(st, slots)
+        }
     }
 }
 
@@ -3220,16 +3459,25 @@ fn finish_delete(
     rescan(st);
 }
 
-/// Put a change back. Every arm is one core call on the game folder, then a rescan.
 /// A change that can be put back shows its result as a toast with Undo, instead of the plain
-/// status toast.
-fn offer_undo(st: &mut State) -> bool {
+/// status toast. `notify::poll` calls this after every page's poll, so a change marked late in
+/// a frame still gets one toast (issue #4): the handler's status line with Undo, or the toast
+/// it pushed itself with Undo added.
+pub fn offer_undo(st: &mut State) -> bool {
     if !std::mem::take(&mut st.installed.undo_fresh) {
         return false;
     }
     let Some(undo) = st.installed.last_undo.clone() else { return false };
     let line = std::mem::take(&mut st.status);
-    let line = if line.trim().is_empty() { "Done.".to_string() } else { line };
+    if line.trim().is_empty() {
+        let again = undo.clone();
+        if st.notices.undo_on_last_push(move |st: &mut State| apply_undo(st, again)) {
+            return true;
+        }
+        let notice = crate::notify::Notice::success("Done").undo(move |st: &mut State| apply_undo(st, undo));
+        crate::notify::push(st, notice);
+        return true;
+    }
     let notice = crate::notify::from_status::<State>(&line).undo(move |st: &mut State| apply_undo(st, undo));
     crate::notify::push(st, notice);
     true
@@ -3311,7 +3559,7 @@ pub fn apply_undo(st: &mut State, undo: Undo) {
                     )
                 })
                 .map_err(|error| error.to_string()),
-                None => Err(format!("Slot {slot:02} is gone, so its fonts cannot come back.")),
+                None => Err(format!("Slot {} is gone, so its fonts cannot come back.", deadlock_core::addons::slot_label(slot))),
             }
         }
         Undo::Update {
@@ -3323,7 +3571,7 @@ pub fn apply_undo(st: &mut State, undo: Undo) {
                 if let Some(meta) = meta {
                     let _ = import::record_meta(&library, meta);
                 }
-                format!("Slot {slot:02} is back to the version before the update.")
+                format!("Slot {} is back to the version before the update.", deadlock_core::addons::slot_label(slot))
             })
             .map_err(|error| error.to_string()),
     };
@@ -3474,7 +3722,7 @@ pub fn update_for(s: &State, addon: &AddonRow) -> Option<RemoteFile> {
                 .iter()
                 .map(|other| {
                     let recorded = meta_for(s, other).map(|m| m.recorded_at.clone()).unwrap_or_default();
-                    let base = mod_updates::baseline_for(&updates.journal, id, other.size_bytes, &recorded);
+                    let base = mod_updates::baseline_for_repaired(&updates.journal, &updates.aliases, id, other.size_bytes, None, &recorded);
                     update_match::Installed {
                         slot: other.slot,
                         file_id: base.file_id,
@@ -3487,7 +3735,7 @@ pub fn update_for(s: &State, addon: &AddonRow) -> Option<RemoteFile> {
         }
         _ => {
             let baseline =
-                mod_updates::baseline_for(&updates.journal, id, addon.size_bytes, &meta.recorded_at);
+                mod_updates::baseline_for_repaired(&updates.journal, &updates.aliases, id, addon.size_bytes, None, &meta.recorded_at);
             match mod_updates::compare(baseline, remote) {
                 UpdateState::Available(file) => file,
                 _ => return None,
@@ -3512,6 +3760,72 @@ fn variant_slots<'a>(s: &'a State, id: u64) -> Vec<&'a AddonRow> {
 
 /// Slots with an update, in load order, not already queued or running.
 /// The notes and lists store (`mod_extras`), for the launch's random lists.
+/// When a slot's file was installed: the newest journal entry for the slot at this size, else
+/// the library entry's date. "Nov 17", with the year when it is not this year.
+pub fn install_date(s: &State, addon: &AddonRow) -> Option<String> {
+    // C16: slot and size, then size alone for a moved mod; a repaired file maps back first.
+    let (bytes, _) = deadlock_core::compat_repair::original_of(&s.installed.updates.aliases, addon.size_bytes, None);
+    let journal = deadlock_core::library_facts::install_date(&s.installed.updates.journal, addon.slot, bytes);
+    let stamp = journal.or_else(|| meta_for(s, addon).map(|meta| meta.recorded_at.clone()))?;
+    short_date(&stamp, this_year())
+}
+
+fn this_year() -> i64 {
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    // Days to a civil year (Howard Hinnant's days_from_civil, inverted for the year only).
+    let days = secs.div_euclid(86_400) + 719_468;
+    let era = days.div_euclid(146_097);
+    let doe = days - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    yoe + era * 400 + i64::from(month <= 2)
+}
+
+/// "Nov 17" from an RFC 3339 stamp, or "Nov 17, 2025" in another year.
+pub fn short_date(stamp: &str, year_now: i64) -> Option<String> {
+    let year: i64 = stamp.get(0..4)?.parse().ok()?;
+    let month: usize = stamp.get(5..7)?.parse().ok()?;
+    let day: u32 = stamp.get(8..10)?.parse().ok()?;
+    const MONTHS: [&str; 12] = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    let name = tr(MONTHS.get(month.checked_sub(1)?)?);
+    Some(if year == year_now { format!("{name} {day}") } else { format!("{name} {day}, {year}") })
+}
+
+/// The picture a slot shows (its own image, else its GameBanana preview), for other pages:
+/// the Locker draws the same picture on its rows.
+pub fn preview_key_for_slot(s: &State, slot: u16) -> Option<String> {
+    let addon = s.addons.addons.iter().find(|a| a.slot == slot)?;
+    notes::preview_key(s, addon)
+}
+
+/// The library extras key of a slot, for scenes and other pages.
+pub fn extras_key(s: &State, addon: &AddonRow) -> deadlock_core::mod_extras::SlotKey {
+    notes::key_with_id(s, addon)
+}
+
+/// Open Installed's name and picture editor for a slot, from another page.
+pub fn open_editor(st: &mut State, slot: u16) {
+    notes::open_edit(st, slot);
+}
+
+/// GameBanana files this mod under Maps (its root or leaf category), from the library extras.
+pub fn in_maps_category(s: &State, addon: &AddonRow) -> bool {
+    let extra = notes::extra(s, addon);
+    maps_category(extra.root_category.as_deref(), extra.category.as_deref())
+}
+
+pub fn maps_category(root: Option<&str>, leaf: Option<&str>) -> bool {
+    [root, leaf]
+        .into_iter()
+        .flatten()
+        .any(|name| matches!(name.trim().to_ascii_lowercase().as_str(), "maps" | "map"))
+}
+
 pub fn extras_path() -> PathBuf {
     notes::extras_file()
 }
@@ -3536,16 +3850,30 @@ fn update_all_button(s: &State, u: &Ui) -> Option<El> {
     let updates = &s.installed.updates;
     if let Some(slot) = updates.running {
         let left = updates.queue.len();
-        let label = if left == 0 {
-            "Updating".to_string()
+        let label = if update_cancelling(s) {
+            tr("Cancelling").to_string()
+        } else if left == 0 {
+            tr("Updating").to_string()
         } else {
-            format!("Updating, {left} more")
+            fill(tr("Updating, {} more"), &[&left.to_string()])
         };
         let _ = slot;
         return Some(
-            u.icon_action(&icons::LOADER, &label, ActionKind::Secondary)
-                .key("installed-update-all")
-                .disabled(true),
+            row()
+                .gap(8.0)
+                .center_y()
+                .child(
+                    u.icon_action(&icons::LOADER, &label, ActionKind::Secondary)
+                        .key("installed-update-all")
+                        .disabled(true),
+                )
+                .child(
+                    u.action(if left == 0 { tr("Cancel") } else { tr("Cancel all") }, ActionKind::Ghost)
+                        .key("installed-update-cancel")
+                        .disabled(update_cancelling(s))
+                        .cursor(rune::Cursor::Pointer)
+                        .on_press(cancel_updates),
+                ),
         );
     }
     let slots = available_updates(s);
@@ -3585,6 +3913,7 @@ pub(crate) fn check_updates(st: &mut State, force: bool) {
         st.installed.updates.cache = mod_updates::read_cache(&mod_updates::cache_path(&data));
         st.installed.updates.journal =
             deadlock_core::install::read_journal(&workspace).unwrap_or_default();
+        st.installed.updates.aliases = repair::aliases();
         st.installed.updates.loaded = true;
     }
     let ids = gamebanana_ids(st);
@@ -3632,6 +3961,84 @@ pub(super) fn queue_updates(st: &mut State, slots: Vec<u16>) {
     start_next_update(st);
 }
 
+/// Reinstall (A4, Deadlock Mod Manager's Reinstall): the same file again into the same slot,
+/// through the update queue's install path (`plan_install` with the slot and force, the old
+/// files backed up, landing on or off as the slot was). The file comes from the install journal
+/// entry for this slot and size; without one, the mod's newest file.
+pub fn reinstall(st: &mut State, slot: u16) {
+    st.installed.menu = None;
+    if st.demo {
+        st.status = tr("Demo library: nothing was changed.").to_string();
+        return;
+    }
+    let Some(addon) = st.addons.addons.iter().find(|a| a.slot == slot).cloned() else { return };
+    let Some(id) = meta_for(st, &addon).and_then(|meta| meta.gamebanana_id) else {
+        crate::notify::push(
+            st,
+            crate::notify::Notice::warning(tr("This mod cannot be reinstalled"))
+                .detail(tr("Sigil reinstalls mods it knows the GameBanana page of. Link it with Check this mod first.")),
+        );
+        return;
+    };
+    let journal = deadlock_core::install::read_journal(&crate::data::workspace_dir()).unwrap_or_default();
+    let target = journal
+        .iter()
+        .rev()
+        .find(|entry| entry.slot == slot && entry.vpk_bytes == addon.size_bytes)
+        .and_then(|entry| entry.download_url.clone())
+        .unwrap_or_else(|| id.to_string());
+    st.installed.updates.targets.insert(slot, target);
+    st.installed.updates.reinstall.insert(slot);
+    queue_updates(st, vec![slot]);
+}
+
+/// Delete and reinstall (DMM's nuke): the slot's files go to the trash, then the same file
+/// installs fresh into the empty slot. A failure puts the old files back; Undo too.
+pub fn nuke_and_reinstall(st: &mut State, slot: u16) {
+    if st.demo {
+        st.installed.menu = None;
+        st.status = tr("Demo library: nothing was changed.").to_string();
+        return;
+    }
+    st.installed.updates.nuke.insert(slot);
+    reinstall(st, slot);
+    if !st.installed.updates.queue.contains(&slot) && st.installed.updates.running != Some(slot) {
+        st.installed.updates.nuke.remove(&slot);
+    }
+}
+
+/// Take one slot out of the update queue, or stop it while it downloads (A5). Once its files
+/// are being written the update finishes: the install step itself is not cut in half.
+pub fn cancel_update(st: &mut State, slot: u16) {
+    let updates = &mut st.installed.updates;
+    updates.queue.retain(|&queued| queued != slot);
+    updates.targets.remove(&slot);
+    if updates.running != Some(slot) {
+        updates.reinstall.remove(&slot);
+        updates.nuke.remove(&slot);
+    }
+    if updates.running == Some(slot) {
+        updates.cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
+/// Cancel the whole queue: the running update and every waiting one.
+pub fn cancel_updates(st: &mut State) {
+    let updates = &mut st.installed.updates;
+    let waiting = std::mem::take(&mut updates.queue);
+    for slot in waiting {
+        updates.targets.remove(&slot);
+    }
+    if updates.running.is_some() {
+        updates.cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
+/// The running update was asked to stop.
+pub fn update_cancelling(s: &State) -> bool {
+    s.installed.updates.running.is_some() && s.installed.updates.cancel.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 /// Run the next queued update on a worker: the install pipeline into the same slot, with the
 /// old files backed up (`plan_install` with the slot and force, then `apply_install_with`),
 /// landing on or off as the slot was. The library entry keeps its name and preview.
@@ -3652,7 +4059,7 @@ fn start_next_update(st: &mut State) {
         st.installed.updates.queue.clear();
         return;
     };
-    let name = meta.as_ref().map(|m| m.name.clone()).unwrap_or_else(|| format!("slot {slot:02}"));
+    let name = meta.as_ref().map(|m| m.name.clone()).unwrap_or_else(|| format!("slot {}", deadlock_core::addons::slot_label(slot)));
     // A Replace from Browse names its archive; a matched variant its own file; else the newest.
     let target = match st.installed.updates.targets.remove(&slot) {
         Some(target) => target,
@@ -3667,7 +4074,11 @@ fn start_next_update(st: &mut State) {
     };
     let workspace = crate::data::workspace_dir();
     let library = library_file();
+    let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    st.installed.updates.cancel = cancel.clone();
     st.installed.updates.running = Some(slot);
+    let nuke = st.installed.updates.nuke.remove(&slot);
+    let trash_root = trash_dir();
     st.status = format!("Updating {name}.");
     st.installed.updates.job.start(st.wake.clone(), move || {
         use deadlock_core::install::{
@@ -3675,24 +4086,51 @@ fn start_next_update(st: &mut State) {
             store_plan,
         };
         let fail = |error: deadlock_core::Error| format!("{slot:02}: {error}");
-        let request = InstallRequest::new(target, workspace.clone())
-            .map_err(fail)?
-            .with_slot(Some(slot))
-            .with_force(true);
-        let plan = plan_install(
-            &request,
-            &PlanOptions {
-                game_root: Some(game_root),
-                ..Default::default()
-            },
-        )
-        .map_err(fail)?;
-        if plan.slot != slot {
-            return Err(format!("{slot:02}: the plan picked slot {:02}. Nothing was written.", plan.slot));
-        }
-        store_plan(&plan).map_err(fail)?;
-        let record = apply_install_with(&plan, true, ApplyOptions { land_disabled: !enabled })
+        // Delete and reinstall: the slot's files go to the trash first (the existing delete,
+        // `trash::trash_slot` with approve); any failure below puts them back.
+        let nuked = if nuke {
+            Some(trash::trash_slot(&game_root, &trash_root, slot, meta.clone(), true).map_err(fail)?)
+        } else {
+            None
+        };
+        let put_back = |error: String| -> String {
+            match &nuked {
+                Some(entry) => match trash::restore(&entry.dir, true) {
+                    Ok(_) => format!("{error} The old files are back."),
+                    Err(again) => format!("{error} The old files are in Sigil's trash ({again})."),
+                },
+                None => error,
+            }
+        };
+        let run = || -> Result<deadlock_core::install::InstallRecord, String> {
+            let request = InstallRequest::new(target, workspace.clone())
+                .map_err(fail)?
+                .with_slot(Some(slot))
+                .with_force(true);
+            let plan = plan_install(
+                &request,
+                &PlanOptions {
+                    game_root: Some(game_root.clone()),
+                    cancel: Some(cancel.clone()),
+                    ..Default::default()
+                },
+            )
             .map_err(fail)?;
+            if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+                return Err(format!("{}: cancelled. Nothing was written.", deadlock_core::addons::slot_label(slot)));
+            }
+            if plan.slot != slot {
+                return Err(format!("{slot:02}: the plan picked slot {:02}. Nothing was written.", plan.slot));
+            }
+            store_plan(&plan).map_err(fail)?;
+            apply_install_with(&plan, true, ApplyOptions { land_disabled: !enabled }).map_err(fail)
+        };
+        let record = run().map_err(put_back)?;
+        // The Undo of a delete-and-reinstall puts the trashed files back over the new ones.
+        let backups = match &nuked {
+            Some(entry) => entry.manifest.files.iter().map(|name| entry.dir.join(name)).collect(),
+            None => record.backups.clone(),
+        };
         let bytes = std::fs::metadata(&record.target).map(|m| m.len()).unwrap_or(0);
         if let Some(old) = meta.clone() {
             let _ = import::record_meta(
@@ -3708,7 +4146,7 @@ fn start_next_update(st: &mut State) {
         Ok(UpdateDone {
             slot,
             name,
-            backups: record.backups,
+            backups,
             old_meta: meta,
             journal: read_journal(&workspace).unwrap_or_default(),
         })
@@ -3741,6 +4179,7 @@ fn poll_changes(st: &mut State) -> bool {
             let n = cache.errors.len();
             st.installed.updates.cache = cache;
             st.installed.updates.journal = journal;
+            st.installed.updates.aliases = repair::aliases();
             if n > 0 && st.screen == Screen::Installed {
                 st.status = format!("{n} mod{} could not be checked for updates.", if n == 1 { "" } else { "s" });
             }
@@ -3751,7 +4190,11 @@ fn poll_changes(st: &mut State) -> bool {
         let slot = st.installed.updates.running.take();
         match result {
             Ok(done) => {
-                st.status = format!("Updated {}. The old file is backed up.", done.name);
+                st.status = if st.installed.updates.reinstall.remove(&done.slot) {
+                    fill(tr("Reinstalled {}. The old file is backed up."), &[&done.name])
+                } else {
+                    format!("Updated {}. The old file is backed up.", done.name)
+                };
                 st.installed.updates.journal = done.journal;
                 st.installed.last_undo = Some(Undo::Update {
                     slot: done.slot,
@@ -3760,12 +4203,21 @@ fn poll_changes(st: &mut State) -> bool {
                 });
                 st.installed.undo_fresh = true;
             }
+            Err(_) if st.installed.updates.cancel.load(std::sync::atomic::Ordering::Relaxed) => {
+                crate::notify::push(
+                    st,
+                    crate::notify::Notice::info(tr("Update cancelled")).detail(tr("Nothing was changed. The mod keeps its current version.")),
+                );
+            }
             Err(error) => {
                 if let Some(slot) = slot {
                     st.installed.updates.failed.insert(slot, error.clone());
                 }
                 st.status = format!("Update failed: {error}");
             }
+        }
+        if let Some(slot) = slot {
+            st.installed.updates.reinstall.remove(&slot);
         }
         rescan(st);
         start_next_update(st);
@@ -3992,7 +4444,7 @@ fn confirm_dialog(s: &State, u: &Ui, confirm: &Confirm) -> El {
             .iter()
             .find(|addon| addon.slot == slot)
             .map(|addon| display_name(s, addon))
-            .unwrap_or_else(|| format!("Slot {slot:02}"))
+            .unwrap_or_else(|| format!("Slot {}", deadlock_core::addons::slot_label(slot)))
     };
     let plural = |n: usize| if n == 1 { "" } else { "s" };
     let (key, title, body, list, label, kind): (&str, String, &str, El, String, ActionKind) =
@@ -4020,7 +4472,7 @@ fn confirm_dialog(s: &State, u: &Ui, confirm: &Confirm) -> El {
                             .w_full()
                             .gap(12.0)
                             .items_start()
-                            .child(text(format!("{slot:02}")).font(MICRO).color(u.faint).w(20.0).pt(3.0))
+                            .child(text(deadlock_core::addons::slot_label(slot)).font(MICRO).color(u.faint).w(28.0).pt(3.0))
                             .child(
                                 col()
                                     .grow(1.0)
@@ -4056,9 +4508,9 @@ fn confirm_dialog(s: &State, u: &Ui, confirm: &Confirm) -> El {
                             .gap(8.0)
                             .center_y()
                             .child(text(name_of(m.from)).font(BODY).color(u.prose).truncate().grow(1.0).min_w(0.0))
-                            .child(text(format!("{:02}", m.from)).font(MICRO).color(u.faint))
+                            .child(text(deadlock_core::addons::slot_label(m.from)).font(MICRO).color(u.faint))
                             .child(icon(&ARROW_RIGHT, 12.0).color(u.faint).a11y_hidden())
-                            .child(text(format!("{:02}", m.to)).font(MICRO).color(u.ink)),
+                            .child(text(deadlock_core::addons::slot_label(m.to)).font(MICRO).color(u.ink)),
                     );
                 }
                 if plan.moves.len() > 8 {
@@ -4073,8 +4525,25 @@ fn confirm_dialog(s: &State, u: &Ui, confirm: &Confirm) -> El {
                     ActionKind::Primary,
                 )
             }
-            Confirm::UpdateAll(slots) => {
+            Confirm::UpdateAll(all) => {
+                let slots = &scoped(s, all);
                 let mut list = col().w_full().gap(4.0);
+                // DMM's Only enabled / Only disabled.
+                let mut scope_row = row().w_full().gap(6.0).pb(4.0);
+                for (scope, words) in [
+                    (UpdateScope::All, tr("All")),
+                    (UpdateScope::Enabled, tr("Only enabled")),
+                    (UpdateScope::Disabled, tr("Only disabled")),
+                ] {
+                    let on = s.installed.update_scope == scope;
+                    scope_row = scope_row.child(
+                        u.action(words, if on { ActionKind::Secondary } else { ActionKind::Ghost })
+                            .key(format!("update-scope-{scope:?}"))
+                            .cursor(rune::Cursor::Pointer)
+                            .on_press(move |st: &mut State| st.installed.update_scope = scope),
+                    );
+                }
+                list = list.child(scope_row);
                 for &slot in slots.iter().take(6) {
                     list = list.child(
                         row()
@@ -4082,7 +4551,7 @@ fn confirm_dialog(s: &State, u: &Ui, confirm: &Confirm) -> El {
                             .h(28.0)
                             .gap(12.0)
                             .center_y()
-                            .child(text(format!("{slot:02}")).font(MICRO).color(u.faint).w(20.0))
+                            .child(text(deadlock_core::addons::slot_label(slot)).font(MICRO).color(u.faint).w(28.0))
                             .child(text(name_of(slot)).font(BODY).color(u.prose).truncate()),
                     );
                     // What changed, from the mod's GameBanana changelog.
@@ -4247,4 +4716,23 @@ fn stage_updates(s: &mut State) {
     s.installed.updates.checked = Some(gamebanana_ids(s));
     s.installed.updates.cache = cache;
     s.installed.updates.loaded = true;
+}
+
+#[cfg(test)]
+mod w4a_tests {
+    use super::*;
+
+    #[test]
+    fn install_dates_read_short_with_the_year_only_when_it_differs() {
+        assert_eq!(short_date("2026-11-17T21:04:11Z", 2026).as_deref(), Some("Nov 17"));
+        assert_eq!(short_date("2025-03-02T09:00:00Z", 2026).as_deref(), Some("Mar 2, 2025"));
+        assert_eq!(short_date("", 2026), None);
+        assert_eq!(short_date("2026-13-01", 2026), None);
+        assert!(this_year() >= 2026);
+    }
+
+    #[test]
+    fn hero_sort_is_listed() {
+        assert!(Sort::ALL.contains(&Sort::Hero));
+    }
 }

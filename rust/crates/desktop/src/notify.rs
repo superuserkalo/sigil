@@ -19,7 +19,10 @@ use rune::{Color, El, Key, KeyEvent, Tx, col, el, row, text};
 
 use crate::app::State;
 use crate::icons;
+use crate::screens::settings::i18n::tr;
 use crate::ui::{BODY, BODY_MED, PAGE_X, Ui};
+
+pub mod feedback;
 
 /// Toasts on screen at once. More wait in the queue.
 pub const CAP: usize = 3;
@@ -31,6 +34,10 @@ pub const LEAVE: f64 = 0.2;
 pub const RESUME_MIN: f64 = 2.0;
 /// A toast with a button stays at least this long, so there is time to press it.
 pub const ACTION_MIN: f64 = 8.0;
+/// Reading time per word: about 200 words a minute (issue #5).
+pub const PER_WORD: f64 = 0.3;
+/// Longest detail drawn on a toast; the rest is in Send feedback and Copy details.
+pub const DETAIL_MAX: usize = 240;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {
@@ -41,12 +48,23 @@ pub enum Kind {
 }
 
 impl Kind {
-    /// Seconds on screen before the toast leaves by itself. Errors stay longest.
-    pub fn duration(self) -> f64 {
+    /// The shortest time on screen before the toast leaves by itself. `None`: an error stays
+    /// until the player closes it (issue #5).
+    pub fn duration(self) -> Option<f64> {
         match self {
-            Kind::Info | Kind::Success => 4.0,
-            Kind::Warning => 6.0,
-            Kind::Error => 10.0,
+            Kind::Info | Kind::Success => Some(4.0),
+            Kind::Warning => Some(8.0),
+            Kind::Error => None,
+        }
+    }
+
+    /// Louder kinds win when two toasts say the same thing.
+    fn rank(self) -> u8 {
+        match self {
+            Kind::Info => 0,
+            Kind::Success => 1,
+            Kind::Warning => 2,
+            Kind::Error => 3,
         }
     }
 
@@ -75,7 +93,7 @@ impl<C> Notice<C> {
     pub fn new(kind: Kind, title: impl Into<String>) -> Self {
         Notice {
             kind,
-            title: title.into(),
+            title: tidy_title(&title.into()),
             detail: None,
             action: None,
             undo: None,
@@ -98,10 +116,20 @@ impl<C> Notice<C> {
         Self::new(Kind::Error, title)
     }
 
-    /// A second, quieter line.
+    /// A second, quieter line. A detail that only repeats the title is dropped (issue #4).
     pub fn detail(mut self, detail: impl Into<String>) -> Self {
         let detail = detail.into();
-        self.detail = (!detail.trim().is_empty()).then_some(detail);
+        let detail = detail.trim();
+        let repeats = detail
+            .trim_end_matches('.')
+            .eq_ignore_ascii_case(self.title.trim_end_matches('.'));
+        self.detail = if detail.is_empty() || repeats {
+            None
+        } else if let Some(rest) = repeat_prefix(detail, &self.title) {
+            Some(rest.to_string())
+        } else {
+            Some(detail.to_string())
+        };
         self
     }
 
@@ -125,18 +153,108 @@ impl<C> Notice<C> {
         self.action.as_ref().map(|(label, _)| label.as_str())
     }
 
-    fn duration(&self) -> f64 {
-        let base = self.kind.duration();
+    /// Seconds on screen: the kind's minimum, the reading time of its words, and the button
+    /// minimum. `None` for an error: it stays until closed.
+    pub fn duration(&self) -> Option<f64> {
+        let base = self.kind.duration()?;
+        let words = self.title.split_whitespace().count()
+            + self.detail.as_deref().map_or(0, |d| d.split_whitespace().count());
+        let mut seconds = base.max(words as f64 * PER_WORD);
         if self.undo.is_some() || self.action.is_some() {
-            base.max(ACTION_MIN)
-        } else {
-            base
+            seconds = seconds.max(ACTION_MIN);
+        }
+        Some(seconds)
+    }
+
+    /// The same title: one action, one toast (issue #4), however the two callers worded the
+    /// rest.
+    fn same(&self, other: &Notice<C>) -> bool {
+        self.title.trim().eq_ignore_ascii_case(other.title.trim())
+    }
+
+    /// Fold a repeat into this toast: the louder kind, the newer detail and buttons, keeping
+    /// any the repeat does not bring.
+    fn absorb(&mut self, newer: Notice<C>) {
+        if newer.kind.rank() >= self.kind.rank() {
+            self.kind = newer.kind;
+        }
+        if newer.detail.is_some() {
+            self.detail = newer.detail;
+        }
+        if newer.action.is_some() {
+            self.action = newer.action;
+        }
+        if newer.undo.is_some() {
+            self.undo = newer.undo;
         }
     }
 
-    /// The same words of the same kind: shown once, with its timer restarted.
-    fn same(&self, other: &Notice<C>) -> bool {
-        self.kind == other.kind && self.title == other.title && self.detail == other.detail
+    /// The detail as a toast draws it: at most [`DETAIL_MAX`] characters.
+    pub fn short_detail(&self) -> Option<String> {
+        let detail = self.detail.as_deref()?;
+        if detail.chars().count() <= DETAIL_MAX {
+            return Some(detail.to_string());
+        }
+        let cut: String = detail.chars().take(DETAIL_MAX).collect();
+        let cut = cut.rsplit_once(' ').map_or(cut.as_str(), |(head, _)| head);
+        Some(format!("{}\u{2026}", cut.trim_end_matches([',', ';', ':', ' '])))
+    }
+}
+
+/// One format for every title: no trailing period (an ellipsis stays), no doubled spaces, and
+/// a first word in plain lowercase letters gets its capital.
+pub fn tidy_title(title: &str) -> String {
+    let mut out = title.split_whitespace().collect::<Vec<_>>().join(" ");
+    if out.ends_with('.') && !out.ends_with("..") {
+        out.pop();
+    }
+    let first = out.split(' ').next().unwrap_or_default();
+    if !first.is_empty() && first.chars().all(|c| c.is_ascii_lowercase()) {
+        let mut chars = out.chars();
+        if let Some(c) = chars.next() {
+            out = c.to_ascii_uppercase().to_string() + chars.as_str();
+        }
+    }
+    out
+}
+
+/// A detail that opens with the title and a separator: the part after it.
+fn repeat_prefix<'a>(detail: &'a str, title: &str) -> Option<&'a str> {
+    let title = title.trim_end_matches('.');
+    let head = detail.get(..title.len())?;
+    if !head.eq_ignore_ascii_case(title) {
+        return None;
+    }
+    let rest = detail[title.len()..].trim_start_matches(['.', ':', ',', ' ']);
+    (!rest.is_empty() && rest.len() < detail.len()).then_some(rest)
+}
+
+fn words(text: &str) -> Vec<String> {
+    text.split(|c: char| !c.is_alphanumeric())
+        .filter(|word| word.len() >= 3)
+        .map(str::to_lowercase)
+        .collect()
+}
+
+/// Two lines about the same thing: at least half the shorter one's words are shared.
+fn similar(a: &str, b: &str) -> bool {
+    let (a, b) = (words(a), words(b));
+    let shorter = a.len().min(b.len());
+    let shared = a.iter().filter(|word| b.contains(word)).count();
+    shorter > 0 && shared * 2 >= shorter
+}
+
+/// The pushed detail already carries the line (a raw error under a friendlier title).
+fn contains_words(detail: &str, line: &str) -> bool {
+    let (detail, line) = (words(detail), words(line));
+    !line.is_empty() && line.iter().all(|word| detail.contains(word))
+}
+
+fn wake(due: f64) -> Effects<Effect> {
+    if due.is_finite() {
+        Effects::one(Effect::WakeAt(due))
+    } else {
+        Effects::none()
     }
 }
 
@@ -194,6 +312,11 @@ pub struct Notices<C> {
     pub now: f64,
     /// Wakes asked for by pushes outside a `Tx`; the next poll hands them over.
     pending: Vec<f64>,
+    /// The toasts pushed since the last poll: kind, title and detail. A status line written in
+    /// the same frame that says the same thing only shows when it is louder (issue #4).
+    pushed: Vec<(Kind, String, String)>,
+    /// The Send feedback dialog (`feedback.rs`, issue #5).
+    pub feedback: feedback::Feedback,
 }
 
 impl<C> Default for Notices<C> {
@@ -204,6 +327,8 @@ impl<C> Default for Notices<C> {
             next_id: 1,
             now: 0.0,
             pending: Vec::new(),
+            pushed: Vec::new(),
+            feedback: feedback::Feedback::default(),
         }
     }
 }
@@ -243,10 +368,13 @@ impl<C> Notices<C> {
     }
 
     fn show(&mut self, index: usize, now: f64) -> Effects<Effect> {
-        let due = now + self.toasts[index].notice.duration();
+        let due = self.toasts[index]
+            .notice
+            .duration()
+            .map_or(f64::INFINITY, |seconds| now + seconds);
         let attempt = self.seq.next();
         self.toasts[index].phase = Phase::Shown { attempt, due };
-        Effects::one(Effect::WakeAt(due))
+        wake(due)
     }
 
     fn leave(&mut self, index: usize, now: f64) -> Effects<Effect> {
@@ -263,12 +391,12 @@ impl<C> Notices<C> {
                 if let Some(index) = self.toasts.iter().position(|toast| {
                     !matches!(toast.phase, Phase::Leaving { .. }) && toast.notice.same(&notice)
                 }) {
-                    // Dedup: keep one toast, take the newest buttons, restart its timer.
-                    self.toasts[index].notice = notice;
+                    // Dedup: keep one toast, take the newest words and buttons, restart its timer.
+                    self.toasts[index].notice.absorb(notice);
                     return match self.toasts[index].phase {
                         Phase::Shown { .. } => self.show(index, now),
                         Phase::Held { .. } => {
-                            let left = self.toasts[index].notice.duration();
+                            let left = self.toasts[index].notice.duration().unwrap_or(f64::INFINITY);
                             self.toasts[index].phase = Phase::Held { left };
                             Effects::none()
                         }
@@ -340,7 +468,7 @@ impl<C> Notices<C> {
                         let due = now + left.max(RESUME_MIN);
                         let attempt = self.seq.next();
                         self.toasts[index].phase = Phase::Shown { attempt, due };
-                        Effects::one(Effect::WakeAt(due))
+                        wake(due)
                     }
                     _ => Effects::none(),
                 }
@@ -401,6 +529,48 @@ impl<C> Notices<C> {
 
     pub fn take_pending(&mut self) -> Vec<f64> {
         std::mem::take(&mut self.pending)
+    }
+
+    /// Put an Undo on the toast pushed this frame, when it has none. False when nothing was
+    /// pushed this frame.
+    pub fn undo_on_last_push(&mut self, f: impl FnOnce(&mut C) + 'static) -> bool {
+        if self.pushed.is_empty() {
+            return false;
+        }
+        let Some(index) = self
+            .toasts
+            .iter()
+            .rposition(|toast| !matches!(toast.phase, Phase::Leaving { .. }))
+        else {
+            return false;
+        };
+        if self.toasts[index].notice.undo.is_none() {
+            self.toasts[index].notice.undo = Some(Box::new(f));
+            // The Undo needs its time on screen.
+            if matches!(self.toasts[index].phase, Phase::Shown { .. }) {
+                let now = self.now;
+                let effects = self.show(index, now);
+                self.defer(effects);
+            }
+        }
+        true
+    }
+
+    /// A handler or worker result pushed a toast this frame.
+    pub fn note_push(&mut self, notice: &Notice<C>) {
+        self.pushed.push((
+            notice.kind,
+            notice.title.clone(),
+            notice.detail.clone().unwrap_or_default(),
+        ));
+    }
+
+    /// A status line from the same frame as a push that says the same thing is the same
+    /// action told twice; it only shows when it is louder than that push.
+    pub fn status_is_news(&self, line: &str, kind: Kind) -> bool {
+        !self.pushed.iter().any(|(pushed, title, detail)| {
+            kind.rank() <= pushed.rank() && (similar(line, title) || contains_words(detail, line))
+        })
     }
 }
 
@@ -510,6 +680,7 @@ fn split_sentence(line: &str) -> (String, Option<String>) {
 /// for.
 pub fn push(st: &mut State, notice: Notice<State>) {
     let now = st.notices.now;
+    st.notices.note_push(&notice);
     let effects = st.notices.step(Event::Push { notice, now });
     st.notices.defer(effects);
     kick(st);
@@ -543,14 +714,18 @@ fn carry(tx: &mut Tx, effects: Effects<Effect>) {
 pub fn poll(st: &mut State, now: f64, tx: &mut Tx) -> bool {
     st.notices.now = now;
     let before = st.notices.drawn();
+    // Installed's Undo first: it turns this frame's status line into its toast.
+    crate::screens::installed::offer_undo(st);
     let line = std::mem::take(&mut st.status);
     if !line.trim().is_empty() {
-        let effects = st.notices.step(Event::Push {
-            notice: from_status(&line),
-            now,
-        });
-        carry(tx, effects);
+        let notice = from_status(&line);
+        if st.notices.status_is_news(&line, notice.kind) {
+            let effects = st.notices.step(Event::Push { notice, now });
+            carry(tx, effects);
+        }
     }
+    st.notices.pushed.clear();
+    st.notices.feedback.poll();
     let effects = st.notices.tick(now);
     carry(tx, effects);
     for due in st.notices.take_pending() {
@@ -599,22 +774,33 @@ fn hover(st: &mut State, id: Id, inside: bool, tx: &mut Tx) {
 
 pub const TOAST_W: f32 = 400.0;
 
-/// The stack, pinned to the window's bottom-right corner. None when nothing is shown.
+/// The stack, pinned to the window's bottom-right corner, and the Send feedback dialog over
+/// everything when it is open. None when neither is shown.
 pub fn region(s: &State, u: &Ui) -> Option<El> {
     let toasts: Vec<El> = s.notices.visible().map(|toast| card(toast, u)).collect();
-    if toasts.is_empty() {
-        return None;
-    }
-    Some(
+    let stack = (!toasts.is_empty()).then(|| {
         col()
             .key("toasts")
             .role("region")
-            .label("Notifications")
+            .label(tr("Notifications"))
             .pin(None, None, Some(PAGE_X), Some(24.0))
             .w(TOAST_W)
             .gap(8.0)
-            .children(toasts),
-    )
+            .children(toasts)
+    });
+    let Some(dialog) = feedback::dialog(s, u) else {
+        return stack;
+    };
+    let layer = el()
+        .key("feedback-layer")
+        .absolute(0.0, 0.0)
+        .w_full()
+        .h_full()
+        .child(u.modal_layer("feedback-modal", dialog));
+    Some(match stack {
+        Some(stack) => layer.child(stack),
+        None => layer,
+    })
 }
 
 fn kind_icon(kind: Kind, u: &Ui) -> El {
@@ -643,14 +829,8 @@ fn card(toast: &Toast<State>, u: &Ui) -> El {
                 .wrap()
                 .w_full(),
         );
-    if let Some(detail) = &notice.detail {
-        words = words.child(
-            text(detail.clone())
-                .font(BODY)
-                .color(u.muted)
-                .wrap()
-                .w_full(),
-        );
+    if let Some(detail) = notice.short_detail() {
+        words = words.child(text(detail).font(BODY).color(u.muted).wrap().w_full());
     }
     let mut body = row()
         .w_full()
@@ -658,19 +838,28 @@ fn card(toast: &Toast<State>, u: &Ui) -> El {
         .items_start()
         .child(el().size(16.0, 20.0).center().child(kind_icon(notice.kind, u)))
         .child(words);
+    // One format: at most one action (Undo, Show, Retry) beside the words. An error puts its
+    // action and Send feedback on a row of their own under the words, so long titles keep room.
+    let error = notice.kind == Kind::Error;
+    let mut buttons: Vec<El> = Vec::new();
     if let Some(label) = notice.action_label() {
-        body = body.child(
+        buttons.push(
             text_button(u, &format!("toast-{id}-action"), label)
                 .cursor(rune::Cursor::Pointer)
                 .on_press_tx(move |st: &mut State, tx: &mut Tx| run_action(st, id, tx)),
         );
     }
     if notice.has_undo() {
-        body = body.child(
-            text_button(u, &format!("toast-{id}-undo"), "Undo")
+        buttons.push(
+            text_button(u, &format!("toast-{id}-undo"), tr("Undo"))
                 .cursor(rune::Cursor::Pointer)
                 .on_press_tx(move |st: &mut State, tx: &mut Tx| run_undo(st, id, tx)),
         );
+    }
+    if !error {
+        for button in buttons.drain(..) {
+            body = body.child(button);
+        }
     }
     body = body.child(
         el().key(format!("toast-{id}-close"))
@@ -682,7 +871,7 @@ fn card(toast: &Toast<State>, u: &Ui) -> El {
             .press(u.over.alpha(0.08))
             .focusable(true)
             .role("button")
-            .label("Dismiss")
+            .label(tr("Dismiss"))
             .cursor(rune::Cursor::Pointer)
             .on_press_tx(move |st: &mut State, tx: &mut Tx| dismiss(st, id, tx))
             .child(rune::icon(&icons::X, 14.0).color(u.faint).a11y_hidden()),
@@ -724,6 +913,24 @@ fn card(toast: &Toast<State>, u: &Ui) -> El {
         )
         .motion(rune::tok::motion::SNAPPY)
         .child(body);
+    if error {
+        let (title, detail) = (notice.title.clone(), notice.detail.clone().unwrap_or_default());
+        let feedback = feedback::button_look(u, &format!("toast-{id}-feedback"))
+            .on_press_tx(move |st: &mut State, tx: &mut Tx| {
+                dismiss(st, id, tx);
+                feedback::open(st, &title, &detail);
+            });
+        card = card.child(
+            row()
+                .w_full()
+                .pl(18.0)
+                .pt(6.0)
+                .gap(4.0)
+                .center_y()
+                .children(buttons)
+                .child(feedback),
+        );
+    }
     if let Some(detail) = &notice.detail {
         card = card.description(detail.clone());
     }
@@ -811,10 +1018,10 @@ mod tests {
     }
 
     #[test]
-    fn errors_stay_longer_and_buttons_get_time() {
+    fn errors_stay_until_closed_and_buttons_get_time() {
         let mut n = N::default();
-        assert_eq!(push(&mut n, Notice::error("Broke"), 0.0), vec![10.0]);
-        assert_eq!(push(&mut n, Notice::warning("Careful"), 0.0), vec![6.0]);
+        assert!(push(&mut n, Notice::error("Broke"), 0.0).is_empty());
+        assert_eq!(push(&mut n, Notice::warning("Careful"), 0.0), vec![8.0]);
         assert_eq!(
             push(&mut n, Notice::success("Done").undo(|log: &mut Log| log.push("undo")), 0.0),
             vec![ACTION_MIN]
@@ -857,15 +1064,91 @@ mod tests {
     }
 
     #[test]
-    fn identical_messages_are_shown_once() {
+    fn one_title_is_one_toast_and_the_louder_kind_wins() {
         let mut n = N::default();
         push(&mut n, Notice::warning("Disk full").detail("Free some space"), 0.0);
-        push(&mut n, Notice::warning("Disk full").detail("Free some space"), 1.0);
+        push(&mut n, Notice::warning("Disk full.").detail("Free some space"), 1.0);
         assert_eq!(n.len(), 1);
-        // A different kind or detail is a different message.
-        push(&mut n, Notice::error("Disk full").detail("Free some space"), 1.0);
-        push(&mut n, Notice::warning("Disk full"), 1.0);
-        assert_eq!(n.len(), 3);
+        // Two callers word it differently: still one toast, the louder kind, the newer detail.
+        push(&mut n, Notice::error("disk full").detail("No space left on device"), 1.0);
+        push(&mut n, Notice::info("Disk full"), 1.0);
+        assert_eq!(n.len(), 1);
+        let toast = n.get(1).unwrap();
+        assert_eq!(toast.notice.kind, Kind::Error);
+        assert_eq!(toast.notice.detail.as_deref(), Some("No space left on device"));
+        // Now an error, it no longer leaves by itself.
+        assert!(n.tick(1_000.0).is_empty());
+        assert!(n.get(1).unwrap().visible());
+    }
+
+    #[test]
+    fn errors_are_sticky_through_hover_and_close_on_dismiss() {
+        let mut n = N::default();
+        push(&mut n, Notice::error("Could not write"), 0.0);
+        assert!(wakes(n.tick(3_600.0)).is_empty());
+        n.step(Event::Hover { id: 1, inside: true, now: 10.0 });
+        assert!(wakes(n.step(Event::Hover { id: 1, inside: false, now: 20.0 })).is_empty());
+        assert!(wakes(n.tick(7_200.0)).is_empty());
+        assert!(n.get(1).unwrap().visible());
+        let leave = wakes(n.step(Event::Dismiss { id: 1, now: 30.0 }));
+        assert_eq!(leave, vec![30.0 + LEAVE]);
+        n.tick(30.0 + LEAVE);
+        assert!(n.is_empty());
+    }
+
+    #[test]
+    fn long_words_get_reading_time() {
+        let words = "word ".repeat(60);
+        // 60 words at 200 a minute: 18 s, above the info and warning minimums.
+        let info: Notice<Log> = Notice::info("Read me").detail(words.clone());
+        assert!((info.duration().unwrap() - 62.0 * PER_WORD).abs() < 1e-9);
+        let warning: Notice<Log> = Notice::warning("Short");
+        assert_eq!(warning.duration(), Some(8.0));
+        let short: Notice<Log> = Notice::info("Short");
+        assert_eq!(short.duration(), Some(4.0));
+    }
+
+    #[test]
+    fn titles_share_one_format_and_details_do_not_repeat_them() {
+        assert_eq!(tidy_title("Saved."), "Saved");
+        assert_eq!(tidy_title("Loading..."), "Loading...");
+        assert_eq!(tidy_title("turned  off slot 03."), "Turned off slot 03");
+        assert_eq!(tidy_title("pak05_dir.vpk is missing"), "pak05_dir.vpk is missing");
+        let same: Notice<Log> = Notice::error("Install failed").detail("Install failed.");
+        assert!(same.detail.is_none());
+        let prefixed: Notice<Log> = Notice::error("Install failed").detail("Install failed: disk full");
+        assert_eq!(prefixed.detail.as_deref(), Some("disk full"));
+        let long: Notice<Log> = Notice::error("x").detail("word ".repeat(100));
+        let shown = long.short_detail().unwrap();
+        assert!(shown.chars().count() <= DETAIL_MAX + 1 && shown.ends_with('\u{2026}'));
+    }
+
+    #[test]
+    fn a_status_line_in_the_same_frame_as_a_push_is_dropped_unless_louder() {
+        let mut n = N::default();
+        let line = "Installed Ashfall. Slot 03. It loads next start.";
+        assert!(n.status_is_news(line, Kind::Success));
+        n.note_push(&Notice::success("Installed Ashfall").detail("Slot 03"));
+        assert!(!n.status_is_news(line, Kind::Success));
+        assert!(!n.status_is_news(line, Kind::Info));
+        // Louder, or about something else: still news.
+        assert!(n.status_is_news(line, Kind::Warning));
+        assert!(n.status_is_news("Starting Deadlock with 4 mods on.", Kind::Info));
+        // A raw error under a friendlier title.
+        n.note_push(&Notice::error("Ashfall was not installed").detail("Download failed: timed out"));
+        assert!(!n.status_is_news("Download failed: timed out", Kind::Error));
+    }
+
+    #[test]
+    fn a_late_undo_joins_the_toast_pushed_this_frame() {
+        let mut n = N::default();
+        // Nothing pushed this frame: no toast to join.
+        assert!(!n.undo_on_last_push(|log: &mut Log| log.push("undo")));
+        n.note_push(&Notice::success("Moved 1 mod to the trash"));
+        n.step(Event::Push { notice: Notice::success("Moved 1 mod to the trash"), now: 0.0 });
+        assert!(n.undo_on_last_push(|log: &mut Log| log.push("undo")));
+        assert_eq!(n.len(), 1);
+        assert!(n.get(1).unwrap().notice.has_undo());
     }
 
     #[test]
@@ -895,7 +1178,7 @@ mod tests {
         assert_eq!(phase(&n, 4), Phase::Queued);
         let wake = wakes(n.tick(1.0 + LEAVE));
         assert_eq!(n.drawn(), vec![1, 3, 4]);
-        assert_eq!(wake, vec![1.0 + LEAVE + Kind::Info.duration()]);
+        assert_eq!(wake, vec![1.0 + LEAVE + Kind::Info.duration().unwrap()]);
         assert_eq!(phase(&n, 5), Phase::Queued);
     }
 
@@ -1022,12 +1305,12 @@ mod tests {
         );
         assert_eq!(
             notice.title,
-            "Game found, but gameinfo.gi does not list citadel/addons."
+            "Game found, but gameinfo.gi does not list citadel/addons"
         );
         assert_eq!(notice.detail.as_deref(), Some("The game will ignore every addon."));
         // Short lines and lines without a sentence break stay whole.
         let short: Notice<()> = from_status("Saved. Done.");
-        assert_eq!(short.title, "Saved. Done.");
+        assert_eq!(short.title, "Saved. Done");
         assert!(short.detail.is_none());
         let decimal: Notice<()> = from_status(
             "The scan took 1.5 s and read every addon slot in the folder without any problem at all",

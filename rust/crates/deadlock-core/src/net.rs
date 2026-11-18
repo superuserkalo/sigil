@@ -117,14 +117,37 @@ pub fn set_proxy(url: Option<String>) -> Result<(), String> {
     Ok(())
 }
 
-/// Ok for `http://` or `https://` with a host and a port. SOCKS would need ureq's socks
-/// feature; a user name and password go through [`set_proxy_auth`], never the address.
-pub fn validate_proxy(url: &str) -> Result<(), String> {
-    let lower = url.to_ascii_lowercase();
-    let rest = ["http://", "https://"]
+/// The proxy schemes Settings accepts, and the protocol each one maps to. `socks5h` resolves
+/// names on the proxy (Tor and most SSH tunnels need that); `socks5` resolves them locally, as
+/// Deadlock Mod Manager's SOCKS5 option does.
+const PROXY_SCHEMES: [(&str, ureq::ProxyProtocol); 4] = [
+    ("http://", ureq::ProxyProtocol::Http),
+    ("https://", ureq::ProxyProtocol::Https),
+    ("socks5://", ureq::ProxyProtocol::Socks5),
+    ("socks5h://", ureq::ProxyProtocol::Socks5h),
+];
+
+/// The protocol and `host:port` part of a proxy address, before any checks.
+fn split_proxy(lower: &str) -> Option<(ureq::ProxyProtocol, &str)> {
+    PROXY_SCHEMES
         .iter()
-        .find_map(|scheme| lower.strip_prefix(scheme))
-        .ok_or("Start the proxy with http:// or https://")?;
+        .find_map(|(scheme, protocol)| lower.strip_prefix(scheme).map(|rest| (*protocol, rest)))
+}
+
+/// True for a `socks5://` or `socks5h://` address.
+pub fn is_socks_proxy(url: &str) -> bool {
+    matches!(
+        split_proxy(&url.trim().to_ascii_lowercase()),
+        Some((ureq::ProxyProtocol::Socks5 | ureq::ProxyProtocol::Socks5h, _))
+    )
+}
+
+/// Ok for `http://`, `https://`, `socks5://` or `socks5h://` with a host and a port. A user
+/// name and password go through [`set_proxy_auth`], never the address.
+pub fn validate_proxy(url: &str) -> Result<(), String> {
+    let lower = url.trim().to_ascii_lowercase();
+    let (_, rest) = split_proxy(&lower)
+        .ok_or("Start the proxy with http://, https://, socks5:// or socks5h://")?;
     if rest.contains('@') {
         return Err("Put the user name and password under Proxy sign-in, not in the address".to_string());
     }
@@ -133,7 +156,7 @@ pub fn validate_proxy(url: &str) -> Result<(), String> {
     if host.is_empty() || port.parse::<u16>().is_err() {
         return Err("The proxy needs a host and a port".to_string());
     }
-    ureq::Proxy::new(url).map(|_| ()).map_err(|e| e.to_string())
+    ureq::Proxy::new(url.trim()).map(|_| ()).map_err(|e| e.to_string())
 }
 
 /// The proxy for download paths, applied on top of a builder. Without one the builder keeps
@@ -213,7 +236,7 @@ pub fn current_proxy() -> Option<ureq::Proxy> {
     build_proxy(&url, auth.as_ref(), &bypass).ok()
 }
 
-/// Build a proxy from an `http(s)://host:port` address, an optional sign-in and a bypass list.
+/// Build a proxy from an `http(s)://` or `socks5(h)://` `host:port` address, an optional sign-in and a bypass list.
 pub fn build_proxy(
     url: &str,
     auth: Option<&(String, String)>,
@@ -221,14 +244,7 @@ pub fn build_proxy(
 ) -> Result<ureq::Proxy, String> {
     validate_proxy(url)?;
     let lower = url.trim().to_ascii_lowercase();
-    let (protocol, rest) = if let Some(rest) = lower.strip_prefix("https://") {
-        (ureq::ProxyProtocol::Https, rest)
-    } else {
-        (
-            ureq::ProxyProtocol::Http,
-            lower.strip_prefix("http://").unwrap_or(&lower),
-        )
-    };
+    let (protocol, rest) = split_proxy(&lower).ok_or("Unknown proxy scheme")?;
     let host_port = rest.trim_end_matches('/');
     let (host, port) = host_port
         .rsplit_once(':')
@@ -308,7 +324,11 @@ mod tests {
         assert!(validate_proxy("http://127.0.0.1:7890").is_ok());
         assert!(validate_proxy("https://proxy.lan:8443/").is_ok());
         assert!(validate_proxy("http://user:pw@proxy.lan:1080").is_err());
-        assert!(validate_proxy("socks5://proxy.lan:1080").is_err());
+        assert!(validate_proxy("socks5://proxy.lan:1080").is_ok());
+        assert!(validate_proxy("SOCKS5H://127.0.0.1:9050").is_ok());
+        assert!(validate_proxy("socks4://proxy.lan:1080").is_err());
+        assert!(validate_proxy("socks5://user:pw@proxy.lan:1080").is_err());
+        assert!(validate_proxy("socks5://proxy.lan").is_err());
         assert!(validate_proxy("127.0.0.1:7890").is_err());
         assert!(validate_proxy("http://proxy.lan").is_err());
         assert!(validate_proxy("ftp://proxy.lan:21").is_err());
@@ -327,6 +347,94 @@ mod tests {
         assert!(proxy.is_no_proxy(&lan));
         assert!(!proxy.is_no_proxy(&banana));
         assert!(build_proxy("http://proxy.lan", None, &[]).is_err());
+    }
+
+    #[test]
+    fn socks5_addresses_build_socks_proxies() {
+        let auth = ("me".to_string(), "secret".to_string());
+        let proxy = build_proxy("socks5://127.0.0.1:1080", Some(&auth), &[]).unwrap();
+        assert_eq!(proxy.protocol(), ureq::ProxyProtocol::Socks5);
+        assert_eq!(proxy.port(), 1080);
+        assert_eq!(proxy.username(), Some("me"));
+        let remote = build_proxy("socks5h://tor.lan:9050/", None, &[]).unwrap();
+        assert_eq!(remote.protocol(), ureq::ProxyProtocol::Socks5h);
+        assert!(is_socks_proxy(" SOCKS5://a:1 "));
+        assert!(!is_socks_proxy("http://a:1"));
+    }
+
+    /// A one-shot SOCKS5 server (no auth, CONNECT only) that relays to the requested address.
+    fn socks5_server() -> (u16, std::sync::Arc<AtomicBool>) {
+        use std::io::{Read, Write};
+        let used = std::sync::Arc::new(AtomicBool::new(false));
+        let seen = used.clone();
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            let (mut client, _) = listener.accept().unwrap();
+            seen.store(true, Ordering::SeqCst);
+            let mut head = [0u8; 2];
+            client.read_exact(&mut head).unwrap();
+            let mut methods = vec![0u8; head[1] as usize];
+            client.read_exact(&mut methods).unwrap();
+            client.write_all(&[5, 0]).unwrap();
+            let mut request = [0u8; 4];
+            client.read_exact(&mut request).unwrap();
+            let host = match request[3] {
+                1 => {
+                    let mut ip = [0u8; 4];
+                    client.read_exact(&mut ip).unwrap();
+                    std::net::Ipv4Addr::from(ip).to_string()
+                }
+                3 => {
+                    let mut len = [0u8; 1];
+                    client.read_exact(&mut len).unwrap();
+                    let mut name = vec![0u8; len[0] as usize];
+                    client.read_exact(&mut name).unwrap();
+                    String::from_utf8(name).unwrap()
+                }
+                other => panic!("address type {other}"),
+            };
+            let mut port = [0u8; 2];
+            client.read_exact(&mut port).unwrap();
+            let target = format!("{host}:{}", u16::from_be_bytes(port));
+            let upstream = std::net::TcpStream::connect(target).unwrap();
+            client.write_all(&[5, 0, 0, 1, 127, 0, 0, 1, 0, 0]).unwrap();
+            let mut down = upstream.try_clone().unwrap();
+            let mut back = client.try_clone().unwrap();
+            let mut up = upstream;
+            std::thread::spawn(move || {
+                let _ = std::io::copy(&mut client, &mut up);
+            });
+            let _ = std::io::copy(&mut down, &mut back);
+        });
+        (port, used)
+    }
+
+    #[test]
+    fn requests_travel_through_a_socks5_proxy() {
+        use std::io::{Read, Write};
+        let web = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let web_port = web.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            let (mut stream, _) = web.accept().unwrap();
+            let mut buffer = [0u8; 1024];
+            let _ = stream.read(&mut buffer);
+            let _ = stream.write_all(
+                b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\nConnection: close\r\n\r\nhello",
+            );
+        });
+        let (socks, used) = socks5_server();
+        let proxy = build_proxy(&format!("socks5://127.0.0.1:{socks}"), None, &[]).unwrap();
+        let agent = builder().proxy(Some(proxy)).build().new_agent();
+        let body = agent
+            .get(&format!("http://127.0.0.1:{web_port}/"))
+            .call()
+            .unwrap()
+            .body_mut()
+            .read_to_string()
+            .unwrap();
+        assert_eq!(body, "hello");
+        assert!(used.load(Ordering::SeqCst), "the request went through the SOCKS5 server");
     }
 
     #[test]

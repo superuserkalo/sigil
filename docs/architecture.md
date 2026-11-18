@@ -305,6 +305,12 @@ Enforced in code:
      anonymous GET per installed GameBanana mod when Installed opens, at most every six hours
      (cached in `mod-updates.json` in the app data directory), or on "Check for updates". The
      request carries only the public mod id. An update downloads through the install pipeline.
+     The same request lists a candidate's files when Identify runs a CRC check on an unknown mod
+     (`mod_lookup::crc_detect`, wave 4), which then reads only the end of each candidate ZIP with
+     at most two `Range` GETs on the GameBanana file hosts (the install allowlist applies on every
+     redirect; at most 40 archives per run). Nothing is downloaded in full; the request carries
+     only public mod and file ids. The name search for an unknown mod is the Browse `Mod/Index`
+     name filter above.
    - `api.github.com` and `raw.githubusercontent.com`: Performance configs. Anonymous GETs of public
      files, no user data. `api.github.com` resolves the newest release of
      `Sqooky/OptimizationLock` (newest commit) and `dacooderr/OptiLock` (latest release tag) and
@@ -352,7 +358,9 @@ Enforced in code:
      Responses are cached under the app data directory (`cache/stats`).
    - `gamebanana.com/apiv11/Member/<id>/ProfilePage`: one anonymous GET when the user links a
      GameBanana account in Settings > Integrations, to read the public member name. The member
-     id is stored in `settings.json`.
+     id is stored in `settings.json`. The same path is read once when a mod's details open the
+     author's contacts (`library_facts::fetch_author_profile`): the author's member id from the
+     mod page, nothing about the user. Only https links on each platform's own host are shown.
    - `gamebanana.com/apiv11/RemoteInstall/<member id>/<token>/<manager alias>`: Remote Install
      (`deadlock_core::remote_install`). While a pairing exists and Sigil is open, one GET every
      five minutes, or on Check now, reads the member's queued mods; each read marks the returned
@@ -399,7 +407,8 @@ Enforced in code:
      calls (`rust/crates/agent-host`, `apps/agent-host`), subscription sign-in
      (`desktop/src/signin.rs`) and publish (`desktop/src/publish.rs`), which do not go through
      the core gate.
-   - An HTTP proxy from Settings > Network applies to GameBanana browsing and mod downloads
+   - An HTTP, HTTPS or SOCKS5 (`socks5://`, or `socks5h://` to resolve names on the proxy) proxy
+     from Settings > Network applies to GameBanana browsing and mod downloads
      (`net::with_proxy`). Without one, ureq honours `HTTPS_PROXY` from the environment.
    - `api.deadworks.net`: Servers. Anonymous GETs, no user data: `/api/steam/servers?deadworks=1`
      (Steam's server list for Deadlock, filtered to Deadworks servers) and `/api/servers` (the
@@ -438,6 +447,10 @@ Enforced in code:
    - Connection diagnostics and Test connection (Settings > Network, on a press only): HEAD
      requests to GameBanana, `files.gamebanana.com`, `api.deadlock-api.com`, `api.github.com`,
      `raw.githubusercontent.com` and `api.deadworks.net`, through the proxy when one is set.
+     The diagnostics list (`diagnostics::run`, wave 4, DMM's checks) sends one small GET each to
+     the GameBanana API, `files.gamebanana.com`, the Steam news feed on `api.steampowered.com`,
+     `api.deadlock-api.com` and `api.github.com`, and resolves those host names. It does not use
+     DMM's Cloudflare trace probe, which is not on this list.
    - `api.github.com/repos/superuserkalo/sigil/contributors`: one anonymous GET when About >
      Contributors opens.
    - The proxy sign-in (Settings > Network) is kept in the OS keychain (macOS `security`,

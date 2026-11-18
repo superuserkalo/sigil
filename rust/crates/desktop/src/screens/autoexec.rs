@@ -1580,6 +1580,10 @@ pub fn sync_launch_options(st: &mut State) {
     if simulated(st) {
         return;
     }
+    // Settings > Game > Vanilla launches without launch options (wave 4, DMM's Vanilla Mode).
+    if crate::screens::settings::misc_w4::vanilla_without_options(st) {
+        return;
+    }
     let root = st.game_root.clone();
     match launch_options::sync_at_launch(&crate::data::data_dir(), root.as_deref()) {
         Ok(LaunchSync::Written { .. }) => {

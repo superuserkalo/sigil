@@ -12,7 +12,8 @@ chrono.workspace = true
 regex.workspace = true
 crc32fast.workspace = true
 flate2.workspace = true
-ureq.workspace = true
+# SOCKS5 proxies (Settings > Network). ureq 3 speaks SOCKS itself; the feature adds no crate.
+ureq = { workspace = true, features = ["socks-proxy"] }
 # Install pipeline: sha256 for downloads and the ZIP reader. Both are already
 # in the workspace lock through `dah-rs`, so this adds no new crate.
 sha2 = "0.10"

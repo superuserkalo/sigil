@@ -786,10 +786,22 @@ pub fn network(s: &State, u: &Ui) -> El {
     let proxy_line = match (&s.prefs.proxy, proxy_valid) {
         (_, false) => deadlock_core::net::validate_proxy(&proxy_typed)
             .err()
+            .map(|e| tr(&e).to_string())
             .unwrap_or_default(),
         (Some(p), _) => fill(tr("Using {} for Browse and mod downloads."), &[p]),
         (None, _) => tr("Browse and mod downloads connect directly.").to_string(),
     };
+    // SOCKS5 (wave 4, DMM's third proxy kind): say where names resolve.
+    let proxy_line = match proxy_scheme(&proxy_typed) {
+        Some(ProxyScheme::Socks5) if proxy_valid => {
+            format!("{proxy_line} {}", tr("SOCKS5: names resolve on this PC."))
+        }
+        Some(ProxyScheme::Socks5h) if proxy_valid => {
+            format!("{proxy_line} {}", tr("SOCKS5h: names resolve on the proxy."))
+        }
+        _ => proxy_line,
+    };
+    let scheme = proxy_scheme(&proxy_typed).unwrap_or(ProxyScheme::Http);
     col()
         .w_full()
         .gap(LIST_GAP)
@@ -854,12 +866,24 @@ pub fn network(s: &State, u: &Ui) -> El {
             std::iter::once(stacked_row(
                 u,
                 "settings-proxy",
-                "HTTP proxy",
+                "Proxy server",
                 &proxy_line,
                 row()
                     .w_full()
                     .gap(8.0)
                     .center_y()
+                    .child(segmented(
+                        u,
+                        "settings-proxy-kind",
+                        &[
+                            (ProxyScheme::Http, "HTTP"),
+                            (ProxyScheme::Https, "HTTPS"),
+                            (ProxyScheme::Socks5, "SOCKS5"),
+                            (ProxyScheme::Socks5h, "SOCKS5h"),
+                        ],
+                        scheme,
+                        set_proxy_scheme,
+                    ))
                     .child(
                         field(
                             rune::text_input(&s.settings.proxy_edit, MONO)
@@ -895,6 +919,50 @@ pub fn network(s: &State, u: &Ui) -> El {
         ))
 }
 
+/// The proxy kinds Settings offers: DMM's HTTP, HTTPS and SOCKS5, plus SOCKS5 with names
+/// resolved on the proxy.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum ProxyScheme {
+    Http,
+    Https,
+    Socks5,
+    Socks5h,
+}
+
+impl ProxyScheme {
+    fn prefix(self) -> &'static str {
+        match self {
+            ProxyScheme::Http => "http://",
+            ProxyScheme::Https => "https://",
+            ProxyScheme::Socks5 => "socks5://",
+            ProxyScheme::Socks5h => "socks5h://",
+        }
+    }
+}
+
+pub(crate) fn proxy_scheme(address: &str) -> Option<ProxyScheme> {
+    let lower = address.trim().to_ascii_lowercase();
+    [ProxyScheme::Socks5h, ProxyScheme::Socks5, ProxyScheme::Https, ProxyScheme::Http]
+        .into_iter()
+        .find(|scheme| lower.starts_with(scheme.prefix()))
+}
+
+/// Swap the typed address's scheme, keeping the host and port; an empty field gets the
+/// scheme so the next keys type the host.
+pub(crate) fn with_scheme(address: &str, scheme: ProxyScheme) -> String {
+    let trimmed = address.trim();
+    let rest = match trimmed.find("://") {
+        Some(at) => &trimmed[at + 3..],
+        None => trimmed,
+    };
+    format!("{}{rest}", scheme.prefix())
+}
+
+fn set_proxy_scheme(st: &mut State, scheme: ProxyScheme) {
+    let next = with_scheme(&st.settings.proxy_edit.text, scheme);
+    st.settings.proxy_edit = TextEdit::new(next);
+}
+
 fn save_proxy(st: &mut State) {
     let typed = st.settings.proxy_edit.text.trim().to_string();
     let value = (!typed.is_empty()).then_some(typed);
@@ -907,7 +975,10 @@ fn save_proxy(st: &mut State) {
                 false,
             );
         }
-        Err(error) => say(st, error, true),
+        Err(error) => {
+            let error = tr(&error).to_string();
+            say(st, error, true)
+        }
     }
 }
 
@@ -1004,7 +1075,11 @@ pub fn logs(s: &State, u: &Ui) -> El {
                         ),
                     ]),
                 ),
-            ],
+            ]
+            .into_iter()
+            // Wave 4: Log source, Copy logs and Ask Sigil for help (DMM).
+            .chain(super::logs_w4::rows(s, u))
+            .collect(),
         ))
         .child(section(
             u,
@@ -1045,7 +1120,10 @@ pub fn logs(s: &State, u: &Ui) -> El {
         .child(section(
             u,
             "Report a problem",
-            super::support::report_rows(s, u),
+            super::support::report_rows(s, u)
+                .into_iter()
+                .chain(std::iter::once(super::logs_w4::full_log_row(u)))
+                .collect(),
         ))
 }
 
@@ -1358,6 +1436,18 @@ pub fn background(st: &mut State, tx: &mut Tx) -> bool {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_proxy_kind_swaps_only_the_scheme() {
+        use super::{ProxyScheme, proxy_scheme, with_scheme};
+        assert_eq!(with_scheme("http://127.0.0.1:7890", ProxyScheme::Socks5), "socks5://127.0.0.1:7890");
+        assert_eq!(with_scheme("", ProxyScheme::Socks5h), "socks5h://");
+        assert_eq!(with_scheme("10.0.0.2:1080", ProxyScheme::Https), "https://10.0.0.2:1080");
+        assert_eq!(proxy_scheme("SOCKS5H://h:1"), Some(ProxyScheme::Socks5h));
+        assert_eq!(proxy_scheme("socks5://h:1"), Some(ProxyScheme::Socks5));
+        assert_eq!(proxy_scheme("h:1"), None);
+        assert!(deadlock_core::net::validate_proxy(&with_scheme("h:1080", ProxyScheme::Socks5)).is_ok());
+    }
+
     use super::*;
 
     #[test]

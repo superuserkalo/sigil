@@ -16,6 +16,10 @@ pub(crate) fn files_section(s: &State, u: &Ui, d: &Details, profile: &ModProfile
                 .color(u.muted),
         );
     }
+    // Wave 4: the slots this mod is installed in, each with Delete (Grimoire).
+    if let Some(copies) = super::super::w4::installed_copies(s, u, d) {
+        c = c.child(copies);
+    }
     let only = profile.files.len() == 1;
     for file in &profile.files {
         c = c.child(file_card(s, u, d, file, only));
@@ -204,7 +208,9 @@ pub(crate) fn artist_card(s: &State, u: &Ui, member: &ModMember, fallback: &str)
                 .gap(2.0)
                 .child(text("Creator").font(SMALL).color(u.faint))
                 .child(who)
-                .child(donation_row(u, member)),
+                .child(donation_row(u, member))
+                // Wave 4: the creator's own links (both apps read `_aContactInfo`).
+                .children(super::super::w4::author_links(s, u, member.id)),
         )
         .child(
             row()

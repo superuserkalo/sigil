@@ -12,7 +12,7 @@
 //! through Installed's `reorder`, the same write the drag and the card menu's moves make, with
 //! the same Undo. The dialog itself is the confirm, so no second one opens.
 
-use rune::{Color, El, Key, KeyEvent, ScrollSpec, Tx, col, el, icon, row, spacer, text};
+use rune::{Color, El, Key, KeyEvent, ScrollSpec, TextEdit, Tx, col, el, icon, row, spacer, text};
 
 use crate::app::State;
 use crate::screens::settings::i18n::{fill, tr};
@@ -21,7 +21,7 @@ use crate::ui::{ActionKind, BODY, BODY_MED, H1, MICRO, SMALL, Ui};
 use super::display_name;
 
 /// The open dialog.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Default, PartialEq)]
 pub struct OrderDialog {
     /// The enabled slots in load order when the dialog opened.
     pub start: Vec<u16>,
@@ -31,6 +31,13 @@ pub struct OrderDialog {
     pub picked: Option<u16>,
     /// The picked row is held: arrows move it instead of picking another.
     pub held: bool,
+    /// Deadlock Mod Manager's search: shows the rows whose name or author matches. Moves still
+    /// act on the whole order.
+    pub query: TextEdit,
+    /// Grimoire's position chip: the row whose place is being typed, and the typed number.
+    pub typing: Option<(u16, TextEdit)>,
+    /// Why the typed place was refused.
+    pub typed_error: Option<String>,
 }
 
 /// One move of the picked row.
@@ -74,6 +81,26 @@ pub fn changes(start: &[u16], order: &[u16]) -> usize {
     start.iter().zip(order).filter(|(a, b)| a != b).count()
 }
 
+/// The order after `slot` is put at the typed place (1 loads first). An error line when the
+/// number is not a place in the list.
+pub fn placed(order: &[u16], slot: u16, typed: &str) -> Result<Vec<u16>, String> {
+    let max = order.len();
+    match typed.trim().trim_start_matches('#').parse::<usize>() {
+        Ok(n) if (1..=max).contains(&n) => Ok(deadlock_core::load_order::move_to_index(order, slot, n - 1)),
+        _ => Err(fill(tr("Type a place from 1 to {}."), &[&max.to_string()])),
+    }
+}
+
+/// The rows a search shows: every row when it is empty, else the ones whose name or author
+/// holds it.
+pub fn visible(order: &[u16], query: &str, words: impl Fn(u16) -> String) -> Vec<u16> {
+    let query = query.trim().to_lowercase();
+    if query.is_empty() {
+        return order.to_vec();
+    }
+    order.iter().copied().filter(|slot| words(*slot).to_lowercase().contains(&query)).collect()
+}
+
 /// The row `delta` rows from the picked one, clamped to the list. The first row when none is
 /// picked.
 pub fn neighbour(order: &[u16], picked: Option<u16>, delta: isize) -> Option<u16> {
@@ -93,7 +120,44 @@ pub fn neighbour(order: &[u16], picked: Option<u16>, delta: isize) -> Option<u16
 pub fn open(st: &mut State) {
     st.installed.menu = None;
     let start = super::group_slots(st, true);
-    st.installed.order = Some(OrderDialog { order: start.clone(), picked: start.first().copied(), start, held: false });
+    st.installed.order = Some(OrderDialog {
+        order: start.clone(),
+        picked: start.first().copied(),
+        start,
+        ..OrderDialog::default()
+    });
+}
+
+/// Name and author of a slot, what the search reads.
+fn words(s: &State, slot: u16) -> String {
+    let Some(addon) = s.addons.addons.iter().find(|a| a.slot == slot) else {
+        return String::new();
+    };
+    let author = super::meta_for(s, addon).and_then(|m| m.author.clone()).unwrap_or_default();
+    format!("{} {author}", display_name(s, addon))
+}
+
+fn start_typing(st: &mut State, slot: u16) {
+    let Some(dialog) = st.installed.order.as_mut() else { return };
+    let at = dialog.order.iter().position(|s| *s == slot).map_or(1, |i| i + 1);
+    dialog.picked = Some(slot);
+    dialog.held = false;
+    dialog.typed_error = None;
+    dialog.typing = Some((slot, TextEdit::new(at.to_string())));
+}
+
+fn commit_typing(st: &mut State, tx: &mut Tx) {
+    let Some(dialog) = st.installed.order.as_mut() else { return };
+    let Some((slot, edit)) = dialog.typing.clone() else { return };
+    match placed(&dialog.order, slot, &edit.text) {
+        Ok(order) => {
+            dialog.order = order;
+            dialog.typing = None;
+            dialog.typed_error = None;
+            tx.scroll_into_view(row_key(slot));
+        }
+        Err(error) => dialog.typed_error = Some(error),
+    }
 }
 
 fn close(st: &mut State) {
@@ -114,8 +178,12 @@ fn step(st: &mut State, step: Move, tx: &mut Tx) {
 }
 
 fn pick(st: &mut State, delta: isize, tx: &mut Tx) {
+    let shown = match st.installed.order.as_ref() {
+        Some(dialog) => visible(&dialog.order, &dialog.query.text, |slot| words(st, slot)),
+        None => return,
+    };
     let Some(dialog) = st.installed.order.as_mut() else { return };
-    dialog.picked = neighbour(&dialog.order, dialog.picked, delta);
+    dialog.picked = neighbour(&shown, dialog.picked, delta);
     if let Some(slot) = dialog.picked {
         tx.scroll_into_view(row_key(slot));
     }
@@ -193,16 +261,61 @@ pub fn dialog(s: &State, u: &Ui) -> Option<El> {
         .label(tr("Mods in load order"))
         .on_key(on_key);
     // The slots stay the ones the mods have now; Apply hands them out in the new order.
+    let shown = visible(&dialog.order, &dialog.query.text, |slot| words(s, slot));
     for (index, slot) in dialog.order.iter().enumerate() {
+        if !shown.contains(slot) {
+            continue;
+        }
         let new_slot = dialog.start.get(index).copied().unwrap_or(*slot);
         list = list.child(order_row(s, u, dialog, index, *slot, new_slot));
     }
-    let hint = if dialog.held {
+    if shown.is_empty() {
+        list = list.child(
+            el().w_full().py(24.0).center().child(text(tr("No mods match the search.")).font(BODY).color(u.muted)),
+        );
+    }
+    let searching = !dialog.query.text.trim().is_empty();
+    let search = row()
+        .w_full()
+        .gap(10.0)
+        .center_y()
+        .child(
+            u.search_shell(
+                rune::text_input(&dialog.query, BODY)
+                    .key("order-search")
+                    .single_line()
+                    .label(tr("Search mods or authors"))
+                    .grow(1.0)
+                    .min_w(0.0)
+                    .color(u.ink)
+                    .placeholder(tr("Search mods or authors"), u.faint)
+                    .caret(u.accent, u.accent.alpha(0.20))
+                    .on_edit(rune::edit_access(|st: &mut State| {
+                        &mut st.installed.order.get_or_insert_with(OrderDialog::default).query
+                    })),
+            )
+            .grow(1.0),
+        )
+        .child(
+            text(if searching {
+                fill(tr("{} of {}"), &[&shown.len().to_string(), &dialog.order.len().to_string()])
+            } else {
+                fill(tr("{} mods"), &[&dialog.order.len().to_string()])
+            })
+            .font(SMALL)
+            .color(u.faint),
+        );
+    let hint = if searching {
+        tr("Moves act on the whole order. Clear the search to see every mod.")
+    } else if dialog.held {
         tr("Up and Down move it. Home and End send it to the top or bottom. Space puts it down.")
     } else {
         tr("Up and Down pick a mod. Space picks it up to move it, or hold Alt with an arrow.")
     };
     let mut foot = row().w_full().gap(8.0).center_y().pt(4.0);
+    if let Some(error) = &dialog.typed_error {
+        foot = foot.child(text(error.clone()).font(SMALL).color(u.rose));
+    }
     if changed > 0 {
         foot = foot
             .child(
@@ -266,6 +379,7 @@ pub fn dialog(s: &State, u: &Ui) -> Option<El> {
                     .color(u.muted)
                     .wrap(),
             )
+            .child(search)
             .child(list)
             .child(text(hint).font(SMALL).color(u.faint).wrap())
             .child(foot),
@@ -310,7 +424,8 @@ fn order_row(s: &State, u: &Ui, dialog: &OrderDialog, index: usize, slot: u16, n
                 dialog.picked = Some(slot);
             }
         })
-        .child(text(format!("{new_slot:02}")).font(MICRO).color(if picked { u.ink } else { u.faint }).w(20.0))
+        .child(text(deadlock_core::addons::slot_label(new_slot)).font(MICRO).color(if picked { u.ink } else { u.faint }).w(28.0))
+        .child(place_chip(dialog, u, index, slot))
         .child(
             text(name.clone())
                 .font(if picked { BODY_MED } else { BODY })
@@ -357,6 +472,64 @@ fn order_row(s: &State, u: &Ui, dialog: &OrderDialog, index: usize, slot: u16, n
         line = line.child(el().w(4.0));
     }
     line
+}
+
+/// Grimoire's click-to-type place: "#3", or a small field while it is typed. Enter moves the
+/// row there; Escape leaves it.
+fn place_chip(dialog: &OrderDialog, u: &Ui, index: usize, slot: u16) -> El {
+    if let Some((typing, edit)) = &dialog.typing
+        && *typing == slot
+    {
+        return rune::text_input(edit, BODY)
+            .key(format!("order-place-{slot:02}"))
+            .single_line()
+            .label(tr("Type a place"))
+            .w(48.0)
+            .px(6.0)
+            .py(2.0)
+            .radius(crate::ui::r(6.0))
+            .fill(u.well)
+            .border(1.0, u.accent.alpha(0.6))
+            .color(u.ink)
+            .caret(u.accent, u.accent.alpha(0.20))
+            .autofocus()
+            .on_edit(rune::edit_access(|st: &mut State| {
+                &mut st
+                    .installed
+                    .order
+                    .get_or_insert_with(OrderDialog::default)
+                    .typing
+                    .get_or_insert_with(|| (0, TextEdit::new("")))
+                    .1
+            }))
+            .on_submit(|st: &mut State, tx: &mut Tx| commit_typing(st, tx))
+            .on_key(|st: &mut State, ev: &KeyEvent, _tx: &mut Tx| {
+                if ev.key == Key::Escape {
+                    if let Some(dialog) = st.installed.order.as_mut() {
+                        dialog.typing = None;
+                        dialog.typed_error = None;
+                    }
+                    true
+                } else {
+                    false
+                }
+            });
+    }
+    let place = format!("#{}", index + 1);
+    row()
+        .key(format!("order-place-{slot:02}"))
+        .h(22.0)
+        .px(6.0)
+        .center()
+        .radius(crate::ui::r(5.0))
+        .border(1.0, u.hair_strong)
+        .hover(u.hover)
+        .focusable(true)
+        .role("button")
+        .label(fill(tr("Place {}. Press to type a new place."), &[&(index + 1).to_string()]))
+        .cursor(rune::Cursor::Pointer)
+        .on_press(move |st: &mut State| start_typing(st, slot))
+        .child(text(place).font(MICRO).color(u.muted).a11y_hidden())
 }
 
 /// Lucide arrow-up-down (ISC), drawn like `icons.rs`.
@@ -411,6 +584,30 @@ mod tests {
         assert_eq!(shift(&start, &order, 2), -1);
         assert_eq!(changes(&start, &order), 4);
         assert_eq!(changes(&start, &start), 0);
+    }
+
+    #[test]
+    fn a_typed_place_moves_the_row_and_a_bad_one_is_refused() {
+        let order = [2, 3, 5, 9];
+        assert_eq!(placed(&order, 9, "1"), Ok(vec![9, 2, 3, 5]));
+        assert_eq!(placed(&order, 2, "#3"), Ok(vec![3, 5, 2, 9]));
+        assert!(placed(&order, 2, "0").is_err());
+        assert!(placed(&order, 2, "5").is_err());
+        assert!(placed(&order, 2, "two").is_err());
+    }
+
+    #[test]
+    fn the_search_shows_matching_rows_in_order() {
+        let order = [2, 3, 5];
+        let words = |slot: u16| match slot {
+            2 => "Haze Neon by kalo".to_string(),
+            3 => "Abrams HUD by tselky".to_string(),
+            _ => "Neon crosshair".to_string(),
+        };
+        assert_eq!(visible(&order, "", words), vec![2, 3, 5]);
+        assert_eq!(visible(&order, "neon", words), vec![2, 5]);
+        assert_eq!(visible(&order, "TSELKY", words), vec![3]);
+        assert!(visible(&order, "zzz", words).is_empty());
     }
 
     #[test]

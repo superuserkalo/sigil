@@ -913,7 +913,7 @@ fn retryable(error: &ureq::Error) -> bool {
 
 /// One GET against the public API with the shared timeout and user agent.
 /// `what` names the request in an error, for example `page 3`.
-fn get_body(url: &str, what: &str) -> Result<String> {
+pub(crate) fn get_body(url: &str, what: &str) -> Result<String> {
     let agent = api_agent();
     let send = || {
         agent

@@ -30,6 +30,8 @@ pub struct Read {
     pub previews: Vec<Preview>,
     /// Deadlock's own cursor files, for its card.
     pub stock: Vec<String>,
+    /// The active pack's files Steam put back, or a newer copy of the pack (C7).
+    pub reapply: Option<cursors::Reapply>,
 }
 
 #[derive(Default)]
@@ -44,6 +46,8 @@ pub struct Cursors {
     pub work: Job<String>,
     /// The pack whose delete is being asked about.
     pub confirm_delete: Option<String>,
+    /// The reconcile banner (C7): the active pack needs applying again.
+    pub reapply: Option<cursors::Reapply>,
 }
 
 pub fn store() -> PathBuf {
@@ -143,10 +147,12 @@ pub fn start_read(st: &mut State) {
         for pack in &state.packs {
             previews.extend(previews_in(&cursors::pack_folder(&store, &pack.id), &pack.id, &preview_names(&pack.files)));
         }
-        let stock_folder = if state.active_id.is_some() {
-            Some(store.join("stock"))
-        } else {
-            game.as_deref().map(cursors::cursor_folder)
+        // C7: Deadlock's own set for the stock card, from the copy Sigil kept or the game folder
+        // (`stock_preview_folder` picks).
+        let stock_folder = match game.as_deref() {
+            Some(game) => cursors::stock_preview_folder(&store, game).ok(),
+            None if state.active_id.is_some() => Some(store.join("stock")),
+            None => None,
         };
         let mut stock = Vec::new();
         if let Some(folder) = stock_folder {
@@ -162,7 +168,8 @@ pub fn start_read(st: &mut State) {
             previews.extend(previews_in(&folder, "stock", &preview_names(&names)));
             stock = names;
         }
-        Ok(Read { state, previews, stock })
+        let reapply = game.as_deref().and_then(|game| cursors::needs_reapply(&store, game).ok().flatten());
+        Ok(Read { state, previews, stock, reapply })
     });
 }
 
@@ -184,6 +191,7 @@ pub fn poll(st: &mut State) -> bool {
                 }
                 st.locker.cursors.state = Some(read.state);
                 st.locker.cursors.stock = read.stock;
+                st.locker.cursors.reapply = read.reapply;
                 st.locker.cursors.error = None;
             }
             Err(error) => st.locker.cursors.error = Some(error),
@@ -260,10 +268,27 @@ fn pick_folder(_st: &mut State, tx: &mut Tx) {
 /// Import an archive, a folder, or the folder a cursor file sits in. The pack is named after
 /// the folder, as Grimoire names a loose-file pack.
 pub fn import_path(st: &mut State, path: PathBuf) {
+    // C7: an archive Sigil downloaded keeps its GameBanana mod and file ids, so importing a newer
+    // copy of the same pack replaces it in place (Grimoire's replace by file id).
+    let origin = st
+        .launch
+        .downloads
+        .snapshot()
+        .items
+        .iter()
+        .find(|item| item.path.as_deref() == Some(path.as_path()))
+        .map(|item| cursors::PackSource {
+            gamebanana_id: item.mod_id,
+            gamebanana_file_id: item.url.as_deref().and_then(crate::screens::settings::telemetry::file_id_of),
+        });
     run(st, move |store| {
         let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
         if ["zip", "7z", "rar"].contains(&ext.as_str()) {
-            let packs = cursors::import_archive(store, &path).map_err(|e| e.to_string())?;
+            let packs = match &origin {
+                Some(origin) => cursors::import_archive_from(store, &path, None, origin),
+                None => cursors::import_archive(store, &path),
+            }
+            .map_err(|e| e.to_string())?;
             return match packs.len() {
                 0 => Err(tr("That archive has no cursor images.").to_string()),
                 1 => Ok(fill(tr("Imported {}."), &[&packs[0].name])),
@@ -443,8 +468,37 @@ pub fn pane(s: &State, u: &Ui) -> El {
     if busy {
         body = body.child(text(tr("Working on the cursor folder")).font(SMALL).color(u.muted));
     }
+    if let Some(banner) = reapply_banner(s, u) {
+        body = body.child(banner);
+    }
+    // Cursor packs downloaded through Sigil: import keeps their GameBanana source, so a newer
+    // download replaces the older pack in place.
+    let snapshot = s.launch.downloads.snapshot();
+    for item in snapshot
+        .items
+        .iter()
+        .filter(|item| item.state == deadlock_core::download_queue::State::Done && item.name.to_lowercase().contains("cursor"))
+        .take(3)
+    {
+        let Some(path) = item.path.clone() else { continue };
+        body = body.child(
+            row()
+                .key(format!("locker-cursor-download-{}", item.id))
+                .w_full()
+                .gap(8.0)
+                .center_y()
+                .child(rune::icon(&icons::DOWNLOAD, 14.0).color(u.faint).a11y_hidden())
+                .child(text(fill(tr("Downloaded: {}"), &[&item.name])).font(SMALL).color(u.prose).grow(1.0).min_w(0.0).truncate())
+                .child(
+                    u.action(tr("Import"), ActionKind::Ghost)
+                        .disabled(busy)
+                        .cursor(rune::Cursor::Pointer)
+                        .on_press(move |st: &mut State| import_path(st, path.clone())),
+                ),
+        );
+    }
     if let Some(error) = &c.error {
-        body = body.child(text(error.clone()).font(SMALL).color(u.rose).wrap());
+        body = body.child(crate::notify::feedback::error_box(u, "locker-cursor-error", error));
     }
     if let Some(id) = c.confirm_delete.clone() {
         let name = state.packs.iter().find(|p| p.id == id).map(|p| p.name.clone()).unwrap_or_default();
@@ -501,6 +555,60 @@ pub fn pane(s: &State, u: &Ui) -> El {
         );
     }
     body
+}
+
+/// Apply the active pack again, after Steam put stock files back or the pack was updated. The
+/// same app action as picking it (`cursors::apply` with `approve`).
+fn reapply(st: &mut State) {
+    let Some(id) = st.locker.cursors.reapply.as_ref().map(|r| r.pack_id.clone()) else { return };
+    if crate::screens::settings::watch::refuse_while_running(st) {
+        return;
+    }
+    let Some(game_root) = st.game_root.clone() else {
+        st.status = tr("Set the game folder in Settings first.").to_string();
+        return;
+    };
+    st.locker.cursors.reapply = None;
+    run(st, move |store| {
+        cursors::apply(store, &id, &game_root, true)
+            .map(|plan| fill(tr("{} is on again. Deadlock uses it from the next start."), &[&plan.pack_name]))
+            .map_err(|e| e.to_string())
+    });
+}
+
+/// The reconcile banner: what changed under the active pack, and Apply again (C7). Grimoire
+/// reapplies on its own at startup; Sigil asks, since it writes the game folder.
+fn reapply_banner(s: &State, u: &Ui) -> Option<El> {
+    let r = s.locker.cursors.reapply.as_ref()?;
+    let line = if !r.restored_by_steam.is_empty() {
+        fill(
+            tr("Steam put back {} of {}'s cursor files, so the game shows its own cursors there."),
+            &[&r.restored_by_steam.len().to_string(), &r.pack_name],
+        )
+    } else {
+        fill(tr("{} was updated since you picked it."), &[&r.pack_name])
+    };
+    Some(
+        row()
+            .key("locker-cursor-reapply")
+            .w_full()
+            .padding(12.0)
+            .gap(10.0)
+            .center_y()
+            .radius(crate::ui::r(8.0))
+            .fill(u.amber.alpha(0.08))
+            .border(1.0, u.amber.alpha(0.35))
+            .role("status")
+            .child(rune::icon(&icons::TRIANGLE_ALERT, 15.0).color(u.amber).a11y_hidden())
+            .child(text(line).font(SMALL).color(u.prose).wrap().grow(1.0).min_w(0.0))
+            .child(
+                u.action(tr("Apply again"), ActionKind::Secondary)
+                    .key("locker-cursor-reapply-yes")
+                    .disabled(s.locker.cursors.work.is_running())
+                    .cursor(rune::Cursor::Pointer)
+                    .on_press(reapply),
+            ),
+    )
 }
 
 /// Scenes: two packs, the second on, with drawn previews.

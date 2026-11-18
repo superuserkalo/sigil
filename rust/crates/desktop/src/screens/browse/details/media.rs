@@ -83,6 +83,13 @@ pub(crate) fn gallery_stack(s: &State, u: &Ui, d: &Details) -> El {
             .label(format!("View image {} of {count} full size", index + 1))
             .cursor(rune::Cursor::Pointer)
             .on_press(move |st: &mut State| open_lightbox(st, index))
+            .on_secondary_press({
+                // Wave 4: Grimoire's image menu; Copy takes the full size picture.
+                let url = if image.full_url.is_empty() { image.url.clone() } else { image.full_url.clone() };
+                move |st: &mut State, _press, _tx: &mut Tx| {
+                    super::super::w4::open_image_menu(st, format!("gallery-{index}"), url.clone())
+                }
+            })
             .child(image_fill(
                 s,
                 format!("gallery-image-{index}"),
@@ -221,6 +228,7 @@ pub(crate) fn open_lightbox(st: &mut State, index: usize) {
     }
     details.lightbox = Some(index);
     let full = details.images().get(index).map(|image| image.full_url.clone());
+    super::super::w4::reset_zoom(st);
     crate::data::queue_images(st, full.into_iter().collect(), true);
 }
 
@@ -241,6 +249,7 @@ pub(crate) fn step_lightbox(st: &mut State, next: bool) {
 }
 
 pub(crate) fn close_lightbox(st: &mut State) {
+    super::super::w4::reset_zoom(st);
     if let Some(details) = st.browse_view.details.as_mut() {
         details.lightbox = None;
     }
@@ -257,40 +266,86 @@ pub(crate) fn lightbox(s: &State, u: &Ui, d: &Details, index: usize) -> El {
             .or_else(|| s.thumbnails.get(&image.url))
     });
     let veil = veiled(s, d.id, d.nsfw);
-    let mut stage = el().key("lightbox-stage").w_full().grow(1.0).min_h(0.0);
-    if let Some(pixels) = pixels {
-        let picture = el()
-            .key(format!("lightbox-image-{index}"))
-            .w_full()
-            .h_full()
-            .pixels_fit(pixels, SurfaceFit::Fit)
-            .a11y_hidden();
-        stage = stage
-            .clip_rounded(0.0)
-            .child(if veil { picture.blur(crate::screens::settings::nsfw::lightbox_blur()) } else { picture });
-    }
-    let round = |key: &str, glyph: &'static Icon, label: &str| {
+    let round = |key: &str, glyph: &'static Icon, label: &str, size: f32| {
         el().key(key.to_string())
-            .size(40.0, 40.0)
+            .size(size, size)
             .center()
-            .radius(20.0)
+            .radius(size / 2.0)
             .fill(Color::BLACK.alpha(0.6))
             .border(1.0, Color::WHITE.alpha(0.15))
             .hover(Color::BLACK.alpha(0.85))
             .focusable(true)
             .role("button")
-            .label(label.to_string())
+            .label(crate::screens::settings::i18n::tr(label).to_string())
             .cursor(rune::Cursor::Pointer)
-            .child(icon(glyph, 20.0).color(u.ink).a11y_hidden())
+            .child(icon(glyph, size / 2.0).color(u.ink).a11y_hidden())
     };
+    // The picture box is fitted to the image's own ratio, so its close button and counter sit
+    // on the picture, clear of the title bar and the window's own close button (issue #3).
+    let ratio = pixels
+        .map(|p| p.size())
+        .filter(|(w, h)| *w > 0 && *h > 0)
+        .map(|(w, h)| w as f32 / h as f32)
+        .or_else(|| image.map(|image| image.aspect).filter(|a| *a > 0.2))
+        .unwrap_or(16.0 / 9.0);
+    let mut picture = el()
+        .key(format!("lightbox-image-{index}"))
+        .clip_rounded(0.0);
+    if let Some(pixels) = pixels {
+        picture = picture.pixels_fit(pixels, SurfaceFit::Fill);
+        if veil {
+            picture = picture.blur(crate::screens::settings::nsfw::lightbox_blur());
+        }
+    } else {
+        picture = picture.fill(Color::WHITE.alpha(0.04));
+    }
+    let menu_url = image.map(|image| if image.full_url.is_empty() { image.url.clone() } else { image.full_url.clone() }).unwrap_or_default();
+    // Wave 4: zoom and pan (wheel, pinch, drag, double click, the zoom bar).
+    let zoom = super::super::w4::zoom(s);
+    let pan = s.browse_view.w4.pan;
+    let picture = picture.scale(zoom).offset(pan.0, pan.1);
+    let frame = super::super::w4::zoomable(el())
+        .key("lightbox-frame")
+        .aspect_fit(ratio)
+        .clip_rounded(0.0)
+        .on_press(|_: &mut State| {})
+        // Wave 4: Grimoire's image menu on the full size picture.
+        .on_secondary_press(move |st: &mut State, _press, _tx: &mut Tx| {
+            super::super::w4::open_image_menu(st, "lightbox-frame".to_string(), menu_url.clone())
+        })
+        .child(picture.absolute(0.0, 0.0).w_full().h_full().a11y_hidden())
+        .child(
+            round("lightbox-close", &icons::X, "Close full size view", 32.0)
+                .pin(None, Some(10.0), Some(10.0), None)
+                .on_press(close_lightbox),
+        )
+        .child(image_badge(u, format!("{} / {count}", index + 1)).pin(
+            Some(10.0),
+            Some(10.0),
+            None,
+            None,
+        ))
+        .child(super::super::w4::zoom_bar(s, u).pin(None, None, Some(10.0), Some(10.0)));
+    let stage = el()
+        .key("lightbox-stage")
+        .w_full()
+        .grow(1.0)
+        .min_h(0.0)
+        .center()
+        .child(frame);
     let mut layer = full_layer("browse-lightbox", Color::BLACK.alpha(0.95))
         .role("dialog")
-        .label(format!("{} full size", d.name))
+        .label(crate::screens::settings::i18n::fill(
+            crate::screens::settings::i18n::tr("{} full size"),
+            &[&d.name],
+        ))
         .padding(16.0)
         .pt(64.0)
         .gap(12.0)
         .items_center()
         .modal(true, close_lightbox)
+        // A press on the backdrop closes; the picture swallows its own presses.
+        .on_press(close_lightbox)
         .on_key(|st: &mut State, ev: &KeyEvent, _| match ev.key {
             Key::Escape => {
                 close_lightbox(st);
@@ -317,34 +372,29 @@ pub(crate) fn lightbox(s: &State, u: &Ui, d: &Details, index: usize) -> El {
                 .align(rune::Align::Center),
         );
     }
-    layer = layer
-        .child(
-            round("lightbox-close", &icons::X, "Close full size view")
-                .pin(None, Some(16.0), Some(16.0), None)
-                .on_press(close_lightbox),
-        )
-        .child(image_badge(u, format!("{} / {count}", index + 1)).pin(
-            Some(16.0),
-            Some(24.0),
-            None,
-            None,
-        ));
     if count > 1 {
-        layer = layer.child(
-            row()
-                .key("lightbox-steps")
-                .pin(Some(16.0), Some(72.0), Some(16.0), Some(72.0))
-                .center_y()
-                .child(
-                    round("lightbox-prev", &icons::CHEVRON_LEFT, "Previous image")
-                        .on_press(|st: &mut State| step_lightbox(st, false)),
+        // Each arrow in its own edge strip, so the picture itself is never under a step row.
+        let strip = |key: &str, left: bool| {
+            col()
+                .key(key.to_string())
+                .w(40.0)
+                .center()
+                .pin(
+                    left.then_some(16.0),
+                    Some(72.0),
+                    (!left).then_some(16.0),
+                    Some(72.0),
                 )
-                .child(spacer())
-                .child(
-                    round("lightbox-next", &icons::CHEVRON_RIGHT, "Next image")
-                        .on_press(|st: &mut State| step_lightbox(st, true)),
-                ),
-        );
+        };
+        layer = layer
+            .child(strip("lightbox-steps", true).child(
+                round("lightbox-prev", &icons::CHEVRON_LEFT, "Previous image", 40.0)
+                    .on_press(|st: &mut State| step_lightbox(st, false)),
+            ))
+            .child(strip("lightbox-steps-next", false).child(
+                round("lightbox-next", &icons::CHEVRON_RIGHT, "Next image", 40.0)
+                    .on_press(|st: &mut State| step_lightbox(st, true)),
+            ));
     }
     layer
 }

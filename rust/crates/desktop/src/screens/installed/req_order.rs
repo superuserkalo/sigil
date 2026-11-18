@@ -10,20 +10,44 @@
 //! (`installed::apply_moves`). A base kept "always first" cannot be passed; the popover says so.
 //! Deadlock Mod Manager has no such check.
 
-use deadlock_core::requirements::{ModRequirements, OrderProblem, OrderedMod, order_problems};
+use std::collections::BTreeMap;
+use std::path::PathBuf;
+
+use deadlock_core::requirements::{ModRequirements, OrderProblem, OrderedMod, order_problems, order_problems_with_files};
 use rune::{Color, El, col, el, icon, row, text};
 
 
 use crate::app::State;
 use crate::icons;
+use crate::jobs::Job;
 use crate::screens::settings::i18n::{fill, tr};
 use crate::ui::{SMALL, Ui};
 
 use super::{Menu, display_name, meta_for, notes};
 
+/// Grimoire's texture-overlay narrowing (C6): the game paths of the mods in a problem, by
+/// GameBanana id, with the file size they were read at. Read on a worker, never per frame.
+#[derive(Default)]
+pub struct Files {
+    pub lists: BTreeMap<u64, (u64, Vec<String>)>,
+    /// Ids already sent to the worker at this size, so a broken file is read once.
+    pub tried: BTreeMap<u64, u64>,
+    pub job: Job<Vec<(u64, u64, Vec<String>)>>,
+    /// Bumped when lists arrive; with the plain problems it keys the last narrowed answer.
+    pub generation: usize,
+    pub last: Option<(Vec<OrderProblem>, usize, Vec<OrderProblem>)>,
+}
+
 /// Work the problems out again from the library, the extras and the requirement pages read so
-/// far. True when they changed. Called in Installed's poll; it walks memory only.
+/// far. True when they changed. Called in Installed's poll; it walks memory only, and starts a
+/// worker for the file lists the narrowing still needs.
 pub fn refresh(st: &mut State) -> bool {
+    if let Some(Ok(found)) = st.installed.order_files.job.try_take() {
+        for (id, size, list) in found {
+            st.installed.order_files.lists.insert(id, (size, list));
+        }
+        st.installed.order_files.generation += 1;
+    }
     let mods: Vec<OrderedMod> = st
         .addons
         .addons
@@ -46,12 +70,74 @@ pub fn refresh(st: &mut State) -> bool {
             Some(ModRequirements::new(Some(m.gamebanana_id), list.clone()))
         })
         .collect();
-    let fresh = order_problems(&mods, &requirements);
+    let plain = order_problems(&mods, &requirements);
+    let fresh = narrow(st, &mods, &requirements, plain);
     if fresh != st.installed.order_problems {
         st.installed.order_problems = fresh;
         return true;
     }
     false
+}
+
+/// Keep only the pairs where the dependent really overlays its base's textures, once both file
+/// lists are read; until then (or for a file that cannot be read) the plain slot check stands.
+fn narrow(st: &mut State, mods: &[OrderedMod], requirements: &[ModRequirements], plain: Vec<OrderProblem>) -> Vec<OrderProblem> {
+    if plain.is_empty() {
+        return plain;
+    }
+    if let Some((seen, generation, answer)) = &st.installed.order_files.last
+        && *seen == plain
+        && *generation == st.installed.order_files.generation
+        && !st.installed.order_files.job.is_running()
+    {
+        return answer.clone();
+    }
+    let dir = super::addons_folder(st);
+    let size_of = |slot: u16| st.addons.addons.iter().find(|a| a.slot == slot).map(|a| (a.size_bytes, a.path(&dir)));
+    let mut needed: Vec<(u64, u64, PathBuf)> = Vec::new();
+    for problem in &plain {
+        for (id, slot) in [(problem.overlay, problem.overlay_slot), (problem.base, problem.base_slot)] {
+            if let Some((size, path)) = size_of(slot) {
+                needed.push((id, size, path));
+            }
+        }
+    }
+    let files = &mut st.installed.order_files;
+    let missing: Vec<(u64, u64, PathBuf)> = needed
+        .iter()
+        .filter(|(id, size, _)| files.lists.get(id).is_none_or(|(at, _)| at != size))
+        .filter(|(id, size, _)| files.tried.get(id) != Some(size))
+        .cloned()
+        .collect();
+    if !missing.is_empty() && !files.job.is_running() && !st.demo && !rune::is_headless() {
+        for (id, size, _) in &missing {
+            files.tried.insert(*id, *size);
+        }
+        files.job.start(st.wake.clone(), move || {
+            let paths: Vec<(u64, PathBuf)> = missing.iter().map(|(id, _, path)| (*id, path.clone())).collect();
+            let lists = deadlock_core::requirements::file_lists(&paths);
+            Ok(missing
+                .into_iter()
+                .filter_map(|(id, size, _)| lists.get(&id).map(|list| (id, size, list.clone())))
+                .collect())
+        });
+    }
+    let current: BTreeMap<u64, Vec<String>> = needed
+        .iter()
+        .filter_map(|(id, size, _)| {
+            let (at, list) = files.lists.get(id)?;
+            (at == size).then(|| (*id, list.clone()))
+        })
+        .collect();
+    let answer = if current.is_empty() {
+        plain.clone()
+    } else {
+        order_problems_with_files(mods, requirements, &current)
+    };
+    if !files.job.is_running() {
+        files.last = Some((plain, files.generation, answer.clone()));
+    }
+    answer
 }
 
 /// The first problem where `slot` is the dependent.

@@ -48,6 +48,9 @@ pub struct Downloads {
     pub demo_rates: std::collections::HashMap<String, (u64, bool)>,
     /// Rows the slow-download toast already spoke for. Each download gets one, ever.
     pub slow_told: std::collections::HashSet<String>,
+    /// Wave 4 (Grimoire's "Switching from X"): each running row's last file server, and the one
+    /// it failed over from with when, by row id.
+    pub servers: ServersSeen,
 }
 
 impl Default for Downloads {
@@ -61,6 +64,7 @@ impl Default for Downloads {
             drag: None,
             demo_rates: std::collections::HashMap::new(),
             slow_told: std::collections::HashSet::new(),
+            servers: std::collections::HashMap::new(),
         }
     }
 }
@@ -274,7 +278,8 @@ pub fn section(s: &State, u: &Ui) -> El {
     for (index, item) in queue.items.iter().enumerate() {
         let target = drag.filter(|(id, from, to)| *id != item.id && *to == index && from != to);
         let speed = rate(&downloads.demo_rates, item);
-        body = body.child(item_row(u, &queue, index, item, speed, drag.is_some_and(|(id, _, _)| *id == item.id), target.map(|(_, from, to)| from < to)));
+        let switched = switched_from(&downloads.servers, &item.id);
+        body = body.child(item_row(u, &queue, index, item, speed, switched, drag.is_some_and(|(id, _, _)| *id == item.id), target.map(|(_, from, to)| from < to)));
     }
     body
 }
@@ -368,12 +373,14 @@ pub fn poll(st: &mut State) -> bool {
         return false;
     }
     let queue = downloads.snapshot();
+    let switched = track_servers(&mut st.launch.downloads.servers, &queue.items);
+    let downloads = &st.launch.downloads;
     let fresh: Vec<(String, String)> = newly_slow(&queue.items, &downloads.demo_rates, &downloads.slow_told)
         .into_iter()
         .map(|item| (item.id.clone(), item.name.clone()))
         .collect();
     if fresh.is_empty() {
-        return false;
+        return switched;
     }
     for (id, name) in fresh {
         st.launch.downloads.slow_told.insert(id);
@@ -392,9 +399,59 @@ pub fn poll(st: &mut State) -> bool {
     true
 }
 
+/// Each running row's last file server, and the one it failed over from with when.
+pub type ServersSeen = std::collections::HashMap<String, (String, Option<(String, std::time::Instant)>)>;
+
+/// How long "switched from" stays on a row after a failover.
+pub const SWITCH_NOTE: std::time::Duration = std::time::Duration::from_secs(20);
+
+/// Follow each running row's file server; a change from one server to another is a failover.
+/// True when something changed.
+pub fn track_servers(
+    seen: &mut ServersSeen,
+    items: &[Item],
+) -> bool {
+    let mut changed = false;
+    for item in items.iter().filter(|item| item.state == ItemState::Running) {
+        let Some(now) = item.server.as_deref().map(super::browse::quick::server_name) else { continue };
+        match seen.get_mut(&item.id) {
+            Some((last, from)) if *last != now => {
+                *from = Some((std::mem::replace(last, now), std::time::Instant::now()));
+                changed = true;
+            }
+            Some(_) => {}
+            None => {
+                seen.insert(item.id.clone(), (now, None));
+            }
+        }
+    }
+    seen.retain(|id, _| items.iter().any(|item| item.id == *id && !item.state.finished()));
+    changed
+}
+
+/// The server a row failed over from, while the note is fresh.
+pub fn switched_from<'a>(
+    seen: &'a ServersSeen,
+    id: &str,
+) -> Option<&'a str> {
+    seen.get(id)
+        .and_then(|(_, from)| from.as_ref())
+        .filter(|(_, at)| at.elapsed() < SWITCH_NOTE)
+        .map(|(server, _)| server.as_str())
+}
+
 /// The running line: bytes, speed and time left when they are known.
-fn running_detail(item: &Item, speed: Option<u64>, eta: Option<u64>) -> String {
+fn running_detail(item: &Item, speed: Option<u64>, eta: Option<u64>, switched: Option<&str>) -> String {
     let mut parts = vec![item.detail()];
+    // Which file server it streams from (wave 4, Grimoire's "Automatic · server"), and the one
+    // it just failed over from.
+    if let Some(server) = &item.server {
+        let now = crate::screens::browse::quick::server_name(server);
+        parts.push(match switched {
+            Some(from) => fill(tr("from {}, switched from {}"), &[&now, from]),
+            None => fill(tr("from {}"), &[&now]),
+        });
+    }
     if let Some(bps) = speed {
         parts.push(format!("{}/s", queue::size(bps)));
     }
@@ -569,12 +626,14 @@ fn queue_target(st: &mut State) {
 
 /// One archive: state, name, the line under it, a progress line while it runs, and its
 /// controls on the right.
+#[allow(clippy::too_many_arguments)]
 fn item_row(
     u: &Ui,
     queue: &queue::Queue,
     index: usize,
     item: &Item,
     (speed, eta, slow): (Option<u64>, Option<u64>, bool),
+    switched: Option<&str>,
     dragging: bool,
     drop_below: Option<bool>,
 ) -> El {
@@ -594,7 +653,7 @@ fn item_row(
         item.name.clone()
     };
     let detail = if item.state == ItemState::Running {
-        running_detail(item, speed, eta)
+        running_detail(item, speed, eta, switched)
     } else if item.state == ItemState::Done && item.scan.suspicious() {
         let count = item.scan.warnings.len();
         fill(
@@ -605,6 +664,11 @@ fn item_row(
             },
             &[&item.detail(), &count.to_string()],
         )
+    } else if item.state == ItemState::Queued
+        && let Some(place) = queue.position(&item.id)
+    {
+        // Place in line (wave 4, Grimoire's numbered queue): 1 runs next.
+        fill(tr("#{} in line. Waiting its turn."), &[&place.to_string()])
     } else {
         item.detail()
     };
@@ -1000,6 +1064,21 @@ mod tests {
         let mut item = Item::new(id.to_string(), format!("https://gamebanana.com/mods/{id}"));
         item.state = state;
         item
+    }
+
+    #[test]
+    fn a_server_change_reads_as_a_failover() {
+        let mut seen = std::collections::HashMap::new();
+        let mut row = row_in("a", ItemState::Running);
+        row.server = Some("filecache3.gamebanana.com".into());
+        assert!(!track_servers(&mut seen, std::slice::from_ref(&row)));
+        assert_eq!(switched_from(&seen, "a"), None);
+        row.server = Some("filecache9.gamebanana.com".into());
+        assert!(track_servers(&mut seen, std::slice::from_ref(&row)));
+        assert_eq!(switched_from(&seen, "a"), Some("filecache3"));
+        row.state = ItemState::Done;
+        track_servers(&mut seen, std::slice::from_ref(&row));
+        assert!(seen.is_empty());
     }
 
     #[test]

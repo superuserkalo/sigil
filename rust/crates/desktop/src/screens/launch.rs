@@ -234,7 +234,11 @@ pub fn view(s: &State, u: &Ui) -> El {
         .child(u.page_head("", tr("Launch"), &detail, Some(actions)));
 
     if let Some(last) = &v.last {
-        page = page.child(note_line(u, last, is_bad(last)));
+        page = page.child(if is_bad(last) {
+            crate::notify::feedback::error_box(u, "launch-last-error", last)
+        } else {
+            note_line(u, last, false)
+        });
     }
 
     let body = if !s.game_detected {
@@ -249,7 +253,12 @@ pub fn view(s: &State, u: &Ui) -> El {
             ),
         )
     } else if let Some(error) = &v.error {
-        u.empty_state("", tr("Launch status could not be read"), error, None)
+        u.empty_state(
+            "",
+            tr("Launch status could not be read"),
+            error,
+            Some(crate::notify::feedback::button(u, "launch-error-feedback", tr("Launch status could not be read"), error)),
+        )
     } else {
         let stashed = pending.is_some();
         let ready = !stashed && !v.busy && !running;
@@ -298,11 +307,19 @@ pub fn view(s: &State, u: &Ui) -> El {
             && (!read.gameinfo_present || !read.gameinfo_addons)
             && !running
         {
-            body = body.child(note_line(
-                u,
-                tr("gameinfo.gi does not load mods right now. Fix it from the banner or in Updates."),
-                true,
-            ));
+            body = body.child(
+                row()
+                    .w_full()
+                    .gap(10.0)
+                    .center_y()
+                    .child(note_line(u, tr("gameinfo.gi does not load mods right now."), true).grow(1.0).shrink().min_w(0.0))
+                    .child(
+                        u.action(tr("Fix mods"), ActionKind::Secondary)
+                            .key("launch-fix-gameinfo")
+                            .cursor(rune::Cursor::Pointer)
+                            .on_press(fix_gameinfo),
+                    ),
+            );
         }
         if let Some(crash) = read.and_then(|read| read.crash.as_ref()) {
             body = body.child(crash_block(s, u, crash));
@@ -701,7 +718,8 @@ fn checklist(u: &Ui, s: &State) -> El {
                         .on_press(move |st: &mut State| {
                             st.launch.dialog = Dialog::None;
                             match kind {
-                                0 => st.gameinfo.confirm = true,
+                                // The press is the approval; Undo puts the file back.
+                                0 => fix_gameinfo(st),
                                 1 => st.go(Screen::Conflicts),
                                 _ => st.go(Screen::Updates),
                             }
@@ -795,19 +813,25 @@ fn stop_confirm(u: &Ui, _s: &State) -> El {
                     u.icon_action(&icons::SQUARE_STOP, tr("Stop game"), ActionKind::Danger)
                         .key("launch-stop-run")
                         .cursor(rune::Cursor::Pointer)
-                        .on_press(|st: &mut State| stop_game_now(st)),
+                        .on_press(|st: &mut State| stop_game_now(st, true)),
                 ),
         )
 }
 
 /// Close the running game, as Stop game does. The launch overlay's Cancel uses it.
 pub fn stop_game(st: &mut State) {
-    stop_game_now(st);
+    stop_game_now(st, true);
+}
+
+/// The launch overlay's Cancel already said "Launch cancelled"; closing the game it asked for
+/// is the same action, so no second toast (issue #4).
+pub fn stop_game_quietly(st: &mut State) {
+    stop_game_now(st, false);
 }
 
 /// Ask the game to close. The wait for a graceful exit runs on a thread; the monitor picks up
 /// the result, and a presence check is asked for right away.
-fn stop_game_now(st: &mut State) {
+fn stop_game_now(st: &mut State, tell: bool) {
     st.launch.dialog = Dialog::None;
     if rune::is_headless() {
         st.launch.last = Some(tr("Headless run: the game was not stopped.").to_string());
@@ -832,11 +856,65 @@ fn stop_game_now(st: &mut State) {
     // Discord presence and the running row switch at once; the checks correct any surprise.
     st.settings.game_running = false;
     st.settings.last_game_check = None;
-    crate::notify::push(
-        st,
-        crate::notify::Notice::info(tr("Closing Deadlock")).detail(tr("The game closes on its own.")),
-    );
+    if tell {
+        crate::notify::push(
+            st,
+            crate::notify::Notice::info(tr("Closing Deadlock")).detail(tr("The game closes on its own.")),
+        );
+    }
     crate::data::start_launch_read(st);
+}
+
+/// GAME WRITE, from a Fix press on the Launch page or its checklist: repair `gameinfo.gi` with
+/// `game_apply::apply_gameinfo_repair`, which keeps the mounts the player or another tool added
+/// (from the newest backup), with `deploy::repair_gameinfo` as the fallback when it errors. The
+/// toast offers Undo from the backup either one made.
+pub fn fix_gameinfo(st: &mut State) {
+    use crate::notify::{self, Notice};
+    if st.demo {
+        st.gameinfo.state = crate::banner::Gameinfo::Loads;
+        notify::push(st, Notice::info(tr("Demo library: nothing was changed.")));
+        return;
+    }
+    let Some(game_root) = st.game_root.clone() else {
+        notify::push(st, Notice::warning(tr("Set the game folder in Settings first.")));
+        return;
+    };
+    let (changed, detail, backup) = match deadlock_core::game_apply::apply_gameinfo_repair(&game_root, true) {
+        Ok(Some(done)) => {
+            let detail = if done.restored.is_empty() {
+                String::new()
+            } else {
+                fill(tr("Kept {} lines another tool or you had added."), &[&done.restored.len().to_string()])
+            };
+            (true, detail, Some(done.backup))
+        }
+        Ok(None) => (false, String::new(), None),
+        Err(first) => match deadlock_core::deploy::repair_gameinfo(&deadlock_core::deploy::gameinfo_path(&game_root), true) {
+            Ok(repair) => (repair.changed, String::new(), repair.backup),
+            Err(error) => {
+                notify::push(
+                    st,
+                    Notice::error(tr("Could not fix gameinfo.gi")).detail(format!("{first}. {error}")),
+                );
+                return;
+            }
+        },
+    };
+    st.gameinfo.state = crate::banner::Gameinfo::Loads;
+    crate::data::rescan_game(st);
+    let mut notice = Notice::success(if changed { tr("Fixed. Mods load again") } else { tr("Already fixed. Nothing changed") })
+        .detail(detail);
+    if let Some(backup) = backup {
+        notice = notice.undo(move |st: &mut State| match deadlock_core::backups::restore(&backup, true) {
+            Ok(_) => {
+                crate::data::rescan_game(st);
+                notify::push(st, Notice::info(tr("Put gameinfo.gi back as it was")));
+            }
+            Err(error) => notify::push(st, Notice::error(tr("Could not undo the fix")).detail(error.to_string())),
+        });
+    }
+    notify::push(st, notice);
 }
 
 fn is_bad(message: &str) -> bool {

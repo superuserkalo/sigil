@@ -18,7 +18,11 @@ pub mod keychain;
 mod locales;
 mod locales_parity;
 mod locales_wave;
+mod locales_w4b;
 pub mod log;
+pub mod logs_w4;
+pub mod misc_w4;
+pub mod diag_w4;
 pub mod netx;
 pub mod nsfw;
 pub mod onboarding;
@@ -174,6 +178,8 @@ pub enum Confirm {
     CleanupArchives,
     ForgetSharing,
     ClearLogs,
+    /// Hand the masked logs to Sigil's agent (wave 4, DMM's AI help).
+    AskAgent,
 }
 
 /// What Steam has for Deadlock's launch options.
@@ -242,12 +248,17 @@ pub struct View {
     pub personalize: personalize::View,
     /// Opt-in telemetry: consent, the flush worker, Send diagnostics (`telemetry.rs`).
     pub telemetry: telemetry::Telemetry,
+    /// Wave 4: the troubleshooting checklist and the saved catalog card (`diag_w4.rs`).
+    pub w4: diag_w4::DiagW4,
 }
 
 // --- open, close, poll ---------------------------------------------------------
 
 /// Open the sheet on its current category and read what that category shows.
 pub fn open(st: &mut State) {
+    if !st.settings.open {
+        crate::shell_tips::on_settings_open(st);
+    }
     st.settings.open = true;
     st.settings.message = None;
     crate::data::refresh_subscriptions(st);
@@ -268,6 +279,12 @@ pub fn open(st: &mut State) {
     select(st, tab);
 }
 
+/// Open the sheet on one tab (a banner, a tip or the status bar).
+pub fn open_tab(st: &mut State, tab: Tab) {
+    st.settings.tab = tab;
+    st.go(crate::model::Screen::Settings);
+}
+
 pub fn close(st: &mut State) {
     st.settings.open = false;
     st.settings.confirm = None;
@@ -280,6 +297,7 @@ fn select(st: &mut State, tab: Tab) {
         Tab::Game => read_launch_options(st),
         Tab::Backups => read_backups(st),
         Tab::Storage => {
+            diag_w4::read_catalog(st);
             read_sizes(st);
             st.settings.leftover = st
                 .addons_dir
@@ -297,6 +315,9 @@ fn select(st: &mut State, tab: Tab) {
         _ => {}
     }
     extra::on_select(st, tab);
+    if tab == Tab::Experimental {
+        crate::shell_tips::on_experimental(st);
+    }
 }
 
 /// Called from the app's poll loop.
@@ -315,6 +336,8 @@ pub fn poll(st: &mut State, tx: &mut Tx) -> bool {
     changed |= extra::poll(st, tx);
     changed |= personalize::poll(st);
     changed |= telemetry::poll(st);
+    changed |= diag_w4::poll(st);
+    changed |= crate::shell_tips::poll(st, tx);
     changed
 }
 
@@ -416,6 +439,8 @@ pub fn modal(s: &State, u: &Ui, window: (f32, f32)) -> Option<El> {
         search::results(s, u)
     } else if let Some(only) = extra::scene_content(s, u, s.settings.tab) {
         only
+    } else if let Some(only) = diag_w4::scene_content(s, u) {
+        only
     } else {
         match s.settings.tab {
             Tab::Game => game(s, u),
@@ -440,7 +465,11 @@ pub fn modal(s: &State, u: &Ui, window: (f32, f32)) -> Option<El> {
                 .child(tray::rows(s, u))
                 .child(extra::editor_row(s, u))
                 .child(onboarding::rows(s, u)),
-            Tab::Appearance => appearance(s, u),
+            Tab::Appearance => col()
+                .w_full()
+                .gap(LIST_GAP)
+                .child(appearance(s, u))
+                .child(misc_w4::fun_section(s, u)),
             Tab::Integrations => col()
                 .w_full()
                 .gap(LIST_GAP)
@@ -452,16 +481,33 @@ pub fn modal(s: &State, u: &Ui, window: (f32, f32)) -> Option<El> {
                 .w_full()
                 .gap(LIST_GAP)
                 .child(tabs::network(s, u))
+                .child(diag_w4::section_el(s, u))
                 .child(netx::diagnostics_section(s, u)),
             Tab::Logs => col()
                 .w_full()
                 .gap(LIST_GAP)
                 .child(tabs::logs(s, u))
                 .child(section(u, "Send to Sigil", vec![telemetry::diagnostics_row(s, u)])),
-            Tab::Storage => storage(s, u),
+            Tab::Storage => col()
+                .w_full()
+                .gap(LIST_GAP)
+                .child(storage(s, u))
+                .child(diag_w4::catalog_section(s, u)),
             Tab::Experimental => col()
                 .w_full()
                 .gap(LIST_GAP)
+                .child(section(
+                    u,
+                    "",
+                    vec![setting_row(
+                        u,
+                        "settings-tour",
+                        "Tour of experimental features",
+                        detail(u, "What each switch below does, one step at a time."),
+                        button(u, "settings-tour-open", "Take the tour", ActionKind::Secondary)
+                            .on_press(crate::shell_tips::open_tour),
+                    )],
+                ))
                 .child(tabs::experimental(s, u))
                 .child(tools::experimental_section(s, u)),
             Tab::About => about(s, u),
@@ -547,13 +593,18 @@ pub fn modal(s: &State, u: &Ui, window: (f32, f32)) -> Option<El> {
             Color::BLACK.alpha(if u.light { 0.18 } else { 0.55 }),
         )
         .modal(true, close)
-        .on_key(|st: &mut State, ev: &KeyEvent, _| {
+        .on_key(|st: &mut State, ev: &KeyEvent, tx: &mut rune::Tx| {
             if ev.key == Key::Escape {
                 if st.settings.search.text.is_empty() {
                     close(st);
                 } else {
                     st.settings.search = TextEdit::new("");
                 }
+                true
+            } else if ev.key == Key::Command('f') {
+                // DMM: Cmd or Ctrl+F jumps to the search field. The sheet opens on its tab list
+                // instead, so the caret only shows once someone asks to search (issue #2).
+                tx.focus("settings-search-input", true);
                 true
             } else {
                 false
@@ -579,6 +630,10 @@ pub fn modal(s: &State, u: &Ui, window: (f32, f32)) -> Option<El> {
         layer = layer.child(u.modal_layer("settings-confirm", confirm_dialog(s, u, ask)));
     } else if let Some(d) = extra::dialog(s, u) {
         layer = layer.child(u.modal_layer("settings-extra", d));
+    } else if let Some(d) = crate::shell_tips::tour(s, u) {
+        layer = layer.child(u.modal_layer("settings-tour", d));
+    } else if let Some(tip) = crate::shell_tips::view(s, u, true) {
+        layer = layer.child(tip);
     }
     Some(layer)
 }
@@ -649,7 +704,8 @@ fn search_field(s: &State, u: &Ui) -> El {
                 .color(u.ink)
                 .placeholder(tr("Search settings"), u.faint)
                 .caret(u.accent, u.accent.alpha(0.22))
-                .on_edit(|st: &mut State| &mut st.settings.search),
+                .on_edit(|st: &mut State| &mut st.settings.search)
+                .on_submit(|st: &mut State, _| search::open_first(st)),
         );
     if typed {
         field = field.child(
@@ -668,7 +724,7 @@ fn search_field(s: &State, u: &Ui) -> El {
 
 fn list_item(s: &State, u: &Ui, tab: Tab) -> El {
     let on = s.settings.tab == tab && s.settings.search.text.trim().is_empty();
-    row()
+    let item = row()
         .key(format!("settings-tab-{}", tab.key()))
         .w_full()
         .h(32.0)
@@ -698,7 +754,10 @@ fn list_item(s: &State, u: &Ui, tab: Tab) -> El {
                 .color(if on { u.ink } else { u.prose })
                 .truncate()
                 .a11y_hidden(),
-        )
+        );
+    // The sheet opens focused on its current tab, not the search field: a modal otherwise
+    // focuses its first Tab stop, which drew the search caret on every open (issue #2).
+    if on { item.autofocus() } else { item }
 }
 
 // --- shared rows ---------------------------------------------------------------
@@ -1125,13 +1184,12 @@ fn launch_options(s: &State, u: &Ui) -> El {
     section(
         u,
         "Launch options",
-        vec![stacked_row(
-            u,
-            "settings-launch-options",
-            "Steam launch options",
-            &line,
-            control,
-        )],
+        vec![
+            stacked_row(u, "settings-launch-options", "Steam launch options", &line, control),
+            // Wave 4: DMM's curated options (Sigil's own list) and Vanilla Mode.
+            misc_w4::known_options(s, u),
+            misc_w4::vanilla_row(u),
+        ],
     )
 }
 
@@ -1767,6 +1825,7 @@ fn mods(s: &State, u: &Ui) -> El {
             u,
             "Browse",
             vec![
+                misc_w4::update_badges_row(s, u),
                 setting_row(
                     u,
                     "settings-sort",
@@ -2451,6 +2510,7 @@ fn updates(s: &State, u: &Ui) -> Vec<El> {
         rows.push(install);
     }
     rows.push(tabs::channel_row(s, u));
+    rows.push(misc_w4::channel_notes(s, u));
     rows
 }
 
@@ -2829,6 +2889,12 @@ fn confirm_dialog(s: &State, u: &Ui, ask: &Confirm) -> El {
             "Clear",
             true,
         ),
+        Confirm::AskAgent => (
+            "Share your logs with Sigil's agent?",
+            logs_w4::confirm_text(s.prefs.flag("agent")),
+            "Open the agent",
+            false,
+        ),
     };
     let title = tr(title);
     let ask = ask.clone();
@@ -2884,6 +2950,10 @@ fn run_confirm(st: &mut State, ask: Confirm) {
             log::info("Match sharing log forgotten");
             return say(st, tr("Forgotten."), false);
         }
+        Confirm::AskAgent => {
+            close(st);
+            return logs_w4::ask_agent(st);
+        }
         Confirm::ClearLogs => {
             let result = log::clear();
             st.settings.log_size = Some(log::size());
@@ -2899,7 +2969,7 @@ fn run_confirm(st: &mut State, ask: Confirm) {
         return;
     }
     match ask {
-        Confirm::ForgetSharing | Confirm::ClearLogs => {}
+        Confirm::ForgetSharing | Confirm::ClearLogs | Confirm::AskAgent => {}
         Confirm::CleanupArchives => {
             let Some(dir) = st.addons_dir.clone() else {
                 return say(st, tr("Find the game folder first."), true);

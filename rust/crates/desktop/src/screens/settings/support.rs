@@ -234,6 +234,10 @@ pub fn report(st: &State) -> String {
         parts.push(format!("--- what happened ---\n{bug}\n"));
     }
     parts.push(super::tabs::diagnostic_report(st));
+    // Grimoire's "Include full log": the whole log after the summary, capped at 5 MB.
+    if options::get().full_log {
+        parts.push(format!("\n--- full log ---\n{}", super::logs_w4::full_log()));
+    }
     if !st.settings.extra.support.picked.is_empty() {
         let mut lines = vec![String::new(), "--- selected Deadlock crashes ---".to_string()];
         for path in &st.settings.extra.support.picked {

@@ -50,6 +50,8 @@ mod panels;
 mod persist;
 pub mod multi;
 pub mod quick;
+pub mod w4;
+pub mod paste;
 pub mod replace;
 mod scenes;
 pub mod store;
@@ -418,6 +420,10 @@ pub struct View {
     pub installs: quick::Installs,
     /// A Replace from a file row, waiting for its confirm.
     pub replace: Option<replace::Pending>,
+    /// Wave 4: dock width, random hero, featured picks, creator links, image menu.
+    pub w4: w4::W4,
+    /// Wave 4: the bulk paste dialog (Grimoire).
+    pub paste: paste::Paste,
 }
 
 /// One page of collections.

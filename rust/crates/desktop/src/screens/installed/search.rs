@@ -102,7 +102,7 @@ pub fn solo_start(st: &mut State, slot: u16) {
         Ok(report) => {
             let name = meta_for(st, addon)
                 .map(|meta| meta.name.clone())
-                .unwrap_or_else(|| format!("slot {slot:02}"));
+                .unwrap_or_else(|| format!("slot {}", deadlock_core::addons::slot_label(slot)));
             st.installed.solo = Some(Solo {
                 name: name.clone(),
                 others,
@@ -332,7 +332,7 @@ fn name_of(s: &State, slot: u16) -> String {
         .iter()
         .find(|addon| addon.slot == slot)
         .map(|addon| super::display_name(s, addon))
-        .unwrap_or_else(|| format!("Slot {slot:02}"))
+        .unwrap_or_else(|| format!("Slot {}", deadlock_core::addons::slot_label(slot)))
 }
 
 fn verdict_row(
@@ -408,7 +408,7 @@ pub fn search_dialog(s: &State, u: &Ui) -> Option<El> {
                             .grow(1.0)
                             .min_w(0.0),
                     )
-                    .child(text(format!("{slot:02}")).font(MICRO).color(u.faint)),
+                    .child(text(deadlock_core::addons::slot_label(slot)).font(MICRO).color(u.faint)),
             );
         }
         if enabled.len() > 12 {
@@ -462,7 +462,7 @@ pub fn search_dialog(s: &State, u: &Ui) -> Option<El> {
                     .h(28.0)
                     .gap(8.0)
                     .center_y()
-                    .child(text(format!("{slot:02}")).font(MICRO).color(u.faint).w(20.0))
+                    .child(text(deadlock_core::addons::slot_label(*slot)).font(MICRO).color(u.faint).w(28.0))
                     .child(text(name_of(s, *slot)).font(BODY).color(u.prose).truncate()),
             );
         }
@@ -527,7 +527,7 @@ pub fn search_dialog(s: &State, u: &Ui) -> Option<El> {
                 .gap(8.0)
                 .center_y()
                 .child(icon(&icons::TRIANGLE_ALERT, 14.0).color(u.amber).a11y_hidden())
-                .child(text(format!("{slot:02}")).font(MICRO).color(u.faint).w(20.0))
+                .child(text(deadlock_core::addons::slot_label(*slot)).font(MICRO).color(u.faint).w(28.0))
                 .child(text(name_of(s, *slot)).font(BODY_MED).color(u.ink).truncate()),
         );
     }

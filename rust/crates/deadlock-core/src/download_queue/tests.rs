@@ -300,7 +300,29 @@ fn a_stream_writes_the_bytes_and_reports_progress() {
     assert_eq!(fs::read(&path).unwrap(), body);
     assert!(!part_path(&path).exists());
     assert!(seen.last().unwrap().0 >= body.len() as u64 - READ_BUFFER as u64);
+    assert_eq!(control.server().as_deref(), Some("127.0.0.1"), "the file server is known while it streams");
     let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn waiting_items_have_a_place_in_line() {
+    let mut queue = Queue::default();
+    let a = queue.add("715100").unwrap();
+    let b = queue.add("715101").unwrap();
+    let c = queue.add("715102").unwrap();
+    queue.get_mut(&b).unwrap().mod_id = Some(715101);
+    assert_eq!(queue.position(&a), Some(1));
+    assert_eq!(queue.position(&c), Some(3));
+    queue.get_mut(&a).unwrap().state = State::Running;
+    assert_eq!(queue.position(&a), None, "a running item is not waiting");
+    assert_eq!(queue.position(&b), Some(1));
+    assert_eq!(queue.positions().get(&c), Some(&2));
+    let (item, place) = queue.for_mod(715101).unwrap();
+    assert_eq!((item.id.as_str(), place), (b.as_str(), Some(1)));
+    let (item, place) = queue.for_mod(715102).unwrap();
+    assert_eq!((item.id.as_str(), place), (c.as_str(), Some(2)), "a bare id target matches too");
+    assert!(queue.for_mod(1).is_none());
+    assert_eq!(queue.position("missing"), None);
 }
 
 #[test]

@@ -524,7 +524,7 @@ impl DownloadPolicy {
 }
 
 /// Resolve a redirect target, which may be absolute or root-relative.
-fn resolve_location(base: &WebUrl, location: &str) -> Result<WebUrl> {
+pub(crate) fn resolve_location(base: &WebUrl, location: &str) -> Result<WebUrl> {
     let value = location.trim();
 
     if value.starts_with("http://") || value.starts_with("https://") {
@@ -570,9 +570,8 @@ pub fn download(url: &str, destination_dir: &Path, policy: &DownloadPolicy) -> R
 /// The flag is read before the request, on every redirect, in the read loop after each chunk
 /// and once more before the finished file is renamed into place. On a cancel the `.part` file
 /// is deleted and [`Error::Cancelled`] is returned, so no later run can take a half file for a
-/// complete download. A cancellable download streams in one connection: the multi-range path in
-/// [`crate::fast_download`] has no cancel checks, and a stop button that waits for it would not
-/// be a stop button.
+/// complete download. The multi-range path in [`crate::fast_download`] reads the same flag after
+/// every chunk of every part, so a cancellable install keeps the faster download.
 pub fn download_with_cancel(
     url: &str,
     destination_dir: &Path,
@@ -692,9 +691,8 @@ pub fn download_with_cancel(
     let _ = fs::remove_file(&partial_path);
 
     // Settings > Network > Faster downloads: a large file that allows ranges comes in parts
-    // (crate::fast_download). Any failure falls back to the one stream below. A cancellable
-    // download skips the parts, because that path has no flag to read and would keep going
-    // after the player pressed stop.
+    // (crate::fast_download). Any failure falls back to the one stream below, except a cancel:
+    // the parts read the same flag after every chunk, and a stop ends the run.
     let ranged = crate::fast_download::splittable(
         response.headers().get("accept-ranges").and_then(|v| v.to_str().ok()),
         response
@@ -704,25 +702,29 @@ pub fn download_with_cancel(
             .and_then(|v| v.parse::<u64>().ok()),
         crate::net::download_parts(),
     );
-    if cancel.is_none()
-        && let Some(total) = ranged
-        && let Ok((bytes, sha256)) = crate::fast_download::fetch_ranges(
+    if let Some(total) = ranged {
+        match crate::fast_download::fetch_ranges_with_cancel(
             &agent,
             &final_url.to_string(),
             GAMEBANANA_USER_AGENT,
             &final_path,
             total,
             crate::net::download_parts(),
-        )
-    {
-        return Ok(DownloadReport {
-            requested_url: url.to_string(),
-            final_url: final_url.to_string(),
-            path: final_path,
-            file_name,
-            bytes,
-            sha256,
-        });
+            cancel,
+        ) {
+            Ok((bytes, sha256)) => {
+                return Ok(DownloadReport {
+                    requested_url: url.to_string(),
+                    final_url: final_url.to_string(),
+                    path: final_path,
+                    file_name,
+                    bytes,
+                    sha256,
+                });
+            }
+            Err(Error::Cancelled) => return Err(Error::Cancelled),
+            Err(_) => {}
+        }
     }
 
     let mut file = File::create(&partial_path)?;
@@ -3281,7 +3283,8 @@ fn deploy_staged(
 fn remove_leftover_chunks(plan: &InstallPlan, written: &[String]) -> Result<Vec<String>> {
     let mut removed = Vec::new();
 
-    let entries = match fs::read_dir(&plan.addons_dir) {
+    // The slot's own folder: an overflow slot's `pakNN` name repeats in `citadel/addons`.
+    let entries = match fs::read_dir(crate::addons::slot_folder(&plan.addons_dir, plan.slot)) {
         Ok(entries) => entries,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(removed),
         Err(error) => return Err(error.into()),

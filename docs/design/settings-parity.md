@@ -1,6 +1,6 @@
 # Settings parity: Grimoire and Deadlock Mod Manager
 
-Status: audit done 2026-11-17; parity round built 2026-11-17; wave 3 rows updated 2026-11-18 (pages, preview volume, map mods, fix before launch, Remote Install backlogged). Every settings item in both apps, from their source, with what Sigil does about it.
+Status: audit done 2026-11-17; parity round built 2026-11-17; wave 3 rows updated 2026-11-18 (pages, preview volume, map mods, fix before launch, Remote Install backlogged); wave 4 UI B rows updated 2026-11-18 (SOCKS5, checklist, catalog, logs, AI help, launch options, vanilla, update marks, channel notes, seasons). Every settings item in both apps, from their source, with what Sigil does about it.
 
 Sources: Grimoire (`vendor/grimoire`, MIT) `src/pages/Settings.tsx`, `src/components/settings/**`, `electron/main/services/settings.ts`; Deadlock Mod Manager (`vendor/dmm`, GPL-3.0, behaviour only) `apps/desktop/src/pages/settings.tsx`, `apps/desktop/src/components/settings/*.tsx`, `plugins/themes`.
 
@@ -36,7 +36,7 @@ Grouped by task, thirteen categories in three groups, a search field over all of
 | # | Area | Item | What it does | Sigil | Where in Sigil, or why not |
 | --- | --- | --- | --- | --- | --- |
 | 1 | Header | Buy me a coffee | Opens the author's Ko-fi page | Declined (rule) | Sigil has no donation page; About links the source |
-| 2 | Nav | Search settings | Filters settings across categories | Built now | Settings, search field over the category list |
+| 2 | Nav | Search settings | Filters settings across categories | Built now | Settings, search field over the category list; wave 4: the caret shows only once the field is focused (issue #2), Cmd or Ctrl+F focuses it, Enter opens the first match |
 | 3 | Nav | Clear search | Clears the query | Built now | Settings, x in the search field and Escape |
 | 4 | Game | Deadlock installation path | Type or keep the game path | Had it | Game > Deadlock folder |
 | 5 | Game | Valid / invalid badge | Path validation | Had it | Game > Deadlock folder line |
@@ -128,7 +128,7 @@ Grouped by task, thirteen categories in three groups, a search field over all of
 | 91 | Social | Sign out | Logout | Needs a backend | With 87 |
 | 92 | Social | Delete account | Delete | Needs a backend | With 87 |
 | 93 | Social | Dismiss error | Clear banner | Needs a backend | With 87 |
-| 94 | Updates | Update channel | Stable or nightly | Built now | About and updates > Release channel |
+| 94 | Updates | Update channel | Stable or nightly | Built now | About and updates > Release channel, and Going back to an earlier version with the Releases link (wave 4) |
 | 95 | Updates | Check automatically | Startup check | Had it | Network > Check for Sigil updates, Privacy > Update check |
 | 96 | Updates | Current version | Version and state | Had it | About and updates |
 | 97 | Updates | What's new | Release notes | Built now | About and updates > Release notes when newer |
@@ -139,7 +139,7 @@ Grouped by task, thirteen categories in three groups, a search field over all of
 | 102 | Experimental | Stats dashboard | Flag | Had it | Stats is a main page; Privacy > Player stats turns its network off |
 | 103 | Experimental | Crosshair designer | Flag | Had it | Crosshair is a main page |
 | 104 | Experimental | Grimoire Social | Flag | Needs a backend | With 87 |
-| 105 | Experimental | Fix unknown mods | Match local VPKs | Elsewhere in Sigil | Installed import matches GameBanana |
+| 105 | Experimental | Fix unknown mods | Match local VPKs | Elsewhere in Sigil | Installed > Identify runs GameBanana name search, and the CRC probe behind its own "Also compare checksums" opt-in (off by default, remembered), C8, wave 4 |
 | 106 | Experimental | Imprint installed mods | Embed identity | Built now | Experimental > Tools: Imprint installed mods (Browse and DeadlockForge installs) and Imprint now; writes addoninfo.txt and modinfo.json into the VPK |
 | 107 | Experimental | Mod safety | Flag | Elsewhere in Sigil | Always on: payload validator |
 | 108 | Experimental | Deadworks servers | Flag | Built now | Experimental > Servers |
@@ -161,12 +161,12 @@ Grouped by task, thirteen categories in three groups, a search field over all of
 | 124 | Maintenance | Save proxy | Save | Built now | Network > Save |
 | 125 | Maintenance | Clear saved proxy | Clear | Built now | Network > Clear |
 | 126 | Maintenance | Credentials stored securely | Info | Built now | Network > Proxy sign-in: password in the OS keychain, never a file |
-| 127 | Maintenance | Cached mods count, last sync | Catalog mirror | Declined (rule) | Sigil reads GameBanana live; no mirror to report |
-| 128 | Maintenance | Wipe cache | Delete mirror | Had it | Storage > Preview images, Downloads |
+| 127 | Maintenance | Cached mods count, last sync | Catalog mirror | Built now | Storage > Mod catalog > Saved catalog: mods saved, last sync, size on disk, Sync now (wave 4) |
+| 128 | Maintenance | Wipe cache | Delete mirror | Built now | Storage > Mod catalog > Saved catalog > Wipe (wave 4); Storage > Preview images, Downloads |
 | 129 | Maintenance | Sync database | Resync mirror | Built now | Network > Refresh Browse |
 | 130 | Maintenance | Preview cache size | Info | Had it | Storage > Preview images |
 | 131 | Maintenance | Clear preview cache | Clear | Had it | Storage > Clear |
-| 132 | Support | GitHub issues | Link | Built now | Logs and support > Open an issue |
+| 132 | Support | GitHub issues | Link | Built now | Logs and support > Open an issue; wave 4: every error toast and inline error box has Send feedback (scrubbed details, a note, Send with a reference code, Copy details, Open a GitHub issue prefilled) |
 | 133 | Support | Join Discord | Link | Declined (rule) | Sigil has no Discord server |
 | 134 | Support | Crashes refresh | Rescan dumps | Built now | Logs and support > Crash dumps refresh |
 | 135 | Support | Include crash in report | Checkbox | Built now | Logs and support > tick a crash; the report adds its exception and error text |
@@ -176,7 +176,7 @@ Grouped by task, thirteen categories in three groups, a search field over all of
 | 139 | Support | Show more crashes | Paging | Built now | Logs and support > Show more (50 at a time) |
 | 140 | Support | Bug description | Text | Built now | Logs and support > What went wrong (report and GitHub issue) |
 | 141 | Support | Generate report | Build report | Built now | Logs and support > Diagnostic report |
-| 142 | Support | Include full log | Checkbox | Built now | Copy the last 200 lines, Open log file |
+| 142 | Support | Include full log | Checkbox | Built now | Logs and support > Report a problem > Include the full log (up to 5 MB, wave 4) |
 | 143 | Support | Verbose mod logging | Checkbox | Built now | Logs and support > Log level Debug |
 | 144 | Support | Generated report view | Review | Built now | Copied to the clipboard for review |
 | 145 | Support | Copy report | Copy | Built now | Copy report |
@@ -202,7 +202,7 @@ Grouped by task, thirteen categories in three groups, a search field over all of
 | 1 | All | Settings search | Search and jump | Built now | Settings search |
 | 2 | Launch | -condebug toggle | Console log for presence | Built now | Game > Console log (-condebug): written to Steam launch options through the usual confirm |
 | 3 | Launch | Disable presence first warning | Coupling notice | Built now | Turning the console log off while game presence is on asks to turn presence off first |
-| 4 | Launch | Curated launch options | Server list of options | Needs a backend | DMM API; Steam launch options field instead |
+| 4 | Launch | Curated launch options | Server list of options | Built now | Game > Launch options > Common launch options: Sigil's own list of ten, press to add or take out (wave 4; DMM's list is server side) |
 | 5 | Launch | Copy command | Copy option | Elsewhere in Sigil | Steam launch options field is selectable |
 | 6 | Launch | Create custom option | Own option | Had it | Game > Steam launch options |
 | 7 | Launch | Edit custom option | Edit | Had it | Same field |
@@ -252,11 +252,11 @@ Grouped by task, thirteen categories in three groups, a search field over all of
 | 51 | Mods | Sort sounds by hero | Locker | Elsewhere in Sigil | Locker page |
 | 52 | Mods | Default sort | Sort | Had it | Mods > Order |
 | 53 | Mods | Paginated browsing | Pages | Declined (rule) | Browse loads pages as you scroll |
-| 54 | Mods | Update badges | Badges | Elsewhere in Sigil | Updates page |
+| 54 | Mods | Update badges | Badges | Built now | Mods > Browse > Show mod update marks (on; Browse cards and details, and Installed cards' Update mark, wave 4) |
 | 55 | Mods | Download cache location | Info | Had it | Storage > Mod workspace, Downloads |
 | 56 | Mods | Move download cache | Move | Built now | Mods > Downloads > Download cache > Move (folder moved, link left in place) |
 | 57 | Mods | Move cache back | Move | Built now | Mods > Downloads > Download cache > Move back |
-| 58 | Application | Vanilla mode | Launch without mods | Had it | Launch vanilla, One launch button |
+| 58 | Application | Vanilla mode | Launch without mods | Built now | Game > Launch options > Vanilla launches without launch options (off; Steam's options are kept and written back at the next modded launch, wave 4) |
 | 59 | Application | Minimize to tray | Tray | Built, hook pending | General > Window; `tray.rs` is done, `main.rs` needs `keep_running`, `on_close` and `tray::install` (owner listed); Rune has no macOS tray backend |
 | 60 | Application | Close to tray | Tray | Built, hook pending | General > Window; same hooks as Minimize to tray |
 | 61 | Application | Automatic updates | Check | Had it | Network > Check for Sigil updates |
@@ -282,8 +282,8 @@ Grouped by task, thirteen categories in three groups, a search field over all of
 | 81 | Features | Experimental badges | Info | Built now | Experimental page intro |
 | 82 | Features | Leftover warning | Info | Built now | Experimental: turning off hides, deletes nothing |
 | 83 | Themes | Predefined / custom | Switch | Had it | Appearance > Theme |
-| 84 | Themes | Seasonal themes | Auto | Declined (rule) | Personalize ships ten original presets; no seasonal auto-switch |
-| 85 | Themes | Seasonal dismiss | Button | Declined (rule) | With 84 |
+| 84 | Themes | Seasonal themes | Auto | Built now | Appearance > Seasons and extras > Seasonal themes (off by default; DMM's dates, Sigil's own look, wave 4) |
+| 85 | Themes | Seasonal dismiss | Button | Built now | Appearance > Seasons and extras > Turn off until next time / Bring it back, and Seasonal effects (off) (wave 4) |
 | 86 | Themes | Remlock | Theme | Declined (rule) | GPL: names and palettes not copied; ten original presets in Personalize |
 | 87 | Themes | Nightshift | Theme | Declined (rule) | GPL: names and palettes not copied; ten original presets in Personalize |
 | 88 | Themes | Bloodmoon | Theme | Declined (rule) | GPL: names and palettes not copied; ten original presets in Personalize |
@@ -331,7 +331,7 @@ Grouped by task, thirteen categories in three groups, a search field over all of
 | 130 | Network | Download routing | Mirror first | Built now | Mods > Downloads > Fastest server first |
 | 131 | Network | Faster downloads | Parallel parts | Built now | Mods > Downloads > Faster downloads (4 or 8 parts, files of 8 MB or more) |
 | 132 | Network | Enable proxy | Proxy | Built now | Network > HTTP proxy |
-| 133 | Network | Protocol | HTTP / HTTPS / SOCKS5 | Built now | http:// and https://; SOCKS needs ureq's socks feature (refused) |
+| 133 | Network | Protocol | HTTP / HTTPS / SOCKS5 | Built now | Network > Proxy server: HTTP, HTTPS, SOCKS5 and SOCKS5h (wave 4, C12) |
 | 134 | Network | Host | Field | Built now | One address field |
 | 135 | Network | Port | Field | Built now | Validated in the address |
 | 136 | Network | Authentication | Toggle | Built now | Network > Proxy sign-in |
@@ -365,12 +365,12 @@ Grouped by task, thirteen categories in three groups, a search field over all of
 | 164 | Tools | Open game folder | Reveal | Had it | Game > folder button |
 | 165 | Tools | Open mods folder | Reveal | Had it | Game > Addon folder Reveal |
 | 166 | Tools | Open app data | Reveal | Had it | Storage > Data folder |
-| 167 | Tools | Connection diagnostics | Probe hosts | Built now | Network > Diagnostics > Connection diagnostics |
+| 167 | Tools | Connection diagnostics | Probe hosts | Built now | Network > Troubleshooting > Connection checklist (DMM's checks, How to fix, Copy results; wave 4) and Diagnostics |
 | 168 | Tools | Repair mod folder | Rebuild manifest | Elsewhere in Sigil | Storage > Rescan; install journal in core |
 | 169 | Tools | Restore unknown-file alert | Alert | Built now | Storage > Mod data > Warn about unknown files (startup notification, Don't warn again) |
 | 170 | Tools | Mod recovery report | Info | Built now | Storage > Mod data > Mod recovery report |
 | 171 | Tools | Clear catalog and resync | Danger | Built now | Network > Refresh Browse |
-| 172 | Tools | Wipe local catalog | Danger | Declined (rule) | No local catalog mirror |
+| 172 | Tools | Wipe local catalog | Danger | Built now | Storage > Mod catalog > Saved catalog: count, last sync, size, Sync now, Wipe with a confirm (wave 4, C13) |
 | 173 | Tools | Clear download cache | Danger | Had it | Storage > Downloads Clear |
 | 174 | Tools | Clear all mod data | Danger | Built now | Storage > Mod data > Clear all mod data |
 | 175 | Tools | Clear mods state | Danger | Built now | Storage > Mod data > Reset mod records |
@@ -390,8 +390,8 @@ Grouped by task, thirteen categories in three groups, a search field over all of
 | 189 | Logging | Open latest dump | Open | Built now | Show newest |
 | 190 | Logging | Dump count | Info | Built now | Crash dumps line |
 | 191 | Logging | AI provider | AI site | Declined (rule) | Sigil has an agent; logs never go to a site automatically |
-| 192 | Logging | Log source | Select | Built now | Copy the last 200 lines (Sigil log) |
-| 193 | Logging | Get AI help | Copy and open AI | Declined (rule) | Copy report covers it without opening a third-party site |
+| 192 | Logging | Log source | Select | Built now | Logs and support > Log source: Combined, Sigil log, Crash dumps; Copy logs (wave 4) |
+| 193 | Logging | Get AI help | Copy and open AI | Built now | Logs and support > Ask Sigil for help: the masked logs go into Sigil's own agent, nothing is sent until Send (wave 4) |
 | 194 | Experimental | Custom maps | Flag | Declined (rule) | Maps change gameplay space; cosmetic-only rule |
 | 195 | Experimental | Mod Foundry | Flag | Built now | Experimental > Agent |
 | 196 | Experimental | Performance configs | Flag | Elsewhere in Sigil | Performance page |

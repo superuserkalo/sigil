@@ -310,6 +310,88 @@ pub fn prune(entries: &[BackupEntry], keep: usize, workspace: Option<&Path>) -> 
     Ok(doomed.len())
 }
 
+/// One install backup that holds files of a single slot: what an install replaced there.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SlotBackup {
+    pub slot: u16,
+    /// The stamp folder under `<workspace>/.dah/install/backups/`.
+    pub folder: PathBuf,
+    /// The backed-up files that still exist, by their slot file names.
+    pub files: Vec<PathBuf>,
+    pub bytes: u64,
+    /// When the install that took the backup ran (journal `installedAt`, RFC 3339).
+    pub taken_at: String,
+    /// The mod that was in the slot before, from the previous journal entry for the slot. None
+    /// when the slot held a file Sigil did not install.
+    pub previous_label: Option<String>,
+    /// The mod whose install replaced it.
+    pub replaced_by: String,
+    /// The install's plan id, for matching a journal line.
+    pub plan_id: String,
+}
+
+/// The install backups of one slot, newest first, from the install journal. A slot number is
+/// global (1 to 990), so an overflow slot's `pakNN` files never mix with `citadel/addons`'s
+/// own `pakNN`. Backups whose files were deleted or pruned are left out.
+pub fn for_slot(workspace: &Path, slot: u16) -> Vec<SlotBackup> {
+    let Ok(journal) = crate::install::read_journal(workspace) else {
+        return Vec::new();
+    };
+    let root = crate::install::backups_dir(workspace);
+    let mut out = Vec::new();
+    for (index, entry) in journal.iter().enumerate() {
+        if entry.slot != slot || entry.backups.is_empty() {
+            continue;
+        }
+        let files: Vec<PathBuf> = entry
+            .backups
+            .iter()
+            .filter(|path| path.is_file() && path.parent().and_then(Path::parent) == Some(&root))
+            .cloned()
+            .collect();
+        let Some(folder) = files.first().and_then(|path| path.parent()).map(Path::to_path_buf)
+        else {
+            continue;
+        };
+        let bytes = files
+            .iter()
+            .filter_map(|path| fs::metadata(path).ok())
+            .map(|meta| meta.len())
+            .sum();
+        let previous_label = journal[..index]
+            .iter()
+            .rev()
+            .find(|earlier| earlier.slot == slot)
+            .map(|earlier| earlier.source_label.clone());
+        out.push(SlotBackup {
+            slot,
+            folder,
+            files,
+            bytes,
+            taken_at: entry.installed_at.clone(),
+            previous_label,
+            replaced_by: entry.source_label.clone(),
+            plan_id: entry.plan_id.clone(),
+        });
+    }
+    out.reverse();
+    out
+}
+
+/// Every slot with at least one install backup, with its count, for a badge on the mod card.
+pub fn slots_with_backups(workspace: &Path) -> std::collections::BTreeMap<u16, usize> {
+    let mut counts = std::collections::BTreeMap::new();
+    let Ok(journal) = crate::install::read_journal(workspace) else {
+        return counts;
+    };
+    for entry in journal {
+        if entry.backups.iter().any(|path| path.is_file()) {
+            *counts.entry(entry.slot).or_insert(0) += 1;
+        }
+    }
+    counts
+}
+
 fn stamp() -> String {
     format!("{}-{}", now_iso().replace([':', '.'], "-"), std::process::id())
 }
@@ -467,5 +549,87 @@ mod tests {
         assert!(citadel.join("gameinfo.gi.sigil-bak").is_file());
         assert!(citadel.join("cfg").join("autoexec.cfg.dah-backup-z").is_file());
         fs::remove_dir_all(root).unwrap();
+    }
+
+    fn journal_line(workspace: &Path, slot: u16, label: &str, at: &str, backups: Vec<PathBuf>) {
+        let entry = crate::install::InstallJournalEntry {
+            schema: 1,
+            plan_id: format!("plan-{label}"),
+            installed_at: at.to_string(),
+            source: label.to_string(),
+            source_label: label.to_string(),
+            download_url: None,
+            archive: PathBuf::new(),
+            archive_sha256: String::new(),
+            slot,
+            file: crate::addons::slot_name(slot, "_dir.vpk"),
+            target: PathBuf::new(),
+            chunk_files: Vec::new(),
+            entries: 1,
+            bytes: 1,
+            vpk_bytes: 1,
+            vpk_sha256: String::new(),
+            backups,
+            removed_chunks: Vec::new(),
+            removed_files: Vec::new(),
+            gameinfo_repaired: false,
+            warnings: Vec::new(),
+        };
+        let path = crate::install::journal_path(workspace);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let mut text = fs::read_to_string(&path).unwrap_or_default();
+        text.push_str(&serde_json::to_string(&entry).unwrap());
+        text.push('\n');
+        fs::write(&path, text).unwrap();
+    }
+
+    #[test]
+    fn slot_backups_come_from_the_journal_newest_first() {
+        let workspace = scratch("slot");
+        let root = crate::install::backups_dir(&workspace);
+        let first = root.join("2026-01-01T00-00-00Z-1");
+        let second = root.join("2026-02-01T00-00-00Z-1");
+        let overflow = root.join("2026-03-01T00-00-00Z-1");
+        for dir in [&first, &second, &overflow] {
+            fs::create_dir_all(dir).unwrap();
+        }
+        fs::write(first.join("pak05_dir.vpk"), b"aaaa").unwrap();
+        fs::write(second.join("pak05_dir.vpk"), b"bb").unwrap();
+        fs::write(second.join("pak05_000.vpk"), b"ccc").unwrap();
+        // Slot 104 is pak05 in the second addon folder: the same file name, another slot.
+        fs::write(overflow.join("pak05_dir.vpk"), b"d").unwrap();
+        journal_line(&workspace, 5, "Alpha", "2026-01-01T00:00:00Z", Vec::new());
+        journal_line(&workspace, 5, "Beta", "2026-01-01T00:00:01Z", vec![first.join("pak05_dir.vpk")]);
+        journal_line(
+            &workspace,
+            5,
+            "Gamma",
+            "2026-02-01T00:00:00Z",
+            vec![second.join("pak05_dir.vpk"), second.join("pak05_000.vpk")],
+        );
+        journal_line(&workspace, 104, "Delta", "2026-03-01T00:00:00Z", vec![overflow.join("pak05_dir.vpk")]);
+        // A pruned backup is skipped.
+        journal_line(&workspace, 5, "Gone", "2026-04-01T00:00:00Z", vec![root.join("x").join("pak05_dir.vpk")]);
+
+        let list = for_slot(&workspace, 5);
+        assert_eq!(list.len(), 2);
+        assert_eq!(list[0].replaced_by, "Gamma");
+        assert_eq!(list[0].previous_label.as_deref(), Some("Beta"));
+        assert_eq!(list[0].files.len(), 2);
+        assert_eq!(list[0].bytes, 5);
+        assert_eq!(list[0].folder, second);
+        assert_eq!(list[1].replaced_by, "Beta");
+        assert_eq!(list[1].previous_label.as_deref(), Some("Alpha"));
+        assert_eq!(list[1].taken_at, "2026-01-01T00:00:01Z");
+
+        let overflow_list = for_slot(&workspace, 104);
+        assert_eq!(overflow_list.len(), 1);
+        assert_eq!(overflow_list[0].previous_label, None);
+
+        let counts = slots_with_backups(&workspace);
+        assert_eq!(counts.get(&5), Some(&2));
+        assert_eq!(counts.get(&104), Some(&1));
+        assert!(for_slot(&workspace, 7).is_empty());
+        let _ = fs::remove_dir_all(&workspace);
     }
 }

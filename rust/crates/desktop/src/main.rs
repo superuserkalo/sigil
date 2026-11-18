@@ -24,6 +24,8 @@ mod prefs;
 mod publish;
 mod screens;
 mod shell;
+mod shell_w4;
+mod shell_tips;
 mod signin;
 mod single_instance;
 mod statusbar;
@@ -67,7 +69,7 @@ fn main() -> std::process::ExitCode {
     brand::install_app_icon();
     let scenes: &'static [(&'static str, fn(&mut State))] =
         Box::leak(
-            [app::scenes(), &deeplink::SCENES[..], &screens::settings::personalize::SCENES[..]]
+            [app::scenes(), &deeplink::SCENES[..], &screens::settings::personalize::SCENES[..], screens::w4a_scenes::SCENES]
                 .concat()
                 .into_boxed_slice(),
         );

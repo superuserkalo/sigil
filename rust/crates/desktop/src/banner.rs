@@ -113,6 +113,33 @@ fn fix(st: &mut State) {
         notify::push(st, Notice::info("Demo data: nothing was changed."));
         return;
     }
+    // Wave 4: the owner's repair keeps mounts the player or another tool added (DMM), from
+    // Sigil's newest copy; on an error it falls back to adding Sigil's own lines only.
+    if let Some(game_root) = st.game_root.clone() {
+        match deadlock_core::game_apply::apply_gameinfo_repair(&game_root, true) {
+            Ok(done) => {
+                st.gameinfo.state = Gameinfo::Loads;
+                crate::data::rescan_game(st);
+                let notice = match done {
+                    Some(done) => {
+                        let mut notice = Notice::success("Fixed. Mods load again");
+                        if !done.restored.is_empty() {
+                            notice = notice.detail(crate::screens::settings::i18n::fill(
+                                crate::screens::settings::i18n::tr("Kept {} lines another tool had added."),
+                                &[&done.restored.len().to_string()],
+                            ));
+                        }
+                        let backup = done.backup;
+                        notice.undo(move |st: &mut State| undo_fix(st, backup))
+                    }
+                    None => Notice::success("Already fixed. Nothing changed"),
+                };
+                notify::push(st, notice);
+                return;
+            }
+            Err(error) => crate::screens::settings::log::error(format!("gameinfo.gi repair, keeping mounts: {error}")),
+        }
+    }
     match deadlock_core::deploy::repair_gameinfo(&path, true) {
         Ok(repair) => {
             st.gameinfo.state = Gameinfo::Loads;
@@ -176,6 +203,10 @@ pub fn view(s: &State, u: &Ui) -> Option<El> {
         Gameinfo::NoGame => ("Deadlock wasn't found. Choose its folder to manage your mods.", false),
         Gameinfo::Unknown | Gameinfo::Loads => return None,
     };
+    // Hidden with its X until the next launch (Grimoire); a different problem still shows.
+    if crate::shell_w4::gameinfo_hidden(s, line) {
+        return None;
+    }
     let details_label = if s.gameinfo.state == Gameinfo::NoGame { "Choose folder" } else { "Details" };
     let mut bar = row()
         .key("gameinfo-banner")
@@ -217,7 +248,7 @@ pub fn view(s: &State, u: &Ui) -> Option<El> {
                 .on_press(|st: &mut State| st.gameinfo.confirm = true),
         );
     }
-    Some(bar)
+    Some(bar.child(crate::shell_w4::gameinfo_hide_button(u, line.to_string())))
 }
 
 /// The Fix confirm, mounted with the other modal layers.

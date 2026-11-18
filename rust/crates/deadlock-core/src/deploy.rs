@@ -377,6 +377,29 @@ pub fn repair_gameinfo(gameinfo_path: &Path, approve: bool) -> Result<GameinfoRe
     }
 
     let text = fs::read_to_string(gameinfo_path)?;
+    let (output, citadel_at) = repaired_gameinfo_text(&text, &status)
+        .map_err(|reason| Error::msg(format!("{} {reason}", gameinfo_path.display())))?;
+
+    let line = if status.addons_search_path { status.line } else { Some(citadel_at + 1) };
+    let backup_path = backup_path_for(gameinfo_path)?;
+    fs::copy(gameinfo_path, &backup_path)?;
+    crate::util::write_atomic(gameinfo_path, output.as_bytes())?;
+
+    Ok(GameinfoRepair {
+        changed: true,
+        backup: Some(backup_path),
+        line,
+    })
+}
+
+/// The text [`repair_gameinfo`] writes for `text` whose status is `status`: the missing lines
+/// inserted (the addons line and language mounts above `Game citadel`, the Mod and Write paths
+/// before the block closes), every other byte kept. Also returns the index of `Game citadel`.
+/// The error is a reason to append to the file name.
+pub fn repaired_gameinfo_text(
+    text: &str,
+    status: &GameInfoStatus,
+) -> std::result::Result<(String, usize), String> {
     let ending = if text.contains("\r\n") { "\r\n" } else { "\n" };
     let citadel_pattern =
         Regex::new(r"(?i)^\s*Game\s+citadel\s*$").expect("gameinfo citadel pattern is valid");
@@ -387,10 +410,9 @@ pub fn repair_gameinfo(gameinfo_path: &Path, approve: bool) -> Result<GameinfoRe
     let lines: Vec<&str> = text.split_inclusive('\n').collect();
 
     let Some(citadel_at) = lines.iter().position(|raw| citadel_pattern.is_match(&code(raw))) else {
-        return Err(Error::msg(format!(
-            "{} has no `{GAMEINFO_CITADEL_LINE}` SearchPath line to insert above. Refusing to guess.",
-            gameinfo_path.display()
-        )));
+        return Err(format!(
+            "has no `{GAMEINFO_CITADEL_LINE}` SearchPath line to insert above. Refusing to guess."
+        ));
     };
     let citadel_line = lines[citadel_at].trim_end_matches(['\r', '\n']);
     let indent = &citadel_line[..citadel_line.len() - citadel_line.trim_start().len()];
@@ -414,12 +436,12 @@ pub fn repair_gameinfo(gameinfo_path: &Path, approve: bool) -> Result<GameinfoRe
             closing.push(line);
         }
     }
-    let block_end = crate::discovery::search_paths_block(&text).map(|(_, end)| end);
+    let block_end = crate::discovery::search_paths_block(text).map(|(_, end)| end);
     if !closing.is_empty() && block_end.is_none_or(|end| end <= citadel_at) {
-        return Err(Error::msg(format!(
-            "{} has no SearchPaths block Sigil can read to add the Mod and Write paths. Refusing to guess.",
-            gameinfo_path.display()
-        )));
+        return Err(
+            "has no SearchPaths block Sigil can read to add the Mod and Write paths. Refusing to guess."
+                .to_string(),
+        );
     }
 
     let mut output = String::with_capacity(text.len() + 256);
@@ -441,16 +463,7 @@ pub fn repair_gameinfo(gameinfo_path: &Path, approve: bool) -> Result<GameinfoRe
         output.push_str(raw_line);
     }
 
-    let line = if status.addons_search_path { status.line } else { Some(citadel_at + 1) };
-    let backup_path = backup_path_for(gameinfo_path)?;
-    fs::copy(gameinfo_path, &backup_path)?;
-    crate::util::write_atomic(gameinfo_path, output.as_bytes())?;
-
-    Ok(GameinfoRepair {
-        changed: true,
-        backup: Some(backup_path),
-        line,
-    })
+    Ok((output, citadel_at))
 }
 
 fn scan_conflicts(

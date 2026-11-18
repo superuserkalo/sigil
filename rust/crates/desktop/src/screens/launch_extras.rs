@@ -121,7 +121,7 @@ pub fn roll_before_launch(st: &mut State) {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_nanos() as u64)
         .unwrap_or(0);
-    let (wanted, picks) = roll(&extras, &disk, &map_slots(st), seed);
+    let (wanted, picks) = roll(&extras, &disk, &all_map_slots(st), seed);
     if wanted.is_empty() {
         return;
     }
@@ -155,10 +155,21 @@ pub fn map_slots(s: &State) -> BTreeSet<u16> {
     s.addons
         .addons
         .iter()
-        .filter(|a| a.enabled)
-        .filter(|a| s.launch_extras.maps.get(&(a.slot, a.size_bytes)).copied().unwrap_or(false))
+        .filter(|a| a.enabled && is_map(s, a))
         .map(|a| a.slot)
         .collect()
+}
+
+/// Every slot known to be a map mod, on or off: a random list never picks one (A7).
+pub fn all_map_slots(s: &State) -> BTreeSet<u16> {
+    s.addons.addons.iter().filter(|a| is_map(s, a)).map(|a| a.slot).collect()
+}
+
+/// A map mod by its files (`mod_kinds::is_map_mod_vpk`, read on the worker) or by its
+/// GameBanana category (Maps), as Deadlock Mod Manager's `isMap` does.
+pub fn is_map(s: &State, addon: &crate::model::AddonRow) -> bool {
+    s.launch_extras.maps.get(&(addon.slot, addon.size_bytes)).copied().unwrap_or(false)
+        || crate::screens::installed::in_maps_category(s, addon)
 }
 
 /// Read enabled slot files the cache lacks, on a worker, while the warning or a random list
@@ -179,11 +190,21 @@ pub fn poll(st: &mut State) -> bool {
         return changed;
     }
     let dir = st.addons_dir.clone().map(PathBuf::from).unwrap_or_default();
+    // Off members of a random list are read too: the roll may turn one on.
+    let listed: BTreeSet<u16> = st
+        .installed
+        .notes
+        .extras
+        .lists
+        .iter()
+        .filter(|l| l.random_each_launch)
+        .flat_map(|l| l.members.iter().filter_map(|uid| st.installed.notes.extras.slot_for_uid(uid)))
+        .collect();
     let todo: Vec<((u16, u64), PathBuf)> = st
         .addons
         .addons
         .iter()
-        .filter(|a| a.enabled && !st.launch_extras.tried.contains(&(a.slot, a.size_bytes)))
+        .filter(|a| (a.enabled || listed.contains(&a.slot)) && !st.launch_extras.tried.contains(&(a.slot, a.size_bytes)))
         .take(16)
         .map(|a| ((a.slot, a.size_bytes), a.path(&dir)))
         .collect();
@@ -265,13 +286,13 @@ pub fn dialog(s: &State, u: &Ui) -> Option<El> {
             .iter()
             .find(|a| a.slot == *slot)
             .map(|a| crate::screens::installed::display_name(s, a))
-            .unwrap_or_else(|| format!("{slot:02}"));
+            .unwrap_or_else(|| deadlock_core::addons::slot_label(*slot));
         names = names.child(
             row()
                 .w_full()
                 .gap(8.0)
                 .center_y()
-                .child(text(format!("{slot:02}")).font(MICRO).color(u.faint).w(20.0))
+                .child(text(deadlock_core::addons::slot_label(*slot)).font(MICRO).color(u.faint).w(28.0))
                 .child(text(name).font(BODY).color(u.prose).truncate()),
         );
     }
@@ -388,6 +409,15 @@ mod tests {
             assert_eq!(wanted.get(&5), Some(&true), "seed {seed}");
             assert_eq!(wanted.get(&3), Some(&false));
         }
+    }
+
+    #[test]
+    fn the_gamebanana_maps_category_marks_a_map_mod() {
+        use crate::screens::installed::maps_category;
+        assert!(maps_category(Some("Maps"), Some("Arena")));
+        assert!(maps_category(None, Some("maps")));
+        assert!(!maps_category(Some("Skins"), Some("Haze")));
+        assert!(!maps_category(None, None));
     }
 
     #[test]

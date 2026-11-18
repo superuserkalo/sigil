@@ -18,6 +18,8 @@ use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU8, Ordering};
 
 use super::locales;
+#[path = "locales_w4a.rs"]
+mod locales_w4a;
 
 /// The choice in Settings. `System` follows the OS language when Sigil has it.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
@@ -115,7 +117,7 @@ pub fn current() -> Lang {
 
 fn maps() -> &'static [HashMap<&'static str, &'static str>; 3] {
     static MAPS: OnceLock<[HashMap<&'static str, &'static str>; 3]> = OnceLock::new();
-    MAPS.get_or_init(|| Lang::ALL.map(|lang| lang.table().iter().chain(lang.more()).chain(lang.wave()).copied().collect()))
+    MAPS.get_or_init(|| Lang::ALL.map(|lang| lang.table().iter().chain(lang.more()).chain(lang.wave()).chain(if lang == Lang::German { super::locales_w4b::DE } else { &[] }).chain(if lang == Lang::German { locales_w4a::DE } else { &[] }).copied().collect()))
 }
 
 #[cfg(test)]
@@ -190,6 +192,8 @@ mod tests {
             .iter()
             .chain(super::super::locales_parity::DE)
             .chain(super::super::locales_wave::DE)
+            .chain(super::super::locales_w4b::DE)
+            .chain(super::locales_w4a::DE)
         {
             assert!(seen.insert(*en), "duplicate key {en:?}");
             assert_eq!(en.matches("{}").count(), de.matches("{}").count(), "holes in {en:?}");
@@ -240,11 +244,36 @@ mod tests {
             include_str!("../locker/cursors.rs"),
             include_str!("../installed/repair.rs"),
             include_str!("telemetry.rs"),
+            // Parity wave 4, UI B.
+            include_str!("../w4b_scenes.rs"),
+            include_str!("../../shell_w4.rs"),
+            include_str!("../../shell_tips.rs"),
+            include_str!("logs_w4.rs"),
+            include_str!("misc_w4.rs"),
+            include_str!("diag_w4.rs"),
+            include_str!("../browse/w4.rs"),
+            include_str!("../browse/paste.rs"),
+            // Parity wave 4, UI A.
+            include_str!("../../notify.rs"),
+            include_str!("../../notify/feedback.rs"),
+            include_str!("../w4a_scenes.rs"),
+            include_str!("../installed/backups.rs"),
+            include_str!("../installed/checks.rs"),
+            include_str!("../locker/sync.rs"),
+            include_str!("../locker/parts.rs"),
+            include_str!("../locker/art.rs"),
+            include_str!("../installed/safety_gate.rs"),
+            include_str!("../installed/imprint.rs"),
+            include_str!("../installed/selection.rs"),
+            include_str!("../installed/list_sections.rs"),
+            include_str!("../installed/sound.rs"),
         ];
         let table: std::collections::HashSet<&str> = locales::DE
             .iter()
             .chain(super::super::locales_parity::DE)
             .chain(super::super::locales_wave::DE)
+            .chain(super::super::locales_w4b::DE)
+            .chain(super::locales_w4a::DE)
             .map(|(en, _)| *en)
             .collect();
         let mut missing = Vec::new();
@@ -256,6 +285,8 @@ mod tests {
                     && !NOT_TEXT.contains(&literal.as_str())
                     && !super::super::locales_parity::NOT_TEXT.contains(&literal.as_str())
                     && !super::super::locales_wave::NOT_TEXT.contains(&literal.as_str())
+                    && !super::super::locales_w4b::NOT_TEXT.contains(&literal.as_str())
+                    && !super::locales_w4a::NOT_TEXT.contains(&literal.as_str())
                     && !is_path_data(&literal)
                 {
                     missing.push(literal);

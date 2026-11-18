@@ -60,6 +60,18 @@ pub const DE: &[(&str, &str)] = &[
     ("Unpin the window", "Fenster lösen"),
     ("Writes these settings to autoexec.cfg. The current file is backed up first.", "Schreibt diese Einstellungen in autoexec.cfg. Die aktuelle Datei wird zuerst gesichert."),
     ("autoexec.cfg has no crosshair from Sigil. Nothing changed.", "autoexec.cfg enthält kein Fadenkreuz von Sigil. Nichts wurde geändert."),
+    // Wave 4: the hero settings switch.
+    ("Applies the crosshair as the game's default and keeps hero overrides. Turning it off restores your previous settings. Close Deadlock first.", "Wendet das Fadenkreuz als Standard des Spiels an und behält Helden-Ausnahmen. Ausschalten stellt deine vorherigen Einstellungen wieder her. Schließ Deadlock vorher."),
+    ("Write to the game's hero settings", "In die Helden-Einstellungen des Spiels schreiben"),
+    ("Writing the hero settings", "Helden-Einstellungen werden geschrieben"),
+    ("On: {} of {} hero settings files take the crosshair. Apply writes it again; turning it off restores your previous settings.", "An: {} von {} Helden-Einstellungsdateien übernehmen das Fadenkreuz. Anwenden schreibt es erneut; Ausschalten stellt deine vorherigen Einstellungen wieder her."),
+    ("On: the crosshair is the game's default, hero overrides stay. Turning it off restores your previous settings.", "An: Das Fadenkreuz ist der Standard des Spiels, Helden-Ausnahmen bleiben. Ausschalten stellt deine vorherigen Einstellungen wieder her."),
+    ("Crosshair written to the hero settings", "Fadenkreuz in die Helden-Einstellungen geschrieben"),
+    ("Launch Deadlock to use it.", "Starte Deadlock, um es zu nutzen."),
+    ("Hero settings restored", "Helden-Einstellungen wiederhergestellt"),
+    ("Your previous crosshair settings are back.", "Deine vorherigen Fadenkreuz-Einstellungen sind zurück."),
+    ("The hero settings were not changed", "Die Helden-Einstellungen wurden nicht geändert"),
+    ("Find the game folder first.", "Finde zuerst den Spielordner."),
 ];
 
 pub fn get(text: &str) -> Option<&'static str> {
