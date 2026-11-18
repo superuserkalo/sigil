@@ -1,0 +1,24 @@
+{
+  "name": "@dah/telemetry",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Sigil's opt-in Cloudflare Worker: usage events, scrubbed crashes, player-sent diagnostics and the mod hash index",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.node.json && tsc -p test/tsconfig.json",
+    "types": "wrangler types --no-include-runtime",
+    "migrate:local": "wrangler d1 migrations apply sigil --local",
+    "migrate:remote": "wrangler d1 migrations apply sigil --remote"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-plugin": "1.8.4",
+    "@cloudflare/workers-types": "5.20261118.1",
+    "@types/node": "24.19.2",
+    "typescript": "5.9.3",
+    "vitest": "4.1.12",
+    "wrangler": "4.164.0"
+  }
+}
