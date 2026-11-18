@@ -1,8 +1,7 @@
 //! Tests for the download queue: pure state, the scan, mirrors, and one real stream.
 
 use super::*;
-
-use super::*;
+use super::speed::Rate;
 
 fn scratch(name: &str) -> PathBuf {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -354,3 +353,182 @@ fn a_row_knows_when_it_was_added() {
     let added = item.added_ms().unwrap();
     assert!(before <= added && added <= after);
 }
+
+// ---------------------------------------------------------------------------
+// Speed, time left and order
+// ---------------------------------------------------------------------------
+
+const MB: u64 = 1024 * 1024;
+
+#[test]
+fn speed_is_smoothed_across_sample_windows() {
+    let mut rate = Rate::default();
+    rate.observe(0, Duration::ZERO);
+    // A chunk that lands inside the sample window is not a speed on its own.
+    rate.observe(512 * 1024, Duration::from_millis(120));
+    assert_eq!(rate.bps(), None, "the window has not passed yet");
+
+    rate.observe(MB, Duration::from_millis(500));
+    let first = rate.bps().unwrap();
+    assert_eq!(first, 2 * MB, "1 MiB in half a second");
+
+    // A steady transfer keeps the average on the real rate.
+    for step in 1..=4 {
+        rate.observe(MB + step * MB, Duration::from_millis(500 + step * 500));
+    }
+    let steady = rate.bps().unwrap();
+    assert_eq!(steady, 2 * MB);
+
+    // One very fast window lifts the number without jumping to it: the newest reading counts
+    // for three tenths, so 34 MiB/s after 2 MiB/s reads as about 11.6 MiB/s.
+    rate.observe(22 * MB, Duration::from_millis(3_000));
+    let burst = rate.bps().unwrap();
+    assert!(burst > steady, "a fast window lifts the number");
+    assert!(burst < 20 * MB, "smoothing keeps one burst from taking over: {burst}");
+
+    // One slow window pulls it down gently rather than snapping to the new rate.
+    rate.observe(22 * MB + MB / 2, Duration::from_millis(3_500));
+    let dip = rate.bps().unwrap();
+    assert!(dip < burst && dip > 5 * MB, "no jitter on one slow window: {dip}");
+}
+
+#[test]
+fn a_restarted_file_clears_the_speed() {
+    let mut rate = Rate::default();
+    rate.observe(0, Duration::ZERO);
+    rate.observe(4 * MB, Duration::from_millis(500));
+    assert_eq!(rate.bps(), Some(8 * MB));
+    // A failover that starts the file again must not read as a negative or tiny rate.
+    rate.observe(0, Duration::from_millis(700));
+    assert_eq!(rate.bps(), None);
+}
+
+#[test]
+fn eta_needs_a_total_and_a_speed() {
+    let mut item = Item::new("d1".into(), "715100".into());
+    item.state = State::Running;
+    item.bytes_total = 10 * MB;
+    item.bytes_done = MB;
+    assert_eq!(item.eta_secs(), None, "no sample yet");
+
+    item.rate.observe(0, Duration::ZERO);
+    item.rate.observe(MB, Duration::from_millis(500));
+    assert_eq!(item.speed_bps(), Some(2 * MB));
+    assert_eq!(item.eta_secs(), Some(5), "9 MiB left at 2 MiB/s rounds up");
+
+    item.bytes_total = 0;
+    assert_eq!(item.eta_secs(), None, "the size is unknown");
+    item.bytes_total = item.bytes_done;
+    assert_eq!(item.eta_secs(), None, "nothing is left");
+    item.bytes_total = 10 * MB;
+    item.state = State::Paused;
+    assert_eq!(item.eta_secs(), None);
+    assert_eq!(item.speed_bps(), None);
+}
+
+#[test]
+fn a_crawl_is_flagged_after_eight_seconds_and_clears_on_recovery() {
+    let mut item = Item::new("d1".into(), "715100".into());
+    item.state = State::Running;
+    item.bytes_total = 100 * MB;
+    // 64 KiB every 512 ms is 125 KB/s, under the 150 KB/s threshold.
+    let chunk = 64 * 1024;
+    item.rate.observe(0, Duration::ZERO);
+    for step in 1..=16 {
+        item.rate.observe(step * chunk, Duration::from_millis(step * 512));
+        assert!(!item.is_slow(), "a short crawl is not a warning (step {step})");
+    }
+    item.rate.observe(17 * chunk, Duration::from_millis(17 * 512));
+    assert!(item.is_slow(), "8 seconds under the threshold is a crawl");
+
+    // One fast window clears the flag instead of holding it for the rest of the transfer.
+    item.rate.observe(17 * chunk + 8 * MB, Duration::from_millis(18 * 512));
+    assert!(!item.is_slow(), "a recovery clears the flag");
+    assert!(item.speed_bps().unwrap() > SLOW_BPS);
+
+    // Nearly done: no notice, it finishes before one would help (Deadlock Mod Manager's rule).
+    let mut nearly = Item::new("d2".into(), "715101".into());
+    nearly.state = State::Running;
+    nearly.bytes_total = 100 * MB;
+    nearly.bytes_done = 98 * MB;
+    nearly.rate = item.rate;
+    nearly.rate.observe(18 * chunk, Duration::from_millis(40 * 512));
+    nearly.rate.observe(19 * chunk, Duration::from_millis(60 * 512));
+    assert!(!nearly.is_slow());
+
+    item.state = State::Paused;
+    assert!(!item.is_slow());
+    assert_eq!(item.speed_bps(), None);
+}
+
+#[test]
+fn a_pause_restarts_the_slow_window() {
+    let mut rate = Rate::default();
+    let chunk = 32 * 1024;
+    rate.observe(0, Duration::ZERO);
+    for step in 1..=20_u64 {
+        rate.observe(step * chunk, Duration::from_millis(step * 256));
+    }
+    assert!(!rate.slow());
+
+    // Five silent seconds, then the same crawl. Readings start again from the resume, so the
+    // window cannot span the pause and fire early.
+    let resume = 5_120 + 5_000;
+    rate.observe(20 * chunk, Duration::from_millis(resume));
+    for step in 1..=32_u64 {
+        rate.observe(20 * chunk + step * chunk, Duration::from_millis(resume + step * 256));
+        assert!(!rate.slow(), "the window spans no pause (step {step})");
+    }
+    rate.observe(20 * chunk + 33 * chunk, Duration::from_millis(resume + 33 * 256));
+    assert!(rate.slow(), "a fresh 8 seconds of crawl still fires");
+}
+
+#[test]
+fn a_waiting_row_moves_and_a_started_one_does_not() {
+    let mut queue = Queue::default();
+    for _ in 0..3 {
+        queue.add("715100").unwrap();
+    }
+    assert_eq!(order(&queue), vec!["d1", "d2", "d3"]);
+
+    queue.move_to("d3", 0).unwrap();
+    assert_eq!(order(&queue), vec!["d3", "d1", "d2"]);
+    assert_eq!(queue.next_runnable().as_deref(), Some("d3"), "the worker picks the new first");
+
+    queue.move_to("d3", 99).unwrap();
+    assert_eq!(order(&queue), vec!["d1", "d2", "d3"], "an index past the end lands last");
+    queue.move_to("d1", 1).unwrap();
+    assert_eq!(order(&queue), vec!["d2", "d1", "d3"]);
+
+    queue.get_mut("d1").unwrap().state = State::Running;
+    assert!(queue.move_to("d1", 0).is_err(), "the running row keeps its place");
+    queue.get_mut("d2").unwrap().state = State::Paused;
+    assert!(queue.move_to("d2", 2).is_err(), "a paused row has already started");
+    queue.get_mut("d3").unwrap().state = State::Done;
+    assert!(queue.move_to("d3", 0).is_err(), "a finished row keeps its place");
+    assert!(queue.move_to("nope", 0).is_err());
+    assert_eq!(order(&queue), vec!["d2", "d1", "d3"], "a refused move changes nothing");
+}
+
+#[test]
+fn a_speed_reading_never_reaches_the_queue_file() {
+    let dir = scratch("speed-file");
+    let mut queue = Queue::default();
+    let id = queue.add("715100").unwrap();
+    let item = queue.get_mut(&id).unwrap();
+    item.state = State::Running;
+    item.rate.observe(0, Duration::ZERO);
+    item.rate.observe(4 * MB, Duration::from_millis(500));
+    assert_eq!(item.speed_bps(), Some(8 * MB));
+    store_queue(&dir, &queue).unwrap();
+    let text = fs::read_to_string(queue_path(&dir)).unwrap();
+    assert!(!text.contains("\"rate\""), "speed is runtime state, not queue data");
+    let loaded = load_queue(&dir);
+    assert_eq!(loaded.items[0].speed_bps(), None);
+    let _ = fs::remove_dir_all(&dir);
+}
+
+fn order(queue: &Queue) -> Vec<String> {
+    queue.items.iter().map(|item| item.id.clone()).collect()
+}
+

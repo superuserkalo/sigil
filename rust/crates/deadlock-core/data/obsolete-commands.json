@@ -1,0 +1,552 @@
+{
+  "schema": 1,
+  "note": "Console variables and console commands Deadlock no longer reads. A launch flag belongs in the same list with its leading dash. Each entry records the evidence that it was removed or renamed.",
+  "entries": [
+    {
+      "name": "animgraph_enable_parallel_op_evaluation",
+      "kind": "removed",
+      "replacement": null,
+      "note": "Not in Valve's convar dump after build 6711.",
+      "source": "GameTracking-Deadlock DumpSource2/convars.txt: absent from build 6711 (DMM perf catalog statusSinceBuild)"
+    },
+    {
+      "name": "animgraph_enable_parallel_preupdate",
+      "kind": "removed",
+      "replacement": null,
+      "note": "Not in Valve's convar dump after build 6711.",
+      "source": "GameTracking-Deadlock DumpSource2/convars.txt: absent from build 6711 (DMM perf catalog statusSinceBuild)"
+    },
+    {
+      "name": "animgraph_enable_parallel_update",
+      "kind": "removed",
+      "replacement": null,
+      "note": "Not in Valve's convar dump after build 6711.",
+      "source": "GameTracking-Deadlock DumpSource2/convars.txt: absent from build 6711 (DMM perf catalog statusSinceBuild)"
+    },
+    {
+      "name": "animgraph_record_all",
+      "kind": "removed",
+      "replacement": null,
+      "note": "Not in Valve's convar dump after build 6711.",
+      "source": "GameTracking-Deadlock DumpSource2/convars.txt: absent from build 6711 (DMM perf catalog statusSinceBuild)"
+    },
+    {
+      "name": "battery_saver",
+      "kind": "removed",
+      "replacement": null,
+      "note": "Battery saver mode; the game dropped it after build 6711.",
+      "source": "GameTracking-Deadlock DumpSource2/convars.txt: absent from build 6711 (DMM perf catalog statusSinceBuild)"
+    },
+    {
+      "name": "citadel_auto_ping_window",
+      "kind": "removed",
+      "replacement": null,
+      "note": "Not in Valve's convar dump after build 6757.",
+      "source": "GameTracking-Deadlock DumpSource2/convars.txt: absent from build 6757 (DMM perf catalog statusSinceBuild)"
+    },
+    {
+      "name": "citadel_camera_height_ceiling_distance",
+      "kind": "removed",
+      "replacement": null,
+      "note": "Not in Valve's convar dump after build 6711.",
+      "source": "GameTracking-Deadlock DumpSource2/convars.txt: absent from build 6711 (DMM perf catalog statusSinceBuild)"
+    },
+    {
+      "name": "citadel_camera_parrot_smoothing_rate",
+      "kind": "removed",
+      "replacement": null,
+      "note": "Not in Valve's convar dump after build 6711.",
+      "source": "GameTracking-Deadlock DumpSource2/convars.txt: absent from build 6711 (DMM perf catalog statusSinceBuild)"
+    },
+    {
+      "name": "citadel_damage_text_batching_window_ability",
+      "kind": "removed",
+      "replacement": null,
+      "note": "Ability damage batching moved to the individual and cumulative window convars after build 6711.",
+      "source": "GameTracking-Deadlock DumpSource2/convars.txt: absent from build 6711 (DMM perf catalog statusSinceBuild)"
+    },
+    {
+      "name": "citadel_damage_text_lifetime",
+      "kind": "renamed",
+      "replacement": "citadel_damage_text_lifetime_new",
+      "note": "The accumulated damage text lifetime convar replaced it after build 6711.",
+      "source": "GameTracking-Deadlock DumpSource2/convars.txt: old name absent from build 6711, replacement present in build 6857"
+    },
+    {
+      "name": "citadel_distance_mouse_move_for_minimap_drawing",
+      "kind": "removed",
+      "replacement": null,
+      "note": "Not in Valve's convar dump after build 6757.",
+      "source": "GameTracking-Deadlock DumpSource2/convars.txt: absent from build 6757 (DMM perf catalog statusSinceBuild)"
+    },
+    {
+      "name": "citadel_enable_new_ping_particle",
+      "kind": "removed",
+      "replacement": null,
+      "note": "Not in Valve's convar dump after build 6769.",
+      "source": "GameTracking-Deadlock DumpSource2/convars.txt: absent from build 6769 (DMM perf catalog statusSinceBuild)"
+    },
+    {
+      "name": "citadel_minimap_draw_fow",
+      "kind": "removed",
+      "replacement": null,
+      "note": "Not in Valve's convar dump after build 6711.",
+      "source": "GameTracking-Deadlock DumpSource2/convars.txt: absent from build 6711 (DMM perf catalog statusSinceBuild)"
+    },
+    {
+      "name": "citadel_minimap_unit_click_radius",
+      "kind": "removed",
+      "replacement": null,
+      "note": "Not in Valve's convar dump after build 6757.",
+      "source": "GameTracking-Deadlock DumpSource2/convars.txt: absent from build 6757 (DMM perf catalog statusSinceBuild)"
+    },
+    {
+      "name": "citadel_minimap_use_canvas_for_neutrals",
+      "kind": "removed",
+      "replacement": null,
+      "note": "Not in Valve's convar dump after build 6514.",
+      "source": "GameTracking-Deadlock DumpSource2/convars.txt: absent from build 6514 (DMM perf catalog statusSinceBuild)"
+    },
+    {
+      "name": "citadel_minimap_use_canvas_for_shop",
+      "kind": "removed",
+      "replacement": null,
+      "note": "Not in Valve's convar dump after build 6514.",
+      "source": "GameTracking-Deadlock DumpSource2/convars.txt: absent from build 6514 (DMM perf catalog statusSinceBuild)"
+    },
+    {
+      "name": "citadel_minimap_use_effects",
+      "kind": "removed",
+      "replacement": null,
+      "note": "Not in Valve's convar dump after build 6753.",
+      "source": "GameTracking-Deadlock DumpSource2/convars.txt: absent from build 6753 (DMM perf catalog statusSinceBuild)"
+    },
+    {
+      "name": "citadel_minimap_zip_line_thickness",
+      "kind": "removed",
+      "replacement": null,
+      "note": "Not in Valve's convar dump after build 6757.",
+      "source": "GameTracking-Deadlock DumpSource2/convars.txt: absent from build 6757 (DMM perf catalog statusSinceBuild)"
+    },
+    {
+      "name": "citadel_npc_disable_floor_point_caching",
+      "kind": "removed",
+      "replacement": null,
+      "note": "Not in Valve's convar dump after build 6711.",
+      "source": "GameTracking-Deadlock DumpSource2/convars.txt: absent from build 6711 (DMM perf catalog statusSinceBuild)"
+    },
+    {
+      "name": "citadel_npc_force_animate_every_tick",
+      "kind": "removed",
+      "replacement": null,
+      "note": "Not in Valve's convar dump after build 6711.",
+      "source": "GameTracking-Deadlock DumpSource2/convars.txt: absent from build 6711 (DMM perf catalog statusSinceBuild)"
+    },
+    {
+      "name": "citadel_outer_radius_scaler",
+      "kind": "removed",
+      "replacement": null,
+      "note": "Not in Valve's convar dump after build 6757.",
+      "source": "GameTracking-Deadlock DumpSource2/convars.txt: absent from build 6757 (DMM perf catalog statusSinceBuild)"
+    },
+    {
+      "name": "citadel_ping_wheel_activation_radius",
+      "kind": "removed",
+      "replacement": null,
+      "note": "Legacy chat wheel activation radius; the game no longer reads it after build 6757.",
+      "source": "GameTracking-Deadlock DumpSource2/convars.txt: absent from build 6757 (DMM perf catalog statusSinceBuild)"
+    },
+    {
+      "name": "citadel_player_anim_debug",
+      "kind": "removed",
+      "replacement": null,
+      "note": "Not in Valve's convar dump after build 6711.",
+      "source": "GameTracking-Deadlock DumpSource2/convars.txt: absent from build 6711 (DMM perf catalog statusSinceBuild)"
+    },
+    {
+      "name": "citadel_portrait_unit_ag2_enable",
+      "kind": "removed",
+      "replacement": null,
+      "note": "Not in Valve's convar dump after build 6711.",
+      "source": "GameTracking-Deadlock DumpSource2/convars.txt: absent from build 6711 (DMM perf catalog statusSinceBuild)"
+    },
+    {
+      "name": "citadel_show_chat_wheel_angle_threshold",
+      "kind": "removed",
+      "replacement": null,
+      "note": "Chat wheel angle threshold; the game no longer reads it after build 6711.",
+      "source": "GameTracking-Deadlock DumpSource2/convars.txt: absent from build 6711 (DMM perf catalog statusSinceBuild)"
+    },
+    {
+      "name": "citadel_test_ranked_summary",
+      "kind": "removed",
+      "replacement": null,
+      "note": "Test-only ranked summary switch; removed in build 6660.",
+      "source": "GameTracking-Deadlock DumpSource2/convars.txt: absent from build 6660 (DMM perf catalog statusSinceBuild)"
+    },
+    {
+      "name": "citadel_unit_status_allies_see_thru_walls_max_distance",
+      "kind": "removed",
+      "replacement": null,
+      "note": "Not in Valve's convar dump after build 6711.",
+      "source": "GameTracking-Deadlock DumpSource2/convars.txt: absent from build 6711 (DMM perf catalog statusSinceBuild)"
+    },
+    {
+      "name": "citadel_unit_status_dpi",
+      "kind": "removed",
+      "replacement": null,
+      "note": "Not in Valve's convar dump after build 6711.",
+      "source": "GameTracking-Deadlock DumpSource2/convars.txt: absent from build 6711 (DMM perf catalog statusSinceBuild)"
+    },
+    {
+      "name": "citadel_unit_status_old_update_rate",
+      "kind": "removed",
+      "replacement": null,
+      "note": "Not in Valve's convar dump after build 6711.",
+      "source": "GameTracking-Deadlock DumpSource2/convars.txt: absent from build 6711 (DMM perf catalog statusSinceBuild)"
+    },
+    {
+      "name": "citadel_unit_status_single_bar_mode",
+      "kind": "removed",
+      "replacement": null,
+      "note": "Not in Valve's convar dump after build 6711.",
+      "source": "GameTracking-Deadlock DumpSource2/convars.txt: absent from build 6711 (DMM perf catalog statusSinceBuild)"
+    },
+    {
+      "name": "citadel_unit_status_stamina_low_pips",
+      "kind": "removed",
+      "replacement": null,
+      "note": "Not in Valve's convar dump after build 6726.",
+      "source": "GameTracking-Deadlock DumpSource2/convars.txt: absent from build 6726 (DMM perf catalog statusSinceBuild)"
+    },
+    {
+      "name": "citadel_unit_status_use_new",
+      "kind": "removed",
+      "replacement": null,
+      "note": "Old health bar mode switch; removed after build 6711.",
+      "source": "GameTracking-Deadlock DumpSource2/convars.txt: absent from build 6711 (DMM perf catalog statusSinceBuild)"
+    },
+    {
+      "name": "citadel_unit_status_use_v2",
+      "kind": "removed",
+      "replacement": null,
+      "note": "Health bar v2 switch; removed after build 6711.",
+      "source": "GameTracking-Deadlock DumpSource2/convars.txt: absent from build 6711 (DMM perf catalog statusSinceBuild)"
+    },
+    {
+      "name": "citadel_unit_status_use_v2_for_nonplayers",
+      "kind": "removed",
+      "replacement": null,
+      "note": "Health bar v2 switch for non-player units; removed after build 6711.",
+      "source": "GameTracking-Deadlock DumpSource2/convars.txt: absent from build 6711 (DMM perf catalog statusSinceBuild)"
+    },
+    {
+      "name": "cl_enable_eye_occlusion",
+      "kind": "removed",
+      "replacement": null,
+      "note": "Not in Valve's convar dump after build 6711.",
+      "source": "GameTracking-Deadlock DumpSource2/convars.txt: absent from build 6711 (DMM perf catalog statusSinceBuild)"
+    },
+    {
+      "name": "cl_eye_yaw_multiplier",
+      "kind": "removed",
+      "replacement": null,
+      "note": "Not in Valve's convar dump after build 6711.",
+      "source": "GameTracking-Deadlock DumpSource2/convars.txt: absent from build 6711 (DMM perf catalog statusSinceBuild)"
+    },
+    {
+      "name": "cl_globallight_freeze",
+      "kind": "removed",
+      "replacement": null,
+      "note": "Not in Valve's convar dump after build 6711.",
+      "source": "GameTracking-Deadlock DumpSource2/convars.txt: absent from build 6711 (DMM perf catalog statusSinceBuild)"
+    },
+    {
+      "name": "cl_globallight_shadow_mode",
+      "kind": "removed",
+      "replacement": null,
+      "note": "Not in Valve's convar dump after build 6711.",
+      "source": "GameTracking-Deadlock DumpSource2/convars.txt: absent from build 6711 (DMM perf catalog statusSinceBuild)"
+    },
+    {
+      "name": "cl_skel_constraints_enable",
+      "kind": "removed",
+      "replacement": null,
+      "note": "Not in Valve's convar dump after build 6711.",
+      "source": "GameTracking-Deadlock DumpSource2/convars.txt: absent from build 6711 (DMM perf catalog statusSinceBuild)"
+    },
+    {
+      "name": "csm_viewmodel_farz",
+      "kind": "removed",
+      "replacement": null,
+      "note": "Not in Valve's convar dump after build 6711.",
+      "source": "GameTracking-Deadlock DumpSource2/convars.txt: absent from build 6711 (DMM perf catalog statusSinceBuild)"
+    },
+    {
+      "name": "fog_enableskybox",
+      "kind": "removed",
+      "replacement": null,
+      "note": "Not in Valve's convar dump after build 6728.",
+      "source": "GameTracking-Deadlock DumpSource2/convars.txt: absent from build 6728 (DMM perf catalog statusSinceBuild)"
+    },
+    {
+      "name": "lb_allow_time_sliced_shadow_map_rendering",
+      "kind": "removed",
+      "replacement": null,
+      "note": "Not in Valve's convar dump after build 6711.",
+      "source": "GameTracking-Deadlock DumpSource2/convars.txt: absent from build 6711 (DMM perf catalog statusSinceBuild)"
+    },
+    {
+      "name": "lb_enable_newsum",
+      "kind": "removed",
+      "replacement": null,
+      "note": "Not in Valve's convar dump after build 6711.",
+      "source": "GameTracking-Deadlock DumpSource2/convars.txt: absent from build 6711 (DMM perf catalog statusSinceBuild)"
+    },
+    {
+      "name": "mat_async_shader_load",
+      "kind": "removed",
+      "replacement": null,
+      "note": "Not in Valve's convar dump after build 6711.",
+      "source": "GameTracking-Deadlock DumpSource2/convars.txt: absent from build 6711 (DMM perf catalog statusSinceBuild)"
+    },
+    {
+      "name": "mat_depthbias_shadowmap",
+      "kind": "removed",
+      "replacement": null,
+      "note": "Not in Valve's convar dump after build 6711.",
+      "source": "GameTracking-Deadlock DumpSource2/convars.txt: absent from build 6711 (DMM perf catalog statusSinceBuild)"
+    },
+    {
+      "name": "mat_slopescaledepthbias_shadowmap",
+      "kind": "removed",
+      "replacement": null,
+      "note": "Not in Valve's convar dump after build 6711.",
+      "source": "GameTracking-Deadlock DumpSource2/convars.txt: absent from build 6711 (DMM perf catalog statusSinceBuild)"
+    },
+    {
+      "name": "panorama_max_fps",
+      "kind": "removed",
+      "replacement": null,
+      "note": "UI framerate cap; removed after build 6711.",
+      "source": "GameTracking-Deadlock DumpSource2/convars.txt: absent from build 6711 (DMM perf catalog statusSinceBuild)"
+    },
+    {
+      "name": "panorama_max_overlay_fps",
+      "kind": "removed",
+      "replacement": null,
+      "note": "UI overlay framerate cap; removed after build 6711.",
+      "source": "GameTracking-Deadlock DumpSource2/convars.txt: absent from build 6711 (DMM perf catalog statusSinceBuild)"
+    },
+    {
+      "name": "phys_visualize_traces",
+      "kind": "removed",
+      "replacement": null,
+      "note": "Not in Valve's convar dump after build 6711.",
+      "source": "GameTracking-Deadlock DumpSource2/convars.txt: absent from build 6711 (DMM perf catalog statusSinceBuild)"
+    },
+    {
+      "name": "r_async_compute_fog",
+      "kind": "removed",
+      "replacement": null,
+      "note": "Not in Valve's convar dump after build 6711.",
+      "source": "GameTracking-Deadlock DumpSource2/convars.txt: absent from build 6711 (DMM perf catalog statusSinceBuild)"
+    },
+    {
+      "name": "r_citadel_depth_prepass_cull_threshold",
+      "kind": "removed",
+      "replacement": null,
+      "note": "Not in Valve's convar dump after build 6711.",
+      "source": "GameTracking-Deadlock DumpSource2/convars.txt: absent from build 6711 (DMM perf catalog statusSinceBuild)"
+    },
+    {
+      "name": "r_citadel_depth_prepass_dynamic_objects",
+      "kind": "removed",
+      "replacement": null,
+      "note": "Not in Valve's convar dump after build 6711.",
+      "source": "GameTracking-Deadlock DumpSource2/convars.txt: absent from build 6711 (DMM perf catalog statusSinceBuild)"
+    },
+    {
+      "name": "r_citadel_disable_npr_lighting",
+      "kind": "removed",
+      "replacement": null,
+      "note": "Not in Valve's convar dump after build 6711.",
+      "source": "GameTracking-Deadlock DumpSource2/convars.txt: absent from build 6711 (DMM perf catalog statusSinceBuild)"
+    },
+    {
+      "name": "r_citadel_enable_pano_world_blur",
+      "kind": "removed",
+      "replacement": null,
+      "note": "Not in Valve's convar dump after build 6711.",
+      "source": "GameTracking-Deadlock DumpSource2/convars.txt: absent from build 6711 (DMM perf catalog statusSinceBuild)"
+    },
+    {
+      "name": "r_citadel_gpu_debug_draw",
+      "kind": "removed",
+      "replacement": null,
+      "note": "Not in Valve's convar dump after build 6711.",
+      "source": "GameTracking-Deadlock DumpSource2/convars.txt: absent from build 6711 (DMM perf catalog statusSinceBuild)"
+    },
+    {
+      "name": "r_citadel_mboit_enabled",
+      "kind": "removed",
+      "replacement": null,
+      "note": "Not in Valve's convar dump after build 6711.",
+      "source": "GameTracking-Deadlock DumpSource2/convars.txt: absent from build 6711 (DMM perf catalog statusSinceBuild)"
+    },
+    {
+      "name": "r_citadel_npr_force_solid_outline",
+      "kind": "removed",
+      "replacement": null,
+      "note": "Not in Valve's convar dump after build 6711.",
+      "source": "GameTracking-Deadlock DumpSource2/convars.txt: absent from build 6711 (DMM perf catalog statusSinceBuild)"
+    },
+    {
+      "name": "r_citadel_screenspace_particles_full_res",
+      "kind": "removed",
+      "replacement": null,
+      "note": "Not in Valve's convar dump after build 6711.",
+      "source": "GameTracking-Deadlock DumpSource2/convars.txt: absent from build 6711 (DMM perf catalog statusSinceBuild)"
+    },
+    {
+      "name": "r_citadel_ssao_thin_occluder_compensation",
+      "kind": "removed",
+      "replacement": null,
+      "note": "Not in Valve's convar dump after build 6711.",
+      "source": "GameTracking-Deadlock DumpSource2/convars.txt: absent from build 6711 (DMM perf catalog statusSinceBuild)"
+    },
+    {
+      "name": "r_cubemap_normalization",
+      "kind": "removed",
+      "replacement": null,
+      "note": "Not in Valve's convar dump after build 6711.",
+      "source": "GameTracking-Deadlock DumpSource2/convars.txt: absent from build 6711 (DMM perf catalog statusSinceBuild)"
+    },
+    {
+      "name": "r_debug_draw_safe_area_insets",
+      "kind": "removed",
+      "replacement": null,
+      "note": "Not in Valve's convar dump after build 6711.",
+      "source": "GameTracking-Deadlock DumpSource2/convars.txt: absent from build 6711 (DMM perf catalog statusSinceBuild)"
+    },
+    {
+      "name": "r_decals_max_on_deformables",
+      "kind": "removed",
+      "replacement": null,
+      "note": "Not in Valve's convar dump after build 6711.",
+      "source": "GameTracking-Deadlock DumpSource2/convars.txt: absent from build 6711 (DMM perf catalog statusSinceBuild)"
+    },
+    {
+      "name": "r_draw_overlays",
+      "kind": "removed",
+      "replacement": null,
+      "note": "Not in Valve's convar dump after build 6711.",
+      "source": "GameTracking-Deadlock DumpSource2/convars.txt: absent from build 6711 (DMM perf catalog statusSinceBuild)"
+    },
+    {
+      "name": "r_flush_on_pooled_ib_resize",
+      "kind": "removed",
+      "replacement": null,
+      "note": "Not in Valve's convar dump after build 6711.",
+      "source": "GameTracking-Deadlock DumpSource2/convars.txt: absent from build 6711 (DMM perf catalog statusSinceBuild)"
+    },
+    {
+      "name": "r_force_zprepass",
+      "kind": "removed",
+      "replacement": null,
+      "note": "Z prepass override; removed after build 6711.",
+      "source": "GameTracking-Deadlock DumpSource2/convars.txt: absent from build 6711 (DMM perf catalog statusSinceBuild)"
+    },
+    {
+      "name": "r_lighting_only",
+      "kind": "removed",
+      "replacement": null,
+      "note": "Not in Valve's convar dump after build 6711.",
+      "source": "GameTracking-Deadlock DumpSource2/convars.txt: absent from build 6711 (DMM perf catalog statusSinceBuild)"
+    },
+    {
+      "name": "r_lightmap_bicubic_filtering",
+      "kind": "removed",
+      "replacement": null,
+      "note": "Not in Valve's convar dump after build 6711.",
+      "source": "GameTracking-Deadlock DumpSource2/convars.txt: absent from build 6711 (DMM perf catalog statusSinceBuild)"
+    },
+    {
+      "name": "r_multiscattering",
+      "kind": "removed",
+      "replacement": null,
+      "note": "Not in Valve's convar dump after build 6686.",
+      "source": "GameTracking-Deadlock DumpSource2/convars.txt: absent from build 6686 (DMM perf catalog statusSinceBuild)"
+    },
+    {
+      "name": "r_opaque",
+      "kind": "removed",
+      "replacement": null,
+      "note": "Not in Valve's convar dump after build 6711.",
+      "source": "GameTracking-Deadlock DumpSource2/convars.txt: absent from build 6711 (DMM perf catalog statusSinceBuild)"
+    },
+    {
+      "name": "r_particle_explicit_fetch",
+      "kind": "removed",
+      "replacement": null,
+      "note": "Not in Valve's convar dump after build 6736.",
+      "source": "GameTracking-Deadlock DumpSource2/convars.txt: absent from build 6736 (DMM perf catalog statusSinceBuild)"
+    },
+    {
+      "name": "r_render_portals",
+      "kind": "removed",
+      "replacement": null,
+      "note": "Portal rendering switch; removed after build 6711.",
+      "source": "GameTracking-Deadlock DumpSource2/convars.txt: absent from build 6711 (DMM perf catalog statusSinceBuild)"
+    },
+    {
+      "name": "r_showdebugrendertarget",
+      "kind": "removed",
+      "replacement": null,
+      "note": "Not in Valve's convar dump after build 6711.",
+      "source": "GameTracking-Deadlock DumpSource2/convars.txt: absent from build 6711 (DMM perf catalog statusSinceBuild)"
+    },
+    {
+      "name": "r_showsunshadowdebugrendertargets",
+      "kind": "removed",
+      "replacement": null,
+      "note": "Not in Valve's convar dump after build 6711.",
+      "source": "GameTracking-Deadlock DumpSource2/convars.txt: absent from build 6711 (DMM perf catalog statusSinceBuild)"
+    },
+    {
+      "name": "r_showsunshadowdebugsplitvis",
+      "kind": "removed",
+      "replacement": null,
+      "note": "Not in Valve's convar dump after build 6711.",
+      "source": "GameTracking-Deadlock DumpSource2/convars.txt: absent from build 6711 (DMM perf catalog statusSinceBuild)"
+    },
+    {
+      "name": "r_suppress_redundant_state_changes",
+      "kind": "removed",
+      "replacement": null,
+      "note": "Not in Valve's convar dump after build 6711.",
+      "source": "GameTracking-Deadlock DumpSource2/convars.txt: absent from build 6711 (DMM perf catalog statusSinceBuild)"
+    },
+    {
+      "name": "r_texture_stream_resolution_bias",
+      "kind": "removed",
+      "replacement": null,
+      "note": "Not in Valve's convar dump after build 6711.",
+      "source": "GameTracking-Deadlock DumpSource2/convars.txt: absent from build 6711 (DMM perf catalog statusSinceBuild)"
+    },
+    {
+      "name": "sc_aggregate_gpu_vis_culling",
+      "kind": "removed",
+      "replacement": null,
+      "note": "Not in Valve's convar dump after build 6711.",
+      "source": "GameTracking-Deadlock DumpSource2/convars.txt: absent from build 6711 (DMM perf catalog statusSinceBuild)"
+    },
+    {
+      "name": "sc_instanced_mesh_mesh_shader",
+      "kind": "removed",
+      "replacement": null,
+      "note": "Instanced mesh shader toggle; removed after build 6711.",
+      "source": "GameTracking-Deadlock DumpSource2/convars.txt: absent from build 6711 (DMM perf catalog statusSinceBuild)"
+    }
+  ]
+}

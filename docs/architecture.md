@@ -389,6 +389,14 @@ Enforced in code:
      or local address. Sigil shows every origin and asks before the source is saved; it syncs
      only on add or Sync again, and downloads only when the user presses Install. Nothing about
      the user is sent.
+   - `api.divineskins.gg`, `lol-mods.divine-cdn.com`, `lol-assets.divine-cdn.com` and
+     `images.divine-cdn.com`: Divine Skins installs. Backlogged (2026-11-18): the core module
+     exists but nothing in the app calls it yet, so Sigil makes none of these requests today. A pasted Divine Skins page or Deadlock Mod
+     Manager link reads the public one-click manifest from `api.divineskins.gg`, plus the public
+     release list when the link names no release; the manifest may name an archive on
+     `lol-mods.divine-cdn.com` and a cover image on `lol-assets.divine-cdn.com` or
+     `images.divine-cdn.com`. Anonymous GETs, no account and no user data. See
+     `deadlock_core::divine_skins`.
    - Connection diagnostics and Test connection (Settings > Network, on a press only): HEAD
      requests to GameBanana, `files.gamebanana.com`, `api.deadlock-api.com`, `api.github.com`,
      `raw.githubusercontent.com` and `api.deadworks.net`, through the proxy when one is set.
