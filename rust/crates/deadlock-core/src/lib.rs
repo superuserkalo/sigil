@@ -64,6 +64,7 @@ pub mod steam_users;
 pub mod stats;
 pub mod steam_launch;
 pub mod subscription;
+pub mod telemetry;
 pub mod toolchain;
 pub mod trash;
 pub mod vpk;
@@ -137,6 +138,7 @@ pub use project::{
     ProjectHistoryEntry, TargetCheck, TargetStatus, baseline_path, check_project, create_project,
     format_project_check, project_path, read_baseline, read_project, write_baseline, write_project,
 };
+pub use telemetry::{Consent, ENDPOINT, EVENTS, HashMatch};
 pub use vpk::{
     ReadVpkOptions, VPK_DIRECTORY_ARCHIVE, VPK_MAGIC, VpkDirectory, VpkEntry, VpkHeader,
     chunk_path_for, crc32, is_safe_vpk_path, read_vpk_directory, read_vpk_directory_with,

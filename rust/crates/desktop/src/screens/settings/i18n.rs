@@ -233,6 +233,13 @@ mod tests {
             include_str!("../downloads.rs"),
             include_str!("../launch_progress.rs"),
             include_str!("../autoexec_flags.rs"),
+            include_str!("../../statusbar.rs"),
+            include_str!("../browse/strip.rs"),
+            include_str!("../launch_extras.rs"),
+            include_str!("../installed/req_order.rs"),
+            include_str!("../locker/cursors.rs"),
+            include_str!("../installed/repair.rs"),
+            include_str!("telemetry.rs"),
         ];
         let table: std::collections::HashSet<&str> = locales::DE
             .iter()

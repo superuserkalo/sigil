@@ -230,6 +230,21 @@ pub fn section(s: &State, u: &Ui) -> El {
                 .on_press(move |st: &mut State| st.launch.downloads.send(command.clone())),
         );
     }
+    // Grimoire's Cancel all: every row still waiting, running or paused. A running row stops
+    // mid-stream and its partial file goes.
+    let unfinished: Vec<String> = queue.items.iter().filter(|item| !item.state.finished()).map(|item| item.id.clone()).collect();
+    if unfinished.len() > 1 {
+        head = head.child(
+            u.action(tr("Cancel all"), ActionKind::Ghost)
+                .key("downloads-cancel-all")
+                .cursor(rune::Cursor::Pointer)
+                .on_press(move |st: &mut State| {
+                    for id in &unfinished {
+                        st.launch.downloads.send(queue::Command::Cancel(id.clone()));
+                    }
+                }),
+        );
+    }
     if finished > 0 {
         head = head.child(
             u.action(tr("Clear finished"), ActionKind::Ghost)

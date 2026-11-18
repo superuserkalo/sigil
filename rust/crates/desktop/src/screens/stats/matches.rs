@@ -46,8 +46,19 @@ pub(super) fn matches(s: &State, u: &Ui, snap: &StatsSnapshot, d: &Derived) -> E
     let averages: BTreeMap<u32, &HeroPerformance> =
         snap.heroes.iter().map(|hero| (hero.hero_id, hero)).collect();
     for (index, sitting) in d.sessions.iter().take(s.stats.sittings_shown).enumerate() {
+        // The page's ranked and date filter (`more.rs`): a sitting with nothing left is skipped.
+        let now = snap.generated_unix.max(item_now());
+        let kept: Vec<usize> = sitting
+            .indices
+            .iter()
+            .copied()
+            .filter(|i| super::more::keeps(&s.stats.more, &snap.matches[*i], now))
+            .collect();
+        if kept.is_empty() {
+            continue;
+        }
         table = table.child(sitting_head(u, snap, sitting, index));
-        for &match_index in &sitting.indices {
+        for &match_index in &kept {
             let item = &snap.matches[match_index];
             let open = s.stats.expanded == Some(item.match_id);
             table = table.child(match_row(s, u, item, open));
@@ -270,8 +281,20 @@ fn match_detail(
                         move |st: &mut State| crate::data::start_scoreboard_load(st, id)
                     }),
             )
-            .child(text(tr("Both teams, final builds and the souls curve")).font(SMALL).color(u.faint)),
+            .child(text(tr("Both teams, final builds and the souls curve")).font(SMALL).color(u.faint))
+            .child(spacer())
+            .child(
+                u.icon_action(&icons::EXTERNAL_LINK, tr("Open on Statlocker"), ActionKind::Ghost)
+                    .key(format!("stats-match-statlocker-{key}"))
+                    .role("link")
+                    .cursor(rune::Cursor::Pointer)
+                    .on_press_tx({
+                        let url = statlocker_match_url(item.match_id);
+                        move |st: &mut State, tx: &mut rune::Tx| open_statlocker(st, tx, &url)
+                    }),
+            ),
     );
+    body = body.child(super::more::timeline(s, u, item.match_id));
     body = body.child(match review {
         Some(_) => row().gap(12.0).center_y().child(
             u.action(tr("Review this match"), ActionKind::Secondary)
@@ -295,4 +318,12 @@ fn match_detail(
         .pb(16.0)
         .border_sides([0.0, 0.0, 1.0, 0.0], u.hair)
         .child(body)
+}
+
+/// The clock, for the date filter on the match list.
+fn item_now() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
 }

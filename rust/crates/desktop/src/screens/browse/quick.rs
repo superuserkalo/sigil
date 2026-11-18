@@ -58,6 +58,8 @@ pub struct Entry {
     /// Name, author and preview for the Installed card, from the card or the details.
     author: Option<String>,
     thumbnail: Option<String>,
+    /// Set by Cancel while the install worker plans this mod (`install::PlanOptions`).
+    cancel: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
 }
 
 impl Entry {
@@ -74,6 +76,7 @@ impl Entry {
             started: false,
             author: None,
             thumbnail: None,
+            cancel: None,
         }
     }
 
@@ -354,6 +357,7 @@ fn retry(st: &mut State, id: u64) {
 /// Send `target` to the download queue for mod `id`. The queue row and the install that
 /// follows report on this mod's button only.
 pub fn start(st: &mut State, id: u64, name: &str, target: String, file: Option<u64>, update: Vec<u8>) {
+    crate::screens::settings::telemetry::event(st, "install:start", Some("page:browse"));
     let target = target.trim().to_string();
     if st.game_root.is_none() {
         fail(st, id, name, target, file, update, tr("Set the game folder in Settings to install.").to_string());
@@ -554,6 +558,10 @@ fn start_next(st: &mut State) -> bool {
         }
         return true;
     };
+    let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    if let Some(entry) = st.browse_view.installs.items.get_mut(&id) {
+        entry.cancel = Some(cancel.clone());
+    }
     let entry = &st.browse_view.installs.items[&id];
     // A mod id plans by id, so the journal keeps where it came from (the update check reads
     // that) and the plan reuses the archive the queue just downloaded. A file link plans the
@@ -577,6 +585,7 @@ fn start_next(st: &mut State) -> bool {
         library: deadlock_core::import::library_path(&crate::data::data_dir()),
         land_disabled: st.prefs.land_disabled,
         switch_variants: crate::screens::settings::options::switch_variants(),
+        cancel,
     };
     st.browse_view.installs.running = Some(id);
     st.browse_view.installs.job.start(st.wake.clone(), move || {
@@ -598,6 +607,7 @@ struct Work {
     library: PathBuf,
     land_disabled: bool,
     switch_variants: bool,
+    cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
 /// Plan, validate and write one install, then record it for Installed. The same steps as the
@@ -614,10 +624,11 @@ fn install(work: Work) -> Result<Finished, String> {
         &request,
         &PlanOptions {
             game_root: Some(work.game_root.clone()),
+            cancel: Some(work.cancel.clone()),
             ..Default::default()
         },
     )
-    .map_err(|e| e.to_string())?;
+    .map_err(super::plan_error)?;
     store_plan(&plan).map_err(|e| e.to_string())?;
     let record = apply_install_with(
         &plan,
@@ -687,9 +698,12 @@ fn take_result(st: &mut State) -> bool {
             .unwrap_or_default();
             st.installed.library_sig = None;
             if st.installed.updates.loaded {
-                st.installed.updates.journal = done.journal;
+                st.installed.updates.journal = done.journal.clone();
             }
             crate::data::scan_addons_now(st);
+            crate::screens::settings::telemetry::event(st, "install:done", Some("page:browse"));
+            // Unknown-mod lookup (opt-in): add this file's hash to the index.
+            crate::screens::settings::telemetry::contribute(st, id, done.journal.iter().rev().find(|entry| entry.slot == done.slot));
             st.browse_view.installs.owned.insert(id, done.slot);
             st.browse_view.installs.owned_sig = None;
             refresh_owned(st);
@@ -710,6 +724,15 @@ fn take_result(st: &mut State) -> bool {
                     .detail(detail)
                     .action(tr("Open Installed"), |st: &mut State| st.go(Screen::Installed)),
             );
+        }
+        Err(error) if error == super::CANCELLED => {
+            crate::screens::settings::telemetry::event(st, "install:cancel", Some("page:browse"));
+            // The player stopped it: the card goes back to Install, quietly.
+            st.browse_view.installs.items.remove(&id);
+            if let (Some(row), Some(handle)) = (row, &st.launch.downloads.handle) {
+                handle.send(Command::Remove(row));
+            }
+            crate::notify::push(st, crate::notify::Notice::info(fill(tr("{} was cancelled"), &[&name])));
         }
         Err(error) if error.contains("more than one pakNN_dir.vpk") => {
             // A real choice: the archive holds several mods. The picker installs the one
@@ -847,8 +870,16 @@ pub fn button_el(u: &Ui, b: &Button, key: String, id: u64, name: &str, size: Siz
         );
     }
     if b.busy() {
-        // Still a target, so a press on a busy button does not open the card behind it.
-        return button.on_press(|_st: &mut State| {});
+        // A press on a busy button cancels it: the queue row while it downloads, the plan
+        // while it installs. It stays a target, so the card behind it does not open.
+        let label = fill(tr("Cancel {}"), &[name]);
+        return button
+            .label(label)
+            .hover(u.hover)
+            .focusable(true)
+            .cursor(rune::Cursor::Pointer)
+            .child(icon(&icons::X, 12.0).color(u.faint).a11y_hidden())
+            .on_press(move |st: &mut State| cancel(st, id));
     }
     let name = name.to_string();
     button
@@ -857,6 +888,32 @@ pub fn button_el(u: &Ui, b: &Button, key: String, id: u64, name: &str, size: Siz
         .focusable(true)
         .cursor(rune::Cursor::Pointer)
         .on_press(move |st: &mut State| press(st, id, &name))
+}
+
+/// Cancel one Browse install: its download queue row while it waits or streams (the queue
+/// removes the partial file), or the install worker's plan while it extracts and validates.
+pub fn cancel(st: &mut State, id: u64) {
+    let Some(entry) = st.browse_view.installs.items.get(&id) else { return };
+    match entry.step {
+        Step::Queued | Step::Downloading(_) | Step::Paused(_) => match entry.row.clone() {
+            Some(row) => st.launch.downloads.send(Command::Cancel(row)),
+            None => {
+                // The queue has not named its row yet: forget the entry, and the row it makes
+                // is cancelled by the target on the next follow.
+                let target = entry.target.clone();
+                st.browse_view.installs.items.remove(&id);
+                if let Some(row) = st.launch.downloads.snapshot().items.iter().rev().find(|item| item.target == target && !item.state.finished()) {
+                    st.launch.downloads.send(Command::Cancel(row.id.clone()));
+                }
+            }
+        },
+        Step::Installing => {
+            if let Some(flag) = &entry.cancel {
+                flag.store(true, std::sync::atomic::Ordering::Relaxed);
+            }
+        }
+        _ => {}
+    }
 }
 
 /// The line a card or row shows instead of its byline while an install moves or after it

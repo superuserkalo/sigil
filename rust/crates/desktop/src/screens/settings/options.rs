@@ -90,6 +90,10 @@ pub struct Options {
     pub allow_scripts: bool,
     /// Ask before a second mod for one hero is turned on (Deadlock Mod Manager's warning).
     pub hero_conflict_warning: bool,
+    /// Ask at a modded launch whether to turn enabled map mods off (Deadlock Mod Manager 2.4).
+    pub map_mod_warning: bool,
+    /// Repair enabled mods made for an older game build before each modded launch.
+    pub repair_before_launch: bool,
     // Integrations
     pub forge: bool,
     /// Read console.log for the match phase and hero.
@@ -146,6 +150,8 @@ impl Default for Options {
             skip_replace_confirm: false,
             allow_scripts: false,
             hero_conflict_warning: true,
+            map_mod_warning: true,
+            repair_before_launch: false,
             forge: false,
             presence_game: false,
             presence_lines: BTreeMap::new(),
@@ -279,6 +285,8 @@ impl Options {
             skip_replace_confirm: b("skip_replace_confirm", d.skip_replace_confirm),
             allow_scripts: b("allow_scripts", d.allow_scripts),
             hero_conflict_warning: b("hero_conflict_warning", d.hero_conflict_warning),
+            map_mod_warning: b("map_mod_warning", d.map_mod_warning),
+            repair_before_launch: b("repair_before_launch", d.repair_before_launch),
             forge: b("forge", d.forge),
             presence_game: b("presence_game", d.presence_game),
             presence_lines: lines_map(map.get("presence_lines")),
@@ -339,6 +347,8 @@ impl Options {
         m.insert("skip_replace_confirm".into(), json!(self.skip_replace_confirm));
         m.insert("allow_scripts".into(), json!(self.allow_scripts));
         m.insert("hero_conflict_warning".into(), json!(self.hero_conflict_warning));
+        m.insert("map_mod_warning".into(), json!(self.map_mod_warning));
+        m.insert("repair_before_launch".into(), json!(self.repair_before_launch));
         m.insert("forge".into(), json!(self.forge));
         m.insert("presence_game".into(), json!(self.presence_game));
         m.insert("presence_lines".into(), lines_json(&self.presence_lines));
@@ -543,6 +553,8 @@ mod tests {
             skip_replace_confirm: true,
             allow_scripts: true,
             hero_conflict_warning: false,
+            map_mod_warning: false,
+            repair_before_launch: true,
             forge: true,
             presence_game: true,
             presence_lines: BTreeMap::new(),

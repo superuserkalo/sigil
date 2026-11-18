@@ -237,14 +237,9 @@ pub struct Flag {
     pub default: bool,
 }
 
-/// Every flag Sigil reads. A flag read by id that is not listed here is off.
-pub const FLAGS: [Flag; 3] = [
-    Flag {
-        id: "servers",
-        title: "Servers",
-        line: "Shows the Deadworks community server browser in the sidebar.",
-        default: true,
-    },
+/// Every experimental flag Sigil reads, shown in Settings > Experimental. A flag read by id
+/// that is not listed here or in `PAGES` is off.
+pub const FLAGS: [Flag; 2] = [
     Flag {
         id: "agent",
         title: "Agent",
@@ -258,6 +253,80 @@ pub const FLAGS: [Flag; 3] = [
         default: false,
     },
 ];
+
+/// The pages a player can turn off one by one (Deadlock Mod Manager's Features). They share
+/// the `flags` map with `FLAGS`, so the Servers switch from before keeps its saved value.
+/// Mod management (Browse, Installed, Overlap, Profiles) is always on.
+pub const PAGES: [(Screen, Flag); 6] = [
+    (
+        Screen::Locker,
+        Flag {
+            id: "page_locker",
+            title: "Locker",
+            line: "Pick a skin per hero and shuffle skins on each launch. Turning it off also stops the shuffle.",
+            default: true,
+        },
+    ),
+    (
+        Screen::Crosshair,
+        Flag {
+            id: "page_crosshair",
+            title: "Crosshair",
+            line: "Design a crosshair and write it into the game's config.",
+            default: true,
+        },
+    ),
+    (
+        Screen::Autoexec,
+        Flag {
+            id: "page_autoexec",
+            title: "Autoexec",
+            line: "Edit autoexec.cfg and the game's launch options.",
+            default: true,
+        },
+    ),
+    (
+        Screen::Performance,
+        Flag {
+            id: "page_performance",
+            title: "Performance",
+            line: "Apply community configs that trade visual detail for frame rate.",
+            default: true,
+        },
+    ),
+    (
+        Screen::Stats,
+        Flag {
+            id: "page_stats",
+            title: "Stats",
+            line: "Player stats and match history. Sends the Steam account ids you look up to deadlock-api.",
+            default: true,
+        },
+    ),
+    (
+        Screen::Servers,
+        Flag {
+            id: "servers",
+            title: "Servers",
+            line: "Browse and join Deadworks community servers.",
+            default: true,
+        },
+    ),
+];
+
+/// "Mods only" (Deadlock Mod Manager's Minimal mode): every page in `PAGES` is off while it is
+/// on, and each page's own switch comes back when it is turned off.
+pub const MODS_ONLY: &str = "mods_only";
+
+/// A flag's default, from either list. Unknown ids are off.
+fn flag_default(id: &str) -> Option<bool> {
+    FLAGS
+        .iter()
+        .chain(PAGES.iter().map(|(_, flag)| flag))
+        .find(|f| f.id == id)
+        .map(|f| f.default)
+        .or_else(|| (id == MODS_ONLY).then_some(false))
+}
 
 /// Intervals offered for background work, in minutes. 0 means never.
 pub const CATALOG_MINUTES: [u32; 4] = [0, 15, 30, 60];
@@ -301,6 +370,8 @@ pub struct Prefs {
     pub channel: Channel,
     pub custom_accents: Vec<String>,
     pub transparent_sidebar: bool,
+    /// The quiet bar under every page: game, catalog, downloads, profile, volume, update.
+    pub status_bar: bool,
     pub single_launch: bool,
     /// Flags the user changed; the rest read their default from `FLAGS`.
     pub flags: BTreeMap<String, bool>,
@@ -345,6 +416,7 @@ impl Default for Prefs {
             channel: Channel::Stable,
             custom_accents: Vec::new(),
             transparent_sidebar: false,
+            status_bar: true,
             single_launch: false,
             flags: BTreeMap::new(),
             skip_confirm: Default::default(),
@@ -450,13 +522,14 @@ impl Prefs {
                 })
                 .unwrap_or_default(),
             transparent_sidebar: b("transparent_sidebar", d.transparent_sidebar),
+            status_bar: b("status_bar", d.status_bar),
             single_launch: b("single_launch", d.single_launch),
             flags: map
                 .get("flags")
                 .and_then(Value::as_object)
                 .map(|o| {
                     o.iter()
-                        .filter(|(k, _)| FLAGS.iter().any(|f| f.id == k.as_str()))
+                        .filter(|(k, _)| flag_default(k).is_some())
                         .filter_map(|(k, v)| Some((k.clone(), v.as_bool()?)))
                         .collect()
                 })
@@ -480,18 +553,27 @@ impl Prefs {
         }
     }
 
-    /// An experimental flag: the user's choice, else its default.
+    /// A flag: the user's choice, else its default.
     pub fn flag(&self, id: &str) -> bool {
         self.flags
             .get(id)
             .copied()
-            .unwrap_or_else(|| FLAGS.iter().find(|f| f.id == id).is_some_and(|f| f.default))
+            .unwrap_or_else(|| flag_default(id).unwrap_or(false))
+    }
+
+    /// Is this page shown? Pages outside `PAGES` always are, and "Mods only" hides every
+    /// page that is in it.
+    pub fn page_on(&self, screen: Screen) -> bool {
+        match PAGES.iter().find(|(page, _)| *page == screen) {
+            Some((_, flag)) => self.flag(flag.id) && !self.flag(MODS_ONLY),
+            None => true,
+        }
     }
 
     /// Flip a flag, dropping the entry when it matches the default.
     pub fn toggle_flag(&mut self, id: &str) {
         let on = !self.flag(id);
-        let default = FLAGS.iter().find(|f| f.id == id).is_some_and(|f| f.default);
+        let default = flag_default(id).unwrap_or(false);
         if on == default {
             self.flags.remove(id);
         } else {
@@ -545,6 +627,7 @@ impl Prefs {
         map.insert("channel".into(), json!(self.channel.id()));
         map.insert("custom_accents".into(), json!(self.custom_accents));
         map.insert("transparent_sidebar".into(), json!(self.transparent_sidebar));
+        map.insert("status_bar".into(), json!(self.status_bar));
         map.insert("single_launch".into(), json!(self.single_launch));
         map.insert("flags".into(), json!(self.flags));
         map.insert("skip_confirm".into(), json!(self.skip_confirm));
@@ -658,6 +741,7 @@ mod tests {
             channel: Channel::Preview,
             custom_accents: vec!["#12ab34".into(), "#abc".into()],
             transparent_sidebar: true,
+            status_bar: false,
             single_launch: true,
             flags: [("servers".to_string(), false), ("docked_details".to_string(), true)]
                 .into_iter()
@@ -720,6 +804,25 @@ mod tests {
         assert!(!back.flag("servers"));
         assert!(!back.flags.contains_key("bogus"));
         assert_eq!(back.share_minutes, 30);
+    }
+
+    #[test]
+    fn pages_turn_off_one_by_one_and_mods_only_hides_them_all() {
+        let mut p = Prefs::default();
+        assert!(PAGES.iter().all(|(screen, _)| p.page_on(*screen)), "every page is on by default");
+        assert!(p.page_on(Screen::Browse) && p.page_on(Screen::Installed));
+        p.toggle_flag("page_stats");
+        assert!(!p.page_on(Screen::Stats));
+        assert!(p.page_on(Screen::Locker));
+        p.toggle_flag(MODS_ONLY);
+        assert!(PAGES.iter().all(|(screen, _)| !p.page_on(*screen)));
+        assert!(p.page_on(Screen::Installed), "mod management stays");
+        p.toggle_flag(MODS_ONLY);
+        assert!(p.page_on(Screen::Locker), "each page's own switch comes back");
+        assert!(!p.page_on(Screen::Stats));
+        // The Servers switch saved before the Pages section still reads.
+        let old = Prefs::from_json(r#"{"flags":{"servers":false,"page_locker":false,"mods_only":true}}"#);
+        assert!(!old.flag("servers") && !old.flag("page_locker") && old.flag(MODS_ONLY));
     }
 
     #[test]

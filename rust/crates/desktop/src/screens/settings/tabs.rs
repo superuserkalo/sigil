@@ -14,7 +14,7 @@ use super::i18n::{self, Lang, fill, tr};
 use super::log::{self, Level};
 use super::sharing;
 use super::{
-    Confirm, LIST_GAP, button, detail, disabled, field, say, section, segmented, setting_row,
+    Confirm, LIST_GAP, ROW_H, button, detail, disabled, field, say, section, segmented, setting_row,
     stacked_row, status_word, toggle_row, trailing,
 };
 use crate::app::State;
@@ -33,6 +33,7 @@ pub fn general(s: &State, u: &Ui) -> El {
     let dates: Vec<(DateFormat, &str)> = DateFormat::ALL.iter().map(|f| (*f, f.label())).collect();
     let startup: Vec<(Screen, &str)> = prefs::STARTUP_SCREENS
         .iter()
+        .filter(|screen| s.prefs.page_on(**screen))
         .map(|screen| (*screen, screen.title()))
         .collect();
     let launch: Vec<(prefs::OnLaunch, &str)> =
@@ -1151,6 +1152,92 @@ pub fn experimental(s: &State, u: &Ui) -> El {
                 .w_full(),
         )
         .child(section(u, "", rows))
+}
+
+// --- pages ------------------------------------------------------------------------
+
+/// Settings > General > Pages: each optional page on or off, and "Mods only" over them all
+/// (Deadlock Mod Manager's Features tab). A page that is off leaves the sidebar and its route;
+/// what it already wrote into the game stays.
+pub fn pages(s: &State, u: &Ui) -> El {
+    let mods_only = s.prefs.flag(prefs::MODS_ONLY);
+    let on = prefs::PAGES.iter().filter(|(_, flag)| s.prefs.flag(flag.id)).count();
+    let count_line = if mods_only {
+        fill(tr("{} pages paused. Your choices come back when you turn this off."), &[&on.to_string()])
+    } else {
+        fill(tr("{} of {} pages on."), &[&on.to_string(), &prefs::PAGES.len().to_string()])
+    };
+    let mut rows = vec![setting_row(
+        u,
+        "settings-pages-mods-only",
+        "Mods only",
+        detail(u, &count_line),
+        u.toggle(mods_only)
+            .key("settings-pages-mods-only-switch")
+            .label(tr("Mods only"))
+            .cursor(rune::Cursor::Pointer)
+            .on_press(|st: &mut State| {
+                prefs::edit(st, |p| p.toggle_flag(prefs::MODS_ONLY));
+                super::apply_flags(st);
+            }),
+    )];
+    for (screen, flag) in prefs::PAGES.iter() {
+        let id = flag.id;
+        let shown = s.prefs.flag(id);
+        let row_el = row()
+            .key(format!("settings-page-{}", screen.key()))
+            .w_full()
+            .min_h(ROW_H)
+            .py(10.0)
+            .gap(12.0)
+            .center_y()
+            .border_sides([0.0, 0.0, 1.0, 0.0], u.hair)
+            .child(rune::icon(screen.icon(), 16.0).color(u.muted).a11y_hidden())
+            .child(
+                col()
+                    .grow(1.0)
+                    .min_w(0.0)
+                    .gap(2.0)
+                    .child(
+                        row()
+                            .gap(8.0)
+                            .center_y()
+                            .child(text(tr(flag.title).to_string()).font(BODY_MED).color(u.ink))
+                            .child(if mods_only && shown {
+                                text(tr("Paused")).font(SMALL).color(u.faint)
+                            } else {
+                                el()
+                            }),
+                    )
+                    .child(detail(u, flag.line)),
+            )
+            .child(disabled(
+                u.toggle(shown && !mods_only)
+                    .key(format!("settings-page-{}-switch", screen.key()))
+                    .label(tr(flag.title))
+                    .cursor(rune::Cursor::Pointer)
+                    .on_press(move |st: &mut State| {
+                        if st.prefs.flag(prefs::MODS_ONLY) {
+                            return;
+                        }
+                        prefs::edit(st, |p| p.toggle_flag(id));
+                        super::apply_flags(st);
+                    }),
+                mods_only,
+            ));
+        rows.push(row_el);
+    }
+    col()
+        .w_full()
+        .gap(LIST_GAP)
+        .child(
+            text(tr("Turn off the pages you do not use. Mod management is always on. A page you turn off leaves the sidebar, and anything it already changed in your game stays."))
+                .font(BODY)
+                .color(u.muted)
+                .wrap()
+                .w_full(),
+        )
+        .child(section(u, "Pages", rows))
 }
 
 // --- updates (inside About) ------------------------------------------------------

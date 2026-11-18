@@ -349,10 +349,16 @@ pub fn poll(st: &mut State, tx: &mut Tx) -> bool {
             }
             Err(error) => {
                 st.install.busy = false;
-                st.install.log = Some(error);
-                st.install.tone = Tone::Bad;
+                let cancelled = error == super::CANCELLED;
+                st.install.tone = if cancelled { Tone::Quiet } else { Tone::Bad };
+                st.install.log = Some(if cancelled {
+                    crate::screens::settings::i18n::tr("Cancelled. Nothing was installed.").to_string()
+                } else {
+                    error
+                });
             }
         }
+        st.install.cancel = None;
         changed = true;
     }
     if let Some(result) = st.browse_view.collections_job.try_take() {

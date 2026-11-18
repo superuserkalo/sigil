@@ -30,7 +30,11 @@ pub fn init_state() -> State {
     state.prefs = crate::prefs::Prefs::load();
     crate::prefs::apply_game_dir(&state.prefs);
     crate::ui::set_look(state.prefs.theme, state.prefs.accent_color());
-    state.screen = state.prefs.startup;
+    state.screen = if state.prefs.page_on(state.prefs.startup) {
+        state.prefs.startup
+    } else {
+        crate::model::Screen::Browse
+    };
     state.paths.data = data_dir().display().to_string();
     let game_root = apply_game_status(&mut state);
     load_cached_patches(&mut state);
@@ -2689,7 +2693,8 @@ fn plural_line(n: usize, one: &str, many: &str) -> String {
 /// Silent when nothing shuffles, and a failure never blocks a launch. Returns whether a
 /// slot changed. Safe to call with the Locker never opened this session: it rebuilds the
 /// mod list from the installed VPKs.
-#[allow(dead_code)] // The launch handler calls it; that line is in another owner's file.
+/// Called from the launch's Roll step (`screens::launch_extras::roll_before_launch`) while the
+/// Locker page is on.
 pub fn shuffle_before_launch(state: &mut State) -> bool {
     let prefs = locker::read_prefs(&locker_prefs_path());
     if prefs.shuffle.is_empty() {
@@ -3540,6 +3545,9 @@ pub fn start_install_plan(state: &mut State) {
     let workspace = workspace_dir();
     let game_root = state.game_root.clone();
     let wake = state.wake.clone();
+    let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    state.install.cancel = Some(cancel.clone());
+    crate::screens::settings::telemetry::event(state, "install:start", Some("page:browse"));
     state.install.busy = true;
     state.install.vpks.clear();
     state.install.log = Some("Downloading, extracting and validating on a worker.".to_string());
@@ -3554,10 +3562,11 @@ pub fn start_install_plan(state: &mut State) {
                 .with_vpk(vpk);
             let options = deadlock_core::install::PlanOptions {
                 game_root,
+                cancel: Some(cancel),
                 ..Default::default()
             };
             let plan = deadlock_core::install::plan_install(&request, &options)
-                .map_err(|error| error.to_string())?;
+                .map_err(crate::screens::browse::plan_error)?;
             deadlock_core::install::store_plan(&plan).map_err(|error| error.to_string())?;
             Ok::<_, String>(plan_summary(&plan))
         })();
@@ -3590,6 +3599,8 @@ pub fn start_vpk_scan(state: &mut State) {
     let one_click = state.install.one_click;
     let workspace = workspace_dir();
     let wake = state.wake.clone();
+    let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    state.install.cancel = Some(cancel.clone());
     state.install.busy = true;
     state.browse_view.vpk_job.start(wake, move || {
         let request = deadlock_core::install::InstallRequest::new(target, workspace)
@@ -3597,9 +3608,9 @@ pub fn start_vpk_scan(state: &mut State) {
             .with_slot(slot)
             .with_force(force)
             .with_one_click(one_click);
-        let options = deadlock_core::install::PlanOptions::default();
+        let options = deadlock_core::install::PlanOptions { cancel: Some(cancel), ..Default::default() };
         deadlock_core::install::vpk_choices(&request, &options)
-            .map_err(|error| error.to_string())
+            .map_err(crate::screens::browse::plan_error)
     });
 }
 
@@ -3701,6 +3712,16 @@ pub fn start_install_apply(state: &mut State) {
 
 pub fn apply_install_outcome(state: &mut State, outcome: crate::screens::browse::InstallOutcome) {
     state.install.busy = false;
+    state.install.cancel = None;
+    // Cancel is the player's choice, not a failure: say so quietly and stop there.
+    if outcome.error.as_deref() == Some(crate::screens::browse::CANCELLED) {
+        state.install.log = Some(crate::screens::settings::i18n::tr("Cancelled. Nothing was installed.").to_string());
+        state.install.tone = crate::ui::Tone::Quiet;
+        state.install.auto = false;
+        crate::notify::push(state, crate::notify::Notice::info(crate::screens::settings::i18n::tr("Install cancelled")));
+        crate::screens::settings::telemetry::event(state, "install:cancel", Some("page:browse"));
+        return;
+    }
     let plan_landed = outcome.plan.is_some() && outcome.applied.is_none() && outcome.error.is_none();
     let applied_ok = outcome.applied.is_some() && outcome.error.is_none();
     let failed = outcome.error.is_some();
@@ -3713,6 +3734,12 @@ pub fn apply_install_outcome(state: &mut State, outcome: crate::screens::browse:
         }
     }
     if let Some(applied) = outcome.applied {
+        crate::screens::settings::telemetry::event(state, "install:done", Some("page:browse"));
+        // Unknown-mod lookup (opt-in): add the installed file's hash to the index.
+        if let (Ok(id), Some(plan)) = (state.install.target.trim().parse::<u64>(), state.install.plan.as_ref()) {
+            let journal = deadlock_core::install::read_journal(&workspace_dir()).unwrap_or_default();
+            crate::screens::settings::telemetry::contribute(state, id, journal.iter().rev().find(|entry| entry.slot == plan.slot));
+        }
         state.install.log = Some(applied.clone());
         state.install.tone = crate::ui::Tone::Ok;
         state.status = applied;
@@ -3727,6 +3754,7 @@ pub fn apply_install_outcome(state: &mut State, outcome: crate::screens::browse:
         crate::screens::browse::quick::refresh_owned(state);
     }
     if let Some(error) = outcome.error {
+        crate::screens::settings::telemetry::event(state, "install:failed", Some("page:browse"));
         state.install.log = Some(error.clone());
         state.install.tone = crate::ui::Tone::Bad;
         state.status = error;

@@ -114,6 +114,27 @@ pub struct InstallView {
     pub unchecked: std::collections::BTreeSet<String>,
     /// The checked files going in (`multi`).
     pub multi: Job<super::multi::Done>,
+    /// Set by Cancel while a plan or the VPK scan downloads and extracts (`install::PlanOptions`).
+    pub cancel: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+}
+
+/// The line a cancelled plan reports, so it reads as "Cancelled" and not as an error.
+pub const CANCELLED: &str = "Cancelled. Nothing was installed.";
+
+/// A plan error as the app shows it: the cancel line when the player stopped it.
+pub fn plan_error(error: deadlock_core::Error) -> String {
+    if deadlock_core::install::is_cancelled(&error) {
+        CANCELLED.to_string()
+    } else {
+        error.to_string()
+    }
+}
+
+/// Stop the dialog's download, extract or scan. The worker removes its partial files.
+pub fn cancel_install(st: &mut State) {
+    if let Some(flag) = &st.install.cancel {
+        flag.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
 }
 
 impl Default for InstallView {
@@ -136,6 +157,7 @@ impl Default for InstallView {
             vpks: Vec::new(),
             unchecked: std::collections::BTreeSet::new(),
             multi: Job::default(),
+            cancel: None,
         }
     }
 }
@@ -471,11 +493,25 @@ pub(crate) fn install_dialog(s: &State, u: &Ui) -> El {
                 .on_press(|st: &mut State| st.install.open = false),
         );
     } else {
+        // While a download, extract or scan runs, Cancel stops it (the worker removes its
+        // partial files); otherwise it closes the dialog.
+        let stoppable = v.busy && v.cancel.is_some();
+        let stopping = v.cancel.as_ref().is_some_and(|flag| flag.load(std::sync::atomic::Ordering::Relaxed));
         actions = actions.child(
-            u.action("Cancel", ActionKind::Ghost)
-                .key("install-cancel")
-                .cursor(rune::Cursor::Pointer)
-                .on_press(|st: &mut State| st.install.open = false),
+            u.action(
+                if stopping { crate::screens::settings::i18n::tr("Cancelling") } else { crate::screens::settings::i18n::tr("Cancel") },
+                if stoppable { ActionKind::Secondary } else { ActionKind::Ghost },
+            )
+            .key("install-cancel")
+            .disabled(stopping)
+            .cursor(rune::Cursor::Pointer)
+            .on_press(|st: &mut State| {
+                if st.install.busy && st.install.cancel.is_some() {
+                    cancel_install(st);
+                } else {
+                    st.install.open = false;
+                }
+            }),
         );
         if let Some(plan) = &v.plan {
             actions = actions

@@ -20,6 +20,7 @@ use crate::model::Screen;
 use crate::ui::{ActionKind, BODY, BODY_MED, H1, H2, MONO, SMALL, Ui};
 
 mod cards;
+pub mod cursors;
 mod variants;
 
 /// One roster hero as the screen draws it. `asset_count` is kept for later views.
@@ -132,6 +133,8 @@ pub enum HeroSection {
 pub enum GeneralTab {
     Type(GeneralType),
     Custom(String),
+    /// Cursor packs (`cursors.rs`): loose files over the game's cursor folder, not VPKs.
+    Cursors,
 }
 
 /// The New category and Rename dialog.
@@ -202,6 +205,8 @@ pub struct View {
     /// The content area's laid-out size, so cards can crop the render on the face.
     pub page_size: (f32, f32),
     pub notes_placeholder: TextEdit,
+    /// Cursor packs (`cursors.rs`).
+    pub cursors: cursors::Cursors,
 }
 
 impl Default for View {
@@ -239,6 +244,7 @@ impl Default for View {
                 860.0 - crate::ui::TITLEBAR_H,
             ),
             notes_placeholder: TextEdit::new(""),
+            cursors: cursors::Cursors::default(),
         }
     }
 }
@@ -1533,6 +1539,7 @@ fn tab_mods<'a>(v: &'a View, tab: &GeneralTab) -> Vec<&'a ModRow> {
                 .collect(),
             None => Vec::new(),
         },
+        GeneralTab::Cursors => Vec::new(),
     };
     // Enabled first, then by name, as Grimoire's groups.
     mods.sort_by(|a, b| {
@@ -1571,6 +1578,12 @@ fn general_page(s: &State, u: &Ui, v: &View) -> El {
             .on_press(move |st: &mut State| st.locker.general_tab = Some(GeneralTab::Type(kind))),
         );
     }
+    // Grimoire's Cursor tab: packs, not VPKs, so its count is the packs.
+    let packs = v.cursors.state.as_ref().map_or(0, |state| state.packs.len());
+    tabs = tabs.child(
+        rail_row(u, "locker-tab-cursors".to_string(), "Cursors", packs, active == GeneralTab::Cursors, packs == 0)
+            .on_press(|st: &mut State| st.locker.general_tab = Some(GeneralTab::Cursors)),
+    );
     if !v.categories.is_empty() {
         tabs = tabs.child(el().w_full().h(1.0).my(4.0).fill(u.hair).a11y_hidden());
     }
@@ -1697,6 +1710,7 @@ fn general_page(s: &State, u: &Ui, v: &View) -> El {
 
     let mods = tab_mods(v, &active);
     let (title, custom_id) = match &active {
+        GeneralTab::Cursors => (String::new(), None),
         GeneralTab::Type(kind) => (kind.label().to_string(), None),
         GeneralTab::Custom(id) => (
             v.categories
@@ -1717,7 +1731,9 @@ fn general_page(s: &State, u: &Ui, v: &View) -> El {
         .w_full()
         .gap(8.0)
         .child(pane_head(u, &title, plural(mods.len(), "mod", "mods"), add));
-    if mods.is_empty() {
+    if active == GeneralTab::Cursors {
+        pane_body = cursors::pane(s, u);
+    } else if mods.is_empty() {
         let (line, action) = match &custom_id {
             Some(_) => (
                 format!("Nothing in {title} yet. Add mods to file them here."),

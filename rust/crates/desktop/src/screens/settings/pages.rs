@@ -79,6 +79,22 @@ pub fn section_el(_s: &State, u: &Ui) -> El {
             ),
             toggle_row(
                 u,
+                "settings-pref-map-mods",
+                "Warn about map mods at launch",
+                "A modded launch asks whether to turn map mods off first. They can keep you out of matchmaking.",
+                o.map_mod_warning,
+                |st| options::edit(st, |o| o.map_mod_warning = !o.map_mod_warning),
+            ),
+            toggle_row(
+                u,
+                "settings-pref-repair-launch",
+                "Fix mods automatically before launch",
+                "Repairs old game data, sound bindings and cameras in enabled mods before a modded launch. Each original is kept for Revert in the Compatibility review.",
+                o.repair_before_launch,
+                |st| options::edit(st, |o| o.repair_before_launch = !o.repair_before_launch),
+            ),
+            toggle_row(
+                u,
                 "settings-pref-match-files",
                 "Match remaining update files",
                 "When one installed file and one new upload are left over, treat them as an update.",

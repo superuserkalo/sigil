@@ -9,6 +9,7 @@ use deadlock_core::stats::insight;
 use rune::{Color, El, Key, KeyEvent, ScrollSpec, Shape, canvas, col, el, row, spacer, text};
 
 use crate::app::State;
+use crate::icons;
 use crate::ui::{ActionKind, BODY, BODY_MED, H1, SMALL, Ui};
 
 use super::german::tr;
@@ -53,7 +54,18 @@ pub(super) fn board_dialog(s: &State, u: &Ui, match_id: u64) -> El {
         }
     }
 
-    footer = footer.child(spacer()).child(
+    footer = footer
+        .child(
+            u.icon_action(&icons::EXTERNAL_LINK, tr("Open on Statlocker"), ActionKind::Ghost)
+                .key("board-statlocker")
+                .role("link")
+                .cursor(rune::Cursor::Pointer)
+                .on_press_tx(move |st: &mut State, tx: &mut rune::Tx| {
+                    open_statlocker(st, tx, &statlocker_match_url(match_id))
+                }),
+        )
+        .child(spacer())
+        .child(
         u.action(tr("Close"), ActionKind::Ghost)
             .key("board-close")
             .cursor(rune::Cursor::Pointer)

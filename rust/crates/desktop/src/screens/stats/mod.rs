@@ -42,6 +42,7 @@ mod heroes;
 mod leaderboard;
 mod map;
 mod matches;
+mod more;
 mod shared;
 mod social;
 
@@ -198,6 +199,8 @@ pub struct View {
     pub demo_error: Option<String>,
     pub demo_busy: bool,
     pub review: Option<ReviewPanel>,
+    /// The ranked and date filter, Items, the purchase timeline and Party (`more.rs`).
+    pub more: more::More,
 }
 
 pub struct ReviewPanel {
@@ -252,6 +255,7 @@ impl Default for View {
             demo_error: None,
             demo_busy: false,
             review: None,
+            more: more::More::default(),
         }
     }
 }
@@ -388,6 +392,7 @@ pub fn poll(state: &mut State) -> bool {
         };
         changed = true;
     }
+    changed |= more::poll(state);
     changed
 }
 
@@ -534,6 +539,11 @@ pub fn scene_people(s: &mut State) {
     }
 }
 
+/// Items rows for a scene (`wave3_scenes`).
+pub fn more_items(rows: Vec<deadlock_core::stats::items::ItemStat>, names: std::collections::HashMap<u64, String>) -> more::ItemsLoad {
+    more::ItemsLoad { rows, names }
+}
+
 /// The account panel open, with tracked players and Steam accounts to add.
 pub fn scene_tracked(s: &mut State) {
     load_fixture(s);
@@ -567,6 +577,12 @@ pub fn view(s: &State, u: &Ui) -> El {
     let mut actions = row().gap(8.0).center_y();
     if let Some(snap) = &v.snapshot {
         actions = actions.child(account_button(u, &snap.profile, v.account_open));
+        actions = actions.child(shared::statlocker_link(
+            u,
+            "stats-statlocker".to_string(),
+            shared::statlocker_profile_url(snap.account_id),
+            tr("Open on Statlocker"),
+        ));
         actions = actions.child(
             u.icon_button(&icons::REFRESH_CW, tr("Refresh"))
                 .key("stats-refresh")
@@ -618,8 +634,11 @@ pub fn view(s: &State, u: &Ui) -> El {
             .child(brief::progress(s, u, snap, derived))
             .child(leaderboard::leaderboard_section(s, u, snap))
             .child(heroes::heroes(s, u, snap))
+            .child(more::filter_bar(s, u))
             .child(matches::matches(s, u, snap, derived))
+            .child(more::items_section(s, u))
             .child(social::social_section(s, u))
+            .child(more::party_section(s, u))
             .child(map::map_section(s, u))
             .child(demos::demo_section(s, u)),
         _ if loading => page.child(skeleton(u)),
@@ -779,6 +798,12 @@ fn account_list(s: &State, u: &Ui) -> El {
             )
             .child(spacer())
             .child(text(meta).font(TNUM_SMALL).color(u.faint));
+        r = r.child(shared::statlocker_link(
+            u,
+            format!("stats-statlocker-{account_id}"),
+            shared::statlocker_profile_url(account_id),
+            tr("Open on Statlocker"),
+        ));
         if !searching {
             if !primary {
                 r = r.child(

@@ -131,6 +131,10 @@ pub struct State {
     pub gameinfo: crate::banner::Banner,
     /// Drag, zoom, the shortcuts sheet, What's new and the background blur (`crate::shell`).
     pub shell: crate::shell::Shell,
+    /// The status bar's cached counts and its volume popover (`crate::statusbar`).
+    pub bar: crate::statusbar::Bar,
+    /// Map mod answers, the launch question and the random lists (`screens::launch_extras`).
+    pub launch_extras: screens::launch_extras::LaunchExtras,
 }
 
 impl Default for State {
@@ -226,6 +230,8 @@ impl Default for State {
             notices: crate::notify::Notices::default(),
             gameinfo: crate::banner::Banner::default(),
             shell: crate::shell::Shell::default(),
+            bar: crate::statusbar::Bar::default(),
+            launch_extras: Default::default(),
         }
     }
 }
@@ -308,6 +314,8 @@ impl State {
             screens::settings::open(self);
             return;
         }
+        // A page turned off in Settings has no route: a shortcut or a link lands on Browse.
+        let screen = if self.prefs.page_on(screen) { screen } else { Screen::Browse };
         self.settings.open = false;
         if under_agent(screen) {
             self.ensure_host();
@@ -319,6 +327,11 @@ impl State {
                 Screen::Installed => screens::installed::release_previews(self),
                 _ => {}
             }
+        }
+        if self.screen != screen
+            && let Some(name) = screens::settings::telemetry::page_event(screen)
+        {
+            screens::settings::telemetry::event(self, name, None);
         }
         self.screen = screen;
         self.status.clear();
@@ -1156,7 +1169,13 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
             }
         })
         .child(sidebar(s, &u, insets))
-        .child(main.child(col().key("page").grow(1.0).min_h(0.0).w_full().child(body)));
+        .child({
+            let main = main.child(col().key("page").grow(1.0).min_h(0.0).w_full().child(body));
+            match crate::statusbar::view(s, &u) {
+                Some(bar) => main.child(bar),
+                None => main,
+            }
+        });
     // Personalize: the background image and glow, painted under the sidebar and pages.
     if let Some(backdrop) = screens::settings::personalize::backdrop(s, &u, window) {
         root = root.child(backdrop);
@@ -1190,6 +1209,8 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
         ("crosshair-modal", screens::crosshair::dialog(s, &u)),
         ("recolor-modal", screens::locker::dialog(s, &u)),
         ("gameinfo-modal", crate::banner::dialog(s, &u)),
+        ("map-mods-modal", screens::launch_extras::dialog(s, &u)),
+        ("telemetry-modal", screens::settings::telemetry::dialog(s, &u)),
         ("shell-modal", crate::shell::whats_new_dialog(s, &u).or_else(|| crate::shell::shortcuts_dialog(s, &u))),
     ] {
         if let Some(layer) = layer {
@@ -1206,6 +1227,10 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
     }
     if let Some(sheet) = screens::settings::modal(s, &u, window) {
         root = root.child(sheet);
+    }
+    // Send diagnostics opens from inside Settings, so it sits over the sheet.
+    if let Some(preview) = screens::settings::telemetry::diagnostics_dialog(s, &u) {
+        root = root.child(u.modal_layer("diagnostics-modal", preview));
     }
     // A drag anywhere in the window, over any dialog, shows the same target.
     if s.shell.drop_hover {
@@ -1250,7 +1275,8 @@ pub fn under_agent(screen: Screen) -> bool {
 fn sidebar(s: &State, u: &Ui, insets: rune::ChromeInsets) -> El {
     let mut nav = col().key("nav").w_full().px(8.0).gap(2.0);
     for screen in PLACES {
-        if screen == Screen::Servers && !s.prefs.flag("servers") {
+        // Settings > General > Pages turns a page off; it leaves the sidebar and its route.
+        if !s.prefs.page_on(screen) {
             continue;
         }
         nav = nav.child(nav_item(s, u, screen));
@@ -1759,6 +1785,9 @@ pub fn poll(s: &mut State, t: f64, _tx: &mut Tx) -> bool {
     changed |= screens::settings::poll(s, _tx);
     changed |= screens::launch_progress::poll(s, _tx);
     changed |= screens::downloads::poll(s);
+    changed |= crate::statusbar::poll(s);
+    changed |= screens::launch_extras::poll(s);
+    changed |= screens::locker::cursors::poll(s);
     while let Some(event) = s.agent.try_event() {
         s.apply_agent_event(event);
         changed = true;
@@ -2497,6 +2526,27 @@ pub fn scenes() -> &'static [(&'static str, fn(&mut State))] {
         ("installed-overlap-list", screens::installed::wave_scenes::overlap_list),
         ("installed-hero-from-models", screens::installed::wave_scenes::hero_from_models),
         ("downloads-slow-toast", screens::installed::wave_scenes::slow_toast),
+        ("wave3-pages", screens::wave3_scenes::pages),
+        ("wave3-pages-mods-only", screens::wave3_scenes::mods_only),
+        ("wave3-status-bar", screens::wave3_scenes::status_bar),
+        ("wave3-status-volume", screens::wave3_scenes::status_volume),
+        ("wave3-statlocker", screens::wave3_scenes::statlocker),
+        ("wave3-statlocker-board", screens::wave3_scenes::statlocker_board),
+        ("wave3-statlocker-people", screens::wave3_scenes::statlocker_people),
+        ("wave3-browse-strip", screens::wave3_scenes::browse_strip),
+        ("wave3-health-outdated", screens::wave3_scenes::health_outdated),
+        ("wave3-health-outdated-confirm", screens::wave3_scenes::health_outdated_confirm),
+        ("wave3-order-fix", screens::installed::wave_scenes::order_fix),
+        ("wave3-lists-random", screens::wave3_scenes::lists_random),
+        ("wave3-map-mods", screens::wave3_scenes::map_mods),
+        ("wave3-stats-more", screens::wave3_scenes::stats_more),
+        ("wave3-locker-cursors", screens::wave3_scenes::locker_cursors),
+        ("wave3-repairs", screens::wave3_scenes::repairs),
+        ("wave3-repairs-ask", screens::wave3_scenes::repairs_ask),
+        ("wave3-install-cancel", screens::wave3_scenes::install_cancel),
+        ("wave3-telemetry-consent", screens::wave3_scenes::telemetry_consent),
+        ("wave3-telemetry-privacy", screens::wave3_scenes::telemetry_privacy),
+        ("wave3-telemetry-diagnostics", screens::wave3_scenes::telemetry_diagnostics),
         ("browse-install-enable", screens::browse::scene_install_enable),
         ("browse-replace", screens::browse::scene_replace),
         ("browse-replace-first", screens::browse::scene_replace_first),

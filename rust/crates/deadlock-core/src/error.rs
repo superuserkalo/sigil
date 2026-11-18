@@ -12,6 +12,10 @@ pub enum Error {
     Message(String),
     #[error("network error: {0}")]
     Network(String),
+    /// The player stopped a Browse install. Nothing was written, so this reads as a state,
+    /// not a failure; [`crate::install::is_cancelled`] tells a caller which one it has.
+    #[error("Cancelled. Nothing was installed.")]
+    Cancelled,
 }
 
 impl Error {

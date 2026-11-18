@@ -16,6 +16,7 @@ use rune::{El, TextEdit, col, icon, row, spacer, text};
 use crate::app::State;
 use crate::icons;
 use crate::jobs::Job;
+use crate::screens::settings::i18n::{fill, tr};
 use crate::ui::{ActionKind, BODY, BODY_MED, H1, MICRO, SMALL, Ui};
 
 use super::notes;
@@ -65,6 +66,8 @@ pub enum Stage {
 pub struct HealthUi {
     pub reviews: Vec<SlotReview>,
     pub running: bool,
+    /// "Turn off mods with outdated data" is asking before it switches them.
+    pub confirm_off: bool,
     pub error: Option<String>,
     pub job: Job<Vec<SlotReview>>,
     pub checked: usize,
@@ -414,6 +417,8 @@ pub fn scan_dialog(s: &State, u: &Ui) -> Option<El> {
 enum Ask {
     Offline,
     Link(u64, Option<u64>),
+    /// Sigil's hash index, with unknown-mod lookup consent (`settings::telemetry::lookup`).
+    Lookup,
 }
 
 /// Look at a slot's own metadata and Sigil's records. No network until a mod is known or a link
@@ -458,6 +463,18 @@ fn start_identify(st: &mut State, slot: u8, ask: Ask) {
                     file_id,
                     ..Match::default()
                 },
+                Ask::Lookup => {
+                    let best = crate::screens::settings::telemetry::lookup(&path)?
+                        .into_iter()
+                        .max_by_key(|m| m.reports)
+                        .ok_or_else(|| "Sigil's index does not know this file yet.".to_string())?;
+                    Match {
+                        gamebanana_id: Some(best.gamebanana_mod_id),
+                        file_id: Some(best.file_id),
+                        source: "lookup".to_string(),
+                        ..Match::default()
+                    }
+                }
             };
             let profile = match found.gamebanana_id {
                 Some(id) => gamebanana::fetch_mod_profile(id).ok(),
@@ -627,7 +644,22 @@ pub fn identify_dialog(s: &State, u: &Ui) -> Option<El> {
             body = body.child(field);
         }
     }
-    let mut actions = row().w_full().gap(8.0).center_y().child(spacer());
+    let mut actions = row().w_full().gap(8.0).center_y();
+    // Unknown-mod lookup (opt-in, Settings > Privacy): ask Sigil's hash index.
+    let lookup = s.settings.telemetry.consent;
+    if ui.stage == Stage::Failed && lookup.asked && lookup.hash_lookup && !s.prefs.offline {
+        let slot = ui.slot;
+        actions = actions.child(
+            u.action(tr("Look it up"), ActionKind::Ghost)
+                .key("identify-lookup")
+                .cursor(rune::Cursor::Pointer)
+                .on_press(move |st: &mut State| {
+                    crate::screens::settings::telemetry::event(st, "identify:lookup", Some("page:installed"));
+                    start_identify(st, slot, Ask::Lookup);
+                }),
+        );
+    }
+    actions = actions.child(spacer());
     if ui.stage == Stage::Failed {
         actions = actions.child(
             u.action("Link this mod", ActionKind::Primary)
@@ -690,6 +722,7 @@ pub fn open_health(st: &mut State) {
     let mut ui = HealthUi {
         reviews: Vec::new(),
         running: true,
+        confirm_off: false,
         error: None,
         job: Job::default(),
         checked: 0,
@@ -705,6 +738,7 @@ pub fn open_health(st: &mut State) {
         st.installed.tools.health = Some(ui);
         return;
     };
+    super::repair::start_check(st);
     let cache = crate::data::data_dir().join("cache");
     let wake = st.wake.clone();
     ui.job.start(wake, move || {
@@ -713,6 +747,105 @@ pub fn open_health(st: &mut State) {
         Ok(mod_health::review_against(&wanted, &paths))
     });
     st.installed.tools.health = Some(ui);
+}
+
+/// Mods the review found with outdated game data: an old hero model or a game data file the
+/// game no longer has (Grimoire's "outdated data" issue). These are the ones that can crash or
+/// look wrong, so the bulk action turns them off; a moved or gone path only goes unused.
+pub fn outdated_slots(reviews: &[SlotReview]) -> Vec<u8> {
+    let mut slots: Vec<u8> = reviews
+        .iter()
+        .filter(|review| review.issues.iter().any(|issue| issue.kind == mod_health::IssueKind::Skeleton))
+        .map(|review| review.slot)
+        .collect();
+    slots.sort_unstable();
+    slots.dedup();
+    slots
+}
+
+/// Turn off every enabled mod with outdated data, behind Undo (Grimoire's Issues panel bulk
+/// action). The review keeps the rows of the mods that stayed on.
+fn turn_off_outdated(st: &mut State) {
+    let Some(ui) = st.installed.tools.health.as_mut() else { return };
+    ui.confirm_off = false;
+    let slots = outdated_slots(&ui.reviews);
+    if st.demo {
+        st.status = tr("Demo library: nothing was changed.").to_string();
+        return;
+    }
+    if crate::screens::settings::watch::refuse_while_running(st) {
+        return;
+    }
+    let targets: Vec<(u8, String)> = st
+        .addons
+        .addons
+        .iter()
+        .filter(|addon| addon.enabled && slots.contains(&addon.slot))
+        .map(|addon| (addon.slot, super::display_name(st, addon)))
+        .collect();
+    if targets.is_empty() {
+        return;
+    }
+    let changed = super::switch_slots(st, targets, false);
+    if let Some(ui) = st.installed.tools.health.as_mut() {
+        ui.reviews.retain(|review| !changed.contains(&review.slot));
+        ui.checked = ui.checked.saturating_sub(changed.len());
+    }
+}
+
+/// The footer: the bulk action and its confirm, then Done.
+fn health_footer(ui: &HealthUi, u: &Ui) -> El {
+    let close = |st: &mut State| st.installed.tools.health = None;
+    let outdated = if ui.running || ui.error.is_some() { 0 } else { outdated_slots(&ui.reviews).len() };
+    let mut footer = row().w_full().gap(8.0).center_y();
+    if ui.confirm_off && outdated > 0 {
+        let line = if outdated == 1 {
+            tr("Turn off 1 mod? It stays installed, and Undo turns it back on.").to_string()
+        } else {
+            fill(tr("Turn off {} mods? They stay installed, and Undo turns them back on."), &[&outdated.to_string()])
+        };
+        return footer
+            .child(text(line).font(SMALL).color(u.muted).wrap().grow(1.0).min_w(0.0))
+            .child(
+                u.action(tr("Cancel"), ActionKind::Ghost)
+                    .key("health-off-cancel")
+                    .cursor(rune::Cursor::Pointer)
+                    .on_press(|st: &mut State| {
+                        if let Some(ui) = st.installed.tools.health.as_mut() {
+                            ui.confirm_off = false;
+                        }
+                    }),
+            )
+            .child(
+                u.action(tr("Turn off"), ActionKind::Danger)
+                    .key("health-off-confirm")
+                    .cursor(rune::Cursor::Pointer)
+                    .on_press(turn_off_outdated),
+            );
+    }
+    if outdated > 0 {
+        let label = if outdated == 1 {
+            tr("Turn off 1 mod with outdated data").to_string()
+        } else {
+            fill(tr("Turn off {} mods with outdated data"), &[&outdated.to_string()])
+        };
+        footer = footer.child(
+            u.icon_action(&icons::POWER, &label, ActionKind::Secondary)
+                .key("health-off-outdated")
+                .cursor(rune::Cursor::Pointer)
+                .on_press(|st: &mut State| {
+                    if let Some(ui) = st.installed.tools.health.as_mut() {
+                        ui.confirm_off = true;
+                    }
+                }),
+        );
+    }
+    footer.child(spacer()).child(
+        u.action(tr("Done"), ActionKind::Primary)
+            .key("health-done")
+            .cursor(rune::Cursor::Pointer)
+            .on_press(close),
+    )
 }
 
 pub fn health_dialog(s: &State, u: &Ui) -> Option<El> {
@@ -797,19 +930,8 @@ pub fn health_dialog(s: &State, u: &Ui) -> Option<El> {
             .child(text("Compatibility review").font(H1).color(u.ink))
             .child(text(body).font(BODY).color(u.muted).wrap())
             .child(list)
-            .child(
-                row()
-                    .w_full()
-                    .gap(8.0)
-                    .center_y()
-                    .child(spacer())
-                    .child(
-                        u.action("Done", ActionKind::Primary)
-                            .key("health-done")
-                            .cursor(rune::Cursor::Pointer)
-                            .on_press(close),
-                    ),
-            ),
+            .children(super::repair::block(s, u))
+            .child(health_footer(ui, u)),
     )
 }
 
@@ -1312,4 +1434,33 @@ pub fn merged_chip(s: &State, u: &Ui, slot: u8) -> Option<El> {
                     .a11y_hidden(),
             ),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use deadlock_core::mod_health::{Issue, IssueKind};
+
+    fn review(slot: u8, kinds: &[IssueKind]) -> SlotReview {
+        SlotReview {
+            slot,
+            issues: kinds
+                .iter()
+                .map(|kind| Issue { kind: *kind, path: format!("p/{slot}"), now_at: None })
+                .collect(),
+            ..SlotReview::default()
+        }
+    }
+
+    #[test]
+    fn only_outdated_data_counts_for_the_bulk_switch() {
+        let reviews = vec![
+            review(9, &[IssueKind::Skeleton]),
+            review(2, &[IssueKind::Moved, IssueKind::Gone]),
+            review(4, &[IssueKind::Gone, IssueKind::Skeleton]),
+            review(7, &[]),
+        ];
+        assert_eq!(outdated_slots(&reviews), vec![4, 9]);
+        assert!(outdated_slots(&[]).is_empty());
+    }
 }

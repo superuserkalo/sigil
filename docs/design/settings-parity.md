@@ -1,6 +1,6 @@
 # Settings parity: Grimoire and Deadlock Mod Manager
 
-Status: audit done 2026-11-17; parity round built 2026-11-17. Every settings item in both apps, from their source, with what Sigil does about it.
+Status: audit done 2026-11-17; parity round built 2026-11-17; wave 3 rows updated 2026-11-18 (pages, preview volume, map mods, fix before launch, Remote Install backlogged). Every settings item in both apps, from their source, with what Sigil does about it.
 
 Sources: Grimoire (`vendor/grimoire`, MIT) `src/pages/Settings.tsx`, `src/components/settings/**`, `electron/main/services/settings.ts`; Deadlock Mod Manager (`vendor/dmm`, GPL-3.0, behaviour only) `apps/desktop/src/pages/settings.tsx`, `apps/desktop/src/components/settings/*.tsx`, `plugins/themes`.
 
@@ -81,7 +81,7 @@ Grouped by task, thirteen categories in three groups, a search field over all of
 | 44 | Appearance | Art: active tab | Art behind the active tab | Built now | Appearance > Personalize > Art > Active tab (accent glow, hero or image) |
 | 45 | Appearance | Art: Launch vanilla | Button art | Built now | Appearance > Personalize > Art > Launch vanilla (Grimoire's art, hero or image) |
 | 46 | Appearance | Art: Launch modded | Button art | Built now | Appearance > Personalize > Art > Launch modded (Grimoire's art, hero or image) |
-| 47 | Appearance | Art: volume bar | Bar art | Declined (rule) | Sigil has no volume bar |
+| 47 | Appearance | Art: volume bar | Bar art | Not built yet | Sigil has a status bar volume now (wave 3); Personalize art for it is not built |
 | 48 | Appearance | Art source | Default, hero, image | Built now | Appearance > Personalize > Art: Off, default, hero, your image |
 | 49 | Appearance | Hero grid | Pick a hero render | Built now | Appearance > Personalize > Art > Hero (chip grid) |
 | 50 | Appearance | Adjust framing | Crop the render | Built now | Appearance > Personalize > Art: Across, Down, Zoom, Reset framing |
@@ -246,8 +246,8 @@ Grouped by task, thirteen categories in three groups, a search field over all of
 | 45 | Mods | Publish your own source | Guide link | Built now | Mods > Sources > How to publish your own source |
 | 46 | Mods | Auto-reapply mods | At startup | Built now | Game > Reapply mods when Sigil starts (vanilla stash back, gameinfo.gi repair) |
 | 47 | Mods | Hero conflict warning | Warn | Built now | Mods > Warn about a second mod for one hero (a mod's heroes are its GameBanana hero tag plus the heroes its model paths replace) |
-| 48 | Mods | Map mod launch warning | Ask | Had it | General > Ask before launching (mod count) |
-| 49 | Mods | Fix mods before launch | Auto repair | Built now | Game > Fix mods before launch (gameinfo.gi repair); DMM's per-mod health repair needs a health analyser Sigil does not have |
+| 48 | Mods | Map mod launch warning | Ask | Built now | Mods > Warn about map mods at launch; a modded launch with map mods on asks Turn them off and launch, Launch anyway, Don't ask again (wave 3) |
+| 49 | Mods | Fix mods before launch | Auto repair | Built now | Mods > Fix mods automatically before launch: a launch step runs the compatibility repairs (data, sounds, cameras) on every enabled mod, originals kept for Revert (wave 3); Game > Fix mods before launch still repairs gameinfo.gi |
 | 50 | Mods | Several skins per hero | Locker | Elsewhere in Sigil | Locker page |
 | 51 | Mods | Sort sounds by hero | Locker | Elsewhere in Sigil | Locker page |
 | 52 | Mods | Default sort | Sort | Had it | Mods > Order |
@@ -265,19 +265,19 @@ Grouped by task, thirteen categories in three groups, a search field over all of
 | 64 | Application | DeadlockForge 1-click | Bridge | Built now | Integrations > DeadlockForge (see Grimoire 67) |
 | 65 | Application | NVIDIA Wayland compatibility | Webkit workaround | Declined (rule) | Sigil has no webview |
 | 66 | Application | Theme light / dark / system | Theme | Had it | Appearance > Theme |
-| 67 | Application | Audio volume | Preview volume | Declined (rule) | Sigil plays no audio previews |
+| 67 | Application | Audio volume | Preview volume | Built now | Status bar volume (popover, mute) and Browse > View menu move the one preview volume (wave 3) |
 | 68 | Application | Show feature tips | Tips | Built now | General > Setup and tips > Show page tips |
 | 69 | Application | 3D model preview | Toggle | Not built yet | Needs a 3D model renderer; Rune has no mesh pipeline yet |
 | 70 | Application | Language | 18 languages | Built now | General > Language (English, Deutsch; tables for more) |
-| 71 | Features | Minimal mode | All features off | Built now | Experimental flags hide Servers and Agent; others stay core |
-| 72 | Features | Stats | Feature | Had it | Privacy > Player stats |
-| 73 | Features | Server browser | Feature | Built now | Experimental > Servers (Deadworks, no DMM API) |
+| 71 | Features | Minimal mode | All features off | Built now | General > Pages > Mods only: every optional page off, each switch comes back after (wave 3) |
+| 72 | Features | Stats | Feature | Built now | General > Pages > Stats hides the page and its route; Privacy > Player stats stops its reads |
+| 73 | Features | Server browser | Feature | Built now | General > Pages > Servers (moved from Experimental; the saved value is kept) |
 | 74 | Features | Server picker | Block relay regions | Declined (rule) | Matchmaking advantage risk (cosmetic-only rule) |
-| 75 | Features | Crosshairs | Feature | Had it | Crosshair page; community crosshairs need DMM API (backend) |
-| 76 | Features | Hero skins | Feature | Elsewhere in Sigil | Locker page |
-| 77 | Features | Performance | Feature | Elsewhere in Sigil | Performance page |
+| 75 | Features | Crosshairs | Feature | Built now | General > Pages > Crosshair; community crosshairs need DMM API (backend) |
+| 76 | Features | Hero skins | Feature | Built now | General > Pages > Locker; off also stops the launch shuffle |
+| 77 | Features | Performance | Feature | Built now | General > Pages > Performance |
 | 78 | Features | Mod Foundry | Feature | Built now | Experimental > Agent |
-| 79 | Features | Autoexec editor | Feature | Elsewhere in Sigil | Autoexec page |
+| 79 | Features | Autoexec editor | Feature | Built now | General > Pages > Autoexec |
 | 80 | Features | Plugins | Feature | Declined (rule) | No plugin runtime; agent tools are the extension point |
 | 81 | Features | Experimental badges | Info | Built now | Experimental page intro |
 | 82 | Features | Leftover warning | Info | Built now | Experimental: turning off hides, deletes nothing |
@@ -343,7 +343,7 @@ Grouped by task, thirteen categories in three groups, a search field over all of
 | 142 | Network | Cancel | Discard | Built now | Save stays off until the text changes |
 | 143 | Network | Save | Apply | Built now | Network > Save |
 | 144 | Network | Proxy status | Info | Built now | Network > HTTP proxy line |
-| 145 | Integrations | GameBanana pairing status | Remote install | Needs a backend | Needs GameBanana remote-install pairing for Sigil |
+| 145 | Integrations | GameBanana pairing status | Remote install | Not built yet | Backlogged by the owner (2026-11-18): GameBanana has to list Sigil as a 1-Click manager first. The protocol is in `deadlock_core::remote_install`, not wired |
 | 146 | Integrations | Pairing guide | Info | Needs a backend | With 145 |
 | 147 | Integrations | Linked GameBanana member | Info | Built now | Integrations > GameBanana (public profile link) |
 | 148 | Integrations | Check now | Poll queue | Needs a backend | With 145 |

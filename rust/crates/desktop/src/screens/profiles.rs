@@ -1402,6 +1402,7 @@ pub fn plan_view(plan: &core::ProfileApplyPlan) -> PlanView {
 /// folder and may rewrite autoexec.cfg. Runs only from a press: the confirm dialog or the
 /// titlebar switcher.
 fn apply(st: &mut State, slug: &str) {
+    crate::screens::settings::telemetry::event(st, "profile:apply", Some("page:profiles"));
     close(st);
     let name = find_row(st, slug).map(|row| row.name.clone()).unwrap_or_default();
     if st.profiles.fixture {
