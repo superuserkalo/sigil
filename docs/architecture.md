@@ -374,8 +374,7 @@ Enforced in code:
      start time. "Show what you are doing" off sends only "Using Sigil". Discord itself shows the
      activity to the user's friends. See `screens/settings/discord.rs`.
    - Sigil's telemetry Worker (opt-in, off by default, owner-approved 2026-11-18): the one host in
-     `deadlock_core::telemetry` (`ENDPOINT`, `https://sigil-telemetry.invalid` until the owner
-     swaps in the deployed URL). Nothing is sent until the player agrees in the first-start
+     `deadlock_core::telemetry` (`ENDPOINT`, `https://sigil-telemetry.gantchevkaloyan.workers.dev`). Nothing is sent until the player agrees in the first-start
      dialog, and each kind has its own switch in Settings > Privacy:
      - `POST /v1/events`, with usage consent: `installId` (a random UUID kept in
        `<data>/telemetry/install-id`, not a machine id), app version, OS and up to 50 allowlisted

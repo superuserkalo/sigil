@@ -1,0 +1,53 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "sigil-telemetry",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-11-18",
+  // Workers Logs and Traces for the operator only. They carry request metadata and the structured
+  // JSON lines this Worker writes, which never include a request body, an IP or a user agent.
+  "observability": {
+    "enabled": true,
+    "traces": {
+      "enabled": true
+    }
+  },
+  // Usage events go to Analytics Engine, not to D1. The binding is SIGIL_EVENTS; the dataset it
+  // writes is `sigil_events`.
+  "analytics_engine_datasets": [
+    {
+      "binding": "SIGIL_EVENTS",
+      "dataset": "sigil_events"
+    }
+  ],
+  // `database_id` is a placeholder until the owner runs `wrangler d1 create sigil` and pastes the
+  // id. Local development and the tests use a Miniflare database and ignore it.
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "sigil",
+      "database_id": "09a0b076-af41-48ff-a23d-5b1554ff440e",
+      "migrations_dir": "migrations"
+    }
+  ],
+  // 60 requests per 60 seconds per Cloudflare location. The key is a salted hash of the caller
+  // address, held in memory only; see src/limiter.ts.
+  "ratelimits": [
+    {
+      "name": "LIMITER",
+      "namespace_id": "1001",
+      "simple": {
+        "limit": 60,
+        "period": 60
+      }
+    }
+  ],
+  // Retention: diagnostics older than 30 days and crashes older than 90 days are deleted daily.
+  "triggers": {
+    "crons": ["17 3 * * *"]
+  },
+  // Do not report Wrangler usage to Cloudflare for this project. The Worker itself is the product
+  // decision recorded in docs/decisions/0014-opt-in-telemetry.md.
+  "workers_dev": true,
+  "preview_urls": false,
+  "send_metrics": false
+}
