@@ -410,7 +410,7 @@ mod tests {
         .unwrap();
         let mut second = first.clone();
         second.id = "z-later".to_string();
-        second.created_at = "2026-11-18T12:00:00.000Z".to_string();
+        second.created_at = "2999-01-01T00:00:00.000Z".to_string();
         write(&scratch.workspace(), &second).unwrap();
         fs::write(snapshot_path(&scratch.workspace(), "broken"), "{not json").unwrap();
         let listed = list(&scratch.workspace());

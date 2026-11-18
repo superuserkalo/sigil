@@ -6,6 +6,13 @@
 //! installed but off and a mod that is not installed. The second says which enabled mods would
 //! lose something when a mod is disabled.
 //!
+//! [`order_problems`] is the third check. Deadlock lets the lowest addon slot win a path two
+//! mods both ship, so a recolor or patch that sits in a higher slot than the skin it needs is
+//! replaced by that skin and changes nothing. The check reports each such pair with the slot
+//! moves that put the dependent directly before its base, which is Grimoire's "Recolor won't
+//! show: the base skin is hiding it" fix. Deadlock Mod Manager reports missing requirements
+//! only and has no load-order check.
+//!
 //! GameBanana's plain `_aRequirements` list has no importance column, so every entry counts as
 //! required. An entry without a GameBanana mod id (a tool, a credit, a link to another site)
 //! cannot be checked against the installed library and is reported as
@@ -24,11 +31,13 @@
 //! # Ok::<(), deadlock_core::Error>(())
 //! ```
 
+use std::collections::BTreeSet;
 use std::time::Duration;
 
 use serde_json::Value;
 
 use crate::error::{Error, Result};
+use crate::load_order::{SlotMove, move_to_index, moves_for_order};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Requirement {
@@ -129,6 +138,38 @@ pub struct MissingRequirement {
     pub state: RequirementState,
 }
 
+/// One installed mod, as [`order_problems`] reads it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct OrderedMod {
+    /// The GameBanana mod id, which is what requirements name.
+    pub gamebanana_id: u64,
+    /// The addon slot. The lower number loads first and wins a path two mods both ship.
+    pub slot: u8,
+    /// A disabled mod is not loaded, so it neither hides a mod nor is hidden.
+    pub enabled: bool,
+    /// The player keeps this mod first (`ModExtra::always_first`), so nothing can be moved
+    /// above it.
+    pub always_first: bool,
+}
+
+/// A mod that loads after the mod it needs, so the needed mod hides it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OrderProblem {
+    /// GameBanana id of the mod that needs the other one, for example a recolor.
+    pub overlay: u64,
+    pub overlay_slot: u8,
+    /// GameBanana id of the mod it needs, for example the base skin.
+    pub base: u64,
+    pub base_slot: u8,
+    /// The moves that put the dependent directly before its base. Empty when the base is
+    /// always first, because no move can put anything above it. Apply with
+    /// [`crate::load_order::plan_reorder`].
+    pub moves: Vec<SlotMove>,
+    /// Whether [`OrderProblem::moves`] fixes it. False means the player has to clear "always
+    /// first" on the base first, since that mod is moved back to the front on the next reorder.
+    pub fixable: bool,
+}
+
 /// What `target` needs that the active profile does not already have on.
 ///
 /// A requirement is left out when its mod is enabled, and when it names the target itself:
@@ -183,6 +224,92 @@ pub fn broken_on_disable(target_id: u64, enabled: &[(u64, ModRequirements)]) -> 
         }
     }
     broken
+}
+
+/// The enabled mods that load after the mod they need.
+///
+/// For every entry in `requirements` whose [`ModRequirements::gamebanana_id`] names an enabled
+/// mod, each link that names another enabled mod is checked against the slots. When the
+/// dependent sits in a higher slot than its base, the base wins every path the two share and
+/// the dependent changes nothing, so the pair is reported:
+///
+/// - [`OrderProblem::moves`] puts the dependent directly before its base;
+///   [`crate::load_order::plan_reorder`] turns them into the two rename passes. It is empty
+///   when the base is [`OrderedMod::always_first`], because the app would move that mod back to
+///   the front on the next reorder;
+/// - [`OrderProblem::fixable`] says whether those moves exist.
+///
+/// A requirement without a GameBanana mod link is left out, as it is in [`missing_on_enable`]:
+/// it cannot be matched. So is a link to the dependent itself, and any base that is not
+/// installed and enabled. Each pair is reported once and the result is sorted by the
+/// dependent's slot, then the base's slot.
+///
+/// The slot check does not read the VPKs. Grimoire also confirms from the two file lists that
+/// the dependent replaces textures the base ships, which keeps a required mod that shares no
+/// path out of the warning. A caller that has both listings can narrow the pairs the same way
+/// before it offers the fix.
+///
+/// `mods` holds one entry per installed mod; a mod without a GameBanana id cannot be matched
+/// and is left out by the caller.
+pub fn order_problems(mods: &[OrderedMod], requirements: &[ModRequirements]) -> Vec<OrderProblem> {
+    let enabled_slots: Vec<u8> = mods
+        .iter()
+        .filter(|m| m.enabled)
+        .map(|m| m.slot)
+        .collect::<BTreeSet<u8>>()
+        .into_iter()
+        .collect();
+
+    let mut seen = BTreeSet::new();
+    let mut problems = Vec::new();
+    for target in requirements {
+        let Some(overlay_id) = target.gamebanana_id else {
+            continue;
+        };
+        let Some(overlay) = mods.iter().find(|m| m.gamebanana_id == overlay_id && m.enabled) else {
+            continue;
+        };
+        for requirement in &target.requirements {
+            let Some(base_id) = requirement.mod_id else {
+                continue;
+            };
+            if base_id == overlay_id {
+                continue;
+            }
+            let Some(base) = mods.iter().find(|m| m.gamebanana_id == base_id && m.enabled) else {
+                continue;
+            };
+            if overlay.slot <= base.slot || !seen.insert((overlay_id, base_id)) {
+                continue;
+            }
+            let moves = if base.always_first {
+                Vec::new()
+            } else {
+                let at = enabled_slots
+                    .iter()
+                    .position(|slot| *slot == base.slot)
+                    .unwrap_or(0);
+                moves_for_order(&enabled_slots, &move_to_index(&enabled_slots, overlay.slot, at))
+            };
+            problems.push(OrderProblem {
+                overlay: overlay_id,
+                overlay_slot: overlay.slot,
+                base: base_id,
+                base_slot: base.slot,
+                fixable: !moves.is_empty(),
+                moves,
+            });
+        }
+    }
+    problems.sort_by_key(|problem| {
+        (
+            problem.overlay_slot,
+            problem.base_slot,
+            problem.overlay,
+            problem.base,
+        )
+    });
+    problems
 }
 
 #[cfg(test)]
@@ -273,5 +400,124 @@ mod tests {
         let target = ModRequirements::new(Some(7), vec![requirement("Itself", Some(7))]);
         assert!(missing_on_enable(&target, &[], &[]).is_empty());
         assert!(broken_on_disable(7, &[(7, target)]).is_empty());
+    }
+
+    fn ordered(gamebanana_id: u64, slot: u8) -> OrderedMod {
+        OrderedMod {
+            gamebanana_id,
+            slot,
+            enabled: true,
+            always_first: false,
+        }
+    }
+
+    #[test]
+    fn a_recolor_above_its_base_gets_the_moves_that_fix_it() {
+        // Base skin in slot 2, recolor in slot 5, an unrelated mod in slot 7.
+        let mods = vec![ordered(1, 2), ordered(2, 5), ordered(3, 7)];
+        let requirements = vec![ModRequirements::new(
+            Some(2),
+            vec![requirement("Base skin", Some(1))],
+        )];
+        let problems = order_problems(&mods, &requirements);
+        assert_eq!(
+            problems,
+            vec![OrderProblem {
+                overlay: 2,
+                overlay_slot: 5,
+                base: 1,
+                base_slot: 2,
+                moves: vec![SlotMove { from: 5, to: 2 }, SlotMove { from: 2, to: 5 }],
+                fixable: true,
+            }]
+        );
+    }
+
+    #[test]
+    fn a_dependent_already_before_its_base_is_left_alone() {
+        let mods = vec![ordered(2, 1), ordered(1, 4)];
+        let requirements = vec![ModRequirements::new(
+            Some(2),
+            vec![requirement("Base skin", Some(1))],
+        )];
+        assert!(order_problems(&mods, &requirements).is_empty());
+    }
+
+    #[test]
+    fn only_enabled_installed_mods_count() {
+        let requirements = vec![ModRequirements::new(
+            Some(2),
+            vec![
+                requirement("A base", Some(1)),
+                requirement("A mod that is not installed", Some(9)),
+                requirement("A tool", None),
+            ],
+        )];
+
+        // The base is installed but off.
+        let mut mods = vec![ordered(2, 5), ordered(1, 2)];
+        mods[1].enabled = false;
+        assert!(order_problems(&mods, &requirements).is_empty());
+
+        // The dependent is off.
+        let mut mods = vec![ordered(2, 5), ordered(1, 2)];
+        mods[0].enabled = false;
+        assert!(order_problems(&mods, &requirements).is_empty());
+
+        // The dependent is not in the list at all, so its page cannot be matched.
+        let mods = vec![ordered(1, 2)];
+        assert!(order_problems(&mods, &requirements).is_empty());
+    }
+
+    #[test]
+    fn a_base_that_is_always_first_cannot_be_moved() {
+        let mut mods = vec![ordered(2, 5), ordered(1, 2)];
+        mods[1].always_first = true;
+        let requirements = vec![ModRequirements::new(
+            Some(2),
+            vec![requirement("Base skin", Some(1))],
+        )];
+        let problems = order_problems(&mods, &requirements);
+        assert_eq!(problems.len(), 1);
+        assert!(!problems[0].fixable);
+        assert!(problems[0].moves.is_empty());
+    }
+
+    #[test]
+    fn a_pair_is_reported_once_and_in_slot_order() {
+        let mods = vec![ordered(5, 1), ordered(4, 2), ordered(3, 4), ordered(6, 7)];
+        let requirements = vec![
+            ModRequirements::new(
+                Some(3),
+                vec![requirement("Base A", Some(5)), requirement("Base B", Some(4))],
+            ),
+            ModRequirements::new(
+                Some(3),
+                vec![requirement("Base A again", Some(5))],
+            ),
+            ModRequirements::new(Some(4), vec![requirement("Base B", Some(5))]),
+        ];
+        let problems = order_problems(&mods, &requirements);
+        let pairs: Vec<(u64, u64)> = problems.iter().map(|p| (p.overlay, p.base)).collect();
+        // Sorted by the dependent's slot, then the base's: overlay 4 sits in slot 2.
+        assert_eq!(pairs, vec![(4, 5), (3, 5), (3, 4)]);
+        assert_eq!(
+            problems[1].moves,
+            vec![
+                SlotMove { from: 4, to: 1 },
+                SlotMove { from: 1, to: 2 },
+                SlotMove { from: 2, to: 4 },
+            ]
+        );
+    }
+
+    #[test]
+    fn a_page_without_a_mod_id_for_the_dependent_is_skipped() {
+        let mods = vec![ordered(1, 2), ordered(2, 5)];
+        let requirements = vec![ModRequirements::new(
+            None,
+            vec![requirement("Base skin", Some(1))],
+        )];
+        assert!(order_problems(&mods, &requirements).is_empty());
     }
 }

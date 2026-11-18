@@ -343,9 +343,27 @@ Enforced in code:
      15, 30 or 60 minutes while Sigil is open, or on "Share now"; each batch is logged in
      `<data>/match-sharing.json` and shown in Settings; "Forget" deletes that log.
      `deadlock_core::salts` holds the scan and the request.
+     Stats views also read `/v1/analytics/item-stats` (the player's item win rates and
+     average buy time, plus the unfiltered baseline the delta is measured against),
+     `/v1/analytics/hero-comb-stats` (pair and trio records for the Party view),
+     `/v1/players/hero-stats` with the same ranked, unranked and start-date filters, and
+     `/v1/matches/{match_id}/metadata?disable_steam=true` for one match's item purchase
+     timeline. The only identifiers sent are the account ids the user entered or picked.
+     Responses are cached under the app data directory (`cache/stats`).
    - `gamebanana.com/apiv11/Member/<id>/ProfilePage`: one anonymous GET when the user links a
      GameBanana account in Settings > Integrations, to read the public member name. The member
      id is stored in `settings.json`.
+   - `gamebanana.com/apiv11/RemoteInstall/<member id>/<token>/<manager alias>`: Remote Install
+     (`deadlock_core::remote_install`). While a pairing exists and Sigil is open, one GET every
+     five minutes, or on Check now, reads the member's queued mods; each read marks the returned
+     entries retrieved on GameBanana, which is the only acknowledgement the protocol has. The
+     token comes from GameBanana's Pair button (the `registerKey,<member id>,<token>` link) and
+     stays in the OS keychain; it travels in this URL and nowhere else. The manager alias is
+     `Sigil`, a placeholder until GameBanana enables Remote Install for it: until then the read
+     answers an `_sErrorCode`, which the app shows. `Member/<id>/ProfilePage` is also read once
+     when a pair link arrives, to show the account name before the user links it. The queue
+     itself names only GameBanana mod and sound ids and a one-click link on a `gamebanana.com`
+     host; the download goes through the existing install pipeline.
    - The release check also reads `/repos/<owner>/<repo>/releases?per_page=1` when the user picks
      the Preview channel in Settings > About and updates.
    - Discord Rich Presence (opt-in, off by default, owner-approved 2026-11-17): no network. Sigil

@@ -8,6 +8,7 @@ pub mod autoexec;
 pub mod bisect;
 pub mod backups;
 pub mod crosshair;
+pub mod cursors;
 pub mod demo;
 pub mod discovery;
 pub mod divine_skins;
@@ -27,6 +28,7 @@ pub mod launch;
 pub mod load_order;
 pub mod locker;
 pub mod obsolete_commands;
+pub mod overflow;
 pub mod patch_notes;
 pub mod performance;
 pub mod payload;
@@ -34,11 +36,13 @@ pub mod profiles;
 pub mod project;
 pub mod recolor;
 pub mod release;
+pub mod remote_install;
 pub mod review;
 pub mod servers;
 pub mod catalog_mirror;
 pub mod character;
 pub mod cleanup;
+pub mod compat_repair;
 pub mod deploy;
 pub mod migrate;
 pub mod mod_updates;
@@ -46,6 +50,7 @@ pub mod mod_data;
 pub mod mod_extras;
 pub mod mod_health;
 pub mod mod_heroes;
+pub mod mod_kinds;
 pub mod mod_merge;
 pub mod mod_safety;
 pub mod game_session;
@@ -112,6 +117,10 @@ pub use launch::{
 pub use locker::{
     LOCKER_ASSETS_ENV, LockerAssetPaths, LockerHero, discover_heroes, discover_heroes_with_assets,
     display_name_for, hero_asset_key, read_hero_asset_index, resolve_name_art, resolve_render,
+};
+pub use overflow::{
+    OverflowPlan, OverflowSlot, folder_name as overflow_folder_name, gameinfo_with_overflow,
+    overflow_folders_in, plan as plan_overflow,
 };
 pub use patch_notes::{
     DEADLOCK_NEWS_URL, PATCH_NOTES_CACHE_SCHEMA, PatchNote, PatchNoteCache, cache_from_notes,
