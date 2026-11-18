@@ -1,6 +1,6 @@
 # 0013 Sigil links vpkmerge-core for compatibility repairs
 
-Status: proposed (accepted once the integration builds and passes its tests)
+Status: accepted (shipped in 0.1.7; the real-game repair test is still to run on Windows)
 Date: 2026-11-18
 
 ## Context
@@ -36,7 +36,9 @@ executable, so shelling out to a second binary is not the path.
 ## Consequences
 
 - The executable grows by vpkmerge-core and its dependencies (gltf, image, quick-xml, rayon,
-  valve_pak). Measure the release size before accepting; trim with features upstream if needed.
+  valve_pak): measured 71.2 MB to 74.0 MB for the Windows build (0.1.6 to 0.1.7).
+- vpkmerge's patched `valve_pak` is pinned in `rust/Cargo.toml` `[patch.crates-io]` at the same
+  revision, because a git dependency's own `[patch]` section is ignored.
 - vpkmerge's GLB soul-container import and recolor code become reachable for later waves (Mod
   Foundry, soul container and spirit urn).
 - An upstream bug in repairs affects Sigil directly; the verification step and the backup are
