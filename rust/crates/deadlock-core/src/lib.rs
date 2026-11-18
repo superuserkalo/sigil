@@ -45,6 +45,7 @@ pub mod mod_updates;
 pub mod mod_data;
 pub mod mod_extras;
 pub mod mod_health;
+pub mod mod_heroes;
 pub mod mod_merge;
 pub mod mod_safety;
 pub mod game_session;

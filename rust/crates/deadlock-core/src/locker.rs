@@ -977,7 +977,7 @@ fn strip_suffix_ignore_case<'a>(value: &'a str, suffix: &str) -> &'a str {
 /// The roster hero a lowercase game path belongs to, through the folder after
 /// any `heroes*` segment: `models/heroes_staging/inferno_v4/...`,
 /// `materials/models/heroes_wip/punkgoat/...`, `sounds/heroes/haze/...`.
-fn hero_of_path(path_lower: &str) -> Option<&'static RosterHero> {
+pub(crate) fn hero_of_path(path_lower: &str) -> Option<&'static RosterHero> {
     let segments: Vec<&str> = path_lower.split('/').collect();
     let heroes_at = segments
         .iter()
