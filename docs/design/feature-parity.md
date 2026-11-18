@@ -155,7 +155,7 @@ Endpoints, verified with curl against the live API on 2026-11-17 (Deadlock game 
 | Multi-select, bulk enable / disable / delete | G+D | Selection mode | has (built: check box on hover, shift-click range, select all shown; bulk on, off, delete behind a confirm with "Don't ask again") | M | P1 |
 | Delete a mod | G+D | Remove the VPK | has (built: card menu and selection; files move to Sigil's trash with restore and Empty trash, `deadlock_core::trash`) | S | P1 |
 | Drag-and-drop install | G+D | Drop files on the window | has on Installed (built: drop veil, then the import review) | S | P1 |
-| Load order reorder | G+D | Drag to change pak number | partial (built: Load first, earlier, later in the card menu, two-pass renames with rollback, `deadlock_core::load_order`; no drag yet) | M | P1 |
+| Load order reorder | G+D | Drag to change pak number | has (built: drag a card to reorder, plus Load first, earlier, later in the card menu; two-pass renames with rollback, `deadlock_core::load_order`) | M | P1 |
 | Update checks + update all | G+D | Per-mod badge, batch update with backup | has (built: checked on open at most every 6 hours, Update chip and Update all; same slot, on or off kept, old files backed up; no ignore yet) | M | P1 |
 | Variant groups / mod options | G+D | Several files of one mod as one card | has (built: GameBanana files group by mod id, one card with the playing file, a picker with per-file switch, label rename, split and delete) | M | P2 |
 | Merge mods | G | One VPK from several | has (built: lowest free slot lands off, the lower slot wins, strict mode refuses a shared path, a sidecar record, unmerge to the trash) | L | P3 |
@@ -329,9 +329,12 @@ Endpoints, verified with curl against the live API on 2026-11-17 (Deadlock game 
 
 ## Next, by priority
 
-1. Installed: drag to reorder, a live archive CRC scan for unknown VPKs, a vdata diff in the
+Waves 1 and 2 of `.scratch/parity-2026-11-18/plan.md` shipped in 0.1.5; wave 3 is next.
+Translation is deferred by the owner until the launcher is ready.
+
+1. Installed: a live archive CRC scan for unknown VPKs, a vdata diff in the
    compatibility review, and a fonts prompt inside the install review (today it is on the card).
-2. Shell: the GameBanana 1-Click listing request (`deep-links.md`), i18n, coachmarks, and Undo
+2. Shell: the GameBanana 1-Click listing request (`deep-links.md`), coachmarks, and Undo
    for profile apply and the Installed delete, update and reorder actions.
 3. Locker: "Browse skins for this hero" (sets the new hero filter), shuffle, variants.
 4. Crosshair presets; Overlap "make X win" and ignores.
