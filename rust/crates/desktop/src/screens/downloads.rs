@@ -5,8 +5,8 @@
 //! fit its state, and the look inside the archive before it reaches the install dialog.
 //!
 //! Running rows show their smoothed speed and the time left (`Item::speed_bps`,
-//! `Item::eta_secs`), and a crawl under 1 MB/s for 15 seconds says so (`Item::is_slow`,
-//! Grimoire's rule). Rows still waiting can be moved up and down or dragged; the queue's
+//! `Item::eta_secs`), and a crawl under 150 KB/s for 8 seconds says so (`Item::is_slow`,
+//! Deadlock Mod Manager's threshold with Grimoire's gap rule). Rows still waiting can be moved up and down or dragged; the queue's
 //! `move_to` refuses a row that started. The titlebar shows [`indicator`] on every page while
 //! anything downloads, and its press opens this list in a panel ([`panel`]).
 //!
@@ -46,6 +46,8 @@ pub struct Downloads {
     /// Fixture speeds for the scenes, by row id: bytes a second and whether it crawls. The
     /// worker's own rows read their speed from the queue.
     pub demo_rates: std::collections::HashMap<String, (u64, bool)>,
+    /// Rows the slow-download toast already spoke for. Each download gets one, ever.
+    pub slow_told: std::collections::HashSet<String>,
 }
 
 impl Default for Downloads {
@@ -58,6 +60,7 @@ impl Default for Downloads {
             panel: false,
             drag: None,
             demo_rates: std::collections::HashMap::new(),
+            slow_told: std::collections::HashSet::new(),
         }
     }
 }
@@ -327,6 +330,53 @@ pub fn rate(rates: &std::collections::HashMap<String, (u64, bool)>, item: &Item)
     (item.speed_bps(), item.eta_secs(), item.is_slow())
 }
 
+// --- the slow-download toast ------------------------------------------------------------------
+
+/// Rows that crawl now and have not had their toast: Grimoire's notice, once per download.
+pub fn newly_slow<'a>(
+    items: &'a [Item],
+    rates: &std::collections::HashMap<String, (u64, bool)>,
+    told: &std::collections::HashSet<String>,
+) -> Vec<&'a Item> {
+    items
+        .iter()
+        .filter(|item| item.state == ItemState::Running && !told.contains(&item.id))
+        .filter(|item| rate(rates, item).2)
+        .collect()
+}
+
+/// The first time a download crawls, one warning toast says why, with a way to the list. It is
+/// never repeated for that download; the row's own warning in the list stays while it crawls.
+pub fn poll(st: &mut State) -> bool {
+    let downloads = &st.launch.downloads;
+    if downloads.handle.is_none() && downloads.demo.is_none() {
+        return false;
+    }
+    let queue = downloads.snapshot();
+    let fresh: Vec<(String, String)> = newly_slow(&queue.items, &downloads.demo_rates, &downloads.slow_told)
+        .into_iter()
+        .map(|item| (item.id.clone(), item.name.clone()))
+        .collect();
+    if fresh.is_empty() {
+        return false;
+    }
+    for (id, name) in fresh {
+        st.launch.downloads.slow_told.insert(id);
+        let title = if name.trim().is_empty() {
+            tr("A download is running slowly").to_string()
+        } else {
+            fill(tr("{} is downloading slowly"), &[&name])
+        };
+        crate::notify::push(
+            st,
+            crate::notify::Notice::warning(title)
+                .detail(tr("This is most likely GameBanana's servers under heavy load or your internet provider. The download keeps going."))
+                .action(tr("Show downloads"), |st: &mut State| st.launch.downloads.panel = true),
+        );
+    }
+    true
+}
+
 /// The running line: bytes, speed and time left when they are known.
 fn running_detail(item: &Item, speed: Option<u64>, eta: Option<u64>) -> String {
     let mut parts = vec![item.detail()];
@@ -580,7 +630,7 @@ fn item_row(
                 .items_start()
                 .child(icon(&icons::TRIANGLE_ALERT, 12.0).color(u.amber).mt(2.0).a11y_hidden())
                 .child(
-                    text(tr("Downloading slowly, under 1 MB/s. This is most likely GameBanana's servers under heavy load or your internet provider."))
+                    text(tr("Downloading slowly, under 150 KB/s. This is most likely GameBanana's servers under heavy load or your internet provider."))
                         .font(SMALL)
                         .color(u.amber)
                         .wrap()
@@ -951,6 +1001,22 @@ mod tests {
         assert_eq!(landing(&items, 1, -3), 1, "never above the running row");
         assert_eq!(landing(&items, 4, 9), 4, "clamped at the last waiting row");
         assert_eq!(landing(&items, 0, 1), 0, "a running row does not move");
+    }
+
+    #[test]
+    fn a_crawl_is_told_once_per_download() {
+        let items = vec![row_in("a", ItemState::Running), row_in("b", ItemState::Running), row_in("c", ItemState::Queued)];
+        let mut rates = std::collections::HashMap::new();
+        rates.insert("a".to_string(), (90_000, true));
+        rates.insert("b".to_string(), (4_000_000, false));
+        rates.insert("c".to_string(), (90_000, true));
+        let mut told = std::collections::HashSet::new();
+        let ids = |rows: Vec<&Item>| rows.iter().map(|item| item.id.clone()).collect::<Vec<_>>();
+        assert_eq!(ids(newly_slow(&items, &rates, &told)), vec!["a"], "only the running crawl; b is fast, c waits");
+        told.insert("a".to_string());
+        assert!(newly_slow(&items, &rates, &told).is_empty(), "never twice for one download");
+        rates.insert("b".to_string(), (80_000, true));
+        assert_eq!(ids(newly_slow(&items, &rates, &told)), vec!["b"], "another download gets its own");
     }
 
     #[test]

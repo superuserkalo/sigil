@@ -410,6 +410,9 @@ pub fn list_row(s: &State, u: &Ui, card: &Group) -> El {
     for chip in notes::card_chips(s, u, addon) {
         chips = chips.child(chip);
     }
+    if let Some(badge) = super::overlap::badge(s, u, slot, false) {
+        chips = chips.child(badge);
+    }
     let dragging = s.installed.drag.is_some_and(|d| d.slot == slot);
     let drop = super::drag::drop_mark(s, slot, addon.enabled);
     let mut line = row()

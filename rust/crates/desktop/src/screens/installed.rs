@@ -15,6 +15,8 @@ mod drag;
 pub mod enable;
 mod layout;
 mod notes;
+mod order;
+mod overlap;
 mod search;
 mod tools;
 pub mod update_match;
@@ -110,6 +112,10 @@ pub struct View {
     pub hidden: BTreeSet<u8>,
     /// A card being dragged to a new load order.
     pub drag: Option<drag::Dragging>,
+    /// Enabled slots that share game paths with other enabled mods, from the last scan.
+    pub overlaps: overlap::Overlaps,
+    /// The open load order dialog.
+    pub order: Option<order::OrderDialog>,
     /// `last_undo` was just set: the next poll turns the status line into a toast with Undo.
     pub undo_fresh: bool,
 }
@@ -297,6 +303,8 @@ pub enum Menu {
     List,
     /// Bulk actions over the shown mods.
     More,
+    /// Who one card overlaps, from its overlap badge.
+    Overlap(u8),
 }
 
 /// The mods the page shows: search, source and group applied, in the chosen order.
@@ -559,6 +567,7 @@ fn filter_bar(s: &State, u: &Ui) -> El {
         .child(spacer())
         .child(sort)
         .child(view)
+        .children(order::open_button(s, u))
         .child(more)
 }
 
@@ -1147,6 +1156,9 @@ fn warning_buttons(s: &State, u: &Ui, addon: &AddonRow) -> Vec<El> {
     if let Some(badge) = enable::hidden_badge(s, u, addon.slot) {
         buttons.push(badge);
     }
+    if let Some(badge) = overlap::badge(s, u, addon.slot, true) {
+        buttons.push(badge);
+    }
     let scan = s
         .installed
         .tools
@@ -1371,6 +1383,7 @@ pub fn overlay(s: &State, u: &Ui) -> Option<El> {
         Menu::Tag => ("installed-tag".to_string(), Align::Start, 200.0),
         Menu::List => ("installed-list".to_string(), Align::Start, 240.0),
         Menu::More => ("installed-bulk".to_string(), Align::End, 260.0),
+        Menu::Overlap(slot) => (format!("installed-overlap-{slot:02}"), Align::End, 340.0),
     };
     let mut items: Vec<El> = Vec::new();
 
@@ -1682,6 +1695,7 @@ pub fn overlay(s: &State, u: &Ui) -> Option<El> {
         Menu::Hero | Menu::Category | Menu::Tag | Menu::List => {
             items.extend(notes::menu_rows(s, u, menu));
         }
+        Menu::Overlap(slot) => items = overlap::menu_items(s, u, slot),
         Menu::More => {
             let shown = shown_addons(s);
             let picked = !s.installed.selected.is_empty();
@@ -2052,6 +2066,7 @@ pub fn poll(st: &mut State) -> bool {
     changed |= poll_changes(st);
     changed |= enable::poll(st);
     changed |= enable::refresh_hidden(st);
+    changed |= overlap::refresh(st);
 
     if !st.demo && st.addons.scanned {
         let sig: Vec<(u8, u64)> = st
@@ -2351,6 +2366,9 @@ pub fn dialog(s: &State, u: &Ui) -> Option<El> {
         return Some(dialog);
     }
     if let Some(dialog) = layout::picker_dialog(s, u) {
+        return Some(dialog);
+    }
+    if let Some(dialog) = order::dialog(s, u) {
         return Some(dialog);
     }
     if s.installed.trash.open {
@@ -3313,9 +3331,25 @@ fn group_slots(s: &State, enabled: bool) -> Vec<u8> {
 /// Plan the renames that give `group` the order `wanted`, then confirm. The demo plans
 /// from the scan; a real folder is read again so the plan sees every file of each slot.
 pub(super) fn ask_reorder(st: &mut State, group: &[u8], wanted: &[u8]) {
+    if let Some(plan) = plan_order(st, group, wanted) {
+        ask(st, Confirm::Reorder(plan));
+    }
+}
+
+/// Plan and apply an order the player already confirmed (the load order dialog's Apply): the
+/// same plan and write as [`ask_reorder`], without a second confirm.
+pub(super) fn apply_order(st: &mut State, group: &[u8], wanted: &[u8]) {
+    if let Some(plan) = plan_order(st, group, wanted) {
+        reorder(st, plan);
+    }
+}
+
+/// The renames that give `group` the order `wanted`, or `None` with the reason in the status
+/// line (or nothing to do).
+fn plan_order(st: &mut State, group: &[u8], wanted: &[u8]) -> Option<ReorderPlan> {
     let moves = load_order::moves_for_order(group, wanted);
     if moves.is_empty() {
-        return;
+        return None;
     }
     let dir = addons_folder(st);
     let files = if st.demo {
@@ -3333,13 +3367,16 @@ pub(super) fn ask_reorder(st: &mut State, group: &[u8], wanted: &[u8]) {
             Ok(files) => files,
             Err(error) => {
                 st.status = error.to_string();
-                return;
+                return None;
             }
         }
     };
     match load_order::plan_reorder(&dir, &files, &moves, &load_order::new_token()) {
-        Ok(plan) => ask(st, Confirm::Reorder(plan)),
-        Err(error) => st.status = error.to_string(),
+        Ok(plan) => Some(plan),
+        Err(error) => {
+            st.status = error.to_string();
+            None
+        }
     }
 }
 

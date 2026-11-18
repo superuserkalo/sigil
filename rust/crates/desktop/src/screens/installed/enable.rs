@@ -13,6 +13,12 @@
 //! `broken_on_disable`, run against the mods on in the addon folder (the active profile).
 //! Settings > Mods > "Show what a mod needs" turns these checks off, and "Warn about a second
 //! mod for one hero" the hero one.
+//!
+//! A mod's heroes are its GameBanana hero tag plus the heroes whose model and material files it
+//! replaces (`deadlock_core::mod_heroes::model_heroes_in_vpk`, Deadlock Mod Manager's rule), so
+//! two untagged skins for one hero still ask. The VPK directories are read on a worker while
+//! Installed or Browse is open, once per slot file (`(slot, size)`), and kept in [`Gates`]; a
+//! switch only looks the answer up and never waits on a read.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::PathBuf;
@@ -37,6 +43,8 @@ use super::{display_name, meta_for, notes};
 const STALE_SECS: i64 = 7 * 24 * 60 * 60;
 /// Pages read per background pass.
 const BATCH: usize = 6;
+/// VPK directories read per background pass for their model heroes.
+const MODEL_BATCH: usize = 16;
 
 /// The open question, if any.
 #[derive(Clone, Debug, PartialEq)]
@@ -55,6 +63,9 @@ pub enum Gate {
     Breaks { slot: u8, dependents: Vec<u8> },
 }
 
+/// One slot file's model heroes, from the worker: `((slot, size), heroes)`.
+pub type ModelHeroes = ((u8, u64), Vec<String>);
+
 /// The gate's state, kept with Installed.
 #[derive(Default)]
 pub struct Gates {
@@ -65,6 +76,11 @@ pub struct Gates {
     pub job: Job<Vec<(u64, Vec<Requirement>)>>,
     /// Ids asked for this session, found or not.
     pub tried: HashSet<u64>,
+    /// Heroes each slot file's model and material paths replace, by `(slot, size)`.
+    pub model_heroes: HashMap<(u8, u64), Vec<String>>,
+    pub model_job: Job<Vec<ModelHeroes>>,
+    /// Slot files given to the worker this session, read or not.
+    pub model_tried: HashSet<(u8, u64)>,
 }
 
 // --- pure rules -------------------------------------------------------------------------------
@@ -74,23 +90,58 @@ pub struct Gates {
 pub struct Facts {
     pub slot: u8,
     pub enabled: bool,
-    pub hero: Option<String>,
+    /// The GameBanana hero tag and the heroes its model paths replace, without case duplicates.
+    pub heroes: Vec<String>,
     /// The variant group key: files of one mod never count against each other.
     pub group: Option<String>,
 }
 
-/// The mods that are on for the same hero as `target`, outside its own variant group. Empty
-/// when the target has no hero.
+/// A mod's heroes: the tag first, then the model heroes, blanks and case duplicates dropped.
+pub fn hero_union(tag: Option<&str>, models: &[String]) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for hero in tag.into_iter().chain(models.iter().map(String::as_str)) {
+        let hero = hero.trim();
+        if !hero.is_empty() && !out.iter().any(|h| h.eq_ignore_ascii_case(hero)) {
+            out.push(hero.to_string());
+        }
+    }
+    out
+}
+
+/// The heroes two mods share, in `a`'s order.
+pub fn shared_heroes(a: &Facts, b: &Facts) -> Vec<String> {
+    a.heroes
+        .iter()
+        .filter(|hero| b.heroes.iter().any(|h| h.eq_ignore_ascii_case(hero)))
+        .cloned()
+        .collect()
+}
+
+/// The mods that are on for any hero of `target`, outside its own variant group. Empty when
+/// the target has no hero.
 pub fn same_hero(target: &Facts, mods: &[Facts]) -> Vec<u8> {
-    let Some(hero) = target.hero.as_deref().filter(|hero| !hero.trim().is_empty()) else {
+    if target.heroes.is_empty() {
         return Vec::new();
-    };
+    }
     mods.iter()
         .filter(|other| other.slot != target.slot && other.enabled)
         .filter(|other| target.group.is_none() || other.group != target.group)
-        .filter(|other| other.hero.as_deref().is_some_and(|h| h.eq_ignore_ascii_case(hero)))
+        .filter(|other| !shared_heroes(target, other).is_empty())
         .map(|other| other.slot)
         .collect()
+}
+
+/// The heroes `target` shares with any of `others`, for the question's title.
+pub fn heroes_in_question(target: &Facts, mods: &[Facts], others: &[u8]) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for other in mods.iter().filter(|m| others.contains(&m.slot)) {
+        for hero in shared_heroes(target, other) {
+            if !out.iter().any(|h| h.eq_ignore_ascii_case(&hero)) {
+                out.push(hero);
+            }
+        }
+    }
+    out
 }
 
 /// Slots whose model another enabled mod hides (Deadlock Mod Manager's rule): the mod ships a
@@ -132,10 +183,17 @@ fn facts(st: &State) -> Vec<Facts> {
         .map(|addon| {
             let extra = notes::extra(st, addon);
             let id = meta_for(st, addon).and_then(|meta| meta.gamebanana_id);
+            let models = st
+                .installed
+                .gates
+                .model_heroes
+                .get(&(addon.slot, addon.size_bytes))
+                .map(Vec::as_slice)
+                .unwrap_or(&[]);
             Facts {
                 slot: addon.slot,
                 enabled: addon.enabled,
-                hero: extra.hero.clone(),
+                heroes: hero_union(extra.hero.as_deref(), models),
                 group: deadlock_core::mod_extras::variant_key(Some(&extra), id),
             }
         })
@@ -234,14 +292,21 @@ fn dependents_of(st: &State, slot: u8) -> Vec<u8> {
 pub fn switch(st: &mut State, slot: u8, enable: bool) {
     st.installed.menu = None;
     if enable {
-        let others = if options::hero_conflict_warning() {
+        let (others, heroes) = if options::hero_conflict_warning() {
             let all = facts(st);
-            all.iter().find(|f| f.slot == slot).map(|target| same_hero(target, &all)).unwrap_or_default()
+            match all.iter().find(|f| f.slot == slot) {
+                Some(target) => {
+                    let others = same_hero(target, &all);
+                    let heroes = heroes_in_question(target, &all, &others);
+                    (others, heroes)
+                }
+                None => (Vec::new(), Vec::new()),
+            }
         } else {
-            Vec::new()
+            (Vec::new(), Vec::new())
         };
         if !others.is_empty() {
-            let hero = addon(st, slot).and_then(|a| notes::extra(st, a).hero).unwrap_or_default();
+            let hero = heroes.join(", ");
             st.installed.gates.open = Some(Gate::Hero { slot, hero, others });
             return;
         }
@@ -357,10 +422,50 @@ fn save_cache(known: &HashMap<u64, (i64, Vec<Requirement>)>) {
     }
 }
 
+/// Read the model heroes of slot files not read yet, a batch at a time on a worker, while
+/// Installed or Browse is open and the hero warning is on. Local reads only (the VPK directory
+/// tree), so it runs offline too; never in the demo or a headless run.
+fn poll_model_heroes(st: &mut State) -> bool {
+    let mut changed = false;
+    if let Some(result) = st.installed.gates.model_job.try_take() {
+        if let Ok(found) = result {
+            st.installed.gates.model_heroes.extend(found);
+        }
+        changed = true;
+    }
+    if st.demo || rune::is_headless() || !options::hero_conflict_warning() {
+        return changed;
+    }
+    let open = matches!(st.screen, crate::model::Screen::Installed | crate::model::Screen::Browse);
+    if !open || !st.addons.scanned || st.installed.gates.model_job.is_running() {
+        return changed;
+    }
+    let dir = super::addons_folder(st);
+    let wanted: Vec<((u8, u64), PathBuf)> = st
+        .addons
+        .addons
+        .iter()
+        .map(|addon| ((addon.slot, addon.size_bytes), dir.join(&addon.file)))
+        .filter(|(key, _)| !st.installed.gates.model_heroes.contains_key(key) && !st.installed.gates.model_tried.contains(key))
+        .take(MODEL_BATCH)
+        .collect();
+    if wanted.is_empty() {
+        return changed;
+    }
+    st.installed.gates.model_tried.extend(wanted.iter().map(|(key, _)| *key));
+    st.installed.gates.model_job.start(st.wake.clone(), move || {
+        Ok(wanted
+            .into_iter()
+            .filter_map(|(key, path)| deadlock_core::mod_heroes::model_heroes_in_vpk(&path).ok().map(|heroes| (key, heroes)))
+            .collect())
+    });
+    changed
+}
+
 /// Read the cache once, take finished lookups, and look up a few more installed mods while
 /// Installed or Browse is open. Never in the demo, offline or a headless run.
 pub fn poll(st: &mut State) -> bool {
-    let mut changed = false;
+    let mut changed = poll_model_heroes(st);
     if let Some(result) = st.installed.gates.job.try_take() {
         if let Ok(found) = result {
             let at = now();
@@ -709,9 +814,41 @@ mod tests {
         Facts {
             slot,
             enabled,
-            hero: hero.map(str::to_string),
+            heroes: hero.map(str::to_string).into_iter().collect(),
             group: group.map(str::to_string),
         }
+    }
+
+    fn many(slot: u8, enabled: bool, heroes: &[&str], group: &str) -> Facts {
+        Facts {
+            slot,
+            enabled,
+            heroes: heroes.iter().map(|h| h.to_string()).collect(),
+            group: Some(group.to_string()),
+        }
+    }
+
+    #[test]
+    fn a_mod_has_its_tag_and_its_model_heroes() {
+        let models = vec!["Haze".to_string(), "paradox".to_string()];
+        assert_eq!(hero_union(Some("Paradox"), &models), vec!["Paradox", "Haze"], "the tag first, no case duplicates");
+        assert_eq!(hero_union(None, &models), vec!["Haze", "paradox"]);
+        assert_eq!(hero_union(Some("  "), &[]), Vec::<String>::new());
+    }
+
+    #[test]
+    fn a_model_hero_counts_without_a_tag() {
+        // Slot 2 is tagged Paradox; slot 4 has no tag but replaces Paradox's model.
+        let mods = vec![
+            many(2, true, &["Paradox"], "gb:2"),
+            many(3, true, &["Haze", "Infernus"], "gb:3"),
+            many(4, false, &["Paradox", "Infernus"], "local:4"),
+            many(5, false, &[], "local:5"),
+        ];
+        assert_eq!(same_hero(&mods[2], &mods), vec![2, 3], "any shared hero asks");
+        assert_eq!(heroes_in_question(&mods[2], &mods, &[2, 3]), vec!["Paradox", "Infernus"]);
+        assert!(same_hero(&mods[3], &mods).is_empty(), "no hero, no question");
+        assert_eq!(shared_heroes(&mods[1], &mods[2]), vec!["Infernus"]);
     }
 
     #[test]

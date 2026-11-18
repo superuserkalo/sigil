@@ -1758,6 +1758,7 @@ pub fn poll(s: &mut State, t: f64, _tx: &mut Tx) -> bool {
     changed |= screens::crosshair::poll(s, _tx);
     changed |= screens::settings::poll(s, _tx);
     changed |= screens::launch_progress::poll(s, _tx);
+    changed |= screens::downloads::poll(s);
     while let Some(event) = s.agent.try_event() {
         s.apply_agent_event(event);
         changed = true;
@@ -2490,6 +2491,12 @@ pub fn scenes() -> &'static [(&'static str, fn(&mut State))] {
         ("installed-variants-on", screens::installed::wave_scenes::variants_on),
         ("installed-selection-actions", screens::installed::wave_scenes::selection),
         ("installed-update-changelog", screens::installed::wave_scenes::changelog),
+        ("installed-load-order", screens::installed::wave_scenes::load_order),
+        ("installed-load-order-open", screens::installed::wave_scenes::load_order_open),
+        ("installed-overlap-badges", screens::installed::wave_scenes::overlap_badges),
+        ("installed-overlap-list", screens::installed::wave_scenes::overlap_list),
+        ("installed-hero-from-models", screens::installed::wave_scenes::hero_from_models),
+        ("downloads-slow-toast", screens::installed::wave_scenes::slow_toast),
         ("browse-install-enable", screens::browse::scene_install_enable),
         ("browse-replace", screens::browse::scene_replace),
         ("browse-replace-first", screens::browse::scene_replace_first),

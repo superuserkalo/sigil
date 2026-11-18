@@ -65,6 +65,11 @@ fn cache() -> &'static std::sync::Mutex<Ignores> {
     CACHE.get_or_init(|| Mutex::new(impact::load_ignores(&crate::data::data_dir())))
 }
 
+/// The ignore list for other pages: Installed's overlap badge leaves out what it hides.
+pub fn ignore_list() -> Ignores {
+    ignores()
+}
+
 fn ignores() -> Ignores {
     cache().lock().map(|list| list.clone()).unwrap_or_default()
 }

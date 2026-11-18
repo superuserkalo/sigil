@@ -228,6 +228,8 @@ mod tests {
             include_str!("../browse/multi.rs"),
             include_str!("../installed/enable.rs"),
             include_str!("../installed/drag.rs"),
+            include_str!("../installed/order.rs"),
+            include_str!("../installed/overlap.rs"),
             include_str!("../downloads.rs"),
             include_str!("../launch_progress.rs"),
             include_str!("../autoexec_flags.rs"),
