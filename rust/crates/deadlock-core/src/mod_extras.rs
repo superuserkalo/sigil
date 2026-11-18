@@ -92,6 +92,15 @@ pub struct ModList {
     pub name: String,
     /// `ModExtra::uid` of each member.
     pub members: Vec<String>,
+    /// One member is turned on at each launch, picked by [`random_picks`]. A store written
+    /// before this flag existed reads as off.
+    #[serde(default)]
+    pub random_each_launch: bool,
+    /// The member the last launch's roll turned on, by `ModExtra::uid`, so the next roll
+    /// passes over it. Saved by [`record_picks`] once the picks are applied. A store written
+    /// before this field existed reads as none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_pick: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -281,6 +290,8 @@ impl Extras {
             id: id.clone(),
             name: label,
             members,
+            random_each_launch: false,
+            last_pick: None,
         });
         id
     }
@@ -299,6 +310,113 @@ impl Extras {
             }
         }
     }
+}
+
+/// One member to turn on for every list the player marked random.
+///
+/// Each pair is the list id and the slot key of the picked member. The choice is deterministic
+/// for `seed`: the same store, the same slots and the same seed always return the same members,
+/// so a test can pin the result. Lists are independent of each other, because the seed is mixed
+/// with the list id.
+///
+/// A list with fewer than two members that have an entry in this store has nothing to choose
+/// between and is left out, the same way Deadlock Mod Manager leaves out a pool of one. The roll
+/// leaves out the member `is_on` says is switched on now and the member `ModList::last_pick`
+/// says was picked last launch, so two launches in a row do not land on the same member, while
+/// at least one candidate remains after both: a pool of two where one is on picks the other. When
+/// every member is on or was picked last time, the roll uses the pool without `last_pick`, then
+/// the whole pool, so a launch always gets a pick.
+///
+/// Pass the result to [`record_picks`] after the picks are applied and save the store, so the
+/// next launch knows what was picked. Entries for slots that were removed stay in the store by
+/// design, so the caller checks the pick against the slots on disk before it turns anything on.
+pub fn random_picks(
+    extras: &Extras,
+    seed: u64,
+    is_on: impl Fn(&SlotKey) -> bool,
+) -> Vec<(String, SlotKey)> {
+    let mut picks = Vec::new();
+    for list in &extras.lists {
+        if !list.random_each_launch {
+            continue;
+        }
+        let mut seen = BTreeSet::new();
+        let pool: Vec<(String, SlotKey)> = list
+            .members
+            .iter()
+            .filter(|uid| seen.insert(uid.as_str()))
+            .filter_map(|uid| extras.find_uid(uid).map(|entry| (uid.clone(), slot_key(entry))))
+            .collect();
+        if pool.len() < 2 {
+            continue;
+        }
+        let last_pick = list.last_pick.as_deref();
+        let mut candidates: Vec<usize> = (0..pool.len())
+            .filter(|&i| !is_on(&pool[i].1) && Some(pool[i].0.as_str()) != last_pick)
+            .collect();
+        if candidates.is_empty() {
+            candidates = (0..pool.len())
+                .filter(|&i| Some(pool[i].0.as_str()) != last_pick)
+                .collect();
+        }
+        // A safety net: a pool of two or more always keeps a member after dropping last_pick.
+        if candidates.is_empty() {
+            candidates = (0..pool.len()).collect();
+        }
+        let index = pick_index(seed, &list.id, candidates.len());
+        let member = &pool[candidates[index]];
+        picks.push((list.id.clone(), member.1));
+    }
+    picks
+}
+
+/// Remember the member each list picked, by `ModExtra::uid`, so the next launch passes over
+/// it. The caller saves the store after applying the picks. A pick for a list that is gone, or
+/// for a slot with no entry in the store, is ignored.
+pub fn record_picks(extras: &mut Extras, picks: &[(String, SlotKey)]) {
+    for (list_id, key) in picks {
+        let Some(uid) = extras.find(key.slot, key.size_bytes).map(|entry| entry.uid.clone())
+        else {
+            continue;
+        };
+        if let Some(list) = extras.lists.iter_mut().find(|list| &list.id == list_id) {
+            list.last_pick = Some(uid);
+        }
+    }
+}
+
+/// The key a store entry points at.
+fn slot_key(entry: &ModExtra) -> SlotKey {
+    SlotKey {
+        slot: entry.slot,
+        size_bytes: entry.size_bytes,
+        gamebanana_id: entry.gamebanana_id,
+    }
+}
+
+/// Which of `count` candidates a list picks for a seed. `count` is at least one at every call.
+fn pick_index(seed: u64, group: &str, count: usize) -> usize {
+    (split_mix(seed ^ fnv1a(group.as_bytes())) % count as u64) as usize
+}
+
+/// FNV-1a: a stable hash for a list id, independent of the standard library's hasher.
+fn fnv1a(bytes: &[u8]) -> u64 {
+    let mut hash = 0xcbf2_9ce4_8422_2325u64;
+    for byte in bytes {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    hash
+}
+
+/// SplitMix64: turns a seed into a well spread number, so neighbouring seeds do not walk
+/// through a group in lockstep.
+fn split_mix(value: u64) -> u64 {
+    let value = value.wrapping_add(0x9e37_79b9_7f4a_7c15);
+    let mut z = value;
+    z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+    z ^ (z >> 31)
 }
 
 fn dedup_keep_order(items: &mut Vec<String>) {
@@ -515,6 +633,161 @@ mod tests {
         assert_eq!(x.list(&b).unwrap().members, vec!["u2".to_string()]);
         x.remove_list(&a);
         assert!(x.list(&a).is_none());
+    }
+
+    #[test]
+    fn a_random_list_picks_one_installed_member_for_a_seed() {
+        let mut x = Extras::default();
+        let a = x.entry(key(1, 10, Some(1))).uid.clone();
+        let b = x.entry(key(2, 20, Some(2))).uid.clone();
+        let c = x.entry(key(3, 30, Some(3))).uid.clone();
+        let list = x.add_list("Skins", vec![a.clone(), b.clone(), c.clone()]);
+        assert!(!x.list(&list).unwrap().random_each_launch);
+
+        x.lists[0].random_each_launch = true;
+        let picks = random_picks(&x, 7, |_| false);
+        assert_eq!(picks.len(), 1);
+        assert_eq!(picks[0].0, list);
+        let all = [key(1, 10, Some(1)), key(2, 20, Some(2)), key(3, 30, Some(3))];
+        assert!(all.contains(&picks[0].1));
+
+        // The same seed gives the same pick, every seed gives one of the three members.
+        assert_eq!(random_picks(&x, 7, |_| false), picks);
+        let slots: BTreeSet<u8> = (0..64)
+            .map(|seed| random_picks(&x, seed, |_| false)[0].1.slot)
+            .collect();
+        assert!(slots.len() > 1, "the seed has to change the pick");
+    }
+
+    #[test]
+    fn a_pool_of_two_picks_the_member_that_is_off() {
+        let mut x = Extras::default();
+        let a = x.entry(key(1, 10, None)).uid.clone();
+        let b = x.entry(key(2, 20, None)).uid.clone();
+        x.add_list("Skins", vec![a.clone(), b.clone()]);
+        x.lists[0].random_each_launch = true;
+        let on = key(1, 10, None);
+        for seed in 0..64 {
+            let picks = random_picks(&x, seed, |member| *member == on);
+            assert_eq!(picks.len(), 1, "seed {seed}");
+            assert_eq!(picks[0].1, key(2, 20, None), "seed {seed}");
+        }
+        // What is on does not matter: the other member is the pick either way.
+        let on = key(2, 20, None);
+        for seed in 0..64 {
+            let picks = random_picks(&x, seed, |member| *member == on);
+            assert_eq!(picks[0].1, key(1, 10, None), "seed {seed}");
+        }
+    }
+
+    #[test]
+    fn the_member_picked_last_launch_is_left_out() {
+        let mut x = Extras::default();
+        let a = x.entry(key(1, 10, None)).uid.clone();
+        let b = x.entry(key(2, 20, None)).uid.clone();
+        let c = x.entry(key(3, 30, None)).uid.clone();
+        x.add_list("Skins", vec![a.clone(), b.clone(), c.clone()]);
+        x.lists[0].random_each_launch = true;
+        x.lists[0].last_pick = Some(a);
+        let mut slots = BTreeSet::new();
+        for seed in 0..64 {
+            let picks = random_picks(&x, seed, |_| false);
+            assert_eq!(picks.len(), 1, "seed {seed}");
+            assert_ne!(picks[0].1, key(1, 10, None), "seed {seed}");
+            slots.insert(picks[0].1.slot);
+        }
+        assert_eq!(slots, BTreeSet::from([2, 3]));
+    }
+
+    #[test]
+    fn a_pool_with_every_member_on_still_picks_one() {
+        let mut x = Extras::default();
+        let a = x.entry(key(1, 10, None)).uid.clone();
+        let b = x.entry(key(2, 20, None)).uid.clone();
+        let c = x.entry(key(3, 30, None)).uid.clone();
+        x.add_list("Skins", vec![a.clone(), b.clone(), c.clone()]);
+        x.lists[0].random_each_launch = true;
+        x.lists[0].last_pick = Some(c);
+        let all = [key(1, 10, None), key(2, 20, None), key(3, 30, None)];
+        for seed in 0..64 {
+            let picks = random_picks(&x, seed, |_| true);
+            assert_eq!(picks.len(), 1, "seed {seed}");
+            assert!(all.contains(&picks[0].1), "seed {seed}: {:?}", picks[0].1);
+            // Everything is on, so the last pick is the only member left out.
+            assert_ne!(picks[0].1, key(3, 30, None), "seed {seed}");
+        }
+    }
+
+    #[test]
+    fn record_picks_remembers_the_member_for_the_next_launch() {
+        let mut x = Extras::default();
+        let a = x.entry(key(1, 10, None)).uid.clone();
+        let b = x.entry(key(2, 20, None)).uid.clone();
+        x.add_list("Skins", vec![a.clone(), b.clone()]);
+        x.lists[0].random_each_launch = true;
+        assert_eq!(x.lists[0].last_pick, None);
+        let picks = random_picks(&x, 3, |_| false);
+        record_picks(&mut x, &picks);
+        let picked = x.lists[0].last_pick.clone().unwrap();
+        assert!(picked == a || picked == b);
+        assert_eq!(picked, x.uid_of(picks[0].1.slot, picks[0].1.size_bytes).unwrap());
+        // The same seed now gives the other member.
+        let next = random_picks(&x, 3, |_| false);
+        assert_ne!(next[0].1, picks[0].1);
+        // A pick for a list that is gone, or for a slot with no entry, changes nothing.
+        let gone = ("missing".to_string(), key(9, 90, None));
+        record_picks(&mut x, &[gone]);
+        assert_eq!(x.lists[0].last_pick, Some(picked));
+    }
+
+    #[test]
+    fn a_random_list_needs_two_entries_and_leaves_other_lists_alone() {
+        let mut x = Extras::default();
+        let a = x.entry(key(1, 10, None)).uid.clone();
+        let r = x.add_list("Rolls", vec![a.clone(), a.clone(), "gone".into()]);
+        let plain = x.add_list("Fixed", vec![a.clone()]);
+        x.lists[0].random_each_launch = true;
+        // Two members listed, one installed: nothing to choose between.
+        assert!(random_picks(&x, 1, |_| false).is_empty());
+
+        let b = x.entry(key(2, 20, None)).uid.clone();
+        x.lists[0].members.push(b.clone());
+        let picks = random_picks(&x, 1, |_| false);
+        assert_eq!(picks.len(), 1);
+        assert_eq!(picks[0].0, r);
+        assert_ne!(picks[0].0, plain);
+
+        // A list that does not roll is never picked.
+        x.lists[0].random_each_launch = false;
+        assert!(random_picks(&x, 1, |_| false).is_empty());
+    }
+
+    #[test]
+    fn a_store_without_the_random_flag_reads_it_as_off() {
+        let old = r#"{"schema":1,"mods":[],"lists":[{"id":"l1","name":"Skins","members":[]}]}"#;
+        let read: Extras = serde_json::from_str(old).unwrap();
+        assert!(!read.lists[0].random_each_launch);
+
+        let mut written = read;
+        written.lists[0].random_each_launch = true;
+        let text = serde_json::to_string(&written).unwrap();
+        assert!(text.contains(r#""randomEachLaunch":true"#), "{text}");
+        let back: Extras = serde_json::from_str(&text).unwrap();
+        assert!(back.lists[0].random_each_launch);
+    }
+
+    #[test]
+    fn a_last_pick_round_trips_and_an_old_store_reads_none() {
+        let old = r#"{"schema":1,"mods":[],"lists":[{"id":"l1","name":"Skins","members":[],"randomEachLaunch":true}]}"#;
+        let read: Extras = serde_json::from_str(old).unwrap();
+        assert_eq!(read.lists[0].last_pick, None);
+
+        let mut written = read;
+        written.lists[0].last_pick = Some("u1".into());
+        let text = serde_json::to_string(&written).unwrap();
+        assert!(text.contains(r#""lastPick":"u1""#), "{text}");
+        let back: Extras = serde_json::from_str(&text).unwrap();
+        assert_eq!(back.lists[0].last_pick.as_deref(), Some("u1"));
     }
 
     #[test]
