@@ -27,6 +27,80 @@ pub struct GameInfoStatus {
     pub present: bool,
     pub addons_search_path: bool,
     pub line: Option<usize>,
+    /// Required `SearchPaths` lines the file lacks, as `Key path` ([`REQUIRED_SEARCH_PATHS`]).
+    /// Empty when all are there or the block could not be read.
+    #[serde(default)]
+    pub missing_paths: Vec<String>,
+}
+
+/// `SearchPaths` lines a modded game needs besides `Game citadel/addons` (Grimoire and Deadlock
+/// Mod Manager declare them too). Valve's stock file can lack them:
+/// - the language and low-violence mounts: without them localized hero-name art is hidden even
+///   with every mod off; they must come before the base game's `Game citadel`;
+/// - `Mod` and `Write` for citadel and core: with mod folders mounted ahead of citadel the game
+///   dies at launch ("Unable to read default keybinding configuration") without them.
+pub const REQUIRED_SEARCH_PATHS: [(&str, &str); 6] = [
+    ("Game_UILanguage", "citadel_*LANGUAGE*"),
+    ("Game_LowViolence", "citadel_lv"),
+    ("Mod", "citadel"),
+    ("Write", "citadel"),
+    ("Mod", "core"),
+    ("Write", "core"),
+];
+
+/// The zero-based line range of the `SearchPaths { ... }` block: the line naming it through the
+/// line of its closing brace. `None` when it cannot be found unambiguously.
+pub fn search_paths_block(text: &str) -> Option<(usize, usize)> {
+    let lines: Vec<&str> = text.lines().collect();
+    let code = |line: &str| match line.find("//") {
+        Some(at) => line[..at].to_string(),
+        None => line.to_string(),
+    };
+    let start = lines.iter().position(|line| code(line).trim().eq_ignore_ascii_case("SearchPaths"))?;
+    let mut depth = 0i32;
+    let mut opened = false;
+    for (index, line) in lines.iter().enumerate().skip(start) {
+        for ch in code(line).chars() {
+            match ch {
+                '{' => {
+                    depth += 1;
+                    opened = true;
+                }
+                '}' => {
+                    depth -= 1;
+                    if opened && depth == 0 {
+                        return Some((start, index));
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    None
+}
+
+/// The required lines `text` lacks, compared case-insensitively inside the `SearchPaths` block.
+pub fn missing_search_paths(text: &str) -> Vec<String> {
+    let Some((start, end)) = search_paths_block(text) else { return Vec::new() };
+    let present: Vec<(String, String)> = text
+        .lines()
+        .skip(start + 1)
+        .take(end.saturating_sub(start + 1))
+        .filter_map(|line| {
+            let code = line.find("//").map_or(line, |at| &line[..at]);
+            let mut words = code.split_whitespace();
+            let key = words.next()?.to_ascii_lowercase();
+            let path = words.next()?.replace('\\', "/").to_ascii_lowercase();
+            Some((key, path))
+        })
+        .collect();
+    REQUIRED_SEARCH_PATHS
+        .iter()
+        .filter(|(key, path)| {
+            !present.iter().any(|(k, p)| k == &key.to_ascii_lowercase() && p == &path.to_ascii_lowercase())
+        })
+        .map(|(key, path)| format!("{key} {path}"))
+        .collect()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -376,6 +450,7 @@ pub fn read_game_info_status(gameinfo_path: &Path) -> Result<GameInfoStatus> {
                 present: false,
                 addons_search_path: false,
                 line: None,
+                missing_paths: Vec::new(),
             });
         }
         Err(error) => return Err(error.into()),
@@ -395,6 +470,7 @@ pub fn read_game_info_status(gameinfo_path: &Path) -> Result<GameInfoStatus> {
                 present: true,
                 addons_search_path: true,
                 line: Some(index + 1),
+                missing_paths: missing_search_paths(&text),
             });
         }
     }
@@ -410,6 +486,7 @@ pub fn read_game_info_status(gameinfo_path: &Path) -> Result<GameInfoStatus> {
             present: true,
             addons_search_path: true,
             line,
+            missing_paths: missing_search_paths(&text),
         });
     }
 
@@ -417,6 +494,7 @@ pub fn read_game_info_status(gameinfo_path: &Path) -> Result<GameInfoStatus> {
         present: true,
         addons_search_path: false,
         line: None,
+        missing_paths: missing_search_paths(&text),
     })
 }
 

@@ -31,6 +31,9 @@ pub enum Gameinfo {
     NotListed { path: PathBuf },
     /// The file itself is gone: the banner, without Fix (Steam has to restore it).
     Missing { path: PathBuf },
+    /// Mods load, but lines a modded game needs are missing (the Mod and Write paths, without
+    /// which it can crash at launch, or the language mounts): the banner with Fix.
+    Incomplete { path: PathBuf, missing: Vec<String> },
     /// No Deadlock install was found: the banner points at Settings > Game to choose it.
     NoGame,
 }
@@ -87,8 +90,10 @@ pub fn poll(st: &mut State) -> bool {
 pub fn state_for(path: PathBuf, status: &GameInfoStatus) -> Gameinfo {
     if !status.present {
         Gameinfo::Missing { path }
-    } else if status.addons_search_path {
+    } else if status.addons_search_path && status.missing_paths.is_empty() {
         Gameinfo::Loads
+    } else if status.addons_search_path {
+        Gameinfo::Incomplete { path, missing: status.missing_paths.clone() }
     } else {
         Gameinfo::NotListed { path }
     }
@@ -99,8 +104,9 @@ pub fn state_for(path: PathBuf, status: &GameInfoStatus) -> Gameinfo {
 /// offers Undo, which restores that copy.
 fn fix(st: &mut State) {
     st.gameinfo.confirm = false;
-    let Gameinfo::NotListed { path } = st.gameinfo.state.clone() else {
-        return;
+    let path = match st.gameinfo.state.clone() {
+        Gameinfo::NotListed { path } | Gameinfo::Incomplete { path, .. } => path,
+        _ => return,
     };
     if st.demo {
         st.gameinfo.state = Gameinfo::Loads;
@@ -163,6 +169,10 @@ pub fn view(s: &State, u: &Ui) -> Option<El> {
             "Mods are off. gameinfo.gi is missing. Verify the game files in Steam, then come back.",
             false,
         ),
+        Gameinfo::Incomplete { .. } => (
+            "gameinfo.gi is missing lines a modded game needs. Without them Deadlock can crash at launch.",
+            true,
+        ),
         Gameinfo::NoGame => ("Deadlock wasn't found. Choose its folder to manage your mods.", false),
         Gameinfo::Unknown | Gameinfo::Loads => return None,
     };
@@ -221,7 +231,13 @@ pub fn dialog(s: &State, u: &Ui) -> Option<El> {
         .gap(8.0)
         .child(text("Fix gameinfo.gi").font(H1).color(u.ink))
         .child(
-            text("Sigil adds back the one line that tells Deadlock to load mods. The current file is copied aside first, so you can undo it.")
+            text(match &s.gameinfo.state {
+                Gameinfo::Incomplete { missing, .. } => format!(
+                    "Sigil adds the lines the game needs: {}. The current file is copied aside first, so you can undo it.",
+                    missing.join(", ")
+                ),
+                _ => "Sigil adds back the one line that tells Deadlock to load mods. The current file is copied aside first, so you can undo it.".to_string(),
+            })
                 .font(BODY)
                 .color(u.muted)
                 .wrap(),
@@ -288,6 +304,21 @@ mod tests {
             present,
             addons_search_path: listed,
             line: listed.then_some(40),
+            missing_paths: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn missing_mod_or_language_lines_offer_a_fix() {
+        let mut status = status(true, true);
+        status.missing_paths = vec!["Mod citadel".into(), "Write core".into()];
+        let path = PathBuf::from("gameinfo.gi");
+        match state_for(path.clone(), &status) {
+            Gameinfo::Incomplete { path: p, missing } => {
+                assert_eq!(p, path);
+                assert_eq!(missing.len(), 2);
+            }
+            other => panic!("expected Incomplete, got {other:?}"),
         }
     }
 
