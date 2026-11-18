@@ -2285,6 +2285,43 @@ fn collect_vpk_choices(files: &[(String, u64)]) -> Vec<VpkChoice> {
 }
 
 /// Download, extract, validate and plan. Writes only inside the workspace.
+/// What [`install_vpks`] managed: each file it installed, in order, and the error that stopped it
+/// (`None` when every file went in).
+#[derive(Debug)]
+pub struct MultiInstall {
+    pub installed: Vec<(InstallPlan, InstallRecord)>,
+    pub error: Option<Error>,
+}
+
+/// Install several `pakNN_dir.vpk` files from one archive (a model and its voice pack, say), each
+/// into its own free slot, in the order given: the first gets the lowest slot, so it wins where
+/// two of them change the same file, as the author ordered them. `vpks` are paths from
+/// [`vpk_choices`]. Each file is planned, stored and applied before the next is planned, so the
+/// next lands in the next free slot. Stops at the first failure; files already installed stay
+/// (each is a normal install the user can turn off or remove).
+pub fn install_vpks(
+    request: &InstallRequest,
+    vpks: &[String],
+    options: &PlanOptions,
+    apply: ApplyOptions,
+    approve: bool,
+) -> MultiInstall {
+    let mut installed = Vec::new();
+    for vpk in vpks {
+        let one = request.clone().with_vpk(Some(vpk.clone()));
+        let step = plan_install(&one, options).and_then(|plan| {
+            store_plan(&plan)?;
+            let record = apply_install_with(&plan, approve, apply)?;
+            Ok((plan, record))
+        });
+        match step {
+            Ok(done) => installed.push(done),
+            Err(error) => return MultiInstall { installed, error: Some(error) },
+        }
+    }
+    MultiInstall { installed, error: None }
+}
+
 pub fn plan_install(request: &InstallRequest, options: &PlanOptions) -> Result<InstallPlan> {
     if let Some(slot) = request.slot
         && !(1..=99).contains(&slot)
@@ -5073,6 +5110,51 @@ mod tests {
             plan.files,
             vec!["materials/heroes/haze/haze_color.vmat_c".to_string()]
         );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn every_vpk_of_an_archive_installs_into_its_own_slot_in_order() {
+        let root = scratch("multi-install");
+        let game_root = fake_game(&root);
+        let workspace = root.join("workspace");
+        fs::create_dir_all(&workspace).unwrap();
+        let (dir_a, chunks_a) = make_vpk(
+            &root.join("build-a"),
+            "pak01",
+            &[("materials/heroes/billy/billy_color.vmat_c", b"one")],
+        );
+        let (dir_b, chunks_b) = make_vpk(
+            &root.join("build-b"),
+            "pak02",
+            &[("materials/heroes/haze/haze_color.vmat_c", b"two")],
+        );
+        let mut files: Vec<(String, Vec<u8>, u32)> = Vec::new();
+        for path in [&dir_a, &dir_b].into_iter().chain(chunks_a.iter()).chain(chunks_b.iter()) {
+            let name = path.file_name().unwrap().to_string_lossy().to_string();
+            files.push((name, fs::read(path).unwrap(), 0o100644));
+        }
+        let refs: Vec<(&str, &[u8], u32)> =
+            files.iter().map(|(name, bytes, mode)| (name.as_str(), bytes.as_slice(), *mode)).collect();
+        let archive = root.join("both.zip");
+        fs::write(&archive, build_stored_zip(&refs)).unwrap();
+        let options = PlanOptions { game_root: Some(game_root.clone()), tools: ToolPaths::default(), ..PlanOptions::default() };
+        let request = InstallRequest::new(archive.display().to_string(), workspace).unwrap().with_one_click(false);
+        let mut picks: Vec<String> = vpk_choices(&request, &options).unwrap().into_iter().map(|c| c.path).collect();
+        picks.sort();
+
+        let done = install_vpks(&request, &picks, &options, ApplyOptions::default(), true);
+        assert!(done.error.is_none(), "{:?}", done.error);
+        assert_eq!(done.installed.len(), 2);
+        let slots: Vec<u8> = done.installed.iter().map(|(plan, _)| plan.slot).collect();
+        assert!(slots[0] < slots[1], "the first file takes the lower slot: {slots:?}");
+        for (plan, _) in &done.installed {
+            assert!(plan.target.is_file(), "{} was written", plan.target.display());
+        }
+
+        // Without approval nothing more is written and the error says so.
+        let refused = install_vpks(&request, &picks, &options, ApplyOptions::default(), false);
+        assert!(refused.installed.is_empty() && refused.error.is_some());
         let _ = fs::remove_dir_all(&root);
     }
 
