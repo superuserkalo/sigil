@@ -18,6 +18,8 @@ coverage/
 
 # Vendored Grimoire checkouts (see scripts/vendor-grimoire.sh)
 vendor/
+# The patched unrar_sys builds UnRAR from these sources, so they are tracked.
+!rust/patches/unrar_sys/vendor/
 
 # Local mod workspaces and build output
 /workspace/
