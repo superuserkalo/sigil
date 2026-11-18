@@ -55,7 +55,7 @@ pub const DE: &[(&str, &str)] = &[
     ("Installed {} files, then stopped: {}", "{} Dateien installiert, dann angehalten: {}"),
     ("This archive holds {} files. Each is checked; uncheck the ones you do not want.", "Dieses Archiv enthält {} Dateien. Alle sind angehakt; entferne den Haken bei denen, die du nicht willst."),
     ("Nothing queued. Paste a GameBanana link and the archive downloads in the background.", "Nichts in der Warteschlange. Füge einen GameBanana-Link ein, und das Archiv lädt im Hintergrund."),
-    ("Downloading slowly, under 1 MB/s. This is most likely GameBanana's servers under heavy load or your internet provider.", "Lädt langsam, unter 1 MB/s. Wahrscheinlich sind die GameBanana-Server stark ausgelastet oder es liegt an deinem Internetanbieter."),
+    ("Downloading slowly, under 150 KB/s. This is most likely GameBanana's servers under heavy load or your internet provider.", "Lädt langsam, unter 150 KB/s. Wahrscheinlich sind die GameBanana-Server stark ausgelastet oder es liegt an deinem Internetanbieter."),
     ("Move up", "Nach oben"),
     ("Move down", "Nach unten"),
     ("Drag to reorder", "Zum Umsortieren ziehen"),
@@ -85,6 +85,34 @@ pub const DE: &[(&str, &str)] = &[
     ("{} commands the game no longer has", "{} Befehle, die das Spiel nicht mehr kennt"),
     ("Use {}", "{} verwenden"),
     ("Asks which skin to keep for a hero.", "Fragt, welcher Skin für einen Helden bleibt."),
+    // Load order dialog
+    ("Load order", "Ladereihenfolge"),
+    ("Change the load order", "Ladereihenfolge ändern"),
+    ("Mods in load order", "Mods in Ladereihenfolge"),
+    ("Mods higher in this list load first. When two mods change the same file, the higher one wins.", "Mods weiter oben in dieser Liste laden zuerst. Ändern zwei Mods dieselbe Datei, gewinnt die obere."),
+    ("Up and Down pick a mod. Space picks it up to move it, or hold Alt with an arrow.", "Hoch und Runter wählen eine Mod. Leertaste nimmt sie zum Verschieben auf, oder halte Alt mit einer Pfeiltaste."),
+    ("Up and Down move it. Home and End send it to the top or bottom. Space puts it down.", "Hoch und Runter verschieben sie. Pos1 und Ende schicken sie nach ganz oben oder unten. Leertaste legt sie ab."),
+    ("Move to top", "Ganz nach oben"),
+    ("Move to bottom", "Ganz nach unten"),
+    ("Up {}", "{} nach oben"),
+    ("Down {}", "{} nach unten"),
+    ("1 mod moves", "1 Mod wird verschoben"),
+    ("{} mods move", "{} Mods werden verschoben"),
+    ("Undo changes", "Änderungen verwerfen"),
+    ("Apply", "Übernehmen"),
+    // Overlap badge
+    ("Shares files with {}. The lower slot loads first and wins.", "Teilt Dateien mit {}. Der niedrigere Slot lädt zuerst und gewinnt."),
+    ("Shares files with other mods. The lower slot loads first and wins.", "Teilt Dateien mit anderen Mods. Der niedrigere Slot lädt zuerst und gewinnt."),
+    ("Wins", "Gewinnt"),
+    ("This one wins", "Diese gewinnt"),
+    ("1 file", "1 Datei"),
+    ("{} files", "{} Dateien"),
+    ("Review in Overlap", "In Überschneidungen ansehen"),
+    // Slow download toast
+    ("{} is downloading slowly", "{} lädt langsam herunter"),
+    ("A download is running slowly", "Ein Download läuft langsam"),
+    ("This is most likely GameBanana's servers under heavy load or your internet provider. The download keeps going.", "Wahrscheinlich sind die GameBanana-Server stark ausgelastet oder es liegt an deinem Internetanbieter. Der Download läuft weiter."),
+    ("Show downloads", "Downloads anzeigen"),
 ];
 
 /// Literals in the routed files that are not UI text: icon path data and demo fixtures.

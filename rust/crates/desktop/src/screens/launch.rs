@@ -1231,7 +1231,7 @@ pub fn scene_downloads_panel(st: &mut State) {
     st.launch.downloads.panel = true;
 }
 
-/// `downloads-slow`: the running row has crawled under 1 MB/s for a while.
+/// `downloads-slow`: the running row has crawled under 150 KB/s for a while.
 pub fn scene_downloads_slow(st: &mut State) {
     scene_downloads(st);
     st.launch.downloads.demo_rates.insert("d1".to_string(), (412_000, true));

@@ -245,7 +245,7 @@ Grouped by task, thirteen categories in three groups, a search field over all of
 | 44 | Mods | Source status | Info | Built now | Mods > Sources row line (origin, mod count, synced, error) |
 | 45 | Mods | Publish your own source | Guide link | Built now | Mods > Sources > How to publish your own source |
 | 46 | Mods | Auto-reapply mods | At startup | Built now | Game > Reapply mods when Sigil starts (vanilla stash back, gameinfo.gi repair) |
-| 47 | Mods | Hero conflict warning | Warn | Elsewhere in Sigil | Overlap page |
+| 47 | Mods | Hero conflict warning | Warn | Built now | Mods > Warn about a second mod for one hero (a mod's heroes are its GameBanana hero tag plus the heroes its model paths replace) |
 | 48 | Mods | Map mod launch warning | Ask | Had it | General > Ask before launching (mod count) |
 | 49 | Mods | Fix mods before launch | Auto repair | Built now | Game > Fix mods before launch (gameinfo.gi repair); DMM's per-mod health repair needs a health analyser Sigil does not have |
 | 50 | Mods | Several skins per hero | Locker | Elsewhere in Sigil | Locker page |

@@ -1,6 +1,7 @@
 //! Headless scenes for the parity wave's Installed states: the hero, requirement and dependent
 //! questions, the hidden-model mark, a drag, several files of one mod on at once, the selection's
-//! update and copy, and the changelog in the update confirm.
+//! update and copy, the changelog in the update confirm, the load order dialog, the overlap
+//! badge and its list, and the hero question raised by model paths alone.
 
 use deadlock_core::requirements::{MissingRequirement, RequirementState};
 
@@ -8,7 +9,7 @@ use crate::app::State;
 use crate::model::ConflictRow;
 
 use super::enable::Gate;
-use super::{Confirm, drag, layout};
+use super::{Confirm, Menu, drag, layout, order, overlap};
 
 fn base(s: &mut State) {
     crate::app::scene_demo_installed(s);
@@ -127,4 +128,54 @@ pub fn changelog(s: &mut State) {
         s.installed.updates.changelog.insert(id, Ok(vec![entry]));
     }
     s.installed.confirm = Some(Confirm::UpdateAll(slots));
+}
+
+/// The load order dialog with slot 07 moved to the top and slot 04 picked up.
+pub fn load_order(s: &mut State) {
+    base(s);
+    order::open(s);
+    if let Some(dialog) = s.installed.order.as_mut() {
+        dialog.order = order::moved(&dialog.order, 7, order::Move::First);
+        dialog.picked = Some(4);
+        dialog.held = true;
+    }
+}
+
+/// The load order dialog as it opens: nothing moved, the first row picked.
+pub fn load_order_open(s: &mut State) {
+    base(s);
+    order::open(s);
+}
+
+/// The overlap badges on the cards, from the demo's conflict rows.
+pub fn overlap_badges(s: &mut State) {
+    base(s);
+    overlap::refresh(s);
+}
+
+/// Slot 07's overlap badge pressed: who it overlaps and who wins.
+pub fn overlap_list(s: &mut State) {
+    base(s);
+    overlap::refresh(s);
+    s.installed.hovered = Some(7);
+    s.installed.menu = Some(Menu::Overlap(7));
+}
+
+/// Slot 12 (off, no hero tag) replaces Paradox's model, and slot 05 is a Paradox skin: turning
+/// 12 on asks, from the model paths alone.
+pub fn hero_from_models(s: &mut State) {
+    base(s);
+    for slot in [5u8, 12] {
+        if let Some(addon) = s.addons.addons.iter().find(|a| a.slot == slot) {
+            let key = (addon.slot, addon.size_bytes);
+            s.installed.gates.model_heroes.insert(key, vec!["Paradox".to_string()]);
+        }
+    }
+    super::enable::switch(s, 12, true);
+}
+
+/// A crawling download raises its one toast.
+pub fn slow_toast(s: &mut State) {
+    crate::screens::launch::scene_downloads_slow(s);
+    crate::screens::downloads::poll(s);
 }

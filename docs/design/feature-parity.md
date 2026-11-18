@@ -44,10 +44,10 @@ Two architectural differences drive many rows:
 | Profiles | 9 | 0 | 0 | 1 |
 | Servers | 8 | 0 | 0 | 1 |
 | Launch | 7 | 0 | 0 | 0 |
-| Overlap | 6 | 0 | 0 | 0 |
-| Downloads | 5 | 0 | 0 | 0 |
+| Overlap | 7 | 0 | 0 | 0 |
+| Downloads | 6 | 0 | 0 | 0 |
 | Global shell | 15 | 0 | 3 | 2 |
-| **Total** | 171 | 5 | 6 | 5 |
+| **Total** | 173 | 5 | 6 | 5 |
 
 ## Browse
 
@@ -155,7 +155,7 @@ Endpoints, verified with curl against the live API on 2026-11-17 (Deadlock game 
 | Multi-select, bulk enable / disable / delete | G+D | Selection mode | has (built: check box on hover, shift-click range, select all shown; bulk on, off, delete behind a confirm with "Don't ask again") | M | P1 |
 | Delete a mod | G+D | Remove the VPK | has (built: card menu and selection; files move to Sigil's trash with restore and Empty trash, `deadlock_core::trash`) | S | P1 |
 | Drag-and-drop install | G+D | Drop files on the window | has on Installed (built: drop veil, then the import review) | S | P1 |
-| Load order reorder | G+D | Drag to change pak number | has (built: drag a card to reorder, plus Load first, earlier, later in the card menu; two-pass renames with rollback, `deadlock_core::load_order`) | M | P1 |
+| Load order reorder | G+D | Drag to change pak number | has (built: drag a card to reorder, Load first, earlier, later in the card menu, and DMM's load order dialog with keyboard moves, top and bottom buttons and one Apply; all go through two-pass renames with rollback, `deadlock_core::load_order`; no search in the dialog yet) | M | P1 |
 | Update checks + update all | G+D | Per-mod badge, batch update with backup | has (built: checked on open at most every 6 hours, Update chip and Update all; same slot, on or off kept, old files backed up; no ignore yet) | M | P1 |
 | Variant groups / mod options | G+D | Several files of one mod as one card | has (built: GameBanana files group by mod id, one card with the playing file, a picker with per-file switch, label rename, split and delete) | M | P2 |
 | Merge mods | G | One VPK from several | has (built: lowest free slot lands off, the lower slot wins, strict mode refuses a shared path, a sidecar record, unmerge to the trash) | L | P3 |
@@ -291,6 +291,7 @@ Endpoints, verified with curl against the live API on 2026-11-17 (Deadlock game 
 | Ignore pair / file / mod with restore | G+D | Ignore lists | has (`deadlock_core::impact` ignore list in app data, restore list at the bottom of Overlap) | M | P2 |
 | Sidebar badge with count | G | Badge | has (`conflicts::badge_count`, ignores excluded; mounting line in the wave report) | S | P3 |
 | Explainer | G+D | How it works | has (`conflicts.rs`, two lines above the table; the resolve dialog repeats it) | S | P3 |
+| Overlap badge on cards | G+D | Mark mods that share files | has (`installed/overlap.rs`: a quiet badge on enabled cards and rows from the scan's conflict rows, ignores excluded; its press lists the other mods, files shared and who wins, then Overlap; a hidden model keeps its own mark) | S | P2 |
 
 ## Downloads
 
@@ -300,6 +301,7 @@ Endpoints, verified with curl against the live API on 2026-11-17 (Deadlock game 
 | Queue with progress | G+D | Several downloads | has (`download_queue.rs` queue on the Launch page: several archives, byte progress, states); Browse's install dialog still downloads inside its own job | M | P2 |
 | Pause, resume, cancel, retry | D | Queue controls | has (`download_queue.rs`: pause keeps the part file, resume continues with Range, cancel removes it, retry starts again) | M | P3 |
 | File server failover | G+D | Mirrors | has (`download_queue.rs` tries the GameBanana file servers in turn when the chosen host fails) | M | P3 |
+| Slow download warning | G+D | Say why a download crawls | has (`downloads.rs`: the row's warning while it crawls, and one toast per download the first time, with Show downloads) | S | P2 |
 | Suspicious archive warning | G | Scan before install | has (`download_queue.rs` scans a ZIP's entry names, unpacks .7z/.rar within limits; the warning comes before the install dialog) | S | P2 |
 
 ## Global shell
