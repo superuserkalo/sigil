@@ -265,6 +265,7 @@ pub const DE: &[(&str, &str)] = &[
     ("Only what you turn on under Help improve Sigil: usage events, crash reports, unknown-mod lookups, and diagnostics when you press Send.", "Nur, was du unter Hilf, Sigil zu verbessern einschaltest: Nutzungsereignisse, Absturzberichte, Mod-Nachschlagen und Diagnosen, wenn du Senden drückst."),
     ("Sigil goes online only for the features below. Usage events, crash reports and lookups go to Sigil's own server only when you turn them on.", "Sigil geht nur für die Funktionen unten online. Nutzungsereignisse, Absturzberichte und Nachschlagen gehen nur an Sigils eigenen Server, wenn du sie einschaltest."),
     ("Look it up", "Nachschlagen"),
+    ("Mods past slot 99 may not load", "Mods nach Slot 99 laden eventuell nicht"),
 ];
 
 /// Literals in the routed files that are not UI text: icon path data and demo fixtures.

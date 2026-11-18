@@ -50,7 +50,7 @@ pub const DMM_IDENTIFIER: &str = "dev.stormix.deadlock-mod-manager";
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ModMeta {
-    pub slot: u8,
+    pub slot: u16,
     /// Size of the directory VPK when this was recorded. Together with `slot` it is the key.
     pub size_bytes: u64,
     pub name: String,
@@ -83,7 +83,7 @@ impl Default for Library {
 
 impl Library {
     /// The entry for a slot whose directory VPK still has the recorded size.
-    pub fn find(&self, slot: u8, size_bytes: u64) -> Option<&ModMeta> {
+    pub fn find(&self, slot: u16, size_bytes: u64) -> Option<&ModMeta> {
         self.mods
             .iter()
             .rev()
@@ -136,7 +136,7 @@ pub fn record_meta(path: &Path, mut meta: ModMeta) -> Result<()> {
 /// Fill in a missing preview for the mod in `slot`, only when that slot still holds the same mod
 /// (GameBanana id and file size): a lookup that lands late never touches a newer install.
 /// True when it wrote.
-pub fn set_thumbnail(path: &Path, slot: u8, size_bytes: u64, gamebanana_id: u64, url: &str) -> Result<bool> {
+pub fn set_thumbnail(path: &Path, slot: u16, size_bytes: u64, gamebanana_id: u64, url: &str) -> Result<bool> {
     let mut library = read_library(path).unwrap_or_default();
     let Some(entry) = library.mods.iter_mut().find(|m| {
         m.slot == slot && m.size_bytes == size_bytes && m.gamebanana_id == Some(gamebanana_id)
@@ -566,11 +566,11 @@ pub fn local_mods(paths: &[PathBuf]) -> Vec<ForeignMod> {
 #[serde(rename_all = "camelCase", tag = "kind")]
 pub enum ImportAction {
     /// Copy into this free slot as `pakNN_dir.vpk.disabled`.
-    Copy { slot: u8 },
+    Copy { slot: u16 },
     /// Install the archive into this slot through the install pipeline, disabled.
-    Archive { slot: u8 },
+    Archive { slot: u16 },
     /// Already in the addon folder at this slot: only the name and preview are recorded.
-    Adopt { slot: u8 },
+    Adopt { slot: u16 },
     Skip { reason: String },
 }
 
@@ -604,9 +604,10 @@ impl ImportPlan {
     }
 }
 
-/// The lowest free slots, one per request, in order. `None` once 99 is passed. Pure.
-pub fn assign_slots(used: &BTreeSet<u8>, count: usize) -> Vec<Option<u8>> {
-    let mut free = (1..=99u8).filter(|slot| !used.contains(slot));
+/// The lowest free slots, one per request, in order: past 99 they are in the extra addon folders.
+/// `None` once every slot is taken. Pure.
+pub fn assign_slots(used: &BTreeSet<u16>, count: usize) -> Vec<Option<u16>> {
+    let mut free = (1..=crate::addons::MAX_SLOT).filter(|slot| !used.contains(slot));
     (0..count).map(|_| free.next()).collect()
 }
 
@@ -709,9 +710,9 @@ pub struct ApplyContext {
 #[serde(rename_all = "camelCase")]
 pub struct ImportReport {
     /// `(slot, name)` for every mod written into the addon folder.
-    pub imported: Vec<(u8, String)>,
+    pub imported: Vec<(u16, String)>,
     /// `(slot, name)` for mods already installed whose name and preview were recorded.
-    pub adopted: Vec<(u8, String)>,
+    pub adopted: Vec<(u16, String)>,
     /// `(name, reason)`.
     pub failed: Vec<(String, String)>,
 }
@@ -772,10 +773,20 @@ pub fn apply_plan(plan: &ImportPlan, context: &ApplyContext) -> Result<ImportRep
         }
     }
 
+    // Mods past slot 99 landed in extra folders, which gameinfo.gi has to mount.
+    if report.imported.iter().any(|(slot, _)| crate::addons::folder_index(*slot) > 0)
+        && let Err(error) = crate::addons::sync_overflow_mount(&addons)
+    {
+        report.failed.push((
+            "gameinfo.gi".to_string(),
+            format!("Mods past slot 99 were imported, but mounting their folder failed: {error}"),
+        ));
+    }
+
     Ok(report)
 }
 
-fn copy_item(addons: &Path, source: &ForeignMod, slot: u8) -> Result<u64> {
+fn copy_item(addons: &Path, source: &ForeignMod, slot: u16) -> Result<u64> {
     if file_size(&source.file) != source.size_bytes || !source.file.is_file() {
         return Err(Error::msg(format!(
             "{} changed since the plan. Nothing was copied.",
@@ -794,11 +805,11 @@ fn copy_item(addons: &Path, source: &ForeignMod, slot: u8) -> Result<u64> {
             let index = chunk_index_of(chunk).ok_or_else(|| {
                 Error::msg(format!("{} is not named like a VPK chunk.", chunk.display()))
             })?;
-            let target = addons.join(format!("pak{slot:02}_{index:03}.vpk"));
+            let target = crate::addons::slot_path(addons, slot, &format!("_{index:03}.vpk"));
             copy_new(chunk, &target)?;
             written.push(target);
         }
-        let target = addons.join(format!("pak{slot:02}_dir.vpk{DISABLED_SUFFIX}"));
+        let target = crate::addons::slot_path(addons, slot, &format!("_dir.vpk{DISABLED_SUFFIX}"));
         copy_new(&source.file, &target)?;
         written.push(target.clone());
         Ok(file_size(&target))
@@ -812,7 +823,7 @@ fn copy_item(addons: &Path, source: &ForeignMod, slot: u8) -> Result<u64> {
     outcome
 }
 
-fn install_archive(context: &ApplyContext, source: &ForeignMod, slot: u8) -> Result<u64> {
+fn install_archive(context: &ApplyContext, source: &ForeignMod, slot: u16) -> Result<u64> {
     use crate::install::{
         ApplyOptions, InstallRequest, PlanOptions, apply_install_with, plan_install,
     };
@@ -830,7 +841,7 @@ fn install_archive(context: &ApplyContext, source: &ForeignMod, slot: u8) -> Res
 fn record(
     context: &ApplyContext,
     source: &ForeignMod,
-    slot: u8,
+    slot: u16,
     size_bytes: u64,
     source_key: &str,
 ) -> Result<()> {
@@ -855,6 +866,9 @@ fn copy_new(source: &Path, destination: &Path) -> Result<()> {
         )));
     }
     let temporary = destination.with_file_name(format!("{}.sigil-tmp", file_name_of(destination)));
+    if let Some(parent) = destination.parent() {
+        fs::create_dir_all(parent)?;
+    }
     if let Err(error) = fs::copy(source, &temporary) {
         let _ = fs::remove_file(&temporary);
         return Err(error.into());
@@ -1003,7 +1017,7 @@ fn chunk_index_path(source: &ForeignMod, index: u16) -> Option<&PathBuf> {
 }
 
 /// The slot of a file that already sits directly in the addon folder under a slot name.
-fn slot_in_folder(file: &Path, addons: &Path) -> Option<u8> {
+fn slot_in_folder(file: &Path, addons: &Path) -> Option<u16> {
     let parent = file.parent()?;
     let same = match (fs::canonicalize(parent), fs::canonicalize(addons)) {
         (Ok(a), Ok(b)) => a == b,
@@ -1014,13 +1028,13 @@ fn slot_in_folder(file: &Path, addons: &Path) -> Option<u8> {
     }
     let name = file_name_of(file).to_ascii_lowercase();
     let rest = name.strip_prefix("pak")?;
-    let slot: u8 = rest.get(..2)?.parse().ok()?;
+    let slot: u16 = rest.get(..2)?.parse().ok()?;
     let tail = rest.get(2..)?;
     ((1..=99).contains(&slot) && (tail == "_dir.vpk" || tail == "_dir.vpk.disabled")).then_some(slot)
 }
 
 /// `(slot, path, size)` for every directory VPK in the addon folder, either name.
-fn installed_dir_files(addons: &Path) -> Vec<(u8, PathBuf, u64)> {
+fn installed_dir_files(addons: &Path) -> Vec<(u16, PathBuf, u64)> {
     let Ok(entries) = fs::read_dir(addons) else {
         return Vec::new();
     };
@@ -1036,8 +1050,8 @@ fn installed_dir_files(addons: &Path) -> Vec<(u8, PathBuf, u64)> {
 }
 
 /// An installed slot whose directory VPK has the same bytes as `source`.
-fn same_bytes_slot(source: &ForeignMod, installed: &[(u8, PathBuf, u64)]) -> Option<u8> {
-    let candidates: Vec<&(u8, PathBuf, u64)> = installed
+fn same_bytes_slot(source: &ForeignMod, installed: &[(u16, PathBuf, u64)]) -> Option<u16> {
+    let candidates: Vec<&(u16, PathBuf, u64)> = installed
         .iter()
         .filter(|(_, _, size)| *size == source.size_bytes && *size > 0)
         .collect();
@@ -1051,12 +1065,12 @@ fn same_bytes_slot(source: &ForeignMod, installed: &[(u8, PathBuf, u64)]) -> Opt
         .map(|(slot, _, _)| *slot)
 }
 
-fn slot_dir_size(addons: &Path, slot: u8) -> u64 {
-    let enabled = addons.join(format!("pak{slot:02}_dir.vpk"));
+fn slot_dir_size(addons: &Path, slot: u16) -> u64 {
+    let enabled = crate::addons::slot_path(addons, slot, "_dir.vpk");
     if enabled.is_file() {
         return file_size(&enabled);
     }
-    file_size(&addons.join(format!("pak{slot:02}_dir.vpk{DISABLED_SUFFIX}")))
+    file_size(&crate::addons::slot_path(addons, slot, &format!("_dir.vpk{DISABLED_SUFFIX}")))
 }
 
 #[cfg(test)]
@@ -1103,10 +1117,13 @@ mod tests {
 
     #[test]
     fn assigns_the_lowest_free_slots_in_order() {
-        let used: BTreeSet<u8> = [1, 2, 4].into_iter().collect();
+        let used: BTreeSet<u16> = [1, 2, 4].into_iter().collect();
         assert_eq!(assign_slots(&used, 3), vec![Some(3), Some(5), Some(6)]);
-        let full: BTreeSet<u8> = (1..=98).collect();
-        assert_eq!(assign_slots(&full, 2), vec![Some(99), None]);
+        // Past 99 the slots carry on into the extra addon folders.
+        let main_full: BTreeSet<u16> = (1..=98).collect();
+        assert_eq!(assign_slots(&main_full, 2), vec![Some(99), Some(100)]);
+        let full: BTreeSet<u16> = (1..crate::addons::MAX_SLOT).collect();
+        assert_eq!(assign_slots(&full, 2), vec![Some(crate::addons::MAX_SLOT), None]);
     }
 
     #[test]
@@ -1355,7 +1372,7 @@ mod thumbnail_tests {
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         let path = dir.join("library.json");
-        let meta = |slot: u8, size: u64, id: u64| ModMeta {
+        let meta = |slot: u16, size: u64, id: u64| ModMeta {
             slot,
             size_bytes: size,
             name: "A mod".into(),

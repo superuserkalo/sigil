@@ -22,16 +22,16 @@ use super::{Menu, display_name};
 
 /// For each enabled slot that overlaps: the other enabled slots it shares paths with, and how
 /// many paths each pair shares.
-pub type Overlaps = BTreeMap<u8, BTreeMap<u8, usize>>;
+pub type Overlaps = BTreeMap<u16, BTreeMap<u16, usize>>;
 
 /// Who overlaps whom. `hidden` says whether a row is ignored on the Overlap page.
-pub fn by_slot(conflicts: &[ConflictRow], enabled: &BTreeSet<u8>, hidden: impl Fn(&ConflictRow) -> bool) -> Overlaps {
+pub fn by_slot(conflicts: &[ConflictRow], enabled: &BTreeSet<u16>, hidden: impl Fn(&ConflictRow) -> bool) -> Overlaps {
     let mut out = Overlaps::new();
     for row in conflicts {
         if hidden(row) {
             continue;
         }
-        let on: Vec<u8> = row.slots.iter().copied().filter(|slot| enabled.contains(slot)).collect();
+        let on: Vec<u16> = row.slots.iter().copied().filter(|slot| enabled.contains(slot)).collect();
         for a in &on {
             for b in &on {
                 if a != b {
@@ -44,13 +44,13 @@ pub fn by_slot(conflicts: &[ConflictRow], enabled: &BTreeSet<u8>, hidden: impl F
 }
 
 /// The winner of a pair: the lower slot loads first, and the game keeps its copy.
-pub fn winner(a: u8, b: u8) -> u8 {
+pub fn winner(a: u16, b: u16) -> u16 {
     a.min(b)
 }
 
 /// Recompute after a scan or an ignore change. Cheap: the rows are already in memory.
 pub fn refresh(st: &mut State) -> bool {
-    let enabled: BTreeSet<u8> = st.addons.addons.iter().filter(|a| a.enabled).map(|a| a.slot).collect();
+    let enabled: BTreeSet<u16> = st.addons.addons.iter().filter(|a| a.enabled).map(|a| a.slot).collect();
     let ignores = crate::screens::conflicts::ignore_list();
     let fresh = by_slot(&st.addons.conflicts, &enabled, |row| ignores.hides(&row.path, &row.slots, row.winner));
     if fresh != st.installed.overlaps {
@@ -60,7 +60,7 @@ pub fn refresh(st: &mut State) -> bool {
     false
 }
 
-fn name_of(s: &State, slot: u8) -> String {
+fn name_of(s: &State, slot: u16) -> String {
     s.addons
         .addons
         .iter()
@@ -70,7 +70,7 @@ fn name_of(s: &State, slot: u8) -> String {
 }
 
 /// The words the badge carries for a screen reader, and the line the popover heads with.
-pub fn summary(s: &State, slot: u8) -> Option<String> {
+pub fn summary(s: &State, slot: u16) -> Option<String> {
     let others = s.installed.overlaps.get(&slot)?;
     let names: Vec<String> = others.keys().map(|other| name_of(s, *other)).collect();
     Some(fill(tr("Shares files with {}. The lower slot loads first and wins."), &[&names.join(", ")]))
@@ -78,7 +78,7 @@ pub fn summary(s: &State, slot: u8) -> Option<String> {
 
 /// The badge: on an image corner for cards, or as a small chip in a list row. None when the mod
 /// does not overlap, or its model is hidden (that mark says more).
-pub fn badge(s: &State, u: &Ui, slot: u8, on_image: bool) -> Option<El> {
+pub fn badge(s: &State, u: &Ui, slot: u16, on_image: bool) -> Option<El> {
     if s.installed.hidden.contains(&slot) {
         return None;
     }
@@ -110,7 +110,7 @@ pub fn badge(s: &State, u: &Ui, slot: u8, on_image: bool) -> Option<El> {
 }
 
 /// The popover rows: who this mod overlaps, how many files, who wins, then Overlap.
-pub fn menu_items(s: &State, u: &Ui, slot: u8) -> Vec<El> {
+pub fn menu_items(s: &State, u: &Ui, slot: u16) -> Vec<El> {
     let Some(others) = s.installed.overlaps.get(&slot) else {
         return Vec::new();
     };
@@ -170,7 +170,7 @@ pub fn menu_items(s: &State, u: &Ui, slot: u8) -> Vec<El> {
 mod tests {
     use super::*;
 
-    fn row(path: &str, slots: &[u8]) -> ConflictRow {
+    fn row(path: &str, slots: &[u16]) -> ConflictRow {
         ConflictRow { path: path.into(), slots: slots.to_vec(), winner: *slots.iter().min().unwrap() }
     }
 
@@ -181,7 +181,7 @@ mod tests {
             row("materials/b.vtex_c", &[2, 5, 9]),
             row("sounds/c.vsnd_c", &[3, 4]),
         ];
-        let enabled: BTreeSet<u8> = [2, 3, 4, 5].into_iter().collect();
+        let enabled: BTreeSet<u16> = [2, 3, 4, 5].into_iter().collect();
         let found = by_slot(&conflicts, &enabled, |_| false);
         assert_eq!(found[&2].iter().map(|(k, v)| (*k, *v)).collect::<Vec<_>>(), vec![(5, 2)], "9 is off");
         assert_eq!(found[&5][&2], 2);
@@ -192,7 +192,7 @@ mod tests {
     #[test]
     fn ignored_rows_leave_no_badge() {
         let conflicts = vec![row("materials/a.vmat_c", &[2, 5]), row("sounds/c.vsnd_c", &[3, 4])];
-        let enabled: BTreeSet<u8> = [2, 3, 4, 5].into_iter().collect();
+        let enabled: BTreeSet<u16> = [2, 3, 4, 5].into_iter().collect();
         let found = by_slot(&conflicts, &enabled, |r| r.path.starts_with("sounds/"));
         assert!(found.contains_key(&2) && found.contains_key(&5));
         assert!(!found.contains_key(&3) && !found.contains_key(&4));

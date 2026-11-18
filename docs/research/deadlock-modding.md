@@ -69,7 +69,11 @@ Only the `SearchPaths` part may change. Editing other parts of `gameinfo.gi` can
 - Other names are ignored (`goldcase.vpk`, `pak1_dir.vpk`, `pak00_dir.vpk`, `pak100_dir.vpk`).
 - Subfolders are ignored.
 - Lower number wins when two mods ship the same file.
-- The game loads at most 99 VPKs per folder. Managers add more folders to work around it.
+- The game loads at most 99 VPKs per folder. Managers add more folders to work around it: Sigil
+  numbers slots 1 to 990 across `citadel/addons` and `citadel/sigil-addons2` to `sigil-addons10`
+  (`deadlock_core::addons::slot_folder`), mounted after `citadel/addons` in a marked
+  `gameinfo.gi` block (`deadlock_core::overflow`). Folder order wins first, then the `pakNN`
+  number, so a lower slot still wins. Isolated profiles stay at 99.
 - Two mods that each change part of the same shared file can still break each other; order does not
   fix that.
 

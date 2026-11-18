@@ -19,7 +19,7 @@ use super::{Sort, layout};
 /// A card on the move.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Dragging {
-    pub slot: u8,
+    pub slot: u16,
     pub enabled: bool,
     /// Its place among the section's cards when the drag began, and where it would land.
     pub from: usize,
@@ -45,7 +45,7 @@ pub fn grid_target(from: usize, count: usize, cols: usize, pitch: [f32; 2], dx: 
 
 /// The load order of `group` (every slot of the section, lowest first) after the card `slot`
 /// moves onto the place of `shown[to]`: after it when moving down, before it when moving up.
-pub fn wanted_order(group: &[u8], shown: &[u8], slot: u8, to: usize) -> Vec<u8> {
+pub fn wanted_order(group: &[u16], shown: &[u16], slot: u16, to: usize) -> Vec<u16> {
     let Some(target) = shown.get(to).copied() else {
         return group.to_vec();
     };
@@ -59,7 +59,7 @@ pub fn wanted_order(group: &[u8], shown: &[u8], slot: u8, to: usize) -> Vec<u8> 
 }
 
 /// The cards of one section in the order they are drawn, by the slot each speaks for.
-pub fn order(st: &State, enabled: bool) -> Vec<u8> {
+pub fn order(st: &State, enabled: bool) -> Vec<u16> {
     let shown = super::shown_addons(st);
     layout::groups(st, &shown)
         .iter()
@@ -74,7 +74,7 @@ pub fn allowed(s: &State) -> bool {
 }
 
 /// The drop mark for a card: `Some(true)` when the dragged card lands after it.
-pub fn drop_mark(s: &State, slot: u8, enabled: bool) -> Option<bool> {
+pub fn drop_mark(s: &State, slot: u16, enabled: bool) -> Option<bool> {
     let d = s.installed.drag?;
     if d.enabled != enabled || d.from == d.to || d.slot == slot {
         return None;
@@ -84,7 +84,7 @@ pub fn drop_mark(s: &State, slot: u8, enabled: bool) -> Option<bool> {
 }
 
 /// The grip on a card or row. `pitch` is one card and its gap; `cols` the cards across.
-pub fn grip(u: &Ui, slot: u8, enabled: bool, pitch: [f32; 2], cols: usize, dragging: bool, show: bool) -> El {
+pub fn grip(u: &Ui, slot: u16, enabled: bool, pitch: [f32; 2], cols: usize, dragging: bool, show: bool) -> El {
     el().key(format!("installed-grip-{slot:02}"))
         .size(28.0, 28.0)
         .center()
@@ -99,7 +99,7 @@ pub fn grip(u: &Ui, slot: u8, enabled: bool, pitch: [f32; 2], cols: usize, dragg
         .child(icon(&GRIP_VERTICAL, 14.0).color(rune::Color::WHITE.alpha(0.9)).a11y_hidden())
 }
 
-fn drag(st: &mut State, slot: u8, enabled: bool, pitch: [f32; 2], cols: usize, d: &mut Drag) {
+fn drag(st: &mut State, slot: u16, enabled: bool, pitch: [f32; 2], cols: usize, d: &mut Drag) {
     match d.phase {
         Phase::Down => {
             let from = order(st, enabled).iter().position(|s| *s == slot).unwrap_or(0);

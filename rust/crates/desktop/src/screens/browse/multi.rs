@@ -18,7 +18,7 @@ use crate::screens::settings::i18n::{fill, tr};
 
 /// What the multi-file worker reports.
 pub struct Done {
-    pub slots: Vec<u8>,
+    pub slots: Vec<u16>,
     pub error: Option<String>,
 }
 

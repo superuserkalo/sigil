@@ -55,11 +55,11 @@ pub fn refresh(st: &mut State) -> bool {
 }
 
 /// The first problem where `slot` is the dependent.
-pub fn problem_for(s: &State, slot: u8) -> Option<&OrderProblem> {
+pub fn problem_for(s: &State, slot: u16) -> Option<&OrderProblem> {
     s.installed.order_problems.iter().find(|p| p.overlay_slot == slot)
 }
 
-fn name_of(s: &State, slot: u8) -> String {
+fn name_of(s: &State, slot: u16) -> String {
     s.addons
         .addons
         .iter()
@@ -77,7 +77,7 @@ pub fn line(s: &State, problem: &OrderProblem) -> String {
 }
 
 /// The amber mark on the dependent's preview corner, or a chip in a list row.
-pub fn badge(s: &State, u: &Ui, slot: u8, on_image: bool) -> Option<El> {
+pub fn badge(s: &State, u: &Ui, slot: u16, on_image: bool) -> Option<El> {
     let problem = problem_for(s, slot)?;
     let open = s.installed.menu == Some(Menu::Order(slot));
     let base = el()
@@ -106,7 +106,7 @@ pub fn badge(s: &State, u: &Ui, slot: u8, on_image: bool) -> Option<El> {
 }
 
 /// The popover: what is wrong, and Fix it (or why it cannot be fixed by a move).
-pub fn menu_items(s: &State, u: &Ui, slot: u8) -> Vec<El> {
+pub fn menu_items(s: &State, u: &Ui, slot: u16) -> Vec<El> {
     let Some(problem) = problem_for(s, slot) else {
         return Vec::new();
     };

@@ -106,7 +106,7 @@ pub fn missing_search_paths(text: &str) -> Vec<String> {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct AddonSlot {
-    pub slot: u8,
+    pub slot: u16,
     pub file_name: String,
     pub size_bytes: u64,
 }
@@ -119,7 +119,7 @@ pub struct AddonsStatus {
     pub slots: Vec<AddonSlot>,
     pub chunk_files: Vec<String>,
     pub ignored_files: Vec<String>,
-    pub next_free_slot: Option<u8>,
+    pub next_free_slot: Option<u16>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -331,14 +331,17 @@ pub fn default_steam_roots_for(
     }
 }
 
-pub fn format_slot_file_name(slot: u8) -> Result<String> {
-    if !(1..=99).contains(&slot) {
+/// The directory file name of a slot inside its own folder (slot 101 is `pak02_dir.vpk` in
+/// `sigil-addons2`; see [`crate::addons::slot_folder`]).
+pub fn format_slot_file_name(slot: u16) -> Result<String> {
+    if !crate::addons::is_slot(slot) {
         return Err(Error::msg(format!(
-            "Addon slot must be an integer from 1 to 99, received {slot}"
+            "Addon slot must be an integer from 1 to {}, received {slot}",
+            crate::addons::MAX_SLOT
         )));
     }
 
-    Ok(format!("pak{slot:02}_dir.vpk"))
+    Ok(crate::addons::slot_name(slot, "_dir.vpk"))
 }
 
 pub fn discover_deadlock_install(options: InstallDiscoveryOptions) -> Result<InstallDiscovery> {
@@ -531,7 +534,7 @@ pub fn read_addons_status(addons_dir: &Path) -> Result<AddonsStatus> {
 
         if let Some(captures) = slot_pattern.captures(&name) {
             if let Some(value) = captures.get(1) {
-                if let Ok(slot) = value.as_str().parse::<u8>() {
+                if let Ok(slot) = value.as_str().parse::<u16>() {
                     if (1..=99).contains(&slot) {
                         let size_bytes = fs::metadata(&path).map(|data| data.len()).unwrap_or(0);
                         slots.push(AddonSlot {
@@ -557,7 +560,7 @@ pub fn read_addons_status(addons_dir: &Path) -> Result<AddonsStatus> {
     chunk_files.sort();
     ignored_files.sort();
 
-    let used: Vec<u8> = slots.iter().map(|slot| slot.slot).collect();
+    let used: Vec<u16> = slots.iter().map(|slot| slot.slot).collect();
     let next_free_slot = (1..=99).find(|slot| !used.contains(slot));
 
     Ok(AddonsStatus {

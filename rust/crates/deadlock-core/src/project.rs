@@ -50,9 +50,9 @@ pub struct ModProject {
     pub game_app_id: String,
     /// Exact game paths the mod intends to replace.
     pub targets: Vec<String>,
-    pub slot: Option<u8>,
+    pub slot: Option<u16>,
     #[serde(default)]
-    pub deployed_slot: Option<u8>,
+    pub deployed_slot: Option<u16>,
     #[serde(default)]
     pub deployed_at: Option<String>,
     pub references: Vec<String>,
@@ -98,7 +98,7 @@ pub struct ProjectBaseline {
     pub project_slug: String,
     pub captured_at: String,
     pub game_app_id: String,
-    pub slot: Option<u8>,
+    pub slot: Option<u16>,
     pub gameinfo: Option<GameInfoStatus>,
     pub entries: Vec<BaselineEntry>,
 }
@@ -139,12 +139,12 @@ pub struct ProjectCheck {
     pub unbaselined: usize,
     pub gameinfo: Option<GameInfoStatus>,
     pub gameinfo_ok: bool,
-    pub slot: Option<u8>,
+    pub slot: Option<u16>,
     /// Slot this project last deployed to, when known.
-    pub deployed_slot: Option<u8>,
+    pub deployed_slot: Option<u16>,
     /// Installed addon occupying the project's preferred slot, when any.
     pub slot_conflict: Option<AddonSlot>,
-    pub next_free_slot: Option<u8>,
+    pub next_free_slot: Option<u16>,
 }
 
 pub fn project_path(workspace: &Path) -> PathBuf {

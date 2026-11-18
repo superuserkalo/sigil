@@ -180,16 +180,16 @@ fn escape_xml(value: &str) -> String {
         .replace('\'', "&apos;")
 }
 
-fn marker_start(slot: u8) -> String {
+fn marker_start(slot: u16) -> String {
     format!("{SECTION_START}{slot:02}]")
 }
 
-fn marker_end(slot: u8) -> String {
+fn marker_end(slot: u16) -> String {
     format!("{SECTION_END}{slot:02}]")
 }
 
 /// The config with this slot's block taken out.
-pub fn strip_section(content: &str, slot: u8) -> String {
+pub fn strip_section(content: &str, slot: u16) -> String {
     let start_marker = marker_start(slot);
     let end_marker = marker_end(slot);
     let Some(start) = content.find(&start_marker) else {
@@ -206,7 +206,7 @@ pub fn strip_section(content: &str, slot: u8) -> String {
 }
 
 /// Add a block for this slot after the last existing `<fontpattern>` line.
-pub fn patch_conf(content: &str, slot: u8, fonts: &[Font]) -> String {
+pub fn patch_conf(content: &str, slot: u16, fonts: &[Font]) -> String {
     let content = strip_section(content, slot);
     if fonts.is_empty() {
         return content;
@@ -247,7 +247,7 @@ pub fn patch_conf(content: &str, slot: u8, fonts: &[Font]) -> String {
 pub fn install_fonts(
     game_root: &Path,
     vpk: &Path,
-    slot: u8,
+    slot: u16,
     backup_dir: &Path,
     approve: bool,
 ) -> Result<FontReport> {
@@ -345,7 +345,7 @@ pub fn install_fonts(
 /// moved to Sigil's backups. Game install write; refuses without `approve`.
 pub fn remove_fonts(
     game_root: &Path,
-    slot: u8,
+    slot: u16,
     backup_dir: &Path,
     approve: bool,
 ) -> Result<FontReport> {
@@ -419,7 +419,7 @@ fn default_conf() -> String {
 }
 
 /// Whether the game's `fonts.conf` already has a block for this slot.
-pub fn has_block(game_root: &Path, slot: u8) -> bool {
+pub fn has_block(game_root: &Path, slot: u16) -> bool {
     fs::read_to_string(fonts_dir(game_root).join(CONF_FILE_NAME))
         .map(|content| content.contains(&marker_start(slot)))
         .unwrap_or(false)

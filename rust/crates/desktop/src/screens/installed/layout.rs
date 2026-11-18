@@ -119,7 +119,7 @@ pub struct Variants {
     /// The open picker: the group key it lists.
     pub open: Option<String>,
     /// The label being renamed, by slot, and the text typed.
-    pub renaming: Option<u8>,
+    pub renaming: Option<u16>,
     pub text: TextEdit,
 }
 
@@ -145,25 +145,25 @@ pub fn group_for<'a>(st: &'a State, key: &str) -> Vec<&'a AddonRow> {
 
 /// The card's switch for a group: on turns on the file it shows (through the same questions
 /// as any switch), off turns every file of the group off.
-pub fn group_switch(st: &mut State, members: &[u8], enable: bool, chosen: u8) {
+pub fn group_switch(st: &mut State, members: &[u16], enable: bool, chosen: u16) {
     if enable {
         super::enable::switch(st, chosen, true);
         return;
     }
-    let wanted: std::collections::BTreeMap<u8, bool> =
+    let wanted: std::collections::BTreeMap<u16, bool> =
         members.iter().map(|slot| (*slot, false)).collect();
     set_group(st, wanted, "Turned the mod off.".to_string());
 }
 
 /// Apply a wanted set of slot switches, keep one Undo for all of them, and rescan.
-fn set_group(st: &mut State, wanted: std::collections::BTreeMap<u8, bool>, line: String) {
+fn set_group(st: &mut State, wanted: std::collections::BTreeMap<u16, bool>, line: String) {
     let Some(game_root) = super::writable_game(st) else { return };
     super::apply_switch(st, &game_root, &wanted, line);
 }
 
 /// A press on a multi-file card: its file list, or its GameBanana page when Settings asks for
 /// that and the mod has one.
-pub fn open_group(st: &mut State, key: Option<String>, slot: u8) {
+pub fn open_group(st: &mut State, key: Option<String>, slot: u16) {
     if options::installed_open_page()
         && let Some(id) = st
             .addons
@@ -181,7 +181,7 @@ pub fn open_group(st: &mut State, key: Option<String>, slot: u8) {
 
 /// The new order of a group's slots with the file at `index` moved one place up or down.
 /// `None` at either end.
-pub fn nudge(slots: &[u8], index: usize, up: bool) -> Option<Vec<u8>> {
+pub fn nudge(slots: &[u16], index: usize, up: bool) -> Option<Vec<u16>> {
     let to = if up { index.checked_sub(1)? } else { index + 1 };
     if to >= slots.len() || index >= slots.len() {
         return None;
@@ -192,7 +192,7 @@ pub fn nudge(slots: &[u8], index: usize, up: bool) -> Option<Vec<u8>> {
 }
 
 /// Take one file out of its group, so it gets its own card again.
-pub fn split_variant(st: &mut State, slot: u8) {
+pub fn split_variant(st: &mut State, slot: u16) {
     if !st.addons.addons.iter().any(|addon| addon.slot == slot) {
         return;
     }
@@ -205,7 +205,7 @@ pub fn split_variant(st: &mut State, slot: u8) {
 }
 
 /// Rename one file in the picker.
-pub fn rename_variant(st: &mut State, slot: u8) {
+pub fn rename_variant(st: &mut State, slot: u16) {
     let label = st.installed.variants.text.text.trim().to_string();
     if label.is_empty() {
         return;
@@ -233,7 +233,7 @@ pub fn picker_dialog(s: &State, u: &Ui) -> Option<El> {
         let label = notes::label_for(s, addon);
         let on = addon.enabled;
         let slot = addon.slot;
-        let slots: Vec<u8> = members.iter().map(|member| member.slot).collect();
+        let slots: Vec<u16> = members.iter().map(|member| member.slot).collect();
         let index = slots.iter().position(|s| *s == slot).unwrap_or(0);
         let renaming = s.installed.variants.renaming == Some(slot);
         let mut line = row()
@@ -501,7 +501,7 @@ pub fn list_row(s: &State, u: &Ui, card: &Group) -> El {
                 .on_press(move |st: &mut State| open_menu(st, Menu::Card(slot))),
         )
         .child({
-            let members: Vec<u8> = card.addons.iter().map(|addon| addon.slot).collect();
+            let members: Vec<u16> = card.addons.iter().map(|addon| addon.slot).collect();
             let is_variants = card.is_variants();
             u.toggle(addon.enabled)
                 .key(format!("toggle-{slot:02}"))

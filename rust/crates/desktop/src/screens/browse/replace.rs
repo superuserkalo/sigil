@@ -23,14 +23,14 @@ pub struct Pending {
     pub file_id: u64,
     pub file_name: String,
     /// The installed slots that can be replaced, and the one picked.
-    pub slots: Vec<u8>,
-    pub chosen: u8,
+    pub slots: Vec<u16>,
+    pub chosen: u16,
     pub dont_ask: bool,
 }
 
 /// The installed slots of mod `id` that are on disk.
-pub fn candidates(s: &State, id: u64) -> Vec<u8> {
-    let mut slots: Vec<u8> = s
+pub fn candidates(s: &State, id: u64) -> Vec<u16> {
+    let mut slots: Vec<u16> = s
         .addons
         .addons
         .iter()

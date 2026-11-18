@@ -92,7 +92,7 @@ const API_TIMEOUT_SECONDS: u64 = 30;
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct ProfileSlot {
-    pub slot: u8,
+    pub slot: u16,
     /// File name as it was on disk at capture time, with `.disabled` when off.
     pub file: String,
     pub enabled: bool,
@@ -492,7 +492,7 @@ pub fn set_active_profile(workspace: &Path, slug: Option<&str>) -> Result<()> {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct AddonIdentity {
-    pub slot: u8,
+    pub slot: u16,
     /// File name on disk, with `.disabled` when off.
     pub file: String,
     pub enabled: bool,
@@ -591,18 +591,9 @@ pub fn installed_identities(game_root: &Path, workspace: &Path) -> Result<Vec<Ad
 pub fn installed_identities_in(directory: &Path, workspace: &Path) -> Result<Vec<AddonIdentity>> {
     let sources = read_sources(workspace);
     let journal = crate::install::read_journal(workspace).unwrap_or_default();
-    let entries = match fs::read_dir(directory) {
-        Ok(entries) => entries,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
-        Err(error) => return Err(error.into()),
-    };
-    let mut names: Vec<String> = Vec::new();
-    for entry in entries.flatten() {
-        if entry.file_type().map(|kind| kind.is_file()).unwrap_or(false) {
-            names.push(entry.file_name().to_string_lossy().into_owned());
-        }
-    }
-    let groups = crate::load_order::group_slot_files(&names);
+    // The main folder and its extra folders (`sigil-addons2` and on), by global slot. A profile
+    // folder has no extra folders, so this reads just that folder for it.
+    let groups = crate::load_order::read_slot_files(directory)?;
 
     let mut identities = Vec::with_capacity(groups.len());
     for (slot, files) in groups {
@@ -614,7 +605,7 @@ pub fn installed_identities_in(directory: &Path, workspace: &Path) -> Result<Vec
         else {
             continue;
         };
-        let path = directory.join(&file);
+        let path = crate::addons::slot_folder(directory, slot).join(&file);
         let fingerprint = match fingerprint_file(&path) {
             Ok(value) => value,
             Err(_) => continue,
@@ -707,11 +698,11 @@ pub fn gamebanana_ids_from_source(source: &str) -> (Option<u64>, Option<u64>) {
 #[serde(rename_all = "camelCase")]
 pub enum EntryState {
     /// Found, by GameBanana ids, fingerprint or slot.
-    Ready { slot: u8, enabled_now: bool },
+    Ready { slot: u16, enabled_now: bool },
     /// Not installed.
     Missing,
     /// The recorded slot now holds a different mod, so it is left alone.
-    SlotReused { slot: u8 },
+    SlotReused { slot: u16 },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -728,7 +719,7 @@ pub struct EntryPlan {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SlotChange {
-    pub slot: u8,
+    pub slot: u16,
     pub from: String,
     pub to: String,
     pub label: String,
@@ -849,7 +840,7 @@ pub fn plan_profile_apply(
     let directory = addons_dir(game_root);
     let states = resolve_entries(&profile.slots, &installed);
 
-    let mut wanted: BTreeMap<u8, (bool, String)> = BTreeMap::new();
+    let mut wanted: BTreeMap<u16, (bool, String)> = BTreeMap::new();
     let mut entries = Vec::with_capacity(profile.slots.len());
     for (index, (entry, state)) in profile.slots.iter().zip(states).enumerate() {
         let label = installed_label(entry, &state, &installed);
@@ -870,7 +861,8 @@ pub fn plan_profile_apply(
     for addon in &installed {
         let enabled_name = enabled_file_name(&addon.file);
         let disabled_name = format!("{enabled_name}{DISABLED_SUFFIX}");
-        if directory.join(&enabled_name).is_file() && directory.join(&disabled_name).is_file() {
+        let folder = crate::addons::slot_folder(&directory, addon.slot);
+        if folder.join(&enabled_name).is_file() && folder.join(&disabled_name).is_file() {
             blocked = Some(format!(
                 "Slot {:02} has both {enabled_name} and {disabled_name}. Remove one first.",
                 addon.slot
@@ -998,8 +990,9 @@ fn apply_shared(game_root: &Path, workspace: &Path, profile: &Profile) -> Result
     }
     // Off before on, as Grimoire does, so a swap never has both sets loaded at once.
     for change in plan.turn_off.iter().chain(plan.turn_on.iter()) {
-        let from = addons.join(&change.from);
-        let to = addons.join(&change.to);
+        let folder = crate::addons::slot_folder(&addons, change.slot);
+        let from = folder.join(&change.from);
+        let to = folder.join(&change.to);
         if to.exists() {
             return Err(Error::msg(format!(
                 "Slot {:02}: {} already exists. Stopped after {} change(s).",
@@ -1119,8 +1112,9 @@ pub fn undo_profile_apply(
     let addons = addons_dir(game_root);
     let mut report = UndoReport::default();
     for change in result.changes.iter().rev() {
-        let from = addons.join(&change.to);
-        let to = addons.join(&change.from);
+        let folder = crate::addons::slot_folder(&addons, change.slot);
+        let from = folder.join(&change.to);
+        let to = folder.join(&change.from);
         if to.exists() {
             report.skipped.push(format!("slot {:02}: {} is in the way", change.slot, change.from));
             continue;
@@ -2081,7 +2075,7 @@ pub struct ImportEntry {
     pub status: ImportStatus,
     pub reason: Option<String>,
     /// The slot that already holds this mod, when it is installed.
-    pub installed_slot: Option<u8>,
+    pub installed_slot: Option<u16>,
 }
 
 impl ImportEntry {
@@ -2363,7 +2357,7 @@ fn validate_profile(profile: &Profile) -> Result<()> {
     }
     validate_slug(&profile.slug)?;
 
-    let mut seen: Vec<u8> = Vec::with_capacity(profile.slots.len());
+    let mut seen: Vec<u16> = Vec::with_capacity(profile.slots.len());
     for record in &profile.slots {
         if !(1..=99).contains(&record.slot) {
             return Err(Error::msg(format!(
@@ -2426,13 +2420,13 @@ fn enabled_file_name(file: &str) -> String {
 }
 
 /// The `NN` of `pakNN_dir.vpk`, or None when the name does not match.
-fn slot_number(file: &str) -> Option<u8> {
+fn slot_number(file: &str) -> Option<u16> {
     let lower = file.to_ascii_lowercase();
     let stem = lower.strip_prefix("pak")?.strip_suffix("_dir.vpk")?;
     if stem.len() != 2 || !stem.chars().all(|character| character.is_ascii_digit()) {
         return None;
     }
-    let slot = stem.parse::<u8>().ok()?;
+    let slot = stem.parse::<u16>().ok()?;
     (1..=99).contains(&slot).then_some(slot)
 }
 
@@ -2754,7 +2748,7 @@ mod tests {
         assert!(decode_share_code("nope").is_err());
     }
 
-    fn identity(slot: u8, mod_id: Option<u64>, file_id: Option<u64>, name: &str) -> AddonIdentity {
+    fn identity(slot: u16, mod_id: Option<u64>, file_id: Option<u64>, name: &str) -> AddonIdentity {
         AddonIdentity {
             slot,
             file: format!("pak{slot:02}_dir.vpk"),

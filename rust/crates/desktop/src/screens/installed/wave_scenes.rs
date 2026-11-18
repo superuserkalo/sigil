@@ -165,7 +165,7 @@ pub fn overlap_list(s: &mut State) {
 /// 12 on asks, from the model paths alone.
 pub fn hero_from_models(s: &mut State) {
     base(s);
-    for slot in [5u8, 12] {
+    for slot in [5u16, 12] {
         if let Some(addon) = s.addons.addons.iter().find(|a| a.slot == slot) {
             let key = (addon.slot, addon.size_bytes);
             s.installed.gates.model_heroes.insert(key, vec!["Paradox".to_string()]);
@@ -184,7 +184,7 @@ pub fn slow_toast(s: &mut State) {
 /// order mark is on 04 and its popover is open.
 pub fn order_fix(s: &mut State) {
     base(s);
-    let id_of = |s: &State, slot: u8| {
+    let id_of = |s: &State, slot: u16| {
         s.addons
             .addons
             .iter()

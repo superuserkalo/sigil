@@ -32,7 +32,7 @@ pub struct Notes {
     pub extras: Extras,
     pub loaded: bool,
     /// The slots the store was last read for.
-    pub sig: Option<Vec<(u8, u64)>>,
+    pub sig: Option<Vec<(u16, u64)>>,
     /// Mod pages read on a worker, to fill hero, category and NSFW.
     pub backfill: Job<Vec<ModExtra>>,
     /// GameBanana ids the backfill was started for.
@@ -53,11 +53,11 @@ pub struct Notes {
 /// The open editor.
 pub enum Dialog {
     /// Tags of one slot.
-    Tags(u8),
+    Tags(u16),
     /// Named lists and their members.
     Lists,
     /// Name, picture and NSFW flag of a local mod.
-    EditLocal(u8),
+    EditLocal(u16),
     /// A new list with the given name.
     NewList,
 }
@@ -85,7 +85,7 @@ fn key_with_id(st: &State, addon: &AddonRow) -> SlotKey {
 }
 
 /// The key of a slot, looked up from the page's rows.
-fn slot_key(st: &State, slot: u8) -> Option<SlotKey> {
+fn slot_key(st: &State, slot: u16) -> Option<SlotKey> {
     st.addons
         .addons
         .iter()
@@ -99,7 +99,7 @@ pub fn extra(st: &State, addon: &AddonRow) -> ModExtra {
 }
 
 /// Change the entry of one slot and write the store. Returns the entry afterwards.
-pub fn edit_slot(st: &mut State, slot: u8, f: impl FnOnce(&mut ModExtra)) -> ModExtra {
+pub fn edit_slot(st: &mut State, slot: u16, f: impl FnOnce(&mut ModExtra)) -> ModExtra {
     let Some(key) = slot_key(st, slot) else {
         return ModExtra::default();
     };
@@ -117,7 +117,7 @@ pub fn edit_slot(st: &mut State, slot: u8, f: impl FnOnce(&mut ModExtra)) -> Mod
     entry
 }
 
-fn addon_at(st: &State, slot: u8) -> Option<&AddonRow> {
+fn addon_at(st: &State, slot: u16) -> Option<&AddonRow> {
     st.addons.addons.iter().find(|addon| addon.slot == slot)
 }
 
@@ -128,7 +128,7 @@ fn addon_at(st: &State, slot: u8) -> Option<&AddonRow> {
 pub fn poll(st: &mut State) -> bool {
     let mut changed = false;
     if !st.demo && st.addons.scanned {
-        let sig: Vec<(u8, u64)> = st
+        let sig: Vec<(u16, u64)> = st
             .addons
             .addons
             .iter()
@@ -194,7 +194,7 @@ fn poll_backfill(st: &mut State) -> bool {
     if st.demo || rune::is_headless() || !st.addons.scanned || st.prefs.offline {
         return changed;
     }
-    let mut wanted: Vec<(String, u8, u64, u64)> = Vec::new();
+    let mut wanted: Vec<(String, u16, u64, u64)> = Vec::new();
     for addon in &st.addons.addons {
         let Some(id) = meta_for(st, addon).and_then(|meta| meta.gamebanana_id) else {
             continue;
@@ -580,7 +580,7 @@ fn close(st: &mut State) {
     st.installed.notes.error = None;
 }
 
-fn tags_dialog(s: &State, u: &Ui, slot: u8) -> El {
+fn tags_dialog(s: &State, u: &Ui, slot: u16) -> El {
     let addon = addon_at(s, slot);
     let entry = addon.map(|addon| extra(s, addon)).unwrap_or_default();
     let mut tags = col().w_full().gap(6.0);
@@ -829,7 +829,7 @@ fn new_list_dialog(s: &State, u: &Ui) -> El {
         )
 }
 
-fn edit_dialog(s: &State, u: &Ui, slot: u8) -> El {
+fn edit_dialog(s: &State, u: &Ui, slot: u16) -> El {
     let addon = addon_at(s, slot);
     let entry = addon.map(|addon| extra(s, addon)).unwrap_or_default();
     let image_name = s
@@ -957,7 +957,7 @@ fn error_line(s: &State, u: &Ui) -> El {
 // --- handlers ----------------------------------------------------------------
 
 /// Open the editor for a slot with its current name, picture and flag.
-pub fn open_edit(st: &mut State, slot: u8) {
+pub fn open_edit(st: &mut State, slot: u16) {
     let Some(addon) = addon_at(st, slot) else { return };
     let entry = extra(st, addon);
     let name = meta_for(st, addon)
@@ -983,7 +983,7 @@ fn pick_image(_st: &mut State, tx: &mut Tx) {
     });
 }
 
-fn save_edit(st: &mut State, slot: u8) {
+fn save_edit(st: &mut State, slot: u16) {
     if addon_at(st, slot).is_none() {
         return;
     }
@@ -1042,7 +1042,7 @@ fn save_edit(st: &mut State, slot: u8) {
     close(st);
 }
 
-fn add_typed_tags(st: &mut State, slot: u8) {
+fn add_typed_tags(st: &mut State, slot: u16) {
     let line = st.installed.notes.text.text.clone();
     let tags = mod_extras::parse_tags(&line);
     if tags.is_empty() {
@@ -1058,7 +1058,7 @@ fn add_typed_tags(st: &mut State, slot: u8) {
     st.installed.notes.error = None;
 }
 
-fn remove_tag(st: &mut State, slot: u8, tag: &str) {
+fn remove_tag(st: &mut State, slot: u16, tag: &str) {
     edit_slot(st, slot, |entry| {
         entry.tags.retain(|known| !known.eq_ignore_ascii_case(tag));
     });
@@ -1075,7 +1075,7 @@ pub fn lists_switch(st: &mut State, id: &str, enable: bool) {
     let Some(list) = st.installed.notes.extras.list(id) else { return };
     let name = list.name.clone();
     let members = list.members.clone();
-    let mut wanted: std::collections::BTreeMap<u8, bool> = std::collections::BTreeMap::new();
+    let mut wanted: std::collections::BTreeMap<u16, bool> = std::collections::BTreeMap::new();
     let mut found = 0;
     for uid in &members {
         if let Some(slot) = st.installed.notes.extras.slot_for_uid(uid)
@@ -1136,7 +1136,7 @@ fn delete_list(st: &mut State, id: &str) {
 }
 
 /// Turn a mod's pin on or off. Pinned mods sit at the top of the disabled list.
-pub fn toggle_pin(st: &mut State, slot: u8) {
+pub fn toggle_pin(st: &mut State, slot: u16) {
     let Some(addon) = addon_at(st, slot) else { return };
     let entry = extra(st, addon);
     let pinned = !entry.pinned;
@@ -1150,7 +1150,7 @@ pub fn toggle_pin(st: &mut State, slot: u8) {
 
 /// Turn "load first" on or off. On, the mod moves to the lowest slot of its group, where it
 /// wins every file it shares with another mod.
-pub fn toggle_always_first(st: &mut State, slot: u8) {
+pub fn toggle_always_first(st: &mut State, slot: u16) {
     if crate::screens::settings::watch::refuse_while_running(st) {
         return;
     }
@@ -1191,13 +1191,13 @@ pub fn toggle_always_first(st: &mut State, slot: u8) {
 }
 
 /// Remember that the player does not want the newer file of this mod.
-pub fn ignore_update(st: &mut State, slot: u8, file_id: Option<u64>) {
+pub fn ignore_update(st: &mut State, slot: u16, file_id: Option<u64>) {
     edit_slot(st, slot, |entry| entry.ignored_update = file_id.or(Some(0)));
     st.status = "Update ignored. You can ask for it again from the update chip.".to_string();
 }
 
 /// Forget an ignored update.
-pub fn unignore_update(st: &mut State, slot: u8) {
+pub fn unignore_update(st: &mut State, slot: u16) {
     edit_slot(st, slot, |entry| entry.ignored_update = None);
     st.status = "The update shows again.".to_string();
 }

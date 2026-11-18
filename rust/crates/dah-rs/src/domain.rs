@@ -183,7 +183,7 @@ pub fn payload_warnings(issues: &[PayloadIssue]) -> Vec<String> {
 }
 
 /// `NN` from the command line, else the project slot, else 01.
-pub fn resolve_slot(explicit: Option<u8>, project: &ModProject) -> Result<u8> {
+pub fn resolve_slot(explicit: Option<u16>, project: &ModProject) -> Result<u16> {
     let slot = explicit.or(project.slot).unwrap_or(1);
 
     if !(1..=99).contains(&slot) {
@@ -196,12 +196,12 @@ pub fn resolve_slot(explicit: Option<u8>, project: &ModProject) -> Result<u8> {
     Ok(slot)
 }
 
-pub fn slot_file_name(slot: u8) -> String {
+pub fn slot_file_name(slot: u16) -> String {
     format!("pak{slot:02}_dir.vpk")
 }
 
 /// Pack the staging tree into `<output>/pakNN_dir.vpk` plus chunk files.
-pub fn pack_staging(staging: &Path, output: &Path, slot: u8) -> Result<PackedVpk> {
+pub fn pack_staging(staging: &Path, output: &Path, slot: u16) -> Result<PackedVpk> {
     let options = PackOptions {
         staging_dir: staging.to_path_buf(),
         output_dir: output.to_path_buf(),
@@ -228,7 +228,7 @@ pub fn latest_release_manifest(project_dir: &Path) -> Result<Option<ReleaseManif
 /// concrete slot, so the manifest stores it directly.
 pub fn build_release_manifest(
     project: &ModProject,
-    slot: u8,
+    slot: u16,
     packed: &PackedVpk,
     baseline_captured_at: &str,
     notes: Option<String>,
@@ -261,7 +261,7 @@ fn file_name(path: &Path) -> String {
 }
 
 pub struct DeployConflictView {
-    pub slot: u8,
+    pub slot: u16,
     pub file: String,
     pub paths: usize,
 }
@@ -270,7 +270,7 @@ pub struct DeployConflictView {
 /// names a core struct field.
 pub struct DeployReport {
     pub addons_dir: PathBuf,
-    pub slot: u8,
+    pub slot: u16,
     pub conflicts: Vec<DeployConflictView>,
     pub replace_required: bool,
     pub gameinfo_needs_repair: bool,
@@ -310,7 +310,7 @@ pub fn deploy_plan(
     game_root: &Path,
     release: &Path,
     manifest: &ReleaseManifest,
-    slot: Option<u8>,
+    slot: Option<u16>,
 ) -> Result<DeployPlan> {
     plan_deploy(game_root, release, manifest, slot).map_err(|error| core("deploy plan", error))
 }

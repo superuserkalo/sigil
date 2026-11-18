@@ -538,7 +538,7 @@ fn contributing_a_hash_needs_consent_and_sends_the_documented_fields() {
     assert_eq!(value["fileId"], 30);
 
     let server = Server::start("{}");
-    contribute_hash_at("1.0.0", &server.base, &sha, 10, 20, 30).unwrap();
+    contribute_hash_at("1.0.0", &server.base, "4f5d7a1e-2b3c-4d5e-8f90-123456789abc", &sha, 10, 20, 30).unwrap();
     let bodies = server.bodies();
     assert_eq!(bodies.len(), 1);
     let sent: Value = serde_json::from_str(&bodies[0]).unwrap();
@@ -546,7 +546,7 @@ fn contributing_a_hash_needs_consent_and_sends_the_documented_fields() {
     assert_eq!(sent["size"], 10);
     assert_eq!(sent["gamebananaModId"], 20);
     assert_eq!(sent["fileId"], 30);
-    assert!(contribute_hash_at("1.0.0", &server.base, &sha, 0, 20, 30).is_err());
+    assert!(contribute_hash_at("1.0.0", &server.base, "4f5d7a1e-2b3c-4d5e-8f90-123456789abc", &sha, 0, 20, 30).is_err());
     let _ = fs::remove_dir_all(&dir);
 }
 
@@ -601,5 +601,22 @@ fn scrub_wipes_the_running_users_home() {
         let scrubbed = scrub(&text);
         assert!(!scrubbed.contains(&home), "{scrubbed}");
         assert!(scrubbed.contains("<home>"), "{scrubbed}");
+    }
+}
+
+/// The Worker drops an event name it does not list, so every name the app sends must be in
+/// `services/telemetry/src/events.ts` (a page event as its bare page name).
+#[test]
+fn every_event_name_is_on_the_workers_allowlist() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../services/telemetry/src/events.ts");
+    let Ok(source) = std::fs::read_to_string(&path) else {
+        return; // a crate-only checkout has no Worker to compare with
+    };
+    for name in EVENTS {
+        let listed = match name.strip_prefix("page:") {
+            Some(page) => source.contains(&format!("\"{page}\"")),
+            None => source.contains(&format!("\"{name}\"")),
+        };
+        assert!(listed, "{name} is not on the Worker's allowlist");
     }
 }

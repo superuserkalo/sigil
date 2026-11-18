@@ -67,7 +67,7 @@ pub fn after_install(st: &mut State, plan_landed: bool, applied: bool, failed: b
 pub struct PlanSummary {
     pub id: String,
     pub source_label: String,
-    pub slot: u8,
+    pub slot: u16,
     pub target: String,
     pub files: usize,
     pub bytes: u64,
@@ -174,8 +174,8 @@ impl InstallView {
         }
     }
 
-    pub fn slot_value(&self) -> Option<u8> {
-        self.slot.text.trim().parse::<u8>().ok()
+    pub fn slot_value(&self) -> Option<u16> {
+        self.slot.text.trim().parse::<u16>().ok()
     }
 }
 

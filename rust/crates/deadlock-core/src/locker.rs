@@ -412,7 +412,7 @@ pub struct LockerSound {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LockerMod {
-    pub slot: u8,
+    pub slot: u16,
     /// File name on disk, `.disabled` suffix included.
     pub file: String,
     pub enabled: bool,
@@ -669,7 +669,7 @@ fn read_locker_mods(addons: &[InstalledAddon], addons_dir: Option<&Path>) -> Vec
 
     for addon in addons {
         let Ok(parsed) = read_vpk_directory_with(
-            &directory.join(&addon.file),
+            &addon.path(&directory),
             &ReadVpkOptions {
                 keep_preload: false,
             },
@@ -1689,7 +1689,7 @@ pub fn equip_hero_skin(
     game_root: &Path,
     mods: &[LockerMod],
     hero: &str,
-    slot: u8,
+    slot: u16,
     approve: bool,
 ) -> Result<SetManyReport> {
     let hero_mods = hero_mods(mods, hero);
@@ -1700,7 +1700,7 @@ pub fn equip_hero_skin(
         )));
     }
 
-    let wanted: BTreeMap<u8, bool> = hero_mods
+    let wanted: BTreeMap<u16, bool> = hero_mods
         .iter()
         .map(|item| (item.slot, item.slot == slot))
         .collect();
@@ -1714,11 +1714,11 @@ pub fn move_hero_skin(
     game_root: &Path,
     mods: &[LockerMod],
     hero: &str,
-    slot: u8,
+    slot: u16,
     to_index: usize,
     approve: bool,
 ) -> Result<crate::load_order::ReorderReport> {
-    let slots: Vec<u8> = hero_mods(mods, hero).iter().map(|item| item.slot).collect();
+    let slots: Vec<u16> = hero_mods(mods, hero).iter().map(|item| item.slot).collect();
 
     if !slots.contains(&slot) {
         return Err(Error::msg(format!(
@@ -1773,7 +1773,7 @@ fn hero_seed(seed: u64, key: &str) -> u64 {
 /// hero, every other mod of that hero off. Pure and deterministic for a seed,
 /// so the same launch picks the same skins. A mod shared by two shuffled heroes
 /// stays on when either one picks it.
-pub fn shuffle_picks(mods: &[LockerMod], heroes: &[String], seed: u64) -> BTreeMap<u8, bool> {
+pub fn shuffle_picks(mods: &[LockerMod], heroes: &[String], seed: u64) -> BTreeMap<u16, bool> {
     let keys: BTreeSet<String> = heroes
         .iter()
         .map(|hero| hero_asset_key(hero))
@@ -1841,11 +1841,11 @@ pub fn equip_ability_sound(
     mods: &[LockerMod],
     hero: &str,
     ability: u8,
-    slot: u8,
+    slot: u16,
     approve: bool,
 ) -> Result<SetManyReport> {
     let key = hero_asset_key(hero);
-    let wanted: BTreeMap<u8, bool> = mods
+    let wanted: BTreeMap<u16, bool> = mods
         .iter()
         .filter(|item| {
             item.sounds
@@ -2264,7 +2264,7 @@ mod tests {
         assert!(library.mods.is_empty());
     }
 
-    fn addon(slot: u8, enabled: bool) -> InstalledAddon {
+    fn addon(slot: u16, enabled: bool) -> InstalledAddon {
         InstalledAddon {
             slot,
             file: if enabled {
@@ -2354,7 +2354,7 @@ mod tests {
         let _ = fs::remove_dir_all(root);
     }
 
-    fn test_mod(slot: u8, enabled: bool, heroes: &[&str]) -> LockerMod {
+    fn test_mod(slot: u16, enabled: bool, heroes: &[&str]) -> LockerMod {
         LockerMod {
             slot,
             file: if enabled {
@@ -2575,12 +2575,12 @@ mod tests {
         let first = shuffle_picks(&mods, &heroes, 7);
         assert_eq!(shuffle_picks(&mods, &heroes, 7), first);
         assert!(first.values().any(|on| *on));
-        let haze_on: Vec<u8> = first
+        let haze_on: Vec<u16> = first
             .iter()
             .filter(|(slot, on)| **on && (1..=3).contains(*slot))
             .map(|(slot, _)| *slot)
             .collect();
-        let wraith_on: Vec<u8> = first
+        let wraith_on: Vec<u16> = first
             .iter()
             .filter(|(slot, on)| **on && (4..=5).contains(*slot))
             .map(|(slot, _)| *slot)
@@ -2591,7 +2591,7 @@ mod tests {
         assert!(!first.contains_key(&6));
 
         // Different seeds reach different picks over a few launches.
-        let picks: BTreeSet<u8> = (0..12)
+        let picks: BTreeSet<u16> = (0..12)
             .flat_map(|seed| {
                 shuffle_picks(&mods, &heroes, seed)
                     .into_iter()
@@ -2609,7 +2609,7 @@ mod tests {
         }
         assert!(shuffle_for_launch(&root, &mods, &heroes, 7, false).is_err());
         shuffle_for_launch(&root, &mods, &heroes, 7, true).unwrap();
-        let enabled = |slot: u8| addons.join(format!("pak{slot:02}_dir.vpk")).is_file();
+        let enabled = |slot: u16| addons.join(format!("pak{slot:02}_dir.vpk")).is_file();
         assert_eq!(enabled(1) as usize + enabled(2) as usize + enabled(3) as usize, 1);
         assert_eq!(enabled(4) as usize + enabled(5) as usize, 1);
         assert!(enabled(6), "a hero outside the pool keeps its mod");

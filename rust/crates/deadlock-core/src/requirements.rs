@@ -144,7 +144,7 @@ pub struct OrderedMod {
     /// The GameBanana mod id, which is what requirements name.
     pub gamebanana_id: u64,
     /// The addon slot. The lower number loads first and wins a path two mods both ship.
-    pub slot: u8,
+    pub slot: u16,
     /// A disabled mod is not loaded, so it neither hides a mod nor is hidden.
     pub enabled: bool,
     /// The player keeps this mod first (`ModExtra::always_first`), so nothing can be moved
@@ -157,10 +157,10 @@ pub struct OrderedMod {
 pub struct OrderProblem {
     /// GameBanana id of the mod that needs the other one, for example a recolor.
     pub overlay: u64,
-    pub overlay_slot: u8,
+    pub overlay_slot: u16,
     /// GameBanana id of the mod it needs, for example the base skin.
     pub base: u64,
-    pub base_slot: u8,
+    pub base_slot: u16,
     /// The moves that put the dependent directly before its base. Empty when the base is
     /// always first, because no move can put anything above it. Apply with
     /// [`crate::load_order::plan_reorder`].
@@ -252,11 +252,11 @@ pub fn broken_on_disable(target_id: u64, enabled: &[(u64, ModRequirements)]) -> 
 /// `mods` holds one entry per installed mod; a mod without a GameBanana id cannot be matched
 /// and is left out by the caller.
 pub fn order_problems(mods: &[OrderedMod], requirements: &[ModRequirements]) -> Vec<OrderProblem> {
-    let enabled_slots: Vec<u8> = mods
+    let enabled_slots: Vec<u16> = mods
         .iter()
         .filter(|m| m.enabled)
         .map(|m| m.slot)
-        .collect::<BTreeSet<u8>>()
+        .collect::<BTreeSet<u16>>()
         .into_iter()
         .collect();
 
@@ -402,7 +402,7 @@ mod tests {
         assert!(broken_on_disable(7, &[(7, target)]).is_empty());
     }
 
-    fn ordered(gamebanana_id: u64, slot: u8) -> OrderedMod {
+    fn ordered(gamebanana_id: u64, slot: u16) -> OrderedMod {
         OrderedMod {
             gamebanana_id,
             slot,

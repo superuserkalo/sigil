@@ -26,9 +26,9 @@ use super::{meta_for, writable_game};
 #[derive(Default)]
 pub struct Tools {
     pub scan: Option<ScanUi>,
-    pub scan_job: Job<(u8, ScanReport)>,
+    pub scan_job: Job<(u16, ScanReport)>,
     /// Scan results by `(slot, size)`, so a chip does not scan twice.
-    pub scans: BTreeMap<(u8, u64), ScanReport>,
+    pub scans: BTreeMap<(u16, u64), ScanReport>,
     pub identify: Option<IdentifyUi>,
     pub health: Option<HealthUi>,
     pub merge: Option<MergeUi>,
@@ -43,17 +43,20 @@ pub struct Tools {
 }
 
 pub struct ScanUi {
-    pub slot: u8,
+    pub slot: u16,
     pub report: Option<ScanReport>,
 }
 
 pub struct IdentifyUi {
-    pub slot: u8,
+    pub slot: u16,
     pub link: TextEdit,
     pub found: Option<Match>,
     pub stage: Stage,
     pub error: Option<String>,
     pub job: Job<(Match, Option<ModProfile>)>,
+    /// A match from Sigil's shared index waits here until the player confirms it: anyone can
+    /// contribute to that index, so it is never applied on its own.
+    pub pending: Option<(Match, ModProfile)>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -74,7 +77,7 @@ pub struct HealthUi {
 }
 
 pub struct MergeUi {
-    pub picked: BTreeSet<u8>,
+    pub picked: BTreeSet<u16>,
     pub name: TextEdit,
     pub strict: bool,
     pub preview: Option<MergePreview>,
@@ -91,7 +94,7 @@ pub enum MergeStage {
 }
 
 pub struct FontUi {
-    pub slot: u8,
+    pub slot: u16,
     pub fonts: Vec<Font>,
     pub stage: Stage,
     pub error: Option<String>,
@@ -205,7 +208,13 @@ pub fn poll(st: &mut State) -> bool {
                     };
                 }
                 if let Some(profile) = profile {
-                    apply_identification(st, slot, &found, &profile);
+                    if found.source == "lookup" {
+                        if let Some(ui) = &mut st.installed.tools.identify {
+                            ui.pending = Some((found.clone(), profile));
+                        }
+                    } else {
+                        apply_identification(st, slot, &found, &profile);
+                    }
                 }
             }
             Err(error) => {
@@ -270,7 +279,7 @@ pub fn poll(st: &mut State) -> bool {
 // --- safety scan ---------------------------------------------------------------
 
 /// Scan a slot on a worker and open the report.
-pub fn open_scan(st: &mut State, slot: u8) {
+pub fn open_scan(st: &mut State, slot: u16) {
     st.installed.menu = None;
     st.installed.tools.scan = Some(ScanUi { slot, report: None });
     if let Some(report) = st
@@ -293,7 +302,7 @@ pub fn open_scan(st: &mut State, slot: u8) {
     let Some(addon) = st.addons.addons.iter().find(|addon| addon.slot == slot) else {
         return;
     };
-    let path = super::addons_folder(st).join(&addon.file);
+    let path = addon.path(&super::addons_folder(st));
     let wake = st.wake.clone();
     st.installed.tools.scan_job.start(wake, move || {
         Ok((slot, mod_safety::scan_vpk(&path)))
@@ -423,7 +432,7 @@ enum Ask {
 
 /// Look at a slot's own metadata and Sigil's records. No network until a mod is known or a link
 /// is given; the page itself is fetched once so the name and picture can be filled in.
-pub fn open_identify(st: &mut State, slot: u8) {
+pub fn open_identify(st: &mut State, slot: u16) {
     st.installed.menu = None;
     st.installed.tools.identify = Some(IdentifyUi {
         slot,
@@ -432,18 +441,19 @@ pub fn open_identify(st: &mut State, slot: u8) {
         stage: Stage::Looking,
         error: None,
         job: Job::default(),
+        pending: None,
     });
     start_identify(st, slot, Ask::Offline);
 }
 
-fn start_identify(st: &mut State, slot: u8, ask: Ask) {
+fn start_identify(st: &mut State, slot: u16, ask: Ask) {
     if st.demo || rune::is_headless() {
         return;
     }
     let Some(addon) = st.addons.addons.iter().find(|addon| addon.slot == slot) else {
         return;
     };
-    let path = super::addons_folder(st).join(&addon.file);
+    let path = addon.path(&super::addons_folder(st));
     let store: Identities = identify::read_identities(&identify::identities_path(
         &crate::data::data_dir(),
     ));
@@ -452,6 +462,7 @@ fn start_identify(st: &mut State, slot: u8, ask: Ask) {
     let wake = st.wake.clone();
     if let Some(ui) = &mut st.installed.tools.identify {
         ui.stage = Stage::Looking;
+        ui.pending = None;
         ui.error = None;
     }
     if let Some(ui) = &mut st.installed.tools.identify {
@@ -471,6 +482,7 @@ fn start_identify(st: &mut State, slot: u8, ask: Ask) {
                     Match {
                         gamebanana_id: Some(best.gamebanana_mod_id),
                         file_id: Some(best.file_id),
+                        author: Some(format!("{} reports", best.reports)),
                         source: "lookup".to_string(),
                         ..Match::default()
                     }
@@ -485,7 +497,7 @@ fn start_identify(st: &mut State, slot: u8, ask: Ask) {
     }
 }
 
-fn apply_identification(st: &mut State, slot: u8, found: &Match, profile: &ModProfile) {
+fn apply_identification(st: &mut State, slot: u16, found: &Match, profile: &ModProfile) {
     let Some(size_bytes) = st
         .addons
         .addons
@@ -544,7 +556,8 @@ fn apply_identification(st: &mut State, slot: u8, found: &Match, profile: &ModPr
         .find(|addon| addon.slot == slot)
         .map(|addon| addon.file.clone())
         .unwrap_or_default();
-    if let Ok(sha256) = identify::sha256_file(&super::addons_folder(st).join(&file)) {
+    let folder = deadlock_core::addons::slot_folder(&super::addons_folder(st), slot);
+    if let Ok(sha256) = identify::sha256_file(&folder.join(&file)) {
         let path = identify::identities_path(&crate::data::data_dir());
         let mut store = identify::read_identities(&path);
         store.remember(identify::IdentityEntry {
@@ -579,6 +592,36 @@ pub fn identify_dialog(s: &State, u: &Ui) -> Option<El> {
                     .color(u.muted)
                     .wrap(),
             );
+        }
+        Stage::Found if ui.pending.is_some() => {
+            if let Some((found, profile)) = &ui.pending {
+                let reports = found.author.clone().unwrap_or_default();
+                body = body
+                    .child(
+                        text(format!("Sigil's shared index says this is {} (GameBanana mod {}).", profile.name, profile.id))
+                            .font(BODY_MED)
+                            .color(u.ink)
+                            .wrap(),
+                    )
+                    .child(
+                        text(format!("Players add to this index, so check it before you use it ({reports}). Nothing changes until you press Use this match."))
+                            .font(SMALL)
+                            .color(u.muted)
+                            .wrap(),
+                    )
+                    .child(
+                        u.action("Use this match", ActionKind::Primary)
+                            .key("identify-use-lookup")
+                            .cursor(rune::Cursor::Pointer)
+                            .on_press(|st: &mut State| {
+                                let Some(ui) = &mut st.installed.tools.identify else { return };
+                                let slot = ui.slot;
+                                if let Some((found, profile)) = ui.pending.take() {
+                                    apply_identification(st, slot, &found, &profile);
+                                }
+                            }),
+                    );
+            }
         }
         Stage::Found => {
             if let Some(found) = &ui.found
@@ -716,7 +759,7 @@ pub fn open_health(st: &mut State) {
         .filter(|addon| addon.enabled)
         .map(|addon| SlotFile {
             slot: addon.slot,
-            path: super::addons_folder(st).join(&addon.file),
+            path: addon.path(&super::addons_folder(st)),
         })
         .collect();
     let mut ui = HealthUi {
@@ -752,8 +795,8 @@ pub fn open_health(st: &mut State) {
 /// Mods the review found with outdated game data: an old hero model or a game data file the
 /// game no longer has (Grimoire's "outdated data" issue). These are the ones that can crash or
 /// look wrong, so the bulk action turns them off; a moved or gone path only goes unused.
-pub fn outdated_slots(reviews: &[SlotReview]) -> Vec<u8> {
-    let mut slots: Vec<u8> = reviews
+pub fn outdated_slots(reviews: &[SlotReview]) -> Vec<u16> {
+    let mut slots: Vec<u16> = reviews
         .iter()
         .filter(|review| review.issues.iter().any(|issue| issue.kind == mod_health::IssueKind::Skeleton))
         .map(|review| review.slot)
@@ -776,7 +819,7 @@ fn turn_off_outdated(st: &mut State) {
     if crate::screens::settings::watch::refuse_while_running(st) {
         return;
     }
-    let targets: Vec<(u8, String)> = st
+    let targets: Vec<(u16, String)> = st
         .addons
         .addons
         .iter()
@@ -1267,7 +1310,7 @@ pub fn unmerge(st: &mut State, merged: &MergedMod) {
 // --- fonts ---------------------------------------------------------------------
 
 /// Find a mod's fonts and offer to add them. Nothing is written until the button is pressed.
-pub fn open_fonts(st: &mut State, slot: u8) {
+pub fn open_fonts(st: &mut State, slot: u16) {
     st.installed.menu = None;
     st.installed.tools.fonts = Some(FontUi {
         slot,
@@ -1282,7 +1325,7 @@ pub fn open_fonts(st: &mut State, slot: u8) {
     let Some(addon) = st.addons.addons.iter().find(|addon| addon.slot == slot) else {
         return;
     };
-    let path = super::addons_folder(st).join(&addon.file);
+    let path = addon.path(&super::addons_folder(st));
     let wake = st.wake.clone();
     st.installed.tools.fonts_job.start(wake, move || {
         fonts::fonts_in_vpk(&path).map_err(|error| error.to_string())
@@ -1375,7 +1418,7 @@ fn install_fonts(st: &mut State) {
     let Some(addon) = st.addons.addons.iter().find(|addon| addon.slot == slot) else {
         return;
     };
-    let path = super::addons_folder(st).join(&addon.file);
+    let path = addon.path(&super::addons_folder(st));
     let backups = crate::data::data_dir().join("backups");
     let wake = st.wake.clone();
     st.installed.tools.font_install.start(wake, move || {
@@ -1399,7 +1442,7 @@ fn remove_fonts(st: &mut State) {
 }
 
 /// Whether a slot's fonts were added by Sigil, for the card menu's label.
-pub fn has_fonts(st: &State, slot: u8) -> bool {
+pub fn has_fonts(st: &State, slot: u16) -> bool {
     st.game_root
         .as_ref()
         .map(|root| fonts::has_block(root, slot))
@@ -1407,13 +1450,13 @@ pub fn has_fonts(st: &State, slot: u8) -> bool {
 }
 
 /// The merged record of a slot, for the card badge and the menu.
-pub fn merged_for(s: &State, slot: u8) -> Option<&MergedMod> {
+pub fn merged_for(s: &State, slot: u16) -> Option<&MergedMod> {
     let addons = super::addons_folder(s);
     s.installed.tools.merged.find_slot(&addons, slot)
 }
 
 /// A card's "Merged" chip.
-pub fn merged_chip(s: &State, u: &Ui, slot: u8) -> Option<El> {
+pub fn merged_chip(s: &State, u: &Ui, slot: u16) -> Option<El> {
     let merged = merged_for(s, slot)?;
     Some(
         row()
@@ -1441,7 +1484,7 @@ mod tests {
     use super::*;
     use deadlock_core::mod_health::{Issue, IssueKind};
 
-    fn review(slot: u8, kinds: &[IssueKind]) -> SlotReview {
+    fn review(slot: u16, kinds: &[IssueKind]) -> SlotReview {
         SlotReview {
             slot,
             issues: kinds

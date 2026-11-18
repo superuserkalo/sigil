@@ -573,7 +573,7 @@ fn first_mods(s: &State, n: usize) -> Vec<(u64, String)> {
 }
 
 /// Mod `id` installed in `slot` with a newer file on GameBanana since.
-fn stage_update(s: &mut State, id: u64, name: &str, slot: u8) {
+fn stage_update(s: &mut State, id: u64, name: &str, slot: u16) {
     use deadlock_core::mod_updates::{RemoteFile, RemoteMod};
     s.installed.library.mods.push(deadlock_core::import::ModMeta {
         slot,
@@ -689,7 +689,7 @@ pub fn scene_install_files_menu(s: &mut State) {
 // --- parity wave: Enable, Replace and the multi-file picker ----------------------------------
 
 /// Mod `id` installed in `slot`, on or off, as a scanned addon folder shows it.
-fn stage_installed(s: &mut State, id: u64, name: &str, slot: u8, enabled: bool) {
+fn stage_installed(s: &mut State, id: u64, name: &str, slot: u16, enabled: bool) {
     s.installed.library.mods.push(deadlock_core::import::ModMeta {
         slot,
         size_bytes: 1,
@@ -720,7 +720,7 @@ pub fn scene_install_enable(s: &mut State) {
     scene_with(s, |_| {});
     let mods = first_mods(s, 2);
     for (n, (id, name)) in mods.iter().enumerate() {
-        stage_installed(s, *id, name, 30 + n as u8, n == 1);
+        stage_installed(s, *id, name, 30 + n as u16, n == 1);
     }
 }
 

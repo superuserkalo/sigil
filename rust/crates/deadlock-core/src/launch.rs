@@ -263,6 +263,14 @@ pub fn stash_vanilla(game_root: &Path, data_dir: &Path, approve: bool) -> Result
         }
     }
 
+    // Mods past slot 99 load only through gameinfo.gi's extra folder block; taking the block
+    // out makes them vanilla too, without moving their files. Restore mounts it again.
+    if let Err(error) = crate::addons::unmount_overflow(&addons) {
+        return Err(Error::msg(format!(
+            "The main addon folder was stashed, but the extra addon folders could not be taken out of gameinfo.gi ({error}). Restore before launching."
+        )));
+    }
+
     Ok(StashResult {
         addons_dir: addons,
         stash_dir,
@@ -377,6 +385,8 @@ pub fn restore_vanilla(data_dir: &Path, approve: bool) -> Result<RestoreResult> 
 
     // The manifest was the last entry, so the root is empty now.
     let _ = fs::remove_dir(&vanilla_stash_dir(data_dir));
+    // Mount the extra addon folders again (taken out for the vanilla launch).
+    crate::addons::sync_overflow_mount(&addons)?;
 
     Ok(RestoreResult {
         addons_dir: addons,

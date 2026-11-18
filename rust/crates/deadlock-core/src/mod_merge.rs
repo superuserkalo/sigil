@@ -21,7 +21,6 @@ use crate::addons::{AddonToggleResult, DISABLED_SUFFIX, set_enabled};
 use crate::deploy::addons_dir;
 use crate::error::{Error, Result};
 use crate::install::occupied_slots;
-use crate::load_order::slot_of;
 use crate::util::{now_iso, write_atomic};
 use crate::vpk::{ReadVpkOptions, is_safe_vpk_path, read_vpk_directory_with, read_vpk_entry_data};
 use crate::vpk_write::{PackOptions, pack_vpk};
@@ -37,7 +36,7 @@ pub const MAX_NAME: usize = 80;
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MergeSource {
-    pub slot: u8,
+    pub slot: u16,
     /// File names as they were in the addon folder (the `.disabled` one included).
     pub files: Vec<String>,
     /// The name shown for the mod at the time.
@@ -58,7 +57,7 @@ pub struct MergedMod {
     /// The folder it was written into.
     pub addons_dir: PathBuf,
     /// The slot it took.
-    pub slot: u8,
+    pub slot: u16,
     pub files: Vec<String>,
     pub entries: usize,
     pub bytes: u64,
@@ -105,7 +104,7 @@ impl MergedStore {
             .collect()
     }
 
-    pub fn find_slot(&self, addons: &Path, slot: u8) -> Option<&MergedMod> {
+    pub fn find_slot(&self, addons: &Path, slot: u16) -> Option<&MergedMod> {
         self.for_dir(addons)
             .into_iter()
             .find(|merged| merged.slot == slot)
@@ -119,7 +118,7 @@ impl MergedStore {
 /// A slot and the label the player sees, for a merge.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MergeInput {
-    pub slot: u8,
+    pub slot: u16,
     pub name: String,
 }
 
@@ -131,7 +130,7 @@ pub struct MergePreview {
     /// Distinct paths across the sources.
     pub paths: usize,
     /// Paths more than one source ships, with the slots in priority order.
-    pub collisions: Vec<(String, Vec<u8>)>,
+    pub collisions: Vec<(String, Vec<u16>)>,
     pub bytes: u64,
     /// A source whose file could not be read.
     pub error: Option<String>,
@@ -146,13 +145,13 @@ pub fn preview(sources: &[MergeInput], addons: &Path) -> MergePreview {
     preview
         .sources
         .sort_by_key(|source| std::cmp::Reverse(source.slot));
-    let mut owners: BTreeMap<String, Vec<u8>> = BTreeMap::new();
+    let mut owners: BTreeMap<String, Vec<u16>> = BTreeMap::new();
     for source in &preview.sources {
-        let file = addons.join(format!("pak{:02}_dir.vpk", source.slot));
+        let file = crate::addons::slot_path(addons, source.slot, "_dir.vpk");
         let file = if file.is_file() {
             file
         } else {
-            addons.join(format!("pak{:02}_dir.vpk{DISABLED_SUFFIX}", source.slot))
+            crate::addons::slot_path(addons, source.slot, &format!("_dir.vpk{DISABLED_SUFFIX}"))
         };
         let directory = match read_vpk_directory_with(&file, &ReadVpkOptions { keep_preload: false })
         {
@@ -179,7 +178,7 @@ pub fn preview(sources: &[MergeInput], addons: &Path) -> MergePreview {
 }
 
 /// The record id for a merge: the time and the slot, so two merges never share one.
-fn new_id(slot: u8) -> String {
+fn new_id(slot: u16) -> String {
     let stamp = now_iso()
         .replace(['-', ':', '.', 'T', 'Z'], "")
         .chars()
@@ -231,7 +230,7 @@ pub fn merge_mods(
             "A merge holds at most {MAX_SOURCES} mods. Nothing was written."
         )));
     }
-    let mut slots: BTreeSet<u8> = BTreeSet::new();
+    let mut slots: BTreeSet<u16> = BTreeSet::new();
     for source in sources {
         if !(1..=99).contains(&source.slot) || !slots.insert(source.slot) {
             return Err(Error::msg(format!(
@@ -262,9 +261,9 @@ pub fn merge_mods(
     }
 
     let used = occupied_slots(&addons)?;
-    let Some(slot) = (1..=99u8).find(|slot| !used.contains(slot)) else {
+    let Some(slot) = (1..=crate::addons::MAX_SLOT).find(|slot| !used.contains(slot)) else {
         return Err(Error::msg(
-            "Every addon slot from 01 to 99 is taken. Nothing was written.",
+            "Every addon slot is taken. Nothing was written.",
         ));
     };
 
@@ -304,11 +303,17 @@ pub fn merge_mods(
                 .and_then(|name| name.rsplit('_').next())
                 .and_then(|tail| tail.strip_suffix(".vpk"))
                 .unwrap_or("000");
-            let target = addons.join(format!("pak{slot:02}_{index}.vpk"));
+            let target = crate::addons::slot_path(&addons, slot, &format!("_{index}.vpk"));
+            if let Some(parent) = target.parent() {
+                fs::create_dir_all(parent)?;
+            }
             copy_new(chunk, &target)?;
             files.push(file_name(&target));
         }
-        let target = addons.join(format!("pak{slot:02}_dir.vpk{DISABLED_SUFFIX}"));
+        let target = crate::addons::slot_path(&addons, slot, &format!("_dir.vpk{DISABLED_SUFFIX}"));
+        if let Some(parent) = target.parent() {
+            fs::create_dir_all(parent)?;
+        }
         let temporary = target.with_file_name(format!("{}.sigil-tmp", file_name(&target)));
         if let Err(error) = fs::copy(&packed.dir_path, &temporary) {
             let _ = fs::remove_file(&temporary);
@@ -370,6 +375,10 @@ pub fn merge_mods(
     store.merged.retain(|other| other.slot != slot || other.addons_dir != merged.addons_dir);
     store.merged.push(merged.clone());
     write_merged(store_path, &store)?;
+    // A merged mod past slot 99 lands in an extra folder that gameinfo.gi has to mount.
+    if crate::addons::folder_index(slot) > 0 {
+        crate::addons::sync_overflow_mount(&merged.addons_dir)?;
+    }
     Ok(merged)
 }
 
@@ -401,11 +410,8 @@ pub fn unmerge(
     let mut back = Vec::new();
     for source in &merged.sources {
         // The source files moved with their slot file names; find the slot by name.
-        let slot = source
-            .files
-            .iter()
-            .find_map(|name| slot_of(name))
-            .unwrap_or(source.slot);
+        // The source kept its slot; a name only carries the number inside its folder.
+        let slot = source.slot;
         if let Ok(result) = set_enabled(game_root, slot, true, true) {
             back.push(result);
         }
@@ -416,12 +422,12 @@ pub fn unmerge(
     Ok(back)
 }
 
-fn slot_dir_vpk(addons: &Path, slot: u8) -> Result<PathBuf> {
-    let enabled = addons.join(format!("pak{slot:02}_dir.vpk"));
+fn slot_dir_vpk(addons: &Path, slot: u16) -> Result<PathBuf> {
+    let enabled = crate::addons::slot_path(addons, slot, "_dir.vpk");
     if enabled.is_file() {
         return Ok(enabled);
     }
-    let disabled = addons.join(format!("pak{slot:02}_dir.vpk{DISABLED_SUFFIX}"));
+    let disabled = crate::addons::slot_path(addons, slot, &format!("_dir.vpk{DISABLED_SUFFIX}"));
     if disabled.is_file() {
         return Ok(disabled);
     }
@@ -431,17 +437,11 @@ fn slot_dir_vpk(addons: &Path, slot: u8) -> Result<PathBuf> {
     )))
 }
 
-fn slot_file_names(addons: &Path, slot: u8) -> Vec<String> {
-    let Ok(entries) = fs::read_dir(addons) else {
-        return Vec::new();
-    };
-    let mut names: Vec<String> = entries
-        .flatten()
-        .map(|entry| entry.file_name().to_string_lossy().into_owned())
-        .filter(|name| slot_of(name) == Some(slot))
-        .collect();
-    names.sort();
-    names
+fn slot_file_names(addons: &Path, slot: u16) -> Vec<String> {
+    crate::load_order::read_slot_files(addons)
+        .ok()
+        .and_then(|mut files| files.remove(&slot))
+        .unwrap_or_default()
 }
 
 fn file_name(path: &Path) -> String {
@@ -470,12 +470,12 @@ fn copy_new(source: &Path, target: &Path) -> Result<()> {
 }
 
 /// The file a merge slot has, so a card can say what it was built from.
-pub fn source_slots(merged: &MergedMod) -> Vec<u8> {
+pub fn source_slots(merged: &MergedMod) -> Vec<u16> {
     merged.sources.iter().map(|source| source.slot).collect()
 }
 
 /// A slot number as the merge list shows it.
-pub fn slots_label(slots: &[u8]) -> String {
+pub fn slots_label(slots: &[u16]) -> String {
     slots
         .iter()
         .map(|slot| format!("{slot:02}"))

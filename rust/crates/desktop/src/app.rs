@@ -97,7 +97,7 @@ pub struct State {
     pub launch_dialog: bool,
     /// The launch confirm is for a vanilla run (mods set aside first).
     pub launch_vanilla: bool,
-    pub addon_dialog: Option<(u8, bool)>,
+    pub addon_dialog: Option<(u16, bool)>,
     pub watch: Option<model::WatchState>,
     pub capabilities: Vec<(String, String)>,
     pub subscriptions: Vec<model::SubscriptionRow>,
@@ -417,6 +417,17 @@ impl State {
         if rune::is_headless() {
             self.status = "Headless run: the launch request was not sent to Steam.".to_string();
             return;
+        }
+        // Mods past slot 99 load through gameinfo.gi's extra folder block, which a game update
+        // or a vanilla launch takes out: mount the folders that hold mods before Steam starts.
+        if let Some(game_root) = self.game_root.clone()
+            && let Err(error) = deadlock_core::addons::sync_overflow_mount(&deadlock_core::deploy::addons_dir(&game_root))
+        {
+            crate::notify::push(
+                self,
+                crate::notify::Notice::warning(tr("Mods past slot 99 may not load"))
+                    .detail(format!("Adding their folders to gameinfo.gi failed: {error}")),
+            );
         }
         // Locker's "shuffle on launch" puts a new skin set in place before Steam starts.
         if crate::data::shuffle_before_launch(self) {

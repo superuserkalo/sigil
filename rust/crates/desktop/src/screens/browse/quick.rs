@@ -46,7 +46,7 @@ pub struct Entry {
     /// The file row it was started from in the details, when it was not the mod's newest.
     pub file: Option<u64>,
     /// Slots of an installed copy to replace in place. Empty for a new install.
-    pub update: Vec<u8>,
+    pub update: Vec<u16>,
     pub step: Step,
     /// The download queue row, once the worker added it.
     row: Option<String>,
@@ -63,7 +63,7 @@ pub struct Entry {
 }
 
 impl Entry {
-    fn new(name: &str, target: String, file: Option<u64>, update: Vec<u8>, step: Step) -> Self {
+    fn new(name: &str, target: String, file: Option<u64>, update: Vec<u16>, step: Step) -> Self {
         Entry {
             name: name.to_string(),
             target,
@@ -99,7 +99,7 @@ pub struct Installs {
     running: Option<u64>,
     /// Installed GameBanana mods and their slot: the library store, then the install journal
     /// for slots the store does not name. Rebuilt when either or the addon folder changes.
-    pub owned: HashMap<u64, u8>,
+    pub owned: HashMap<u64, u16>,
     owned_sig: Option<(bool, usize, usize, u64)>,
     /// The details' file menu beside its Install button, for this mod.
     pub files_menu: Option<u64>,
@@ -107,7 +107,7 @@ pub struct Installs {
 
 /// What the install worker reports.
 pub struct Finished {
-    pub slot: u8,
+    pub slot: u16,
     pub journal: Vec<InstallJournalEntry>,
 }
 
@@ -228,7 +228,7 @@ pub fn switched_off(s: &State, id: u64) -> bool {
 }
 
 /// The slot an installed mod sits in.
-pub fn owned_slot(s: &State, id: u64) -> Option<u8> {
+pub fn owned_slot(s: &State, id: u64) -> Option<u16> {
     let installs = &s.browse_view.installs;
     if installs.owned_sig.is_some() {
         return installs.owned.get(&id).copied();
@@ -243,8 +243,8 @@ pub fn owned_slot(s: &State, id: u64) -> Option<u8> {
 }
 
 /// Every slot that holds mod `id`, for an update.
-fn owned_slots(s: &State, id: u64) -> Vec<u8> {
-    let mut slots: Vec<u8> = s
+fn owned_slots(s: &State, id: u64) -> Vec<u16> {
+    let mut slots: Vec<u16> = s
         .installed
         .library
         .mods
@@ -356,7 +356,7 @@ fn retry(st: &mut State, id: u64) {
 
 /// Send `target` to the download queue for mod `id`. The queue row and the install that
 /// follows report on this mod's button only.
-pub fn start(st: &mut State, id: u64, name: &str, target: String, file: Option<u64>, update: Vec<u8>) {
+pub fn start(st: &mut State, id: u64, name: &str, target: String, file: Option<u64>, update: Vec<u16>) {
     crate::screens::settings::telemetry::event(st, "install:start", Some("page:browse"));
     let target = target.trim().to_string();
     if st.game_root.is_none() {
@@ -388,7 +388,7 @@ pub fn start(st: &mut State, id: u64, name: &str, target: String, file: Option<u
 }
 
 #[allow(clippy::too_many_arguments)]
-fn fail(st: &mut State, id: u64, name: &str, target: String, file: Option<u64>, update: Vec<u8>, error: String) {
+fn fail(st: &mut State, id: u64, name: &str, target: String, file: Option<u64>, update: Vec<u16>, error: String) {
     let entry = Entry::new(name, target, file, update, Step::Failed(error.clone()));
     st.browse_view.installs.items.insert(id, entry);
     st.status = error.clone();

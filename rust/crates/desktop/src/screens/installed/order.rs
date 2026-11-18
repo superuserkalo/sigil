@@ -24,11 +24,11 @@ use super::display_name;
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct OrderDialog {
     /// The enabled slots in load order when the dialog opened.
-    pub start: Vec<u8>,
+    pub start: Vec<u16>,
     /// The order being edited: the first loads first.
-    pub order: Vec<u8>,
+    pub order: Vec<u16>,
     /// The picked row, by the slot it stands for now.
-    pub picked: Option<u8>,
+    pub picked: Option<u16>,
     /// The picked row is held: arrows move it instead of picking another.
     pub held: bool,
 }
@@ -45,7 +45,7 @@ pub enum Move {
 // --- pure rules -------------------------------------------------------------------------------
 
 /// The order after `slot` makes `step`. Unchanged at an end, or when the slot is not listed.
-pub fn moved(order: &[u8], slot: u8, step: Move) -> Vec<u8> {
+pub fn moved(order: &[u16], slot: u16, step: Move) -> Vec<u16> {
     let Some(at) = order.iter().position(|s| *s == slot) else {
         return order.to_vec();
     };
@@ -60,7 +60,7 @@ pub fn moved(order: &[u8], slot: u8, step: Move) -> Vec<u8> {
 }
 
 /// How far a mod moved since the dialog opened: positive when it loads earlier now.
-pub fn shift(start: &[u8], order: &[u8], slot: u8) -> isize {
+pub fn shift(start: &[u16], order: &[u16], slot: u16) -> isize {
     let from = start.iter().position(|s| *s == slot);
     let to = order.iter().position(|s| *s == slot);
     match (from, to) {
@@ -70,13 +70,13 @@ pub fn shift(start: &[u8], order: &[u8], slot: u8) -> isize {
 }
 
 /// How many mods end up in a different place.
-pub fn changes(start: &[u8], order: &[u8]) -> usize {
+pub fn changes(start: &[u16], order: &[u16]) -> usize {
     start.iter().zip(order).filter(|(a, b)| a != b).count()
 }
 
 /// The row `delta` rows from the picked one, clamped to the list. The first row when none is
 /// picked.
-pub fn neighbour(order: &[u8], picked: Option<u8>, delta: isize) -> Option<u8> {
+pub fn neighbour(order: &[u16], picked: Option<u16>, delta: isize) -> Option<u16> {
     if order.is_empty() {
         return None;
     }
@@ -154,7 +154,7 @@ fn on_key(st: &mut State, ev: &KeyEvent, tx: &mut Tx) -> bool {
 
 // --- the view ----------------------------------------------------------------------------------
 
-fn row_key(slot: u8) -> String {
+fn row_key(slot: u16) -> String {
     format!("order-row-{slot:02}")
 }
 
@@ -272,7 +272,7 @@ pub fn dialog(s: &State, u: &Ui) -> Option<El> {
     )
 }
 
-fn order_row(s: &State, u: &Ui, dialog: &OrderDialog, index: usize, slot: u8, new_slot: u8) -> El {
+fn order_row(s: &State, u: &Ui, dialog: &OrderDialog, index: usize, slot: u16, new_slot: u16) -> El {
     let picked = dialog.picked == Some(slot);
     let held = picked && dialog.held;
     let name = s

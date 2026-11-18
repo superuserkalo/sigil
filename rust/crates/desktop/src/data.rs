@@ -2569,7 +2569,7 @@ fn after_locker_write(state: &mut State) {
     start_locker_load(state);
 }
 
-pub fn equip_locker_skin(state: &mut State, hero: &str, slot: u8) {
+pub fn equip_locker_skin(state: &mut State, hero: &str, slot: u16) {
     use crate::notify::{self, Notice};
     let Some(game_root) = state.game_root.clone() else {
         notify::push(
@@ -2590,7 +2590,7 @@ pub fn equip_locker_skin(state: &mut State, hero: &str, slot: u8) {
     }
 }
 
-pub fn move_locker_skin(state: &mut State, hero: &str, slot: u8, to_index: usize) {
+pub fn move_locker_skin(state: &mut State, hero: &str, slot: u16, to_index: usize) {
     use crate::notify::{self, Notice};
     let Some(game_root) = state.game_root.clone() else {
         notify::push(
@@ -2618,7 +2618,7 @@ pub fn move_locker_skin(state: &mut State, hero: &str, slot: u8, to_index: usize
     }
 }
 
-pub fn equip_locker_sound(state: &mut State, hero: &str, ability: u8, slot: u8) {
+pub fn equip_locker_sound(state: &mut State, hero: &str, ability: u8, slot: u16) {
     use crate::notify::{self, Notice};
     let Some(game_root) = state.game_root.clone() else {
         notify::push(
@@ -3008,7 +3008,7 @@ fn crash_advisory(
     let changes = impact::recent_changes(workspace, std::time::Duration::from_secs(7 * 86_400), 20);
 
     // Names and shipped paths for the enabled slots: the library first, the journal next.
-    let mut names: std::collections::BTreeMap<u8, String> = std::collections::BTreeMap::new();
+    let mut names: std::collections::BTreeMap<u16, String> = std::collections::BTreeMap::new();
     if let Ok(library) = deadlock_core::import::read_library(&deadlock_core::import::library_path(data))
     {
         for meta in &library.mods {
@@ -3020,13 +3020,15 @@ fn crash_advisory(
     for change in &changes {
         names.entry(change.slot).or_insert_with(|| change.name.clone());
     }
-    let mut shipped: std::collections::BTreeMap<u8, Vec<String>> = std::collections::BTreeMap::new();
+    let mut shipped: std::collections::BTreeMap<u16, Vec<String>> = std::collections::BTreeMap::new();
     if let Some(addons) = addons_dir
         && info.comment.is_some()
-        && let Ok(installed) = deadlock_core::addons::list_installed(addons)
+        // `addons` is the addon folder; list_installed takes the game root three levels up.
+        && let Some(game_root) = addons.ancestors().nth(3)
+        && let Ok(installed) = deadlock_core::addons::list_installed(game_root)
     {
         for addon in installed.iter().filter(|addon| addon.enabled) {
-            let path = addons.join(&addon.file);
+            let path = addon.path(addons);
             let options = deadlock_core::vpk::ReadVpkOptions { keep_preload: false };
             if let Ok(directory) = deadlock_core::vpk::read_vpk_directory_with(&path, &options) {
                 let paths = directory
@@ -3127,7 +3129,12 @@ pub fn run_launch(state: &mut State, dialog: crate::screens::launch::Dialog) {
     state.launch.dialog = Dialog::None;
     let data = data_dir();
     let result = match dialog {
-        Dialog::Modded => deadlock_core::launch::launch_modded(true)
+        Dialog::Modded => {
+            if let Some(game_root) = state.game_root.clone() {
+                let _ = deadlock_core::addons::sync_overflow_mount(&deadlock_core::deploy::addons_dir(&game_root));
+            }
+            deadlock_core::launch::launch_modded(true)
+        }
             .map(|launch| format!("Steam opener {} accepted {}.", launch.opener, launch.url)),
         Dialog::Vanilla => {
             let Some(game_root) = state.game_root.clone() else {
@@ -3866,13 +3873,13 @@ pub fn import_demo_file(state: &mut State) {
     });
 }
 
-pub fn set_addon_enabled(state: &mut State, slot: u8, enable: bool) {
+pub fn set_addon_enabled(state: &mut State, slot: u16, enable: bool) {
     toggle_addon(state, slot, enable, true);
 }
 
 /// The slot switch's rename. The toast offers Undo (the opposite rename) unless this call is
 /// itself the undo.
-fn toggle_addon(state: &mut State, slot: u8, enable: bool, offer_undo: bool) {
+fn toggle_addon(state: &mut State, slot: u16, enable: bool, offer_undo: bool) {
     use crate::notify::{self, Notice};
     let Some(game_root) = state.game_root.clone() else {
         state.status = "No Deadlock install was found. Nothing was renamed.".to_string();

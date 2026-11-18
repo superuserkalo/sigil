@@ -483,7 +483,7 @@ pub fn imprint_all(st: &mut State) {
 }
 
 /// After an install: imprint the new slot when the setting is on. Worker thread.
-pub fn imprint_after_install(root: &Path, slot: u8, meta: &deadlock_core::import::ModMeta) {
+pub fn imprint_after_install(root: &Path, slot: u16, meta: &deadlock_core::import::ModMeta) {
     if !options::get().imprint {
         return;
     }

@@ -34,7 +34,7 @@ pub const TRASH_SCHEMA: u32 = 1;
 #[serde(rename_all = "camelCase")]
 pub struct TrashManifest {
     pub schema: u32,
-    pub slot: u8,
+    pub slot: u16,
     /// The addon folder the files came from, and go back to.
     pub addons_dir: PathBuf,
     /// File names as they were in the addon folder.
@@ -60,7 +60,7 @@ pub struct TrashEntry {
 /// What [`restore`] put back.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RestoreReport {
-    pub slot: u8,
+    pub slot: u16,
     pub files: Vec<String>,
     pub meta: Option<ModMeta>,
 }
@@ -78,7 +78,7 @@ pub fn trash_root(data_dir: &Path) -> PathBuf {
 }
 
 /// The files of one slot in the game's addon folder, sorted. Read only.
-pub fn slot_files(game_root: &Path, slot: u8) -> Result<Vec<String>> {
+pub fn slot_files(game_root: &Path, slot: u16) -> Result<Vec<String>> {
     let mut files = read_slot_files(&addons_dir(game_root))?;
     Ok(files.remove(&slot).unwrap_or_default())
 }
@@ -89,13 +89,14 @@ pub fn slot_files(game_root: &Path, slot: u8) -> Result<Vec<String>> {
 pub fn trash_slot(
     game_root: &Path,
     trash_root: &Path,
-    slot: u8,
+    slot: u16,
     meta: Option<ModMeta>,
     approve: bool,
 ) -> Result<TrashEntry> {
-    if !(1..=99).contains(&slot) {
+    if !crate::addons::is_slot(slot) {
         return Err(Error::msg(format!(
-            "Slot {slot} is outside 1 to 99. Nothing was deleted."
+            "Slot {slot} is outside 1 to {}. Nothing was deleted.",
+            crate::addons::MAX_SLOT
         )));
     }
     if !approve {
@@ -117,20 +118,21 @@ pub fn trash_slot(
             addons.display()
         )));
     }
+    let folder = crate::addons::slot_folder(&addons, slot);
     for name in &files {
-        let regular = fs::symlink_metadata(addons.join(name))
+        let regular = fs::symlink_metadata(folder.join(name))
             .map(|m| m.file_type().is_file())
             .unwrap_or(false);
-        if !regular || slot_of(name) != Some(slot) {
+        if !regular || slot_of(name) != Some(crate::addons::local_slot(slot)) {
             return Err(Error::msg(format!(
                 "{name} is not a slot file of {slot:02}. Nothing was deleted."
             )));
         }
     }
-    let enabled = files.iter().any(|name| name.eq_ignore_ascii_case(&format!("pak{slot:02}_dir.vpk")));
+    let enabled = files.iter().any(|name| name.eq_ignore_ascii_case(&crate::addons::slot_name(slot, "_dir.vpk")));
     let bytes = files
         .iter()
-        .map(|name| fs::metadata(addons.join(name)).map(|m| m.len()).unwrap_or(0))
+        .map(|name| fs::metadata(folder.join(name)).map(|m| m.len()).unwrap_or(0))
         .sum();
 
     make_entry(&addons, trash_root, slot, files, meta, enabled, bytes)
@@ -143,13 +145,14 @@ pub fn trash_slot(
 pub fn trash_named(
     game_root: &Path,
     trash_root: &Path,
-    slot: u8,
+    slot: u16,
     names: &[String],
     approve: bool,
 ) -> Result<TrashEntry> {
-    if !(1..=99).contains(&slot) {
+    if !crate::addons::is_slot(slot) {
         return Err(Error::msg(format!(
-            "Slot {slot} is outside 1 to 99. Nothing was deleted."
+            "Slot {slot} is outside 1 to {}. Nothing was deleted.",
+            crate::addons::MAX_SLOT
         )));
     }
     if !approve {
@@ -173,12 +176,13 @@ pub fn trash_named(
     let mut files: Vec<String> = names.to_vec();
     files.sort();
     files.dedup();
+    let folder = crate::addons::slot_folder(&addons, slot);
     for name in &files {
         check_plain_name(name)?;
-        let regular = fs::symlink_metadata(addons.join(name))
+        let regular = fs::symlink_metadata(folder.join(name))
             .map(|m| m.file_type().is_file())
             .unwrap_or(false);
-        if !regular || slot_of(name) != Some(slot) {
+        if !regular || slot_of(name) != Some(crate::addons::local_slot(slot)) {
             return Err(Error::msg(format!(
                 "{name} is not a file of slot {slot:02}. Nothing was deleted."
             )));
@@ -186,10 +190,10 @@ pub fn trash_named(
     }
     let enabled = files
         .iter()
-        .any(|name| name.eq_ignore_ascii_case(&format!("pak{slot:02}_dir.vpk")));
+        .any(|name| name.eq_ignore_ascii_case(&crate::addons::slot_name(slot, "_dir.vpk")));
     let bytes = files
         .iter()
-        .map(|name| fs::metadata(addons.join(name)).map(|m| m.len()).unwrap_or(0))
+        .map(|name| fs::metadata(folder.join(name)).map(|m| m.len()).unwrap_or(0))
         .sum();
     make_entry(&addons, trash_root, slot, files, None, enabled, bytes)
 }
@@ -198,7 +202,7 @@ pub fn trash_named(
 fn make_entry(
     addons: &Path,
     trash_root: &Path,
-    slot: u8,
+    slot: u16,
     files: Vec<String>,
     meta: Option<ModMeta>,
     enabled: bool,
@@ -221,12 +225,13 @@ fn make_entry(
     // where its files belong.
     write_manifest(&dir, &manifest)?;
 
+    let folder = crate::addons::slot_folder(addons, slot);
     let mut moved: Vec<&String> = Vec::new();
     for name in &files {
-        if let Err(error) = move_file(&addons.join(name), &dir.join(name)) {
+        if let Err(error) = move_file(&folder.join(name), &dir.join(name)) {
             let mut stuck = Vec::new();
             for done in moved.iter().rev() {
-                if move_file(&dir.join(done), &addons.join(done)).is_err() {
+                if move_file(&dir.join(done), &folder.join(done)).is_err() {
                     stuck.push(done.as_str());
                 }
             }
@@ -253,9 +258,9 @@ fn make_entry(
 pub fn trash_slots(
     game_root: &Path,
     trash_root: &Path,
-    slots: &[(u8, Option<ModMeta>)],
+    slots: &[(u16, Option<ModMeta>)],
     approve: bool,
-) -> (Vec<TrashEntry>, Vec<(u8, String)>) {
+) -> (Vec<TrashEntry>, Vec<(u16, String)>) {
     let mut entries = Vec::new();
     let mut errors = Vec::new();
     for (slot, meta) in slots {
@@ -286,7 +291,7 @@ pub fn restore(entry_dir: &Path, approve: bool) -> Result<RestoreReport> {
     }
     for name in &manifest.files {
         check_plain_name(name)?;
-        if slot_of(name) != Some(manifest.slot) {
+        if slot_of(name) != Some(crate::addons::local_slot(manifest.slot)) {
             return Err(Error::msg(format!(
                 "{name} is not a file of slot {:02}. Nothing was moved.",
                 manifest.slot
@@ -307,11 +312,13 @@ pub fn restore(entry_dir: &Path, approve: bool) -> Result<RestoreReport> {
         )));
     }
 
+    let folder = crate::addons::slot_folder(addons, manifest.slot);
+    fs::create_dir_all(&folder)?;
     let mut moved: Vec<&String> = Vec::new();
     for name in &manifest.files {
-        if let Err(error) = move_file(&entry_dir.join(name), &addons.join(name)) {
+        if let Err(error) = move_file(&entry_dir.join(name), &folder.join(name)) {
             for done in moved.iter().rev() {
-                let _ = move_file(&addons.join(done), &entry_dir.join(done));
+                let _ = move_file(&folder.join(done), &entry_dir.join(done));
             }
             return Err(Error::msg(format!(
                 "Moving {name} back failed ({error}). The entry stays in the trash."
@@ -387,7 +394,7 @@ pub fn empty_trash(trash_root: &Path, approve: bool) -> Result<EmptyReport> {
 pub fn undo_update(
     game_root: &Path,
     trash_root: &Path,
-    slot: u8,
+    slot: u16,
     backups: &[PathBuf],
     approve: bool,
 ) -> Result<Option<TrashEntry>> {
@@ -407,7 +414,7 @@ pub fn undo_update(
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_default();
-        if slot_of(&name) != Some(slot) || !backup.is_file() {
+        if slot_of(&name) != Some(crate::addons::local_slot(slot)) || !backup.is_file() {
             return Err(Error::msg(format!(
                 "{} is not a backup of slot {slot:02}. Nothing was changed.",
                 backup.display()
@@ -422,8 +429,9 @@ pub fn undo_update(
         Some(trash_slot(game_root, trash_root, slot, None, true)?)
     };
     let mut copied: Vec<PathBuf> = Vec::new();
+    let folder = crate::addons::slot_folder(&addons, slot);
     for (backup, name) in backups.iter().zip(names.iter()) {
-        let target = addons.join(name);
+        let target = folder.join(name);
         let result = if fs::symlink_metadata(&target).is_ok() {
             Err(Error::msg(format!("{name} appeared in the slot")))
         } else {
@@ -449,12 +457,12 @@ pub fn undo_update(
 // Helpers
 // ---------------------------------------------------------------------------
 
-fn slot_files_in(addons: &Path, slot: u8) -> Result<Vec<String>> {
+fn slot_files_in(addons: &Path, slot: u16) -> Result<Vec<String>> {
     let mut files = read_slot_files(addons)?;
     Ok(files.remove(&slot).unwrap_or_default())
 }
 
-fn unique_id(trash_root: &Path, slot: u8) -> Result<String> {
+fn unique_id(trash_root: &Path, slot: u16) -> Result<String> {
     let stamp = chrono::Utc::now().format("%Y%m%d-%H%M%S-%3f");
     for n in 0..1000 {
         let id = if n == 0 {

@@ -237,7 +237,7 @@ enum AddonsCommand {
     Enable {
         /// Addon slot, 1 to 99.
         #[arg(value_name = "SLOT")]
-        slot: u8,
+        slot: u16,
         /// Write the rename into the game addons folder.
         #[arg(long)]
         approve: bool,
@@ -249,7 +249,7 @@ enum AddonsCommand {
     Disable {
         /// Addon slot, 1 to 99.
         #[arg(value_name = "SLOT")]
-        slot: u8,
+        slot: u16,
         /// Write the rename into the game addons folder.
         #[arg(long)]
         approve: bool,
@@ -761,7 +761,7 @@ enum InstallCommand {
         target: String,
         /// Addon slot 1 to 99. Defaults to the lowest free slot.
         #[arg(long, value_name = "N")]
-        slot: Option<u8>,
+        slot: Option<u16>,
         /// Replace an occupied slot after backing up its files.
         #[arg(long)]
         force: bool,
@@ -931,7 +931,7 @@ enum ModCommand {
         workspace: Option<PathBuf>,
         /// Addon slot 1 to 99. Defaults to project.slot or 01.
         #[arg(long, value_name = "N")]
-        slot: Option<u8>,
+        slot: Option<u16>,
         /// Output directory. Defaults to <project>/builds.
         #[arg(long, value_name = "DIR")]
         out: Option<PathBuf>,
@@ -946,7 +946,7 @@ enum ModCommand {
         workspace: Option<PathBuf>,
         /// Addon slot 1 to 99. Defaults to project.slot or 01.
         #[arg(long, value_name = "N")]
-        slot: Option<u8>,
+        slot: Option<u16>,
         /// Note stored in the release manifest and project history.
         #[arg(long, value_name = "TEXT")]
         note: Option<String>,
@@ -961,7 +961,7 @@ enum ModCommand {
         workspace: Option<PathBuf>,
         /// Addon slot 1 to 99. Defaults to the release manifest.
         #[arg(long, value_name = "N")]
-        slot: Option<u8>,
+        slot: Option<u16>,
         /// Write the VPK and gameinfo repair into the game install.
         #[arg(long)]
         approve: bool,

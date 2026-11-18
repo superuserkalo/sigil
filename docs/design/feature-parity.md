@@ -172,13 +172,13 @@ Endpoints, verified with curl against the live API on 2026-11-17 (Deadlock game 
 | Issues bulk action | G | Turn off mods with outdated data | has (wave 3: the review's "Turn off N mods with outdated data", a confirm, one Undo) | S | P2 |
 | Requirement load-order fix | G | "The base skin is hiding it. Fix it" | has (wave 3, `installed/req_order.rs`: an amber mark on the dependent, its popover names the base and Fix it moves it before the base through the drag path with Undo; a base kept first cannot be passed and says so) | S | P2 |
 | Random member per group each launch | D | One list member on at random | has (wave 3: a list's Random switch, a Roll step at each modded launch, map mods and missing files left out, the last pick avoided, one Undo) | S | P3 |
-| More than 99 enabled mods | G+D | Overflow folders | partial: planning in `deadlock_core::overflow`; the apply step and UI wait for the owner | M | P2 |
+| More than 99 enabled mods | G+D | Overflow folders | has (built: slots 1 to 990 across `sigil-addons2` to `sigil-addons10`, mounted in `gameinfo.gi` after every install, import, merge, reorder or restore and before each modded launch; vanilla launches unmount them; isolated profiles stay at 99) | M | P2 |
 | Recap dialogs after bulk actions | D | What changed | has (built: changed, failed with the reason, not tried, why it stopped) | S | P3 |
 | Global (always first) mods | G | Priority folder | has (built: "Always load first" moves the mod to the lowest slot of its group and keeps it there; Locker > General also mounts `citadel/grimoire` for hand-placed VPKs, with a backup and tests) | M | P3 |
 | Edit local mod (name, image, NSFW) | G | Metadata editor | has (built: name, a picture copied into Sigil's data folder, a mature flag; GameBanana entries too) | S | P3 |
 | Fonts prompt | D | Install shipped fonts | has (built: `deadlock_core::fonts` copies `panorama/fonts` files, adds a `<fontpattern>` block per mod with a config backup, and removes both; offered from the card) | S | P3 |
 | Pinned favorites in disabled list | G | Pin | has (built: pinned mods sort to the top of the disabled group) | S | P3 |
-| 99 enabled limit warning | G | Toast at the slot cap | has (built: a warning when 99 mods are on) | S | P2 |
+| 99 enabled limit warning | G | Toast at the slot cap | has (built: a warning when all 990 slots hold a mod) | S | P2 |
 
 ## Locker
 
