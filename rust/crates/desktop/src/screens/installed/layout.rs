@@ -8,13 +8,18 @@
 //! ships as several slots. Cards that share a group show as one card whose switch picks one
 //! file, and its picker lists every file with its own switch, label and delete. GameBanana mods
 //! group by their mod id on their own; the player can join other mods with
-//! [`super::notes::Dialog`]'s group field, or take a card out of its group here. Only one file
-//! of a group is on at a time, so the game never loads two variants.
+//! [`super::notes::Dialog`]'s group field, or take a card out of its group here. Any set of a
+//! group's files can be on at once (a model and its voice pack, two HUD parts); each loads like a
+//! mod of its own, so the picker also sets their order inside the group (lower slot wins).
+//! Settings > Mods > "Open the mod page for multi-file mods" makes a press on such a card open
+//! its GameBanana page instead of the picker.
 
 use rune::{Color, El, TextEdit, Tx, col, el, icon, row, spacer, text};
 
 use crate::app::State;
 use crate::icons;
+use crate::screens::settings::i18n::{fill, tr};
+use crate::screens::settings::options;
 use crate::model::AddonRow;
 use crate::ui::{ActionKind, BODY, BODY_MED, H1, MICRO, SMALL, Ui};
 
@@ -138,20 +143,11 @@ pub fn group_for<'a>(st: &'a State, key: &str) -> Vec<&'a AddonRow> {
         .collect()
 }
 
-/// Turn one file of a group on and the others off. One game write per slot, through
-/// `set_many`; the whole switch is one Undo.
-pub fn enable_variant(st: &mut State, members: &[u8], slot: u8) {
-    let mut wanted = std::collections::BTreeMap::new();
-    for member in members {
-        wanted.insert(*member, *member == slot);
-    }
-    set_group(st, wanted, format!("Using the file in slot {slot:02}."));
-}
-
-/// The card's switch for a group: on enables the file it shows, off turns them all off.
+/// The card's switch for a group: on turns on the file it shows (through the same questions
+/// as any switch), off turns every file of the group off.
 pub fn group_switch(st: &mut State, members: &[u8], enable: bool, chosen: u8) {
     if enable {
-        enable_variant(st, members, chosen);
+        super::enable::switch(st, chosen, true);
         return;
     }
     let wanted: std::collections::BTreeMap<u8, bool> =
@@ -163,6 +159,36 @@ pub fn group_switch(st: &mut State, members: &[u8], enable: bool, chosen: u8) {
 fn set_group(st: &mut State, wanted: std::collections::BTreeMap<u8, bool>, line: String) {
     let Some(game_root) = super::writable_game(st) else { return };
     super::apply_switch(st, &game_root, &wanted, line);
+}
+
+/// A press on a multi-file card: its file list, or its GameBanana page when Settings asks for
+/// that and the mod has one.
+pub fn open_group(st: &mut State, key: Option<String>, slot: u8) {
+    if options::installed_open_page()
+        && let Some(id) = st
+            .addons
+            .addons
+            .iter()
+            .find(|addon| addon.slot == slot)
+            .and_then(|addon| meta_for(st, addon))
+            .and_then(|meta| meta.gamebanana_id)
+    {
+        crate::screens::browse::open_submission(st, deadlock_core::gamebanana::BrowseSection::Mods, id);
+        return;
+    }
+    open_picker(st, key);
+}
+
+/// The new order of a group's slots with the file at `index` moved one place up or down.
+/// `None` at either end.
+pub fn nudge(slots: &[u8], index: usize, up: bool) -> Option<Vec<u8>> {
+    let to = if up { index.checked_sub(1)? } else { index + 1 };
+    if to >= slots.len() || index >= slots.len() {
+        return None;
+    }
+    let mut order = slots.to_vec();
+    order.swap(index, to);
+    Some(order)
 }
 
 /// Take one file out of its group, so it gets its own card again.
@@ -208,6 +234,7 @@ pub fn picker_dialog(s: &State, u: &Ui) -> Option<El> {
         let on = addon.enabled;
         let slot = addon.slot;
         let slots: Vec<u8> = members.iter().map(|member| member.slot).collect();
+        let index = slots.iter().position(|s| *s == slot).unwrap_or(0);
         let renaming = s.installed.variants.renaming == Some(slot);
         let mut line = row()
             .key(format!("variant-{slot:02}"))
@@ -219,9 +246,9 @@ pub fn picker_dialog(s: &State, u: &Ui) -> Option<El> {
             .child(
                 u.toggle(on)
                     .key(format!("variant-switch-{slot:02}"))
-                    .label(format!("{} {label}", if on { "Turn off" } else { "Use" }))
+                    .label(fill(if on { tr("Turn off {}") } else { tr("Turn on {}") }, &[&label]))
                     .cursor(rune::Cursor::Pointer)
-                    .on_press(move |st: &mut State| enable_variant(st, &slots, slot)),
+                    .on_press(move |st: &mut State| super::enable::switch(st, slot, !on)),
             );
         if renaming {
             line = line
@@ -261,6 +288,20 @@ pub fn picker_dialog(s: &State, u: &Ui) -> Option<El> {
                         .truncate(),
                     ),
             );
+            for (up, glyph, words) in [(true, &icons::ARROW_UP, tr("Load earlier")), (false, &ARROW_DOWN, tr("Load later"))] {
+                let order = nudge(&slots, index, up);
+                let group = slots.clone();
+                let mut b = u
+                    .icon_button(glyph, words)
+                    .key(format!("variant-{}-{slot:02}", if up { "up" } else { "down" }));
+                b = match order {
+                    Some(order) => b
+                        .cursor(rune::Cursor::Pointer)
+                        .on_press(move |st: &mut State| super::ask_reorder(st, &group, &order)),
+                    None => b.disabled(true).opacity(0.35),
+                };
+                line = line.child(b);
+            }
             line = line.child(
                 u.icon_button(&icons::SQUARE_PEN, "Rename this file")
                     .key(format!("variant-rename-{slot:02}"))
@@ -309,7 +350,7 @@ pub fn picker_dialog(s: &State, u: &Ui) -> Option<El> {
             .modal(true, close)
             .child(text(name).font(H1).color(u.ink).wrap())
             .child(
-                text("One file of this mod is on at a time. Pick the one you want.")
+                text(tr("Turn on any of its files. Each one loads like a mod of its own, and the higher one in this list wins where two change the same file."))
                     .font(BODY)
                     .color(u.muted)
                     .wrap(),
@@ -369,6 +410,8 @@ pub fn list_row(s: &State, u: &Ui, card: &Group) -> El {
     for chip in notes::card_chips(s, u, addon) {
         chips = chips.child(chip);
     }
+    let dragging = s.installed.drag.is_some_and(|d| d.slot == slot);
+    let drop = super::drag::drop_mark(s, slot, addon.enabled);
     let mut line = row()
         .key(format!("addon-row-{slot:02}"))
         .w_full()
@@ -377,9 +420,29 @@ pub fn list_row(s: &State, u: &Ui, card: &Group) -> El {
         .center_y()
         .px(8.0)
         .radius(crate::ui::r(8.0))
-        .fill(if selected { u.selected } else { Color::TRANSPARENT })
-        .border_sides([0.0, 0.0, 1.0, 0.0], u.hair)
-        .hover(u.hover)
+        .opacity(if dragging { 0.55 } else { 1.0 })
+        .fill(if selected || dragging { u.selected } else { Color::TRANSPARENT })
+        .border_sides(
+            match drop {
+                Some(false) => [2.0, 0.0, 1.0, 0.0],
+                Some(true) => [0.0, 0.0, 2.0, 0.0],
+                None => [0.0, 0.0, 1.0, 0.0],
+            },
+            if drop.is_some() { u.accent } else { u.hair },
+        )
+        .hover(u.hover);
+    if super::drag::allowed(s) {
+        line = line.child(super::drag::grip(
+            u,
+            slot,
+            addon.enabled,
+            [0.0, 52.0],
+            1,
+            dragging,
+            s.installed.hovered == Some(slot),
+        ));
+    }
+    line = line
         .child(
             el()
                 .size(18.0, 18.0)
@@ -419,7 +482,7 @@ pub fn list_row(s: &State, u: &Ui, card: &Group) -> El {
             u.icon_button(&icons::LAYERS, "Choose the file")
                 .key(format!("row-variants-{slot:02}"))
                 .cursor(rune::Cursor::Pointer)
-                .on_press(move |st: &mut State| open_picker(st, group_key.clone())),
+                .on_press(move |st: &mut State| open_group(st, group_key.clone(), slot)),
         );
     }
     let group_key = card.key.clone();
@@ -431,7 +494,9 @@ pub fn list_row(s: &State, u: &Ui, card: &Group) -> El {
                 .cursor(rune::Cursor::Pointer)
                 .on_press(move |st: &mut State| open_menu(st, Menu::Card(slot))),
         )
-        .child(
+        .child({
+            let members: Vec<u8> = card.addons.iter().map(|addon| addon.slot).collect();
+            let is_variants = card.is_variants();
             u.toggle(addon.enabled)
                 .key(format!("toggle-{slot:02}"))
                 .label(format!(
@@ -440,9 +505,34 @@ pub fn list_row(s: &State, u: &Ui, card: &Group) -> El {
                 ))
                 .cursor(rune::Cursor::Pointer)
                 .on_press(move |st: &mut State| {
-                    let _ = group_key;
-                    super::toggle_one(st, slot, enable)
-                }),
-        );
+                    let _ = &group_key;
+                    if is_variants {
+                        group_switch(st, &members, enable, slot)
+                    } else {
+                        super::enable::switch(st, slot, enable)
+                    }
+                })
+        });
     line
+}
+
+/// Lucide arrow-down (ISC), drawn like `icons.rs`.
+static ARROW_DOWN: rune::Icon = rune::Icon {
+    name: "sigil-variants-arrow-down",
+    view: 24.0,
+    body: r#"<g fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="m19 12-7 7-7-7"/></g>"#,
+};
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_file_moves_one_place_inside_its_group() {
+        assert_eq!(nudge(&[3, 7, 9], 1, true), Some(vec![7, 3, 9]));
+        assert_eq!(nudge(&[3, 7, 9], 1, false), Some(vec![3, 9, 7]));
+        assert_eq!(nudge(&[3, 7, 9], 0, true), None, "the first cannot go up");
+        assert_eq!(nudge(&[3, 7, 9], 2, false), None, "the last cannot go down");
+        assert_eq!(nudge(&[3], 4, false), None);
+    }
 }

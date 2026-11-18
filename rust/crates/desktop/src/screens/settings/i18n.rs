@@ -67,6 +67,14 @@ impl Lang {
         }
     }
 
+    /// The third table: strings added in the parity wave (`locales_wave.rs`).
+    fn wave(self) -> &'static [(&'static str, &'static str)] {
+        match self {
+            Lang::German => super::locales_wave::DE,
+            _ => &[],
+        }
+    }
+
     /// The concrete language `System` stands for, from `LC_ALL`, `LC_MESSAGES` or `LANG`.
     pub fn resolve(self) -> Lang {
         match self {
@@ -107,7 +115,7 @@ pub fn current() -> Lang {
 
 fn maps() -> &'static [HashMap<&'static str, &'static str>; 3] {
     static MAPS: OnceLock<[HashMap<&'static str, &'static str>; 3]> = OnceLock::new();
-    MAPS.get_or_init(|| Lang::ALL.map(|lang| lang.table().iter().chain(lang.more()).copied().collect()))
+    MAPS.get_or_init(|| Lang::ALL.map(|lang| lang.table().iter().chain(lang.more()).chain(lang.wave()).copied().collect()))
 }
 
 #[cfg(test)]
@@ -178,7 +186,11 @@ mod tests {
     #[test]
     fn tables_have_no_duplicates_and_keep_holes() {
         let mut seen = std::collections::HashSet::new();
-        for (en, de) in locales::DE.iter().chain(super::super::locales_parity::DE) {
+        for (en, de) in locales::DE
+            .iter()
+            .chain(super::super::locales_parity::DE)
+            .chain(super::super::locales_wave::DE)
+        {
             assert!(seen.insert(*en), "duplicate key {en:?}");
             assert_eq!(en.matches("{}").count(), de.matches("{}").count(), "holes in {en:?}");
             assert!(!de.contains('\u{2014}'), "em dash in {de:?}");
@@ -212,10 +224,18 @@ mod tests {
             include_str!("tray.rs"),
             include_str!("watch.rs"),
             include_str!("../browse/quick.rs"),
+            include_str!("../browse/replace.rs"),
+            include_str!("../browse/multi.rs"),
+            include_str!("../installed/enable.rs"),
+            include_str!("../installed/drag.rs"),
+            include_str!("../downloads.rs"),
+            include_str!("../launch_progress.rs"),
+            include_str!("../autoexec_flags.rs"),
         ];
         let table: std::collections::HashSet<&str> = locales::DE
             .iter()
             .chain(super::super::locales_parity::DE)
+            .chain(super::super::locales_wave::DE)
             .map(|(en, _)| *en)
             .collect();
         let mut missing = Vec::new();
@@ -226,6 +246,8 @@ mod tests {
                     && !table.contains(literal.as_str())
                     && !NOT_TEXT.contains(&literal.as_str())
                     && !super::super::locales_parity::NOT_TEXT.contains(&literal.as_str())
+                    && !super::super::locales_wave::NOT_TEXT.contains(&literal.as_str())
+                    && !is_path_data(&literal)
                 {
                     missing.push(literal);
                 }
@@ -273,6 +295,11 @@ mod tests {
         // Key names in the shortcuts sheet
         "Click", "Enter", "Esc",
     ];
+
+    /// SVG path data in an icon body (`M12 5v14`): letters and numbers, never words.
+    fn is_path_data(s: &str) -> bool {
+        s.starts_with('M') && s.chars().nth(1).is_some_and(|c| c.is_ascii_digit())
+    }
 
     fn is_ui_text(s: &str) -> bool {
         let first = s.chars().next();

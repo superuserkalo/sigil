@@ -120,7 +120,7 @@ pub(crate) fn file_card(s: &State, u: &Ui, d: &Details, file: &ModFile, only: bo
 
     // This file's own state while it installs; the press installs it at once.
     let install = match d.profile.as_ref() {
-        Some(profile) => super::super::quick::file_button(s, u, d, profile, file),
+        Some(profile) => super::super::replace::file_actions(s, u, d, profile, file),
         None => el(),
     };
     let _ = only;

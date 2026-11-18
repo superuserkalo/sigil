@@ -11,10 +11,14 @@
 //! identification, compatibility review, merge, fonts). This file keeps the page, the cards,
 //! the menus and the writes the older rounds built.
 
+mod drag;
+pub mod enable;
 mod layout;
 mod notes;
 mod search;
 mod tools;
+pub mod update_match;
+pub mod wave_scenes;
 
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::PathBuf;
@@ -100,6 +104,12 @@ pub struct View {
     pub updates: Updates,
     /// The last change that can be put back, for the Undo of a notice.
     pub last_undo: Option<Undo>,
+    /// The hero, requirement and dependents questions a switch asks first.
+    pub gates: enable::Gates,
+    /// Slots whose model another enabled mod hides, from the last scan.
+    pub hidden: BTreeSet<u8>,
+    /// A card being dragged to a new load order.
+    pub drag: Option<drag::Dragging>,
     /// `last_undo` was just set: the next poll turns the status line into a toast with Undo.
     pub undo_fresh: bool,
 }
@@ -128,6 +138,12 @@ pub struct Updates {
     pub running: Option<u8>,
     pub job: Job<UpdateDone>,
     pub failed: BTreeMap<u8, String>,
+    /// What a queued slot installs from, when it is not the mod's newest file: a file link for
+    /// a matched variant, or a downloaded archive for a Replace from Browse.
+    pub targets: BTreeMap<u8, String>,
+    /// GameBanana changelogs for the update confirm, by mod id.
+    pub changelog: BTreeMap<u64, Result<Vec<deadlock_core::gamebanana::ModUpdate>, String>>,
+    pub changelog_job: Job<Vec<(u64, Result<Vec<deadlock_core::gamebanana::ModUpdate>, String>)>>,
 }
 
 /// What the trash worker made: the entries and the slots that failed.
@@ -841,12 +857,19 @@ fn section(s: &State, u: &Ui, which: Section, cards: &[&layout::Group]) -> El {
         return c;
     }
     if s.installed.layout.is_cards() {
+        let cols = s.installed.layout.columns();
+        // One card and its gap, from the last layout, so a drag steps card by card.
+        let pitch = cards
+            .first()
+            .and_then(|card| rune::memo::layout_size(&format!("addon-{:02}", card.primary().slot)))
+            .map(|[w, h]| [w + GRID_GAP, h + GRID_GAP])
+            .unwrap_or([260.0, 220.0]);
         let mut grid = el()
             .w_full()
-            .equal_columns(s.installed.layout.columns())
+            .equal_columns(cols)
             .gap(GRID_GAP);
         for card in cards {
-            grid = grid.child(card_view(s, u, card));
+            grid = grid.child(card_view(s, u, card, pitch, cols));
         }
         c = c.child(grid);
     } else {
@@ -867,7 +890,7 @@ pub fn meta_for<'a>(s: &'a State, addon: &AddonRow) -> Option<&'a ModMeta> {
 /// One card: a 16:9 preview with the selection box, warning buttons and the "more" button,
 /// the slot number and an update chip on it; the name, a line of detail and the switch below.
 /// A variant group shows the file it is playing and how many it holds.
-fn card_view(s: &State, u: &Ui, card: &layout::Group) -> El {
+fn card_view(s: &State, u: &Ui, card: &layout::Group, pitch: [f32; 2], cols: usize) -> El {
     let addon = card.primary();
     let slot = addon.slot;
     let enable = !addon.enabled;
@@ -882,11 +905,15 @@ fn card_view(s: &State, u: &Ui, card: &layout::Group) -> El {
         None => format!("{}  ·  {}", slot_file_name(addon), addon.size_label()),
     };
     if card.is_variants() {
-        detail = format!(
-            "{} files  ·  {}",
-            card.addons.len(),
-            notes::label_for(s, addon)
-        );
+        let on = card.addons.iter().filter(|addon| addon.enabled).count();
+        detail = if on > 1 {
+            crate::screens::settings::i18n::fill(
+                crate::screens::settings::i18n::tr("{} of {} files on"),
+                &[&on.to_string(), &card.addons.len().to_string()],
+            )
+        } else {
+            format!("{} files  ·  {}", card.addons.len(), notes::label_for(s, addon))
+        };
     } else if let Some(hero) = notes::extra(s, addon).hero {
         detail = format!("{detail}  ·  {hero}");
     }
@@ -968,6 +995,12 @@ fn card_view(s: &State, u: &Ui, card: &layout::Group) -> El {
         media = media
             .cursor(rune::Cursor::Pointer)
             .on_press_tx(move |st: &mut State, tx: &mut Tx| pick(st, slot, tx.mods().shift));
+    } else if card.is_variants() {
+        // A multi-file card opens its file list (or its page, as Settings chooses).
+        let key = card.key.clone();
+        media = media
+            .cursor(rune::Cursor::Pointer)
+            .on_press(move |st: &mut State| layout::open_group(st, key.clone(), slot));
     }
     if !addon.enabled && pixels.is_some() {
         // Off mods read quieter: the preview sits under a dark wash.
@@ -988,7 +1021,12 @@ fn card_view(s: &State, u: &Ui, card: &layout::Group) -> El {
     if let Some(merged) = tools::merged_chip(s, u, slot) {
         bottom = bottom.child(merged);
     }
-    let mut top = row().w_full().items_start().child(pick_box).child(spacer());
+    let mut top = row().w_full().items_start().gap(4.0).child(pick_box);
+    let dragging = s.installed.drag.is_some_and(|d| d.slot == slot);
+    if drag::allowed(s) {
+        top = top.child(drag::grip(u, slot, addon.enabled, pitch, cols, dragging, hovered));
+    }
+    top = top.child(spacer());
     for mark in card_marks(s, u, addon) {
         top = top.child(mark);
     }
@@ -1020,7 +1058,7 @@ fn card_view(s: &State, u: &Ui, card: &layout::Group) -> El {
             if is_variants {
                 layout::group_switch(st, &members, enable, chosen)
             } else {
-                toggle_one(st, slot, enable)
+                enable::switch(st, slot, enable)
             }
         });
 
@@ -1048,18 +1086,23 @@ fn card_view(s: &State, u: &Ui, card: &layout::Group) -> El {
             u.icon_button(&icons::LAYERS, "Choose the file")
                 .key(format!("installed-variants-{slot:02}"))
                 .cursor(rune::Cursor::Pointer)
-                .on_press(move |st: &mut State| layout::open_picker(st, key.clone())),
+                .on_press(move |st: &mut State| layout::open_group(st, key.clone(), slot)),
         );
     }
     footer = footer.child(el().w(2.0)).child(switch);
 
+    let drop = drag::drop_mark(s, slot, addon.enabled).is_some();
     col()
         .key(format!("addon-{slot:02}"))
         .min_w(0.0)
         .padding(1.0)
         .radius(CARD_RADIUS)
+        .opacity(if dragging { 0.55 } else { 1.0 })
         .fill(if selected { u.selected } else { u.well })
-        .border(1.0, if selected { u.accent.alpha(0.85) } else { Color::WHITE.alpha(0.07) })
+        .border(
+            if drop { 2.0 } else { 1.0 },
+            if drop || selected { u.accent.alpha(0.85) } else { Color::WHITE.alpha(0.07) },
+        )
         .on_hover_change(move |st: &mut State, inside: bool, _tx: &mut Tx| {
             if inside {
                 st.installed.hovered = Some(slot);
@@ -1101,6 +1144,9 @@ fn card_marks(s: &State, u: &Ui, addon: &AddonRow) -> Vec<El> {
 /// review, when either has something to say about this mod.
 fn warning_buttons(s: &State, u: &Ui, addon: &AddonRow) -> Vec<El> {
     let mut buttons = Vec::new();
+    if let Some(badge) = enable::hidden_badge(s, u, addon.slot) {
+        buttons.push(badge);
+    }
     let scan = s
         .installed
         .tools
@@ -1226,6 +1272,26 @@ fn update_chip(s: &State, u: &Ui, addon: &AddonRow) -> Option<El> {
     }
     let _ = u;
     Some(chip)
+}
+
+/// A slot's file for another page's list: its name and variant label, and the slot with on or
+/// off.
+pub fn file_label(s: &State, slot: u8) -> (String, String) {
+    let Some(addon) = s.addons.addons.iter().find(|addon| addon.slot == slot) else {
+        return (format!("{slot:02}"), String::new());
+    };
+    let name = display_name(s, addon);
+    let label = notes::label_for(s, addon);
+    let state = crate::screens::settings::i18n::tr(if addon.enabled { "On" } else { "Off" });
+    (
+        if label.is_empty() || label == name { name } else { format!("{name}  ·  {label}") },
+        format!("{slot:02}  ·  {state}"),
+    )
+}
+
+/// The page's check box, for another page's dialog.
+pub fn check_box_el(u: &Ui, on: bool) -> El {
+    check_box(u, on, false)
 }
 
 pub(super) fn slot_file_name(addon: &AddonRow) -> String {
@@ -1792,11 +1858,17 @@ fn st_on(s: &State) -> usize {
 /// The mod list as text for the clipboard: the name, author and slot, one mod a line, the
 /// mods on first.
 fn copy_lines(s: &State) -> String {
+    copy_lines_of(s, None)
+}
+
+/// The same lines for the picked mods only, or every shown mod when `only` is `None`.
+fn copy_lines_of(s: &State, only: Option<&BTreeSet<u8>>) -> String {
     let mut lines = Vec::new();
     for enabled in [true, false] {
         for addon in shown_addons(s)
             .into_iter()
             .filter(|addon| addon.enabled == enabled)
+            .filter(|addon| only.is_none_or(|only| only.contains(&addon.slot)))
         {
             let name = display_name(s, addon);
             let author = meta_for(s, addon)
@@ -1978,6 +2050,8 @@ pub fn poll(st: &mut State) -> bool {
     changed |= notes::poll(st);
     changed |= tools::poll(st);
     changed |= poll_changes(st);
+    changed |= enable::poll(st);
+    changed |= enable::refresh_hidden(st);
 
     if !st.demo && st.addons.scanned {
         let sig: Vec<(u8, u64)> = st
@@ -2246,6 +2320,9 @@ fn reveal_command(path: &PathBuf) -> Result<(), String> {
 /// The import review when one is open; otherwise the enable or disable confirm. A slot toggle
 /// is one rename in the addon folder.
 pub fn dialog(s: &State, u: &Ui) -> Option<El> {
+    if let Some(dialog) = enable::dialog(s, u) {
+        return Some(dialog);
+    }
     if let Some(dialog) = importer::dialog(s, u) {
         return Some(dialog);
     }
@@ -2822,7 +2899,34 @@ fn selection_bar(s: &State, u: &Ui) -> El {
                 ),
         );
     }
-    bar.child(spacer())
+    use crate::screens::settings::i18n::{fill, tr};
+    let updates: Vec<u8> = s
+        .installed
+        .selected
+        .iter()
+        .copied()
+        .filter(|slot| available_updates(s).contains(slot))
+        .collect();
+    bar = bar.child(spacer());
+    if !updates.is_empty() {
+        bar = bar.child(
+            u.icon_action(&icons::ARROW_UP, &fill(tr("Update {}"), &[&updates.len().to_string()]), ActionKind::Secondary)
+                .key("installed-selection-update")
+                .cursor(rune::Cursor::Pointer)
+                .on_press(move |st: &mut State| ask(st, Confirm::UpdateAll(updates.clone()))),
+        );
+    }
+    bar.child(
+            u.icon_action(&icons::COPY, tr("Copy"), ActionKind::Secondary)
+                .key("installed-selection-copy")
+                .label(tr("Copy the selected mods as a list"))
+                .cursor(rune::Cursor::Pointer)
+                .on_press_tx(|st: &mut State, tx: &mut Tx| {
+                    let picked = st.installed.selected.clone();
+                    tx.copy(copy_lines_of(st, Some(&picked)));
+                    st.status = tr("Mod list copied.").to_string();
+                }),
+        )
         .child(
             u.icon_action(&icons::POWER, "Turn on", ActionKind::Secondary)
                 .key("installed-selection-on")
@@ -3208,7 +3312,7 @@ fn group_slots(s: &State, enabled: bool) -> Vec<u8> {
 
 /// Plan the renames that give `group` the order `wanted`, then confirm. The demo plans
 /// from the scan; a real folder is read again so the plan sees every file of each slot.
-fn ask_reorder(st: &mut State, group: &[u8], wanted: &[u8]) {
+pub(super) fn ask_reorder(st: &mut State, group: &[u8], wanted: &[u8]) {
     let moves = load_order::moves_for_order(group, wanted);
     if moves.is_empty() {
         return;
@@ -3277,18 +3381,47 @@ pub fn update_for(s: &State, addon: &AddonRow) -> Option<RemoteFile> {
     }
     let updates = &s.installed.updates;
     let remote = updates.cache.mods.get(&id)?;
-    let baseline =
-        mod_updates::baseline_for(&updates.journal, id, addon.size_bytes, &meta.recorded_at);
-    match mod_updates::compare(baseline, remote) {
-        UpdateState::Available(file) => {
-            let ignored = notes::extra(s, addon).ignored_update;
-            match ignored {
-                Some(ignored) if ignored == 0 || ignored == file.file_id => None,
-                _ => Some(file),
+    let file = match variant_slots(s, id).as_slice() {
+        // Several files of this mod: each is matched to its own successor.
+        siblings if siblings.len() > 1 => {
+            let installed: Vec<update_match::Installed> = siblings
+                .iter()
+                .map(|other| {
+                    let recorded = meta_for(s, other).map(|m| m.recorded_at.clone()).unwrap_or_default();
+                    let base = mod_updates::baseline_for(&updates.journal, id, other.size_bytes, &recorded);
+                    update_match::Installed {
+                        slot: other.slot,
+                        file_id: base.file_id,
+                        installed_at: base.installed_at,
+                    }
+                })
+                .collect();
+            let match_remaining = crate::screens::settings::options::match_update_files();
+            update_match::pair(&installed, remote, match_remaining).remove(&addon.slot)?
+        }
+        _ => {
+            let baseline =
+                mod_updates::baseline_for(&updates.journal, id, addon.size_bytes, &meta.recorded_at);
+            match mod_updates::compare(baseline, remote) {
+                UpdateState::Available(file) => file,
+                _ => return None,
             }
         }
-        _ => None,
+    };
+    let ignored = notes::extra(s, addon).ignored_update;
+    match ignored {
+        Some(ignored) if ignored == 0 || ignored == file.file_id => None,
+        _ => Some(file),
     }
+}
+
+/// The slots on disk that hold GameBanana mod `id`.
+fn variant_slots<'a>(s: &'a State, id: u64) -> Vec<&'a AddonRow> {
+    s.addons
+        .addons
+        .iter()
+        .filter(|addon| meta_for(s, addon).and_then(|meta| meta.gamebanana_id) == Some(id))
+        .collect()
 }
 
 /// Slots with an update, in load order, not already queued or running.
@@ -3424,6 +3557,18 @@ fn start_next_update(st: &mut State) {
         return;
     };
     let name = meta.as_ref().map(|m| m.name.clone()).unwrap_or_else(|| format!("slot {slot:02}"));
+    // A Replace from Browse names its archive; a matched variant its own file; else the newest.
+    let target = match st.installed.updates.targets.remove(&slot) {
+        Some(target) => target,
+        None if variant_slots(st, id).len() > 1 => {
+            // One file of several: only its matched successor, never the mod's newest file.
+            match st.addons.addons.iter().find(|a| a.slot == slot).and_then(|a| update_for(st, a)) {
+                Some(file) => format!("https://gamebanana.com/dl/{}", file.file_id),
+                None => return start_next_update(st),
+            }
+        }
+        None => id.to_string(),
+    };
     let workspace = crate::data::workspace_dir();
     let library = library_file();
     st.installed.updates.running = Some(slot);
@@ -3434,7 +3579,7 @@ fn start_next_update(st: &mut State) {
             store_plan,
         };
         let fail = |error: deadlock_core::Error| format!("{slot:02}: {error}");
-        let request = InstallRequest::new(id.to_string(), workspace.clone())
+        let request = InstallRequest::new(target, workspace.clone())
             .map_err(fail)?
             .with_slot(Some(slot))
             .with_force(true);
@@ -3494,6 +3639,7 @@ fn poll_changes(st: &mut State) -> bool {
     if st.screen == Screen::Installed {
         check_updates(st, false);
     }
+    changed |= poll_changelog(st);
     if let Some(result) = st.installed.updates.check.try_take() {
         if let Ok((cache, journal)) = result {
             let n = cache.errors.len();
@@ -3530,6 +3676,70 @@ fn poll_changes(st: &mut State) -> bool {
         changed = true;
     }
     changed
+}
+
+/// Changelogs for the mods in the open update confirm: read once each, three entries a mod.
+fn poll_changelog(st: &mut State) -> bool {
+    let mut changed = false;
+    if let Some(Ok(found)) = st.installed.updates.changelog_job.try_take() {
+        for (id, log) in found {
+            st.installed.updates.changelog.insert(id, log);
+        }
+        changed = true;
+    }
+    let Some(Confirm::UpdateAll(slots)) = st.installed.confirm.as_ref() else {
+        return changed;
+    };
+    if st.demo || rune::is_headless() || st.prefs.offline || st.installed.updates.changelog_job.is_running() {
+        return changed;
+    }
+    let mut ids: Vec<u64> = slots
+        .iter()
+        .filter_map(|slot| st.addons.addons.iter().find(|a| a.slot == *slot))
+        .filter_map(|addon| meta_for(st, addon).and_then(|meta| meta.gamebanana_id))
+        .filter(|id| !st.installed.updates.changelog.contains_key(id))
+        .collect();
+    ids.sort_unstable();
+    ids.dedup();
+    ids.truncate(6);
+    if ids.is_empty() {
+        return changed;
+    }
+    for id in &ids {
+        st.installed.updates.changelog.insert(*id, Ok(Vec::new()));
+    }
+    st.installed.updates.changelog_job.start(st.wake.clone(), move || {
+        Ok(ids
+            .into_iter()
+            .map(|id| {
+                let log = deadlock_core::gamebanana::fetch_updates(deadlock_core::gamebanana::BrowseSection::Mods, id, 3)
+                    .map(|page| page.items)
+                    .map_err(|e| e.to_string());
+                (id, log)
+            })
+            .collect())
+    });
+    changed
+}
+
+/// The newest changelog entry of a mod, as two short lines for the update confirm.
+fn changelog_lines(s: &State, u: &Ui, slot: u8) -> Option<El> {
+    let id = s.addons.addons.iter().find(|a| a.slot == slot).and_then(|a| meta_for(s, a)).and_then(|m| m.gamebanana_id)?;
+    let entry = s.installed.updates.changelog.get(&id)?.as_ref().ok()?.first()?;
+    let mut head = entry.title.clone();
+    if let Some(version) = entry.version.as_ref().filter(|v| !v.is_empty()) {
+        head = format!("{head}  ·  {version}");
+    }
+    let mut c = col().w_full().pl(32.0).gap(2.0).child(text(head).font(SMALL).color(u.prose).truncate());
+    let lines: Vec<String> = if entry.changes.is_empty() {
+        entry.text.lines().map(str::trim).filter(|l| !l.is_empty()).take(2).map(str::to_string).collect()
+    } else {
+        entry.changes.iter().take(3).map(|(label, line)| if label.is_empty() { line.clone() } else { format!("{label}: {line}") }).collect()
+    };
+    for line in lines {
+        c = c.child(text(line).font(SMALL).color(u.faint).truncate());
+    }
+    Some(c)
 }
 
 // --- trash -------------------------------------------------------------------------------
@@ -3779,6 +3989,10 @@ fn confirm_dialog(s: &State, u: &Ui, confirm: &Confirm) -> El {
                             .child(text(format!("{slot:02}")).font(MICRO).color(u.faint).w(20.0))
                             .child(text(name_of(slot)).font(BODY).color(u.prose).truncate()),
                     );
+                    // What changed, from the mod's GameBanana changelog.
+                    if let Some(log) = changelog_lines(s, u, slot) {
+                        list = list.child(log.pb(6.0));
+                    }
                 }
                 if slots.len() > 6 {
                     list = list.child(text(format!("and {} more", slots.len() - 6)).font(SMALL).color(u.faint));

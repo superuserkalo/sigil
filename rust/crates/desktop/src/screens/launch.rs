@@ -78,6 +78,8 @@ pub struct View {
     pub downloads: downloads::Downloads,
     /// The overlap page's dialog and ignore list, kept with this area's state.
     pub overlap: conflicts::View,
+    /// A launch the progress overlay is stepping through.
+    pub progress: Option<crate::screens::launch_progress::Progress>,
 }
 
 impl Default for View {
@@ -92,6 +94,7 @@ impl Default for View {
             monitor: Monitor::default(),
             downloads: downloads::Downloads::default(),
             overlap: conflicts::View::default(),
+            progress: None,
         }
     }
 }
@@ -619,6 +622,12 @@ fn checklist_issues(s: &State) -> Vec<Issue> {
             detail: "gameinfo.gi lost the addons line, so the game skips every mod.",
             fix: Fix::Gameinfo,
         });
+    } else if matches!(s.gameinfo.state, crate::banner::Gameinfo::Incomplete { .. }) {
+        issues.push(Issue {
+            title: "gameinfo.gi is missing lines",
+            detail: "Without the Mod and Write paths the game can crash at start, and without the language paths text breaks.",
+            fix: Fix::Gameinfo,
+        });
     }
     let overlaps = conflicts::badge_count(s);
     if overlaps > 0 {
@@ -789,6 +798,11 @@ fn stop_confirm(u: &Ui, _s: &State) -> El {
                         .on_press(|st: &mut State| stop_game_now(st)),
                 ),
         )
+}
+
+/// Close the running game, as Stop game does. The launch overlay's Cancel uses it.
+pub fn stop_game(st: &mut State) {
+    stop_game_now(st);
 }
 
 /// Ask the game to close. The wait for a graceful exit runs on a thread; the monitor picks up
@@ -1057,7 +1071,13 @@ fn confirm(u: &Ui, s: &State, dialog: Dialog) -> El {
                 .child(
                     u.action(action, ActionKind::Primary)
                         .cursor(rune::Cursor::Pointer)
-                        .on_press(move |st: &mut State| crate::data::run_launch(st, dialog)),
+                        .on_press(move |st: &mut State| match dialog {
+                            // A launch runs through the progress overlay, which writes the
+                            // launch options into Steam first.
+                            Dialog::Modded => crate::screens::launch_progress::begin(st, false, true),
+                            Dialog::Vanilla => crate::screens::launch_progress::begin(st, true, true),
+                            other => crate::data::run_launch(st, other),
+                        }),
                 ),
         )
 }
@@ -1195,4 +1215,45 @@ pub fn scene_downloads(st: &mut State) {
 pub fn scene_downloads_review(st: &mut State) {
     scene_downloads(st);
     st.launch.downloads.dialog = downloads::Dialog::Review("d5".to_string());
+}
+
+// --- parity wave scenes --------------------------------------------------------------------------
+
+/// `downloads-indicator`: the titlebar indicator over Installed while the queue runs.
+pub fn scene_downloads_indicator(st: &mut State) {
+    crate::app::scene_demo_installed(st);
+    stage_queue(st);
+}
+
+/// `downloads-panel`: the indicator's list open over the page.
+pub fn scene_downloads_panel(st: &mut State) {
+    scene_downloads_indicator(st);
+    st.launch.downloads.panel = true;
+}
+
+/// `downloads-slow`: the running row has crawled under 1 MB/s for a while.
+pub fn scene_downloads_slow(st: &mut State) {
+    scene_downloads(st);
+    st.launch.downloads.demo_rates.insert("d1".to_string(), (412_000, true));
+}
+
+/// `downloads-drag`: the last waiting row dragged above the first.
+pub fn scene_downloads_drag(st: &mut State) {
+    scene_downloads(st);
+    let items = st.launch.downloads.snapshot().items;
+    let from = items.iter().position(|item| item.id == "d7").unwrap_or(0);
+    let to = items.iter().position(|item| item.id == "d3").unwrap_or(0);
+    st.launch.downloads.drag = Some(("d7".to_string(), from, to));
+}
+
+/// `launch-progress`: the overlay while Sigil writes the launch options.
+pub fn scene_progress(st: &mut State) {
+    crate::app::scene_demo_installed(st);
+    crate::screens::launch_progress::stage(st, false, 1);
+}
+
+/// `launch-progress-waiting`: Steam has the game; the overlay waits for it.
+pub fn scene_progress_waiting(st: &mut State) {
+    crate::app::scene_demo_installed(st);
+    crate::screens::launch_progress::stage(st, false, 3);
 }

@@ -4,13 +4,19 @@
 //! module draws it on the Launch page: one row per archive with its progress, the controls that
 //! fit its state, and the look inside the archive before it reaches the install dialog.
 //!
+//! Running rows show their smoothed speed and the time left (`Item::speed_bps`,
+//! `Item::eta_secs`), and a crawl under 1 MB/s for 15 seconds says so (`Item::is_slow`,
+//! Grimoire's rule). Rows still waiting can be moved up and down or dragged; the queue's
+//! `move_to` refuses a row that started. The titlebar shows [`indicator`] on every page while
+//! anything downloads, and its press opens this list in a panel ([`panel`]).
+//!
 //! Nothing here writes to the game folder. A finished row hands its path to Browse's install
 //! dialog, which still plans, validates and asks before anything lands in `citadel/addons`.
 
 use std::path::PathBuf;
 
 use deadlock_core::download_queue::{self as queue, Item, State as ItemState};
-use rune::{El, TextEdit, col, el, icon, row, spacer, text};
+use rune::{Align, Color, El, Side, TextEdit, col, el, icon, row, spacer, text};
 
 use crate::app::State;
 use crate::icons;
@@ -32,6 +38,14 @@ pub struct Downloads {
     pub dialog: Dialog,
     /// Fixture rows for the scenes and the pictures. A real queue never uses this.
     pub demo: Option<queue::Queue>,
+    /// The titlebar panel with the list is open.
+    pub panel: bool,
+    /// A waiting row being dragged: its id, where it started and where it would land, as
+    /// positions in the queue's list.
+    pub drag: Option<(String, usize, usize)>,
+    /// Fixture speeds for the scenes, by row id: bytes a second and whether it crawls. The
+    /// worker's own rows read their speed from the queue.
+    pub demo_rates: std::collections::HashMap<String, (u64, bool)>,
 }
 
 impl Default for Downloads {
@@ -41,6 +55,9 @@ impl Default for Downloads {
             input: TextEdit::new(""),
             dialog: Dialog::None,
             demo: None,
+            panel: false,
+            drag: None,
+            demo_rates: std::collections::HashMap::new(),
         }
     }
 }
@@ -117,6 +134,7 @@ impl Downloads {
         add("d1", "billy recolor", Q::Running, 4_400_000, 11_000_000, false);
         add("d2", "hud pack", Q::Paused, 1_200_000, 3_000_000, false);
         add("d3", "yoshi sounds", Q::Queued, 0, 0, false);
+        add("d7", "kelvin ice pack", Q::Queued, 0, 0, false);
         add("d4", "old crosshair", Q::Failed, 900_000, 2_400_000, false);
         add("d5", "masked skin pack", Q::Done, 8_100_000, 8_100_000, true);
         add("d6", "extra hud", Q::Done, 2_200_000, 2_200_000, false);
@@ -124,6 +142,7 @@ impl Downloads {
             item.error = Some("The server closed the connection.".to_string());
         }
         self.demo = Some(stage);
+        self.demo_rates.insert("d1".to_string(), (2_300_000, false));
     }
 }
 
@@ -152,6 +171,9 @@ fn demo_apply(queue: &mut queue::Queue, command: queue::Command) {
             queue.clear_finished();
         }
         queue::Command::PauseAll(paused) => queue.paused = paused,
+        queue::Command::MoveTo { id, index } => {
+            let _ = queue.move_to(&id, index);
+        }
         queue::Command::Shutdown => {}
     }
 }
@@ -230,10 +252,201 @@ pub fn section(s: &State, u: &Ui) -> El {
         );
         return body;
     }
-    for item in &queue.items {
-        body = body.child(item_row(u, item));
+    let drag = downloads.drag.as_ref();
+    for (index, item) in queue.items.iter().enumerate() {
+        let target = drag.filter(|(id, from, to)| *id != item.id && *to == index && from != to);
+        let speed = rate(&downloads.demo_rates, item);
+        body = body.child(item_row(u, &queue, index, item, speed, drag.is_some_and(|(id, _, _)| *id == item.id), target.map(|(_, from, to)| from < to)));
     }
     body
+}
+
+// --- reorder ------------------------------------------------------------------------------------
+
+/// The row height the drag math steps by.
+const ROW_H: f32 = 56.0;
+
+/// Where a waiting row lands: the position `steps` rows from `from` in the list, clamped to the
+/// rows still waiting (a waiting row never jumps above the running one or below a finished one).
+pub fn landing(items: &[Item], from: usize, steps: isize) -> usize {
+    let waiting: Vec<usize> = items
+        .iter()
+        .enumerate()
+        .filter(|(_, item)| item.state == ItemState::Queued)
+        .map(|(at, _)| at)
+        .collect();
+    let Some(me) = waiting.iter().position(|at| *at == from) else {
+        return from;
+    };
+    let wanted = (me as isize + steps).clamp(0, waiting.len() as isize - 1) as usize;
+    waiting[wanted]
+}
+
+fn drag_row(st: &mut State, id: &str, from: usize, d: &mut rune::Drag) {
+    match d.phase {
+        rune::Phase::Down => st.launch.downloads.drag = Some((id.to_string(), from, from)),
+        rune::Phase::Move => {
+            let items = st.launch.downloads.snapshot().items;
+            let steps = (d.dy / ROW_H).round() as isize;
+            st.launch.downloads.drag = Some((id.to_string(), from, landing(&items, from, steps)));
+        }
+        rune::Phase::Up => {
+            if let Some((id, from, to)) = st.launch.downloads.drag.take()
+                && !d.cancelled()
+                && from != to
+            {
+                st.launch.downloads.send(queue::Command::MoveTo { id, index: to });
+            }
+        }
+    }
+}
+
+// --- speed ----------------------------------------------------------------------------------------
+
+/// Seconds left as words: "40 s left", "3 min left", "1 h 5 min left".
+pub fn eta_label(secs: u64) -> String {
+    if secs < 60 {
+        fill(tr("{} s left"), &[&secs.max(1).to_string()])
+    } else if secs < 3600 {
+        fill(tr("{} min left"), &[&secs.div_ceil(60).to_string()])
+    } else {
+        let minutes = secs.div_ceil(60);
+        fill(tr("{} h {} min left"), &[&(minutes / 60).to_string(), &(minutes % 60).to_string()])
+    }
+}
+
+/// A row's speed, time left and crawl flag: the queue's numbers, or a scene's fixture.
+pub fn rate(rates: &std::collections::HashMap<String, (u64, bool)>, item: &Item) -> (Option<u64>, Option<u64>, bool) {
+    if item.state == ItemState::Running
+        && let Some((bps, slow)) = rates.get(&item.id)
+    {
+        let left = item.bytes_total.saturating_sub(item.bytes_done);
+        let eta = (item.bytes_total > 0 && left > 0 && *bps > 0).then(|| left.div_ceil(*bps));
+        return (Some(*bps), eta, *slow);
+    }
+    (item.speed_bps(), item.eta_secs(), item.is_slow())
+}
+
+/// The running line: bytes, speed and time left when they are known.
+fn running_detail(item: &Item, speed: Option<u64>, eta: Option<u64>) -> String {
+    let mut parts = vec![item.detail()];
+    if let Some(bps) = speed {
+        parts.push(format!("{}/s", queue::size(bps)));
+    }
+    if let Some(eta) = eta {
+        parts.push(eta_label(eta));
+    }
+    parts.join(" · ")
+}
+
+// --- the titlebar indicator -----------------------------------------------------------------------
+
+/// What the indicator says: rows downloading or waiting, the share done when sizes are known,
+/// and whether any of them crawls.
+pub fn summary(queue: &queue::Queue, rates: &std::collections::HashMap<String, (u64, bool)>) -> Option<(usize, Option<f32>, bool)> {
+    let moving: Vec<&Item> = queue
+        .items
+        .iter()
+        .filter(|item| matches!(item.state, ItemState::Queued | ItemState::Running | ItemState::Paused))
+        .collect();
+    if moving.is_empty() {
+        return None;
+    }
+    let total: u64 = moving.iter().map(|item| item.bytes_total).sum();
+    let done: u64 = moving.iter().map(|item| item.bytes_done.min(item.bytes_total)).sum();
+    let share = (total > 0 && moving.iter().all(|item| item.bytes_total > 0)).then(|| done as f32 / total as f32);
+    let slow = moving.iter().any(|item| rate(rates, item).2);
+    Some((moving.len(), share, slow))
+}
+
+/// The small button in the titlebar while anything downloads. Shown on every page.
+pub fn indicator(s: &State, u: &Ui) -> Option<El> {
+    let (count, share, slow) = summary(&s.launch.downloads.snapshot(), &s.launch.downloads.demo_rates)?;
+    let words = match share {
+        Some(share) => format!("{}%", (share.clamp(0.0, 1.0) * 100.0).floor() as u32),
+        None => count.to_string(),
+    };
+    let label = fill(if count == 1 { tr("{} download, open the list") } else { tr("{} downloads, open the list") }, &[&count.to_string()]);
+    let open = s.launch.downloads.panel;
+    let tint = if slow { u.amber } else { u.accent };
+    let mut b = row()
+        .key("titlebar-downloads")
+        .h(28.0)
+        .pl(8.0)
+        .pr(10.0)
+        .gap(6.0)
+        .center_y()
+        .radius(crate::ui::r(8.0))
+        .clip_rounded(crate::ui::r(8.0))
+        .fill(if open { u.selected } else { tint.alpha(0.08) })
+        .border(1.0, tint.alpha(0.35))
+        .hover(u.hover)
+        .press(u.over.alpha(0.08))
+        .focusable(true)
+        .role("button")
+        .label(label)
+        .cursor(rune::Cursor::Pointer)
+        .on_press(|st: &mut State| st.launch.downloads.panel = !st.launch.downloads.panel);
+    if let Some(share) = share {
+        let f = share.clamp(0.0, 1.0);
+        b = b.child(
+            row()
+                .absolute(0.0, 0.0)
+                .w_full()
+                .h_full()
+                .child(el().h_full().grow(f).fill(tint.alpha(0.16)))
+                .child(el().h_full().grow(1.0 - f))
+                .a11y_hidden(),
+        );
+    }
+    b = b
+        .child(icon(if slow { &icons::TRIANGLE_ALERT } else { &icons::DOWNLOAD }, 14.0).color(tint).a11y_hidden())
+        .child(text(words).font(SMALL).color(u.ink).a11y_hidden());
+    Some(b)
+}
+
+/// The list under the indicator, over any page.
+pub fn panel(s: &State, u: &Ui) -> Option<El> {
+    if !s.launch.downloads.panel {
+        return None;
+    }
+    let close = |st: &mut State| st.launch.downloads.panel = false;
+    Some(
+        col()
+            .key("downloads-panel")
+            .role("dialog")
+            .label(tr("Downloads"))
+            .w(560.0)
+            .shrink()
+            .min_h(0.0)
+            .fill(u.raised)
+            .radius(crate::ui::r(12.0))
+            .border(1.0, u.hair_strong)
+            .shadow(16.0, 40.0, Color::BLACK.alpha(0.5))
+            .anchored_fit("titlebar-downloads", Side::Bottom, Align::End, 6.0)
+            .modal(true, close)
+            .on_key(|st: &mut State, ev: &rune::KeyEvent, _| {
+                if ev.key == rune::Key::Escape {
+                    st.launch.downloads.panel = false;
+                    true
+                } else {
+                    false
+                }
+            })
+            .child(
+                col()
+                    .key("downloads-panel-scroll")
+                    .w_full()
+                    .shrink()
+                    .min_h(0.0)
+                    .max_h(520.0)
+                    .px(16.0)
+                    .pt(8.0)
+                    .pb(12.0)
+                    .scroll(rune::ScrollSpec { stick_bottom: false })
+                    .child(section(s, u)),
+            ),
+    )
 }
 
 /// The field and the Add button: a queued download starts without leaving the page.
@@ -291,7 +504,15 @@ fn queue_target(st: &mut State) {
 
 /// One archive: state, name, the line under it, a progress line while it runs, and its
 /// controls on the right.
-fn item_row(u: &Ui, item: &Item) -> El {
+fn item_row(
+    u: &Ui,
+    queue: &queue::Queue,
+    index: usize,
+    item: &Item,
+    (speed, eta, slow): (Option<u64>, Option<u64>, bool),
+    dragging: bool,
+    drop_below: Option<bool>,
+) -> El {
     let (glyph, tint) = match item.state {
         ItemState::Queued => (&icons::DOWNLOAD, u.faint),
         ItemState::Running => (&icons::DOWNLOAD, u.ink),
@@ -307,7 +528,9 @@ fn item_row(u: &Ui, item: &Item) -> El {
     } else {
         item.name.clone()
     };
-    let detail = if item.state == ItemState::Done && item.scan.suspicious() {
+    let detail = if item.state == ItemState::Running {
+        running_detail(item, speed, eta)
+    } else if item.state == ItemState::Done && item.scan.suspicious() {
         let count = item.scan.warnings.len();
         fill(
             if count == 1 {
@@ -348,8 +571,43 @@ fn item_row(u: &Ui, item: &Item) -> El {
     if matches!(item.state, ItemState::Running | ItemState::Paused) {
         middle = middle.child(progress_line(u, item));
     }
+    if slow {
+        middle = middle.child(
+            row()
+                .key(format!("downloads-slow-{}", item.id))
+                .w_full()
+                .gap(6.0)
+                .items_start()
+                .child(icon(&icons::TRIANGLE_ALERT, 12.0).color(u.amber).mt(2.0).a11y_hidden())
+                .child(
+                    text(tr("Downloading slowly, under 1 MB/s. This is most likely GameBanana's servers under heavy load or your internet provider."))
+                        .font(SMALL)
+                        .color(u.amber)
+                        .wrap()
+                        .grow(1.0)
+                        .min_w(0.0),
+                ),
+        );
+    }
 
     let mut controls = row().gap(4.0).center_y();
+    if item.state == ItemState::Queued {
+        for (up, glyph, words) in [(true, &icons::ARROW_UP, tr("Move up")), (false, &ARROW_DOWN, tr("Move down"))] {
+            let to = landing(&queue.items, index, if up { -1 } else { 1 });
+            let mv = id.clone();
+            let mut b = u
+                .icon_button(glyph, words)
+                .key(format!("downloads-{}-{}", if up { "up" } else { "down" }, item.id));
+            b = if to == index {
+                b.disabled(true).opacity(0.35)
+            } else {
+                b.cursor(rune::Cursor::Pointer).on_press(move |st: &mut State| {
+                    st.launch.downloads.send(queue::Command::MoveTo { id: mv.clone(), index: to })
+                })
+            };
+            controls = controls.child(b);
+        }
+    }
     match item.state {
         ItemState::Queued | ItemState::Running => {
             let pause = id.clone();
@@ -448,18 +706,60 @@ fn item_row(u: &Ui, item: &Item) -> El {
         }),
     );
 
-    row()
+    // A waiting row's glyph is its drag handle.
+    let lead = if item.state == ItemState::Queued {
+        let drag_id = item.id.clone();
+        el().key(format!("downloads-grip-{}", item.id))
+            .w(16.0)
+            .h(24.0)
+            .center()
+            .radius(4.0)
+            .hover(u.hover)
+            .label(tr("Drag to reorder"))
+            .cursor(if dragging { rune::Cursor::Grabbing } else { rune::Cursor::Grab })
+            .on_drag(move |st: &mut State, d: &mut rune::Drag, _tx: &mut rune::Tx| drag_row(st, &drag_id, index, d))
+            .child(icon(&GRIP_VERTICAL, 14.0).color(u.faint).a11y_hidden())
+    } else {
+        el().w(16.0).child(icon(glyph, 16.0).color(tint).a11y_hidden())
+    };
+    let mut r = row()
         .key(format!("downloads-row-{}", item.id))
         .w_full()
         .min_h(52.0)
         .py(8.0)
         .gap(12.0)
         .center_y()
+        .fill(if dragging { u.selected } else { Color::TRANSPARENT })
         .border_sides([0.0, 0.0, 1.0, 0.0], u.hair)
-        .child(el().w(16.0).child(icon(glyph, 16.0).color(tint).a11y_hidden()))
+        .child(lead)
         .child(middle)
-        .child(controls)
+        .child(controls);
+    if let Some(below) = drop_below {
+        let line = el().w_full().h(2.0).fill(u.accent).a11y_hidden();
+        r = r.child(
+            col()
+                .absolute(0.0, 0.0)
+                .w_full()
+                .h_full()
+                .a11y_hidden()
+                .child(if below { spacer() } else { line.clone() })
+                .child(if below { line } else { spacer() }),
+        );
+    }
+    r
 }
+
+/// Lucide grip-vertical and arrow-down (ISC), drawn like `icons.rs`.
+static GRIP_VERTICAL: rune::Icon = rune::Icon {
+    name: "sigil-downloads-grip-vertical",
+    view: 24.0,
+    body: r#"<g fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="12" r="1"/><circle cx="9" cy="5" r="1"/><circle cx="9" cy="19" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="15" cy="5" r="1"/><circle cx="15" cy="19" r="1"/></g>"#,
+};
+static ARROW_DOWN: rune::Icon = rune::Icon {
+    name: "sigil-downloads-arrow-down",
+    view: 24.0,
+    body: r#"<g fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="m19 12-7 7-7-7"/></g>"#,
+};
 
 /// A 3 point track: the ember part grows with the fraction and the rest stays a hairline.
 fn progress_line(u: &Ui, item: &Item) -> El {
@@ -630,6 +930,55 @@ fn review(_s: &State, u: &Ui, item: Item) -> El {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn row_in(id: &str, state: ItemState) -> Item {
+        let mut item = Item::new(id.to_string(), format!("https://gamebanana.com/mods/{id}"));
+        item.state = state;
+        item
+    }
+
+    #[test]
+    fn a_waiting_row_lands_among_the_waiting_rows() {
+        let items = vec![
+            row_in("a", ItemState::Running),
+            row_in("b", ItemState::Queued),
+            row_in("c", ItemState::Queued),
+            row_in("d", ItemState::Done),
+            row_in("e", ItemState::Queued),
+        ];
+        assert_eq!(landing(&items, 1, 1), 2, "one down is the next waiting row");
+        assert_eq!(landing(&items, 2, 1), 4, "the finished row in between is skipped");
+        assert_eq!(landing(&items, 1, -3), 1, "never above the running row");
+        assert_eq!(landing(&items, 4, 9), 4, "clamped at the last waiting row");
+        assert_eq!(landing(&items, 0, 1), 0, "a running row does not move");
+    }
+
+    #[test]
+    fn time_left_reads_as_words() {
+        assert_eq!(eta_label(0), "1 s left");
+        assert_eq!(eta_label(42), "42 s left");
+        assert_eq!(eta_label(61), "2 min left");
+        assert_eq!(eta_label(3_900), "1 h 5 min left");
+    }
+
+    #[test]
+    fn the_indicator_counts_moving_rows_only() {
+        let mut q = queue::Queue::default();
+        assert!(summary(&q, &std::collections::HashMap::new()).is_none());
+        let mut a = row_in("a", ItemState::Running);
+        a.bytes_done = 25;
+        a.bytes_total = 100;
+        let mut b = row_in("b", ItemState::Queued);
+        b.bytes_total = 100;
+        q.items = vec![a, b, row_in("c", ItemState::Done)];
+        let none = std::collections::HashMap::new();
+        let (count, share, slow) = summary(&q, &none).unwrap();
+        assert_eq!(count, 2);
+        assert_eq!(share, Some(0.125));
+        assert!(!slow);
+        q.items.push(row_in("d", ItemState::Queued));
+        assert_eq!(summary(&q, &none).unwrap().1, None, "an unknown size hides the share");
+    }
 
     #[test]
     fn the_field_is_taken_once_and_cleared() {

@@ -336,10 +336,11 @@ pub fn poll(st: &mut State, tx: &mut Tx) -> bool {
             Ok(choices) => {
                 st.install.busy = false;
                 st.install.vpks = choices;
+                st.install.unchecked.clear();
                 st.install.log = Some(if st.install.vpks.len() > 1 {
-                    format!(
-                        "This archive holds {} mods. Choose the one you want.",
-                        st.install.vpks.len()
+                    crate::screens::settings::i18n::fill(
+                        crate::screens::settings::i18n::tr("This archive holds {} files. Each is checked; uncheck the ones you do not want."),
+                        &[&st.install.vpks.len().to_string()],
                     )
                 } else {
                     "The archive has one mod.".to_string()

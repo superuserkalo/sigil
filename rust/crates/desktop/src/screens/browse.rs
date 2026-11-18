@@ -48,7 +48,9 @@ mod install;
 pub mod page;
 mod panels;
 mod persist;
+pub mod multi;
 pub mod quick;
+pub mod replace;
 mod scenes;
 pub mod store;
 
@@ -413,6 +415,8 @@ pub struct View {
     pub update_cache: Option<deadlock_core::mod_updates::UpdateCache>,
     /// One-press installs, per mod, and which mods are installed.
     pub installs: quick::Installs,
+    /// A Replace from a file row, waiting for its confirm.
+    pub replace: Option<replace::Pending>,
 }
 
 /// One page of collections.

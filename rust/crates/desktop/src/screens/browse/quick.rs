@@ -7,7 +7,9 @@
 //!
 //! State is kept per mod in [`Installs::items`], keyed by the GameBanana id, so one install
 //! never changes another card. A button reads [`button`]: Install, Queued, Downloading NN%,
-//! Installing, then Installed (or Update when a newer file is out, Retry after a failure).
+//! Installing, then Installed (or Update when a newer file is out, Retry after a failure, Enable
+//! when it is installed but every file of it is switched off: installs land off by default, and
+//! a press turns it on through Installed's switch, with its hero and requirement questions).
 //! Installs run one at a time so two plans never pick the same free slot; downloads queue.
 //! Updates of an installed mod download here too, then hand the slot to Installed's update
 //! queue, which replaces the file in place.
@@ -126,6 +128,8 @@ pub enum Button {
     Installing,
     Installed,
     Update,
+    /// Installed, but switched off. The press turns it on.
+    Enable,
 }
 
 impl Button {
@@ -150,6 +154,7 @@ impl Button {
             Button::Installing => tr("Installing").to_string(),
             Button::Installed => tr("Installed").to_string(),
             Button::Update => tr("Update").to_string(),
+            Button::Enable => tr("Enable").to_string(),
         }
     }
 
@@ -200,9 +205,23 @@ pub fn button(s: &State, id: u64) -> Button {
         if available_update(s, id).is_some() && !update_ignored(s, id) {
             return Button::Update;
         }
+        if switched_off(s, id) {
+            return Button::Enable;
+        }
         return Button::Installed;
     }
     Button::Install
+}
+
+/// Every file of mod `id` in the addon folder is off. False before the folder is read.
+pub fn switched_off(s: &State, id: u64) -> bool {
+    if !s.addons.scanned {
+        return false;
+    }
+    let slots = owned_slots(s, id);
+    let present: Vec<&crate::model::AddonRow> =
+        s.addons.addons.iter().filter(|a| slots.contains(&a.slot)).collect();
+    !present.is_empty() && present.iter().all(|a| !a.enabled)
 }
 
 /// The slot an installed mod sits in.
@@ -306,6 +325,12 @@ pub fn press(st: &mut State, id: u64, name: &str) {
             st.browse_view.context = None;
             st.go(Screen::Installed);
         }
+        Button::Enable => {
+            st.browse_view.context = None;
+            if let Some(slot) = owned_slots(st, id).first().copied() {
+                crate::screens::installed::enable::switch(st, slot, true);
+            }
+        }
         _ => {}
     }
 }
@@ -375,6 +400,7 @@ fn fail(st: &mut State, id: u64, name: &str, target: String, file: Option<u64>, 
 /// Browse's poll every frame.
 pub fn poll(st: &mut State) -> bool {
     let mut changed = take_result(st);
+    changed |= super::multi::poll(st);
     // The update check and the install journal, so cards can say Installed and Update.
     if st.screen == Screen::Browse {
         crate::screens::installed::check_updates(st, false);
@@ -488,6 +514,19 @@ fn start_next(st: &mut State) -> bool {
         // The archive is in the download cache now: Installed's update reuses it and swaps
         // the file in place, keeping the slot, its on or off state and an undo.
         let slots = entry.update.clone();
+        // The update installs exactly what was downloaded: the mod id (its newest file, so the
+        // journal keeps the mod), or for any other file that very archive.
+        let target = match (&entry.archive, entry.target.parse::<u64>().is_ok()) {
+            (Some(path), false) => path.display().to_string(),
+            _ => entry.target.clone(),
+        };
+        // Only a file picked by hand is pinned; a plain Update lets Installed match each file
+        // of a multi-file mod to its own successor.
+        if entry.file.is_some() {
+            for slot in &slots {
+                st.installed.updates.targets.insert(*slot, target.clone());
+            }
+        }
         crate::screens::installed::queue_updates(st, slots.clone());
         let updates = &st.installed.updates;
         let moving = slots
@@ -731,6 +770,7 @@ fn glyph(b: &Button) -> &'static Icon {
         Button::Installing => &icons::LOADER,
         Button::Installed => &icons::CHECK,
         Button::Update => &icons::REFRESH_CW,
+        Button::Enable => &icons::POWER,
     }
 }
 
@@ -757,6 +797,7 @@ pub fn button_el(u: &Ui, b: &Button, key: String, id: u64, name: &str, size: Siz
         Button::Paused(_) => (u.muted, u.muted, Color::WHITE.alpha(0.02), u.hair_strong),
         Button::Installed => (u.muted, u.teal, Color::TRANSPARENT, u.hair),
         Button::Update => (u.ink, u.accent, u.accent.alpha(0.10), u.accent.alpha(0.55)),
+        Button::Enable => (u.ink, u.teal, Color::WHITE.alpha(0.035), u.hair_strong),
     };
     let (h, words) = match size {
         Size::Card => (28.0, Some(b.short())),
@@ -870,6 +911,7 @@ pub fn installed_badge(s: &State, id: u64) -> Option<El> {
     let (glyph, words) = match b {
         Button::Installed => (&icons::CHECK, tr("Installed")),
         Button::Update => (&icons::REFRESH_CW, tr("Update")),
+        Button::Enable => (&icons::POWER, tr("Off")),
         _ => return None,
     };
     Some(
@@ -1187,5 +1229,37 @@ mod tests {
         assert_eq!(Button::Installing.label(), "Installing");
         assert_eq!(Button::Installed.label(), "Installed");
         assert!(Button::Queued.busy() && !Button::Installed.busy());
+        assert_eq!(Button::Enable.label(), "Enable");
+        assert!(!Button::Enable.busy());
+    }
+
+    #[test]
+    fn an_installed_mod_that_is_off_offers_enable() {
+        let mut st = State::default();
+        st.installed.library.mods.push(deadlock_core::import::ModMeta {
+            slot: 4,
+            size_bytes: 10,
+            name: "Off one".into(),
+            author: None,
+            thumbnail_url: None,
+            gamebanana_id: Some(77),
+            source: "browse".into(),
+            recorded_at: String::new(),
+        });
+        st.addons.scanned = true;
+        st.addons.addons.push(crate::model::AddonRow {
+            slot: 4,
+            file: "pak04_dir.vpk.disabled".into(),
+            size_bytes: 10,
+            chunk_files: Vec::new(),
+            entry_count: None,
+            enabled: false,
+        });
+        refresh_owned(&mut st);
+        assert_eq!(button(&st, 77), Button::Enable);
+        st.addons.addons[0].enabled = true;
+        st.browse_view.installs.owned_sig = None;
+        refresh_owned(&mut st);
+        assert_eq!(button(&st, 77), Button::Installed, "on again, it is just installed");
     }
 }

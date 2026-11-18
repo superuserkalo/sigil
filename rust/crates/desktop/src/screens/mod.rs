@@ -1,4 +1,5 @@
 pub mod autoexec;
+pub mod autoexec_flags;
 pub mod browse;
 pub mod character;
 pub mod conflicts;
@@ -9,6 +10,7 @@ pub mod import;
 pub mod index;
 pub mod installed;
 pub mod launch;
+pub mod launch_progress;
 pub mod locker;
 pub mod patches;
 pub mod performance;

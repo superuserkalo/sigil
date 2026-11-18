@@ -88,6 +88,8 @@ pub struct Options {
     pub swap_install_replace: bool,
     pub skip_replace_confirm: bool,
     pub allow_scripts: bool,
+    /// Ask before a second mod for one hero is turned on (Deadlock Mod Manager's warning).
+    pub hero_conflict_warning: bool,
     // Integrations
     pub forge: bool,
     /// Read console.log for the match phase and hero.
@@ -143,6 +145,7 @@ impl Default for Options {
             swap_install_replace: false,
             skip_replace_confirm: false,
             allow_scripts: false,
+            hero_conflict_warning: true,
             forge: false,
             presence_game: false,
             presence_lines: BTreeMap::new(),
@@ -275,6 +278,7 @@ impl Options {
             swap_install_replace: b("swap_install_replace", d.swap_install_replace),
             skip_replace_confirm: b("skip_replace_confirm", d.skip_replace_confirm),
             allow_scripts: b("allow_scripts", d.allow_scripts),
+            hero_conflict_warning: b("hero_conflict_warning", d.hero_conflict_warning),
             forge: b("forge", d.forge),
             presence_game: b("presence_game", d.presence_game),
             presence_lines: lines_map(map.get("presence_lines")),
@@ -334,6 +338,7 @@ impl Options {
         m.insert("swap_install_replace".into(), json!(self.swap_install_replace));
         m.insert("skip_replace_confirm".into(), json!(self.skip_replace_confirm));
         m.insert("allow_scripts".into(), json!(self.allow_scripts));
+        m.insert("hero_conflict_warning".into(), json!(self.hero_conflict_warning));
         m.insert("forge".into(), json!(self.forge));
         m.insert("presence_game".into(), json!(self.presence_game));
         m.insert("presence_lines".into(), lines_json(&self.presence_lines));
@@ -476,6 +481,16 @@ pub fn switch_variants() -> bool {
     get().switch_variants
 }
 
+/// Turning on a second mod for a hero asks first.
+pub fn hero_conflict_warning() -> bool {
+    get().hero_conflict_warning
+}
+
+/// Requirements are checked when a mod is turned on or off.
+pub fn prompt_requirements() -> bool {
+    get().prompt_requirements
+}
+
 /// Changes to the addons folder wait while the game runs.
 pub fn block_while_running() -> bool {
     get().block_while_running
@@ -527,6 +542,7 @@ mod tests {
             swap_install_replace: true,
             skip_replace_confirm: true,
             allow_scripts: true,
+            hero_conflict_warning: false,
             forge: true,
             presence_game: true,
             presence_lines: BTreeMap::new(),
