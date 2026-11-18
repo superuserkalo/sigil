@@ -615,10 +615,28 @@ pub(crate) fn context_menu(s: &State, u: &Ui) -> Option<El> {
                 "",
                 false,
             )
-            .on_press_tx(move |st: &mut State, tx: &mut Tx| {
-                tx.copy(image.clone());
-                st.status = "Image link copied.".to_string();
+            .on_press_tx({
+                let image = image.clone();
+                move |st: &mut State, tx: &mut Tx| {
+                    tx.copy(image.clone());
+                    st.status = "Image link copied.".to_string();
+                    st.browse_view.context = None;
+                }
+            }),
+        );
+        // Wave 4: Grimoire's Copy image and Open image beside the address.
+        items = items.child(
+            menu_item(
+                u,
+                "ctx-image-more",
+                Some(icon(&icons::EXTERNAL_LINK, 14.0).color(u.muted).a11y_hidden()),
+                crate::screens::settings::i18n::tr("Image..."),
+                "",
+                false,
+            )
+            .on_press(move |st: &mut State| {
                 st.browse_view.context = None;
+                super::super::w4::open_image_menu(st, format!("browse-card-{id}"), image.clone());
             }),
         );
     }

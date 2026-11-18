@@ -379,6 +379,10 @@ pub(crate) fn dashboard(s: &State, u: &Ui) -> Option<El> {
     if let Some(rail) = trending_rail(s, u, "month", "Popular this month") {
         rails = rails.child(rail);
     }
+    // Wave 4: one featured mod per category this week (DMM), from the saved catalog.
+    if let Some(rail) = super::w4::featured_rail(s, u) {
+        rails = rails.child(rail);
+    }
     if let Some(rail) = hero_rail(s, u) {
         rails = rails.child(rail);
     }
@@ -532,7 +536,15 @@ pub(crate) fn hero_rail(s: &State, u: &Ui) -> Option<El> {
             .key("browse-hero-rail")
             .w_full()
             .gap(12.0)
-            .child(text("Browse by hero").font(BODY_MED).color(u.muted))
+            .child(
+                row()
+                    .w_full()
+                    .center_y()
+                    .child(text("Browse by hero").font(BODY_MED).color(u.muted))
+                    .child(spacer())
+                    // Wave 4: DMM's random hero.
+                    .child(super::w4::random_button(u)),
+            )
             .child(strip),
     )
 }

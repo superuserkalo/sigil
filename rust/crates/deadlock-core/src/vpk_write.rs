@@ -3,7 +3,12 @@
 //! Layout facts live in `docs/research/vpk-format.md` and the matching reader in
 //! [`crate::vpk`]. The writer always stores entry bytes in chunk files
 //! (`<base>_000.vpk` and up), never inline in the directory file, so the header
-//! file data section stays empty.
+//! file data section stays empty. That stays the default.
+//!
+//! [`pack_vpk_single`] writes one self-contained `<base>_dir.vpk` instead: every entry inline
+//! in the file data section, archive index `0x7fff`, no `_000` chunk. [`combine_chunks`]
+//! rewrites an existing split archive that way, which is what a compatibility repair needs
+//! (vpkmerge and Grimoire heal single-file archives only).
 
 use std::collections::BTreeMap;
 use std::fs::{self, File};
@@ -14,7 +19,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::{Error, Result};
 use crate::util::{temp_path, write_atomic};
-use crate::vpk::{VPK_MAGIC, is_safe_vpk_path, try_chunk_path_for};
+use crate::vpk::{
+    ReadVpkOptions, VPK_DIRECTORY_ARCHIVE, VPK_MAGIC, is_safe_vpk_path, read_vpk_directory_with,
+    read_vpk_entry_data, try_chunk_path_for,
+};
 
 /// Chunk cap used when [`PackOptions::chunk_size`] is zero.
 pub const DEFAULT_CHUNK_SIZE: u64 = 1024 * 1024 * 1024;
@@ -107,19 +115,7 @@ pub fn pack_vpk(options: &PackOptions) -> Result<PackedVpk> {
     assign_chunks(&mut entries, chunk_size)?;
     let chunk_paths = write_chunks(&mut entries, &dir_path)?;
 
-    let tree = build_tree(&entries);
-    let tree_size = u32::try_from(tree.len())
-        .map_err(|_| Error::msg("VPK directory tree is larger than 4 GiB."))?;
-
-    let mut file = Vec::with_capacity(HEADER_V2_SIZE as usize + tree.len());
-    file.extend_from_slice(&VPK_MAGIC.to_le_bytes());
-    file.extend_from_slice(&2_u32.to_le_bytes());
-    file.extend_from_slice(&tree_size.to_le_bytes());
-    file.extend_from_slice(&0_u32.to_le_bytes()); // file data section
-    file.extend_from_slice(&0_u32.to_le_bytes()); // archive MD5 section
-    file.extend_from_slice(&0_u32.to_le_bytes()); // other MD5 section
-    file.extend_from_slice(&0_u32.to_le_bytes()); // signature section
-    file.extend_from_slice(&tree);
+    let file = directory_bytes(&entries, 0)?;
     write_atomic(&dir_path, &file)?;
 
     let total_bytes = entries.iter().map(|entry| u64::from(entry.length)).sum();
@@ -130,6 +126,182 @@ pub fn pack_vpk(options: &PackOptions) -> Result<PackedVpk> {
         entry_count: entries.len(),
         total_bytes,
     })
+}
+
+/// Header plus directory tree for `entries`, with `data_size` bytes of inline file data to follow.
+fn directory_bytes(entries: &[PackedEntry], data_size: u32) -> Result<Vec<u8>> {
+    let tree = build_tree(entries);
+    let tree_size = u32::try_from(tree.len())
+        .map_err(|_| Error::msg("VPK directory tree is larger than 4 GiB."))?;
+
+    let mut file = Vec::with_capacity(HEADER_V2_SIZE as usize + tree.len());
+    file.extend_from_slice(&VPK_MAGIC.to_le_bytes());
+    file.extend_from_slice(&2_u32.to_le_bytes());
+    file.extend_from_slice(&tree_size.to_le_bytes());
+    file.extend_from_slice(&data_size.to_le_bytes()); // file data section
+    file.extend_from_slice(&0_u32.to_le_bytes()); // archive MD5 section
+    file.extend_from_slice(&0_u32.to_le_bytes()); // other MD5 section
+    file.extend_from_slice(&0_u32.to_le_bytes()); // signature section
+    file.extend_from_slice(&tree);
+    Ok(file)
+}
+
+/// Pack a staging tree into one self-contained `<base>_dir.vpk`: every entry is stored inline
+/// after the directory tree, so no `<base>_000.vpk` is written. `chunk_size` is ignored. The
+/// payload must fit the 4 GiB offset limit of one VPK file.
+pub fn pack_vpk_single(options: &PackOptions) -> Result<PackedVpk> {
+    let paths = collect_staging_entries(&options.staging_dir)?;
+
+    if paths.is_empty() {
+        return Err(Error::msg(format!(
+            "Staging folder {} has no files to pack.",
+            options.staging_dir.display()
+        )));
+    }
+
+    let base_name = sanitize_base_name(&options.base_name)?;
+    fs::create_dir_all(&options.output_dir)?;
+    let dir_path = options.output_dir.join(format!("{base_name}_dir.vpk"));
+
+    let mut entries = Vec::with_capacity(paths.len());
+    for path in paths {
+        entries.push(PackedEntry::new(&options.staging_dir, path)?);
+    }
+
+    write_single_file(&dir_path, &mut entries, |entry, sink| {
+        let mut source = File::open(&entry.source)?;
+        let mut buffer = vec![0u8; READ_BUFFER_SIZE];
+        loop {
+            let count = source.read(&mut buffer)?;
+            if count == 0 {
+                break;
+            }
+            sink(&buffer[..count])?;
+        }
+        Ok(())
+    })?;
+
+    let total_bytes = entries.iter().map(|entry| u64::from(entry.length)).sum();
+    Ok(PackedVpk {
+        dir_path,
+        chunk_paths: Vec::new(),
+        entry_count: entries.len(),
+        total_bytes,
+    })
+}
+
+/// Rewrite the archive behind `dir_vpk` (a split `<name>_dir.vpk` with `_NNN` chunks, or one
+/// that is already single-file) as one self-contained VPK at `out_vpk`. Preload bytes are
+/// folded into the data, so every entry reads back byte for byte the same with the same CRC.
+/// `out_vpk` must not exist yet and must not be `dir_vpk`. Nothing beside `dir_vpk` changes.
+pub fn combine_chunks(dir_vpk: &Path, out_vpk: &Path) -> Result<PackedVpk> {
+    if out_vpk.exists() {
+        return Err(Error::msg(format!(
+            "{} already exists. Pick a new path for the combined archive.",
+            out_vpk.display()
+        )));
+    }
+    let directory = read_vpk_directory_with(dir_vpk, &ReadVpkOptions { keep_preload: true })?;
+    if directory.entries.is_empty() {
+        return Err(Error::msg(format!("{} has no entries to combine.", dir_vpk.display())));
+    }
+
+    let mut entries = Vec::with_capacity(directory.entries.len());
+    for entry in &directory.entries {
+        let mut packed = PackedEntry::named(entry.path.clone(), PathBuf::new())?;
+        packed.length = entry.total_length;
+        entries.push(packed);
+    }
+    let by_path: BTreeMap<&str, &crate::vpk::VpkEntry> =
+        directory.entries.iter().map(|entry| (entry.path.as_str(), entry)).collect();
+
+    if let Some(parent) = out_vpk.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    write_single_file(out_vpk, &mut entries, |packed, sink| {
+        let entry = by_path
+            .get(packed.path.as_str())
+            .ok_or_else(|| Error::msg(format!("{} vanished while combining.", packed.path)))?;
+        let data = read_vpk_entry_data(&directory, entry)?;
+        sink(&data)
+    })?;
+
+    let total_bytes = entries.iter().map(|entry| u64::from(entry.length)).sum();
+    Ok(PackedVpk {
+        dir_path: out_vpk.to_path_buf(),
+        chunk_paths: Vec::new(),
+        entry_count: entries.len(),
+        total_bytes,
+    })
+}
+
+/// True when any entry of `dir_vpk` keeps its bytes in a `_NNN` chunk file. Reads the directory
+/// only: chunk files left beside a single-file archive do not count.
+pub fn is_split(dir_vpk: &Path) -> Result<bool> {
+    let directory = read_vpk_directory_with(dir_vpk, &ReadVpkOptions { keep_preload: false })?;
+    Ok(directory
+        .entries
+        .iter()
+        .any(|entry| entry.length > 0 && entry.archive_index != VPK_DIRECTORY_ARCHIVE))
+}
+
+/// Write `entries` inline into one VPK at `path`. `read` streams each entry's bytes into the
+/// sink it is given; lengths are checked and CRCs computed on the way. The data goes to a
+/// temporary sibling first, then header, tree and data land in place with one rename.
+fn write_single_file(
+    path: &Path,
+    entries: &mut [PackedEntry],
+    mut read: impl FnMut(&PackedEntry, &mut dyn FnMut(&[u8]) -> Result<()>) -> Result<()>,
+) -> Result<()> {
+    let data_path = temp_path(&path.with_extension("data"));
+    let result = (|| -> Result<()> {
+        let mut writer = BufWriter::new(File::create(&data_path)?);
+        let mut offset: u64 = 0;
+        for entry in entries.iter_mut() {
+            let mut hasher = crc32fast::Hasher::new();
+            let mut written: u64 = 0;
+            read(entry, &mut |bytes: &[u8]| {
+                hasher.update(bytes);
+                writer.write_all(bytes)?;
+                written += bytes.len() as u64;
+                Ok(())
+            })?;
+            if written != u64::from(entry.length) {
+                return Err(Error::msg(format!(
+                    "{} changed size while packing: expected {} bytes, read {}.",
+                    entry.path, entry.length, written
+                )));
+            }
+            entry.crc32 = hasher.finalize();
+            entry.archive_index = VPK_DIRECTORY_ARCHIVE;
+            entry.offset = u32::try_from(offset).map_err(|_| {
+                Error::msg("A single-file VPK must stay under 4 GiB. Pack it in chunks instead.")
+            })?;
+            offset += written;
+        }
+        writer.flush()?;
+        drop(writer);
+        let data_size = u32::try_from(offset).map_err(|_| {
+            Error::msg("A single-file VPK must stay under 4 GiB. Pack it in chunks instead.")
+        })?;
+
+        let head = directory_bytes(entries, data_size)?;
+        let partial = temp_path(path);
+        let written = (|| -> Result<()> {
+            let mut out = BufWriter::new(File::create(&partial)?);
+            out.write_all(&head)?;
+            std::io::copy(&mut File::open(&data_path)?, &mut out)?;
+            out.flush()?;
+            Ok(())
+        })();
+        if let Err(error) = written.and_then(|()| fs::rename(&partial, path).map_err(Error::from)) {
+            let _ = fs::remove_file(&partial);
+            return Err(error);
+        }
+        Ok(())
+    })();
+    let _ = fs::remove_file(&data_path);
+    result
 }
 
 struct PackedEntry {
@@ -160,6 +332,13 @@ impl PackedEntry {
             ))
         })?;
 
+        let mut entry = Self::named(path, source)?;
+        entry.length = length;
+        Ok(entry)
+    }
+
+    /// An entry for `path` with its name split the VPK way, length zero.
+    fn named(path: String, source: PathBuf) -> Result<Self> {
         let (directory, file_name) = match path.rsplit_once('/') {
             Some((directory, file_name)) => (directory.to_string(), file_name),
             None => (String::new(), path.as_str()),
@@ -179,7 +358,7 @@ impl PackedEntry {
             directory,
             name,
             extension,
-            length,
+            length: 0,
             crc32: 0,
             archive_index: 0,
             offset: 0,
@@ -587,6 +766,64 @@ mod tests {
             let rejected = collect_staging_entries(&linked).unwrap_err();
             assert!(rejected.to_string().contains("symbolic link"));
         }
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn single_file_packs_and_combined_chunks_read_back_the_same() {
+        let root = temp_root("single");
+        let staging = root.join("staging");
+        fs::create_dir_all(staging.join("models/heroes_wip/billy")).unwrap();
+        fs::create_dir_all(staging.join("materials")).unwrap();
+        fs::write(staging.join("models/heroes_wip/billy/billy.vmdl_c"), b"model-bytes").unwrap();
+        fs::write(staging.join("materials/hero.vmat_c"), b"material").unwrap();
+        fs::write(staging.join("materials/empty.vmat_c"), b"").unwrap();
+        fs::write(staging.join("readme"), b"no extension").unwrap();
+
+        let expected = [
+            ("models/heroes_wip/billy/billy.vmdl_c", b"model-bytes".as_slice()),
+            ("materials/hero.vmat_c", b"material".as_slice()),
+            ("materials/empty.vmat_c", b"".as_slice()),
+        ];
+        let check = |dir: &Path| {
+            let directory = read_vpk_directory(dir).unwrap();
+            assert_eq!(directory.entries.len(), 4);
+            for (path, bytes) in expected {
+                let entry = directory.by_path.get(path).unwrap();
+                let data = read_vpk_entry_data(&directory, entry).unwrap();
+                assert_eq!(data, bytes, "{path}");
+                assert_eq!(entry.crc32, crc32(&data), "{path}");
+                assert_eq!(entry.archive_index, VPK_DIRECTORY_ARCHIVE, "{path}");
+            }
+            assert_eq!(directory.header.file_data_section_size, 11 + 8 + 12);
+        };
+
+        let single = pack_vpk_single(&PackOptions::new(staging.clone(), root.join("one"), "pak07"))
+            .unwrap();
+        assert!(single.chunk_paths.is_empty());
+        assert!(!root.join("one").join("pak07_000.vpk").exists());
+        assert_eq!(fs::read_dir(root.join("one")).unwrap().count(), 1, "no temporary file is left");
+        check(&single.dir_path);
+        assert!(!is_split(&single.dir_path).unwrap());
+
+        let split = pack_vpk(&PackOptions {
+            staging_dir: staging.clone(),
+            output_dir: root.join("split"),
+            base_name: "pak07".to_string(),
+            chunk_size: 8,
+        })
+        .unwrap();
+        assert!(split.chunk_paths.len() > 1);
+        assert!(is_split(&split.dir_path).unwrap());
+
+        let out = root.join("combined").join("pak07_dir.vpk");
+        let combined = combine_chunks(&split.dir_path, &out).unwrap();
+        assert_eq!(combined.entry_count, 4);
+        check(&out);
+        assert!(!is_split(&out).unwrap());
+        assert!(split.chunk_paths.iter().all(|chunk| chunk.is_file()), "the source is untouched");
+        assert!(combine_chunks(&split.dir_path, &out).is_err(), "an existing output is refused");
 
         let _ = fs::remove_dir_all(&root);
     }

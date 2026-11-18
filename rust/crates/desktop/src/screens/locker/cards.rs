@@ -9,6 +9,7 @@ use rune::{
 };
 
 use crate::app::State;
+use crate::screens::settings::i18n::{fill, tr};
 use crate::ui::{ActionKind, BODY, BODY_MED, SMALL, Ui};
 
 use super::{
@@ -292,7 +293,62 @@ pub(super) fn shuffle_dialog(s: &State, u: &Ui) -> El {
                         }),
                 ),
         );
+        // C14: Grimoire's shuffle pool. With none picked every skin of the hero can come up;
+        // picking some keeps the roll to those. The roll never repeats the skin on now.
+        if on {
+            for m in v.mods.iter().filter(|m| m.heroes.contains(&hero.display_name)) {
+                let key = m.key.clone();
+                let in_pool = v.prefs.in_pool(&m.key);
+                list = list.child(
+                    row()
+                        .key(format!("locker-pool-{}", m.slot))
+                        .w_full()
+                        .h(34.0)
+                        .pl(16.0)
+                        .gap(10.0)
+                        .center_y()
+                        .role("checkbox")
+                        .checked(in_pool)
+                        .label(fill(tr("{} in the shuffle pool"), &[&m.label]))
+                        .cursor(rune::Cursor::Pointer)
+                        .on_press(move |st: &mut State| {
+                            st.locker.prefs.toggle_pool(&key);
+                            crate::data::save_locker_prefs(st);
+                        })
+                        .child(
+                            rune::icon(&crate::icons::CIRCLE_CHECK, 14.0)
+                                .color(if in_pool { u.accent } else { u.faint.alpha(0.5) })
+                                .a11y_hidden(),
+                        )
+                        .child(text(m.label.clone()).font(BODY).color(u.prose).grow(1.0).min_w(0.0).truncate()),
+                );
+            }
+        }
     }
+    let multi = v.prefs.multi_skin;
+    let multi_row = row()
+        .key("locker-multi-skin")
+        .w_full()
+        .gap(12.0)
+        .center_y()
+        .label(tr("Several skins per hero"))
+        .child(
+            col()
+                .grow(1.0)
+                .min_w(0.0)
+                .gap(2.0)
+                .child(text(tr("Several skins per hero")).font(BODY_MED).color(u.ink))
+                .child(
+                    text(tr("Equip adds a skin and keeps the others on, for skins that change different parts. Off: equip swaps."))
+                        .font(SMALL)
+                        .color(u.muted)
+                        .wrap(),
+                ),
+        )
+        .child(u.toggle(multi).cursor(rune::Cursor::Pointer).on_press(|st: &mut State| {
+            st.locker.prefs.multi_skin = !st.locker.prefs.multi_skin;
+            crate::data::save_locker_prefs(st);
+        }));
 
     let mut buttons = row()
         .w_full()
@@ -317,6 +373,7 @@ pub(super) fn shuffle_dialog(s: &State, u: &Ui) -> El {
         .w_full()
         .gap(16.0)
         .child(dialog_title(u, "Shuffle on launch".to_string(), "locker-shuffle-close"))
+        .child(multi_row)
         .child(
             text("Each launch turns on one random skin for these heroes. Their other skins turn off.")
                 .font(BODY)
@@ -513,7 +570,7 @@ pub(super) fn applied_dialog(s: &State, u: &Ui) -> El {
                                     .truncate(),
                             )
                             .child(
-                                text(format!("Slot {:02}", m.slot))
+                                text(format!("Slot {}", deadlock_core::addons::slot_label(m.slot)))
                                     .font(SMALL)
                                     .color(u.faint)
                                     .truncate(),

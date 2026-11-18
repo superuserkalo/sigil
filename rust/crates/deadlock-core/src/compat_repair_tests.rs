@@ -125,21 +125,26 @@ fn detects_animation_overrides_from_compiled_names() {
 }
 
 #[test]
-fn split_archives_are_refused() {
+fn split_archives_are_combined_before_a_repair() {
     let root = root("split");
-    let base = vpk(&root, "pak01", &[("scripts/heroes.vdata_c", b"base")]);
-    let mod_vpk = vpk(&root, "pak03", &[("scripts/heroes.vdata_c", b"mod")]);
-    let out = root.join("staged_dir.vpk");
+    let base = single_file_vpk(&root, "pak01", &[("materials/rock.vmat_c", b"base")]);
+    let mod_vpk = vpk(&root, "pak03", &[("materials/rock.vmat_c", b"mod")]);
+    assert!(crate::vpk_write::is_split(&mod_vpk).unwrap());
+    let staging = root.join("staging");
+    fs::create_dir_all(&staging).unwrap();
+    let out = staging.join("staged_dir.vpk");
 
-    let error = check(&base, &mod_vpk, RepairKind::Data, false).unwrap_err();
-    assert!(
-        error.to_string().contains("split archive"),
-        "unexpected error: {error}"
-    );
+    let findings = check(&base, &mod_vpk, RepairKind::Data, false).unwrap();
+    assert!(findings.iter().all(|f| !f.repairable), "nothing here is a repairable resource");
 
-    let error = repair_to(&base, &mod_vpk, &out, RepairKind::Cameras, false).unwrap_err();
-    assert!(error.to_string().contains("split archive"));
+    let applied = repair_to(&base, &mod_vpk, &out, RepairKind::Cameras, false).unwrap();
+    assert!(applied.is_empty());
     assert!(!out.exists());
+    assert_eq!(
+        fs::read_dir(&staging).unwrap().count(),
+        0,
+        "the combined copy is removed after the run"
+    );
 
     let _ = fs::remove_dir_all(&root);
 }

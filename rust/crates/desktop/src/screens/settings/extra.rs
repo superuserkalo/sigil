@@ -51,6 +51,8 @@ pub struct Extra {
     pub draft: Option<super::templates::Draft>,
     pub forge: super::forge::Bridge,
     pub onboarding: Option<super::onboarding::Step>,
+    /// Wave 4: the page the setup opens when it finishes (Installed after the mods step).
+    pub after_onboarding: Option<crate::model::Screen>,
     pub onboarding_error: Option<String>,
     pub last_screen: Option<String>,
     pub editors: Option<Vec<super::editor::Found>>,

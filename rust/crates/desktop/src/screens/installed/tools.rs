@@ -208,7 +208,7 @@ pub fn poll(st: &mut State) -> bool {
                     };
                 }
                 if let Some(profile) = profile {
-                    if found.source == "lookup" {
+                    if matches!(found.source.as_str(), "lookup" | "crc" | "name") {
                         if let Some(ui) = &mut st.installed.tools.identify {
                             ui.pending = Some((found.clone(), profile));
                         }
@@ -253,7 +253,7 @@ pub fn poll(st: &mut State) -> bool {
                 }
                 if removed || n == 0 {
                     st.installed.last_undo = Some(super::Undo::FontsRemoved(slot));
-                    st.status = format!("Took the fonts of slot {slot:02} out.");
+                    st.status = format!("Took the fonts of slot {} out.", deadlock_core::addons::slot_label(slot));
                 } else {
                     st.installed.last_undo = Some(super::Undo::FontsInstalled(slot));
                     st.status = format!(
@@ -428,6 +428,41 @@ enum Ask {
     Link(u64, Option<u64>),
     /// Sigil's hash index, with unknown-mod lookup consent (`settings::telemetry::lookup`).
     Lookup,
+    /// GameBanana name search, then Grimoire's archive CRC probe over the hits (C8) when the
+    /// player turned it on. Search words come from the name Sigil shows and the file name.
+    Name(Vec<String>, bool),
+}
+
+// --- CRC opt-in (Grimoire: an off-by-default switch) -------------------------------------------
+//
+// The CRC probe reads parts of every matching archive from GameBanana. It stays off until the
+// player ticks "Also compare checksums" in the identify dialog; the choice is remembered in
+// `<data>/identify-crc.json`.
+
+fn crc_path() -> std::path::PathBuf {
+    crate::data::data_dir().join("identify-crc.json")
+}
+
+static CRC_ON: std::sync::OnceLock<std::sync::atomic::AtomicBool> = std::sync::OnceLock::new();
+
+fn crc_cell() -> &'static std::sync::atomic::AtomicBool {
+    CRC_ON.get_or_init(|| {
+        let on = !rune::is_headless()
+            && !cfg!(test)
+            && std::fs::read_to_string(crc_path()).is_ok_and(|text| text.trim() == "true");
+        std::sync::atomic::AtomicBool::new(on)
+    })
+}
+
+pub fn crc_on() -> bool {
+    crc_cell().load(std::sync::atomic::Ordering::Relaxed)
+}
+
+fn set_crc(on: bool) {
+    crc_cell().store(on, std::sync::atomic::Ordering::Relaxed);
+    if !rune::is_headless() && !cfg!(test) {
+        let _ = std::fs::write(crc_path(), if on { "true" } else { "false" });
+    }
 }
 
 /// Look at a slot's own metadata and Sigil's records. No network until a mod is known or a link
@@ -474,6 +509,45 @@ fn start_identify(st: &mut State, slot: u16, ask: Ask) {
                     file_id,
                     ..Match::default()
                 },
+                Ask::Name(terms, crc) => {
+                    let mut ids: Vec<u64> = Vec::new();
+                    let mut first: Option<deadlock_core::gamebanana::BrowseMod> = None;
+                    for term in terms.iter().take(2) {
+                        for hit in deadlock_core::mod_lookup::search_by_name(term, 10).map_err(|e| e.to_string())? {
+                            if !ids.contains(&hit.id) {
+                                ids.push(hit.id);
+                                if first.is_none() {
+                                    first = Some(hit);
+                                }
+                            }
+                        }
+                    }
+                    if ids.is_empty() {
+                        return Err(tr("GameBanana has no mod by that name. Paste its link instead.").to_string());
+                    }
+                    let probe = if crc {
+                        deadlock_core::mod_lookup::crc_detect(&path, &ids, None).map_err(|e| e.to_string())?
+                    } else {
+                        None
+                    };
+                    match probe {
+                        // The file's checksum is inside one of the hits' archives: a sure match.
+                        Some(hit) => Match {
+                            gamebanana_id: Some(hit.gamebanana_id),
+                            file_id: Some(hit.file_id),
+                            source: "crc".to_string(),
+                            ..Match::default()
+                        },
+                        // No archive holds it (or they are not ZIP files): the best name match, to
+                        // confirm by eye.
+                        None => Match {
+                            gamebanana_id: first.as_ref().map(|hit| hit.id),
+                            name: first.as_ref().map(|hit| hit.name.clone()),
+                            source: "name".to_string(),
+                            ..Match::default()
+                        },
+                    }
+                }
                 Ask::Lookup => {
                     let best = crate::screens::settings::telemetry::lookup(&path)?
                         .into_iter()
@@ -702,6 +776,43 @@ pub fn identify_dialog(s: &State, u: &Ui) -> Option<El> {
                 }),
         );
     }
+    let mut search_row = row().w_full().gap(8.0).center_y();
+    if ui.stage == Stage::Failed && !s.prefs.offline {
+        let slot = ui.slot;
+        search_row = search_row.child(
+            u.action(tr("Search GameBanana by name"), ActionKind::Ghost)
+                .key("identify-name")
+                .cursor(rune::Cursor::Pointer)
+                .on_press(move |st: &mut State| {
+                    let terms = st
+                        .addons
+                        .addons
+                        .iter()
+                        .find(|a| a.slot == slot)
+                        .map(|a| {
+                            let shown = super::display_name(st, a);
+                            deadlock_core::mod_lookup::search_terms(Some(&shown), &[a.file.as_str()])
+                        })
+                        .unwrap_or_default();
+                    start_identify(st, slot, Ask::Name(terms, crc_on()));
+                }),
+        );
+        let on = crc_on();
+        search_row = search_row.child(
+            row()
+                .key("identify-crc")
+                .gap(6.0)
+                .center_y()
+                .focusable(true)
+                .role("checkbox")
+                .checked(on)
+                .label(tr("Also compare checksums"))
+                .cursor(rune::Cursor::Pointer)
+                .on_press(move |_st: &mut State| set_crc(!on))
+                .child(rune::icon(if on { &icons::SQUARE_CHECK } else { &icons::SQUARE }, 14.0).color(if on { u.accent } else { u.faint }).a11y_hidden())
+                .child(text(tr("Also compare checksums")).font(SMALL).color(u.muted).a11y_hidden()),
+        );
+    }
     actions = actions.child(spacer());
     if ui.stage == Stage::Failed {
         actions = actions.child(
@@ -728,6 +839,7 @@ pub fn identify_dialog(s: &State, u: &Ui) -> Option<El> {
             .modal(true, close)
             .child(text(name).font(H1).color(u.ink).wrap())
             .child(body)
+            .child(search_row)
             .child(actions),
     )
 }
@@ -933,7 +1045,7 @@ pub fn health_dialog(s: &State, u: &Ui) -> Option<El> {
                     .gap(8.0)
                     .center_y()
                     .border_sides([0.0, 0.0, 1.0, 0.0], u.hair)
-                    .child(text(format!("{:02}", review.slot)).font(MICRO).color(u.faint).w(20.0))
+                    .child(text(deadlock_core::addons::slot_label(review.slot)).font(MICRO).color(u.faint).w(28.0))
                     .child(text(name.clone()).font(BODY_MED).color(u.ink).truncate().grow(1.0).min_w(0.0))
                     .child(
                         text(format!(
@@ -1055,7 +1167,7 @@ pub fn merge_dialog(s: &State, u: &Ui) -> Option<El> {
                         }
                     })
                     .child(super::check_box(u, on, false))
-                    .child(text(format!("{slot:02}")).font(MICRO).color(u.faint).w(20.0))
+                    .child(text(deadlock_core::addons::slot_label(slot)).font(MICRO).color(u.faint).w(28.0))
                     .child(
                         text(super::display_name(s, addon))
                             .font(BODY)
@@ -1506,4 +1618,18 @@ mod tests {
         assert_eq!(outdated_slots(&reviews), vec![4, 9]);
         assert!(outdated_slots(&[]).is_empty());
     }
+}
+
+/// `w4a-identify-name`: an unknown mod, with Search GameBanana by name and the checksum opt-in.
+pub fn scene_identify_name(st: &mut State) {
+    crate::app::scene_demo_installed(st);
+    st.installed.tools.identify = Some(IdentifyUi {
+        slot: 9,
+        link: TextEdit::new(""),
+        found: None,
+        stage: Stage::Failed,
+        error: None,
+        job: Job::default(),
+        pending: None,
+    });
 }

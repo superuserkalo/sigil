@@ -56,6 +56,10 @@ pub struct Shell {
     pub blur_failed: Option<String>,
     /// The key of the blur on the worker, to know what failed.
     pub blur_running: Option<String>,
+    /// Wave 4: collapsed sidebar, New marks, hidden banners.
+    pub w4: crate::shell_w4::W4,
+    /// Wave 4: feature tips, the experimental tour, easter eggs and seasons.
+    pub tips: crate::shell_tips::Tips,
 }
 
 pub struct Notes {
@@ -158,6 +162,11 @@ pub fn on_key(st: &mut State, ev: &KeyEvent, _tx: &mut Tx) -> bool {
         }
         'm' if ev.mods.shift => {
             open_mods_folder(st);
+            true
+        }
+        // Collapse or expand the sidebar (DMM's shortcut).
+        'b' if !ev.mods.shift => {
+            crate::shell_w4::toggle_sidebar(st);
             true
         }
         _ => false,

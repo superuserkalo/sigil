@@ -265,7 +265,8 @@ pub(crate) fn start_details_fetch(st: &mut State) {
 /// Apply finished reads (details, categories, the top list, the mirror, previews) and the
 /// titlebar search once typing pauses. Called from `app::poll`.
 pub fn poll(st: &mut State, tx: &mut Tx) -> bool {
-    let mut changed = poll_search(st, tx);
+    let copied = super::w4::poll_copy(st, tx);
+    let mut changed = poll_search(st, tx) | copied;
     // One-press installs: queue rows, the install worker, Installed and Update states.
     changed |= super::quick::poll(st);
     if st.screen == Screen::Browse {
@@ -776,10 +777,13 @@ pub(crate) fn available_update(s: &State, id: u64) -> Option<RemoteFile> {
         .mods
         .get(&id)
         .or_else(|| s.browse_view.update_cache.as_ref().and_then(|cache| cache.mods.get(&id)))?;
-    let baseline = deadlock_core::mod_updates::baseline_for(
+    // A repaired mod keeps matching its update (C3): the alias maps it back to the original.
+    let baseline = deadlock_core::mod_updates::baseline_for_repaired(
         &s.installed.updates.journal,
+        &s.installed.updates.aliases,
         id,
         meta.size_bytes,
+        None,
         &meta.recorded_at,
     );
     match deadlock_core::mod_updates::compare(baseline, remote) {

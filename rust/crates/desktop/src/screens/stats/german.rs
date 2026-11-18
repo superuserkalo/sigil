@@ -236,6 +236,29 @@ pub const DE: &[(&str, &str)] = &[
     ("Open on Statlocker", "Auf Statlocker öffnen"),
     ("The page could not be opened: {}", "Die Seite ließ sich nicht öffnen: {}"),
     ("\u{00b7} \u{00b7} \u{00b7}", "\u{00b7} \u{00b7} \u{00b7}"),
+    ("Add player", "Spieler hinzufügen"),
+    ("Each player offers up to 3 heroes, as in queue. Press a player, then heroes below.", "Jeder Spieler bietet bis zu 3 Helden an, wie in der Warteschlange. Drück einen Spieler, dann Helden unten."),
+    ("Everyone's games in the filter's window, 30 days when none is set. Items need 500 matches to show.", "Die Spiele aller im Zeitraum des Filters, 30 Tage ohne Zeitraum. Gegenstände brauchen 500 Matches, um zu erscheinen."),
+    ("Filters every section below", "Filtert jeden Abschnitt darunter"),
+    ("Give at least two players a hero.", "Gib mindestens zwei Spielern einen Helden."),
+    ("No heroes yet", "Noch keine Helden"),
+    ("No item has enough matches in this window.", "Kein Gegenstand hat in diesem Zeitraum genug Matches."),
+    ("Overview and Heroes show this filter.", "Übersicht und Helden zeigen diesen Filter."),
+    ("Player {}", "Spieler {}"),
+    ("Reading your stats for this filter", "Deine Statistiken für diesen Filter werden gelesen"),
+    ("Remove player", "Spieler entfernen"),
+    ("Show item meta", "Item-Meta zeigen"),
+    ("Take out {}", "{} herausnehmen"),
+    ("The filtered stats did not load: {}", "Die gefilterten Statistiken haben nicht geladen: {}"),
+    ("Item meta", "Item-Meta"),
+    ("Win rate and buy time of every item across all players", "Siegquote und Kaufzeit jedes Gegenstands über alle Spieler"),
+    ("Most played heroes", "Meistgespielte Helden"),
+    ("Pick heroes by hand", "Helden selbst wählen"),
+    ("Every lineup your party can queue, rated from pair and trio records", "Jede Aufstellung, die deine Gruppe spielen kann, bewertet aus Paar- und Trio-Daten"),
+    ("This patch", "Dieser Patch"),
+    ("The filter's window", "Zeitraum des Filters"),
+    ("Everyone's games since the patch on {}. Items need 500 matches to show.", "Die Spiele aller seit dem Patch vom {}. Gegenstände brauchen 500 Matches, um zu erscheinen."),
+    ("No patch date was found, so this is the last 30 days. Items need 500 matches to show.", "Kein Patchdatum gefunden, daher die letzten 30 Tage. Gegenstände brauchen 500 Matches, um zu erscheinen."),
 ];
 
 pub fn get(text: &str) -> Option<&'static str> {
@@ -302,7 +325,7 @@ pub fn routed(source: &str) -> Vec<String> {
 mod tests {
     use super::*;
 
-    const SOURCES: [&str; 10] = [
+    const SOURCES: [&str; 11] = [
         include_str!("more.rs"),
         include_str!("mod.rs"),
         include_str!("brief.rs"),
@@ -313,6 +336,7 @@ mod tests {
         include_str!("leaderboard.rs"),
         include_str!("map.rs"),
         include_str!("demos.rs"),
+        include_str!("w4.rs"),
     ];
 
     #[test]

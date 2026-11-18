@@ -27,6 +27,7 @@ pub(crate) fn snapshot(s: &State) -> persist::Persisted {
         card_size: s.browse_view.card_size.id().to_string(),
         paged: s.browse_view.paged,
         audio_volume: s.browse_view.audio.volume,
+        audio_unmuted: s.bar.unmuted,
         hidden_mods: s
             .browse_view
             .hidden_mods
@@ -81,9 +82,11 @@ pub(crate) fn apply_persisted(st: &mut State, saved: persist::Persisted) -> bool
     st.browse_view.layout = Layout::from_id(&saved.layout);
     st.browse_view.card_size = CardSize::from_id(&saved.card_size);
     st.browse_view.paged = saved.paged;
-    if saved.audio_volume > 0.0 {
-        st.browse_view.audio.set_volume(saved.audio_volume);
+    // A saved 0 is a mute and comes back as one (wave 4); the level before it stays for Unmute.
+    if saved.audio_volume >= 0.0 {
+        st.browse_view.audio.set_volume(saved.audio_volume.min(1.0));
     }
+    st.bar.unmuted = saved.audio_unmuted;
     st.browse_view.hidden_mods = saved.hidden_mods.iter().map(|hidden| hidden.id).collect();
     st.browse_view.hidden_names = saved
         .hidden_mods

@@ -1,6 +1,6 @@
 # Feature parity: Grimoire and Deadlock Mod Manager
 
-Status: audit 2026-11-17, updated the same day; wave 3 rows updated 2026-11-18. Browse and mod details are built, including a
+Status: audit 2026-11-17, updated the same day; wave 3 rows updated 2026-11-18; wave 4 (UI B) rows updated 2026-11-18. Browse and mod details are built, including a
 bounded local catalog mirror (JSONL, no new crate, no SQLite), the inline sound player and the
 multi-VPK picker. The Installed page has its first round. The global shell has its round: drop
 anywhere, zoom chords, the shortcuts sheet, What's new after an update, the tray, density, and a
@@ -35,8 +35,8 @@ Two architectural differences drive many rows:
 | --- | ---: | ---: | ---: | ---: |
 | Browse | 37 | 0 | 0 | 0 |
 | Mod details | 19 | 0 | 1 | 0 |
-| Installed | 29 | 3 | 0 | 0 |
-| Locker | 9 | 1 | 1 | 0 |
+| Installed | 40 | 0 | 0 | 0 |
+| Locker | 12 | 0 | 1 | 0 |
 | Crosshair | 9 | 0 | 0 | 1 |
 | Autoexec | 4 | 1 | 0 | 0 |
 | Performance | 8 | 0 | 0 | 0 |
@@ -110,7 +110,11 @@ Endpoints, verified with curl against the live API on 2026-11-17 (Deadlock game 
 | Card: downloads | D | Download count | has (built: the mod page's count is kept in the saved catalog) | M | P3 |
 | Sound preview | G+D | Inline player, one at a time, volume | has (built: rodio player, one sample, volume in View options) | M | P2 |
 | Hover prefetch of details | D | 250 ms hover prefetch | has (built: profile cached after 250 ms) | S | P3 |
-| Card context menu: copy image / link | G | Right click | has (built: open, copy link, copy image link, install, hide mod and creator) | S | P3 |
+| Card context menu: copy image / link | G | Right click | has (built: open, copy link, copy image link, install, hide mod and creator; wave 4: Grimoire's image menu on cards, the gallery and the full size view: Copy image (the picture as PNG), Copy image address, Open image) | S | P3 |
+| Random hero | D | Dice on the hero rail | has (wave 4: Random on Browse by hero opens a random hero's skins, never the last pick) | S | P3 |
+| Featured mod per category | D | Weekly pick per category | has (wave 4: Featured this week on the landing, one per category from the saved catalog through `library_facts::featured`, play button for a sound pick) | S | P3 |
+| Bulk paste import | G | Many links, a collection or a code | has (wave 4, `browse/paste.rs`: mod links and ids, a lone collection link opens it; preview with installed and duplicates skipped, Select all, Skip NSFW, Queue N, Cancel remaining; one file per mod picked from its list (newest by default); Save N as a profile once they are installed; a profile code or profile JSON goes to Profiles > Import) | M | P3 |
+| Rate-limit notice | G | GameBanana 429 | has (wave 4: one toast at most every 10 seconds and the empty grid says GameBanana is rate-limiting Sigil) | S | P3 |
 | Catalog sync indicator / local mirror | G+D | SQLite mirror | has (built: bounded JSONL index, background incremental sync, offline browse, author search, date ranges) | L | P3 |
 
 ## Mod details
@@ -118,7 +122,9 @@ Endpoints, verified with curl against the live API on 2026-11-17 (Deadlock game 
 | Feature | Source | What it does | Sigil | Effort | Priority |
 | --- | --- | --- | --- | --- | --- |
 | Modal or docked panel | G | Overlay or side dock | has | - | - |
-| Gallery and lightbox | G+D | Images, arrows, captions | has | - | - |
+| Gallery and lightbox | G+D | Images, arrows, captions | has (wave 4, issue #3: the close button and counter sit on the picture, a press on the backdrop closes; zoom to 400 percent with the wheel, a pinch, a double click or the zoom bar, and pan by dragging while zoomed) | - | - |
+| Delete an installed file from details | G | Trash on the file row | has (wave 4: an Installed list above the files, each slot with Delete through Installed's confirm and trash with Undo) | S | P3 |
+| Resizable docked details | G | Drag the panel edge | has (wave 4: drag its left edge, 320 to 900 points, kept across launches) | S | P3 |
 | About text | G+D | Description | has (plain text, no inline links) | - | - |
 | Files list with per-file install | G+D | Name, size, downloads, date, description, archived | has | - | - |
 | Changelog | G+D | Updates | has (10) | - | - |
@@ -131,7 +137,7 @@ Endpoints, verified with curl against the live API on 2026-11-17 (Deadlock game 
 | Requirements panel | G+D | Required and recommended mods | has (built: requirements section, install and open) | M | P2 |
 | Installed / update / outdated tags, ignore updates | G+D | Status tags | has tags and ignore in Browse; Installed's update check needs the ignore hook | M | P2 |
 | Embedded videos | D | Video embeds | has (built: a Videos list; each opens in the browser) | M | P3 |
-| Donation / Ko-fi, socials | G+D | Support the creator | has (built: donation links from the creator profile) | S | P3 |
+| Donation / Ko-fi, socials | G+D | Support the creator | has (built: donation links from the creator profile; wave 4: the creator's own links from `Member/<id>/ProfilePage`, a Discord user name copies) | S | P3 |
 | 3D model preview | D | three.js viewer | missing | L | P3 |
 | More comments / changelog paging | D | Load more | has (built) | S | P3 |
 | Hero detected and override | D | Hero picker | has (built: detected from the page, change in the picker) | M | P3 |
@@ -151,29 +157,36 @@ Endpoints, verified with curl against the live API on 2026-11-17 (Deadlock game 
 | Status filter (all / enabled / disabled) | G+D | Tabs with counts | has (built) | S | P1 |
 | Source filter (GameBanana / local / other managers / unknown) | G | Filter | has (built) | S | P2 |
 | Hero / category / tag filters | G+D | Filters | has (built: `mod_extras` stores hero, category, tags, a pin, an ignored update, a picture and a variant group; GameBanana metadata is fetched on the page and backfilled for older entries) | M | P2 |
-| Sort (load order, name, recently added, size) | G+D | Sort | has (built) | S | P1 |
-| Grid / list, card size | G+D | View options | has (built: Cards, Small cards, List) | S | P3 |
-| Multi-select, bulk enable / disable / delete | G+D | Selection mode | has (built: check box on hover, shift-click range, select all shown; bulk on, off, delete behind a confirm with "Don't ask again") | M | P1 |
+| Sort (load order, name, hero, recently added, size) | G+D | Sort | has (built; wave 4: sort by hero, the install date on cards from the journal, `library_facts::install_date`) | S | P1 |
+| Grid / list, card size | G+D | View options | has (built: Cards, Small cards, List; wave 4: card style options in View, the details line and the slot number each on or off) | S | P3 |
+| Multi-select, bulk enable / disable / delete | G+D | Selection mode | has (built: check box on hover, shift-click range, select all shown, Ctrl+A (Cmd+A) selects every shown mod and Escape clears (wave 4); bulk on, off, delete behind a confirm with "Don't ask again") | M | P1 |
 | Delete a mod | G+D | Remove the VPK | has (built: card menu and selection; files move to Sigil's trash with restore and Empty trash, `deadlock_core::trash`) | S | P1 |
 | Drag-and-drop install | G+D | Drop files on the window | has on Installed (built: drop veil, then the import review) | S | P1 |
-| Load order reorder | G+D | Drag to change pak number | has (built: drag a card to reorder, Load first, earlier, later in the card menu, and DMM's load order dialog with keyboard moves, top and bottom buttons and one Apply; all go through two-pass renames with rollback, `deadlock_core::load_order`; no search in the dialog yet) | M | P1 |
-| Update checks + update all | G+D | Per-mod badge, batch update with backup | has (built: checked on open at most every 6 hours, Update chip and Update all; same slot, on or off kept, old files backed up; no ignore yet) | M | P1 |
+| Load order reorder | G+D | Drag to change pak number | has (built: drag a card to reorder, Load first, earlier, later in the card menu, and DMM's load order dialog with keyboard moves, top and bottom buttons and one Apply; all go through two-pass renames with rollback, `deadlock_core::load_order`; wave 4: DMM's search by name or author and Grimoire's type-a-place chip in the dialog; ordering the files inside one multi-file mod is the same list, one row per file) | M | P1 |
+| Update checks + update all | G+D | Per-mod badge, batch update with backup | has (built: checked on open at most every 6 hours, Update chip and Update all; same slot, on or off kept, old files backed up; wave 4: Cancel on each Updating or Queued chip and Cancel all beside the progress; a cancel stops the download, `PlanOptions.cancel`; repaired mods keep their check, `baseline_for_repaired`; Update all takes All, Only enabled or Only disabled (DMM); a mod whose installed file was archived offers Replace with each current file; the Update mark follows Settings > Show mod update badges) | M | P1 |
+| Sound preview on installed mods | D | Play a sound mod's sample | has (wave 4, `installed/sound.rs`: Play on cards of mods in a Sound, Audio or Music category, the sample from the mod's GameBanana page, through Browse's player at the shared preview volume) | S | P3 |
 | Variant groups / mod options | G+D | Several files of one mod as one card | has (built: GameBanana files group by mod id, one card with the playing file, a picker with per-file switch, label rename, split and delete) | M | P2 |
+| Group and add variants | G | Group 2+ mods as one card, add files to a group | has (wave 4, `installed/selection.rs`: the selection's More > Group as one mod writes one `variant_group` for the picked files and their card mates, so a group card plus a new file adds it) | S | P3 |
 | Merge mods | G | One VPK from several | has (built: lowest free slot lands off, the lower slot wins, strict mode refuses a shared path, a sidecar record, unmerge to the trash) | L | P3 |
-| Mod lists / groups | G+D | Named groups, enable per group | has (built: a list from the selection, filter by list, turn on or off per list) | M | P3 |
+| Mod lists / groups | G+D | Named groups, enable per group | has (built: a list from the selection, filter by list, turn on or off per list; wave 4: View > Sections by list shows a section per list with Turn on / Turn off and "Not in a list", an icon per list and Move up / down in the Mod lists dialog, `installed/list_sections.rs`) | M | P3 |
 | Tags | G | User tags | has (built: tags per mod, a tag filter, tags in the editor) | M | P3 |
 | Solo test | G | Launch with only this mod | has (built: every other mod off, a line above the cards, Restore) | S | P2 |
-| Unknown VPK identification | G+D | Match CRCs to GameBanana | partial: embedded `addoninfo.txt` / `modinfo.json`, Sigil's sha256 identity store and the install journal, a pasted GameBanana link; no live archive CRC scan | L | P3 |
+| Unknown VPK identification | G+D | Match CRCs to GameBanana | has (wave 4: Search GameBanana by name, then, with the "Also compare checksums" opt-in (off by default, Grimoire's experimental switch), the ZIP CRC probe over the hits, `mod_lookup`, confirmed before it is linked; also: embedded `addoninfo.txt` / `modinfo.json`, Sigil's sha256 identity store and the install journal, a pasted GameBanana link; no live archive CRC scan | L | P3 |
 | Mod safety scan | G | Scripts and executables in VPKs | has (built: `mod_safety` lists programs, scripts, pages and network calls inside a VPK, shown as a card button and a report; a warning, never a gate) | M | P2 |
+| Mod safety gate and view imprint | G | Script mods wait off until reviewed; card menu shows the embedded identity | has (wave 4: turning on a mod with programs, scripts or network calls asks first with Turn on this once and Trust this version, `installed/safety_gate.rs`, skipped by Allow script mods; More actions > View imprint shows sha256, size, the root addoninfo.txt and modinfo.json, the GameBanana id, the download link and merge sources, `installed/imprint.rs`) | S | P3 |
+| Bulk Locker tag | G | Tag the selection in the Locker | has (wave 4: the selection's More > Add to a Locker category) | S | P3 |
 | Copy mod list | G+D | Clipboard export | has (built: slot, name, author, off mark, one a line) | S | P3 |
 | Find broken mod (bisect) | D | Halve the enabled set across launches | has (built: `deadlock_core::bisect`, an all-off launch first, still broken / works / not sure, restore all or leave the culprit off) | M | P3 |
 | Compatibility review / issues | G+D | Outdated, skeleton, data checks | has (paths the game moved or removed, stale hero models and game data, plus vpkmerge's dry run for data, text, sound bindings, skeletons and cameras against pak01) | L | P2 |
-| Compatibility repairs | G+D | Fix mods made for an older build | has (wave 3, `installed/repair.rs`: Repair per mod, Fix all and Revert in the review through `compat_repair::apply_repair` / `revert_repair`, backups and staging in app data, a question first when another mod ships animations, split archives refused with the reason, library and notes follow the new size) | L | P2 |
+| Compatibility repairs | G+D | Fix mods made for an older build | has (wave 3, `installed/repair.rs`: Repair per mod, Fix all and Revert in the review through `compat_repair::apply_repair` / `revert_repair`, backups and staging in app data, a question first when another mod ships animations, split archives combined and repaired (wave 4, C4), library and notes follow the new size) | L | P2 |
 | Issues bulk action | G | Turn off mods with outdated data | has (wave 3: the review's "Turn off N mods with outdated data", a confirm, one Undo) | S | P2 |
 | Requirement load-order fix | G | "The base skin is hiding it. Fix it" | has (wave 3, `installed/req_order.rs`: an amber mark on the dependent, its popover names the base and Fix it moves it before the base through the drag path with Undo; a base kept first cannot be passed and says so) | S | P2 |
-| Random member per group each launch | D | One list member on at random | has (wave 3: a list's Random switch, a Roll step at each modded launch, map mods and missing files left out, the last pick avoided, one Undo) | S | P3 |
+| Random member per group each launch | D | One list member on at random | has (wave 3: a list's Random switch, a Roll step at each modded launch, map mods (by their files or the GameBanana Maps category, off members read too) and missing files left out, the last pick avoided, one Undo) | S | P3 |
 | More than 99 enabled mods | G+D | Overflow folders | has (built: slots 1 to 990 across `sigil-addons2` to `sigil-addons10`, mounted in `gameinfo.gi` after every install, import, merge, reorder or restore and before each modded launch; vanilla launches unmount them; isolated profiles stay at 99) | M | P2 |
 | Recap dialogs after bulk actions | D | What changed | has (built: changed, failed with the reason, not tried, why it stopped) | S | P3 |
+| Per-mod backups | D | Backups an update replaced | has (wave 4, `installed/backups.rs`: More actions > Backups lists `backups::for_slot` with date and size; Put this version back runs the update undo, `trash::undo_update`; Delete removes the backup) | S | P3 |
+| Reinstall | D | Same file again into the same slot | has (wave 4: More actions > Reinstall, the journal's file through the update queue with force, old files backed up; More actions > Delete and reinstall trashes the slot first and puts the old files back on any failure) | S | P3 |
+| Analyze addons, HUD check, missing files, read-only | D | Folder health | has (wave 4, `installed/checks.rs`: More > Analyze the addons folder, per folder counts, leftovers, unknown slots with Find which mod this is, doubled slots, read-only files, missing files with Reinstall; Check HUD mods; a modded launch warns when an enabled mod lacks files; Make writable clears the read-only flag through `game_apply::make_writable`) | M | P3 |
 | Global (always first) mods | G | Priority folder | has (built: "Always load first" moves the mod to the lowest slot of its group and keeps it there; Locker > General also mounts `citadel/grimoire` for hand-placed VPKs, with a backup and tests) | M | P3 |
 | Edit local mod (name, image, NSFW) | G | Metadata editor | has (built: name, a picture copied into Sigil's data folder, a mature flag; GameBanana entries too) | S | P3 |
 | Fonts prompt | D | Install shipped fonts | has (built: `deadlock_core::fonts` copies `panorama/fonts` files, adds a `<fontpattern>` block per mod with a config backup, and removes both; offered from the card) | S | P3 |
@@ -189,8 +202,11 @@ Endpoints, verified with curl against the live API on 2026-11-17 (Deadlock game 
 | General categories | G | Soul containers, urns, hideout, icons | has | - | - |
 | Hero favorites, type-ahead, prev/next | G | Navigation | has (built: star on cards, list rows and the hero page, Starred filter, hero search over names and aliases, list view, prev/next walk the filtered list) | S | P3 |
 | Skin variants, equip, reorder | G+D | Per-hero load order | has (built: skins in load order, Equip turns the others off, arrows move a skin within the hero's numbers, `deadlock_core::locker`) | M | P2 |
+| Several skins per hero, shuffle pool | G+D | Equip adds; a pool for the shuffle | has (wave 4, C14: a Shuffle dialog switch makes Equip add a skin, `locker_parts::equip_wanted`; per-skin pool picks; the shuffle never repeats the skin on now, `shuffle_wanted`) | S | P3 |
+| Weapon skins and voice lines per hero | D | Weapon skins, voice lines and gun sounds under their hero | has (wave 4, `locker/parts.rs`: each mod's VPK paths read with the Locker into `locker_parts::hero_parts`, a hero page section Weapons and voice with each mod's switch, `by_hero` sorting) | M | P3 |
+| Locker image per mod | G | A picture per mod | has (wave 4, `locker/art.rs`: Locker rows show the picture Installed shows, a Picture button opens the shared editor; one picture per mod, no separate background art) | S | P3 |
 | Shuffle on launch | G+D | Random skin per hero | has (per-hero switch, seeded pick, Shuffle now; the launch's Roll step runs it while the Locker page is on, wave 3) | M | P2 |
-| Cursor packs | G | Import, apply, restore Deadlock's cursors | has (wave 3, `locker/cursors.rs`: General > Cursors, cards with previews, import a folder, a cursor file's folder or an archive, apply and restore through `cursors::apply` / `restore`, delete with a confirm, Find cursors) | M | P3 |
+| Cursor packs | G | Import, apply, restore Deadlock's cursors | has (wave 3, `locker/cursors.rs`: General > Cursors, cards with previews, import a folder, a cursor file's folder or an archive, apply and restore through `cursors::apply` / `restore`, delete with a confirm, Find cursors; wave 4: a banner when Steam put stock files back or the pack was updated, with Apply again; the stock card previews `stock_preview_folder`; a cursor archive Sigil downloaded imports with its GameBanana source and replaces the older pack in place) | M | P3 |
 | Browse skins for this hero | G+D | Jump to Browse with the hero filter | has | - | - |
 | Ability sounds | G | Per-ability sound mod | has (built: `sounds/abilities` classification by `aN` token, hero page Sounds section, one sound per ability) | M | P3 |
 | Custom hero cards | G | Portrait upload and crop | has (built: PNG/JPEG/WebP copy in app data, crop slider, remove) | M | P3 |
@@ -248,8 +264,9 @@ Endpoints, verified with curl against the live API on 2026-11-17 (Deadlock game 
 | Live match view | D | Needs `-condebug` plus a HUD bridge mod; designed in `docs/design/stats-live.md` | missing | L | P3 |
 | Open on Statlocker | G | Links to statlocker.gg | has (wave 3: the player in the header and tracked list, teammates and opponents, an open match and the scoreboard; a browser link, no app request) | S | P3 |
 | Items tab | D | Item win rates and purchase timelines | has (wave 3, `stats/more.rs`: the player's item rows against everyone's, buy time against everyone's, and an open match's purchase timeline) | M | P3 |
-| Ranked and date filters | D | Scope Overview, Heroes, Items | partial: ranked, unranked and a start date scope Matches, Items and Party; Overview and Heroes come from the snapshot and are not filtered yet | M | P3 |
-| Party tab | D | Rate the lineups a party can queue | has (wave 3: pick tracked players and premades, each member's three most played heroes, pair and trio records, estimates for larger parties, low samples greyed) | M | P3 |
+| Ranked and date filters | D | Scope Overview, Heroes, Items | has (wave 4: the filter sits on top and scopes every section; with a filter set the overview and Heroes read `fetch_snapshot_filtered` on a worker) | M | P3 |
+| Party tab | D | Rate the lineups a party can queue | has (wave 3: pick tracked players and premades, each member's three most played heroes, pair and trio records, estimates for larger parties, low samples greyed; wave 4: DMM's planner, up to six players each offering up to three heroes picked by hand, `party::rate_lineups`) | M | P3 |
+| Item meta | D | Everyone's best items | has (wave 4: Stats > Item meta, `items::global_item_stats` since the newest patch (Steam feed cache) or in the filter's window, 30 days when none is set) | S | P3 |
 
 ## Profiles
 
@@ -289,8 +306,8 @@ Endpoints, verified with curl against the live API on 2026-11-17 (Deadlock game 
 | Confirm dialogs | - | Sigil approval gate | has | - | - |
 | Running state, stop game | G+D | Detect and stop | has (`launch.rs` monitors the process table, Stop game behind a confirm, `deadlock_core::launch::stop_game`) | S | P2 |
 | Crash advisories from dumps | G+D | Likely culprit mod | has (`launch.rs` advisory: dump error text matched against shipped paths, else the newest install from before the crash; turn the mod off or dismiss) | M | P2 |
-| Map mod launch warning | D | Ask to turn map mods off | has (wave 3, `launch_extras.rs`: map mods found from their VPK paths on a worker, a modded launch asks Turn them off and launch, Launch anyway, Don't ask again; Settings > Mods switch) | S | P3 |
-| Launch checklist overlay | D | Steps before launch | has (`launch.rs`: gameinfo, overlaps and updates before a modded launch, with a fix per row and Launch anyway) | M | P3 |
+| Map mod launch warning | D | Ask to turn map mods off | has (wave 3, `launch_extras.rs`: map mods found from their VPK paths on a worker or the GameBanana Maps category (wave 4), a modded launch asks Turn them off and launch, Launch anyway, Don't ask again; Settings > Mods switch) | S | P3 |
+| Launch checklist overlay | D | Steps before launch | has (wave 4: the gameinfo fix here and on the Launch page runs `game_apply::apply_gameinfo_repair`, keeping other mounts, with `deploy::repair_gameinfo` as the fallback; `launch.rs`: gameinfo, overlaps and updates before a modded launch, with a fix per row and Launch anyway) | M | P3 |
 | Discord rich presence | G+D | Optional presence | has (`settings/discord.rs`; launch and stop set the running state at once, so presence switches without waiting for the 30 s check) | M | P3 |
 
 ## Overlap
@@ -300,7 +317,7 @@ Endpoints, verified with curl against the live API on 2026-11-17 (Deadlock game 
 | Pairs that touch the same files, winner | G+D | Report | has | - | - |
 | Grouped by kind with search | G | HUD, models, sounds | has | - | - |
 | Make X win (swap order), disable one | G+D | Resolve | has (`conflicts.rs`: pick a losing slot, then swap the two slot numbers through `load_order` with undo, or turn it off) | S | P1 |
-| Ignore pair / file / mod with restore | G+D | Ignore lists | has (`deadlock_core::impact` ignore list in app data, restore list at the bottom of Overlap) | M | P2 |
+| Ignore pair / file / mod with restore | G+D | Ignore lists | has (`deadlock_core::impact` ignore list in app data, restore list at the bottom of Overlap; wave 4: Ignore all with a confirm and one Undo, and a list per active profile started from the shared one, DMM's ignores per profile) | M | P2 |
 | Sidebar badge with count | G | Badge | has (`conflicts::badge_count`, ignores excluded; mounting line in the wave report) | S | P3 |
 | Explainer | G+D | How it works | has (`conflicts.rs`, two lines above the table; the resolve dialog repeats it) | S | P3 |
 | Overlap badge on cards | G+D | Mark mods that share files | has (`installed/overlap.rs`: a quiet badge on enabled cards and rows from the scan's conflict rows, ignores excluded; its press lists the other mods, files shared and who wins, then Overlap; a hidden model keeps its own mark) | S | P2 |
@@ -313,7 +330,8 @@ Endpoints, verified with curl against the live API on 2026-11-17 (Deadlock game 
 | Queue with progress | G+D | Several downloads | has (`download_queue.rs` queue on the Launch page: several archives, byte progress, states); Browse's install dialog still downloads inside its own job | M | P2 |
 | Cancel a running download or install | G+D | Stop, Cancel all | has (wave 3: the X on a running row, Cancel all in the list; a busy Browse card cancels its queue row or its plan, and the install dialog's Cancel stops its download and extract through `PlanOptions.cancel`, shown as Cancelled) | S | P2 |
 | Pause, resume, cancel, retry | D | Queue controls | has (`download_queue.rs`: pause keeps the part file, resume continues with Range, cancel removes it, retry starts again) | M | P3 |
-| File server failover | G+D | Mirrors | has (`download_queue.rs` tries the GameBanana file servers in turn when the chosen host fails) | M | P3 |
+| File server failover | G+D | Mirrors | has (`download_queue.rs` tries the GameBanana file servers in turn when the chosen host fails; wave 4: the running row and the Browse card name the server, as Grimoire's "Automatic · server", and say "switched from X" for 20 seconds after a failover) | M | P3 |
+| Queue position | G | "Queued #2" | has (wave 4: a waiting Browse card says Queued #N, a waiting downloads row #N in line) | S | P3 |
 | Slow download warning | G+D | Say why a download crawls | has (`downloads.rs`: the row's warning while it crawls, and one toast per download the first time, with Show downloads) | S | P2 |
 | Suspicious archive warning | G | Scan before install | has (`download_queue.rs` scans a ZIP's entry names, unpacks .7z/.rar within limits; the warning comes before the install dialog) | S | P2 |
 
@@ -326,22 +344,28 @@ Endpoints, verified with curl against the live API on 2026-11-17 (Deadlock game 
 | Keyboard: Cmd+number screens, quit, close | D | Shortcuts | has | - | - |
 | Update check | G+D | GitHub releases, opt-in at startup | has (Settings) | - | - |
 | Zoom shortcuts, settings shortcut, open mods folder | D | Ctrl+=, Ctrl+, Ctrl+M | has (built: Cmd plus, minus and 0 step the zoom, Cmd+, opens Settings, Shift+Cmd+M opens the mods folder) | S | P2 |
-| Toasts with undo | G+D | Notifications | has (`notify.rs`: bottom-right stack of 3, hover holds, Undo on slot toggle, crosshair apply, autoexec save, gameinfo fix) | M | P1 |
+| Toasts with undo | G+D | Notifications | has (`notify.rs`: bottom-right stack of 3, hover holds, Undo on slot toggle, crosshair apply, autoexec save, gameinfo fix; wave 4: one title one toast, a status line from the same action folds into its toast, errors stay until closed, reading time for the rest, Send feedback on every error toast and inline error box, issues #4 and #5) | M | P1 |
 | Drag-and-drop install anywhere | G+D | Drop overlay, import review | has (built: a drop on any page without its own target opens the import review; Installed keeps its page target) | S | P1 |
 | Deep links / 1-click install | G+D | `grimoire:` / `dlmm:` handler for GameBanana 1-Click | has: `sigil:` links open the mod with the file chosen and the Install dialog (see `deep-links.md`); GameBanana listing not requested yet | - | - |
 | GameBanana Remote Install | D | Pair and poll a queue | missing: backlogged by the owner (2026-11-18) until GameBanana lists Sigil as a 1-Click manager; the protocol is in `deadlock_core::remote_install`, not wired | M | P3 |
 | Status bar | D | Bottom bar with state | has (wave 3, `statusbar.rs`: game found, catalog sync, downloads, an app update, the active profile and the preview volume; counts cached once a second; Appearance switch) | S | P3 |
-| Global preview volume | G | One volume for every preview | has (wave 3: the status bar's volume popover with mute moves the one value Browse's View menu shows) | S | P3 |
+| Global preview volume | G | One volume for every preview | has (wave 3: the status bar's volume popover with mute moves the one value Browse's View menu shows; wave 4: a mute and the level before it survive a restart) | S | P3 |
 | Per-page feature switches | D | Turn optional pages off | has (wave 3: General > Pages for Locker, Crosshair, Autoexec, Performance, Stats, Servers, and Mods only; a page that is off leaves the sidebar and its route) | S | P3 |
-| Onboarding | G+D | Game path, gameinfo fix, autoexec | has (built: first-run setup mounted as an overlay, and Show setup again in Settings) | M | P2 |
+| Onboarding | G+D | Game path, gameinfo fix, autoexec | has (built: first-run setup mounted as an overlay, and Show setup again in Settings; wave 4: DMM's connection step (proxy with SOCKS5, offline) and existing-mods step (count, open Installed when done)) | M | P2 |
 | What's new dialog | D | Per-version notes | has (built: shown once per version after an update, from the release notes the update check already fetched) | S | P3 |
-| gameinfo.gi banner with fix | G+D | Reset after updates | has (`banner.rs`: every page, Fix behind a confirm, rechecked on startup, focus, launch, rescan) | S | P1 |
+| gameinfo.gi banner with fix | G+D | Reset after updates | has (`banner.rs`: every page, Fix behind a confirm, rechecked on startup, focus, launch, rescan; wave 4: Fix keeps mounts another tool added (`game_apply::apply_gameinfo_repair`, falls back to the plain repair), and Grimoire's Hide until next launch per message) | S | P1 |
 | Sidebar badges (installed, overlap counts) | G+D | Counts | has (built: Installed count and the overlap count in amber) | S | P3 |
 | i18n | G+D | Languages | missing | L | P3 |
 | Theming | G+D | Themes and accent | has (Settings) | - | - |
 | Tray | D | Close to tray | has (built: Windows and Linux tray, default close still quits; macOS rows explain no tray backend) | S | P3 |
 | Single instance lock | G | One process | has (Rune pipe or socket; a lock and socket on macOS) | - | - |
-| Feature hints / coachmarks | D | Usage hints | missing | M | P3 |
+| Feature hints / coachmarks | D | Usage hints | has (wave 4, `shell_tips.rs`: Did you know? cards anchored to the control with Show me, Got it, Turn off tips; one a session after the page settles, never over a dialog; two dismissals retire a tip; General > Show feature tips and Reset) | M | P3 |
+| Collapsible sidebar | G+D | Icons only | has (wave 4, `shell_w4.rs`: Collapse sidebar at the foot, Cmd or Ctrl+B, tooltips and warning dots while collapsed, kept across launches) | S | P2 |
+| App update banner | G | Install or view, hide until next launch | has (wave 4: a banner over every page while an update is out, Install or View update, an X that hides it for the run) | S | P3 |
+| "New" marks on pages | D | Until first opened | has (wave 4: Stats, Servers and Performance carry New until opened once, kept in options.json) | S | P3 |
+| Experimental tour | (neither) | Reopenable walkthrough | has (wave 4: Settings > Experimental > Take the tour, once on the first visit; each stop has its switch) | S | P3 |
+| Easter eggs | G | Rare jokes | has, off by default (wave 4: five knocks on the wordmark open the news computer, 7 percent joke tooltips, 5 percent window title; Appearance > Easter eggs) | S | P3 |
+| Seasonal themes | D | Holiday looks by date | has, off by default (wave 4: DMM's five windows and overlap rule, a seasonal mark in the sidebar with a small toy each, Turn off until next time, and Seasonal effects (snow, sparks, lanterns, petals; 28 particles stepped at 15 frames a second, off by default); Sigil's own look, no DMM art) | M | P3 |
 | Analytics | D | Consent-gated usage events | has (wave 3, ADR 0014, `settings/telemetry.rs`: a first-start question, Privacy switches for usage events, crash reports and unknown-mod lookup, Send diagnostics with a preview and a reference code; Sigil's own Worker, not Google Analytics) | M | P3 |
 | Unknown-mod hash lookup | D | Name a VPK from a hash index | has (wave 3: Identify's Look it up through `telemetry::identify` with lookup consent; GameBanana installs add their hash) | S | P3 |
 | Announcements, feature flags | D | Needs D's backend | won't | - | - |

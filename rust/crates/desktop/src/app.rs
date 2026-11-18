@@ -28,7 +28,7 @@ use crate::model::{
 use crate::publish::PublishJob;
 use crate::screens;
 use crate::ui::{
-    ActionKind, BODY, BODY_MED, LABEL, MICRO, NAV, PAGE_X, SIDEBAR_W, SMALL, TITLEBAR_H, Tone,
+    ActionKind, BODY, BODY_MED, LABEL, MICRO, NAV, PAGE_X, SMALL, TITLEBAR_H, Tone,
     Ui,
 };
 
@@ -335,6 +335,8 @@ impl State {
         }
         self.screen = screen;
         self.status.clear();
+        crate::shell_w4::mark_seen(self, screen);
+        crate::shell_tips::on_page(self, screen);
         match screen {
             Screen::Installed | Screen::Conflicts => {
                 if !self.addons.scanned && !self.addon_job.is_running() {
@@ -429,13 +431,8 @@ impl State {
                     .detail(format!("Adding their folders to gameinfo.gi failed: {error}")),
             );
         }
-        // Locker's "shuffle on launch" puts a new skin set in place before Steam starts.
-        if crate::data::shuffle_before_launch(self) {
-            crate::notify::push(
-                self,
-                crate::notify::Notice::success(tr("Locker skins shuffled")),
-            );
-        }
+        // Locker's "shuffle on launch" already ran in the launch's Roll step
+        // (`launch_extras::roll_before_launch`); running it here too shuffled twice.
         let spawn = |program: &str, args: &[&str]| {
             std::process::Command::new(program)
                 .args(args)
@@ -1159,6 +1156,9 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
         .h_full()
         .min_w(0.0)
         .child(titlebar(s, &u, insets));
+    if let Some(banner) = crate::shell_w4::update_banner(s, &u) {
+        main = main.child(banner);
+    }
     if let Some(banner) = crate::banner::view(s, &u) {
         main = main.child(banner);
     }
@@ -1190,6 +1190,10 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
     // Personalize: the background image and glow, painted under the sidebar and pages.
     if let Some(backdrop) = screens::settings::personalize::backdrop(s, &u, window) {
         root = root.child(backdrop);
+    }
+    // Wave 4: themed art behind the pages (off by default).
+    if let Some(art) = screens::settings::misc_w4::themed_art(s, &u, window) {
+        root = root.child(art);
     }
     if let Some(menu) = screens::installed::overlay(s, &u) {
         root = root.child(menu);
@@ -1223,6 +1227,7 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
         ("map-mods-modal", screens::launch_extras::dialog(s, &u)),
         ("telemetry-modal", screens::settings::telemetry::dialog(s, &u)),
         ("shell-modal", crate::shell::whats_new_dialog(s, &u).or_else(|| crate::shell::shortcuts_dialog(s, &u))),
+        ("toy-modal", crate::shell_tips::toy(s, &u)),
     ] {
         if let Some(layer) = layer {
             root = root.child(u.modal_layer(key, layer));
@@ -1246,6 +1251,16 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
     // A drag anywhere in the window, over any dialog, shows the same target.
     if s.shell.drop_hover {
         root = root.child(crate::shell::drop_veil(&u));
+    }
+    // Wave 4: seasonal effects over the pages (off by default; never takes input).
+    if let Some(layer) = crate::shell_tips::effects(s, &u, window) {
+        root = root.child(layer);
+    }
+    // Wave 4: a feature tip anchored to its control (the Settings one lives in the sheet).
+    if !s.settings.open
+        && let Some(tip) = crate::shell_tips::view(s, &u, false)
+    {
+        root = root.child(tip);
     }
     // Toasts sit above everything, dialogs included, as Grimoire's do.
     if let Some(toasts) = crate::notify::region(s, &u) {
@@ -1295,6 +1310,7 @@ fn sidebar(s: &State, u: &Ui, insets: rune::ChromeInsets) -> El {
     if s.prefs.flag("agent") {
         nav = nav.child(el().h(12.0)).child(nav_item(s, u, Screen::Agent));
     }
+    let collapsed = s.shell.w4.collapsed;
 
     // The wordmark clears the traffic lights on macOS and sits on the 16 point edge elsewhere.
     let brand_left = if insets.leading > 0.0 {
@@ -1302,9 +1318,57 @@ fn sidebar(s: &State, u: &Ui, insets: rune::ChromeInsets) -> El {
     } else {
         18.0
     };
+    let foot = if collapsed {
+        // Icons only (wave 4): the launch buttons and Settings keep their tooltips.
+        col()
+            .key("sidebar-foot")
+            .w_full()
+            .px(8.0)
+            .pt(8.0)
+            .pb(8.0)
+            .gap(4.0)
+            .border_sides([1.0, 0.0, 0.0, 0.0], u.hair)
+            .child(compact_launch(s, u, false))
+            .child(if s.prefs.single_launch { el() } else { compact_launch(s, u, true) })
+            .child(el().h(4.0))
+            .children(crate::shell_tips::season_mark(s, u))
+            .child(crate::shell_w4::collapse_button(s, u))
+            .child(settings_item(s, u))
+    } else {
+        col()
+            .key("sidebar-foot")
+            .w_full()
+            .px(8.0)
+            .pt(8.0)
+            .pb(8.0)
+            .gap(4.0)
+            .border_sides([1.0, 0.0, 0.0, 0.0], u.hair)
+            // The game is up: a line that stops it, on the Launch page.
+            .children(screens::launch::sidebar_state(s, u))
+            .child(if s.prefs.single_launch {
+                // Personalize's art for the one button too, from the surface it will use.
+                screens::settings::personalize::launch_art(
+                    s,
+                    u,
+                    screens::settings::tabs::single_launch(s, u),
+                    s.settings.launch_vanilla_pick,
+                )
+            } else {
+                screens::settings::personalize::launch_art(s, u, launch_modded(s, u), false)
+            })
+            .child(if s.prefs.single_launch {
+                el()
+            } else {
+                screens::settings::personalize::launch_art(s, u, launch_vanilla(u), true)
+            })
+            .child(el().h(4.0))
+            .children(crate::shell_tips::season_mark(s, u))
+            .child(crate::shell_w4::collapse_button(s, u))
+            .child(settings_item(s, u))
+    };
     col()
         .key("sidebar")
-        .w(SIDEBAR_W)
+        .w(crate::shell_w4::sidebar_width(s, insets.leading))
         .h_full()
         .fill(screens::settings::personalize::sidebar_fill(s, u))
         .border_sides([0.0, 1.0, 0.0, 0.0], u.hair)
@@ -1317,7 +1381,14 @@ fn sidebar(s: &State, u: &Ui, insets: rune::ChromeInsets) -> El {
                 .pr(12.0)
                 .center_y()
                 .window_drag()
-                .child(crate::brand::header(s, u)),
+                .child(if collapsed {
+                    el()
+                } else if s.shell.w4.eggs {
+                    // Easter eggs: five knocks on the wordmark open the news computer.
+                    el().on_press(crate::shell_tips::knock).child(crate::brand::header(s, u))
+                } else {
+                    crate::brand::header(s, u)
+                }),
         )
         .child(
             col()
@@ -1331,36 +1402,7 @@ fn sidebar(s: &State, u: &Ui, insets: rune::ChromeInsets) -> El {
                 })
                 .child(nav),
         )
-        .child(
-            col()
-                .key("sidebar-foot")
-                .w_full()
-                .px(8.0)
-                .pt(8.0)
-                .pb(8.0)
-                .gap(4.0)
-                .border_sides([1.0, 0.0, 0.0, 0.0], u.hair)
-                // The game is up: a line that stops it, on the Launch page.
-                .children(screens::launch::sidebar_state(s, u))
-                .child(if s.prefs.single_launch {
-                    // Personalize's art for the one button too, from the surface it will use.
-                    screens::settings::personalize::launch_art(
-                        s,
-                        u,
-                        screens::settings::tabs::single_launch(s, u),
-                        s.settings.launch_vanilla_pick,
-                    )
-                } else {
-                    screens::settings::personalize::launch_art(s, u, launch_modded(s, u), false)
-                })
-                .child(if s.prefs.single_launch {
-                    el()
-                } else {
-                    screens::settings::personalize::launch_art(s, u, launch_vanilla(u), true)
-                })
-                .child(el().h(4.0))
-                .child(settings_item(s, u)),
-        )
+        .child(foot)
 }
 
 fn nav_row(u: &Ui, key: String, on: bool) -> El {
@@ -1402,6 +1444,35 @@ fn nav_item(s: &State, u: &Ui, screen: Screen) -> El {
                 .grow(1.0)
                 .truncate(),
         );
+    if s.shell.w4.collapsed {
+        // Icons only: the title is the tooltip, and only a warning count stays, as a dot
+        // (Grimoire).
+        return nav_row(u, format!("nav-{}", screen.key()), on)
+            .role("tab")
+            .label(tr(screen.title()))
+            .help(tr(screen.title()))
+            .checked(on)
+            .cursor(rune::Cursor::Pointer)
+            .on_press(move |st: &mut State| st.go(screen))
+            .px(0.0)
+            .center()
+            .child(
+                rune::icon(screen.icon(), 16.0)
+                    .color(if on { u.ink } else { u.muted })
+                    .a11y_hidden(),
+            )
+            .children(
+                nav_count(s, screen)
+                    .filter(|(_, warn)| *warn)
+                    .map(|_| crate::shell_w4::dot(u.amber).pin(None, Some(6.0), Some(10.0), None)),
+            );
+    }
+    if crate::shell_w4::is_new(s, screen) {
+        r = r.child(crate::shell_w4::new_pill(u));
+    }
+    if let Some(joke) = crate::shell_tips::meme(s, screen) {
+        r = r.help(joke);
+    }
     if let Some((label, warn)) = nav_count(s, screen) {
         r = r.child(
             text(label)
@@ -1513,8 +1584,53 @@ fn launch_vanilla(u: &Ui) -> El {
         .child(text(tr("Launch vanilla")).font(BODY).color(u.muted).grow(1.0))
 }
 
+/// A launch button with its icon only, for the collapsed sidebar. With one launch button the
+/// pick from Settings decides which launch it is.
+fn compact_launch(s: &State, u: &Ui, vanilla: bool) -> El {
+    let vanilla = if s.prefs.single_launch { s.settings.launch_vanilla_pick } else { vanilla };
+    let label = tr(if vanilla { "Launch vanilla" } else { "Launch modded" });
+    row()
+        .key(if vanilla { "launch-vanilla" } else { "launch-modded" })
+        .w_full()
+        .h(if vanilla { 32.0 } else { 36.0 })
+        .center()
+        .radius(crate::ui::r(8.0))
+        .fill(if vanilla { Color::TRANSPARENT } else { u.accent })
+        .hover(if vanilla { u.hover } else { Color::WHITE.alpha(0.10) })
+        .focusable(true)
+        .role("button")
+        .label(label)
+        .help(label)
+        .cursor(rune::Cursor::Pointer)
+        .on_press_tx(move |st: &mut State, tx: &mut Tx| ask_or_launch(st, tx, vanilla))
+        .child(
+            rune::icon(&icons::PLAY, 14.0)
+                .color(if vanilla { u.faint } else { u.accent_ink })
+                .a11y_hidden(),
+        )
+}
+
 fn settings_item(s: &State, u: &Ui) -> El {
     let on = s.settings.open;
+    if s.shell.w4.collapsed {
+        return nav_row(u, "nav-settings".to_string(), on)
+            .role("tab")
+            .label(tr("Settings"))
+            .help(tr("Settings"))
+            .checked(on)
+            .cursor(rune::Cursor::Pointer)
+            .on_press(|st: &mut State| st.go(Screen::Settings))
+            .px(0.0)
+            .center()
+            .child(
+                rune::icon(&icons::SETTINGS, 16.0)
+                    .color(if on { u.ink } else { u.muted })
+                    .a11y_hidden(),
+            )
+            .children(
+                crate::updater::sidebar_badge(s, u).map(|badge| badge.pin(None, Some(6.0), Some(10.0), None)),
+            );
+    }
     nav_row(u, "nav-settings".to_string(), on)
         .role("tab")
         .label(tr("Settings"))
@@ -1921,6 +2037,10 @@ fn elapsed_label(seconds: u64) -> String {
 pub fn on_key(s: &mut State, ev: &KeyEvent, tx: &mut Tx) -> bool {
     // The shortcuts sheet, zoom, and the mods folder. These win over the screen chords.
     if crate::shell::on_key(s, ev, tx) {
+        return true;
+    }
+    // Installed: Ctrl or Cmd+A selects every shown mod, with nothing focused (A3).
+    if screens::installed::select_all_key(s, ev) {
         return true;
     }
     if let Key::Command(c) = ev.key
@@ -2558,6 +2678,40 @@ pub fn scenes() -> &'static [(&'static str, fn(&mut State))] {
         ("wave3-telemetry-consent", screens::wave3_scenes::telemetry_consent),
         ("wave3-telemetry-privacy", screens::wave3_scenes::telemetry_privacy),
         ("wave3-telemetry-diagnostics", screens::wave3_scenes::telemetry_diagnostics),
+        // Parity wave 4, UI B.
+        ("w4b-settings-open", screens::w4b_scenes::settings_open),
+        ("w4b-lightbox", screens::w4b_scenes::lightbox),
+        ("w4b-lightbox-docked", screens::w4b_scenes::lightbox_docked),
+        ("w4b-proxy-socks", screens::w4b_scenes::proxy_socks),
+        ("w4b-sidebar-collapsed", screens::w4b_scenes::sidebar_collapsed),
+        ("w4b-update-banner", screens::w4b_scenes::update_banner),
+        ("w4b-logs", screens::w4b_scenes::logs),
+        ("w4b-logs-ask", screens::w4b_scenes::logs_ask),
+        ("w4b-launch-options", screens::w4b_scenes::launch_options),
+        ("w4b-channel-notes", screens::w4b_scenes::channel_notes),
+        ("w4b-browse-featured", screens::w4b_scenes::browse_featured),
+        ("w4b-browse-details-links", screens::w4b_scenes::browse_details_links),
+        ("w4b-browse-image-menu", screens::w4b_scenes::browse_image_menu),
+        ("w4b-browse-dock-wide", screens::w4b_scenes::browse_dock_wide),
+        ("w4b-browse-rate-limited", screens::w4b_scenes::browse_rate_limited),
+        ("w4b-troubleshoot", screens::w4b_scenes::troubleshoot),
+        ("w4b-catalog", screens::w4b_scenes::catalog),
+        ("w4b-stats", screens::w4b_scenes::stats),
+        ("w4b-crosshair-hero", screens::w4b_scenes::crosshair_hero),
+        ("w4b-onboarding-network", screens::w4b_scenes::onboarding_network),
+        ("w4b-onboarding-mods", screens::w4b_scenes::onboarding_mods),
+        ("w4b-feature-tip", screens::w4b_scenes::feature_tip),
+        ("w4b-tour", screens::w4b_scenes::tour),
+        ("w4b-easter-eggs", screens::w4b_scenes::easter_eggs),
+        ("w4b-seasons-settings", screens::w4b_scenes::seasons_settings),
+        ("w4b-browse-paste", screens::w4b_scenes::browse_paste),
+        ("w4b-themed-grid", screens::w4b_scenes::themed_grid),
+        ("w4b-downloads-failover", screens::w4b_scenes::downloads_failover),
+        ("w4b-lightbox-zoomed", screens::w4b_scenes::lightbox_zoomed),
+        ("w4b-browse-paste-files", screens::w4b_scenes::browse_paste_files),
+        ("w4b-themed-crest", screens::w4b_scenes::themed_crest),
+        ("w4b-seasonal-effects", screens::w4b_scenes::seasonal_effects),
+        ("w4b-themed-terminal", screens::w4b_scenes::themed_terminal),
         ("browse-install-enable", screens::browse::scene_install_enable),
         ("browse-replace", screens::browse::scene_replace),
         ("browse-replace-first", screens::browse::scene_replace_first),

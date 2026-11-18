@@ -21,12 +21,16 @@ pub enum Step {
     #[default]
     Game,
     Gameinfo,
+    /// Wave 4 (DMM's setup): a proxy or offline before Sigil goes online.
+    Network,
+    /// Wave 4 (DMM's setup): mods already in the addons folder.
+    Mods,
     Autoexec,
     Privacy,
 }
 
 impl Step {
-    const ALL: [Step; 4] = [Step::Game, Step::Gameinfo, Step::Autoexec, Step::Privacy];
+    const ALL: [Step; 6] = [Step::Game, Step::Gameinfo, Step::Network, Step::Mods, Step::Autoexec, Step::Privacy];
 
     fn index(self) -> usize {
         Step::ALL.iter().position(|s| *s == self).unwrap_or(0)
@@ -44,6 +48,8 @@ impl Step {
         match self {
             Step::Game => "Find Deadlock",
             Step::Gameinfo => "Let the game load mods",
+            Step::Network => "Your connection",
+            Step::Mods => "Mods you already have",
             Step::Autoexec => "Your autoexec",
             Step::Privacy => "Updates and privacy",
         }
@@ -54,13 +60,15 @@ impl Step {
 pub fn on_startup(st: &mut State) {
     if !options::get().onboarded && !st.demo && !rune::is_headless() {
         st.settings.extra.onboarding = Some(Step::Game);
+        st.settings.proxy_edit = rune::TextEdit::new(st.prefs.proxy.clone().unwrap_or_default());
     }
 }
 
 fn finish(st: &mut State) {
     options::edit(st, |o| o.onboarded = true);
     st.settings.extra.onboarding = None;
-    st.go(Screen::Browse);
+    let next = st.settings.extra.after_onboarding.take().unwrap_or(Screen::Browse);
+    st.go(next);
 }
 
 fn gameinfo_state(st: &State) -> (bool, bool) {
@@ -170,6 +178,109 @@ fn step_body(s: &State, u: &Ui, step: Step) -> El {
                     button(u, "onboarding-fix", "Fix", ActionKind::Primary).on_press(fix_gameinfo),
                     ok || !present,
                 )))
+        }
+        Step::Network => {
+            let typed = s.settings.proxy_edit.text.trim().to_string();
+            let valid = typed.is_empty() || deadlock_core::net::validate_proxy(&typed).is_ok();
+            col()
+                .w_full()
+                .gap(12.0)
+                .child(line("Sigil reads GameBanana and downloads mods. Behind a proxy or a firewall, set the proxy here; HTTP, HTTPS and SOCKS5 work. You can change it later in Settings > Network."))
+                .child(
+                    row()
+                        .w_full()
+                        .gap(8.0)
+                        .center_y()
+                        .child(
+                            super::field(
+                                rune::text_input(&s.settings.proxy_edit, MONO)
+                                    .key("onboarding-proxy")
+                                    .label(tr("Proxy address"))
+                                    .single_line()
+                                    .grow(1.0)
+                                    .color(u.ink)
+                                    .placeholder("socks5://127.0.0.1:1080", u.faint)
+                                    .caret(u.accent, u.accent.alpha(0.22))
+                                    .on_edit(|st: &mut State| &mut st.settings.proxy_edit),
+                                u,
+                            )
+                            .grow(1.0)
+                            .min_w(0.0),
+                        )
+                        .child(super::disabled(
+                            button(u, "onboarding-proxy-save", "Save", ActionKind::Secondary).on_press(|st: &mut State| {
+                                let typed = st.settings.proxy_edit.text.trim().to_string();
+                                let value = (!typed.is_empty()).then_some(typed);
+                                match deadlock_core::net::set_proxy(value.clone()) {
+                                    Ok(()) => crate::prefs::edit(st, |p| p.proxy = value),
+                                    Err(error) => {
+                                        let error = tr(&error).to_string();
+                                        say(st, error, true)
+                                    }
+                                }
+                            }),
+                            !valid || typed == s.prefs.proxy.clone().unwrap_or_default(),
+                        )),
+                )
+                .child(status(
+                    s.prefs.proxy.is_none() || valid,
+                    match &s.prefs.proxy {
+                        Some(proxy) => fill(tr("Using {} for Browse and mod downloads."), &[proxy]),
+                        None => tr("Browse and mod downloads connect directly.").to_string(),
+                    },
+                ))
+                .child(
+                    row()
+                        .w_full()
+                        .gap(12.0)
+                        .center_y()
+                        .child(text(tr("Offline mode")).font(BODY_MED).color(u.ink).grow(1.0))
+                        .child(
+                            u.toggle(s.prefs.offline)
+                                .key("onboarding-offline")
+                                .label(tr("Offline mode"))
+                                .cursor(rune::Cursor::Pointer)
+                                .on_press(|st: &mut State| {
+                                    crate::prefs::edit(st, |p| p.offline = !p.offline);
+                                    super::apply_offline(st.prefs.offline);
+                                }),
+                        ),
+                )
+        }
+        Step::Mods => {
+            let count = s.addons.addons.len();
+            col()
+                .w_full()
+                .gap(12.0)
+                .child(line("Mods already in the addons folder stay where they are. Installed lists them; mods Sigil does not know yet can be named there by looking them up."))
+                .child(status(
+                    s.addons.scanned,
+                    if !s.addons.scanned {
+                        tr("Looking in the addons folder").to_string()
+                    } else if count == 0 {
+                        tr("No mods in the addons folder yet").to_string()
+                    } else {
+                        fill(tr("{} mods found in the addons folder"), &[&count.to_string()])
+                    },
+                ))
+                .child(
+                    row()
+                        .w_full()
+                        .gap(12.0)
+                        .center_y()
+                        .child(text(tr("Open Installed when done")).font(BODY_MED).color(u.ink).grow(1.0))
+                        .child(super::disabled(
+                            u.toggle(s.settings.extra.after_onboarding == Some(Screen::Installed))
+                                .key("onboarding-mods-open")
+                                .label(tr("Open Installed when done"))
+                                .cursor(rune::Cursor::Pointer)
+                                .on_press(|st: &mut State| {
+                                    let next = &mut st.settings.extra.after_onboarding;
+                                    *next = if next.is_some() { None } else { Some(Screen::Installed) };
+                                }),
+                            count == 0,
+                        )),
+                )
         }
         Step::Autoexec => {
             let exists = s.game_root.as_ref().is_some_and(|r| deadlock_core::autoexec_path(r).is_file());
@@ -321,7 +432,9 @@ pub fn rows(_s: &State, u: &Ui) -> El {
     section(
         u,
         "Setup and tips",
-        vec![
+        super::misc_w4::tip_rows(u)
+            .into_iter()
+            .chain(vec![
             toggle_row(u, "settings-tips", "Show page tips", "One line about a page, the first time you open it.", o.tips, |st| {
                 options::edit(st, |o| o.tips = !o.tips)
             }),
@@ -350,9 +463,11 @@ pub fn rows(_s: &State, u: &Ui) -> El {
                     options::edit(st, |o| o.onboarded = false);
                     super::close(st);
                     st.settings.extra.onboarding = Some(Step::Game);
+                    st.settings.proxy_edit = rune::TextEdit::new(st.prefs.proxy.clone().unwrap_or_default());
                 }),
             ),
-        ],
+        ])
+            .collect(),
     )
 }
 
@@ -365,7 +480,8 @@ mod tests {
         assert_eq!(Step::Game.next(), Some(Step::Gameinfo));
         assert_eq!(Step::Privacy.next(), None);
         assert_eq!(Step::Game.back(), None);
-        assert_eq!(Step::Autoexec.back(), Some(Step::Gameinfo));
+        assert_eq!(Step::Gameinfo.next(), Some(Step::Network));
+        assert_eq!(Step::Autoexec.back(), Some(Step::Mods));
     }
 
     #[test]

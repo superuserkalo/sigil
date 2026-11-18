@@ -201,7 +201,7 @@ pub fn split_variant(st: &mut State, slot: u16) {
         entry.variant_group = Some(format!("alone-{}", entry.uid));
     });
     st.installed.variants.open = None;
-    st.status = format!("Slot {slot:02} is its own card again.");
+    st.status = format!("Slot {} is its own card again.", deadlock_core::addons::slot_label(slot));
 }
 
 /// Rename one file in the picker.
@@ -480,7 +480,7 @@ pub fn list_row(s: &State, u: &Ui, card: &Group) -> El {
         )
         .child(chips)
         .child(
-            text(format!("{slot:02}")).font(MICRO).color(u.faint).w(20.0),
+            text(deadlock_core::addons::slot_label(slot)).font(MICRO).color(u.faint).w(28.0),
         );
     if card.is_variants() {
         let group_key = card.key.clone();

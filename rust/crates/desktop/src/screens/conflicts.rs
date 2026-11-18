@@ -62,7 +62,92 @@ pub fn badge_count(s: &State) -> usize {
 fn cache() -> &'static std::sync::Mutex<Ignores> {
     use std::sync::{Mutex, OnceLock};
     static CACHE: OnceLock<Mutex<Ignores>> = OnceLock::new();
-    CACHE.get_or_init(|| Mutex::new(impact::load_ignores(&crate::data::data_dir())))
+    CACHE.get_or_init(|| Mutex::new(impact::load_ignores(&scope_dir(scope().as_deref()))))
+}
+
+// --- ignores per profile (DMM) -------------------------------------------------------------
+//
+// Deadlock Mod Manager keeps the overlaps you accept per profile. With a profile active, Sigil
+// keeps that profile's list in `<data>/overlap-profiles/<slug>/overlap-ignores.json`, started as
+// a copy of the shared list so nothing seems to come back; with none, the shared list.
+
+fn scope_cell() -> &'static std::sync::Mutex<Option<String>> {
+    use std::sync::{Mutex, OnceLock};
+    static SCOPE: OnceLock<Mutex<Option<String>>> = OnceLock::new();
+    SCOPE.get_or_init(|| Mutex::new(None))
+}
+
+fn scope() -> Option<String> {
+    scope_cell().lock().ok().and_then(|slug| slug.clone())
+}
+
+/// The folder whose `overlap-ignores.json` the list lives in.
+pub fn scope_dir(slug: Option<&str>) -> std::path::PathBuf {
+    let data = crate::data::data_dir();
+    match slug {
+        Some(slug) if !slug.trim().is_empty() => data.join("overlap-profiles").join(deadlock_core::profiles::slug_for(slug)),
+        _ => data,
+    }
+}
+
+/// Follow the active profile. Called from Installed's poll; a change reads that profile's list.
+pub fn sync_scope(st: &State) {
+    if st.demo || rune::is_headless() {
+        return;
+    }
+    let active = st.profiles.active.clone();
+    if scope() == active {
+        return;
+    }
+    if let Ok(mut slot) = scope_cell().lock() {
+        slot.clone_from(&active);
+    }
+    let dir = scope_dir(active.as_deref());
+    let path = impact::ignores_path(&dir);
+    if active.is_some() && !path.exists() {
+        let _ = std::fs::create_dir_all(&dir);
+        let _ = std::fs::copy(impact::ignores_path(&crate::data::data_dir()), &path);
+    }
+    if let Ok(mut cached) = cache().lock() {
+        *cached = impact::load_ignores(&dir);
+    }
+}
+
+/// Grimoire's Ignore all: every overlap shown goes to Ignored after the inline confirm, with
+/// one Undo that puts the list back as it was.
+static ASK_ALL: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+fn ignore_all(st: &mut State) {
+    ASK_ALL.store(false, std::sync::atomic::Ordering::Relaxed);
+    let before = ignores();
+    let rows: Vec<(Vec<u16>, u16)> = st
+        .addons
+        .conflicts
+        .iter()
+        .filter(|row| !before.hides(&row.path, &row.slots, row.winner))
+        .map(|row| (row.slots.clone(), row.winner))
+        .collect();
+    edit(|list| {
+        let mut changed = false;
+        for (slots, winner) in &rows {
+            for slot in slots.iter().filter(|slot| *slot != winner) {
+                changed |= list.add_pair(*winner, *slot);
+            }
+        }
+        changed
+    });
+    crate::notify::push(
+        st,
+        crate::notify::Notice::success(fill(tr("Ignored {} overlaps"), &[&rows.len().to_string()]))
+            .detail(tr("Restore any of them at the bottom of Overlap."))
+            .undo(move |_st: &mut State| {
+                let before = before.clone();
+                edit(move |list| {
+                    *list = before;
+                    true
+                });
+            }),
+    );
 }
 
 /// The ignore list for other pages: Installed's overlap badge leaves out what it hides.
@@ -76,8 +161,9 @@ fn ignores() -> Ignores {
 
 /// Read, edit and store the list, and keep the cache in step.
 fn edit(change: impl FnOnce(&mut Ignores) -> bool) -> Ignores {
-    let fresh = impact::edit_ignores(&crate::data::data_dir(), change)
-        .unwrap_or_else(|_| impact::load_ignores(&crate::data::data_dir()));
+    let dir = scope_dir(scope().as_deref());
+    let _ = std::fs::create_dir_all(&dir);
+    let fresh = impact::edit_ignores(&dir, change).unwrap_or_else(|_| impact::load_ignores(&dir));
     if let Ok(mut cached) = cache().lock() {
         *cached = fresh.clone();
     }
@@ -96,7 +182,34 @@ pub fn view(s: &State, u: &Ui) -> El {
         .collect();
     let visible_count = badge_count(s);
 
-    let actions = row().gap(8.0).center_y().child(
+    let asking_all = ASK_ALL.load(std::sync::atomic::Ordering::Relaxed);
+    let mut actions = row().gap(8.0).center_y();
+    if visible_count > 1 {
+        actions = if asking_all {
+            actions
+                .child(text(fill(tr("Ignore all {} overlaps?"), &[&visible_count.to_string()])).font(SMALL).color(u.muted))
+                .child(
+                    u.action(tr("Cancel"), ActionKind::Ghost)
+                        .key("conflicts-ignore-all-no")
+                        .cursor(rune::Cursor::Pointer)
+                        .on_press(|_st: &mut State| ASK_ALL.store(false, std::sync::atomic::Ordering::Relaxed)),
+                )
+                .child(
+                    u.action(tr("Ignore all"), ActionKind::Primary)
+                        .key("conflicts-ignore-all-yes")
+                        .cursor(rune::Cursor::Pointer)
+                        .on_press(ignore_all),
+                )
+        } else {
+            actions.child(
+                u.action(tr("Ignore all"), ActionKind::Ghost)
+                    .key("conflicts-ignore-all")
+                    .cursor(rune::Cursor::Pointer)
+                    .on_press(|_st: &mut State| ASK_ALL.store(true, std::sync::atomic::Ordering::Relaxed)),
+            )
+        };
+    }
+    let actions = actions.child(
         u.icon_button(&icons::REFRESH_CW, tr("Rescan"))
             .key("conflicts-rescan")
             .cursor(rune::Cursor::Pointer)
@@ -271,7 +384,7 @@ fn matches_query(row: &ConflictRow, query: &str) -> bool {
         || row
             .slots
             .iter()
-            .any(|slot| format!("{slot:02}").contains(query))
+            .any(|slot| format!("{slot:02}").contains(query) || deadlock_core::addons::slot_label(*slot).contains(query))
 }
 
 /// Two quiet lines: what an overlap is and what the two fixes do.
@@ -331,7 +444,7 @@ fn conflict_row(u: &Ui, index: usize, conflict: &ConflictRow) -> El {
         let loser = *slot;
         let target = path.clone();
         let all = slots.clone();
-        let label = format!("{slot:02}");
+        let label = deadlock_core::addons::slot_label(*slot);
         let chip = if loser == winner {
             text(label)
                 .font(MONO)
@@ -381,7 +494,7 @@ fn conflict_row(u: &Ui, index: usize, conflict: &ConflictRow) -> El {
         )
         .child(slot_chips)
         .child(
-            text(format!("{:02}", conflict.winner))
+            text(deadlock_core::addons::slot_label(conflict.winner))
                 .font(MONO)
                 .color(u.prose)
                 .w(WINNER_W)
@@ -574,7 +687,7 @@ fn resolve(s: &State, u: &Ui, path: &str, slots: &[u16], winner: u16, loser: u16
         names
             .get(&slot)
             .cloned()
-            .unwrap_or_else(|| format!("Slot {slot:02}"))
+            .unwrap_or_else(|| format!("Slot {}", deadlock_core::addons::slot_label(slot)))
     };
     let loser_name = name_for(loser);
     let winner_name = name_for(winner);
@@ -656,7 +769,7 @@ fn resolve(s: &State, u: &Ui, path: &str, slots: &[u16], winner: u16, loser: u16
             tr("Shipped by"),
             &slots
                 .iter()
-                .map(|slot| format!("{slot:02}"))
+                .map(|slot| deadlock_core::addons::slot_label(*slot))
                 .collect::<Vec<_>>()
                 .join(", "),
             u.ink,
@@ -860,4 +973,10 @@ pub fn scene_ignored(st: &mut State) {
     list.add_pair(2, 7);
     list.add_file(4, "sounds/heroes/infernus/infernus_fire_loop.vsnd_c");
     stage_ignores(list);
+}
+
+/// `w4a-overlap-ignore-all`: Ignore all pressed, asking before every overlap goes to Ignored.
+pub fn scene_ignore_all(st: &mut State) {
+    scene_base(st);
+    ASK_ALL.store(true, std::sync::atomic::Ordering::Relaxed);
 }

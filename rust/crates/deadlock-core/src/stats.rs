@@ -755,6 +755,37 @@ impl StatsClient {
             .collect())
     }
 
+    /// Per-hero rows inside `filter` (match mode and start time), for the Heroes view's
+    /// filters. The same endpoint as [`StatsClient::fetch_hero_stats`] with the filter's query.
+    pub fn fetch_hero_stats_filtered(
+        &self,
+        account_id: u64,
+        filter: &filters::StatsFilter,
+    ) -> Result<Vec<HeroPerformance>> {
+        ensure_account(account_id)?;
+        let mut query = vec![("account_ids", account_id.to_string())];
+        query.extend(filters::filter_query(filter));
+        let rows: Vec<RawHeroStats> =
+            self.get_cached("/v1/players/hero-stats", &query, cache::TTL_HERO_STATS)?;
+        Ok(rows
+            .into_iter()
+            .map(RawHeroStats::into_performance)
+            .collect())
+    }
+
+    /// The newest `limit` matches inside `filter`. The full history is one download either
+    /// way, so the window is filled after filtering.
+    pub fn fetch_matches_filtered(
+        &self,
+        account_id: u64,
+        limit: usize,
+        filter: &filters::StatsFilter,
+    ) -> Result<Vec<MatchSummary>> {
+        let mut rows = filters::filter_matches(&self.fetch_matches(account_id, MATCH_WINDOW_MAX)?, filter);
+        rows.truncate(limit.clamp(1, MATCH_WINDOW_MAX));
+        Ok(rows)
+    }
+
     /// Hero id to display name, from `/v1/assets/heroes`.
     ///
     /// The asset response is about 1.9 MB because it includes lore and art
@@ -925,6 +956,27 @@ impl StatsClient {
     /// Hero names are best effort: if the asset request fails, rows keep their
     /// hero ids and the statistics stay usable.
     pub fn fetch_snapshot(&self, account_id: u64, match_limit: usize) -> Result<StatsSnapshot> {
+        self.snapshot_in(account_id, match_limit, None)
+    }
+
+    /// [`StatsClient::fetch_snapshot`] scoped by `filter`: the Overview's career totals and hero
+    /// rows come from the filtered hero stats, and the match window keeps only matches in the
+    /// filter's mode and window. Profile and rank are the player's and do not change.
+    pub fn fetch_snapshot_filtered(
+        &self,
+        account_id: u64,
+        match_limit: usize,
+        filter: &filters::StatsFilter,
+    ) -> Result<StatsSnapshot> {
+        self.snapshot_in(account_id, match_limit, Some(filter))
+    }
+
+    fn snapshot_in(
+        &self,
+        account_id: u64,
+        match_limit: usize,
+        filter: Option<&filters::StatsFilter>,
+    ) -> Result<StatsSnapshot> {
         ensure_account(account_id)?;
         self.reset_age();
         let profile = self.fetch_player(account_id)?;
@@ -936,8 +988,16 @@ impl StatsClient {
         let tier_names = self.fetch_rank_names().unwrap_or_default();
         let mut rank = raw_rank.into_rank();
         rank.benchmark = self.fetch_rank_benchmark(rank.badge).unwrap_or(None);
-        let heroes = self.fetch_hero_stats(account_id)?;
-        let matches = self.fetch_matches(account_id, match_limit)?;
+        let (heroes, matches) = match filter {
+            Some(filter) => (
+                self.fetch_hero_stats_filtered(account_id, filter)?,
+                self.fetch_matches_filtered(account_id, match_limit, filter)?,
+            ),
+            None => (
+                self.fetch_hero_stats(account_id)?,
+                self.fetch_matches(account_id, match_limit)?,
+            ),
+        };
         let hero_names = self.fetch_hero_names().unwrap_or_default();
         let generated_unix = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)

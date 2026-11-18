@@ -342,6 +342,35 @@ impl Queue {
             .sum()
     }
 
+    /// Where a waiting item stands in line: 1 runs next. None for an item that is running,
+    /// paused, finished or unknown. The order is the one [`Queue::next_runnable`] follows.
+    pub fn position(&self, id: &str) -> Option<usize> {
+        self.items
+            .iter()
+            .filter(|item| item.state == State::Queued)
+            .position(|item| item.id == id)
+            .map(|index| index + 1)
+    }
+
+    /// [`Queue::position`] for every waiting item, by id.
+    pub fn positions(&self) -> std::collections::BTreeMap<String, usize> {
+        self.items
+            .iter()
+            .filter(|item| item.state == State::Queued)
+            .enumerate()
+            .map(|(index, item)| (item.id.clone(), index + 1))
+            .collect()
+    }
+
+    /// The newest queue row for a GameBanana mod, with its place in line when it waits, for a
+    /// Browse card ("Queued #3", "Downloading from 2.gamebanana.com").
+    pub fn for_mod(&self, mod_id: u64) -> Option<(&Item, Option<usize>)> {
+        let item = self.items.iter().rev().find(|item| {
+            item.mod_id == Some(mod_id) || item.target.trim() == mod_id.to_string()
+        })?;
+        Some((item, self.position(&item.id)))
+    }
+
     /// The next item the worker should pick up.
     pub fn next_runnable(&self) -> Option<String> {
         if self.paused {
@@ -614,6 +643,8 @@ pub fn failover_candidates(url: &str, servers: &[String]) -> Vec<String> {
 pub struct Control {
     pause: AtomicBool,
     cancel: AtomicBool,
+    /// The host the current stream reads from, once its redirects are followed.
+    server: Mutex<Option<String>>,
 }
 
 impl Control {
@@ -635,6 +666,18 @@ impl Control {
 
     pub fn cancelled(&self) -> bool {
         self.cancel.load(Ordering::SeqCst)
+    }
+
+    /// Record the file server the stream is reading from.
+    pub fn set_server(&self, host: Option<String>) {
+        if let Ok(mut slot) = self.server.lock() {
+            *slot = host;
+        }
+    }
+
+    /// The file server the stream is reading from, while it runs.
+    pub fn server(&self) -> Option<String> {
+        self.server.lock().ok().and_then(|slot| slot.clone())
     }
 }
 
@@ -748,6 +791,11 @@ fn open(
     )))
 }
 
+/// The file server's host name, or None for GameBanana's own pages (not a file server).
+fn file_host(url: &WebUrl) -> Option<String> {
+    Some(url.host.clone()).filter(|host| host != "gamebanana.com" && host != "www.gamebanana.com")
+}
+
 fn part_path(path: &Path) -> PathBuf {
     let name = path
         .file_name()
@@ -772,6 +820,7 @@ pub fn stream(
     progress: &mut dyn FnMut(u64, Option<u64>),
 ) -> Result<StreamEnd> {
     let (final_url, mut response) = open(agent, url, policy, None, from)?;
+    control.set_server(file_host(&final_url));
     let status = response.status().as_u16();
     let length = response
         .headers()
@@ -1367,6 +1416,9 @@ fn run_item(
         {
             live.bytes_done = done;
             live.rate.observe(done, started.elapsed());
+            if let Some(server) = progress_control.server() {
+                live.server = Some(server);
+            }
             if let Some(total) = total.filter(|total| *total > 0) {
                 live.bytes_total = total;
             }
@@ -1416,7 +1468,7 @@ fn run_item(
         Ok(fetched) => {
             let bytes = fetched.bytes;
             if let Some(live) = queue.get_mut(id) {
-                live.server = fetched.server.clone();
+                live.server = fetched.server.clone().or_else(|| item_control.server());
             }
             finish(workspace, shared, queue, id, fetched.path, bytes);
         }

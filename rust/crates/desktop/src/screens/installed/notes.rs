@@ -77,7 +77,7 @@ pub fn key(addon: &AddonRow) -> SlotKey {
 }
 
 /// The key with the GameBanana id from the library entry, when there is one.
-fn key_with_id(st: &State, addon: &AddonRow) -> SlotKey {
+pub fn key_with_id(st: &State, addon: &AddonRow) -> SlotKey {
     SlotKey {
         gamebanana_id: meta_for(st, addon).and_then(|meta| meta.gamebanana_id),
         ..key(addon)
@@ -621,7 +621,7 @@ fn tags_dialog(s: &State, u: &Ui, slot: u16) -> El {
         .on_submit(move |st: &mut State, _tx: &mut Tx| add_typed_tags(st, slot));
     let name = addon
         .map(|addon| super::display_name(s, addon))
-        .unwrap_or_else(|| format!("Slot {slot:02}"));
+        .unwrap_or_else(|| format!("Slot {}", deadlock_core::addons::slot_label(slot)));
     dialog_shell(u, "installed-tags", &format!("Tags for {name}"))
         .child(text("Tags").font(H1).color(u.ink))
         .child(
@@ -665,7 +665,9 @@ fn lists_dialog(s: &State, u: &Ui) -> El {
                 .wrap(),
         );
     }
-    for entry in &extras.lists {
+    let list_count = extras.lists.len();
+    for (index, entry) in extras.lists.iter().enumerate() {
+        let (icon_button, moves) = super::list_sections::row_controls(u, &entry.id, &entry.name, index == 0, index + 1 == list_count);
         let members = entry.members.len();
         let id = entry.id.clone();
         let id_show = id.clone();
@@ -674,79 +676,92 @@ fn lists_dialog(s: &State, u: &Ui) -> El {
         let id_random = id.clone();
         let random = entry.random_each_launch;
         let name = entry.name.clone();
+        // Two lines a list: who it is (icon, name, order, delete), then what it does.
+        let top = row()
+            .w_full()
+            .gap(8.0)
+            .center_y()
+            .child(icon_button)
+            .child(
+                col()
+                    .grow(1.0)
+                    .min_w(0.0)
+                    .gap(2.0)
+                    .child(text(name.clone()).font(BODY_MED).color(u.ink).truncate())
+                    .child(
+                        text(if random {
+                            crate::screens::settings::i18n::fill(
+                                crate::screens::settings::i18n::tr("{} mods, random each launch"),
+                                &[&members.to_string()],
+                            )
+                        } else {
+                            format!("{members} mod{}", if members == 1 { "" } else { "s" })
+                        })
+                        .font(SMALL)
+                        .color(u.faint)
+                        .truncate(),
+                    ),
+            )
+            .child(moves)
+            .child(
+                u.icon_button(&icons::TRASH_2, &format!("Delete {name}"))
+                    .key(format!("list-delete-{}", entry.id))
+                    .cursor(rune::Cursor::Pointer)
+                    .on_press(move |st: &mut State| delete_list(st, &id)),
+            );
+        let actions = row()
+            .w_full()
+            .gap(8.0)
+            .center_y()
+            // Deadlock Mod Manager 2.4: one member on at random each launch.
+            .child(
+                row()
+                    .key(format!("list-random-{}", entry.id))
+                    .gap(6.0)
+                    .center_y()
+                    .focusable(true)
+                    .role("switch")
+                    .checked(random)
+                    .label(crate::screens::settings::i18n::tr("One at random each launch"))
+                    .cursor(rune::Cursor::Pointer)
+                    .on_press(move |st: &mut State| toggle_random(st, &id_random))
+                    .child(text(crate::screens::settings::i18n::tr("Random")).font(SMALL).color(u.muted).a11y_hidden())
+                    .child(u.toggle(random).a11y_hidden()),
+            )
+            .child(spacer())
+            .child(
+                u.action("Show", ActionKind::Ghost)
+                    .key(format!("list-show-{}", entry.id))
+                    .disabled(members == 0)
+                    .cursor(rune::Cursor::Pointer)
+                    .on_press(move |st: &mut State| {
+                        st.installed.notes.list = Some(id_show.clone());
+                        close(st);
+                    }),
+            )
+            .child(
+                u.action("Turn on", ActionKind::Secondary)
+                    .key(format!("list-on-{}", entry.id))
+                    .disabled(members == 0)
+                    .cursor(rune::Cursor::Pointer)
+                    .on_press(move |st: &mut State| lists_switch(st, &id_on, true)),
+            )
+            .child(
+                u.action("Turn off", ActionKind::Secondary)
+                    .key(format!("list-off-{}", entry.id))
+                    .disabled(members == 0)
+                    .cursor(rune::Cursor::Pointer)
+                    .on_press(move |st: &mut State| lists_switch(st, &id_off, false)),
+            );
         list = list.child(
-            row()
+            col()
                 .key(format!("list-{}", entry.id))
                 .w_full()
-                .h(52.0)
-                .gap(8.0)
-                .center_y()
+                .py(8.0)
+                .gap(6.0)
                 .border_sides([0.0, 0.0, 1.0, 0.0], u.hair)
-                .child(
-                    col()
-                        .grow(1.0)
-                        .min_w(0.0)
-                        .gap(2.0)
-                        .child(text(name.clone()).font(BODY_MED).color(u.ink).truncate())
-                        .child(
-                            text(if random {
-                                crate::screens::settings::i18n::fill(
-                                    crate::screens::settings::i18n::tr("{} mods, random each launch"),
-                                    &[&members.to_string()],
-                                )
-                            } else {
-                                format!("{members} mod{}", if members == 1 { "" } else { "s" })
-                            })
-                            .font(SMALL)
-                            .color(u.faint)
-                            .truncate(),
-                        ),
-                )
-                // Deadlock Mod Manager 2.4: one member on at random each launch.
-                .child(
-                    row()
-                        .key(format!("list-random-{}", entry.id))
-                        .gap(6.0)
-                        .center_y()
-                        .focusable(true)
-                        .role("switch")
-                        .checked(random)
-                        .label(crate::screens::settings::i18n::tr("One at random each launch"))
-                        .cursor(rune::Cursor::Pointer)
-                        .on_press(move |st: &mut State| toggle_random(st, &id_random))
-                        .child(text(crate::screens::settings::i18n::tr("Random")).font(SMALL).color(u.muted).a11y_hidden())
-                        .child(u.toggle(random).a11y_hidden()),
-                )
-                .child(
-                    u.action("Show", ActionKind::Ghost)
-                        .key(format!("list-show-{}", entry.id))
-                        .disabled(members == 0)
-                        .cursor(rune::Cursor::Pointer)
-                        .on_press(move |st: &mut State| {
-                            st.installed.notes.list = Some(id_show.clone());
-                            close(st);
-                        }),
-                )
-                .child(
-                    u.action("Turn on", ActionKind::Secondary)
-                        .key(format!("list-on-{}", entry.id))
-                        .disabled(members == 0)
-                        .cursor(rune::Cursor::Pointer)
-                        .on_press(move |st: &mut State| lists_switch(st, &id_on, true)),
-                )
-                .child(
-                    u.action("Turn off", ActionKind::Secondary)
-                        .key(format!("list-off-{}", entry.id))
-                        .disabled(members == 0)
-                        .cursor(rune::Cursor::Pointer)
-                        .on_press(move |st: &mut State| lists_switch(st, &id_off, false)),
-                )
-                .child(
-                    u.icon_button(&icons::TRASH_2, &format!("Delete {name}"))
-                        .key(format!("list-delete-{}", entry.id))
-                        .cursor(rune::Cursor::Pointer)
-                        .on_press(move |st: &mut State| delete_list(st, &id)),
-                ),
+                .child(top)
+                .child(actions),
         );
     }
     dialog_shell(u, "installed-lists", "Mod lists")
@@ -857,7 +872,7 @@ fn edit_dialog(s: &State, u: &Ui, slot: u16) -> El {
     let nsfw = s.installed.notes.nsfw;
     let name = addon
         .map(|addon| super::display_name(s, addon))
-        .unwrap_or_else(|| format!("Slot {slot:02}"));
+        .unwrap_or_else(|| format!("Slot {}", deadlock_core::addons::slot_label(slot)));
     dialog_shell(u, "installed-edit", &format!("Edit {name}"))
         .child(text("Edit this mod").font(H1).color(u.ink))
         .child(
@@ -948,10 +963,10 @@ fn dialog_shell(u: &Ui, key: &str, label: &str) -> El {
 }
 
 fn error_line(s: &State, u: &Ui) -> El {
-    text(s.installed.notes.error.clone().unwrap_or_default())
-        .font(SMALL)
-        .color(u.rose)
-        .wrap()
+    match s.installed.notes.error.as_deref().filter(|error| !error.trim().is_empty()) {
+        Some(error) => crate::notify::feedback::error_box(u, "notes-error", error).grow(1.0).shrink().min_w(0.0),
+        None => rune::el(),
+    }
 }
 
 // --- handlers ----------------------------------------------------------------
@@ -1038,7 +1053,7 @@ fn save_edit(st: &mut State, slot: u16) {
         let _ = deadlock_core::import::record_meta(&library, meta);
     }
     st.installed.library_sig = None;
-    st.status = format!("Saved slot {slot:02}.");
+    st.status = format!("Saved slot {}.", deadlock_core::addons::slot_label(slot));
     close(st);
 }
 
@@ -1142,9 +1157,9 @@ pub fn toggle_pin(st: &mut State, slot: u16) {
     let pinned = !entry.pinned;
     edit_slot(st, slot, |entry| entry.pinned = pinned);
     st.status = if pinned {
-        format!("Pinned slot {slot:02} to the top of the disabled mods.")
+        format!("Pinned slot {} to the top of the disabled mods.", deadlock_core::addons::slot_label(slot))
     } else {
-        format!("Slot {slot:02} is no longer pinned.")
+        format!("Slot {} is no longer pinned.", deadlock_core::addons::slot_label(slot))
     };
 }
 
@@ -1160,7 +1175,7 @@ pub fn toggle_always_first(st: &mut State, slot: u16) {
     edit_slot(st, slot, |entry| entry.always_first = first);
     if !first || super::writable_game(st).is_none() {
         if !first {
-            st.status = format!("Slot {slot:02} no longer loads first.");
+            st.status = format!("Slot {} no longer loads first.", deadlock_core::addons::slot_label(slot));
         }
         return;
     }
@@ -1181,7 +1196,7 @@ pub fn toggle_always_first(st: &mut State, slot: u16) {
                 st.installed.notes.sig = None;
                 st.installed.last_undo = Some(super::Undo::Reorder(plan));
                 st.installed.undo_fresh = true;
-                st.status = format!("Slot {slot:02} loads first from now on.");
+                st.status = format!("Slot {} loads first from now on.", deadlock_core::addons::slot_label(slot));
                 super::rescan(st);
             }
             Err(error) => st.status = error.to_string(),

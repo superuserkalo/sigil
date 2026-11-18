@@ -2472,6 +2472,11 @@ fn unique_slug(workspace: &Path, base: &str) -> Result<String> {
     Err(Error::msg("Too many profiles share this name."))
 }
 
+/// The file-name slug a profile named `name` is saved under.
+pub fn slug_for(name: &str) -> String {
+    slugify(name)
+}
+
 fn slugify(name: &str) -> String {
     let mut slug = String::new();
     let mut last_was_separator = false;

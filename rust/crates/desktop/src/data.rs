@@ -1084,21 +1084,12 @@ fn missing_install_library() -> AddonLibrary {
 }
 
 pub fn apply_addon_library(state: &mut State, library: AddonLibrary) {
-    state.status = if let Some(error) = &library.error {
-        error.clone()
-    } else {
-        format!(
-            "Addon folder read: {}. {} conflict{}.",
-            library.summary(),
-            library.conflicts.len(),
-            if library.conflicts.len() == 1 {
-                ""
-            } else {
-                "s"
-            }
-        )
-    };
+    // A good read shows on the page itself; a toast for it doubled every action's own (#4).
+    if let Some(error) = &library.error {
+        state.status = error.clone();
+    }
     state.addons = library;
+    crate::screens::locker::sync::addons_changed(state);
 }
 
 fn map_browse_page(page: &gamebanana::BrowsePage, key: u64) -> BrowsePageView {
@@ -2270,10 +2261,14 @@ pub fn load_locker(
                 label: labels
                     .get(&base)
                     .cloned()
-                    .unwrap_or_else(|| format!("pak{:02}", item.slot)),
+                    .unwrap_or_else(|| format!("Slot {}", deadlock_core::addons::slot_label(item.slot))),
                 heroes: item.heroes.clone(),
                 general: item.general,
                 sounds: item.sounds.clone(),
+                parts: install
+                    .as_ref()
+                    .map(|install| crate::screens::locker::parts::read(&install.addons_dir, item.slot, &item.file))
+                    .unwrap_or_default(),
             }
         })
         .collect();
@@ -2578,9 +2573,19 @@ pub fn equip_locker_skin(state: &mut State, hero: &str, slot: u16) {
         );
         return;
     };
-    match locker::equip_hero_skin(&game_root, &locker_mods(state), hero, slot, true) {
+    // C14: with "several skins per hero" on, equip adds the skin instead of replacing the others.
+    let equipped = match state.locker.prefs.equip_mode() {
+        deadlock_core::locker_parts::EquipMode::Add => {
+            deadlock_core::locker_parts::equip_wanted(&locker_mods(state), hero, slot, deadlock_core::locker_parts::EquipMode::Add)
+                .and_then(|wanted| deadlock_core::addons::set_many(&game_root, &wanted, true).map(|_| ()))
+        }
+        deadlock_core::locker_parts::EquipMode::Replace => {
+            locker::equip_hero_skin(&game_root, &locker_mods(state), hero, slot, true).map(|_| ())
+        }
+    };
+    match equipped {
         Ok(_) => {
-            notify::push(state, Notice::success(format!("Equipped {hero}'s slot {slot:02}")));
+            notify::push(state, Notice::success(format!("Equipped {hero}'s slot {}", deadlock_core::addons::slot_label(slot))));
             after_locker_write(state);
         }
         Err(error) => notify::push(
@@ -2732,7 +2737,9 @@ pub fn shuffle_before_launch(state: &mut State) -> bool {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|duration| duration.as_secs())
         .unwrap_or(0);
-    match locker::shuffle_for_launch(&game_root, &mods, &prefs.shuffle, seed, true) {
+    // C14: the shuffle avoids the skin on now, and keeps to the pool when one is set.
+    let wanted = deadlock_core::locker_parts::shuffle_wanted(&mods, &prefs.shuffle, prefs.pool_slots(&mods).as_ref(), seed);
+    match deadlock_core::addons::set_many(&game_root, &wanted, true) {
         Ok(report) if report.done.is_empty() => false,
         Ok(_) => {
             scan_addons_now(state);
@@ -4204,6 +4211,8 @@ pub fn apply_crosshair(state: &mut State) {
                 None => notice,
             };
             crate::notify::push(state, notice);
+            // Wave 4: with "Write to the game's hero settings" on, those files get it too.
+            crate::screens::crosshair::after_apply(state);
         }
         Err(error) => {
             state.crosshair.log = Some(error.to_string());

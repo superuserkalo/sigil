@@ -184,6 +184,11 @@ fn ready_count(st: &State) -> usize {
 
 /// The background image and the glow, painted under the sidebar and the pages. None while
 /// both are off.
+/// The sidebar's width now: narrower when it is collapsed to icons (wave 4).
+fn side_w(s: &State) -> f32 {
+    crate::shell_w4::sidebar_width(s, 0.0)
+}
+
 pub fn backdrop(s: &State, u: &Ui, _window: (f32, f32)) -> Option<El> {
     let p = &s.prefs.personal;
     let image = if p.background.on {
@@ -203,7 +208,7 @@ pub fn backdrop(s: &State, u: &Ui, _window: (f32, f32)) -> Option<El> {
         .paint_order(-1)
         .a11y_hidden();
     if let Some((px, blur)) = image {
-        let left = if p.background.sidebar { 0.0 } else { SIDEBAR_W };
+        let left = if p.background.sidebar { 0.0 } else { side_w(s) };
         let top = if p.background.topbar { 0.0 } else { TITLEBAR_H };
         let bleed = p.background.blur * 2.0;
         let picture = el()
@@ -223,7 +228,7 @@ pub fn backdrop(s: &State, u: &Ui, _window: (f32, f32)) -> Option<El> {
         // The glow starts where the page does unless the sidebar lets it through.
         let open_sidebar = s.prefs.transparent_sidebar
             || (p.background.sidebar && image.is_some());
-        let left = if open_sidebar { 0.0 } else { SIDEBAR_W };
+        let left = if open_sidebar { 0.0 } else { side_w(s) };
         layer = layer.child(
             el().key("personal-glow")
                 .pin(Some(left), Some(0.0), Some(0.0), Some(0.0))

@@ -111,6 +111,15 @@ fn backup_root() -> PathBuf {
     crate::data::data_dir().join("compat-backups")
 }
 
+/// The repaired-to-original map the core keeps beside the backups (C3), read when the update
+/// check loads and after each repair.
+pub fn aliases() -> Vec<deadlock_core::compat_repair::RepairAlias> {
+    if rune::is_headless() || cfg!(test) {
+        return Vec::new();
+    }
+    deadlock_core::compat_repair::read_repair_aliases(&backup_root())
+}
+
 fn staging() -> PathBuf {
     crate::data::data_dir().join("staging").join("compat")
 }
@@ -283,6 +292,7 @@ fn rekey(st: &mut State, slot: u16, old_size: u64, new_size: u64) {
 
 /// Apply a batch's results: records, sizes, one recap line. Shared with the launch step.
 pub fn finish(st: &mut State, done: Vec<Done>) {
+    st.installed.updates.aliases = aliases();
     let (mut fixed, mut reverted, mut failed) = (0usize, 0usize, Vec::new());
     for item in done {
         match item {
@@ -329,13 +339,14 @@ pub fn finish(st: &mut State, done: Vec<Done>) {
         line.push(tr("Put the original file back.").to_string());
     }
     if !failed.is_empty() {
+        // One toast: the failure, with what did work in front of the reasons (issue #4).
+        line.push(failed.join("\n"));
         crate::notify::push(
             st,
             crate::notify::Notice::error(fill(tr("{} mods could not be repaired"), &[&failed.len().to_string()]))
-                .detail(failed.join("\n")),
+                .detail(line.join(" ")),
         );
-    }
-    if !line.is_empty() {
+    } else if !line.is_empty() {
         st.status = line.join(" ");
     }
     super::rescan(st);
@@ -405,7 +416,7 @@ pub fn block(s: &State, u: &Ui) -> Option<El> {
                     .gap(8.0)
                     .center_y()
                     .border_sides([0.0, 0.0, 1.0, 0.0], u.hair)
-                    .child(text(format!("{slot:02}")).font(MICRO).color(u.faint).w(20.0))
+                    .child(text(deadlock_core::addons::slot_label(slot)).font(MICRO).color(u.faint).w(28.0))
                     .child(text(display_name(s, addon)).font(BODY_MED).color(u.ink).truncate().grow(1.0).min_w(0.0))
                     .child(
                         text({
@@ -434,7 +445,7 @@ pub fn block(s: &State, u: &Ui) -> Option<El> {
                     .w_full()
                     .py(4.0)
                     .gap(8.0)
-                    .child(text(format!("{slot:02}")).font(MICRO).color(u.faint).w(20.0))
+                    .child(text(deadlock_core::addons::slot_label(*slot)).font(MICRO).color(u.faint).w(28.0))
                     .child(text(error.clone()).font(SMALL).color(u.faint).wrap().grow(1.0).min_w(0.0)),
             );
         }
@@ -450,7 +461,7 @@ pub fn block(s: &State, u: &Ui) -> Option<El> {
                 .gap(8.0)
                 .center_y()
                 .border_sides([0.0, 0.0, 1.0, 0.0], u.hair)
-                .child(text(format!("{:02}", record.slot)).font(MICRO).color(u.faint).w(20.0))
+                .child(text(deadlock_core::addons::slot_label(record.slot)).font(MICRO).color(u.faint).w(28.0))
                 .child(text(display_name(s, addon)).font(BODY_MED).color(u.ink).truncate().grow(1.0).min_w(0.0))
                 .child(text(tr("Repaired")).font(SMALL).color(u.teal))
                 .child(
@@ -554,7 +565,7 @@ pub fn stage_scene(st: &mut State, asking: bool) {
     checked.findings.insert(2, vec![finding("scripts/heroes.vdata_c", "data", 4), finding("sounds/footsteps.vsndevts_c", "sounds", 2)]);
     checked.findings.insert(9, vec![finding("models/heroes_wip/drifter/drifter.vmdl_c", "cameras", 1)]);
     checked.animations.insert(5);
-    checked.errors.insert(7, tr("This mod is a split archive (pak07_000.vpk next to it). Sigil does not repair split archives.").to_string());
+    checked.errors.insert(7, tr("pak07_dir.vpk could not be read: the file ends early.").to_string());
     st.installed.repairs.checked = Some(checked);
     st.installed.repairs.loaded = true;
     if let Some(addon) = st.addons.addons.iter().find(|a| a.slot == 3) {

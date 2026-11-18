@@ -39,6 +39,8 @@ pub struct Persisted {
     pub card_size: String,
     pub paged: bool,
     pub audio_volume: f32,
+    /// The level before a mute, so Unmute after a restart brings it back.
+    pub audio_unmuted: Option<f32>,
     pub hidden_mods: Vec<HiddenMod>,
     pub hidden_authors: Vec<String>,
     pub ignored_updates: Vec<u64>,
@@ -71,6 +73,7 @@ impl Default for Persisted {
             card_size: String::new(),
             paged: false,
             audio_volume: 0.7,
+            audio_unmuted: None,
             hidden_mods: Vec::new(),
             hidden_authors: Vec::new(),
             ignored_updates: Vec::new(),
@@ -184,6 +187,11 @@ pub(crate) fn from_value(value: &Value) -> Persisted {
             .and_then(Value::as_f64)
             .map(|volume| volume as f32)
             .unwrap_or(0.7),
+        audio_unmuted: value
+            .get("audioUnmuted")
+            .and_then(Value::as_f64)
+            .map(|volume| volume as f32)
+            .filter(|volume| *volume > 0.0),
         hidden_mods,
         hidden_authors,
         ignored_updates,
@@ -232,6 +240,7 @@ pub(crate) fn to_value(state: &Persisted) -> Value {
         "cardSize": state.card_size,
         "paged": state.paged,
         "audioVolume": state.audio_volume,
+        "audioUnmuted": state.audio_unmuted,
         "hiddenMods": state.hidden_mods.iter().map(|hidden| serde_json::json!({
             "id": hidden.id,
             "model": hidden.model,
@@ -268,6 +277,7 @@ mod tests {
             card_size: "Large".into(),
             paged: true,
             audio_volume: 0.4,
+            audio_unmuted: None,
             hidden_mods: vec![HiddenMod {
                 id: 5,
                 model: "Mod".into(),
@@ -279,5 +289,17 @@ mod tests {
         let value = to_value(&state);
         assert_eq!(from_value(&value), state);
         assert_eq!(from_value(&serde_json::json!({})), Persisted::default());
+    }
+
+    #[test]
+    fn a_mute_survives_a_restart_with_its_level() {
+        let state = Persisted {
+            audio_volume: 0.0,
+            audio_unmuted: Some(0.55),
+            ..Persisted::default()
+        };
+        let back = from_value(&to_value(&state));
+        assert_eq!(back.audio_volume, 0.0);
+        assert_eq!(back.audio_unmuted, Some(0.55));
     }
 }

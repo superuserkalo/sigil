@@ -60,6 +60,14 @@ pub struct Entry {
     thumbnail: Option<String>,
     /// Set by Cancel while the install worker plans this mod (`install::PlanOptions`).
     cancel: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+    /// Place in the download line while it waits, 1 runs next (wave 4, Grimoire's "Queued #2").
+    pub place: Option<usize>,
+    /// The file server the download streams from (wave 4, Grimoire's "Automatic · server").
+    pub server: Option<String>,
+    /// Cancel was pressed after the update went to Installed's queue: it ends as cancelled.
+    cancelled: bool,
+    /// The file server it failed over from, and when (Grimoire's "Switching from X").
+    pub switched: Option<(String, std::time::Instant)>,
 }
 
 impl Entry {
@@ -77,6 +85,10 @@ impl Entry {
             author: None,
             thumbnail: None,
             cancel: None,
+            place: None,
+            server: None,
+            cancelled: false,
+            switched: None,
         }
     }
 
@@ -205,7 +217,8 @@ pub fn button(s: &State, id: u64) -> Button {
         if updates.queue.contains(&slot) {
             return Button::Queued;
         }
-        if available_update(s, id).is_some() && !update_ignored(s, id) {
+        // Settings > Mods > Show mod update marks (DMM) hides the mark; Installed still updates.
+        if s.shell.w4.update_badges && available_update(s, id).is_some() && !update_ignored(s, id) {
             return Button::Update;
         }
         if switched_off(s, id) {
@@ -413,6 +426,11 @@ pub fn poll(st: &mut State) -> bool {
     changed |= follow_queue(st);
     changed |= follow_updates(st);
     changed |= start_next(st);
+    // Wave 4: featured picks, creator links and the rate-limit notice.
+    changed |= super::w4::refresh_featured(st);
+    changed |= super::w4::poll_author(st);
+    changed |= super::w4::poll_rate_limit(st);
+    changed |= super::paste::poll(st);
     changed
 }
 
@@ -439,6 +457,18 @@ fn follow_queue(st: &mut State) -> bool {
         };
         if entry.row.is_none() {
             entry.row = Some(item.id.clone());
+        }
+        let place = queue.position(&item.id);
+        let server = item.server.as_deref().map(server_name);
+        if entry.place != place || entry.server != server {
+            if let (Some(before), Some(now)) = (&entry.server, &server)
+                && before != now
+            {
+                entry.switched = Some((before.clone(), std::time::Instant::now()));
+            }
+            entry.place = place;
+            entry.server = server;
+            changed = true;
         }
         let next = match item.state {
             Row::Queued => Step::Queued,
@@ -474,7 +504,8 @@ fn follow_queue(st: &mut State) -> bool {
 fn follow_updates(st: &mut State) -> bool {
     let updates = &st.installed.updates;
     let mut changed = false;
-    for entry in st.browse_view.installs.items.values_mut() {
+    let mut gone = Vec::new();
+    for (id, entry) in st.browse_view.installs.items.iter_mut() {
         if entry.update.is_empty() || !entry.started || entry.step != Step::Installing {
             continue;
         }
@@ -483,6 +514,18 @@ fn follow_updates(st: &mut State) -> bool {
             .iter()
             .any(|slot| updates.running == Some(*slot) || updates.queue.contains(slot));
         if waiting {
+            // A stop asked from Installed counts the same as one asked here.
+            if updates.running.is_some_and(|slot| entry.update.contains(&slot))
+                && updates.cancel.load(std::sync::atomic::Ordering::Relaxed)
+            {
+                entry.cancelled = true;
+            }
+            continue;
+        }
+        if entry.cancelled {
+            // Cancelled: the card goes back to its Update button, never Done.
+            gone.push(*id);
+            changed = true;
             continue;
         }
         entry.step = match entry.update.iter().find_map(|slot| updates.failed.get(slot)) {
@@ -490,6 +533,9 @@ fn follow_updates(st: &mut State) -> bool {
             None => Step::Done,
         };
         changed = true;
+    }
+    for id in gone {
+        st.browse_view.installs.items.remove(&id);
     }
     changed
 }
@@ -797,6 +843,17 @@ fn glyph(b: &Button) -> &'static Icon {
     }
 }
 
+/// A file server's short name: `filecache9` for `filecache9.gamebanana.com`, as Grimoire
+/// names it; any other host as it is.
+pub fn server_name(host: &str) -> String {
+    let host = host.trim().trim_start_matches("https://").trim_start_matches("http://");
+    let host = host.split('/').next().unwrap_or(host);
+    match host.split_once('.') {
+        Some((first, rest)) if rest.ends_with("gamebanana.com") && first != "gamebanana" => first.to_string(),
+        _ => host.to_string(),
+    }
+}
+
 /// The fill behind a downloading label, `fraction` of the width from the left.
 fn progress_fill(fraction: f32, color: Color) -> El {
     let f = fraction.clamp(0.0, 1.0);
@@ -893,7 +950,29 @@ pub fn button_el(u: &Ui, b: &Button, key: String, id: u64, name: &str, size: Siz
 /// Cancel one Browse install: its download queue row while it waits or streams (the queue
 /// removes the partial file), or the install worker's plan while it extracts and validates.
 pub fn cancel(st: &mut State, id: u64) {
+    // An update started from Browse runs in Installed's queue: cancel it there (A5). A running
+    // update that was asked to stop shows Cancelling, never Done.
+    if !st.browse_view.installs.items.get(&id).is_some_and(Entry::busy) {
+        let updates = &st.installed.updates;
+        if let Some(slot) = owned_slots(st, id)
+            .into_iter()
+            .find(|slot| updates.running == Some(*slot) || updates.queue.contains(slot))
+        {
+            crate::screens::installed::cancel_update(st, slot);
+            return;
+        }
+    }
     let Some(entry) = st.browse_view.installs.items.get(&id) else { return };
+    if entry.started && !entry.update.is_empty() && entry.step == Step::Installing {
+        let slots = entry.update.clone();
+        for slot in slots {
+            crate::screens::installed::cancel_update(st, slot);
+        }
+        if let Some(entry) = st.browse_view.installs.items.get_mut(&id) {
+            entry.cancelled = true;
+        }
+        return;
+    }
     match entry.step {
         Step::Queued | Step::Downloading(_) | Step::Paused(_) => match entry.row.clone() {
             Some(row) => st.launch.downloads.send(Command::Cancel(row)),
@@ -922,8 +1001,23 @@ pub fn status_line(s: &State, u: &Ui, id: u64) -> Option<El> {
     let b = button(s, id);
     let (words, color) = match &b {
         Button::Retry(error) => (error.clone(), u.rose),
-        Button::Queued => (tr("Waiting for its turn").to_string(), u.muted),
-        Button::Downloading(_) | Button::Installing => (b.label(), u.accent),
+        Button::Queued => match s.browse_view.installs.items.get(&id).and_then(|e| e.place) {
+            Some(place) => (fill(tr("Queued #{}, waiting for its turn"), &[&place.to_string()]), u.muted),
+            None => (tr("Waiting for its turn").to_string(), u.muted),
+        },
+        Button::Downloading(_) => {
+            let entry = s.browse_view.installs.items.get(&id);
+            let switched = entry
+                .and_then(|e| e.switched.as_ref())
+                .filter(|(_, at)| at.elapsed() < crate::screens::downloads::SWITCH_NOTE)
+                .map(|(from, _)| from.clone());
+            match (entry.and_then(|e| e.server.clone()), switched) {
+                (Some(server), Some(from)) => (fill(tr("{} from {}, switched from {}"), &[&b.label(), &server, &from]), u.accent),
+                (Some(server), None) => (fill(tr("{} from {}"), &[&b.label(), &server]), u.accent),
+                _ => (b.label(), u.accent),
+            }
+        }
+        Button::Installing => (b.label(), u.accent),
         Button::Paused(_) => (b.label(), u.muted),
         _ => return None,
     };
@@ -1280,6 +1374,10 @@ mod tests {
 
     #[test]
     fn labels_read_as_one_sequence() {
+        assert_eq!(server_name("filecache9.gamebanana.com"), "filecache9");
+        assert_eq!(server_name("https://files.gamebanana.com/mods/x.zip"), "files");
+        assert_eq!(server_name("gamebanana.com"), "gamebanana.com");
+        assert_eq!(server_name("mirror.example.org"), "mirror.example.org");
         assert_eq!(Button::Install.label(), "Install");
         assert_eq!(Button::Downloading(Some(0.4)).label(), "Downloading 40%");
         assert_eq!(Button::Downloading(Some(0.4)).short(), "40%");

@@ -532,30 +532,75 @@ pub fn read_dmm(app_dirs: &[PathBuf], game_root: Option<&Path>) -> DetectedSourc
     }
 }
 
-/// Files the user picked: a directory VPK (its chunks are found next to it) or an archive.
+/// Files the user picked: a directory VPK (its chunks are found next to it), an archive, or a
+/// folder (every `_dir.vpk` in it and one level down). Each gets a readable name, best first:
+///
+/// 1. the title the VPK carries itself (`addoninfo.txt` or `modinfo.json`, with its author and
+///    GameBanana id), as Deadlock Mod Manager and Grimoire read it;
+/// 2. for a bare slot name such as `pak05_dir.vpk`, the folder it sits in (`Neon Haze/pak05_dir.vpk`
+///    is "Neon Haze"), or the picked folder's name;
+/// 3. the file name, tidied (`neon_haze_dir.vpk` is "Neon haze").
 pub fn local_mods(paths: &[PathBuf]) -> Vec<ForeignMod> {
-    paths
-        .iter()
-        .filter(|path| path.is_file())
-        .map(|path| {
-            let name = file_name_of(path);
-            let lower = name.to_ascii_lowercase();
-            let archive = [".zip", ".7z", ".rar"]
-                .iter()
-                .any(|ext| lower.ends_with(ext));
-            ForeignMod {
+    let mut out = Vec::new();
+    for path in paths {
+        if path.is_dir() {
+            for (file, chunks) in dir_vpks_under(path) {
+                out.push(local_vpk(&file, chunks));
+            }
+            continue;
+        }
+        if !path.is_file() {
+            continue;
+        }
+        let name = file_name_of(path);
+        let lower = name.to_ascii_lowercase();
+        let archive = [".zip", ".7z", ".rar"]
+            .iter()
+            .any(|ext| lower.ends_with(ext));
+        if archive {
+            out.push(ForeignMod {
                 name: pretty_name(&name),
                 author: None,
                 thumbnail_url: None,
                 gamebanana_id: None,
                 file: path.clone(),
-                chunks: if archive { Vec::new() } else { chunks_for(path) },
+                chunks: Vec::new(),
                 size_bytes: file_size(path),
                 enabled_in_source: false,
                 archive,
-            }
-        })
-        .collect()
+            });
+        } else {
+            out.push(local_vpk(path, chunks_for(path)));
+        }
+    }
+    out
+}
+
+/// One local directory VPK with the readable name [`local_mods`] describes.
+fn local_vpk(path: &Path, chunks: Vec<PathBuf>) -> ForeignMod {
+    let embedded = crate::identify::read_embedded(path).unwrap_or_default();
+    let file_name = file_name_of(path);
+    let mut name = pretty_name(&file_name);
+    if name == file_name
+        && let Some(folder) = path.parent().and_then(|parent| parent.file_name())
+    {
+        let folder = folder.to_string_lossy();
+        let pretty = pretty_name(&folder);
+        if !pretty.is_empty() && !matches!(folder.to_ascii_lowercase().as_str(), "addons" | "citadel" | "game") {
+            name = pretty;
+        }
+    }
+    ForeignMod {
+        name: embedded.title.clone().unwrap_or(name),
+        author: embedded.author.clone(),
+        thumbnail_url: None,
+        gamebanana_id: embedded.gamebanana_id,
+        file: path.to_path_buf(),
+        chunks,
+        size_bytes: file_size(path),
+        enabled_in_source: false,
+        archive: false,
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1351,6 +1396,30 @@ mod tests {
         // A plan for another game folder is refused outright.
         let other = ApplyContext { game_root: root.join("Elsewhere"), ..context };
         assert!(apply_plan(&plan, &other).is_err());
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn local_mods_get_readable_names() {
+        let root = scratch("local-names");
+        let named = root.join("Neon Haze");
+        fs::create_dir_all(&named).unwrap();
+        let slot_file = make_vpk(&named, "pak05_dir.vpk", &[("materials/a.vmat_c", b"a")]);
+        let plain = make_vpk(&root, "gold_abrams_dir.vpk", &[("materials/b.vmat_c", b"b")]);
+        let titled_dir = root.join("titled");
+        fs::create_dir_all(&titled_dir).unwrap();
+        make_vpk(
+            &titled_dir,
+            "pak09_dir.vpk",
+            &[("addoninfo.txt", b"\"addontitle\" \"Shiny Sword\"\n\"addonauthor\" \"Ana\"\n\"gamebananaid\" \"4242\"")],
+        );
+
+        let mods = local_mods(&[slot_file, plain, titled_dir.clone()]);
+        let names: Vec<&str> = mods.iter().map(|m| m.name.as_str()).collect();
+        assert_eq!(names, ["Neon Haze", "Gold abrams", "Shiny Sword"]);
+        assert_eq!(mods[2].author.as_deref(), Some("Ana"));
+        assert_eq!(mods[2].gamebanana_id, Some(4242));
+        assert!(mods.iter().all(|m| !m.archive));
         let _ = fs::remove_dir_all(&root);
     }
 

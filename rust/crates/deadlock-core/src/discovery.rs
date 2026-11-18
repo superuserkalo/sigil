@@ -459,6 +459,12 @@ pub fn read_game_info_status(gameinfo_path: &Path) -> Result<GameInfoStatus> {
         Err(error) => return Err(error.into()),
     };
 
+    Ok(game_info_status_of(&text))
+}
+
+/// [`read_game_info_status`] for text already read (a present file).
+pub fn game_info_status_of(text: &str) -> GameInfoStatus {
+    let text = text.to_string();
     let pattern =
         Regex::new(r"(?i)^\s*Game\s+citadel[\\/]addons\s*$").expect("gameinfo pattern is valid");
 
@@ -469,12 +475,12 @@ pub fn read_game_info_status(gameinfo_path: &Path) -> Result<GameInfoStatus> {
         };
 
         if pattern.is_match(without_comment) {
-            return Ok(GameInfoStatus {
+            return GameInfoStatus {
                 present: true,
                 addons_search_path: true,
                 line: Some(index + 1),
                 missing_paths: missing_search_paths(&text),
-            });
+            };
         }
     }
 
@@ -485,20 +491,20 @@ pub fn read_game_info_status(gameinfo_path: &Path) -> Result<GameInfoStatus> {
             .lines()
             .position(|line| line.trim() == crate::profiles::PROFILE_BLOCK_BEGIN)
             .map(|index| index + 1);
-        return Ok(GameInfoStatus {
+        return GameInfoStatus {
             present: true,
             addons_search_path: true,
             line,
             missing_paths: missing_search_paths(&text),
-        });
+        };
     }
 
-    Ok(GameInfoStatus {
+    GameInfoStatus {
         present: true,
         addons_search_path: false,
         line: None,
         missing_paths: missing_search_paths(&text),
-    })
+    }
 }
 
 pub fn read_addons_status(addons_dir: &Path) -> Result<AddonsStatus> {

@@ -158,6 +158,16 @@ fn chrono_like(at: std::time::SystemTime) -> String {
 }
 
 /// Days since 1970-01-01 to a civil date (Howard Hinnant's algorithm).
+/// (year, month, day) for days since 1970-01-01 (UTC).
+pub fn civil_date(days: i64) -> (i64, u32, u32) {
+    civil(days)
+}
+
+/// The year of days since 1970-01-01 (UTC).
+pub fn civil_year(days: i64) -> i64 {
+    civil(days).0
+}
+
 fn civil(z: i64) -> (i64, u32, u32) {
     let z = z + 719_468;
     let era = z.div_euclid(146_097);

@@ -47,12 +47,18 @@ pub(crate) fn grid_page(s: &State, u: &Ui) -> El {
     } else if s.browse.page.is_none() {
         u.empty_state(
             "",
-            if s.browse.error.is_some() {
+            if s.browse.error.as_deref().is_some_and(super::w4::is_rate_limit) {
+                crate::screens::settings::i18n::tr("GameBanana is rate-limiting Sigil")
+            } else if s.browse.error.is_some() {
                 "GameBanana did not respond"
             } else {
                 "Nothing loaded yet"
             },
-            "Check your connection, then try again.",
+            if s.browse.error.as_deref().is_some_and(super::w4::is_rate_limit) {
+                crate::screens::settings::i18n::tr("Wait a minute, then try again.")
+            } else {
+                "Check your connection, then try again."
+            },
             Some(
                 u.icon_action(&icons::REFRESH_CW, "Try again", ActionKind::Secondary)
                     .key("browse-retry")
@@ -403,7 +409,8 @@ pub(crate) fn toolbar(s: &State, u: &Ui, detail: &str) -> El {
                     }),
             );
     }
-    r.child(
+    // Wave 4: paste many mod links at once (Grimoire).
+    r.child(super::paste::button(u)).child(
         u.icon_button(&icons::REFRESH_CW, "Refresh")
             .key("browse-refresh")
             .cursor(rune::Cursor::Pointer)

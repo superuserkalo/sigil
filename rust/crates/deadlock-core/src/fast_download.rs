@@ -6,6 +6,7 @@
 use std::fs::{self, File};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use sha2::{Digest, Sha256};
 
@@ -59,6 +60,55 @@ fn part_path(path: &Path, index: usize) -> PathBuf {
     path.with_file_name(format!("{name}.part{index}"))
 }
 
+/// One range into `part`, reading `stop` after every chunk.
+fn fetch_part(
+    agent: &ureq::Agent,
+    url: &str,
+    user_agent: &str,
+    part: &Path,
+    (start, end): (u64, u64),
+    total: u64,
+    stop: &dyn Fn() -> bool,
+) -> Result<()> {
+    let mut response = agent
+        .get(url)
+        .header("User-Agent", user_agent)
+        .header("Range", &format!("bytes={start}-{end}"))
+        .call()
+        .map_err(|e| Error::Network(e.to_string()))?;
+    if response.status().as_u16() != 206 {
+        return Err(Error::Network(format!("range answered HTTP {}", response.status())));
+    }
+    let header = response
+        .headers()
+        .get("content-range")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_string();
+    if !content_range_ok(&header, start, end, total) {
+        return Err(Error::Network(format!("unexpected Content-Range {header:?}")));
+    }
+    let mut file = File::create(part)?;
+    let mut reader = response.body_mut().with_config().limit(end - start + 1).reader();
+    let mut buffer = vec![0u8; PART_CHUNK_BYTES];
+    let mut copied: u64 = 0;
+    loop {
+        if stop() {
+            return Err(Error::Cancelled);
+        }
+        let read = reader.read(&mut buffer)?;
+        if read == 0 {
+            break;
+        }
+        file.write_all(&buffer[..read])?;
+        copied += read as u64;
+    }
+    if copied != end - start + 1 {
+        return Err(Error::Network(format!("range {start}-{end} came back short")));
+    }
+    Ok(())
+}
+
 /// Fetch `url` into `path` in ranges with `agent`. Returns the bytes written and their
 /// sha256. On any error every part file is removed and nothing is left at `path`.
 pub fn fetch_ranges(
@@ -69,6 +119,31 @@ pub fn fetch_ranges(
     total: u64,
     parts: u32,
 ) -> Result<(u64, String)> {
+    fetch_ranges_with_cancel(agent, url, user_agent, path, total, parts, None)
+}
+
+/// Bytes each part reads between two looks at the cancel flag.
+const PART_CHUNK_BYTES: usize = 256 * 1024;
+
+/// [`fetch_ranges`] that stops when `cancel` is set. Every part reads the flag after each
+/// chunk and once more before the parts are joined, so a stop lands as fast as on the
+/// one-stream path. A cancel removes every part file and returns [`Error::Cancelled`]; the
+/// caller must not fall back to one stream on that error. A part that fails also tells the
+/// others to stop, so a broken range does not wait for the rest to finish.
+pub fn fetch_ranges_with_cancel(
+    agent: &ureq::Agent,
+    url: &str,
+    user_agent: &str,
+    path: &Path,
+    total: u64,
+    parts: u32,
+    cancel: Option<&AtomicBool>,
+) -> Result<(u64, String)> {
+    let cancelled = || cancel.is_some_and(|flag| flag.load(Ordering::SeqCst));
+    if cancelled() {
+        return Err(Error::Cancelled);
+    }
+    let abort = AtomicBool::new(false);
     let ranges = plan(total, parts);
     if ranges.is_empty() {
         return Err(Error::msg("Not worth splitting."));
@@ -85,32 +160,15 @@ pub fn fetch_ranges(
             .map(|(index, (start, end))| {
                 let (start, end) = (*start, *end);
                 let part = part_path(path, index);
+                let abort = &abort;
+                let cancelled = &cancelled;
                 scope.spawn(move || -> Result<()> {
-                    let mut response = agent
-                        .get(url)
-                        .header("User-Agent", user_agent)
-                        .header("Range", &format!("bytes={start}-{end}"))
-                        .call()
-                        .map_err(|e| Error::Network(e.to_string()))?;
-                    if response.status().as_u16() != 206 {
-                        return Err(Error::Network(format!("range answered HTTP {}", response.status())));
+                    let stop = || abort.load(Ordering::SeqCst) || cancelled();
+                    let result = fetch_part(agent, url, user_agent, &part, (start, end), total, &stop);
+                    if result.is_err() {
+                        abort.store(true, Ordering::SeqCst);
                     }
-                    let header = response
-                        .headers()
-                        .get("content-range")
-                        .and_then(|v| v.to_str().ok())
-                        .unwrap_or("")
-                        .to_string();
-                    if !content_range_ok(&header, start, end, total) {
-                        return Err(Error::Network(format!("unexpected Content-Range {header:?}")));
-                    }
-                    let mut file = File::create(&part)?;
-                    let mut reader = response.body_mut().with_config().limit(end - start + 1).reader();
-                    let copied = std::io::copy(&mut reader, &mut file)?;
-                    if copied != end - start + 1 {
-                        return Err(Error::Network(format!("range {start}-{end} came back short")));
-                    }
-                    Ok(())
+                    result
                 })
             })
             .collect();
@@ -119,9 +177,20 @@ pub fn fetch_ranges(
             .map(|h| h.join().unwrap_or_else(|_| Err(Error::msg("A download part stopped."))))
             .collect()
     });
-    if let Some(Err(error)) = results.into_iter().find(|r| r.is_err()) {
+    if cancelled() {
         cleanup(ranges.len());
-        return Err(error);
+        return Err(Error::Cancelled);
+    }
+    // A part stopped by another part's failure reports `Cancelled`; the real cause wins.
+    let mut errors: Vec<Error> = results.into_iter().filter_map(|r| r.err()).collect();
+    if !errors.is_empty() {
+        cleanup(ranges.len());
+        let index = errors.iter().position(|e| !matches!(e, Error::Cancelled)).unwrap_or(0);
+        let error = errors.swap_remove(index);
+        return Err(match error {
+            Error::Cancelled => Error::Network("A download part stopped.".to_string()),
+            other => other,
+        });
     }
     let joined = (|| -> Result<(u64, String)> {
         let partial = path.with_extension("joining");
@@ -236,6 +305,32 @@ mod tests {
         let expected: String = Sha256::digest(&body).iter().map(|b| format!("{b:02x}")).collect();
         assert_eq!(sha, expected);
         assert!(!part_path(&path, 0).exists());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_set_cancel_flag_stops_the_parts_and_leaves_nothing() {
+        let total = MIN_SPLIT_BYTES as usize + 11;
+        let body: Vec<u8> = (0..total).map(|i| (i % 7) as u8).collect();
+        let url = serve(body);
+        let dir = std::env::temp_dir().join(format!("sigil-ranges-cancel-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("file.bin");
+        let agent: ureq::Agent = crate::net::builder().build().into();
+        let flag = AtomicBool::new(true);
+        let error =
+            fetch_ranges_with_cancel(&agent, &url, "test", &path, total as u64, 4, Some(&flag))
+                .unwrap_err();
+        assert!(matches!(error, Error::Cancelled));
+        assert!(!path.exists());
+        for index in 0..4 {
+            assert!(!part_path(&path, index).exists());
+        }
+        let flag = AtomicBool::new(false);
+        let (bytes, _) =
+            fetch_ranges_with_cancel(&agent, &url, "test", &path, total as u64, 4, Some(&flag))
+                .unwrap();
+        assert_eq!(bytes, total as u64);
         let _ = fs::remove_dir_all(&dir);
     }
 }

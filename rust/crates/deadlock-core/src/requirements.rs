@@ -31,7 +31,7 @@
 //! # Ok::<(), deadlock_core::Error>(())
 //! ```
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::time::Duration;
 
 use serde_json::Value;
@@ -246,8 +246,7 @@ pub fn broken_on_disable(target_id: u64, enabled: &[(u64, ModRequirements)]) -> 
 ///
 /// The slot check does not read the VPKs. Grimoire also confirms from the two file lists that
 /// the dependent replaces textures the base ships, which keeps a required mod that shares no
-/// path out of the warning. A caller that has both listings can narrow the pairs the same way
-/// before it offers the fix.
+/// path out of the warning: [`order_problems_with_files`] does that narrowing.
 ///
 /// `mods` holds one entry per installed mod; a mod without a GameBanana id cannot be matched
 /// and is left out by the caller.
@@ -312,9 +311,119 @@ pub fn order_problems(mods: &[OrderedMod], requirements: &[ModRequirements]) -> 
     problems
 }
 
+/// Files a mod may ship next to its resources that say nothing about what it replaces.
+const OVERLAY_IGNORED: [&str; 6] = [
+    "addoninfo.txt",
+    "grimoire_meta.json",
+    "readme.txt",
+    "readme.md",
+    "license",
+    "license.txt",
+];
+
+/// Grimoire's texture-overlay test (`isTextureOverlay` in `src/lib/requirementLoadOrder.ts`,
+/// MIT, ported): `overlay` is a recolor of `base` when it ships at least one texture
+/// (`.vtex_c`), every resource it ships is a texture or material (`.vtex_c`, `.vmat_c`) that
+/// `base` also ships, and `base` is a model mod (it ships a `.vmdl_c`). Readme, license and
+/// addon info files are ignored. Paths compare without case and with either slash.
+pub fn is_texture_overlay<O: AsRef<str>, B: AsRef<str>>(overlay: &[O], base: &[B]) -> bool {
+    let norm = |path: &str| path.to_ascii_lowercase().replace('\\', "/");
+    let resources: Vec<String> = overlay
+        .iter()
+        .map(|path| norm(path.as_ref()))
+        .filter(|path| !OVERLAY_IGNORED.contains(&path.as_str()))
+        .collect();
+    let base: BTreeSet<String> = base.iter().map(|path| norm(path.as_ref())).collect();
+    !resources.is_empty()
+        && resources.iter().any(|path| path.ends_with(".vtex_c"))
+        && resources.iter().all(|path| {
+            (path.ends_with(".vtex_c") || path.ends_with(".vmat_c")) && base.contains(path)
+        })
+        && base.iter().any(|path| path.ends_with(".vmdl_c"))
+}
+
+/// [`order_problems`] narrowed the way Grimoire narrows it: a pair whose two file lists are
+/// both in `files` (keyed by GameBanana id, game paths from each mod's VPK) is kept only when
+/// [`is_texture_overlay`] says the dependent recolors the base. A pair with a missing list
+/// stays, as [`order_problems`] reports it, so an unreadable VPK never hides a real problem.
+pub fn order_problems_with_files(
+    mods: &[OrderedMod],
+    requirements: &[ModRequirements],
+    files: &BTreeMap<u64, Vec<String>>,
+) -> Vec<OrderProblem> {
+    order_problems(mods, requirements)
+        .into_iter()
+        .filter(|problem| match (files.get(&problem.overlay), files.get(&problem.base)) {
+            (Some(overlay), Some(base)) => is_texture_overlay(overlay, base),
+            _ => true,
+        })
+        .collect()
+}
+
+/// The game paths inside each VPK, keyed by GameBanana id, for [`order_problems_with_files`].
+/// A VPK that cannot be read is left out.
+pub fn file_lists(vpks: &[(u64, std::path::PathBuf)]) -> BTreeMap<u64, Vec<String>> {
+    let options = crate::vpk::ReadVpkOptions { keep_preload: false };
+    vpks.iter()
+        .filter_map(|(id, path)| {
+            let directory = crate::vpk::read_vpk_directory_with(path, &options).ok()?;
+            Some((*id, directory.entries.into_iter().map(|entry| entry.path).collect()))
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn texture_overlays_match_grimoire() {
+        let texture = "materials/skin_color.vtex_c";
+        let model = "models/hero.vmdl_c";
+        let material = "materials/skin.vmat_c";
+        assert!(is_texture_overlay(&[texture], &[texture, model]));
+        assert!(is_texture_overlay(&["MATERIALS\\SKIN_COLOR.VTEX_C"], &[texture, model]));
+        assert!(is_texture_overlay(&[texture, "README.txt"], &[texture, model]));
+        assert!(!is_texture_overlay(&[texture, "scripts/settings.txt"], &[texture, model]));
+        assert!(!is_texture_overlay(&[texture, model], &[texture, model]));
+        assert!(!is_texture_overlay(&[texture], &["materials/other.vtex_c", model]));
+        assert!(!is_texture_overlay::<&str, &str>(&[], &[texture, model]));
+        assert!(!is_texture_overlay(&[material], &[material, model]));
+        assert!(!is_texture_overlay(&[texture], &[texture]));
+    }
+
+    #[test]
+    fn file_lists_narrow_order_problems() {
+        let mods = [
+            OrderedMod { gamebanana_id: 1, slot: 1, enabled: true, always_first: false },
+            OrderedMod { gamebanana_id: 2, slot: 2, enabled: true, always_first: false },
+            OrderedMod { gamebanana_id: 3, slot: 3, enabled: true, always_first: false },
+        ];
+        let needs_base = |id| {
+            ModRequirements::new(
+                Some(id),
+                vec![Requirement {
+                    name: "Base".into(),
+                    url: "https://gamebanana.com/mods/1".into(),
+                    mod_id: Some(1),
+                }],
+            )
+        };
+        let requirements = [needs_base(2), needs_base(3)];
+        assert_eq!(order_problems(&mods, &requirements).len(), 2);
+
+        let base = vec!["materials/a.vtex_c".to_string(), "models/a.vmdl_c".to_string()];
+        let mut files = BTreeMap::new();
+        files.insert(1, base);
+        files.insert(2, vec!["materials/a.vtex_c".to_string()]);
+        files.insert(3, vec!["sounds/a.vsnd_c".to_string()]);
+        let narrowed = order_problems_with_files(&mods, &requirements, &files);
+        assert_eq!(narrowed.len(), 1);
+        assert_eq!(narrowed[0].overlay, 2);
+
+        files.remove(&3);
+        assert_eq!(order_problems_with_files(&mods, &requirements, &files).len(), 2, "an unknown list keeps the pair");
+    }
 
     #[test]
     fn requirements_are_name_and_link_pairs() {

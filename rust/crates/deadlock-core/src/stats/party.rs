@@ -96,6 +96,38 @@ pub fn lineup_ratings(party: &[u32], filter: &StatsFilter) -> Result<Vec<LineupR
     }
 
     let members = party_picks(&accounts, filter)?;
+    rate_members(&members, filter)
+}
+
+/// Rate hand-picked lineups: `member_picks[i]` is the heroes member `i` would play (up to any
+/// count; repeats ignored). Every lineup with one pick per member and no hero twice is rated
+/// from the same hero combination records as [`lineup_ratings`], best first. The lineups'
+/// `account_ids` are member numbers starting at 1, since no account is involved. Fewer than two
+/// members with picks returns an empty list.
+pub fn rate_lineups(member_picks: &[Vec<u32>], filter: &StatsFilter) -> Result<Vec<LineupRating>> {
+    let members = members_from_picks(member_picks);
+    rate_members(&members, filter)
+}
+
+/// `(member number, picks)` for [`rate_lineups`]: zero hero ids and repeats dropped, members
+/// without picks left out.
+pub fn members_from_picks(member_picks: &[Vec<u32>]) -> Vec<(u32, Vec<u32>)> {
+    member_picks
+        .iter()
+        .enumerate()
+        .filter_map(|(index, picks)| {
+            let mut heroes: Vec<u32> = Vec::new();
+            for &hero in picks {
+                if hero != 0 && !heroes.contains(&hero) {
+                    heroes.push(hero);
+                }
+            }
+            (!heroes.is_empty()).then(|| (index as u32 + 1, heroes))
+        })
+        .collect()
+}
+
+fn rate_members(members: &[(u32, Vec<u32>)], filter: &StatsFilter) -> Result<Vec<LineupRating>> {
     if members.len() < 2 {
         return Ok(Vec::new());
     }
@@ -114,7 +146,21 @@ pub fn lineup_ratings(party: &[u32], filter: &StatsFilter) -> Result<Vec<LineupR
         CombIndex::new()
     };
 
-    let mut ratings = rate_party(&members, &pairs, &trios);
+    Ok(sorted(rate_party(members, &pairs, &trios)))
+}
+
+/// [`rate_lineups`] without the network: the pair and trio records are given. For tests and
+/// for a caller that already holds the combination rows.
+pub fn rate_lineups_with(member_picks: &[Vec<u32>], pairs: &[HeroComb], trios: &[HeroComb]) -> Vec<LineupRating> {
+    let members = members_from_picks(member_picks);
+    if members.len() < 2 {
+        return Vec::new();
+    }
+    sorted(rate_party(&members, &index_combs(pairs), &index_combs(trios)))
+}
+
+/// Best first, unrated last.
+fn sorted(mut ratings: Vec<LineupRating>) -> Vec<LineupRating> {
     ratings.sort_by(|left, right| {
         right
             .win_rate_percent
@@ -123,7 +169,7 @@ pub fn lineup_ratings(party: &[u32], filter: &StatsFilter) -> Result<Vec<LineupR
             .then(right.sample_matches.cmp(&left.sample_matches))
             .then(left.hero_ids.cmp(&right.hero_ids))
     });
-    Ok(ratings)
+    ratings
 }
 
 /// The party's expected win rate: the mean over the rated lineups, each
@@ -630,5 +676,18 @@ mod tests {
                 .is_empty()
         );
         assert!(lineup_ratings(&[1, 2, 3, 4, 5, 6, 7], &StatsFilter::default()).is_err());
+    }
+
+    #[test]
+    fn hand_picked_lineups_are_rated_without_accounts() {
+        let pairs = [HeroComb { hero_ids: vec![1, 2], wins: 6, matches: 10 }, HeroComb { hero_ids: vec![1, 3], wins: 3, matches: 10 }];
+        let ratings = rate_lineups_with(&[vec![1, 1, 0], vec![2, 3, 1]], &pairs, &[]);
+        // Member 1 plays 1; member 2 plays 2 or 3 (1 is taken).
+        assert_eq!(ratings.len(), 2);
+        assert_eq!(ratings[0].hero_ids, vec![1, 2]);
+        assert_eq!(ratings[0].account_ids, vec![1, 2]);
+        assert!((ratings[0].win_rate_percent.unwrap() - 60.0).abs() < 1e-9);
+        assert_eq!(members_from_picks(&[vec![], vec![5]]), vec![(2, vec![5])]);
+        assert!(rate_lineups_with(&[vec![1]], &pairs, &[]).is_empty());
     }
 }

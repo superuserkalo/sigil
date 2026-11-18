@@ -20,7 +20,10 @@ use crate::model::Screen;
 use crate::ui::{ActionKind, BODY, BODY_MED, H1, H2, MONO, SMALL, Ui};
 
 mod cards;
+pub mod art;
 pub mod cursors;
+pub mod parts;
+pub mod sync;
 mod variants;
 
 /// One roster hero as the screen draws it. `asset_count` is kept for later views.
@@ -75,7 +78,13 @@ pub struct ModRow {
     pub general: Option<GeneralType>,
     /// Ability sounds this mod replaces.
     pub sounds: Vec<LockerSound>,
+    /// What it changes per hero (C14): skin, weapon skin, voice lines, weapon and ability
+    /// sounds, from its VPK paths (`locker_parts::hero_parts`, read with the Locker).
+    pub parts: Parts,
 }
+
+/// Hero name to the parts a mod changes for that hero.
+pub type Parts = std::collections::BTreeMap<String, std::collections::BTreeSet<deadlock_core::locker_parts::HeroPart>>;
 
 /// A recolor brief in the workspace, for the applied changes review.
 #[derive(Clone)]
@@ -126,6 +135,8 @@ pub enum Page {
 pub enum HeroSection {
     Mods,
     Sounds,
+    /// Weapon skins, voice lines and weapon sounds (`parts.rs`).
+    Parts,
     Recolor,
 }
 
@@ -207,6 +218,10 @@ pub struct View {
     pub notes_placeholder: TextEdit,
     /// Cursor packs (`cursors.rs`).
     pub cursors: cursors::Cursors,
+    /// The addon folder the list last matched (`sync.rs`, issue #1).
+    pub addons_sig: Option<sync::Sig>,
+    /// Mod pictures already asked for (`art.rs`).
+    pub art_asked: std::collections::HashSet<String>,
 }
 
 impl Default for View {
@@ -245,6 +260,8 @@ impl Default for View {
             ),
             notes_placeholder: TextEdit::new(""),
             cursors: cursors::Cursors::default(),
+            addons_sig: None,
+            art_asked: Default::default(),
         }
     }
 }
@@ -410,7 +427,18 @@ fn grid_page(s: &State, u: &Ui, v: &View) -> El {
         if !v.loaded {
             loading(cols)
         } else if let Some(error) = &v.error {
-            u.empty_state("", "Heroes could not be loaded", error, Some(retry(u)))
+            u.empty_state(
+                "",
+                "Heroes could not be loaded",
+                error,
+                Some(
+                    row()
+                        .gap(8.0)
+                        .center_y()
+                        .child(retry(u))
+                        .child(crate::notify::feedback::button(u, "locker-error-feedback", "Heroes could not be loaded", error)),
+                ),
+            )
         } else {
             u.empty_state("", "No heroes yet", "Try again in a moment.", Some(retry(u)))
         }
@@ -1155,7 +1183,7 @@ pub(super) fn mod_row(s: &State, u: &Ui, m: &ModRow, trailing: Option<El>) -> El
         .map(|addon| addon.enabled)
         .unwrap_or(m.enabled);
     let detail = {
-        let mut parts = vec![format!("Slot {:02}", m.slot)];
+        let mut parts = vec![format!("Slot {}", deadlock_core::addons::slot_label(m.slot))];
         if !m.heroes.is_empty() {
             parts.push(m.heroes.join(", "));
         } else if let Some(kind) = m.general {
@@ -1172,6 +1200,7 @@ pub(super) fn mod_row(s: &State, u: &Ui, m: &ModRow, trailing: Option<El>) -> El
         .gap(12.0)
         .center_y()
         .border_sides([0.0, 0.0, 1.0, 0.0], u.hair)
+        .child(art::thumb(s, u, m.slot))
         .child(
             col()
                 .grow(1.0)
@@ -1183,7 +1212,8 @@ pub(super) fn mod_row(s: &State, u: &Ui, m: &ModRow, trailing: Option<El>) -> El
                         .truncate(),
                 )
                 .child(text(detail).font(SMALL).color(u.faint).truncate()),
-        );
+        )
+        .child(art::edit_button(u, m.slot, &m.label));
     if let Some(t) = trailing {
         r = r.child(t);
     }
@@ -1265,6 +1295,11 @@ fn hero_page(s: &State, u: &Ui, v: &View, hero: &HeroCard) -> El {
             rail_row(u, "locker-section-sounds".into(), "Sounds", sounds.len(), section == HeroSection::Sounds, sounds.is_empty())
                 .on_press(|st: &mut State| st.locker.hero_section = HeroSection::Sounds),
         )
+        .child({
+            let n = parts::count(v, &hero.display_name);
+            rail_row(u, "locker-section-parts".into(), crate::screens::settings::i18n::tr("Weapons and voice"), n, section == HeroSection::Parts, n == 0)
+                .on_press(|st: &mut State| st.locker.hero_section = HeroSection::Parts)
+        })
         .child(
             rail_row(
                 u,
@@ -1420,6 +1455,16 @@ fn hero_page(s: &State, u: &Ui, v: &View, hero: &HeroCard) -> El {
             }
             c
         }
+        HeroSection::Parts => col()
+            .w_full()
+            .gap(8.0)
+            .child(pane_head(
+                u,
+                crate::screens::settings::i18n::tr("Weapons and voice"),
+                plural(parts::count(v, &hero.display_name), "mod", "mods"),
+                None,
+            ))
+            .child(parts::section(s, u, v, hero)),
         HeroSection::Recolor => {
             let recolor_hero = hero.clone();
             let can = !hero.recolor_paths.is_empty();
@@ -1994,7 +2039,7 @@ fn picker_dialog(s: &State, u: &Ui, id: &str) -> El {
         } else {
             m.general
                 .map(|kind| kind.label().to_string())
-                .unwrap_or_else(|| format!("Slot {:02}", m.slot))
+                .unwrap_or_else(|| format!("Slot {}", deadlock_core::addons::slot_label(m.slot)))
         };
         list = list.child(
             row()
@@ -2467,6 +2512,7 @@ fn fixture_mods(s: &mut State) {
             heroes: vec!["Haze".to_string()],
             general: None,
             sounds: Vec::new(),
+            parts: Default::default(),
         },
         ModRow {
             slot: 12,
@@ -2477,6 +2523,7 @@ fn fixture_mods(s: &mut State) {
             heroes: vec!["Haze".to_string()],
             general: None,
             sounds: Vec::new(),
+            parts: Default::default(),
         },
         ModRow {
             slot: 13,
@@ -2487,6 +2534,7 @@ fn fixture_mods(s: &mut State) {
             heroes: vec!["Haze".to_string()],
             general: None,
             sounds: Vec::new(),
+            parts: Default::default(),
         },
         ModRow {
             slot: 14,
@@ -2497,6 +2545,7 @@ fn fixture_mods(s: &mut State) {
             heroes: vec!["Wraith".to_string()],
             general: None,
             sounds: Vec::new(),
+            parts: Default::default(),
         },
         ModRow {
             slot: 15,
@@ -2507,6 +2556,7 @@ fn fixture_mods(s: &mut State) {
             heroes: Vec::new(),
             general: Some(GeneralType::Announcer),
             sounds: vec![sound("Haze", 2)],
+            parts: Default::default(),
         },
         ModRow {
             slot: 16,
@@ -2517,6 +2567,7 @@ fn fixture_mods(s: &mut State) {
             heroes: Vec::new(),
             general: Some(GeneralType::Announcer),
             sounds: vec![sound("Haze", 2)],
+            parts: Default::default(),
         },
         ModRow {
             slot: 17,
@@ -2527,6 +2578,7 @@ fn fixture_mods(s: &mut State) {
             heroes: Vec::new(),
             general: Some(GeneralType::Announcer),
             sounds: vec![sound("Haze", 4)],
+            parts: Default::default(),
         },
     ];
     rows.sort_by_key(|row| row.slot);
@@ -2706,4 +2758,32 @@ mod tests {
         assert!(!hero_name_matches("Haze", "haze", "talon"));
         assert!(!hero_name_matches("Haze", "haze", "wraith"));
     }
+}
+
+/// `w4a-locker-parts`: Haze's Weapons and voice section with a weapon skin, voice lines and a
+/// gun sound mod.
+pub fn scene_parts(s: &mut State) {
+    use deadlock_core::locker_parts::HeroPart;
+    scene_hero(s);
+    fixture_mods(s);
+    let mut add = |slot: u16, label: &str, on: bool, parts: &[HeroPart]| {
+        let mut map = Parts::new();
+        map.insert("Haze".to_string(), parts.iter().copied().collect());
+        s.locker.mods.push(ModRow {
+            slot,
+            file: format!("pak{slot:02}_dir.vpk"),
+            enabled: on,
+            key: format!("vpk:part-{slot}"),
+            label: label.to_string(),
+            heroes: Vec::new(),
+            general: None,
+            sounds: Vec::new(),
+            parts: map,
+        });
+    };
+    add(18, "Haze Gold Pistols", true, &[HeroPart::Weapon]);
+    add(19, "Haze Chrome Pistols", false, &[HeroPart::Weapon]);
+    add(20, "Haze, dubbed", true, &[HeroPart::Voice]);
+    add(21, "Silenced pistols", true, &[HeroPart::WeaponSound]);
+    s.locker.hero_section = HeroSection::Parts;
 }

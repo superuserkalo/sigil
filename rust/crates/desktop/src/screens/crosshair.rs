@@ -144,6 +144,11 @@ pub struct SceneArt {
 }
 
 pub struct View {
+    /// Wave 4: what writing to the hero settings would change (files changed, files), read only.
+    pub w4_plan: Option<Result<(usize, usize), String>>,
+    /// Wave 4: the hero settings write or restore on its worker (`game_apply`), and whether it
+    /// was a write (true) or a restore.
+    pub w4_job: Job<(bool, usize)>,
     pub settings: deadlock_core::crosshair::Crosshair,
     pub source: String,
     pub log: Option<String>,
@@ -174,6 +179,8 @@ pub struct View {
 impl Default for View {
     fn default() -> Self {
         View {
+            w4_plan: None,
+            w4_job: Job::default(),
             settings: deadlock_core::crosshair::Crosshair::default(),
             source: "editor defaults".to_string(),
             log: None,
@@ -306,6 +313,7 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
         }
         changed = true;
     }
+    changed |= poll_hero_write(s);
     if let Some((_, at)) = s.crosshair.copied
         && at.elapsed() >= COPIED_FOR
     {
@@ -984,7 +992,38 @@ fn colour_section(s: &State, u: &Ui) -> El {
 
 fn game_section(s: &State, u: &Ui) -> El {
     let c = &s.crosshair.settings;
+    let on = crate::screens::settings::options::get().crosshair_hero_settings;
+    // Wave 4: DMM's "write the crosshair to the game's hero settings", through the owner's
+    // `game_apply` step with a backup; off restores.
+    let hero_line = if s.crosshair.w4_job.is_running() {
+        tr("Writing the hero settings").to_string()
+    } else if on {
+        match &s.crosshair.w4_plan {
+            Some(Ok((changed, files))) => fill(
+                tr("On: {} of {} hero settings files take the crosshair. Apply writes it again; turning it off restores your previous settings."),
+                &[&changed.to_string(), &files.to_string()],
+            ),
+            Some(Err(error)) => error.clone(),
+            None => tr("On: the crosshair is the game's default, hero overrides stay. Turning it off restores your previous settings.").to_string(),
+        }
+    } else {
+        tr("Applies the crosshair as the game's default and keeps hero overrides. Turning it off restores your previous settings. Close Deadlock first.").to_string()
+    };
     rows()
+        .child(
+            col()
+                .key("crosshair-hero-settings")
+                .w_full()
+                .border_sides([0.0, 0.0, 1.0, 0.0], u.hair)
+                .pb(8.0)
+                .child(setting_row(u, tr("Write to the game's hero settings")).border_sides([0.0; 4], u.hair).child(
+                    u.toggle(on)
+                        .label(tr("Write to the game's hero settings").to_string())
+                        .cursor(rune::Cursor::Pointer)
+                        .on_press(toggle_hero_settings),
+                ))
+                .child(text(hero_line).font(SMALL).color(u.muted).wrap()),
+        )
         .child(switch_row(
             u,
             tr("Static gap"),
@@ -1004,6 +1043,96 @@ fn game_section(s: &State, u: &Ui) -> El {
                 st.crosshair.source = "edited".to_string();
             },
         ))
+}
+
+/// Turn the hero settings write on or off (DMM): on writes the current crosshair into the
+/// game's and the Steam account's `citadel_hero_settings.lst` with a backup; off restores what
+/// was there. Both run on a worker through the owner's `game_apply` step, with the game closed.
+fn toggle_hero_settings(st: &mut State) {
+    if crate::screens::settings::watch::refuse_while_running(st) {
+        return;
+    }
+    let on = !crate::screens::settings::options::get().crosshair_hero_settings;
+    crate::screens::settings::options::edit(st, |o| o.crosshair_hero_settings = on);
+    st.crosshair.w4_plan = if on { Some(hero_settings_plan(st)) } else { None };
+    start_hero_write(st, on);
+}
+
+/// After a crosshair is applied with the switch on, the hero settings get it too.
+pub fn after_apply(st: &mut State) {
+    if crate::screens::settings::options::get().crosshair_hero_settings {
+        start_hero_write(st, true);
+    }
+}
+
+/// The game's and the Steam accounts' hero settings files.
+fn hero_settings_paths(st: &State) -> Option<Vec<std::path::PathBuf>> {
+    let root = st.game_root.clone()?;
+    let roots = deadlock_core::discovery::default_steam_roots();
+    let accounts: Vec<u32> = deadlock_core::steam_users::detect(&roots).iter().map(|u| u.account_id).collect();
+    Some(deadlock_core::game_plans::hero_settings_paths(&root, roots.first().map(|p| p.as_path()), &accounts))
+}
+
+fn hero_backup_path() -> std::path::PathBuf {
+    crate::data::data_dir().join("crosshair-hero-settings-backup.json")
+}
+
+/// GAME WRITE, user triggered: the owner's `game_apply::apply_crosshair_hero_settings` with
+/// approve, off the UI thread.
+fn start_hero_write(st: &mut State, on: bool) {
+    if st.demo || rune::is_headless() || st.crosshair.w4_job.is_running() {
+        return;
+    }
+    let Some(paths) = hero_settings_paths(st) else {
+        st.crosshair.log = Some(tr("Find the game folder first.").to_string());
+        st.crosshair.tone = Tone::Warn;
+        return;
+    };
+    let crosshair = on.then(|| st.crosshair.settings.clone());
+    let backup = hero_backup_path();
+    let wake = st.wake.clone();
+    st.crosshair.w4_job.start(wake, move || {
+        deadlock_core::game_apply::apply_crosshair_hero_settings(&paths, &backup, crosshair.as_ref(), true)
+            .map(|count| (on, count))
+            .map_err(|e| e.to_string())
+    });
+}
+
+/// Take the worker's result: a toast either way (DMM's wording).
+fn poll_hero_write(st: &mut State) -> bool {
+    let Some(result) = st.crosshair.w4_job.try_take() else {
+        return false;
+    };
+    match result {
+        Ok((true, _)) => crate::notify::push(
+            st,
+            crate::notify::Notice::success(tr("Crosshair written to the hero settings")).detail(tr("Launch Deadlock to use it.")),
+        ),
+        Ok((false, _)) => crate::notify::push(
+            st,
+            crate::notify::Notice::success(tr("Hero settings restored")).detail(tr("Your previous crosshair settings are back.")),
+        ),
+        Err(error) => crate::notify::push(
+            st,
+            crate::notify::Notice::warning(tr("The hero settings were not changed")).detail(error),
+        ),
+    }
+    st.crosshair.w4_plan = None;
+    true
+}
+
+/// (settings that would change, files) for the current crosshair, read only.
+fn hero_settings_plan(st: &State) -> Result<(usize, usize), String> {
+    use deadlock_core::game_plans;
+    let paths = hero_settings_paths(st).ok_or_else(|| tr("Find the game folder first.").to_string())?;
+    let backup = game_plans::read_crosshair_backup(&hero_backup_path()).map_err(|e| e.to_string())?;
+    let plan = game_plans::plan_crosshair_write(&paths, &backup, Some(&st.crosshair.settings)).map_err(|e| e.to_string())?;
+    let changed = plan
+        .edits
+        .iter()
+        .filter(|e| e.original.as_deref() != Some(e.updated.as_str()))
+        .count();
+    Ok((changed, plan.edits.len()))
 }
 
 /// The rows of one group, straight under the picker.

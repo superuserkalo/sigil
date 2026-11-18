@@ -67,6 +67,50 @@ impl StatsFilter {
     }
 }
 
+/// `match_mode` values in a match history row: 1 is unranked, 4 is ranked.
+pub const MATCH_MODE_UNRANKED: i32 = 1;
+pub const MATCH_MODE_RANKED: i32 = 4;
+
+impl StatsFilter {
+    /// True when a match history row is inside this scope: its mode (ranked 4, unranked 1;
+    /// private lobbies, bots and other modes never count) and its start time.
+    pub fn keeps(&self, row: &crate::stats::MatchSummary) -> bool {
+        let mode_ok = match self.ranked {
+            Some(true) => row.match_mode == MATCH_MODE_RANKED,
+            Some(false) => row.match_mode == MATCH_MODE_UNRANKED,
+            None => matches!(row.match_mode, MATCH_MODE_RANKED | MATCH_MODE_UNRANKED),
+        };
+        let since_ok = self
+            .since
+            .filter(|since| *since > 0)
+            .is_none_or(|since| row.start_time >= since as i64);
+        mode_ok && since_ok
+    }
+
+    /// A filter whose window starts at the newest game patch in `notes` ("this patch"), keeping
+    /// the ranked choice. Unchanged when no note is a patch.
+    pub fn since_last_patch(&self, notes: &[crate::patch_notes::PatchNote]) -> StatsFilter {
+        let newest = notes
+            .iter()
+            .filter(|note| note.is_patch)
+            .filter_map(|note| chrono::DateTime::parse_from_rfc3339(&note.published_at).ok())
+            .map(|time| time.timestamp())
+            .max();
+        StatsFilter {
+            ranked: self.ranked,
+            since: newest.map(|t| t.max(0) as u64).or(self.since),
+        }
+    }
+}
+
+/// The rows of `matches` inside `filter`, in the order given.
+pub fn filter_matches(
+    matches: &[crate::stats::MatchSummary],
+    filter: &StatsFilter,
+) -> Vec<crate::stats::MatchSummary> {
+    matches.iter().filter(|row| filter.keeps(row)).cloned().collect()
+}
+
 /// Ok for a SteamID3 account id, the form the statistics endpoints take.
 pub(crate) fn ensure_account(account: u32) -> Result<()> {
     if account == 0 {
@@ -251,5 +295,65 @@ mod tests {
     fn the_account_floor_rejects_zero() {
         assert!(ensure_account(1).is_ok());
         assert!(ensure_account(0).is_err());
+    }
+
+    fn row(start: i64, mode: i32) -> crate::stats::MatchSummary {
+        crate::stats::MatchSummary {
+            match_id: start as u64,
+            hero_id: 1,
+            hero_name: None,
+            start_time: start,
+            started_at: String::new(),
+            duration_seconds: 1800,
+            game_mode: 1,
+            match_mode: mode,
+            player_team: 0,
+            kills: 0,
+            deaths: 0,
+            assists: 0,
+            kda: 0.0,
+            net_worth: 0,
+            last_hits: 0,
+            denies: 0,
+            outcome: crate::stats::MatchOutcome::Win,
+            win: Some(true),
+            abandoned_seconds: None,
+            ranked_badge: None,
+            ranked_delta: None,
+        }
+    }
+
+    #[test]
+    fn matches_follow_mode_and_window() {
+        let rows = vec![row(100, 4), row(200, 1), row(300, 4), row(400, 2)];
+        let both = filter_matches(&rows, &StatsFilter::default());
+        assert_eq!(both.len(), 3, "a private lobby is never counted");
+        let ranked = StatsFilter { ranked: Some(true), since: Some(150) };
+        assert_eq!(filter_matches(&rows, &ranked).iter().map(|r| r.start_time).collect::<Vec<_>>(), [300]);
+        let unranked = StatsFilter { ranked: Some(false), since: Some(0) };
+        assert_eq!(filter_matches(&rows, &unranked).len(), 1);
+    }
+
+    #[test]
+    fn this_patch_starts_at_the_newest_patch_note() {
+        let note = |at: &str, is_patch: bool| crate::patch_notes::PatchNote {
+            id: at.to_string(),
+            title: String::new(),
+            url: String::new(),
+            author: String::new(),
+            published_at: at.to_string(),
+            contents: String::new(),
+            tags: Vec::new(),
+            is_patch,
+        };
+        let notes = vec![
+            note("2026-11-01T00:00:00Z", true),
+            note("2026-11-10T00:00:00Z", true),
+            note("2026-11-12T00:00:00Z", false),
+        ];
+        let scoped = StatsFilter { ranked: Some(true), since: None }.since_last_patch(&notes);
+        assert_eq!(scoped.ranked, Some(true));
+        assert_eq!(scoped.since, Some(1_794_268_800));
+        assert_eq!(StatsFilter::default().since_last_patch(&[]).since, None);
     }
 }

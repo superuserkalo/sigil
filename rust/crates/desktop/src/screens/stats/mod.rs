@@ -43,6 +43,7 @@ mod leaderboard;
 mod map;
 mod matches;
 mod more;
+pub mod w4;
 mod shared;
 mod social;
 
@@ -201,6 +202,8 @@ pub struct View {
     pub review: Option<ReviewPanel>,
     /// The ranked and date filter, Items, the purchase timeline and Party (`more.rs`).
     pub more: more::More,
+    /// Wave 4: the filtered overview, Party by hand and Item meta (`w4.rs`).
+    pub w4: w4::W4,
 }
 
 pub struct ReviewPanel {
@@ -256,6 +259,7 @@ impl Default for View {
             demo_busy: false,
             review: None,
             more: more::More::default(),
+            w4: w4::W4::default(),
         }
     }
 }
@@ -393,6 +397,7 @@ pub fn poll(state: &mut State) -> bool {
         changed = true;
     }
     changed |= more::poll(state);
+    changed |= w4::poll(state);
     changed
 }
 
@@ -628,19 +633,24 @@ pub fn view(s: &State, u: &Ui) -> El {
             tr("The API only knows matches that finished. New ones show up a little while after they end."),
             None,
         )),
-        (Some(snap), Some(derived)) => page
-            .child(brief::brief_block(s, u, snap, derived))
-            .child(brief::numbers(u, snap, derived))
-            .child(brief::progress(s, u, snap, derived))
-            .child(leaderboard::leaderboard_section(s, u, snap))
-            .child(heroes::heroes(s, u, snap))
-            .child(more::filter_bar(s, u))
-            .child(matches::matches(s, u, snap, derived))
-            .child(more::items_section(s, u))
-            .child(social::social_section(s, u))
-            .child(more::party_section(s, u))
-            .child(map::map_section(s, u))
-            .child(demos::demo_section(s, u)),
+        (Some(snap), Some(derived)) => {
+            // Wave 4: the filter sits on top and scopes the overview and Heroes as well.
+            let (osnap, oderived) = w4::overview(s).unwrap_or((snap, derived));
+            page.child(more::filter_bar(s, u))
+                .children(w4::scope_note(s, u))
+                .child(brief::brief_block(s, u, osnap, oderived))
+                .child(brief::numbers(u, osnap, oderived))
+                .child(brief::progress(s, u, osnap, oderived))
+                .child(leaderboard::leaderboard_section(s, u, snap))
+                .child(heroes::heroes(s, u, osnap))
+                .child(matches::matches(s, u, snap, derived))
+                .child(more::items_section(s, u))
+                .child(w4::meta_section(s, u))
+                .child(social::social_section(s, u))
+                .child(more::party_section(s, u))
+                .child(map::map_section(s, u))
+                .child(demos::demo_section(s, u))
+        }
         _ if loading => page.child(skeleton(u)),
         _ => page.child(entry(s, u)),
     };

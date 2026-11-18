@@ -106,12 +106,17 @@ pub fn begin(st: &mut State, vanilla: bool, page: bool) {
     if !vanilla && crate::screens::launch_extras::ask_first(st, page) {
         return;
     }
+
     begin_checked(st, vanilla, page);
 }
 
 /// Start a launch with every question answered. The press is the approval; the steps run from
 /// the next poll on.
 pub fn begin_checked(st: &mut State, vanilla: bool, page: bool) {
+    if !vanilla {
+        // C11: a mod missing files loads broken or not at all; say so, then launch.
+        crate::screens::installed::checks::missing_before_launch(st);
+    }
     crate::screens::settings::telemetry::event(st, if vanilla { "launch:vanilla" } else { "launch:modded" }, None);
     let stashed = deadlock_core::launch::stash_status(&crate::data::data_dir()).is_some();
     st.launch_dialog = false;
@@ -164,7 +169,10 @@ pub fn poll(st: &mut State, tx: &mut Tx) -> bool {
         }
     }
     if step.hands_off() {
-        if let Some(line) = st.launch.last.clone() {
+        // The step's own line wins; `launch.last` may still hold an earlier step's result.
+        if st.status.trim().is_empty()
+            && let Some(line) = st.launch.last.clone()
+        {
             st.status = line;
         }
         // `settings::poll` takes `settings.launched` and minimizes or closes as Settings asks.
@@ -195,7 +203,7 @@ fn wait(st: &mut State, tx: &mut Tx, progress: &Progress) -> bool {
     if running {
         st.launch.progress = None;
         if progress.closing {
-            crate::screens::launch::stop_game(st);
+            crate::screens::launch::stop_game_quietly(st);
         }
         return true;
     }

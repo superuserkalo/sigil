@@ -1302,6 +1302,13 @@ pub struct LockerPrefs {
     pub shuffle: Vec<String>,
     /// Custom card art per hero asset key.
     pub cards: BTreeMap<String, CustomCard>,
+    /// Skins opted into the shuffle, by [`LockerMod::key`] (survives renames and slot moves).
+    /// Empty means every skin of a shuffled hero is in the pool.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub shuffle_pool: Vec<String>,
+    /// Equip adds a skin instead of replacing the hero's others (several skins per hero).
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub multi_skin: bool,
 }
 
 impl Default for LockerPrefs {
@@ -1311,6 +1318,8 @@ impl Default for LockerPrefs {
             favorites: Vec::new(),
             shuffle: Vec::new(),
             cards: BTreeMap::new(),
+            shuffle_pool: Vec::new(),
+            multi_skin: false,
         }
     }
 }
@@ -1386,6 +1395,42 @@ impl LockerPrefs {
 
     pub fn any_shuffle(&self) -> bool {
         !self.shuffle.is_empty()
+    }
+
+    /// True when the mod with this content key is opted into the shuffle pool.
+    pub fn in_pool(&self, key: &str) -> bool {
+        self.shuffle_pool.iter().any(|item| item == key)
+    }
+
+    /// Opt a mod in or out of the shuffle pool. Returns the new state.
+    pub fn toggle_pool(&mut self, key: &str) -> bool {
+        if key.is_empty() {
+            return false;
+        }
+        if let Some(at) = self.shuffle_pool.iter().position(|item| item == key) {
+            self.shuffle_pool.remove(at);
+            false
+        } else {
+            self.shuffle_pool.push(key.to_string());
+            true
+        }
+    }
+
+    /// The slots of the pooled mods, for [`crate::locker_parts::shuffle_wanted`]. None when the
+    /// pool is empty (every skin counts).
+    pub fn pool_slots(&self, mods: &[LockerMod]) -> Option<BTreeSet<u16>> {
+        (!self.shuffle_pool.is_empty()).then(|| {
+            mods.iter().filter(|item| self.in_pool(&item.key)).map(|item| item.slot).collect()
+        })
+    }
+
+    /// How equip treats a hero's other skins.
+    pub fn equip_mode(&self) -> crate::locker_parts::EquipMode {
+        if self.multi_skin {
+            crate::locker_parts::EquipMode::Add
+        } else {
+            crate::locker_parts::EquipMode::Replace
+        }
     }
 
     fn clean(mut self) -> Self {

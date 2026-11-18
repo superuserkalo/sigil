@@ -109,6 +109,40 @@ pub struct Options {
     pub tips: bool,
     pub tips_seen: Vec<String>,
     pub unknown_alert_off: bool,
+    // Wave 4 (shell, Settings, Browse)
+    /// The sidebar shows icons only (Grimoire keeps it across launches; DMM's Cmd+B).
+    pub sidebar_collapsed: bool,
+    /// Pages whose "New" mark was cleared by opening them once (DMM).
+    pub seen_pages: Vec<String>,
+    /// Show update marks on mod cards and details (DMM, on by default).
+    pub update_badges: bool,
+    /// A vanilla launch writes no launch options to Steam (DMM's Vanilla Mode).
+    pub vanilla_no_args: bool,
+    /// Contextual feature tips (DMM): on by default, one per session.
+    pub feature_hints: bool,
+    /// Tips that were answered (Got it, used, or ignored twice).
+    pub hints_done: Vec<String>,
+    /// Small counters the tips read: Settings visits, ignores per tip.
+    pub counters: BTreeMap<String, u64>,
+    /// Seasonal themes by date (DMM), off by default.
+    pub seasonal: bool,
+    /// `<season>:<year>` turned off until it comes round again.
+    pub seasonal_dismissed: Option<String>,
+    /// Easter eggs (Grimoire), off by default.
+    pub easter_eggs: bool,
+    /// The support report carries the whole log, not only its tail (Grimoire).
+    pub full_log: bool,
+    /// What Copy and Ask Sigil read: `combined`, `sigil` or `dumps` (DMM's Log Source).
+    pub log_source: String,
+    /// The experimental tour was shown once.
+    pub tour_seen: bool,
+    /// Crosshair: write it to the game's hero settings (DMM). The write is the owner's step.
+    pub crosshair_hero_settings: bool,
+    /// Themed preset: `none`, `grid` (Blueprint), `crest` (the Sigil mark large behind the
+    /// pages) or `terminal` (the grid and monospace type), off by default.
+    pub themed_art: String,
+    /// Seasonal full-screen effects (snow, sparks), off by default; needs seasonal themes on.
+    pub seasonal_effects: bool,
 }
 
 impl Default for Options {
@@ -161,6 +195,22 @@ impl Default for Options {
             tips: true,
             tips_seen: Vec::new(),
             unknown_alert_off: false,
+            sidebar_collapsed: false,
+            seen_pages: Vec::new(),
+            update_badges: true,
+            vanilla_no_args: false,
+            feature_hints: true,
+            hints_done: Vec::new(),
+            counters: BTreeMap::new(),
+            seasonal: false,
+            seasonal_dismissed: None,
+            easter_eggs: false,
+            full_log: false,
+            log_source: "combined".into(),
+            tour_seen: false,
+            crosshair_hero_settings: false,
+            themed_art: "none".into(),
+            seasonal_effects: false,
         }
     }
 }
@@ -296,6 +346,33 @@ impl Options {
             tips: b("tips", d.tips),
             tips_seen: strings("tips_seen"),
             unknown_alert_off: b("unknown_alert_off", d.unknown_alert_off),
+            sidebar_collapsed: b("sidebar_collapsed", d.sidebar_collapsed),
+            seen_pages: strings("seen_pages"),
+            update_badges: b("update_badges", d.update_badges),
+            vanilla_no_args: b("vanilla_no_args", d.vanilla_no_args),
+            feature_hints: b("feature_hints", d.feature_hints),
+            hints_done: strings("hints_done"),
+            counters: map
+                .get("counters")
+                .and_then(Value::as_object)
+                .map(|o| {
+                    o.iter()
+                        .filter_map(|(k, v)| Some((k.clone(), v.as_u64()?)))
+                        .take(64)
+                        .collect()
+                })
+                .unwrap_or_default(),
+            seasonal: b("seasonal", d.seasonal),
+            seasonal_dismissed: s("seasonal_dismissed"),
+            easter_eggs: b("easter_eggs", d.easter_eggs),
+            full_log: b("full_log", d.full_log),
+            log_source: s("log_source")
+                .filter(|v| ["combined", "sigil", "dumps"].contains(&v.as_str()))
+                .unwrap_or(d.log_source),
+            tour_seen: b("tour_seen", d.tour_seen),
+            crosshair_hero_settings: b("crosshair_hero_settings", d.crosshair_hero_settings),
+            seasonal_effects: b("seasonal_effects", d.seasonal_effects),
+            themed_art: s("themed_art").filter(|v| ["none", "grid", "crest", "terminal"].contains(&v.as_str())).unwrap_or(d.themed_art),
         }
     }
 
@@ -358,6 +435,22 @@ impl Options {
         m.insert("tips".into(), json!(self.tips));
         m.insert("tips_seen".into(), json!(self.tips_seen));
         m.insert("unknown_alert_off".into(), json!(self.unknown_alert_off));
+        m.insert("sidebar_collapsed".into(), json!(self.sidebar_collapsed));
+        m.insert("seen_pages".into(), json!(self.seen_pages));
+        m.insert("update_badges".into(), json!(self.update_badges));
+        m.insert("vanilla_no_args".into(), json!(self.vanilla_no_args));
+        m.insert("feature_hints".into(), json!(self.feature_hints));
+        m.insert("hints_done".into(), json!(self.hints_done));
+        m.insert("counters".into(), json!(self.counters));
+        m.insert("seasonal".into(), json!(self.seasonal));
+        m.insert("seasonal_dismissed".into(), opt(&self.seasonal_dismissed));
+        m.insert("easter_eggs".into(), json!(self.easter_eggs));
+        m.insert("full_log".into(), json!(self.full_log));
+        m.insert("log_source".into(), json!(self.log_source));
+        m.insert("tour_seen".into(), json!(self.tour_seen));
+        m.insert("crosshair_hero_settings".into(), json!(self.crosshair_hero_settings));
+        m.insert("themed_art".into(), json!(self.themed_art));
+        m.insert("seasonal_effects".into(), json!(self.seasonal_effects));
         serde_json::to_string_pretty(&Value::Object(m)).unwrap_or_default() + "\n"
     }
 
@@ -564,6 +657,22 @@ mod tests {
             tips: false,
             tips_seen: vec!["browse".into()],
             unknown_alert_off: true,
+            sidebar_collapsed: true,
+            seen_pages: vec!["stats".into()],
+            update_badges: false,
+            vanilla_no_args: true,
+            feature_hints: false,
+            hints_done: vec!["settings-search".into()],
+            counters: BTreeMap::from([("settings_visits".to_string(), 4)]),
+            seasonal: true,
+            seasonal_dismissed: Some("halloween:2026".into()),
+            easter_eggs: true,
+            full_log: true,
+            log_source: "dumps".into(),
+            tour_seen: true,
+            crosshair_hero_settings: true,
+            themed_art: "grid".into(),
+            seasonal_effects: true,
         };
         o.presence_lines.insert(
             "match".into(),

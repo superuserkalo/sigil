@@ -84,8 +84,8 @@ pub struct RepairFinding {
 /// Dry run: what a repair would change in `mod_vpk` against the installed game's `pak01_dir.vpk`.
 ///
 /// Read only. Returns the entries a repair would touch, plus entries that cannot be repaired and
-/// why. A mod with nothing to fix returns an empty list. Fails when either archive is missing or
-/// the mod is a split archive. `animation_overrides` only reaches the data heal: pass
+/// why. A mod with nothing to fix returns an empty list. Fails when either archive is missing. A
+/// split mod is combined into a temporary single-file copy first (see [`SingleFile`]). `animation_overrides` only reaches the data heal: pass
 /// [`has_animation_overrides`] for the other enabled mods. The camera repair has no such flag
 /// upstream.
 pub fn check(
@@ -96,8 +96,27 @@ pub fn check(
 ) -> Result<Vec<RepairFinding>> {
     require_archive(base_pak01, "game pak01")?;
     require_archive(mod_vpk, "mod")?;
-    ensure_not_split(mod_vpk)?;
+    let scratch = std::env::temp_dir().join(format!(
+        "sigil-compat-check-{}-{}",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0)
+    ));
+    let single = SingleFile::of(mod_vpk, &scratch)?;
+    let result = check_single(base_pak01, single.path(), kind, animation_overrides);
+    drop(single);
+    let _ = fs::remove_dir(&scratch);
+    result
+}
 
+fn check_single(
+    base_pak01: &Path,
+    mod_vpk: &Path,
+    kind: RepairKind,
+    animation_overrides: bool,
+) -> Result<Vec<RepairFinding>> {
     match kind {
         RepairKind::Data => {
             let mut repairer = CompatibilityRepairer::new(base_pak01).map_err(|error| {
@@ -152,7 +171,6 @@ pub fn repair_to(
 ) -> Result<Vec<RepairFinding>> {
     require_archive(base_pak01, "game pak01")?;
     require_archive(mod_vpk, "mod")?;
-    ensure_not_split(mod_vpk)?;
 
     if out_vpk.exists() {
         return Err(Error::msg(format!(
@@ -160,6 +178,12 @@ pub fn repair_to(
             out_vpk.display()
         )));
     }
+
+    // A split mod (Sigil's own builds, most packers) is combined into one archive beside the
+    // output first; vpkmerge heals that copy. The combined copy is removed on every path.
+    let scratch = out_vpk.parent().map(Path::to_path_buf).unwrap_or_default();
+    let single = SingleFile::of(mod_vpk, &scratch)?;
+    let mod_vpk = single.path();
 
     let base_stamp = file_stamp(base_pak01)?;
 
@@ -313,44 +337,42 @@ fn require_archive(path: &Path, what: &str) -> Result<()> {
     }
 }
 
-/// Refuse a mod whose data sits in `<name>_NNN.vpk` chunks next to its directory file.
+/// The archive a repair reads: the mod itself when its data is inline, else a single-file copy
+/// made with [`crate::vpk_write::combine_chunks`] in `scratch`, removed when this is dropped.
 ///
-/// Repairing one chunk of a split archive would leave the rest stale, and rebuilding the split
-/// layout is a merge. Grimoire refuses these too.
-fn ensure_not_split(vpk: &Path) -> Result<()> {
-    let Some(parent) = vpk.parent().filter(|parent| !parent.as_os_str().is_empty()) else {
-        return Ok(());
-    };
-    let Some(stem) = archive_stem(vpk) else {
-        return Ok(());
-    };
+/// Repairing one chunk of a split archive would leave the rest stale, so Grimoire refuses split
+/// mods. Combining first lets the repair run on every mod, including Sigil's own chunked builds,
+/// and the repaired result is one self-contained `_dir.vpk`. Chunk files left beside it are no
+/// longer referenced; the game opens only the chunks its directory names.
+struct SingleFile {
+    path: PathBuf,
+    temporary: bool,
+}
 
-    let prefix = format!("{}_", stem.to_ascii_lowercase());
-    let entries = match fs::read_dir(parent) {
-        Ok(entries) => entries,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-        Err(error) => return Err(error.into()),
-    };
-
-    for entry in entries {
-        let entry = entry?;
-        let name = entry.file_name().to_string_lossy().to_ascii_lowercase();
-        let Some(rest) = name.strip_prefix(&prefix) else {
-            continue;
-        };
-        if rest.len() == 7
-            && rest.ends_with(".vpk")
-            && rest[..3].bytes().all(|b| b.is_ascii_digit())
-        {
-            return Err(Error::msg(format!(
-                "{} is a split archive ({}). Combine its chunks into one VPK before repairing.",
-                vpk.display(),
-                entry.file_name().to_string_lossy()
-            )));
+impl SingleFile {
+    fn of(vpk: &Path, scratch: &Path) -> Result<SingleFile> {
+        if !crate::vpk_write::is_split(vpk)? {
+            return Ok(SingleFile { path: vpk.to_path_buf(), temporary: false });
         }
+        fs::create_dir_all(scratch)?;
+        let stem = archive_stem(vpk).unwrap_or_else(|| "mod".to_string());
+        let path = scratch.join(format!("{stem}-combined-{}_dir.vpk", std::process::id()));
+        let _ = fs::remove_file(&path);
+        crate::vpk_write::combine_chunks(vpk, &path)?;
+        Ok(SingleFile { path, temporary: true })
     }
 
-    Ok(())
+    fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
+impl Drop for SingleFile {
+    fn drop(&mut self) {
+        if self.temporary {
+            let _ = fs::remove_file(&self.path);
+        }
+    }
 }
 
 fn archive_stem(vpk: &Path) -> Option<String> {
@@ -460,6 +482,64 @@ pub struct AppliedRepair {
     pub new_size: u64,
     /// SHA-256 of the repaired file now in the game folder.
     pub new_sha256: String,
+    /// SHA-256 of the mod before the repair (also the backup's name prefix).
+    #[serde(default)]
+    pub old_sha256: String,
+}
+
+/// File that maps repaired mods back to the files they were installed as, in `backup_root`.
+pub const REPAIR_ALIASES_FILE: &str = "repair-aliases.json";
+
+/// One repaired file and the file it was before. The update check and anything else keyed by a
+/// mod's size or hash looks the original up here, so a repair never makes a mod look unknown.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RepairAlias {
+    pub repaired_bytes: u64,
+    pub repaired_sha256: String,
+    pub original_bytes: u64,
+    pub original_sha256: String,
+}
+
+/// Every alias [`apply_repair`] recorded under `backup_root`, oldest first. Empty when none.
+pub fn read_repair_aliases(backup_root: &Path) -> Vec<RepairAlias> {
+    fs::read(backup_root.join(REPAIR_ALIASES_FILE))
+        .ok()
+        .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+        .unwrap_or_default()
+}
+
+/// Add one alias to the ledger in `backup_root` (app data). A repeat of the same pair is kept once.
+pub fn record_repair_alias(backup_root: &Path, alias: RepairAlias) -> Result<()> {
+    let mut aliases = read_repair_aliases(backup_root);
+    if aliases.contains(&alias) {
+        return Ok(());
+    }
+    aliases.push(alias);
+    fs::create_dir_all(backup_root)?;
+    crate::util::write_atomic(
+        &backup_root.join(REPAIR_ALIASES_FILE),
+        &serde_json::to_vec_pretty(&aliases)?,
+    )
+}
+
+/// The size and hash the mod was installed with, following repairs back (a mod repaired twice
+/// resolves to its first file). Unknown files come back unchanged.
+pub fn original_of(aliases: &[RepairAlias], bytes: u64, sha256: Option<&str>) -> (u64, Option<String>) {
+    let mut current = (bytes, sha256.map(str::to_string));
+    for _ in 0..16 {
+        let next = aliases.iter().rev().find(|alias| {
+            alias.repaired_bytes == current.0
+                && current.1.as_deref().is_none_or(|sha| sha.eq_ignore_ascii_case(&alias.repaired_sha256))
+        });
+        match next {
+            Some(alias) if (alias.original_bytes, Some(alias.original_sha256.as_str())) != (current.0, current.1.as_deref()) => {
+                current = (alias.original_bytes, Some(alias.original_sha256.clone()));
+            }
+            _ => break,
+        }
+    }
+    current
 }
 
 /// Repair one installed mod in place: the app action behind Repair and Fix all.
@@ -469,7 +549,9 @@ pub struct AppliedRepair {
 /// [`repair_to`] in `staging` (app data, never the game folder), confirms the mod did not change
 /// during the run, then swaps the repaired file in through a temporary sibling and a rename.
 /// Returns `None` when nothing needed repairing; the backup is still kept then only if it already
-/// existed. On any failure the original stays in place.
+/// existed. On any failure the original stays in place. A success also records a
+/// [`RepairAlias`] in `backup_root`, so [`crate::mod_updates::baseline_for_repaired`] still finds
+/// the install the mod came from.
 pub fn apply_repair(
     base_pak01: &Path,
     mod_vpk: &Path,
@@ -513,12 +595,25 @@ pub fn apply_repair(
         }
         let new_sha256 = crate::identify::sha256_file(&staged_file)?;
         replace_file(&staged_file, mod_vpk)?;
+        let new_size = fs::metadata(mod_vpk)?.len();
+        // The update check keys mods by size: remember what this file was installed as. A
+        // failed write only costs the update badge, never the repair.
+        let _ = record_repair_alias(
+            backup_root,
+            RepairAlias {
+                repaired_bytes: new_size,
+                repaired_sha256: new_sha256.clone(),
+                original_bytes: old_size,
+                original_sha256: original_sha.clone(),
+            },
+        );
         Ok(AppliedRepair {
             findings,
             backup,
             old_size,
-            new_size: fs::metadata(mod_vpk)?.len(),
+            new_size,
             new_sha256,
+            old_sha256: original_sha.clone(),
         })
     })();
     let _ = fs::remove_dir_all(&run);

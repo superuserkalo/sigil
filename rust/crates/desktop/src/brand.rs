@@ -53,6 +53,12 @@ pub fn load(st: &mut State) {
     }
 }
 
+/// The mark alone in the theme's ink, once decoded (the Crest themed art draws it large).
+pub fn mark<'a>(s: &'a State, u: &Ui) -> Option<&'a rune::Pixels> {
+    let dark_theme = (u.ink.r + u.ink.g + u.ink.b) / 3.0 > 0.5;
+    s.thumbnails.get(if dark_theme { MARK_LIGHT_KEY } else { MARK_DARK_KEY })
+}
+
 /// The mark and the wordmark in the theme's ink; the plain name until they decode.
 pub fn header(s: &State, u: &Ui) -> El {
     let dark_theme = (u.ink.r + u.ink.g + u.ink.b) / 3.0 > 0.5;

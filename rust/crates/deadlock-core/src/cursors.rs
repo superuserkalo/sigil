@@ -70,6 +70,43 @@ pub struct CursorPacksState {
     /// sha256 of every file Sigil last wrote into the game cursor folder, keyed by
     /// lowercased file name. A file there with another hash was put back by Steam.
     pub applied: BTreeMap<String, String>,
+    /// Where each pack came from, keyed by pack id. Only packs installed from GameBanana have
+    /// an entry; reinstalling the same mod replaces its pack in place.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub sources: BTreeMap<String, PackSource>,
+}
+
+/// The GameBanana mod and file a cursor pack was installed from.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct PackSource {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub gamebanana_id: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub gamebanana_file_id: Option<u64>,
+}
+
+impl PackSource {
+    /// Same GameBanana file (Grimoire's rule), or the same mod (a newer file of it: an update).
+    pub fn same_origin(&self, other: &PackSource) -> bool {
+        let same = |a: Option<u64>, b: Option<u64>| a.is_some() && a == b;
+        same(self.gamebanana_file_id, other.gamebanana_file_id)
+            || same(self.gamebanana_id, other.gamebanana_id)
+    }
+}
+
+/// Why the active pack must be written again.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Reapply {
+    pub pack_id: String,
+    pub pack_name: String,
+    /// Cursor files in the game folder that no longer hold what Sigil wrote: Steam put them
+    /// back to stock (a game update or a file verify), or they are gone.
+    pub restored_by_steam: Vec<String>,
+    /// The pack was reinstalled from its GameBanana source since it was applied, so the store
+    /// holds newer files than the game folder.
+    pub pack_updated: bool,
 }
 
 /// One stock cursor file to copy into the store before a pack replaces it.
@@ -302,12 +339,42 @@ pub fn import_files(store: &Path, name: &str, files: &[PathBuf]) -> Result<Curso
 /// Resolves to an empty list when the archive holds no cursor images. The caller decides
 /// whether that is an error.
 pub fn import_archive(store: &Path, archive: &Path) -> Result<Vec<CursorPack>> {
-    let source = archive
+    import_archive_from(store, archive, None, &PackSource::default())
+}
+
+/// [`import_archive`] for an archive downloaded from GameBanana. `origin` is recorded on every
+/// pack it yields, and a pack already installed from the same file or the same mod with the
+/// same variant is replaced in place: it keeps its id (so an active pack stays active) and gets
+/// the new files. Call [`needs_reapply`] afterwards; an active pack that was replaced reports
+/// `pack_updated`. `name` overrides the archive's file name as the pack name (the mod's title).
+pub fn import_archive_from(
+    store: &Path,
+    archive: &Path,
+    name: Option<&str>,
+    origin: &PackSource,
+) -> Result<Vec<CursorPack>> {
+    let source = name
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| archive_stem_name(archive));
+    import_extracted_archive(store, archive, &source, origin)
+}
+
+fn archive_stem_name(archive: &Path) -> String {
+    archive
         .file_stem()
         .map(|value| value.to_string_lossy().trim().to_string())
         .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| "cursor pack".to_string());
+        .unwrap_or_else(|| "cursor pack".to_string())
+}
 
+fn import_extracted_archive(
+    store: &Path,
+    archive: &Path,
+    source: &str,
+    origin: &PackSource,
+) -> Result<Vec<CursorPack>> {
     let extract_root = packs_root(store).join(format!(".extract-{}", new_uid()));
     let report = match extract_archive(
         archive,
@@ -322,7 +389,7 @@ pub fn import_archive(store: &Path, archive: &Path) -> Result<Vec<CursorPack>> {
         }
     };
 
-    let result = install_extracted(store, &source, &report.directory, &report.files);
+    let result = install_extracted(store, source, &report.directory, &report.files, origin);
     let _ = fs::remove_dir_all(&extract_root);
     result
 }
@@ -338,6 +405,19 @@ pub fn list(store: &Path) -> Result<CursorPacksState> {
 /// names to it and pass a BMP through [`bmp_with_explicit_alpha`] before showing it.
 pub fn pack_folder(store: &Path, id: &str) -> PathBuf {
     pack_dir(store, id)
+}
+
+/// The folder holding Deadlock's own cursors for a "stock" preview, as Grimoire picks it: the
+/// game's cursor folder while no pack is applied, else Sigil's stock copy in the store. List
+/// cursor names there with [`is_cursor_file_name`] and pass BMPs through
+/// [`bmp_with_explicit_alpha`].
+pub fn stock_preview_folder(store: &Path, game_root: &Path) -> Result<PathBuf> {
+    let state = load_state(store)?;
+    Ok(if state.active_id.is_none() {
+        cursor_folder(game_root)
+    } else {
+        stock_dir(store)
+    })
 }
 
 /// Write the state file. The app calls this with the `state` a plan returned, after running
@@ -367,6 +447,7 @@ pub fn delete(store: &Path, id: &str) -> Result<()> {
     }
 
     state.packs.remove(position);
+    state.sources.remove(id);
     save_state(store, &state)?;
 
     let directory = pack_dir(store, id);
@@ -546,6 +627,51 @@ fn is_usable_cursor_file(name: &str, bytes: &[u8]) -> bool {
     bytes.len() >= 2 && bytes[0] == b'B' && bytes[1] == b'M'
 }
 
+/// Whether the active pack must be written again, Grimoire's startup reconcile as a check: a
+/// cursor file Sigil wrote was put back to stock by Steam (or removed), or the pack was
+/// reinstalled from its source since it was applied. None when no pack is active, nothing
+/// changed, or the cursor folder is missing. Reads only; the fix is the usual
+/// [`apply_plan`] for `pack_id`.
+pub fn needs_reapply(store: &Path, game_root: &Path) -> Result<Option<Reapply>> {
+    let state = load_state(store)?;
+    let Some(active) = state.active_id.clone() else {
+        return Ok(None);
+    };
+    let Some(pack) = state.packs.iter().find(|pack| pack.id == active) else {
+        return Ok(None);
+    };
+    let folder = cursor_folder(game_root);
+    if !folder.is_dir() {
+        return Ok(None);
+    }
+    let restored_by_steam: Vec<String> = state
+        .applied
+        .iter()
+        .filter(|(name, hash)| {
+            fs::read(folder.join(name.as_str()))
+                .map(|bytes| sha256_hex(&bytes) != **hash)
+                .unwrap_or(true)
+        })
+        .map(|(name, _)| name.clone())
+        .collect();
+    let directory = pack_dir(store, &pack.id);
+    let stored: BTreeMap<String, String> = pack
+        .files
+        .iter()
+        .filter_map(|name| fs::read(directory.join(name)).ok().map(|bytes| (name.clone(), sha256_hex(&bytes))))
+        .collect();
+    let pack_updated = stored != state.applied;
+    if restored_by_steam.is_empty() && !pack_updated {
+        return Ok(None);
+    }
+    Ok(Some(Reapply {
+        pack_id: pack.id.clone(),
+        pack_name: pack.name.clone(),
+        restored_by_steam,
+        pack_updated,
+    }))
+}
+
 fn load_state(store: &Path) -> Result<CursorPacksState> {
     let path = state_path(store);
     match fs::read_to_string(&path) {
@@ -570,6 +696,7 @@ fn install_extracted(
     source: &str,
     directory: &Path,
     files: &[String],
+    origin: &PackSource,
 ) -> Result<Vec<CursorPack>> {
     let mut groups: BTreeMap<String, BTreeMap<String, PathBuf>> = BTreeMap::new();
     for relative in files {
@@ -629,8 +756,25 @@ fn install_extracted(
             None => source.to_string(),
         };
 
-        match install_pack(store, &mut state, &name, variant, contents) {
-            Ok(pack) => installed.push(pack),
+        // Reinstalling from the same GameBanana source replaces that pack in place.
+        let replaces = (*origin != PackSource::default())
+            .then(|| {
+                state.packs.iter().find(|pack| {
+                    pack.variant == variant
+                        && state.sources.get(&pack.id).is_some_and(|known| known.same_origin(origin))
+                        && !installed.iter().any(|done| done.id == pack.id)
+                })
+            })
+            .flatten()
+            .map(|pack| pack.id.clone());
+        let result = install_pack_as(store, &mut state, replaces, &name, variant, contents);
+        match result {
+            Ok(pack) => {
+                if *origin != PackSource::default() {
+                    state.sources.insert(pack.id.clone(), origin.clone());
+                }
+                installed.push(pack)
+            }
             Err(error) => {
                 remove_pack_dirs(store, &installed);
                 return Err(error);
@@ -655,8 +799,26 @@ fn install_pack(
     variant: Option<String>,
     contents: BTreeMap<String, Vec<u8>>,
 ) -> Result<CursorPack> {
-    let id = new_uid();
-    let directory = pack_dir(store, &id);
+    install_pack_as(store, state, None, name, variant, contents)
+}
+
+/// [`install_pack`], reusing `existing` as the id when it replaces a pack in place. The new
+/// files go to a fresh folder first and replace the old folder only once all are written.
+fn install_pack_as(
+    store: &Path,
+    state: &mut CursorPacksState,
+    existing: Option<String>,
+    name: &str,
+    variant: Option<String>,
+    contents: BTreeMap<String, Vec<u8>>,
+) -> Result<CursorPack> {
+    let id = existing.clone().filter(|id| is_safe_id(id)).unwrap_or_else(new_uid);
+    let final_dir = pack_dir(store, &id);
+    let directory = if existing.is_some() {
+        packs_root(store).join(format!(".replace-{}", new_uid()))
+    } else {
+        final_dir.clone()
+    };
     let pack = CursorPack {
         id: id.clone(),
         name: name.to_string(),
@@ -675,6 +837,16 @@ fn install_pack(
             return Err(Error::msg(format!(
                 "Cursor file {} could not be written: {error}",
                 path.display()
+            )));
+        }
+    }
+    if directory != final_dir {
+        let _ = fs::remove_dir_all(&final_dir);
+        if let Err(error) = fs::rename(&directory, &final_dir) {
+            let _ = fs::remove_dir_all(&directory);
+            return Err(Error::msg(format!(
+                "Could not replace {}: {error}",
+                final_dir.display()
             )));
         }
     }
@@ -1465,5 +1637,68 @@ mod tests {
         restore(&store, &game, true).unwrap();
         assert_eq!(fs::read(folder.join("cursor.bmp")).unwrap(), stock);
         assert!(list(&store).unwrap().active_id.is_none());
+    }
+
+    #[test]
+    fn sources_replace_in_place_and_reapply_is_detected() {
+        let temp = TempDir::new("source");
+        let store = temp.join("store");
+        let game_root = fake_game(temp.path());
+        let folder = cursor_folder(&game_root);
+        fs::write(folder.join("cursor.bmp"), bmp_32(1)).unwrap();
+
+        let first = temp.join("first.zip");
+        write_zip(&first, &[("cursor.bmp", &bmp_32(200))]);
+        let origin = PackSource { gamebanana_id: Some(77), gamebanana_file_id: Some(1) };
+        let packs = import_archive_from(&store, &first, Some("Neon"), &origin).unwrap();
+        assert_eq!(packs.len(), 1);
+        let id = packs[0].id.clone();
+        assert_eq!(packs[0].name, "Neon");
+        assert_eq!(list(&store).unwrap().sources.get(&id), Some(&origin));
+        assert_eq!(needs_reapply(&store, &game_root).unwrap(), None, "nothing is applied yet");
+        assert_eq!(stock_preview_folder(&store, &game_root).unwrap(), folder);
+
+        let plan = apply_plan(&store, &id, &game_root).unwrap();
+        run_actions(&store, &plan.stock_backups, &plan.restores, &plan.state);
+        for write in &plan.writes {
+            fs::copy(&write.from, &write.to).unwrap();
+        }
+        assert_eq!(needs_reapply(&store, &game_root).unwrap(), None);
+        assert_eq!(stock_preview_folder(&store, &game_root).unwrap(), stock_dir(&store));
+
+        // Steam verifies the files: the stock cursor is back.
+        fs::write(folder.join("cursor.bmp"), bmp_32(1)).unwrap();
+        let reapply = needs_reapply(&store, &game_root).unwrap().unwrap();
+        assert_eq!(reapply.pack_id, id);
+        assert_eq!(reapply.restored_by_steam, vec!["cursor.bmp".to_string()]);
+        assert!(!reapply.pack_updated);
+        for write in &plan.writes {
+            fs::copy(&write.from, &write.to).unwrap();
+        }
+
+        // A newer file of the same mod replaces the pack in place and keeps it active.
+        let second = temp.join("second.zip");
+        write_zip(&second, &[("cursor.bmp", &bmp_32(100))]);
+        let update = PackSource { gamebanana_id: Some(77), gamebanana_file_id: Some(2) };
+        let packs = import_archive_from(&store, &second, Some("Neon"), &update).unwrap();
+        assert_eq!(packs[0].id, id);
+        let state = list(&store).unwrap();
+        assert_eq!(state.packs.len(), 1);
+        assert_eq!(state.active_id.as_deref(), Some(id.as_str()));
+        assert_eq!(state.sources.get(&id), Some(&update));
+        assert_eq!(fs::read(pack_folder(&store, &id).join("cursor.bmp")).unwrap(), bmp_32(100));
+        let reapply = needs_reapply(&store, &game_root).unwrap().unwrap();
+        assert!(reapply.pack_updated);
+        assert!(reapply.restored_by_steam.is_empty());
+        assert!(
+            fs::read_dir(packs_root(&store)).unwrap().flatten().all(|e| !e.file_name().to_string_lossy().starts_with('.')),
+            "no staging folder is left"
+        );
+
+        // Another mod is another pack; a plain import never replaces.
+        let other = PackSource { gamebanana_id: Some(78), gamebanana_file_id: Some(9) };
+        import_archive_from(&store, &second, None, &other).unwrap();
+        import_archive(&store, &second).unwrap();
+        assert_eq!(list(&store).unwrap().packs.len(), 3);
     }
 }

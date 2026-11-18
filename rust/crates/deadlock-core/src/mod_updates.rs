@@ -267,6 +267,29 @@ pub fn baseline_for(
     }
 }
 
+/// [`baseline_for`] for a file that may have been repaired since it was installed. A repair
+/// changes the directory VPK's size, so the size is first traced back through the repair
+/// ledger ([`crate::compat_repair::read_repair_aliases`]) to the size the journal recorded.
+/// `vpk_sha256` narrows the match when the caller has it.
+pub fn baseline_for_repaired(
+    journal: &[InstallJournalEntry],
+    aliases: &[crate::compat_repair::RepairAlias],
+    mod_id: u64,
+    vpk_bytes: u64,
+    vpk_sha256: Option<&str>,
+    recorded_at: &str,
+) -> Baseline {
+    let direct = baseline_for(journal, mod_id, vpk_bytes, recorded_at);
+    if direct.file_id.is_some() {
+        return direct;
+    }
+    let (original, _) = crate::compat_repair::original_of(aliases, vpk_bytes, vpk_sha256);
+    if original == vpk_bytes {
+        return direct;
+    }
+    baseline_for(journal, mod_id, original, recorded_at)
+}
+
 /// Compare what is installed with the mod's current files.
 pub fn compare(baseline: Baseline, remote: &RemoteMod) -> UpdateState {
     let Some(newest) = remote.newest() else {
@@ -436,5 +459,47 @@ mod tests {
         cache.mods.insert(5, RemoteMod { files: vec![file(1, 2)] });
         write_cache(&path, &cache).unwrap();
         assert_eq!(read_cache(&path), cache);
+    }
+
+    #[test]
+    fn a_repaired_mod_still_matches_its_install() {
+        use crate::compat_repair::{RepairAlias, original_of, read_repair_aliases, record_repair_alias};
+        let journal = vec![entry(
+            "gamebanana:9",
+            Some("https://gamebanana.com/dl/5"),
+            100,
+            "2026-01-01T00:00:00Z",
+        )];
+        let dir = std::env::temp_dir().join(format!("sigil-repair-alias-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        record_repair_alias(&dir, RepairAlias {
+            repaired_bytes: 140,
+            repaired_sha256: "bb".into(),
+            original_bytes: 100,
+            original_sha256: "aa".into(),
+        })
+        .unwrap();
+        // Repaired a second time: 140 became 150.
+        let second = RepairAlias {
+            repaired_bytes: 150,
+            repaired_sha256: "cc".into(),
+            original_bytes: 140,
+            original_sha256: "bb".into(),
+        };
+        record_repair_alias(&dir, second.clone()).unwrap();
+        record_repair_alias(&dir, second).unwrap();
+        let aliases = read_repair_aliases(&dir);
+        assert_eq!(aliases.len(), 2, "a repeat is stored once");
+        assert_eq!(original_of(&aliases, 150, None), (100, Some("aa".into())));
+        assert_eq!(original_of(&aliases, 150, Some("CC")).0, 100);
+        assert_eq!(original_of(&aliases, 150, Some("zz")).0, 150, "another file of that size");
+        assert_eq!(original_of(&aliases, 7, None), (7, None));
+
+        let b = baseline_for_repaired(&journal, &aliases, 9, 150, None, "2026-05-01T00:00:00Z");
+        assert_eq!(b.file_id, Some(5));
+        assert_eq!(baseline_for(&journal, 9, 150, "").file_id, None, "the plain lookup misses it");
+        let b = baseline_for_repaired(&journal, &[], 9, 150, None, "");
+        assert_eq!(b, Baseline::default());
+        let _ = fs::remove_dir_all(&dir);
     }
 }

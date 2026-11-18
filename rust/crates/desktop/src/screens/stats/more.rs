@@ -245,6 +245,8 @@ fn refilter(st: &mut State) {
     if !m.party_job.is_running() {
         m.party = Fetched::Idle;
     }
+    // Wave 4: the overview and Heroes follow the filter too.
+    super::w4::refilter(st);
 }
 
 // --- views -------------------------------------------------------------------------------
@@ -296,7 +298,7 @@ pub(super) fn filter_bar(s: &State, u: &Ui) -> El {
         .child(modes)
         .child(since)
         .child(spacer())
-        .child(text(tr("Filters Matches, Items and Party")).font(SMALL).color(u.faint))
+        .child(text(tr("Filters every section below")).font(SMALL).color(u.faint))
 }
 
 fn minutes(seconds: f64) -> String {
@@ -429,6 +431,11 @@ fn hero_label(s: &State, hero_id: u32) -> String {
         .as_ref()
         .and_then(|snap| snap.heroes.iter().find(|h| h.hero_id == hero_id))
         .map(hero_name)
+        .or_else(|| {
+            s.stats.w4.names.as_ref().and_then(|names| {
+                names.iter().find(|(id, _)| *id == hero_id).map(|(_, name)| name.clone())
+            })
+        })
         .unwrap_or_else(|| crate::screens::settings::i18n::fill(tr("Hero {}"), &[&hero_id.to_string()]))
 }
 
@@ -440,7 +447,12 @@ pub(super) fn party_section(s: &State, u: &Ui) -> El {
         .key("stats-party")
         .w_full()
         .gap(12.0)
-        .child(section_head(u, "Party", "Every lineup your party can queue, from each member's most played heroes"));
+        .child(section_head(u, "Party", "Every lineup your party can queue, rated from pair and trio records"))
+        // Wave 4: DMM's planner, heroes picked by hand.
+        .child(super::w4::party_mode(s, u));
+    if s.stats.w4.hand {
+        return section.child(super::w4::hand_party(s, u));
+    }
     // Members: tracked players, then premades from the teammates list.
     let mut people: Vec<(u64, String)> = s
         .stats
@@ -503,7 +515,15 @@ pub(super) fn party_section(s: &State, u: &Ui) -> El {
                 .on_press(start_party),
         ),
     );
-    match &m.party {
+    section.child(lineup_table(s, u, &m.party, false))
+}
+
+/// The rated lineups: the top ten with hero chips, estimates marked, thin samples greyed, and
+/// the party's expected win rate. `hand` lineups come from picks made by hand.
+pub(super) fn lineup_table(s: &State, u: &Ui, party: &Fetched<Vec<LineupRating>>, hand: bool) -> El {
+    let section = col().w_full().gap(12.0);
+    let prefix = if hand { "stats-lineup-hand" } else { "stats-lineup" };
+    match party {
         Fetched::Idle => section,
         Fetched::Loading => section.child(text(tr("Rating lineups")).font(BODY).color(u.muted)),
         Fetched::Failed(error) => section.child(problem(u, error)),
@@ -526,7 +546,7 @@ pub(super) fn party_section(s: &State, u: &Ui) -> El {
                 };
                 let rate = rating.win_rate_percent.map(|r| format!("{r:.1}%")).unwrap_or_else(|| "-".to_string());
                 table = table.child(
-                    data_row(format!("stats-lineup-{index}"), u, 40.0)
+                    data_row(format!("{prefix}-{index}"), u, 40.0)
                         .child(cell(heroes, 0.0))
                         .child(num(matches, 96.0, if muted { u.faint } else { u.prose }))
                         .child(num(rate, 96.0, if muted { u.faint } else { u.ink })),
