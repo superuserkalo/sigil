@@ -30,11 +30,180 @@ use crate::vpk::{ReadVpkOptions, read_vpk_directory_with};
 /// Suffix that marks a slot directory file as off.
 pub const DISABLED_SUFFIX: &str = ".disabled";
 
-/// One addon slot found in `game/citadel/addons`.
+/// Slots one addon folder holds: `pak01_dir.vpk` through `pak99_dir.vpk`.
+pub const SLOTS_PER_FOLDER: u16 = 99;
+
+/// The highest slot: `citadel/addons` plus the extra folders `sigil-addons2` to
+/// `sigil-addons10` (see [`crate::overflow`]), 99 each.
+pub const MAX_SLOT: u16 = SLOTS_PER_FOLDER * crate::overflow::MAX_FOLDERS as u16;
+
+/// A slot is one number from 1 to [`MAX_SLOT`] across every addon folder, in load order: 1 to
+/// 99 are `citadel/addons/pak01` to `pak99`, 100 to 198 are `citadel/sigil-addons2/pak01` to
+/// `pak99`, and so on. The game reads the folders in that order and the `pakNN` number inside
+/// each, so a lower slot still wins a shared path.
+pub fn is_slot(slot: u16) -> bool {
+    (1..=MAX_SLOT).contains(&slot)
+}
+
+/// Zero-based folder of a slot: 0 is `citadel/addons`.
+pub fn folder_index(slot: u16) -> usize {
+    usize::from(slot.max(1) - 1) / usize::from(SLOTS_PER_FOLDER)
+}
+
+/// The `pakNN` number of a slot inside its own folder, 1 to 99.
+pub fn local_slot(slot: u16) -> u16 {
+    (slot.max(1) - 1) % SLOTS_PER_FOLDER + 1
+}
+
+/// The slot of `pak<local>` in folder `index`.
+pub fn global_slot(index: usize, local: u16) -> u16 {
+    index as u16 * SLOTS_PER_FOLDER + local
+}
+
+/// The folder a slot's files live in, from the main addons folder.
+pub fn slot_folder(addons: &Path, slot: u16) -> std::path::PathBuf {
+    folder_at(addons, folder_index(slot))
+}
+
+/// Folder `index` beside the main addons folder: the folder itself for 0, else
+/// `citadel/sigil-addons<index + 1>`.
+pub fn folder_at(addons: &Path, index: usize) -> std::path::PathBuf {
+    if index == 0 {
+        return addons.to_path_buf();
+    }
+    let name = format!("{}{}", crate::overflow::FOLDER_PREFIX, index + 1);
+    addons.parent().map(|citadel| citadel.join(&name)).unwrap_or_else(|| addons.join(name))
+}
+
+/// `pakNN` plus `suffix` for a slot, numbered inside its folder: `slot_name(101, "_dir.vpk")`
+/// is `pak02_dir.vpk` (it lives in `sigil-addons2`).
+pub fn slot_name(slot: u16, suffix: &str) -> String {
+    format!("pak{:02}{suffix}", local_slot(slot))
+}
+
+/// Full path of a slot file: [`slot_folder`] joined with [`slot_name`].
+pub fn slot_path(addons: &Path, slot: u16, suffix: &str) -> std::path::PathBuf {
+    slot_folder(addons, slot).join(slot_name(slot, suffix))
+}
+
+/// How a slot reads to a player: `05`, or `2·05` for pak05 in the second folder.
+pub fn slot_label(slot: u16) -> String {
+    match folder_index(slot) {
+        0 => format!("{:02}", local_slot(slot)),
+        index => format!("{}·{:02}", index + 1, local_slot(slot)),
+    }
+}
+
+/// The addon folders that exist on disk, with their index: always the main one first (even
+/// when missing, so callers report it), then each extra folder that is a directory.
+pub fn existing_folders(addons: &Path) -> Vec<(usize, std::path::PathBuf)> {
+    let mut folders = vec![(0, addons.to_path_buf())];
+    for index in 1..crate::overflow::MAX_FOLDERS {
+        let folder = folder_at(addons, index);
+        if folder.is_dir() {
+            folders.push((index, folder));
+        }
+    }
+    folders
+}
+
+/// GAME WRITE, called by the app actions that add, move or remove slot files. Makes
+/// `gameinfo.gi` mount exactly the extra addon folders that hold a slot file, in the marked block
+/// of [`crate::overflow`], and removes extra folders that are left empty. The folders are filled
+/// before this runs, so the game never mounts a folder of half-moved files.
+///
+/// While an isolated profile's block is in `gameinfo.gi` nothing extra is mounted: an isolated
+/// profile holds at most 99 mods, and the extra folders belong to the main library. Backs
+/// `gameinfo.gi` up beside itself before changing it and writes atomically. Returns whether the
+/// file changed. A missing `gameinfo.gi` changes nothing (the gameinfo banner reports it).
+pub fn sync_overflow_mount(addons: &Path) -> Result<bool> {
+    let files = crate::load_order::read_slot_files(addons)?;
+    let used: BTreeSet<usize> = files
+        .keys()
+        .map(|slot| folder_index(*slot))
+        .filter(|index| *index > 0)
+        .collect();
+    for index in 1..crate::overflow::MAX_FOLDERS {
+        let folder = folder_at(addons, index);
+        if !used.contains(&index)
+            && folder.is_dir()
+            && fs::read_dir(&folder).map(|mut entries| entries.next().is_none()).unwrap_or(false)
+        {
+            let _ = fs::remove_dir(&folder);
+        }
+    }
+
+    let Some(citadel) = addons.parent() else {
+        return Ok(false);
+    };
+    let gameinfo = citadel.join("gameinfo.gi");
+    if !gameinfo.is_file() {
+        return Ok(false);
+    }
+    let text = fs::read_to_string(&gameinfo)?;
+    let isolated = text.lines().any(|line| line.trim() == "// sigil:profile-begin");
+    let folders: Vec<String> = if isolated {
+        Vec::new()
+    } else {
+        used.iter()
+            .map(|index| crate::overflow::folder_name(index + 1))
+            .collect::<Result<_>>()?
+    };
+    if crate::overflow::overflow_folders_in(&text) == folders {
+        return Ok(false);
+    }
+    let next = crate::overflow::gameinfo_with_overflow(&text, &folders)?;
+    let stamp = crate::util::now_iso().replace([':', '.'], "-");
+    fs::copy(&gameinfo, gameinfo.with_file_name(format!("gameinfo.gi.dah-backup-{stamp}")))?;
+    crate::util::write_atomic(&gameinfo, next.as_bytes())?;
+    Ok(true)
+}
+
+/// GAME WRITE for a vanilla launch: take the extra addon folders out of `gameinfo.gi`, so the
+/// game loads none of their mods. The files stay where they are; [`sync_overflow_mount`] mounts
+/// them again when the stash is restored. Backs the file up first. Returns whether it changed.
+pub fn unmount_overflow(addons: &Path) -> Result<bool> {
+    let Some(citadel) = addons.parent() else {
+        return Ok(false);
+    };
+    let gameinfo = citadel.join("gameinfo.gi");
+    if !gameinfo.is_file() {
+        return Ok(false);
+    }
+    let text = fs::read_to_string(&gameinfo)?;
+    if crate::overflow::overflow_folders_in(&text).is_empty() {
+        return Ok(false);
+    }
+    let next = crate::overflow::gameinfo_with_overflow(&text, &[])?;
+    let stamp = crate::util::now_iso().replace([':', '.'], "-");
+    fs::copy(&gameinfo, gameinfo.with_file_name(format!("gameinfo.gi.dah-backup-{stamp}")))?;
+    crate::util::write_atomic(&gameinfo, next.as_bytes())?;
+    Ok(true)
+}
+
+/// Every file name in every addon folder, as `(folder index, file name)`. Plain files only.
+pub fn folder_files(addons: &Path) -> std::io::Result<Vec<(usize, String)>> {
+    let mut files = Vec::new();
+    for (index, folder) in existing_folders(addons) {
+        let read = match fs::read_dir(&folder) {
+            Ok(read) => read,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => return Err(error),
+        };
+        for entry in read.flatten() {
+            if entry.path().is_file() {
+                files.push((index, entry.file_name().to_string_lossy().into_owned()));
+            }
+        }
+    }
+    Ok(files)
+}
+
+/// One addon slot found in `game/citadel/addons` or one of its extra folders.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct InstalledAddon {
-    pub slot: u8,
+    pub slot: u16,
     /// File name on disk, including the `.disabled` suffix when disabled.
     pub file: String,
     /// Size of the directory VPK. Chunk files are counted separately.
@@ -46,6 +215,24 @@ pub struct InstalledAddon {
     pub enabled: bool,
 }
 
+impl InstalledAddon {
+    /// The folder this addon lives in, from the main addons folder.
+    pub fn folder(&self, addons: &Path) -> std::path::PathBuf {
+        slot_folder(addons, self.slot)
+    }
+
+    /// Full path of the directory file (`file`), in its own folder.
+    pub fn path(&self, addons: &Path) -> std::path::PathBuf {
+        self.folder(addons).join(&self.file)
+    }
+
+    /// Full paths of the chunk files.
+    pub fn chunk_paths(&self, addons: &Path) -> Vec<std::path::PathBuf> {
+        let folder = self.folder(addons);
+        self.chunk_files.iter().map(|chunk| folder.join(chunk)).collect()
+    }
+}
+
 /// A game path shipped by more than one enabled addon.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -53,9 +240,9 @@ pub struct AddonConflict {
     /// Game path with forward slashes, as stored in the VPK.
     pub path: String,
     /// Slots that ship the path, ascending.
-    pub slots: Vec<u8>,
+    pub slots: Vec<u16>,
     /// Lowest slot, which the game loads first.
-    pub winner: u8,
+    pub winner: u16,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -71,7 +258,7 @@ pub struct ConflictReport {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct AddonToggleResult {
-    pub slot: u8,
+    pub slot: u16,
     /// Directory file name before the rename.
     pub from: String,
     /// Directory file name after the rename.
@@ -86,12 +273,10 @@ pub struct AddonToggleResult {
 /// slot is enabled or not.
 pub fn list_installed(game_root: &Path) -> Result<Vec<InstalledAddon>> {
     let directory = addons_dir(game_root);
-
-    let read_dir = match fs::read_dir(&directory) {
-        Ok(read_dir) => read_dir,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
-        Err(error) => return Err(error.into()),
-    };
+    if !directory.is_dir() {
+        return Ok(Vec::new());
+    }
+    let files = folder_files(&directory)?;
 
     let enabled_pattern =
         Regex::new(r"(?i)^pak(\d{2})_dir\.vpk$").expect("addon slot pattern is valid");
@@ -100,17 +285,11 @@ pub fn list_installed(game_root: &Path) -> Result<Vec<InstalledAddon>> {
     let chunk_pattern =
         Regex::new(r"(?i)^pak(\d{2})_\d{3}\.vpk$").expect("addon chunk pattern is valid");
 
-    let mut slots: BTreeMap<u8, (String, bool)> = BTreeMap::new();
-    let mut chunks: BTreeMap<u8, Vec<String>> = BTreeMap::new();
+    let mut slots: BTreeMap<u16, (String, bool)> = BTreeMap::new();
+    let mut chunks: BTreeMap<u16, Vec<String>> = BTreeMap::new();
 
-    for entry in read_dir.flatten() {
-        let path = entry.path();
-
-        if !path.is_file() {
-            continue;
-        }
-
-        let name = entry.file_name().to_string_lossy().into_owned();
+    for (index, name) in files {
+        let parse_slot = |capture| parse_slot(capture).map(|local| global_slot(index, local));
 
         if let Some(captures) = chunk_pattern.captures(&name) {
             if let Some(slot) = parse_slot(captures.get(1)) {
@@ -143,7 +322,7 @@ pub fn list_installed(game_root: &Path) -> Result<Vec<InstalledAddon>> {
     let mut addons = Vec::with_capacity(slots.len());
 
     for (slot, (file, enabled)) in slots {
-        let path = directory.join(&file);
+        let path = slot_folder(&directory, slot).join(&file);
         let size_bytes = fs::metadata(&path).map(|data| data.len()).unwrap_or(0);
         let entry_count = read_vpk_directory_with(&path, &ReadVpkOptions {
             keep_preload: false,
@@ -191,10 +370,10 @@ pub fn read_conflict_report(game_root: &Path) -> Result<ConflictReport> {
     }
 
     // Lowercased path -> (path as shipped, slots that ship it).
-    let mut shipped: BTreeMap<String, (String, BTreeSet<u8>)> = BTreeMap::new();
+    let mut shipped: BTreeMap<String, (String, BTreeSet<u16>)> = BTreeMap::new();
 
     for addon in addons.iter().filter(|addon| addon.enabled) {
-        let path = directory.join(&addon.file);
+        let path = addon.path(&directory);
 
         let parsed = match read_vpk_directory_with(&path, &ReadVpkOptions {
             keep_preload: false,
@@ -259,17 +438,17 @@ pub fn find_conflicts(game_root: &Path) -> Result<Vec<AddonConflict>> {
 /// while it is off.
 pub fn set_enabled(
     game_root: &Path,
-    slot: u8,
+    slot: u16,
     enabled: bool,
     approve: bool,
 ) -> Result<AddonToggleResult> {
-    if !(1..=99).contains(&slot) {
+    if !is_slot(slot) {
         return Err(Error::msg(format!(
-            "Slot {slot} is outside 1 to 99. Addon slots are pak01_dir.vpk to pak99_dir.vpk."
+            "Slot {slot} is outside 1 to {MAX_SLOT}. Nothing was written."
         )));
     }
 
-    let directory = addons_dir(game_root);
+    let directory = slot_folder(&addons_dir(game_root), slot);
     let action = if enabled { "enable" } else { "disable" };
 
     if !approve {
@@ -286,7 +465,7 @@ pub fn set_enabled(
         )));
     }
 
-    let enabled_name = format!("pak{slot:02}_dir.vpk");
+    let enabled_name = slot_name(slot, "_dir.vpk");
     let disabled_name = format!("{enabled_name}{DISABLED_SUFFIX}");
     let enabled_path = directory.join(&enabled_name);
     let disabled_path = directory.join(&disabled_name);
@@ -348,9 +527,10 @@ pub fn revert_toggles(
     if !approve {
         return Err(Error::msg("Not approved: undo the switch. Nothing was renamed."));
     }
-    let directory = addons_dir(game_root);
-    let enabled_name = |slot: u8| format!("pak{slot:02}_dir.vpk");
+    let addons = addons_dir(game_root);
+    let enabled_name = |slot: u16| slot_name(slot, "_dir.vpk");
     for result in results {
+        let directory = slot_folder(&addons, result.slot);
         let names = [enabled_name(result.slot), format!("{}{DISABLED_SUFFIX}", enabled_name(result.slot))];
         if !names.contains(&result.from) || !names.contains(&result.to) || result.from == result.to {
             return Err(Error::msg(format!(
@@ -367,6 +547,7 @@ pub fn revert_toggles(
     }
     let mut reverted = Vec::new();
     for result in results {
+        let directory = slot_folder(&addons, result.slot);
         fs::rename(directory.join(&result.to), directory.join(&result.from))?;
         reverted.push(AddonToggleResult {
             slot: result.slot,
@@ -381,14 +562,14 @@ pub fn revert_toggles(
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SetManyReport {
     pub done: Vec<AddonToggleResult>,
-    pub failed: Vec<(u8, String)>,
+    pub failed: Vec<(u16, String)>,
 }
 
 /// GAME WRITE. Put several slots in a wanted state, each one the single rename of
 /// [`set_enabled`]. Slots already in that state are skipped quietly; a slot that fails stops
 /// nothing else. Refuses everything without `approve`. Used by solo test, the broken mod
 /// search, variant pickers and mod lists.
-pub fn set_many(game_root: &Path, wanted: &BTreeMap<u8, bool>, approve: bool) -> Result<SetManyReport> {
+pub fn set_many(game_root: &Path, wanted: &BTreeMap<u16, bool>, approve: bool) -> Result<SetManyReport> {
     if !approve {
         return Err(Error::msg("Not approved: switch several mods. Nothing was renamed."));
     }
@@ -407,8 +588,8 @@ pub fn set_many(game_root: &Path, wanted: &BTreeMap<u8, bool>, approve: bool) ->
     Ok(report)
 }
 
-fn parse_slot(capture: Option<regex::Match<'_>>) -> Option<u8> {
-    let slot = capture?.as_str().parse::<u8>().ok()?;
+fn parse_slot(capture: Option<regex::Match<'_>>) -> Option<u16> {
+    let slot = capture?.as_str().parse::<u16>().ok()?;
     (1..=99).contains(&slot).then_some(slot)
 }
 
@@ -451,7 +632,7 @@ mod revert_tests {
         fs::write(addons.join("pak01_dir.vpk"), "a").unwrap();
         fs::write(addons.join("pak02_dir.vpk.disabled"), "b").unwrap();
         fs::write(addons.join("pak03_dir.vpk"), "c").unwrap();
-        let wanted: BTreeMap<u8, bool> = [(1, false), (2, true), (3, true), (9, true)].into();
+        let wanted: BTreeMap<u16, bool> = [(1, false), (2, true), (3, true), (9, true)].into();
         assert!(set_many(&root, &wanted, false).is_err());
         assert!(addons.join("pak01_dir.vpk").is_file());
         let report = set_many(&root, &wanted, true).unwrap();
@@ -461,5 +642,114 @@ mod revert_tests {
         assert!(addons.join("pak02_dir.vpk").is_file());
         revert_toggles(&root, &report.done, true).unwrap();
         assert!(addons.join("pak01_dir.vpk").is_file());
+    }
+}
+
+#[cfg(test)]
+mod overflow_tests {
+    use super::*;
+    use crate::load_order::{SlotMove, apply_reorder, plan_reorder, read_slot_files};
+
+    const GAMEINFO: &str = "\"GameInfo\"\n{\n\tFileSystem\n\t{\n\t\tSearchPaths\n\t\t{\n\t\t\tGame citadel/addons\n\t\t\tGame \"citadel\"\n\t\t\tGame \"core\"\n\t\t}\n\t}\n}\n";
+
+    /// `<tmp>/game/citadel` with an addons folder and a stock gameinfo.gi.
+    fn game(tag: &str) -> std::path::PathBuf {
+        let root = std::env::temp_dir().join(format!("sigil-overflow-{tag}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let citadel = root.join("game").join("citadel");
+        fs::create_dir_all(citadel.join("addons")).unwrap();
+        fs::write(citadel.join("gameinfo.gi"), GAMEINFO).unwrap();
+        root
+    }
+
+    #[test]
+    fn slots_map_to_folders_and_back() {
+        assert_eq!((folder_index(1), local_slot(1)), (0, 1));
+        assert_eq!((folder_index(99), local_slot(99)), (0, 99));
+        assert_eq!((folder_index(100), local_slot(100)), (1, 1));
+        assert_eq!((folder_index(198), local_slot(198)), (1, 99));
+        assert_eq!((folder_index(MAX_SLOT), local_slot(MAX_SLOT)), (9, 99));
+        assert_eq!(global_slot(1, 5), 104);
+        assert_eq!(slot_name(104, "_dir.vpk"), "pak05_dir.vpk");
+        assert_eq!(slot_label(5), "05");
+        assert_eq!(slot_label(104), "2·05");
+        let addons = Path::new("/g/game/citadel/addons");
+        assert_eq!(slot_folder(addons, 104), Path::new("/g/game/citadel/sigil-addons2"));
+        assert!(!is_slot(0) && !is_slot(MAX_SLOT + 1));
+    }
+
+    #[test]
+    fn mods_in_an_extra_folder_are_listed_with_their_global_slot() {
+        let root = game("list");
+        let addons = addons_dir(&root);
+        fs::write(addons.join("pak05_dir.vpk"), b"main").unwrap();
+        let extra = slot_folder(&addons, 100);
+        fs::create_dir_all(&extra).unwrap();
+        fs::write(extra.join("pak05_dir.vpk.disabled"), b"extra").unwrap();
+        fs::write(extra.join("pak05_000.vpk"), b"chunk").unwrap();
+
+        let listed = list_installed(&root).unwrap();
+        let slots: Vec<(u16, bool)> = listed.iter().map(|a| (a.slot, a.enabled)).collect();
+        assert_eq!(slots, vec![(5, true), (104, false)]);
+        assert_eq!(listed[1].path(&addons), extra.join("pak05_dir.vpk.disabled"));
+        assert_eq!(listed[1].chunk_files, vec!["pak05_000.vpk".to_string()]);
+
+        set_enabled(&root, 104, true, true).unwrap();
+        assert!(extra.join("pak05_dir.vpk").is_file());
+        assert!(addons.join("pak05_dir.vpk").is_file(), "the main folder's pak05 is untouched");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn a_reorder_across_folders_moves_files_and_mounts_the_folder() {
+        let root = game("reorder");
+        let addons = addons_dir(&root);
+        let gameinfo = addons.parent().unwrap().join("gameinfo.gi");
+        fs::write(addons.join("pak07_dir.vpk"), b"seven").unwrap();
+        fs::write(addons.join("pak07_000.vpk"), b"chunk").unwrap();
+
+        let files = read_slot_files(&addons).unwrap();
+        let plan = plan_reorder(&addons, &files, &[SlotMove { from: 7, to: 120 }], "t").unwrap();
+        apply_reorder(&plan, true).unwrap();
+        let extra = slot_folder(&addons, 120);
+        assert_eq!(fs::read(extra.join("pak21_dir.vpk")).unwrap(), b"seven");
+        assert!(extra.join("pak21_000.vpk").is_file());
+        assert!(!addons.join("pak07_dir.vpk").exists());
+        let text = fs::read_to_string(&gameinfo).unwrap();
+        assert_eq!(crate::overflow::overflow_folders_in(&text), vec!["sigil-addons2".to_string()]);
+
+        // Moving it back empties the extra folder: the mount and the folder go away.
+        let files = read_slot_files(&addons).unwrap();
+        let plan = plan_reorder(&addons, &files, &[SlotMove { from: 120, to: 7 }], "u").unwrap();
+        apply_reorder(&plan, true).unwrap();
+        assert!(addons.join("pak07_dir.vpk").is_file());
+        assert!(!extra.exists(), "an empty extra folder is removed");
+        let text = fs::read_to_string(&gameinfo).unwrap();
+        assert!(crate::overflow::overflow_folders_in(&text).is_empty());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn an_isolated_profile_gets_no_extra_mounts_and_vanilla_unmounts() {
+        let root = game("mounts");
+        let addons = addons_dir(&root);
+        let gameinfo = addons.parent().unwrap().join("gameinfo.gi");
+        let extra = slot_folder(&addons, 150);
+        fs::create_dir_all(&extra).unwrap();
+        fs::write(extra.join(slot_name(150, "_dir.vpk")), b"x").unwrap();
+
+        assert!(sync_overflow_mount(&addons).unwrap());
+        assert!(!sync_overflow_mount(&addons).unwrap(), "a second sync changes nothing");
+        assert!(unmount_overflow(&addons).unwrap());
+        assert!(crate::overflow::overflow_folders_in(&fs::read_to_string(&gameinfo).unwrap()).is_empty());
+        assert!(extra.join(slot_name(150, "_dir.vpk")).is_file(), "vanilla keeps the files");
+
+        let isolated = GAMEINFO.replace(
+            "\t\t\tGame citadel/addons\n",
+            "\t\t\t// sigil:profile-begin\n\t\t\tGame citadel/addons/sigil-ranked\n\t\t\t// sigil:profile-end\n",
+        );
+        fs::write(&gameinfo, isolated).unwrap();
+        assert!(!sync_overflow_mount(&addons).unwrap(), "nothing extra mounts beside an isolated profile");
+        let _ = fs::remove_dir_all(root);
     }
 }

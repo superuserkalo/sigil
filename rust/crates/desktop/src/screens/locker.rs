@@ -64,7 +64,7 @@ impl HeroCard {
 /// One installed addon slot.
 #[derive(Clone)]
 pub struct ModRow {
-    pub slot: u8,
+    pub slot: u16,
     pub file: String,
     pub enabled: bool,
     /// Content identity, the category membership key.

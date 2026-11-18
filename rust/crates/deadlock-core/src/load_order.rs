@@ -21,7 +21,7 @@ use std::path::{Path, PathBuf};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 
-use crate::addons::DISABLED_SUFFIX;
+use crate::addons::{DISABLED_SUFFIX, MAX_SLOT, global_slot, is_slot, local_slot, slot_folder};
 use crate::error::{Error, Result};
 use crate::import::Library;
 
@@ -32,11 +32,12 @@ pub const TEMP_PREFIX: &str = ".sigil-reorder-";
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SlotMove {
-    pub from: u8,
-    pub to: u8,
+    pub from: u16,
+    pub to: u16,
 }
 
-/// One rename inside the addon folder, by file name.
+/// One rename, by path relative to the `citadel` folder (`addons/pak05_dir.vpk`,
+/// `sigil-addons2/pak01_dir.vpk`), so a move can cross into an extra addon folder.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RenameStep {
@@ -89,27 +90,29 @@ fn slot_pattern() -> Regex {
     Regex::new(r"(?i)^pak(\d{2})_(dir\.vpk(\.disabled)?|\d{3}\.vpk)$").expect("slot file pattern is valid")
 }
 
-/// The slot a file name belongs to: `pakNN_dir.vpk`, `pakNN_dir.vpk.disabled` or a
-/// `pakNN_MMM.vpk` chunk, with NN from 01 to 99. Anything else is `None`.
-pub fn slot_of(name: &str) -> Option<u8> {
+/// The `pakNN` number a file name carries, 01 to 99, inside its own folder: `pakNN_dir.vpk`,
+/// `pakNN_dir.vpk.disabled` or a `pakNN_MMM.vpk` chunk. Anything else is `None`. A slot in an
+/// extra folder is [`crate::addons::global_slot`] of its folder and this number.
+pub fn slot_of(name: &str) -> Option<u16> {
     let captures = slot_pattern().captures(name)?;
-    let slot = captures.get(1)?.as_str().parse::<u8>().ok()?;
+    let slot = captures.get(1)?.as_str().parse::<u16>().ok()?;
     (1..=99).contains(&slot).then_some(slot)
 }
 
-/// `name` moved from slot `from` to slot `to`, keeping its kind and suffix. `None` when the
-/// name is not a file of slot `from` or `to` is outside 01 to 99.
-pub fn rename_for_slot(name: &str, from: u8, to: u8) -> Option<String> {
-    if slot_of(name) != Some(from) || !(1..=99).contains(&to) {
+/// `name` moved from slot `from` to slot `to` (both global), keeping its kind and suffix: the
+/// new name carries `to`'s number inside its folder. `None` when the name is not a file of slot
+/// `from` or `to` is not a slot.
+pub fn rename_for_slot(name: &str, from: u16, to: u16) -> Option<String> {
+    if slot_of(name) != Some(local_slot(from)) || !is_slot(to) {
         return None;
     }
     // `pak` plus two digits; the rest of the name stays as it is (case included).
-    Some(format!("{}{to:02}{}", &name[..3], &name[5..]))
+    Some(format!("{}{:02}{}", &name[..3], local_slot(to), &name[5..]))
 }
 
 /// Group addon folder file names by slot. Names that are not slot files are left out.
-pub fn group_slot_files<S: AsRef<str>>(names: &[S]) -> BTreeMap<u8, Vec<String>> {
-    let mut slots: BTreeMap<u8, Vec<String>> = BTreeMap::new();
+pub fn group_slot_files<S: AsRef<str>>(names: &[S]) -> BTreeMap<u16, Vec<String>> {
+    let mut slots: BTreeMap<u16, Vec<String>> = BTreeMap::new();
     for name in names {
         let name = name.as_ref();
         if let Some(slot) = slot_of(name) {
@@ -122,24 +125,39 @@ pub fn group_slot_files<S: AsRef<str>>(names: &[S]) -> BTreeMap<u8, Vec<String>>
     slots
 }
 
-/// The slot files in `addons_dir`, grouped by slot. Read only. Only regular files count: a
-/// symlink or folder with a slot name is left out, so no operation follows it.
-pub fn read_slot_files(addons_dir: &Path) -> Result<BTreeMap<u8, Vec<String>>> {
-    let entries = match fs::read_dir(addons_dir) {
-        Ok(entries) => entries,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(BTreeMap::new()),
-        Err(error) => return Err(error.into()),
-    };
-    let mut names = Vec::new();
-    for entry in entries.flatten() {
-        let Ok(kind) = entry.file_type() else {
-            continue;
+/// The slot files in `addons_dir` and its extra folders, grouped by global slot. Names are bare
+/// file names; [`crate::addons::slot_folder`] says which folder each slot's files are in. Read
+/// only. Only regular files count: a symlink or folder with a slot name is left out, so no
+/// operation follows it.
+pub fn read_slot_files(addons_dir: &Path) -> Result<BTreeMap<u16, Vec<String>>> {
+    let mut slots: BTreeMap<u16, Vec<String>> = BTreeMap::new();
+    for (index, folder) in crate::addons::existing_folders(addons_dir) {
+        let entries = match fs::read_dir(&folder) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => return Err(error.into()),
         };
-        if kind.is_file() {
-            names.push(entry.file_name().to_string_lossy().into_owned());
+        let mut names = Vec::new();
+        for entry in entries.flatten() {
+            let Ok(kind) = entry.file_type() else {
+                continue;
+            };
+            if kind.is_file() {
+                names.push(entry.file_name().to_string_lossy().into_owned());
+            }
+        }
+        for (local, files) in group_slot_files(&names) {
+            slots.insert(global_slot(index, local), files);
         }
     }
-    Ok(group_slot_files(&names))
+    Ok(slots)
+}
+
+/// `name` in `slot`'s folder, relative to the `citadel` folder: `addons/pak05_dir.vpk`.
+pub fn relative_to_citadel(addons_dir: &Path, slot: u16, name: &str) -> String {
+    let folder = slot_folder(addons_dir, slot);
+    let folder = folder.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    format!("{folder}/{name}")
 }
 
 /// Whether a slot file name is a directory file that is switched off.
@@ -156,11 +174,11 @@ pub fn is_disabled_name(name: &str) -> bool {
 /// numbers in use does not change. Mods that keep their number are left out.
 ///
 /// `wanted` must hold exactly the slots of `current`; otherwise there is no move.
-pub fn moves_for_order(current: &[u8], wanted: &[u8]) -> Vec<SlotMove> {
-    let mut numbers: Vec<u8> = current.to_vec();
+pub fn moves_for_order(current: &[u16], wanted: &[u16]) -> Vec<SlotMove> {
+    let mut numbers: Vec<u16> = current.to_vec();
     numbers.sort_unstable();
     numbers.dedup();
-    let mut check: Vec<u8> = wanted.to_vec();
+    let mut check: Vec<u16> = wanted.to_vec();
     check.sort_unstable();
     if check != numbers {
         return Vec::new();
@@ -175,8 +193,8 @@ pub fn moves_for_order(current: &[u8], wanted: &[u8]) -> Vec<SlotMove> {
 
 /// `slots` (in load order) with `slot` taken out and put back at `index`, clamped to the end.
 /// A slot that is not in the list leaves the order as it was.
-pub fn move_to_index(slots: &[u8], slot: u8, index: usize) -> Vec<u8> {
-    let mut order: Vec<u8> = slots.to_vec();
+pub fn move_to_index(slots: &[u16], slot: u16, index: usize) -> Vec<u16> {
+    let mut order: Vec<u16> = slots.to_vec();
     let Some(at) = order.iter().position(|&s| s == slot) else {
         return order;
     };
@@ -187,7 +205,7 @@ pub fn move_to_index(slots: &[u8], slot: u8, index: usize) -> Vec<u8> {
 }
 
 /// The moves that swap two slots' numbers.
-pub fn swap(a: u8, b: u8) -> Vec<SlotMove> {
+pub fn swap(a: u16, b: u16) -> Vec<SlotMove> {
     if a == b {
         return Vec::new();
     }
@@ -206,7 +224,7 @@ pub fn swap(a: u8, b: u8) -> Vec<SlotMove> {
 /// temporary names unique to this plan; it must be letters, digits or dashes.
 pub fn plan_reorder(
     addons_dir: &Path,
-    files: &BTreeMap<u8, Vec<String>>,
+    files: &BTreeMap<u16, Vec<String>>,
     moves: &[SlotMove],
     token: &str,
 ) -> Result<ReorderPlan> {
@@ -220,9 +238,9 @@ pub fn plan_reorder(
     let mut tos = BTreeSet::new();
     for m in &moves {
         for slot in [m.from, m.to] {
-            if !(1..=99).contains(&slot) {
+            if !is_slot(slot) {
                 return Err(Error::msg(format!(
-                    "Slot {slot} is outside 1 to 99. Nothing was renamed."
+                    "Slot {slot} is outside 1 to {MAX_SLOT}. Nothing was renamed."
                 )));
             }
         }
@@ -262,13 +280,14 @@ pub fn plan_reorder(
                 Error::msg(format!("{name} is not a file of slot {:02}.", m.from))
             })?;
             let temporary = format!("{TEMP_PREFIX}{token}-{target}");
+            let temporary = relative_to_citadel(addons_dir, m.to, &temporary);
             stage.push(RenameStep {
-                from: name.clone(),
+                from: relative_to_citadel(addons_dir, m.from, name),
                 to: temporary.clone(),
             });
             finish.push(RenameStep {
                 from: temporary,
-                to: target,
+                to: relative_to_citadel(addons_dir, m.to, &target),
             });
         }
     }
@@ -318,7 +337,7 @@ pub fn reverse_plan(plan: &ReorderPlan) -> ReorderPlan {
 
 /// Library entries follow their slot to its new number. App data, not the game install.
 pub fn remap_library(library: &mut Library, moves: &[SlotMove]) {
-    let map: BTreeMap<u8, u8> = moves.iter().map(|m| (m.from, m.to)).collect();
+    let map: BTreeMap<u16, u16> = moves.iter().map(|m| (m.from, m.to)).collect();
     for meta in &mut library.mods {
         if let Some(&to) = map.get(&meta.slot) {
             meta.slot = to;
@@ -348,18 +367,24 @@ pub fn apply_reorder(plan: &ReorderPlan, approve: bool) -> Result<ReorderReport>
     if plan.stage.len() != plan.finish.len() {
         return Err(Error::msg("The reorder plan is malformed. Nothing was renamed."));
     }
-    let dir = &plan.addons_dir;
-    if !dir.is_dir() {
+    let addons = &plan.addons_dir;
+    if !addons.is_dir() {
         return Err(Error::msg(format!(
             "Addon folder {} does not exist. Nothing was renamed.",
-            dir.display()
+            addons.display()
         )));
     }
+    // Steps are relative to the citadel folder so they can cross into an extra addon folder.
+    let citadel = addons.parent().unwrap_or(addons.as_path()).to_path_buf();
+    let dir = &citadel;
+    let addon_folders: BTreeSet<String> = (0..crate::overflow::MAX_FOLDERS)
+        .filter_map(|index| crate::addons::folder_at(addons, index).file_name().map(|n| n.to_string_lossy().into_owned()))
+        .collect();
 
     let leaving: BTreeSet<String> = plan.stage.iter().map(|s| s.from.to_ascii_lowercase()).collect();
     for step in &plan.stage {
-        check_plain_name(&step.from)?;
-        check_plain_name(&step.to)?;
+        check_step_path(&step.from, &addon_folders)?;
+        check_step_path(&step.to, &addon_folders)?;
         let source = dir.join(&step.from);
         let regular = fs::symlink_metadata(&source).map(|m| m.file_type().is_file()).unwrap_or(false);
         if !regular {
@@ -376,8 +401,8 @@ pub fn apply_reorder(plan: &ReorderPlan, approve: bool) -> Result<ReorderReport>
         }
     }
     for step in &plan.finish {
-        check_plain_name(&step.to)?;
-        if slot_of(&step.to).is_none() {
+        check_step_path(&step.to, &addon_folders)?;
+        if slot_of(file_part(&step.to)).is_none() {
             return Err(Error::msg(format!("{} is not a slot file name. Nothing was renamed.", step.to)));
         }
         if fs::symlink_metadata(dir.join(&step.to)).is_ok()
@@ -387,6 +412,13 @@ pub fn apply_reorder(plan: &ReorderPlan, approve: bool) -> Result<ReorderReport>
                 "{} already exists and is not moving. Nothing was renamed.",
                 step.to
             )));
+        }
+    }
+
+    // A move into an extra folder needs the folder; it is mounted afterwards.
+    for step in &plan.finish {
+        if let Some(parent) = dir.join(&step.to).parent() {
+            fs::create_dir_all(parent)?;
         }
     }
 
@@ -423,6 +455,12 @@ pub fn apply_reorder(plan: &ReorderPlan, approve: bool) -> Result<ReorderReport>
         done.push((from, to));
     }
 
+    // A move into or out of an extra folder changes which folders gameinfo.gi must mount. The
+    // files are in place first; a failed mount leaves mods unmounted, never half moved.
+    if plan.moves.iter().any(|m| crate::addons::folder_index(m.from) > 0 || crate::addons::folder_index(m.to) > 0) {
+        crate::addons::sync_overflow_mount(addons)?;
+    }
+
     Ok(ReorderReport {
         moves: plan.moves.clone(),
         renamed: plan.renames(),
@@ -442,6 +480,22 @@ fn roll_back(done: &[(PathBuf, PathBuf)]) -> Vec<String> {
         }
     }
     stuck
+}
+
+/// The file name part of a step path (`addons/pak05_dir.vpk` gives `pak05_dir.vpk`).
+pub(crate) fn file_part(step: &str) -> &str {
+    step.rsplit('/').next().unwrap_or(step)
+}
+
+/// A step path is one addon folder this build knows and one plain file name.
+fn check_step_path(step: &str, folders: &BTreeSet<String>) -> Result<()> {
+    let Some((folder, name)) = step.split_once('/') else {
+        return Err(Error::msg(format!("{step:?} has no addon folder. Nothing was changed.")));
+    };
+    if !folders.contains(folder) {
+        return Err(Error::msg(format!("{folder:?} is not an addon folder. Nothing was changed.")));
+    }
+    check_plain_name(name)
 }
 
 /// A bare file name: no separators, no `..`, not empty.
@@ -477,9 +531,14 @@ pub fn target_of_temp(name: &str) -> Option<String> {
     slot_of(target).map(|_| target.to_string())
 }
 
-/// The `.sigil-reorder-*` files an interrupted reorder left behind. Read only.
+/// The `.sigil-reorder-*` files an interrupted reorder left behind, in the main addon folder.
+/// Read only. [`leftover_temp_paths`] covers the extra folders too.
 pub fn leftover_temp_files(addons_dir: &Path) -> Vec<String> {
-    let Ok(entries) = fs::read_dir(addons_dir) else {
+    leftover_in(addons_dir)
+}
+
+fn leftover_in(folder: &Path) -> Vec<String> {
+    let Ok(entries) = fs::read_dir(folder) else {
         return Vec::new();
     };
     let mut names: Vec<String> = entries
@@ -490,6 +549,14 @@ pub fn leftover_temp_files(addons_dir: &Path) -> Vec<String> {
         .collect();
     names.sort();
     names
+}
+
+/// Every leftover temporary file across the addon folders, as `(folder, name)`. Read only.
+pub fn leftover_temp_paths(addons_dir: &Path) -> Vec<(PathBuf, String)> {
+    crate::addons::existing_folders(addons_dir)
+        .into_iter()
+        .flat_map(|(_, folder)| leftover_in(&folder).into_iter().map(move |name| (folder.clone(), name)))
+        .collect()
 }
 
 /// What a recovery pass did.
@@ -521,16 +588,16 @@ pub fn recover_temp_files(addons_dir: &Path, approve: bool) -> Result<RecoveryRe
         )));
     }
     let mut report = RecoveryReport::default();
-    for name in leftover_temp_files(addons_dir) {
+    for (folder, name) in leftover_temp_paths(addons_dir) {
         let Some(target) = target_of_temp(&name) else {
             continue;
         };
-        let to = addons_dir.join(&target);
+        let to = folder.join(&target);
         if fs::symlink_metadata(&to).is_ok() {
             report.left.push(name);
             continue;
         }
-        match fs::rename(addons_dir.join(&name), &to) {
+        match fs::rename(folder.join(&name), &to) {
             Ok(()) => report.restored.push((name, target)),
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
                 report.left.push(name);
@@ -548,7 +615,7 @@ pub fn recover_temp_files(addons_dir: &Path, approve: bool) -> Result<RecoveryRe
 /// Move one slot to the front of its group (the mods that are on, or the ones that are off).
 /// Game install write; refuses without `approve`. This is how an "always load first" mod wins
 /// every overlap: the lowest slot number in the addon folder.
-pub fn move_slot_to_front(game_root: &Path, slot: u8, approve: bool) -> Result<ReorderReport> {
+pub fn move_slot_to_front(game_root: &Path, slot: u16, approve: bool) -> Result<ReorderReport> {
     let addons = crate::deploy::addons_dir(game_root);
     let files = read_slot_files(&addons)?;
     let plan = plan_slot_to_front(&addons, &files, slot, &new_token())?;
@@ -559,8 +626,8 @@ pub fn move_slot_to_front(game_root: &Path, slot: u8, approve: bool) -> Result<R
 /// [`apply_reorder`] so the caller can keep it for Undo.
 pub fn plan_slot_to_front(
     addons_dir: &Path,
-    files: &BTreeMap<u8, Vec<String>>,
-    slot: u8,
+    files: &BTreeMap<u16, Vec<String>>,
+    slot: u16,
     token: &str,
 ) -> Result<ReorderPlan> {
     let Some(names) = files.get(&slot) else {
@@ -569,7 +636,7 @@ pub fn plan_slot_to_front(
         )));
     };
     let enabled = !names.iter().any(|name| is_disabled_name(name));
-    let group: Vec<u8> = files
+    let group: Vec<u16> = files
         .iter()
         .filter(|(_, names)| names.iter().any(|name| is_disabled_name(name)) != enabled)
         .map(|(&slot, _)| slot)
@@ -627,7 +694,10 @@ mod tests {
         );
         assert_eq!(rename_for_slot("pak05_002.vpk", 5, 42).as_deref(), Some("pak42_002.vpk"));
         assert_eq!(rename_for_slot("pak05_dir.vpk", 4, 1), None);
-        assert_eq!(rename_for_slot("pak05_dir.vpk", 5, 100), None);
+        // Slot 100 is pak01 in the first extra folder; past the last slot there is none.
+        assert_eq!(rename_for_slot("pak05_dir.vpk", 5, 100).as_deref(), Some("pak01_dir.vpk"));
+        assert_eq!(rename_for_slot("pak01_dir.vpk", 100, 5).as_deref(), Some("pak05_dir.vpk"));
+        assert_eq!(rename_for_slot("pak05_dir.vpk", 5, crate::addons::MAX_SLOT + 1), None);
     }
 
     #[test]
@@ -663,13 +733,14 @@ mod tests {
         ]);
         let plan = plan_reorder(Path::new("/x"), &files, &swap(1, 2), "t1").unwrap();
         assert_eq!(plan.stage.len(), 3);
+        // Steps name their folder (relative to citadel), so a move can cross folders.
         for step in &plan.stage {
-            assert!(step.to.starts_with(".sigil-reorder-t1-"), "{}", step.to);
+            assert!(step.to.starts_with("x/.sigil-reorder-t1-"), "{}", step.to);
         }
         let renames = plan.renames();
-        assert!(renames.contains(&("pak02_000.vpk".into(), "pak01_000.vpk".into())));
-        assert!(renames.contains(&("pak02_dir.vpk.disabled".into(), "pak01_dir.vpk.disabled".into())));
-        assert!(renames.contains(&("pak01_dir.vpk".into(), "pak02_dir.vpk".into())));
+        assert!(renames.contains(&("x/pak02_000.vpk".into(), "x/pak01_000.vpk".into())));
+        assert!(renames.contains(&("x/pak02_dir.vpk.disabled".into(), "x/pak01_dir.vpk.disabled".into())));
+        assert!(renames.contains(&("x/pak01_dir.vpk".into(), "x/pak02_dir.vpk".into())));
 
         // Onto slot 3, which stays: refused.
         let error = plan_reorder(Path::new("/x"), &files, &[SlotMove { from: 1, to: 3 }], "t")
@@ -761,7 +832,7 @@ mod tests {
             });
         }
         remap_library(&mut library, &swap(1, 2));
-        let got: Vec<(u8, &str)> = library.mods.iter().map(|m| (m.slot, m.name.as_str())).collect();
+        let got: Vec<(u16, &str)> = library.mods.iter().map(|m| (m.slot, m.name.as_str())).collect();
         assert_eq!(got, vec![(1, "b"), (2, "a"), (4, "c")]);
     }
 

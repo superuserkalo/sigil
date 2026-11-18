@@ -55,7 +55,7 @@ pub enum LineState {
 #[derive(Clone)]
 pub struct ModLine {
     pub label: String,
-    pub slot: u8,
+    pub slot: u16,
     pub enabled: bool,
     pub state: LineState,
 }
@@ -2955,7 +2955,7 @@ pub fn titlebar_switcher(s: &State, u: &Ui) -> El {
 // ---------------------------------------------------------------------------
 
 fn fixture_profiles() -> Vec<Profile> {
-    let slot = |n: u8, name: &str, ids: Option<(u64, u64)>| core::ProfileSlot {
+    let slot = |n: u16, name: &str, ids: Option<(u64, u64)>| core::ProfileSlot {
         slot: n,
         file: format!("pak{n:02}_dir.vpk"),
         enabled: true,
@@ -3144,7 +3144,7 @@ pub fn scene_import(st: &mut State) {
         return;
     };
     let portable = export.profile;
-    let entry = |index: usize, label: &str, status: ImportStatus, installed: Option<u8>| ImportEntry {
+    let entry = |index: usize, label: &str, status: ImportStatus, installed: Option<u16>| ImportEntry {
         index,
         label: label.to_string(),
         enabled: true,

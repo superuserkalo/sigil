@@ -31,7 +31,7 @@ pub const EXTRAS_SCHEMA: u32 = 1;
 pub struct ModExtra {
     /// Stable id: mod lists point at this, so a mod keeps its lists when its slot changes.
     pub uid: String,
-    pub slot: u8,
+    pub slot: u16,
     /// Size of the directory VPK when this was written. Together with `slot` it is the key.
     pub size_bytes: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -124,13 +124,13 @@ impl Default for Extras {
 /// One slot on disk, as [`Extras::sync`] needs it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SlotKey {
-    pub slot: u8,
+    pub slot: u16,
     pub size_bytes: u64,
     pub gamebanana_id: Option<u64>,
 }
 
 impl Extras {
-    pub fn find(&self, slot: u8, size_bytes: u64) -> Option<&ModExtra> {
+    pub fn find(&self, slot: u16, size_bytes: u64) -> Option<&ModExtra> {
         self.mods
             .iter()
             .rev()
@@ -142,7 +142,7 @@ impl Extras {
     }
 
     /// The newest entry for a slot, whatever its size. Used where the size is not at hand.
-    pub fn find_slot(&self, slot: u8) -> Option<&ModExtra> {
+    pub fn find_slot(&self, slot: u16) -> Option<&ModExtra> {
         self.mods.iter().rev().find(|m| m.slot == slot)
     }
 
@@ -157,12 +157,12 @@ impl Extras {
     }
 
     /// The slot a uid sits in now, after reorders and updates.
-    pub fn slot_for_uid(&self, uid: &str) -> Option<u8> {
+    pub fn slot_for_uid(&self, uid: &str) -> Option<u16> {
         self.find_uid(uid).map(|entry| entry.slot)
     }
 
     /// The uid of the entry for a slot, if it has one.
-    pub fn uid_of(&self, slot: u8, size_bytes: u64) -> Option<String> {
+    pub fn uid_of(&self, slot: u16, size_bytes: u64) -> Option<String> {
         self.find(slot, size_bytes).map(|entry| entry.uid.clone())
     }
 
@@ -236,7 +236,7 @@ impl Extras {
 
     /// Entries follow their slot to its new number after a reorder.
     pub fn remap(&mut self, moves: &[SlotMove]) {
-        let map: BTreeMap<u8, u8> = moves.iter().map(|m| (m.from, m.to)).collect();
+        let map: BTreeMap<u16, u16> = moves.iter().map(|m| (m.from, m.to)).collect();
         for entry in &mut self.mods {
             if let Some(&to) = map.get(&entry.slot) {
                 entry.slot = to;
@@ -245,7 +245,7 @@ impl Extras {
     }
 
     /// Move one entry to another key (an update wrote a new file into the slot).
-    pub fn rekey(&mut self, slot: u8, old_size: u64, new_size: u64) {
+    pub fn rekey(&mut self, slot: u16, old_size: u64, new_size: u64) {
         if let Some(entry) = self
             .mods
             .iter_mut()
@@ -440,7 +440,7 @@ pub fn variant_key(extra: Option<&ModExtra>, gamebanana_id: Option<u64>) -> Opti
 
 /// The label one file gets in its variant picker: the player's label, else the archive file
 /// name, else the slot.
-pub fn variant_label(extra: Option<&ModExtra>, file_name: &str, slot: u8) -> String {
+pub fn variant_label(extra: Option<&ModExtra>, file_name: &str, slot: u16) -> String {
     extra
         .and_then(|entry| entry.variant_label.clone())
         .filter(|label| !label.trim().is_empty())
@@ -574,7 +574,7 @@ mod tests {
         root
     }
 
-    fn key(slot: u8, size: u64, id: Option<u64>) -> SlotKey {
+    fn key(slot: u16, size: u64, id: Option<u64>) -> SlotKey {
         SlotKey {
             slot,
             size_bytes: size,
@@ -653,7 +653,7 @@ mod tests {
 
         // The same seed gives the same pick, every seed gives one of the three members.
         assert_eq!(random_picks(&x, 7, |_| false), picks);
-        let slots: BTreeSet<u8> = (0..64)
+        let slots: BTreeSet<u16> = (0..64)
             .map(|seed| random_picks(&x, seed, |_| false)[0].1.slot)
             .collect();
         assert!(slots.len() > 1, "the seed has to change the pick");

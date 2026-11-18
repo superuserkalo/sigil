@@ -756,7 +756,7 @@ pub(crate) fn step_details(st: &mut State, next: bool) {
 }
 
 /// The slot the mod sits in, from the library store and the install journal.
-pub(crate) fn installed_slot(s: &State, id: u64) -> Option<u8> {
+pub(crate) fn installed_slot(s: &State, id: u64) -> Option<u16> {
     super::quick::owned_slot(s, id)
 }
 

@@ -57,7 +57,7 @@ impl Verdict {
 #[serde(rename_all = "camelCase")]
 pub struct Round {
     /// The suspects that were on for this launch, ascending.
-    pub suspects: Vec<u8>,
+    pub suspects: Vec<u16>,
     pub verdict: Verdict,
 }
 
@@ -77,11 +77,11 @@ pub enum State {
 #[serde(rename_all = "camelCase")]
 pub struct Bisect {
     /// Every slot that was on when the search started, ascending.
-    pub original: Vec<u8>,
+    pub original: Vec<u16>,
     /// Suspects left, ascending. Never includes a culprit.
-    pub pool: Vec<u8>,
+    pub pool: Vec<u16>,
     /// Slots this search blamed, in the order it found them.
-    pub culprits: Vec<u8>,
+    pub culprits: Vec<u16>,
     /// The number of pool entries known to be fine.
     pub low: usize,
     /// The number of pool entries the culprit is within.
@@ -94,7 +94,7 @@ pub struct Bisect {
 }
 
 impl Bisect {
-    pub fn new(original: &[u8], pool: &[u8]) -> Self {
+    pub fn new(original: &[u16], pool: &[u16]) -> Self {
         let mut pool = pool.to_vec();
         pool.sort_unstable();
         pool.dedup();
@@ -126,7 +126,7 @@ impl Bisect {
 
     /// The suspects to have on for the next launch. Empty once a culprit is found or the pool
     /// is empty.
-    pub fn suspects(&self) -> Vec<u8> {
+    pub fn suspects(&self) -> Vec<u16> {
         match self.state() {
             // The first launch has everything off, so the search knows a suspect is the cause.
             State::Testing if self.sanity => Vec::new(),
@@ -141,7 +141,7 @@ impl Bisect {
     }
 
     /// Every suspect the round has not cleared, for the "all off" first launch.
-    pub fn pool_slots(&self) -> &[u8] {
+    pub fn pool_slots(&self) -> &[u16] {
         &self.pool
     }
 
@@ -196,7 +196,7 @@ impl Bisect {
 
     /// The slots to have on for the next launch: the culprits found plus the current suspects.
     /// Everything else the library has is switched off by the caller.
-    pub fn enable_now(&self) -> Vec<u8> {
+    pub fn enable_now(&self) -> Vec<u16> {
         let mut on = self.culprits.clone();
         on.extend(self.suspects());
         on.sort_unstable();
@@ -217,7 +217,7 @@ impl Bisect {
 }
 
 /// The slots a search starts with: everything that is on now.
-pub fn candidates(enabled: &[u8]) -> BTreeSet<u8> {
+pub fn candidates(enabled: &[u16]) -> BTreeSet<u16> {
     enabled.iter().copied().collect()
 }
 
@@ -226,7 +226,7 @@ mod tests {
     use super::*;
 
     /// Run a search where `broken` is the culprit and the answer comes from what was on.
-    fn run(pool: &[u8], broken: Option<u8>) -> (Bisect, usize) {
+    fn run(pool: &[u16], broken: Option<u16>) -> (Bisect, usize) {
         let mut search = Bisect::new(pool, pool);
         let mut launches = 0;
         while !search.finished() {
@@ -246,8 +246,8 @@ mod tests {
 
     #[test]
     fn finds_the_broken_mod_in_a_logarithmic_number_of_launches() {
-        let pool: Vec<u8> = (1..=12).collect();
-        for broken in 1..=12u8 {
+        let pool: Vec<u16> = (1..=12).collect();
+        for broken in 1..=12u16 {
             let (search, launches) = run(&pool, Some(broken));
             assert_eq!(search.culprits, vec![broken], "broken {broken}");
             assert_eq!(search.state(), State::Found);

@@ -57,13 +57,13 @@ pub struct View {
     /// Names and previews per slot, read from the library store.
     pub library: Library,
     /// `(slot, size)` of the scan the library was last read for. `None` forces a reread.
-    pub library_sig: Option<Vec<(u8, u64)>>,
+    pub library_sig: Option<Vec<(u16, u64)>>,
     pub thumbs: ThumbCrew,
     /// URLs in the current thumbnail batch, and ones that failed (never asked again).
     pub batch: HashSet<String>,
     pub failed: HashSet<String>,
     /// Previews looked up for installs recorded without one: `(slot, size, url)` written back.
-    pub preview_fill: crate::jobs::Job<Vec<(u8, u64, String)>>,
+    pub preview_fill: crate::jobs::Job<Vec<(u16, u64, String)>>,
     /// GameBanana ids already looked up this run, found or not.
     pub preview_tried: HashSet<u64>,
     pub collapsed_enabled: bool,
@@ -85,7 +85,7 @@ pub struct View {
     /// Compatibility repairs: the dry run, the records Revert reads, the work (`repair.rs`).
     pub repairs: repair::Repairs,
     /// The card under the pointer, which shows its "more" button.
-    pub hovered: Option<u8>,
+    pub hovered: Option<u16>,
     pub menu: Option<Menu>,
     pub import: importer::Flow,
     /// Which group the page shows.
@@ -98,8 +98,8 @@ pub struct View {
     pub drop_hover: bool,
     /// Cards picked for a bulk action, by slot, and the last one picked (the shift-click
     /// anchor).
-    pub selected: BTreeSet<u8>,
-    pub anchor: Option<u8>,
+    pub selected: BTreeSet<u16>,
+    pub anchor: Option<u16>,
     /// A delete, reorder or update waiting for its confirm.
     pub confirm: Option<Confirm>,
     /// "Don't ask again" is ticked in the open confirm.
@@ -113,7 +113,7 @@ pub struct View {
     /// The hero, requirement and dependents questions a switch asks first.
     pub gates: enable::Gates,
     /// Slots whose model another enabled mod hides, from the last scan.
-    pub hidden: BTreeSet<u8>,
+    pub hidden: BTreeSet<u16>,
     /// A card being dragged to a new load order.
     pub drag: Option<drag::Dragging>,
     /// Enabled slots that share game paths with other enabled mods, from the last scan.
@@ -146,24 +146,24 @@ pub struct Updates {
     pub checked: Option<Vec<u64>>,
     pub check: Job<(UpdateCache, Vec<InstallJournalEntry>)>,
     /// Slots waiting to update, and the one updating now.
-    pub queue: Vec<u8>,
-    pub running: Option<u8>,
+    pub queue: Vec<u16>,
+    pub running: Option<u16>,
     pub job: Job<UpdateDone>,
-    pub failed: BTreeMap<u8, String>,
+    pub failed: BTreeMap<u16, String>,
     /// What a queued slot installs from, when it is not the mod's newest file: a file link for
     /// a matched variant, or a downloaded archive for a Replace from Browse.
-    pub targets: BTreeMap<u8, String>,
+    pub targets: BTreeMap<u16, String>,
     /// GameBanana changelogs for the update confirm, by mod id.
     pub changelog: BTreeMap<u64, Result<Vec<deadlock_core::gamebanana::ModUpdate>, String>>,
     pub changelog_job: Job<Vec<(u64, Result<Vec<deadlock_core::gamebanana::ModUpdate>, String>)>>,
 }
 
 /// What the trash worker made: the entries and the slots that failed.
-pub type TrashDone = (Vec<TrashEntry>, Vec<(u8, String)>);
+pub type TrashDone = (Vec<TrashEntry>, Vec<(u16, String)>);
 
 /// One finished update, from the worker.
 pub struct UpdateDone {
-    pub slot: u8,
+    pub slot: u16,
     pub name: String,
     pub backups: Vec<PathBuf>,
     pub old_meta: Option<ModMeta>,
@@ -173,9 +173,9 @@ pub struct UpdateDone {
 /// A change that asks first, unless the user ticked "Don't ask again".
 #[derive(Clone, Debug)]
 pub enum Confirm {
-    Delete(Vec<u8>),
+    Delete(Vec<u16>),
     Reorder(ReorderPlan),
-    UpdateAll(Vec<u8>),
+    UpdateAll(Vec<u16>),
 }
 
 impl Confirm {
@@ -205,7 +205,7 @@ pub enum Undo {
     /// The install backups of an update, and the library entry from before it
     /// (`deadlock_core::trash::undo_update`).
     Update {
-        slot: u8,
+        slot: u16,
         backups: Vec<PathBuf>,
         meta: Option<ModMeta>,
     },
@@ -213,9 +213,9 @@ pub enum Undo {
     /// (`deadlock_core::mod_merge::unmerge`).
     Unmerge(Box<deadlock_core::mod_merge::MergedMod>),
     /// Fonts Sigil added for a slot (`deadlock_core::fonts::remove_fonts`).
-    FontsInstalled(u8),
+    FontsInstalled(u16),
     /// Fonts Sigil removed from a slot (`deadlock_core::fonts::install_fonts`).
-    FontsRemoved(u8),
+    FontsRemoved(u16),
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -290,7 +290,7 @@ impl Sort {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Menu {
     /// The "more" menu of one card.
-    Card(u8),
+    Card(u16),
     /// The Import dropdown in the toolbar: local files and other managers.
     Import,
     /// The "Import from another mod manager" dropdown in the empty state.
@@ -300,9 +300,9 @@ pub enum Menu {
     /// The look of the page.
     View,
     /// The tools of one card: safety scan, fonts, identification, compatibility.
-    Tools(u8),
+    Tools(u16),
     /// The less used actions of one card, behind "More actions".
-    CardMore(u8),
+    CardMore(u16),
     Hero,
     Category,
     Tag,
@@ -310,9 +310,9 @@ pub enum Menu {
     /// Bulk actions over the shown mods.
     More,
     /// Who one card overlaps, from its overlap badge.
-    Overlap(u8),
+    Overlap(u16),
     /// Why one card loads too late for the mod it needs, and Fix it.
-    Order(u8),
+    Order(u16),
 }
 
 /// The mods the page shows: search, source and group applied, in the chosen order.
@@ -702,7 +702,7 @@ fn apply_bulk(st: &mut State, enable: bool) {
     if crate::screens::settings::watch::refuse_while_running(st) {
         return;
     }
-    let targets: Vec<(u8, String)> = bulk_targets(st, enable)
+    let targets: Vec<(u16, String)> = bulk_targets(st, enable)
         .into_iter()
         .map(|addon| (addon.slot, display_name(st, addon)))
         .collect();
@@ -713,13 +713,13 @@ fn apply_bulk(st: &mut State, enable: bool) {
 /// Turn these slots on or off in one pass: the same single rename the card switch does
 /// (`deadlock_core::addons::set_many`), reported once in a recap and put behind Undo. The
 /// caller has already checked demo mode and a running game. Returns the slots that changed.
-pub(super) fn switch_slots(st: &mut State, targets: Vec<(u8, String)>, enable: bool) -> Vec<u8> {
+pub(super) fn switch_slots(st: &mut State, targets: Vec<(u16, String)>, enable: bool) -> Vec<u16> {
     let Some(game_root) = st.game_root.clone() else {
         st.status = "Set the game folder in Settings first.".to_string();
         return Vec::new();
     };
-    let wanted: BTreeMap<u8, bool> = targets.iter().map(|(slot, _)| (*slot, enable)).collect();
-    let names: BTreeMap<u8, String> = targets.into_iter().collect();
+    let wanted: BTreeMap<u16, bool> = targets.iter().map(|(slot, _)| (*slot, enable)).collect();
+    let names: BTreeMap<u16, String> = targets.into_iter().collect();
     let mut recap = search::Recap::new(if enable {
         format!("Turned on {} mods", wanted.len())
     } else {
@@ -1070,7 +1070,7 @@ fn card_view(s: &State, u: &Ui, card: &layout::Group, pitch: [f32; 2], cols: usi
             .child(spacer())
             .child(bottom.pl(2.0).pb(2.0)),
     );
-    let members: Vec<u8> = card.addons.iter().map(|addon| addon.slot).collect();
+    let members: Vec<u16> = card.addons.iter().map(|addon| addon.slot).collect();
     let chosen = slot;
     let is_variants = card.is_variants();
     let switch = u
@@ -1309,7 +1309,7 @@ fn update_chip(s: &State, u: &Ui, addon: &AddonRow) -> Option<El> {
 
 /// A slot's file for another page's list: its name and variant label, and the slot with on or
 /// off.
-pub fn file_label(s: &State, slot: u8) -> (String, String) {
+pub fn file_label(s: &State, slot: u16) -> (String, String) {
     let Some(addon) = s.addons.addons.iter().find(|addon| addon.slot == slot) else {
         return (format!("{slot:02}"), String::new());
     };
@@ -1413,7 +1413,7 @@ pub fn overlay(s: &State, u: &Ui) -> Option<El> {
         Menu::Card(slot) => {
             let addon = s.addons.addons.iter().find(|addon| addon.slot == slot)?;
             let extra = notes::extra(s, addon);
-            let path = PathBuf::from(s.addons_dir.clone().unwrap_or_default()).join(&addon.file);
+            let path = addon.path(&PathBuf::from(s.addons_dir.clone().unwrap_or_default()));
             items.push(
                 menu_item(u, "menu-reveal", Some(&icons::FOLDER_OPEN), "Show in folder", "", true)
                     .on_press(move |st: &mut State| {
@@ -1899,7 +1899,7 @@ fn copy_lines(s: &State) -> String {
 }
 
 /// The same lines for the picked mods only, or every shown mod when `only` is `None`.
-fn copy_lines_of(s: &State, only: Option<&BTreeSet<u8>>) -> String {
+fn copy_lines_of(s: &State, only: Option<&BTreeSet<u16>>) -> String {
     let mut lines = Vec::new();
     for enabled in [true, false] {
         for addon in shown_addons(s)
@@ -2050,7 +2050,7 @@ fn fill_previews(st: &mut State) -> bool {
     if st.demo || rune::is_headless() || st.screen != Screen::Installed || st.installed.preview_fill.is_running() {
         return changed;
     }
-    let wanted: Vec<(u8, u64, u64)> = st
+    let wanted: Vec<(u16, u64, u64)> = st
         .installed
         .library
         .mods
@@ -2094,7 +2094,7 @@ pub fn poll(st: &mut State) -> bool {
     changed |= repair::poll(st);
 
     if !st.demo && st.addons.scanned {
-        let sig: Vec<(u8, u64)> = st
+        let sig: Vec<(u16, u64)> = st
             .addons
             .addons
             .iter()
@@ -2169,7 +2169,7 @@ fn allowed_image(url: &str) -> bool {
 /// Names and previews for the demo library. Previews are read from the local image cache so
 /// the scene needs no network; with an empty cache the cards show placeholders.
 pub fn stage_demo(st: &mut State) {
-    let names: [(u8, &str, Option<&str>); 10] = [
+    let names: [(u16, &str, Option<&str>); 10] = [
         (1, "Chromamancer Violet", Some("tselky")),
         (2, "Asa Mitaka over Paige", Some("toast068")),
         (3, "Random Respawn Dances", Some("Bailey31")),
@@ -2212,7 +2212,7 @@ pub fn stage_demo(st: &mut State) {
 /// Hero, category, tags, a pin and a named list for the demo library.
 fn stage_extras(st: &mut State) {
     use deadlock_core::mod_extras::{Extras, ModExtra, ModList};
-    type Fact<'a> = (u8, &'a str, &'a str, &'a str, &'a [&'a str], bool);
+    type Fact<'a> = (u16, &'a str, &'a str, &'a str, &'a [&'a str], bool);
     let facts: [Fact; 9] = [
         (1, "Violet", "Skins", "Violet", &["main"], false),
         (2, "Paige", "Skins", "Paige", &[], true),
@@ -2564,7 +2564,7 @@ pub fn scene_list(s: &mut State) {
 /// Two files of one GameBanana mod as a variant card, its picker open.
 pub fn scene_variants(s: &mut State) {
     crate::app::scene_demo_installed(s);
-    let size = |st: &State, slot: u8| {
+    let size = |st: &State, slot: u16| {
         st.addons
             .addons
             .iter()
@@ -2692,6 +2692,7 @@ pub fn scene_identify(s: &mut State) {
         stage: tools::Stage::Failed,
         error: None,
         job: Job::default(),
+        pending: None,
     });
 }
 
@@ -2780,7 +2781,7 @@ pub fn scene_solo(s: &mut State) {
 pub fn scene_bisect(s: &mut State) {
     crate::app::scene_demo_installed(s);
     search::search_open(s);
-    let picked: Vec<u8> = s.installed.search.picked.iter().copied().collect();
+    let picked: Vec<u16> = s.installed.search.picked.iter().copied().collect();
     let original = s.installed.search.original.clone();
     let mut bisect = deadlock_core::bisect::Bisect::new(&original, &picked);
     bisect.judge(deadlock_core::bisect::Verdict::Works);
@@ -2867,15 +2868,15 @@ fn danger_item(u: &Ui, key: &str, label: &str) -> El {
 
 /// Pick or unpick one card. With Shift, everything shown between the last pick and this
 /// card is picked.
-pub(super) fn pick(st: &mut State, slot: u8, shift: bool) {
+pub(super) fn pick(st: &mut State, slot: u16, shift: bool) {
     let v = &st.installed;
     if shift && let Some(anchor) = v.anchor {
-        let order: Vec<u8> = shown_order(st);
+        let order: Vec<u16> = shown_order(st);
         let a = order.iter().position(|&s| s == anchor);
         let b = order.iter().position(|&s| s == slot);
         if let (Some(a), Some(b)) = (a, b) {
             let (lo, hi) = (a.min(b), a.max(b));
-            let range: Vec<u8> = order[lo..=hi].to_vec();
+            let range: Vec<u16> = order[lo..=hi].to_vec();
             st.installed.selected.extend(range);
             st.installed.anchor = Some(slot);
             return;
@@ -2888,9 +2889,9 @@ pub(super) fn pick(st: &mut State, slot: u8, shift: bool) {
 }
 
 /// The shown cards in the order they are drawn: the Enabled group, then Disabled.
-fn shown_order(s: &State) -> Vec<u8> {
+fn shown_order(s: &State) -> Vec<u16> {
     let shown = shown_addons(s);
-    let mut order: Vec<u8> = shown.iter().filter(|a| a.enabled).map(|a| a.slot).collect();
+    let mut order: Vec<u16> = shown.iter().filter(|a| a.enabled).map(|a| a.slot).collect();
     order.extend(shown.iter().filter(|a| !a.enabled).map(|a| a.slot));
     order
 }
@@ -2946,7 +2947,7 @@ fn selection_bar(s: &State, u: &Ui) -> El {
         );
     }
     use crate::screens::settings::i18n::{fill, tr};
-    let updates: Vec<u8> = s
+    let updates: Vec<u16> = s
         .installed
         .selected
         .iter()
@@ -2992,7 +2993,7 @@ fn selection_bar(s: &State, u: &Ui) -> El {
                 .key("installed-selection-delete")
                 .cursor(rune::Cursor::Pointer)
                 .on_press(|st: &mut State| {
-                    let slots: Vec<u8> = st.installed.selected.iter().copied().collect();
+                    let slots: Vec<u16> = st.installed.selected.iter().copied().collect();
                     ask(st, Confirm::Delete(slots));
                 }),
         )
@@ -3032,7 +3033,7 @@ pub(super) fn writable_game(st: &mut State) -> Option<PathBuf> {
 pub(super) fn apply_switch(
     st: &mut State,
     game_root: &std::path::Path,
-    wanted: &BTreeMap<u8, bool>,
+    wanted: &BTreeMap<u16, bool>,
     line: String,
 ) {
     if crate::screens::settings::watch::refuse_while_running(st) {
@@ -3056,20 +3057,24 @@ pub(super) fn apply_switch(
     warn_at_cap(st);
 }
 
-/// The slot cap: 99 mods is all the game's addon folder holds, so say so when it is reached.
+/// The slot cap. Past 99 mods Sigil fills extra addon folders (`sigil-addons2` and on), so the
+/// cap is [`deadlock_core::addons::MAX_SLOT`]; say so when it is reached.
 pub(super) fn warn_at_cap(st: &mut State) {
-    let on = st.addons.addons.iter().filter(|addon| addon.enabled).count();
-    if on >= 99 {
+    let used = st.addons.addons.len();
+    if used >= usize::from(deadlock_core::addons::MAX_SLOT) {
         crate::notify::push(
             st,
             crate::notify::Notice::warning("Every addon slot is in use")
-                .detail("All 99 mods are on. Turn one off before adding another."),
+                .detail(format!(
+                    "All {} slots hold a mod. Remove one before adding another.",
+                    deadlock_core::addons::MAX_SLOT
+                )),
         );
     }
 }
 
 /// The card switch: one rename, remembered for Undo.
-pub(super) fn toggle_one(st: &mut State, slot: u8, enable: bool) {
+pub(super) fn toggle_one(st: &mut State, slot: u16, enable: bool) {
     st.addon_dialog = None;
     if crate::screens::settings::watch::refuse_while_running(st) {
         return;
@@ -3138,14 +3143,14 @@ fn dont_ask_row(s: &State, u: &Ui) -> El {
 
 /// Move the slots' files to Sigil's trash (`deadlock_core::trash::trash_slots`) and drop
 /// their library entries; Undo restores both.
-fn delete(st: &mut State, slots: Vec<u8>) {
+fn delete(st: &mut State, slots: Vec<u16>) {
     if crate::screens::settings::watch::refuse_while_running(st) {
         return;
     }
     let Some(game_root) = writable_game(st) else {
         return;
     };
-    let items: Vec<(u8, Option<ModMeta>)> = slots
+    let items: Vec<(u16, Option<ModMeta>)> = slots
         .iter()
         .map(|&slot| {
             let meta = st
@@ -3189,7 +3194,7 @@ fn delete(st: &mut State, slots: Vec<u8>) {
 fn finish_delete(
     st: &mut State,
     entries: Vec<TrashEntry>,
-    errors: Vec<(u8, String)>,
+    errors: Vec<(u16, String)>,
 ) {
     if !entries.is_empty() {
         st.installed.last_undo = Some(Undo::Delete(entries.iter().map(|e| e.dir.clone()).collect()));
@@ -3293,7 +3298,7 @@ pub fn apply_undo(st: &mut State, undo: Undo) {
                 .addons
                 .iter()
                 .find(|addon| addon.slot == slot)
-                .map(|addon| addons_folder(st).join(&addon.file));
+                .map(|addon| addon.path(&addons_folder(st)));
             match file {
                 Some(vpk) => deadlock_core::fonts::install_fonts(
                     &game_root, &vpk, slot, &backups, true,
@@ -3344,8 +3349,8 @@ fn undo_label(undo: &Undo) -> String {
 // --- load order --------------------------------------------------------------------------
 
 /// The slots of every mod that is on (or off), in load order.
-fn group_slots(s: &State, enabled: bool) -> Vec<u8> {
-    let mut slots: Vec<u8> = s
+fn group_slots(s: &State, enabled: bool) -> Vec<u16> {
+    let mut slots: Vec<u16> = s
         .addons
         .addons
         .iter()
@@ -3358,7 +3363,7 @@ fn group_slots(s: &State, enabled: bool) -> Vec<u8> {
 
 /// Plan the renames that give `group` the order `wanted`, then confirm. The demo plans
 /// from the scan; a real folder is read again so the plan sees every file of each slot.
-pub(super) fn ask_reorder(st: &mut State, group: &[u8], wanted: &[u8]) {
+pub(super) fn ask_reorder(st: &mut State, group: &[u16], wanted: &[u16]) {
     if let Some(plan) = plan_order(st, group, wanted) {
         ask(st, Confirm::Reorder(plan));
     }
@@ -3366,7 +3371,7 @@ pub(super) fn ask_reorder(st: &mut State, group: &[u8], wanted: &[u8]) {
 
 /// Plan and apply an order the player already confirmed (the load order dialog's Apply): the
 /// same plan and write as [`ask_reorder`], without a second confirm.
-pub(super) fn apply_order(st: &mut State, group: &[u8], wanted: &[u8]) {
+pub(super) fn apply_order(st: &mut State, group: &[u16], wanted: &[u16]) {
     if let Some(plan) = plan_order(st, group, wanted) {
         reorder(st, plan);
     }
@@ -3374,7 +3379,7 @@ pub(super) fn apply_order(st: &mut State, group: &[u8], wanted: &[u8]) {
 
 /// The renames that give `group` the order `wanted`, or `None` with the reason in the status
 /// line (or nothing to do).
-fn plan_order(st: &mut State, group: &[u8], wanted: &[u8]) -> Option<ReorderPlan> {
+fn plan_order(st: &mut State, group: &[u16], wanted: &[u16]) -> Option<ReorderPlan> {
     plan_moves(st, load_order::moves_for_order(group, wanted))
 }
 
@@ -3516,7 +3521,7 @@ pub fn pending_update_count(s: &State) -> usize {
     available_updates(s).len()
 }
 
-fn available_updates(s: &State) -> Vec<u8> {
+fn available_updates(s: &State) -> Vec<u16> {
     let updates = &s.installed.updates;
     s.addons
         .addons
@@ -3610,7 +3615,7 @@ pub(crate) fn check_updates(st: &mut State, force: bool) {
 
 /// Queue slots for update and start the first. Each one is a button press or the Update all
 /// confirm.
-pub(super) fn queue_updates(st: &mut State, slots: Vec<u8>) {
+pub(super) fn queue_updates(st: &mut State, slots: Vec<u16>) {
     if crate::screens::settings::watch::refuse_while_running(st) {
         return;
     }
@@ -3722,7 +3727,7 @@ fn poll_changes(st: &mut State) -> bool {
         changed = true;
     }
     if st.addons.scanned && !st.installed.selected.is_empty() {
-        let on_disk: BTreeSet<u8> = st.addons.addons.iter().map(|addon| addon.slot).collect();
+        let on_disk: BTreeSet<u16> = st.addons.addons.iter().map(|addon| addon.slot).collect();
         let before = st.installed.selected.len();
         st.installed.selected.retain(|slot| on_disk.contains(slot));
         changed |= before != st.installed.selected.len();
@@ -3814,7 +3819,7 @@ fn poll_changelog(st: &mut State) -> bool {
 }
 
 /// The newest changelog entry of a mod, as two short lines for the update confirm.
-fn changelog_lines(s: &State, u: &Ui, slot: u8) -> Option<El> {
+fn changelog_lines(s: &State, u: &Ui, slot: u16) -> Option<El> {
     let id = s.addons.addons.iter().find(|a| a.slot == slot).and_then(|a| meta_for(s, a)).and_then(|m| m.gamebanana_id)?;
     let entry = s.installed.updates.changelog.get(&id)?.as_ref().ok()?.first()?;
     let mut head = entry.title.clone();
@@ -3981,7 +3986,7 @@ fn trash_dialog(s: &State, u: &Ui) -> El {
 
 fn confirm_dialog(s: &State, u: &Ui, confirm: &Confirm) -> El {
     let close = |st: &mut State| st.installed.confirm = None;
-    let name_of = |slot: u8| {
+    let name_of = |slot: u16| {
         s.addons
             .addons
             .iter()
@@ -4187,7 +4192,7 @@ pub fn scene_card_menu(s: &mut State) {
 pub fn scene_trash(s: &mut State) {
     crate::app::scene_demo_installed(s);
     let addons = PathBuf::from("/Deadlock/game/citadel/addons");
-    s.installed.trash.entries = [(6u8, "Viscous Goo Recolor", 7_340_032u64), (14, "", 1_204_224)]
+    s.installed.trash.entries = [(6u16, "Viscous Goo Recolor", 7_340_032u64), (14, "", 1_204_224)]
         .into_iter()
         .map(|(slot, name, bytes)| TrashEntry {
             id: format!("20261117-101500-000-pak{slot:02}"),

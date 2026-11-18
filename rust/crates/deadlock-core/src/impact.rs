@@ -31,7 +31,7 @@ use crate::util::write_atomic;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Change {
-    pub slot: u8,
+    pub slot: u16,
     /// The mod name the plan carried (`sourceLabel`), or the file name without it.
     pub name: String,
     pub at: String,
@@ -190,7 +190,7 @@ impl Reason {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Suspect {
-    pub slot: u8,
+    pub slot: u16,
     pub name: String,
     pub reason: Reason,
     /// The shipped path the dump named, when the match came from the dump.
@@ -207,8 +207,8 @@ pub struct Suspect {
 pub fn suspect(
     facts: &DumpFacts,
     changes: &[Change],
-    names: &BTreeMap<u8, String>,
-    shipped: &BTreeMap<u8, Vec<String>>,
+    names: &BTreeMap<u16, String>,
+    shipped: &BTreeMap<u16, Vec<String>>,
 ) -> Option<Suspect> {
     if let Some(comment) = facts.comment.as_deref()
         && let Some((slot, file)) = match_comment(comment, shipped)
@@ -231,7 +231,7 @@ pub fn suspect(
     })
 }
 
-fn name_for(names: &BTreeMap<u8, String>, slot: u8) -> String {
+fn name_for(names: &BTreeMap<u16, String>, slot: u16) -> String {
     names
         .get(&slot)
         .cloned()
@@ -243,7 +243,7 @@ fn name_for(names: &BTreeMap<u8, String>, slot: u8) -> String {
 /// The comment streams in a Deadlock dump read like `FATAL ERROR: panorama/layout/hud.xml
 /// failed to load`, so a full path or its last segment is enough. Matching is case
 /// insensitive and needs at least four characters, which keeps `hud` from matching everything.
-fn match_comment(comment: &str, shipped: &BTreeMap<u8, Vec<String>>) -> Option<(u8, String)> {
+fn match_comment(comment: &str, shipped: &BTreeMap<u16, Vec<String>>) -> Option<(u16, String)> {
     let text = comment.to_lowercase();
     for (slot, paths) in shipped {
         for path in paths {
@@ -263,8 +263,8 @@ fn match_comment(comment: &str, shipped: &BTreeMap<u8, Vec<String>>) -> Option<(
 }
 
 /// Group shipped game paths by slot, from `(slot file, paths)` pairs the caller read.
-pub fn shipped_by_slot(pairs: impl IntoIterator<Item = (u8, Vec<String>)>) -> BTreeMap<u8, Vec<String>> {
-    let mut out: BTreeMap<u8, Vec<String>> = BTreeMap::new();
+pub fn shipped_by_slot(pairs: impl IntoIterator<Item = (u16, Vec<String>)>) -> BTreeMap<u16, Vec<String>> {
+    let mut out: BTreeMap<u16, Vec<String>> = BTreeMap::new();
     for (slot, mut paths) in pairs {
         paths.sort();
         out.insert(slot, paths);
@@ -286,12 +286,12 @@ pub const IGNORES_SCHEMA: u32 = 1;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct IgnorePair {
-    pub a: u8,
-    pub b: u8,
+    pub a: u16,
+    pub b: u16,
 }
 
 impl IgnorePair {
-    pub fn new(a: u8, b: u8) -> Self {
+    pub fn new(a: u16, b: u16) -> Self {
         if a <= b {
             IgnorePair { a, b }
         } else {
@@ -304,7 +304,7 @@ impl IgnorePair {
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct IgnoreFile {
-    pub slot: u8,
+    pub slot: u16,
     pub path: String,
 }
 
@@ -318,7 +318,7 @@ pub struct Ignores {
     /// Sorted by slot then path.
     pub files: Vec<IgnoreFile>,
     /// Sorted slots whose overlaps are all ignored.
-    pub mods: Vec<u8>,
+    pub mods: Vec<u16>,
 }
 
 impl Default for Ignores {
@@ -342,16 +342,16 @@ impl Ignores {
         self.pairs.len() + self.files.len() + self.mods.len()
     }
 
-    pub fn pair_ignored(&self, a: u8, b: u8) -> bool {
+    pub fn pair_ignored(&self, a: u16, b: u16) -> bool {
         let wanted = IgnorePair::new(a, b);
         self.pairs.contains(&wanted)
     }
 
-    pub fn mod_ignored(&self, slot: u8) -> bool {
+    pub fn mod_ignored(&self, slot: u16) -> bool {
         self.mods.contains(&slot)
     }
 
-    pub fn file_ignored(&self, slot: u8, path: &str) -> bool {
+    pub fn file_ignored(&self, slot: u16, path: &str) -> bool {
         self.files
             .iter()
             .any(|entry| entry.slot == slot && entry.path.eq_ignore_ascii_case(path))
@@ -363,8 +363,8 @@ impl Ignores {
     /// The row hides when every losing slot is ignored for this path, or the mod itself is
     /// ignored, or the pair with the winner is ignored. One remaining un-ignored loser keeps
     /// the row, which is why a new mod brings its overlaps back.
-    pub fn hides(&self, path: &str, slots: &[u8], winner: u8) -> bool {
-        let losers: Vec<u8> = slots.iter().copied().filter(|slot| *slot != winner).collect();
+    pub fn hides(&self, path: &str, slots: &[u16], winner: u16) -> bool {
+        let losers: Vec<u16> = slots.iter().copied().filter(|slot| *slot != winner).collect();
         if losers.is_empty() {
             return false;
         }
@@ -376,7 +376,7 @@ impl Ignores {
     }
 
     /// Add a pair. True when the list changed.
-    pub fn add_pair(&mut self, a: u8, b: u8) -> bool {
+    pub fn add_pair(&mut self, a: u16, b: u16) -> bool {
         if a == b {
             return false;
         }
@@ -390,7 +390,7 @@ impl Ignores {
     }
 
     /// Add one path for one slot. True when the list changed.
-    pub fn add_file(&mut self, slot: u8, path: &str) -> bool {
+    pub fn add_file(&mut self, slot: u16, path: &str) -> bool {
         let entry = IgnoreFile {
             slot,
             path: path.to_string(),
@@ -404,7 +404,7 @@ impl Ignores {
     }
 
     /// Add one slot. True when the list changed.
-    pub fn add_mod(&mut self, slot: u8) -> bool {
+    pub fn add_mod(&mut self, slot: u16) -> bool {
         if self.mods.contains(&slot) {
             return false;
         }
@@ -414,7 +414,7 @@ impl Ignores {
     }
 
     /// Take one pair back off the list.
-    pub fn remove_pair(&mut self, a: u8, b: u8) -> bool {
+    pub fn remove_pair(&mut self, a: u16, b: u16) -> bool {
         let pair = IgnorePair::new(a, b);
         let before = self.pairs.len();
         self.pairs.retain(|entry| *entry != pair);
@@ -422,7 +422,7 @@ impl Ignores {
     }
 
     /// Take one file back off the list.
-    pub fn remove_file(&mut self, slot: u8, path: &str) -> bool {
+    pub fn remove_file(&mut self, slot: u16, path: &str) -> bool {
         let before = self.files.len();
         self.files
             .retain(|entry| !(entry.slot == slot && entry.path.eq_ignore_ascii_case(path)));
@@ -430,15 +430,15 @@ impl Ignores {
     }
 
     /// Turn one mod back on in the report.
-    pub fn remove_mod(&mut self, slot: u8) -> bool {
+    pub fn remove_mod(&mut self, slot: u16) -> bool {
         let before = self.mods.len();
         self.mods.retain(|entry| *entry != slot);
         self.mods.len() != before
     }
 
     /// Every slot the list mentions, for the restore list.
-    pub fn slots(&self) -> BTreeSet<u8> {
-        let mut slots: BTreeSet<u8> = self.mods.iter().copied().collect();
+    pub fn slots(&self) -> BTreeSet<u16> {
+        let mut slots: BTreeSet<u16> = self.mods.iter().copied().collect();
         for pair in &self.pairs {
             slots.insert(pair.a);
             slots.insert(pair.b);
@@ -506,14 +506,14 @@ pub struct RestoreEntry {
 /// What one restore entry removes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RestoreKind {
-    Pair(u8, u8),
-    File(u8, String),
-    Mod(u8),
+    Pair(u16, u16),
+    File(u16, String),
+    Mod(u16),
 }
 
 /// The ignore list as rows for the restore list, one line each.
-pub fn restore_entries(list: &Ignores, names: &BTreeMap<u8, String>) -> Vec<RestoreEntry> {
-    let name = |slot: u8| {
+pub fn restore_entries(list: &Ignores, names: &BTreeMap<u16, String>) -> Vec<RestoreEntry> {
+    let name = |slot: u16| {
         names
             .get(&slot)
             .cloned()
@@ -563,7 +563,7 @@ mod tests {
         root
     }
 
-    fn names() -> BTreeMap<u8, String> {
+    fn names() -> BTreeMap<u16, String> {
         BTreeMap::from([(1, "Alpha".to_string()), (3, "Bravo".to_string())])
     }
 

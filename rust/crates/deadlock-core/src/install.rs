@@ -235,7 +235,7 @@ pub struct InstallRequest {
     pub target: String,
     pub source: InstallSource,
     /// Requested slot. None means the lowest free slot.
-    pub slot: Option<u8>,
+    pub slot: Option<u16>,
     /// Replace an occupied slot instead of refusing.
     pub force: bool,
     /// The install started from a single press (Browse, a `sigil:` link). Archives that
@@ -263,7 +263,7 @@ impl InstallRequest {
         })
     }
 
-    pub fn with_slot(mut self, slot: Option<u8>) -> Self {
+    pub fn with_slot(mut self, slot: Option<u16>) -> Self {
         self.slot = slot;
         self
     }
@@ -2186,7 +2186,7 @@ pub enum InstallArtifact {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct InstallConflict {
-    pub slot: u8,
+    pub slot: u16,
     pub file: String,
     pub paths: Vec<String>,
 }
@@ -2213,7 +2213,7 @@ pub struct InstallPlan {
     pub workspace: PathBuf,
     pub game_root: PathBuf,
     pub addons_dir: PathBuf,
-    pub slot: u8,
+    pub slot: u16,
     pub target: PathBuf,
     /// Game paths the payload ships, sorted.
     pub files: Vec<String>,
@@ -2500,10 +2500,11 @@ pub fn install_vpks(
 
 pub fn plan_install(request: &InstallRequest, options: &PlanOptions) -> Result<InstallPlan> {
     if let Some(slot) = request.slot
-        && !(1..=99).contains(&slot)
+        && !crate::addons::is_slot(slot)
     {
         return Err(Error::msg(format!(
-            "Slot {slot} is outside 1 to 99. Addon slots are pak01_dir.vpk to pak99_dir.vpk."
+            "Slot {slot} is outside 1 to {}. Nothing was written.",
+            crate::addons::MAX_SLOT
         )));
     }
 
@@ -2608,7 +2609,7 @@ pub fn plan_install(request: &InstallRequest, options: &PlanOptions) -> Result<I
     )?;
     warnings.extend(slot_warnings);
 
-    let target = addons.join(format_slot_file_name(slot)?);
+    let target = crate::addons::slot_folder(&addons, slot).join(format_slot_file_name(slot)?);
 
     let conflicts = scan_conflicts(&addons, slot, &candidate.payload, &mut warnings)?;
     let gameinfo_status = read_game_info_status(&gameinfo)?;
@@ -2702,10 +2703,10 @@ fn prepare_staging(root: &Path, candidate: &Candidate, staging: &Path) -> Result
 /// would replace.
 fn choose_slot(
     addons: &Path,
-    requested: Option<u8>,
+    requested: Option<u16>,
     force: bool,
     payload_entries: usize,
-) -> Result<(u8, Vec<PathBuf>, bool, Vec<String>)> {
+) -> Result<(u16, Vec<PathBuf>, bool, Vec<String>)> {
     let status = read_addons_status(addons)?;
     // A disabled slot or a slot with only chunk files left is still taken: the
     // lowest free slot must hold none of its names.
@@ -2713,12 +2714,15 @@ fn choose_slot(
 
     let slot = match requested {
         Some(value) => value,
-        None => (1..=99)
+        // Past 99 the mod goes to the next extra folder (`sigil-addons2` and on), which is
+        // mounted in gameinfo.gi after the write.
+        None => (1..=crate::addons::MAX_SLOT)
             .find(|slot| !used.contains(slot))
             .ok_or_else(|| {
-                Error::msg(
-                    "Every addon slot 01 to 99 is taken. Remove an addon before installing another.",
-                )
+                Error::msg(format!(
+                    "Every addon slot (1 to {}) is taken. Remove an addon before installing another.",
+                    crate::addons::MAX_SLOT
+                ))
             })?,
     };
 
@@ -2726,8 +2730,9 @@ fn choose_slot(
     let mut warnings = Vec::new();
 
     let dir_name = format_slot_file_name(slot)?;
-    let target = addons.join(&dir_name);
-    let disabled = addons.join(format!("{dir_name}.disabled"));
+    let folder = crate::addons::slot_folder(addons, slot);
+    let target = folder.join(&dir_name);
+    let disabled = folder.join(format!("{dir_name}.disabled"));
 
     if target.is_file() {
         replaced.push(target.clone());
@@ -2739,9 +2744,17 @@ fn choose_slot(
         ));
     }
 
-    for chunk in &status.chunk_files {
-        if is_slot_chunk_name(chunk, slot) {
-            replaced.push(addons.join(chunk));
+    if crate::addons::folder_index(slot) == 0 {
+        for chunk in &status.chunk_files {
+            if is_slot_chunk_name(chunk, slot) {
+                replaced.push(addons.join(chunk));
+            }
+        }
+    } else if let Some(names) = crate::load_order::read_slot_files(addons)?.get(&slot) {
+        for name in names {
+            if is_slot_chunk_name(name, slot) {
+                replaced.push(folder.join(name));
+            }
         }
     }
 
@@ -2788,7 +2801,7 @@ fn choose_slot(
 /// Lower slots that already ship a payload path. The lower slot wins in game.
 fn scan_conflicts(
     addons: &Path,
-    slot: u8,
+    slot: u16,
     files: &[String],
     warnings: &mut Vec<String>,
 ) -> Result<Vec<InstallConflict>> {
@@ -2893,7 +2906,7 @@ pub struct InstallJournalEntry {
     pub download_url: Option<String>,
     pub archive: PathBuf,
     pub archive_sha256: String,
-    pub slot: u8,
+    pub slot: u16,
     /// Directory file name, for example `pak03_dir.vpk`.
     pub file: String,
     pub target: PathBuf,
@@ -2962,7 +2975,8 @@ pub fn apply_install_with(
         )));
     }
 
-    if plan.target != plan.addons_dir.join(format_slot_file_name(plan.slot)?) {
+    let slot_folder = crate::addons::slot_folder(&plan.addons_dir, plan.slot);
+    if plan.target != slot_folder.join(format_slot_file_name(plan.slot)?) {
         return Err(Error::msg(format!(
             "Plan target {} does not match slot {:02} in {}.",
             plan.target.display(),
@@ -2982,9 +2996,9 @@ pub fn apply_install_with(
 
     let slot_file = format_slot_file_name(plan.slot)?;
     let affected_exists = plan.target.is_file()
-        || plan.addons_dir.join(format!("{slot_file}.disabled")).is_file()
+        || slot_folder.join(format!("{slot_file}.disabled")).is_file()
         || plan.replaced.iter().any(|path| path.is_file())
-        || slot_chunks_present(&plan.addons_dir, plan.slot)?;
+        || slot_chunks_present(&slot_folder, plan.slot)?;
 
     if plan.replace_required != affected_exists {
         return Err(Error::msg(
@@ -3064,6 +3078,19 @@ pub fn apply_install_with(
 
     append_journal(&plan.workspace, &entry)?;
 
+    // A slot past 99 lives in an extra folder that gameinfo.gi has to mount. The files are
+    // already in place, so a failed mount leaves an unmounted mod, never a broken game; it
+    // becomes a warning the app shows.
+    let mut entry = entry;
+    if crate::addons::folder_index(plan.slot) > 0
+        && let Err(error) = crate::addons::sync_overflow_mount(&plan.addons_dir)
+    {
+        entry.warnings.push(format!(
+            "Slot {} is in an extra addon folder, and adding it to gameinfo.gi failed: {error}",
+            crate::addons::slot_label(plan.slot)
+        ));
+    }
+
     Ok(InstallRecord {
         entry,
         target: written,
@@ -3087,7 +3114,7 @@ fn remove_other_slot_name(plan: &InstallPlan, keep: &Path) -> Result<Vec<String>
     } else {
         disabled
     };
-    let path = plan.addons_dir.join(&other);
+    let path = crate::addons::slot_folder(&plan.addons_dir, plan.slot).join(&other);
 
     if !path.is_file() {
         return Ok(Vec::new());
@@ -3104,39 +3131,11 @@ fn remove_other_slot_name(plan: &InstallPlan, keep: &Path) -> Result<Vec<String>
     Ok(vec![other])
 }
 
-/// Slots 01 to 99 that hold any name in `addons`: `pakNN_dir.vpk`,
+/// Slots that hold any name in `addons` or its extra folders: `pakNN_dir.vpk`,
 /// `pakNN_dir.vpk.disabled` or a `pakNN_MMM.vpk` chunk. Read only.
-pub fn occupied_slots(addons: &Path) -> Result<BTreeSet<u8>> {
-    let mut used = BTreeSet::new();
-
-    let entries = match fs::read_dir(addons) {
-        Ok(entries) => entries,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(used),
-        Err(error) => return Err(error.into()),
-    };
-
-    for entry in entries.flatten() {
-        if !entry.path().is_file() {
-            continue;
-        }
-        let name = entry.file_name().to_string_lossy().to_ascii_lowercase();
-        if !name.is_ascii() || !name.starts_with("pak") || name.len() < "pak00_000.vpk".len() {
-            continue;
-        }
-        let Ok(slot) = name[3..5].parse::<u8>() else {
-            continue;
-        };
-        if !(1..=99).contains(&slot) {
-            continue;
-        }
-        let rest = &name[5..];
-        let is_dir = rest == "_dir.vpk" || rest == "_dir.vpk.disabled";
-        if is_dir || is_slot_chunk_name(&name, slot) {
-            used.insert(slot);
-        }
-    }
-
-    Ok(used)
+pub fn occupied_slots(addons: &Path) -> Result<BTreeSet<u16>> {
+    // Every slot file in the main folder and the extra ones, by global slot.
+    Ok(crate::load_order::read_slot_files(addons)?.into_keys().collect())
 }
 
 fn verify_artifact(plan: &InstallPlan) -> Result<()> {
@@ -3234,7 +3233,7 @@ fn deploy_archive_vpk(
                 Error::msg(format!("Chunk {} has no file name.", chunk.display()))
             })?;
         let renamed = rename_chunk(&name, plan.slot)?;
-        copy_into_place(chunk, &plan.addons_dir.join(&renamed))?;
+        copy_into_place(chunk, &crate::addons::slot_folder(&plan.addons_dir, plan.slot).join(&renamed))?;
         chunk_files.push(renamed);
     }
 
@@ -3255,7 +3254,7 @@ fn deploy_staged(
     let packed = pack_vpk(&PackOptions::new(
         staging.to_path_buf(),
         build_dir,
-        format!("pak{:02}", plan.slot),
+        format!("pak{:02}", crate::addons::local_slot(plan.slot)),
     ))?;
 
     let mut chunk_files = Vec::new();
@@ -3265,7 +3264,7 @@ fn deploy_staged(
             .file_name()
             .map(|value| value.to_string_lossy().into_owned())
             .ok_or_else(|| Error::msg(format!("Chunk {} has no file name.", chunk.display())))?;
-        copy_into_place(chunk, &plan.addons_dir.join(&name))?;
+        copy_into_place(chunk, &crate::addons::slot_folder(&plan.addons_dir, plan.slot).join(&name))?;
         chunk_files.push(name);
     }
 
@@ -3325,7 +3324,7 @@ fn remove_leftover_chunks(plan: &InstallPlan, written: &[String]) -> Result<Vec<
 }
 
 /// True for `pakNN_MMM.vpk` at the given slot. `pakNN_dir.vpk` is not a chunk.
-fn is_slot_chunk_name(name: &str, slot: u8) -> bool {    if !name.is_ascii() {
+fn is_slot_chunk_name(name: &str, slot: u16) -> bool {    if !name.is_ascii() {
         return false;
     }
 
@@ -3334,14 +3333,14 @@ fn is_slot_chunk_name(name: &str, slot: u8) -> bool {    if !name.is_ascii() {
 
     bytes.len() == "pak00_000.vpk".len()
         && lowered.starts_with("pak")
-        && &lowered[3..5] == format!("{slot:02}").as_str()
+        && &lowered[3..5] == format!("{:02}", crate::addons::local_slot(slot)).as_str()
         && bytes[5] == b'_'
         && bytes[6..9].iter().all(|byte| byte.is_ascii_digit())
         && lowered.ends_with(".vpk")
 }
 
 /// True when any chunk file of `slot` sits in the addons folder.
-fn slot_chunks_present(addons: &Path, slot: u8) -> Result<bool> {
+fn slot_chunks_present(addons: &Path, slot: u16) -> Result<bool> {
     let entries = match fs::read_dir(addons) {
         Ok(entries) => entries,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
@@ -3358,7 +3357,7 @@ fn slot_chunks_present(addons: &Path, slot: u8) -> Result<bool> {
     Ok(false)
 }
 
-fn rename_chunk(name: &str, slot: u8) -> Result<String> {
+fn rename_chunk(name: &str, slot: u16) -> Result<String> {
     let lowered = name.to_ascii_lowercase();
 
     if !name.is_ascii()
@@ -3370,7 +3369,7 @@ fn rename_chunk(name: &str, slot: u8) -> Result<String> {
         )));
     }
 
-    Ok(format!("pak{slot:02}_{}.vpk", &name[6..9]))
+    Ok(format!("pak{:02}_{}.vpk", crate::addons::local_slot(slot), &name[6..9]))
 }
 
 fn copy_into_place(source: &Path, destination: &Path) -> Result<()> {
@@ -3381,6 +3380,10 @@ fn copy_into_place(source: &Path, destination: &Path) -> Result<()> {
             Error::msg(format!("Cannot copy to {}: it has no file name.", destination.display()))
         })?;
     let temporary = destination.with_file_name(format!("{name}.dah-tmp"));
+    // The first mod past slot 99 creates its extra folder.
+    if let Some(parent) = destination.parent() {
+        fs::create_dir_all(parent)?;
+    }
 
     if let Err(error) = fs::copy(source, &temporary) {
         let _ = fs::remove_file(&temporary);
@@ -5381,7 +5384,7 @@ mod tests {
         let done = install_vpks(&request, &picks, &options, ApplyOptions::default(), true);
         assert!(done.error.is_none(), "{:?}", done.error);
         assert_eq!(done.installed.len(), 2);
-        let slots: Vec<u8> = done.installed.iter().map(|(plan, _)| plan.slot).collect();
+        let slots: Vec<u16> = done.installed.iter().map(|(plan, _)| plan.slot).collect();
         assert!(slots[0] < slots[1], "the first file takes the lower slot: {slots:?}");
         for (plan, _) in &done.installed {
             assert!(plan.target.is_file(), "{} was written", plan.target.display());

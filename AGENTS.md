@@ -118,7 +118,8 @@ Adding a tool:
 ## Deadlock domain rules
 
 - Engine name is `citadel`. Mods load from `game/citadel/addons`.
-- A mod is `pakNN_dir.vpk`, NN from `01` to `99`. Other names and subfolders are ignored. Lower
+- A mod is `pakNN_dir.vpk`, NN from `01` to `99` per folder (Sigil adds `citadel/sigil-addons2` to
+  `sigil-addons10` for slots 100 to 990; `deadlock_core::addons`). Other names and subfolders are ignored. Lower
   number wins when two mods ship the same path.
 - The game only sees the `addons` folder when `gameinfo.gi` lists `Game citadel/addons` above
   `Game citadel`. Game updates and Steam file verification reset that file.

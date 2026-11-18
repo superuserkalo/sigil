@@ -75,7 +75,7 @@ pub struct Issue {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SlotReview {
-    pub slot: u8,
+    pub slot: u16,
     pub issues: Vec<Issue>,
     /// Issues beyond [`MAX_ISSUES`].
     pub more: usize,
@@ -110,7 +110,7 @@ impl SlotReview {
 /// A slot and the VPK file to read.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SlotFile {
-    pub slot: u8,
+    pub slot: u16,
     pub path: PathBuf,
 }
 

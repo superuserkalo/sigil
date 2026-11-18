@@ -344,7 +344,7 @@ pub struct HistoryEntry {
 pub struct Project {
     pub name: String,
     pub version: String,
-    pub slot: u8,
+    pub slot: u16,
     pub state: ProjectState,
     pub updated: String,
     pub summary: String,
@@ -417,7 +417,7 @@ pub fn format_count(value: u64) -> String {
 /// One slot in `game/citadel/addons`, as `list_installed` reports it.
 #[derive(Clone)]
 pub struct AddonRow {
-    pub slot: u8,
+    pub slot: u16,
     pub file: String,
     pub size_bytes: u64,
     pub chunk_files: Vec<String>,
@@ -426,8 +426,14 @@ pub struct AddonRow {
 }
 
 impl AddonRow {
+    /// `05`, or `2·05` for pak05 in the second addon folder.
     pub fn slot_label(&self) -> String {
-        format!("{:02}", self.slot)
+        deadlock_core::addons::slot_label(self.slot)
+    }
+
+    /// The directory file in its own folder (a slot past 99 lives in an extra addon folder).
+    pub fn path(&self, addons: &std::path::Path) -> std::path::PathBuf {
+        deadlock_core::addons::slot_folder(addons, self.slot).join(&self.file)
     }
 
     pub fn size_label(&self) -> String {
@@ -459,8 +465,8 @@ impl AddonRow {
 /// slot, which the game loads first.
 pub struct ConflictRow {
     pub path: String,
-    pub slots: Vec<u8>,
-    pub winner: u8,
+    pub slots: Vec<u16>,
+    pub winner: u16,
 }
 
 impl ConflictRow {
@@ -711,7 +717,7 @@ pub struct ReleaseState {
 
 pub struct ReleaseInfo {
     pub version: String,
-    pub slot: u8,
+    pub slot: u16,
     pub vpk_file: String,
     pub chunk_files: Vec<String>,
     pub entries: usize,
@@ -825,7 +831,7 @@ pub enum ReleaseDialog {
 }
 
 pub struct DeployPlanView {
-    pub slot: u8,
+    pub slot: u16,
     pub target: String,
     pub chunk_targets: Vec<String>,
     pub replace_required: bool,
@@ -837,7 +843,7 @@ pub struct DeployPlanView {
 }
 
 pub struct DeployConflictView {
-    pub slot: u8,
+    pub slot: u16,
     pub file: String,
     pub paths: Vec<String>,
 }
@@ -889,7 +895,7 @@ pub struct ReviewItem {
     pub name: String,
     pub version: String,
     pub path: String,
-    pub slot: Option<u8>,
+    pub slot: Option<u16>,
     pub unchanged: usize,
     pub changed: usize,
     pub missing: usize,

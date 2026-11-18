@@ -26,7 +26,7 @@ pub struct PlanArgs {
     /// GameBanana mod id, mod URL, archive URL or local archive.
     pub target: String,
     /// Requested addon slot, 1 to 99. Defaults to the lowest free slot.
-    pub slot: Option<u8>,
+    pub slot: Option<u16>,
     /// Replace an occupied slot after backing it up.
     pub force: bool,
     /// Workspace directory. Defaults to DAH_WORKSPACE_DIR or <data>/workspace.

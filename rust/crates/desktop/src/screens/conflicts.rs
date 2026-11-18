@@ -38,9 +38,9 @@ pub enum Dialog {
     /// One losing slot picked from a row.
     Resolve {
         path: String,
-        slots: Vec<u8>,
-        winner: u8,
-        loser: u8,
+        slots: Vec<u16>,
+        winner: u16,
+        loser: u16,
     },
 }
 
@@ -456,7 +456,7 @@ fn warnings(s: &State, u: &Ui) -> El {
 }
 
 /// Slot names for the restore list, from the library and the addon rows.
-fn names(s: &State) -> std::collections::BTreeMap<u8, String> {
+fn names(s: &State) -> std::collections::BTreeMap<u16, String> {
     let mut names = std::collections::BTreeMap::new();
     for addon in &s.addons.addons {
         if let Some(meta) = s
@@ -473,7 +473,7 @@ fn names(s: &State) -> std::collections::BTreeMap<u8, String> {
 }
 
 /// The restore list: every ignore, one row each, with the action that takes it back.
-fn restore_list(u: &Ui, list: &Ignores, names: std::collections::BTreeMap<u8, String>) -> El {
+fn restore_list(u: &Ui, list: &Ignores, names: std::collections::BTreeMap<u16, String>) -> El {
     let entries = impact::restore_entries(list, &names);
     let mut head = row()
         .w_full()
@@ -567,10 +567,10 @@ pub fn dialog(s: &State, u: &Ui) -> Option<El> {
     }
 }
 
-fn resolve(s: &State, u: &Ui, path: &str, slots: &[u8], winner: u8, loser: u8) -> El {
+fn resolve(s: &State, u: &Ui, path: &str, slots: &[u16], winner: u16, loser: u16) -> El {
     let close = |st: &mut State| st.launch.overlap.dialog = Dialog::None;
     let names = names(s);
-    let name_for = |slot: u8| {
+    let name_for = |slot: u16| {
         names
             .get(&slot)
             .cloned()
@@ -697,7 +697,7 @@ fn resolve(s: &State, u: &Ui, path: &str, slots: &[u8], winner: u8, loser: u8) -
 
 /// Swap two slot numbers so the loser wins their shared files. The approved rename path is
 /// `load_order::apply_reorder`; it never overwrites and rolls back on failure.
-fn make_win(st: &mut State, winner: u8, loser: u8) {
+fn make_win(st: &mut State, winner: u16, loser: u16) {
     use crate::notify::{self, Notice};
     if crate::screens::settings::watch::refuse_while_running(st) {
         return;

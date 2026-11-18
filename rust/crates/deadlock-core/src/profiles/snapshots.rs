@@ -360,7 +360,7 @@ mod tests {
         }
     }
 
-    fn slot(n: u8, name: &str) -> ProfileSlot {
+    fn slot(n: u16, name: &str) -> ProfileSlot {
         ProfileSlot {
             slot: n,
             file: format!("pak{n:02}_dir.vpk"),

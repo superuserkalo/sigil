@@ -38,7 +38,7 @@ pub const KINDS: [RepairKind; 2] = [RepairKind::Data, RepairKind::Cameras];
 /// One repair Revert can undo.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Record {
-    pub slot: u8,
+    pub slot: u16,
     pub file: String,
     pub backup: PathBuf,
     pub new_sha256: String,
@@ -51,19 +51,19 @@ pub struct Record {
 #[derive(Default)]
 pub struct Checked {
     /// Repairable findings by slot.
-    pub findings: BTreeMap<u8, Vec<RepairFinding>>,
+    pub findings: BTreeMap<u16, Vec<RepairFinding>>,
     /// Enabled slots that ship animation files.
-    pub animations: BTreeSet<u8>,
+    pub animations: BTreeSet<u16>,
     /// Slots the dry run could not read (a split archive, a broken file), and why.
-    pub errors: BTreeMap<u8, String>,
+    pub errors: BTreeMap<u16, String>,
 }
 
 /// One result of a repair batch.
 pub enum Done {
-    Repaired { slot: u8, file: String, applied: AppliedRepair },
+    Repaired { slot: u16, file: String, applied: AppliedRepair },
     Reverted(Record),
-    Nothing(u8),
-    Failed(u8, String),
+    Nothing(u16),
+    Failed(u16, String),
 }
 
 #[derive(Default)]
@@ -74,7 +74,7 @@ pub struct Repairs {
     pub check: Job<Checked>,
     pub work: Job<Vec<Done>>,
     /// Slots waiting for the animation question.
-    pub ask: Option<Vec<u8>>,
+    pub ask: Option<Vec<u16>>,
 }
 
 impl Record {
@@ -92,7 +92,7 @@ impl Record {
 
     fn from_json(v: &Value) -> Option<Record> {
         Some(Record {
-            slot: u8::try_from(v.get("slot")?.as_u64()?).ok()?,
+            slot: u16::try_from(v.get("slot")?.as_u64()?).ok()?,
             file: v.get("file")?.as_str()?.to_string(),
             backup: PathBuf::from(v.get("backup")?.as_str()?),
             new_sha256: v.get("newSha256")?.as_str()?.to_string(),
@@ -137,18 +137,18 @@ fn save_records(records: &[Record]) {
 }
 
 /// Whether repairing `slot` meets another enabled mod's animations.
-pub fn meets_animations(animations: &BTreeSet<u8>, slot: u8) -> bool {
+pub fn meets_animations(animations: &BTreeSet<u16>, slot: u16) -> bool {
     animations.iter().any(|other| *other != slot)
 }
 
 /// Enabled slot files, as `(slot, file, path)`.
-fn enabled_files(st: &State) -> Vec<(u8, String, PathBuf)> {
+fn enabled_files(st: &State) -> Vec<(u16, String, PathBuf)> {
     let dir = super::addons_folder(st);
     st.addons
         .addons
         .iter()
         .filter(|a| a.enabled)
-        .map(|a| (a.slot, a.file.clone(), dir.join(&a.file)))
+        .map(|a| (a.slot, a.file.clone(), a.path(&dir)))
         .collect()
 }
 
@@ -167,7 +167,7 @@ pub fn start_check(st: &mut State) {
     st.installed.repairs.check.start(wake, move || Ok(dry_run(&game_root, &files)));
 }
 
-fn dry_run(game_root: &Path, files: &[(u8, String, PathBuf)]) -> Checked {
+fn dry_run(game_root: &Path, files: &[(u16, String, PathBuf)]) -> Checked {
     let base = deadlock_core::game_index::game_vpk_path(game_root);
     let mut out = Checked::default();
     for (slot, _, path) in files {
@@ -195,7 +195,7 @@ fn dry_run(game_root: &Path, files: &[(u8, String, PathBuf)]) -> Checked {
 }
 
 /// Repair these slots, asking first when another enabled mod ships animations.
-pub fn ask_repair(st: &mut State, slots: Vec<u8>) {
+pub fn ask_repair(st: &mut State, slots: Vec<u16>) {
     if slots.is_empty() {
         return;
     }
@@ -208,7 +208,7 @@ pub fn ask_repair(st: &mut State, slots: Vec<u8>) {
 }
 
 /// The approved repair: one worker pass over the slots.
-pub fn run_repair(st: &mut State, slots: Vec<u8>) {
+pub fn run_repair(st: &mut State, slots: Vec<u16>) {
     st.installed.repairs.ask = None;
     if st.demo {
         st.status = tr("Demo library: nothing was changed.").to_string();
@@ -222,12 +222,12 @@ pub fn run_repair(st: &mut State, slots: Vec<u8>) {
         return;
     };
     let animations = st.installed.repairs.checked.as_ref().map(|c| c.animations.clone()).unwrap_or_default();
-    let files: Vec<(u8, String, PathBuf)> = enabled_files(st).into_iter().filter(|(slot, _, _)| slots.contains(slot)).collect();
+    let files: Vec<(u16, String, PathBuf)> = enabled_files(st).into_iter().filter(|(slot, _, _)| slots.contains(slot)).collect();
     let wake = st.wake.clone();
     st.installed.repairs.work.start(wake, move || Ok(repair_all(&game_root, &files, &animations)));
 }
 
-fn repair_all(game_root: &Path, files: &[(u8, String, PathBuf)], animations: &BTreeSet<u8>) -> Vec<Done> {
+fn repair_all(game_root: &Path, files: &[(u16, String, PathBuf)], animations: &BTreeSet<u16>) -> Vec<Done> {
     let base = deadlock_core::game_index::game_vpk_path(game_root);
     files
         .iter()
@@ -258,7 +258,7 @@ pub fn revert(st: &mut State, record: Record) {
     if crate::screens::settings::watch::refuse_while_running(st) || st.installed.repairs.work.is_running() {
         return;
     }
-    let path = super::addons_folder(st).join(&record.file);
+    let path = deadlock_core::addons::slot_folder(&super::addons_folder(st), record.slot).join(&record.file);
     let wake = st.wake.clone();
     st.installed.repairs.work.start(wake, move || {
         Ok(vec![match compat_repair::revert_repair(&record.backup, &path, &record.new_sha256, true) {
@@ -269,7 +269,7 @@ pub fn revert(st: &mut State, record: Record) {
 }
 
 /// Move the library entry and the notes of a slot from one file size to another.
-fn rekey(st: &mut State, slot: u8, old_size: u64, new_size: u64) {
+fn rekey(st: &mut State, slot: u16, old_size: u64, new_size: u64) {
     let library = super::library_file();
     if let Ok(mut lib) = import::read_library(&library) {
         if let Some(meta) = lib.mods.iter_mut().rev().find(|m| m.slot == slot && m.size_bytes == old_size) {
@@ -371,7 +371,7 @@ pub fn start_before_launch(st: &mut State) -> bool {
     let files = enabled_files(st);
     let wake = st.wake.clone();
     st.installed.repairs.work.start(wake, move || {
-        let animations: BTreeSet<u8> = files
+        let animations: BTreeSet<u16> = files
             .iter()
             .filter(|(_, _, path)| compat_repair::has_animation_overrides(std::slice::from_ref(path)))
             .map(|(slot, _, _)| *slot)
@@ -579,7 +579,7 @@ mod tests {
 
     #[test]
     fn another_mods_animations_raise_the_question_but_its_own_do_not() {
-        let animations: BTreeSet<u8> = [5].into_iter().collect();
+        let animations: BTreeSet<u16> = [5].into_iter().collect();
         assert!(meets_animations(&animations, 2));
         assert!(!meets_animations(&animations, 5), "a mod's own animations are not another mod's");
         assert!(!meets_animations(&BTreeSet::new(), 2));

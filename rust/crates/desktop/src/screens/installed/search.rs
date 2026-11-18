@@ -27,7 +27,7 @@ use super::{meta_for, writable_game};
 pub struct Solo {
     pub name: String,
     /// What was on, as `(slot, size, uid)`; the uid finds the slot again after a reorder.
-    pub others: Vec<(u8, u64, String)>,
+    pub others: Vec<(u16, u64, String)>,
 }
 
 /// The broken mod search's dialog state.
@@ -36,9 +36,9 @@ pub struct SearchFlow {
     pub open: bool,
     pub search: Option<Bisect>,
     /// The suspects picked in the setup step.
-    pub picked: BTreeSet<u8>,
+    pub picked: BTreeSet<u16>,
     /// What was on before the search started.
-    pub original: Vec<u8>,
+    pub original: Vec<u16>,
     pub error: Option<String>,
 }
 
@@ -71,7 +71,7 @@ impl Recap {
 // --- solo test ---------------------------------------------------------------
 
 /// Turn every other mod off. The card menu's "Test this mod alone".
-pub fn solo_start(st: &mut State, slot: u8) {
+pub fn solo_start(st: &mut State, slot: u16) {
     if crate::screens::settings::watch::refuse_while_running(st) {
         return;
     }
@@ -83,7 +83,7 @@ pub fn solo_start(st: &mut State, slot: u8) {
         st.status = "Turn the mod on first, then test it alone.".to_string();
         return;
     }
-    let others: Vec<(u8, u64, String)> = st
+    let others: Vec<(u16, u64, String)> = st
         .addons
         .addons
         .iter()
@@ -97,7 +97,7 @@ pub fn solo_start(st: &mut State, slot: u8) {
         st.status = "This is already the only mod that is on.".to_string();
         return;
     }
-    let wanted: BTreeMap<u8, bool> = others.iter().map(|(slot, _, _)| (*slot, false)).collect();
+    let wanted: BTreeMap<u16, bool> = others.iter().map(|(slot, _, _)| (*slot, false)).collect();
     match deadlock_core::addons::set_many(&game_root, &wanted, true) {
         Ok(report) => {
             let name = meta_for(st, addon)
@@ -129,7 +129,7 @@ pub fn solo_restore(st: &mut State) {
         return;
     };
     // A uid follows its slot through a reorder; the slot and size are the fallback.
-    let mut wanted: BTreeMap<u8, bool> = BTreeMap::new();
+    let mut wanted: BTreeMap<u16, bool> = BTreeMap::new();
     for (slot, size, uid) in &solo.others {
         let now = st
             .installed
@@ -200,7 +200,7 @@ pub fn solo_banner(s: &State, u: &Ui) -> Option<El> {
 
 /// The enabled mods a search can suspect, in load order, leaving out the ones a search cannot
 /// judge (a mod with no file is not listed anyway).
-pub fn default_suspects(s: &State) -> BTreeSet<u8> {
+pub fn default_suspects(s: &State) -> BTreeSet<u16> {
     s.addons
         .addons
         .iter()
@@ -226,7 +226,7 @@ pub fn search_open(st: &mut State) {
 
 /// Start the search: all suspects off, then the first round.
 pub fn search_start(st: &mut State) {
-    let picked: Vec<u8> = st.installed.search.picked.iter().copied().collect();
+    let picked: Vec<u16> = st.installed.search.picked.iter().copied().collect();
     if picked.len() < 2 {
         st.installed.search.error = Some("Pick at least two mods to search.".to_string());
         return;
@@ -247,8 +247,8 @@ fn search_apply(st: &mut State) {
     }
     let Some(search) = st.installed.search.search.clone() else { return };
     let Some(game_root) = writable_game(st) else { return };
-    let on: BTreeSet<u8> = search.enable_now().into_iter().collect();
-    let mut wanted: BTreeMap<u8, bool> = BTreeMap::new();
+    let on: BTreeSet<u16> = search.enable_now().into_iter().collect();
+    let mut wanted: BTreeMap<u16, bool> = BTreeMap::new();
     for addon in &st.addons.addons {
         wanted.insert(addon.slot, on.contains(&addon.slot));
     }
@@ -288,15 +288,15 @@ pub fn search_finish(st: &mut State, leave_culprits_off: bool) {
         return;
     }
     let Some(game_root) = writable_game(st) else { return };
-    let culprits: BTreeSet<u8> = st
+    let culprits: BTreeSet<u16> = st
         .installed
         .search
         .search
         .as_ref()
         .map(|search| search.culprits.iter().copied().collect())
         .unwrap_or_default();
-    let original: Vec<u8> = st.installed.search.original.clone();
-    let mut wanted: BTreeMap<u8, bool> = BTreeMap::new();
+    let original: Vec<u16> = st.installed.search.original.clone();
+    let mut wanted: BTreeMap<u16, bool> = BTreeMap::new();
     for addon in &st.addons.addons {
         let was_on = original.contains(&addon.slot);
         let on = was_on && !(leave_culprits_off && culprits.contains(&addon.slot));
@@ -326,7 +326,7 @@ pub fn search_finish(st: &mut State, leave_culprits_off: bool) {
     super::rescan(st);
 }
 
-fn name_of(s: &State, slot: u8) -> String {
+fn name_of(s: &State, slot: u16) -> String {
     s.addons
         .addons
         .iter()
@@ -576,7 +576,7 @@ pub fn search_dialog(s: &State, u: &Ui) -> Option<El> {
     )
 }
 
-fn st_off_count(s: &State, suspects: &[u8]) -> usize {
+fn st_off_count(s: &State, suspects: &[u16]) -> usize {
     s.addons
         .addons
         .iter()

@@ -12,14 +12,14 @@ use crate::util::{format_bytes, lossy, now_rfc3339, print_json};
 
 pub struct ReleaseArgs {
     pub workspace: Option<PathBuf>,
-    pub slot: Option<u8>,
+    pub slot: Option<u16>,
     pub note: Option<String>,
     pub json: bool,
 }
 
 pub struct DeployArgs {
     pub workspace: Option<PathBuf>,
-    pub slot: Option<u8>,
+    pub slot: Option<u16>,
     pub approve: bool,
     pub json: bool,
 }

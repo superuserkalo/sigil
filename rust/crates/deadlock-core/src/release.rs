@@ -25,7 +25,7 @@ pub struct ReleaseManifest {
     pub project_slug: String,
     pub project_name: String,
     pub version: String,
-    pub slot: u8,
+    pub slot: u16,
     pub created_at: String,
     /// Packed directory VPK name inside the release folder, for example `pak07_dir.vpk`.
     pub vpk_file: String,
@@ -45,7 +45,7 @@ impl ReleaseManifest {
         project_slug: impl Into<String>,
         project_name: impl Into<String>,
         version: impl Into<String>,
-        slot: u8,
+        slot: u16,
         vpk_file: impl Into<String>,
     ) -> Self {
         Self {

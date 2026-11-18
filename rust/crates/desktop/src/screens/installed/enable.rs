@@ -50,21 +50,21 @@ const MODEL_BATCH: usize = 16;
 #[derive(Clone, Debug, PartialEq)]
 pub enum Gate {
     /// Turning `slot` on while `others` are on for the same hero.
-    Hero { slot: u8, hero: String, others: Vec<u8> },
+    Hero { slot: u16, hero: String, others: Vec<u16> },
     /// `slot` needs mods that are off or not installed. `also_off` is what the hero question
     /// already chose to turn off; `with` the installed requirements ticked to turn on too.
     Needs {
-        slot: u8,
-        also_off: Vec<u8>,
+        slot: u16,
+        also_off: Vec<u16>,
         missing: Vec<MissingRequirement>,
-        with: BTreeSet<u8>,
+        with: BTreeSet<u16>,
     },
     /// Turning `slot` off while the mods in `dependents` (slots) list it as a requirement.
-    Breaks { slot: u8, dependents: Vec<u8> },
+    Breaks { slot: u16, dependents: Vec<u16> },
 }
 
 /// One slot file's model heroes, from the worker: `((slot, size), heroes)`.
-pub type ModelHeroes = ((u8, u64), Vec<String>);
+pub type ModelHeroes = ((u16, u64), Vec<String>);
 
 /// The gate's state, kept with Installed.
 #[derive(Default)]
@@ -77,10 +77,10 @@ pub struct Gates {
     /// Ids asked for this session, found or not.
     pub tried: HashSet<u64>,
     /// Heroes each slot file's model and material paths replace, by `(slot, size)`.
-    pub model_heroes: HashMap<(u8, u64), Vec<String>>,
+    pub model_heroes: HashMap<(u16, u64), Vec<String>>,
     pub model_job: Job<Vec<ModelHeroes>>,
     /// Slot files given to the worker this session, read or not.
-    pub model_tried: HashSet<(u8, u64)>,
+    pub model_tried: HashSet<(u16, u64)>,
 }
 
 // --- pure rules -------------------------------------------------------------------------------
@@ -88,7 +88,7 @@ pub struct Gates {
 /// What the hero check needs to know about one installed mod.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Facts {
-    pub slot: u8,
+    pub slot: u16,
     pub enabled: bool,
     /// The GameBanana hero tag and the heroes its model paths replace, without case duplicates.
     pub heroes: Vec<String>,
@@ -119,7 +119,7 @@ pub fn shared_heroes(a: &Facts, b: &Facts) -> Vec<String> {
 
 /// The mods that are on for any hero of `target`, outside its own variant group. Empty when
 /// the target has no hero.
-pub fn same_hero(target: &Facts, mods: &[Facts]) -> Vec<u8> {
+pub fn same_hero(target: &Facts, mods: &[Facts]) -> Vec<u16> {
     if target.heroes.is_empty() {
         return Vec::new();
     }
@@ -132,7 +132,7 @@ pub fn same_hero(target: &Facts, mods: &[Facts]) -> Vec<u8> {
 }
 
 /// The heroes `target` shares with any of `others`, for the question's title.
-pub fn heroes_in_question(target: &Facts, mods: &[Facts], others: &[u8]) -> Vec<String> {
+pub fn heroes_in_question(target: &Facts, mods: &[Facts], others: &[u16]) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     for other in mods.iter().filter(|m| others.contains(&m.slot)) {
         for hero in shared_heroes(target, other) {
@@ -146,7 +146,7 @@ pub fn heroes_in_question(target: &Facts, mods: &[Facts], others: &[u8]) -> Vec<
 
 /// Slots whose model another enabled mod hides (Deadlock Mod Manager's rule): the mod ships a
 /// `.vmdl_c` that a mod loading before it also ships, so the game uses the other one's model.
-pub fn hidden_models(conflicts: &[ConflictRow], enabled: &BTreeSet<u8>) -> BTreeSet<u8> {
+pub fn hidden_models(conflicts: &[ConflictRow], enabled: &BTreeSet<u16>) -> BTreeSet<u16> {
     let mut hidden = BTreeSet::new();
     for row in conflicts {
         if !row.path.to_ascii_lowercase().ends_with(".vmdl_c") {
@@ -162,7 +162,7 @@ pub fn hidden_models(conflicts: &[ConflictRow], enabled: &BTreeSet<u8>) -> BTree
 }
 
 /// The switches one answer writes: the target, what goes off with it, and what comes on with it.
-pub fn wanted(slot: u8, enable: bool, also_off: &[u8], also_on: &[u8]) -> BTreeMap<u8, bool> {
+pub fn wanted(slot: u16, enable: bool, also_off: &[u16], also_on: &[u16]) -> BTreeMap<u16, bool> {
     let mut wanted = BTreeMap::new();
     for other in also_off {
         wanted.insert(*other, false);
@@ -200,16 +200,16 @@ fn facts(st: &State) -> Vec<Facts> {
         .collect()
 }
 
-fn addon(st: &State, slot: u8) -> Option<&AddonRow> {
+fn addon(st: &State, slot: u16) -> Option<&AddonRow> {
     st.addons.addons.iter().find(|addon| addon.slot == slot)
 }
 
-fn gamebanana_id(st: &State, slot: u8) -> Option<u64> {
+fn gamebanana_id(st: &State, slot: u16) -> Option<u64> {
     addon(st, slot).and_then(|addon| meta_for(st, addon)).and_then(|meta| meta.gamebanana_id)
 }
 
 /// The installed slot of a GameBanana mod: one that is on, else the lowest.
-fn slot_of_id(st: &State, id: u64) -> Option<u8> {
+fn slot_of_id(st: &State, id: u64) -> Option<u16> {
     let mut slots: Vec<&AddonRow> = st
         .addons
         .addons
@@ -239,7 +239,7 @@ fn requirements_of(st: &State, id: u64) -> Option<ModRequirements> {
 }
 
 /// What turning `slot` on still needs, with `also_off` going off at the same time.
-fn missing_for(st: &State, slot: u8, also_off: &[u8]) -> Vec<MissingRequirement> {
+fn missing_for(st: &State, slot: u16, also_off: &[u16]) -> Vec<MissingRequirement> {
     let Some(target) = gamebanana_id(st, slot).and_then(|id| requirements_of(st, id)) else {
         return Vec::new();
     };
@@ -252,7 +252,7 @@ fn missing_for(st: &State, slot: u8, also_off: &[u8]) -> Vec<MissingRequirement>
 }
 
 /// The enabled slots that need `slot`, by their GameBanana pages.
-fn dependents_of(st: &State, slot: u8) -> Vec<u8> {
+fn dependents_of(st: &State, slot: u16) -> Vec<u16> {
     let Some(id) = gamebanana_id(st, slot) else {
         return Vec::new();
     };
@@ -269,7 +269,7 @@ fn dependents_of(st: &State, slot: u8) -> Vec<u8> {
         .into_iter()
         .filter_map(|other| requirements_of(st, other).map(|r| (other, r)))
         .collect();
-    let mut slots: Vec<u8> = needs::broken_on_disable(id, &enabled)
+    let mut slots: Vec<u16> = needs::broken_on_disable(id, &enabled)
         .into_iter()
         .flat_map(|other| {
             st.addons
@@ -289,7 +289,7 @@ fn dependents_of(st: &State, slot: u8) -> Vec<u8> {
 // --- the switch -----------------------------------------------------------------------------------
 
 /// A switch press on one slot: ask first when something needs asking, else switch it.
-pub fn switch(st: &mut State, slot: u8, enable: bool) {
+pub fn switch(st: &mut State, slot: u16, enable: bool) {
     st.installed.menu = None;
     if enable {
         let (others, heroes) = if options::hero_conflict_warning() {
@@ -322,13 +322,13 @@ pub fn switch(st: &mut State, slot: u8, enable: bool) {
 }
 
 /// After the hero question: ask about requirements, or write.
-fn check_needs(st: &mut State, slot: u8, also_off: Vec<u8>) {
+fn check_needs(st: &mut State, slot: u16, also_off: Vec<u16>) {
     let missing = if options::prompt_requirements() { missing_for(st, slot, &also_off) } else { Vec::new() };
     if missing.is_empty() {
         return apply(st, slot, true, &also_off, &[]);
     }
     // The installed ones are ticked to come on with it.
-    let with: BTreeSet<u8> = missing
+    let with: BTreeSet<u16> = missing
         .iter()
         .filter(|m| m.state == RequirementState::InstalledOff)
         .filter_map(|m| m.gamebanana_id.and_then(|id| slot_of_id(st, id)))
@@ -337,7 +337,7 @@ fn check_needs(st: &mut State, slot: u8, also_off: Vec<u8>) {
 }
 
 /// One write for the answer: a plain switch when only the target changes.
-fn apply(st: &mut State, slot: u8, enable: bool, also_off: &[u8], also_on: &[u8]) {
+fn apply(st: &mut State, slot: u16, enable: bool, also_off: &[u16], also_on: &[u16]) {
     st.installed.gates.open = None;
     if also_off.is_empty() && also_on.is_empty() {
         return super::toggle_one(st, slot, enable);
@@ -441,11 +441,11 @@ fn poll_model_heroes(st: &mut State) -> bool {
         return changed;
     }
     let dir = super::addons_folder(st);
-    let wanted: Vec<((u8, u64), PathBuf)> = st
+    let wanted: Vec<((u16, u64), PathBuf)> = st
         .addons
         .addons
         .iter()
-        .map(|addon| ((addon.slot, addon.size_bytes), dir.join(&addon.file)))
+        .map(|addon| ((addon.slot, addon.size_bytes), addon.path(&dir)))
         .filter(|(key, _)| !st.installed.gates.model_heroes.contains_key(key) && !st.installed.gates.model_tried.contains(key))
         .take(MODEL_BATCH)
         .collect();
@@ -542,12 +542,12 @@ fn shell(u: &Ui, key: &str, title: &str) -> El {
         .child(text(title.to_string()).font(H1).color(u.ink).wrap())
 }
 
-fn name_of(s: &State, slot: u8) -> String {
+fn name_of(s: &State, slot: u16) -> String {
     addon(s, slot).map(|a| display_name(s, a)).unwrap_or_else(|| format!("{slot:02}"))
 }
 
 /// One mod in a dialog list: its slot, name and a quiet note on the right.
-fn mod_line(s: &State, u: &Ui, slot: u8, note: &str, strong: bool) -> El {
+fn mod_line(s: &State, u: &Ui, slot: u16, note: &str, strong: bool) -> El {
     row()
         .key(format!("gate-mod-{slot:02}"))
         .w_full()
@@ -582,7 +582,7 @@ fn cancel(u: &Ui) -> El {
         .on_press(close)
 }
 
-fn hero_dialog(s: &State, u: &Ui, slot: u8, hero: &str, others: &[u8]) -> El {
+fn hero_dialog(s: &State, u: &Ui, slot: u16, hero: &str, others: &[u16]) -> El {
     let title = fill(tr("{} already has a mod on"), &[hero]);
     let mut list = col().w_full().border_sides([1.0, 0.0, 0.0, 0.0], u.hair);
     for other in others {
@@ -619,10 +619,10 @@ fn hero_dialog(s: &State, u: &Ui, slot: u8, hero: &str, others: &[u8]) -> El {
 fn needs_dialog(
     s: &State,
     u: &Ui,
-    slot: u8,
-    also_off: &[u8],
+    slot: u16,
+    also_off: &[u16],
     missing: &[MissingRequirement],
-    with: &BTreeSet<u8>,
+    with: &BTreeSet<u16>,
 ) -> El {
     let title = fill(tr("{} needs other mods"), &[&name_of(s, slot)]);
     let mut list = col().w_full().border_sides([1.0, 0.0, 0.0, 0.0], u.hair);
@@ -706,7 +706,7 @@ fn needs_dialog(
         list = list.child(line);
     }
     let off = also_off.to_vec();
-    let on: Vec<u8> = with.iter().copied().collect();
+    let on: Vec<u16> = with.iter().copied().collect();
     let label = if on.is_empty() {
         tr("Turn on anyway").to_string()
     } else {
@@ -729,7 +729,7 @@ fn needs_dialog(
         ]))
 }
 
-fn breaks_dialog(s: &State, u: &Ui, slot: u8, dependents: &[u8]) -> El {
+fn breaks_dialog(s: &State, u: &Ui, slot: u16, dependents: &[u16]) -> El {
     let title = fill(tr("Other mods need {}"), &[&name_of(s, slot)]);
     let mut list = col().w_full().border_sides([1.0, 0.0, 0.0, 0.0], u.hair);
     for other in dependents {
@@ -767,7 +767,7 @@ fn breaks_dialog(s: &State, u: &Ui, slot: u8, dependents: &[u8]) -> El {
 
 /// The hidden-model mark on a card: the game shows another mod's model instead of this one.
 /// A press opens Overlap, where the winner is chosen.
-pub fn hidden_badge(s: &State, u: &Ui, slot: u8) -> Option<El> {
+pub fn hidden_badge(s: &State, u: &Ui, slot: u16) -> Option<El> {
     if !s.installed.hidden.contains(&slot) {
         return None;
     }
@@ -797,7 +797,7 @@ pub static EYE_OFF: rune::Icon = rune::Icon {
 
 /// Recompute the hidden-model slots after a scan.
 pub fn refresh_hidden(st: &mut State) -> bool {
-    let enabled: BTreeSet<u8> = st.addons.addons.iter().filter(|a| a.enabled).map(|a| a.slot).collect();
+    let enabled: BTreeSet<u16> = st.addons.addons.iter().filter(|a| a.enabled).map(|a| a.slot).collect();
     let hidden = hidden_models(&st.addons.conflicts, &enabled);
     if hidden != st.installed.hidden {
         st.installed.hidden = hidden;
@@ -810,7 +810,7 @@ pub fn refresh_hidden(st: &mut State) -> bool {
 mod tests {
     use super::*;
 
-    fn f(slot: u8, enabled: bool, hero: Option<&str>, group: Option<&str>) -> Facts {
+    fn f(slot: u16, enabled: bool, hero: Option<&str>, group: Option<&str>) -> Facts {
         Facts {
             slot,
             enabled,
@@ -819,7 +819,7 @@ mod tests {
         }
     }
 
-    fn many(slot: u8, enabled: bool, heroes: &[&str], group: &str) -> Facts {
+    fn many(slot: u16, enabled: bool, heroes: &[&str], group: &str) -> Facts {
         Facts {
             slot,
             enabled,
@@ -876,7 +876,7 @@ mod tests {
             ConflictRow { path: "models/heroes/paradox/paradox.vmdl_c".into(), slots: vec![2, 5, 9], winner: 2 },
             ConflictRow { path: "materials/x.vmat_c".into(), slots: vec![3, 4], winner: 3 },
         ];
-        let enabled: BTreeSet<u8> = [2, 3, 4, 5].into_iter().collect();
+        let enabled: BTreeSet<u16> = [2, 3, 4, 5].into_iter().collect();
         let hidden = hidden_models(&conflicts, &enabled);
         assert_eq!(hidden.into_iter().collect::<Vec<_>>(), vec![5], "the winner and a texture loser are not hidden; 9 is off");
     }

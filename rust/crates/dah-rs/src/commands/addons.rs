@@ -62,15 +62,15 @@ pub fn list(json_output: bool) -> Result<()> {
     Ok(())
 }
 
-pub fn enable(slot: u8, approve: bool, json_output: bool) -> Result<()> {
+pub fn enable(slot: u16, approve: bool, json_output: bool) -> Result<()> {
     set_state(slot, true, approve, json_output)
 }
 
-pub fn disable(slot: u8, approve: bool, json_output: bool) -> Result<()> {
+pub fn disable(slot: u16, approve: bool, json_output: bool) -> Result<()> {
     set_state(slot, false, approve, json_output)
 }
 
-fn set_state(slot: u8, enabled: bool, approve: bool, json_output: bool) -> Result<()> {
+fn set_state(slot: u16, enabled: bool, approve: bool, json_output: bool) -> Result<()> {
     let install = install()?;
     let result = set_enabled(&install.game_root, slot, enabled, approve)
         .map_err(|error| core(if enabled { "addon enable" } else { "addon disable" }, error))?;
@@ -183,7 +183,7 @@ fn chunk_label(addon: &InstalledAddon) -> String {
     }
 }
 
-fn slot_list(slots: &[u8]) -> String {
+fn slot_list(slots: &[u16]) -> String {
     slots
         .iter()
         .map(|slot| format!("{slot:02}"))

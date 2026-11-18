@@ -82,7 +82,7 @@ pub fn sync_folder(game_root: &Path, workspace: &Path, profile: &Profile) -> Res
         dir: dir.clone(),
         ..FolderSync::default()
     };
-    let mut wanted: BTreeSet<u8> = BTreeSet::new();
+    let mut wanted: BTreeSet<u16> = BTreeSet::new();
 
     for (entry, state) in profile.slots.iter().zip(states) {
         let EntryState::Ready { slot, .. } = state else {
@@ -91,6 +91,14 @@ pub fn sync_folder(game_root: &Path, workspace: &Path, profile: &Profile) -> Res
             }
             continue;
         };
+        // An isolated profile folder holds pak01 to pak99 only; a mod in an extra addon folder
+        // (slot past 99) has no place there, so it is reported rather than copied.
+        if crate::addons::folder_index(slot) > 0 {
+            if entry.enabled {
+                sync.missing.push(format!("{} (past slot 99; isolated profiles hold 99 mods)", entry.label()));
+            }
+            continue;
+        }
         wanted.insert(slot);
         let Some(files) = groups.get(&slot) else {
             continue;

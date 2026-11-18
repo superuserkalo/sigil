@@ -18,7 +18,7 @@ use deadlock_core::mod_updates::{RemoteFile, RemoteMod};
 /// One installed file of the mod.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Installed {
-    pub slot: u8,
+    pub slot: u16,
     /// The GameBanana file id it was installed from, when the journal knows it.
     pub file_id: Option<u64>,
     /// When it was installed, unix seconds.
@@ -46,7 +46,7 @@ fn overlap(a: &BTreeSet<String>, b: &BTreeSet<String>) -> f32 {
 
 /// The upload that replaces each installed slot. Slots that are current or have no confident
 /// match are left out.
-pub fn pair(installed: &[Installed], remote: &RemoteMod, match_remaining: bool) -> BTreeMap<u8, RemoteFile> {
+pub fn pair(installed: &[Installed], remote: &RemoteMod, match_remaining: bool) -> BTreeMap<u16, RemoteFile> {
     let current: Vec<&RemoteFile> = remote.files.iter().filter(|f| !f.archived).collect();
     let installed_ids: BTreeSet<u64> = installed.iter().filter_map(|i| i.file_id).collect();
     let stale: Vec<&Installed> = installed
@@ -66,7 +66,7 @@ pub fn pair(installed: &[Installed], remote: &RemoteMod, match_remaining: bool) 
     };
 
     // Each stale slot's proposal: (target file id, strength).
-    let mut proposals: Vec<(u8, u64, f32)> = Vec::new();
+    let mut proposals: Vec<(u16, u64, f32)> = Vec::new();
     for slot in &stale {
         let Some(old) = slot.file_id.and_then(|id| remote.files.iter().find(|f| f.file_id == id)) else {
             continue;
@@ -96,10 +96,10 @@ pub fn pair(installed: &[Installed], remote: &RemoteMod, match_remaining: bool) 
     }
 
     // Settle claims on one upload: the strongest wins, a tie leaves both unmatched.
-    let mut winners: BTreeMap<u8, u64> = BTreeMap::new();
+    let mut winners: BTreeMap<u16, u64> = BTreeMap::new();
     let targets: BTreeSet<u64> = proposals.iter().map(|p| p.1).collect();
     for target in targets {
-        let mut claims: Vec<&(u8, u64, f32)> = proposals.iter().filter(|p| p.1 == target).collect();
+        let mut claims: Vec<&(u16, u64, f32)> = proposals.iter().filter(|p| p.1 == target).collect();
         claims.sort_by(|a, b| b.2.total_cmp(&a.2));
         if claims.len() == 1 || claims[0].2 > claims[1].2 {
             winners.insert(claims[0].0, target);
@@ -131,7 +131,7 @@ mod tests {
         RemoteFile { file_id: id, file_name: name.to_string(), added, archived }
     }
 
-    fn slot(slot: u8, file_id: u64) -> Installed {
+    fn slot(slot: u16, file_id: u64) -> Installed {
         Installed { slot, file_id: Some(file_id), installed_at: Some(150) }
     }
 

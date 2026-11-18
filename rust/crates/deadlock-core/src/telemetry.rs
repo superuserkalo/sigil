@@ -44,7 +44,7 @@ use crate::util::write_atomic;
 
 /// The Worker root. The owner swaps in the deployed URL after `wrangler deploy`; `.invalid` is
 /// reserved by RFC 2606, so a build that forgets sends nothing anywhere real.
-pub const ENDPOINT: &str = "https://sigil-telemetry.invalid";
+pub const ENDPOINT: &str = "https://sigil-telemetry.gantchevkaloyan.workers.dev";
 
 /// The event names the Worker stores. Unknown names are dropped on both sides: the app does not
 /// queue them, and the Worker drops them again. `services/telemetry/src/events.ts` must keep the
@@ -580,12 +580,15 @@ pub fn contribute_hash(
     let version = config()
         .map(|config| config.version)
         .unwrap_or_else(|| app_version(""));
-    contribute_hash_at(&version, ENDPOINT, sha256, size, mod_id, file_id)
+    contribute_hash_at(&version, ENDPOINT, &install_id(data_dir), sha256, size, mod_id, file_id)
 }
 
+/// The install id goes with a contribution so the Worker can count each install once (it keeps
+/// only a salted hash of it). Lookups never send it.
 fn contribute_hash_at(
     version: &str,
     base: &str,
+    install: &str,
     sha256: &str,
     size: u64,
     mod_id: u64,
@@ -600,6 +603,7 @@ fn contribute_hash_at(
         ));
     }
     let body = json!({
+        "installId": install,
         "sha256": sha256,
         "size": size,
         "gamebananaModId": mod_id,

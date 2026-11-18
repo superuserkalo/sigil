@@ -31,7 +31,7 @@ pub const GAMEINFO_CITADEL_LINE: &str = "Game citadel";
 #[serde(rename_all = "camelCase")]
 pub struct DeployConflict {
     /// Existing slot, always lower than the target slot.
-    pub slot: u8,
+    pub slot: u16,
     /// Existing addon file name.
     pub file: String,
     /// Release entries that the existing slot already ships.
@@ -41,7 +41,7 @@ pub struct DeployConflict {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct DeployPlan {
-    pub slot: u8,
+    pub slot: u16,
     pub target: PathBuf,
     pub chunk_targets: Vec<PathBuf>,
     pub replace_required: bool,
@@ -91,7 +91,7 @@ pub fn plan_deploy(
     game_root: &Path,
     release_dir: &Path,
     manifest: &ReleaseManifest,
-    slot: Option<u8>,
+    slot: Option<u16>,
 ) -> Result<DeployPlan> {
     let mut warnings = Vec::new();
 
@@ -455,7 +455,7 @@ pub fn repair_gameinfo(gameinfo_path: &Path, approve: bool) -> Result<GameinfoRe
 
 fn scan_conflicts(
     addons: &Path,
-    target_slot: u8,
+    target_slot: u16,
     entries: &[String],
     warnings: &mut Vec<String>,
 ) -> Result<Vec<DeployConflict>> {
@@ -464,7 +464,7 @@ fn scan_conflicts(
     }
 
     let addons_status = read_addons_status(addons)?;
-    let mut grouped: BTreeMap<(u8, String), Vec<String>> = BTreeMap::new();
+    let mut grouped: BTreeMap<(u16, String), Vec<String>> = BTreeMap::new();
 
     for addon in &addons_status.slots {
         if addon.slot >= target_slot {

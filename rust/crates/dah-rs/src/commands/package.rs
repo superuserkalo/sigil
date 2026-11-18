@@ -17,7 +17,7 @@ pub struct ValidateArgs {
 
 pub struct PackArgs {
     pub workspace: Option<PathBuf>,
-    pub slot: Option<u8>,
+    pub slot: Option<u16>,
     pub out: Option<PathBuf>,
     pub json: bool,
 }

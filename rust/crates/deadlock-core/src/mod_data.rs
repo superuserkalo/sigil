@@ -58,7 +58,12 @@ fn stamp() -> String {
 pub fn create_snapshot(game_root: &Path, root: &Path, library: Option<&Path>) -> Result<Snapshot> {
     let addons = addons_dir(game_root);
     let slots = read_slot_files(&addons)?;
-    let files: Vec<String> = slots.into_values().flatten().collect();
+    // Files in an extra addon folder keep that folder as a prefix (`sigil-addons2/pak05_dir.vpk`)
+    // so two folders' `pak05` never collide in the snapshot.
+    let files: Vec<String> = slots
+        .into_iter()
+        .flat_map(|(slot, names)| names.into_iter().map(move |name| snapshot_name(slot, &name)))
+        .collect();
     if files.is_empty() {
         return Err(Error::msg("The addons folder has no mods to back up."));
     }
@@ -74,7 +79,11 @@ pub fn create_snapshot(game_root: &Path, root: &Path, library: Option<&Path>) ->
     let mut bytes = 0;
     let result = (|| -> Result<()> {
         for name in &files {
-            bytes += fs::copy(addons.join(name), partial.join(name))?;
+            let target = partial.join(name);
+            if let Some(parent) = target.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            bytes += fs::copy(snapshot_source(&addons, name), target)?;
         }
         Ok(())
     })();
@@ -160,7 +169,7 @@ pub fn restore_snapshot(
     let mut report = SnapshotRestore::default();
     let current = read_slot_files(&addons)?;
     if mode == RestoreMode::Replace {
-        let slots: Vec<(u8, Option<crate::import::ModMeta>)> = current.keys().map(|s| (*s, None)).collect();
+        let slots: Vec<(u16, Option<crate::import::ModMeta>)> = current.keys().map(|s| (*s, None)).collect();
         let (entries, errors) = crate::trash::trash_slots(game_root, trash_root, &slots, true);
         if let Some((slot, error)) = errors.first() {
             return Err(Error::msg(format!(
@@ -170,25 +179,29 @@ pub fn restore_snapshot(
         }
         report.trashed = entries.into_iter().map(|e| e.dir).collect();
     }
-    let used: std::collections::BTreeSet<u8> = if mode == RestoreMode::Merge {
+    let used: std::collections::BTreeSet<u16> = if mode == RestoreMode::Merge {
         current.keys().copied().collect()
     } else {
         Default::default()
     };
+    let mut extra = false;
     for name in &snap.manifest.files {
-        let Some(slot) = slot_of(name) else { continue };
-        if name.contains(['/', '\\']) {
-            continue;
-        }
+        let Some((slot, file)) = parse_snapshot_name(name) else { continue };
         if used.contains(&slot) {
             report.skipped.push(name.clone());
             continue;
         }
-        let target = addons.join(name);
-        let partial = addons.join(format!("{name}.dah-tmp"));
+        let folder = crate::addons::slot_folder(&addons, slot);
+        fs::create_dir_all(&folder)?;
+        extra |= crate::addons::folder_index(slot) > 0;
+        let target = folder.join(file);
+        let partial = folder.join(format!("{file}.dah-tmp"));
         fs::copy(snapshot.join(name), &partial)?;
         fs::rename(&partial, &target)?;
         report.copied.push(name.clone());
+    }
+    if extra {
+        crate::addons::sync_overflow_mount(&addons)?;
     }
     Ok(report)
 }
@@ -197,8 +210,8 @@ pub fn restore_snapshot(
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct RecoveryReport {
     /// (slot, trash entry folder) for each slot moved out.
-    pub moved: Vec<(u8, PathBuf)>,
-    pub failed: Vec<(u8, String)>,
+    pub moved: Vec<(u16, PathBuf)>,
+    pub failed: Vec<(u16, String)>,
     pub bytes: u64,
 }
 
@@ -227,8 +240,10 @@ pub fn clear_all_mods(game_root: &Path, trash_root: &Path, approve: bool) -> Res
         return Err(Error::msg("Not approved: clear all mods. Nothing was changed."));
     }
     let slots = read_slot_files(&addons_dir(game_root))?;
-    let list: Vec<(u8, Option<crate::import::ModMeta>)> = slots.keys().map(|s| (*s, None)).collect();
+    let list: Vec<(u16, Option<crate::import::ModMeta>)> = slots.keys().map(|s| (*s, None)).collect();
     let (entries, failed) = crate::trash::trash_slots(game_root, trash_root, &list, true);
+    // The extra addon folders are empty now: take their mounts out of gameinfo.gi.
+    crate::addons::sync_overflow_mount(&addons_dir(game_root))?;
     Ok(RecoveryReport {
         bytes: entries.iter().map(|e| e.manifest.bytes).sum(),
         moved: entries.into_iter().map(|e| (e.manifest.slot, e.dir)).collect(),
@@ -340,7 +355,7 @@ pub fn copy_mods_to(game_root: &Path, target_root: &Path, trash_root: &Path, app
     let to = addons_dir(target_root);
     fs::create_dir_all(&to)?;
     let existing = read_slot_files(&to)?;
-    let list: Vec<(u8, Option<crate::import::ModMeta>)> = existing.keys().map(|s| (*s, None)).collect();
+    let list: Vec<(u16, Option<crate::import::ModMeta>)> = existing.keys().map(|s| (*s, None)).collect();
     let (trashed, errors) = crate::trash::trash_slots(target_root, trash_root, &list, true);
     if let Some((slot, error)) = errors.first() {
         return Err(Error::msg(format!("Slot {slot:02} in the copy could not be cleared: {error}")));
@@ -349,12 +364,18 @@ pub fn copy_mods_to(game_root: &Path, target_root: &Path, trash_root: &Path, app
         trashed: trashed.len(),
         ..Default::default()
     };
-    for name in read_slot_files(&from)?.into_values().flatten() {
-        let partial = to.join(format!("{name}.dah-tmp"));
-        report.bytes += fs::copy(from.join(&name), &partial)?;
-        fs::rename(&partial, to.join(&name))?;
-        report.copied += 1;
+    for (slot, names) in read_slot_files(&from)? {
+        let source = crate::addons::slot_folder(&from, slot);
+        let target = crate::addons::slot_folder(&to, slot);
+        fs::create_dir_all(&target)?;
+        for name in names {
+            let partial = target.join(format!("{name}.dah-tmp"));
+            report.bytes += fs::copy(source.join(&name), &partial)?;
+            fs::rename(&partial, target.join(&name))?;
+            report.copied += 1;
+        }
     }
+    crate::addons::sync_overflow_mount(&to)?;
     Ok(report)
 }
 
@@ -363,8 +384,8 @@ pub fn copy_mods_to(game_root: &Path, target_root: &Path, trash_root: &Path, app
 
 /// Other slots that hold a file of the same GameBanana mod as `new_slot`, from the library's
 /// newest entry per slot.
-pub fn sibling_slots(library: &crate::import::Library, mod_id: u64, new_slot: u8) -> Vec<u8> {
-    let mut latest: std::collections::BTreeMap<u8, Option<u64>> = Default::default();
+pub fn sibling_slots(library: &crate::import::Library, mod_id: u64, new_slot: u16) -> Vec<u16> {
+    let mut latest: std::collections::BTreeMap<u16, Option<u64>> = Default::default();
     for meta in &library.mods {
         latest.insert(meta.slot, meta.gamebanana_id);
     }
@@ -382,9 +403,9 @@ pub fn switch_variants(
     game_root: &Path,
     library: &crate::import::Library,
     mod_id: u64,
-    new_slot: u8,
+    new_slot: u16,
     approve: bool,
-) -> Result<Vec<u8>> {
+) -> Result<Vec<u16>> {
     if !approve {
         return Err(Error::msg("Not approved: switch variants. Nothing was changed."));
     }
@@ -697,6 +718,42 @@ fn copy_tree(from: &Path, to: &Path) -> Result<()> {
         fs::copy(from, to)?;
     }
     Ok(())
+}
+
+/// The name a slot file has inside a snapshot: bare for the main folder, `<folder>/<name>` for
+/// an extra addon folder.
+fn snapshot_name(slot: u16, name: &str) -> String {
+    match crate::addons::folder_index(slot) {
+        0 => name.to_string(),
+        index => format!("{}{}/{name}", crate::overflow::FOLDER_PREFIX, index + 1),
+    }
+}
+
+fn snapshot_source(addons: &Path, name: &str) -> PathBuf {
+    match name.split_once('/') {
+        Some((folder, file)) => addons.parent().map(|citadel| citadel.join(folder).join(file)).unwrap_or_else(|| addons.join(file)),
+        None => addons.join(name),
+    }
+}
+
+/// The global slot and bare file name of a snapshot entry. `None` for anything that is not a
+/// slot file, or a folder this build does not write.
+fn parse_snapshot_name(name: &str) -> Option<(u16, &str)> {
+    let (index, file) = match name.split_once('/') {
+        None => (0, name),
+        Some((folder, file)) => {
+            let number: usize = folder.strip_prefix(crate::overflow::FOLDER_PREFIX)?.parse().ok()?;
+            if !(2..=crate::overflow::MAX_FOLDERS).contains(&number) || file.contains(['/', '\\']) {
+                return None;
+            }
+            (number - 1, file)
+        }
+    };
+    if file.contains(['/', '\\']) {
+        return None;
+    }
+    let local = slot_of(file)?;
+    Some((crate::addons::global_slot(index, local), file))
 }
 
 #[cfg(test)]

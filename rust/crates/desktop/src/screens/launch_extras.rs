@@ -28,12 +28,12 @@ use crate::screens::settings::options;
 use crate::ui::{ActionKind, BODY, H1, MICRO, Ui};
 
 /// Map mod answers by `(slot, size)`, from the worker.
-pub type MapAnswer = ((u8, u64), bool);
+pub type MapAnswer = ((u16, u64), bool);
 
 /// The question a modded launch raises when map mods are on.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MapAsk {
-    pub slots: Vec<u8>,
+    pub slots: Vec<u16>,
     /// The launch came from the Launch page, not the sidebar.
     pub page: bool,
     pub dont_ask: bool,
@@ -42,9 +42,9 @@ pub struct MapAsk {
 #[derive(Default)]
 pub struct LaunchExtras {
     /// Is a slot file a map mod, by `(slot, size)`.
-    pub maps: HashMap<(u8, u64), bool>,
+    pub maps: HashMap<(u16, u64), bool>,
     pub job: Job<Vec<MapAnswer>>,
-    pub tried: HashSet<(u8, u64)>,
+    pub tried: HashSet<(u16, u64)>,
     pub ask: Option<MapAsk>,
     /// The launch's repair step started its worker (`installed::repair`).
     pub repairing: bool,
@@ -55,7 +55,7 @@ pub struct LaunchExtras {
 /// One slot file on disk as the roll reads it: slot, size, on.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct OnDisk {
-    pub slot: u8,
+    pub slot: u16,
     pub size: u64,
     pub enabled: bool,
 }
@@ -68,11 +68,11 @@ pub struct OnDisk {
 pub fn roll(
     extras: &Extras,
     disk: &[OnDisk],
-    maps: &BTreeSet<u8>,
+    maps: &BTreeSet<u16>,
     seed: u64,
-) -> (BTreeMap<u8, bool>, Vec<(String, SlotKey)>) {
-    let present = |slot: u8, size: u64| disk.iter().any(|d| d.slot == slot && d.size == size);
-    let on = |slot: u8| disk.iter().any(|d| d.slot == slot && d.enabled);
+) -> (BTreeMap<u16, bool>, Vec<(String, SlotKey)>) {
+    let present = |slot: u16, size: u64| disk.iter().any(|d| d.slot == slot && d.size == size);
+    let on = |slot: u16| disk.iter().any(|d| d.slot == slot && d.enabled);
     let mut pool = extras.clone();
     for list in pool.lists.iter_mut().filter(|l| l.random_each_launch) {
         list.members.retain(|uid| {
@@ -151,7 +151,7 @@ pub fn roll_before_launch(st: &mut State) {
 // --- map mods ---------------------------------------------------------------------------
 
 /// Enabled slots known to be map mods.
-pub fn map_slots(s: &State) -> BTreeSet<u8> {
+pub fn map_slots(s: &State) -> BTreeSet<u16> {
     s.addons
         .addons
         .iter()
@@ -179,13 +179,13 @@ pub fn poll(st: &mut State) -> bool {
         return changed;
     }
     let dir = st.addons_dir.clone().map(PathBuf::from).unwrap_or_default();
-    let todo: Vec<((u8, u64), PathBuf)> = st
+    let todo: Vec<((u16, u64), PathBuf)> = st
         .addons
         .addons
         .iter()
         .filter(|a| a.enabled && !st.launch_extras.tried.contains(&(a.slot, a.size_bytes)))
         .take(16)
-        .map(|a| ((a.slot, a.size_bytes), dir.join(&a.file)))
+        .map(|a| ((a.slot, a.size_bytes), a.path(&dir)))
         .collect();
     if todo.is_empty() {
         return changed;
@@ -209,7 +209,7 @@ pub fn ask_first(st: &mut State, page: bool) -> bool {
     if !options::get().map_mod_warning {
         return false;
     }
-    let slots: Vec<u8> = map_slots(st).into_iter().collect();
+    let slots: Vec<u16> = map_slots(st).into_iter().collect();
     if slots.is_empty() {
         return false;
     }
@@ -228,7 +228,7 @@ fn answer(st: &mut State, turn_off: bool) {
         && let Some(game_root) = st.game_root.clone()
     {
         {
-            let wanted: BTreeMap<u8, bool> = ask.slots.iter().map(|slot| (*slot, false)).collect();
+            let wanted: BTreeMap<u16, bool> = ask.slots.iter().map(|slot| (*slot, false)).collect();
             match deadlock_core::addons::set_many(&game_root, &wanted, true) {
                 Ok(report) => {
                     if !report.done.is_empty() {
@@ -344,7 +344,7 @@ mod tests {
     use super::*;
     use deadlock_core::mod_extras::{ModExtra, ModList};
 
-    fn extras(slots: &[u8], random: bool) -> Extras {
+    fn extras(slots: &[u16], random: bool) -> Extras {
         let mut x = Extras::default();
         let mut uids = Vec::new();
         for slot in slots {
@@ -362,7 +362,7 @@ mod tests {
         x
     }
 
-    fn disk(on: &[u8], all: &[u8]) -> Vec<OnDisk> {
+    fn disk(on: &[u16], all: &[u16]) -> Vec<OnDisk> {
         all.iter().map(|s| OnDisk { slot: *s, size: 100 + *s as u64, enabled: on.contains(s) }).collect()
     }
 
@@ -372,7 +372,7 @@ mod tests {
         for seed in 0..32 {
             let (wanted, picks) = roll(&x, &disk(&[3, 5], &[3, 5, 8]), &BTreeSet::new(), seed);
             assert_eq!(picks.len(), 1);
-            let mut on: BTreeSet<u8> = [3, 5].into_iter().collect();
+            let mut on: BTreeSet<u16> = [3, 5].into_iter().collect();
             for (slot, enable) in &wanted {
                 if *enable { on.insert(*slot); } else { on.remove(slot); }
             }
@@ -396,7 +396,7 @@ mod tests {
         // Slot 5's file is not on disk: one member is left, nothing to choose.
         assert!(roll(&extras(&[3, 5], true), &disk(&[3], &[3]), &BTreeSet::new(), 1).0.is_empty());
         // Slot 5 is a map mod: never picked and never switched.
-        let maps: BTreeSet<u8> = [5].into_iter().collect();
+        let maps: BTreeSet<u16> = [5].into_iter().collect();
         assert!(roll(&extras(&[3, 5], true), &disk(&[3, 5], &[3, 5]), &maps, 1).0.is_empty());
     }
 }
