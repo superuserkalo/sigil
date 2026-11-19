@@ -5,7 +5,14 @@ use std::path::{Path, PathBuf};
 
 use rune::TextEdit;
 
-use super::{Busy, Confirm, Content, Firewall, HostState, Phase, Plugin, Setup, bridge};
+use deadlock_core::host::{ContentOrigin, ServerContentKind};
+use deadlock_core::servers::invite::{Invite, InviteItem, InviteTarget};
+
+use super::listen::ConDebug;
+use super::{
+    Busy, Confirm, Content, Firewall, HostState, Network, Phase, Plugin, Setup, Upnp, bridge,
+};
+use crate::screens::servers::invite::{Item, Plan, Stage};
 use crate::app::State;
 use crate::model::Screen;
 
@@ -33,6 +40,19 @@ pub const SCENES: &[Scene] = &[
     ("host-running-downloads", running_downloads),
     ("host-running-downloads-de", running_downloads_german),
     ("host-downloads-rule-missing", downloads_rule_missing),
+    ("host-listen", listen),
+    ("host-listen-waiting", listen_waiting),
+    ("host-listen-no-condebug", listen_no_condebug),
+    ("host-relay-waiting", relay_waiting),
+    ("host-relay-running", relay_running),
+    ("host-relay-running-de", relay_running_german),
+    ("host-direct-upnp", direct_upnp),
+    ("host-upnp-failed", upnp_failed),
+    ("maps-listen", maps_listen),
+    ("servers-invite-enter", invite_enter),
+    ("servers-invite-review", invite_review),
+    ("servers-invite-installing", invite_installing),
+    ("servers-invite-join", invite_join),
 ];
 
 const GAME_BUILD: &str = "6123456";
@@ -293,4 +313,179 @@ fn running_downloads_german(s: &mut State) {
 fn downloads_rule_missing(s: &mut State) {
     running_downloads(s);
     s.servers.host.firewall = Firewall::Partial;
+}
+
+// --- no port forwarding (ADR 0015, second amendment) -----------------------------------------
+
+const CODE: &str = "[A:1:570253314:51555]";
+
+/// "Play with friends, no setup" after Launch: the code is in and the invite carries the map.
+fn listen(s: &mut State) {
+    ready(s);
+    let host = &mut s.servers.host;
+    host.listen_map = "harbor_night".to_string();
+    host.listen_condebug = Some(ConDebug::Added);
+    host.listen_invite = Some((CODE.to_string(), format!("sigil-invite:v1:{CODE}:o:715100/1414905")));
+    s.maps.invite = crate::screens::maps::Invite::Ready { map: "harbor_night".to_string(), code: CODE.to_string() };
+}
+
+fn listen_waiting(s: &mut State) {
+    ready(s);
+    s.servers.host.listen_condebug = Some(ConDebug::Already);
+    s.maps.invite = crate::screens::maps::Invite::Watching("dl_midtown".to_string());
+}
+
+fn listen_no_condebug(s: &mut State) {
+    ready(s);
+    s.servers.host.listen_condebug = Some(ConDebug::Failed(
+        "Steam is running and would overwrite the change when it exits. Quit Steam, then save again.".to_string(),
+    ));
+    s.maps.invite = crate::screens::maps::Invite::Missed("dl_midtown".to_string());
+}
+
+fn origins() -> Vec<ContentOrigin> {
+    vec![
+        ContentOrigin {
+            key: "maps/harbor_night".to_string(),
+            kind: ServerContentKind::Map,
+            name: "harbor_night".to_string(),
+            item: Some(InviteItem { mod_id: 715100, file_id: 1414905 }),
+        },
+        ContentOrigin {
+            key: "addons/lantern_hud".to_string(),
+            kind: ServerContentKind::Addon,
+            name: "lantern_hud".to_string(),
+            item: None,
+        },
+    ]
+}
+
+/// Relay mode, just started: Steam has not printed the code yet.
+fn relay_waiting(s: &mut State) {
+    running_custom(s);
+    let host = &mut s.servers.host;
+    host.network = Network::Relay;
+    host.origins = Some(origins());
+}
+
+/// Relay mode with the code: the invite carries the GameBanana map, the HUD addon is not on
+/// GameBanana.
+fn relay_running(s: &mut State) {
+    relay_waiting(s);
+    let host = &mut s.servers.host;
+    host.join_code = Some(CODE.to_string());
+    host.relay_ready = true;
+    host.serving = Some(27068);
+    host.push_lines([
+        "SV:  ServerSteamID=[A:1:570253314:51555] (90293420156608514).".to_string(),
+        "SDR RelayNetworkStatus:  avail=OK  config=OK  anyrelay=OK   (OK.  Relays: 25 valid)".to_string(),
+    ]);
+}
+
+fn relay_running_german(s: &mut State) {
+    s.prefs.language = crate::screens::settings::i18n::Lang::German;
+    crate::screens::settings::i18n::set(s.prefs.language);
+    relay_running(s);
+}
+
+/// Direct mode with UPnP on: the router opened the game port, refused the download port, and
+/// said its public address, which the invite uses.
+fn direct_upnp(s: &mut State) {
+    running_downloads(s);
+    let host = &mut s.servers.host;
+    host.network = Network::Direct;
+    host.upnp = true;
+    host.origins = Some(origins());
+    host.upnp_result = Some(Upnp::Mapped {
+        ports: vec![
+            ("TCP 27067".to_string(), None),
+            ("UDP 27067".to_string(), None),
+            ("TCP 27068".to_string(), Some("Port 27068 is already forwarded to another device on your router.".to_string())),
+        ],
+        external_ip: Some("203.0.113.7".to_string()),
+    });
+}
+
+fn upnp_failed(s: &mut State) {
+    running(s);
+    let host = &mut s.servers.host;
+    host.network = Network::Direct;
+    host.upnp = true;
+    host.origins = Some(Vec::new());
+    host.upnp_result = Some(Upnp::Failed(
+        "No router answered the UPnP search. UPnP may be off on your router. Turn it on there, or forward the ports by hand.".to_string(),
+    ));
+}
+
+/// The Maps page with the card on top.
+fn maps_listen(s: &mut State) {
+    listen(s);
+    s.screen = Screen::Maps;
+    s.maps.scanned = true;
+    s.maps.catalog = Some(Ok(Vec::new()));
+}
+
+fn invite_base(s: &mut State) {
+    s.load_demo();
+    s.screen = Screen::Servers;
+    s.game_detected = true;
+    crate::screens::servers::scene(s);
+    s.servers.dialog = Some(crate::screens::servers::Dialog::Invite);
+}
+
+fn invite_enter(s: &mut State) {
+    invite_base(s);
+    s.servers.invite.text = TextEdit::new("connect [A:1:570253314:51555]");
+    s.servers.invite.stage = Stage::Enter(Some(
+        "This is not a Sigil invite. Ask your friend to copy it again from Sigil's Host page.".to_string(),
+    ));
+}
+
+fn invite() -> Invite {
+    Invite::new(
+        InviteTarget::Steam(CODE.to_string()),
+        true,
+        [
+            InviteItem { mod_id: 715100, file_id: 1414905 },
+            InviteItem { mod_id: 600009, file_id: 1388001 },
+            InviteItem { mod_id: 598120, file_id: 1370442 },
+        ],
+    )
+    .expect("fixture invite")
+}
+
+fn items(plans: [Plan; 3]) -> Vec<Item> {
+    let name = |id: u64| match id {
+        715100 => "Harbor Night",
+        600009 => "Lantern HUD",
+        _ => "Quiet Footsteps",
+    };
+    invite()
+        .items
+        .into_iter()
+        .zip(plans)
+        .map(|(item, plan)| Item { item, name: name(item.mod_id).to_string(), plan })
+        .collect()
+}
+
+fn invite_review(s: &mut State) {
+    invite_base(s);
+    s.servers.invite.stage = Stage::Review {
+        invite: invite(),
+        items: items([Plan::Get, Plan::TurnOn(5), Plan::Replace(vec![9])]),
+    };
+}
+
+fn invite_installing(s: &mut State) {
+    invite_base(s);
+    s.servers.invite.stage = Stage::Installing {
+        invite: invite(),
+        items: items([Plan::Working, Plan::TurnOn(5), Plan::Working]),
+    };
+}
+
+fn invite_join(s: &mut State) {
+    invite_base(s);
+    s.servers.password = TextEdit::new("lantern");
+    s.servers.invite.stage = Stage::Join(invite());
 }

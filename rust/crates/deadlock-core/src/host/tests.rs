@@ -80,6 +80,8 @@ fn settings_round_trip_through_app_data() {
             max_players: Some(12),
             extra: "-ip 192.168.1.20".into(),
             fastdl_port: Some(27200),
+            network: Network::Direct,
+            upnp: true,
         },
     };
     save_settings(&data, &settings).unwrap();
@@ -127,9 +129,10 @@ fn launch_line_is_exact_and_never_holds_the_password_or_name() {
     let expected: Vec<&str> = vec![
         "-dedicated", "-console", "-dev", "-insecure", "-allow_no_lobby_connect",
         "+tv_citadel_auto_record", "0", "+spec_replay_enable", "0", "+tv_enable", "0",
-        "+citadel_upload_replay_enabled", "0", "+hostport", "27067", "+exec", "sigil_server.cfg",
-        "+map", "dl_midtown",
+        "+citadel_upload_replay_enabled", "0", "+hostport", "27067", "-nomaster", "+exec",
+        "sigil_server.cfg", "+map", "dl_midtown",
     ];
+    assert_eq!(config.network, Network::Relay, "relay is the default");
     assert_eq!(config.launch_args(), expected);
     let command = server_command(Path::new("/srv/dw"), &config).unwrap();
     assert_eq!(args_of(&command), expected);
@@ -149,6 +152,7 @@ fn launch_line_adds_max_players_and_extra_options() {
         map: "dl_streets".into(),
         max_players: Some(8),
         extra: "  -ip 10.0.0.5   +sv_cheats 0 ".into(),
+        network: Network::Direct,
         ..ServerConfig::default()
     };
     let args = config.launch_args();
@@ -157,6 +161,16 @@ fn launch_line_adds_max_players_and_extra_options() {
         tail,
         ["+hostport", "27100", "-maxplayers", "8", "+exec", "sigil_server.cfg", "+map", "dl_streets", "-ip", "10.0.0.5", "+sv_cheats", "0"]
     );
+    assert!(!args.iter().any(|a| a == "-nomaster"), "a direct server stays on Steam's list");
+}
+
+#[test]
+fn settings_saved_before_the_network_field_load_as_relay_without_upnp() {
+    let old: HostSettings = serde_json::from_str(r#"{"server":{"name":"Old","map":"dl_midtown","port":27067}}"#).unwrap();
+    assert_eq!(old.server.network, Network::Relay);
+    assert!(!old.server.upnp);
+    let direct: ServerConfig = serde_json::from_str(r#"{"network":"direct","upnp":true}"#).unwrap();
+    assert_eq!((direct.network, direct.upnp), (Network::Direct, true));
 }
 
 // --- SteamCMD -------------------------------------------------------------------------------
@@ -722,4 +736,188 @@ fn jsonc_strips_comments_and_trailing_commas() {
     assert_eq!(value["a"], "x // not a comment");
     assert_eq!(value["b"], serde_json::json!([1, 2]));
     assert_eq!(value["c"], "q\"/*");
+}
+
+// --- relay mode, invites, UPnP ports (ADR 0015, second amendment) ---------------------------
+
+const STOCK_GAMEINFO: &str = "\"GameInfo\"\r\n{\r\n\tFileSystem\r\n\t{\r\n\t\tSearchPaths\r\n\t\t{\r\n\t\t\tGame\tcitadel\r\n\t\t}\r\n\t}\r\n\tNetworkSystem\r\n\t{\r\n\t\tBetaUniverse\r\n\t\t{\r\n\t\t\tFakeLag\t40\r\n\t\t}\r\n\t}\r\n\tConVars\r\n\t{\r\n\t\t\"sv_minrate\"\t\"98304\"\r\n\t}\r\n}\r\n";
+
+fn network_server(name: &str) -> (PathBuf, PathBuf) {
+    let root = scratch(name);
+    let server = root.join("server");
+    fs::create_dir_all(server.join("game").join("citadel")).unwrap();
+    fs::write(server_gameinfo_path(&server), STOCK_GAMEINFO).unwrap();
+    (root, server)
+}
+
+fn read_config(server: &Path) -> serde_json::Value {
+    serde_json::from_str(&strip_jsonc(&fs::read_to_string(deadworks_config_path(server)).unwrap())).unwrap()
+}
+
+fn backups_holding_gameinfo(server: &Path) -> usize {
+    fs::read_dir(server.join(CONTENT_BACKUPS))
+        .map(|dirs| {
+            dirs.flatten()
+                .filter(|d| d.path().join("game").join("citadel").join("gameinfo.gi").is_file())
+                .count()
+        })
+        .unwrap_or(0)
+}
+
+#[test]
+fn relay_mode_edits_only_the_servers_gameinfo_and_unlists_it() {
+    let (root, server) = network_server("relay");
+    assert!(prepare_network(&server, Network::Relay, false).is_err(), "needs the press");
+    assert_eq!(fs::read_to_string(server_gameinfo_path(&server)).unwrap(), STOCK_GAMEINFO, "nothing changed");
+
+    assert!(prepare_network(&server, Network::Relay, true).unwrap(), "first start writes the edits");
+    let text = fs::read_to_string(server_gameinfo_path(&server)).unwrap();
+    assert!(text.contains("\tNetworkSystem\r\n\t{\r\n\t\tCreateListenSocketP2P\t2\r\n"));
+    assert!(text.contains("\tConVars\r\n\t{\r\n\t\t\"net_p2p_listen_dedicated\"\t\"1\"\r\n"));
+    assert!(gameinfo_has_relay(&text));
+    assert_eq!(backups_holding_gameinfo(&server), 1, "Steam's file was kept first");
+    assert_eq!(read_config(&server)["serverbrowser"]["unlisted"], true);
+    assert!(server.join(NETWORK_MARKER).is_file());
+
+    // Idempotent: a second start changes nothing.
+    assert!(!prepare_network(&server, Network::Relay, true).unwrap());
+    assert_eq!(fs::read_to_string(server_gameinfo_path(&server)).unwrap(), text);
+
+    // A SteamCMD update puts Steam's file back; the next start applies the edits again.
+    fs::write(server_gameinfo_path(&server), STOCK_GAMEINFO).unwrap();
+    assert!(prepare_network(&server, Network::Relay, true).unwrap());
+    assert!(gameinfo_has_relay(&fs::read_to_string(server_gameinfo_path(&server)).unwrap()));
+
+    // Direct mode gives back Steam's file and takes out the listing Sigil set.
+    assert!(prepare_network(&server, Network::Direct, true).unwrap());
+    assert_eq!(fs::read_to_string(server_gameinfo_path(&server)).unwrap(), STOCK_GAMEINFO);
+    assert!(read_config(&server)["serverbrowser"].get("unlisted").is_none());
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn an_unlisted_value_the_player_set_stays_in_direct_mode() {
+    let (root, server) = network_server("unlisted");
+    fs::create_dir_all(deadworks_config_path(&server).parent().unwrap()).unwrap();
+    fs::write(deadworks_config_path(&server), "{ \"serverbrowser\": { \"unlisted\": true } }").unwrap();
+    prepare_network(&server, Network::Relay, true).unwrap();
+    assert!(!server.join(NETWORK_MARKER).exists(), "Sigil did not set it, so it does not own it");
+    prepare_network(&server, Network::Direct, true).unwrap();
+    assert_eq!(read_config(&server)["serverbrowser"]["unlisted"], true);
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn relay_mode_needs_the_server_files() {
+    let root = scratch("relay-missing");
+    let server = root.join("server");
+    fs::create_dir_all(&server).unwrap();
+    let message = prepare_network(&server, Network::Relay, true).unwrap_err().to_string();
+    assert!(message.contains("Download the server files"), "{message}");
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn the_join_code_survives_the_console_ring() {
+    let buffer = LineBuffer::default();
+    buffer.push("Connection to Steam servers successful.\r\n");
+    buffer.push("SV:  ServerSteamID=[A:1:570253314:51555] (90293420156608514).");
+    for i in 0..MAX_LINES + 50 {
+        buffer.push(&format!("line {i}"));
+    }
+    buffer.push("SV:  ServerSteamID=[A:1:1:1] (1).");
+    buffer.push("SDR RelayNetworkStatus:  avail=OK  config=OK  anyrelay=OK");
+    let relay = buffer.relay();
+    assert_eq!(relay.join_code.as_deref(), Some("[A:1:570253314:51555]"));
+    assert!(relay.logged_on && relay.relay_ready);
+    assert!(!buffer.lines().iter().any(|l| l.contains("570253314")), "the line itself dropped off");
+}
+
+#[test]
+fn upnp_asks_for_the_game_port_only_in_direct_mode() {
+    let tcp = |port| PortRequest { protocol: PortProtocol::Tcp, port };
+    let udp = |port| PortRequest { protocol: PortProtocol::Udp, port };
+    assert_eq!(router_ports(Network::Direct, 27067, Some(27068)), vec![tcp(27067), udp(27067), tcp(27068)]);
+    assert_eq!(router_ports(Network::Direct, 27067, None), vec![tcp(27067), udp(27067)]);
+    assert_eq!(router_ports(Network::Relay, 27067, Some(27068)), vec![tcp(27068)]);
+    assert!(router_ports(Network::Relay, 27067, None).is_empty());
+}
+
+#[test]
+fn an_installed_map_mod_gives_its_inner_map_to_the_server() {
+    let root = scratch("map-mod");
+    let server = content_server(&root);
+    let inner = content_vpk(&root, "dl_harbor.vpk", &[("maps/dl_harbor.vmap_c", b"vmap"), ("maps/dl_harbor/world.vwrld_c", b"w")]);
+    let inner_bytes = fs::read(&inner).unwrap();
+    let pak = content_vpk(&root, "pak07_dir.vpk", &[("maps/dl_harbor.vpk", &inner_bytes), ("panorama/images/harbor.vtex_c", b"x")]);
+
+    let installed = install_server_content(&server, std::slice::from_ref(&pak), true).unwrap();
+    assert_eq!(installed, ["maps/dl_harbor"]);
+    assert_eq!(fs::read(server_maps_dir(&server).join("dl_harbor.vpk")).unwrap(), inner_bytes);
+    assert!(!server.join(".sigil-unpack").exists(), "the scratch folder is removed");
+    assert!(server_map_names(&server).contains(&"dl_harbor".to_string()));
+
+    // Two maps in one pak are refused before anything is written.
+    let other = content_vpk(&root, "dl_other.vpk", &[("maps/dl_other.vmap_c", b"v")]);
+    let other_bytes = fs::read(&other).unwrap();
+    let two = content_vpk(&root, "pak08_dir.vpk", &[("maps/dl_one.vpk", &inner_bytes), ("maps/dl_other.vpk", &other_bytes)]);
+    assert!(install_server_content(&server, &[two], true).unwrap_err().to_string().contains("several maps"));
+    let _ = fs::remove_dir_all(&root);
+}
+
+fn journal_entry(slot: u16, label: &str, url: Option<&str>, sha: &str, target: &Path) -> crate::install::InstallJournalEntry {
+    crate::install::InstallJournalEntry {
+        schema: 1,
+        plan_id: format!("plan-{slot}"),
+        installed_at: "2026-11-19T00:00:00Z".into(),
+        source: label.into(),
+        source_label: label.into(),
+        download_url: url.map(str::to_string),
+        archive: PathBuf::from("a.zip"),
+        archive_sha256: String::new(),
+        slot,
+        file: format!("pak{slot:02}_dir.vpk"),
+        target: target.to_path_buf(),
+        chunk_files: Vec::new(),
+        entries: 1,
+        bytes: 1,
+        vpk_bytes: 1,
+        vpk_sha256: sha.into(),
+        backups: Vec::new(),
+        removed_chunks: Vec::new(),
+        removed_files: Vec::new(),
+        gameinfo_repaired: false,
+        warnings: Vec::new(),
+    }
+}
+
+#[test]
+fn the_invite_lists_gamebanana_content_and_names_the_rest() {
+    let root = scratch("invite");
+    let server = content_server(&root);
+    let inner = content_vpk(&root, "dl_harbor.vpk", &[("maps/dl_harbor.vmap_c", b"vmap")]);
+    let pak = content_vpk(&root, "pak07_dir.vpk", &[("maps/dl_harbor.vpk", &fs::read(&inner).unwrap())]);
+    let addon = content_vpk(&root, "turbo.vpk", &[("scripts/turbo.vdata_c", b"t")]);
+    let local = content_vpk(&root, "homemade.vpk", &[("scripts/home.vdata_c", b"h")]);
+    install_server_content(&server, &[pak.clone(), addon.clone(), local], true).unwrap();
+
+    let sha = |p: &Path| crate::servers::file_sha256(p).unwrap();
+    let journal = vec![
+        journal_entry(7, "gamebanana:715100", Some("https://gamebanana.com/dl/1414905"), &sha(&pak), &pak),
+        // Installed by link: the library names the mod. Matched by path.
+        journal_entry(9, "https://gamebanana.com/dl/42", Some("https://gamebanana.com/dl/42"), "elsewhere", &addon),
+    ];
+    let library = |slot: u16| (slot == 9).then_some(600009);
+    let origins = content_origins(&server, &journal, &library);
+    let item = |key: &str| origins.iter().find(|o| o.key == key).and_then(|o| o.item);
+    use crate::servers::invite::{InviteItem, InviteTarget, parse_invite};
+    assert_eq!(item("maps/dl_harbor"), Some(InviteItem { mod_id: 715100, file_id: 1414905 }));
+    assert_eq!(item("addons/turbo"), Some(InviteItem { mod_id: 600009, file_id: 42 }));
+    assert_eq!(item("addons/homemade"), None);
+
+    let (invite, elsewhere) = host_invite(InviteTarget::Steam("[A:1:5:6]".into()), true, &origins).unwrap();
+    assert_eq!(invite.to_string(), "sigil-invite:v1:[A:1:5:6]:p:600009/42,715100/1414905");
+    assert_eq!(elsewhere, ["homemade"]);
+    assert_eq!(parse_invite(&invite.to_string()).unwrap(), invite);
+    let _ = fs::remove_dir_all(&root);
 }

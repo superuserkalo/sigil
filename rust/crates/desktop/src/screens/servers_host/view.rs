@@ -4,7 +4,8 @@
 use rune::{Color, El, Key, KeyEvent, ScrollSpec, Tx, col, el, icon, row, spacer, text};
 
 use super::{
-    Busy, Confirm, Firewall, HostState, NEED_BYTES, Phase, Setup, connect_line, gigabytes,
+    Busy, Confirm, Firewall, HostState, NEED_BYTES, Network, Phase, Setup, Upnp, connect_line,
+    gigabytes,
 };
 use crate::app::State;
 use crate::icons;
@@ -31,6 +32,8 @@ enum Step {
 pub fn view(s: &State, u: &Ui) -> El {
     let host = &s.servers.host;
     let mut page = col().key("host-page").w_full().max_w(MAX_W).gap(24.0);
+    // The in-game host needs no server files, so it is offered on every system.
+    page = page.child(super::listen::card(s, u, "host"));
     if !host.windows {
         return page.child(not_windows(u));
     }
@@ -1214,6 +1217,10 @@ fn reach_section(s: &State, u: &Ui) -> El {
         },
     );
 
+    let network = network_row(s, u);
+    let invite = invite_row(s, u);
+    let upnp = upnp_row(s, u);
+
     // This PC and the local network.
     let mut lan = col().w_full().gap(6.0);
     if host.lan.is_empty() {
@@ -1343,32 +1350,238 @@ fn reach_section(s: &State, u: &Ui) -> El {
                 .child(text(line.to_string()).font(SMALL).color(u.muted).grow(1.0).min_w(0.0).wrap()),
         );
     }
+    let router_body = if host.network == Network::Relay {
+        col().w_full().gap(6.0).child(detail(
+            u,
+            fill(
+                tr("Steam relay needs no forwarding for the game. Only content that is not on GameBanana needs TCP port {} (map downloads) forwarded to this PC, or the UPnP switch."),
+                &[&downloads],
+            ),
+        ))
+    } else {
+        col()
+            .w_full()
+            .gap(6.0)
+            .child(detail(u, tr("Your router has to pass both ports on to this PC. Sigil does not look up your public IP; UPnP above can open the ports for you.").to_string()))
+            .child(steps)
+    };
     let router = step_row(
         u,
         "host-router",
         Step::Info,
         tr("Friends outside your network"),
-        col()
-            .w_full()
-            .gap(6.0)
-            .child(detail(u, tr("Your router has to pass both ports on to this PC. Sigil does not change router settings or look up your public IP.").to_string()))
-            .child(steps),
+        router_body,
         None,
     )
     .border_sides([0.0, 0.0, 0.0, 0.0], Color::TRANSPARENT);
 
+    let mut panel = u.panel().w_full().child(network);
+    if let Some(invite) = invite {
+        panel = panel.child(invite);
+    }
     col()
         .key("host-reach")
         .w_full()
         .gap(10.0)
         .child(section_head(u, tr("Let friends join"), "", None))
+        .child(panel.child(firewall).child(upnp).child(lan_row).child(router))
+}
+
+fn network_choice(u: &Ui, key: &str, title: &str, line: &str, on: bool, locked: bool, network: Network) -> El {
+    col()
+        .key(key.to_string())
+        .grow(1.0)
+        .w(0.0)
+        .min_w(0.0)
+        .gap(4.0)
+        .padding(12.0)
+        .radius(crate::ui::r(8.0))
+        .fill(if on { u.accent.alpha(0.08) } else { u.well })
+        .border(1.0, if on { u.accent.alpha(0.5) } else { u.hair })
+        .opacity(if locked && !on { 0.5 } else { 1.0 })
+        .focusable(!locked)
+        .role("radio")
+        .checked(on)
+        .label(tr(title))
+        .cursor(if locked { rune::Cursor::Default } else { rune::Cursor::Pointer })
+        .child(text(tr(title)).font(BODY_MED).color(u.ink).a11y_hidden())
+        .child(text(tr(line)).font(SMALL).color(u.muted).wrap().w_full().a11y_hidden())
+        .on_press(move |st: &mut State| super::set_network(st, network))
+}
+
+/// Relay (the default) or direct, locked while the server runs.
+fn network_row(s: &State, u: &Ui) -> El {
+    let host = &s.servers.host;
+    let locked = host.running();
+    let relay = host.network == Network::Relay;
+    let mut body = col()
+        .w_full()
+        .gap(8.0)
         .child(
-            u.panel()
+            row()
                 .w_full()
-                .child(firewall)
-                .child(lan_row)
-                .child(router),
+                .gap(10.0)
+                .child(network_choice(
+                    u,
+                    "host-network-relay",
+                    "Steam relay (no port forwarding)",
+                    "Friends join with a code through Steam and Valve's relays. Nothing to set up on your router. The code changes every restart.",
+                    relay,
+                    locked,
+                    Network::Relay,
+                ))
+                .child(network_choice(
+                    u,
+                    "host-network-direct",
+                    "Direct (address and port)",
+                    "A fixed address that stays on the server list. Friends outside your network need the ports forwarded, or UPnP.",
+                    !relay,
+                    locked,
+                    Network::Direct,
+                )),
+        );
+    if relay {
+        body = body.child(
+            text(tr("Relay mode edits the server's own gameinfo.gi (never your game's) the way the Deadworks launcher does, and keeps the server off the server lists. Each Start applies it again, also after a server update."))
+                .font(SMALL)
+                .color(u.faint)
+                .wrap()
+                .w_full(),
+        );
+    }
+    step_row(u, "host-network", Step::Info, tr("How friends connect"), body, None)
+}
+
+/// The invite while the server runs: the relay code (or the address), Sigil's invite string,
+/// and the content friends cannot get from GameBanana.
+fn invite_row(s: &State, u: &Ui) -> Option<El> {
+    let host = &s.servers.host;
+    if host.phase != Phase::Running {
+        return None;
+    }
+    let mut body = col().w_full().gap(8.0);
+    let step;
+    match (host.network, host.invite()) {
+        (Network::Relay, None) => {
+            step = Step::Busy;
+            body = body.child(detail(
+                u,
+                tr("Waiting for Steam. The join code shows here when the server has signed in to Steam, usually within a minute.").to_string(),
+            ));
+        }
+        (_, None) => {
+            step = Step::Todo;
+            body = body.child(detail(u, tr("No address for an invite yet. Is this PC connected?").to_string()));
+        }
+        (network, Some((invite, elsewhere))) => {
+            step = Step::Done;
+            if network == Network::Relay && !host.relay_ready {
+                body = body.child(detail(u, tr("Steam is still connecting to its relays. Friends can try the code now.").to_string()));
+            }
+            body = body.child(super::listen::copy_box(
+                s,
+                u,
+                "host-invite",
+                tr("Sigil invite (friends paste it in Servers > Join with invite)"),
+                invite.to_string(),
+            ));
+            let password = (!host.password.text.is_empty()).then_some(host.password.text.as_str());
+            if let Ok(line) = invite.target.console_line(password) {
+                body = body.child(super::listen::copy_box(s, u, "host-console-line", tr("Console line (F7 in Deadlock)"), line));
+            }
+            if network == Network::Relay {
+                body = body.child(detail(u, tr("The code changes every time the server starts. Send the new invite after a restart.").to_string()));
+            } else if !matches!(host.upnp_result, Some(Upnp::Mapped { external_ip: Some(_), .. })) {
+                body = body.child(detail(u, tr("This invite uses your local address, for friends on your network. For friends outside, use your public IP from the router's status page.").to_string()));
+            }
+            if !invite.items.is_empty() {
+                body = body.child(detail(
+                    u,
+                    fill(tr("GameBanana files in the invite: {}. Friends using Sigil get them before they join."), &[&invite.items.len().to_string()]),
+                ));
+            }
+            if !elsewhere.is_empty() {
+                body = body.child(
+                    text(fill(
+                        tr("Not on GameBanana: {}. Friends get these only from this PC's download port (direct mode, UPnP or a forwarded port)."),
+                        &[&elsewhere.join(", ")],
+                    ))
+                    .font(SMALL)
+                    .color(u.amber)
+                    .wrap()
+                    .w_full(),
+                );
+            }
+        }
+    }
+    Some(step_row(u, "host-invite-row", step, tr("Invite friends"), body, None))
+}
+
+/// The opt-in UPnP switch and what the router said.
+fn upnp_row(s: &State, u: &Ui) -> El {
+    let host = &s.servers.host;
+    let locked = host.running();
+    let on = host.upnp;
+    let downloads = host.download_port().to_string();
+    let what = if host.network == Network::Direct {
+        fill(
+            tr("Asks your router to open TCP and UDP port {} and TCP port {} (map downloads) while the server runs, and to close them when it stops."),
+            &[&host.port().to_string(), &downloads],
         )
+    } else {
+        fill(
+            tr("Asks your router to open TCP port {} (map downloads) while the server runs, and to close it when it stops. Relay mode needs no game port."),
+            &[&downloads],
+        )
+    };
+    let mut body = col()
+        .w_full()
+        .gap(4.0)
+        .child(detail(u, what))
+        .child(
+            text(tr("Off by default. Sigil talks only to the router on your local network (UPnP); nothing is sent outside it."))
+                .font(SMALL)
+                .color(u.faint)
+                .wrap()
+                .w_full(),
+        );
+    let mut step = if on { Step::Todo } else { Step::Info };
+    match &host.upnp_result {
+        Some(Upnp::Mapped { ports, external_ip }) if host.phase == Phase::Running => {
+            step = if ports.iter().all(|(_, e)| e.is_none()) { Step::Done } else { Step::Warn };
+            for (port, error) in ports {
+                let line = match error {
+                    None => fill(tr("{}: open"), &[port]),
+                    Some(error) => fill(tr("{}: {}"), &[port, error]),
+                };
+                body = body.child(
+                    text(line)
+                        .font(SMALL)
+                        .color(if error.is_none() { u.teal } else { u.amber })
+                        .wrap()
+                        .w_full(),
+                );
+            }
+            if let Some(ip) = external_ip {
+                body = body.child(detail(u, fill(tr("The router's public address: {}."), &[ip])));
+            }
+        }
+        Some(Upnp::Failed(error)) if host.phase == Phase::Running => {
+            step = Step::Warn;
+            body = body.child(text(error.clone()).font(SMALL).color(u.amber).wrap().w_full());
+        }
+        _ if on && locked => {}
+        _ if on => body = body.child(detail(u, tr("The next Start asks the router.").to_string())),
+        _ => {}
+    }
+    let toggle = u
+        .toggle(on)
+        .key("host-upnp-toggle")
+        .label(tr("Open ports on my router (UPnP)"))
+        .opacity(if locked { 0.5 } else { 1.0 })
+        .cursor(if locked { rune::Cursor::Default } else { rune::Cursor::Pointer })
+        .on_press(super::toggle_upnp);
+    step_row(u, "host-upnp", step, tr("Open ports on my router (UPnP)"), body, Some(toggle))
 }
 
 // ---------------------------------------------------------------------------------------------

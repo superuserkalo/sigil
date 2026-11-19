@@ -83,6 +83,10 @@ struct LedgerEntry {
     size: u64,
     source: String,
     installed_at: String,
+    /// SHA-256 of the file the player picked, when it differs from the installed file (a map
+    /// taken out of an addon pak). Matches the install journal's `vpkSha256`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    source_sha256: Option<String>,
 }
 
 /// `<server>/game/citadel/maps`.
@@ -179,7 +183,7 @@ pub fn classify_content(vpk: &Path) -> Result<(ServerContentKind, String)> {
     Ok((kind, name))
 }
 
-fn backup_dir(server_dir: &Path) -> PathBuf {
+pub(super) fn backup_dir(server_dir: &Path) -> PathBuf {
     let stamp = now_iso().replace([':', '.'], "-");
     server_dir.join(CONTENT_BACKUPS).join(stamp)
 }
@@ -197,8 +201,77 @@ fn move_to_backup(server_dir: &Path, backups: &Path, file: &Path) -> Result<()> 
     Ok(())
 }
 
+struct Planned {
+    kind: ServerContentKind,
+    name: String,
+    /// The VPK copied in: the picked file, or the map taken out of it.
+    from: PathBuf,
+    /// The file the player picked.
+    picked: PathBuf,
+    picked_sha256: Option<String>,
+    dest: PathBuf,
+}
+
+/// A scratch folder inside the server folder for maps taken out of addon paks, removed when
+/// the install ends.
+struct UnpackDir(PathBuf);
+
+impl UnpackDir {
+    fn new(server_dir: &Path) -> Self {
+        UnpackDir(server_dir.join(".sigil-unpack"))
+    }
+}
+
+impl Drop for UnpackDir {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.0);
+    }
+}
+
+/// A custom map installed as an addon mod is a `pakNN_dir.vpk` whose payload holds the map as
+/// `maps/<name>.vpk`. The server needs that inner file in its own `maps/` folder, so it is
+/// written to `out/<name>.vpk`. None for any other VPK (a map or addon VPK used as it is).
+pub(super) fn unpack_addon_map(vpk: &Path, out: &Path) -> Result<Option<PathBuf>> {
+    let file = vpk.file_name().and_then(|n| n.to_str()).unwrap_or_default().to_ascii_lowercase();
+    let is_pak = file.len() == "pak00_dir.vpk".len()
+        && file.starts_with("pak")
+        && file.ends_with("_dir.vpk")
+        && file[3..5].bytes().all(|b| b.is_ascii_digit());
+    if !is_pak {
+        return Ok(None);
+    }
+    let directory = crate::vpk::read_vpk_directory_with(vpk, &crate::vpk::ReadVpkOptions { keep_preload: false })?;
+    let names = crate::maps::map_names_in_paths(directory.entries.iter().map(|e| e.path.as_str()));
+    let name = match names.as_slice() {
+        [] => return Ok(None),
+        [one] => one.to_ascii_lowercase(),
+        many => {
+            return Err(Error::msg(format!(
+                "{file} carries several maps ({}). Server content is one map per file.",
+                many.join(", ")
+            )));
+        }
+    };
+    if !valid_content_name(&name) {
+        return Err(Error::msg(format!(
+            "{name:?} cannot be served: Deadworks content names are 1 to 64 of a-z, 0-9 and _."
+        )));
+    }
+    let entry = directory
+        .entries
+        .iter()
+        .find(|e| e.path.replace('\\', "/").eq_ignore_ascii_case(&format!("maps/{name}.vpk")))
+        .ok_or_else(|| Error::msg(format!("{file} lists the map {name} but has no maps/{name}.vpk.")))?;
+    let data = crate::vpk::read_vpk_entry_data(&directory, entry)?;
+    fs::create_dir_all(out)?;
+    let target = out.join(format!("{name}.vpk"));
+    write_atomic(&target, &data)?;
+    Ok(Some(target))
+}
+
 /// Copy map and addon VPKs into the server folder and advertise them, so joiners are offered
-/// them. Returns the installed names (`maps/<name>` or `addons/<name>`). Each VPK is checked
+/// them. Returns the installed names (`maps/<name>` or `addons/<name>`). An installed map mod
+/// (`pakNN_dir.vpk` carrying `maps/<name>.vpk`) gives its inner map. Each VPK is checked
 /// (readable, safe paths, no executables or archives) before anything is written. A stock file
 /// Sigil did not install is never replaced.
 pub fn install_server_content(server_dir: &Path, vpks: &[PathBuf], approve: bool) -> Result<Vec<String>> {
@@ -206,10 +279,18 @@ pub fn install_server_content(server_dir: &Path, vpks: &[PathBuf], approve: bool
     check_server_dir(server_dir, None)?;
     let mut ledger = read_ledger(server_dir);
     let mut planned = Vec::new();
+    let unpacked = UnpackDir::new(server_dir);
+    let mut sources: Vec<(PathBuf, Option<String>)> = Vec::new();
     for vpk in vpks {
         if !vpk.is_file() {
             return Err(Error::msg(format!("{} does not exist.", vpk.display())));
         }
+        match unpack_addon_map(vpk, &unpacked.0)? {
+            Some(inner) => sources.push((inner, Some(file_sha256(vpk)?))),
+            None => sources.push((vpk.clone(), None)),
+        }
+    }
+    for (index, (vpk, source_sha)) in sources.iter().enumerate() {
         let (kind, name) = classify_content(vpk)?;
         let dest = dir_for(server_dir, kind).join(format!("{name}.vpk"));
         if dest.exists() && !ledger.files.contains_key(&key(kind, &name)) {
@@ -217,15 +298,22 @@ pub fn install_server_content(server_dir: &Path, vpks: &[PathBuf], approve: bool
                 "The server already has {name}.vpk from the game files. Sigil does not replace it; stock maps need no upload."
             )));
         }
-        if planned.iter().any(|(k, n, _, _): &(ServerContentKind, String, PathBuf, PathBuf)| *k == kind && *n == name) {
+        if planned.iter().any(|p: &Planned| p.kind == kind && p.name == name) {
             return Err(Error::msg(format!("{name} is in the list twice.")));
         }
-        planned.push((kind, name, vpk.clone(), dest));
+        planned.push(Planned {
+            kind,
+            name,
+            from: vpk.clone(),
+            picked: vpks[index].clone(),
+            picked_sha256: source_sha.clone(),
+            dest,
+        });
     }
 
     let backups = backup_dir(server_dir);
     let mut installed = Vec::new();
-    for (kind, name, source, dest) in planned {
+    for Planned { kind, name, from: source, picked, picked_sha256, dest } in planned {
         let parent = dest.parent().unwrap_or(server_dir);
         fs::create_dir_all(parent)?;
         let temporary = parent.join(format!(".{name}.vpk.sigil-tmp"));
@@ -240,8 +328,9 @@ pub fn install_server_content(server_dir: &Path, vpks: &[PathBuf], approve: bool
             LedgerEntry {
                 sha256: file_sha256(&dest)?,
                 size: meta.len(),
-                source: source.display().to_string(),
+                source: picked.display().to_string(),
                 installed_at: now_iso(),
+                source_sha256: picked_sha256,
             },
         );
         installed.push(key(kind, &name));
@@ -396,6 +485,65 @@ pub fn build_fastdl(server_dir: &Path, out_dir: &Path, approve: bool) -> Result<
         written.push(target);
     }
     Ok(written)
+}
+
+/// One piece of content Sigil put on the server, and the GameBanana file it came from.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ContentOrigin {
+    /// `maps/<name>` or `addons/<name>`.
+    pub key: String,
+    pub kind: ServerContentKind,
+    pub name: String,
+    /// None: not installed from GameBanana through Sigil (a local file, another manager).
+    /// Friends then need the download port for it.
+    pub item: Option<crate::servers::invite::InviteItem>,
+}
+
+/// Where each piece of Sigil's server content came from: the install journal entry that wrote
+/// the VPK the player picked (matched by SHA-256, else by path). `mod_id_for_slot` names the
+/// mod for installs the journal labels by link only.
+pub fn content_origins(
+    server_dir: &Path,
+    journal: &[crate::install::InstallJournalEntry],
+    mod_id_for_slot: &dyn Fn(u16) -> Option<u64>,
+) -> Vec<ContentOrigin> {
+    use crate::servers::invite::{item_for_sha256, journal_item};
+    let ledger = read_ledger(server_dir);
+    let mut out = Vec::new();
+    for (key, entry) in &ledger.files {
+        let Some((dir, name)) = key.split_once('/') else { continue };
+        let kind = match dir {
+            "maps" => ServerContentKind::Map,
+            "addons" => ServerContentKind::Addon,
+            _ => continue,
+        };
+        let picked_sha = entry.source_sha256.as_deref().unwrap_or(&entry.sha256);
+        let by_path = || {
+            journal
+                .iter()
+                .rev()
+                .filter(|e| e.target.display().to_string() == entry.source)
+                .find_map(|e| journal_item(e, mod_id_for_slot))
+        };
+        let item = item_for_sha256(journal, picked_sha, mod_id_for_slot).or_else(by_path);
+        out.push(ContentOrigin { key: key.clone(), kind, name: name.to_string(), item });
+    }
+    out
+}
+
+/// The invite for this server: where to join, whether it asks for a password, and the
+/// GameBanana files of its content. The second list names the content friends cannot get from
+/// GameBanana (they need the download port).
+pub fn host_invite(
+    target: crate::servers::invite::InviteTarget,
+    password: bool,
+    origins: &[ContentOrigin],
+) -> Result<(crate::servers::invite::Invite, Vec<String>)> {
+    let items = origins.iter().filter_map(|o| o.item);
+    let invite = crate::servers::invite::Invite::new(target, password, items)?;
+    let elsewhere = origins.iter().filter(|o| o.item.is_none()).map(|o| o.name.clone()).collect();
+    Ok((invite, elsewhere))
 }
 
 /// `<server>/sigil-fastdl`.
@@ -570,6 +718,25 @@ fn edit_serverbrowser(server_dir: &Path, backups: &Path, edit: impl FnOnce(&mut 
     text.push_str(&serde_json::to_string_pretty(&config)?);
     text.push('\n');
     write_atomic(&path, text.as_bytes())
+}
+
+/// One value of `serverbrowser` in `deadworks.jsonc`.
+pub(super) fn serverbrowser_value(server_dir: &Path, key: &str) -> Option<Value> {
+    read_serverbrowser(server_dir)?.get(key).cloned()
+}
+
+/// Set (or with None remove) one value of `serverbrowser`, keeping the rest. The previous file
+/// goes to the backups when it changes.
+pub(super) fn set_serverbrowser_value(server_dir: &Path, key: &str, value: Option<Value>) -> Result<()> {
+    let backups = backup_dir(server_dir);
+    edit_serverbrowser(server_dir, &backups, |browser| match value {
+        Some(value) => {
+            browser.insert(key.to_string(), value);
+        }
+        None => {
+            browser.remove(key);
+        }
+    })
 }
 
 fn names_of(keys: &[String], kind: ServerContentKind) -> Vec<String> {

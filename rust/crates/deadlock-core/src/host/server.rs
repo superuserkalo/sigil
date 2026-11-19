@@ -2,7 +2,7 @@
 
 use std::collections::VecDeque;
 use std::io::{BufRead, BufReader, Read, Write};
-use std::net::UdpSocket;
+use std::net::{Ipv4Addr, UdpSocket};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::{Arc, Mutex};
@@ -11,6 +11,8 @@ use std::time::{Duration, Instant};
 use super::config::{SERVER_CFG_NAME, ServerConfig};
 use super::content::start_downloads;
 use super::fastdl_server::FastdlServer;
+use super::network::{Network, RelayState, prepare_network};
+use super::upnp::{PortProtocol, PortRequest, UpnpLease};
 use super::{require_approval, require_windows};
 use crate::error::{Error, Result};
 use crate::util::{hidden_command, write_atomic};
@@ -28,10 +30,27 @@ pub fn deadworks_exe(server_dir: &Path) -> PathBuf {
 #[derive(Debug, Default)]
 pub struct LineBuffer {
     inner: Mutex<(VecDeque<String>, u64)>,
+    /// What the console said about Steam networking, read as lines arrive so it survives
+    /// the ring dropping old lines.
+    relay: Mutex<RelayState>,
 }
 
 impl LineBuffer {
+    /// One line of server output.
     pub fn push(&self, line: &str) {
+        if let Ok(mut relay) = self.relay.lock() {
+            relay.feed(line);
+        }
+        self.keep(line);
+    }
+
+    /// The join code and relay readiness seen so far.
+    pub fn relay(&self) -> RelayState {
+        self.relay.lock().map(|r| r.clone()).unwrap_or_default()
+    }
+
+    /// Keep a line without reading it for signals (Sigil's own echo of a typed command).
+    fn keep(&self, line: &str) {
         let mut line: String = line.trim_end_matches(['\r', '\n']).to_string();
         if line.len() > MAX_LINE_CHARS {
             let mut cut = MAX_LINE_CHARS;
@@ -85,7 +104,22 @@ pub struct ServerHandle {
     pub port: u16,
     /// The TCP port joiners download custom maps from, when the download server runs.
     pub fastdl_port: Option<u16>,
+    /// How friends reach it.
+    pub network: Network,
+    /// Router ports opened through UPnP, closed again on stop (and on drop).
+    upnp: Mutex<Option<UpnpLease>>,
+    /// What the UPnP request did, when the player turned it on.
+    upnp_outcome: Option<UpnpOutcome>,
     pub started: Instant,
+}
+
+/// What asking the router for ports did.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum UpnpOutcome {
+    /// Each requested port, with the router's refusal when it refused that one.
+    Mapped { ports: Vec<(PortProtocol, u16, Option<String>)>, external_ip: Option<Ipv4Addr> },
+    /// No router answered, or it refused every port.
+    Failed(String),
 }
 
 impl ServerHandle {
@@ -129,8 +163,33 @@ impl ServerHandle {
         let stdin = guard.as_mut().ok_or_else(|| Error::msg("The server console is closed."))?;
         stdin.write_all(format!("{command}\n").as_bytes())?;
         stdin.flush()?;
-        self.log.push(&format!("> {command}"));
+        self.log.keep(&format!("> {command}"));
         Ok(())
+    }
+
+    /// The join code in relay mode: the `ServerSteamID` the console printed, once it has.
+    /// It changes every restart. None in direct mode.
+    pub fn join_code(&self) -> Option<String> {
+        (self.network == Network::Relay).then(|| self.log.relay().join_code).flatten()
+    }
+
+    /// Everything the console said about Steam networking so far.
+    pub fn relay_state(&self) -> RelayState {
+        self.log.relay()
+    }
+
+    /// What the UPnP request did. None when UPnP was off or there was nothing to open.
+    pub fn upnp_outcome(&self) -> Option<&UpnpOutcome> {
+        self.upnp_outcome.as_ref()
+    }
+
+    /// Remove the router ports UPnP opened. Safe to call more than once.
+    pub fn close_router_ports(&self) {
+        if let Ok(mut upnp) = self.upnp.lock()
+            && let Some(mut lease) = upnp.take()
+        {
+            lease.release();
+        }
     }
 
     /// True while the map download server is up.
@@ -152,6 +211,7 @@ impl ServerHandle {
     pub fn stop(&self, grace: Duration) -> Result<StopOutcome> {
         let outcome = self.stop_process(grace);
         self.stop_downloads();
+        self.close_router_ports();
         outcome
     }
 
@@ -232,9 +292,17 @@ pub fn start_server(server_dir: &Path, config: &ServerConfig, approve: bool) -> 
     let download_port = config
         .download_port()
         .ok_or_else(|| Error::msg("The map download port would be past 65535."))?;
+    // The network mode's gameinfo.gi edits and listing go in first: SteamCMD's validate puts
+    // Steam's gameinfo.gi back after every update.
+    prepare_network(server_dir, config.network, true)?;
     // Deadworks reads deadworks.jsonc at startup, so the download address goes in first.
     let downloads = start_downloads(server_dir, download_port)?;
     let fastdl_port = downloads.as_ref().map(FastdlServer::port);
+    let (upnp, upnp_outcome) = if config.upnp {
+        open_router_ports(&router_ports(config.network, config.port, fastdl_port))
+    } else {
+        (None, None)
+    };
     let cfg = server_dir.join("game").join("citadel").join("cfg").join(SERVER_CFG_NAME);
     write_atomic(&cfg, config.cfg_text().as_bytes())?;
 
@@ -254,8 +322,43 @@ pub fn start_server(server_dir: &Path, config: &ServerConfig, approve: bool) -> 
         downloads: Mutex::new(downloads),
         port: config.port,
         fastdl_port,
+        network: config.network,
+        upnp: Mutex::new(upnp),
+        upnp_outcome,
         started: Instant::now(),
     })
+}
+
+/// The router ports UPnP opens: the game port (TCP and UDP) in direct mode, and the map
+/// download port (TCP) whenever it serves. A relay server needs no game port.
+pub fn router_ports(network: Network, game_port: u16, download_port: Option<u16>) -> Vec<PortRequest> {
+    let mut ports = Vec::new();
+    if network == Network::Direct {
+        ports.push(PortRequest { protocol: PortProtocol::Tcp, port: game_port });
+        ports.push(PortRequest { protocol: PortProtocol::Udp, port: game_port });
+    }
+    if let Some(port) = download_port {
+        ports.push(PortRequest { protocol: PortProtocol::Tcp, port });
+    }
+    ports
+}
+
+/// Ask the router for `ports`, inside the player's Start press (UPnP is on). A router that
+/// does not answer does not stop the server; the outcome says what happened.
+fn open_router_ports(ports: &[PortRequest]) -> (Option<UpnpLease>, Option<UpnpOutcome>) {
+    if ports.is_empty() {
+        return (None, None);
+    }
+    match super::upnp::open_ports(ports, "Sigil Deadworks server", true) {
+        Ok(lease) => {
+            let outcome = UpnpOutcome::Mapped {
+                ports: lease.results.iter().map(|r| (r.protocol, r.port, r.error.clone())).collect(),
+                external_ip: lease.external_ip,
+            };
+            (Some(lease), Some(outcome))
+        }
+        Err(error) => (None, Some(UpnpOutcome::Failed(error.to_string()))),
+    }
 }
 
 fn pump(stream: impl Read + Send + 'static, log: Arc<LineBuffer>) {

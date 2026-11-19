@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use super::network::Network;
 use crate::error::{Error, Result};
 use crate::util::write_atomic;
 
@@ -37,6 +38,13 @@ pub struct ServerConfig {
     /// TCP port of the map download server Sigil runs beside the server when it has custom
     /// content (ADR 0015 amendment). None: the game port plus one (27068 by default).
     pub fastdl_port: Option<u16>,
+    /// How friends reach the server: Steam relay (no port forwarding, the default) or the
+    /// address and port. Settings saved before this field load as relay.
+    pub network: Network,
+    /// Ask the home router to open the ports through UPnP while the server runs: the game
+    /// port (TCP and UDP) in direct mode, and the map download port (TCP) when it serves.
+    /// Off by default; local network only.
+    pub upnp: bool,
 }
 
 impl Default for ServerConfig {
@@ -49,6 +57,8 @@ impl Default for ServerConfig {
             max_players: None,
             extra: String::new(),
             fastdl_port: None,
+            network: Network::Relay,
+            upnp: false,
         }
     }
 }
@@ -150,6 +160,8 @@ impl ServerConfig {
     }
 
     /// The `deadworks.exe` arguments, in order. Never carries the join password or the name.
+    /// Relay mode adds `-nomaster`: a relay server cannot be reached at the address Steam's
+    /// server list would show, so it stays off that list (as the Deadworks launcher does).
     pub fn launch_args(&self) -> Vec<String> {
         let mut args: Vec<String> = [
             "-dedicated",
@@ -171,6 +183,9 @@ impl ServerConfig {
         .map(|s| (*s).to_string())
         .collect();
         args.push(self.port.to_string());
+        if self.network == Network::Relay {
+            args.push("-nomaster".to_string());
+        }
         if let Some(players) = self.max_players {
             args.push("-maxplayers".to_string());
             args.push(players.to_string());

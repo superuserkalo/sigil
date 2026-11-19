@@ -3044,6 +3044,9 @@ pub fn write_map_launch(
     Ok(Some(write.backup.unwrap_or(write.path)))
 }
 
+/// Sigil invites: join target plus the GameBanana ids of the server's custom content.
+pub mod invite;
+
 #[cfg(test)]
 mod tests;
 

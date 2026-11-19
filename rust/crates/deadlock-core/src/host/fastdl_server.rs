@@ -53,8 +53,13 @@ pub struct Limits {
     pub header_deadline: Duration,
     /// How long one write may wait on a client that does not read.
     pub write_timeout: Duration,
-    /// The longest one connection may stay open, download included.
+    /// The longest one connection may stay open, download included. Every write waits at most
+    /// what is left of it, so a client that reads one byte at a time cannot stretch it.
     pub max_connection_time: Duration,
+    /// The slowest download kept: at least this many bytes in every [`Self::rate_window`] after
+    /// the first one. Slower clients are cut off so they cannot hold the slots.
+    pub min_bytes_per_window: u64,
+    pub rate_window: Duration,
 }
 
 impl Default for Limits {
@@ -66,6 +71,8 @@ impl Default for Limits {
             header_deadline: Duration::from_secs(10),
             write_timeout: Duration::from_secs(30),
             max_connection_time: Duration::from_secs(60 * 60),
+            min_bytes_per_window: 64 * 1024,
+            rate_window: Duration::from_secs(30),
         }
     }
 }
@@ -467,6 +474,58 @@ fn open_target(root: &Path, target: &str) -> Option<(File, u64)> {
     Some((file, opened.len()))
 }
 
+fn timed_out(error: &std::io::Error) -> bool {
+    matches!(error.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut)
+}
+
+/// The time budget of one download: the connection deadline and the minimum rate.
+struct Pace {
+    write_timeout: Duration,
+    deadline: Instant,
+    window: Duration,
+    min_bytes: u64,
+    window_start: Instant,
+    window_bytes: u64,
+}
+
+impl Pace {
+    fn new(limits: &Limits, started: Instant) -> Self {
+        Pace {
+            write_timeout: limits.write_timeout,
+            deadline: started + limits.max_connection_time,
+            window: limits.rate_window,
+            min_bytes: limits.min_bytes_per_window,
+            window_start: Instant::now(),
+            window_bytes: 0,
+        }
+    }
+
+    fn sent(&mut self, bytes: u64) {
+        self.window_bytes += bytes;
+    }
+
+    /// How long the next write may wait, or None when the connection must end: its time is
+    /// up, or the window that just ended (each one from the first 30 s on) moved fewer than the
+    /// minimum bytes.
+    fn next_wait(&mut self) -> Option<Duration> {
+        let now = Instant::now();
+        let left = self.deadline.checked_duration_since(now).filter(|d| !d.is_zero())?;
+        if !self.window.is_zero() && now.duration_since(self.window_start) >= self.window {
+            if self.window_bytes < self.min_bytes {
+                return None;
+            }
+            self.window_start = now;
+            self.window_bytes = 0;
+        }
+        let mut wait = self.write_timeout.min(left);
+        if !self.window.is_zero() {
+            let window_left = self.window.saturating_sub(now.duration_since(self.window_start));
+            wait = wait.min(window_left);
+        }
+        Some(wait.max(Duration::from_millis(1)))
+    }
+}
+
 fn serve(mut stream: TcpStream, slot: Slot) {
     let shared = Arc::clone(&slot.shared);
     let limits = shared.limits;
@@ -499,17 +558,32 @@ fn serve(mut stream: TcpStream, slot: Slot) {
     }
     let mut buffer = vec![0u8; CHUNK];
     let mut sent = 0u64;
+    let mut pace = Pace::new(&limits, started);
     while sent < length {
-        if shared.stop.load(Ordering::SeqCst) || started.elapsed() > limits.max_connection_time {
-            return;
-        }
         let want = CHUNK.min((length - sent) as usize);
         let read = match file.read(&mut buffer[..want]) {
             Ok(0) | Err(_) => return,
             Ok(n) => n,
         };
-        if stream.write_all(&buffer[..read]).is_err() {
-            return;
+        let mut offset = 0;
+        while offset < read {
+            if shared.stop.load(Ordering::SeqCst) {
+                return;
+            }
+            let Some(wait) = pace.next_wait() else { return };
+            if stream.set_write_timeout(Some(wait)).is_err() {
+                return;
+            }
+            match stream.write(&buffer[offset..read]) {
+                Ok(0) => return,
+                Ok(n) => {
+                    offset += n;
+                    pace.sent(n as u64);
+                }
+                // A wait cut short by the deadline or the rate window: check both again.
+                Err(e) if timed_out(&e) && wait < limits.write_timeout => {}
+                Err(_) => return,
+            }
         }
         sent += read as u64;
     }
@@ -797,6 +871,105 @@ mod tests {
         assert!(statuses.iter().all(|s| *s == 200 || *s == 503), "{statuses:?}");
         assert!(statuses.contains(&200));
         let _ = fs::remove_dir_all(&root);
+    }
+
+    /// A client that reads one byte now and then, from its own thread, until told to stop.
+    fn slow_reader(server: &FastdlServer) -> (Arc<AtomicBool>, std::thread::JoinHandle<()>) {
+        let mut stream = TcpStream::connect(server.local_addr()).unwrap();
+        stream.write_all(format!("GET /maps/{FILE} HTTP/1.1\r\n\r\n").as_bytes()).unwrap();
+        let stop = Arc::new(AtomicBool::new(false));
+        let flag = Arc::clone(&stop);
+        let thread = std::thread::spawn(move || {
+            let mut byte = [0u8; 1];
+            while !flag.load(Ordering::SeqCst) {
+                if matches!(stream.read(&mut byte), Ok(0) | Err(_)) {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(100));
+            }
+        });
+        (stop, thread)
+    }
+
+    fn wait_for_connections(server: &FastdlServer, count: usize, within: Duration) -> Duration {
+        let started = Instant::now();
+        while server.open_connections() != count && started.elapsed() < within {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        started.elapsed()
+    }
+
+    /// Big enough that the socket buffers on both ends fill and the server's writes block.
+    const SLOW_FILE: usize = 48 * 1024 * 1024;
+
+    #[test]
+    fn a_slow_reader_is_cut_off_at_the_connection_deadline_and_frees_its_slot() {
+        let limits = Limits {
+            max_per_ip: 1,
+            write_timeout: Duration::from_secs(20),
+            max_connection_time: Duration::from_millis(1500),
+            min_bytes_per_window: 0,
+            rate_window: Duration::ZERO,
+            ..Limits::default()
+        };
+        let (root, server, _) = served("slow-deadline", SLOW_FILE, limits);
+        let started = Instant::now();
+        let (stop, reader) = slow_reader(&server);
+        wait_for_connections(&server, 1, Duration::from_secs(2));
+        assert_eq!(get(&server, &format!("/maps/{FILE}")).status, 503, "the slow client holds the address's slot");
+        wait_for_connections(&server, 0, Duration::from_secs(10));
+        assert_eq!(server.open_connections(), 0, "the download ended");
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "ended near the 1.5 s deadline, not after the 20 s write timeout: {:?}",
+            started.elapsed()
+        );
+        stop.store(true, Ordering::SeqCst);
+        reader.join().unwrap();
+        assert_eq!(head_status(&server), 200, "the slot is free again");
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_reader_below_the_minimum_rate_is_cut_off() {
+        let limits = Limits {
+            max_per_ip: 1,
+            write_timeout: Duration::from_secs(20),
+            max_connection_time: Duration::from_secs(3600),
+            min_bytes_per_window: 64 * 1024,
+            rate_window: Duration::from_millis(600),
+            ..Limits::default()
+        };
+        let (root, server, _) = served("slow-rate", SLOW_FILE, limits);
+        let started = Instant::now();
+        let (stop, reader) = slow_reader(&server);
+        wait_for_connections(&server, 1, Duration::from_secs(2));
+        wait_for_connections(&server, 0, Duration::from_secs(10));
+        assert_eq!(server.open_connections(), 0, "the download ended");
+        assert!(started.elapsed() < Duration::from_secs(5), "cut off after a slow window: {:?}", started.elapsed());
+        stop.store(true, Ordering::SeqCst);
+        reader.join().unwrap();
+        assert_eq!(head_status(&server), 200, "the slot is free again");
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn the_pace_waits_at_most_what_is_left() {
+        let limits = Limits {
+            write_timeout: Duration::from_secs(30),
+            max_connection_time: Duration::from_secs(2),
+            rate_window: Duration::from_secs(60),
+            ..Limits::default()
+        };
+        let mut pace = Pace::new(&limits, Instant::now());
+        let wait = pace.next_wait().unwrap();
+        assert!(wait <= Duration::from_secs(2) && wait > Duration::from_secs(1), "{wait:?}");
+        let expired = Pace::new(&Limits { max_connection_time: Duration::ZERO, ..limits }, Instant::now());
+        assert!({ expired }.next_wait().is_none(), "no time left ends the connection");
+    }
+
+    fn head_status(server: &FastdlServer) -> u16 {
+        send(server, format!("HEAD /maps/{FILE} HTTP/1.1\r\n\r\n").as_bytes()).status
     }
 
     #[test]

@@ -16,6 +16,7 @@
 //! the password or the Steam Guard code.
 
 pub(crate) mod bridge;
+pub mod listen;
 pub mod scenes;
 mod view;
 
@@ -32,6 +33,7 @@ use crate::jobs::Job;
 use crate::model::Screen;
 use crate::screens::settings::i18n::{fill, tr};
 
+pub use deadlock_core::host::{ContentOrigin, Network};
 pub use view::{dialog, overlay, tab_status, view};
 
 /// Console lines kept in memory for the page. The core keeps its own bounded ring.
@@ -136,6 +138,14 @@ pub enum Confirm {
     Firewall,
 }
 
+/// What the UPnP request did while the server runs.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Upnp {
+    /// Each port as `TCP 27067`, with the router's refusal when it refused that one.
+    Mapped { ports: Vec<(String, Option<String>)>, external_ip: Option<String> },
+    Failed(String),
+}
+
 /// A custom map's VPK waiting to be copied into the server folder at the next Start.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Content {
@@ -185,6 +195,27 @@ pub struct HostState {
     pub firewall_job: Job<Firewall>,
     pub lan: Vec<String>,
     pub join_job: Job<()>,
+    /// How friends reach the server (ADR 0015, second amendment). Relay unless saved otherwise.
+    pub network: Network,
+    /// Ask the router for the ports through UPnP while the server runs. Off by default.
+    pub upnp: bool,
+    /// What the router said, for the running server.
+    pub upnp_result: Option<Upnp>,
+    /// The running relay server's join code, read from its console.
+    pub join_code: Option<String>,
+    /// Steam said it is connected (relays ready or logged on).
+    pub relay_ready: bool,
+    /// Where the server's custom content came from on GameBanana, read after a start.
+    pub origins: Option<Vec<ContentOrigin>>,
+    pub origins_job: Job<Vec<ContentOrigin>>,
+    /// The text last copied from this page, so its button reads "Copied".
+    pub copied: Option<String>,
+    /// "Play with friends, no setup": the map the card launches.
+    pub listen_map: String,
+    /// What the last Launch press did about `-condebug`.
+    pub listen_condebug: Option<listen::ConDebug>,
+    /// The in-game host's code and the Sigil invite built from it.
+    pub listen_invite: Option<(String, String)>,
     pub confirm: Option<Confirm>,
     pub error: Option<String>,
     pub loaded: bool,
@@ -229,6 +260,17 @@ impl Default for HostState {
             firewall_job: Job::default(),
             lan: Vec::new(),
             join_job: Job::default(),
+            network: config.network,
+            upnp: config.upnp,
+            upnp_result: None,
+            join_code: None,
+            relay_ready: false,
+            origins: None,
+            origins_job: Job::default(),
+            copied: None,
+            listen_map: deadlock_core::host::DEFAULT_MAP.to_string(),
+            listen_condebug: None,
+            listen_invite: None,
             confirm: None,
             error: None,
             loaded: false,
@@ -339,6 +381,8 @@ impl HostState {
             max_players,
             extra: self.extra.text.trim().to_string(),
             fastdl_port: self.fastdl_port,
+            network: self.network,
+            upnp: self.upnp,
         };
         config.validate().map_err(|e| e.to_string())?;
         Ok(config)
@@ -357,6 +401,35 @@ impl HostState {
                 .unwrap_or_default(),
         );
         self.extra = TextEdit::new(config.extra.clone());
+        self.network = config.network;
+        self.upnp = config.upnp;
+    }
+
+    /// Where an invite points: the relay code, or in direct mode the router's public address
+    /// (when UPnP learned it) or this PC's first LAN address. None until there is one.
+    pub fn invite_target(&self) -> Option<deadlock_core::servers::invite::InviteTarget> {
+        use deadlock_core::servers::invite::InviteTarget;
+        if self.phase != Phase::Running {
+            return None;
+        }
+        match self.network {
+            Network::Relay => self.join_code.clone().map(InviteTarget::Steam),
+            Network::Direct => {
+                let public = match &self.upnp_result {
+                    Some(Upnp::Mapped { external_ip, .. }) => external_ip.clone(),
+                    _ => None,
+                };
+                let ip = public.or_else(|| self.lan.first().cloned())?;
+                format!("{ip}:{}", self.port()).parse().ok().map(InviteTarget::Address)
+            }
+        }
+    }
+
+    /// The Sigil invite for the running server and the content not on GameBanana.
+    pub fn invite(&self) -> Option<(deadlock_core::servers::invite::Invite, Vec<String>)> {
+        let target = self.invite_target()?;
+        let origins = self.origins.as_deref().unwrap_or_default();
+        bridge::invite(target, !self.password.text.is_empty(), origins)
     }
 
     /// Append console lines, keeping the newest `CONSOLE_LINES`.
@@ -422,6 +495,46 @@ pub fn open_with_map(st: &mut State, name: &str, vpk: &Path) {
     if !host.running() {
         host.map = TextEdit::new(name.to_string());
     }
+}
+
+/// Relay or direct. Saved with the settings; applied at the next Start.
+pub fn set_network(st: &mut State, network: Network) {
+    if st.servers.host.running() || st.servers.host.network == network {
+        return;
+    }
+    st.servers.host.network = network;
+    save(st);
+}
+
+/// The UPnP switch. Saved; the next Start asks the router, Stop removes the ports again.
+pub fn toggle_upnp(st: &mut State) {
+    if st.servers.host.running() {
+        return;
+    }
+    st.servers.host.upnp = !st.servers.host.upnp;
+    save(st);
+}
+
+/// Read where the server's content came from on GameBanana, for the invite. Reads only.
+fn start_origins(st: &mut State) {
+    let Some(dir) = st.servers.host.server_dir.clone() else {
+        return;
+    };
+    if idle(st) {
+        return;
+    }
+    let library: Vec<(u16, u64)> = st
+        .installed
+        .library
+        .mods
+        .iter()
+        .filter_map(|m| m.gamebanana_id.map(|id| (m.slot, id)))
+        .collect();
+    let wake = st.wake.clone();
+    st.servers
+        .host
+        .origins_job
+        .start(wake, move || Ok(bridge::origins(&dir, &library)));
 }
 
 /// First visit: the saved folders and settings, then the checks. Reads only.
@@ -622,6 +735,10 @@ pub fn start(st: &mut State) {
     host.live_map = Some(config.map.clone());
     host.console.clear();
     host.console_seen = 0;
+    host.join_code = None;
+    host.relay_ready = false;
+    host.upnp_result = None;
+    host.origins = None;
     let copy = host.content_for(&config.map).map(|c| c.vpk.clone());
     save(st);
     if idle(st) {
@@ -748,8 +865,10 @@ pub fn poll(st: &mut State, now: f64, tx: &mut Tx) -> bool {
     let mut changed = false;
     if on_page && !st.servers.host.loaded {
         load(st);
+        listen::on_open(st);
         changed = true;
     }
+    changed |= listen::refresh(st);
     let host = &mut st.servers.host;
     if let Some(result) = host.check_job.try_take() {
         host.setup = Some(result);
@@ -788,12 +907,15 @@ pub fn poll(st: &mut State, now: f64, tx: &mut Tx) -> bool {
         }
         changed = true;
     }
+    let mut start_after = false;
     if let Some(result) = host.start_job.try_take() {
         match result {
             Ok(running) => {
                 host.serving = bridge::serving_downloads(&running);
+                host.upnp_result = bridge::upnp(&running);
                 host.server = Some(running);
                 host.phase = Phase::Running;
+                start_after = true;
                 // The map is in the server folder now; the next check lists it there.
                 if let Some(map) = &host.live_map {
                     host.content.retain(|c| &c.name != map);
@@ -813,10 +935,17 @@ pub fn poll(st: &mut State, now: f64, tx: &mut Tx) -> bool {
         }
         changed = true;
     }
+    if let Some(result) = host.origins_job.try_take() {
+        host.origins = result.ok();
+        changed = true;
+    }
     if let Some(result) = host.stop_job.try_take() {
-        // The download server stopped with the game server; the last handle goes here.
+        // The download server and the router ports stopped with the game server.
         host.server = None;
         host.serving = None;
+        host.join_code = None;
+        host.relay_ready = false;
+        host.upnp_result = None;
         host.live_map = None;
         host.phase = match result {
             Ok(()) => Phase::Stopped,
@@ -832,6 +961,11 @@ pub fn poll(st: &mut State, now: f64, tx: &mut Tx) -> bool {
         if seen != host.console_seen {
             host.console_seen = seen;
             host.push_lines(lines);
+            let (code, ready) = bridge::relay(&server);
+            if code != host.join_code || ready != host.relay_ready {
+                host.join_code = code;
+                host.relay_ready = ready;
+            }
             changed = true;
         }
         if host.phase == Phase::Running
@@ -840,11 +974,18 @@ pub fn poll(st: &mut State, now: f64, tx: &mut Tx) -> bool {
             // Dropping the handle stops the map download server too.
             host.server = None;
             host.serving = None;
+            host.join_code = None;
+            host.relay_ready = false;
+            host.upnp_result = None;
             host.live_map = None;
             host.phase = Phase::Exited(exit);
             changed = true;
         }
     }
+    if start_after {
+        start_origins(st);
+    }
+    let host = &mut st.servers.host;
     let mut closed = false;
     if let Some(run) = &mut host.steamcmd {
         live = true;

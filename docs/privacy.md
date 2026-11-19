@@ -221,6 +221,26 @@ game server (TCP, the game port plus one, 27068 by default) so friends who use S
 that content from you. It starts when you press Start and stops with the server. It hands out only
 the files in the server's `sigil-fastdl` folder, keeps no log, and sends nothing anywhere itself.
 
+Steam relay mode (the default for a hosted server) changes only the server's own gameinfo.gi so
+the server listens through Steam networking; friends connect through Valve's relays with a code
+that changes every restart, and neither side's IP address is shown to the other by Steam. The
+server is kept off the server lists. This is Valve's network, used by the game itself; Sigil sends
+nothing extra.
+
+The UPnP switch (off by default) lets Sigil ask your home router to open the server's ports while
+it runs and close them when it stops. Sigil talks only to the router on your local network
+(a multicast search on your LAN, then the router's own address); nothing goes to the internet and
+nothing is logged. The router's answer may include your public IP address, which Sigil shows on the
+Host page and puts in a Direct-mode invite; it is not stored or sent anywhere.
+
+A Sigil invite you copy holds the join code or address, whether a password is needed (never the
+password), and the GameBanana mod and file ids of the server's content. Where you paste it is up to
+you. A friend's Sigil uses those ids to download from GameBanana, as any install does.
+
+Play with friends (the in-game host) adds `-condebug` to Deadlock's launch options in Steam so Sigil
+can read the join code from the game's `console.log` on your PC. It stays on until you turn it off
+in Settings > Game.
+
 What the two sides learn about each other: anyone who connects to your server or its download
 port sees your public IP address (or your LAN address on a local network), as with any game
 server you host. You, as the host, see the IP address of every player who joins (Deadworks prints
