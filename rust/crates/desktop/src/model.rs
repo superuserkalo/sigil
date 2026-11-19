@@ -28,6 +28,8 @@ pub enum Screen {
     Release,
     Toolchain,
     Character,
+    /// Custom maps (Settings > Experimental > Custom maps), `screens::maps`.
+    Maps,
     Settings,
 }
 
@@ -79,6 +81,7 @@ impl Screen {
             Screen::Release => "release",
             Screen::Toolchain => "toolchain",
             Screen::Character => "character",
+            Screen::Maps => "maps",
             Screen::Settings => "settings",
         }
     }
@@ -105,6 +108,7 @@ impl Screen {
             Screen::Release => "Release",
             Screen::Toolchain => "Toolchain",
             Screen::Character => "Character",
+            Screen::Maps => "Maps",
             Screen::Settings => "Settings",
         }
     }
@@ -131,6 +135,7 @@ impl Screen {
             Screen::Release => "RELEASE AND REVIEW",
             Screen::Toolchain => "DECOMPILE AND COMPILE",
             Screen::Character => "CHARACTER GENERATION",
+            Screen::Maps => "CUSTOM MAPS",
             Screen::Settings => "LOCAL CONFIGURATION",
         }
     }
@@ -157,6 +162,7 @@ impl Screen {
             Screen::Release => "Build, check and install this mod.",
             Screen::Toolchain => "Tools that compile and decompile game files.",
             Screen::Character => "Turn a reference into a character model.",
+            Screen::Maps => "Custom maps from GameBanana.",
             Screen::Settings => "Game, models and maintenance.",
         }
     }
@@ -184,6 +190,7 @@ impl Screen {
             Screen::Release => &i::PACKAGE,
             Screen::Toolchain => &i::WRENCH,
             Screen::Character => &i::USER,
+            Screen::Maps => &i::GLOBE,
             Screen::Settings => &i::SETTINGS,
         }
     }
@@ -210,6 +217,7 @@ impl Screen {
             Screen::Release => "◈",
             Screen::Toolchain => "⚒",
             Screen::Character => "◭",
+            Screen::Maps => "◎",
             Screen::Settings => "⚙",
         }
     }
@@ -236,6 +244,7 @@ impl Screen {
             Screen::Release => "",
             Screen::Toolchain => "",
             Screen::Character => "",
+            Screen::Maps => "",
             Screen::Settings => "⌘,",
         }
     }

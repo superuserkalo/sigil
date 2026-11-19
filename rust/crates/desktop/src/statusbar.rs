@@ -228,7 +228,8 @@ fn volume(s: &State, u: &Ui) -> El {
     if s.bar.volume_open {
         chip = chip.child(volume_popover(s, u, level));
     }
-    chip
+    // Personalize > Art > Volume bar (off by default) paints under the control.
+    crate::screens::settings::personalize::volume_art(s, u, chip)
 }
 
 fn volume_popover(s: &State, u: &Ui, level: f32) -> El {

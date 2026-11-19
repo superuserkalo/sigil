@@ -422,6 +422,13 @@ Enforced in code:
      connection resolves through a guard that refuses loopback, private, link-local and reserved
      addresses (unless the game server itself is local), at most five redirects, 4 GiB per file and
      16 GiB per join, VPK checks before anything is installed.
+   - Host a server (Windows, ADR 0015), only when the player presses the setup button:
+     `steamcdn-a.akamaihd.net/client/installer/steamcmd.zip` (Valve's SteamCMD, pinned size and
+     SHA-256) and the pinned Deadworks release zip from
+     `github.com/Deadworks-net/deadworks/releases/download/<tag>/` (GitHub redirects to
+     `release-assets.githubusercontent.com`; pinned size and SHA-256, redirects only to GitHub's
+     asset hosts). No user data. SteamCMD then talks to Steam itself in its own window, where the
+     player signs in; Sigil never sees the Steam password. No UPnP, no public-IP lookup.
    - GameBanana file servers (parity round, 2026-11-17): `gamebanana.com/apiv11/Util/Fileservers`
      (the server directory, when Settings > Mods opens or on Refresh status), and a speed test on
      "Test now" only: the newest file of GameBanana's top Deadlock mod (`Mod/Index`, its

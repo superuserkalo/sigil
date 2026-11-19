@@ -14,11 +14,14 @@ pub mod launch_extras;
 pub mod launch_gate;
 pub mod launch_progress;
 pub mod locker;
+pub mod maps;
 pub mod patches;
 pub mod performance;
 pub mod profiles;
 pub mod projects;
 pub mod servers;
+/// Host a server (`servers::host`), by its own name for other screens.
+pub use servers::host;
 pub mod servers_maps;
 pub mod release;
 pub mod settings;

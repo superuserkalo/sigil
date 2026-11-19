@@ -107,6 +107,8 @@ pub fn begin(st: &mut State, vanilla: bool, page: bool) {
     if crate::screens::launch_gate::blocked(st, vanilla, page) {
         return;
     }
+    // A Launch map press leaves `map <name>` in autoexec.cfg; a normal launch removes it.
+    crate::screens::maps::clear_stale_map_launch(st);
     if !vanilla && crate::screens::launch_extras::ask_first(st, page) {
         return;
     }

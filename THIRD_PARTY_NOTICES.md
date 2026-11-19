@@ -73,7 +73,8 @@ for redistribution.
   from `WelcomeModal.tsx`); the Preferences and Support behaviours.
 - Personalize: packaged builds ship `public/locker/launch-modded-bg.webp` and
   `public/locker/launch-vanilla-bg.jpg` (copied by `scripts/pack-locker-art.sh`) as the default art
-  behind the sidebar launch buttons. The two-corner ambient glow and its seven presets (`GLOWS` in
+  behind the sidebar launch buttons, and `public/sidebar/preview-volume-bg.jpg` as the default art
+  behind the status bar volume control. The two-corner ambient glow and its seven presets (`GLOWS` in
   `rust/crates/desktop/src/ui/personalize.rs`) follow `src/lib/backgroundGradient.ts`; the art
   surfaces, sources and framing follow `src/components/settings/AppearanceArtSection.tsx`. The ten
   preset themes are Sigil's own.

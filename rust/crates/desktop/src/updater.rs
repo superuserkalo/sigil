@@ -1421,6 +1421,10 @@ pub fn start_download(st: &mut State) {
     if st.settings.updater.job.is_running() || st.demo || rune::is_headless() {
         return;
     }
+    // A package manager updates this copy; the in-app installer stays out of its way.
+    if crate::package_manager::current().is_some() {
+        return;
+    }
     if let Err(error) = deadlock_core::net::check() {
         st.settings.updater.error = Some(error);
         return;

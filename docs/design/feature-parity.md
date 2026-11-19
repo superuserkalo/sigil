@@ -1,6 +1,6 @@
 # Feature parity: Grimoire and Deadlock Mod Manager
 
-Status: audit 2026-11-17, updated the same day; wave 3 rows updated 2026-11-18; wave 4 (UI B) rows updated 2026-11-18. Browse and mod details are built, including a
+Status: audit 2026-11-17, updated the same day; smalls round 2026-11-19 (custom maps page, update progress, package manager note); wave 3 rows updated 2026-11-18; wave 4 (UI B) rows updated 2026-11-18. Browse and mod details are built, including a
 bounded local catalog mirror (JSONL, no new crate, no SQLite), the inline sound player and the
 multi-VPK picker. The Installed page has its first round. The global shell has its round: drop
 anywhere, zoom chords, the shortcuts sheet, What's new after an update, the tray, density, and a
@@ -42,7 +42,7 @@ Two architectural differences drive many rows:
 | Performance | 8 | 0 | 0 | 0 |
 | Stats | 6 | 0 | 1 | 0 |
 | Profiles | 9 | 0 | 0 | 1 |
-| Servers | 8 | 0 | 0 | 1 |
+| Servers | 8 | 1 | 0 | 1 |
 | Launch | 7 | 0 | 0 | 0 |
 | Overlap | 7 | 0 | 0 | 0 |
 | Downloads | 6 | 0 | 0 | 0 |
@@ -239,7 +239,7 @@ Endpoints, verified with curl against the live API on 2026-11-17 (Deadlock game 
 | Edit commands, keep unknown lines | G+D | Blocks | has | - | - |
 | Command library by category | G | Premade commands | has | - | - |
 | Save with backup | G+D | Write the cfg | has | - | - |
-| Steam launch options | G | Written to localconfig at launch | partial: Autoexec saves them and Write to Steam now writes them; the launch buttons still need the `autoexec::sync_launch_options` hook (line in the round report) | M | P2 |
+| Steam launch options | G | Written to localconfig at launch | has (built: every launch writes the saved launch options through `autoexec::sync_launch_options` in the launch steps; wave 1) | M | P1 |
 | Open in external editor | D | Editor handoff | has (Edit in editor, the editor chosen in Settings) | - | - |
 
 ## Performance
@@ -300,6 +300,8 @@ Endpoints, verified with curl against the live API on 2026-11-17 (Deadlock game 
 | Valve relay region picker (firewall) | D | Server picker | won't (owner decision 2026-11-17: admin firewall change) | L | P3 |
 | Favorites, recent servers, direct connect | - | Sigil extras | has (`.dah/servers.json`; favorites and recent scopes, address dialog that runs the same join check) | M | - |
 | Maps view and Launch map | D | Custom map help for custom/Deadworks servers | has (`servers_maps.rs`: GameBanana Maps category, console name from the description or installed VPK, copyable `map <name>`, Launch writes a managed autoexec block with a backup and starts the game) | M | P3 |
+| Custom maps page, How to play, Invite friends | D | Experimental custom-maps: Maps page, How to play This Map, Launch Map, Invite Friends (connect code from console.log) | has (2026-11-19, `screens/maps.rs`, `deadlock_core::maps`: off by default; map name from the addon VPK's `maps/<name>.vpk`; Launch map through the gameinfo gate; Host this map hands off to Servers > Host) | M | P3 |
+| Host a server from this PC | - | Neither G nor D hosts (G's empty list only says "hosting requires Windows") | partial (ADR 0015, Servers > Host: setup checklist for .NET 10, free space, SteamCMD, server files and the pinned Deadworks release; SteamCMD opens in its own window so the Steam sign-in never reaches Sigil; server settings with a map picker that lists stock and installed custom maps, Start and Stop, live console with a command line; plugins on and off; firewall rule behind Windows' admin prompt; LAN join, copyable `connect ip:port`, router forwarding steps, custom-map invite; "older than your game" update banner; macOS and Linux show why it needs Windows. Built and checked in headless scenes; not yet run on a Windows PC. No player list beyond typing `status`) | L | P2 |
 
 ## Launch
 
@@ -352,7 +354,7 @@ Endpoints, verified with curl against the live API on 2026-11-17 (Deadlock game 
 | Drag-and-drop install anywhere | G+D | Drop overlay, import review | has (built: a drop on any page without its own target opens the import review; Installed keeps its page target) | S | P1 |
 | Deep links / 1-click install | G+D | `grimoire:` / `dlmm:` handler for GameBanana 1-Click | has: `sigil:` links open the mod with the file chosen and the Install dialog (see `deep-links.md`); GameBanana listing not requested yet | - | - |
 | GameBanana Remote Install | D | Pair and poll a queue | missing: backlogged by the owner (2026-11-18) until GameBanana lists Sigil as a 1-Click manager; the protocol is in `deadlock_core::remote_install`, not wired | M | P3 |
-| Status bar | D | Bottom bar with state | has (wave 3, `statusbar.rs`: game found, catalog sync, downloads, an app update, the active profile and the preview volume; counts cached once a second; Appearance switch) | S | P3 |
+| Status bar | D | Bottom bar with state | has (wave 3, `statusbar.rs`: game found, catalog sync, downloads, an app update, the active profile and the preview volume; counts cached once a second; Appearance switch; the background image can run under it and the volume control can carry art, both off by default) | S | P3 |
 | Global preview volume | G | One volume for every preview | has (wave 3: the status bar's volume popover with mute moves the one value Browse's View menu shows; wave 4: a mute and the level before it survive a restart) | S | P3 |
 | Per-page feature switches | D | Turn optional pages off | has (wave 3: General > Pages for Locker, Crosshair, Autoexec, Performance, Stats, Servers, and Mods only; a page that is off leaves the sidebar and its route) | S | P3 |
 | Onboarding | G+D | Game path, gameinfo fix, autoexec | has (built: first-run setup mounted as an overlay, and Show setup again in Settings; wave 4: DMM's connection step (proxy with SOCKS5, offline) and existing-mods step (count, open Installed when done)) | M | P2 |
@@ -365,7 +367,7 @@ Endpoints, verified with curl against the live API on 2026-11-17 (Deadlock game 
 | Single instance lock | G | One process | has (Rune pipe or socket; a lock and socket on macOS) | - | - |
 | Feature hints / coachmarks | D | Usage hints | has (wave 4, `shell_tips.rs`: Did you know? cards anchored to the control with Show me, Got it, Turn off tips; one a session after the page settles, never over a dialog; two dismissals retire a tip; General > Show feature tips and Reset) | M | P3 |
 | Collapsible sidebar | G+D | Icons only | has (wave 4, `shell_w4.rs`: Collapse sidebar at the foot, Cmd or Ctrl+B, tooltips and warning dots while collapsed, kept across launches) | S | P2 |
-| App update banner | G | Install or view, hide until next launch | has (wave 4: a banner over every page while an update is out, Install or View update, an X that hides it for the run) | S | P3 |
+| App update banner | G | Install or view, hide until next launch; download progress; package manager note | has (wave 4: a banner over every page while an update is out, Install or View update, an X that hides it for the run; 2026-11-19: bytes, percent and a bar while the update downloads, here and in About > Updates; a winget, Scoop, Chocolatey, Homebrew, Nix, Snap, Flatpak or system-package copy says updates come from that manager and the installer is off) | S | P3 |
 | "New" marks on pages | D | Until first opened | has (wave 4: Stats, Servers and Performance carry New until opened once, kept in options.json) | S | P3 |
 | Experimental tour | (neither) | Reopenable walkthrough | has (wave 4: Settings > Experimental > Take the tour, once on the first visit; each stop has its switch) | S | P3 |
 | Easter eggs | G | Rare jokes | has, off by default (wave 4: five knocks on the wordmark open the news computer, 7 percent joke tooltips, 5 percent window title; Appearance > Easter eggs) | S | P3 |

@@ -1,6 +1,6 @@
 # Settings parity: Grimoire and Deadlock Mod Manager
 
-Status: audit done 2026-11-17; parity round built 2026-11-17; wave 3 rows updated 2026-11-18 (pages, preview volume, map mods, fix before launch, Remote Install backlogged); wave 4 UI B rows updated 2026-11-18 (SOCKS5, checklist, catalog, logs, AI help, launch options, vanilla, update marks, channel notes, seasons). Every settings item in both apps, from their source, with what Sigil does about it.
+Status: audit done 2026-11-17; smalls round 2026-11-19 (rows G47, G99, G100, D129, D194 built); parity round built 2026-11-17; wave 3 rows updated 2026-11-18 (pages, preview volume, map mods, fix before launch, Remote Install backlogged); wave 4 UI B rows updated 2026-11-18 (SOCKS5, checklist, catalog, logs, AI help, launch options, vanilla, update marks, channel notes, seasons). Every settings item in both apps, from their source, with what Sigil does about it.
 
 Sources: Grimoire (`vendor/grimoire`, MIT) `src/pages/Settings.tsx`, `src/components/settings/**`, `electron/main/services/settings.ts`; Deadlock Mod Manager (`vendor/dmm`, GPL-3.0, behaviour only) `apps/desktop/src/pages/settings.tsx`, `apps/desktop/src/components/settings/*.tsx`, `plugins/themes`.
 
@@ -12,14 +12,14 @@ Status words: **Had it** (Sigil had it before this round), **Built now**, **Buil
 | --- | --- | --- |
 | Items | 159 | 232 |
 | Had it | 27 | 42 |
-| Built now | 81 | 115 |
+| Built now | 84 | 117 |
 | Built, hook pending | 0 | 3 |
 | Elsewhere in Sigil | 35 | 27 |
 | Needs a backend | 8 | 6 |
 | Declined (rule) | 5 | 38 |
-| Not built yet | 3 | 1 |
-| **Covered** (had, built, elsewhere) | **138** | **184** |
-| Covered or deliberately declined | 143 | 222 |
+| Not built yet | 1 | 2 |
+| **Covered** (had, built, elsewhere) | **141** | **186** |
+| Covered or deliberately declined | 146 | 224 |
 
 The parity round (2026-11-17) built every row that was **Not built yet** except the two 3D model previews (no 3D renderer in Rune yet) and the two update rows the updater owns. **Built, hook pending** means the setting, its storage and its getter work, and one line in a page another agent owns still has to read it; `.scratch/sigil-redesign/` lists the lines.
 
@@ -81,7 +81,7 @@ Grouped by task, thirteen categories in three groups, a search field over all of
 | 44 | Appearance | Art: active tab | Art behind the active tab | Built now | Appearance > Personalize > Art > Active tab (accent glow, hero or image) |
 | 45 | Appearance | Art: Launch vanilla | Button art | Built now | Appearance > Personalize > Art > Launch vanilla (Grimoire's art, hero or image) |
 | 46 | Appearance | Art: Launch modded | Button art | Built now | Appearance > Personalize > Art > Launch modded (Grimoire's art, hero or image) |
-| 47 | Appearance | Art: volume bar | Bar art | Not built yet | Sigil has a status bar volume now (wave 3); Personalize art for it is not built |
+| 47 | Appearance | Art: volume bar | Bar art | Built now | Appearance > Personalize > Sidebar art > Volume bar: Off (default), Sigil's art (Grimoire's `preview-volume-bg.jpg`), a hero or your image, with framing; paints behind the status bar's volume control (`personalize::volume_art`) |
 | 48 | Appearance | Art source | Default, hero, image | Built now | Appearance > Personalize > Art: Off, default, hero, your image |
 | 49 | Appearance | Hero grid | Pick a hero render | Built now | Appearance > Personalize > Art > Hero (chip grid) |
 | 50 | Appearance | Adjust framing | Crop the render | Built now | Appearance > Personalize > Art: Across, Down, Zoom, Reset framing |
@@ -133,8 +133,8 @@ Grouped by task, thirteen categories in three groups, a search field over all of
 | 96 | Updates | Current version | Version and state | Had it | About and updates |
 | 97 | Updates | What's new | Release notes | Built now | About and updates > Release notes when newer |
 | 98 | Updates | Check / Download / Install | Contextual update button | Had it | Check now; download and install need signed builds (later) |
-| 99 | Updates | Download progress | Progress | Not built yet | With in-app install |
-| 100 | Updates | Package manager note | Managed installs | Not built yet | No package-managed builds yet |
+| 99 | Updates | Download progress | Progress | Built now | About > Updates and the update banner show bytes and percent while Sigil downloads its update (`settings/smalls.rs::progress_line`, `shell_w4::update_banner`) |
+| 100 | Updates | Package manager note | Managed installs | Built now | A copy under winget, Scoop, Chocolatey, Homebrew's Caskroom, Nix, Snap, Flatpak or `/usr`/`/opt` (path only, `package_manager.rs`) says updates come from that manager; the installer row and the automatic download are off |
 | 101 | Updates | Manual download note | Ad-hoc signed macOS | Had it | Release notes opens the release page |
 | 102 | Experimental | Stats dashboard | Flag | Had it | Stats is a main page; Privacy > Player stats turns its network off |
 | 103 | Experimental | Crosshair designer | Flag | Had it | Crosshair is a main page |
@@ -251,7 +251,7 @@ Grouped by task, thirteen categories in three groups, a search field over all of
 | 50 | Mods | Several skins per hero | Locker | Elsewhere in Sigil | Locker page |
 | 51 | Mods | Sort sounds by hero | Locker | Elsewhere in Sigil | Locker page |
 | 52 | Mods | Default sort | Sort | Had it | Mods > Order |
-| 53 | Mods | Paginated browsing | Pages | Declined (rule) | Browse loads pages as you scroll |
+| 53 | Mods | Paginated browsing | Pages | Elsewhere in Sigil | Browse loads the next page as you scroll near the end; same catalog reach, different design |
 | 54 | Mods | Update badges | Badges | Built now | Mods > Browse > Show mod update marks (on; Browse cards and details, and Installed cards' Update mark, wave 4) |
 | 55 | Mods | Download cache location | Info | Had it | Storage > Mod workspace, Downloads |
 | 56 | Mods | Move download cache | Move | Built now | Mods > Downloads > Download cache > Move (folder moved, link left in place) |
@@ -278,7 +278,7 @@ Grouped by task, thirteen categories in three groups, a search field over all of
 | 77 | Features | Performance | Feature | Built now | General > Pages > Performance |
 | 78 | Features | Mod Foundry | Feature | Built now | Experimental > Agent |
 | 79 | Features | Autoexec editor | Feature | Built now | General > Pages > Autoexec |
-| 80 | Features | Plugins | Feature | Declined (rule) | No plugin runtime; agent tools are the extension point |
+| 80 | Features | Plugins | Feature | On hold (owner) | Owner decision 2026-11-18: on hold until players ask |
 | 81 | Features | Experimental badges | Info | Built now | Experimental page intro |
 | 82 | Features | Leftover warning | Info | Built now | Experimental: turning off hides, deletes nothing |
 | 83 | Themes | Predefined / custom | Switch | Had it | Appearance > Theme |
@@ -321,13 +321,13 @@ Grouped by task, thirteen categories in three groups, a search field over all of
 | 120 | Themes | Save / cancel edits | Save | Built now | Appearance > Personalize > Theme builder > Save theme, Cancel |
 | 121 | Background | Image preview / remove | Background image | Built now | Appearance > Personalize > Background image (preview, Remove) |
 | 122 | Background | Choose image | File | Built now | Appearance > Personalize > Background image > Choose image |
-| 123 | Background | Image URL | Remote image | Declined (rule) | Network allowlist: an arbitrary image host is not allowed; choose a local file |
+| 123 | Background | Image URL | Remote image | Declined (rule) | Network allowlist: loading from any pasted host is not allowed; choose a local file. A one-time download into app data would need the owner's exception |
 | 124 | Background | Opacity | Slider | Built now | Appearance > Personalize > Background image > Opacity |
 | 125 | Background | Blur | Slider | Built now | Appearance > Personalize > Background image > Blur |
 | 126 | Background | Coverage diagram | Info | Built now | Appearance > Personalize > Background image preview shows the covered parts |
 | 127 | Background | Include sidebar | Toggle | Built now | Appearance > Personalize > Background image > Behind the sidebar |
 | 128 | Background | Include top bar | Toggle | Built now | Appearance > Personalize > Background image > Behind the top bar |
-| 129 | Background | Include bottom bar | Toggle | Declined (rule) | Sigil has no bottom bar |
+| 129 | Background | Include bottom bar | Toggle | Built now | Appearance > Background image > Behind the status bar (off by default): the image runs under the status bar; off, it stops at the bar's top edge |
 | 130 | Network | Download routing | Mirror first | Built now | Mods > Downloads > Fastest server first |
 | 131 | Network | Faster downloads | Parallel parts | Built now | Mods > Downloads > Faster downloads (4 or 8 parts, files of 8 MB or more) |
 | 132 | Network | Enable proxy | Proxy | Built now | Network > HTTP proxy |
@@ -392,11 +392,11 @@ Grouped by task, thirteen categories in three groups, a search field over all of
 | 191 | Logging | AI provider | AI site | Declined (rule) | Sigil has an agent; logs never go to a site automatically |
 | 192 | Logging | Log source | Select | Built now | Logs and support > Log source: Combined, Sigil log, Crash dumps; Copy logs (wave 4) |
 | 193 | Logging | Get AI help | Copy and open AI | Built now | Logs and support > Ask Sigil for help: the masked logs go into Sigil's own agent, nothing is sent until Send (wave 4) |
-| 194 | Experimental | Custom maps | Flag | Declined (rule) | Maps change gameplay space; cosmetic-only rule |
+| 194 | Experimental | Custom maps | Flag | Built now | Experimental > Custom maps (off by default) adds a Maps page (GameBanana's Maps category through Browse's catalog read and install button) and How to play on the Maps page, Browse details of a Maps mod and Installed's card menu: map name from the VPK's `maps/<name>.vpk` (`deadlock_core::maps`) or the description, Launch map (managed autoexec block, gameinfo gate, launch steps), Host this map, Invite friends (`connect <code>` read from console.log) |
 | 195 | Experimental | Mod Foundry | Flag | Built now | Experimental > Agent |
 | 196 | Experimental | Performance configs | Flag | Elsewhere in Sigil | Performance page |
 | 197 | Experimental | Cloud backup | Flag | Needs a backend | Needs a Sigil account service |
-| 198 | Experimental | Plugins | Flag | Declined (rule) | No plugin runtime |
+| 198 | Experimental | Plugins | Flag | On hold (owner) | Owner decision 2026-11-18: on hold until players ask; agent tools are today's extension point |
 | 199 | Experimental | Blocked note | Info | Built now | Experimental intro line |
 | 200 | Match data | What it powers | Info | Built now | Privacy > What is sent |
 | 201 | Match data | Tracker site tiles | Links | Built now | Integrations > Stat sites |
@@ -416,7 +416,7 @@ Grouped by task, thirteen categories in three groups, a search field over all of
 | 215 | Privacy | Remember per-item choices | Toggle | Built now | Mods > Mature content > Remember what you reveal |
 | 216 | Privacy | Clear saved choices | Button | Built now | Mods > Mature content > Clear |
 | 217 | Privacy | Player stats | Toggle | Had it | Privacy > Player stats |
-| 218 | Privacy | Google Analytics | Telemetry | Declined (rule) | Hard rule: no telemetry |
+| 218 | Privacy | Google Analytics | Telemetry | Declined (rule) | No third-party analytics; Sigil's own opt-in telemetry (ADR 0014) covers usage, crashes and diagnostics |
 | 219 | Privacy | Network activity docs | Link | Built now | Privacy > Where Sigil connects (inline) |
 | 220 | Information | Third-party disclaimer | Info | Had it | About: Valve line |
 | 221 | Information | About text | Info | Had it | About |
