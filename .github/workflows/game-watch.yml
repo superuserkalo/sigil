@@ -41,7 +41,7 @@ jobs:
 
       - name: Checked this file before?
         id: seen
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: live/checked
           key: gameinfo-${{ steps.live.outputs.sha }}
@@ -49,14 +49,17 @@ jobs:
 
       - name: Check out Sigil
         if: steps.seen.outputs.cache-hit != 'true'
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           path: sigil
+          persist-credentials: false
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
+        with:
+          toolchain: stable
         if: steps.seen.outputs.cache-hit != 'true'
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         if: steps.seen.outputs.cache-hit != 'true'
         with:
           workspaces: sigil/rust
@@ -77,7 +80,7 @@ jobs:
         if: always() && steps.seen.outputs.cache-hit != 'true' && steps.test.outcome != 'skipped'
         run: echo "${{ steps.test.outcome }}" > live/checked
 
-      - uses: actions/cache/save@v4
+      - uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         if: always() && steps.seen.outputs.cache-hit != 'true' && steps.test.outcome != 'skipped'
         with:
           path: live/checked
