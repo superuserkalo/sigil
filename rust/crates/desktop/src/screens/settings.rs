@@ -31,6 +31,8 @@ pub mod pages;
 pub mod personalize;
 mod search;
 pub mod sharing;
+pub mod smalls;
+pub mod locales_smalls;
 pub mod sources;
 pub mod support;
 pub mod tabs;
@@ -2506,7 +2508,10 @@ fn updates(s: &State, u: &Ui) -> Vec<El> {
     if let Some(offer) = offer {
         rows.push(release_notes(u, offer));
     }
-    if let Some(install) = install_row(s, u, offer) {
+    // A copy a package manager owns says so instead of offering the installer (Grimoire).
+    if let Some(note) = smalls::package_manager_row(u) {
+        rows.push(note);
+    } else if let Some(install) = install_row(s, u, offer) {
         rows.push(install);
     }
     rows.push(tabs::channel_row(s, u));
@@ -2577,22 +2582,8 @@ fn install_row(s: &State, u: &Ui, offer: Option<&Release>) -> Option<El> {
             .w_full()
             .gap(6.0)
             .pt(4.0)
-            .child(
-                row()
-                    .w_full()
-                    .h(4.0)
-                    .radius(2.0)
-                    .fill(u.well)
-                    .child(el().w_frac(frac).h_full().radius(2.0).fill(u.muted)),
-            )
-            .child(
-                text(fill(
-                    tr("{} of {}"),
-                    &[&crate::updater::megabytes(done), &crate::updater::megabytes(total)],
-                ))
-                .font(SMALL)
-                .color(u.muted),
-            );
+            .child(smalls::bar(u, frac))
+            .child(text(smalls::progress_line(done, total)).font(SMALL).color(u.muted));
         return Some(setting_row(
             u,
             "settings-update-progress",
@@ -2671,6 +2662,12 @@ fn check_latest(repo: &str, current: &str, preview: bool) -> Result<UpdateCheck,
         crate::updater::TRUSTED_KEYS,
         crate::updater::platform_key(),
     )?;
+    // A package manager owns this copy: report the release, never download it.
+    if let Some(release) = latest.as_mut()
+        && let Some(manager) = crate::package_manager::current()
+    {
+        release.install = Err(smalls::managed_reason(manager));
+    }
     // A development build reads the release but says why it cannot install it.
     if let Some(release) = latest.as_mut()
         && release.install.is_ok()

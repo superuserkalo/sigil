@@ -81,6 +81,8 @@ pub struct Background {
     pub blur: f32,
     pub sidebar: bool,
     pub topbar: bool,
+    /// The image also runs under the status bar (Deadlock Mod Manager's "Include bottom bar").
+    pub statusbar: bool,
 }
 
 pub const BLUR_MAX: f32 = 32.0;
@@ -94,6 +96,7 @@ impl Default for Background {
             blur: 0.0,
             sidebar: false,
             topbar: false,
+            statusbar: false,
         }
     }
 }
@@ -184,16 +187,19 @@ pub enum Surface {
     Tab,
     Modded,
     Vanilla,
+    /// The preview volume control in the status bar (Grimoire's "Art: volume bar").
+    Volume,
 }
 
 impl Surface {
-    pub const ALL: [Surface; 3] = [Surface::Tab, Surface::Modded, Surface::Vanilla];
+    pub const ALL: [Surface; 4] = [Surface::Tab, Surface::Modded, Surface::Vanilla, Surface::Volume];
 
     pub fn id(self) -> &'static str {
         match self {
             Surface::Tab => "tab",
             Surface::Modded => "modded",
             Surface::Vanilla => "vanilla",
+            Surface::Volume => "volume",
         }
     }
 
@@ -202,6 +208,7 @@ impl Surface {
             Surface::Tab => "Active tab",
             Surface::Modded => "Launch modded",
             Surface::Vanilla => "Launch vanilla",
+            Surface::Volume => "Volume bar",
         }
     }
 
@@ -211,6 +218,7 @@ impl Surface {
             Surface::Tab => None,
             Surface::Modded => Some("launch-modded-bg.webp"),
             Surface::Vanilla => Some("launch-vanilla-bg.jpg"),
+            Surface::Volume => Some("preview-volume-bg.jpg"),
         }
     }
 
@@ -220,6 +228,7 @@ impl Surface {
             Surface::Tab => Framing::default(),
             Surface::Modded => Framing { x: 0.5, y: 0.45, zoom: 1.0 },
             Surface::Vanilla => Framing { x: 0.5, y: 0.48, zoom: 1.0 },
+            Surface::Volume => Framing { x: 0.5, y: 0.43, zoom: 1.0 },
         }
     }
 }
@@ -229,6 +238,7 @@ pub struct Art {
     pub tab: ArtSlot,
     pub modded: ArtSlot,
     pub vanilla: ArtSlot,
+    pub volume: ArtSlot,
 }
 
 impl Art {
@@ -237,6 +247,7 @@ impl Art {
             Surface::Tab => &self.tab,
             Surface::Modded => &self.modded,
             Surface::Vanilla => &self.vanilla,
+            Surface::Volume => &self.volume,
         }
     }
 
@@ -245,6 +256,7 @@ impl Art {
             Surface::Tab => &mut self.tab,
             Surface::Modded => &mut self.modded,
             Surface::Vanilla => &mut self.vanilla,
+            Surface::Volume => &mut self.volume,
         }
     }
 }
@@ -484,6 +496,7 @@ impl Personal {
             blur: f(bg, "blur", 0.0, BLUR_MAX, d.background.blur),
             sidebar: b(bg, "sidebar", d.background.sidebar),
             topbar: b(bg, "topbar", d.background.topbar),
+            statusbar: b(bg, "statusbar", d.background.statusbar),
         };
         let gl = map.get("glow");
         let hex_or = |key: &str, default: &str| {
@@ -544,6 +557,7 @@ impl Personal {
             tab: slot("tab"),
             modded: slot("modded"),
             vanilla: slot("vanilla"),
+            volume: slot("volume"),
         };
         let radius = map
             .get("radius")
@@ -591,6 +605,7 @@ impl Personal {
                 "blur": bg.blur,
                 "sidebar": bg.sidebar,
                 "topbar": bg.topbar,
+                "statusbar": bg.statusbar,
             }),
         );
         let g = &self.glow;
@@ -631,6 +646,7 @@ impl Personal {
                 "tab": slot(&self.art.tab),
                 "modded": slot(&self.art.modded),
                 "vanilla": slot(&self.art.vanilla),
+                "volume": slot(&self.art.volume),
             }),
         );
         map.insert("radius".into(), json!(self.radius.id()));
@@ -970,6 +986,7 @@ mod tests {
             blur: 8.0,
             sidebar: true,
             topbar: false,
+            statusbar: true,
         };
         p.glow.on = true;
         p.remember_glow("#112233", "#445566");
@@ -979,6 +996,10 @@ mod tests {
         };
         p.art.tab.source = ArtSource::Default;
         p.art.vanilla.source = ArtSource::Custom("art-vanilla-0011223344556677.png".into());
+        p.art.volume = ArtSlot {
+            source: ArtSource::Default,
+            framing: Framing { x: 0.5, y: 0.43, zoom: 1.0 },
+        };
         p.radius = Radius::Round;
         p.density = Density::Compact;
         p
@@ -1011,6 +1032,8 @@ mod tests {
         assert_eq!(p.background.blur, 0.0);
         assert_eq!(p.glow.from, Glow::default().from);
         assert_eq!(p.art.tab.source, ArtSource::Off);
+        assert!(!p.background.statusbar, "the status bar stays out of the image by default");
+        assert_eq!(p.art.volume.source, ArtSource::Off, "the volume bar has no art by default");
         assert_eq!(p.radius, Radius::Default);
         assert_eq!(p.density, Density::Default);
     }

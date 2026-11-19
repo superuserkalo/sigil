@@ -450,6 +450,18 @@ pub(crate) fn details_info(s: &State, u: &Ui, d: &Details) -> El {
 
     c = c.child(files_section(s, u, d, profile));
     c = c.child(requirements_section(s, u, d));
+    // Custom maps (experimental): a map's name, Launch map and Invite friends (DMM).
+    if let Some(play) = crate::screens::maps::details_section(
+        s,
+        u,
+        d.id,
+        &profile.super_category,
+        &profile.category,
+        &d.profile_url,
+        &profile.text,
+    ) {
+        c = c.child(play);
+    }
 
     if let Some(member) = &profile.submitter {
         c = c.child(artist_card(s, u, member, &d.author));

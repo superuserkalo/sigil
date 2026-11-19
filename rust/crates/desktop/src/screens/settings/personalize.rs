@@ -95,7 +95,7 @@ fn heroes() -> &'static [(String, PathBuf, Option<PathBuf>)] {
 }
 
 fn shipped(surface: Surface) -> Option<&'static str> {
-    static ART: OnceLock<[Option<String>; 3]> = OnceLock::new();
+    static ART: OnceLock<[Option<String>; Surface::ALL.len()]> = OnceLock::new();
     let art = ART.get_or_init(|| {
         Surface::ALL.map(|s| {
             s.default_file()
@@ -210,6 +210,8 @@ pub fn backdrop(s: &State, u: &Ui, _window: (f32, f32)) -> Option<El> {
     if let Some((px, blur)) = image {
         let left = if p.background.sidebar { 0.0 } else { side_w(s) };
         let top = if p.background.topbar { 0.0 } else { TITLEBAR_H };
+        // The status bar keeps the plain window colour unless the image is asked under it.
+        let bottom = if s.prefs.status_bar && !p.background.statusbar { crate::statusbar::BAR_H } else { 0.0 };
         let bleed = p.background.blur * 2.0;
         let picture = el()
             .key("personal-bg-image")
@@ -219,7 +221,7 @@ pub fn backdrop(s: &State, u: &Ui, _window: (f32, f32)) -> Option<El> {
             .opacity(p.background.opacity);
         layer = layer.child(
             el().key("personal-bg")
-                .pin(Some(left), Some(top), Some(0.0), Some(0.0))
+                .pin(Some(left), Some(top), Some(0.0), Some(bottom))
                 .clip_rounded(0.0)
                 .child(picture),
         );
@@ -452,6 +454,44 @@ pub fn launch_art(s: &State, u: &Ui, button: El, vanilla: bool) -> El {
         [(0.0, tint.alpha(0.96)), (0.5, tint.alpha(0.7)), (1.0, tint.alpha(0.2))]
     };
     under(button, px, (SIDE_ITEM_W, h), framing, scrim)
+}
+
+/// The status bar's volume control is this wide while it carries art.
+pub const VOLUME_ART_W: f32 = 76.0;
+
+/// Art behind the status bar's volume control (Grimoire's volume bar art). The art sits in its
+/// own clipped layer beside the control, so the volume popover anchored to it is never cut.
+pub fn volume_art(s: &State, u: &Ui, chip: El) -> El {
+    let slot = &s.prefs.personal.art.volume;
+    let Some(px) = pixels(s, art_path(Surface::Volume, &slot.source)) else {
+        return chip;
+    };
+    let framing = if slot.source == ArtSource::Default {
+        Surface::Volume.default_framing()
+    } else {
+        slot.framing
+    };
+    let boxed = (VOLUME_ART_W, 20.0);
+    let base = u.bg;
+    el().key("statusbar-volume-art")
+        .size(boxed.0, boxed.1)
+        .child(
+            el().absolute(0.0, 0.0)
+                .size(boxed.0, boxed.1)
+                .clip_rounded(crate::ui::r(5.0))
+                .a11y_hidden()
+                .child(framed(px, boxed, framing))
+                .child(
+                    el().absolute(0.0, 0.0)
+                        .size(boxed.0, boxed.1)
+                        .linear_gradient(
+                            std::f32::consts::FRAC_PI_2,
+                            [(0.0, base.alpha(0.88)), (0.55, base.alpha(0.45)), (1.0, base.alpha(0.15))],
+                        )
+                        .a11y_hidden(),
+                ),
+        )
+        .child(chip.w(boxed.0))
 }
 
 // --- worker results ----------------------------------------------------------------
@@ -1377,12 +1417,14 @@ fn coverage_picture(s: &State, u: &Ui) -> El {
         .clip_rounded(crate::ui::r(8.0))
         .fill(u.bg)
         .border(1.0, u.hair_strong);
+    let foot = 8.0;
     if let Some(px) = image {
         let left = if p.sidebar { 0.0 } else { side };
         let top = if p.topbar { 0.0 } else { bar };
+        let bottom = if p.statusbar { 0.0 } else { foot };
         pic = pic.child(
             el().absolute(left, top)
-                .size(w - left, h - top)
+                .size(w - left, h - top - bottom)
                 .clip_rounded(0.0)
                 .child(
                     el().pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0))
@@ -1407,6 +1449,12 @@ fn coverage_picture(s: &State, u: &Ui) -> El {
         el().absolute(side, 0.0)
             .size(w - side, bar)
             .border_sides([0.0, 0.0, 1.0, 0.0], u.hair)
+            .a11y_hidden(),
+    )
+    .child(
+        el().absolute(side, h - foot)
+            .size(w - side, foot)
+            .border_sides([1.0, 0.0, 0.0, 0.0], u.hair)
             .a11y_hidden(),
     )
     .child(
@@ -1519,6 +1567,7 @@ fn background_section(s: &State, u: &Ui) -> El {
             p.topbar,
             |st| edit(st, |p| p.background.topbar = !p.background.topbar),
         ));
+        rows.push(super::smalls::statusbar_row(s, u, |st| edit(st, |p| p.background.statusbar = !p.background.statusbar)));
     }
     section(u, "Background image", rows)
 }
@@ -1751,11 +1800,13 @@ fn surface_preview(s: &State, u: &Ui, surface: Surface) -> El {
             .radius(crate::ui::r(8.0))
             .child(icon(&icons::PLAY, 14.0).color(u.faint).a11y_hidden())
             .child(text(tr("Launch vanilla").to_string()).font(BODY_MED).color(u.prose)),
+        Surface::Volume => super::smalls::volume_preview(s, u),
     };
     let item = match surface {
         Surface::Tab => tab_art(s, u, item, true),
         Surface::Modded => launch_art(s, u, item, false),
         Surface::Vanilla => launch_art(s, u, item, true),
+        Surface::Volume => volume_art(s, u, item),
     };
     col()
         .key("settings-art-preview")
@@ -1863,6 +1914,7 @@ fn art_section(s: &State, u: &Ui) -> El {
             .pb(16.0)
             .border_sides([0.0, 0.0, 1.0, 0.0], u.hair)
             .child(detail(u, "Art behind the active tab and the launch buttons. The label side stays readable.").wrap())
+            .children(super::smalls::art_note(u, surface))
             .child(body),
     ];
     if matches!(slot.source, ArtSource::Hero(_) | ArtSource::Custom(_)) {
@@ -1961,7 +2013,7 @@ mod tests {
 // --- scenes ------------------------------------------------------------------------
 
 /// Headless scenes for Personalize.
-pub const SCENES: [(&str, fn(&mut State)); 8] = [
+pub const SCENES: [(&str, fn(&mut State)); 12] = [
     ("personalize", scene_settings),
     ("personalize-builder", scene_builder),
     ("personalize-theme", scene_theme),
@@ -1970,6 +2022,10 @@ pub const SCENES: [(&str, fn(&mut State)); 8] = [
     ("personalize-art", scene_art),
     ("personalize-all", scene_all),
     ("personalize-all-settings", scene_all_settings),
+    ("personalize-statusbar", scene_statusbar),
+    ("personalize-statusbar-settings", scene_statusbar_settings),
+    ("personalize-volume-art", scene_volume_art),
+    ("personalize-volume-art-settings", scene_volume_art_settings),
 ];
 
 fn scene_settings(s: &mut State) {
@@ -2048,6 +2104,37 @@ fn scene_all(s: &mut State) {
     s.prefs.personal.theme = Some(ThemePick::Preset("cobalt"));
     s.prefs.personal.radius = Radius::Round;
     ensure_images(s);
+}
+
+/// The background image under the status bar too (DMM's "Include bottom bar").
+fn scene_statusbar(s: &mut State) {
+    scene_background(s);
+    s.prefs.personal.background.opacity = 0.6;
+    s.prefs.personal.background.blur = 0.0;
+    s.prefs.personal.background.statusbar = true;
+}
+
+fn scene_statusbar_settings(s: &mut State) {
+    scene_statusbar(s);
+    s.settings.tab = super::Tab::Appearance;
+    super::open(s);
+    on_open(s);
+}
+
+/// Sigil's art behind the status bar's volume control (Grimoire's volume bar art).
+fn scene_volume_art(s: &mut State) {
+    s.load_demo();
+    s.screen = crate::model::Screen::Installed;
+    s.prefs.personal.art.volume.source = ArtSource::Default;
+    ensure_images(s);
+}
+
+fn scene_volume_art_settings(s: &mut State) {
+    scene_volume_art(s);
+    s.settings.tab = super::Tab::Appearance;
+    super::open(s);
+    s.settings.personalize.surface = Surface::Volume;
+    on_open(s);
 }
 
 /// Everything on, with Appearance open on the hero art picker.

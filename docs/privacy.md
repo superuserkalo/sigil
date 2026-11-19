@@ -210,6 +210,12 @@ server advertises (`dw_fastdl`) after you confirm, with the host shown in the di
 refuses loopback, private, link-local and reserved addresses, limits redirects and size, and checks
 any VPK before installing.
 
+Host a server (Windows) downloads Valve's SteamCMD from `steamcdn-a.akamaihd.net` when you press
+Install SteamCMD: one anonymous GET, checked against a pinned SHA-256.
+
+Host a server downloads the pinned Deadworks release from `github.com/Deadworks-net/deadworks`
+when you press Install Deadworks: one anonymous GET, checked against a pinned SHA-256.
+
 ## Divine Skins
 
 `api.divineskins.gg`, `lol-mods.divine-cdn.com`, `lol-assets.divine-cdn.com` and

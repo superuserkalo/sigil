@@ -135,6 +135,8 @@ pub struct State {
     pub bar: crate::statusbar::Bar,
     /// Map mod answers, the launch question and the random lists (`screens::launch_extras`).
     pub launch_extras: screens::launch_extras::LaunchExtras,
+    /// Custom maps (`screens::maps`).
+    pub maps: screens::maps::Page,
 }
 
 impl Default for State {
@@ -232,6 +234,7 @@ impl Default for State {
             shell: crate::shell::Shell::default(),
             bar: crate::statusbar::Bar::default(),
             launch_extras: Default::default(),
+            maps: Default::default(),
         }
     }
 }
@@ -367,6 +370,7 @@ impl State {
                     screens::servers::start_list(self);
                 }
             }
+            Screen::Maps => screens::maps::on_open(self),
             Screen::Performance => {
                 if !self.performance.loaded && !self.performance.read_job.is_running() {
                     screens::performance::start_read(self);
@@ -1155,6 +1159,7 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
         Screen::Release => screens::release::view(s, &u),
         Screen::Toolchain => screens::toolchain::view(s, &u),
         Screen::Character => screens::character::view(s, &u),
+        Screen::Maps => screens::maps::view(s, &u),
         // Settings opens as a sheet; a stale Settings screen shows the library under it.
         Screen::Settings => screens::installed::view(s, &u),
     };
@@ -1317,6 +1322,10 @@ fn sidebar(s: &State, u: &Ui, insets: rune::ChromeInsets) -> El {
             continue;
         }
         nav = nav.child(nav_item(s, u, screen));
+        // Settings > Experimental > Custom maps adds Maps under Browse (DMM's Maps page).
+        if screen == Screen::Browse && s.prefs.page_on(Screen::Maps) {
+            nav = nav.child(nav_item(s, u, Screen::Maps));
+        }
     }
     if s.prefs.flag("agent") {
         nav = nav.child(el().h(12.0)).child(nav_item(s, u, Screen::Agent));
@@ -1925,6 +1934,7 @@ pub fn poll(s: &mut State, t: f64, _tx: &mut Tx) -> bool {
     changed |= screens::downloads::poll(s);
     changed |= crate::statusbar::poll(s);
     changed |= screens::launch_extras::poll(s);
+    changed |= screens::maps::poll(s);
     changed |= screens::locker::cursors::poll(s);
     changed |= screens::locker::assets::poll(s);
     while let Some(event) = s.agent.try_event() {
@@ -2764,6 +2774,15 @@ pub fn scenes() -> &'static [(&'static str, fn(&mut State))] {
         ("servers-maps", scene_servers_maps),
         ("servers-map-detail", scene_servers_map_detail),
         ("servers-map-unresolved", scene_servers_map_unresolved),
+        ("maps", screens::maps::scene_list),
+        ("maps-installed", screens::maps::scene_installed),
+        ("maps-watching", screens::maps::scene_watching),
+        ("maps-invite", screens::maps::scene_invite),
+        ("maps-not-installed", screens::maps::scene_not_installed),
+        ("maps-unnamed", screens::maps::scene_unnamed),
+        ("update-banner-progress", screens::settings::smalls::scene_update_banner),
+        ("update-settings-progress", screens::settings::smalls::scene_update_settings),
+        ("update-settings-managed", screens::settings::smalls::scene_update_managed),
         ("profiles-snapshots", scene_profiles_snapshots),
         ("profiles-snapshot-restore", scene_profiles_snapshot_restore),
         ("profiles-titlebar", scene_profiles_titlebar),

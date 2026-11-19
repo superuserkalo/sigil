@@ -172,6 +172,12 @@ pub fn update_banner(s: &State, u: &Ui) -> Option<El> {
     } else {
         "A newer version is out. Read what changed and get it from About."
     });
+    // While Sigil downloads the update, the banner shows how far it is.
+    let progress = if ready { None } else { crate::screens::settings::smalls::banner_body(s, u) };
+    let (title, body) = match progress {
+        Some((title, bar)) => (title, bar),
+        None => (title, text(body).font(crate::ui::SMALL).color(u.muted).truncate()),
+    };
     Some(
         row()
             .key("update-banner")
@@ -191,7 +197,7 @@ pub fn update_banner(s: &State, u: &Ui) -> Option<El> {
                     .min_w(0.0)
                     .gap(2.0)
                     .child(text(title).font(BODY_MED).color(u.ink).truncate())
-                    .child(text(body).font(crate::ui::SMALL).color(u.muted).truncate()),
+                    .child(body),
             )
             .child(
                 u.action(tr(if ready { "Install" } else { "View update" }), ActionKind::Secondary)

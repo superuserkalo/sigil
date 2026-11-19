@@ -1672,6 +1672,16 @@ pub fn overlay(s: &State, u: &Ui) -> Option<El> {
                 }
             }
             items.push(menu_rule(u));
+            // Custom maps (experimental): the map's name, Launch map and Invite friends.
+            if crate::screens::maps::on(s) && crate::screens::launch_extras::is_map(s, addon) {
+                items.push(
+                    menu_item(u, "menu-map-play", Some(&icons::PLAY), crate::screens::maps::HOW_TO_PLAY, "", true)
+                        .on_press(move |st: &mut State| {
+                            st.installed.menu = None;
+                            crate::screens::maps::open_slot(st, slot);
+                        }),
+                );
+            }
             if addon.enabled
                 && st_on(s) > 1
             {

@@ -239,7 +239,7 @@ pub struct Flag {
 
 /// Every experimental flag Sigil reads, shown in Settings > Experimental. A flag read by id
 /// that is not listed here or in `PAGES` is off.
-pub const FLAGS: [Flag; 2] = [
+pub const FLAGS: [Flag; 3] = [
     Flag {
         id: "agent",
         title: "Agent",
@@ -250,6 +250,12 @@ pub const FLAGS: [Flag; 2] = [
         id: "docked_details",
         title: "Docked mod details",
         line: "Opens a mod from Browse in a panel beside the grid instead of over it.",
+        default: false,
+    },
+    Flag {
+        id: "custom_maps",
+        title: "Custom maps",
+        line: "Adds a Maps page with GameBanana's maps, and How to play on map mods: launch a map and invite friends.",
         default: false,
     },
 ];
@@ -564,6 +570,10 @@ impl Prefs {
     /// Is this page shown? Pages outside `PAGES` always are, and "Mods only" hides every
     /// page that is in it.
     pub fn page_on(&self, screen: Screen) -> bool {
+        // Custom maps is an experimental flag, not a page switch: off until turned on.
+        if screen == Screen::Maps {
+            return self.flag("custom_maps") && !self.flag(MODS_ONLY);
+        }
         match PAGES.iter().find(|(page, _)| *page == screen) {
             Some((_, flag)) => self.flag(flag.id) && !self.flag(MODS_ONLY),
             None => true,

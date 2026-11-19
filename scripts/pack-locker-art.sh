@@ -43,4 +43,6 @@ cp "$public/locker/global-bg.webp" "$out/global-bg.webp"
 # Personalize: the default art behind the sidebar launch buttons.
 cp "$public/locker/launch-modded-bg.webp" "$out/launch-modded-bg.webp"
 cp "$public/locker/launch-vanilla-bg.jpg" "$out/launch-vanilla-bg.jpg"
+# Personalize: the default art behind the status bar volume control (Grimoire's volume bar).
+cp "$public/sidebar/preview-volume-bg.jpg" "$out/preview-volume-bg.jpg"
 du -sh "$out"

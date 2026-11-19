@@ -32,6 +32,15 @@ use crate::ui::{ActionKind, BODY, BODY_MED, H1, MICRO, MONO, PAGE_TOP, PAGE_X, S
 #[path = "servers_de.rs"]
 mod de;
 
+/// Host a server on this PC (ADR 0015), the Host tab.
+#[path = "servers_host/mod.rs"]
+pub mod host;
+
+/// The Host tab's words, from Sigil's tables (`settings/locales_host.rs`).
+fn host_tr(text: &str) -> &str {
+    crate::screens::settings::i18n::tr(text)
+}
+
 /// The UI text in the player's language: this page's German table first, then Sigil's.
 pub(crate) fn tr(text: &str) -> &str {
     use crate::screens::settings::i18n::{self, Lang};
@@ -65,6 +74,7 @@ const PANEL_W: f32 = 360.0;
 pub enum Tab {
     Servers,
     Maps,
+    Host,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -113,6 +123,7 @@ pub struct View {
     /// The check the user confirmed, kept for an "Install anyway" retry.
     pub last_check: Option<Box<JoinCheck>>,
     pub maps: crate::screens::servers_maps::MapsState,
+    pub host: host::HostState,
     /// The clock time the next automatic refresh is due.
     pub next_refresh: Option<f64>,
     pub started: bool,
@@ -141,6 +152,7 @@ impl Default for View {
             progress: Arc::new(Mutex::new(JoinProgress::default())),
             last_check: None,
             maps: crate::screens::servers_maps::MapsState::default(),
+            host: host::HostState::default(),
             next_refresh: None,
             started: false,
         }
@@ -371,6 +383,7 @@ pub fn poll(st: &mut State, now: f64, tx: &mut Tx) -> bool {
         changed = true;
     }
     changed |= crate::screens::servers_maps::poll(st);
+    changed |= host::poll(st, now, tx);
     schedule_refresh(st, now, tx);
     changed
 }
@@ -512,33 +525,44 @@ pub fn view(s: &State, u: &Ui) -> El {
                     .on_press(|st: &mut State| open_direct(st)),
             )
             .child(
-                u.icon_action(&icons::EXTERNAL_LINK, tr("Host a server"), ActionKind::Ghost)
+                u.icon_action(&SERVER_ICON, tr("Host a server"), ActionKind::Ghost)
                     .key("servers-host")
                     .cursor(rune::Cursor::Pointer)
-                    .on_press_tx(|st: &mut State, tx: &mut Tx| {
-                        if let Err(error) = tx.open_url(dw::DEADWORKS_HOST_GUIDE_URL) {
-                            st.status = format!("The page could not be opened: {error}");
-                        }
+                    .on_press(|st: &mut State| {
+                        st.servers.tab = Tab::Host;
+                        st.servers.menu = None;
                     }),
             );
     }
-    actions = actions.child(
-        u.icon_action(&icons::REFRESH_CW, tr("Refresh"), ActionKind::Secondary)
-            .key("servers-refresh")
-            .opacity(if loading { 0.5 } else { 1.0 })
-            .cursor(rune::Cursor::Pointer)
-            .on_press(|st: &mut State| {
-                if st.servers.tab == Tab::Maps {
-                    st.servers.maps.entries = None;
-                    crate::screens::servers_maps::start_load(st);
-                    st.servers.maps.error = None;
-                } else {
-                    refresh(st);
-                }
-            }),
-    );
+    if s.servers.tab == Tab::Host {
+        if s.servers.host.windows {
+            actions = actions.child(
+                u.icon_action(&icons::REFRESH_CW, host_tr("Check again"), ActionKind::Secondary)
+                    .key("servers-refresh")
+                    .cursor(rune::Cursor::Pointer)
+                    .on_press(host::recheck),
+            );
+        }
+    } else {
+        actions = actions.child(
+            u.icon_action(&icons::REFRESH_CW, tr("Refresh"), ActionKind::Secondary)
+                .key("servers-refresh")
+                .opacity(if loading { 0.5 } else { 1.0 })
+                .cursor(rune::Cursor::Pointer)
+                .on_press(|st: &mut State| {
+                    if st.servers.tab == Tab::Maps {
+                        st.servers.maps.entries = None;
+                        crate::screens::servers_maps::start_load(st);
+                        st.servers.maps.error = None;
+                    } else {
+                        refresh(st);
+                    }
+                }),
+        );
+    }
 
     let detail = match &s.servers.list {
+        _ if s.servers.tab == Tab::Host => String::new(),
         Some(Ok(list)) => {
             let playing: u32 = list.servers.iter().map(|sv| sv.players).sum();
             format!(
@@ -560,8 +584,12 @@ pub fn view(s: &State, u: &Ui) -> El {
         .child(u.page_head("", tr("Servers"), &detail, Some(actions)))
         .child(tabs(s, u));
 
-    if s.servers.tab == Tab::Maps {
-        page = page.child(crate::screens::servers_maps::view(s, u));
+    if s.servers.tab == Tab::Maps || s.servers.tab == Tab::Host {
+        page = page.child(if s.servers.tab == Tab::Host {
+            host::view(s, u)
+        } else {
+            crate::screens::servers_maps::view(s, u)
+        });
         return col()
             .key("servers-scroll")
             .w_full()
@@ -674,7 +702,8 @@ fn clear_filters(st: &mut State) {
 fn tabs(s: &State, u: &Ui) -> El {
     let servers = tab_button(u, "servers-tab-servers", tr("Servers"), s.servers.tab == Tab::Servers);
     let maps = tab_button(u, "servers-tab-maps", tr("Maps"), s.servers.tab == Tab::Maps);
-    row()
+    let hosting = tab_button(u, "servers-tab-host", host_tr("Host"), s.servers.tab == Tab::Host);
+    let bar = row()
         .key("servers-tabs")
         .w_full()
         .gap(4.0)
@@ -682,7 +711,12 @@ fn tabs(s: &State, u: &Ui) -> El {
         .border_sides([0.0, 0.0, 1.0, 0.0], u.hair)
         .child(servers.on_press(|st: &mut State| st.servers.tab = Tab::Servers))
         .child(maps.on_press(|st: &mut State| st.servers.tab = Tab::Maps))
-        .child(spacer())
+        .child(hosting.on_press(|st: &mut State| st.servers.tab = Tab::Host))
+        .child(spacer());
+    if s.servers.tab == Tab::Host {
+        return bar.child(host::tab_status(s, u));
+    }
+    bar
         .child(scope_button(
             u,
             "servers-scope-all",
@@ -1515,6 +1549,9 @@ fn start_direct(st: &mut State) {
 }
 
 pub fn dialog(s: &State, u: &Ui) -> Option<El> {
+    if s.servers.dialog.is_none() && s.servers.tab == Tab::Host && s.screen == Screen::Servers {
+        return host::dialog(s, u);
+    }
     match s.servers.dialog.as_ref()? {
         Dialog::Direct => Some(direct_dialog(s, u)),
         Dialog::Join { server, stage } => Some(join_dialog(s, u, server, stage)),
@@ -1832,6 +1869,9 @@ fn password_field(s: &State, u: &Ui) -> El {
 
 /// The open filter menu, mounted at the root so it draws over the page and escapes its scroll.
 pub fn overlay(s: &State, u: &Ui) -> Option<El> {
+    if s.servers.tab == Tab::Host {
+        return host::overlay(s, u);
+    }
     let menu = s.servers.menu?;
     if s.screen != Screen::Servers {
         return None;
