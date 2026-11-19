@@ -2615,7 +2615,11 @@ pub fn plan_install(request: &InstallRequest, options: &PlanOptions) -> Result<I
 
     let conflicts = scan_conflicts(&addons, slot, &candidate.payload, &mut warnings)?;
     let gameinfo_status = read_game_info_status(&gameinfo)?;
-    let gameinfo_repair = !(gameinfo_status.present && gameinfo_status.addons_search_path);
+    // Also when a required line (Mod and Write citadel) is missing: see
+    // `deploy::ensure_launch_search_paths`.
+    let gameinfo_repair = !(gameinfo_status.present
+        && gameinfo_status.addons_search_path
+        && gameinfo_status.missing_paths.is_empty());
 
     if !gameinfo_status.present {
         warnings.push(format!(

@@ -11,6 +11,7 @@ pub mod index;
 pub mod installed;
 pub mod launch;
 pub mod launch_extras;
+pub mod launch_gate;
 pub mod launch_progress;
 pub mod locker;
 pub mod patches;

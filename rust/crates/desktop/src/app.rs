@@ -422,6 +422,11 @@ impl State {
         }
         // Mods past slot 99 load through gameinfo.gi's extra folder block, which a game update
         // or a vanilla launch takes out: mount the folders that hold mods before Steam starts.
+        // Last line of defence after the launch gate: never start the game without the Mod and
+        // Write lines (the build 10973 crash). Adds only those lines, with a backup.
+        if let Some(game_root) = self.game_root.clone() {
+            let _ = deadlock_core::deploy::ensure_launch_search_paths(&game_root);
+        }
         if let Some(game_root) = self.game_root.clone()
             && let Err(error) = deadlock_core::addons::sync_overflow_mount(&deadlock_core::deploy::addons_dir(&game_root))
         {
@@ -1240,6 +1245,9 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
     }
     if let Some(card) = screens::launch_progress::overlay(s, &u) {
         root = root.child(u.modal_layer("launch-progress-modal", card));
+    }
+    if let Some(card) = screens::launch_gate::dialog(s, &u) {
+        root = root.child(u.modal_layer("launch-gate-modal", card));
     }
     if let Some(sheet) = screens::settings::modal(s, &u, window) {
         root = root.child(sheet);
@@ -2603,6 +2611,7 @@ pub fn scenes() -> &'static [(&'static str, fn(&mut State))] {
         ("launch-running", screens::launch::scene_running),
         ("launch-crash", screens::launch::scene_crash),
         ("launch-checklist", screens::launch::scene_checklist),
+        ("launch-gate", screens::launch_gate::scene),
         ("launch-stop", screens::launch::scene_stop),
         ("launch-vanilla", screens::launch::scene_vanilla),
         ("launch-downloads", screens::launch::scene_downloads),

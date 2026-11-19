@@ -266,6 +266,17 @@ pub const DE: &[(&str, &str)] = &[
     ("Sigil goes online only for the features below. Usage events, crash reports and lookups go to Sigil's own server only when you turn them on.", "Sigil geht nur für die Funktionen unten online. Nutzungsereignisse, Absturzberichte und Nachschlagen gehen nur an Sigils eigenen Server, wenn du sie einschaltest."),
     ("Look it up", "Nachschlagen"),
     ("Mods past slot 99 may not load", "Mods nach Slot 99 laden eventuell nicht"),
+    ("Deadlock will not start like this", "Deadlock startet so nicht"),
+    ("gameinfo.gi mounts your mods but is missing the Mod and Write lines the game now needs, so Deadlock would close at start. Sigil can add them (the old file is kept as a backup).", "gameinfo.gi bindet deine Mods ein, aber es fehlen die Mod- und Write-Zeilen, die das Spiel jetzt braucht, daher würde Deadlock beim Start schließen. Sigil kann sie ergänzen (die alte Datei bleibt als Sicherung erhalten)."),
+    ("Your mods will not load", "Deine Mods werden nicht geladen"),
+    ("gameinfo.gi lost the addons line, usually after a game update or a file check in Steam. Sigil can put it back (the old file is kept as a backup).", "gameinfo.gi hat die Addons-Zeile verloren, meist nach einem Spielupdate oder einer Dateiprüfung in Steam. Sigil kann sie wiederherstellen (die alte Datei bleibt als Sicherung erhalten)."),
+    ("gameinfo.gi is missing", "gameinfo.gi fehlt"),
+    ("Deadlock needs this file to start. Let Steam restore it with Verify integrity of game files, then launch again.", "Deadlock braucht diese Datei zum Starten. Lass Steam sie mit Spieldateien auf Fehler überprüfen wiederherstellen und starte dann erneut."),
+    ("Verify in Steam", "In Steam prüfen"),
+    ("Launch without mods", "Ohne Mods starten"),
+    ("Fix and launch", "Reparieren und starten"),
+    ("gameinfo.gi could not be fixed", "gameinfo.gi konnte nicht repariert werden"),
+    ("Verify the game files in Steam, then try again.", "Prüfe die Spieldateien in Steam und versuche es dann erneut."),
 ];
 
 /// Literals in the routed files that are not UI text: icon path data and demo fixtures.
