@@ -21,6 +21,7 @@ pub mod fonts;
 pub mod forge_bridge;
 pub mod gamebanana;
 pub mod game_catalog;
+pub mod game_assets;
 pub mod game_index;
 pub mod game_apply;
 pub mod game_plans;

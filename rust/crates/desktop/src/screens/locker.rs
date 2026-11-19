@@ -21,6 +21,11 @@ use crate::ui::{ActionKind, BODY, BODY_MED, H1, H2, MONO, SMALL, Ui};
 
 mod cards;
 pub mod art;
+// Parity wave 4, UI C: the game's own art and sounds (`assets.rs` holds the shared state).
+pub mod assets;
+pub mod card_art;
+mod catalog;
+pub mod game_sounds;
 pub mod cursors;
 pub mod parts;
 pub mod sync;
@@ -138,6 +143,10 @@ pub enum HeroSection {
     /// Weapon skins, voice lines and weapon sounds (`parts.rs`).
     Parts,
     Recolor,
+    /// The game's own textures (`catalog.rs`).
+    GameArt,
+    /// The game's own sounds and swaps (`game_sounds.rs`).
+    GameSounds,
 }
 
 #[derive(Clone, PartialEq)]
@@ -222,6 +231,8 @@ pub struct View {
     pub addons_sig: Option<sync::Sig>,
     /// Mod pictures already asked for (`art.rs`).
     pub art_asked: std::collections::HashSet<String>,
+    /// The game's own art and sounds (`assets.rs`).
+    pub assets: assets::Assets,
 }
 
 impl Default for View {
@@ -262,6 +273,7 @@ impl Default for View {
             cursors: cursors::Cursors::default(),
             addons_sig: None,
             art_asked: Default::default(),
+            assets: Default::default(),
         }
     }
 }
@@ -1310,7 +1322,23 @@ fn hero_page(s: &State, u: &Ui, v: &View, hero: &HeroCard) -> El {
                 hero.recolor_paths.is_empty(),
             )
             .on_press(|st: &mut State| st.locker.hero_section = HeroSection::Recolor),
-        );
+        )
+        .child({
+            let n = v.assets.textures.ready().map_or(0, Vec::len);
+            rail_row(u, "locker-section-game-art".into(), crate::screens::settings::i18n::tr("Game art"), n, section == HeroSection::GameArt, false)
+                .on_press(|st: &mut State| {
+                    st.locker.hero_section = HeroSection::GameArt;
+                    assets::ensure_loaded(st);
+                })
+        })
+        .child({
+            let n = v.assets.sounds.ready().map_or(0, Vec::len);
+            rail_row(u, "locker-section-game-sounds".into(), crate::screens::settings::i18n::tr("Game sounds"), n, section == HeroSection::GameSounds, false)
+                .on_press(|st: &mut State| {
+                    st.locker.hero_section = HeroSection::GameSounds;
+                    assets::ensure_loaded(st);
+                })
+        });
 
     let pinned_here = v
         .pinned
@@ -1359,6 +1387,18 @@ fn hero_page(s: &State, u: &Ui, v: &View, hero: &HeroCard) -> El {
             .cursor(rune::Cursor::Pointer)
             .on_press(move |st: &mut State| cards::open_card_dialog(st, &card_hero)),
         )
+        .child({
+            let (code, display) = (hero.codename.clone(), hero.display_name.clone());
+            rail_action(
+                u,
+                format!("locker-hero-ingame-{}", hero.codename),
+                &icons::SPARKLES,
+                crate::screens::settings::i18n::tr("In-game card"),
+                false,
+            )
+            .cursor(rune::Cursor::Pointer)
+            .on_press(move |st: &mut State| card_art::open(st, &code, &display))
+        })
         .child(
             row()
                 .key(format!("locker-hero-shuffle-{}", hero.codename))
@@ -1465,6 +1505,8 @@ fn hero_page(s: &State, u: &Ui, v: &View, hero: &HeroCard) -> El {
                 None,
             ))
             .child(parts::section(s, u, v, hero)),
+        HeroSection::GameArt => catalog::section(s, u, v, hero),
+        HeroSection::GameSounds => game_sounds::section(s, u, v, hero),
         HeroSection::Recolor => {
             let recolor_hero = hero.clone();
             let can = !hero.recolor_paths.is_empty();
@@ -1905,6 +1947,9 @@ fn submit_name(st: &mut State) {
 
 /// Mounted at the root so dialogs overlay the shell.
 pub fn dialog(s: &State, u: &Ui) -> Option<El> {
+    if let Some(dialog) = card_art::dialog(s, u).or_else(|| catalog::dialog(s, u)) {
+        return Some(dialog);
+    }
     if let Some(panel) = s.locker.panel.as_ref() {
         return Some(recolor_dialog(u, panel));
     }

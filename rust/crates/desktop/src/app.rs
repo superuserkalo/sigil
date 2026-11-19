@@ -1923,6 +1923,7 @@ pub fn poll(s: &mut State, t: f64, _tx: &mut Tx) -> bool {
     changed |= crate::statusbar::poll(s);
     changed |= screens::launch_extras::poll(s);
     changed |= screens::locker::cursors::poll(s);
+    changed |= screens::locker::assets::poll(s);
     while let Some(event) = s.agent.try_event() {
         s.apply_agent_event(event);
         changed = true;

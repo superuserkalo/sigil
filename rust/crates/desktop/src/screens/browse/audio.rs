@@ -14,6 +14,8 @@ const MAX_SAMPLE_BYTES: u64 = 12 * 1024 * 1024;
 
 pub(crate) enum Command {
     Play { id: u64, url: String, volume: f32 },
+    /// A sample already in memory (a game clip the Locker read from the game's files).
+    PlayBytes { id: u64, bytes: Vec<u8>, volume: f32 },
     Stop,
     Volume(f32),
 }
@@ -91,6 +93,26 @@ impl Player {
         }
     }
 
+    /// Play a sample already in memory, or stop it when it is the one playing. The Locker's
+    /// game sound browser reads a clip on its own worker and hands the bytes here, so every
+    /// preview shares this one player and the status bar's volume.
+    pub fn toggle_bytes(&mut self, id: u64, bytes: Vec<u8>) {
+        if self.playing == Some(id) {
+            self.stop();
+            return;
+        }
+        if rune::is_headless() {
+            return;
+        }
+        self.error = None;
+        self.loading = Some(id);
+        self.playing = None;
+        let volume = self.volume;
+        if let Some(tx) = self.worker() {
+            let _ = tx.send(Command::PlayBytes { id, bytes, volume });
+        }
+    }
+
     pub fn stop(&mut self) {
         self.playing = None;
         self.loading = None;
@@ -150,14 +172,24 @@ pub(crate) fn run(commands: Receiver<Command>, updates: Sender<Update>) {
 
     while let Ok(command) = commands.recv() {
         match command {
-            Command::Play { id, url, volume: wanted } => {
-                volume = wanted;
+            command @ (Command::Play { .. } | Command::PlayBytes { .. }) => {
+                let (id, source) = match command {
+                    Command::Play { id, url, volume: wanted } => {
+                        volume = wanted;
+                        (id, Err(url))
+                    }
+                    Command::PlayBytes { id, bytes, volume: wanted } => {
+                        volume = wanted;
+                        (id, Ok(bytes))
+                    }
+                    _ => continue,
+                };
                 let _ = updates.send(Update::Loading(id));
                 if let Err(message) = ensure_device(&mut output, &mut player, volume) {
                     let _ = updates.send(Update::Failed(message));
                     continue;
                 }
-                let bytes = match fetch_sample(&url) {
+                let bytes = match source.or_else(|url| fetch_sample(&url)) {
                     Ok(bytes) => bytes,
                     Err(message) => {
                         let _ = updates.send(Update::Failed(message));
