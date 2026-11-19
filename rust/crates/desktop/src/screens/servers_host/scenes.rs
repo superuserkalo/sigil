@@ -464,7 +464,7 @@ fn items(plans: [Plan; 3]) -> Vec<Item> {
         .items
         .into_iter()
         .zip(plans)
-        .map(|(item, plan)| Item { item, name: name(item.mod_id).to_string(), plan })
+        .map(|(item, plan)| Item { item, name: name(item.mod_id).to_string(), plan, file_name: None })
         .collect()
 }
 

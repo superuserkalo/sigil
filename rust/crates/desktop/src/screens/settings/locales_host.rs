@@ -397,6 +397,11 @@ pub const DE: &[(&str, &str)] = &[
     ("Your router has to pass both ports on to this PC. Sigil does not look up your public IP; UPnP above can open the ports for you.", "Dein Router muss beide Ports an diesen PC weitergeben. Sigil sucht deine öffentliche IP nicht heraus; UPnP oben kann die Ports für dich öffnen."),
     ("{}: open", "{}: offen"),
     ("{}: {}", "{}: {}"),
+    ("This file is not part of that GameBanana mod, so the invite may not be genuine. Nothing was installed.", "Diese Datei gehört nicht zu dieser GameBanana-Mod, die Einladung ist womöglich nicht echt. Es wurde nichts installiert."),
+    ("GameBanana could not confirm this file: {}", "GameBanana konnte diese Datei nicht bestätigen: {}"),
+    ("Mod {}, file {} ({})", "Mod {}, Datei {} ({})"),
+    ("Checking the files with GameBanana...", "Die Dateien werden bei GameBanana geprüft..."),
+    ("This invite cannot be used: a file did not check out. Ask your friend for a new invite.", "Diese Einladung kann nicht verwendet werden: Eine Datei hat die Prüfung nicht bestanden. Bitte deinen Freund um eine neue Einladung."),
 ];
 
 /// Literals in the routed files that read as words but are not UI text.
