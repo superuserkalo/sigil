@@ -10,6 +10,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use deadlock_core::host::{self as core, ServerHandle, SteamCmdEvent};
+use deadlock_core::servers::invite::{Invite, InviteTarget};
 
 use super::{Content, Firewall, Plugin, Setup};
 
@@ -346,4 +347,39 @@ pub fn install_content(server_dir: &Path, vpk: &Path) -> Result<(), String> {
     core::install_server_content(server_dir, &[vpk.to_path_buf()], true)
         .map(|_| ())
         .map_err(|e| e.to_string())
+}
+
+/// The relay join code once the console printed it, and whether Valve's relays are ready.
+pub fn relay(server: &Running) -> (Option<String>, bool) {
+    let state = server.relay_state();
+    (server.join_code(), state.relay_ready || state.logged_on)
+}
+
+/// What asking the router for ports did, as one line per port, and the router's public
+/// address when it said.
+pub fn upnp(server: &Running) -> Option<super::Upnp> {
+    use core::UpnpOutcome;
+    Some(match server.upnp_outcome()? {
+        UpnpOutcome::Failed(error) => super::Upnp::Failed(error.clone()),
+        UpnpOutcome::Mapped { ports, external_ip } => super::Upnp::Mapped {
+            ports: ports
+                .iter()
+                .map(|(protocol, port, error)| (format!("{} {port}", protocol.as_str()), error.clone()))
+                .collect(),
+            external_ip: external_ip.map(|ip| ip.to_string()),
+        },
+    })
+}
+
+/// Where each piece of Sigil's server content came from on GameBanana, from the install
+/// journal and the library's slot to mod table. Reads only.
+pub fn origins(server_dir: &Path, library: &[(u16, u64)]) -> Vec<core::ContentOrigin> {
+    let journal = deadlock_core::install::read_journal(&crate::data::workspace_dir()).unwrap_or_default();
+    let by_slot = |slot: u16| library.iter().find(|(s, _)| *s == slot).map(|(_, id)| *id);
+    core::content_origins(server_dir, &journal, &by_slot)
+}
+
+/// The invite text, and the content friends cannot get from GameBanana.
+pub fn invite(target: InviteTarget, password: bool, origins: &[core::ContentOrigin]) -> Option<(Invite, Vec<String>)> {
+    core::host_invite(target, password, origins).ok()
 }

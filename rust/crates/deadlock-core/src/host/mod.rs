@@ -12,6 +12,10 @@
 //!   Name and join password go through a generated cfg, never the command line.
 //! - Reach: a Windows Firewall rule for TCP and UDP on the port (and TCP on the map download
 //!   port), LAN join links.
+//! - Network (ADR 0015, second amendment): Steam relay by default (the server's own
+//!   gameinfo.gi gets Deadworks' two P2P edits, `-nomaster`, the join code read from the
+//!   console), or direct (address and port). An opt-in UPnP switch asks the home router for the
+//!   ports while the server runs ([`upnp`]).
 //! - Map downloads (ADR 0015 amendment): with custom content, a read-only HTTP file server over
 //!   `<server>/sigil-fastdl/` runs beside the server on the game port plus one and stops with it
 //!   ([`FastdlServer`]).
@@ -26,10 +30,12 @@
 mod config;
 mod content;
 mod fastdl_server;
+mod network;
 mod plugins;
 mod reach;
 mod server;
 mod setup;
+pub mod upnp;
 
 #[cfg(test)]
 mod tests;
@@ -39,20 +45,25 @@ pub use config::{
     save_settings, settings_path,
 };
 pub use content::{
-    CONTENT_BACKUPS, CONTENT_LEDGER, FASTDL_DIR, ServerContent, ServerContentKind, build_fastdl,
+    CONTENT_BACKUPS, CONTENT_LEDGER, ContentOrigin, FASTDL_DIR, ServerContent, content_origins, host_invite, ServerContentKind, build_fastdl,
     classify_content, deadworks_config_path, default_fastdl_dir, fastdl_url, install_server_content,
     list_server_content, placeholder_fastdl_url, remove_server_content, server_addons_dir,
     server_map_names, server_maps_dir, set_fastdl_url, strip_jsonc, vmap_names,
 };
+pub use upnp::{PortProtocol, PortRequest, UpnpLease};
 pub use fastdl_server::{FastdlServer, Limits as FastdlLimits, served_name, target_path};
+pub use network::{
+    ConsoleEvent, NETWORK_MARKER, Network, RelayState, apply_server_gameinfo, gameinfo_has_relay,
+    parse_console_line, prepare_network, render_server_gameinfo, server_gameinfo_path, valid_steam_code,
+};
 pub use plugins::{Plugin, list_plugins, plugins_dir, plugins_off_dir, set_plugin};
 pub use reach::{
     FirewallStatus, add_firewall_rule, console_connect, download_rule_name, firewall_script, firewall_rule_name,
     firewall_rule_status, join_url, lan_ipv4s, parse_firewall_show, remove_firewall_rule,
 };
 pub use server::{
-    LineBuffer, MAX_LINES, ServerHandle, StopOutcome, deadworks_exe, server_command, start_server,
-    unsupported_build,
+    LineBuffer, MAX_LINES, ServerHandle, StopOutcome, UpnpOutcome, deadworks_exe, router_ports,
+    server_command, start_server, unsupported_build,
 };
 pub use setup::{
     DEADWORKS_MARKER, DEADWORKS_SHA256, DEADWORKS_SIZE, DEADWORKS_URL, DEADWORKS_VERSION,

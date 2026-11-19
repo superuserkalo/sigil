@@ -14,6 +14,8 @@
 //! - Invite friends follows `console.log` for `ServerSteamID=[A:...]` (DMM's watcher) and shows
 //!   `connect <code>`, the line friends paste in their console (F7).
 //! - Host this map hands the map to Servers > Host (`host::open_with_map`).
+//! - "Play with friends, no setup" sits on top (`host::listen::card`): pick a map, Launch (this
+//!   file's `launch`, with `-condebug` added first), then a Sigil invite and the connect line.
 //!
 //! Off by default: Settings > Experimental > Custom maps (`FLAG`) adds the page and the menus.
 
@@ -229,6 +231,8 @@ pub fn poll(st: &mut State) -> bool {
         }
         changed = true;
     }
+    // "Play with friends, no setup": the Sigil invite from the code (servers_host/listen.rs).
+    changed |= crate::screens::host::listen::refresh(st);
     changed
 }
 
@@ -796,6 +800,7 @@ pub fn view(s: &State, u: &Ui) -> El {
                 .pb(32.0)
                 .gap(16.0)
                 .child(head)
+                .child(crate::screens::host::listen::card(s, u, "maps"))
                 .child(body),
         )
 }

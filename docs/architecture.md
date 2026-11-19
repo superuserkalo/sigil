@@ -428,7 +428,7 @@ Enforced in code:
      `github.com/Deadworks-net/deadworks/releases/download/<tag>/` (GitHub redirects to
      `release-assets.githubusercontent.com`; pinned size and SHA-256, redirects only to GitHub's
      asset hosts). No user data. SteamCMD then talks to Steam itself in its own window, where the
-     player signs in; Sigil never sees the Steam password. No UPnP, no public-IP lookup.
+     player signs in; Sigil never sees the Steam password. No public-IP lookup service.
    - Host a server, map downloads (ADR 0015 amendment): an INBOUND listener, not an outbound
      call. While a hosted server runs with custom maps or addons Sigil installed into it, Sigil
      listens on TCP `0.0.0.0:<game port + 1>` (27068 by default, `fastdl_port` in the host
@@ -443,6 +443,42 @@ Enforced in code:
      starts it; Stop, an exit or dropping the server handle closes it and every open download. A
      download address the player set themselves is kept and nothing is served. The Windows
      Firewall rule (same admin prompt as the game port) and the router steps name this port.
+   - Host a server, network mode (ADR 0015, second amendment). "Steam relay" is the default:
+     on Start, Sigil writes Deadworks' two P2P edits into the SERVER's own
+     `game/citadel/gameinfo.gi` (`CreateListenSocketP2P 2` first in `NetworkSystem`,
+     `"net_p2p_listen_dedicated" "1"` first in `ConVars`; never the player's install; the
+     previous file goes to `sigil-content-backups/<time>/`; idempotent and re-applied every
+     Start because SteamCMD's validate resets it), starts with `-nomaster`, sets
+     `serverbrowser.unlisted` (recorded in `sigil-network.json` so Direct takes out only what
+     Sigil set), and reads the join code from the console line `SV:  ServerSteamID=[A:1:..]`
+     (first one of the run only, matched from the line start). The server's traffic then goes
+     through Steam networking and Valve's relays; that is the game's own connection to Steam,
+     not a Sigil request. "Direct" restores Steam's gameinfo.gi and keeps today's address and
+     port. The firewall rule is offered in both modes.
+   - Host a server, UPnP (opt-in switch, off by default): while a server Sigil started runs,
+     Sigil sends one SSDP `M-SEARCH` to `239.255.255.250:1900` (multicast TTL 2, local network
+     only), reads the answering router's description, and sends SOAP `AddPortMapping` for the
+     game port (TCP and UDP, Direct mode only) and the map download port (TCP, when it serves),
+     12 h lease (0 when the router only takes permanent ones), then `GetExternalIPAddress`.
+     Stop, an exit or dropping the handle sends `DeletePortMapping` for each. A reply may only
+     point at the device that sent it, at a private, link-local or loopback IPv4 over `http://`;
+     hostnames, public addresses and other hosts are never contacted. 2 KiB per SSDP reply,
+     64 KiB per HTTP answer, 3 s socket timeouts. Nothing leaves the LAN, nothing is logged
+     (`deadlock_core::host::upnp`).
+   - Host a server, map downloads: each download write waits at most what is left of the
+     one-hour connection time, and a download that moves under 64 KiB in a 30 s window is ended,
+     so slow readers cannot hold the slots.
+   - Sigil invites (`deadlock_core::servers::invite`): `sigil-invite:v1:<target>:<p|o>:<mod
+     id>/<file id>,...`, where the target is a relay code or `ip:port`. GameBanana ids only, no
+     URLs, no password. The host builds it from the server's content ledger and the install
+     journal (`host::content_origins`). The joiner's Servers > Join with invite parses it
+     strictly, lists the files in one confirm dialog, installs missing ones through the normal
+     GameBanana install path (`gamebanana.com` only, landing switched off), turns on only those
+     items through Installed's switch, then joins: an address through the usual join, a relay
+     code by the console line (Steam's `steam://connect` is not verified for relay codes).
+   - Play with friends, no setup (the in-game host): Launch map on the Host tab or the Maps page
+     adds `-condebug` to Deadlock's Steam launch options (the same backed-up write as Settings >
+     Game) and reads the `ServerSteamID` from `console.log`. No network call of Sigil's own.
    - Joining a server that advertises the placeholder host: the joining Sigil downloads from the
      address it is connecting to instead (`servers::resolve_fastdl`), under the same guard as any
      `dw_fastdl` host, and a file whose hash does not match is always refused there (no "take it

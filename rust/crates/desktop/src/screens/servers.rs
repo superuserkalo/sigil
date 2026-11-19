@@ -32,6 +32,11 @@ use crate::ui::{ActionKind, BODY, BODY_MED, H1, MICRO, MONO, PAGE_TOP, PAGE_X, S
 #[path = "servers_de.rs"]
 mod de;
 
+/// Join with invite (ADR 0015, second amendment): a Sigil invite installs the server's
+/// GameBanana content, then joins.
+#[path = "servers_invite.rs"]
+pub mod invite;
+
 /// Host a server on this PC (ADR 0015), the Host tab.
 #[path = "servers_host/mod.rs"]
 pub mod host;
@@ -124,6 +129,8 @@ pub struct View {
     pub last_check: Option<Box<JoinCheck>>,
     pub maps: crate::screens::servers_maps::MapsState,
     pub host: host::HostState,
+    /// Join with invite: the paste field and where the join is.
+    pub invite: invite::InviteState,
     /// The clock time the next automatic refresh is due.
     pub next_refresh: Option<f64>,
     pub started: bool,
@@ -153,6 +160,7 @@ impl Default for View {
             last_check: None,
             maps: crate::screens::servers_maps::MapsState::default(),
             host: host::HostState::default(),
+            invite: invite::InviteState::default(),
             next_refresh: None,
             started: false,
         }
@@ -163,6 +171,7 @@ impl Default for View {
 pub enum Dialog {
     Join { server: Box<Server>, stage: Stage },
     Direct,
+    Invite,
 }
 
 #[derive(Clone)]
@@ -395,6 +404,7 @@ pub fn poll(st: &mut State, now: f64, tx: &mut Tx) -> bool {
     if st.servers.join_job.is_running() {
         changed = true;
     }
+    changed |= invite::advance(st);
     changed |= crate::screens::servers_maps::poll(st);
     changed |= host::poll(st, now, tx);
     schedule_refresh(st, now, tx);
@@ -536,6 +546,12 @@ pub fn view(s: &State, u: &Ui) -> El {
                     .key("servers-connect")
                     .cursor(rune::Cursor::Pointer)
                     .on_press(|st: &mut State| open_direct(st)),
+            )
+            .child(
+                u.icon_action(&icons::USER, tr("Join with invite"), ActionKind::Ghost)
+                    .key("servers-invite")
+                    .cursor(rune::Cursor::Pointer)
+                    .on_press(|st: &mut State| invite::open(st, "")),
             )
             .child(
                 u.icon_action(&SERVER_ICON, tr("Host a server"), ActionKind::Ghost)
@@ -1551,6 +1567,11 @@ fn open_direct(st: &mut State) {
 
 fn start_direct(st: &mut State) {
     let input = st.servers.direct.text.clone();
+    // A Sigil invite pasted here goes to Join with invite.
+    if input.trim_start().starts_with("sigil-invite:") {
+        invite::open(st, &input);
+        return;
+    }
     let server = match dw::parse_direct_address(&input) {
         Ok(server) => server,
         Err(error) => {
@@ -1567,6 +1588,7 @@ pub fn dialog(s: &State, u: &Ui) -> Option<El> {
     }
     match s.servers.dialog.as_ref()? {
         Dialog::Direct => Some(direct_dialog(s, u)),
+        Dialog::Invite => Some(invite::dialog(s, u)),
         Dialog::Join { server, stage } => Some(join_dialog(s, u, server, stage)),
     }
 }
