@@ -44,7 +44,14 @@ pub struct Item {
     pub item: InviteItem,
     pub name: String,
     pub plan: Plan,
+    /// The file's real name, read from GameBanana's own list for the mod. Set only when the file
+    /// was found there: an invite is pasted text, so its mod and file ids are checked against
+    /// GameBanana before anything is installed or replaced.
+    pub file_name: Option<String>,
 }
+
+/// GameBanana's file list (id, name) per mod id, or why it could not be read.
+pub type FileCheck = Vec<(u64, Result<Vec<(u64, String)>, String>)>;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Stage {
@@ -63,12 +70,24 @@ pub struct InviteState {
     pub text: TextEdit,
     pub stage: Stage,
     pub copied: bool,
+    /// The check of the invite's files against GameBanana, running while the review is open.
+    pub check: crate::jobs::Job<FileCheck>,
 }
 
 impl Default for InviteState {
     fn default() -> Self {
-        InviteState { text: TextEdit::new(""), stage: Stage::Enter(None), copied: false }
+        InviteState {
+            text: TextEdit::new(""),
+            stage: Stage::Enter(None),
+            copied: false,
+            check: crate::jobs::Job::default(),
+        }
     }
+}
+
+/// Items that would download or replace a file need their file checked against GameBanana.
+fn needs_check(plan: &Plan) -> bool {
+    matches!(plan, Plan::Get | Plan::Replace(_))
 }
 
 /// Open the dialog, optionally with a pasted invite (from the Connect field).
@@ -110,7 +129,7 @@ pub fn plan_items(st: &State, invite: &Invite) -> Vec<Item> {
                     None => Plan::Get,
                 },
             };
-            Item { item: *item, name: name_for(st, item.mod_id), plan }
+            Item { item: *item, name: name_for(st, item.mod_id), plan, file_name: None }
         })
         .collect()
 }
@@ -120,6 +139,23 @@ fn read(st: &mut State) {
     let stage = match parse_invite(&st.servers.invite.text.text) {
         Ok(invite) => {
             let items = plan_items(st, &invite);
+            let mut ids: Vec<u64> = items.iter().filter(|i| needs_check(&i.plan)).map(|i| i.item.mod_id).collect();
+            ids.sort_unstable();
+            ids.dedup();
+            if !ids.is_empty() && !(st.demo || rune::is_headless()) {
+                let wake = st.wake.clone();
+                st.servers.invite.check.start(wake, move || {
+                    Ok(ids
+                        .into_iter()
+                        .map(|id| {
+                            let files = deadlock_core::mod_updates::fetch_remote_mod(id)
+                                .map(|remote| remote.files.into_iter().map(|f| (f.file_id, f.file_name)).collect())
+                                .map_err(|error| error.to_string());
+                            (id, files)
+                        })
+                        .collect())
+                });
+            }
             Stage::Review { invite, items }
         }
         Err(error) => Stage::Enter(Some(error.to_string())),
@@ -127,11 +163,42 @@ fn read(st: &mut State) {
     st.servers.invite.stage = stage;
 }
 
+/// Apply GameBanana's answer: a file that is not in its mod's list is refused (the invite may be
+/// forged to show one mod's name and install another file); a found file shows its real name.
+fn apply_check(items: &mut [Item], check: &FileCheck) {
+    for entry in items.iter_mut().filter(|e| needs_check(&e.plan)) {
+        match check.iter().find(|(id, _)| *id == entry.item.mod_id).map(|(_, files)| files) {
+            Some(Ok(files)) => match files.iter().find(|(file_id, _)| *file_id == entry.item.file_id) {
+                Some((_, name)) => entry.file_name = Some(name.clone()),
+                None => {
+                    entry.plan = Plan::Failed(
+                        tr("This file is not part of that GameBanana mod, so the invite may not be genuine. Nothing was installed.")
+                            .to_string(),
+                    )
+                }
+            },
+            Some(Err(error)) => {
+                entry.plan = Plan::Failed(fill(tr("GameBanana could not confirm this file: {}"), &[error]))
+            }
+            None => {}
+        }
+    }
+}
+
 /// The player's confirm: install what is missing (landing off), then turn on the invite's items.
 fn confirm(st: &mut State) {
     let Stage::Review { invite, mut items } = st.servers.invite.stage.clone() else {
         return;
     };
+    // Nothing installs until every file is confirmed by GameBanana, and a refused file stops the
+    // whole invite.
+    let demo = st.demo || rune::is_headless();
+    if st.servers.invite.check.is_running()
+        || items.iter().any(|i| matches!(i.plan, Plan::Failed(_)))
+        || (!demo && items.iter().any(|i| needs_check(&i.plan) && i.file_name.is_none()))
+    {
+        return;
+    }
     for entry in &mut items {
         let update = match &entry.plan {
             Plan::Get => Vec::new(),
@@ -152,6 +219,14 @@ fn confirm(st: &mut State) {
 /// Follow the installs; when every item is in place, turn on the ones that are off and move to
 /// the join. Called from the Servers poll.
 pub fn advance(st: &mut State) -> bool {
+    if let Some(result) = st.servers.invite.check.try_take()
+        && let Stage::Review { invite, mut items } = st.servers.invite.stage.clone()
+    {
+        let check = result.unwrap_or_default();
+        apply_check(&mut items, &check);
+        st.servers.invite.stage = Stage::Review { invite, items };
+        return true;
+    }
     let Stage::Installing { invite, mut items } = st.servers.invite.stage.clone() else {
         return false;
     };
@@ -254,9 +329,12 @@ fn item_rows(u: &Ui, items: &[Item]) -> El {
                         .gap(2.0)
                         .child(text(entry.name.clone()).font(BODY_MED).color(u.ink).truncate())
                         .child(
-                            text(fill(tr("Mod {}, file {}"), &[&entry.item.mod_id.to_string(), &entry.item.file_id.to_string()]))
-                                .font(SMALL)
-                                .color(u.faint),
+                            text(match &entry.file_name {
+                                Some(name) => fill(tr("Mod {}, file {} ({})"), &[&entry.item.mod_id.to_string(), &entry.item.file_id.to_string(), name]),
+                                None => fill(tr("Mod {}, file {}"), &[&entry.item.mod_id.to_string(), &entry.item.file_id.to_string()]),
+                            })
+                            .font(SMALL)
+                            .color(u.faint),
                         )
                         .child(text(line).font(SMALL).color(if bad { u.rose } else { u.muted }).wrap().w_full()),
                 ),
@@ -325,10 +403,18 @@ pub fn dialog(s: &State, u: &Ui) -> El {
             if invite.password {
                 body = body.child(text(tr("The server asks for a password. Ask your friend for it.")).font(SMALL).color(u.amber).wrap());
             }
+            let checking = s.servers.invite.check.is_running();
+            let refused = items.iter().any(|i| matches!(i.plan, Plan::Failed(_)));
+            if checking {
+                body = body.child(text(tr("Checking the files with GameBanana...")).font(SMALL).color(u.muted).wrap());
+            } else if refused {
+                body = body.child(text(tr("This invite cannot be used: a file did not check out. Ask your friend for a new invite.")).font(SMALL).color(u.rose).wrap());
+            }
             body = body.child(buttons(vec![
                 cancel(u, tr("Cancel")),
                 u.icon_action(&icons::LOG_IN, if work { tr("Install and join") } else { tr("Join") }, ActionKind::Primary)
                     .key("servers-invite-go")
+                    .opacity(if checking || refused { 0.5 } else { 1.0 })
                     .cursor(rune::Cursor::Pointer)
                     .on_press(confirm),
             ]));
@@ -430,4 +516,22 @@ mod tests {
         let Stage::Join(invite) = &st.servers.invite.stage else { panic!("not joining") };
         assert_eq!(invite.target.console_line(None).unwrap(), "connect [A:1:5:6]");
     }
+
+    #[test]
+    fn a_file_that_is_not_in_its_mod_is_refused_and_a_real_one_shows_its_name() {
+        let mut items = vec![
+            Item { item: InviteItem { mod_id: 10, file_id: 100 }, name: "Map".into(), plan: Plan::Get, file_name: None },
+            Item { item: InviteItem { mod_id: 20, file_id: 999 }, name: "Skin".into(), plan: Plan::Replace(vec![4]), file_name: None },
+            Item { item: InviteItem { mod_id: 30, file_id: 300 }, name: "On".into(), plan: Plan::Ready(5), file_name: None },
+        ];
+        let check: FileCheck = vec![
+            (10, Ok(vec![(100, "arena.zip".to_string())])),
+            (20, Ok(vec![(200, "skin.zip".to_string())])),
+        ];
+        apply_check(&mut items, &check);
+        assert_eq!(items[0].file_name.as_deref(), Some("arena.zip"));
+        assert!(matches!(items[1].plan, Plan::Failed(_)), "a file from another mod is refused");
+        assert_eq!(items[2].plan, Plan::Ready(5), "an installed match needs no check");
+    }
+
 }
