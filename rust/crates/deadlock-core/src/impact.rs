@@ -231,6 +231,23 @@ pub fn suspect(
     })
 }
 
+/// The journal installs that can still be blamed for a crash at `crash_secs`.
+///
+/// The journal keeps installs of mods that were deleted, switched off or replaced since, keyed
+/// by slot number. Only the newest install per slot describes what is in that slot now, only an
+/// enabled slot can cause a crash, and only an install from before the crash can explain it.
+/// `changes` is newest first, as [`recent_changes`] returns it. A `crash_secs` of 0 (unknown
+/// dump time) skips the time check.
+pub fn blame_candidates(changes: Vec<Change>, enabled: &BTreeSet<u16>, crash_secs: i64) -> Vec<Change> {
+    let mut seen = BTreeSet::new();
+    changes
+        .into_iter()
+        .filter(|change| seen.insert(change.slot))
+        .filter(|change| enabled.contains(&change.slot))
+        .filter(|change| crash_secs == 0 || change.at_secs <= crash_secs)
+        .collect()
+}
+
 fn name_for(names: &BTreeMap<u16, String>, slot: u16) -> String {
     names
         .get(&slot)
@@ -565,6 +582,32 @@ mod tests {
 
     fn names() -> BTreeMap<u16, String> {
         BTreeMap::from([(1, "Alpha".to_string()), (3, "Bravo".to_string())])
+    }
+
+    fn change(slot: u16, name: &str, at_secs: i64) -> Change {
+        Change { slot, name: name.to_string(), at: String::new(), at_secs, file: format!("pak{slot:02}_dir.vpk") }
+    }
+
+    #[test]
+    fn a_deleted_off_or_replaced_mod_is_never_blamed() {
+        // Newest first: slot 4 now holds Delta (Old Four was replaced), slot 7 was deleted,
+        // slot 2 is switched off, slot 9 was installed after the crash.
+        let changes = vec![
+            change(9, "After", 500),
+            change(4, "Delta", 300),
+            change(7, "Gone", 250),
+            change(2, "Off", 200),
+            change(4, "Old Four", 100),
+        ];
+        let enabled = BTreeSet::from([4, 9]);
+        let kept = blame_candidates(changes, &enabled, 400);
+        assert_eq!(kept.iter().map(|c| c.name.as_str()).collect::<Vec<_>>(), vec!["Delta"]);
+        let facts = DumpFacts { path: PathBuf::from("d.mdmp"), modified_secs: Some(400), exception: None, comment: None };
+        let names = BTreeMap::from([(4, "Delta".to_string())]);
+        let suspect = suspect(&facts, &kept, &names, &BTreeMap::new()).unwrap();
+        assert_eq!((suspect.slot, suspect.name.as_str()), (4, "Delta"));
+        // Nothing enabled left from before the crash: no guess at all.
+        assert!(blame_candidates(vec![change(7, "Gone", 250)], &BTreeSet::new(), 400).is_empty());
     }
 
     #[test]

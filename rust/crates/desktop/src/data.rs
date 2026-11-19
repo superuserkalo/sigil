@@ -2967,6 +2967,13 @@ pub fn read_launch(data: &Path) -> Result<crate::screens::launch::Read, String> 
         Some(marker) if marker.open() && !process.running => {
             deadlock_core::launch::record_exit(data).ok().flatten()
         }
+        // The last session ended and the game runs again: started outside Sigil (Steam, a
+        // shortcut). It is a new session, so older dumps stop being "the last crash".
+        Some(marker) if !marker.open() && process.running => {
+            deadlock_core::launch::record_launch(data, deadlock_core::launch::MODE_UNKNOWN)
+                .ok()
+                .or(Some(marker))
+        }
         Some(marker) => Some(marker),
         None if process.running => {
             deadlock_core::launch::record_launch(data, deadlock_core::launch::MODE_UNKNOWN).ok()
@@ -3012,14 +3019,26 @@ fn crash_advisory(
     let dump = impact::unacknowledged_dump(&dumps, marker.started_secs, marker.acknowledged_secs)?;
     let at_secs = impact::dump_seconds(dump).unwrap_or(0);
     let info = game_session::read_dump_info(&dump.path);
-    let changes = impact::recent_changes(workspace, std::time::Duration::from_secs(7 * 86_400), 20);
+    // Only what is installed and switched on now can be named: the journal and the library
+    // also remember mods that were deleted, turned off or replaced in their slot since.
+    let installed = addons_dir
+        .and_then(|addons| addons.ancestors().nth(3))
+        .and_then(|root| deadlock_core::addons::list_installed(root).ok())
+        .unwrap_or_default();
+    let enabled: std::collections::BTreeSet<u16> =
+        installed.iter().filter(|addon| addon.enabled).map(|addon| addon.slot).collect();
+    let changes = impact::blame_candidates(
+        impact::recent_changes(workspace, std::time::Duration::from_secs(7 * 86_400), 20),
+        &enabled,
+        at_secs,
+    );
 
-    // Names and shipped paths for the enabled slots: the library first, the journal next.
+    // Names for the enabled slots: the library first, the journal next.
     let mut names: std::collections::BTreeMap<u16, String> = std::collections::BTreeMap::new();
     if let Ok(library) = deadlock_core::import::read_library(&deadlock_core::import::library_path(data))
     {
         for meta in &library.mods {
-            if !meta.name.trim().is_empty() {
+            if enabled.contains(&meta.slot) && !meta.name.trim().is_empty() {
                 names.insert(meta.slot, meta.name.clone());
             }
         }
@@ -3030,9 +3049,6 @@ fn crash_advisory(
     let mut shipped: std::collections::BTreeMap<u16, Vec<String>> = std::collections::BTreeMap::new();
     if let Some(addons) = addons_dir
         && info.comment.is_some()
-        // `addons` is the addon folder; list_installed takes the game root three levels up.
-        && let Some(game_root) = addons.ancestors().nth(3)
-        && let Ok(installed) = deadlock_core::addons::list_installed(game_root)
     {
         for addon in installed.iter().filter(|addon| addon.enabled) {
             let path = addon.path(addons);
@@ -3067,6 +3083,21 @@ fn crash_advisory(
         comment: info.comment,
         suspect,
     })
+}
+
+/// Every launch Sigil hands to Steam opens a new session marker, whichever button started it.
+/// Without it the crash advisory keeps measuring from an older launch and shows that session's
+/// dump as the last one.
+pub fn mark_launch(state: &mut State, mode: &str) {
+    if state.demo || rune::is_headless() {
+        return;
+    }
+    let _ = deadlock_core::launch::record_launch(&data_dir(), mode);
+    state.settings.game_running = true;
+    state.settings.last_game_check = None;
+    if let Some(read) = state.launch.read.as_mut() {
+        read.crash = None;
+    }
 }
 
 pub fn start_launch_read(state: &mut State) {
@@ -3189,9 +3220,7 @@ pub fn run_launch(state: &mut State, dialog: crate::screens::launch::Dialog) {
                     _ => None,
                 };
                 if let Some(mode) = mode {
-                    let _ = deadlock_core::launch::record_launch(&data, mode);
-                    state.settings.game_running = true;
-                    state.settings.last_game_check = None;
+                    mark_launch(state, mode);
                 }
                 state.launch.last = Some(message);
             }
