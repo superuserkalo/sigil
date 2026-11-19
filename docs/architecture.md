@@ -429,6 +429,24 @@ Enforced in code:
      `release-assets.githubusercontent.com`; pinned size and SHA-256, redirects only to GitHub's
      asset hosts). No user data. SteamCMD then talks to Steam itself in its own window, where the
      player signs in; Sigil never sees the Steam password. No UPnP, no public-IP lookup.
+   - Host a server, map downloads (ADR 0015 amendment): an INBOUND listener, not an outbound
+     call. While a hosted server runs with custom maps or addons Sigil installed into it, Sigil
+     listens on TCP `0.0.0.0:<game port + 1>` (27068 by default, `fastdl_port` in the host
+     settings) with a read-only HTTP/1.1 file server (`deadlock_core::host::FastdlServer`). It
+     serves only `<server>/sigil-fastdl/` as `build_fastdl` lays it out
+     (`/maps/<name>_<hash16>.vpk.zst`, `/addons/...`): GET and HEAD, no directory listing, the
+     request target matched against that file pattern before the disk is touched, no `..`, `%`
+     escapes, backslashes or absolute paths, no symlinks (canonical path stays inside the folder),
+     at most 8 KiB of request head sent within 10 s, 32 connections (8 per address), a 30 s idle
+     write and a one-hour connection cap, files streamed. It logs nothing. Start (the player's
+     press) builds the folder, sets `fastdl_url` to the placeholder `http://0.0.0.0:<port>` and
+     starts it; Stop, an exit or dropping the server handle closes it and every open download. A
+     download address the player set themselves is kept and nothing is served. The Windows
+     Firewall rule (same admin prompt as the game port) and the router steps name this port.
+   - Joining a server that advertises the placeholder host: the joining Sigil downloads from the
+     address it is connecting to instead (`servers::resolve_fastdl`), under the same guard as any
+     `dw_fastdl` host, and a file whose hash does not match is always refused there (no "take it
+     anyway").
    - GameBanana file servers (parity round, 2026-11-17): `gamebanana.com/apiv11/Util/Fileservers`
      (the server directory, when Settings > Mods opens or on Refresh status), and a speed test on
      "Test now" only: the newest file of GameBanana's top Deadlock mod (`Mod/Index`, its

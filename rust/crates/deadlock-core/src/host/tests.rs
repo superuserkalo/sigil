@@ -79,6 +79,7 @@ fn settings_round_trip_through_app_data() {
             password: "letmein".into(),
             max_players: Some(12),
             extra: "-ip 192.168.1.20".into(),
+            fastdl_port: Some(27200),
         },
     };
     save_settings(&data, &settings).unwrap();
@@ -293,8 +294,8 @@ fn windows_only_calls_refuse_elsewhere() {
     assert_eq!(message(install_steamcmd(&dir, true).map(|_| ())), HOSTING_NEEDS_WINDOWS);
     assert_eq!(message(install_deadworks(&dir, true).map(|_| ())), HOSTING_NEEDS_WINDOWS);
     assert_eq!(message(start_server(&dir, &ServerConfig::default(), true).map(|_| ())), HOSTING_NEEDS_WINDOWS);
-    assert_eq!(message(firewall_rule_status(27067).map(|_| ())), HOSTING_NEEDS_WINDOWS);
-    assert_eq!(message(add_firewall_rule(27067, true).map(|_| ())), HOSTING_NEEDS_WINDOWS);
+    assert_eq!(message(firewall_rule_status(27067, Some(27068)).map(|_| ())), HOSTING_NEEDS_WINDOWS);
+    assert_eq!(message(add_firewall_rule(27067, Some(27068), true).map(|_| ())), HOSTING_NEEDS_WINDOWS);
     let _ = fs::remove_dir_all(&dir);
 }
 
@@ -305,8 +306,8 @@ fn every_action_needs_approval() {
         install_steamcmd(&dir, false).map(|_| ()),
         install_deadworks(&dir, false).map(|_| ()),
         start_server(&dir, &ServerConfig::default(), false).map(|_| ()),
-        add_firewall_rule(27067, false).map(|_| ()),
-        remove_firewall_rule(27067, false).map(|_| ()),
+        add_firewall_rule(27067, Some(27068), false).map(|_| ()),
+        remove_firewall_rule(27067, Some(27068), false).map(|_| ()),
         set_plugin(&dir, "X", true, false).map(|_| ()),
         start_steamcmd_update(&dir.join("steamcmd.exe"), &dir, "u", false).map(|_| ()),
     ] {
@@ -440,15 +441,34 @@ fn firewall_show_output_parses() {
 
 #[test]
 fn firewall_script_elevates_once_for_the_missing_rules() {
-    let script = firewall_script(27067, FirewallStatus { tcp: true, udp: false }, true);
+    let status = FirewallStatus { tcp: true, udp: false, downloads: Some(true) };
+    let script = firewall_script(27067, Some(27068), status, true);
     assert_eq!(
         script,
         "try { $p = Start-Process -FilePath cmd.exe -ArgumentList '/c netsh advfirewall firewall add rule name=Sigil-Deadworks-UDP-27067 dir=in action=allow protocol=UDP localport=27067' -Verb RunAs -WindowStyle Hidden -Wait -PassThru; exit $p.ExitCode } catch { exit 1223 }"
     );
-    let both = firewall_script(27100, FirewallStatus::default(), true);
-    assert!(both.contains("protocol=TCP localport=27100 && netsh advfirewall firewall add rule name=Sigil-Deadworks-UDP-27100"));
-    let remove = firewall_script(27100, FirewallStatus { tcp: true, udp: true }, false);
-    assert!(remove.contains("delete rule name=Sigil-Deadworks-TCP-27100 && netsh advfirewall firewall delete rule name=Sigil-Deadworks-UDP-27100"));
+    // Nothing there yet: all three rules in one elevated command, so one admin prompt.
+    let all = firewall_script(27100, Some(27101), FirewallStatus::default(), true);
+    assert_eq!(all.matches("-Verb RunAs").count(), 1);
+    assert!(all.contains("protocol=TCP localport=27100 && netsh advfirewall firewall add rule name=Sigil-Deadworks-UDP-27100"));
+    assert!(all.contains(
+        "protocol=UDP localport=27100 && netsh advfirewall firewall add rule name=Sigil-Deadworks-Downloads-TCP-27101 dir=in action=allow protocol=TCP localport=27101'"
+    ));
+    let remove = firewall_script(27100, Some(27101), FirewallStatus { tcp: true, udp: true, downloads: Some(true) }, false);
+    assert!(remove.contains("delete rule name=Sigil-Deadworks-TCP-27100 && netsh advfirewall firewall delete rule name=Sigil-Deadworks-UDP-27100 && netsh advfirewall firewall delete rule name=Sigil-Deadworks-Downloads-TCP-27101'"));
+    // Without a download port only the game rules are named.
+    assert!(!firewall_script(27100, None, FirewallStatus::default(), true).contains("Downloads"));
+}
+
+#[test]
+fn firewall_status_counts_the_download_rule() {
+    let game_only = FirewallStatus { tcp: true, udp: true, downloads: Some(false) };
+    assert!(!game_only.open() && !game_only.closed());
+    assert!(FirewallStatus { tcp: true, udp: true, downloads: Some(true) }.open());
+    assert!(FirewallStatus { tcp: true, udp: true, downloads: None }.open());
+    assert!(FirewallStatus { tcp: false, udp: false, downloads: Some(false) }.closed());
+    assert!(!FirewallStatus { tcp: false, udp: false, downloads: Some(true) }.closed());
+    assert_eq!(download_rule_name(27068), "Sigil-Deadworks-Downloads-TCP-27068");
 }
 
 #[test]
@@ -597,6 +617,100 @@ fn fastdl_url_is_checked_and_saved() {
     set_fastdl_url(&server, Some("http://192.168.1.20:27080/"), true).unwrap();
     assert_eq!(fastdl_url(&server).as_deref(), Some("http://192.168.1.20:27080"));
     set_fastdl_url(&server, None, true).unwrap();
+    assert_eq!(fastdl_url(&server), None);
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn the_download_port_follows_the_game_port() {
+    let mut config = ServerConfig::default();
+    assert_eq!(config.download_port(), Some(27068));
+    config.port = 28000;
+    assert_eq!(config.download_port(), Some(28001));
+    config.validate().unwrap();
+    config.fastdl_port = Some(8080);
+    assert_eq!(config.download_port(), Some(8080));
+    config.validate().unwrap();
+    config.fastdl_port = Some(28000);
+    assert!(config.validate().unwrap_err().to_string().contains("differ"));
+    config.fastdl_port = Some(80);
+    assert!(config.validate().is_err());
+    config.fastdl_port = None;
+    config.port = 65535;
+    assert_eq!(config.download_port(), None);
+    assert!(config.validate().is_err());
+    // Settings saved before the download port existed still load.
+    let old: ServerConfig = serde_json::from_str(r#"{"name":"x","map":"dl_midtown","port":27067}"#).unwrap();
+    assert_eq!(old.fastdl_port, None);
+    assert_eq!(old.download_port(), Some(27068));
+}
+
+/// GET one path from a local server, the status and body.
+fn http_get(addr: std::net::SocketAddr, path: &str) -> (u16, Vec<u8>) {
+    use std::io::{Read, Write};
+    let mut stream = std::net::TcpStream::connect(addr).unwrap();
+    stream.set_read_timeout(Some(std::time::Duration::from_secs(10))).unwrap();
+    stream.write_all(format!("GET {path} HTTP/1.1\r\nHost: x\r\n\r\n").as_bytes()).unwrap();
+    let mut reply = Vec::new();
+    stream.read_to_end(&mut reply).unwrap();
+    let split = reply.windows(4).position(|w| w == b"\r\n\r\n").unwrap();
+    let status = String::from_utf8_lossy(&reply[9..12]).parse().unwrap();
+    (status, reply[split + 4..].to_vec())
+}
+
+#[test]
+fn starting_with_custom_content_builds_advertises_and_serves_it() {
+    let root = scratch("downloads");
+    let server = content_server(&root);
+    let local: std::net::SocketAddr = "127.0.0.1:0".parse().unwrap();
+
+    // No custom content: nothing is served and nothing is advertised.
+    assert!(super::content::start_downloads_on(&server, local).unwrap().is_none());
+    assert_eq!(fastdl_url(&server), None);
+
+    let map = content_vpk(&root, "dl_arena.vpk", &[("maps/dl_arena.vmap_c", b"vmap")]);
+    install_server_content(&server, &[map], true).unwrap();
+    let out = default_fastdl_dir(&server);
+    fs::create_dir_all(out.join("maps")).unwrap();
+    let stale = out.join("maps").join("dl_old_0123456789abcdef.vpk.zst");
+    fs::write(&stale, b"old build").unwrap();
+    fs::write(out.join("maps").join("notes.txt"), b"player's file").unwrap();
+
+    let downloads = super::content::start_downloads_on(&server, local).unwrap().expect("serving");
+    let port = downloads.port();
+    assert_eq!(fastdl_url(&server), Some(format!("http://0.0.0.0:{port}")));
+    assert!(!stale.exists(), "an old build of removed content is pruned");
+    assert!(out.join("maps").join("notes.txt").exists(), "other files are left alone");
+
+    // What a joiner asks for, at the address it connects to.
+    let vpk = fs::read(server_maps_dir(&server).join("dl_arena.vpk")).unwrap();
+    let hash = &crate::servers::file_sha256(&server_maps_dir(&server).join("dl_arena.vpk")).unwrap()[..16];
+    let entry = crate::servers::ContentEntry {
+        kind: crate::servers::ContentKind::Map,
+        name: "dl_arena".into(),
+        hash: hash.to_string(),
+        size: None,
+    };
+    let base = crate::servers::resolve_fastdl(&fastdl_url(&server).unwrap(), "127.0.0.1".parse().unwrap());
+    let url = crate::servers::content_url(&base, &entry, "zst");
+    let path = url.strip_prefix(&format!("http://127.0.0.1:{port}")).unwrap();
+    let (status, body) = http_get(downloads.local_addr(), path);
+    assert_eq!(status, 200);
+    assert_eq!(zstd::decode_all(&body[..]).unwrap(), vpk);
+    assert_eq!(http_get(downloads.local_addr(), "/maps/notes.txt").0, 404);
+    let addr = downloads.local_addr();
+    drop(downloads);
+    assert!(std::net::TcpStream::connect(addr).is_err(), "dropping it closes the port");
+
+    // A download address the player set themselves is kept, and Sigil serves nothing.
+    set_fastdl_url(&server, Some("https://api.deadworks.net/fastdl/u/me"), true).unwrap();
+    assert!(super::content::start_downloads_on(&server, local).unwrap().is_none());
+    assert_eq!(fastdl_url(&server).as_deref(), Some("https://api.deadworks.net/fastdl/u/me"));
+
+    // Sigil's placeholder is taken out again once the custom content is gone.
+    set_fastdl_url(&server, Some(&placeholder_fastdl_url(27068)), true).unwrap();
+    remove_server_content(&server, &["maps/dl_arena".to_string()], true).unwrap();
+    assert!(super::content::start_downloads_on(&server, local).unwrap().is_none());
     assert_eq!(fastdl_url(&server), None);
     let _ = fs::remove_dir_all(&root);
 }

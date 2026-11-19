@@ -403,6 +403,69 @@ pub fn default_fastdl_dir(server_dir: &Path) -> PathBuf {
     server_dir.join(FASTDL_DIR)
 }
 
+/// The address a hosted server advertises for its own download server: the placeholder host
+/// (`http://0.0.0.0:<port>`), which a joining Sigil swaps for the address it connects to.
+pub fn placeholder_fastdl_url(port: u16) -> String {
+    format!("http://{}:{port}", crate::servers::FASTDL_PLACEHOLDER_HOST)
+}
+
+/// Remove download files [`build_fastdl`] wrote earlier that are not in `keep` (content Sigil
+/// has since removed or replaced). Only files named like the layout in `maps/` and `addons/`
+/// are touched.
+fn prune_fastdl(out_dir: &Path, keep: &[PathBuf]) -> Result<()> {
+    for folder in [ServerContentKind::Map.dir(), ServerContentKind::Addon.dir()] {
+        let Ok(entries) = fs::read_dir(out_dir.join(folder)) else { continue };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let named = path.file_name().and_then(|n| n.to_str()).is_some_and(super::fastdl_server::served_name);
+            if named && entry.file_type().is_ok_and(|t| t.is_file()) && !keep.contains(&path) {
+                fs::remove_file(&path)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Before a start, inside the player's Start press: when the server folder holds content Sigil
+/// installed, bind the download port, refresh `sigil-fastdl/`, advertise
+/// `http://0.0.0.0:<port>` in `deadworks.jsonc` and serve the folder. Returns the running
+/// download server, or None when there is nothing to serve.
+///
+/// A download address the player set themselves (any host other than the placeholder) is
+/// left alone and nothing is served. With no custom content, Sigil's own placeholder address
+/// is taken out again so joiners are not sent to a port nobody listens on.
+pub(super) fn start_downloads(server_dir: &Path, port: u16) -> Result<Option<super::FastdlServer>> {
+    let every_interface = std::net::SocketAddr::new(std::net::Ipv4Addr::UNSPECIFIED.into(), port);
+    start_downloads_on(server_dir, every_interface)
+}
+
+/// [`start_downloads`] on one address (tests bind `127.0.0.1:0`). The advertised port is the
+/// one actually bound.
+pub(super) fn start_downloads_on(
+    server_dir: &Path,
+    addr: std::net::SocketAddr,
+) -> Result<Option<super::FastdlServer>> {
+    let current = fastdl_url(server_dir);
+    if current.as_deref().is_some_and(|url| !crate::servers::is_placeholder_fastdl(url)) {
+        return Ok(None);
+    }
+    let ours = list_server_content(server_dir)?.iter().any(|c| c.ours);
+    if !ours {
+        if current.is_some() {
+            set_fastdl_url(server_dir, None, true)?;
+        }
+        return Ok(None);
+    }
+    let out = default_fastdl_dir(server_dir);
+    fs::create_dir_all(&out)?;
+    // Bind first: a taken port fails before minutes of compression.
+    let server = super::FastdlServer::start_on(&out, addr, super::FastdlLimits::default())?;
+    let written = build_fastdl(server_dir, &out, true)?;
+    prune_fastdl(&out, &written)?;
+    set_fastdl_url(server_dir, Some(&placeholder_fastdl_url(server.port())), true)?;
+    Ok(Some(server))
+}
+
 // ---------------------------------------------------------------------------------------------
 // deadworks.jsonc
 // ---------------------------------------------------------------------------------------------

@@ -10,7 +10,11 @@
 //! - Deadworks: the pinned release zip extracted over that folder (its `game/` merges).
 //! - The server: `game\bin\win64\deadworks.exe -dedicated -console ... +hostport <port> +map <map>`.
 //!   Name and join password go through a generated cfg, never the command line.
-//! - Reach: a Windows Firewall rule for TCP and UDP on the port, LAN join links.
+//! - Reach: a Windows Firewall rule for TCP and UDP on the port (and TCP on the map download
+//!   port), LAN join links.
+//! - Map downloads (ADR 0015 amendment): with custom content, a read-only HTTP file server over
+//!   `<server>/sigil-fastdl/` runs beside the server on the game port plus one and stops with it
+//!   ([`FastdlServer`]).
 //!
 //! Windows only: process starts, downloads and the prerequisite check return
 //! [`HOSTING_NEEDS_WINDOWS`] elsewhere. Pure parsing, config and plugin file moves work on every
@@ -21,6 +25,7 @@
 
 mod config;
 mod content;
+mod fastdl_server;
 mod plugins;
 mod reach;
 mod server;
@@ -36,12 +41,13 @@ pub use config::{
 pub use content::{
     CONTENT_BACKUPS, CONTENT_LEDGER, FASTDL_DIR, ServerContent, ServerContentKind, build_fastdl,
     classify_content, deadworks_config_path, default_fastdl_dir, fastdl_url, install_server_content,
-    list_server_content, remove_server_content, server_addons_dir, server_map_names, server_maps_dir,
-    set_fastdl_url, strip_jsonc, vmap_names,
+    list_server_content, placeholder_fastdl_url, remove_server_content, server_addons_dir,
+    server_map_names, server_maps_dir, set_fastdl_url, strip_jsonc, vmap_names,
 };
+pub use fastdl_server::{FastdlServer, Limits as FastdlLimits, served_name, target_path};
 pub use plugins::{Plugin, list_plugins, plugins_dir, plugins_off_dir, set_plugin};
 pub use reach::{
-    FirewallStatus, add_firewall_rule, console_connect, firewall_script, firewall_rule_name,
+    FirewallStatus, add_firewall_rule, console_connect, download_rule_name, firewall_script, firewall_rule_name,
     firewall_rule_status, join_url, lan_ipv4s, parse_firewall_show, remove_firewall_rule,
 };
 pub use server::{

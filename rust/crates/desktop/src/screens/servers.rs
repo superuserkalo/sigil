@@ -365,6 +365,19 @@ pub fn poll(st: &mut State, now: f64, tx: &mut Tx) -> bool {
                 }) => {
                     let check = st.servers.last_check.take();
                     match check {
+                        // A Sigil host names its files by hash: a mismatch there means the file
+                        // was changed, so there is no "take it anyway".
+                        Some(check) if check.sigil_host => Stage::Failed(crate::screens::settings::i18n::fill(
+                            crate::screens::settings::i18n::tr(
+                                "The host's copy of {} does not match what the server advertises, so Sigil refused it. Ask the host to restart the server in Sigil, then join again.",
+                            ),
+                            &[&report
+                                .mismatched
+                                .iter()
+                                .map(|(key, _)| key.as_str())
+                                .collect::<Vec<_>>()
+                                .join(", ")],
+                        )),
                         Some(check) => Stage::Mismatch {
                             check,
                             files: report.mismatched.into_iter().map(|(key, _)| key).collect(),
@@ -2252,6 +2265,7 @@ pub fn scene_join(s: &mut State) {
             installed: None,
         },
         allow_private: false,
+        sigil_host: false,
     };
     s.servers.dialog = Some(Dialog::Join {
         server: Box::new(server),

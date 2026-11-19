@@ -34,6 +34,9 @@ pub struct ServerConfig {
     pub max_players: Option<u32>,
     /// More launch options, split on whitespace (the Docker image's `EXTRA_ARGS`).
     pub extra: String,
+    /// TCP port of the map download server Sigil runs beside the server when it has custom
+    /// content (ADR 0015 amendment). None: the game port plus one (27068 by default).
+    pub fastdl_port: Option<u16>,
 }
 
 impl Default for ServerConfig {
@@ -45,6 +48,7 @@ impl Default for ServerConfig {
             password: String::new(),
             max_players: None,
             extra: String::new(),
+            fastdl_port: None,
         }
     }
 }
@@ -122,7 +126,27 @@ impl ServerConfig {
         if self.extra.chars().any(|c| c.is_control() && c != ' ' && c != '\t') {
             return Err(Error::msg("Extra launch options must be on one line."));
         }
+        match self.download_port() {
+            None => {
+                return Err(Error::msg(
+                    "The map download port would be past 65535. Pick a game port below 65535 or set the download port.",
+                ));
+            }
+            Some(port) if port < 1024 => {
+                return Err(Error::msg("Pick a map download port from 1024 to 65535."));
+            }
+            Some(port) if port == self.port => {
+                return Err(Error::msg("The map download port must differ from the game port."));
+            }
+            Some(_) => {}
+        }
         Ok(())
+    }
+
+    /// The map download server's TCP port: [`Self::fastdl_port`], or the game port plus one.
+    /// None when the game port is 65535 and no download port is set.
+    pub fn download_port(&self) -> Option<u16> {
+        self.fastdl_port.or_else(|| self.port.checked_add(1))
     }
 
     /// The `deadworks.exe` arguments, in order. Never carries the join password or the name.

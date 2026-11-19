@@ -219,6 +219,8 @@ pub fn steamcmd_status(run: &mut SteamCmdRun) -> SteamCmdStatus {
 /// The running server, shared with the stop worker. Dropping the last one ends the process.
 pub type Running = Arc<ServerHandle>;
 
+/// Start the server. With custom content in the server folder this also starts the map
+/// download server on the download port; both stop with [`stop`] or when the last handle drops.
 pub fn start(server_dir: &Path, config: &Config) -> Result<Running, String> {
     core::start_server(server_dir, config, true)
         .map(Arc::new)
@@ -230,6 +232,11 @@ pub fn stop(server: &Running) -> Result<(), String> {
         .stop(STOP_GRACE)
         .map(|_| ())
         .map_err(|e| e.to_string())
+}
+
+/// The port friends download custom maps from, while the download server runs.
+pub fn serving_downloads(server: &Running) -> Option<u16> {
+    server.fastdl_port.filter(|_| server.serving_downloads())
 }
 
 /// Type one console command into the server.
@@ -287,29 +294,33 @@ pub fn set_plugin(server_dir: &Path, name: &str, on: bool) -> Result<(), String>
 }
 
 fn firewall(status: core::FirewallStatus) -> Firewall {
-    match (status.tcp, status.udp) {
-        (true, true) => Firewall::Present,
-        (false, false) => Firewall::Missing,
-        _ => Firewall::Partial,
+    if status.open() {
+        Firewall::Present
+    } else if status.closed() {
+        Firewall::Missing
+    } else {
+        Firewall::Partial
     }
 }
 
-pub fn firewall_status(port: u16) -> Result<Firewall, String> {
-    core::firewall_rule_status(port)
+/// The game port's TCP and UDP rules and the map download port's TCP rule.
+pub fn firewall_status(port: u16, downloads: u16) -> Result<Firewall, String> {
+    core::firewall_rule_status(port, Some(downloads))
         .map(firewall)
         .map_err(|e| e.to_string())
 }
 
-/// Add the rule for TCP and UDP. Windows shows its admin prompt; a declined prompt is an error.
-pub fn add_firewall(port: u16) -> Result<Firewall, String> {
-    core::add_firewall_rule(port, true)
+/// Add the rules for the game port (TCP and UDP) and the map download port (TCP). Windows
+/// shows its admin prompt once; a declined prompt is an error.
+pub fn add_firewall(port: u16, downloads: u16) -> Result<Firewall, String> {
+    core::add_firewall_rule(port, Some(downloads), true)
         .map(firewall)
         .map_err(|e| e.to_string())
 }
 
-/// Remove the rule again. Windows shows its admin prompt; a declined prompt is an error.
-pub fn remove_firewall(port: u16) -> Result<Firewall, String> {
-    core::remove_firewall_rule(port, true)
+/// Remove the rules again. Windows shows its admin prompt once; a declined prompt is an error.
+pub fn remove_firewall(port: u16, downloads: u16) -> Result<Firewall, String> {
+    core::remove_firewall_rule(port, Some(downloads), true)
         .map(firewall)
         .map_err(|e| e.to_string())
 }

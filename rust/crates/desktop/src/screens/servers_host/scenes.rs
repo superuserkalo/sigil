@@ -30,6 +30,9 @@ pub const SCENES: &[Scene] = &[
     ("host-custom-map", custom_map),
     ("host-map-menu", map_menu),
     ("host-running-custom", running_custom),
+    ("host-running-downloads", running_downloads),
+    ("host-running-downloads-de", running_downloads_german),
+    ("host-downloads-rule-missing", downloads_rule_missing),
 ];
 
 const GAME_BUILD: &str = "6123456";
@@ -272,4 +275,22 @@ fn running_custom(s: &mut State) {
     running(s);
     s.servers.host.map = TextEdit::new("harbor_night");
     s.servers.host.live_map = Some("harbor_night".to_string());
+}
+
+/// Running with custom content: the map download server answers beside it on port 27068.
+fn running_downloads(s: &mut State) {
+    running_custom(s);
+    s.servers.host.serving = Some(27068);
+}
+
+fn running_downloads_german(s: &mut State) {
+    s.prefs.language = crate::screens::settings::i18n::Lang::German;
+    crate::screens::settings::i18n::set(s.prefs.language);
+    running_downloads(s);
+}
+
+/// The game port's rules are there from before; the download port's is not yet.
+fn downloads_rule_missing(s: &mut State) {
+    running_downloads(s);
+    s.servers.host.firewall = Firewall::Partial;
 }

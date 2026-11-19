@@ -966,6 +966,28 @@ fn server_section(s: &State, u: &Ui) -> El {
                 ),
         );
     }
+    if let Some(serving) = host.serving.filter(|_| host.phase == Phase::Running) {
+        card = card.child(
+            row()
+                .key("host-downloads")
+                .w_full()
+                .gap(10.0)
+                .items_start()
+                .role("status")
+                .child(icon(&icons::GLOBE, 16.0).color(u.teal).mt(2.0).a11y_hidden())
+                .child(
+                    text(fill(
+                        tr("Friends using Sigil download your custom maps from this PC on port {}."),
+                        &[&serving.to_string()],
+                    ))
+                    .font(SMALL)
+                    .color(u.prose)
+                    .grow(1.0)
+                    .min_w(0.0)
+                    .wrap(),
+                ),
+        );
+    }
     if locked {
         card = card.child(
             text(tr("Stop the server to change its settings."))
@@ -1106,35 +1128,36 @@ fn console_tone(u: &Ui, line: &str) -> Color {
 fn reach_section(s: &State, u: &Ui) -> El {
     let host = &s.servers.host;
     let port = host.port();
+    let downloads = host.download_port().to_string();
     let running = host.phase == Phase::Running;
 
-    // The firewall rule.
+    // The firewall rules: the game port and the map download port.
     let checking = host.firewall_job.is_running();
     let (step, line) = match (&host.firewall, checking) {
         (_, true) => (Step::Busy, tr("Checking Windows Firewall...").to_string()),
         (Firewall::Present, _) => (
             Step::Done,
             fill(
-                tr("Windows Firewall lets TCP and UDP port {} in."),
-                &[&port.to_string()],
+                tr("Windows Firewall lets TCP and UDP port {} in, and TCP port {} for map downloads."),
+                &[&port.to_string(), &downloads],
             ),
         ),
         (Firewall::Partial, _) => (
             Step::Warn,
             fill(
                 tr(
-                    "Only part of the rule for port {} is there. Add it again to open both TCP and UDP.",
+                    "Only some of the rules are there. Add them again to open TCP and UDP port {} and TCP port {} for map downloads.",
                 ),
-                &[&port.to_string()],
+                &[&port.to_string(), &downloads],
             ),
         ),
         (Firewall::Missing, _) => (
             Step::Todo,
             fill(
                 tr(
-                    "No rule for port {} yet. Other PCs cannot reach the server until there is one.",
+                    "No rules for ports {} and {} yet. Other PCs cannot reach the server or its map downloads until there are.",
                 ),
-                &[&port.to_string()],
+                &[&port.to_string(), &downloads],
             ),
         ),
         (Firewall::Unknown, _) => (Step::Todo, tr("Not checked yet.").to_string()),
@@ -1305,7 +1328,7 @@ fn reach_section(s: &State, u: &Ui) -> El {
         .unwrap_or_else(|| tr("this PC").to_string());
     for (i, line) in [
         tr("Open your router's settings page. Its address is often on a sticker on the router, like 192.168.1.1."),
-        &fill(tr("Forward TCP and UDP port {} to {}."), &[&port.to_string(), &target]),
+        &fill(tr("Forward TCP and UDP port {} and TCP port {} (map downloads) to {}."), &[&port.to_string(), &downloads, &target]),
         &fill(tr("Your public IP is on the router's status page. Friends join with connect <public IP>:{}."), &[&port.to_string()]),
     ]
     .into_iter()
@@ -1328,7 +1351,7 @@ fn reach_section(s: &State, u: &Ui) -> El {
         col()
             .w_full()
             .gap(6.0)
-            .child(detail(u, tr("Your router has to pass the port on to this PC. Sigil does not change router settings or look up your public IP.").to_string()))
+            .child(detail(u, tr("Your router has to pass both ports on to this PC. Sigil does not change router settings or look up your public IP.").to_string()))
             .child(steps),
         None,
     )
@@ -1477,7 +1500,7 @@ pub fn dialog(s: &State, u: &Ui) -> Option<El> {
     let host = &s.servers.host;
     match host.confirm.as_ref()? {
         Confirm::ServerFiles { update } => Some(files_dialog(s, u, *update)),
-        Confirm::Firewall => Some(firewall_dialog(u, host.port())),
+        Confirm::Firewall => Some(firewall_dialog(u, host.port(), host.download_port())),
     }
 }
 
@@ -1569,14 +1592,14 @@ fn files_dialog(s: &State, u: &Ui, update: bool) -> El {
     shell(u, "host-files-dialog", title, body)
 }
 
-fn firewall_dialog(u: &Ui, port: u16) -> El {
+fn firewall_dialog(u: &Ui, port: u16, downloads: u16) -> El {
     let body = col()
         .w_full()
         .gap(10.0)
         .child(
             text(fill(
-                tr("Sigil asks Windows to let incoming TCP and UDP on port {} reach the server. Nothing else changes."),
-                &[&port.to_string()],
+                tr("Sigil asks Windows to let incoming TCP and UDP on port {} reach the server, and TCP on port {} reach Sigil's map downloads. Nothing else changes."),
+                &[&port.to_string(), &downloads.to_string()],
             ))
             .font(BODY)
             .color(u.prose)

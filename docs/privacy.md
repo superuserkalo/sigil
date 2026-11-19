@@ -216,6 +216,18 @@ Install SteamCMD: one anonymous GET, checked against a pinned SHA-256.
 Host a server downloads the pinned Deadworks release from `github.com/Deadworks-net/deadworks`
 when you press Install Deadworks: one anonymous GET, checked against a pinned SHA-256.
 
+Host a server with custom maps or addons runs a small read-only file server on your PC beside the
+game server (TCP, the game port plus one, 27068 by default) so friends who use Sigil can download
+that content from you. It starts when you press Start and stops with the server. It hands out only
+the files in the server's `sigil-fastdl` folder, keeps no log, and sends nothing anywhere itself.
+
+What the two sides learn about each other: anyone who connects to your server or its download
+port sees your public IP address (or your LAN address on a local network), as with any game
+server you host. You, as the host, see the IP address of every player who joins (Deadworks prints
+it in the server console) and of anyone who connects to the download port; Sigil's file server
+does not record it. A joiner's Sigil downloads from the same address it connects to, so joining a
+Sigil-hosted server reveals nothing to a third party.
+
 ## Divine Skins
 
 `api.divineskins.gg`, `lol-mods.divine-cdn.com`, `lol-assets.divine-cdn.com` and

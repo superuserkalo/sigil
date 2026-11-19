@@ -3,8 +3,10 @@
 //!
 //! The tab is a setup checklist (.NET 10, free space, SteamCMD, the server files, Deadworks),
 //! the server card (settings, a map picker with the player's custom maps, Start and Stop,
-//! status, the live console and a command line), plugins, the firewall rule and the ways in
-//! (LAN join, `connect ip:port`, router forwarding). Every download, process start, file copy
+//! status, the live console and a command line), plugins, the firewall rules and the ways in
+//! (LAN join, `connect ip:port`, router forwarding). With custom maps on the server, Start also
+//! runs the read-only map download server on the game port plus one (ADR 0015 amendment) and
+//! Stop ends it; both happen on the start and stop workers. Every download, process start, file copy
 //! and firewall change is a press here; nothing starts on its own and no agent tool reaches
 //! any of it. Checks and installs run on workers through `bridge`, the only file that calls
 //! `deadlock_core::host`. The console keeps at most `CONSOLE_LINES` lines in memory.
@@ -157,6 +159,8 @@ pub struct HostState {
     pub name: TextEdit,
     pub map: TextEdit,
     pub port: TextEdit,
+    /// The saved map download port, kept as saved. None: the game port plus one.
+    pub fastdl_port: Option<u16>,
     pub password: TextEdit,
     pub max_players: TextEdit,
     pub extra: TextEdit,
@@ -167,6 +171,8 @@ pub struct HostState {
     pub live_map: Option<String>,
     pub phase: Phase,
     pub server: Option<bridge::Running>,
+    /// The port the map download server answers on while it runs beside the server.
+    pub serving: Option<u16>,
     pub start_job: Job<bridge::Running>,
     pub stop_job: Job<()>,
     pub console: VecDeque<String>,
@@ -202,6 +208,7 @@ impl Default for HostState {
             name: TextEdit::new(config.name),
             map: TextEdit::new(config.map),
             port: TextEdit::new(config.port.to_string()),
+            fastdl_port: None,
             password: TextEdit::new(""),
             max_players: TextEdit::new(""),
             extra: TextEdit::new(""),
@@ -210,6 +217,7 @@ impl Default for HostState {
             live_map: None,
             phase: Phase::Stopped,
             server: None,
+            serving: None,
             start_job: Job::default(),
             stop_job: Job::default(),
             console: VecDeque::new(),
@@ -233,6 +241,13 @@ impl HostState {
     /// The port the fields hold, or the default when the field is not a port.
     pub fn port(&self) -> u16 {
         parse_port(&self.port.text).unwrap_or(DEFAULT_PORT)
+    }
+
+    /// The map download port: the running one, the saved one, or the game port plus one.
+    pub fn download_port(&self) -> u16 {
+        self.serving
+            .or(self.fastdl_port)
+            .unwrap_or_else(|| self.port().saturating_add(1))
     }
 
     pub fn ready(&self) -> bool {
@@ -323,6 +338,7 @@ impl HostState {
             password: self.password.text.clone(),
             max_players,
             extra: self.extra.text.trim().to_string(),
+            fastdl_port: self.fastdl_port,
         };
         config.validate().map_err(|e| e.to_string())?;
         Ok(config)
@@ -332,6 +348,7 @@ impl HostState {
         self.name = TextEdit::new(config.name.clone());
         self.map = TextEdit::new(config.map.clone());
         self.port = TextEdit::new(config.port.to_string());
+        self.fastdl_port = config.fastdl_port;
         self.password = TextEdit::new(config.password.clone());
         self.max_players = TextEdit::new(
             config
@@ -455,11 +472,12 @@ fn refresh_plugins(st: &mut State) {
 
 fn refresh_firewall(st: &mut State) {
     let port = st.servers.host.port();
+    let downloads = st.servers.host.download_port();
     let wake = st.wake.clone();
     st.servers
         .host
         .firewall_job
-        .start(wake, move || bridge::firewall_status(port));
+        .start(wake, move || bridge::firewall_status(port, downloads));
 }
 
 /// The folder picker for the server files. The choice is saved; nothing is moved.
@@ -675,10 +693,12 @@ pub fn set_plugin(st: &mut State, name: String, on: bool) {
     });
 }
 
-/// Add the inbound rule. Windows shows its admin prompt; the result is read back afterwards.
+/// Add the inbound rules for the game port and the map download port. Windows shows its admin
+/// prompt once; the result is read back afterwards.
 pub fn add_firewall(st: &mut State) {
     st.servers.host.confirm = None;
     let port = st.servers.host.port();
+    let downloads = st.servers.host.download_port();
     if idle(st) || st.servers.host.firewall_job.is_running() {
         return;
     }
@@ -686,12 +706,13 @@ pub fn add_firewall(st: &mut State) {
     st.servers
         .host
         .firewall_job
-        .start(wake, move || bridge::add_firewall(port));
+        .start(wake, move || bridge::add_firewall(port, downloads));
 }
 
-/// Close the server port again: the player's press, behind Windows' admin prompt.
+/// Close both ports again: the player's press, behind Windows' admin prompt.
 pub fn remove_firewall(st: &mut State) {
     let port = st.servers.host.port();
+    let downloads = st.servers.host.download_port();
     if idle(st) || st.servers.host.firewall_job.is_running() {
         return;
     }
@@ -699,7 +720,7 @@ pub fn remove_firewall(st: &mut State) {
     st.servers
         .host
         .firewall_job
-        .start(wake, move || bridge::remove_firewall(port));
+        .start(wake, move || bridge::remove_firewall(port, downloads));
 }
 
 /// Join the server from this PC through Steam.
@@ -770,6 +791,7 @@ pub fn poll(st: &mut State, now: f64, tx: &mut Tx) -> bool {
     if let Some(result) = host.start_job.try_take() {
         match result {
             Ok(running) => {
+                host.serving = bridge::serving_downloads(&running);
                 host.server = Some(running);
                 host.phase = Phase::Running;
                 // The map is in the server folder now; the next check lists it there.
@@ -792,7 +814,9 @@ pub fn poll(st: &mut State, now: f64, tx: &mut Tx) -> bool {
         changed = true;
     }
     if let Some(result) = host.stop_job.try_take() {
+        // The download server stopped with the game server; the last handle goes here.
         host.server = None;
+        host.serving = None;
         host.live_map = None;
         host.phase = match result {
             Ok(()) => Phase::Stopped,
@@ -813,7 +837,9 @@ pub fn poll(st: &mut State, now: f64, tx: &mut Tx) -> bool {
         if host.phase == Phase::Running
             && let Some(exit) = bridge::exited(&server)
         {
+            // Dropping the handle stops the map download server too.
             host.server = None;
+            host.serving = None;
             host.live_map = None;
             host.phase = Phase::Exited(exit);
             changed = true;
