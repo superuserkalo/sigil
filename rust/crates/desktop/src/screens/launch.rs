@@ -80,6 +80,8 @@ pub struct View {
     pub overlap: conflicts::View,
     /// A launch the progress overlay is stepping through.
     pub progress: Option<crate::screens::launch_progress::Progress>,
+    /// A launch stopped by the gate until the player answers (`screens::launch_gate`).
+    pub gate: Option<crate::screens::launch_gate::Pending>,
 }
 
 impl Default for View {
@@ -95,6 +97,7 @@ impl Default for View {
             downloads: downloads::Downloads::default(),
             overlap: conflicts::View::default(),
             progress: None,
+            gate: None,
         }
     }
 }

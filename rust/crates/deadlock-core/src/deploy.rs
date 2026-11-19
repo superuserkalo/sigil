@@ -181,7 +181,10 @@ pub fn plan_deploy(
 
     let gameinfo_file = gameinfo_path(game_root);
     let gameinfo = read_game_info_status(&gameinfo_file)?;
-    let gameinfo_repair = !(gameinfo.present && gameinfo.addons_search_path);
+    // Also when a required line is missing: since build 10973 the game reads its default
+    // keybindings from the `Mod` path, which falls back to the addons folder without `Mod citadel`.
+    let gameinfo_repair =
+        !(gameinfo.present && gameinfo.addons_search_path && gameinfo.missing_paths.is_empty());
 
     if !gameinfo.present {
         warnings.push(format!(
@@ -345,6 +348,84 @@ pub fn apply_deploy(
         backups,
         gameinfo_repaired,
     })
+}
+
+/// Why a launch should not go ahead as it is. Checked fresh from disk when the player presses
+/// Launch, so a file Steam reset a minute ago is caught.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum LaunchBlocker {
+    /// `gameinfo.gi` is gone: Steam has to restore it (Verify integrity of game files).
+    GameinfoMissing,
+    /// Mod folders are mounted but `Mod citadel` / `Write citadel` are missing: the game dies at
+    /// start ("Unable to read default keybinding configuration"). Never launch like this.
+    WillCrash,
+    /// A modded launch with no addons line (and no isolated profile block): no mod loads.
+    ModsWontLoad,
+}
+
+/// The blocker for a launch, or `None` when the game can start as the player asked. Read only.
+pub fn launch_blocker(game_root: &Path, vanilla: bool) -> Option<LaunchBlocker> {
+    let path = gameinfo_path(game_root);
+    let Ok(status) = read_game_info_status(&path) else {
+        return Some(LaunchBlocker::GameinfoMissing);
+    };
+    if !status.present {
+        return Some(LaunchBlocker::GameinfoMissing);
+    }
+    let text = fs::read_to_string(&path).unwrap_or_default();
+    let code_lines = || {
+        text.lines()
+            .map(|line| line.find("//").map_or(line, |at| &line[..at]).trim().to_ascii_lowercase())
+    };
+    let mounts_mods = status.addons_search_path
+        || code_lines().any(|code| code.starts_with("game") && !code.starts_with("game_") && code.contains("citadel/"));
+    let crash = status
+        .missing_paths
+        .iter()
+        .any(|missing| missing.starts_with("Mod ") || missing.starts_with("Write "));
+    if mounts_mods && crash {
+        return Some(LaunchBlocker::WillCrash);
+    }
+    let isolated = code_lines().any(|code| code == "// sigil:profile-begin")
+        || text.lines().any(|line| line.trim() == "// sigil:profile-begin");
+    if !vanilla && !status.addons_search_path && !isolated {
+        return Some(LaunchBlocker::ModsWontLoad);
+    }
+    None
+}
+
+/// GAME WRITE, run right before every launch (modded or vanilla): make sure `gameinfo.gi` holds
+/// the lines a game with mounted mod folders needs to start. Since build 10973 Deadlock reads its
+/// default keybindings from the `Mod` search path, which falls back to the first `Game` line; with
+/// `Game citadel/addons` first and no `Mod citadel` the game dies at launch with "Unable to read
+/// default keybinding configuration". Changes nothing when the addons line is absent (stock file)
+/// or every required line is there. Backs up first. Returns whether the file changed.
+pub fn ensure_launch_search_paths(game_root: &Path) -> Result<bool> {
+    let path = gameinfo_path(game_root);
+    let status = read_game_info_status(&path)?;
+    let mounts_mods = status.addons_search_path
+        || fs::read_to_string(&path).is_ok_and(|text| {
+            text.lines().any(|line| {
+                let code = line.find("//").map_or(line, |at| &line[..at]).trim().to_ascii_lowercase();
+                code.starts_with("game") && code.contains("citadel/") && !code.starts_with("game_")
+            })
+        });
+    if !status.present || !mounts_mods || status.missing_paths.is_empty() {
+        return Ok(false);
+    }
+    // Add only the missing required lines. The plain addons line is never put back here: an
+    // isolated profile replaces it with its own folder on purpose.
+    let only_missing = GameInfoStatus { addons_search_path: true, ..status };
+    let text = fs::read_to_string(&path)?;
+    let (output, _) = repaired_gameinfo_text(&text, &only_missing)
+        .map_err(|reason| Error::msg(format!("{} {reason}", path.display())))?;
+    if output == text {
+        return Ok(false);
+    }
+    fs::copy(&path, backup_path_for(&path)?)?;
+    crate::util::write_atomic(&path, output.as_bytes())?;
+    Ok(true)
 }
 
 /// Restore the addons SearchPath above `Game citadel`.
@@ -768,4 +849,60 @@ mod gameinfo_paths_tests {
         assert!(repair_gameinfo(&path, false).is_err());
         assert_eq!(fs::read_to_string(&path).unwrap(), STOCK);
     }
+
+    /// Valve's current file (build 10973): no Mod or Write lines.
+    const STOCK_10973: &str = "\"GameInfo\"\n{\n\tFileSystem\n\t{\n\t\tSearchPaths\n\t\t{\n\t\t\tGame_UILanguage\t\tcitadel_*LANGUAGE*\n\n\t\t\tGame_LowViolence\tcitadel_lv\n\n\t\t\tGame\t\t\t\tcitadel\n\t\t\tGame\t\t\t\tcore\n\t\t}\n\t}\n}\n";
+
+    fn game_with(tag: &str, gameinfo: &str) -> PathBuf {
+        let root = std::env::temp_dir().join(format!("sigil-launch-gate-{tag}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("game").join("citadel")).unwrap();
+        fs::write(gameinfo_path(&root), gameinfo).unwrap();
+        root
+    }
+
+    #[test]
+    fn the_addons_line_without_mod_and_write_is_a_crash_and_is_fixed_before_launch() {
+        let modded = STOCK_10973.replace("\t\t\tGame\t\t\t\tcitadel\n", "\t\t\tGame\tcitadel/addons\n\t\t\tGame\t\t\t\tcitadel\n");
+        let root = game_with("crash", &modded);
+        assert_eq!(launch_blocker(&root, false), Some(LaunchBlocker::WillCrash));
+        assert_eq!(launch_blocker(&root, true), Some(LaunchBlocker::WillCrash), "vanilla keeps the addons line");
+
+        assert!(ensure_launch_search_paths(&root).unwrap());
+        let text = fs::read_to_string(gameinfo_path(&root)).unwrap();
+        for line in ["Mod\t\tcitadel", "Write\t\tcitadel"] {
+            assert!(text.contains(line), "{line} missing in\n{text}");
+        }
+        assert_eq!(launch_blocker(&root, false), None);
+        assert!(!ensure_launch_search_paths(&root).unwrap(), "a second run changes nothing");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn a_stock_file_never_blocks_vanilla_and_asks_for_the_addons_line_when_modded() {
+        let root = game_with("stock", STOCK_10973);
+        assert_eq!(launch_blocker(&root, true), None);
+        assert_eq!(launch_blocker(&root, false), Some(LaunchBlocker::ModsWontLoad));
+        assert!(!ensure_launch_search_paths(&root).unwrap(), "nothing mounted, nothing to add");
+        fs::remove_file(gameinfo_path(&root)).unwrap();
+        assert_eq!(launch_blocker(&root, true), Some(LaunchBlocker::GameinfoMissing));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn the_pre_launch_fix_never_puts_the_addons_line_back_over_an_isolated_profile() {
+        let isolated = STOCK_10973.replace(
+            "\t\t\tGame\t\t\t\tcitadel\n",
+            "\t\t\t// sigil:profile-begin\n\t\t\tGame citadel/addons/sigil-ranked\n\t\t\t// sigil:profile-end\n\t\t\tGame\t\t\t\tcitadel\n",
+        );
+        let root = game_with("isolated", &isolated);
+        assert_eq!(launch_blocker(&root, false), Some(LaunchBlocker::WillCrash));
+        assert!(ensure_launch_search_paths(&root).unwrap());
+        let text = fs::read_to_string(gameinfo_path(&root)).unwrap();
+        assert!(!text.lines().any(|line| line.trim() == "Game citadel/addons"), "{text}");
+        assert!(text.contains("Mod\t\tcitadel"));
+        assert_eq!(launch_blocker(&root, false), None);
+        let _ = fs::remove_dir_all(root);
+    }
+
 }

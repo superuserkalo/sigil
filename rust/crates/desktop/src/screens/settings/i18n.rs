@@ -236,6 +236,7 @@ mod tests {
             include_str!("../installed/overlap.rs"),
             include_str!("../downloads.rs"),
             include_str!("../launch_progress.rs"),
+            include_str!("../launch_gate.rs"),
             include_str!("../autoexec_flags.rs"),
             include_str!("../../statusbar.rs"),
             include_str!("../browse/strip.rs"),

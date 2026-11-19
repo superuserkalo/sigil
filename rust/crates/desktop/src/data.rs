@@ -3139,6 +3139,7 @@ pub fn run_launch(state: &mut State, dialog: crate::screens::launch::Dialog) {
         Dialog::Modded => {
             if let Some(game_root) = state.game_root.clone() {
                 let _ = deadlock_core::addons::sync_overflow_mount(&deadlock_core::deploy::addons_dir(&game_root));
+                let _ = deadlock_core::deploy::ensure_launch_search_paths(&game_root);
             }
             deadlock_core::launch::launch_modded(true)
         }
@@ -3149,6 +3150,8 @@ pub fn run_launch(state: &mut State, dialog: crate::screens::launch::Dialog) {
                     Some("No Deadlock install was found. Nothing was stashed.".to_string());
                 return;
             };
+            // A vanilla run keeps the addons line, so it needs the Mod and Write lines too.
+            let _ = deadlock_core::deploy::ensure_launch_search_paths(&game_root);
             deadlock_core::launch::launch_vanilla(&game_root, &data, true).map(|launch| {
                 let files = launch
                     .stash_dir

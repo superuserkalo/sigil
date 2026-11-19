@@ -103,6 +103,10 @@ pub fn plan(vanilla: bool, stashed: bool, page: bool, repair: bool) -> Vec<Step>
 /// Start a launch. A modded one first asks about map mods when any are on
 /// (`launch_extras::ask_first`); the answer starts it through [`begin_checked`].
 pub fn begin(st: &mut State, vanilla: bool, page: bool) {
+    // Every launch passes the gate first: a gameinfo.gi that would crash the game stops here.
+    if crate::screens::launch_gate::blocked(st, vanilla, page) {
+        return;
+    }
     if !vanilla && crate::screens::launch_extras::ask_first(st, page) {
         return;
     }
