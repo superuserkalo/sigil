@@ -1361,3 +1361,8 @@ mod tests {
         assert_eq!(Favorite::from_json(&serde_json::json!({"name": "no id"})), None);
     }
 }
+
+/// Close the mod's details: the app calls this when the player leaves Browse.
+pub fn close_details(st: &mut crate::app::State) {
+    detail_state::close_details(st);
+}

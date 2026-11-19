@@ -64,7 +64,7 @@ fn fix_and_launch(st: &mut State) {
 fn verify_in_steam(st: &mut State) {
     st.launch.gate = None;
     let target = "steam://validate/1422450";
-    let spawn = |program: &str, args: &[&str]| std::process::Command::new(program).args(args).spawn().map(|_| ());
+    let spawn = |program: &str, args: &[&str]| deadlock_core::util::hidden_command(program).args(args).spawn().map(|_| ());
     #[cfg(target_os = "macos")]
     let opened = spawn("open", &[target]);
     #[cfg(target_os = "windows")]

@@ -321,7 +321,7 @@ pub struct LaunchOptionsWrite {
 pub fn steam_running() -> bool {
     #[cfg(target_os = "windows")]
     {
-        std::process::Command::new("tasklist")
+        crate::util::hidden_command("tasklist")
             .args(["/FI", "IMAGENAME eq steam.exe", "/NH"])
             .output()
             .map(|out| String::from_utf8_lossy(&out.stdout).to_lowercase().contains("steam.exe"))

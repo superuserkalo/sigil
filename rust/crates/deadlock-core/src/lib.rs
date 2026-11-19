@@ -1,7 +1,7 @@
 //! Deadlock domain core: game discovery, VPK reading, catalog indexes, project
 //! manifests, patch notes and change impact. No UI, no agent runtime.
 
-mod util;
+pub mod util;
 
 pub mod addon_checks;
 pub mod addons;

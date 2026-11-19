@@ -1574,7 +1574,7 @@ fn extract_with_tool(
         )));
     }
 
-    let mut command = Command::new(tool);
+    let mut command = crate::util::hidden_command(tool);
 
     match format {
         ArchiveFormat::SevenZip => {

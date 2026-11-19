@@ -325,6 +325,9 @@ impl State {
             match self.screen {
                 Screen::Locker => crate::data::release_locker_art(self),
                 Screen::Installed => screens::installed::release_previews(self),
+                // Leaving Browse by any route (a toast, the stats strip, the sidebar, a key)
+                // closes the mod's details, as its X would (#6).
+                Screen::Browse => screens::browse::close_details(self),
                 _ => {}
             }
         }
@@ -439,7 +442,7 @@ impl State {
         // Locker's "shuffle on launch" already ran in the launch's Roll step
         // (`launch_extras::roll_before_launch`); running it here too shuffled twice.
         let spawn = |program: &str, args: &[&str]| {
-            std::process::Command::new(program)
+            deadlock_core::util::hidden_command(program)
                 .args(args)
                 .spawn()
                 .map(|_| ())
