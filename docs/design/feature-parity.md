@@ -36,7 +36,7 @@ Two architectural differences drive many rows:
 | Browse | 37 | 0 | 0 | 0 |
 | Mod details | 19 | 0 | 1 | 0 |
 | Installed | 40 | 0 | 0 | 0 |
-| Locker | 12 | 0 | 1 | 0 |
+| Locker | 16 | 0 | 1 | 0 |
 | Crosshair | 9 | 0 | 0 | 1 |
 | Autoexec | 4 | 1 | 0 | 0 |
 | Performance | 8 | 0 | 0 | 0 |
@@ -47,7 +47,7 @@ Two architectural differences drive many rows:
 | Overlap | 7 | 0 | 0 | 0 |
 | Downloads | 6 | 0 | 0 | 0 |
 | Global shell | 15 | 0 | 3 | 2 |
-| **Total** | 173 | 5 | 6 | 5 |
+| **Total** | 177 | 5 | 6 | 5 |
 
 ## Browse
 
@@ -212,6 +212,10 @@ Endpoints, verified with curl against the live API on 2026-11-17 (Deadlock game 
 | Custom hero cards | G | Portrait upload and crop | has (built: PNG/JPEG/WebP copy in app data, crop slider, remove) | M | P3 |
 | 3D hero viewer | G+D | Posed model | missing (`docs/design/locker-3d.md`: Rune has no mesh or depth pass) | L | P3 |
 | Locker overrides review | G | Remove applied cards, sounds, colors | has (built: Locker changes dialog for cards, shuffle, sound mods and recolor briefs) | S | P3 |
+| Asset catalog previews | G | The game's own textures as thumbnails, by kind, with a lightbox | has (wave 4c, `locker/catalog.rs` over `game_assets::texture_catalog` and `texture_thumbnail`: a Game art section on each hero page, kind chips (cards and portraits, ability icons, skin textures, ability effects, other), search over name and path, 48 tiles a page; previews at most 192 px decoded on one worker, at most 96 held and all released when the section closes; lightbox with path, native size, Copy path and Save preview. A full-size PNG export is not offered: the core caps previews at 256 px) | M | P3 |
+| Game sound browser | G+D | The hero's own sound events, played in the app | has (wave 4c, `locker/game_sounds.rs` over `game_assets::sound_catalog` and `clip_audio`: a Game sounds section with ability groups by slot (ULT for the fourth), weapon, movement, melee, voice lines (folded, capped at 200 a group) and other; search; Play through the shared preview player at the status bar's volume; save a clip as MP3 or WAV) | M | P3 |
+| Swap a hero's sounds | G+D | Replace a game sound with your audio, as a mod | has (wave 4c: Replace stages an MP3 (or a 16-bit WAV for uncompressed clips) per event, play it back, loop as the game, on or off, volume in 1.5 dB steps, or a volume change of the game's own sound; before building, a check across heroes warns when another hero plays the same clips; each swap is built by `build_sound_swap` into a VPK in app data and lands in the import review, switched off. Not built: Grimoire's waveform trim (the core takes `trim_ms`), DMM's OGG and FLAC input) | M | P3 |
+| In-game hero card art | G+D | Your image on the hero's cards in the game, as a mod | has (wave 4c, `locker/card_art.rs` over `hero_card_slots` and `build_hero_card_mod`: In-game card on the hero page, every variant at its shape with the game's art dimmed and its size, PNG (JPEG and WebP are turned into PNG), centre crop to the variant's shape with a soft-image warning, several variants in one mod through the import review, switched off; Game art's Replace this icon does the same for one ability icon) | M | P3 |
 
 ## Crosshair
 

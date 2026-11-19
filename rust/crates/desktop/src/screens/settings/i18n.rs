@@ -20,6 +20,8 @@ use std::sync::atomic::{AtomicU8, Ordering};
 use super::locales;
 #[path = "locales_w4a.rs"]
 mod locales_w4a;
+#[path = "locales_w4c.rs"]
+mod locales_w4c;
 
 /// The choice in Settings. `System` follows the OS language when Sigil has it.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
@@ -117,7 +119,7 @@ pub fn current() -> Lang {
 
 fn maps() -> &'static [HashMap<&'static str, &'static str>; 3] {
     static MAPS: OnceLock<[HashMap<&'static str, &'static str>; 3]> = OnceLock::new();
-    MAPS.get_or_init(|| Lang::ALL.map(|lang| lang.table().iter().chain(lang.more()).chain(lang.wave()).chain(if lang == Lang::German { super::locales_w4b::DE } else { &[] }).chain(if lang == Lang::German { locales_w4a::DE } else { &[] }).copied().collect()))
+    MAPS.get_or_init(|| Lang::ALL.map(|lang| lang.table().iter().chain(lang.more()).chain(lang.wave()).chain(if lang == Lang::German { super::locales_w4b::DE } else { &[] }).chain(if lang == Lang::German { locales_w4a::DE } else { &[] }).chain(if lang == Lang::German { locales_w4c::DE } else { &[] }).copied().collect()))
 }
 
 #[cfg(test)]

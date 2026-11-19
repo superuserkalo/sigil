@@ -35,6 +35,9 @@ bzip2 = "0.5"
 # resources. vpkmerge-core (MIT) already does that, and ADR 0013 makes the crate a linked
 # library rather than a second binary. Pinned to a revision, bumped deliberately.
 vpkmerge-core = { git = "https://github.com/Slush97/vpkmerge", rev = "df4158673f4e700b9dda4db76ed9f193440b24ba" }
+# Game asset previews and swaps (game_assets.rs) decode textures and sound clips with
+# morphic, the format crate vpkmerge-core already links. Same repository and revision.
+morphic = { git = "https://github.com/Slush97/vpkmerge", rev = "df4158673f4e700b9dda4db76ed9f193440b24ba" }
 
 # Windows: Steam's and Deadlock's install paths from the registry, and the fixed drives to look
 # for Steam libraries on (discovery.rs). The same windows-sys the desktop app links.

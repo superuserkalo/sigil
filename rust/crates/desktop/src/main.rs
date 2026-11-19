@@ -69,7 +69,7 @@ fn main() -> std::process::ExitCode {
     brand::install_app_icon();
     let scenes: &'static [(&'static str, fn(&mut State))] =
         Box::leak(
-            [app::scenes(), &deeplink::SCENES[..], &screens::settings::personalize::SCENES[..], screens::w4a_scenes::SCENES]
+            [app::scenes(), &deeplink::SCENES[..], &screens::settings::personalize::SCENES[..], screens::w4a_scenes::SCENES, screens::w4c_scenes::SCENES]
                 .concat()
                 .into_boxed_slice(),
         );
