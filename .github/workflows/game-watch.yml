@@ -1,0 +1,113 @@
+name: game-watch
+
+# Watches Deadlock updates so a change that breaks Sigil is caught before players hit it (the
+# Nov 18, 2026 build that crashed games with no `Mod citadel` line is the case it would have
+# caught). Every 30 minutes a light step reads Valve's gameinfo.gi and build number from
+# SteamTracking/GameTracking-Deadlock (public, no Steam login) and compares the file's hash with
+# the last one checked. Only a new file builds Sigil's core and runs its gameinfo.gi repair and
+# launch-gate tests against it. A failure opens one issue (GitHub emails the owner).
+# Free: GitHub-hosted runners cost nothing for a public repository.
+
+on:
+  schedule:
+    - cron: "*/30 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: game-watch
+  cancel-in-progress: false
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      TRACKING: https://raw.githubusercontent.com/SteamTracking/GameTracking-Deadlock/master
+    steps:
+      - name: Read Valve's current gameinfo.gi and build
+        id: live
+        run: |
+          set -euo pipefail
+          mkdir -p live
+          curl -fsSL --retry 3 "$TRACKING/game/citadel/gameinfo.gi" -o live/gameinfo.gi
+          curl -fsSL --retry 3 "$TRACKING/game/citadel/steam.inf" -o live/steam.inf
+          echo "sha=$(sha256sum live/gameinfo.gi | cut -c1-16)" >> "$GITHUB_OUTPUT"
+          # Outside content: keep digits only before it reaches outputs and the issue title.
+          echo "build=$(sed -n 's/^ClientVersion=//p' live/steam.inf | tr -cd '0-9' | cut -c1-12)" >> "$GITHUB_OUTPUT"
+
+      - name: Checked this file before?
+        id: seen
+        uses: actions/cache/restore@v4
+        with:
+          path: live/checked
+          key: gameinfo-${{ steps.live.outputs.sha }}
+          lookup-only: true
+
+      - name: Check out Sigil
+        if: steps.seen.outputs.cache-hit != 'true'
+        uses: actions/checkout@v4
+        with:
+          path: sigil
+
+      - uses: dtolnay/rust-toolchain@stable
+        if: steps.seen.outputs.cache-hit != 'true'
+
+      - uses: Swatinem/rust-cache@v2
+        if: steps.seen.outputs.cache-hit != 'true'
+        with:
+          workspaces: sigil/rust
+
+      - name: Run Sigil's gameinfo.gi checks against Valve's file
+        id: test
+        if: steps.seen.outputs.cache-hit != 'true'
+        working-directory: sigil
+        run: |
+          set -euo pipefail
+          ./scripts/vendor-rune.sh
+          ./scripts/vendor-tinyagent.sh
+          SIGIL_LIVE_GAMEINFO="$GITHUB_WORKSPACE/live/gameinfo.gi" \
+            cargo test --manifest-path rust/Cargo.toml -p deadlock-core \
+            valves_live_gameinfo_still_repairs_and_launches -- --ignored --nocapture 2>&1 | tee ../live/test.log
+
+      - name: Remember this file as checked
+        if: always() && steps.seen.outputs.cache-hit != 'true' && steps.test.outcome != 'skipped'
+        run: echo "${{ steps.test.outcome }}" > live/checked
+
+      - uses: actions/cache/save@v4
+        if: always() && steps.seen.outputs.cache-hit != 'true' && steps.test.outcome != 'skipped'
+        with:
+          path: live/checked
+          key: gameinfo-${{ steps.live.outputs.sha }}
+
+      - name: Open an issue when Sigil breaks
+        if: failure() && steps.test.outcome == 'failure'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BUILD: ${{ steps.live.outputs.build }}
+          SHA: ${{ steps.live.outputs.sha }}
+        run: |
+          set -euo pipefail
+          gh label create game-update --repo "$GITHUB_REPOSITORY" --color B60205 \
+            --description "A Deadlock update breaks Sigil" --force
+          if gh issue list --repo "$GITHUB_REPOSITORY" --label game-update --state open \
+               --search "$SHA in:body" --json number --jq '.[0].number' | grep -q .; then
+            exit 0
+          fi
+          {
+            echo "Deadlock build **$BUILD** changed \`gameinfo.gi\` (sha256 \`$SHA\`...), and Sigil's repair or launch check no longer works with it."
+            echo
+            echo "Players who launch modded may crash or lose their mods until Sigil ships a fix."
+            echo
+            echo "- Valve's file: https://github.com/SteamTracking/GameTracking-Deadlock/blob/master/game/citadel/gameinfo.gi"
+            echo "- Run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+            echo
+            echo '```'
+            tail -n 40 live/test.log
+            echo '```'
+          } > live/issue.md
+          gh issue create --repo "$GITHUB_REPOSITORY" --label game-update --label bug \
+            --title "Deadlock build $BUILD breaks Sigil's gameinfo.gi handling" --body-file live/issue.md

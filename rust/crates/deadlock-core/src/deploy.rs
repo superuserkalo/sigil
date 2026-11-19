@@ -905,4 +905,42 @@ mod gameinfo_paths_tests {
         let _ = fs::remove_dir_all(root);
     }
 
+
+    /// Run by `.github/workflows/game-watch.yml` against Valve's current `gameinfo.gi` (from
+    /// SteamTracking/GameTracking-Deadlock) every 30 minutes: a game update that would break
+    /// Sigil's repair or launch check fails here before players hit it.
+    #[test]
+    #[ignore = "reads SIGIL_LIVE_GAMEINFO; run by the game-watch workflow"]
+    fn valves_live_gameinfo_still_repairs_and_launches() {
+        let Ok(path) = std::env::var("SIGIL_LIVE_GAMEINFO") else {
+            return;
+        };
+        let stock = fs::read_to_string(path).unwrap();
+        let root = game_with("live", &stock);
+        let file = gameinfo_path(&root);
+        assert_eq!(launch_blocker(&root, true), None, "an untouched stock file must launch vanilla");
+        assert!(search_paths_block_found(&stock), "Sigil can no longer find the SearchPaths block");
+
+        repair_gameinfo(&file, true).unwrap();
+        let status = read_game_info_status(&file).unwrap();
+        assert!(status.addons_search_path, "the repair did not mount citadel/addons");
+        assert!(status.missing_paths.is_empty(), "still missing after repair: {:?}", status.missing_paths);
+        assert_eq!(launch_blocker(&root, false), None, "a repaired file must launch modded");
+        assert_eq!(launch_blocker(&root, true), None, "a repaired file must launch vanilla");
+
+        // The repair only adds lines: every line of Valve's file is still there, in order.
+        let repaired = fs::read_to_string(&file).unwrap();
+        let mut rest = repaired.lines();
+        for line in stock.lines() {
+            assert!(rest.any(|candidate| candidate == line), "the repair lost or reordered: {line:?}");
+        }
+        // Sigil's own blocks still go in.
+        crate::overflow::gameinfo_with_overflow(&repaired, &["sigil-addons2".to_string()]).unwrap();
+        let _ = fs::remove_dir_all(root);
+    }
+
+    fn search_paths_block_found(text: &str) -> bool {
+        crate::discovery::search_paths_block(text).is_some()
+    }
+
 }
