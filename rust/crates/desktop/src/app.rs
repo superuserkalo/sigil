@@ -421,7 +421,8 @@ impl State {
 
     /// Launch the game through Steam with the current addon folder. This is an
     /// app action behind the launch dialog, never an agent tool.
-    pub fn launch_modded(&mut self) {
+    /// `vanilla` is true when a vanilla run already set the mods aside and only Steam is left.
+    pub fn launch_modded(&mut self, vanilla: bool) {
         self.launch_dialog = false;
         if rune::is_headless() {
             self.status = "Headless run: the launch request was not sent to Steam.".to_string();
@@ -462,11 +463,18 @@ impl State {
         match opened {
             Ok(()) => {
                 self.settings.launched = true;
-                let on = self.addons.enabled_count();
-                self.status = format!(
-                    "Starting Deadlock with {on} mod{} on.",
-                    if on == 1 { "" } else { "s" }
+                // The marker starts a new session: a crash dump from before it is an old one,
+                // and the Launch page must not show it as the last session's crash.
+                crate::data::mark_launch(
+                    self,
+                    if vanilla { deadlock_core::launch::MODE_VANILLA } else { deadlock_core::launch::MODE_MODDED },
                 );
+                let on = self.addons.enabled_count();
+                self.status = if vanilla {
+                    "Starting Deadlock without mods.".to_string()
+                } else {
+                    format!("Starting Deadlock with {on} mod{} on.", if on == 1 { "" } else { "s" })
+                };
                 // A game update can land with the launch; look at gameinfo.gi again.
                 crate::banner::recheck(self);
             }
@@ -1285,8 +1293,9 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
     root
 }
 
-/// The primary places, in Grimoire's order. Everything else is reached from inside a place.
-const PLACES: [Screen; 10] = [
+/// The primary places, in Grimoire's order, then Launch (the crash report, the vanilla stash
+/// and Restore, the download queue). Everything else is reached from inside a place.
+const PLACES: [Screen; 11] = [
     Screen::Browse,
     Screen::Installed,
     Screen::Locker,
@@ -1297,6 +1306,7 @@ const PLACES: [Screen; 10] = [
     Screen::Conflicts,
     Screen::Profiles,
     Screen::Servers,
+    Screen::Launch,
 ];
 
 /// Screens that live under the Agent place, so it stays selected while one is open.

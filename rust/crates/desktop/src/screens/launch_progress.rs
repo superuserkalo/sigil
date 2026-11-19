@@ -197,7 +197,8 @@ fn run(st: &mut State, step: Step) {
         Step::Roll => crate::screens::launch_extras::roll_before_launch(st),
         Step::Repair => {}
         Step::LaunchOptions => crate::screens::autoexec::sync_launch_options(st),
-        Step::OpenSteam | Step::VanillaStashed => st.launch_modded(),
+        Step::OpenSteam => st.launch_modded(false),
+        Step::VanillaStashed => st.launch_modded(true),
         Step::PageModded => crate::data::run_launch(st, Dialog::Modded),
         Step::Vanilla => crate::data::run_launch(st, Dialog::Vanilla),
         Step::Waiting => {}
