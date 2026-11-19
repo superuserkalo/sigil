@@ -713,6 +713,45 @@ pub fn parse_fastdl(raw: &str) -> Option<String> {
     Some(trimmed.to_string())
 }
 
+/// The host a Sigil-hosted server advertises in `dw_fastdl` (`http://0.0.0.0:27068`): "the
+/// address you are connecting to". A joining Sigil puts that address in its place with
+/// [`resolve_fastdl`] (ADR 0015 amendment), so the host needs no public-IP lookup.
+pub const FASTDL_PLACEHOLDER_HOST: &str = "0.0.0.0";
+
+/// True when `fastdl` names the placeholder host.
+pub fn is_placeholder_fastdl(fastdl: &str) -> bool {
+    fastdl
+        .parse::<ureq::http::Uri>()
+        .ok()
+        .and_then(|uri| uri.host().map(|h| h == FASTDL_PLACEHOLDER_HOST))
+        .unwrap_or(false)
+}
+
+/// `fastdl` with the placeholder host replaced by `server_ip`, the address the player is
+/// connecting to. Scheme, port and path stay. Any other address comes back unchanged.
+pub fn resolve_fastdl(fastdl: &str, server_ip: IpAddr) -> String {
+    let Ok(uri) = fastdl.parse::<ureq::http::Uri>() else {
+        return fastdl.to_string();
+    };
+    let (Some(scheme), Some(authority)) = (uri.scheme_str(), uri.authority()) else {
+        return fastdl.to_string();
+    };
+    if authority.host() != FASTDL_PLACEHOLDER_HOST {
+        return fastdl.to_string();
+    }
+    let host = match server_ip {
+        IpAddr::V4(v4) => v4.to_string(),
+        IpAddr::V6(v6) => match v6.to_ipv4_mapped() {
+            Some(v4) => v4.to_string(),
+            None => format!("[{v6}]"),
+        },
+    };
+    let port = authority.port().map(|p| format!(":{p}")).unwrap_or_default();
+    let path = uri.path_and_query().map(|p| p.as_str()).unwrap_or("");
+    let path = if path == "/" { "" } else { path };
+    format!("{scheme}://{host}{port}{path}")
+}
+
 /// Read the `dw_*` keys. `None` unless `dw_ver` is `1`. Invalid entries are skipped.
 pub fn parse_advertisement(rules: &HashMap<String, String>) -> Option<Advertisement> {
     if rules.get("dw_ver").map(|v| v.trim()) != Some("1") {
@@ -1939,6 +1978,10 @@ pub struct JoinCheck {
     pub bootstrap: BootstrapState,
     /// The game server is on this machine or the local network, so its download host may be too.
     pub allow_private: bool,
+    /// The server advertised the placeholder download host: Sigil on the host's PC serves the
+    /// files itself, named by hash. A file that does not match its hash there was changed on the
+    /// way or on that PC, so it is always refused (no "take it anyway").
+    pub sigil_host: bool,
 }
 
 impl JoinCheck {
@@ -2023,7 +2066,15 @@ pub fn check_join(game_root: &Path, address: &str, api_base: &str) -> Result<Joi
         .map(|(ip, port)| SocketAddr::new(ip, port))
         .ok_or_else(|| Error::msg(format!("{address} is not an ip:port address.")))?;
     let rules = query_rules(addr, RULES_DEADLINE).unwrap_or(None);
-    let advertisement = rules.as_ref().and_then(parse_advertisement);
+    let mut advertisement = rules.as_ref().and_then(parse_advertisement);
+    // A Sigil host serves its own downloads at the address the player connects to.
+    let sigil_host = advertisement
+        .as_ref()
+        .and_then(|ad| ad.fastdl.as_deref())
+        .is_some_and(is_placeholder_fastdl);
+    if let Some(ad) = advertisement.as_mut() {
+        ad.fastdl = ad.fastdl.as_deref().map(|url| resolve_fastdl(url, addr.ip()));
+    }
     let plan = match &advertisement {
         Some(ad) => plan_content(game_root, ad)?,
         None => ContentPlan::default(),
@@ -2039,6 +2090,7 @@ pub fn check_join(game_root: &Path, address: &str, api_base: &str) -> Result<Joi
         gameinfo,
         bootstrap,
         allow_private: !is_public_ip(addr.ip()),
+        sigil_host,
     })
 }
 
@@ -2130,7 +2182,7 @@ pub fn prepare_join(
         if remaining == 0 {
             return Err(Error::msg("This server needs more than 16 GB of downloads. Sigil stops there."));
         }
-        let accept = accept_mismatch.contains(&item.entry.key());
+        let accept = !check.sigil_host && accept_mismatch.contains(&item.entry.key());
         let line = if count > 1 {
             format!("Downloading {} ({} of {count})", item.entry.name, index + 1)
         } else {

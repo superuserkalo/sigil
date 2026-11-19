@@ -1,4 +1,5 @@
-//! Reaching the server: the Windows Firewall rule, LAN addresses and join links. No UPnP and no
+//! Reaching the server: the Windows Firewall rules (game port TCP and UDP, map download port
+//! TCP), LAN addresses and join links. No UPnP and no
 //! public-IP lookup (ADR 0015): the page explains router forwarding instead.
 
 use std::net::{IpAddr, Ipv4Addr, UdpSocket};
@@ -15,17 +16,30 @@ pub fn firewall_rule_name(protocol: &str, port: u16) -> String {
     format!("Sigil-Deadworks-{protocol}-{port}")
 }
 
-/// Which of the two inbound rules exist.
+/// The map download server's rule, `Sigil-Deadworks-Downloads-TCP-27068`.
+pub fn download_rule_name(port: u16) -> String {
+    format!("Sigil-Deadworks-Downloads-TCP-{port}")
+}
+
+/// Which inbound rules exist: TCP and UDP on the game port, and TCP on the map download port.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FirewallStatus {
     pub tcp: bool,
     pub udp: bool,
+    /// TCP on the download port. None when no download port was asked about.
+    pub downloads: Option<bool>,
 }
 
 impl FirewallStatus {
+    /// Every rule asked about is there.
     pub fn open(&self) -> bool {
-        self.tcp && self.udp
+        self.tcp && self.udp && self.downloads != Some(false)
+    }
+
+    /// None of them is there.
+    pub fn closed(&self) -> bool {
+        !self.tcp && !self.udp && self.downloads != Some(true)
     }
 }
 
@@ -44,22 +58,34 @@ fn rule_exists(name: &str) -> Result<bool> {
     Ok(parse_firewall_show(output.status.success(), &String::from_utf8_lossy(&output.stdout), name))
 }
 
-/// Whether Sigil's TCP and UDP rules for `port` are in place. Reads only, no window.
-pub fn firewall_rule_status(port: u16) -> Result<FirewallStatus> {
+/// Whether Sigil's TCP and UDP rules for `port`, and the TCP rule for `download_port`, are in
+/// place. Reads only, no window.
+pub fn firewall_rule_status(port: u16, download_port: Option<u16>) -> Result<FirewallStatus> {
     require_windows()?;
     Ok(FirewallStatus {
         tcp: rule_exists(&firewall_rule_name("TCP", port))?,
         udp: rule_exists(&firewall_rule_name("UDP", port))?,
+        downloads: match download_port {
+            Some(download) => Some(rule_exists(&download_rule_name(download))?),
+            None => None,
+        },
     })
 }
 
 /// The PowerShell that raises Windows' admin prompt once and runs the `netsh` commands for the
-/// missing protocols (`add`) or both (`delete`). The port is a number, so nothing else can ride
+/// missing rules (`add`) or the present ones (`delete`): TCP and UDP on the game port and TCP on
+/// the download port, all behind that one prompt. Ports are numbers, so nothing else can ride
 /// into the elevated command line. Exit 1223 means the player declined the prompt.
-pub fn firewall_script(port: u16, status: FirewallStatus, add: bool) -> String {
+pub fn firewall_script(port: u16, download_port: Option<u16>, status: FirewallStatus, add: bool) -> String {
+    let mut rules = vec![
+        (firewall_rule_name("TCP", port), "TCP", port, status.tcp),
+        (firewall_rule_name("UDP", port), "UDP", port, status.udp),
+    ];
+    if let Some(download) = download_port {
+        rules.push((download_rule_name(download), "TCP", download, status.downloads == Some(true)));
+    }
     let mut commands = Vec::new();
-    for (protocol, present) in [("TCP", status.tcp), ("UDP", status.udp)] {
-        let name = firewall_rule_name(protocol, port);
+    for (name, protocol, port, present) in rules {
         if add && !present {
             commands.push(format!(
                 "netsh advfirewall firewall add rule name={name} dir=in action=allow protocol={protocol} localport={port}"
@@ -89,28 +115,29 @@ fn run_elevated(script: &str) -> Result<()> {
     }
 }
 
-/// Add inbound TCP and UDP rules for `port`. Shows Windows' admin prompt.
-pub fn add_firewall_rule(port: u16, approve: bool) -> Result<FirewallStatus> {
+/// Add inbound TCP and UDP rules for `port` and a TCP rule for `download_port` (the map
+/// download server). Shows Windows' admin prompt once.
+pub fn add_firewall_rule(port: u16, download_port: Option<u16>, approve: bool) -> Result<FirewallStatus> {
     require_approval(approve, "Opening the firewall port")?;
     require_windows()?;
-    let status = firewall_rule_status(port)?;
+    let status = firewall_rule_status(port, download_port)?;
     if status.open() {
         return Ok(status);
     }
-    run_elevated(&firewall_script(port, status, true))?;
-    firewall_rule_status(port)
+    run_elevated(&firewall_script(port, download_port, status, true))?;
+    firewall_rule_status(port, download_port)
 }
 
-/// Remove Sigil's rules for `port`. Shows Windows' admin prompt.
-pub fn remove_firewall_rule(port: u16, approve: bool) -> Result<FirewallStatus> {
+/// Remove Sigil's rules for `port` and `download_port`. Shows Windows' admin prompt once.
+pub fn remove_firewall_rule(port: u16, download_port: Option<u16>, approve: bool) -> Result<FirewallStatus> {
     require_approval(approve, "Closing the firewall port")?;
     require_windows()?;
-    let status = firewall_rule_status(port)?;
-    if !status.tcp && !status.udp {
+    let status = firewall_rule_status(port, download_port)?;
+    if status.closed() {
         return Ok(status);
     }
-    run_elevated(&firewall_script(port, status, false))?;
-    firewall_rule_status(port)
+    run_elevated(&firewall_script(port, download_port, status, false))?;
+    firewall_rule_status(port, download_port)
 }
 
 /// This PC's private IPv4 addresses. No packet leaves the machine: connecting a UDP socket only

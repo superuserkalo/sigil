@@ -154,16 +154,16 @@ pub const DE: &[(&str, &str)] = &[
         "Windows-Firewall wird geprüft...",
     ),
     (
-        "Windows Firewall lets TCP and UDP port {} in.",
-        "Die Windows-Firewall lässt TCP und UDP auf Port {} herein.",
+        "Windows Firewall lets TCP and UDP port {} in, and TCP port {} for map downloads.",
+        "Die Windows-Firewall lässt TCP und UDP auf Port {} herein, und TCP auf Port {} für Karten-Downloads.",
     ),
     (
-        "Only part of the rule for port {} is there. Add it again to open both TCP and UDP.",
-        "Für Port {} ist die Regel nur zum Teil da. Füge sie erneut hinzu, um TCP und UDP zu öffnen.",
+        "Only some of the rules are there. Add them again to open TCP and UDP port {} and TCP port {} for map downloads.",
+        "Nur ein Teil der Regeln ist da. Füge sie erneut hinzu, um TCP und UDP auf Port {} und TCP auf Port {} für Karten-Downloads zu öffnen.",
     ),
     (
-        "No rule for port {} yet. Other PCs cannot reach the server until there is one.",
-        "Noch keine Regel für Port {}. Andere PCs erreichen den Server erst, wenn es eine gibt.",
+        "No rules for ports {} and {} yet. Other PCs cannot reach the server or its map downloads until there are.",
+        "Noch keine Regeln für die Ports {} und {}. Andere PCs erreichen den Server und seine Karten-Downloads erst, wenn es sie gibt.",
     ),
     (
         "Adding the rule shows Windows' admin prompt. Sigil changes nothing else.",
@@ -190,8 +190,8 @@ pub const DE: &[(&str, &str)] = &[
         "Öffne die Einstellungsseite deines Routers. Die Adresse steht oft auf einem Aufkleber am Router, etwa 192.168.1.1.",
     ),
     (
-        "Forward TCP and UDP port {} to {}.",
-        "Leite TCP- und UDP-Port {} an {} weiter.",
+        "Forward TCP and UDP port {} and TCP port {} (map downloads) to {}.",
+        "Leite TCP- und UDP-Port {} und TCP-Port {} (Karten-Downloads) an {} weiter.",
     ),
     (
         "Your public IP is on the router's status page. Friends join with connect <public IP>:{}.",
@@ -202,8 +202,8 @@ pub const DE: &[(&str, &str)] = &[
         "Freunde außerhalb deines Netzwerks",
     ),
     (
-        "Your router has to pass the port on to this PC. Sigil does not change router settings or look up your public IP.",
-        "Dein Router muss den Port an diesen PC weiterleiten. Sigil ändert keine Router-Einstellungen und fragt deine öffentliche IP nicht ab.",
+        "Your router has to pass both ports on to this PC. Sigil does not change router settings or look up your public IP.",
+        "Dein Router muss beide Ports an diesen PC weiterleiten. Sigil ändert keine Router-Einstellungen und fragt deine öffentliche IP nicht ab.",
     ),
     ("Let friends join", "Freunde beitreten lassen"),
     ("Plugins", "Plugins"),
@@ -245,8 +245,8 @@ pub const DE: &[(&str, &str)] = &[
     ),
     ("Open SteamCMD", "SteamCMD öffnen"),
     (
-        "Sigil asks Windows to let incoming TCP and UDP on port {} reach the server. Nothing else changes.",
-        "Sigil bittet Windows, eingehendes TCP und UDP auf Port {} zum Server durchzulassen. Sonst ändert sich nichts.",
+        "Sigil asks Windows to let incoming TCP and UDP on port {} reach the server, and TCP on port {} reach Sigil's map downloads. Nothing else changes.",
+        "Sigil bittet Windows, eingehendes TCP und UDP auf Port {} zum Server und TCP auf Port {} zu Sigils Karten-Downloads durchzulassen. Sonst ändert sich nichts.",
     ),
     (
         "Windows shows its admin prompt next. Press Yes there to add the rule; No leaves the firewall as it is.",
@@ -326,6 +326,14 @@ pub const DE: &[(&str, &str)] = &[
         "Deadworks unterstützt diesen Deadlock-Build noch nicht. Warte auf ein Deadworks-Update und installiere es dann hier.",
     ),
     ("On the server", "Auf dem Server"),
+    (
+        "Friends using Sigil download your custom maps from this PC on port {}.",
+        "Freunde mit Sigil laden deine eigenen Karten auf Port {} von diesem PC herunter.",
+    ),
+    (
+        "The host's copy of {} does not match what the server advertises, so Sigil refused it. Ask the host to restart the server in Sigil, then join again.",
+        "Die Kopie von {} beim Host passt nicht zu dem, was der Server angibt, daher hat Sigil sie abgelehnt. Bitte den Host, den Server in Sigil neu zu starten, und tritt dann erneut bei.",
+    ),
     // END TABLE
 ];
 

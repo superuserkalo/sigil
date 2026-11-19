@@ -634,6 +634,7 @@ fn prepare_join_edits_gameinfo_then_installs_content() {
         gameinfo: read_deadworks_gameinfo(&paths.gameinfo).unwrap(),
         bootstrap: BootstrapState::NotPublished,
         allow_private: true,
+        sigil_host: false,
     };
     assert!(check.blockers().is_empty());
     let writes = check.writes();
@@ -657,6 +658,82 @@ fn prepare_join_edits_gameinfo_then_installs_content() {
 }
 
 #[test]
+fn the_placeholder_download_host_becomes_the_server_address() {
+    let lan: std::net::IpAddr = "192.168.1.20".parse().unwrap();
+    let public: std::net::IpAddr = "203.0.113.7".parse().unwrap();
+    let v6: std::net::IpAddr = "2001:db8::5".parse().unwrap();
+    let mapped: std::net::IpAddr = "::ffff:198.51.100.4".parse().unwrap();
+    assert!(is_placeholder_fastdl("http://0.0.0.0:27068"));
+    assert!(!is_placeholder_fastdl("https://api.deadworks.net/fastdl/u/x"));
+    assert_eq!(resolve_fastdl("http://0.0.0.0:27068", lan), "http://192.168.1.20:27068");
+    assert_eq!(resolve_fastdl("http://0.0.0.0:27068", public), "http://203.0.113.7:27068");
+    assert_eq!(resolve_fastdl("http://0.0.0.0:27068/", lan), "http://192.168.1.20:27068");
+    assert_eq!(resolve_fastdl("https://0.0.0.0/fastdl/a", lan), "https://192.168.1.20/fastdl/a");
+    assert_eq!(resolve_fastdl("http://0.0.0.0:27068", v6), "http://[2001:db8::5]:27068");
+    assert_eq!(resolve_fastdl("http://0.0.0.0:27068", mapped), "http://198.51.100.4:27068");
+    // Anything else stays as the server sent it.
+    for other in ["https://api.deadworks.net/fastdl/u/x", "http://10.0.0.5:8080", "http://0.0.0.1:1"] {
+        assert_eq!(resolve_fastdl(other, lan), other);
+    }
+    // The result is still a valid download base, and the content URL lands on the server.
+    let resolved = parse_fastdl(&resolve_fastdl("http://0.0.0.0:27068", lan)).unwrap();
+    let wanted = entry(ContentKind::Map, "dl_arena", b"x", false);
+    assert_eq!(
+        content_url(&resolved, &wanted, "zst"),
+        format!("http://192.168.1.20:27068/maps/dl_arena_{}.vpk.zst", wanted.hash)
+    );
+}
+
+/// A Sigil host's file server end to end: a good file installs, a file that does not match its
+/// hash is refused even when the player said "take it anyway".
+#[test]
+fn a_sigil_host_download_is_checked_and_a_tampered_one_is_refused() {
+    use crate::host::{FastdlServer, FastdlLimits};
+    let root = scratch("sigil-host");
+    let fastdl = root.join("sigil-fastdl");
+    fs::create_dir_all(fastdl.join("addons")).unwrap();
+    let good = vpk_bytes(&["scripts/mode.vdata_c"]);
+    let wanted = entry(ContentKind::Addon, "mode", &good, true);
+    let server = FastdlServer::start_on(&fastdl, "127.0.0.1:0".parse().unwrap(), FastdlLimits::default()).unwrap();
+    let advertised = format!("http://0.0.0.0:{}", server.port());
+    let base = resolve_fastdl(&advertised, "127.0.0.1".parse().unwrap());
+    let file = fastdl.join("addons").join(format!("mode_{}.vpk.zst", wanted.hash));
+
+    fs::write(&file, zstd_bytes(&good)).unwrap();
+    let outcome = install_entry(&root, &base, &wanted, true, false, &mut |_, _| {}).unwrap();
+    assert_eq!(outcome, EntryOutcome::Installed);
+    let dest = deadworks_paths(&root).dest(&wanted);
+    assert_eq!(fs::read(&dest).unwrap(), good);
+    fs::remove_file(&dest).unwrap();
+    fs::remove_file(deadworks_paths(&root).ledger).ok();
+
+    // Someone swapped the file on the host's PC (or on the way).
+    let evil = vpk_bytes(&["scripts/other.vdata_c"]);
+    fs::write(&file, zstd_bytes(&evil)).unwrap();
+    let paths = deadworks_paths(&root);
+    fs::create_dir_all(&paths.citadel).unwrap();
+    fs::write(&paths.gameinfo, STOCK_GAMEINFO).unwrap();
+    let ad = Advertisement {
+        entries: vec![wanted.clone()],
+        truncated: false,
+        fastdl: Some(base),
+    };
+    let check = JoinCheck {
+        address: "127.0.0.1:27067".into(),
+        advertised: true,
+        plan: plan_content(&root, &ad).unwrap(),
+        gameinfo: read_deadworks_gameinfo(&paths.gameinfo).unwrap(),
+        bootstrap: BootstrapState::NotPublished,
+        allow_private: true,
+        sigil_host: true,
+    };
+    let report = prepare_join(&root, &check, &[wanted.key()], &|_| {}).unwrap();
+    assert!(report.installed.is_empty(), "{:?}", report.installed);
+    assert_eq!(report.mismatched.len(), 1);
+    assert!(!dest.exists(), "the tampered file never lands");
+}
+
+#[test]
 fn a_join_without_a_download_host_is_blocked_before_any_write() {
     let root = scratch("blocked");
     let paths = deadworks_paths(&root);
@@ -674,6 +751,7 @@ fn a_join_without_a_download_host_is_blocked_before_any_write() {
         gameinfo: read_deadworks_gameinfo(&paths.gameinfo).unwrap(),
         bootstrap: BootstrapState::NotPublished,
         allow_private: true,
+        sigil_host: false,
     };
     assert_eq!(check.blockers().len(), 1);
     assert!(prepare_join(&root, &check, &[], &|_| {}).is_err());

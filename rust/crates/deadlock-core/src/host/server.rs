@@ -9,6 +9,8 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use super::config::{SERVER_CFG_NAME, ServerConfig};
+use super::content::start_downloads;
+use super::fastdl_server::FastdlServer;
 use super::{require_approval, require_windows};
 use crate::error::{Error, Result};
 use crate::util::{hidden_command, write_atomic};
@@ -71,14 +73,18 @@ pub enum StopOutcome {
     Forced,
 }
 
-/// A running server. Dropping the handle kills the process, so a server never outlives the app
-/// by accident.
+/// A running server. Dropping the handle kills the process and stops its map download server,
+/// so neither outlives the app by accident.
 #[derive(Debug)]
 pub struct ServerHandle {
     child: Mutex<Child>,
     stdin: Mutex<Option<ChildStdin>>,
     log: Arc<LineBuffer>,
+    /// The map download server, while the server has custom content to hand out.
+    downloads: Mutex<Option<FastdlServer>>,
     pub port: u16,
+    /// The TCP port joiners download custom maps from, when the download server runs.
+    pub fastdl_port: Option<u16>,
     pub started: Instant,
 }
 
@@ -127,8 +133,29 @@ impl ServerHandle {
         Ok(())
     }
 
-    /// Ask the server to `quit`, wait up to `grace`, then kill it.
+    /// True while the map download server is up.
+    pub fn serving_downloads(&self) -> bool {
+        self.downloads.lock().map(|d| d.as_ref().is_some_and(FastdlServer::is_running)).unwrap_or(false)
+    }
+
+    /// Close the map download server and its open downloads. The game server keeps running.
+    pub fn stop_downloads(&self) {
+        if let Ok(mut downloads) = self.downloads.lock()
+            && let Some(mut server) = downloads.take()
+        {
+            server.stop();
+        }
+    }
+
+    /// Ask the server to `quit`, wait up to `grace`, then kill it. The map download server
+    /// stops with it.
     pub fn stop(&self, grace: Duration) -> Result<StopOutcome> {
+        let outcome = self.stop_process(grace);
+        self.stop_downloads();
+        outcome
+    }
+
+    fn stop_process(&self, grace: Duration) -> Result<StopOutcome> {
         if !self.is_running() {
             return Ok(StopOutcome::AlreadyStopped);
         }
@@ -176,6 +203,11 @@ pub fn server_command(server_dir: &Path, config: &ServerConfig) -> Result<Comman
 }
 
 /// Write the server cfg and start the server. The app calls this when the player presses Start.
+///
+/// When the server folder holds custom content Sigil installed, the same press also refreshes
+/// `sigil-fastdl/`, advertises `http://0.0.0.0:<download port>` as the download address and
+/// starts the read-only map download server on that port ([`ServerConfig::download_port`]).
+/// It stops when the handle is stopped or dropped.
 pub fn start_server(server_dir: &Path, config: &ServerConfig, approve: bool) -> Result<ServerHandle> {
     require_approval(approve, "Starting the server")?;
     require_windows()?;
@@ -197,6 +229,12 @@ pub fn start_server(server_dir: &Path, config: &ServerConfig, approve: bool) -> 
             config.port
         )));
     }
+    let download_port = config
+        .download_port()
+        .ok_or_else(|| Error::msg("The map download port would be past 65535."))?;
+    // Deadworks reads deadworks.jsonc at startup, so the download address goes in first.
+    let downloads = start_downloads(server_dir, download_port)?;
+    let fastdl_port = downloads.as_ref().map(FastdlServer::port);
     let cfg = server_dir.join("game").join("citadel").join("cfg").join(SERVER_CFG_NAME);
     write_atomic(&cfg, config.cfg_text().as_bytes())?;
 
@@ -213,7 +251,9 @@ pub fn start_server(server_dir: &Path, config: &ServerConfig, approve: bool) -> 
         child: Mutex::new(child),
         stdin: Mutex::new(stdin),
         log,
+        downloads: Mutex::new(downloads),
         port: config.port,
+        fastdl_port,
         started: Instant::now(),
     })
 }
