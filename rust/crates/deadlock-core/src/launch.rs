@@ -518,7 +518,7 @@ fn open_steam() -> Result<String> {
 
     #[cfg(target_os = "windows")]
     {
-        let mut command = Command::new("cmd");
+        let mut command = crate::util::hidden_command("cmd");
         command.args(["/C", "start", "", STEAM_RUN_URL]);
         after_spawn(command, "cmd /C start")
     }
@@ -1102,7 +1102,7 @@ pub fn stop_game(approve: bool) -> Result<StopReport> {
 #[cfg(windows)]
 fn request_close(pids: &[u32]) -> Result<()> {
     for pid in pids {
-        let status = Command::new("taskkill")
+        let status = crate::util::hidden_command("taskkill")
             .args(["/PID", &pid.to_string()])
             .status()
             .map_err(|error| Error::msg(format!("Could not ask process {pid} to close: {error}")))?;
@@ -1117,7 +1117,7 @@ fn request_close(pids: &[u32]) -> Result<()> {
 #[cfg(windows)]
 fn force_close(pids: &[u32]) -> Result<()> {
     for pid in pids {
-        let status = Command::new("taskkill")
+        let status = crate::util::hidden_command("taskkill")
             .args(["/F", "/PID", &pid.to_string()])
             .status()
             .map_err(|error| Error::msg(format!("Could not end process {pid}: {error}")))?;

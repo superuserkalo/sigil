@@ -1865,7 +1865,7 @@ impl MeshBackend for LocalCommandBackend {
         let stderr = File::create(&stderr_path)?;
 
         let request = &context.record.request;
-        let mut command = Command::new(&self.program);
+        let mut command = crate::util::hidden_command(&self.program);
         command
             .args(&self.args)
             .current_dir(context.character_dir)

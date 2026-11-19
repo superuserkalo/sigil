@@ -853,7 +853,7 @@ fn run_child(
     current_dir: Option<&Path>,
     timeout: Duration,
 ) -> Result<ChildOutput> {
-    let mut command = Command::new(program);
+    let mut command = crate::util::hidden_command(program);
     command
         .args(args)
         .stdin(Stdio::null())

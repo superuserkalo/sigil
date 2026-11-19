@@ -24,7 +24,7 @@ pub struct Helper {
 impl Helper {
     /// A command for this helper, with the subcommand already added.
     pub fn command(&self) -> Command {
-        let mut command = Command::new(&self.program);
+        let mut command = deadlock_core::util::hidden_command(&self.program);
         if let Some(prefix) = self.prefix {
             command.arg(prefix);
         }
