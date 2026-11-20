@@ -13,9 +13,10 @@
 //!   the internet, or builds code at runtime.
 //!
 //! A URL alone is not a finding: every SVG and many layouts name `http://www.w3.org/...` as an
-//! XML namespace, and licence comments carry links. A URL load inside a real comment (found by a
-//! quote-aware tokenizer, never by stripping) is dropped. A layout, style or script too large or
-//! too broken to read is listed as [`Risk::Unchecked`], never skipped.
+//! XML namespace, and licence comments carry links. A URL load (`src=`, `href=`, `url=`, CSS
+//! `url()`, `SetImage`) is listed wherever it appears, comments included: the scan fails closed
+//! rather than guess where a comment ends. A layout, style or script too large or too broken to
+//! read is listed as [`Risk::Unchecked`], never skipped.
 //! Images (`vsvg_c`, `svg`, `vtex_c`, `png`) are never read. It is a warning, not a block:
 //! nothing here stops an install.
 
@@ -294,160 +295,15 @@ static SIGNAL_PATTERNS: LazyLock<Vec<Regex>> = LazyLock::new(|| {
 /// A layout attribute, a stylesheet `url()` or an image call that loads from the internet. The
 /// game fetches these (Panorama's `CLoadFileURLTask`). `file://{images}/...` and other game
 /// roots are local and do not match, and the attribute anchor keeps `xmlns=`, `xlink:href` and
-/// doctype URLs out. The URL is captured for the message. Bytes, so match positions line up
-/// with [`comment_spans`].
+/// doctype URLs out. The URL is captured for the message. Comments are not exempt: a small
+/// tokenizer cannot read comments the way the game's parsers do, so a commented-out load is
+/// listed rather than risk hiding a real one.
 static URL_LOADS: LazyLock<regex::bytes::Regex> = LazyLock::new(|| {
     regex::bytes::Regex::new(
         r#"(?i)(?:(?:^|[\s<;{])(?:src|url|href)\s*=\s*["']|\burl\(\s*["']?|\bSetImage\s*\(\s*["'])\s*((?:https?:)?//[^"'\s)<>]{1,200})"#,
     )
     .expect("url pattern")
 });
-
-/// How comments are written in a Panorama text file, for [`comment_spans`].
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Syntax {
-    /// Layouts: `<!-- -->` in text content, quotes only inside a tag, CDATA kept.
-    Xml,
-    /// Styles: `/* */`, quotes with backslash escapes.
-    Css,
-    /// Scripts and HTML pages: no comment is trusted (regex literals, template strings and
-    /// HTML raw text make a small tokenizer disagree with the real parser), so every URL load
-    /// counts.
-    Opaque,
-}
-
-fn syntax_of(path: &str) -> Syntax {
-    match extension(path).as_str() {
-        "xml" | "vxml" | "vxml_c" => Syntax::Xml,
-        "css" | "vcss" | "vcss_c" => Syntax::Css,
-        _ => Syntax::Opaque,
-    }
-}
-
-fn u32_at(bytes: &[u8], at: usize) -> Option<usize> {
-    let raw: [u8; 4] = bytes.get(at..at.checked_add(4)?)?.try_into().ok()?;
-    usize::try_from(u32::from_le_bytes(raw)).ok()
-}
-
-fn u16_at(bytes: &[u8], at: usize) -> Option<usize> {
-    let raw: [u8; 2] = bytes.get(at..at.checked_add(2)?)?.try_into().ok()?;
-    Some(usize::from(u16::from_le_bytes(raw)))
-}
-
-/// Where a compiled Panorama layout or style keeps its source text: the DATA block, after its
-/// CRC and image-name table (the layout Grimoire's scanner reads). `None` when the resource does
-/// not parse or has no text: then no comment is trusted.
-fn compiled_text_range(bytes: &[u8]) -> Option<std::ops::Range<usize>> {
-    if bytes.len() < 16 || u32_at(bytes, 0)? != bytes.len() || u16_at(bytes, 4)? != 12 {
-        return None;
-    }
-    let table = 8 + u32_at(bytes, 8)?;
-    let count = u32_at(bytes, 12)?;
-    if count > 64 || table < 16 || table.checked_add(count.checked_mul(12)?)? > bytes.len() {
-        return None;
-    }
-    let mut data = None;
-    for index in 0..count {
-        let start = table + index * 12;
-        let offset = start.checked_add(4)?.checked_add(u32_at(bytes, start + 4)?)?;
-        let length = u32_at(bytes, start + 8)?;
-        if offset.checked_add(length)? > bytes.len() {
-            return None;
-        }
-        if &bytes[start..start + 4] == b"DATA" {
-            if data.is_some() {
-                return None;
-            }
-            data = Some(offset..offset + length);
-        }
-    }
-    let data = data?;
-    let names = u16_at(bytes, data.start.checked_add(4)?)?;
-    let mut at = data.start + 6;
-    for _ in 0..names {
-        let end = at + bytes.get(at..data.end)?.iter().position(|byte| *byte == 0)?;
-        at = end + 1 + 8;
-        if at > data.end {
-            return None;
-        }
-    }
-    (at < data.end).then_some(at..data.end)
-}
-
-/// Byte ranges of real comments in `bytes[range]`, read the way the game's parser reads them:
-/// a comment marker inside a quoted value or string is text, not a comment. A comment that
-/// never closes is not trusted. Every guess this makes on odd input ends a span sooner or not at
-/// all, so a URL load is reported rather than hidden.
-fn comment_spans(bytes: &[u8], range: std::ops::Range<usize>, syntax: Syntax) -> Vec<std::ops::Range<usize>> {
-    let mut spans = Vec::new();
-    let text = &bytes[range.clone()];
-    let base = range.start;
-    let at = |i: usize, token: &[u8]| text.get(i..i + token.len()) == Some(token);
-    let find = |from: usize, token: &[u8]| {
-        text.get(from..)
-            .and_then(|rest| rest.windows(token.len()).position(|window| window == token))
-            .map(|found| from + found)
-    };
-    let mut i = 0;
-    match syntax {
-        Syntax::Opaque => {}
-        Syntax::Xml => {
-            while i < text.len() {
-                if at(i, b"<!--") {
-                    let Some(end) = find(i + 4, b"-->") else { break };
-                    spans.push(base + i..base + end + 3);
-                    i = end + 3;
-                } else if at(i, b"<![CDATA[") {
-                    let Some(end) = find(i + 9, b"]]>") else { break };
-                    i = end + 3;
-                } else if text[i] == b'<' {
-                    // A tag: quoted values run to the same quote, the tag to the first `>`
-                    // outside one. XML values have no backslash escapes.
-                    i += 1;
-                    let mut quote = None;
-                    while i < text.len() {
-                        let byte = text[i];
-                        match quote {
-                            Some(q) if byte == q => quote = None,
-                            Some(_) => {}
-                            None if byte == b'"' || byte == b'\'' => quote = Some(byte),
-                            None if byte == b'>' => break,
-                            None => {}
-                        }
-                        i += 1;
-                    }
-                    if quote.is_some() {
-                        break;
-                    }
-                    i += 1;
-                } else {
-                    i += 1;
-                }
-            }
-        }
-        Syntax::Css => {
-            while i < text.len() {
-                let byte = text[i];
-                if at(i, b"/*") {
-                    let Some(end) = find(i + 2, b"*/") else { break };
-                    spans.push(base + i..base + end + 2);
-                    i = end + 2;
-                } else if byte == b'\\' {
-                    i += 2;
-                } else if byte == b'"' || byte == b'\'' {
-                    i += 1;
-                    while i < text.len() && text[i] != byte {
-                        i += if text[i] == b'\\' { 2 } else { 1 };
-                    }
-                    i += 1;
-                } else {
-                    i += 1;
-                }
-            }
-        }
-    }
-    spans
-}
 
 fn extension(path: &str) -> String {
     let name = path.rsplit('/').next().unwrap_or(path);
@@ -478,9 +334,9 @@ fn is_panorama_text(path: &str) -> bool {
     )
 }
 
-/// Search one Panorama text body shipped at `path` (its extension picks the comment syntax).
-/// Returns at most [`MAX_PER_FILE`] `(call, risk)` pairs, worst first.
-pub fn scan_text(path: &str, body: &[u8]) -> Vec<(String, Risk)> {
+/// Search one Panorama text body. Returns at most [`MAX_PER_FILE`] `(call, risk)` pairs, worst
+/// first.
+pub fn scan_text(body: &[u8]) -> Vec<(String, Risk)> {
     let text = String::from_utf8_lossy(body);
     let mut found: Vec<(String, Risk)> = SIGNALS
         .iter()
@@ -488,23 +344,8 @@ pub fn scan_text(path: &str, body: &[u8]) -> Vec<(String, Risk)> {
         .filter(|(_, pattern)| pattern.is_match(&text))
         .map(|(signal, _)| (signal.call.to_string(), signal.risk))
         .collect();
-    // URL loads are searched in the full text. A match is dropped only when it sits wholly
-    // inside a real comment, so a comment marker in a quoted value cannot hide a load.
-    let syntax = syntax_of(path);
-    let range = if path.to_ascii_lowercase().ends_with("_c") {
-        compiled_text_range(body)
-    } else {
-        Some(0..body.len())
-    };
-    let spans = range.map(|range| comment_spans(body, range, syntax)).unwrap_or_default();
-    let load = URL_LOADS.captures_iter(body).find_map(|caps| {
-        let whole = caps.get(0)?;
-        let commented = spans
-            .iter()
-            .any(|span| span.start <= whole.start() && whole.end() <= span.end);
-        (!commented).then(|| caps.get(1)).flatten()
-    });
-    if let Some(load) = load {
+    // Every URL load counts, inside a comment or not: fail closed.
+    if let Some(load) = URL_LOADS.captures(body).and_then(|caps| caps.get(1)) {
         found.push((String::from_utf8_lossy(load.as_bytes()).into_owned(), Risk::Remote));
     }
     found.sort_by_key(|(_, risk)| std::cmp::Reverse(risk.rank()));
@@ -558,7 +399,7 @@ pub fn scan_vpk(path: &Path) -> ScanReport {
             push_finding(&mut findings, &mut more, unchecked(UNREADABLE));
             continue;
         };
-        for (call, risk) in scan_text(&entry.path, &data) {
+        for (call, risk) in scan_text(&data) {
             push_finding(&mut findings, &mut more, Finding {
                 path: entry.path.clone(),
                 risk,
@@ -636,7 +477,7 @@ mod tests {
 
     #[test]
     fn an_svg_with_the_w3_namespace_is_clear() {
-        assert!(scan_text("panorama/images/icon.xml", SVG).is_empty());
+        assert!(scan_text(SVG).is_empty());
         assert_eq!(risk_of_path("panorama/images/heroes/shiv.svg"), None);
         assert!(!is_panorama_text("panorama/images/heroes/shiv.svg"));
     }
@@ -657,10 +498,10 @@ mod tests {
 
     #[test]
     fn plain_layouts_styles_and_scripts_are_clear() {
-        assert!(scan_text("hud.xml", LAYOUT).is_empty(), "{:?}", scan_text("hud.xml", LAYOUT));
-        assert!(scan_text("hud.css", STYLE).is_empty(), "{:?}", scan_text("hud.css", STYLE));
+        assert!(scan_text(LAYOUT).is_empty(), "{:?}", scan_text(LAYOUT));
+        assert!(scan_text(STYLE).is_empty(), "{:?}", scan_text(STYLE));
         let script = b"'use strict';\nfunction OnUpdate() { $('#Timer').text = Game.GetGameTime().toFixed(0); $.Schedule(0.1, OnUpdate); }\nOnUpdate();";
-        assert!(scan_text("hud.vjs_c", script).is_empty());
+        assert!(scan_text(script).is_empty());
         for path in ["a/hud.vxml_c", "a/hud.vcss_c", "a/hud.vjs_c", "a/hud.vts_c"] {
             assert_eq!(risk_of_path(path), None, "{path}");
         }
@@ -668,7 +509,7 @@ mod tests {
 
     #[test]
     fn a_panorama_web_request_is_flagged_with_its_reason() {
-        let found = scan_text("hud.vjs_c", br#"$.AsyncWebRequest("https://example.com/collect", { type: "POST", data: { id: 1 } });"#);
+        let found = scan_text(br#"$.AsyncWebRequest("https://example.com/collect", { type: "POST", data: { id: 1 } });"#);
         assert_eq!(found[0], ("$.AsyncWebRequest".to_string(), Risk::Remote));
         let finding = Finding {
             path: "panorama/scripts/hud.vjs_c".to_string(),
@@ -680,75 +521,40 @@ mod tests {
 
     #[test]
     fn browser_calls_and_url_loads_are_flagged_but_namespaces_are_not() {
-        let calls = |body: &[u8]| scan_text("hud.xml", body).into_iter().map(|(call, _)| call).collect::<Vec<_>>();
+        let calls = |body: &[u8]| scan_text(body).into_iter().map(|(call, _)| call).collect::<Vec<_>>();
         assert_eq!(calls(br#"<Button onactivate="ExternalBrowserGoToURL('https://x.example')" />"#), [
             "ExternalBrowserGoToURL"
         ]);
         assert_eq!(calls(b"$('#Web').SetURL(url);"), ["SetURL"]);
         assert_eq!(calls(br#"<root><CitadelHTMLPanel id="Web" /></root>"#), ["browser panel"]);
         assert_eq!(calls(br#"<Image src="https://cdn.example/a.png" />"#), ["https://cdn.example/a.png"]);
-        let style = scan_text("hud.css", br#".A { background-image: url('//cdn.example/b.png'); }"#);
+        let style = scan_text(br#".A { background-image: url('//cdn.example/b.png'); }"#);
         assert_eq!(style, [("//cdn.example/b.png".to_string(), Risk::Remote)]);
         assert_eq!(calls(b"eval(atob('ZmV0Y2g='))").len(), 2);
-        // A namespace, a doctype, an xlink and a credit comment are not loads.
-        assert!(calls(br#"<root xmlns="http://www.w3.org/1999/xhtml" xlink:href="http://www.w3.org/1999/xlink"><!-- <Image src="https://x" /> --></root>"#).is_empty());
+        // A namespace and an xlink are not loads.
+        assert!(calls(br#"<root xmlns="http://www.w3.org/1999/xhtml" xlink:href="http://www.w3.org/1999/xlink"></root>"#).is_empty());
         // Names that only contain a signal are not it.
         assert!(calls(b"prefetch(1); MyFunction(2); evaluate(3);").is_empty());
         let url = Finding { path: "a.vxml_c".into(), risk: Risk::Remote, call: "https://cdn.example/a.png".into() };
         assert_eq!(url.reason(), "Loads https://cdn.example/a.png from the internet when the game shows it.");
     }
 
-    /// A compiled Panorama resource as community compilers write it: header, one DATA block,
-    /// then a CRC, an empty image-name table and the source text.
-    fn compiled(text: &[u8]) -> Vec<u8> {
-        let mut data = vec![0, 0, 0, 0, 0, 0];
-        data.extend_from_slice(text);
-        let total = 16 + 12 + data.len();
-        let mut bytes = Vec::new();
-        bytes.extend_from_slice(&(total as u32).to_le_bytes());
-        bytes.extend_from_slice(&12u16.to_le_bytes());
-        bytes.extend_from_slice(&0u16.to_le_bytes());
-        bytes.extend_from_slice(&8u32.to_le_bytes());
-        bytes.extend_from_slice(&1u32.to_le_bytes());
-        bytes.extend_from_slice(b"DATA");
-        bytes.extend_from_slice(&8u32.to_le_bytes());
-        bytes.extend_from_slice(&(data.len() as u32).to_le_bytes());
-        bytes.extend_from_slice(&data);
-        assert_eq!(bytes.len(), total);
-        bytes
-    }
-
     #[test]
-    fn a_comment_marker_in_a_quoted_value_cannot_hide_a_load() {
-        let loads = |path: &str, body: &[u8]| {
-            scan_text(path, body).into_iter().filter(|(call, _)| call.contains("evil")).count()
-        };
-        // `<!--` and `-->` inside attribute values are text, so the Image between them loads.
-        let layout = br#"<root><Label text="<!--" /><Image src="https://evil.example/x.png" /><Label text="-->" /></root>"#;
-        assert_eq!(loads("hud.xml", layout), 1);
-        assert_eq!(loads("hud.vxml_c", &compiled(layout)), 1);
-        // The same inside one tag's values.
-        assert_eq!(loads("hud.xml", br#"<Image a="<!--" src="https://evil.example/x" b="-->" />"#), 1);
-        // A `/*` in a CSS string is not a comment either.
-        let style = br#".A { content: "/*"; background-image: url("https://evil.example/y.png"); } .B { content: "*/"; }"#;
-        assert_eq!(loads("hud.css", style), 1);
-        assert_eq!(loads("hud.vcss_c", &compiled(style)), 1);
-        // An escaped quote does not end a CSS string early.
-        assert_eq!(loads("hud.css", br#".A { content: "\" /*"; background: url(https://evil.example/z); } .B { content: "*/"; }"#), 1);
-        // `/*` is not a comment in a layout, and a comment that never closes is not trusted.
-        assert_eq!(loads("hud.xml", br#"<Label text="a" />/*<Image src="https://evil.example/x" />*/"#), 1);
-        assert_eq!(loads("hud.xml", br#"<!-- <Image src="https://evil.example/x" />"#), 1);
-        // Scripts trust no comment at all.
-        assert_eq!(loads("hud.vjs_c", br#"var r = /x\/*/; $('#I').SetImage("https://evil.example/x"); var s = "*/";"#), 1);
-        // Junk ahead of the DATA block cannot open a comment: a resource that does not parse
-        // trusts no comment.
-        let mut junk = b"<!--".to_vec();
-        junk.extend_from_slice(br#"<Image src="https://evil.example/x" alt="-->" />"#);
-        assert_eq!(loads("hud.vxml_c", &junk), 1);
-        // A real comment still hides a credit.
-        assert_eq!(loads("hud.xml", br#"<root><!-- <Image src="https://evil.example/credit" /> --></root>"#), 0);
-        assert_eq!(loads("hud.vxml_c", &compiled(br#"<root><!-- <Image src="https://evil.example/c" /> --></root>"#)), 0);
-        assert_eq!(loads("hud.css", br#"/* url("https://evil.example/credit") */ .A {}"#), 0);
+    fn every_url_load_is_listed_even_in_a_comment() {
+        let loads = |body: &[u8]| scan_text(body).into_iter().filter(|(call, _)| call.contains("evil")).count();
+        // Comment markers in quoted values, CSS `//` lines, processing instructions and
+        // doctypes cannot hide a load, because no comment is exempt.
+        assert_eq!(loads(br#"<root><Label text="<!--" /><Image src="https://evil.example/x.png" /><Label text="-->" /></root>"#), 1);
+        assert_eq!(loads(br#".A { content: "/*"; background-image: url("https://evil.example/y.png"); } .B { content: "*/"; }"#), 1);
+        assert_eq!(loads(b"// a /* \n.A { background: url(https://evil.example/z); } /* */"), 1);
+        assert_eq!(loads(br#"<?xml version='1.0' ?><!DOCTYPE x "a'"><Image src="https://evil.example/x" />"#), 1);
+        assert_eq!(loads(br#"var r = /x\/*/; $('#I').SetImage("https://evil.example/x"); var s = "*/";"#), 1);
+        // A commented-out load is listed too: the scan fails closed.
+        assert_eq!(loads(br#"<root><!-- <Image src="https://evil.example/credit" /> --></root>"#), 1);
+        assert_eq!(loads(br#"/* url("https://evil.example/credit") */ .A {}"#), 1);
+        // Namespaces, doctypes and plain links in credits are not loads.
+        assert_eq!(scan_text(SVG), []);
+        assert_eq!(scan_text(br#"<!-- Made by me, https://evil.example/profile --><root />"#), []);
     }
 
     #[test]
@@ -875,7 +681,7 @@ mod tests {
 
     #[test]
     fn a_text_file_keeps_a_few_calls() {
-        let calls = scan_text("hud.vjs_c", b"fetch(1); eval(2); atob(3); XMLHttpRequest; WebSocket");
+        let calls = scan_text(b"fetch(1); eval(2); atob(3); XMLHttpRequest; WebSocket");
         assert_eq!(calls.len(), MAX_PER_FILE);
         // Worst first: the three network calls outrank eval and atob.
         assert!(calls.iter().all(|(_, risk)| *risk == Risk::Remote), "{calls:?}");
