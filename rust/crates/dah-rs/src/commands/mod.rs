@@ -20,6 +20,7 @@ pub mod publish;
 pub mod release;
 pub mod stats;
 pub mod subscription;
+pub mod viewer;
 pub mod vpk;
 pub mod watch;
 pub mod toolchain;
