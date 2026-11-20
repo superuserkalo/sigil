@@ -33,3 +33,21 @@ and approved changing the rule on 2026-11-18.
 - One more host on the network allowlist, opt-in.
 - The owner operates the Worker and its costs; the code is in the repo so players can read it.
 - BYOK keys and Steam ids are never part of events or crashes; scrubbing is tested on both sides.
+
+## Amendment 2026-11-20: crash reports after a restart
+
+Owner-approved on 2026-11-20 ("after a crash and we restart Sigil we should detect that and offer
+on startup a popup to ask the user if they want to send that crash report").
+
+- Sigil keeps a session marker and finds a run that did not exit cleanly at the next start. The
+  report kinds are `panic`, `unclean_exit` (no panic recorded: abort, stack overflow, driver crash,
+  forced quit) and `native` (a Windows unhandled exception record). A report now also carries the
+  session's scrubbed log tail (`context`, at most 16 KiB). The Worker stores `kind` and `context`
+  (migration `0002_crash_context.sql`).
+- With crash reports on, the report is sent at start and a toast says so. With crash reports off,
+  or the first-start question never answered, a dialog shows exactly what would be sent and asks.
+  Pressing Send report is one-off consent for that report only, the same rule as Send diagnostics;
+  "Always send crash reports" in the dialog is the Settings > Privacy switch. Nothing is sent
+  without a press or the switch.
+- Limits on the device: the same crash at most once a day, at most 3 reports an hour and 10 a day.
+  A crash the player declined is not asked about again for a day.

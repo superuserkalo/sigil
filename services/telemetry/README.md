@@ -1,7 +1,7 @@
 # Sigil telemetry Worker
 
-Status: draft. The Worker and its tests exist. Nothing is deployed, and the desktop app does not
-send anything yet. The decision is `docs/decisions/0014-opt-in-telemetry.md`; the player-facing
+Status: deployed at `https://sigil-telemetry.gantchevkaloyan.workers.dev` (migrations 0001 and 0002
+applied, 2026-11-20). The desktop app sends only behind the Settings > Privacy switches or a press. The decision is `docs/decisions/0014-opt-in-telemetry.md`; the player-facing
 description is `docs/privacy.md`.
 
 One Cloudflare Worker, `sigil-telemetry`, owns every opt-in upload Sigil makes. There is no third
@@ -12,7 +12,7 @@ party: usage events go to Analytics Engine, everything else to D1.
 | Method | Path | Body limit | What it stores |
 | --- | --- | --- | --- |
 | POST | `/v1/events` | 32 KiB | One Analytics Engine point per allowlisted event. Unknown names are dropped, never stored. |
-| POST | `/v1/crash` | 64 KiB | One D1 row per fingerprint, with a repeat count. |
+| POST | `/v1/crash` | 96 KiB | One D1 row per fingerprint, with a repeat count, the kind and the newest log tail. |
 | POST | `/v1/diagnostics` | 1 MiB | One D1 row, returns a support code such as `SGL-7K4M-9QZT`. |
 | GET | `/v1/identify?sha256=<hex>&size=<n>` | none | Nothing. Reads the hash index. |
 | POST | `/v1/hashes` | 4 KiB | Upserts one `mod_hashes` row and counts reports. |
@@ -52,7 +52,10 @@ ORDER BY uses DESC
 
 ### Crashes
 
-`{installId, version, os, message, backtrace}`. Scrubbed again on the server (`src/scrub.ts`): home
+`{installId, version, os, message, backtrace, kind?, context?}`. `kind` is `panic` (default),
+`unclean_exit` (the app found its session marker at the next start without a panic) or `native` (the
+Windows exception filter). `context` is the session's scrubbed log tail, at most 16 KiB; a repeat of
+the same fingerprint keeps the newest non-empty one (migration `0002_crash_context.sql`). Scrubbed again on the server (`src/scrub.ts`): home
 paths, user names in paths, Steam ids, emails, provider and GitHub keys, bearer tokens, JWTs and the
 install id itself. The fingerprint is the first message line plus the first five frames with
 addresses, line numbers and columns removed (`src/fingerprint.ts`), so a repeating crash is one row

@@ -67,6 +67,8 @@ fn main() -> std::process::ExitCode {
     if let Some(code) = updater::on_start() {
         return code;
     }
+    // Sigil's own crashes: the panic hook, the session marker and what the last run left.
+    screens::settings::crash::begin();
     deeplink::startup();
     brand::install_app_icon();
     let scenes: &'static [(&'static str, fn(&mut State))] =
@@ -96,6 +98,8 @@ fn main() -> std::process::ExitCode {
     screens::settings::tray::install(sigil.handle());
     single_instance::attach(sigil.handle());
     sigil.run();
+    // Every quit that reaches here is a clean exit.
+    screens::settings::crash::end();
     rune::release_instance();
     std::process::ExitCode::SUCCESS
 }
