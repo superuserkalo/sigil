@@ -328,7 +328,7 @@ pub fn scan_dialog(s: &State, u: &Ui) -> Option<El> {
         }
         Some(report) if report.is_clear() => {
             body = format!(
-                "{} files and nothing unusual inside: no scripts, no programs, no network calls.",
+                "{} files and nothing unusual inside: no programs, no loose scripts, no network calls.",
                 report.entries
             );
         }
@@ -340,12 +340,8 @@ pub fn scan_dialog(s: &State, u: &Ui) -> Option<El> {
             );
             for finding in report.findings.iter().take(10) {
                 let path = finding.path.clone();
-                let call = finding.call.clone();
-                let line = if call.is_empty() {
-                    format!("{path}  ·  {}", finding.risk.line())
-                } else {
-                    format!("{path}  ·  {call}")
-                };
+                // Exactly why the file is listed, for example the API it calls.
+                let line = finding.reason();
                 list = list.child(
                     row()
                         .w_full()

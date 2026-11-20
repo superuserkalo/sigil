@@ -5,10 +5,11 @@
 //!   never asks again.
 //! - Deadlock Mod Manager: no gate.
 //! - Sigil: turning such a mod on (any switch that goes through `enable::switch`) opens a
-//!   question listing what `mod_safety::scan_vpk` found, with Cancel, Turn on this once and Trust
-//!   this version (kept in `safety-trusted.json`, by the mod and its file size). Compiled UI
-//!   files and pages, which every HUD mod ships, do not ask. Settings > "Allow script mods" skips
-//!   the gate.
+//!   question listing what `mod_safety::scan_vpk` found, each line with its reason, with Cancel,
+//!   Turn on this once and Trust this version (kept in `safety-trusted.json`, by the mod and its
+//!   file size). Images, layouts, styles and Panorama scripts, which skins and HUD mods ship, do
+//!   not ask unless their text reaches the network. Settings > "Allow script mods" skips the
+//!   gate, as it lets script mods through the install check. Rules: `docs/design/mod-safety.md`.
 
 use std::collections::BTreeSet;
 use std::path::PathBuf;
@@ -41,9 +42,9 @@ fn version_key(st: &State, slot: u16) -> Option<String> {
     Some(format!("{who}:{}", addon.size_bytes))
 }
 
-/// Risks that stop a switch: a program, a script or a network call.
+/// Risks that stop a switch. Every finding the scan makes is one: it lists nothing for show.
 pub fn gating(risk: Risk) -> bool {
-    matches!(risk, Risk::Program | Risk::Script | Risk::Remote)
+    matches!(risk, Risk::Program | Risk::Script | Risk::Remote | Risk::Dynamic | Risk::ScriptMod)
 }
 
 /// What to show before `slot` turns on, or `None` to go ahead. The scan is cached per slot file
@@ -67,13 +68,20 @@ pub fn needs_review(st: &mut State, slot: u16) -> Option<Vec<String>> {
     (!lines.is_empty()).then_some(lines)
 }
 
-/// "Program: bin/x.exe" lines for the gating findings.
+/// "Program: bin/x.exe" lines for the gating findings, with what matched when a call did:
+/// "Reaches out: panorama/scripts/hud.vjs_c ($.AsyncWebRequest)".
 pub fn findings(report: &mod_safety::ScanReport) -> Vec<String> {
     report
         .findings
         .iter()
         .filter(|f| gating(f.risk))
-        .map(|f| format!("{}: {}", tr(f.risk.label()), f.path))
+        .map(|f| {
+            if f.call.is_empty() {
+                format!("{}: {}", tr(f.risk.label()), f.path)
+            } else {
+                format!("{}: {} ({})", tr(f.risk.label()), f.path, f.call)
+            }
+        })
         .collect()
 }
 
@@ -115,7 +123,7 @@ pub fn dialog(s: &State, u: &Ui, slot: u16, findings: &[String]) -> El {
         .modal(true, close)
         .child(text(fill(tr("{} ships code"), &[&name])).font(H1).color(u.ink).wrap())
         .child(
-            text(tr("Deadlock does not run these files, but they are unusual in a mod. Turn it on only when you trust where it came from."))
+            text(tr("Each line names a file and why it is listed: a program, a script the game does not run, a script mod, or a call that opens a web page or reaches the network. Images, layouts and styles are never listed. Turn it on only when you trust where it came from."))
                 .font(BODY)
                 .color(u.muted)
                 .wrap(),
@@ -152,7 +160,11 @@ pub fn dialog(s: &State, u: &Ui, slot: u16, findings: &[String]) -> El {
 pub fn stage_scene(st: &mut State) {
     st.installed.gates.open = Some(super::enable::Gate::Safety {
         slot: 3,
-        findings: vec!["Program: bin/helper.exe".to_string(), "Script: scripts/vscripts/boot.lua".to_string()],
+        findings: vec![
+            "Program: bin/helper.exe".to_string(),
+            "Reaches out: panorama/scripts/hud.vjs_c ($.AsyncWebRequest)".to_string(),
+            "Source script: scripts/vscripts/boot.lua".to_string(),
+        ],
     });
 }
 
@@ -162,20 +174,27 @@ mod tests {
     use deadlock_core::mod_safety::{Finding, ScanReport};
 
     #[test]
-    fn only_programs_scripts_and_network_calls_ask() {
-        let finding = |path: &str, risk| Finding { path: path.to_string(), risk, call: String::new() };
+    fn every_finding_asks_and_says_what_matched() {
+        let finding = |path: &str, risk, call: &str| Finding { path: path.to_string(), risk, call: call.to_string() };
         let report = ScanReport {
             findings: vec![
-                finding("panorama/layout/hud.vxml_c", Risk::CompiledText),
-                finding("x/page.html", Risk::Page),
-                finding("bin/a.exe", Risk::Program),
+                finding("bin/a.exe", Risk::Program, ""),
+                finding("panorama/scripts/hud.vjs_c", Risk::Remote, "$.AsyncWebRequest"),
             ],
             ..ScanReport::default()
         };
         let lines = findings(&report);
-        assert_eq!(lines.len(), 1);
-        assert!(lines[0].ends_with("bin/a.exe"));
-        let hud_only = ScanReport { findings: vec![finding("a.vxml_c", Risk::CompiledText)], ..ScanReport::default() };
-        assert!(findings(&hud_only).is_empty());
+        assert_eq!(lines, ["Program: bin/a.exe", "Reaches out: panorama/scripts/hud.vjs_c ($.AsyncWebRequest)"]);
+        // A skin or HUD mod's scan has no findings, so nothing asks.
+        assert!(findings(&ScanReport::default()).is_empty());
+    }
+
+    /// GameBanana mod 679331 (Shiv "Josuke Remaster") ships Shiv's icons as `vsvg_c`. The scan
+    /// used to list them as "Reaches out"; now the gate stays shut.
+    #[test]
+    fn a_skin_with_svg_icons_does_not_ask() {
+        for path in ["panorama/images/heroes/hero_names/shiv.vsvg_c", "panorama/images/heroes/hero_names/shiv_localized.vsvg_c"] {
+            assert_eq!(mod_safety::risk_of_path(path), None);
+        }
     }
 }
