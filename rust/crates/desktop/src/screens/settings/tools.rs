@@ -15,7 +15,7 @@ use crate::app::State;
 use crate::icons;
 use crate::jobs::Job;
 use crate::notify::{self, Notice};
-use crate::ui::{ActionKind, BODY, MONO, SMALL, Ui};
+use crate::ui::{ActionKind, BODY, MONO, Ui};
 
 #[derive(Default)]
 pub struct Tools {
@@ -283,7 +283,7 @@ pub fn recovery_dialog(s: &State, u: &Ui) -> El {
         );
     }
     for (slot, error) in &report.failed {
-        list = list.child(text(format!("pak{slot:02} · {error}")).font(SMALL).color(u.rose).wrap().w_full());
+        list = list.child(crate::notify::feedback::error_line(u, &format!("tools-failed-{slot}"), &format!("pak{slot:02} · {error}")));
     }
     super::extra::shell(u, "settings-recovery-dialog", tr("Mod recovery report"))
         .w(520.0)
