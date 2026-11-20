@@ -45,6 +45,7 @@ pub mod payload;
 pub mod profiles;
 pub mod project;
 pub mod recolor;
+pub mod relays;
 pub mod release;
 pub mod remote_install;
 pub mod review;

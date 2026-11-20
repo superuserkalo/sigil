@@ -1,0 +1,72 @@
+
+Rule Name:                            Core Networking - Teredo (UDP-Out)
+----------------------------------------------------------------------
+Enabled:                              Yes
+Direction:                            Out
+Profiles:                             Domain,Private,Public
+Grouping:                             Core Networking
+LocalIP:                              Any
+RemoteIP:                             Any
+Protocol:                             UDP
+LocalPort:                            Any
+RemotePort:                           Any
+Edge traversal:                       No
+Action:                               Allow
+
+Rule Name:                            Sigil-Relay-ams-27015-27060
+----------------------------------------------------------------------
+Enabled:                              Yes
+Direction:                            Out
+Profiles:                             Domain,Private,Public
+Grouping:                             
+LocalIP:                              Any
+RemoteIP:                             155.133.248.36/32,155.133.248.37/32,155.133.248.40/32,155.133.248.41/32
+Protocol:                             UDP
+LocalPort:                            Any
+RemotePort:                           27015-27060
+Edge traversal:                       No
+Action:                               Block
+
+Rule Name:                            Sigil-Relay-sto-27015-27060
+----------------------------------------------------------------------
+Enabled:                              Yes
+Direction:                            Out
+Profiles:                             Domain,Private,Public
+Grouping:                             
+LocalIP:                              Any
+RemoteIP:                             146.66.157.34/32
+Protocol:                             UDP
+LocalPort:                            Any
+RemotePort:                           27015-27060
+Edge traversal:                       No
+Action:                               Block
+
+Rule Name:                            Sigil-Relay-old-27015-27060
+----------------------------------------------------------------------
+Enabled:                              No
+Direction:                            Out
+Profiles:                             Domain,Private,Public
+Grouping:                             
+LocalIP:                              Any
+RemoteIP:                             155.133.200.1/32
+Protocol:                             UDP
+LocalPort:                            Any
+RemotePort:                           27015-27060
+Edge traversal:                       No
+Action:                               Block
+
+Rule Name:                            Sigil-Deadworks-UDP-27067
+----------------------------------------------------------------------
+Enabled:                              Yes
+Direction:                            In
+Profiles:                             Domain,Private,Public
+Grouping:                             
+LocalIP:                              Any
+RemoteIP:                             Any
+Protocol:                             UDP
+LocalPort:                            27067
+RemotePort:                           Any
+Edge traversal:                       No
+Action:                               Allow
+Ok.
+

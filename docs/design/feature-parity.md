@@ -22,8 +22,8 @@ How to read the tables:
 Deferred as one package, "Sigil accounts" (owner 2026-11-20): Grimoire Social sign-in, cloud
 backup, DMM's Discover publishing, the community library, announcements and feature flags. They
 come later on Sigil's own backend (the telemetry Worker is the likely start), not on Grimoire's or
-DMM's. Rows marked "won't" for style or rules are closed by the owner and are not raised again,
-except the relay region picker, which stays open for a decision.
+DMM's. Rows marked "won't" for style or rules are closed by the owner and are not raised again.
+The relay region picker was decided (owner, 2026-11-20: build it, off by default) and is built.
 
 Two architectural differences drive many rows:
 
@@ -304,7 +304,7 @@ Endpoints, verified with curl against the live API on 2026-11-17 (Deadlock game 
 | Filters: has space, password | G+D | Filters | has | - | - |
 | Region and map filters, sortable columns | G+D | Filters | has (region grouped by continent, game mode, map, password; every column sorts ascending, descending, off with missing values last) | S | P2 |
 | Removable filter chips | D | Chips | has (one chip per filter, Clear (N)) | S | P3 |
-| Valve relay region picker (firewall) | D | Server picker | open: owner to decide (blocks Valve relay locations with Windows Firewall rules behind the admin prompt; Sigil already makes firewall rules for hosting) | L | P3 |
+| Valve relay region picker (firewall) | D | Server picker | partial (ADR 0016, Servers > Regions, off by default: Valve's relay list from `GetSDRConfig` cached a day, locations grouped by region with ping and health from a bounded, cancellable `ping` sweep, fastest open location, tick to block, region Block all and Allow all, presets saved, loaded and deleted, Apply and Reset as one elevated `netsh -f` batch of `Sigil-Relay-*` rules for `deadlock.exe` only, read back after each change with partial, stale, disabled and firewall-off warnings, a status bar mark on every page (shown even with the bar hidden) and a notice at every launch while any region is blocked; macOS and Linux list and ping but say blocking needs Windows. Built and checked in headless scenes; not yet run on a Windows PC. Not built: D's "Where I play" preset from match history and its relay health indicator) | L | P3 |
 | Favorites, recent servers, direct connect | - | Sigil extras | has (`.dah/servers.json`; favorites and recent scopes, address dialog that runs the same join check) | M | - |
 | Maps view and Launch map | D | Custom map help for custom/Deadworks servers | has (`servers_maps.rs`: GameBanana Maps category, console name from the description or installed VPK, copyable `map <name>`, Launch writes a managed autoexec block with a backup and starts the game) | M | P3 |
 | Custom maps page, How to play, Invite friends | D | Experimental custom-maps: Maps page, How to play This Map, Launch Map, Invite Friends (connect code from console.log) | has (2026-11-19, `screens/maps.rs`, `deadlock_core::maps`: off by default; map name from the addon VPK's `maps/<name>.vpk`; Launch map through the gameinfo gate; Host this map hands off to Servers > Host) | M | P3 |

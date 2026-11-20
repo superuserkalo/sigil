@@ -2303,7 +2303,7 @@ fn export_layer(u: &Ui, export: &ExportView) -> El {
         );
     }
     if let Some(error) = &export.error {
-        content = content.child(crate::notify::feedback::error_line(u, "profiles-export-error", error));
+        content = content.child(text(error.clone()).font(BODY).color(u.rose).wrap());
     }
 
     let code = export.share_code.clone();
@@ -2391,7 +2391,7 @@ fn import_input(s: &State, u: &Ui) -> El {
         );
     let mut content = col().w_full().gap(16.0).child(field);
     if let Some(error) = &import.error {
-        content = content.child(crate::notify::feedback::error_line(u, "profiles-import-error", error));
+        content = content.child(text(error.clone()).font(BODY).color(u.rose).wrap());
     }
     if !import.files.is_empty() {
         let mut list = col().w_full();

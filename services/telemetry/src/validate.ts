@@ -15,7 +15,6 @@ export const MAX_SHA256_BYTES = 8 * 1024 * 1024 * 1024;
 export const MAX_MESSAGE_CHARS = 8 * 1024;
 export const MAX_BACKTRACE_CHARS = 48 * 1024;
 export const MAX_SUMMARY_CHARS = 4 * 1024;
-export const MAX_CONTEXT_CHARS = 16 * 1024;
 
 const MAX_VERSION_CHARS = 64;
 const MAX_INSTALL_ID_CHARS = 36;
@@ -54,22 +53,12 @@ export type EventsBody = {
   readonly events: readonly EventInput[];
 };
 
-/** `panic` from the panic hook, `unclean_exit` when the app found its session marker at the
- * next start without a panic, `native` from the Windows exception filter. */
-export type CrashKind = "panic" | "unclean_exit" | "native";
-
-const CRASH_KINDS: readonly CrashKind[] = ["panic", "unclean_exit", "native"];
-
 export type CrashBody = {
   readonly installId: string;
   readonly version: string;
   readonly os: OsName;
   readonly message: string;
   readonly backtrace: string;
-  /** Older apps send no kind; their reports are panics. */
-  readonly kind: CrashKind;
-  /** The session's scrubbed log tail, empty when the app sent none. */
-  readonly context: string;
 };
 
 export type DiagnosticsBody = {
@@ -198,22 +187,7 @@ export function parseCrash(raw: unknown): ParseResult<CrashBody> {
   const backtrace = boundedString(raw.backtrace, MAX_BACKTRACE_CHARS, 0);
   if (backtrace === null) return fail("bad_backtrace");
 
-  let kind: CrashKind = "panic";
-  if (raw.kind !== undefined) {
-    if (typeof raw.kind !== "string" || !(CRASH_KINDS as readonly string[]).includes(raw.kind)) {
-      return fail("bad_kind");
-    }
-    kind = raw.kind as CrashKind;
-  }
-
-  let context = "";
-  if (raw.context !== undefined) {
-    const text = boundedString(raw.context, MAX_CONTEXT_CHARS, 0);
-    if (text === null) return fail("bad_context");
-    context = text;
-  }
-
-  return ok({ installId, version, os, message, backtrace, kind, context });
+  return ok({ installId, version, os, message, backtrace });
 }
 
 export function parseDiagnostics(raw: unknown): ParseResult<DiagnosticsBody> {

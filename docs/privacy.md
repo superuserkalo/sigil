@@ -48,8 +48,7 @@ id, and never puts an install id into a crash report or a diagnostics bundle.
 
 Off until you agree, in a first-start dialog or in Settings > Privacy. There is one switch per kind:
 usage events, crash reports and unknown-mod lookup. Diagnostics are never automatic: they are sent
-only when you press Send. After Sigil crashes, the next start asks about that one crash report even
-when crash reports are off (see [Crash reports](#crash-reports)).
+only when you press Send.
 
 The receiving end is the Cloudflare Worker `sigil-telemetry` in `services/telemetry/`, deployed by
 the owner. The desktop app sends to `https://sigil-telemetry.gantchevkaloyan.workers.dev`. Analytics Engine holds the
@@ -74,40 +73,11 @@ no file name, mod name, hero name or search text can ride along. At most 50 even
 Events wait in a local queue of at most 500 (oldest dropped) when Sigil is offline or between
 sends.
 
-<a id="crash-reports"></a>Crash reports (`POST /v1/crash`, at most 96 KiB; the app keeps a report
-under 60 KiB):
-
-| Field | What it holds | Stored |
-| --- | --- | --- |
-| install id | the random UUID | Checked for shape, never stored |
-| app version | the version that crashed | Yes |
-| operating system | `windows`, `macos`, `linux` or `other` | Yes |
-| kind | `panic`, `unclean_exit` or `native` | Yes |
-| message | the panic message and its source location (at most 8 KiB) | Yes |
-| backtrace | the Rust backtrace (at most 48 KiB); for an unclean exit, the last log line; for `native`, the Windows exception code, the address as an offset in `Sigil.exe` and the thread id | Yes |
-| context | the panicking thread's name, when the session started, and the last 150 lines of Sigil's own log (at most 16 KiB, newest lines kept) | Yes, the newest one per crash |
-
-Everything is scrubbed on your PC and again on the server. Home paths lose the user name
+Crash reports (`POST /v1/crash`): app version, operating system, the message and the backtrace
+(maximum 64 KiB), all scrubbed on your PC and again on the server. Home paths lose the user name
 (`/Users/<user>`), and Steam ids, emails, provider keys, GitHub tokens, bearer tokens and JWTs become
-placeholders. Identical crashes are one row with a repeat count, matched on the message and the
-first frames. Kept 90 days.
-
-How a crash becomes a report: Sigil writes a small session marker in its data folder when it starts
-and removes it whenever it exits cleanly (window close, tray Quit, Restart to update). A marker
-found at the next start means the last run did not exit cleanly. A panic is written to a local
-crash file the moment it happens; a run that died without one (an abort, a stack overflow, a driver
-crash, a forced quit) becomes an `unclean_exit` report, and on Windows an unhandled exception leaves
-a one-line `native` record. When nothing was recorded and the computer started after the run did,
-it was a shutdown, not a crash, and nothing is offered.
-
-- Crash reports on: the report is sent at start and a toast says so.
-- Crash reports off, or never answered: a dialog says what happened, shows exactly what would be
-  sent (Show what is sent), and offers Send report, Don't send and "Always send crash reports" (the
-  same switch as in Settings > Privacy). Pressing Send report is your consent for that one report;
-  nothing goes without the press. Don't send deletes the local file, and the same crash is not
-  asked about again for a day.
-- Limits on your PC: the same crash is sent at most once a day, and at most 3 reports an hour and
-  10 a day leave this install, whatever their kind.
+placeholders. The install id is not stored. Identical crashes are one row with a repeat count,
+matched on the message and the first frames. Kept 90 days.
 
 Diagnostics (`POST /v1/diagnostics`): app version, operating system, a summary you see, and a log
 file (maximum 1 MiB), scrubbed the same way. The Worker returns a support code such as
@@ -124,8 +94,7 @@ unknown-mod lookup switch is on, and it carries no install id.
 
 ### What is never sent
 
-- Log files, except inside a diagnostics bundle you send by pressing a button, and the last 150
-  scrubbed lines inside a crash report (sent automatically only with crash reports on).
+- Log files, except inside a diagnostics bundle you send by pressing a button.
 - Mod files, VPK contents, or any file from the game install.
 - File paths, except paths inside a diagnostics bundle, and those are scrubbed of user names.
 - Steam ids or Steam login details.
@@ -161,6 +130,13 @@ server or gateway. No Sigil server is in the path.
 
 `api.steampowered.com` serves the official Deadlock patch feed (news items and their dates) when
 Patches opens or refreshes. Anonymous GETs, no account, no login.
+
+The relay region picker (Servers > Regions) reads Valve's relay list for Deadlock from
+`api.steampowered.com/ISteamApps/GetSDRConfig/v1/?appid=1422450` when the tab opens and the saved
+copy is older than a day, or when you press Refresh. Anonymous GET, no account, nothing about you
+in it; the answer is kept in Sigil's data folder. Measure ping, on your press only, sends ICMP
+echo (the system `ping`) to the relay addresses in that list. Blocking regions adds Windows
+Firewall rules on your PC behind Windows' admin prompt; nothing about them is sent anywhere.
 
 Match data sharing is opt-in, off by default. While it is on, Sigil reads the first 512 bytes of
 each file in Steam's local HTTP cache (`<Steam>/appcache/httpcache`), keeps URLs shaped
@@ -325,10 +301,7 @@ host fails.
 
 - Your mods, projects, profiles, crosshair settings, filters and view options.
 - Logs and crash dumps, which are analysed locally and only leave inside a diagnostics bundle you
-  send or, as a scrubbed tail, a crash report. A panic writes a scrubbed crash file locally whether
-  or not crash reports are on; Don't send deletes it.
-- The session marker (`telemetry/session.json`) and the crash ledger (`telemetry/crash-ledger.json`:
-  fingerprints and times of sent and declined crashes, for the limits), in the app data directory.
+  send. A panic writes a scrubbed crash file locally whether or not crash reports are on.
 - The queued usage events, until they are sent or dropped.
 - Your Steam login: match data sharing reads local files and never asks Steam for it.
 - Your provider keys and proxy password, in the OS keychain or the `chmod 600` CLI store.

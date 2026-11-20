@@ -32,38 +32,7 @@ pub const SCENES: &[Scene] = &[
     ("w4a-identify-name", crate::screens::installed::tools::scene_identify_name),
     ("w4a-update-scope", update_scope),
     ("w4a-installed-sound", installed_sound),
-    // Sigil's own crash at the next start, and feedback on every error and warning toast.
-    ("crash-offer", crash_offer),
-    ("crash-offer-open", crash_offer_open),
-    ("crash-offer-unclean", crash_offer_unclean),
-    ("crash-sent", crash_sent),
-    ("notify-feedback", crate::notify::scene_feedback),
 ];
-
-/// The crash dialog after a panic, collapsed.
-pub fn crash_offer(s: &mut State) {
-    crate::app::scene_demo_installed(s);
-    crate::screens::settings::crash::stage_scene(s, deadlock_core::telemetry::crash::KIND_PANIC, false);
-}
-
-/// The crash dialog after a panic, with what is sent shown and Always send ticked.
-pub fn crash_offer_open(s: &mut State) {
-    crate::app::scene_demo_installed(s);
-    crate::screens::settings::crash::stage_scene(s, deadlock_core::telemetry::crash::KIND_PANIC, true);
-    s.settings.telemetry.crash.always = true;
-}
-
-/// The crash dialog after a run that left no panic (a native crash or a forced quit).
-pub fn crash_offer_unclean(s: &mut State) {
-    crate::app::scene_demo_installed(s);
-    crate::screens::settings::crash::stage_scene(s, deadlock_core::telemetry::crash::KIND_UNCLEAN, false);
-}
-
-/// The toast a player with crash reports on sees at start.
-pub fn crash_sent(s: &mut State) {
-    crate::app::scene_demo_installed(s);
-    crate::screens::settings::crash::stage_sent(s);
-}
 
 /// Every toast kind at once: a success with Undo, a warning that reads longer, and a sticky
 /// error with its action and Send feedback.

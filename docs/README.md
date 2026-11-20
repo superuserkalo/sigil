@@ -63,6 +63,7 @@ Every doc starts with a status line. Values: `active`, `draft`, `planned`, `supe
 | `decisions/0010-one-executable.md` | accepted | One shipped executable: `cli` and `agent-host` subcommands, host still a child process. |
 | `decisions/0011-build-for-parity.md` | accepted | Build for parity; cosmetic-only, compiled-only payload and confirm-gate rules dropped. |
 | `decisions/0012-signed-self-update.md` | accepted | Self-update from signed GitHub releases; swap, rollback and the key. |
+| `decisions/0016-relay-region-picker.md` | accepted | Relay region picker: Valve's relay list, Windows Firewall rules on the player's Apply. |
 | `runbooks/development.md` | active | Local setup and verification. |
 
 ## Updating docs

@@ -41,8 +41,6 @@ pub struct Telemetry {
     pub preview: Option<String>,
     pub sending: Job<String>,
     pub code: Option<Result<String, String>>,
-    /// Sigil's own crash in the last run: the dialog or the quiet send (`crash.rs`).
-    pub crash: super::crash::Offer,
 }
 
 fn data() -> std::path::PathBuf {
@@ -63,7 +61,6 @@ pub fn on_startup(st: &mut State) {
     st.settings.telemetry.consent = telemetry::read_consent(&dir);
     st.settings.telemetry.loaded = true;
     event(st, "app:start", None);
-    super::crash::on_startup(st);
 }
 
 /// Queue one usage event. A no-op without usage consent, in the demo, a headless run or a test;
@@ -101,7 +98,7 @@ pub fn page_event(screen: crate::model::Screen) -> Option<&'static str> {
 
 /// The question opens once the first-run setup is done; the flush worker runs every 10 minutes.
 pub fn poll(st: &mut State) -> bool {
-    let mut changed = super::crash::poll(st);
+    let mut changed = false;
     let t = &mut st.settings.telemetry;
     if let Some(_result) = t.flush.try_take() {
         changed = true;
@@ -114,7 +111,7 @@ pub fn poll(st: &mut State) -> bool {
     if !t.loaded || st.demo || rune::is_headless() {
         return changed;
     }
-    if !t.consent.asked && !t.asking && !t.crash.asking && super::options::get().onboarded {
+    if !t.consent.asked && !t.asking && super::options::get().onboarded {
         t.asking = true;
         changed = true;
     }
@@ -158,13 +155,8 @@ fn flip(st: &mut State, change: fn(&mut Consent)) {
     event(st, "settings:change", Some("page:settings"));
 }
 
-/// Sigil's own crash in the last run first, then the first-start question.
-pub fn dialog(s: &State, u: &Ui) -> Option<El> {
-    super::crash::dialog(s, u).or_else(|| question(s, u))
-}
-
 /// The first-start question.
-fn question(s: &State, u: &Ui) -> Option<El> {
+pub fn dialog(s: &State, u: &Ui) -> Option<El> {
     if !s.settings.telemetry.asking {
         return None;
     }

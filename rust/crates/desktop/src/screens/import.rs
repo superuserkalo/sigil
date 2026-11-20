@@ -328,7 +328,7 @@ pub fn dialog(s: &State, u: &Ui) -> Option<El> {
         head = head.child(text(line).font(BODY).color(u.muted).wrap());
     }
     if let Some(error) = &d.error {
-        head = head.child(crate::notify::feedback::error_line(u, "import-error", error));
+        head = head.child(text(error.clone()).font(BODY).color(u.rose).wrap());
     }
     let mut body = col().w_full().gap(16.0).child(head);
 

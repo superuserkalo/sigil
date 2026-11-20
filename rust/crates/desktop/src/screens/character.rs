@@ -558,7 +558,7 @@ fn task_detail(s: &State, u: &Ui, index: usize, item: &Row) -> El {
                 ),
         );
     if let Some(error) = &item.error {
-        page = page.child(crate::notify::feedback::error_line(u, "character-error", error));
+        page = page.child(text(error.clone()).font(BODY).color(u.rose).wrap());
     }
     page = page
         .child(facts)

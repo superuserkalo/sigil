@@ -143,6 +143,9 @@ pub struct Options {
     pub themed_art: String,
     /// Seasonal full-screen effects (snow, sparks), off by default; needs seasonal themes on.
     pub seasonal_effects: bool,
+    /// Servers > Regions: presets and the relay locations Sigil last saw blocked. Empty until
+    /// the player presses Apply (`deadlock_core::relays`).
+    pub relay_regions: deadlock_core::relays::Choices,
 }
 
 impl Default for Options {
@@ -211,6 +214,7 @@ impl Default for Options {
             crosshair_hero_settings: false,
             themed_art: "none".into(),
             seasonal_effects: false,
+            relay_regions: deadlock_core::relays::Choices::default(),
         }
     }
 }
@@ -373,6 +377,12 @@ impl Options {
             crosshair_hero_settings: b("crosshair_hero_settings", d.crosshair_hero_settings),
             seasonal_effects: b("seasonal_effects", d.seasonal_effects),
             themed_art: s("themed_art").filter(|v| ["none", "grid", "crest", "terminal"].contains(&v.as_str())).unwrap_or(d.themed_art),
+            relay_regions: map
+                .get("relay_regions")
+                .cloned()
+                .and_then(|v| serde_json::from_value::<deadlock_core::relays::Choices>(v).ok())
+                .map(deadlock_core::relays::Choices::sanitized)
+                .unwrap_or_default(),
         }
     }
 
@@ -451,6 +461,7 @@ impl Options {
         m.insert("crosshair_hero_settings".into(), json!(self.crosshair_hero_settings));
         m.insert("themed_art".into(), json!(self.themed_art));
         m.insert("seasonal_effects".into(), json!(self.seasonal_effects));
+        m.insert("relay_regions".into(), serde_json::to_value(&self.relay_regions).unwrap_or(Value::Null));
         serde_json::to_string_pretty(&Value::Object(m)).unwrap_or_default() + "\n"
     }
 
@@ -545,7 +556,12 @@ pub fn edit_quiet(change: impl FnOnce(&mut Options)) {
 /// Back to the defaults, keeping only what records the user's history rather than a choice:
 /// first-run state and remembered reveals go too, so Reset is a full reset.
 pub fn reset() {
-    let options = Options::default();
+    // The relay rules stay in Windows Firewall after a reset, so the record of them stays too:
+    // the status bar keeps saying regions are blocked until Servers > Regions resets them.
+    let kept = get().relay_regions;
+    let mut options = Options::default();
+    options.relay_regions.applied = kept.applied;
+    options.relay_regions.pending = kept.pending;
     set(options.clone());
     if let Err(error) = save(&options) {
         super::log::error(format!("options.json: {error}"));
@@ -673,6 +689,11 @@ mod tests {
             crosshair_hero_settings: true,
             themed_art: "grid".into(),
             seasonal_effects: true,
+            relay_regions: deadlock_core::relays::Choices {
+                applied: vec!["hkg".into(), "tyo".into()],
+                presets: vec![deadlock_core::relays::Preset { name: "EU only".into(), blocked: vec!["iad".into()] }],
+                pending: true,
+            },
         };
         o.presence_lines.insert(
             "match".into(),
