@@ -8,6 +8,7 @@
 //! pending browser step come from `crate::signin`.
 
 pub mod autostart;
+pub mod crash;
 pub mod discord;
 pub mod downloads;
 pub mod editor;
@@ -2607,7 +2608,7 @@ fn install_row(s: &State, u: &Ui, offer: Option<&Release>) -> Option<El> {
             u,
             "settings-update-failed",
             "Update failed",
-            text(error.clone()).font(SMALL).color(u.rose).wrap(),
+            crate::notify::feedback::error_line(u, "settings-update-error", error),
             trailing(actions),
         ));
     }

@@ -52,8 +52,8 @@ fn sha256_of(text: &str) -> String {
 // A loopback server that records request heads and bodies
 // ---------------------------------------------------------------------------
 
-struct Server {
-    base: String,
+pub(super) struct Server {
+    pub(super) base: String,
     heads: Arc<StdMutex<Vec<String>>>,
     bodies: Arc<StdMutex<Vec<String>>>,
     hits: Arc<AtomicUsize>,
@@ -62,7 +62,7 @@ struct Server {
 }
 
 impl Server {
-    fn start(reply: &str) -> Server {
+    pub(super) fn start(reply: &str) -> Server {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         listener.set_nonblocking(true).unwrap();
         let base = format!("http://{}", listener.local_addr().unwrap());
@@ -113,7 +113,7 @@ impl Server {
         }
     }
 
-    fn hits(&self) -> usize {
+    pub(super) fn hits(&self) -> usize {
         self.hits.load(Ordering::SeqCst)
     }
 
@@ -121,7 +121,7 @@ impl Server {
         self.heads.lock().unwrap().clone()
     }
 
-    fn bodies(&self) -> Vec<String> {
+    pub(super) fn bodies(&self) -> Vec<String> {
         self.bodies.lock().unwrap().clone()
     }
 }
@@ -383,6 +383,7 @@ fn pending_crashes_wait_for_consent_then_are_sent_once() {
         version: "0.1.0".to_string(),
         os: "windows".to_string(),
         ts: 1,
+        ..CrashFile::default()
     };
     fs::write(
         crash_dir(&dir).join("2026-01-01T00-00-00.000000000Z.json"),

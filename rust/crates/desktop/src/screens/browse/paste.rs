@@ -495,7 +495,7 @@ pub fn dialog(s: &State, u: &Ui) -> Option<El> {
     if let Some(saved) = &p.saved {
         body = body.child(match saved {
             Ok(name) => text(fill(tr("Profile saved: {}. Apply it from Profiles."), &[name])).font(SMALL).color(u.teal).wrap(),
-            Err(error) => text(error.clone()).font(SMALL).color(u.rose).wrap(),
+            Err(error) => crate::notify::feedback::error_line(u, "paste-save-error", error),
         });
     }
     Some(
@@ -519,7 +519,7 @@ fn files_list(s: &State, u: &Ui, id: u64) -> El {
     };
     let files = match result {
         Ok(files) => files,
-        Err(error) => return c.child(text(error.clone()).font(SMALL).color(u.rose).wrap()),
+        Err(error) => return c.child(crate::notify::feedback::error_line(u, "paste-read-error", error)),
     };
     let picked = p.variant.get(&id).copied();
     let choice = |key: String, label: String, detail: String, on: bool, file: Option<u64>| {

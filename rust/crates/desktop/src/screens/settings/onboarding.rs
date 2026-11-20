@@ -356,7 +356,7 @@ pub fn overlay(s: &State, u: &Ui) -> Option<El> {
         .child(text(tr(step.title()).to_string()).font(DISPLAY).color(u.ink))
         .child(step_body(s, u, step));
     if let Some(error) = &s.settings.extra.onboarding_error {
-        card = card.child(text(error.clone()).font(SMALL).color(u.rose).wrap().w_full());
+        card = card.child(crate::notify::feedback::error_line(u, "onboarding-error", error));
     }
     let mut buttons = row().w_full().gap(8.0).pt(8.0).center_y().child(
         button(u, "onboarding-skip", "Skip for now", ActionKind::Ghost).on_press(finish),

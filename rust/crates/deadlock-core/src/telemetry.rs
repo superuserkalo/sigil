@@ -14,6 +14,8 @@
 //! - Crash reports ([`install_panic_hook`], [`send_pending_crashes`]): the panic message and a
 //!   backtrace, scrubbed and written to `<data>/telemetry/crashes/<time>.json` locally even when
 //!   crash consent is off. Sending is a separate call so a panic hook never blocks on a socket.
+//!   [`crash`] adds the session marker: a run that did not exit cleanly is found at the next
+//!   start, its log tail is added, and the app asks before sending (or sends, with consent).
 //! - Diagnostics ([`send_diagnostics`]): the player presses Send, so that press is the consent;
 //!   the log tail and summary are scrubbed here and again by the Worker, and the Worker answers
 //!   with a reference code such as `SGL-AB12-CD34`.
@@ -96,6 +98,7 @@ pub const EVENTS: &[&str] = &[
     "backup:restore",
     "cleanup:run",
     "diagnostics:send",
+    "crash:send",
     "settings:change",
     "agent:chat",
     "publish:start",
@@ -197,8 +200,13 @@ struct Queued {
     ts: i64,
 }
 
-/// A crash file on disk. `version` and `os` describe the build that crashed; the send uses the
-/// current version and OS, which is what the Worker stores.
+/// A crash file on disk. `version` and `os` describe the build that crashed, and the send
+/// reports that version (the current one when it is not a valid version).
+///
+/// `kind` is `panic` (the panic hook), `unclean_exit` (no panic, the session marker was left
+/// behind) or `native` (a Windows exception filter record). `thread` names the panicking thread.
+/// `context` is the scrubbed log tail of the session, added at the next start. Files from older
+/// builds have none of the three and read as a panic.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 struct CrashFile {
@@ -207,6 +215,12 @@ struct CrashFile {
     version: String,
     os: String,
     ts: i64,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    kind: String,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    thread: String,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    context: String,
 }
 
 fn telemetry_dir(data_dir: &Path) -> PathBuf {
@@ -398,12 +412,19 @@ fn write_crash(target: &CrashTarget, info: &std::panic::PanicHookInfo<'_>) {
         MAX_CRASH_BACKTRACE,
     );
     let now = Utc::now();
+    let thread = std::thread::current()
+        .name()
+        .map(str::to_string)
+        .unwrap_or_else(|| "unnamed".to_string());
     let crash = CrashFile {
         message,
         backtrace,
         version: target.version.clone(),
         os: os_name().to_string(),
         ts: now.timestamp_millis(),
+        kind: crash::KIND_PANIC.to_string(),
+        thread: truncate(&scrub(&thread), 128),
+        context: String::new(),
     };
     let Ok(text) = serde_json::to_vec_pretty(&crash) else {
         return;
@@ -455,41 +476,18 @@ pub fn send_pending_crashes(data_dir: &Path, version: &str) -> Result<usize> {
 }
 
 /// [`send_pending_crashes`] against a chosen base URL. The caller has already checked consent.
+/// Every file passes the local rate limit and duplicate check (`crash::Ledger`): a crash already
+/// sent in the last day is deleted unsent, and the run stops at the hourly or daily cap.
 fn send_crashes_at(data_dir: &Path, version: &str, base: &str) -> Result<usize> {
     let mut files = crash_files(&crash_dir(data_dir));
     files.sort();
-    if files.is_empty() {
-        return Ok(0);
-    }
-    let install_id = install_id(data_dir);
-    let os = os_name();
     let mut sent = 0;
     for path in files {
-        let Ok(text) = fs::read_to_string(&path) else {
-            continue;
-        };
-        let Ok(crash) = serde_json::from_str::<CrashFile>(&text) else {
-            let _ = fs::remove_file(&path);
-            continue;
-        };
-        if crash.message.trim().is_empty() {
-            let _ = fs::remove_file(&path);
-            continue;
-        }
-        // Scrub again: the file was scrubbed when written, but it is plain JSON on disk.
-        let body = json!({
-            "installId": install_id,
-            "version": version,
-            "os": os,
-            "message": truncate(&scrub(&crash.message), MAX_CRASH_MESSAGE),
-            "backtrace": truncate(&scrub(&crash.backtrace), MAX_CRASH_BACKTRACE),
-        });
-        match post(&endpoint_at(base, "/v1/crash"), version, &body, EVENT_TIMEOUT) {
-            Ok(_) => {
-                let _ = fs::remove_file(&path);
-                sent += 1;
-            }
-            Err(error) => {
+        match crash::send_file_at(data_dir, version, base, &path, Utc::now().timestamp_millis()) {
+            crash::Sent::Yes => sent += 1,
+            crash::Sent::Duplicate | crash::Sent::Unreadable => {}
+            crash::Sent::Limited => break,
+            crash::Sent::Failed(error) => {
                 note(&format!("a crash report was not sent: {error}"));
                 break;
             }
@@ -918,6 +916,11 @@ fn tail(text: &str, max: usize) -> String {
     }
     text[start..].to_string()
 }
+
+/// Crash detection across restarts: the session marker, the record of a run that did not exit
+/// cleanly, the decision to ask or send, and the local rate limit.
+#[path = "telemetry_crash.rs"]
+pub mod crash;
 
 #[cfg(test)]
 #[path = "telemetry_tests.rs"]

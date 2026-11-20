@@ -4,7 +4,8 @@
  * Five endpoints, one cron job, no UI:
  *
  *   POST /v1/events       usage events, one Analytics Engine point per event
- *   POST /v1/crash        scrubbed crash report, deduplicated in D1 by fingerprint
+ *   POST /v1/crash        scrubbed crash report (panic, unclean exit or native), deduplicated
+ *                         in D1 by fingerprint, with the session's scrubbed log tail
  *   POST /v1/diagnostics  scrubbed bundle the player chose to send, returns a support code
  *   GET  /v1/identify     hash lookup for an installed VPK, stores nothing
  *   POST /v1/hashes       hash contributed by an app that just installed that file
@@ -42,7 +43,8 @@ import {
 } from "./validate";
 
 const EVENTS_BODY_LIMIT = 32 * 1024;
-const CRASH_BODY_LIMIT = 64 * 1024;
+// Message 8 KiB, backtrace 48 KiB and the log tail 16 KiB, with room for the envelope.
+const CRASH_BODY_LIMIT = 96 * 1024;
 const DIAGNOSTICS_BODY_LIMIT = 1024 * 1024;
 const HASHES_BODY_LIMIT = 4 * 1024;
 
@@ -166,17 +168,20 @@ async function handleCrash(request: Request, env: Env): Promise<Response> {
   // stored, so a crash row cannot be tied to an install.
   const message = scrub(crash.message);
   const backtrace = scrub(crash.backtrace);
+  const context = scrub(crash.context);
   const fingerprint = await crashFingerprint(message, backtrace);
   const now = Date.now();
 
+  // A repeat keeps the newest log tail when it brings one: the latest session says the most.
   await env.DB.prepare(
-    `INSERT INTO crashes (created_at, version, os, message, backtrace, fingerprint, repeats, last_seen_at)
-     VALUES (?1, ?2, ?3, ?4, ?5, ?6, 1, ?1)
+    `INSERT INTO crashes (created_at, version, os, message, backtrace, fingerprint, repeats, last_seen_at, kind, context)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, 1, ?1, ?7, ?8)
      ON CONFLICT(fingerprint) DO UPDATE SET
        repeats = crashes.repeats + 1,
-       last_seen_at = excluded.last_seen_at`,
+       last_seen_at = excluded.last_seen_at,
+       context = CASE WHEN excluded.context = '' THEN crashes.context ELSE excluded.context END`,
   )
-    .bind(now, crash.version, crash.os, message, backtrace, fingerprint)
+    .bind(now, crash.version, crash.os, message, backtrace, fingerprint, crash.kind, context)
     .run();
 
   const stored = await env.DB.prepare("SELECT repeats FROM crashes WHERE fingerprint = ?1")
