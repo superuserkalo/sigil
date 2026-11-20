@@ -44,7 +44,7 @@ does for each shape.
 | `.7z` (LZMA, LZMA2, BCJ, PPMd, bzip2, zstd, deflate) | 7za | yes | yes |
 | format by magic bytes, not extension | 1-click only | no (extension, case-sensitive) | yes |
 | bare `.vpk` download or file | yes | update path only | yes, with its `_NNN` parts from the same folder |
-| archive inside the archive | no | no | yes, 3 levels deep |
+| archive inside the archive | no | no | yes, 3 levels deep, at most 64 inner archives, one size and file budget shared with the outer archive |
 | `.tar`, `.gz`, `.bz2` | no | no | no; the message says to unpack with 7-Zip |
 | password-protected | no detection (may hang on 7za) | raw library error | clear message for ZIP, 7z and RAR |
 | corrupt or cut-off archive | raw error, archive deleted | raw error | "damaged or only partly downloaded", cached copy deleted so a retry downloads again |
