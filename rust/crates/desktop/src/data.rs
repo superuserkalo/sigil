@@ -3019,26 +3019,28 @@ fn crash_advisory(
     let dump = impact::unacknowledged_dump(&dumps, marker.started_secs, marker.acknowledged_secs)?;
     let at_secs = impact::dump_seconds(dump).unwrap_or(0);
     let info = game_session::read_dump_info(&dump.path);
-    // Only what is installed and switched on now can be named: the journal and the library
-    // also remember mods that were deleted, turned off or replaced in their slot since.
+    // Only a mod that is still installed can be named: the journal and the library also
+    // remember mods that were deleted or replaced in their slot since. A mod that is off now
+    // stays a candidate (it may have been on at the crash); the card then says it is off.
     let installed = addons_dir
         .and_then(|addons| addons.ancestors().nth(3))
         .and_then(|root| deadlock_core::addons::list_installed(root).ok())
         .unwrap_or_default();
+    let present: std::collections::BTreeSet<u16> = installed.iter().map(|addon| addon.slot).collect();
     let enabled: std::collections::BTreeSet<u16> =
         installed.iter().filter(|addon| addon.enabled).map(|addon| addon.slot).collect();
     let changes = impact::blame_candidates(
         impact::recent_changes(workspace, std::time::Duration::from_secs(7 * 86_400), 20),
-        &enabled,
+        &present,
         at_secs,
     );
 
-    // Names for the enabled slots: the library first, the journal next.
+    // Names for the installed slots: the library first, the journal next.
     let mut names: std::collections::BTreeMap<u16, String> = std::collections::BTreeMap::new();
     if let Ok(library) = deadlock_core::import::read_library(&deadlock_core::import::library_path(data))
     {
         for meta in &library.mods {
-            if enabled.contains(&meta.slot) && !meta.name.trim().is_empty() {
+            if present.contains(&meta.slot) && !meta.name.trim().is_empty() {
                 names.insert(meta.slot, meta.name.clone());
             }
         }
@@ -3050,7 +3052,7 @@ fn crash_advisory(
     if let Some(addons) = addons_dir
         && info.comment.is_some()
     {
-        for addon in installed.iter().filter(|addon| addon.enabled) {
+        for addon in &installed {
             let path = addon.path(addons);
             let options = deadlock_core::vpk::ReadVpkOptions { keep_preload: false };
             if let Ok(directory) = deadlock_core::vpk::read_vpk_directory_with(&path, &options) {
@@ -3070,6 +3072,7 @@ fn crash_advisory(
         comment: info.comment.clone(),
     };
     let suspect = impact::suspect(&facts, &changes, &names, &shipped);
+    let suspect_off = suspect.as_ref().is_some_and(|suspect| !enabled.contains(&suspect.slot));
     Some(crate::screens::launch::Crash {
         path: dump.path.display().to_string(),
         file: dump
@@ -3082,6 +3085,7 @@ fn crash_advisory(
         exception: info.exception.map(game_session::exception_label),
         comment: info.comment,
         suspect,
+        suspect_off,
     })
 }
 

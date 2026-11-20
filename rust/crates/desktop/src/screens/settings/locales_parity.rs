@@ -595,6 +595,7 @@ pub const DE: &[(&str, &str)] = &[
     ("Try part of a path or a slot number.", "Versuche einen Teil eines Pfades oder eine Slot-Nummer."),
     ("Turn {} off", "{} ausschalten"),
     ("Turn off {}", "{} ausschalten"),
+    ("Already turned off", "Bereits ausgeschaltet"),
     ("Turn off Ignore overlap by default in Settings to compare your mods.", "Schalte in den Einstellungen „Überschneidung standardmäßig ignorieren“ aus, um deine Mods zu vergleichen."),
     ("Your enabled mods", "Deine aktiven Mods"),
     ("Your mods are moved aside, then Steam starts the game. Restore them here afterwards.", "Deine Mods werden beiseitegelegt, dann startet Steam das Spiel. Lege sie hier danach zurück."),

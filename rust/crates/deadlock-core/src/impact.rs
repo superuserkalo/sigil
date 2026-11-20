@@ -233,17 +233,19 @@ pub fn suspect(
 
 /// The journal installs that can still be blamed for a crash at `crash_secs`.
 ///
-/// The journal keeps installs of mods that were deleted, switched off or replaced since, keyed
-/// by slot number. Only the newest install per slot describes what is in that slot now, only an
-/// enabled slot can cause a crash, and only an install from before the crash can explain it.
-/// `changes` is newest first, as [`recent_changes`] returns it. A `crash_secs` of 0 (unknown
-/// dump time) skips the time check.
-pub fn blame_candidates(changes: Vec<Change>, enabled: &BTreeSet<u16>, crash_secs: i64) -> Vec<Change> {
+/// The journal keeps installs of mods that were deleted or replaced since, keyed by slot
+/// number. Only the newest install per slot describes what is in that slot now, only a slot
+/// that still holds a mod can be named, and only an install from before the crash can explain
+/// it. `installed` holds every slot with a mod in it, on or off: whether a mod that is off now
+/// was off at the crash is not recorded, so it stays a candidate (the advisory then says it is
+/// already off) rather than passing the blame to the next mod. `changes` is newest first, as
+/// [`recent_changes`] returns it. A `crash_secs` of 0 (unknown dump time) skips the time check.
+pub fn blame_candidates(changes: Vec<Change>, installed: &BTreeSet<u16>, crash_secs: i64) -> Vec<Change> {
     let mut seen = BTreeSet::new();
     changes
         .into_iter()
         .filter(|change| seen.insert(change.slot))
-        .filter(|change| enabled.contains(&change.slot))
+        .filter(|change| installed.contains(&change.slot))
         .filter(|change| crash_secs == 0 || change.at_secs <= crash_secs)
         .collect()
 }
@@ -589,9 +591,9 @@ mod tests {
     }
 
     #[test]
-    fn a_deleted_off_or_replaced_mod_is_never_blamed() {
+    fn a_deleted_or_replaced_mod_is_never_blamed_and_an_off_one_keeps_the_blame() {
         // Newest first: slot 4 now holds Delta (Old Four was replaced), slot 7 was deleted,
-        // slot 2 is switched off, slot 9 was installed after the crash.
+        // slot 2 is installed but switched off, slot 9 was installed after the crash.
         let changes = vec![
             change(9, "After", 500),
             change(4, "Delta", 300),
@@ -599,14 +601,19 @@ mod tests {
             change(2, "Off", 200),
             change(4, "Old Four", 100),
         ];
-        let enabled = BTreeSet::from([4, 9]);
-        let kept = blame_candidates(changes, &enabled, 400);
-        assert_eq!(kept.iter().map(|c| c.name.as_str()).collect::<Vec<_>>(), vec!["Delta"]);
+        let installed = BTreeSet::from([2, 4, 9]);
+        let kept = blame_candidates(changes.clone(), &installed, 400);
+        assert_eq!(kept.iter().map(|c| c.name.as_str()).collect::<Vec<_>>(), vec!["Delta", "Off"]);
         let facts = DumpFacts { path: PathBuf::from("d.mdmp"), modified_secs: Some(400), exception: None, comment: None };
-        let names = BTreeMap::from([(4, "Delta".to_string())]);
-        let suspect = suspect(&facts, &kept, &names, &BTreeMap::new()).unwrap();
-        assert_eq!((suspect.slot, suspect.name.as_str()), (4, "Delta"));
-        // Nothing enabled left from before the crash: no guess at all.
+        let names = BTreeMap::from([(2, "Off".to_string()), (4, "Delta".to_string())]);
+        let named = suspect(&facts, &kept, &names, &BTreeMap::new()).unwrap();
+        assert_eq!((named.slot, named.name.as_str()), (4, "Delta"));
+        // A mod switched off since the crash is still the newest change: it keeps the blame
+        // instead of passing it to an older mod that is on.
+        let without_delta = BTreeSet::from([2, 9]);
+        let kept = blame_candidates(changes, &without_delta, 400);
+        assert_eq!(suspect(&facts, &kept, &names, &BTreeMap::new()).unwrap().slot, 2);
+        // Nothing installed left from before the crash: no guess at all.
         assert!(blame_candidates(vec![change(7, "Gone", 250)], &BTreeSet::new(), 400).is_empty());
     }
 

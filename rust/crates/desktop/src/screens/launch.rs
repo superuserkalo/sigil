@@ -51,6 +51,8 @@ pub struct Crash {
     pub exception: Option<String>,
     pub comment: Option<String>,
     pub suspect: Option<Suspect>,
+    /// The suspect is switched off now (the card says so instead of offering Turn off).
+    pub suspect_off: bool,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -492,7 +494,13 @@ fn crash_block(s: &State, u: &Ui, crash: &Crash) -> El {
                         )
                         .child(text(reason).font(SMALL).color(u.muted).wrap()),
                 )
-                .child(
+                .child(if crash.suspect_off {
+                    // Off already (maybe since the crash): nothing to press, say so.
+                    text(tr("Already turned off"))
+                        .key("launch-crash-already-off")
+                        .font(SMALL)
+                        .color(u.muted)
+                } else {
                     u.action(&fill(tr("Turn off {}"), &[&name]), ActionKind::Secondary)
                     .key("launch-crash-off")
                     .disabled(blocked)
@@ -503,8 +511,8 @@ fn crash_block(s: &State, u: &Ui, crash: &Crash) -> El {
                             dismiss_crash(st, at_secs);
                             crate::data::start_launch_read(st);
                         }
-                    }),
-                ),
+                    })
+                }),
         );
     }
     block
@@ -1235,6 +1243,7 @@ fn demo_crash() -> Crash {
             file: Some("panorama/layout/hud/scoreboard.vxml_c".to_string()),
             change: Some(change),
         }),
+        suspect_off: false,
     }
 }
 
