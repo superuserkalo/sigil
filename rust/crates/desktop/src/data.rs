@@ -724,6 +724,11 @@ pub fn set_pixel_scale(scale: f32) {
     }
 }
 
+/// Device pixels per point, as `app::view` last set it (the 3D viewer renders at this).
+pub fn pixel_scale() -> f32 {
+    f32::from_bits(PIXEL_SCALE.load(Ordering::Relaxed))
+}
+
 pub fn set_card_points(width: f32) {
     if width.is_finite() && width > 0.0 {
         CARD_POINTS.store(width.to_bits(), Ordering::Relaxed);

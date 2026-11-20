@@ -1,8 +1,8 @@
 # 3D viewer: asset pipeline and file contract
 
 Status: active, 2026-11-20. The asset half is built (`deadlock_core::viewer`, `dah viewer`). The
-renderer half (`rust/crates/sigil-viewer`, `rust/crates/desktop/src/viewer/`) is in progress in
-parallel. Fixture tests pass; no real-game export has been run yet (no Deadlock install on the
+renderer half is built (`rust/crates/sigil-viewer`, `rust/crates/desktop/src/viewer/`, see
+"Renderer" below) and tested against a stand-in hero and room; no page shows it yet. Fixture tests pass; no real-game export has been run yet (no Deadlock install on the
 build Mac), so the Hideout's entity and world-node parsing is verified only against Grimoire's
 schema, not against a live `dl_hideout.vpk`.
 
@@ -284,3 +284,86 @@ the file paths. The game comes from discovery or `DAH_GAME_DIR`. The real-game t
 - Hero ambient particles and effects (`heroAmbientDiscovery.ts`), material groups and skins per
   hero form, and WIP heroes whose pose lives only in a loose NM pose clip.
 - A real-game run. The ignored test and the CLI are ready for the first machine with Deadlock.
+
+## Renderer
+
+`rust/crates/sigil-viewer` draws the files above on its own wgpu device (wgpu `~30.0.1`, the
+version and per-platform backend Rune links: Metal, D3D12 with FXC, Vulkan). It never reads a VPK
+and never touches the UI.
+
+```rust
+let mut v = sigil_viewer::Viewer::new()?;              // Err(ViewerError::NoGpu) without an adapter
+v.load_hero_file(&glb, Some(&sidecar))?;               // or set_hero(model::load_path(..)?, &Sidecar::read(..))
+v.set_before(Some(stock_model), &stock_sidecar);       // the unmodded side
+v.set_scene(sigil_viewer::load_scene(&scene_json)?);   // Hideout: props, lights, fog, sky, probe
+v.compare = Compare::Split(0.5);                       // After, Before or Split(fraction)
+v.camera.orbit(dx, dy); v.camera.zoom(0.9); v.camera.pan(dx, dy, h); v.reset_camera();
+v.set_clip("shop_menu_base"); v.seek(1.0); v.playback.speed = 0.5; v.playback.playing = false;
+let rgba: &[u8] = v.render(width, height, dt);         // sRGB RGBA8 rows, top first
+let png = v.capture_png(width, height)?;
+```
+
+- Loading: glTF 2.0 through the `gltf` crate (the one morphic links), every node, skin, clip
+  (linear, step, cubic) and embedded image; tangents are generated when missing.
+- Skinning on the GPU from one matrix palette per model; a clip plays by name, loops or holds
+  per the sidecar's `clipInfo.playback`; the stock side plays the modded clip's phase (Deadlock Mod
+  Manager's comparison playback).
+- Materials honour vpkmerge's contract: base color sRGB, metalness in MR blue, roughness in
+  green, AO red, `pbr.vfx` NPR normals decoded hemi-octahedrally, `g_vColorTint1` decoded from
+  sRGB once and applied through the tint mask, color correction about `texture_reflectivity`,
+  self-illumination gated on its scale, authored shells hidden unless Grimoire's rule reveals
+  them, glass and additive drawn blended.
+- Lighting is Grimoire's Citadel NPR port: stepped wrapped diffuse, ambient bands at fixed
+  luminance targets, the upward silhouette rim with its hero depth test, NPR-scaled reflections,
+  the lit inverted-hull outline (0.1 game units times the outline mask). The studio rig, its
+  calibration and the hero inspect post curve (Caldera) come from Grimoire; a scene uses the
+  base Deadlock curve, its realtime lights (directional, point, spot), the fog, the sky cube as
+  backdrop and the reflection cube for reflections and ambient.
+- Frame: hero depth prepass, 4x MSAA HDR pass per shown model, bloom (threshold, five-level
+  chain), post into an sRGB target, read back.
+
+Not consumed yet: `lightmap` (room glbs carry no lightmap UVs today), `cloth`, the fog box and
+its `indirectStrength`, light `temperature` and `shadowChannel`, shadows of any kind (the studio
+draws a contact shadow instead), particles. Point and spot `intensity` is used as authored
+(candela over distance squared) with no calibration against the game, since no export has been
+seen. The cube face orientation (each face's up) follows glTF/OpenGL convention and is unverified
+against a real vpkmerge cube.
+
+### Viewport
+
+`rust/crates/desktop/src/viewer/` owns one render thread per viewport. The thread renders into
+a `rune::Pixels` at the element's device size (capped at about 3.2 million pixels), only while
+the element is on screen and a clip plays or the camera moved, paced to 60 frames a second;
+otherwise it sleeps on its channel. The UI thread only forwards input.
+
+```rust
+viewer::open_hero(s, key, title, Source::Hero { glb, sidecar }, Some(Source::Hero { .. }));
+viewer::open_scene(s, key, title, scene_json, None);   // the scene's own hero, or Some((glb, sidecar))
+viewer::view(s, &u, key) -> El                          // fills its parent
+viewer::set_still(s, key, pixels);                      // shown when the machine has no GPU
+viewer::close(s, key);
+```
+
+Drag orbits, the wheel zooms, Shift-drag pans, double-click resets, and with the view focused the
+arrows orbit, + and - zoom, Space plays, Home resets, F toggles full screen and Escape leaves it.
+The strip has play and pause, seek (pauses), speed, the clip, With mods / Without mods / Split
+(the split line drags), camera reset, a PNG capture into `Pictures/Sigil`, and full screen
+(`viewer::overlay`, placed by `app::view`). Headless snapshots render one fixed frame on the
+calling thread: `--scene viewer`, `viewer-split` and `viewer-hideout`.
+
+### Cost
+
+Measured on an Apple M3 (release, the stand-in hero, 31k triangles):
+
+| Size | Frame | Without readback | Readback (copy, map, unpad) |
+| --- | --- | --- | --- |
+| 1280 x 800 | 2.9 ms | 2.5 ms | 0.17 ms |
+| 2560 x 1600 | 5.4 ms | 3.5 ms | 1.5 ms |
+
+The UI side then copies each frame into Rune's image atlas and uploads it (one more 4 to 16 MB
+copy a frame on the UI's render pass). That copy, not the GPU, is the ceiling at full-screen
+Retina sizes. The zero-copy path is Rune's `NativeSurface` (`vendor/rune/crates/rune/src/native_surface/`,
+used by video): render into an IOSurface-backed Metal texture on macOS or a D3D12 shared texture
+on Windows and hand the handle to the view, so no frame crosses the CPU. It needs the viewer's
+device to create exportable textures (wgpu-hal access to the Metal and D3D12 resources) and is
+not built.

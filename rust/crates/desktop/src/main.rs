@@ -32,6 +32,7 @@ mod single_instance;
 mod statusbar;
 mod ui;
 mod updater;
+mod viewer;
 mod win_frame;
 
 use app::State;
@@ -70,7 +71,7 @@ fn main() -> std::process::ExitCode {
     brand::install_app_icon();
     let scenes: &'static [(&'static str, fn(&mut State))] =
         Box::leak(
-            [app::scenes(), &deeplink::SCENES[..], &screens::settings::personalize::SCENES[..], screens::w4a_scenes::SCENES, screens::w4c_scenes::SCENES, screens::servers::host::scenes::SCENES]
+            [app::scenes(), &deeplink::SCENES[..], &screens::settings::personalize::SCENES[..], screens::w4a_scenes::SCENES, screens::w4c_scenes::SCENES, screens::servers::host::scenes::SCENES, &viewer::SCENES[..]]
                 .concat()
                 .into_boxed_slice(),
         );
@@ -102,5 +103,7 @@ fn main() -> std::process::ExitCode {
 /// The app's poll, then a link's pending file pick (it needs the mod's details first).
 fn poll(s: &mut State, t: f64, tx: &mut rune::Tx) -> bool {
     let changed = app::poll(s, t, tx);
-    deeplink::poll(s) || changed
+    // The 3D viewer's render threads: loaded, failed, a picture saved.
+    let viewer = viewer::poll(s);
+    deeplink::poll(s) || changed || viewer
 }

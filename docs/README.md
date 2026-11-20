@@ -46,7 +46,7 @@ Every doc starts with a status line. Values: `active`, `draft`, `planned`, `supe
 | `design/mod-manager-shell.md` | draft | Mod-manager-first sidebar, screens and real data sources. |
 | `design/feature-parity.md` | current | Every Grimoire and Deadlock Mod Manager feature outside Settings, with Sigil's status, effort and priority. |
 | `design/locker-3d.md` | design | What a posed 3D hero viewer needs from Rune and the game files; nothing is built. |
-| `design/3d-viewer.md` | active | 3D viewer asset pipeline: VPK stack, hero glb and sidecar, Hideout scene file, cache, units and axes. |
+| `design/3d-viewer.md` | active | 3D viewer: asset pipeline and file contract, the wgpu renderer (`sigil-viewer`), the Rune viewport and its cost. |
 | `design/stats-live.md` | design | Live match strip: what `-condebug` gives, what a HUD bridge mod must add, the polling budget. |
 | `design/settings-parity.md` | current | Every Grimoire and Deadlock Mod Manager setting, with Sigil's status and place. |
 | `design/deep-links.md` | current | Install with Sigil links: accepted formats, OS registration, single instance, GameBanana 1-Click listing. |
