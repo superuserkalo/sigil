@@ -3,8 +3,10 @@
 //! Ported from Grimoire's `hideoutScene.ts`, `hideoutAtmosphere.ts` and `source2Entity.ts`
 //! (MIT): world nodes and aggregate fragments, entity lumps (lights, the player spawn, model
 //! props, looping animated props, sky, fog, the nearest reflection probe), the baked
-//! irradiance lightmap, and the camera behind the spawn. Grimoire then merges the static
-//! models into one meshopt bundle and adds probes, particles and a tone curve; those are
+//! lightmap (irradiance, plus the directional and shadow channels), light probe volumes,
+//! light cookies, fog irradiance and density volumes, the master post volume (fixed
+//! exposure, tone curve, bloom, color correction) and the camera behind the spawn. Grimoire
+//! also merges the static models into one meshopt bundle and adds map particles; those are
 //! listed in `omissions` instead of being faked.
 //!
 //! The room is cached per game build and per set of mods that change it. A mod changes the
@@ -15,6 +17,11 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+
+mod bake;
+mod post;
+
+use bake::{FogVolume, Meter, Span};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value as Json;
@@ -33,6 +40,15 @@ use crate::import::Library;
 const WORLD: &str = "maps/dl_hideout/world.vwrld_c";
 const ROOM_FILE: &str = "room.json";
 const DEPS_FILE: &str = "deps.json";
+/// Part of the room's cache key: bumped when the room export changes shape, so an older
+/// room folder is never served.
+const ROOM_REVISION: &str = "hideout-2";
+/// Longest edge of the directional and shadow lightmap PNGs.
+const LIGHTMAP_EDGE: u32 = 2048;
+/// Longest edge of a light cookie PNG.
+const COOKIE_EDGE: u32 = 512;
+/// Grimoire's fog volume limit.
+const FOG_VOLUME_LIMIT: usize = 16;
 
 /// One placed model.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -77,6 +93,128 @@ pub struct HideoutLight {
     /// Baked shadow channel 0 to 3 for a stationary light, else null.
     pub shadow_channel: Option<i32>,
     pub fog_strength: Option<f32>,
+    /// Linear brightness as the game's light shader takes it: `2^brightness *
+    /// brightnessscale` for omni, barn and rect lights, `brightness * brightnessscale` for
+    /// the sun.
+    #[serde(default)]
+    pub brightness: f32,
+    /// Range falloff skirt (`skirt`, default 0.1) and near skirt (`skirt_near`, default 0),
+    /// null for the sun.
+    #[serde(default)]
+    pub skirt: Option<f32>,
+    #[serde(default)]
+    pub skirt_near: Option<f32>,
+    /// True when the light is baked and kept only because it lights fog (`!realtime`).
+    #[serde(default)]
+    pub fog_only: bool,
+    /// Light cookie for an omni or barn light: an sRGB PNG relative to the scene folder, at
+    /// most 512 px, or null.
+    #[serde(default)]
+    pub cookie: Option<String>,
+    /// The light entity's own axes in glTF space, unit length: Source local +X (forward),
+    /// +Y (left), +Z (up).
+    #[serde(default)]
+    pub basis: [[f32; 3]; 3],
+}
+
+/// A volume texture with the box it fills.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HideoutVolume {
+    /// VTV file relative to the scene folder.
+    pub file: String,
+    /// Column major: a glTF world point (meters) to the box's `[0, 1]^3`, in the entity's
+    /// Source local axes (x forward, y left, z up).
+    pub world_to_local: [f32; 16],
+}
+
+/// An `env_volumetric_fog_volume` density box or sphere.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HideoutFogVolume {
+    /// `box` (shape 0) or `sphere` (shape 1).
+    pub shape: String,
+    /// Column major: a glTF world point to the volume's `[0, 1]^3`, Source local axes.
+    pub world_to_local: [f32; 16],
+    pub strength: f32,
+    /// Falloff exponent.
+    pub falloff: f32,
+    /// Overrides the fog's indirect strength inside the volume, or null.
+    pub indirect_strength: Option<f32>,
+    /// Overrides the fog's tint inside the volume, 0 to 1, or null.
+    pub tint: Option<[f32; 3]>,
+}
+
+/// One light probe volume. Every volume samples the same atlas (Grimoire supports one).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HideoutProbe {
+    /// The irradiance atlas, VTV, relative to the scene folder. Its depth holds six equal
+    /// bands, one per cube face (+X, +Y, +Z, -X, -Y, -Z, Source axes).
+    pub file: String,
+    /// The direct light shadow atlas (VTV), or null.
+    pub shadows: Option<String>,
+    /// Column major: a glTF world point to the volume's `[0, 1]^3`, Source local axes.
+    pub world_to_local: [f32; 16],
+    /// Probes per axis (`light_probe_size_x/y/z`).
+    pub size: [f32; 3],
+    /// Where the volume starts in the atlas, texels (`light_probe_atlas_x/Y/Z`).
+    pub offset: [f32; 3],
+    /// The atlas texture's width, height and depth (all six bands).
+    pub atlas_size: [u32; 3],
+    /// Box size over `edge_fade_dists` per axis; 0 on an axis without an edge fade.
+    pub fade: [f32; 3],
+    /// `indoor_outdoor_level`: higher wins where volumes overlap.
+    pub priority: i32,
+    /// `linear`, or `rgbm` for maps baked with game lightmap version 0.
+    pub encoding: String,
+}
+
+/// The `.vpost` tone curve. `whitePoint` is in stops.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HideoutTonemap {
+    pub exposure_bias: f32,
+    pub shoulder_strength: f32,
+    pub linear_strength: f32,
+    pub linear_angle: f32,
+    pub toe_strength: f32,
+    pub toe_num: f32,
+    pub toe_denom: f32,
+    pub white_point: f32,
+}
+
+/// The `.vpost` bloom.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HideoutBloom {
+    /// `add`, `screen` or `blur`.
+    pub blend_mode: String,
+    pub bloom_strength: f32,
+    pub screen_bloom_strength: f32,
+    pub blur_bloom_strength: f32,
+    pub threshold: f32,
+    pub threshold_width: f32,
+    pub blur_weights: [f32; 5],
+    pub blur_tints: [[f32; 3]; 5],
+}
+
+/// The `.vpost` color correction volume.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HideoutColorCorrection {
+    /// Raw RGBA8, `dimension^3 * 4` bytes, x fastest, then y, then z, as the vpost stores it.
+    pub file: String,
+    pub dimension: u32,
+}
+
+/// The master post processing volume's `.vpost`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HideoutPost {
+    pub tonemap: Option<HideoutTonemap>,
+    pub bloom: Option<HideoutBloom>,
+    pub color_correction: Option<HideoutColorCorrection>,
 }
 
 /// The master volumetric fog controller.
@@ -95,6 +233,12 @@ pub struct HideoutFog {
     pub transform: [f32; 16],
     pub min: [f32; 3],
     pub max: [f32; 3],
+    /// The `fogirradiancevolume` (VTV) over the fog box, or null.
+    #[serde(default)]
+    pub irradiance: Option<HideoutVolume>,
+    /// Density volumes, at most 16.
+    #[serde(default)]
+    pub volumes: Vec<HideoutFogVolume>,
 }
 
 /// A cube map exported as six Radiance `.hdr` faces.
@@ -119,6 +263,21 @@ pub struct HideoutLightmap {
     /// Radiance `.hdr`, relative to the scene folder.
     pub file: String,
     pub uv_scale: [f32; 2],
+    /// The glTF `TEXCOORD_n` the room glbs carry lightmap UVs in. morphic writes every
+    /// stream with its Source semantic index, and Source 2 maps keep them in set 3. A
+    /// primitive without it is not lightmapped (Grimoire lights it from the probes).
+    #[serde(default = "lightmap_uv_set")]
+    pub uv_set: u32,
+    /// `directional_irradiance_sh2_lum` as a UNORM RGBA8 PNG (no sRGB), or null.
+    #[serde(default)]
+    pub direction: Option<String>,
+    /// `direct_light_shadows` as a UNORM RGBA8 PNG, or null.
+    #[serde(default)]
+    pub shadows: Option<String>,
+}
+
+fn lightmap_uv_set() -> u32 {
+    3
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -162,12 +321,22 @@ pub struct HideoutScene {
     pub key: String,
     pub units: String,
     pub up: String,
+    /// The fixed exposure of the master post volume (1 when the map has none), absent when
+    /// it adapts (then `autoExposure` is in `omissions`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exposure: Option<f32>,
+    /// The master post volume's tone curve, bloom and color correction, or null.
+    #[serde(default)]
+    pub post: Option<HideoutPost>,
     pub models: Vec<HideoutModel>,
     pub lights: Vec<HideoutLight>,
     pub fog: Option<HideoutFog>,
     pub sky: Option<HideoutSky>,
     pub reflection: Option<HideoutSky>,
     pub lightmap: Option<HideoutLightmap>,
+    /// Light probe volumes, all on one atlas.
+    #[serde(default)]
+    pub probes: Vec<HideoutProbe>,
     pub camera: Option<HideoutCamera>,
     /// Where the hero stands: the player spawn turned to face the camera. glTF space.
     pub hero_anchor: Option<[f32; 16]>,
@@ -178,11 +347,15 @@ pub struct HideoutScene {
     pub failures: Vec<String>,
     /// Parts of the game's scene this file does not carry.
     pub omissions: Vec<String>,
+    /// The map's particle bundle (`particles/bundle.json`): its `info_particle_system`
+    /// effects, or null when it has none.
+    #[serde(default)]
+    pub particles: Option<String>,
     pub pipeline: String,
 }
 
 /// Everything [`export_hideout_with`] takes.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct HideoutExportRequest<'a> {
     pub game_root: &'a Path,
     pub cache_dir: &'a Path,
@@ -195,6 +368,25 @@ pub struct HideoutExportRequest<'a> {
     pub max_texture_edge: Option<u32>,
     /// Longest texture edge for the hero. Default 1024.
     pub hero_texture_edge: Option<u32>,
+    /// Called with how far the export has come, 0.0 to 1.0, never going back, from worker
+    /// threads too. A cache hit reports 1.0 at once.
+    pub progress: Option<&'a (dyn Fn(f32) + Sync)>,
+}
+
+impl std::fmt::Debug for HideoutExportRequest<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("HideoutExportRequest")
+            .field("game_root", &self.game_root)
+            .field("cache_dir", &self.cache_dir)
+            .field("variant", &self.variant)
+            .field("hero", &self.hero)
+            .field("extra_slots", &self.extra_slots)
+            .field("library", &self.library.is_some())
+            .field("max_texture_edge", &self.max_texture_edge)
+            .field("hero_texture_edge", &self.hero_texture_edge)
+            .field("progress", &self.progress.is_some())
+            .finish()
+    }
 }
 
 impl<'a> HideoutExportRequest<'a> {
@@ -208,6 +400,7 @@ impl<'a> HideoutExportRequest<'a> {
             library: None,
             max_texture_edge: Some(256),
             hero_texture_edge: Some(1024),
+            progress: None,
         }
     }
 }
@@ -251,9 +444,19 @@ pub fn export_hideout_with(
         return Err(Error::msg("citadel/pak01_dir.vpk is missing."));
     }
 
+    let meter = Meter::new(request.progress);
+    let whole = meter.span();
+    let (hero_span, room_span) = if request.hero.is_some() {
+        (whole.sub(0.0, 0.3), whole.sub(0.3, 1.0))
+    } else {
+        (whole.sub(0.0, 0.0), whole)
+    };
+
     // The hero first: it takes the export slot on its own, and the room takes it after.
     let hero = match request.hero {
         Some(query) => {
+            // The hero's own 0..1 lands in the hero's share.
+            let hero_progress = |value: f32| hero_span.at(value);
             let mut hero_request = HeroExportRequest::new(
                 request.game_root,
                 request.cache_dir,
@@ -263,17 +466,39 @@ pub fn export_hideout_with(
             hero_request.extra_slots = request.extra_slots;
             hero_request.library = request.library;
             hero_request.max_texture_edge = request.hero_texture_edge;
-            Some(export_hero_with(&hero_request, cancel)?)
+            if request.progress.is_some() {
+                hero_request.progress = Some(&hero_progress);
+            }
+            let exported = export_hero_with(&hero_request, cancel)?;
+            hero_span.done();
+            Some(exported)
         }
         None => None,
     };
 
+    // A modded room needs the original first (its `deps.json` says which mods matter). When
+    // the original is not cached yet it takes most of the room's share.
+    let original_cached = read_room(&room_dir(
+        request.cache_dir,
+        &game,
+        Variant::Original,
+        request.max_texture_edge,
+    ))
+    .is_some();
+    let split = if request.variant == Variant::Original {
+        1.0
+    } else if original_cached {
+        0.0
+    } else {
+        0.8
+    };
     let original = ensure_room(
         request.cache_dir,
         &game,
         Variant::Original,
         request.max_texture_edge,
         cancel,
+        room_span.sub(0.0, split),
     )?;
     let (room_dir, mut scene) = if request.variant == Variant::Modded {
         let mut mods: Vec<Source> = super::sources(
@@ -313,6 +538,7 @@ pub fn export_hideout_with(
                 Variant::Modded,
                 request.max_texture_edge,
                 cancel,
+                room_span.sub(split, 1.0),
             )?
         }
     } else {
@@ -344,7 +570,31 @@ pub fn export_hideout_with(
     let path = room_dir.join(file);
     cache::write_atomic(&path, &serde_json::to_vec_pretty(&scene)?)?;
     cache::touch(&room_dir);
+    whole.done();
     Ok(path)
+}
+
+fn room_key(sources: &[Source], variant: Variant, max_texture_edge: Option<u32>) -> String {
+    let mut parts = vec![
+        PIPELINE_VERSION.to_string(),
+        VPKMERGE_REV.to_string(),
+        ROOM_REVISION.into(),
+        variant.as_str().into(),
+        format!("{max_texture_edge:?}"),
+    ];
+    parts.extend(sources.iter().map(source_fingerprint));
+    cache::key(&parts)
+}
+
+fn room_dir(
+    cache_dir: &Path,
+    sources: &[Source],
+    variant: Variant,
+    max_texture_edge: Option<u32>,
+) -> PathBuf {
+    cache_dir
+        .join("hideout")
+        .join(room_key(sources, variant, max_texture_edge))
 }
 
 /// The room for a stack, built once per key.
@@ -354,30 +604,25 @@ fn ensure_room(
     variant: Variant,
     max_texture_edge: Option<u32>,
     cancel: &AtomicBool,
+    span: Span<'_, '_>,
 ) -> Result<(PathBuf, HideoutScene)> {
-    let mut parts = vec![
-        PIPELINE_VERSION.to_string(),
-        VPKMERGE_REV.to_string(),
-        "hideout".into(),
-        variant.as_str().into(),
-        format!("{max_texture_edge:?}"),
-    ];
-    parts.extend(sources.iter().map(source_fingerprint));
-    let key = cache::key(&parts);
+    let key = room_key(sources, variant, max_texture_edge);
     let parent = cache_dir.join("hideout");
     let dir = parent.join(&key);
     if let Some(scene) = read_room(&dir) {
         cache::touch(&dir);
+        span.done();
         return Ok((dir, scene));
     }
     let _slot = export_slot();
     if let Some(scene) = read_room(&dir) {
+        span.done();
         return Ok((dir, scene));
     }
     check(cancel)?;
     let stack = Stack::open(sources)?.record();
     let staging = Staging::begin(&parent, &key)?;
-    let mut scene = build_room(&stack, max_texture_edge, cancel, &staging.dir)?;
+    let mut scene = build_room(&stack, max_texture_edge, cancel, &staging.dir, span)?;
     scene.key = key;
     scene.variant = variant;
     scene.sources = stack.usage();
@@ -390,6 +635,7 @@ fn ensure_room(
         serde_json::to_vec(&stack.recorded())?,
     )?;
     let dir = staging.commit()?;
+    span.done();
     Ok((dir, scene))
 }
 
@@ -469,18 +715,33 @@ const OMISSIONS: &[&str] = &[
     "directionalLightmap",
     "lightCookies",
     "staticBundle",
+    // The precomputed shadow atlas tiles fog lights sample (R16, decodable, but the scene
+    // file has no field for the atlas or the per-light tiles yet).
+    "fogShadows",
 ];
+
+/// Where each stage of a room build ends, as a share of the build. Models take the rest.
+const STAGE_WORLD: f32 = 0.03;
+const STAGE_LIGHTMAP: f32 = 0.10;
+const STAGE_ENTITIES: f32 = 0.15;
+const STAGE_LIGHTS: f32 = 0.22;
+const STAGE_VOLUMES: f32 = 0.32;
+const STAGE_REFLECTION: f32 = 0.35;
+const STAGE_NODES: f32 = 0.40;
+const STAGE_MODELS: f32 = 0.98;
 
 fn build_room(
     stack: &Stack,
     max_texture_edge: Option<u32>,
     cancel: &AtomicBool,
     out: &Path,
+    span: Span<'_, '_>,
 ) -> Result<HideoutScene> {
     let world_bytes = stack
         .read(WORLD)
         .ok_or_else(|| Error::msg(format!("{WORLD} is not in the Hideout VPK.")))?;
     let world = resource_json(&world_bytes, WORLD)?;
+    span.at(STAGE_WORLD);
     let mut scene = HideoutScene {
         schema: SCHEMA,
         map: "dl_hideout".into(),
@@ -488,12 +749,15 @@ fn build_room(
         key: String::new(),
         units: "meters".into(),
         up: "+Y".into(),
+        exposure: None,
+        post: None,
         models: Vec::new(),
         lights: Vec::new(),
         fog: None,
         sky: None,
         reflection: None,
         lightmap: None,
+        probes: Vec::new(),
         camera: None,
         hero_anchor: None,
         hero: None,
@@ -501,6 +765,7 @@ fn build_room(
         sources: Vec::new(),
         failures: Vec::new(),
         omissions: OMISSIONS.iter().map(|item| item.to_string()).collect(),
+        particles: None,
         pipeline: PIPELINE_VERSION.into(),
     };
 
@@ -526,14 +791,52 @@ fn build_room(
         });
         match exported {
             Ok(()) => {
-                scene.lightmap = Some(HideoutLightmap {
+                let mut lightmap = HideoutLightmap {
                     file: "lightmap/irradiance.hdr".into(),
                     uv_scale,
-                })
+                    uv_set: lightmap_uv_set(),
+                    direction: None,
+                    shadows: None,
+                };
+                // The SH2 luminance and shadow channels: only for the bake version Grimoire
+                // decodes (hideoutScene.ts), as data PNGs.
+                let version = |key: &str| num(lighting.get(key));
+                if version("m_nLightmapVersionNumber") == Some(8.0)
+                    && version("m_nLightmapGameVersionNumber") == Some(5.0)
+                {
+                    let find = |suffix: &str| {
+                        array(lighting.get("m_lightMaps"))
+                            .iter()
+                            .filter_map(Json::as_str)
+                            .find(|entry| entry.ends_with(suffix))
+                    };
+                    for (suffix, file, slot) in [
+                        (
+                            "/directional_irradiance_sh2_lum.vtex",
+                            "lightmap/direction.png",
+                            &mut lightmap.direction,
+                        ),
+                        (
+                            "/direct_light_shadows.vtex",
+                            "lightmap/shadows.png",
+                            &mut lightmap.shadows,
+                        ),
+                    ] {
+                        let Some(entry) = find(suffix) else {
+                            continue;
+                        };
+                        match write_png(stack, entry, &out.join(file), LIGHTMAP_EDGE) {
+                            Ok(()) => *slot = Some(file.to_string()),
+                            Err(_) => scene.failures.push(compiled(entry)),
+                        }
+                    }
+                }
+                scene.lightmap = Some(lightmap);
             }
             Err(_) => scene.failures.push(compiled(irradiance)),
         }
     }
+    span.at(STAGE_LIGHTMAP);
     check(cancel)?;
 
     // Entities, through child lumps.
@@ -570,7 +873,15 @@ fn build_room(
             }
         }
     }
+    span.at(STAGE_ENTITIES);
     check(cancel)?;
+
+    // The map's particle effects (info_particle_system), read through the same stack.
+    match super::particles::export_map_particles(stack, &entities, out, cancel) {
+        Ok(found) => scene.particles = found,
+        Err(error) if super::is_cancelled(&error) => return Err(error),
+        Err(error) => scene.failures.push(format!("particles: {error}")),
+    }
 
     // The player spawn.
     let spawn = entities
@@ -598,11 +909,55 @@ fn build_room(
     let mut requests = Requests::default();
     let mut placements: Vec<Placement> = Vec::new();
     let mut animated: BTreeSet<usize> = BTreeSet::new();
+    let mut cookies: BTreeMap<String, Option<String>> = BTreeMap::new();
+    let mut pending = Pending::default();
+    let mut post_volume: Option<&serde_json::Map<String, Json>> = None;
+    let mut fog_controller: Option<&serde_json::Map<String, Json>> = None;
+    let rgbm = lighting.and_then(|lighting| num(lighting.get("m_nLightmapGameVersionNumber")))
+        == Some(0.0);
+    // The probe atlas every volume samples, its shadow atlas, and the volumes on it.
+    let mut probe_atlas: Option<(String, Option<String>)> = None;
+    let mut probe_volumes: Vec<HideoutProbe> = Vec::new();
 
     for entity in &entities {
         let classname = text(entity.get("classname")).unwrap_or_default();
-        if let Some(light) = map_light(entity) {
+        if let Some(mut light) = map_light(entity) {
+            if matches!(classname, "light_omni2" | "light_barn")
+                && let Some(cookie) = text(entity.get("lightcookie"))
+            {
+                let file = cookies
+                    .entry(compiled(cookie))
+                    .or_insert_with(|| {
+                        let file = bake::cookie_file(cookie);
+                        write_png(stack, cookie, &out.join(&file), COOKIE_EDGE)
+                            .ok()
+                            .map(|()| file)
+                    })
+                    .clone();
+                if file.is_none() {
+                    pending.cookies_failed = true;
+                    scene.failures.push(compiled(cookie));
+                }
+                light.cookie = file;
+            }
             scene.lights.push(light);
+        }
+        if classname == "post_processing_volume"
+            && flag(entity.get("master")) == Some(true)
+            && post_volume.is_none()
+        {
+            post_volume = Some(entity);
+        }
+        if let Some((texture, shadow, volume)) = bake::probe_volume(entity, rgbm) {
+            match &probe_atlas {
+                Some((atlas, _)) if *atlas != texture => {
+                    scene.omissions.push("multipleProbeAtlases".into());
+                }
+                _ => {
+                    probe_atlas.get_or_insert((texture, shadow));
+                    probe_volumes.push(volume);
+                }
+            }
         }
         match classname {
             "env_sky" if flag(entity.get("StartDisabled")) != Some(true) && scene.sky.is_none() => {
@@ -617,6 +972,9 @@ fn build_room(
                     && scene.fog.is_none() =>
             {
                 scene.fog = map_fog(entity);
+                if scene.fog.is_some() {
+                    fog_controller = Some(entity);
+                }
             }
             _ => {}
         }
@@ -667,6 +1025,85 @@ fn build_room(
         }
     }
 
+    // The master post volume: fixed exposure and its vpost. A map without one is lit at 1.
+    match post_volume {
+        Some(entity) => {
+            scene.exposure = post::fixed_exposure(entity);
+            if let Some(path) = text(entity.get("postprocessing")) {
+                match export_post(stack, path, out) {
+                    Ok(exported) => scene.post = Some(exported),
+                    Err(_) => scene.failures.push(compiled(path)),
+                }
+            }
+        }
+        None => scene.exposure = Some(1.0),
+    }
+    span.at(STAGE_LIGHTS);
+    check(cancel)?;
+
+    // Fog irradiance and density volumes, on the master controller.
+    if let (Some(fog), Some(controller)) = (scene.fog.as_mut(), fog_controller) {
+        for entity in &entities {
+            match bake::fog_volume(entity) {
+                FogVolume::Volume(volume) => {
+                    if fog.volumes.len() == FOG_VOLUME_LIMIT {
+                        scene.omissions.push("fogVolumeLimit".into());
+                        break;
+                    }
+                    fog.volumes.push(volume);
+                }
+                FogVolume::HeightFog => scene.omissions.push("heightFogVolumes".into()),
+                FogVolume::Skip => {}
+            }
+        }
+        if let Some(texture) = text(controller.get("fogirradiancevolume")) {
+            let file = "fog/irradiance.vtv";
+            let exported = bake::entity_world_to_local(controller)
+                .ok_or_else(|| Error::msg("fog box"))
+                .and_then(|world_to_local| {
+                    write_vtv(stack, texture, &out.join(file))?;
+                    Ok(world_to_local)
+                });
+            match exported {
+                Ok(world_to_local) => {
+                    fog.irradiance = Some(HideoutVolume {
+                        file: file.into(),
+                        world_to_local,
+                    })
+                }
+                Err(_) => scene.failures.push(compiled(texture)),
+            }
+        }
+    }
+
+    // Light probe volumes, on one atlas.
+    if let Some((texture, shadow)) = &probe_atlas {
+        let file = "probes/0.vtv";
+        match write_vtv(stack, texture, &out.join(file)) {
+            Ok(atlas_size) => {
+                let shadows = shadow.as_ref().and_then(|shadow| {
+                    let file = "probes/0-shadows.vtv";
+                    match write_vtv(stack, shadow, &out.join(file)) {
+                        Ok(_) => Some(file.to_string()),
+                        Err(_) => {
+                            scene.failures.push(compiled(shadow));
+                            None
+                        }
+                    }
+                });
+                for mut volume in probe_volumes {
+                    volume.file = file.into();
+                    volume.shadows.clone_from(&shadows);
+                    volume.atlas_size = atlas_size;
+                    scene.probes.push(volume);
+                }
+            }
+            Err(_) => scene.failures.push(compiled(texture)),
+        }
+    }
+    span.at(STAGE_VOLUMES);
+    check(cancel)?;
+
     // The nearest reflection probe to the spawn.
     let origin = anchor.unwrap_or([0.0; 3]);
     let probe = entities
@@ -706,6 +1143,7 @@ fn build_room(
             Err(_) => scene.failures.push(compiled(texture)),
         }
     }
+    span.at(STAGE_REFLECTION);
     check(cancel)?;
 
     // World nodes: static scene objects and aggregate fragments.
@@ -818,10 +1256,18 @@ fn build_room(
             }
         }
     }
+    span.at(STAGE_NODES);
     check(cancel)?;
 
     // Export every distinct model in parallel.
-    let outcomes = export_models(stack, &requests.list, max_texture_edge, cancel, out)?;
+    let outcomes = export_models(
+        stack,
+        &requests.list,
+        max_texture_edge,
+        cancel,
+        out,
+        span.sub(STAGE_NODES, STAGE_MODELS),
+    )?;
     for (index, outcome) in outcomes.iter().enumerate() {
         if let Outcome::Failed(reason) = outcome {
             scene
@@ -851,6 +1297,7 @@ fn build_room(
     if scene.models.is_empty() {
         return Err(Error::msg("No Hideout geometry could be exported."));
     }
+    settle_omissions(&mut scene, &pending);
     scene.omissions.sort();
     scene.omissions.dedup();
     scene.failures.sort();
@@ -982,6 +1429,14 @@ pub(crate) fn map_light(entity: &serde_json::Map<String, Json>) -> Option<Hideou
         _ => ("point", candela, None),
     };
     let matrix = entity_matrix(entity, false);
+    let sun = classname == "light_environment";
+    let brightness = if sun {
+        num(entity.get("brightness")).unwrap_or(1.0)
+    } else {
+        2f64.powf(num(entity.get("brightness")).unwrap_or(0.0))
+    } * scale;
+    let basis: [[f32; 3]; 3] =
+        std::array::from_fn(|index| space::axis(&matrix, index).map(|value| value as f32));
     Some(HideoutLight {
         kind: kind.into(),
         color: color.map(|value| (value / 255.0) as f32),
@@ -998,6 +1453,100 @@ pub(crate) fn map_light(entity: &serde_json::Map<String, Json>) -> Option<Hideou
             .filter(|channel| (0.0..=3.0).contains(channel))
             .map(|channel| channel as i32),
         fog_strength: fog_strength.map(|value| value as f32),
+        brightness: brightness as f32,
+        skirt: (!sun).then(|| num(entity.get("skirt")).unwrap_or(0.1) as f32),
+        skirt_near: (!sun).then(|| num(entity.get("skirt_near")).unwrap_or(0.0) as f32),
+        fog_only: !realtime,
+        cookie: None,
+        basis,
+    })
+}
+
+/// What was asked for but failed, for [`settle_omissions`].
+#[derive(Debug, Default)]
+struct Pending {
+    /// A light names a cookie that could not be exported.
+    cookies_failed: bool,
+}
+
+/// Take out of `omissions` what the scene now carries. What failed stays.
+fn settle_omissions(scene: &mut HideoutScene, pending: &Pending) {
+    let lightmap = scene.lightmap.as_ref();
+    let post = scene.post.as_ref();
+    let exported = |item: &str| match item {
+        "directionalLightmap" => lightmap.is_some_and(|lightmap| lightmap.direction.is_some()),
+        "colorCorrection" => post.is_some_and(|post| post.color_correction.is_some()),
+        "tonemap" => post.is_some_and(|post| post.tonemap.is_some()),
+        "autoExposure" => scene.exposure.is_some(),
+        "lightCookies" => !pending.cookies_failed,
+        "lightProbes" => !scene.probes.is_empty(),
+        "fogVolumes" => scene.fog.is_some(),
+        "fogIrradiance" => scene
+            .fog
+            .as_ref()
+            .is_some_and(|fog| fog.irradiance.is_some()),
+        "particles" => scene.particles.is_some(),
+        _ => false,
+    };
+    let kept: Vec<String> = scene
+        .omissions
+        .iter()
+        .filter(|item| !exported(item))
+        .cloned()
+        .collect();
+    scene.omissions = kept;
+}
+
+/// A compiled texture from the stack as a PNG at `target`, bytes as stored.
+fn write_png(stack: &Stack, entry: &str, target: &Path, max_edge: u32) -> Result<()> {
+    let bytes = stack
+        .read(&compiled(entry))
+        .ok_or_else(|| Error::msg(format!("{} is not in the stack.", compiled(entry))))?;
+    let png = bake::texture_png(&bytes, max_edge)?;
+    if let Some(parent) = target.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(target, png)?;
+    Ok(())
+}
+
+/// A compiled volume texture from the stack as a VTV file at `target`; its dimensions.
+fn write_vtv(stack: &Stack, entry: &str, target: &Path) -> Result<[u32; 3]> {
+    let bytes = stack
+        .read(&compiled(entry))
+        .ok_or_else(|| Error::msg(format!("{} is not in the stack.", compiled(entry))))?;
+    let (vtv, dims, _) = bake::texture_vtv(&bytes)?;
+    if let Some(parent) = target.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(target, vtv)?;
+    Ok(dims)
+}
+
+/// The master post volume's `.vpost`: tone curve, bloom, and the color correction volume
+/// written to `post/color-correction.bin`.
+fn export_post(stack: &Stack, path: &str, out: &Path) -> Result<HideoutPost> {
+    let entry = compiled(path);
+    let bytes = stack
+        .read(&entry)
+        .ok_or_else(|| Error::msg(format!("{entry} is not in the stack.")))?;
+    let vpost = resource_json(&bytes, &entry)?;
+    let color_correction = match post::color_correction(&vpost).map_err(Error::msg)? {
+        Some((dimension, texels)) => {
+            let file = "post/color-correction.bin";
+            std::fs::create_dir_all(out.join("post"))?;
+            std::fs::write(out.join(file), texels)?;
+            Some(HideoutColorCorrection {
+                file: file.into(),
+                dimension,
+            })
+        }
+        None => None,
+    };
+    Ok(HideoutPost {
+        tonemap: post::tonemap(&vpost),
+        bloom: post::bloom(&vpost),
+        color_correction,
     })
 }
 
@@ -1021,6 +1570,8 @@ fn map_fog(entity: &serde_json::Map<String, Json>) -> Option<HideoutFog> {
         transform: space::to_f32(&space::to_gltf(&entity_matrix(entity, false))),
         min: space::point(min).map(|value| value as f32),
         max: space::point(max).map(|value| value as f32),
+        irradiance: None,
+        volumes: Vec::new(),
     })
 }
 
@@ -1102,9 +1653,12 @@ fn export_models(
     max_texture_edge: Option<u32>,
     cancel: &AtomicBool,
     out: &Path,
+    span: Span<'_, '_>,
 ) -> Result<Vec<Outcome>> {
     std::fs::create_dir_all(out.join("models"))?;
     let next = AtomicUsize::new(0);
+    let finished = AtomicUsize::new(0);
+    let total = requests.len().max(1) as f32;
     let results: Mutex<Vec<Option<Outcome>>> = Mutex::new(vec![None; requests.len()]);
     // Each worker holds a decoded model and its textures at once; four bound the peak memory on
     // a machine with many cores (eight decoding the largest props together ran short).
@@ -1131,6 +1685,8 @@ fn export_models(
                     if let Ok(mut guard) = results.lock() {
                         guard[index] = Some(outcome);
                     }
+                    let count = finished.fetch_add(1, Ordering::Relaxed) + 1;
+                    span.at(count as f32 / total);
                 }
             });
         }
@@ -1200,4 +1756,262 @@ fn export_model(
         .map_err(|error| exporter_error("writing", error))?;
     std::fs::write(out.join(request.file()), glb)?;
     Ok(outcome)
+}
+
+#[cfg(test)]
+mod contract_tests {
+    use super::*;
+
+    fn entity(json: Json) -> serde_json::Map<String, Json> {
+        json.as_object().unwrap().clone()
+    }
+
+    #[test]
+    fn viewer_hideout_light_brightness_rule() {
+        let omni = map_light(&entity(serde_json::json!({
+            "classname": "light_omni2", "origin": [0, 0, 0], "color": [255, 255, 255], "range": 100,
+            "brightness": 2, "brightnessscale": 0.5, "skirt": 0.3, "directlight": 2,
+        })))
+        .unwrap();
+        assert_eq!(omni.brightness, 2.0);
+        assert_eq!(omni.skirt, Some(0.3));
+        assert_eq!(omni.skirt_near, Some(0.0));
+        assert!(!omni.fog_only);
+        assert_eq!(omni.cookie, None);
+
+        let barn = map_light(&entity(serde_json::json!({
+            "classname": "light_barn", "origin": [0, 0, 0], "angles": [0, 90, 0], "color": [255, 255, 255],
+            "range": 100, "directlight": 2,
+        })))
+        .unwrap();
+        // No brightness: 2^0, scale 1. Default skirts.
+        assert_eq!(barn.brightness, 1.0);
+        assert_eq!(barn.skirt, Some(0.1));
+        // Yaw 90: forward is Source +Y (glTF +X), left Source -X (glTF -Z), up glTF +Y.
+        let close = |a: [f32; 3], b: [f32; 3]| (0..3).all(|i| (a[i] - b[i]).abs() < 1e-5);
+        assert!(close(barn.basis[0], [1.0, 0.0, 0.0]), "{:?}", barn.basis);
+        assert!(close(barn.basis[1], [0.0, 0.0, -1.0]), "{:?}", barn.basis);
+        assert!(close(barn.basis[2], [0.0, 1.0, 0.0]), "{:?}", barn.basis);
+        assert!(close(barn.direction, barn.basis[0]));
+
+        let sun = map_light(&entity(serde_json::json!({
+            "classname": "light_environment", "origin": [0, 0, 0], "color": [255, 255, 255], "range": 100,
+            "brightness": 3, "brightnessscale": 2, "directlight": 2,
+        })))
+        .unwrap();
+        assert_eq!(sun.brightness, 6.0);
+        assert_eq!(sun.skirt, None);
+        assert_eq!(sun.skirt_near, None);
+
+        let fog = map_light(&entity(serde_json::json!({
+            "classname": "light_omni2", "origin": [0, 0, 0], "color": [255, 255, 255], "range": 100,
+            "directlight": 1, "fog": 1, "fogstrength": 0.5,
+        })))
+        .unwrap();
+        assert!(fog.fog_only && !fog.realtime);
+    }
+
+    fn scene() -> HideoutScene {
+        HideoutScene {
+            schema: SCHEMA,
+            map: "dl_hideout".into(),
+            variant: Variant::Original,
+            key: String::new(),
+            units: "meters".into(),
+            up: "+Y".into(),
+            exposure: None,
+            post: None,
+            models: Vec::new(),
+            lights: Vec::new(),
+            fog: None,
+            sky: None,
+            reflection: None,
+            lightmap: None,
+            probes: Vec::new(),
+            camera: None,
+            hero_anchor: None,
+            hero: None,
+            spawn: None,
+            sources: Vec::new(),
+            failures: Vec::new(),
+            omissions: OMISSIONS.iter().map(|item| item.to_string()).collect(),
+            particles: None,
+            pipeline: PIPELINE_VERSION.into(),
+        }
+    }
+
+    #[test]
+    fn viewer_hideout_omissions_drop_what_is_exported() {
+        // Nothing exported: everything stays except cookies, which stay only when one failed.
+        let mut bare = scene();
+        settle_omissions(&mut bare, &Pending::default());
+        for item in [
+            "lightProbes",
+            "particles",
+            "colorCorrection",
+            "tonemap",
+            "autoExposure",
+            "fogVolumes",
+            "fogIrradiance",
+            "directionalLightmap",
+            "staticBundle",
+        ] {
+            assert!(bare.omissions.iter().any(|kept| kept == item), "{item}");
+        }
+        assert!(!bare.omissions.iter().any(|kept| kept == "lightCookies"));
+
+        let mut full = scene();
+        full.exposure = Some(1.0);
+        full.post = Some(HideoutPost {
+            tonemap: post::tonemap(&serde_json::json!({
+                "m_bHasTonemapParams": true,
+                "m_toneMapParams": { "m_flExposureBias": 0, "m_flShoulderStrength": 0, "m_flLinearStrength": 0,
+                    "m_flLinearAngle": 0, "m_flToeStrength": 0, "m_flToeNum": 0, "m_flToeDenom": 1, "m_flWhitePoint": 2 },
+            })),
+            bloom: None,
+            color_correction: Some(HideoutColorCorrection {
+                file: "post/color-correction.bin".into(),
+                dimension: 32,
+            }),
+        });
+        full.lightmap = Some(HideoutLightmap {
+            file: "lightmap/irradiance.hdr".into(),
+            uv_scale: [1.0, 1.0],
+            uv_set: 3,
+            direction: Some("lightmap/direction.png".into()),
+            shadows: Some("lightmap/shadows.png".into()),
+        });
+        full.probes.push(HideoutProbe {
+            file: "probes/0.vtv".into(),
+            shadows: None,
+            world_to_local: [0.0; 16],
+            size: [1.0; 3],
+            offset: [0.0; 3],
+            atlas_size: [1, 1, 6],
+            fade: [0.0; 3],
+            priority: 0,
+            encoding: "linear".into(),
+        });
+        full.fog = Some(HideoutFog {
+            color: [1.0; 3],
+            strength: 1.0,
+            indirect_strength: 1.0,
+            draw_distance: 1.0,
+            fade_in: [0.0, 1.0],
+            transform: [0.0; 16],
+            min: [0.0; 3],
+            max: [1.0; 3],
+            irradiance: Some(HideoutVolume {
+                file: "fog/irradiance.vtv".into(),
+                world_to_local: [0.0; 16],
+            }),
+            volumes: Vec::new(),
+        });
+        settle_omissions(&mut full, &Pending::default());
+        assert_eq!(
+            full.omissions,
+            vec!["particles", "staticBundle", "fogShadows"]
+        );
+
+        let mut failed = scene();
+        settle_omissions(
+            &mut failed,
+            &Pending {
+                cookies_failed: true,
+            },
+        );
+        assert!(failed.omissions.iter().any(|kept| kept == "lightCookies"));
+    }
+
+    #[test]
+    fn viewer_hideout_scene_json_shape() {
+        let mut auto = scene();
+        auto.lightmap = Some(HideoutLightmap {
+            file: "lightmap/irradiance.hdr".into(),
+            uv_scale: [1.0, 1.0],
+            uv_set: 3,
+            direction: None,
+            shadows: None,
+        });
+        let json = serde_json::to_value(&auto).unwrap();
+        // Auto exposure: the field is left out; post is null; probes an empty list.
+        assert!(json.get("exposure").is_none());
+        assert!(json["post"].is_null());
+        assert_eq!(json["probes"], serde_json::json!([]));
+        assert_eq!(json["lightmap"]["uvSet"], 3);
+        assert!(json["lightmap"]["direction"].is_null());
+        assert!(json["lightmap"]["shadows"].is_null());
+        auto.exposure = Some(1.0);
+        let json = serde_json::to_value(&auto).unwrap();
+        assert_eq!(json["exposure"], 1.0);
+        let back: HideoutScene = serde_json::from_value(json).unwrap();
+        assert_eq!(back, auto);
+
+        let light = map_light(&entity(serde_json::json!({
+            "classname": "light_omni2", "origin": [0, 0, 0], "color": [255, 255, 255], "range": 100,
+        })))
+        .unwrap();
+        let json = serde_json::to_value(&light).unwrap();
+        for key in [
+            "brightness",
+            "skirt",
+            "skirtNear",
+            "fogOnly",
+            "cookie",
+            "basis",
+        ] {
+            assert!(json.get(key).is_some(), "{key}");
+        }
+        let probe = bake::probe_volume(
+            &entity(serde_json::json!({
+                "lightprobetexture": "a.vtex", "origin": [0, 0, 0], "box_mins": [0, 0, 0], "box_maxs": [1, 1, 1],
+                "light_probe_size_x": 1, "light_probe_size_y": 1, "light_probe_size_z": 1,
+            })),
+            false,
+        )
+        .unwrap()
+        .2;
+        let json = serde_json::to_value(&probe).unwrap();
+        for key in [
+            "file",
+            "shadows",
+            "worldToLocal",
+            "size",
+            "offset",
+            "atlasSize",
+            "fade",
+            "priority",
+            "encoding",
+        ] {
+            assert!(json.get(key).is_some(), "{key}");
+        }
+        let fog = HideoutFogVolume {
+            shape: "box".into(),
+            world_to_local: [0.0; 16],
+            strength: 1.0,
+            falloff: 1.0,
+            indirect_strength: None,
+            tint: None,
+        };
+        let json = serde_json::to_value(&fog).unwrap();
+        for key in [
+            "shape",
+            "worldToLocal",
+            "strength",
+            "falloff",
+            "indirectStrength",
+            "tint",
+        ] {
+            assert!(json.get(key).is_some(), "{key}");
+        }
+        let json = serde_json::to_value(HideoutColorCorrection {
+            file: "post/color-correction.bin".into(),
+            dimension: 32,
+        })
+        .unwrap();
+        assert_eq!(
+            json,
+            serde_json::json!({ "file": "post/color-correction.bin", "dimension": 32 })
+        );
+    }
 }

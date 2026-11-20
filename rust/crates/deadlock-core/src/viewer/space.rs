@@ -22,7 +22,8 @@ const S: f64 = METERS_PER_INCH;
 const SOURCE_TO_GLTF: Mat4 = [
     0.0, 0.0, S, 0.0, S, 0.0, 0.0, 0.0, 0.0, S, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0,
 ];
-const GLTF_TO_SOURCE: Mat4 = [
+/// glTF space (meters, Y up) to Source space (inches, Z up), the inverse of the export wrap.
+pub const GLTF_TO_SOURCE: Mat4 = [
     0.0,
     1.0 / S,
     0.0,
@@ -106,6 +107,81 @@ pub fn rows_matrix(rows: &[[f64; 4]; 3]) -> Mat4 {
         rows[0][0], rows[1][0], rows[2][0], 0.0, rows[0][1], rows[1][1], rows[2][1], 0.0,
         rows[0][2], rows[1][2], rows[2][2], 0.0, rows[0][3], rows[1][3], rows[2][3], 1.0,
     ]
+}
+
+/// The inverse of an affine placement, or None when it is singular.
+pub fn inverse(m: &Mat4) -> Option<Mat4> {
+    // The 3x3 part by cofactors (column major: m[column * 4 + row]).
+    let a = |row: usize, column: usize| m[column * 4 + row];
+    let c00 = a(1, 1) * a(2, 2) - a(1, 2) * a(2, 1);
+    let c01 = a(1, 2) * a(2, 0) - a(1, 0) * a(2, 2);
+    let c02 = a(1, 0) * a(2, 1) - a(1, 1) * a(2, 0);
+    let det = a(0, 0) * c00 + a(0, 1) * c01 + a(0, 2) * c02;
+    if det.abs() < 1e-12 || !det.is_finite() {
+        return None;
+    }
+    let inv = 1.0 / det;
+    // r[row][column] of the inverse 3x3.
+    let r = [
+        [
+            c00 * inv,
+            (a(0, 2) * a(2, 1) - a(0, 1) * a(2, 2)) * inv,
+            (a(0, 1) * a(1, 2) - a(0, 2) * a(1, 1)) * inv,
+        ],
+        [
+            c01 * inv,
+            (a(0, 0) * a(2, 2) - a(0, 2) * a(2, 0)) * inv,
+            (a(0, 2) * a(1, 0) - a(0, 0) * a(1, 2)) * inv,
+        ],
+        [
+            c02 * inv,
+            (a(0, 1) * a(2, 0) - a(0, 0) * a(2, 1)) * inv,
+            (a(0, 0) * a(1, 1) - a(0, 1) * a(1, 0)) * inv,
+        ],
+    ];
+    let t = [m[12], m[13], m[14]];
+    let mut out = IDENTITY;
+    for row in 0..3 {
+        for column in 0..3 {
+            out[column * 4 + row] = r[row][column];
+        }
+        out[12 + row] = -(0..3).map(|k| r[row][k] * t[k]).sum::<f64>();
+    }
+    Some(out)
+}
+
+/// `m * p` for a point.
+pub fn transform_point(m: &Mat4, p: [f64; 3]) -> [f64; 3] {
+    let mut out = [0.0; 3];
+    for (row, value) in out.iter_mut().enumerate() {
+        *value = m[row] * p[0] + m[4 + row] * p[1] + m[8 + row] * p[2] + m[12 + row];
+    }
+    out
+}
+
+/// The matrix that takes a glTF world point (meters) to the normalized `[0, 1]^3`
+/// coordinates of a Source box: `placement` (a Source entity matrix) holding the local box
+/// `min..max` (inches, Source local axes). Grimoire's `(inverse(matrix) * p - min) / (max -
+/// min)` with the glTF to Source conversion folded in. The local axes stay Source's: x is
+/// the entity's forward, y its left, z its up. None for an empty box or a singular placement.
+pub fn box_world_to_local(placement: &Mat4, min: [f64; 3], max: [f64; 3]) -> Option<Mat4> {
+    let size = [max[0] - min[0], max[1] - min[1], max[2] - min[2]];
+    if size.iter().any(|value| *value <= 0.0 || !value.is_finite()) {
+        return None;
+    }
+    let mut normalize = IDENTITY;
+    for axis in 0..3 {
+        normalize[axis * 5] = 1.0 / size[axis];
+        normalize[12 + axis] = -min[axis] / size[axis];
+    }
+    Some(mul(&mul(&normalize, &inverse(placement)?), &GLTF_TO_SOURCE))
+}
+
+/// Column `index` (0 forward +X, 1 left +Y, 2 up +Z) of a Source placement, as a unit glTF
+/// direction.
+pub fn axis(source: &Mat4, index: usize) -> [f64; 3] {
+    let column = index.min(2) * 4;
+    direction([source[column], source[column + 1], source[column + 2]])
 }
 
 /// The forward (+X) axis of a Source placement.

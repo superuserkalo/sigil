@@ -115,8 +115,8 @@ Binary glTF 2.0 written by `morphic::model::to_glb_textured`:
   "hero": "inferno",
   "displayName": "Infernus",
   "variant": "modded",
-  "clips": ["shop_menu_base", "primary_stand_reload"],
-  "idleClip": "shop_menu_base",
+  "clips": ["ui_shop_idle", "shop_menu_base"],
+  "idleClip": "ui_shop_idle",
   "sources": [
     { "slot": 3, "file": "addons/pak03_dir.vpk", "name": "Ember Infernus", "kind": "addon", "enabled": true, "used": 14 },
     { "slot": null, "file": "pak01_dir.vpk", "name": "Deadlock", "kind": "base", "enabled": true, "used": 52 },
@@ -124,9 +124,14 @@ Binary glTF 2.0 written by `morphic::model::to_glb_textured`:
   ],
   "modelEntry": "models/heroes_wip/inferno/inferno.vmdl_c",
   "clipInfo": [
+    { "name": "ui_shop_idle", "durationSeconds": 4.0, "fps": 30.0, "frameCount": 121,
+      "playback": "loop", "action": "idle", "origin": "clipFile",
+      "resource": "models/heroes_wip/inferno/clips/ui_shop_idle.vnmclip_c",
+      "label": "Idle", "group": "idle", "speed": 1.0,
+      "showcase": { "graph": "models/heroes_wip/inferno/inferno_ui.vnmgraph_c", "state": "shop" } },
     { "name": "shop_menu_base", "durationSeconds": 2.97, "fps": 30.0, "frameCount": 90,
-      "playback": "hold", "action": "idle", "origin": "clipFile",
-      "resource": "models/heroes_wip/inferno/clips/inferno_shop_menu_base.vnmclip_c" }
+      "playback": "hold", "action": "idle", "origin": "model", "resource": null,
+      "label": "Idle", "group": "idle", "speed": 1.0, "showcase": null }
   ],
   "cloth": "inferno.cloth.json",
   "units": "meters",
@@ -134,7 +139,7 @@ Binary glTF 2.0 written by `morphic::model::to_glb_textured`:
   "forward": "+Z",
   "key": "3f0c...",
   "issues": [],
-  "pipeline": "sigil-viewer-1"
+  "pipeline": "sigil-viewer-2"
 }
 ```
 
@@ -144,21 +149,48 @@ Binary glTF 2.0 written by `morphic::model::to_glb_textured`:
 | `hero` | Class codename from `scripts/heroes.vdata_c`, without `hero_`. |
 | `displayName` | Roster display name. |
 | `variant` | The look the glb shows. `original` when no installed mod touches the hero. |
-| `clips` | glTF animation names in the glb, idle first. Same names in the modded and original export, so a before/after view can play both in step. |
-| `idleClip` | The clip to start on, or null when the model offers none (bind pose). |
+| `clips` | glTF animation names in the glb, in selection order (the showcase first when there is one). Same names in the modded and original export, so a before/after view can play both in step. |
+| `idleClip` | The clip to start on (the default clip, not always an idle): the showcase, else the hero's first recipe clip present, else a standing or relaxed idle, else `hero_pose` or `ui_hero_pose`, else the first clip. Null when the model offers none (bind pose). |
 | `sources` | The stack the export read, highest precedence first. `slot` null for game files. `used` counts files read from that VPK. |
 | `modelEntry` | The compiled body model inside the VPKs. |
-| `clipInfo` | Per clip: length, rate, frame count, `playback` (`loop` or `hold`: play once and hold the last frame), `action` (`idle`, `relaxedIdle`, `heroPose`, `running`, `reload`, `dash`, `heavyMelee`), `origin` (`model`: embedded in the shown model; `base`: the game's own model at the same path, bound by bone name, used when a skin has no clip files; `clipFile`: a `.vnmclip_c`). |
+| `clipInfo` | Per clip: length, rate, frame count, `playback` (`loop` or `hold`: play once and hold the last frame), `action` (`idle`, `relaxedIdle`, `heroPose`, `running`, `reload`, `dash`, `heavyMelee`), `origin` (`model`: embedded in the shown model; `base`: the game's own model at the same path, bound by bone name, used when a skin has no clip files; `clipFile`: a `.vnmclip_c`), `resource` (the `.vnmclip_c` path for a clip file), `label` (English picker name: `Idle`, `Relaxed idle`, `Hero pose`, `Run`, `Reload`, `Dash`, `Heavy melee` from the recipe, else the clip's own words, `Ui shop idle`), `group` (`idle`, `movement`, `combat` or `other`, Grimoire's `groupHeroClips` token rules), `speed` (playback rate multiplier: the graph clip node's `m_flSpeedMultiplier` for a showcase, else 1), `showcase` (null, or `{ "graph", "state" }` with `state` `shop` or `heroSelect` when the game's UI graph plays this clip on that screen; its `playback` is already the clip's). |
 | `cloth` | File beside the glb with the model's `PHYS.m_pFeModel` as JSON (vpkmerge's `export_femodel_json` shape: nodes, rods, capsules, integrator), or null. Source space. |
 | `issues` | `changesNotShown:<file>`: a mod in the stack none of whose files were read (Deadlock Mod Manager's warning). `clipRig:<name>` / `clipSkeleton:<name>`: a clip file left out because it does not fit the rig. |
 
-Clip choice (Grimoire's `heroAnimationCatalog.ts`): the reviewed per-hero recipe (for example
-Infernus `shop_menu_base` held, Haze `shop_menu_base` plus a held reload), else a standing or
-relaxed idle, else the menu pose vpkmerge would bake, held. Additive clips and names with a layer
-or transition token (`aim`, `add`, `delta`, `layer`, `intro`, `death`, ...) never qualify. At most
-eight clips and 10,000 frames. Clip files beside the model (`<model dir>/clips/*.vnmclip_c`,
-also named `<codename>_<clip>`) win over a same-name embedded copy, because the game's graph
-plays the files. A skin that ships no clip files takes its motions from the game's model.
+Clip choice (Grimoire's `heroAnimationCatalog.ts`, `heroRiggedClips.ts` and
+`heroAnimationMetadata.ts`). The model's DATA block names its AnimGraph2 graphs
+(`m_animGraph2Refs`); every graph's `m_resources` are candidate clip files, and the `ui` graph is
+read for a showcase: a state of the root state machine whose path ends in `/shop`, `/hero_shop`,
+`/select` or `/hero_select`, with no layer weight, root motion weight or bone mask, not an off
+state, whose child is a plain clip node (a data slot, no reverse or reset input, a positive
+speed). Its clip plays looped when the node allows looping, else held, at the node's speed. A shop
+state wins over hero select for the same clip. A showcase clip authored for a skeleton the model
+does not list in `m_vecNmSkeletonRefs` is ignored. The selection, in order:
+
+1. the showcase (shop before hero select, at most 2,400 frames),
+2. the reviewed per-hero recipes (for example Infernus `shop_menu_base` held, Haze
+   `shop_menu_base` plus a held reload), or the standing idle, relaxed idle and hero pose
+   recipes for a hero without one; beside a showcase only the first idle recipe hit is kept, as a
+   standing fallback,
+3. beside a showcase with no idle recipe hit, the first standing or relaxed idle,
+4. with nothing selected, the first neutral idle,
+5. clips the compiled data marks standalone, by name, while under eight clips,
+
+all within 10,000 frames; with nothing at all, the menu pose vpkmerge would bake, held. A clip
+qualifies only as a complete full-body action: more than one frame and over 1 ms long, not
+additive, hidden, delta, base-dependent, a transition, flagged non-standalone, or moving the hero
+(root motion: average linear speed over 0.01 or turn rate over 0.001 rad/s, so a running clip
+that travels is left out), and no layer or transition token in its name (`aim`, `add`, `delta`,
+`layer`, `intro`, `death`, ...). Embedded clips carry no flags of their own: the first eight
+recipe clips borrow `additive` and root motion from the clip file of the same name, or its
+reviewed alias (`PRODUCTION_CLIP_ALIASES`, for example Infernus `shop_menu_base` from
+`ui_shop_idle`), when frame counts match and durations agree within half a frame. Clip files come
+from the graphs first, then `<model dir>/clips/*.vnmclip_c` sorted; a showcase keeps its file
+name, any other file is read only when a recipe could pick it (also named
+`<codename>_<clip>`). A showcase or a complete clip file wins over a same-name embedded copy,
+because the game's graph plays the files. A skin that ships no clip files takes its motions from
+the game's model. The `root_motion` bone's translation is still removed from every clip, for
+embedded clips no file vouches for.
 
 ## Hideout scene: `scene.json` / `scene-<hero key>.json`
 
@@ -170,6 +202,14 @@ plays the files. A skin that ships no clip files takes its motions from the game
   "key": "a91e...",
   "units": "meters",
   "up": "+Y",
+  "exposure": 1.0,
+  "post": {
+    "tonemap": { "exposureBias": 0.8992, "shoulderStrength": 0.3538, "linearStrength": 0.3258, "linearAngle": 0.2528,
+                 "toeStrength": 0.6966, "toeNum": 0.0, "toeDenom": 0.7819, "whitePoint": 3.9996 },
+    "bloom": { "blendMode": "add", "bloomStrength": 0.5, "screenBloomStrength": 0.0, "blurBloomStrength": 0.0,
+               "threshold": 1.0, "thresholdWidth": 0.999, "blurWeights": [5 floats], "blurTints": [[r, g, b] x 5] },
+    "colorCorrection": { "file": "post/color-correction.bin", "dimension": 32 }
+  },
   "models": [
     { "glb": "models/5b1c....glb", "transform": [16 floats], "tint": [1, 1, 1, 1], "primitive": null, "animation": null },
     { "glb": "models/77ad....glb", "transform": [16 floats], "tint": [0.8, 0.8, 0.8, 1], "primitive": 3, "animation": null },
@@ -178,14 +218,23 @@ plays the files. A skin that ships no clip files takes its motions from the game
   "lights": [
     { "kind": "spot", "color": [1, 0.85, 0.7], "intensity": 80.0, "position": [x, y, z], "direction": [x, y, z],
       "range": 12.7, "cone": [20, 45], "classname": "light_barn", "realtime": true,
-      "temperature": null, "shadowChannel": 1, "fogStrength": null }
+      "temperature": null, "shadowChannel": 1, "fogStrength": null,
+      "brightness": 1.0, "skirt": 0.1, "skirtNear": 0.0, "fogOnly": false,
+      "cookie": "cookies/fan_cookie_1a2b3c4d.png", "basis": [[x, y, z], [x, y, z], [x, y, z]] }
   ],
   "fog": { "color": [r, g, b], "strength": 1.0, "indirectStrength": 1.0, "drawDistance": 60.0,
-           "fadeIn": [0, 2], "transform": [16 floats], "min": [x, y, z], "max": [x, y, z] },
+           "fadeIn": [0, 2], "transform": [16 floats], "min": [x, y, z], "max": [x, y, z],
+           "irradiance": { "file": "fog/irradiance.vtv", "worldToLocal": [16 floats] },
+           "volumes": [ { "shape": "box", "worldToLocal": [16 floats], "strength": 1.0, "falloff": 1.0,
+                          "indirectStrength": null, "tint": null } ] },
   "sky": { "cubemap": ["sky/px.hdr", "sky/nx.hdr", "sky/py.hdr", "sky/ny.hdr", "sky/pz.hdr", "sky/nz.hdr"],
            "exposureBias": 0.0, "tint": [1, 1, 1], "position": null },
   "reflection": { "cubemap": ["reflection/px.hdr", "..."], "exposureBias": 0.0, "tint": [1, 1, 1], "position": [x, y, z] },
-  "lightmap": { "file": "lightmap/irradiance.hdr", "uvScale": [u, v] },
+  "lightmap": { "file": "lightmap/irradiance.hdr", "uvScale": [u, v], "uvSet": 3,
+                "direction": "lightmap/direction.png", "shadows": "lightmap/shadows.png" },
+  "probes": [ { "file": "probes/0.vtv", "shadows": "probes/0-shadows.vtv", "worldToLocal": [16 floats],
+                "size": [8, 8, 4], "offset": [0, 0, 0], "atlasSize": [w, h, d], "fade": [4, 0, 4],
+                "priority": 0, "encoding": "linear" } ],
   "camera": { "position": [x, y, z], "target": [x, y, z], "fov": 60.0 },
   "heroAnchor": [16 floats],
   "hero": { "hero": "inferno", "glb": "../../heroes/<key>/inferno.glb", "sidecar": "../../heroes/<key>/inferno.json",
@@ -193,8 +242,7 @@ plays the files. A skin that ships no clip files takes its motions from the game
   "spawn": { "position": [x, y, z], "yawDegrees": 90.0 },
   "sources": [ { "slot": null, "file": "maps/dl_hideout.vpk", "name": "Hideout", "kind": "map", "enabled": true, "used": 412 } ],
   "failures": [],
-  "omissions": ["autoExposure", "colorCorrection", "directionalLightmap", "fogIrradiance", "fogVolumes",
-                "lightCookies", "lightProbes", "particles", "staticBundle", "tonemap"],
+  "omissions": ["fogShadows", "particles", "staticBundle"],
   "pipeline": "sigil-viewer-1"
 }
 ```
@@ -207,22 +255,40 @@ plays the files. A skin that ships no clip files takes its motions from the game
 | `models[].primitive` | For an aggregate fragment: draw only the glTF primitive with this index within its mesh (Grimoire matches `parser.associations` primitive index). Null draws the whole glb. |
 | `models[].animation` | Name of the glTF animation to loop for an animated prop, or null for a static (baked) one. |
 | `lights[]` | Lights not wholly baked into the lightmap: realtime lights, and baked ones that still light fog (`realtime: false`, `fogStrength` set). `intensity` is candela for point and spot, the authored brightness for directional. `direction` is the way the light shines. `range` meters. `cone` inner and outer angle in degrees for `light_barn` (and `[0, 90]` for `light_rect`), null otherwise. `temperature` kelvin when the light uses color temperature. |
+| `lights[].brightness` | Linear brightness the game's light shader takes: `2^brightness * brightnessscale` for omni, barn and rect lights, `brightness * brightnessscale` for `light_environment`. |
+| `lights[].skirt`, `skirtNear` | Range falloff skirts (`skirt`, default 0.1; `skirt_near`, default 0, Grimoire's defaults). Null for `light_environment`. |
+| `lights[].fogOnly` | True for a baked light kept only because it lights fog (the inverse of `realtime`). |
+| `lights[].cookie` | `lightcookie` of an omni or barn light as an sRGB PNG, at most 512 px, named `cookies/<stem>_<sha8>.png` (sha256 of the compiled path), or null. A cookie that fails to export leaves null and keeps `lightCookies` in `omissions`. |
+| `lights[].basis` | The light entity's own axes in glTF space, unit length: Source local +X (forward), +Y (left), +Z (up), from its angles. Orients cookies: barn cookies in the light's local frame, omni cookies by the local ray. |
+| `exposure` | The master `post_processing_volume`'s fixed exposure (Grimoire's `fixedMapExposure`: exposure off gives `2^exposurecompensation`; equal min and max (linear, else log2) give `min * 2^exposurecompensation`). 1 when the map has no master volume. Left out when the exposure adapts, and `autoExposure` stays in `omissions`. |
+| `post` | The master volume's `.vpost`, or null when it has none or it fails to decode. `tonemap` is `m_toneMapParams` (`whitePoint` in stops, as stored), null unless `m_bHasTonemapParams`. `bloom` is `m_bloomParams` (`blendMode` `add`, `screen` or `blur`), null unless `m_bHasBloomParams`. `colorCorrection` is `m_colorCorrectionVolumeData` written raw: RGBA8, `dimension^3 * 4` bytes, x fastest, then y, then z; null when the dimension is 0 or 1. |
 | `fog` | The master `env_volumetric_fog_controller`: tint, strengths, distances in meters, and its box (placement plus local min and max in meters, glTF axes). Null when absent or disabled. |
+| `fog.irradiance` | The controller's `fogirradiancevolume` as a VTV file, with `worldToLocal` over the controller's box. Null when the controller names none or it fails. |
+| `fog.volumes[]` | Enabled `env_volumetric_fog_volume` entities, at most 16 (`fogVolumeLimit` past that): `shape` `box` (0) or `sphere` (1), `strength` (`FogStrength`), `falloff` (`FalloffExponent`), `indirectStrength` and `tint` (0 to 1) only when their override flag is set. Shape 2 (height fog) is skipped and adds `heightFogVolumes`. |
+| `worldToLocal` | On probes, fog irradiance and fog volumes: column major, takes a glTF world point (meters) to the box's normalized `[0, 1]^3` (Grimoire's `(inverse(matrix) * p - min) / (max - min)` with the glTF to Source conversion folded in). The local axes are the entity's Source axes (x forward, y left, z up), not glTF axes, matching the atlas layout. |
+| `probes[]` | Light probe volumes (entities with `lightprobetexture` and `light_probe_size_x/y/z`), all on one atlas like Grimoire (`multipleProbeAtlases` when another is named). `file` is the irradiance atlas (VTV; its depth is six equal bands, one per cube face, +X +Y +Z -X -Y -Z in Source axes), `shadows` the `lightprobetexture_dlshd` atlas or null. `size` probes per axis, `offset` the atlas texel offset (`light_probe_atlas_x/Y/Z`), `atlasSize` the atlas texture's full width, height and depth. `fade` is box size over `edge_fade_dists` per axis, 0 on an axis without a fade (no edge fade). `priority` is `indoor_outdoor_level`. `encoding` is `rgbm` when the world's `m_nLightmapGameVersionNumber` is 0, else `linear`. |
+| VTV files | Uncompressed: u32 LE magic `0x31565456` (`VTV1`), width, height, depth, component (1 RGBA8, 2 RGBA16F, 3 R16), then mip 0 texels tightly packed, x fastest, then y, then z, no color conversion. Grimoire's VTV1 without the gzip. |
 | `sky` | The enabled `env_sky` cube as six Radiance `.hdr` faces (linear). Faces are named in Source axes as vpkmerge writes them: `px` looks along Source +X, which is glTF +Z; `pz` along Source +Z (glTF +Y). `exp2(exposureBias) * tint` scales it. |
 | `reflection` | The `env_cubemap` nearest the spawn, same face layout, with its capture `position`. |
-| `lightmap` | The baked `directional_irradiance_sh2_dc` lightmap as Radiance `.hdr`, capped at 2048, with the world's `m_vLightmapUvScale`. Whether a room glb carries lightmap UVs depends on the morphic export; treat it as optional. |
+| `lightmap` | The baked `directional_irradiance_sh2_dc` lightmap as Radiance `.hdr`, capped at 2048, with the world's `m_vLightmapUvScale`. `uvSet` is 3: morphic writes every vertex TEXCOORD stream as `TEXCOORD_<Source semantic index>`, so room glbs carry lightmap UVs as `TEXCOORD_3` (Grimoire samples `uv3`); a primitive without it is not lightmapped (Grimoire lights it from the probes). `direction` (`directional_irradiance_sh2_lum`) and `shadows` (`direct_light_shadows`) are UNORM RGBA8 PNGs, no sRGB conversion, at most 2048, written only for `m_nLightmapVersionNumber` 8 with `m_nLightmapGameVersionNumber` 5; null otherwise. |
 | `camera` | Behind the spawn as the game's third-person camera: 180 in back, eye 62 in up, target 42 in up, 60 degree vertical field (Grimoire's measured oracle cameras). |
 | `heroAnchor` | Where the hero stands: the player spawn (`info_team_spawn` named `*player_spawn*`) turned 180 degrees to face the camera. Null when the build has no spawn. |
 | `hero` | Present in `scene-<hero key>.json`: the hero export's files, relative to the scene folder, and the same transform as `heroAnchor`. |
 | `variant` | The look of the room. A mod changes the room only when it ships a file the unmodded room read (`deps.json`) or anything under `maps/dl_hideout`, so with only hero skins installed the room is `original` while the hero is modded. |
 | `failures` | Resources that failed to export; their instances are left out. |
-| `omissions` | Parts of the game's scene not in this file, so the renderer does not guess. |
+| `omissions` | Parts of the game's scene not in this file, so the renderer does not guess. Always `particles` (map particles), `staticBundle` (Grimoire's merged meshopt bundle) and `fogShadows` (the precomputed R16 shadow atlas fog lights sample: decodable, but the file has no field for it yet). Others appear when something is missing or failed: `autoExposure`, `tonemap`, `colorCorrection`, `directionalLightmap`, `lightCookies`, `lightProbes`, `fogVolumes`, `fogIrradiance`, `multipleProbeAtlases`, `heightFogVolumes`, `fogVolumeLimit`, `entityAttachments`, `instanceStreams`, `animatedProps`, `playerSpawn`. |
 
 Static props and world objects are baked into their starting pose (`ref` for world objects; the
 entity's `StartingAnim`, `IdleAnim` or `defaultanim` for props). Props that loop their starting
 animation keep their rig and that one clip. Props parented to another entity are skipped
 (`entityAttachments`). Room textures are capped at 256 px (Grimoire's room cap), the hero at
 1024.
+
+`HideoutExportRequest::progress` takes a `Fn(f32) + Sync` that hears 0.0 to 1.0, never going
+back, over real stages: the hero (the first 30% when one is asked, scaled from the hero
+export's own progress), then the world read, lightmap, entities, lights and post,
+probe and fog volumes, reflection, world nodes, and every model exported counted over the
+total. A cache hit reports 1.0 at once.
 
 ## API
 
@@ -282,11 +348,17 @@ the file paths. The game comes from discovery or `DAH_GAME_DIR`. The real-game t
 
 ## Not done yet
 
-- Grimoire's UI AnimGraph2 reader (picking the shop or hero-select state from the compiled
-  graph). The recipes it falls back to are ported; heroes without a recipe use a standing idle.
-- Hideout probes (`probes.bin`), fog irradiance volume, directional lightmap channels, color
-  correction LUT, tone curve and bloom, light cookies, fog shadow atlas, map particles, the
-  meshopt static bundle, distant-instance culling. Each is listed in `omissions`.
+- Grimoire's staged-pose test (`heroStagedPose.ts`): Grimoire samples the exported glb to tell
+  whether a showcase pose is staged for the menu scene (a part laid on the floor, the hero held
+  off it) and then starts on the standing idle, or else drops that idle. Sigil always keeps the
+  standing idle beside a showcase as a selectable clip and starts on the showcase. The per-clip
+  floor offset (`grimoireFloor`) is not written either.
+- Compiled `hidden`, `delta`, `requiresBase`, `transition` and `standalone` flags for embedded
+  clips: the pinned vpkmerge does not report them, so only clip file metadata (additive, root
+  motion) feeds the filter, and step 5 of the clip choice finds nothing yet.
+- Hideout fog shadow atlas (the R16 decode exists; the scene needs a field for the atlas and
+  each fog light's tiles), map particles, the meshopt static bundle, height fog volumes,
+  distant-instance culling. Each is listed in `omissions`.
 - Hero ambient particles and effects (`heroAmbientDiscovery.ts`), material groups and skins per
   hero form, and WIP heroes whose pose lives only in a loose NM pose clip.
 - A real-game run. The ignored test and the CLI are ready for the first machine with Deadlock.
