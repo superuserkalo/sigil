@@ -40,6 +40,8 @@ mod demos;
 mod german;
 mod heroes;
 mod leaderboard;
+pub mod live;
+mod live_de;
 mod map;
 mod matches;
 mod more;
@@ -204,6 +206,8 @@ pub struct View {
     pub more: more::More,
     /// Wave 4: the filtered overview, Party by hand and Item meta (`w4.rs`).
     pub w4: w4::W4,
+    /// The match being played right now (`live.rs`).
+    pub live: live::Live,
 }
 
 pub struct ReviewPanel {
@@ -260,6 +264,7 @@ impl Default for View {
             review: None,
             more: more::More::default(),
             w4: w4::W4::default(),
+            live: live::Live::default(),
         }
     }
 }
@@ -398,6 +403,7 @@ pub fn poll(state: &mut State) -> bool {
     }
     changed |= more::poll(state);
     changed |= w4::poll(state);
+    changed |= live::poll(state);
     changed
 }
 
@@ -616,6 +622,9 @@ pub fn view(s: &State, u: &Ui) -> El {
             Some(actions),
         ));
 
+    if let Some(live) = live::panel(s, u) {
+        page = page.child(live);
+    }
     if v.account_open && v.snapshot.is_some() {
         page = page.child(account_panel(s, u));
     }
@@ -1065,6 +1074,9 @@ fn skeleton(u: &Ui) -> El {
 
 /// Mounted at the root: the scoreboard, or the review panel, over the shell.
 pub fn dialog(s: &State, u: &Ui) -> Option<El> {
+    if let Some(dialog) = live::dialog(s, u) {
+        return Some(dialog);
+    }
     if let Some(match_id) = s.stats.board_open {
         return Some(board::board_dialog(s, u, match_id));
     }

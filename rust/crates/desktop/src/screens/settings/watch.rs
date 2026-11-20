@@ -84,6 +84,7 @@ fn wanted(st: &State) -> bool {
         || o.remove_paths_on_close
         || (o.crash_check && st.settings.extra.watch.session_from.is_some())
         || (o.presence_game && st.prefs.discord)
+        || crate::screens::stats::live::wants_watch(st)
 }
 
 /// Startup work: reapply mods when asked.
@@ -233,6 +234,9 @@ pub fn poll(st: &mut State, tx: &mut Tx) -> bool {
         st.settings.extra.watch.tail = Some(tail);
         changed |= moved;
     }
+    if st.screen == crate::model::Screen::Settings {
+        crate::screens::stats::live::ensure_checked(st);
+    }
     if st.demo || rune::is_headless() || !wanted(st) {
         return changed;
     }
@@ -322,6 +326,7 @@ pub fn game_rows(s: &State, u: &Ui) -> El {
                 ),
             ],
         ))
+        .child(live_section(s, u))
         .child(section(
             u,
             "Keeping mods applied",
@@ -394,6 +399,56 @@ fn toggle_condebug(st: &mut State) {
         st.settings.launch_options = rune::TextEdit::new(value.clone());
         st.settings.confirm = Some(super::Confirm::LaunchOptions(value));
     }
+}
+
+/// Add `-condebug` to Steam's launch options through the usual confirm, when it is not there.
+/// The live match view and its bridge read console.log.
+pub fn turn_on_condebug(st: &mut State) {
+    options::edit(st, |o| o.condebug = true);
+    let current = st.settings.launch_options.text.clone();
+    let value = game_session::with_condebug(&current, true);
+    if value.trim() != current.trim() {
+        st.settings.launch_options = rune::TextEdit::new(value.clone());
+        st.settings.confirm = Some(super::Confirm::LaunchOptions(value));
+    }
+}
+
+/// Settings > Game > Live match: the view, the bridge HUD mod and the player lookup.
+fn live_section(s: &State, u: &Ui) -> El {
+    let o = options::get();
+    let about = tr("Prints both teams' souls, K/D/A, levels and the clock into console.log. A HUD mod Sigil builds from your game. Off by default.");
+    let bridge = crate::screens::stats::live::bridge_line(s);
+    let bridge_line = if bridge.is_empty() { about } else { bridge };
+    section(
+        u,
+        "Live match",
+        vec![
+            toggle_row(
+                u,
+                "settings-live-view",
+                "Live match view",
+                "Stats shows the match you are playing, read from console.log while the game runs. Nothing leaves this computer.",
+                o.live_view,
+                |st| options::edit(st, |o| o.live_view = !o.live_view),
+            ),
+            toggle_row(
+                u,
+                "settings-live-bridge",
+                "Live bridge (HUD mod)",
+                bridge_line,
+                o.live_bridge,
+                crate::screens::stats::live::toggle_from_settings,
+            ),
+            toggle_row(
+                u,
+                "settings-live-lookup",
+                "Look up players in the live match",
+                "Sends the account ids the versus screen shows to deadlock-api once per match, for ranks and match counts. Needs Player stats.",
+                o.live_lookup,
+                |st| options::edit(st, |o| o.live_lookup = !o.live_lookup),
+            ),
+        ],
+    )
 }
 
 /// One line for Settings > Game when the console log is old or missing.

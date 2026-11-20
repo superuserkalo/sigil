@@ -627,6 +627,17 @@ pub const DE: &[(&str, &str)] = &[
     ("The update could not start. Open Installed to see why.", "Das Update konnte nicht starten. Öffne Installiert, um den Grund zu sehen."),
     ("Update", "Aktualisieren"),
     ("{} was not installed", "{} wurde nicht installiert"),
+    // Settings > Game > Live match (`watch.rs`).
+    ("Live match", "Live-Match"),
+    ("Live match view", "Live-Match-Ansicht"),
+    ("Stats shows the match you are playing, read from console.log while the game runs. Nothing leaves this computer.", "Statistiken zeigt das Match, das du spielst, gelesen aus der console.log, während das Spiel läuft. Nichts verlässt diesen Computer."),
+    ("Live bridge (HUD mod)", "Live-Brücke (HUD-Mod)"),
+    ("Prints both teams' souls, K/D/A, levels and the clock into console.log. A HUD mod Sigil builds from your game. Off by default.", "Schreibt Seelen, K/T/A, Level beider Teams und die Uhr in die console.log. Eine HUD-Mod, die Sigil aus deinem Spiel baut. Standardmäßig aus."),
+    ("Look up players in the live match", "Spieler im Live-Match nachschlagen"),
+    ("Stats shows the match you are playing.", "Statistiken zeigt das Match, das du spielst."),
+    ("Both teams' souls and K/D/A in Stats.", "Seelen und K/T/A beider Teams in Statistiken."),
+    ("Ranks for the lobby from deadlock-api.", "Ränge der Lobby von deadlock-api."),
+    ("Sends the account ids the versus screen shows to deadlock-api once per match, for ranks and match counts. Needs Player stats.", "Sendet die Konto-IDs vom Versus-Bildschirm einmal pro Match an deadlock-api, für Ränge und Matchzahlen. Braucht Spielerstatistiken."),
 ];
 
 /// Literals in the routed files that read like words but are not UI text: names, file and
