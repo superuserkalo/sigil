@@ -124,6 +124,8 @@ pub fn begin_checked(st: &mut State, vanilla: bool, page: bool) {
         crate::screens::installed::checks::missing_before_launch(st);
     }
     crate::screens::settings::telemetry::event(st, if vanilla { "launch:vanilla" } else { "launch:modded" }, None);
+    // Blocked relay regions make queues longer; say so at every launch while any is on.
+    crate::screens::servers::regions::remind_at_launch(st);
     let stashed = deadlock_core::launch::stash_status(&crate::data::data_dir()).is_some();
     st.launch_dialog = false;
     st.launch.dialog = Dialog::None;

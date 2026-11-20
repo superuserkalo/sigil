@@ -276,9 +276,12 @@ Enforced in code:
    Joining a Deadworks server adds up to five marked `SearchPaths` lines (`Game
    citadel/deadworks_mods`, `addonroot citadel/deadworks_addons`, and `Mod`/`Write citadel` when
    absent) after the user confirms, with a backup (`deadlock_core::servers`).
+   Outside the game folder, the relay region picker (ADR 0016) adds and removes Windows Firewall
+   rules named `Sigil-Relay-*` (outbound UDP from `deadlock.exe` to Valve relay addresses) only
+   on the player's Apply or Reset, behind Windows' admin prompt, and reads them back after.
 5. **Secrets.** Decrypted keys exist only in main. The agent host receives provider auth through a
    narrow handshake, not the transcript. Tool output and logs are scrubbed for known key shapes.
-6. **Network allowlist.** Provider endpoints, `api.steampowered.com`, `api.deadlock-api.com`, GameBanana, the GitHub update check and signed update download, Deadworks for Servers, the local Discord IPC socket, and Sigil's own telemetry Worker (opt-in, off by default). No other
+6. **Network allowlist.** Provider endpoints, `api.steampowered.com` (patch feed and Valve's relay list), `api.deadlock-api.com`, GameBanana, the GitHub update check and signed update download, Deadworks for Servers, the local Discord IPC socket, and Sigil's own telemetry Worker (opt-in, off by default). No other
    outbound calls from tools without a documented allowlist entry.
    - `gamebanana.com/apiv11`, `images.gamebanana.com` and `files.gamebanana.com`: Browse.
      Anonymous GETs, no key, no user data: `Game/20948/Subfeed?_nPage=N&_csvModelInclusions=Mod|Sound|Wip`
@@ -422,6 +425,15 @@ Enforced in code:
      connection resolves through a guard that refuses loopback, private, link-local and reserved
      addresses (unless the game server itself is local), at most five redirects, 4 GiB per file and
      16 GiB per join, VPK checks before anything is installed.
+   - Relay region picker (Servers > Regions, ADR 0016): one anonymous GET to
+     `api.steampowered.com/ISteamApps/GetSDRConfig/v1/?appid=1422450` (Valve's relay list for
+     Deadlock: location ids, descriptions, relay IPv4 addresses and UDP port ranges) when the tab
+     opens and the saved copy is older than a day, or on its Refresh. 15 s timeout, 2 MB cap,
+     cached as `relay-catalog.json` in the data folder; offline mode and the proxy apply. No user
+     data. Measure ping (a press) sends ICMP echo through the system `ping` to at most two relay
+     addresses per listed location (eight at a time, at most three echoes each, one second
+     timeout, Stop cancels). Nothing else leaves the machine; the firewall rules are local
+     (`deadlock_core::relays`).
    - Host a server (Windows, ADR 0015), only when the player presses the setup button:
      `steamcdn-a.akamaihd.net/client/installer/steamcmd.zip` (Valve's SteamCMD, pinned size and
      SHA-256) and the pinned Deadworks release zip from
@@ -726,6 +738,10 @@ Phase 5, stats and the living catalog (in progress):
 - Done: Servers: Deadworks list with pings, filters and a confirmed join (gameinfo.gi lines, UI
   pack, server content, `steam://connect`). Verified with unit tests and a live list, rules query,
   UI pack and addon install into a scratch root. Not verified: a full join on Windows.
+- Done (not yet run on Windows): relay region picker, Servers > Regions (ADR 0016). Valve's
+  relay list, pings, presets, Apply and Reset through one elevated `netsh -f` batch with a read
+  back, a status bar mark and a launch notice while any region is blocked. Unit tests for the
+  catalog, rule plan and netsh parsing; headless scenes for each state.
 - Next: real `.dem` files from a live match; positions need a serializer-aware extractor.
 - Next: verify 7z and rar extraction on a machine with those tools.
 

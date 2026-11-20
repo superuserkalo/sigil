@@ -41,6 +41,10 @@ pub mod invite;
 #[path = "servers_host/mod.rs"]
 pub mod host;
 
+/// The relay region picker, the Regions tab.
+#[path = "servers_regions/mod.rs"]
+pub mod regions;
+
 /// The Host tab's words, from Sigil's tables (`settings/locales_host.rs`).
 fn host_tr(text: &str) -> &str {
     crate::screens::settings::i18n::tr(text)
@@ -80,6 +84,7 @@ pub enum Tab {
     Servers,
     Maps,
     Host,
+    Regions,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -129,6 +134,8 @@ pub struct View {
     pub last_check: Option<Box<JoinCheck>>,
     pub maps: crate::screens::servers_maps::MapsState,
     pub host: host::HostState,
+    /// The relay region picker.
+    pub regions: regions::RegionsState,
     /// Join with invite: the paste field and where the join is.
     pub invite: invite::InviteState,
     /// The clock time the next automatic refresh is due.
@@ -160,6 +167,7 @@ impl Default for View {
             last_check: None,
             maps: crate::screens::servers_maps::MapsState::default(),
             host: host::HostState::default(),
+            regions: regions::RegionsState::default(),
             invite: invite::InviteState::default(),
             next_refresh: None,
             started: false,
@@ -407,6 +415,7 @@ pub fn poll(st: &mut State, now: f64, tx: &mut Tx) -> bool {
     changed |= invite::advance(st);
     changed |= crate::screens::servers_maps::poll(st);
     changed |= host::poll(st, now, tx);
+    changed |= regions::poll(st, now, tx);
     schedule_refresh(st, now, tx);
     changed
 }
@@ -572,7 +581,8 @@ pub fn view(s: &State, u: &Ui) -> El {
                     .on_press(host::recheck),
             );
         }
-    } else {
+    } else if s.servers.tab != Tab::Regions {
+        // Regions has its own Refresh beside the list.
         actions = actions.child(
             u.icon_action(&icons::REFRESH_CW, tr("Refresh"), ActionKind::Secondary)
                 .key("servers-refresh")
@@ -591,7 +601,7 @@ pub fn view(s: &State, u: &Ui) -> El {
     }
 
     let detail = match &s.servers.list {
-        _ if s.servers.tab == Tab::Host => String::new(),
+        _ if s.servers.tab == Tab::Host || s.servers.tab == Tab::Regions => String::new(),
         Some(Ok(list)) => {
             let playing: u32 = list.servers.iter().map(|sv| sv.players).sum();
             format!(
@@ -613,9 +623,11 @@ pub fn view(s: &State, u: &Ui) -> El {
         .child(u.page_head("", tr("Servers"), &detail, Some(actions)))
         .child(tabs(s, u));
 
-    if s.servers.tab == Tab::Maps || s.servers.tab == Tab::Host {
+    if s.servers.tab == Tab::Maps || s.servers.tab == Tab::Host || s.servers.tab == Tab::Regions {
         page = page.child(if s.servers.tab == Tab::Host {
             host::view(s, u)
+        } else if s.servers.tab == Tab::Regions {
+            regions::view(s, u)
         } else {
             crate::screens::servers_maps::view(s, u)
         });
@@ -732,6 +744,7 @@ fn tabs(s: &State, u: &Ui) -> El {
     let servers = tab_button(u, "servers-tab-servers", tr("Servers"), s.servers.tab == Tab::Servers);
     let maps = tab_button(u, "servers-tab-maps", tr("Maps"), s.servers.tab == Tab::Maps);
     let hosting = tab_button(u, "servers-tab-host", host_tr("Host"), s.servers.tab == Tab::Host);
+    let relay = tab_button(u, "servers-tab-regions", host_tr("Regions"), s.servers.tab == Tab::Regions);
     let bar = row()
         .key("servers-tabs")
         .w_full()
@@ -741,9 +754,13 @@ fn tabs(s: &State, u: &Ui) -> El {
         .child(servers.on_press(|st: &mut State| st.servers.tab = Tab::Servers))
         .child(maps.on_press(|st: &mut State| st.servers.tab = Tab::Maps))
         .child(hosting.on_press(|st: &mut State| st.servers.tab = Tab::Host))
+        .child(relay.on_press(|st: &mut State| st.servers.tab = Tab::Regions))
         .child(spacer());
     if s.servers.tab == Tab::Host {
         return bar.child(host::tab_status(s, u));
+    }
+    if s.servers.tab == Tab::Regions {
+        return bar;
     }
     bar
         .child(scope_button(
@@ -1586,6 +1603,9 @@ pub fn dialog(s: &State, u: &Ui) -> Option<El> {
     if s.servers.dialog.is_none() && s.servers.tab == Tab::Host && s.screen == Screen::Servers {
         return host::dialog(s, u);
     }
+    if s.servers.dialog.is_none() && s.servers.tab == Tab::Regions && s.screen == Screen::Servers {
+        return regions::dialog(s, u);
+    }
     match s.servers.dialog.as_ref()? {
         Dialog::Direct => Some(direct_dialog(s, u)),
         Dialog::Invite => Some(invite::dialog(s, u)),
@@ -1906,6 +1926,9 @@ fn password_field(s: &State, u: &Ui) -> El {
 pub fn overlay(s: &State, u: &Ui) -> Option<El> {
     if s.servers.tab == Tab::Host {
         return host::overlay(s, u);
+    }
+    if s.servers.tab == Tab::Regions {
+        return None;
     }
     let menu = s.servers.menu?;
     if s.screen != Screen::Servers {

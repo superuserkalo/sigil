@@ -1457,8 +1457,6 @@ pub fn restart_now(st: &mut State, tx: &mut Tx) {
         let _ = fs::remove_file(dir.join("pending.json"));
         write_json(&dir.join("applied.json"), &applied_json(&a))?;
         log(format!("Installed Sigil {} over {}; restarting", a.to, a.from));
-        // A clean exit: the new version must not find this run's session marker.
-        crate::screens::settings::crash::end();
         launch(&layout)
     });
     match result {

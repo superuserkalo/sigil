@@ -76,7 +76,7 @@ These are product constraints, not preferences.
   The CLI store is `chmod 600`; the desktop store uses the OS keychain.
 - Nothing leaves the machine without the player's yes. No third-party analytics (no Google
   Analytics, no Sentry SaaS), no heartbeat. Network calls come from a documented allowlist: model
-  provider endpoints, `api.steampowered.com` for the official patch feed, GameBanana, and the
+  provider endpoints, `api.steampowered.com` for the official patch feed and Valve's relay list, GameBanana, and the
   GitHub update check. Owner-approved opt-ins, off by default: match data sharing to
   `api.deadlock-api.com` (`/v1/matches/salts`), Discord Rich Presence over the local Discord IPC
   socket (no network) (2026-11-17), and Sigil's own telemetry Worker on Cloudflare (2026-11-18):

@@ -644,7 +644,12 @@ pub fn review_lines(u: &Ui, item: &ReviewItem) -> El {
         c = c.child(text(warning.clone()).font(SMALL).color(u.amber).wrap());
     }
     if let Some(error) = &item.error {
-        c = c.child(crate::notify::feedback::error_line(u, "release-check-error", &format!("Check failed: {error}")));
+        c = c.child(
+            text(format!("Check failed: {error}"))
+                .font(SMALL)
+                .color(u.rose)
+                .wrap(),
+        );
     }
     c
 }

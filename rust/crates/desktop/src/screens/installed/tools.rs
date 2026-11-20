@@ -744,7 +744,7 @@ pub fn identify_dialog(s: &State, u: &Ui) -> Option<El> {
                     .wrap(),
             );
             if let Some(error) = &ui.error {
-                body = body.child(crate::notify::feedback::error_line(u, "installed-tool-error", error));
+                body = body.child(text(error.clone()).font(SMALL).color(u.rose).wrap());
             }
             let field = rune::text_input(&ui.link, BODY)
                 .key("identify-link")
@@ -1189,7 +1189,7 @@ pub fn merge_dialog(s: &State, u: &Ui) -> Option<El> {
         if let Some(preview) = &ui.preview {
             let mut facts = col().w_full().gap(4.0);
             if let Some(error) = &preview.error {
-                facts = facts.child(crate::notify::feedback::error_line(u, "installed-tool-preview-error", error));
+                facts = facts.child(text(error.clone()).font(SMALL).color(u.rose).wrap());
             } else {
                 facts = facts.child(u.kv("Paths", &preview.paths.to_string(), u.ink)).child(u.kv(
                     "Same file in several",
@@ -1267,7 +1267,7 @@ pub fn merge_dialog(s: &State, u: &Ui) -> Option<El> {
                     ),
             );
         if let Some(error) = &ui.error {
-            body = body.child(crate::notify::feedback::error_line(u, "installed-tool-apply-error", error));
+            body = body.child(text(error.clone()).font(SMALL).color(u.rose).wrap());
         }
     }
     let mut actions = row().w_full().gap(8.0).center_y().child(spacer());

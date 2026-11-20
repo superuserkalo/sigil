@@ -110,7 +110,7 @@ fn speaker(volume: f32) -> &'static rune::Icon {
 }
 
 /// A quiet pressable part: an icon and a few words.
-fn part(u: &Ui, key: &str, glyph: &'static rune::Icon, words: String, tint: rune::Color, label: String) -> El {
+pub(crate) fn part(u: &Ui, key: &str, glyph: &'static rune::Icon, words: String, tint: rune::Color, label: String) -> El {
     row()
         .key(key.to_string())
         .h(20.0)
@@ -308,10 +308,16 @@ fn update(s: &State, u: &Ui) -> Option<El> {
 
 /// The bar, or nothing when Settings hides it.
 pub fn view(s: &State, u: &Ui) -> Option<El> {
+    // Blocked relay regions show even when the bar is hidden: a forgotten block looks like
+    // broken matchmaking, so the mark stays on every page while one is on.
+    let regions = crate::screens::servers::regions::status_chip(s, u);
     if !s.prefs.status_bar {
-        return None;
+        return regions.map(|chip| bar(u).child(chip).child(spacer()));
     }
     let mut left = row().gap(2.0).center_y().child(game(s, u)).child(divider(u)).child(catalog(s, u));
+    if let Some(chip) = regions {
+        left = left.child(divider(u)).child(chip);
+    }
     if let Some(downloads) = downloads(s, u) {
         left = left.child(divider(u)).child(downloads);
     }
@@ -320,22 +326,21 @@ pub fn view(s: &State, u: &Ui) -> Option<El> {
         right = right.child(update).child(divider(u));
     }
     right = right.child(profile(s, u)).child(divider(u)).child(volume(s, u));
-    Some(
-        row()
-            .key("statusbar")
-            .role("status")
-            .label(tr("Status bar"))
-            .w_full()
-            .h(BAR_H)
-            .pl(12.0)
-            .pr(8.0)
-            .gap(8.0)
-            .center_y()
-            .border_sides([1.0, 0.0, 0.0, 0.0], u.hair)
-            .child(left)
-            .child(spacer())
-            .child(right),
-    )
+    Some(bar(u).child(left).child(spacer()).child(right))
+}
+
+fn bar(u: &Ui) -> El {
+    row()
+        .key("statusbar")
+        .role("status")
+        .label(tr("Status bar"))
+        .w_full()
+        .h(BAR_H)
+        .pl(12.0)
+        .pr(8.0)
+        .gap(8.0)
+        .center_y()
+        .border_sides([1.0, 0.0, 0.0, 0.0], u.hair)
 }
 
 #[cfg(test)]

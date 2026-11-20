@@ -312,7 +312,7 @@ pub fn section(s: &State, u: &Ui, v: &View, hero: &HeroCard) -> El {
             .wrap(),
     );
     if let Some(error) = &s.browse_view.audio.error {
-        c = c.child(crate::notify::feedback::error_line(u, "game-sounds-error", error));
+        c = c.child(text(error.clone()).font(SMALL).color(u.rose).wrap());
     }
     let groups = grouped(v);
     if groups.is_empty() {
@@ -646,7 +646,7 @@ fn swap_panel(s: &State, u: &Ui, v: &View, hero: &HeroCard) -> El {
         );
     }
     if let Some(error) = &a.swap_error {
-        panel = panel.child(crate::notify::feedback::error_line(u, "game-sounds-swap-error", error));
+        panel = panel.child(text(error.clone()).font(SMALL).color(u.rose).wrap());
     }
     panel
 }

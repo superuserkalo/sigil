@@ -153,38 +153,6 @@ pub const DE: &[(&str, &str)] = &[
     ("This mod's GameBanana page has no sound sample.", "Die GameBanana-Seite dieser Mod hat keine Hörprobe."),
     ("Stop the sample of {}", "Hörprobe von {} stoppen"),
     ("Play the sample of {}", "Hörprobe von {} abspielen"),
-    // Sigil's own crash, found at the next start (`settings/crash.rs`)
-    ("Sigil closed unexpectedly last time", "Sigil wurde beim letzten Mal unerwartet beendet"),
-    ("It stopped on an error: {}", "Es hielt bei einem Fehler an: {}"),
-    ("Windows ended it with an exception: {}", "Windows hat es mit einer Ausnahme beendet: {}"),
-    (
-        "It ended without a clean exit and left no error message: a native crash, a graphics driver crash or a forced quit.",
-        "Es wurde nicht sauber beendet und hinterließ keine Fehlermeldung: ein nativer Absturz, ein Absturz des Grafiktreibers oder ein erzwungenes Beenden.",
-    ),
-    (
-        "A crash report helps fix it. It holds the error, where it happened and the last lines of Sigil's log, with your user name, paths, keys and emails taken out. Nothing else goes, and only if you press Send report.",
-        "Ein Absturzbericht hilft, das zu beheben. Er enthält den Fehler, die Stelle und die letzten Zeilen von Sigils Protokoll, ohne deinen Benutzernamen, Pfade, Schlüssel und E-Mail-Adressen. Sonst geht nichts raus, und nur, wenn du Bericht senden drückst.",
-    ),
-    ("Show what is sent", "Zeigen, was gesendet wird"),
-    ("Hide what is sent", "Ausblenden, was gesendet wird"),
-    ("Always send crash reports", "Absturzberichte immer senden"),
-    (
-        "Later crash reports go without this question. The switch is in Settings, Privacy.",
-        "Spätere Absturzberichte gehen ohne diese Frage raus. Der Schalter ist unter Einstellungen, Datenschutz.",
-    ),
-    (
-        "Offline mode is on, so Send report is off. Turn it off in Settings to send.",
-        "Der Offlinemodus ist an, daher ist Bericht senden aus. Schalte ihn in den Einstellungen aus, um zu senden.",
-    ),
-    ("Don't send", "Nicht senden"),
-    ("Send report", "Bericht senden"),
-    ("Crash report sent", "Absturzbericht gesendet"),
-    ("Crash report not sent", "Absturzbericht nicht gesendet"),
-    (
-        "Sigil closed unexpectedly last time. Crash reports are on in Settings, Privacy.",
-        "Sigil wurde beim letzten Mal unerwartet beendet. Absturzberichte sind unter Einstellungen, Datenschutz eingeschaltet.",
-    ),
-    ("Thanks. It helps fix what went wrong.", "Danke. Das hilft, den Fehler zu beheben."),
     // Install date on cards (A3)
     ("Mar", "Mär"),
     ("May", "Mai"),
@@ -197,7 +165,6 @@ pub const DE: &[(&str, &str)] = &[
 #[cfg_attr(not(test), allow(dead_code))]
 pub const NOT_TEXT: &[&str] = &[
     "Page: {}",
-    "Warning: {}",
     // Scene fixtures
     "Checked 12 mods. All up to date",
     "Could not write autoexec.cfg",

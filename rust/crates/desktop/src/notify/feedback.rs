@@ -1,7 +1,6 @@
 //! Send feedback from any error (issue #5).
 //!
-//! Every error and warning toast, inline error box, inline error line ([`error_line`]) and
-//! failed-step row offers Send feedback. It opens one
+//! Every error toast, inline error box and failed-step row offers Send feedback. It opens one
 //! dialog, prefilled with what failed (the error, the page, Sigil's version and the system),
 //! shown in full and scrubbed (`deadlock_core::telemetry::scrub`) before anything goes, with an
 //! optional note. Send uses the player-pressed diagnostics path (`telemetry::send_diagnostics`,
@@ -33,8 +32,6 @@ const URL_BODY_MAX: usize = 5000;
 
 pub struct Feedback {
     pub open: bool,
-    /// A warning rather than an error: the report says so.
-    pub warning: bool,
     /// What failed: the toast's title and detail, or an inline box's text.
     pub title: String,
     pub detail: String,
@@ -52,7 +49,6 @@ impl Default for Feedback {
     fn default() -> Self {
         Feedback {
             open: false,
-            warning: false,
             title: String::new(),
             detail: String::new(),
             page: String::new(),
@@ -78,7 +74,7 @@ impl Feedback {
 
     /// What failed, as the dialog shows it and every channel sends it: scrubbed.
     pub fn details(&self, game_found: bool) -> String {
-        let mut lines = vec![self.headline()];
+        let mut lines = vec![format!("Error: {}", self.title)];
         if !self.detail.trim().is_empty() {
             lines.push(self.detail.trim().to_string());
         }
@@ -87,15 +83,6 @@ impl Feedback {
         lines.push(format!("System: {} {}", std::env::consts::OS, std::env::consts::ARCH));
         lines.push(format!("Game found: {game_found}"));
         telemetry::scrub(&lines.join("\n"))
-    }
-
-    /// `Error: <title>` or `Warning: <title>`, the report's first line.
-    fn headline(&self) -> String {
-        if self.warning {
-            format!("Warning: {}", self.title)
-        } else {
-            format!("Error: {}", self.title)
-        }
     }
 
     /// The summary the Worker gets: the player's note first, then what failed.
@@ -127,7 +114,7 @@ impl Feedback {
             }
             body.truncate(cut);
         }
-        let title = telemetry::scrub(&self.headline());
+        let title = telemetry::scrub(&format!("Error: {}", self.title));
         format!("{ISSUES}?title={}&body={}", encode(&title), encode(&body))
     }
 }
@@ -146,14 +133,8 @@ fn encode(value: &str) -> String {
 
 /// Open the dialog for one error.
 pub fn open(st: &mut State, title: &str, detail: &str) {
-    open_as(st, false, title, detail);
-}
-
-/// Open the dialog for an error, or for a warning when `warning` is true.
-pub fn open_as(st: &mut State, warning: bool, title: &str, detail: &str) {
     let f = &mut st.notices.feedback;
     f.open = true;
-    f.warning = warning;
     f.title = title.trim().to_string();
     f.detail = detail.trim().to_string();
     f.page = tr(st.screen.title()).to_string();
@@ -245,31 +226,6 @@ pub fn error_box(u: &Ui, key: &str, message: &str) -> El {
                 .a11y_hidden(),
         )
         .child(button(u, &format!("{key}-feedback"), message, ""))
-}
-
-/// An error shown in place as a line of text (under a field, in a dialog, in a list row), with
-/// Send feedback beside it. Use it instead of a bare red `text(error)` so every error offers the
-/// same way to report it; [`error_box`] is the framed version for a page.
-pub fn error_line(u: &Ui, key: &str, message: &str) -> El {
-    row()
-        .key(key.to_string())
-        .w_full()
-        .gap(8.0)
-        .items_start()
-        .role("alert")
-        .label(message.to_string())
-        .child(
-            text(message.to_string())
-                .font(SMALL)
-                .color(u.rose)
-                .wrap()
-                .selectable(true)
-                .grow(1.0)
-                .shrink()
-                .min_w(0.0)
-                .a11y_hidden(),
-        )
-        .child(button(u, &format!("{key}-feedback"), message, "").mt(-3.0))
 }
 
 /// The dialog, drawn over everything with the toasts (`notify::region`).
@@ -432,19 +388,6 @@ mod tests {
         let summary = f.summary(true);
         assert!(summary.starts_with("Note: clicked install"));
         assert!(summary.contains("Page: Browse"));
-    }
-
-    #[test]
-    fn a_warning_is_reported_as_one() {
-        let mut f = Feedback {
-            title: "2 mods were not installed".to_string(),
-            page: "Profiles".to_string(),
-            ..Feedback::default()
-        };
-        assert!(f.details(true).starts_with("Error: 2 mods"));
-        f.warning = true;
-        assert!(f.details(true).starts_with("Warning: 2 mods"));
-        assert!(f.issue_url(true).contains("title=Warning%3A%202%20mods"));
     }
 
     #[test]

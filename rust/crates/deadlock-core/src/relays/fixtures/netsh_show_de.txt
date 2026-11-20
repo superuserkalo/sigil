@@ -1,0 +1,30 @@
+
+Regelname:                            Sigil-Relay-fra-27015-27140
+----------------------------------------------------------------------
+Aktiviert:                            Ja
+Richtung:                             Aus
+Profile:                              Domne,Privat,ffentlich
+Gruppierung:                          
+Lokale IP:                            Beliebig
+Remote-IP:                            155.133.226.68/255.255.255.255,155.133.226.69/255.255.255.255
+Protokoll:                            UDP
+Lokaler Port:                         Beliebig
+Remoteport:                           27015-27140
+Edgeausnahme:                         Nein
+Aktion:                               Blockieren
+
+Regelname:                            Sigil-Relay-hkg-27015-27060
+----------------------------------------------------------------------
+Aktiviert:                            Nein
+Richtung:                             Aus
+Profile:                              Domne,Privat,ffentlich
+Gruppierung:                          
+Lokale IP:                            Beliebig
+Remote-IP:                            155.133.244.35/32
+Protokoll:                            UDP
+Lokaler Port:                         Beliebig
+Remoteport:                           27015-27060
+Edgeausnahme:                         Nein
+Aktion:                               Blockieren
+OK.
+
