@@ -217,6 +217,81 @@ enum Command {
         #[command(subcommand)]
         command: VpkCommand,
     },
+    /// Export heroes and the Hideout as glb files for the 3D viewer. Reads the game only.
+    Viewer {
+        #[command(subcommand)]
+        command: ViewerCommand,
+    },
+}
+
+#[derive(Subcommand)]
+enum ViewerCommand {
+    /// List the game's heroes with codename and body model.
+    Heroes {
+        /// Print machine-readable JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Name the heroes whose model or material files one mod VPK replaces.
+    ModHeroes {
+        /// A mod's directory VPK, for example pak03_dir.vpk.
+        #[arg(value_name = "VPK")]
+        vpk: PathBuf,
+        /// Print machine-readable JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Export one hero as a glb with a JSON sidecar.
+    ExportHero {
+        /// Codename or display name, for example inferno or Infernus.
+        #[arg(value_name = "HERO")]
+        hero: String,
+        /// The unmodded hero instead of the installed mods.
+        #[arg(long)]
+        original: bool,
+        /// Also include this disabled addon slot, to preview it. Repeat for more.
+        #[arg(long = "with-slot", value_name = "SLOT")]
+        slots: Vec<u16>,
+        /// Cache folder to write into. Default <data>/viewer-cache.
+        #[arg(long, value_name = "DIR")]
+        out: Option<PathBuf>,
+        /// Embed textures at full size instead of 1024 px.
+        #[arg(long)]
+        full_textures: bool,
+        /// Print machine-readable JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Export the Hideout scene, optionally with a hero at the spawn.
+    ExportHideout {
+        /// Hero to stand at the spawn.
+        #[arg(long, value_name = "HERO")]
+        hero: Option<String>,
+        /// The unmodded room and hero.
+        #[arg(long)]
+        original: bool,
+        /// Also include this disabled addon slot. Repeat for more.
+        #[arg(long = "with-slot", value_name = "SLOT")]
+        slots: Vec<u16>,
+        /// Cache folder to write into. Default <data>/viewer-cache.
+        #[arg(long, value_name = "DIR")]
+        out: Option<PathBuf>,
+        /// Print machine-readable JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Remove least recently used viewer exports past a size budget.
+    Prune {
+        /// Megabytes to keep.
+        #[arg(long, default_value_t = 2048, value_name = "MB")]
+        keep_mb: u64,
+        /// Cache folder. Default <data>/viewer-cache.
+        #[arg(long, value_name = "DIR")]
+        out: Option<PathBuf>,
+        /// Print machine-readable JSON.
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -1129,6 +1204,13 @@ impl Cli {
             Command::Vpk { command } => match command {
                 VpkCommand::Inspect { json, .. } => *json,
             },
+            Command::Viewer { command } => match command {
+                ViewerCommand::Heroes { json }
+                | ViewerCommand::ModHeroes { json, .. }
+                | ViewerCommand::ExportHero { json, .. }
+                | ViewerCommand::ExportHideout { json, .. }
+                | ViewerCommand::Prune { json, .. } => *json,
+            },
             Command::Mod { command } => match command {
                 ModCommand::New { json, .. }
                 | ModCommand::Baseline { json, .. }
@@ -1884,6 +1966,54 @@ fn run(cli: &Cli) -> error::Result<i32> {
                     json: *json,
                 })?;
                 Ok(if ok { 0 } else { 1 })
+            }
+        },
+        Command::Viewer { command } => match command {
+            ViewerCommand::Heroes { json } => {
+                commands::viewer::heroes(*json)?;
+                Ok(0)
+            }
+            ViewerCommand::ModHeroes { vpk, json } => {
+                commands::viewer::mod_heroes(vpk, *json)?;
+                Ok(0)
+            }
+            ViewerCommand::ExportHero {
+                hero,
+                original,
+                slots,
+                out,
+                full_textures,
+                json,
+            } => {
+                commands::viewer::export_hero(&commands::viewer::ExportHeroArgs {
+                    hero: hero.clone(),
+                    original: *original,
+                    slots: slots.clone(),
+                    out: out.clone(),
+                    full_textures: *full_textures,
+                    json: *json,
+                })?;
+                Ok(0)
+            }
+            ViewerCommand::ExportHideout {
+                hero,
+                original,
+                slots,
+                out,
+                json,
+            } => {
+                commands::viewer::export_hideout(&commands::viewer::ExportHideoutArgs {
+                    hero: hero.clone(),
+                    original: *original,
+                    slots: slots.clone(),
+                    out: out.clone(),
+                    json: *json,
+                })?;
+                Ok(0)
+            }
+            ViewerCommand::Prune { keep_mb, out, json } => {
+                commands::viewer::prune(out.as_ref(), *keep_mb, *json)?;
+                Ok(0)
             }
         },
         Command::Publish { command } => match command {

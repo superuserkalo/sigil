@@ -78,6 +78,11 @@ for redistribution.
   `rust/crates/desktop/src/ui/personalize.rs`) follow `src/lib/backgroundGradient.ts`; the art
   surfaces, sources and framing follow `src/components/settings/AppearanceArtSection.tsx`. The ten
   preset themes are Sigil's own.
+- 3D viewer assets (2026-11-20), ported code, no assets: `rust/crates/deadlock-core/src/viewer/`
+  ports the hero cache keys, reviewed model entries and skin motion recovery from
+  `electron/main/services/heroPoseModels.ts`, the clip recipes and selection from
+  `src/lib/heroAnimationCatalog.ts`, and the Hideout scene build from `hideoutScene.ts`,
+  `hideoutAtmosphere.ts`, `source2Entity.ts` and `src/lib/hideoutTransform.ts`.
 - Settings: the light theme neutrals and the eight accent presets in
   `rust/crates/desktop/src/ui.rs` and `prefs.rs` follow Grimoire's `src/index.css` and
   `src/lib/accentColor.ts`; the Steam launch options edit in
@@ -109,7 +114,8 @@ for redistribution.
 - Source: https://github.com/Slush97/vpkmerge, pinned at df4158673f4e700b9dda4db76ed9f193440b24ba
 - License: MIT. Copyright (c) 2026 esoc.
 - Use: linked into Sigil.exe for compatibility repairs after game updates (KV3 resource
-  decoding and re-encoding, skeleton, sound, text and camera heals; ADR 0013). The standalone
+  decoding and re-encoding, skeleton, sound, text and camera heals; ADR 0013), and for the 3D
+  viewer's model, clip, texture and cube map export (`deadlock_core::viewer`). The standalone
   binary stays an optional external tool for merging and splitting VPKs.
 
 **ValveResourceFormat / Source 2 Viewer**

@@ -78,6 +78,7 @@ pub mod subscription;
 pub mod telemetry;
 pub mod toolchain;
 pub mod trash;
+pub mod viewer;
 pub mod vpk;
 pub mod vpk_write;
 
