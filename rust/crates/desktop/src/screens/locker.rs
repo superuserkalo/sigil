@@ -233,6 +233,9 @@ pub struct View {
     pub art_asked: std::collections::HashSet<String>,
     /// The game's own art and sounds (`assets.rs`).
     pub assets: assets::Assets,
+    /// The hero page shows the hero in 3D beside its sections (Grimoire's 3D toggle). Kept
+    /// across heroes, as Grimoire's panel is.
+    pub view3d: bool,
 }
 
 impl Default for View {
@@ -274,6 +277,7 @@ impl Default for View {
             addons_sig: None,
             art_asked: Default::default(),
             assets: Default::default(),
+            view3d: false,
         }
     }
 }
@@ -283,6 +287,11 @@ const CARD_RADIUS: f32 = 12.0;
 const CARD_MIN_W: f32 = 160.0;
 const RAIL_W: f32 = 300.0;
 const PANE_W: f32 = 480.0;
+/// With the 3D view on the pane gives up width down to this, so the view keeps about
+/// `VIEW3D_W`; below `VIEW3D_MIN_W` the view replaces the pane.
+const PANE_MIN_W: f32 = 380.0;
+const VIEW3D_W: f32 = 440.0;
+const VIEW3D_MIN_W: f32 = 300.0;
 /// How wide the left fade runs over the art on the hero and General pages.
 const FADE_W: f32 = 1040.0;
 
@@ -994,7 +1003,7 @@ fn list_row(s: &State, u: &Ui, v: &View, hero: &HeroCard) -> El {
 
     let mut body = col().w_full();
     if open {
-        body = body.child(variants::skins_list(s, u, v, hero, false));
+        body = body.child(variants::skins_list(s, u, v, hero, false, false));
     }
 
     col().key(format!("locker-list-block-{}", hero.codename)).w_full().child(header).child(body)
@@ -1012,6 +1021,24 @@ fn open_hero(st: &mut State, name: &str) {
     if let Some(render) = render {
         crate::data::request_locker_art(st, &render);
     }
+    crate::viewer::prepare::sync_locker(st);
+}
+
+/// The 3D view on or off. On, it shows the hero with the enabled mods, against the game's own.
+fn toggle_3d(st: &mut State) {
+    st.locker.view3d = !st.locker.view3d;
+    if st.locker.view3d {
+        crate::viewer::prepare::sync_locker(st);
+    } else {
+        crate::viewer::close(st, crate::viewer::prepare::LOCKER_KEY);
+    }
+}
+
+/// How wide the section pane is with the 3D view on, and whether the view has room beside
+/// it. Without room the view takes the pane's place.
+fn pane_with_3d(page_w: f32) -> (f32, bool) {
+    let pane = (page_w - RAIL_W - VIEW3D_W).clamp(PANE_MIN_W, PANE_W);
+    (pane, page_w - RAIL_W - pane >= VIEW3D_MIN_W)
 }
 
 fn open_general(st: &mut State) {
@@ -1246,9 +1273,11 @@ pub(super) fn mod_row(s: &State, u: &Ui, m: &ModRow, trailing: Option<El>) -> El
 
 fn hero_page(s: &State, u: &Ui, v: &View, hero: &HeroCard) -> El {
     let (page_w, page_h) = v.page_size;
-    // The full render once it has decoded, the card copy until then.
+    // The full render once it has decoded, the card copy until then. The 3D view takes the
+    // art's place.
     let backdrop = ready_pixels(s, hero.render.as_deref())
         .or_else(|| pixels_for(s, hero.card.as_deref()))
+        .filter(|_| !v.view3d)
         .map(|pixels| {
         // Full height, natural width, anchored right: Grimoire's `h-full w-auto right-0`.
         let ratio = hero
@@ -1360,9 +1389,34 @@ fn hero_page(s: &State, u: &Ui, v: &View, hero: &HeroCard) -> El {
     let star_name = hero.display_name.clone();
     let shuffle_name = hero.display_name.clone();
     let card_hero = hero.clone();
+    let hideout_hero = hero.display_name.clone();
     let controls = col()
         .w_full()
         .gap(2.0)
+        .child(
+            rail_action(
+                u,
+                format!("locker-hero-3d-{}", hero.codename),
+                &icons::BOX,
+                crate::screens::settings::i18n::tr("3D view"),
+                v.view3d,
+            )
+            .role("switch")
+            .checked(v.view3d)
+            .cursor(rune::Cursor::Pointer)
+            .on_press(toggle_3d),
+        )
+        .child(
+            rail_action(
+                u,
+                format!("locker-hero-hideout-{}", hero.codename),
+                &crate::viewer::icons::HOUSE,
+                crate::screens::settings::i18n::tr("Hideout"),
+                false,
+            )
+            .cursor(rune::Cursor::Pointer)
+            .on_press(move |st: &mut State| crate::viewer::prepare::open_hideout(st, Some(hideout_hero.clone()))),
+        )
         .child(
             rail_action(
                 u,
@@ -1468,7 +1522,7 @@ fn hero_page(s: &State, u: &Ui, v: &View, hero: &HeroCard) -> El {
                     )
                     .child(row().pt(8.0).child(browse(ActionKind::Primary)));
             } else {
-                c = c.child(variants::skins_list(s, u, v, hero, true));
+                c = c.child(variants::skins_list(s, u, v, hero, !v.view3d, true));
             }
             c
         }
@@ -1556,9 +1610,10 @@ fn hero_page(s: &State, u: &Ui, v: &View, hero: &HeroCard) -> El {
         }
     };
 
+    let (pane_w, room) = if v.view3d { pane_with_3d(page_w) } else { (PANE_W, true) };
     let pane = col()
         .key("locker-hero-pane")
-        .w(PANE_W)
+        .w(pane_w)
         .h_full()
         .min_h(0.0)
         .scroll(ScrollSpec {
@@ -1571,7 +1626,22 @@ fn hero_page(s: &State, u: &Ui, v: &View, hero: &HeroCard) -> El {
         &format!("locker-hero-{}", hero.codename),
         backdrop,
         0.0,
-        row().w_full().h_full().child(rail).child(pane),
+        if v.view3d {
+            let stage = el()
+                .key("locker-hero-3d")
+                .grow(1.0)
+                .min_w(0.0)
+                .h_full()
+                .pt(24.0)
+                .pr(24.0)
+                .pb(24.0)
+                .pl(if room { 0.0 } else { 8.0 })
+                .child(crate::viewer::view(s, u, crate::viewer::prepare::LOCKER_KEY));
+            let r = row().w_full().h_full().child(rail);
+            if room { r.child(pane).child(stage) } else { r.child(stage) }
+        } else {
+            row().w_full().h_full().child(rail).child(pane)
+        },
     )
 }
 
@@ -2644,6 +2714,26 @@ fn fixture_hero(s: &State, name: &str) -> Option<HeroCard> {
         .iter()
         .find(|hero| hero.display_name == name)
         .cloned()
+}
+
+/// Haze's page with the 3D view on and the fixture skins, for the viewer's scenes. The caller
+/// opens the view (stand-in, loading, failed, no game).
+pub fn scene_view3d(s: &mut State) {
+    s.screen = Screen::Locker;
+    if rune::is_headless() {
+        crate::data::locker_now(s);
+    }
+    fixture_mods(s);
+    s.locker.view3d = true;
+    s.locker.page = Page::Hero("Haze".to_string());
+    if let Some(render) = s.locker.heroes.iter().find(|h| h.display_name == "Haze").and_then(|h| h.render.clone()) {
+        crate::data::request_locker_art(s, &render);
+    }
+    s.locker.hero_section = HeroSection::Mods;
+    let (page_w, page_h) = s.locker.page_size;
+    let (pane, room) = pane_with_3d(page_w);
+    let w = if room { page_w - RAIL_W - pane - 24.0 } else { page_w - RAIL_W - 32.0 };
+    crate::viewer::headless_points(s, crate::viewer::prepare::LOCKER_KEY, [w, page_h - 76.0]);
 }
 
 /// The grid in list view, two heroes starred and Haze open to its skins.

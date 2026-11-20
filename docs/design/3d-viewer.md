@@ -2,9 +2,11 @@
 
 Status: active, 2026-11-20. The asset half is built (`deadlock_core::viewer`, `dah viewer`). The
 renderer half is built (`rust/crates/sigil-viewer`, `rust/crates/desktop/src/viewer/`, see
-"Renderer" below) and tested against a stand-in hero and room; no page shows it yet. Fixture tests pass; no real-game export has been run yet (no Deadlock install on the
-build Mac), so the Hideout's entity and world-node parsing is verified only against Grimoire's
-schema, not against a live `dl_hideout.vpk`.
+"Renderer" below). The app places it in the Locker, Installed, a mod's details and a full-screen
+Hideout (see "Where it appears"); every placement and state is checked in headless scenes on a
+stand-in hero and room. No real-game export has been run yet (no Deadlock install on the build
+Mac): what a real hero or the real `dl_hideout.vpk` looks like in the app is unverified, and the
+Hideout's entity and world-node parsing is verified only against Grimoire's schema.
 
 ## Goal
 
@@ -232,7 +234,7 @@ viewer::find_hero(game_root, "Infernus") -> Result<HeroEntry>
 viewer::sources(game_root, Variant::Modded, Some(&[7])) -> Vec<Source>
 viewer::heroes_in_vpk(&vpk) -> Result<Vec<String>>           // codenames a mod changes
 viewer::export_hero(game_root, cache, "inferno", Variant::Modded, &[], &cancel) -> Result<Exported>
-viewer::export_hero_with(&HeroExportRequest { library, max_texture_edge, .. }, &cancel)
+viewer::export_hero_with(&HeroExportRequest { library, max_texture_edge, extra_slots, exclude_slots, .. }, &cancel)
 viewer::export_hideout(game_root, cache, Variant::Modded, Some("inferno"), &cancel) -> Result<PathBuf>
 viewer::export_hideout_with(&HideoutExportRequest { .. }, &cancel)
 viewer::prune_cache(cache, keep_bytes) -> Result<PruneReport>
@@ -241,6 +243,10 @@ viewer::is_cancelled(&error) -> bool
 
 `Exported { glb, sidecar, cloth, key, variant, cached }`. A second call with unchanged inputs
 returns `cached: true` without opening a model.
+
+`extra_slots` adds switched-off slots (preview a mod before turning it on); `exclude_slots` leaves
+enabled slots out (the hero without one mod, the "before" side of a mod's preview while it is on).
+Both change the stack and so the key.
 
 ## CLI
 
@@ -284,6 +290,54 @@ the file paths. The game comes from discovery or `DAH_GAME_DIR`. The real-game t
 - Hero ambient particles and effects (`heroAmbientDiscovery.ts`), material groups and skins per
   hero form, and WIP heroes whose pose lives only in a loose NM pose clip.
 - A real-game run. The ignored test and the CLI are ready for the first machine with Deadlock.
+
+## Where it appears
+
+The screens never open files themselves. They ask `desktop/src/viewer/prepare.rs` for a view under
+a key; it runs the export on a worker thread into `<data>/viewer-cache`, shows the stage while it
+runs ("Preparing Haze with your mods", step 1 of 2, Cancel), and opens the viewport when the files
+are ready. A cache hit opens at once. Every ask has an owner; when the owner goes (the player leaves
+the Locker's hero page, closes the dialog, leaves full screen) or another hero is picked under the
+same key, the export is cancelled through its flag and the view closed. When the installed mods
+change under an open view (a skin turned on in the Locker, Turn on in the dialog), it is asked
+again, so the view follows the game. About 30 seconds after launch the cache is pruned once, on a
+worker, to 2 GB (`prune_cache`, least recently used first).
+
+| Place | How a player gets there | What it shows |
+| --- | --- | --- |
+| Locker, hero page | Rail: **3D view** (a switch, kept across heroes, as Grimoire's 3D toggle) | The hero with every enabled mod against the unmodded game (With mods / Without mods / Split). It takes the 2D art's place right of the sections; the sections pane narrows to 380 points to keep the view about 440 wide, and below 300 points of room the view replaces the pane. Previous and next hero re-ask under the same key. |
+| Locker, skin rows | The cube button on each skin, on or off | Preview in 3D for that one skin on that hero (below). |
+| Locker, Hideout | Rail: **Hideout** | The Hideout full screen with the player's mods and this hero at the spawn (Grimoire puts the Hideout in its hero viewer as a scene; Sigil gives it the whole window). The strip's last button closes it. |
+| Installed, card menu | ... > **Preview in 3D** ("while off" on a switched-off mod) | Preview in 3D dialog. Offered only when `heroes_in_vpk` says the mod changes a hero model: every installed slot is read once per addon scan on a worker and kept by slot, file and size. |
+| Installed, a multi-file mod's file list | The cube button on each file | The same, for that file. |
+| Mod details (Browse) | **Preview in 3D** beside "Installed in slot NN" | The same, for the installed slot. |
+
+The **Preview in 3D** dialog (`viewer/dialog.rs`) shows the mod's hero with the mod's slot in the
+stack, switched on or not (`extra_slots`), against the hero as it is now without it
+(`exclude_slots` when it is on). The compare buttons read With this mod / Without this mod. A mod
+that changes several heroes gets a hero picker in the header. A switched-off mod says so and offers
+Turn on (the same switch as the card). Escape closes it; full screen works from the strip.
+
+Notes under the view's title: "No installed mod changes Haze." when the modded and original exports
+share a key (no compare buttons then), "Neon does not change how Haze looks." for a mod whose stack
+equals the one without it, and "Neon changes nothing this view draws." for each `changesNotShown`
+issue in the sidecar (Deadlock Mod Manager's warning).
+
+States: no game folder ("Deadlock was not found", Open Settings), the export failed (the error,
+Try again, Send feedback through `notify::feedback`), no GPU (the hero's Locker art as the still
+with a one-line note, or the message where a screen has no picture). Demo mode uses the stand-in
+hero and room.
+
+Headless scenes (`cargo run -p dah-desktop -- --snap out.png --scene <name>`): `viewer-locker`,
+`viewer-locker-loading`, `viewer-locker-failed`, `viewer-locker-nogame`, `viewer-locker-nogpu`,
+`viewer-locker-hideout`, `viewer-hideout-loading`, `viewer-installed-menu`, `viewer-mod-dialog`,
+`viewer-mod-dialog-loading`, `viewer-details`, and the bare viewport's `viewer`, `viewer-split`,
+`viewer-hideout`.
+
+What a tester on Windows with Deadlock should check first: the Locker's 3D view on a hero with an
+enabled skin (first export time, the hero standing and animating, With mods against Without mods),
+a switched-off skin through Installed > ... > Preview in 3D, the Hideout from the Locker rail, and a
+second open of each (it should come from the cache at once).
 
 ## Renderer
 
@@ -348,8 +402,9 @@ Drag orbits, the wheel zooms, Shift-drag pans, double-click resets, and with the
 arrows orbit, + and - zoom, Space plays, Home resets, F toggles full screen and Escape leaves it.
 The strip has play and pause, seek (pauses), speed, the clip, With mods / Without mods / Split
 (the split line drags), camera reset, a PNG capture into `Pictures/Sigil`, and full screen
-(`viewer::overlay`, placed by `app::view`). Headless snapshots render one fixed frame on the
-calling thread: `--scene viewer`, `viewer-split` and `viewer-hideout`.
+(`viewer::overlay`, placed by `app::view`). Below 720 points wide the strip folds into two rows
+and drops the clock, speed and clip (full screen has them). Headless snapshots render one fixed
+frame on the calling thread, at the size a scene gives with `viewer::headless_points`.
 
 ### Cost
 

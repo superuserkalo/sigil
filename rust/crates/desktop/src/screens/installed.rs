@@ -1693,6 +1693,17 @@ pub fn overlay(s: &State, u: &Ui) -> Option<El> {
                         }),
                 );
             }
+            // The hero this mod changes, in 3D, even while it is off.
+            if !crate::viewer::dialog::heroes_of(s, slot).is_empty() {
+                let name = display_name(s, addon);
+                items.push(
+                    menu_item(u, "menu-preview-3d", Some(&icons::BOX), tr(crate::viewer::dialog::LABEL), if addon.enabled { "" } else { tr("while off") }, true)
+                        .on_press(move |st: &mut State| {
+                            st.installed.menu = None;
+                            crate::viewer::dialog::open(st, slot, &name);
+                        }),
+                );
+            }
             let pinned = extra.pinned;
             items.push(
                 menu_item(

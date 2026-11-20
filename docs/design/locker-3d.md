@@ -1,8 +1,8 @@
 # Locker 3D hero viewer
 
-Status: design only, 2026-11-17. Nothing here is built. This records what Rune would need
-before a posed hero can spin in the Locker, so the next round starts from facts instead of a
-webview.
+Status: superseded 2026-11-20 by `3d-viewer.md`: the viewer is built on its own wgpu device and
+placed in the Locker. Kept as the 2026-11-17 record of what Rune lacked and why the viewer renders
+off screen.
 
 ## The decision in one line
 

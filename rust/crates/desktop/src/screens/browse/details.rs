@@ -545,6 +545,16 @@ pub(crate) fn status_row(s: &State, u: &Ui, d: &Details) -> Option<El> {
     let mut r = row().w_full().gap(8.0).center_y().flex_wrap();
     if let Some(slot) = slot {
         r = r.child(tag(u, &format!("Installed in slot {slot:02}")));
+        // The hero it changes, in 3D, as the player has it (on or off).
+        if !crate::viewer::dialog::heroes_of(s, slot).is_empty() {
+            let name = d.name.clone();
+            r = r.child(
+                u.icon_action(&icons::BOX, crate::screens::settings::i18n::tr(crate::viewer::dialog::LABEL), ActionKind::Secondary)
+                    .key("details-preview-3d")
+                    .cursor(rune::Cursor::Pointer)
+                    .on_press(move |st: &mut State| crate::viewer::dialog::open(st, slot, &name)),
+            );
+        }
     }
     if let Some(file) = &update {
         let id = d.id;

@@ -56,8 +56,9 @@ fn step_button(
 }
 
 /// The skins of one hero, in load order. `full` adds the order arrows; the list view's
-/// expanded body only needs the switches.
-pub(super) fn skins_list(s: &State, u: &Ui, v: &View, hero: &HeroCard, full: bool) -> El {
+/// expanded body only needs the switches. `preview` adds Preview in 3D (the hero page; with
+/// its 3D view on the arrows give way to keep the names readable).
+pub(super) fn skins_list(s: &State, u: &Ui, v: &View, hero: &HeroCard, full: bool, preview: bool) -> El {
     let mods = hero_mods(v, hero);
     let equipped = mods
         .iter()
@@ -96,6 +97,17 @@ pub(super) fn skins_list(s: &State, u: &Ui, v: &View, hero: &HeroCard, full: boo
                 },
             );
             trailing = trailing.child(up).child(down);
+        }
+
+        if preview {
+            // Preview this skin on the hero in 3D, on or off, against the hero without it.
+            let (label, hero_name) = (m.label.clone(), hero.display_name.clone());
+            trailing = trailing.child(
+                u.icon_button(&icons::BOX, &crate::screens::settings::i18n::fill(crate::screens::settings::i18n::tr("Preview {} in 3D"), &[&m.label]))
+                    .key(format!("locker-3d-{}", m.slot))
+                    .cursor(rune::Cursor::Pointer)
+                    .on_press(move |st: &mut State| crate::viewer::dialog::open_on(st, slot, &label, &hero_name)),
+            );
         }
 
         if Some(slot) != equipped {

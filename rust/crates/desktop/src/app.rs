@@ -1252,6 +1252,8 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
         ("telemetry-modal", screens::settings::telemetry::dialog(s, &u)),
         ("shell-modal", crate::shell::whats_new_dialog(s, &u).or_else(|| crate::shell::shortcuts_dialog(s, &u))),
         ("toy-modal", crate::shell_tips::toy(s, &u)),
+        // Preview in 3D, over a mod's details when it opened from there.
+        ("viewer-modal", crate::viewer::dialog::view(s, &u)),
     ] {
         if let Some(layer) = layer {
             root = root.child(u.modal_layer(key, layer));
