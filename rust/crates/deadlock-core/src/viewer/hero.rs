@@ -6,7 +6,8 @@
 //! into a temporary VPK; Sigil resolves across the open VPKs instead, so any number of mods
 //! stack with no merge step.
 
-use std::collections::BTreeMap;
+use std::cell::Cell;
+use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
 use std::sync::{Mutex, OnceLock};
@@ -14,7 +15,9 @@ use std::sync::{Mutex, OnceLock};
 use serde::{Deserialize, Serialize};
 
 use super::cache::{self, Staging};
-use super::clips::{self, Action, ClipCandidate, Playback};
+use super::clips::{
+    self, Action, ClipCandidate, ClipFileMeta, ClipGroup, ClipShowcase, Playback, Showcase,
+};
 use super::stack::{self, Source, SourceUsage, Stack, Stamp, normalize, source_fingerprint, stamp};
 use super::{
     PIPELINE_VERSION, SCHEMA, VPKMERGE_REV, Variant, check, citadel_dir, exporter_error, kv,
@@ -273,6 +276,23 @@ pub struct ClipMeta {
     pub origin: ClipOrigin,
     /// The `.vnmclip_c` path for a clip file.
     pub resource: Option<String>,
+    /// English name for a clip picker: the recipe's action (`Idle`, `Reload`), else the
+    /// clip's own words (`Ui shop idle`).
+    #[serde(default)]
+    pub label: String,
+    /// Picker section: `idle`, `movement`, `combat` or `other`.
+    #[serde(default)]
+    pub group: ClipGroup,
+    /// Playback rate multiplier: the UI graph's for a showcase, else 1.
+    #[serde(default = "unit_speed")]
+    pub speed: f32,
+    /// Set when the game's UI graph plays this clip on the shop or hero-select screen.
+    #[serde(default)]
+    pub showcase: Option<ClipShowcase>,
+}
+
+fn unit_speed() -> f32 {
+    1.0
 }
 
 /// The JSON sidecar written beside a hero glb. See `docs/design/3d-viewer.md`.
@@ -285,8 +305,11 @@ pub struct HeroSidecar {
     /// The look the glb shows. `original` when no installed mod touches this hero, even if
     /// `modded` was asked for: the two exports then share one cache entry.
     pub variant: Variant,
-    /// glTF animation names in the glb, idle first.
+    /// glTF animation names in the glb, in selection order (the showcase first when the UI
+    /// graph names one).
     pub clips: Vec<String>,
+    /// The clip a preview starts on (Grimoire's default clip rule), despite the name not
+    /// always an idle: the showcase, else a recipe clip, else an idle or pose.
     pub idle_clip: Option<String>,
     /// The VPK stack the export read, highest precedence first. `slot` is null for game files.
     pub sources: Vec<SourceUsage>,
@@ -295,6 +318,10 @@ pub struct HeroSidecar {
     /// File name of the cloth data beside the glb (`PHYS.m_pFeModel` as JSON), when the model
     /// has cloth.
     pub cloth: Option<String>,
+    /// The particle bundle beside the glb (`particles/bundle.json`): the effects the hero
+    /// carries, or null when it carries none.
+    #[serde(default)]
+    pub particles: Option<String>,
     /// `meters`, Y up, the hero standing on y = 0 at the origin, facing +Z.
     pub units: String,
     pub up: String,
@@ -322,7 +349,7 @@ pub struct Exported {
 }
 
 /// Everything [`export_hero_with`] takes.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct HeroExportRequest<'a> {
     pub game_root: &'a Path,
     pub cache_dir: &'a Path,
@@ -339,6 +366,67 @@ pub struct HeroExportRequest<'a> {
     /// Longest texture edge embedded, `None` for full size. Default 1024 (Grimoire's preview
     /// cap: a hero stays under about 120 MB of GPU textures).
     pub max_texture_edge: Option<u32>,
+    /// Called from the export thread with a fraction from 0.0 to 1.0 that never goes down:
+    /// at the stack opening, the model decode, each clip file, the glb and cloth writes, and
+    /// 1.0 when done. A cache hit reports 1.0 at once.
+    pub progress: Option<&'a (dyn Fn(f32) + Sync)>,
+}
+
+impl std::fmt::Debug for HeroExportRequest<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("HeroExportRequest")
+            .field("game_root", &self.game_root)
+            .field("cache_dir", &self.cache_dir)
+            .field("hero", &self.hero)
+            .field("variant", &self.variant)
+            .field("extra_slots", &self.extra_slots)
+            .field("exclude_slots", &self.exclude_slots)
+            .field("library", &self.library.map(|_| "Library"))
+            .field("max_texture_edge", &self.max_texture_edge)
+            .field("progress", &self.progress.map(|_| "Fn(f32)"))
+            .finish()
+    }
+}
+
+/// Monotonic progress reporting: a fraction is passed on only when it is above the last one.
+pub(crate) struct Progress<'a> {
+    report: Option<&'a (dyn Fn(f32) + Sync)>,
+    last: Cell<f32>,
+}
+
+impl<'a> Progress<'a> {
+    pub fn new(report: Option<&'a (dyn Fn(f32) + Sync)>) -> Self {
+        Progress {
+            report,
+            last: Cell::new(-1.0),
+        }
+    }
+
+    /// Report `fraction` (clamped to 0..=1) if it moves forward.
+    pub fn at(&self, fraction: f32) {
+        let fraction = if fraction.is_finite() {
+            fraction.clamp(0.0, 1.0)
+        } else {
+            return;
+        };
+        if fraction <= self.last.get() {
+            return;
+        }
+        self.last.set(fraction);
+        if let Some(report) = self.report {
+            report(fraction);
+        }
+    }
+
+    /// Report step `done` of `total` inside the band from `start` to `end`.
+    pub fn step(&self, start: f32, end: f32, done: usize, total: usize) {
+        let share = if total == 0 {
+            1.0
+        } else {
+            done.min(total) as f32 / total as f32
+        };
+        self.at(start + (end - start) * share);
+    }
 }
 
 impl<'a> HeroExportRequest<'a> {
@@ -352,6 +440,7 @@ impl<'a> HeroExportRequest<'a> {
             exclude_slots: &[],
             library: None,
             max_texture_edge: Some(1024),
+            progress: None,
         }
     }
 }
@@ -460,21 +549,25 @@ pub(crate) fn plan_hero(request: &HeroExportRequest<'_>) -> Result<HeroPlan> {
 
 /// Export a hero with every option. See [`export_hero`].
 pub fn export_hero_with(request: &HeroExportRequest<'_>, cancel: &AtomicBool) -> Result<Exported> {
+    let progress = Progress::new(request.progress);
     check(cancel)?;
     let plan = plan_hero(request)?;
     let parent = request.cache_dir.join("heroes");
     let entry_dir = parent.join(&plan.key);
 
     if let Some(found) = cached(&entry_dir, &plan)? {
+        progress.at(1.0);
         return Ok(found);
     }
     let _slot = export_slot();
     if let Some(found) = cached(&entry_dir, &plan)? {
+        progress.at(1.0);
         return Ok(found);
     }
     check(cancel)?;
 
     let stack = Stack::open(&plan.sources)?;
+    progress.at(STAGE_STACK);
     let staging = Staging::begin(&parent, &plan.key)?;
     let built = build_hero(
         &stack,
@@ -482,6 +575,7 @@ pub fn export_hero_with(request: &HeroExportRequest<'_>, cancel: &AtomicBool) ->
         request.max_texture_edge,
         cancel,
         &staging.dir,
+        &progress,
     )?;
     check(cancel)?;
 
@@ -505,6 +599,7 @@ pub fn export_hero_with(request: &HeroExportRequest<'_>, cancel: &AtomicBool) ->
         model_entry: plan.hero.model_entry.clone(),
         clip_info: built.clips,
         cloth: built.cloth.then(|| format!("{codename}.cloth.json")),
+        particles: built.particles,
         units: "meters".into(),
         up: "+Y".into(),
         forward: "+Z".into(),
@@ -517,8 +612,19 @@ pub fn export_hero_with(request: &HeroExportRequest<'_>, cancel: &AtomicBool) ->
         serde_json::to_vec_pretty(&sidecar)?,
     )?;
     let dir = staging.commit()?;
+    progress.at(1.0);
     Ok(exported(&dir, codename, &sidecar, false))
 }
+
+// Progress bands of a cold hero export. The glb write (texture encoding) is the longest step
+// and has no finer hook, so it gets the widest band.
+const STAGE_STACK: f32 = 0.05;
+const STAGE_MODEL: f32 = 0.2;
+const STAGE_GRAPHS: f32 = 0.3;
+const STAGE_CLIP_FILES: f32 = 0.45;
+const STAGE_CLIPS: f32 = 0.55;
+const STAGE_GLB: f32 = 0.92;
+const STAGE_CLOTH: f32 = 0.97;
 
 fn exported(dir: &Path, codename: &str, sidecar: &HeroSidecar, cached: bool) -> Exported {
     Exported {
@@ -576,6 +682,7 @@ struct Built {
     clips: Vec<ClipMeta>,
     idle: Option<String>,
     cloth: bool,
+    particles: Option<String>,
     issues: Vec<String>,
 }
 
@@ -584,6 +691,20 @@ enum Pick {
     File(usize),
 }
 
+/// A clip file the selection may pick, with its metadata read and keyframes not yet decoded.
+struct ClipFile {
+    name: String,
+    path: String,
+    meta: ClipFileMeta,
+    showcase: Option<Showcase>,
+}
+
+/// At most this many clip files are read per export.
+const MAX_CLIP_FILES: usize = 32;
+/// A neighbouring clip file larger than this is not read just to flag an embedded clip
+/// (Grimoire's cap).
+const METADATA_MAX_BYTES: usize = 2 * 1024 * 1024;
+
 /// Decode the hero, choose its clips, and write `<codename>.glb` (and cloth) into `out`.
 fn build_hero(
     stack: &Stack,
@@ -591,6 +712,7 @@ fn build_hero(
     max_texture_edge: Option<u32>,
     cancel: &AtomicBool,
     out: &Path,
+    progress: &Progress<'_>,
 ) -> Result<Built> {
     let entry = normalize(&hero.model_entry);
     let (bytes, winner) = stack
@@ -599,6 +721,7 @@ fn build_hero(
     check(cancel)?;
     let mut model = morphic::model::decode(&bytes)
         .map_err(|error| exporter_error(format!("decoding {entry}"), error))?;
+    progress.at(STAGE_MODEL);
     let mut issues = Vec::new();
 
     // Skins: the game plays clip files through its animation graph. Copies baked into a skin's
@@ -627,7 +750,26 @@ fn build_hero(
     }
     check(cancel)?;
 
-    // Clip files beside the model, decoded only when a selection could pick them.
+    // The model's AnimGraph2 graphs: which clip files the game plays, and which one its shop
+    // or hero-select screen shows (Grimoire's discoverRiggedHeroClips).
+    let refs = morphic::decode_kv3_resource(&bytes)
+        .map(|data| clips::model_refs(&data))
+        .unwrap_or_default();
+    let available = |path: &str| has_path(stack, path);
+    let graphs = clips::read_graphs(
+        &refs,
+        |path| {
+            stack
+                .read(path)
+                .and_then(|graph| kv::resource_json(&graph, path).ok())
+        },
+        &available,
+    );
+    progress.at(STAGE_GRAPHS);
+    check(cancel)?;
+
+    // Clip files: graph resources first, then the model's clips folder, sorted. A showcase
+    // keeps its file name; any other file is read only when a recipe could pick it.
     let model_dir = entry
         .rsplit_once('/')
         .map(|(dir, _)| dir.to_string())
@@ -639,67 +781,108 @@ fn build_hero(
         .unwrap_or_default()
         .to_string();
     let wanted = clips::wanted_names(&hero.display_name);
-    let mut files: Vec<(String, String, morphic::model::NmClip)> = Vec::new();
+    let mut listed: Vec<String> = graphs.resources.clone();
     for path in stack
         .list(&format!("{model_dir}/clips/"), ".vnmclip_c")
         .into_keys()
     {
+        if !listed.contains(&path) {
+            listed.push(path);
+        }
+    }
+    let mut queue: Vec<(String, String)> = Vec::new();
+    for path in listed {
         let stem = path
             .rsplit('/')
             .next()
             .and_then(|name| name.strip_suffix(".vnmclip_c"))
             .unwrap_or_default();
-        let Some(name) = canonical_clip_name(stem, &hero.codename, &model_stem, &wanted) else {
+        let name = if graphs.showcases.contains_key(&path) {
+            Some(stem.to_string())
+        } else {
+            canonical_clip_name(stem, &hero.codename, &model_stem, &wanted)
+        };
+        let Some(name) = name.filter(|name| !name.is_empty()) else {
             continue;
         };
-        if files.len() >= 32 || files.iter().any(|(existing, _, _)| *existing == name) {
+        if !queue.iter().any(|(existing, _)| *existing == name) {
+            queue.push((name, path));
+        }
+    }
+    // Showcases first, so the cap never drops one.
+    queue.sort_by_key(|(_, path)| !graphs.showcases.contains_key(path));
+    queue.truncate(MAX_CLIP_FILES);
+
+    let mut metadata: HashMap<String, Option<ClipFileMeta>> = HashMap::new();
+    let mut files: Vec<ClipFile> = Vec::new();
+    let total = queue.len();
+    for (done, (name, path)) in queue.into_iter().enumerate() {
+        check(cancel)?;
+        let meta = clip_meta(stack, &path, None);
+        metadata.insert(path.clone(), meta.clone());
+        progress.step(STAGE_GRAPHS, STAGE_CLIP_FILES, done + 1, total);
+        let Some(meta) = meta else {
+            continue;
+        };
+        let showcase = graphs.showcases.get(&path).cloned();
+        // Inherited graph variations can point at another hero's skeleton: never pose this
+        // model with that clip.
+        if showcase.is_some() && !refs.accepts_skeleton(meta.skeleton.as_deref()) {
             continue;
         }
-        check(cancel)?;
-        let Some(clip) = stack
-            .read(&path)
-            .and_then(|bytes| morphic::model::decode_nm_clip(&bytes).ok())
-        else {
-            continue;
-        };
-        files.push((name, path, clip));
+        files.push(ClipFile {
+            name,
+            path,
+            meta,
+            showcase,
+        });
     }
 
-    let mut picks: BTreeMap<String, (ClipCandidate, Pick)> = BTreeMap::new();
-    for (index, clip) in embedded.iter().enumerate() {
-        picks.insert(
-            clip.name.clone(),
-            (
-                ClipCandidate {
-                    name: clip.name.clone(),
-                    frame_count: clip.frame_count,
-                    fps: clip.fps,
-                    additive: false,
-                },
-                Pick::Embedded(index),
-            ),
-        );
-    }
-    for (index, (name, _, clip)) in files.iter().enumerate() {
-        if clip.additive || clip.frame_count <= 1 {
+    // Embedded clips carry no flags of their own: borrow them from the clip file with the same
+    // timing (Grimoire's heroAnimationMetadata).
+    let mut embedded_candidates: Vec<ClipCandidate> = embedded
+        .iter()
+        .map(|clip| ClipCandidate::new(clip.name.clone(), clip.frame_count, clip.fps))
+        .collect();
+    clips::flag_embedded(
+        &entry,
+        &hero.display_name,
+        &mut embedded_candidates,
+        |path| {
+            if let Some(known) = metadata.get(path) {
+                return known.clone();
+            }
+            let meta = clip_meta(stack, path, Some(METADATA_MAX_BYTES));
+            metadata.insert(path.to_string(), meta.clone());
+            meta
+        },
+    );
+
+    let mut picks: Vec<(ClipCandidate, Pick)> = embedded_candidates
+        .into_iter()
+        .enumerate()
+        .map(|(index, candidate)| (candidate, Pick::Embedded(index)))
+        .collect();
+    for (index, file) in files.iter().enumerate() {
+        let candidate = file.meta.candidate(&file.name, file.showcase.clone());
+        let whole = clips::standalone(&candidate);
+        if candidate.showcase.is_some() && !whole {
             continue;
         }
-        // A clip file wins over a same-name embedded copy: it is what the game plays.
-        picks.insert(
-            name.clone(),
-            (
-                ClipCandidate {
-                    name: name.clone(),
-                    frame_count: clip.frame_count as usize,
-                    fps: clip.fps(),
-                    additive: false,
-                },
-                Pick::File(index),
-            ),
-        );
+        // A showcase or a complete clip file wins over a same-name embedded copy: it is what
+        // the game's graph plays.
+        let existing = picks.iter().position(|(old, _)| old.name == candidate.name);
+        match existing {
+            Some(at) if whole => {
+                picks.remove(at);
+            }
+            Some(_) => continue,
+            None => {}
+        }
+        picks.push((candidate, Pick::File(index)));
     }
     let candidates: Vec<ClipCandidate> = picks
-        .values()
+        .iter()
         .map(|(candidate, _)| candidate.clone())
         .collect();
     let choices = clips::select_clips(&candidates, &hero.display_name);
@@ -718,14 +901,22 @@ fn build_hero(
     let mut animations = Vec::new();
     let mut metas = Vec::new();
     let mut kept_choices = Vec::new();
-    for choice in &choices {
-        let Some((_, pick)) = picks.get(&choice.name) else {
+    for (done, choice) in choices.iter().enumerate() {
+        progress.step(STAGE_CLIP_FILES, STAGE_CLIPS, done, choices.len());
+        check(cancel)?;
+        let Some((_, pick)) = picks.iter().find(|(old, _)| old.name == choice.name) else {
             continue;
         };
         let (mut clip, origin, resource) = match pick {
             Pick::Embedded(index) => (embedded[*index].clone(), embedded_origin, None),
             Pick::File(index) => {
-                let (_, path, nm) = &files[*index];
+                let file = &files[*index];
+                let Some(nm) = stack
+                    .read(&file.path)
+                    .and_then(|bytes| morphic::model::decode_nm_clip(&bytes).ok())
+                else {
+                    continue;
+                };
                 let skeleton = stack
                     .read(&stack::compiled(&nm.skeleton_ref))
                     .and_then(|bytes| morphic::model::decode_nm_skeleton(&bytes).ok());
@@ -734,19 +925,20 @@ fn build_hero(
                     continue;
                 };
                 let clip =
-                    morphic::model::nm_clip_to_clip(nm, &skeleton, &model.skeleton, &choice.name);
+                    morphic::model::nm_clip_to_clip(&nm, &skeleton, &model.skeleton, &choice.name);
                 // vpkmerge's workshop motions bar: shared tracks against the smaller rig.
                 let matched = clip.tracks.len();
                 if matched < 2 || matched * 2 < nm.tracks.len().min(rig_bones) {
                     issues.push(format!("clipRig:{}", choice.name));
                     continue;
                 }
-                (clip, ClipOrigin::ClipFile, Some(path.clone()))
+                (clip, ClipOrigin::ClipFile, Some(file.path.clone()))
             }
         };
         clip.name = choice.name.clone();
         clip.looping = choice.playback == Playback::Loop;
-        // Root translation stays under the stage's control: the hero idles in place.
+        // Clips that move the hero are left out by the standalone rule; an embedded clip with
+        // no metadata may still drift, so root translation stays under the stage's control.
         for track in &mut clip.tracks {
             if Some(track.bone) == root_motion {
                 track.translations = None;
@@ -766,11 +958,16 @@ fn build_hero(
             action: choice.action,
             origin,
             resource,
+            label: clips::clip_label(&choice.name, &hero.display_name),
+            group: clips::clip_group(&choice.name, &hero.display_name),
+            speed: choice.speed(),
+            showcase: choice.showcase.as_ref().map(ClipShowcase::from),
         });
         kept_choices.push(choice.clone());
         animations.push(clip);
     }
     model.animations = animations;
+    progress.at(STAGE_CLIPS);
     check(cancel)?;
 
     let options = morphic::model::GlbOptions {
@@ -780,6 +977,7 @@ fn build_hero(
     let glb = morphic::model::to_glb_textured(&model, stack, options)
         .map_err(|error| exporter_error(format!("writing the glb for {entry}"), error))?;
     std::fs::write(out.join(format!("{}.glb", hero.codename)), glb)?;
+    progress.at(STAGE_GLB);
 
     let cloth = cloth_json(&bytes);
     if let Some(cloth) = &cloth {
@@ -788,13 +986,46 @@ fn build_hero(
             serde_json::to_vec(cloth)?,
         )?;
     }
+    progress.at(STAGE_CLOTH);
+
+    // The effects the hero carries, read through the same stack so a particle mod counts as
+    // used (and is not reported as changing nothing).
+    let particles = match super::particles::export_hero_particles(stack, &hero.codename, &entry, &bytes, out, cancel) {
+        Ok(found) => found,
+        Err(error) if super::is_cancelled(&error) => return Err(error),
+        Err(error) => {
+            issues.push(format!("particles:{error}"));
+            None
+        }
+    };
 
     Ok(Built {
-        idle: clips::idle_clip(&kept_choices),
+        idle: clips::default_clip(&kept_choices, &hero.display_name),
         clips: metas,
         cloth: cloth.is_some(),
+        particles,
         issues,
     })
+}
+
+/// Whether any layer of the stack ships `path`.
+fn has_path(stack: &Stack, path: &str) -> bool {
+    let lower = normalize(path);
+    stack
+        .layers
+        .iter()
+        .any(|layer| layer.directory.by_path.contains_key(&lower))
+}
+
+/// A clip file's metadata without decoding its keyframes, or `None` when it is missing, over
+/// `max_bytes`, or not a clip.
+fn clip_meta(stack: &Stack, path: &str, max_bytes: Option<usize>) -> Option<ClipFileMeta> {
+    let bytes = stack.read(path)?;
+    if max_bytes.is_some_and(|max| bytes.len() > max) {
+        return None;
+    }
+    let data = morphic::decode_kv3_resource(&bytes).ok()?;
+    clips::clip_file_meta(&data)
 }
 
 /// The selection name for a clip file: its stem, or the stem without a `<codename>_` or

@@ -250,7 +250,11 @@ fn viewer_plan_keeps_only_mods_that_change_the_hero() {
     let mut without = HeroExportRequest::new(&root, &cache, "inferno", Variant::Modded);
     without.exclude_slots = &[1];
     let inferno_without = plan_hero(&without).unwrap();
-    let slots: Vec<Option<u16>> = inferno_without.sources.iter().map(|source| source.slot).collect();
+    let slots: Vec<Option<u16>> = inferno_without
+        .sources
+        .iter()
+        .map(|source| source.slot)
+        .collect();
     assert_eq!(slots, [Some(2), None, None]);
     assert_ne!(inferno_without.key, inferno.key);
     without.exclude_slots = &[1, 2];
@@ -270,6 +274,7 @@ fn sidecar(codename: &str, key: &str) -> HeroSidecar {
         model_entry: INFERNO.into(),
         clip_info: Vec::new(),
         cloth: None,
+        particles: None,
         units: "meters".into(),
         up: "+Y".into(),
         forward: "+Z".into(),
@@ -571,12 +576,7 @@ fn viewer_hideout_keeps_realtime_and_fog_lights() {
 }
 
 fn clip(name: &str, frames: usize) -> ClipCandidate {
-    ClipCandidate {
-        name: name.into(),
-        frame_count: frames,
-        fps: 30.0,
-        additive: false,
-    }
+    ClipCandidate::new(name, frames, 30.0)
 }
 
 #[test]
@@ -592,7 +592,7 @@ fn viewer_clip_selection_follows_grimoire_recipes() {
     assert_eq!(names, ["shop_menu_base", "primary_stand_reload"]);
     assert_eq!(haze[1].playback, Playback::Hold);
     assert_eq!(
-        super::clips::idle_clip(&haze).as_deref(),
+        super::clips::default_clip(&haze, "Haze").as_deref(),
         Some("shop_menu_base")
     );
 
@@ -715,4 +715,472 @@ fn viewer_real_game_exports() {
         parsed.models.len(),
         parsed.lights.len()
     );
+}
+
+fn showcase(state: super::clips::ShowcaseState, playback: Playback) -> super::clips::Showcase {
+    super::clips::Showcase {
+        graph: "models/heroes_staging/haze/haze_ui.vnmgraph_c".into(),
+        state,
+        playback,
+        speed: 1.25,
+    }
+}
+
+#[test]
+fn viewer_clip_selection_puts_the_showcase_first() {
+    use super::clips::{ShowcaseState, default_clip};
+    let mut select = clip("haze_select_pose", 80);
+    select.showcase = Some(showcase(ShowcaseState::HeroSelect, Playback::Loop));
+    let mut shop = clip("haze_shop_pose", 120);
+    shop.showcase = Some(showcase(ShowcaseState::Shop, Playback::Hold));
+    let mut epic = clip("haze_shop_scene", 2_401);
+    epic.showcase = Some(showcase(ShowcaseState::Shop, Playback::Loop));
+    let offered = [
+        epic,
+        select.clone(),
+        shop,
+        clip("shop_menu_base", 90),
+        clip("primary_stand_idle", 45),
+        clip("primary_stand_reload", 60),
+    ];
+    let haze = select_clips(&offered, "Haze");
+    let names: Vec<&str> = haze.iter().map(|choice| choice.name.as_str()).collect();
+    // The shop showcase (the long one is over the cap), one idle recipe hit as the standing
+    // fallback, then the other recipes. No second idle.
+    assert_eq!(
+        names,
+        ["haze_shop_pose", "shop_menu_base", "primary_stand_reload"]
+    );
+    assert_eq!(haze[0].playback, Playback::Hold);
+    assert_eq!(haze[0].speed(), 1.25);
+    assert_eq!(haze[0].action, None);
+    assert_eq!(haze[2].playback, Playback::Hold);
+    assert_eq!(haze[1].speed(), 1.0);
+    assert_eq!(
+        default_clip(&haze, "Haze").as_deref(),
+        Some("haze_shop_pose")
+    );
+
+    // Without a shop state the hero-select one is the showcase.
+    let only_select = select_clips(&[select, clip("shop_menu_base", 90)], "Haze");
+    assert_eq!(only_select[0].name, "haze_select_pose");
+    assert_eq!(only_select[0].playback, Playback::Loop);
+
+    // Rem's recipes name no idle: a standing idle joins the showcase.
+    let mut rem_shop = clip("familiar_shop", 50);
+    rem_shop.showcase = Some(showcase(ShowcaseState::Shop, Playback::Loop));
+    let rem = select_clips(
+        &[
+            rem_shop,
+            clip("ui_shop", 40),
+            clip("out_of_combat_stand_idle", 30),
+            clip("primary_stand_idle", 30),
+        ],
+        "Rem",
+    );
+    let names: Vec<&str> = rem.iter().map(|choice| choice.name.as_str()).collect();
+    assert_eq!(names, ["familiar_shop", "ui_shop", "primary_stand_idle"]);
+}
+
+#[test]
+fn viewer_clip_selection_fills_and_rejects_like_grimoire() {
+    use super::clips::default_clip;
+    // Root motion, hidden, transition and non-standalone clips never qualify.
+    let mut moving = clip("primary_stand_idle", 45);
+    moving.root_motion = true;
+    let mut relaxed = clip("primary_ooc_stand_idle", 45);
+    relaxed.hidden = true;
+    let mut flagged = clip("stand_idle", 45);
+    flagged.standalone = Some(false);
+    let mut wave = clip("emote_wave", 60);
+    wave.standalone = Some(true);
+    let mut bow = clip("emote_bow", 60);
+    bow.standalone = Some(true);
+    let mut huge = clip("emote_long", 9_990);
+    huge.standalone = Some(true);
+    let picked = select_clips(
+        &[
+            moving,
+            relaxed,
+            flagged,
+            wave,
+            bow,
+            huge,
+            clip("weapon_stand_idle", 40),
+        ],
+        "Somebody New",
+    );
+    let names: Vec<&str> = picked.iter().map(|choice| choice.name.as_str()).collect();
+    // Neutral idle from the default recipes, then standalone clips by name within budget.
+    assert_eq!(names, ["weapon_stand_idle", "emote_bow", "emote_wave"]);
+    assert_eq!(
+        default_clip(&picked, "Somebody New").as_deref(),
+        Some("weapon_stand_idle")
+    );
+
+    // Fill stops at eight clips.
+    let many: Vec<ClipCandidate> = (0..12)
+        .map(|index| {
+            let mut extra = clip(&format!("emote_{index:02}"), 10);
+            extra.standalone = Some(true);
+            extra
+        })
+        .collect();
+    assert_eq!(select_clips(&many, "Somebody New").len(), 8);
+
+    // No idle at all: the default clip is the first hero pose, then the first clip.
+    let posed = select_clips(&[clip("hero_pose", 30)], "Somebody New");
+    assert_eq!(
+        default_clip(&posed, "Somebody New").as_deref(),
+        Some("hero_pose")
+    );
+}
+
+#[test]
+fn viewer_clip_labels_and_groups() {
+    use super::clips::{ClipGroup, clip_group, clip_label};
+    assert_eq!(clip_label("shop_menu_base", "Haze"), "Idle");
+    assert_eq!(clip_label("primary_stand_reload", "Haze"), "Reload");
+    assert_eq!(
+        clip_label("primary_ooc_stand_idle", "Mirage"),
+        "Relaxed idle"
+    );
+    assert_eq!(clip_label("ui_main_menu", "Mirage"), "Hero pose");
+    assert_eq!(clip_label("item_run_n", "Wraith"), "Run");
+    assert_eq!(clip_label("primary_airdash", "Lash"), "Dash");
+    assert_eq!(clip_label("melee_hit", "Lash"), "Heavy melee");
+    assert_eq!(
+        clip_label("models/x/clips/heroShop_pose-v2.vnmclip_c", "Haze"),
+        "Hero Shop pose v2"
+    );
+    assert_eq!(clip_label("__", "Haze"), "__");
+
+    assert_eq!(clip_group("shop_menu_base", "Haze"), ClipGroup::Idle);
+    assert_eq!(
+        clip_group("primary_stand_reload", "Haze"),
+        ClipGroup::Combat
+    );
+    assert_eq!(clip_group("emote_menu_loop", "Haze"), ClipGroup::Idle);
+    assert_eq!(clip_group("item_run_n", "Haze"), ClipGroup::Movement);
+    assert_eq!(clip_group("jump2_land", "Haze"), ClipGroup::Movement);
+    assert_eq!(clip_group("primary_airdash", "Lash"), ClipGroup::Other);
+    assert_eq!(
+        serde_json::to_value(ClipGroup::Movement).unwrap(),
+        "movement"
+    );
+}
+
+/// A small compiled UI graph as KV3 JSON: a root state machine over a shop state, a hero
+/// select state for the same clip, a select state for another clip, a masked state and an
+/// unrelated state.
+fn ui_graph() -> serde_json::Value {
+    serde_json::json!({
+        "m_nRootNodeIdx": 0,
+        "m_resources": [
+            "models/heroes_staging/haze/clips/haze_shop_pose.vnmclip",
+            "models/heroes_staging/haze/clips/haze_select_pose.vnmclip",
+            "models/heroes_staging/haze/clips/missing.vnmclip",
+            "models/heroes_staging/haze/clips/haze_masked.vnmclip"
+        ],
+        "m_nodePaths": [
+            "root", "root/hero_shop", "root/Hero_Select", "root/select", "root/shop",
+            "root/other", "a", "b", "c", "d", "e"
+        ],
+        "m_nodes": [
+            { "_class": "CNmStateMachineNode::CDefinition", "m_nNodeIdx": 0,
+              "m_stateDefinitions": [ { "m_nStateNodeIdx": 1 }, { "m_nStateNodeIdx": 2 },
+                                      { "m_nStateNodeIdx": 3 }, { "m_nStateNodeIdx": 4 },
+                                      { "m_nStateNodeIdx": 5 } ] },
+            state(1, 6), state(2, 7), state(3, 8),
+            { "_class": "CNmStateNode::CDefinition", "m_nNodeIdx": 4, "m_nChildNodeIdx": 9,
+              "m_nLayerWeightNodeIdx": -1, "m_nLayerRootMotionWeightNodeIdx": -1,
+              "m_nLayerBoneMaskNodeIdx": 10, "m_bIsOffState": false },
+            state(5, 10),
+            clip_node(6, 0, false, 1.25),
+            clip_node(7, 0, true, 1.0),
+            clip_node(8, 1, true, 1.0),
+            clip_node(9, 3, true, 1.0),
+            { "_class": "CNmClipNode::CDefinition", "m_nNodeIdx": 10, "m_nDataSlotIdx": 2,
+              "m_bAllowLooping": true, "m_nPlayInReverseValueNodeIdx": 3,
+              "m_nResetTimeValueNodeIdx": -1, "m_flSpeedMultiplier": 1.0 }
+        ]
+    })
+}
+
+fn state(index: i64, child: i64) -> serde_json::Value {
+    serde_json::json!({
+        "_class": "CNmStateNode::CDefinition", "m_nNodeIdx": index, "m_nChildNodeIdx": child,
+        "m_nLayerWeightNodeIdx": -1, "m_nLayerRootMotionWeightNodeIdx": -1,
+        "m_nLayerBoneMaskNodeIdx": -1, "m_bIsOffState": false
+    })
+}
+
+fn clip_node(index: i64, slot: i64, looping: bool, speed: f64) -> serde_json::Value {
+    serde_json::json!({
+        "_class": "CNmClipNode::CDefinition", "m_nNodeIdx": index, "m_nDataSlotIdx": slot,
+        "m_bAllowLooping": looping, "m_nPlayInReverseValueNodeIdx": -1,
+        "m_nResetTimeValueNodeIdx": -1, "m_flSpeedMultiplier": speed
+    })
+}
+
+#[test]
+fn viewer_ui_graph_reader_finds_shop_and_select_states() {
+    use super::clips::{ModelRefs, ShowcaseState, graph_showcases, read_graphs};
+    let available = |path: &str| !path.contains("missing");
+    let graph = ui_graph();
+    let found = graph_showcases(&graph, "g/ui.vnmgraph_c", &available);
+    assert_eq!(found.len(), 2, "{found:?}");
+    let (shop_path, shop) = &found[0];
+    assert_eq!(
+        shop_path,
+        "models/heroes_staging/haze/clips/haze_shop_pose.vnmclip_c"
+    );
+    // Shop wins over the hero select state that plays the same clip.
+    assert_eq!(shop.state, ShowcaseState::Shop);
+    assert_eq!(shop.playback, Playback::Hold);
+    assert_eq!(shop.speed, 1.25);
+    assert_eq!(shop.graph, "g/ui.vnmgraph_c");
+    let (select_path, select) = &found[1];
+    assert!(select_path.ends_with("haze_select_pose.vnmclip_c"));
+    assert_eq!(select.state, ShowcaseState::HeroSelect);
+    assert_eq!(select.playback, Playback::Loop);
+
+    // Every graph lends its resources; only the `ui` graph is mined, and it goes first.
+    let refs = ModelRefs {
+        graphs: vec![
+            ("default".into(), "g/default.vnmgraph".into()),
+            ("ui".into(), "g/ui.vnmgraph".into()),
+        ],
+        skeletons: Vec::new(),
+    };
+    let mut decoded = Vec::new();
+    let clips = read_graphs(
+        &refs,
+        |path| {
+            decoded.push(path.to_string());
+            match path {
+                "g/ui.vnmgraph_c" => Some(ui_graph()),
+                "g/default.vnmgraph_c" => Some(serde_json::json!({
+                    "m_resources": ["models/heroes_staging/haze/clips/primary_stand_idle.vnmclip",
+                                    "models/heroes_staging/haze/clips/haze_shop_pose.vnmclip"]
+                })),
+                _ => None,
+            }
+        },
+        &available,
+    );
+    assert_eq!(decoded, ["g/ui.vnmgraph_c", "g/default.vnmgraph_c"]);
+    let names: Vec<&str> = clips
+        .resources
+        .iter()
+        .map(|path| path.rsplit('/').next().unwrap())
+        .collect();
+    assert_eq!(
+        names,
+        [
+            "haze_shop_pose.vnmclip_c",
+            "haze_select_pose.vnmclip_c",
+            "haze_masked.vnmclip_c",
+            "primary_stand_idle.vnmclip_c"
+        ]
+    );
+    assert_eq!(clips.showcases.len(), 2);
+
+    // A graph whose root is not a state machine shows nothing.
+    let mut rootless = ui_graph();
+    rootless["m_nRootNodeIdx"] = serde_json::json!(4);
+    assert!(graph_showcases(&rootless, "g", &available).is_empty());
+}
+
+#[test]
+fn viewer_model_refs_and_clip_metadata_read_kv3() {
+    use super::clips::{clip_file_meta, flag_embedded, metadata_paths, model_refs};
+    use morphic::kv3::Value;
+    let object = |pairs: Vec<(&str, Value)>| {
+        Value::Object(
+            pairs
+                .into_iter()
+                .map(|(key, value)| (key.to_string(), value))
+                .collect(),
+        )
+    };
+    let text = |value: &str| Value::String(value.into());
+    let model = object(vec![
+        (
+            "m_animGraph2Refs",
+            Value::Array(vec![object(vec![
+                ("m_sIdentifier", text("ui")),
+                (
+                    "m_hGraph",
+                    text("models/heroes_staging/haze/haze_ui.vnmgraph"),
+                ),
+            ])]),
+        ),
+        (
+            "m_vecNmSkeletonRefs",
+            Value::Array(vec![text("models/heroes_staging/haze/haze.vnmskel")]),
+        ),
+    ]);
+    let refs = model_refs(&model);
+    assert_eq!(refs.graphs[0].0, "ui");
+    assert!(refs.accepts_skeleton(Some("models/heroes_staging/haze/haze.vnmskel_c")));
+    assert!(!refs.accepts_skeleton(Some("models/heroes_wip/inferno/inferno.vnmskel")));
+    assert!(!refs.accepts_skeleton(None));
+
+    let clip_data = |frames: u64, duration: f64, linear: f64| {
+        object(vec![
+            (
+                "m_skeleton",
+                text("models/heroes_staging/haze/haze.vnmskel"),
+            ),
+            ("m_nNumFrames", Value::UInt(frames)),
+            ("m_flDuration", Value::Double(duration)),
+            ("m_bIsAdditive", Value::Bool(false)),
+            (
+                "m_rootMotion",
+                object(vec![
+                    ("m_flAverageLinearVelocity", Value::Double(linear)),
+                    ("m_flAverageAngularVelocityRadians", Value::Double(0.0)),
+                ]),
+            ),
+        ])
+    };
+    let still = clip_file_meta(&clip_data(91, 3.0, 0.0)).unwrap();
+    assert!(!still.root_motion);
+    assert_eq!(still.fps(), 30.0);
+    assert!(
+        clip_file_meta(&clip_data(91, 3.0, 0.5))
+            .unwrap()
+            .root_motion
+    );
+    assert!(clip_file_meta(&object(vec![("m_nNumFrames", Value::UInt(3))])).is_none());
+    assert!(still.same_timing(91, 30.0));
+    assert!(!still.same_timing(90, 30.0));
+    assert!(!still.same_timing(91, 20.0));
+
+    let entry = "models/heroes_wip/dynamo/dynamo.vmdl_c";
+    assert_eq!(
+        metadata_paths(entry, "primary_stand_reload"),
+        [
+            "models/heroes_wip/dynamo/clips/primary_stand_reload.vnmclip_c",
+            "models/heroes_wip/dynamo/clips/reload_idle.vnmclip_c"
+        ]
+    );
+    assert_eq!(
+        metadata_paths("models/heroes_wip/inferno/inferno.vmdl_c", "shop_menu_base")[1],
+        "models/heroes_wip/inferno/clips/ui_shop_idle.vnmclip_c"
+    );
+
+    // The alias file with the same timing flags the embedded idle; the mistimed one does not.
+    let mut embedded = vec![
+        ClipCandidate::new("primary_stand_idle", 91, 30.0),
+        ClipCandidate::new("primary_stand_reload", 40, 30.0),
+        ClipCandidate::new("some_layer", 91, 30.0),
+    ];
+    let mut asked = Vec::new();
+    flag_embedded(entry, "Dynamo", &mut embedded, |path| {
+        asked.push(path.to_string());
+        if path.ends_with("weapon_stand_idle.vnmclip_c") || path.ends_with("reload_idle.vnmclip_c")
+        {
+            clip_file_meta(&clip_data(91, 3.0, 0.5))
+        } else {
+            None
+        }
+    });
+    assert!(embedded[0].root_motion);
+    assert!(!embedded[1].root_motion);
+    assert!(!embedded[2].root_motion);
+    assert!(!asked.iter().any(|path| path.contains("some_layer")));
+}
+
+#[test]
+fn viewer_progress_only_moves_forward() {
+    use super::hero::Progress;
+    use std::sync::Mutex;
+    let seen = Mutex::new(Vec::new());
+    let report = |fraction: f32| seen.lock().unwrap().push(fraction);
+    let progress = Progress::new(Some(&report));
+    progress.at(0.25);
+    progress.at(0.125);
+    progress.step(0.25, 0.75, 1, 4);
+    progress.step(0.25, 0.75, 4, 4);
+    progress.step(0.25, 0.75, 9, 4);
+    progress.at(f32::NAN);
+    progress.at(3.0);
+    progress.at(1.0);
+    assert_eq!(*seen.lock().unwrap(), [0.25, 0.375, 0.75, 1.0]);
+}
+
+#[test]
+fn viewer_cache_hit_reports_done() {
+    use std::sync::Mutex;
+    let root = game("progress-hit");
+    let cache = root.join("cache");
+    let plan = plan_hero(&HeroExportRequest::new(
+        &root,
+        &cache,
+        "inferno",
+        Variant::Modded,
+    ))
+    .unwrap();
+    let entry = cache.join("heroes").join(&plan.key);
+    fs::create_dir_all(&entry).unwrap();
+    fs::write(entry.join("inferno.glb"), b"glTF").unwrap();
+    fs::write(
+        entry.join("inferno.json"),
+        serde_json::to_vec(&sidecar("inferno", &plan.key)).unwrap(),
+    )
+    .unwrap();
+
+    let seen = Mutex::new(Vec::new());
+    let report = |fraction: f32| seen.lock().unwrap().push(fraction);
+    let mut request = HeroExportRequest::new(&root, &cache, "inferno", Variant::Modded);
+    request.progress = Some(&report);
+    let found = export_hero_with(&request, &AtomicBool::new(false)).unwrap();
+    assert!(found.cached);
+    assert_eq!(*seen.lock().unwrap(), [1.0]);
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn viewer_clip_meta_contract_field_names() {
+    use super::clips::{ClipGroup, ClipShowcase, ShowcaseState};
+    use super::hero::{ClipMeta, ClipOrigin};
+    let meta = ClipMeta {
+        name: "haze_shop_pose".into(),
+        duration_seconds: 4.0,
+        fps: 30.0,
+        frame_count: 121,
+        playback: Playback::Hold,
+        action: None,
+        origin: ClipOrigin::ClipFile,
+        resource: Some("models/heroes_staging/haze/clips/haze_shop_pose.vnmclip_c".into()),
+        label: "Haze shop pose".into(),
+        group: ClipGroup::Other,
+        speed: 1.25,
+        showcase: Some(ClipShowcase {
+            graph: "models/heroes_staging/haze/haze_ui.vnmgraph_c".into(),
+            state: ShowcaseState::HeroSelect,
+        }),
+    };
+    let json = serde_json::to_value(&meta).unwrap();
+    assert_eq!(json["label"], "Haze shop pose");
+    assert_eq!(json["group"], "other");
+    assert_eq!(json["speed"], 1.25);
+    assert_eq!(json["showcase"]["state"], "heroSelect");
+    assert_eq!(
+        json["showcase"]["graph"],
+        "models/heroes_staging/haze/haze_ui.vnmgraph_c"
+    );
+    assert!(json["showcase"].get("playback").is_none());
+
+    // A clip without the new fields still reads, at speed 1.
+    let old: ClipMeta = serde_json::from_value(serde_json::json!({
+        "name": "idle", "durationSeconds": 1.0, "fps": 30.0, "frameCount": 31,
+        "playback": "loop", "action": "idle", "origin": "model", "resource": null
+    }))
+    .unwrap();
+    assert_eq!(old.speed, 1.0);
+    assert_eq!(old.group, ClipGroup::Other);
+    assert!(old.showcase.is_none());
 }

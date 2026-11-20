@@ -19,9 +19,11 @@
 //!
 //! Decoding and glTF writing are vpkmerge's `morphic` crate (MIT), linked as a library. The
 //! hero export, clip choice and Hideout scene build are ported from Grimoire (MIT):
-//! `heroPoseModels.ts`, `heroAnimationCatalog.ts`, `hideoutScene.ts`, `hideoutAtmosphere.ts`
-//! and `source2Entity.ts`. The per-source usage report and the one-decode-at-a-time slot
-//! follow Deadlock Mod Manager's Foundry preview (behaviour only, no code).
+//! `heroPoseModels.ts`, `heroAnimationCatalog.ts`, `heroRiggedClips.ts` (the UI AnimGraph2
+//! reader), `heroAnimationMetadata.ts`, `heroViewerPlayback.ts` (clip labels and groups),
+//! `hideoutScene.ts`, `hideoutAtmosphere.ts` and `source2Entity.ts`. The per-source usage
+//! report and the one-decode-at-a-time slot follow Deadlock Mod Manager's Foundry preview
+//! (behaviour only, no code).
 //!
 //! Every long call takes a cancel flag, checks it between stages and returns an error that
 //! [`is_cancelled`] recognises. All of it is plain blocking code meant for a worker thread.
@@ -31,6 +33,7 @@ mod clips;
 mod hero;
 mod hideout;
 mod kv;
+mod particles;
 pub mod space;
 mod stack;
 
@@ -45,20 +48,25 @@ use serde::{Deserialize, Serialize};
 use crate::error::{Error, Result};
 
 pub use cache::{PruneReport, prune_cache};
-pub use clips::{Action, ClipCandidate, ClipChoice, Playback, select_clips};
+pub use clips::{
+    Action, ClipCandidate, ClipChoice, ClipGroup, ClipShowcase, Playback, Showcase, ShowcaseState,
+    clip_group, clip_label, select_clips,
+};
 pub use hero::{
     ClipMeta, ClipOrigin, Exported, HeroEntry, HeroExportRequest, HeroSidecar, export_hero,
     export_hero_with, find_hero, heroes, heroes_in_vpk,
 };
 pub use hideout::{
-    HideoutCamera, HideoutExportRequest, HideoutFog, HideoutHero, HideoutLight, HideoutLightmap,
-    HideoutModel, HideoutScene, HideoutSky, HideoutSpawn, export_hideout, export_hideout_with,
+    HideoutBloom, HideoutCamera, HideoutColorCorrection, HideoutExportRequest, HideoutFog,
+    HideoutFogVolume, HideoutHero, HideoutLight, HideoutLightmap, HideoutModel, HideoutPost,
+    HideoutProbe, HideoutScene, HideoutSky, HideoutSpawn, HideoutTonemap, HideoutVolume,
+    export_hideout, export_hideout_with,
 };
 pub use stack::{Source, SourceKind, SourceUsage, name_sources, sources};
 
 /// Bumped whenever the files this module writes change shape or content, so old cache entries
 /// are never served to a newer renderer.
-pub const PIPELINE_VERSION: &str = "sigil-viewer-1";
+pub const PIPELINE_VERSION: &str = "sigil-viewer-2";
 
 /// The vpkmerge revision `Cargo.toml` pins. Part of every cache key: a new exporter re-exports.
 pub const VPKMERGE_REV: &str = "df4158673f4e700b9dda4db76ed9f193440b24ba";
