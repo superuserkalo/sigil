@@ -346,6 +346,36 @@ the file paths. The game comes from discovery or `DAH_GAME_DIR`. The real-game t
   disabled-slot preview; dropping mods that cannot change the hero so the modded and original
   previews share an entry; the room keyed on the mods that touch what the room reads.
 
+## Particle bundle: `particles/bundle.json`
+
+Written by `viewer/particles.rs` beside a hero's sidecar (`"particles": "particles/bundle.json"`)
+and the Hideout scene (`"particles"`), read by `sigil_viewer::particles`. Everything inside is
+Source space (inches, Z up); the renderer applies Source to glTF and the placement.
+
+```json
+{
+  "schema": 1, "owner": "inferno",
+  "systems": { "particles/x/y.vpcf": { "data": { "...": "the .vpcf_c DATA as JSON" }, "format": "vpcf66" } },
+  "textures": { "materials/particle/x.vtex": { "file": "tex/materials_particle_x_vtex.png", "width": 256, "height": 256,
+                "sheet": { "sequences": [ { "id": 0, "clamp": false, "alphaCrop": false, "noColor": false, "noAlpha": false,
+                           "duration": 1.0, "frames": [ { "duration": 0.1, "images": [[0, 0, 0.5, 0.5]] } ] } ] } } },
+  "attachments": [ { "name": "attach_hand_r", "ignoreRotation": false,
+                     "influences": [ { "bone": "hand_R", "offset": [0, 0, 0], "rotation": [0, 0, 0, 1], "weight": 1.0, "rootTransform": false } ] } ],
+  "effects": [ { "id": "ambient_0", "system": "particles/x/y.vpcf", "source": "model-particles-list",
+                 "attachment": { "type": "point_follow", "point": "attach_hand_r", "offset": [0, 0, 0] }, "attachmentCp1": null,
+                 "configuration": null, "transform": null, "controlPoints": [], "startActive": true, "seed": 12345 } ],
+  "issues": []
+}
+```
+
+Textures are top-mip PNGs (straight alpha, at most 1024 px); sheet rects are uv `[u0, v0, u1, v1]`.
+`source` is one of `model-particles-list`, `model-particle-cfg`, `model-ambient`, `hero-ambient`
+(kept with `startActive: false`, as Grimoire leaves it out of the showcase), `weapon-passive` and
+`map-entity` (with `transform`, the entity matrix, and `controlPoints` from `cpointN`, `tint_cp`,
+`data_cp`). Limits: 160 systems 12 levels deep and 128 textures a bundle when written; the renderer
+loads at most 256 systems an effect, 512 a bundle and 32 children a system, sheets at most 1024
+sequences of 1024 frames of 16 images (65,536 in all), textures at most 4096 x 4096.
+
 ## Not done yet
 
 - Grimoire's staged-pose test (`heroStagedPose.ts`): Grimoire samples the exported glb to tell
@@ -357,10 +387,11 @@ the file paths. The game comes from discovery or `DAH_GAME_DIR`. The real-game t
   clips: the pinned vpkmerge does not report them, so only clip file metadata (additive, root
   motion) feeds the filter, and step 5 of the clip choice finds nothing yet.
 - Hideout fog shadow atlas (the R16 decode exists; the scene needs a field for the atlas and
-  each fog light's tiles), map particles, the meshopt static bundle, height fog volumes,
-  distant-instance culling. Each is listed in `omissions`.
-- Hero ambient particles and effects (`heroAmbientDiscovery.ts`), material groups and skins per
-  hero form, and WIP heroes whose pose lives only in a loose NM pose clip.
+  each fog light's tiles), the meshopt static bundle, height fog volumes and Grimoire's
+  distant-instance culling (its room clearance cube). Each is listed in `omissions` or below.
+- Particle animation-event effects (`AE_CL_CREATE_PARTICLE_EFFECT` in the played clips),
+  snapshots, particle models and ropes; material groups and skins per hero form; WIP heroes
+  whose pose lives only in a loose NM pose clip.
 - A real-game run. The ignored test and the CLI are ready for the first machine with Deadlock.
 
 ## Where it appears
@@ -404,7 +435,11 @@ Headless scenes (`cargo run -p dah-desktop -- --snap out.png --scene <name>`): `
 `viewer-locker-loading`, `viewer-locker-failed`, `viewer-locker-nogame`, `viewer-locker-nogpu`,
 `viewer-locker-hideout`, `viewer-hideout-loading`, `viewer-installed-menu`, `viewer-mod-dialog`,
 `viewer-mod-dialog-loading`, `viewer-details`, and the bare viewport's `viewer`, `viewer-split`,
-`viewer-hideout`.
+`viewer-hideout`, `viewer-controls`, `viewer-backdrop-ember`, `viewer-backdrop-studio-gradient`,
+`viewer-backdrop-none`, `viewer-transparent`, `viewer-gif-review` and `viewer-recording`. The
+stand-in Hideout (`fixture_room::upgrade_hideout`) bakes its own lightmap (DC, direction, a
+stationary light's shadow mask) with `TEXCOORD_3` UVs, a probe volume, a colour grade, a cookie,
+a fog volume and map particles, so `viewer-hideout` exercises every Hideout path.
 
 What a tester on Windows with Deadlock should check first: the Locker's 3D view on a hero with an
 enabled skin (first export time, the hero standing and animating, With mods against Without mods),
@@ -463,12 +498,38 @@ let png = v.capture_png(width, height)?;
   `catch_unwind`, so a panic is a "could not open" state with its message, never a view left on
   Loading. Adapter, counts, sizes, timings and what was left out go to Sigil's log.
 
-Not consumed yet: `lightmap` (room glbs carry no lightmap UVs today), `cloth`, the fog box and
-its `indirectStrength`, light `temperature` and `shadowChannel`, shadows of any kind (the studio
-draws a contact shadow instead), particles. Point and spot `intensity` is used as authored
-(candela over distance squared) with no calibration against the game, since no export has been
-seen. The cube face orientation (each face's up) follows glTF/OpenGL convention and is unverified
-against a real vpkmerge cube.
+- Shadows: the studio key and the Hideout's nearest realtime directional or spot light cast a
+  2048 shadow map (3x3 PCF, slope bias, normal offset) onto the hero, the room and the studio
+  floor, which is Grimoire's 0.25 shadow catcher. Alpha-tested parts stay out of the map; a
+  stationary light (baked shadow channel) shadows only the hero, its static shadow being baked.
+  Point lights cast none (Grimoire's map lights cast none at all).
+- Hideout lighting (Grimoire's `source2Lightmap`, `source2ProbeVolume`, `source2DynamicLights`,
+  `source2LightCookies`, `source2Atmosphere`, `sourcePostProcess`): the SH2 lightmap read through
+  `TEXCOORD_3` with the lightmap reflection blend on rough baked surfaces; the light probe volumes
+  as the hero's NPR ambient cube and the ambient of props without a lightmap, with their shadow
+  volume; Source light units (linear brightness, 10000 / d^2 in inches, skirt); cookies (barn
+  framed in its cone, omni wrapped, luminance only); fog-only lights kept off surfaces; the
+  baked shadow mask squared for point and spot lights; the map's fixed exposure, tone curve,
+  bloom (VRF threshold window, per-level weights and tints by blend constant, add, screen, blur)
+  and colour correction volume (indexed by the display-encoded colour); the volumetric fog
+  marched per surface fragment through the fog volumes (16 steps, 0.01 per inch, the irradiance
+  volume and the fog lights). The sky is left clear of fog, as in Grimoire.
+- Cloth (`sigil_viewer::cloth`, Grimoire's solver): the hero's `<codename>.cloth.json` stepped at
+  1/120 s on the clip's own clock (at most 12 substeps, 8 ms), reset on a clip change or seek.
+- Particles (`sigil_viewer::particles`, a subset of Grimoire's port of VRF's): the hero's bundle
+  on its posed attachments and the map's effects lit by its sun, simulated in Source space,
+  drawn as instanced spritecards (and trails) in the scene pass after the surfaces. Classes the
+  port lacks are listed in `Viewer::particle_diagnostics`, never guessed. A new bundle gets a
+  second of simulation before its first frame so a still shows it.
+- Looks (`Look`): Grimoire's backgrounds (None, Transparent, a picture, the ten soul gradients),
+  Deadlock Mod Manager's studio gradient, Midtown dusk lighting, bloom, shadows, cloth and
+  particles switches; `auto_rotate` turns the hero at 0.25 rad/s (Grimoire's turntable).
+
+Not consumed yet: light `temperature`, the fog shadow atlas, Grimoire's distant-instance
+clearance culling. Point and spot lights without `brightness` (older exports) use `intensity` as
+candela over distance squared. The cube face orientation (each face's up) follows glTF/OpenGL
+convention and is unverified against a real vpkmerge cube; none of the Hideout data has been
+seen from a real export yet.
 
 ### Viewport
 
@@ -497,6 +558,20 @@ The strip has play and pause, seek (pauses), speed, the clip, With mods / Withou
 and drops the clock, speed and clip (full screen has them). Headless snapshots render one fixed
 frame on the calling thread, at the size a scene gives with `viewer::headless_points`.
 
+The strip also has (`viewer/controls.rs`) Auto-rotate, the Controls panel, Record a GIF and Record
+a video. The Controls panel (Grimoire's, anchored to its button by `viewer::popover`) holds the
+clip picker grouped Idle, Movement, Combat, Other with the sidecar's friendly names, Lighting
+(Studio, Midtown dusk), Background (Studio, None, Transparent, Deadlock Mod Manager's studio
+gradient, Grimoire's ten soul gradients, a picture of the player's up to 12 MB) and switches for
+Auto-rotate, Cloth, Particles, Bloom and Shadows, kept across sessions in `<data>/viewer.json`.
+GIF (Grimoire's `viewerGif.ts`): up to four seconds at 12 frames a second and 480 px, then a review
+that loops the take, trims start and end on a strip of six thumbnails (arrows step a frame, Shift
+twelve), and saves, retakes or cancels. Video (Deadlock Mod Manager's, behaviour only): up to ten
+seconds at 30 frames a second, a REC pill with the clock, Motion JPEG encoded on its own thread
+(`.mov` on macOS, `.avi` elsewhere; no VP8/VP9 encoder is linked). Recordings and pictures go to
+`Pictures/Sigil`. Grimoire's keys join: W A S D orbit, Q and E zoom, R resets, T turns the
+turntable. The export panel shows a real percentage from the pipeline's progress callback.
+
 ### Cost
 
 Measured on an Apple M3 (release, the stand-in hero, 31k triangles):
@@ -505,6 +580,20 @@ Measured on an Apple M3 (release, the stand-in hero, 31k triangles):
 | --- | --- | --- | --- |
 | 1280 x 800 | 2.9 ms | 2.5 ms | 0.17 ms |
 | 2560 x 1600 | 5.4 ms | 3.5 ms | 1.5 ms |
+
+With everything on (release, `cargo test --release -p sigil-viewer --test parity_bench -- --ignored
+--nocapture`, the same M3, 1280 x 800):
+
+| Scene | Frame |
+| --- | --- |
+| Stand-in hero: cloth, ember plume (45 particles), shadow map, bloom | 2.7 ms |
+| The same without particles and shadows | 2.5 ms |
+| Stand-in Hideout: lightmap, probes, fog volume march, cookies, map post, 108 particles | 11.5 ms |
+
+Cloth alone: 0.005 ms a frame for the stand-in (21 nodes), 0.12 ms for a synthetic 401-node
+rig. Particles alone: 0.2 ms a frame to step 2,000 particles and build their cards. The
+Hideout's cost is mostly the volumetric fog, marched per surface fragment; a half-resolution
+pass as Grimoire's would cut it.
 
 The UI side then copies each frame into Rune's image atlas and uploads it (one more 4 to 16 MB
 copy a frame on the UI's render pass). That copy, not the GPU, is the ceiling at full-screen
