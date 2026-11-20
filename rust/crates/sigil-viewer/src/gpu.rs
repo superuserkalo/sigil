@@ -182,6 +182,19 @@ impl Gpu {
         }
     }
 
+    /// Texture bytes still inside the budget.
+    pub fn texture_room(&self) -> u64 {
+        self.texture_budget.saturating_sub(self.with_usage(|u| u.texture_bytes))
+    }
+
+    /// Records textures made outside `upload_image` (particle sprites) against the budget.
+    pub fn charge_textures(&self, (bytes, count): (u64, usize)) {
+        self.with_usage(|u| {
+            u.texture_bytes += bytes;
+            u.textures += count;
+        });
+    }
+
     /// What is on the GPU and what was left out.
     pub fn usage(&self) -> Usage {
         self.usage.lock().map(|u| u.clone()).unwrap_or_default()

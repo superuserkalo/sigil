@@ -885,7 +885,8 @@ impl Viewer {
     pub fn set_scene_with(&mut self, assets: SceneAssets, cancel: &AtomicBool, progress: &mut dyn FnMut(LoadProgress)) -> SceneReport {
         let SceneAssets { desc, models, sky, reflection, hideout: baked, particles: map_particles, .. } = assets;
         self.scene_particles = map_particles.map(|b| {
-            let mut pg = particles::ParticleGpu::new(&self.gpu.device, &self.gpu.queue, &self.pipes.frame_layout, self.gpu.msaa, gpu::HDR, gpu::DEPTH, &b);
+            let mut pg = particles::ParticleGpu::new(&self.gpu.device, &self.gpu.queue, &self.pipes.frame_layout, self.gpu.msaa, gpu::HDR, gpu::DEPTH, &b, self.gpu.texture_room());
+            self.gpu.charge_textures(pg.textures());
             // The map's sun lights its particles (Grimoire's HideoutParticleLayer).
             if let Some(sun) = desc.lights.iter().find(|l| l.kind == scene::LightKind::Directional && !l.fog_only) {
                 pg.set_sun(sun.color);
@@ -1010,7 +1011,8 @@ impl Viewer {
     /// The hero's particle effects (`particles/bundle.json` beside its sidecar), or none.
     pub fn set_hero_particles(&mut self, bundle: Option<particles::Bundle>) {
         self.hero_particles = bundle.map(|b| {
-            let gpu = particles::ParticleGpu::new(&self.gpu.device, &self.gpu.queue, &self.pipes.frame_layout, self.gpu.msaa, gpu::HDR, gpu::DEPTH, &b);
+            let gpu = particles::ParticleGpu::new(&self.gpu.device, &self.gpu.queue, &self.pipes.frame_layout, self.gpu.msaa, gpu::HDR, gpu::DEPTH, &b, self.gpu.texture_room());
+            self.gpu.charge_textures(gpu.textures());
             (b, gpu)
         });
         self.particles_warm = false;
