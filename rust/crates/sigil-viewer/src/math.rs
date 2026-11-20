@@ -113,6 +113,13 @@ impl Mat4 {
         Mat4([[f / aspect, 0.0, 0.0, 0.0], [0.0, f, 0.0, 0.0], [0.0, 0.0, r, -1.0], [0.0, 0.0, r * near, 0.0]])
     }
 
+    /// Right-handed orthographic box `[-hw, hw] x [-hh, hh]`, depth `near..far` along -Z
+    /// mapped to wgpu's 0..1.
+    pub fn orthographic(hw: f32, hh: f32, near: f32, far: f32) -> Mat4 {
+        let d = (far - near).max(1e-6);
+        Mat4([[1.0 / hw.max(1e-6), 0.0, 0.0, 0.0], [0.0, 1.0 / hh.max(1e-6), 0.0, 0.0], [0.0, 0.0, -1.0 / d, 0.0], [0.0, 0.0, -near / d, 1.0]])
+    }
+
     pub fn look_at(eye: Vec3, target: Vec3, up: Vec3) -> Mat4 {
         let f = normalize(sub(target, eye));
         let s = normalize(cross(f, up));

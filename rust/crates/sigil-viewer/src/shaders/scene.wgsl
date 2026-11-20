@@ -395,6 +395,8 @@ fn shade_npr(s: Surface, world: vec3<f32>, frag: vec2<f32>) -> vec3<f32> {
     var direct = vec3<f32>(0.0);
     var spec = vec3<f32>(0.0);
     let count = u32(frame.counts.x);
+    let shadowed = u32(frame.shadow.y);
+    let lit = shadow_at(world, n);
     for (var i = 0u; i < 8u; i = i + 1u) {
         if (i >= count) {
             break;
@@ -402,7 +404,7 @@ fn shade_npr(s: Surface, world: vec3<f32>, frag: vec2<f32>) -> vec3<f32> {
         let l = light_at(i, world);
         let n_dot_l = dot(n, l.xyz);
         if (n_dot_l > 0.0) {
-            let c = frame.lights[i].color.rgb * l.w / PI;
+            let c = frame.lights[i].color.rgb * l.w * select(1.0, lit, i == shadowed) / PI;
             direct = direct + c * direct_diffuse(n_dot_l);
             spec = spec + c * direct_specular(n, l.xyz, v, s.rough, f0);
         }
@@ -434,6 +436,8 @@ fn shade_pbr(s: Surface, world: vec3<f32>) -> vec3<f32> {
     var direct = vec3<f32>(0.0);
     var spec = vec3<f32>(0.0);
     let count = u32(frame.counts.x);
+    let shadowed = u32(frame.shadow.y);
+    let lit = shadow_at(world, n);
     for (var i = 0u; i < 8u; i = i + 1u) {
         if (i >= count) {
             break;
@@ -441,7 +445,7 @@ fn shade_pbr(s: Surface, world: vec3<f32>) -> vec3<f32> {
         let l = light_at(i, world);
         let n_dot_l = dot(n, l.xyz);
         if (n_dot_l > 0.0) {
-            let c = frame.lights[i].color.rgb * l.w;
+            let c = frame.lights[i].color.rgb * l.w * select(1.0, lit, i == shadowed);
             direct = direct + c * n_dot_l / PI;
             spec = spec + c / PI * direct_specular(n, l.xyz, v, s.rough, f0);
         }

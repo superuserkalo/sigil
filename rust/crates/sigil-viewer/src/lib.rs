@@ -79,12 +79,34 @@ pub struct Look {
     pub transparent: bool,
     pub bloom: bool,
     pub floor: bool,
+    /// The key light casts a shadow map (studio key, or the Hideout's nearest realtime
+    /// directional or spot light).
+    pub shadows: bool,
 }
 
 impl Default for Look {
     fn default() -> Self {
-        Look { transparent: false, bloom: true, floor: true }
+        Look { transparent: false, bloom: true, floor: true, shadows: true }
     }
+}
+
+/// A directional light's shadow camera: an orthographic box around a sphere of `radius` at
+/// `center`, seen from `to_light`.
+pub fn directional_shadow(to_light: Vec3, center: Vec3, radius: f32) -> Mat4 {
+    let d = normalize(to_light);
+    let up = if d[1].abs() > 0.95 { [0.0, 0.0, 1.0] } else { [0.0, 1.0, 0.0] };
+    let eye = math::add(center, math::scale(d, radius * 2.0));
+    let view = Mat4::look_at(eye, center, up);
+    Mat4::orthographic(radius, radius, 0.0, radius * 4.0).mul(&view)
+}
+
+/// A spot light's shadow camera: its cone from its position, out to its range.
+pub fn spot_shadow(position: Vec3, shine: Vec3, outer: f32, range: f32) -> Mat4 {
+    let d = normalize(shine);
+    let up = if d[1].abs() > 0.95 { [0.0, 0.0, 1.0] } else { [0.0, 1.0, 0.0] };
+    let view = Mat4::look_at(position, math::add(position, d), up);
+    let fov = (outer * 2.0 + 0.05).clamp(0.2, 2.8);
+    Mat4::perspective(fov, 1.0, 0.05, range.max(1.0)).mul(&view)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -819,7 +841,7 @@ impl Viewer {
         self.framed_aspect = aspect;
     }
 
-    fn frame_uniforms(&self, width: u32, height: u32) -> (FrameGpu, PostGpu, Option<FloorGpu>, f32) {
+    fn frame_uniforms(&self, width: u32, height: u32) -> (FrameGpu, PostGpu, Option<FloorGpu>, Option<Mat4>) {
         let aspect = width as f32 / height.max(1) as f32;
         let extent = self.env_extent;
         let (near, far) = self.camera.near_far(extent);
@@ -831,6 +853,10 @@ impl Viewer {
         let mut lights = [LightGpu::zeroed_light(); 8];
         let mut count = 0usize;
         let key_dir;
+        // The light that casts the shadow map, its index in `lights`, and its camera.
+        let mut shadow: Option<(usize, Mat4)> = None;
+        let hero_bounds = self.hero.as_ref().map(|h| h.bounds()).unwrap_or(Aabb { min: [-0.5, 0.0, -0.5], max: [0.5, 2.0, 0.5] });
+        let hero_radius = math::length(hero_bounds.size()) * 0.5 * 1.05;
         match scene.filter(|s| !s.lights.is_empty()) {
             Some(s) => {
                 // Directional lights first, then the nearest point and spot lights to the hero.
@@ -842,6 +868,13 @@ impl Viewer {
                 });
                 for l in order.into_iter().take(8) {
                     let d = normalize(l.direction);
+                    if shadow.is_none() && l.realtime && self.look.shadows {
+                        match l.kind {
+                            scene::LightKind::Directional => shadow = Some((count, directional_shadow(d, hero_bounds.center(), hero_radius.max(3.0)))),
+                            scene::LightKind::Spot => shadow = Some((count, spot_shadow(l.position, d, l.cone.map_or(0.8, |c| c.1), l.range))),
+                            scene::LightKind::Point => {}
+                        }
+                    }
                     let (cos_outer, cos_inner) = l.cone.map_or((-1.0, -1.0), |(i, o)| (o.cos(), i.cos()));
                     lights[count] = LightGpu {
                         pos_dir: match l.kind {
@@ -870,6 +903,9 @@ impl Viewer {
                 lights[1] = LightGpu { pos_dir: [f[0], f[1], f[2], 0.0], color: [0.65 * 1.2 * light_scale, 0.78 * 1.2 * light_scale, 1.2 * light_scale, 0.0], ..LightGpu::zeroed_light() };
                 count = 2;
                 key_dir = k;
+                if self.look.shadows {
+                    shadow = Some((0, directional_shadow(k, hero_bounds.center(), hero_radius)));
+                }
             }
         }
         let (top, bottom) = (ENV_TOP, ENV_BOTTOM);
@@ -911,6 +947,12 @@ impl Viewer {
                 None => [1.0; 4],
             },
             lights,
+            shadow_matrix: shadow.map_or(Mat4::IDENTITY, |s| s.1).to_cols_array(),
+            shadow: match shadow {
+                // Normal offset: about a texel and a half of the light's box.
+                Some((i, _)) => [1.0, i as f32, 1.0 / gpu::SHADOW_SIZE as f32, (hero_radius * 2.0 / gpu::SHADOW_SIZE as f32 * 1.5).max(0.002)],
+                None => [0.0; 4],
+            },
         };
         let mut post = if scene.is_some() { base_post(exposure) } else { hero_post(exposure) };
         post.top[3] = if self.look.transparent { 1.0 } else { 0.0 };
@@ -936,7 +978,7 @@ impl Viewer {
             let radius = (s[0].max(s[2]) * 0.9).max(s[1] * 0.32);
             FloorGpu { center: [c[0], b.min[1] + 0.002, c[2], radius], shadow: [-key_dir[0] * 0.35, -key_dir[2] * 0.35, 0.85, 0.0] }
         });
-        (frame, post, floor, aspect)
+        (frame, post, floor, shadow.map(|s| s.1))
     }
 
     /// Advances the clock by `dt` seconds and renders a `width` by `height` frame. Returns
@@ -968,7 +1010,7 @@ impl Viewer {
         if self.targets.as_ref().is_none_or(|t| t.width != width || t.height != height) {
             self.targets = Some(Targets::new(&self.gpu, width, height));
         }
-        let (frame, post, floor, _) = self.frame_uniforms(width, height);
+        let (frame, post, floor, shadow) = self.frame_uniforms(width, height);
         let eye = self.camera.eye();
         let dist = |slot: &Slot, c: Vec3, mesh: usize| {
             let m = slot.bases.get(mesh).and_then(|&b| slot.palette.get(b as usize)).copied().unwrap_or_default();
@@ -990,7 +1032,7 @@ impl Viewer {
             (Compare::Split(_), true) => [Some(&after), Some(&before_list)],
             _ => [Some(&after), None],
         };
-        let inputs = FrameInputs { frame, post, floor, layers, read: !self.skip_read, env_cube: self.reflection.as_ref().map(|c| &c.view), sky_cube: self.sky.as_ref().map(|c| &c.view) };
+        let inputs = FrameInputs { frame, post, floor, layers, read: !self.skip_read, env_cube: self.reflection.as_ref().map(|c| &c.view), sky_cube: self.sky.as_ref().map(|c| &c.view), shadow: shadow.map(|m| m.to_cols_array()) };
         let targets = self.targets.as_ref().expect("targets");
         let mut out = std::mem::take(&mut self.frame);
         self.last = gpu::render_frame(&self.gpu, &self.pipes, &self.res, targets, &inputs, &mut out);
