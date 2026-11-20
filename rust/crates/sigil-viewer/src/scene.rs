@@ -98,6 +98,72 @@ impl Sidecar {
     pub fn playmode(&self, clip: &str) -> Playmode {
         self.clip_info.iter().find(|c| c.name == clip).map(|c| c.playback).unwrap_or_default()
     }
+
+    /// The animation graph's speed for a clip (1 when the sidecar gives none).
+    pub fn speed(&self, clip: &str) -> f32 {
+        self.clip_info.iter().find(|c| c.name == clip).map(|c| c.speed).filter(|s| s.is_finite() && *s > 0.0).unwrap_or(1.0)
+    }
+
+    /// The clip picker's name for a clip: the sidecar's label, else the clip name made readable.
+    pub fn label(&self, clip: &str) -> String {
+        self.clip_info.iter().find(|c| c.name == clip).and_then(|c| c.label.clone()).unwrap_or_else(|| humanize_clip(clip))
+    }
+
+    /// The clip picker's group: `idle`, `movement`, `combat` or `other`.
+    pub fn group(&self, clip: &str) -> String {
+        self.clip_info.iter().find(|c| c.name == clip).and_then(|c| c.group.clone()).unwrap_or_else(|| clip_group(clip).to_string())
+    }
+}
+
+/// A clip name as Grimoire's picker shows it when no recipe names it (heroViewerPlayback.ts):
+/// folder and extension dropped, camelCase split, underscores and dashes as spaces, the first
+/// letter upper case.
+pub fn humanize_clip(name: &str) -> String {
+    let base = name.rsplit(['/', '\\']).next().unwrap_or(name);
+    let lower = base.to_ascii_lowercase();
+    let stem = [".vnmclip_c", ".vnmclip", ".vanim_c", ".vanim"].iter().find_map(|ext| lower.ends_with(ext).then(|| &base[..base.len() - ext.len()])).unwrap_or(base);
+    let mut out = String::new();
+    let mut prev_lower = false;
+    for c in stem.chars() {
+        if c == '_' || c == '-' {
+            if !out.ends_with(' ') {
+                out.push(' ');
+            }
+            prev_lower = false;
+            continue;
+        }
+        if c.is_ascii_uppercase() && prev_lower {
+            out.push(' ');
+        }
+        prev_lower = c.is_ascii_lowercase();
+        out.push(c);
+    }
+    let out = out.trim().to_string();
+    let mut chars = out.chars();
+    match chars.next() {
+        Some(f) => f.to_uppercase().chain(chars).collect(),
+        None => name.to_string(),
+    }
+}
+
+/// Grimoire's picker groups by name tokens (groupHeroClips).
+pub fn clip_group(name: &str) -> &'static str {
+    let lower = name.to_ascii_lowercase();
+    let tokens: Vec<&str> = lower.split(|c: char| !c.is_ascii_alphanumeric()).filter(|t| !t.is_empty()).collect();
+    let any = |set: &[&str]| tokens.iter().any(|t| set.contains(t));
+    let movement = tokens.iter().any(|t| {
+        let word = t.trim_end_matches(|c: char| c.is_ascii_digit());
+        ["walk", "run", "sprint", "jump", "land", "crouch", "dash", "slide", "climb", "move"].contains(&word)
+    });
+    if any(&["attack", "fire", "shoot", "reload", "melee", "punch", "cast", "ability", "ult", "ultimate"]) {
+        "combat"
+    } else if any(&["idle", "menu", "loadout", "select", "shop", "pose"]) {
+        "idle"
+    } else if movement {
+        "movement"
+    } else {
+        "other"
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -548,6 +614,21 @@ mod tests {
         assert_eq!(sky.scale, [2.0; 3]);
         assert!(s.hero.is_some() && s.hero_anchor.is_some());
         assert_eq!(s.omissions, vec!["tonemap", "particles"]);
+    }
+
+    #[test]
+    fn clip_names_read_as_grimoire_shows_them() {
+        assert_eq!(humanize_clip("models/heroes/haze/clips/primary_stand_reload.vnmclip_c"), "Primary stand reload");
+        assert_eq!(humanize_clip("heroSelectIdle"), "Hero Select Idle");
+        assert_eq!(clip_group("primary_stand_reload"), "combat");
+        assert_eq!(clip_group("ui_shop_idle"), "idle");
+        assert_eq!(clip_group("run_n2"), "movement");
+        assert_eq!(clip_group("emote_wave"), "other");
+        let s = Sidecar::parse(r#"{"clipInfo":[{"name":"shop_menu_base","label":"Idle","group":"idle","speed":0.69}]}"#);
+        assert_eq!(s.label("shop_menu_base"), "Idle");
+        assert_eq!(s.speed("shop_menu_base"), 0.69);
+        assert_eq!(s.speed("other"), 1.0);
+        assert_eq!(s.label("dash_forward"), "Dash forward");
     }
 
     #[test]

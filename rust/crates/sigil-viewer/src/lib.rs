@@ -20,6 +20,7 @@ pub mod hideout;
 pub mod material;
 pub mod math;
 pub mod model;
+pub mod particles;
 pub mod scene;
 
 use std::collections::HashMap;
@@ -85,13 +86,83 @@ pub struct Look {
     /// The key light casts a shadow map (studio key, or the Hideout's nearest realtime
     /// directional or spot light).
     pub shadows: bool,
+    /// What fills the frame behind the hero (a scene's sky always wins).
+    pub backdrop: Backdrop,
+    /// Grimoire's lighting scenes for the studio (a Hideout brings its own).
+    pub lighting: Lighting,
+    /// Simulate the hero's cloth (Grimoire's Cloth switch, on by default).
+    pub cloth: bool,
+    /// Play the hero's and the map's particle effects (Grimoire's Particles switch).
+    pub particles: bool,
 }
 
 impl Default for Look {
     fn default() -> Self {
-        Look { transparent: false, bloom: true, floor: true, shadows: true }
+        Look { transparent: false, bloom: true, floor: true, shadows: true, backdrop: Backdrop::Studio, lighting: Lighting::Studio, cloth: true, particles: true }
     }
 }
+
+/// The studio backdrop.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Backdrop {
+    /// Sigil's charcoal with an ember glow behind the hero.
+    #[default]
+    Studio,
+    /// One of `GRADIENTS`.
+    Gradient(usize),
+    /// Grimoire's None: the flat viewer grey.
+    Plain,
+    /// A picture the player chose (`Viewer::set_backdrop_image`), cover cropped.
+    Image,
+}
+
+/// Grimoire's lighting scenes (HeroPoseViewer.tsx): the studio rig, or Midtown dusk's warm
+/// key, brighter environment and higher exposure.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Lighting {
+    #[default]
+    Studio,
+    Midtown,
+}
+
+/// A backdrop gradient: sRGB stops at 0, `mid` and 1, radial from `center` over
+/// `spread` times the frame's diagonal (or vertical when `center` is None), then a vignette.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Gradient {
+    pub name: &'static str,
+    pub center: Option<[f32; 2]>,
+    pub spread: f32,
+    pub stops: [[f32; 3]; 3],
+    pub mid: f32,
+    pub vignette: f32,
+}
+
+const fn hex(rgb: u32) -> [f32; 3] {
+    [((rgb >> 16) & 255) as f32 / 255.0, ((rgb >> 8) & 255) as f32 / 255.0, (rgb & 255) as f32 / 255.0]
+}
+
+const fn radial(name: &'static str, cx: f32, cy: f32, spread: f32, stops: [u32; 3], mid: f32) -> Gradient {
+    Gradient { name, center: Some([cx, cy]), spread, stops: [hex(stops[0]), hex(stops[1]), hex(stops[2])], mid, vignette: 0.5 }
+}
+
+/// Deadlock Mod Manager's studio gradient, then Grimoire's ten soul backdrops
+/// (soulBackdrops.ts), in their order.
+pub const GRADIENTS: [Gradient; 11] = [
+    Gradient { name: "Studio gradient", center: None, spread: 1.0, stops: [hex(0x16171b), hex(0x101114), hex(0x0a0b0d)], mid: 0.5, vignette: 0.0 },
+    radial("Charcoal spotlight", 0.5, 0.42, 0.78, [0x34343a, 0x18181b, 0x0a0a0b], 0.5),
+    radial("Warm ember", 0.5, 0.88, 0.85, [0x5e3717, 0x2a160a, 0x080605], 0.4),
+    radial("Cool abyss blue", 0.5, 0.4, 0.78, [0x1f3a58, 0x0d1a2a, 0x05080d], 0.5),
+    radial("Violet soul", 0.5, 0.42, 0.78, [0x3d2160, 0x1c0f30, 0x080510], 0.5),
+    radial("Deep forest", 0.5, 0.46, 0.78, [0x17402e, 0x0b1f17, 0x050b08], 0.5),
+    radial("Crimson dusk", 0.5, 0.46, 0.78, [0x5e1a22, 0x2a0d12, 0x0c0608], 0.45),
+    radial("Teal nebula", 0.42, 0.38, 0.78, [0x0f5050, 0x0a2626, 0x04090a], 0.45),
+    radial("Amber halo", 0.5, 0.5, 0.78, [0x7a4410, 0x3a2208, 0x0b0805], 0.42),
+    Gradient { name: "Indigo-to-rose dawn", center: None, spread: 1.0, stops: [hex(0x241a3a), hex(0x1a0f1e), hex(0x08060a)], mid: 0.55, vignette: 0.4 },
+    radial("Ice steel", 0.5, 0.36, 0.78, [0x2c3a44, 0x141a1f, 0x070a0c], 0.5),
+];
+
+/// Grimoire's turntable: the hero turns at a quarter radian a second.
+pub const SPIN_SPEED: f32 = 0.25;
 
 /// A directional light's shadow camera: an orthographic box around a sphere of `radius` at
 /// `center`, seen from `to_light`.
@@ -150,6 +221,8 @@ struct Slot {
     /// A still prop is posed once.
     still: bool,
     posed: bool,
+    /// The node matrices of the last pose (the glb's frame), for attachments.
+    globals: Vec<Mat4>,
 }
 
 impl Slot {
@@ -166,7 +239,7 @@ impl Slot {
         let bases = model::palettes(&model, &globals, &placement, &mut palette);
         let unit = model::game_unit(&model, &globals) * placement.scale_factor();
         let g = mesh.instance(gpu, p, palette.len(), &bases, tint, only);
-        Slot { model, gpu: g, placement, clip, palette, bases, unit, fixed_bounds: None, still: false, posed: false }
+        Slot { model, gpu: g, placement, clip, palette, bases, unit, fixed_bounds: None, still: false, posed: false, globals }
     }
 
     /// A scene prop: bounds measured now (only its fragment when `only`), posed once when still.
@@ -188,9 +261,14 @@ impl Slot {
         self.posed = true;
         let clip = self.clip.and_then(|c| self.model.clips.get(c));
         let locals = model::sample_pose(&self.model, clip, time);
-        let globals = model::globals(&self.model, &locals);
-        self.bases = model::palettes(&self.model, &globals, &self.placement, &mut self.palette);
+        self.globals = model::globals(&self.model, &locals);
+        self.bases = model::palettes(&self.model, &self.globals, &self.placement, &mut self.palette);
         self.gpu.write_palette(gpu, &self.palette);
+    }
+
+    /// The glb's Source-to-glTF node (`skeleton`) as posed, so Source-space effects can follow.
+    fn skeleton(&self) -> Mat4 {
+        self.model.nodes.iter().position(|n| n.name == "skeleton").and_then(|i| self.globals.get(i).copied()).unwrap_or_else(fixture::source_to_gltf)
     }
 
     fn bounds(&self) -> Aabb {
@@ -292,6 +370,11 @@ fn hero_post(exposure: f32) -> PostGpu {
         bloom2: [0.0; 4],
         lut: [0.0; 4],
         bloom_w: [[1.0, 1.0, 1.0, 0.0]; 5],
+        bg: [0.0; 4],
+        bg_at: [0.5, 0.5, 1.0, 1.0],
+        bg0: [0.0; 4],
+        bg1: [0.0; 4],
+        bg2: [0.0; 4],
     }
 }
 
@@ -412,6 +495,8 @@ pub struct SceneAssets {
     pub reflection: Option<CubeData>,
     /// The lightmap, probe and fog volumes, cookies and colour correction.
     pub hideout: hideout::HideoutData,
+    /// The map's particle bundle, when the scene names one.
+    pub particles: Option<particles::Bundle>,
     pub errors: Vec<String>,
     /// Files and placements left out to stay inside the bounds below.
     pub skipped: Vec<String>,
@@ -471,10 +556,17 @@ pub fn load_scene_with(path: &Path, cancel: &AtomicBool, progress: &mut dyn FnMu
     let reflection = cube(&desc.reflection);
     let hideout = hideout::HideoutData::load(&desc);
     errors.extend(hideout.errors.iter().cloned());
+    let particles = desc.particles.as_deref().and_then(|p| match particles::Bundle::read(p) {
+        Ok(b) => Some(b),
+        Err(e) => {
+            errors.push(e);
+            None
+        }
+    });
     if cancel.load(Ordering::Relaxed) {
         return Err(ViewerError::Cancelled);
     }
-    Ok(SceneAssets { desc, models: loaded.models, sky, reflection, hideout, errors, skipped: loaded.skipped, files: loaded.files })
+    Ok(SceneAssets { desc, models: loaded.models, sky, reflection, hideout, particles, errors, skipped: loaded.skipped, files: loaded.files })
 }
 
 /// Bytes a decoded model holds (vertices, indices, pixels, clips), for the memory budget.
@@ -597,6 +689,15 @@ pub struct Viewer {
     /// pipelines took. For the app's log.
     notes: Vec<String>,
     hideout: Option<hideout::HideoutGpu>,
+    /// The hero's effects (its bundle for the attachments) and the map's.
+    hero_particles: Option<(particles::Bundle, particles::ParticleGpu)>,
+    scene_particles: Option<particles::ParticleGpu>,
+    /// Effects get a second of simulation before their first frame, so a still shows them.
+    particles_warm: bool,
+    /// The turntable (auto-rotate): on, and the hero's turn so far in radians.
+    pub auto_rotate: bool,
+    turn: f32,
+    backdrop_image: Option<(wgpu::TextureView, f32)>,
 }
 
 impl Viewer {
@@ -659,6 +760,12 @@ impl Viewer {
             env_extent: 3.0,
             notes,
             hideout: None,
+            hero_particles: None,
+            scene_particles: None,
+            particles_warm: false,
+            auto_rotate: false,
+            turn: 0.0,
+            backdrop_image: None,
         })
     }
 
@@ -743,7 +850,16 @@ impl Viewer {
     /// the report; what was placed so far stays). Each distinct file is uploaded once and its
     /// placements share it; what does not fit the device is left out (`usage`).
     pub fn set_scene_with(&mut self, assets: SceneAssets, cancel: &AtomicBool, progress: &mut dyn FnMut(LoadProgress)) -> SceneReport {
-        let SceneAssets { desc, models, sky, reflection, hideout: baked, .. } = assets;
+        let SceneAssets { desc, models, sky, reflection, hideout: baked, particles: map_particles, .. } = assets;
+        self.scene_particles = map_particles.map(|b| {
+            let mut pg = particles::ParticleGpu::new(&self.gpu.device, &self.gpu.queue, &self.pipes.frame_layout, self.gpu.msaa, gpu::HDR, gpu::DEPTH, &b);
+            // The map's sun lights its particles (Grimoire's HideoutParticleLayer).
+            if let Some(sun) = desc.lights.iter().find(|l| l.kind == scene::LightKind::Directional && !l.fog_only) {
+                pg.set_sun(sun.color);
+            }
+            pg
+        });
+        self.particles_warm = false;
         self.hideout = Some(hideout::HideoutGpu::new(&self.gpu, &desc, &baked, &self.pipes.hideout_none));
         let mut report = SceneReport::default();
         let mut meshes: HashMap<*const Model, GpuMesh> = HashMap::new();
@@ -791,6 +907,7 @@ impl Viewer {
         self.env.clear();
         self.env_extent = 3.0;
         self.scene = None;
+        self.scene_particles = None;
         self.hideout = None;
         self.sky = None;
         self.reflection = None;
@@ -820,6 +937,11 @@ impl Viewer {
         true
     }
 
+    /// Every clip with its picker label and group, in the sidecar's order.
+    pub fn clip_labels(&self) -> Vec<(String, String, String)> {
+        self.clips().into_iter().map(|(name, _)| (self.sidecar.label(&name), self.sidecar.group(&name), name)).map(|(l, g, n)| (n, l, g)).collect()
+    }
+
     pub fn clip(&self) -> Option<String> {
         let hero = self.hero.as_ref()?;
         hero.clip.map(|c| hero.model.clips[c].name.clone())
@@ -833,7 +955,68 @@ impl Viewer {
     pub fn animating(&self) -> bool {
         let d = self.duration();
         let held = self.playmode == Playmode::Hold && self.playback.time >= d;
-        (self.playback.playing && d > 0.0 && !held) || self.env.iter().any(|e| e.clip.is_some())
+        (self.playback.playing && d > 0.0 && !held) || self.env.iter().any(|e| e.clip.is_some()) || (self.auto_rotate && self.hero.is_some())
+    }
+
+    /// The hero's particle effects (`particles/bundle.json` beside its sidecar), or none.
+    pub fn set_hero_particles(&mut self, bundle: Option<particles::Bundle>) {
+        self.hero_particles = bundle.map(|b| {
+            let gpu = particles::ParticleGpu::new(&self.gpu.device, &self.gpu.queue, &self.pipes.frame_layout, self.gpu.msaa, gpu::HDR, gpu::DEPTH, &b);
+            (b, gpu)
+        });
+        self.particles_warm = false;
+    }
+
+    /// What the particle port skipped (unknown classes and inputs), hero then map.
+    pub fn particle_diagnostics(&self) -> Vec<String> {
+        let mut out: Vec<String> = self.hero_particles.iter().flat_map(|(_, g)| g.diagnostics().iter().cloned()).collect();
+        out.extend(self.scene_particles.iter().flat_map(|g| g.diagnostics().iter().cloned()));
+        out
+    }
+
+    /// Live particles, hero and map together.
+    pub fn particle_count(&self) -> usize {
+        self.hero_particles.as_ref().map_or(0, |(_, g)| g.particle_count()) + self.scene_particles.as_ref().map_or(0, |g| g.particle_count())
+    }
+
+    /// Steps the effects by `dt` and puts their cards on the GPU.
+    fn step_particles(&mut self, dt: f32) {
+        if !self.look.particles || (self.hero_particles.is_none() && self.scene_particles.is_none()) {
+            return;
+        }
+        let camera = self.camera.eye();
+        let (steps, step) = if self.particles_warm { (1, dt) } else { (30, 1.0 / 30.0) };
+        self.particles_warm = true;
+        if let (Some((bundle, pg)), Some(hero)) = (&mut self.hero_particles, &self.hero) {
+            let skeleton = hero.skeleton();
+            let to_world = hero.placement.mul(&skeleton);
+            let back = skeleton.inverse();
+            let bone = |name: &str| hero.model.nodes.iter().position(|n| n.name == name).and_then(|i| hero.globals.get(i)).map(|g| back.mul(g));
+            let attach = |name: &str| bundle.attachment_frame(name, &bone);
+            for _ in 0..steps {
+                pg.step(step, &to_world, &attach, camera);
+            }
+            pg.upload(&self.gpu.queue);
+        }
+        if let Some(pg) = &mut self.scene_particles {
+            let to_world = fixture::source_to_gltf();
+            for _ in 0..steps {
+                pg.step(step, &to_world, &|_| None, camera);
+            }
+            pg.upload(&self.gpu.queue);
+        }
+    }
+
+    /// A picture behind the hero (`Backdrop::Image`): straight sRGB RGBA8, cover cropped. `None`
+    /// drops it (the backdrop falls back to the studio).
+    pub fn set_backdrop_image(&mut self, image: Option<(u32, u32, &[u8])>) {
+        self.backdrop_image = image.filter(|(w, h, rgba)| *w > 0 && *h > 0 && rgba.len() >= (*w as usize * *h as usize * 4)).and_then(|(w, h, rgba)| {
+            let view = gpu::upload_srgb(&self.gpu, w, h, rgba)?;
+            Some((view, w as f32 / h as f32))
+        });
+        if self.backdrop_image.is_none() && self.look.backdrop == Backdrop::Image {
+            self.look.backdrop = Backdrop::Studio;
+        }
     }
 
     /// Loop, or play once and hold the last frame (the sidecar's `playback`).
@@ -846,7 +1029,9 @@ impl Viewer {
         self.clock += dt;
         if self.playback.playing {
             let d = self.duration();
-            self.playback.time += dt.max(0.0) * self.playback.speed;
+            // The animation graph's own rate for the clip (a shop pose at 0.69) under the player's.
+            let graph = self.clip().map_or(1.0, |c| self.sidecar.speed(&c));
+            self.playback.time += dt.max(0.0) * self.playback.speed * graph;
             if d > 0.0 {
                 self.playback.time = match self.playmode {
                     Playmode::Loop => self.playback.time.rem_euclid(d),
@@ -868,6 +1053,7 @@ impl Viewer {
 
     pub fn reset_camera(&mut self) {
         self.home = None;
+        self.turn = 0.0;
     }
 
     pub fn timings(&self) -> Timings {
@@ -903,7 +1089,8 @@ impl Viewer {
         let view = self.camera.view();
         let proj = Mat4::perspective(self.camera.fov_y, aspect, near, far);
         let scene = self.scene.as_ref();
-        let exposure = scene.and_then(|s| s.exposure).unwrap_or(STUDIO_EXPOSURE);
+        let midtown = scene.is_none() && self.look.lighting == Lighting::Midtown;
+        let exposure = scene.and_then(|s| s.exposure).unwrap_or(if midtown { 1.6 } else { STUDIO_EXPOSURE });
         let light_scale = RIG_EXPOSURE / exposure;
         let mut lights = [LightGpu::zeroed_light(); 8];
         let mut count = 0usize;
@@ -959,7 +1146,9 @@ impl Viewer {
             None => {
                 let k = normalize(KEY);
                 let f = normalize(FILL);
-                lights[0] = LightGpu { pos_dir: [k[0], k[1], k[2], 0.0], color: [1.4 * light_scale, 1.4 * light_scale, 1.4 * light_scale, 0.0], ..LightGpu::zeroed_light() };
+                // Midtown dusk: a warm (254, 153, 91) key at 2.2 instead of the white 1.4.
+                let key = if midtown { [254.0 / 255.0 * 2.2, 153.0 / 255.0 * 2.2, 91.0 / 255.0 * 2.2] } else { [1.4; 3] };
+                lights[0] = LightGpu { pos_dir: [k[0], k[1], k[2], 0.0], color: [key[0] * light_scale, key[1] * light_scale, key[2] * light_scale, 0.0], ..LightGpu::zeroed_light() };
                 lights[1] = LightGpu { pos_dir: [f[0], f[1], f[2], 0.0], color: [0.65 * 1.2 * light_scale, 0.78 * 1.2 * light_scale, 1.2 * light_scale, 0.0], ..LightGpu::zeroed_light() };
                 count = 2;
                 key_dir = k;
@@ -969,7 +1158,7 @@ impl Viewer {
             }
         }
         let (top, bottom) = (ENV_TOP, ENV_BOTTOM);
-        let env_k = 1.1 * light_scale;
+        let env_k = if midtown { 1.6 } else { 1.1 } * light_scale;
         // A scene's probe (or sky) gives the ambient per side; the studio integrates its room.
         let probe = self.reflection.as_ref().or(self.sky.as_ref());
         let cube = match probe {
@@ -1019,6 +1208,28 @@ impl Viewer {
             None => (hero_post(exposure), [[1.0; 3]; 5]),
         };
         post.top[3] = if self.look.transparent { 1.0 } else { 0.0 };
+        match self.look.backdrop {
+            Backdrop::Studio => {}
+            Backdrop::Plain => {
+                post.bg = [3.0, 0.0, 0.0, 0.0];
+                post.bg0 = [26.0 / 255.0, 26.0 / 255.0, 26.0 / 255.0, 0.0];
+            }
+            Backdrop::Gradient(i) => {
+                let g = GRADIENTS[i.min(GRADIENTS.len() - 1)];
+                let center = g.center.unwrap_or([0.5, 0.0]);
+                post.bg = [if g.center.is_some() { 1.0 } else { 2.0 }, g.spread, g.vignette, g.mid];
+                post.bg_at = [center[0], center[1], width as f32 / height.max(1) as f32, 0.0];
+                post.bg0 = [g.stops[0][0], g.stops[0][1], g.stops[0][2], 0.0];
+                post.bg1 = [g.stops[1][0], g.stops[1][1], g.stops[1][2], 0.0];
+                post.bg2 = [g.stops[2][0], g.stops[2][1], g.stops[2][2], 0.0];
+            }
+            Backdrop::Image => {
+                if let Some((_, image_aspect)) = &self.backdrop_image {
+                    post.bg = [4.0, 0.0, 0.0, 0.0];
+                    post.bg_at = [0.5, 0.5, width as f32 / height.max(1) as f32, *image_aspect];
+                }
+            }
+        }
         if !self.look.bloom {
             post.curve_b[2] = 0.0;
         }
@@ -1058,6 +1269,13 @@ impl Viewer {
         let edge = self.gpu.max_edge();
         let (width, height) = (width.clamp(1, edge), height.clamp(1, edge));
         self.advance(dt);
+        if self.auto_rotate {
+            self.turn = (self.turn + dt.clamp(0.0, 0.1) * SPIN_SPEED).rem_euclid(std::f32::consts::TAU);
+        }
+        let placement = self.hero_placement().mul(&Mat4::from_trs([0.0; 3], math::quat_axis_angle([0.0, 1.0, 0.0], self.turn), [1.0; 3]));
+        for slot in [&mut self.hero, &mut self.before].into_iter().flatten() {
+            slot.placement = placement;
+        }
         let time = self.playback.time;
         let hero_duration = self.duration();
         if let Some(h) = &mut self.hero {
@@ -1074,6 +1292,7 @@ impl Viewer {
             let d = e.duration();
             e.pose(&self.gpu, if d > 0.0 { clock.rem_euclid(d) } else { 0.0 });
         }
+        self.step_particles(dt);
         let aspect = width as f32 / height as f32;
         if self.home.is_none() || ((aspect - self.framed_aspect).abs() > 0.01 && self.home == Some(self.camera)) {
             self.frame_camera(aspect);
@@ -1098,12 +1317,13 @@ impl Viewer {
         if let (Some(b), Some(f)) = (&self.before, &before_fn) {
             before_list.push(Shown { model: &b.gpu, hero: true, eye_distance: f });
         }
+        let particle_list: Vec<&particles::ParticleGpu> = if self.look.particles { self.hero_particles.iter().map(|(_, g)| g).chain(self.scene_particles.iter()).collect() } else { Vec::new() };
         let layers: [Option<&[Shown]>; 2] = match (self.compare, self.before.is_some()) {
             (Compare::Before, true) => [Some(&before_list), None],
             (Compare::Split(_), true) => [Some(&after), Some(&before_list)],
             _ => [Some(&after), None],
         };
-        let inputs = FrameInputs { frame, post, floor, layers, read: !self.skip_read, env_cube: self.reflection.as_ref().map(|c| &c.view), sky_cube: self.sky.as_ref().map(|c| &c.view), shadow: shadow.map(|m| m.to_cols_array()), hideout: self.hideout.as_ref().zip(baked), bloom_weights, shadow_hero_only };
+        let inputs = FrameInputs { frame, post, floor, layers, read: !self.skip_read, env_cube: self.reflection.as_ref().map(|c| &c.view), sky_cube: self.sky.as_ref().map(|c| &c.view), backdrop: self.backdrop_image.as_ref().map(|b| &b.0), shadow: shadow.map(|m| m.to_cols_array()), hideout: self.hideout.as_ref().zip(baked), bloom_weights, shadow_hero_only, particles: &particle_list };
         let targets = self.targets.as_ref().expect("targets");
         let mut out = std::mem::take(&mut self.frame);
         self.last = gpu::render_frame(&self.gpu, &self.pipes, &self.res, targets, &inputs, &mut out);
