@@ -133,7 +133,7 @@ pub fn scan_archive(archive: &Path, scratch_root: &Path) -> ScanReport {
             let _ = fs::remove_dir_all(&destination);
             report
         }
-        ArchiveFormat::Unknown => {
+        ArchiveFormat::Vpk | ArchiveFormat::Unknown => {
             // Not an archive at all: the install pipeline will say so. A single file still
             // gets a name check.
             let name = archive
