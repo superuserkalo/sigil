@@ -109,7 +109,7 @@ trusted that version).
 | Panorama layouts and styles: `vxml_c vcss_c xml vxml css vcss html htm` | yes | text calls a web or browser API, loads a URL, or builds code | "Reaches out" or "Hidden code", with the API or URL | The game ships 900 of them. Event handlers and inline script are normal HUD mod content; Grimoire flags them as "Runs scripts", Sigil does not. |
 | Panorama scripts: `vjs_c vts_c` | yes | same as layouts | same | The game runs them and ships `vts_c` itself; inside Panorama they have no network API but the ones listed. Grimoire flags every script; Sigil flags what it does. |
 | API calls in that text: `$.AsyncWebRequest`, `SetURL`, `CitadelHTMLPanel` or `<HTML`, `ExternalBrowserGoToURL`, `BrowserGoToURL`, `OpenURL`, `OpenExternalBrowserURL`, `ExecuteSteamURL`, `fetch(`, `XMLHttpRequest`, `WebSocket`, `importScripts(`, `javascript:` | | match on a whole word | "Reaches out: path (API)" with a sentence per API | Section 1. Searched in the full text, so a comment cannot hide a call. |
-| URL loads: `src=`, `href=`, `url=` attribute, CSS `url(...)`, `SetImage(...)` with `http:`, `https:` or `//` | | match in the full text, dropped only when wholly inside a real comment | "Loads <url> from the internet when the game shows it." | Panorama fetches these. The attribute anchor keeps `xmlns=`, doctype URLs and `xlink:href` out; credits in comments are dropped (see "Comments" below). |
+| URL loads: `src=`, `href=`, `url=` attribute, CSS `url(...)`, `SetImage(...)` with `http:`, `https:` or `//` | | match anywhere in the text, comments included | "Loads <url> from the internet when the game shows it." | Panorama fetches these. The attribute anchor keeps `xmlns=`, doctype URLs, `xlink:href` and plain links in credits out. A commented-out load is listed (see "Comments" below). |
 | Code built at runtime: `eval(`, `new Function(`, `Function("`, `atob(`, `fromCharCode(`, `RunScriptInPanelContext` | | match on a whole word | "Hidden code" | Grimoire's `dynamic-code`; the usual way to hide a URL. |
 | Layouts, styles and scripts over 1 MB, or whose bytes cannot be read | | always | "Not checked": "Too large to check" or "Could not be read" | Size or damage must not be a way past the scan. Grimoire reports the same as `uninspectable` and `unreadable-archive`. A VPK whose directory cannot be read asks at the gate as "Not checked: the whole file". |
 | Programs: `exe dll com bat cmd ps1 vbs lnk msi so dylib wasm` | no | always | "Program" | Never needed by a mod. Same list as Grimoire. The install check refuses them outside a VPK. |
@@ -117,16 +117,13 @@ trusted that version).
 | Console configs: `cfg` | no | always | "Source script": "Console config: the game runs its commands when a bind or another config executes it." | Can run console commands. DMM stages loose `.cfg` for review. |
 | Script mods: `*.vnmskel_c`, `scripts/**/*.vdata_c` | no | always | "Script mod" with the install check's message | One definition, `payload::script_mod_kind`, for both the install check and the scan, so "Allow script mods" covers the same files in both places. |
 
-Comments: URL loads are searched in the full text, and a match is dropped only when it lies
-wholly inside a comment span from a small quote-aware tokenizer, so a comment marker inside a
-quoted value (`text="<!--"`, `content: "/*"`) cannot hide a load. Layouts (`xml`, `vxml`,
-`vxml_c`) know only `<!-- -->` in text content, with quotes counted inside tags and CDATA kept.
-Styles (`css`, `vcss`, `vcss_c`) know `/* */`, with quoted strings and backslash escapes. Scripts
-and HTML pages trust no comment (regex literals, template strings and HTML raw text would let a
-small tokenizer disagree with the real parser). A comment that never closes is not trusted. In
-a compiled file, comments count only inside the DATA block's source text, after its CRC and
-image-name table; a resource that does not parse trusts no comment. API names are always searched
-in the full text.
+Comments: no comment is exempt. Two rounds of a quote-aware comment tokenizer still disagreed
+with the game's parsers (a `/*` in a quoted value, CSS `//` lines, unquoted `url(...)`, `<?...?>`
+and `<!DOCTYPE>` with quotes), and each disagreement let a real load hide inside a fake comment.
+So the scan fails closed: a URL load (`src=`, `href=`, `url=`, CSS `url()`, `SetImage`) is listed
+wherever it appears. The cost is that a commented-out load in a layout or style is listed too; a
+credit line with a plain link is not, because it is not an attribute-anchored load. API names are
+also searched in the full text.
 
 Limits: the scan matches text, not a parsed AST, so a script that builds an API name from pieces
 (`$["Async" + "WebRequest"]`) gets through unless it also uses `atob`, `eval` or the like. A binary
