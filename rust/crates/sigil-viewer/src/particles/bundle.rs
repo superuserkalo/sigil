@@ -200,15 +200,25 @@ fn attach_of(v: Option<&Value>) -> Option<EffectAttach> {
     Some(EffectAttach { kind: kind.trim_start_matches("pattach_").to_string(), point: kv::s(v, "point").unwrap_or("").to_string(), offset: kv::v3(v, "offset", [0.0; 3]) })
 }
 
+/// The most texels a particle texture may have when read (64 MB as RGBA8).
+pub const MAX_TEXTURE_TEXELS: u64 = 4096 * 4096;
+
 impl Bundle {
     /// Reads `bundle.json` (or the directory holding it) and decodes its textures.
     pub fn read(path: &Path) -> Result<Bundle, String> {
+        // (Textures past `MAX_TEXTURE_TEXELS` are refused before they are decoded.)
         let file: PathBuf = if path.is_dir() { path.join("bundle.json") } else { path.to_path_buf() };
         let text = std::fs::read_to_string(&file).map_err(|e| format!("read {}: {e}", file.display()))?;
         let json: Value = serde_json::from_str(&text).map_err(|e| format!("parse {}: {e}", file.display()))?;
         let dir = file.parent().unwrap_or(Path::new("."));
         Bundle::from_json(&json, |rel| {
             let p = dir.join(rel);
+            // A bundle's picture comes from a mod: read its size first and refuse a huge one
+            // before decoding it.
+            let (w, h) = image::image_dimensions(&p).map_err(|e| format!("{}: {e}", p.display()))?;
+            if u64::from(w) * u64::from(h) > MAX_TEXTURE_TEXELS {
+                return Err(format!("{}: {w}x{h} is past the particle texture cap", p.display()));
+            }
             let bytes = std::fs::read(&p).map_err(|e| format!("read {}: {e}", p.display()))?;
             let img = image::load_from_memory(&bytes).map_err(|e| format!("decode {}: {e}", p.display()))?.to_rgba8();
             Ok((img.width(), img.height(), img.into_raw()))

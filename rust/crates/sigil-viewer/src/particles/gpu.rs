@@ -37,6 +37,9 @@ struct Draw {
     range: (u32, u32),
 }
 
+/// What one bundle's particle textures may take on the GPU, mips included.
+pub const PARTICLE_TEXTURE_BUDGET: u64 = 256 * 1024 * 1024;
+
 pub struct ParticleGpu {
     effects: Effects,
     sheets: HashMap<String, Sheet>,
@@ -116,8 +119,21 @@ impl ParticleGpu {
         let mut textures = Vec::new();
         let mut views: HashMap<String, usize> = HashMap::new();
         let mut view_list: Vec<wgpu::TextureView> = Vec::new();
-        let mut upload = |width: u32, height: u32, rgba: &[u8]| {
-            let chain = crate::gpu::mip_chain(width, height, rgba);
+        // The viewer's texture edge cap (gpu::upload_image's), the device's own limit, and a
+        // budget for all of a bundle's textures: a texture past them is left out with a note.
+        let device_edge = device.limits().max_texture_dimension_2d;
+        let mut budget = PARTICLE_TEXTURE_BUDGET;
+        let mut upload = |width: u32, height: u32, rgba: &[u8]| -> Option<usize> {
+            let mut chain = crate::gpu::mip_chain(width, height, rgba);
+            while chain.len() > 1 && chain[0].0.max(chain[0].1) > crate::gpu::MAX_TEXTURE_EDGE {
+                chain.remove(0);
+            }
+            let (width, height) = (chain[0].0, chain[0].1);
+            let bytes: u64 = chain.iter().map(|l| l.2.len() as u64).sum();
+            if width.max(height) > device_edge || bytes > budget {
+                return None;
+            }
+            budget -= bytes;
             let tex = device.create_texture(&wgpu::TextureDescriptor {
                 label: Some("particle texture"),
                 size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
@@ -138,9 +154,9 @@ impl ParticleGpu {
             }
             view_list.push(tex.create_view(&Default::default()));
             textures.push(tex);
-            view_list.len() - 1
+            Some(view_list.len() - 1)
         };
-        let fallback = upload(64, 64, &soft_dot(64));
+        let fallback = upload(64, 64, &soft_dot(64)).unwrap_or(0);
         let mut sheets = HashMap::new();
         let mut names: Vec<&String> = bundle.textures.keys().collect();
         names.sort();
@@ -149,7 +165,15 @@ impl ParticleGpu {
             if t.width == 0 || t.height == 0 || t.rgba.len() < (t.width * t.height * 4) as usize {
                 continue;
             }
-            views.insert(name.clone(), upload(t.width, t.height, &t.rgba));
+            match upload(t.width, t.height, &t.rgba) {
+                Some(view) => {
+                    views.insert(name.clone(), view);
+                }
+                None => {
+                    effects.push_diagnostic(format!("{name}: a {}x{} texture past the device limit or the particle texture budget, left out", t.width, t.height));
+                    continue;
+                }
+            }
             if let Some(s) = &t.sheet {
                 sheets.insert(name.clone(), s.clone());
             }

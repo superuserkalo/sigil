@@ -542,3 +542,111 @@ fn particles_timing_2000() {
     let total = t0.elapsed().as_secs_f64() * 1000.0 / frames as f64;
     println!("2000 particles: step {:.3} ms, step + build {:.3} ms per frame ({} cards)", step_ms / frames as f64, total, out.len());
 }
+
+fn count_systems(s: &System) -> usize {
+    1 + s.get_children().iter().map(count_systems).sum::<usize>()
+}
+
+/// A wide tree (40 children a level, twelve levels deep) would load 40^11 systems; the budget
+/// stops it at a few hundred and says so.
+#[test]
+fn particles_wide_child_trees_stop_at_the_system_budget() {
+    let defs = Defs(
+        (0..super::system::MAX_DEPTH + 1)
+            .map(|d| {
+                let children: Vec<Value> = (0..40).map(|_| json!({ "m_ChildRef": format!("lvl{}.vpcf", d + 1) })).collect();
+                (format!("lvl{d}.vpcf"), json!({ "_class": "CParticleSystemDefinition", "m_Children": children }), Some("vpcf66".to_string()))
+            })
+            .collect(),
+    );
+    let mut cx = ParseCx::default();
+    let started = std::time::Instant::now();
+    let sys = System::load("lvl0.vpcf", &defs, SYSTEM_CAP, &mut cx, &mut Vec::new()).expect("root");
+    assert!(count_systems(&sys) <= super::system::MAX_EFFECT_SYSTEMS, "{}", count_systems(&sys));
+    assert!(sys.get_children().len() <= super::system::MAX_CHILDREN);
+    assert!(cx.diagnostics.iter().any(|d| d.contains("budget")), "{:?}", cx.diagnostics);
+    assert!(cx.diagnostics.iter().any(|d| d.contains("children past the first")));
+    assert!(started.elapsed().as_secs() < 5);
+    // A second effect from the same bundle gets its own effect budget but shares the bundle's.
+    cx.effect_loaded = 0;
+    let _ = System::load("lvl0.vpcf", &defs, SYSTEM_CAP, &mut cx, &mut Vec::new());
+    assert!(cx.loaded <= super::system::MAX_BUNDLE_SYSTEMS);
+    cx.effect_loaded = 0;
+    assert!(System::load("lvl0.vpcf", &defs, SYSTEM_CAP, &mut cx, &mut Vec::new()).is_none(), "the bundle budget is spent");
+}
+
+fn png_header(width: u32, height: u32) -> Vec<u8> {
+    fn crc(bytes: &[u8]) -> u32 {
+        let mut c = 0xffff_ffffu32;
+        for b in bytes {
+            c ^= u32::from(*b);
+            for _ in 0..8 {
+                c = if c & 1 != 0 { 0xedb8_8320 ^ (c >> 1) } else { c >> 1 };
+            }
+        }
+        !c
+    }
+    let mut ihdr = b"IHDR".to_vec();
+    ihdr.extend_from_slice(&width.to_be_bytes());
+    ihdr.extend_from_slice(&height.to_be_bytes());
+    ihdr.extend_from_slice(&[8, 6, 0, 0, 0]);
+    let mut png = vec![0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a];
+    png.extend_from_slice(&13u32.to_be_bytes());
+    png.extend_from_slice(&ihdr);
+    png.extend_from_slice(&crc(&ihdr).to_be_bytes());
+    // An empty IDAT and the IEND, so the header reads through.
+    for chunk in [&b"IDAT"[..], &b"IEND"[..]] {
+        png.extend_from_slice(&0u32.to_be_bytes());
+        png.extend_from_slice(chunk);
+        png.extend_from_slice(&crc(chunk).to_be_bytes());
+    }
+    png
+}
+
+/// A bundle texture claiming 100000 x 100000 texels is refused from its header, unread.
+#[test]
+fn particles_huge_textures_are_refused_before_decoding() {
+    let dir = scratch_dir("huge");
+    std::fs::create_dir_all(dir.join("tex")).unwrap();
+    std::fs::write(dir.join("tex/huge.png"), png_header(100_000, 100_000)).unwrap();
+    let json = json!({ "schema": 1, "systems": {}, "attachments": [], "effects": [],
+        "textures": { "materials/particle/huge.vtex": { "file": "tex/huge.png", "width": 100000, "height": 100000, "sheet": null } } });
+    std::fs::write(dir.join("bundle.json"), json.to_string()).unwrap();
+    let b = Bundle::read(&dir).expect("the bundle still reads");
+    assert!(b.textures.is_empty(), "the huge texture is left out");
+    assert!(b.issues.iter().any(|i| i.contains("cap")), "{:?}", b.issues);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A texture wider than the device allows is downscaled to the viewer's edge cap, not handed
+/// to wgpu as is: no validation error on any device.
+#[test]
+fn particles_wide_textures_upload_within_the_limits() {
+    let gpu = match crate::gpu::Gpu::new() {
+        Ok(g) => g,
+        Err(e) => {
+            eprintln!("no GPU ({e:?}); skipped");
+            return;
+        }
+    };
+    let device = &gpu.device;
+    let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
+    let frame_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: None,
+        entries: &[wgpu::BindGroupLayoutEntry {
+            binding: 0,
+            visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+            ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Uniform, has_dynamic_offset: false, min_binding_size: None },
+            count: None,
+        }],
+    });
+    let (w, h) = (device.limits().max_texture_dimension_2d.max(8192) * 2, 4);
+    let mut b = fixture::hero_bundle();
+    let ember = b.textures.get_mut(fixture::EMBER_TEXTURE).expect("ember texture");
+    ember.width = w;
+    ember.height = h;
+    ember.rgba = vec![255; (w * h * 4) as usize];
+    let pg = ParticleGpu::new(device, &gpu.queue, &frame_layout, gpu.msaa, crate::gpu::HDR, crate::gpu::DEPTH, &b);
+    assert!(pollster::block_on(scope.pop()).is_none(), "no validation error");
+    let _ = pg.diagnostics();
+}

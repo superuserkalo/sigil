@@ -82,12 +82,53 @@ pub(crate) fn read_vtv_header(bytes: &[u8]) -> Option<([u32; 3], VtvKind)> {
     (texels > 0 && bytes.len() == VTV_HEADER + texels * kind.texel_bytes()).then_some((dims, kind))
 }
 
+/// The largest compiled texture read for a lightmap, cookie or volume (the file comes from the
+/// stack, where a mod can put anything): particles.rs's `MAX_TEXTURE_BYTES`.
+pub(crate) const MAX_COMPILED_TEXTURE: usize = 64 * 1024 * 1024;
+/// The most a decoded texture or volume may take, checked from its header before decoding.
+pub(crate) const MAX_DECODED_TEXTURE: u64 = 256 * 1024 * 1024;
+
+/// Refuses a texture whose file or decoded size (width x height x depth x the widest texel
+/// it can decode to) is past the caps, before any of it is decoded.
+pub(crate) fn check_texture_budget(bytes: &[u8], width: u32, height: u32, depth: u32, texel: u64) -> Result<()> {
+    if bytes.len() > MAX_COMPILED_TEXTURE {
+        return Err(Error::msg(format!("texture: a {} MB file is over the {} MB cap", bytes.len() >> 20, MAX_COMPILED_TEXTURE >> 20)));
+    }
+    let decoded = u64::from(width)
+        .checked_mul(u64::from(height))
+        .and_then(|n| n.checked_mul(u64::from(depth)))
+        .and_then(|n| n.checked_mul(texel));
+    match decoded {
+        Some(n) if n <= MAX_DECODED_TEXTURE => Ok(()),
+        _ => Err(Error::msg(format!("texture: {width}x{height}x{depth} decodes past the {} MB cap", MAX_DECODED_TEXTURE >> 20))),
+    }
+}
+
+/// `check_texture_budget` for a compiled texture on disk that vpkmerge decodes to float HDR
+/// (the lightmap, the sky and reflection cubes): the file size, then its header's size at
+/// 16 bytes a texel, six faces for a cube.
+pub(crate) fn check_texture_file(path: &std::path::Path) -> Result<()> {
+    let len = std::fs::metadata(path)?.len();
+    if len > MAX_COMPILED_TEXTURE as u64 {
+        return Err(Error::msg(format!("texture: a {} MB file is over the {} MB cap", len >> 20, MAX_COMPILED_TEXTURE >> 20)));
+    }
+    let bytes = std::fs::read(path)?;
+    let info = morphic::inspect(&bytes).map_err(|error| Error::msg(format!("texture: {error:?}")))?;
+    let faces = if info.flags.contains(morphic::TextureFlags::CUBE_TEXTURE) { 6 } else { 1 };
+    check_texture_budget(&bytes, u32::from(info.width), u32::from(info.height), u32::from(info.depth).max(1) * faces, 16)
+}
+
 /// A compiled texture's mip 0, every slice, as a VTV file: x fastest, then y, then z, no
 /// color conversion. A 2D texture is one slice. vpkmerge's `texture-volume`
-/// (`texture_volume_bytes`), uncompressed.
+/// (`texture_volume_bytes`), uncompressed. Bounded by `check_texture_budget` before decoding.
 pub(crate) fn texture_vtv(bytes: &[u8]) -> Result<(Vec<u8>, [u32; 3], VtvKind)> {
+    if bytes.len() > MAX_COMPILED_TEXTURE {
+        return Err(Error::msg("volume texture: the file is over the size cap"));
+    }
     let failed = |error: morphic::DecodeError| Error::msg(format!("volume texture: {error:?}"));
     let info = morphic::inspect(bytes).map_err(failed)?;
+    // RGBA16F is the widest texel a slice decodes to.
+    check_texture_budget(bytes, u32::from(info.width), u32::from(info.height), u32::from(info.depth), 8)?;
     let volume = info.flags.contains(morphic::TextureFlags::VOLUME_TEXTURE);
     if info.flags.contains(morphic::TextureFlags::CUBE_TEXTURE) || (!volume && info.depth != 1) {
         return Err(Error::msg("volume texture: not a volume or 2D texture"));
@@ -158,6 +199,13 @@ fn check_size(
 /// data texture stays UNORM, an sRGB color texture stays sRGB encoded). vpkmerge's `catalog
 /// texture --thumbs`.
 pub(crate) fn texture_png(bytes: &[u8], max_edge: u32) -> Result<Vec<u8>> {
+    if bytes.len() > MAX_COMPILED_TEXTURE {
+        return Err(Error::msg("texture png: the file is over the size cap"));
+    }
+    // The thumbnail decodes the top mip whole before scaling it: refuse a huge one first.
+    if let Ok(info) = morphic::inspect(bytes) {
+        check_texture_budget(bytes, u32::from(info.width), u32::from(info.height), u32::from(info.depth).max(1), 8)?;
+    }
     vpkmerge_core::texture_catalog::thumbnail_png(bytes, max_edge)
         .map(|thumbnail| thumbnail.png)
         .map_err(|error| Error::msg(format!("texture png: {error:?}")))
@@ -400,6 +448,20 @@ mod tests {
         let mut r16 = vtv_header([2, 2, 1], VtvKind::R16).to_vec();
         r16.extend_from_slice(&[0; 8]);
         assert_eq!(read_vtv_header(&r16), Some(([2, 2, 1], VtvKind::R16)));
+    }
+
+    #[test]
+    fn viewer_texture_budget_refuses_crafted_sizes() {
+        // A header claiming 16384 x 16384 x 64 RGBA16F texels (128 GB) is refused unread.
+        assert!(check_texture_budget(&[0u8; 64], 16384, 16384, 64, 8).is_err());
+        // Overflowing products are refused, not wrapped.
+        assert!(check_texture_budget(&[0u8; 64], u32::MAX, u32::MAX, u32::MAX, u64::MAX).is_err());
+        // A file over the compiled cap is refused whatever its header says.
+        assert!(check_texture_budget(&vec![0u8; MAX_COMPILED_TEXTURE + 1], 4, 4, 1, 4).is_err());
+        assert!(texture_vtv(&vec![0u8; MAX_COMPILED_TEXTURE + 1]).is_err());
+        assert!(texture_png(&vec![0u8; MAX_COMPILED_TEXTURE + 1], 64).is_err());
+        // A real probe atlas fits.
+        assert!(check_texture_budget(&[0u8; 64], 64, 64, 6 * 32, 8).is_ok());
     }
 
     #[test]

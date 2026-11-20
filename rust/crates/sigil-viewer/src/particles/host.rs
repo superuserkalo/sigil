@@ -61,6 +61,7 @@ fn rigid_axes(m: &Mat4) -> [Vec3; 3] {
 
 impl EffectHost {
     pub fn new(effect: &Effect, bundle: &Bundle, cx: &mut ParseCx) -> Option<EffectHost> {
+        cx.effect_loaded = 0;
         let sys = System::load(&effect.system, bundle, SYSTEM_CAP, cx, &mut Vec::new())?;
         let map = effect.transform.is_some();
         let uses_configuration = effect.attachment.is_none() && !map;
