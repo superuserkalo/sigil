@@ -14,7 +14,9 @@
 pub mod camera;
 pub mod capture;
 pub mod fixture;
+pub mod fixture_room;
 pub mod gpu;
+pub mod hideout;
 pub mod material;
 pub mod math;
 pub mod model;
@@ -287,7 +289,50 @@ fn hero_post(exposure: f32) -> PostGpu {
         glow_at: [0.5, 0.42, 0.42, 0.5],
         inv_view_proj: Mat4::IDENTITY.to_cols_array(),
         sky: [0.0; 4],
+        bloom2: [0.0; 4],
+        lut: [0.0; 4],
+        bloom_w: [[1.0, 1.0, 1.0, 0.0]; 5],
     }
+}
+
+/// A scene's post: its own tone curve, exposure bias and bloom when the map's post volume
+/// gives them (VRF's PostProcessRenderer as Grimoire ports it), else the base Deadlock curve.
+fn map_post(exposure: f32, post: &scene::Post) -> (PostGpu, [[f32; 3]; 5]) {
+    let mut p = base_post(exposure);
+    let mut weights = [[1.0f32; 3]; 5];
+    if let Some(t) = post.tonemap {
+        let (a, b, c, d, e, f) = (t.shoulder, t.linear_strength, t.linear_angle, t.toe, t.toe_num, t.toe_denom.max(1e-4));
+        let curve = |x: f32| (x * (a * x + c * b) + d * e) / (x * (a * x + b) + d * f) - e / f;
+        let white = 2f32.powf(t.white_point);
+        p.exposure = [exposure * 2f32.powf(t.exposure_bias), white, 1.0 / curve(white).max(1e-4), 1.0];
+        p.curve_a = [a, b, c, d];
+        p.curve_b[0] = e;
+        p.curve_b[1] = f;
+    }
+    if let Some(bl) = post.bloom {
+        let max = bl.add.max(bl.screen).max(bl.blur);
+        if max > 0.0 {
+            let mode = match bl.mode {
+                scene::BloomMode::Add => 0.0,
+                scene::BloomMode::Screen => 1.0,
+                scene::BloomMode::Blur => 2.0,
+            };
+            p.curve_b[2] = bl.add / max;
+            p.curve_b[3] = bl.threshold;
+            p.bloom2 = [mode, bl.screen / max, bl.blur / max, bl.width.max(1e-3)];
+            p.lut[2] = max;
+            for (i, w) in weights.iter_mut().enumerate() {
+                *w = bl.tints[i].map(|t| t * bl.weights[i]);
+            }
+            for (i, slot) in p.bloom_w.iter_mut().enumerate() {
+                *slot = [weights[i][0], weights[i][1], weights[i][2], 0.0];
+            }
+            p.bloom_w[0][3] = 5.0;
+        } else {
+            p.curve_b[2] = 0.0;
+        }
+    }
+    (p, weights)
 }
 
 /// A scene cube read and resampled on the CPU: square faces in glTF order with box mips, and
@@ -365,6 +410,8 @@ pub struct SceneAssets {
     pub models: Vec<Option<Arc<Model>>>,
     pub sky: Option<CubeData>,
     pub reflection: Option<CubeData>,
+    /// The lightmap, probe and fog volumes, cookies and colour correction.
+    pub hideout: hideout::HideoutData,
     pub errors: Vec<String>,
     /// Files and placements left out to stay inside the bounds below.
     pub skipped: Vec<String>,
@@ -422,10 +469,12 @@ pub fn load_scene_with(path: &Path, cancel: &AtomicBool, progress: &mut dyn FnMu
     };
     let sky = cube(&desc.sky);
     let reflection = cube(&desc.reflection);
+    let hideout = hideout::HideoutData::load(&desc);
+    errors.extend(hideout.errors.iter().cloned());
     if cancel.load(Ordering::Relaxed) {
         return Err(ViewerError::Cancelled);
     }
-    Ok(SceneAssets { desc, models: loaded.models, sky, reflection, errors, skipped: loaded.skipped, files: loaded.files })
+    Ok(SceneAssets { desc, models: loaded.models, sky, reflection, hideout, errors, skipped: loaded.skipped, files: loaded.files })
 }
 
 /// Bytes a decoded model holds (vertices, indices, pixels, clips), for the memory budget.
@@ -547,6 +596,7 @@ pub struct Viewer {
     /// How the device came up: the software adapter after the driver failed, how long the
     /// pipelines took. For the app's log.
     notes: Vec<String>,
+    hideout: Option<hideout::HideoutGpu>,
 }
 
 impl Viewer {
@@ -608,6 +658,7 @@ impl Viewer {
             reflection: None,
             env_extent: 3.0,
             notes,
+            hideout: None,
         })
     }
 
@@ -692,7 +743,8 @@ impl Viewer {
     /// the report; what was placed so far stays). Each distinct file is uploaded once and its
     /// placements share it; what does not fit the device is left out (`usage`).
     pub fn set_scene_with(&mut self, assets: SceneAssets, cancel: &AtomicBool, progress: &mut dyn FnMut(LoadProgress)) -> SceneReport {
-        let SceneAssets { desc, models, sky, reflection, .. } = assets;
+        let SceneAssets { desc, models, sky, reflection, hideout: baked, .. } = assets;
+        self.hideout = Some(hideout::HideoutGpu::new(&self.gpu, &desc, &baked, &self.pipes.hideout_none));
         let mut report = SceneReport::default();
         let mut meshes: HashMap<*const Model, GpuMesh> = HashMap::new();
         self.env.clear();
@@ -739,6 +791,7 @@ impl Viewer {
         self.env.clear();
         self.env_extent = 3.0;
         self.scene = None;
+        self.hideout = None;
         self.sky = None;
         self.reflection = None;
         let placement = self.hero_placement();
@@ -842,7 +895,8 @@ impl Viewer {
         self.framed_aspect = aspect;
     }
 
-    fn frame_uniforms(&self, width: u32, height: u32) -> (FrameGpu, PostGpu, Option<FloorGpu>, Option<Mat4>) {
+    #[allow(clippy::type_complexity)]
+    fn frame_uniforms(&self, width: u32, height: u32) -> (FrameGpu, PostGpu, Option<FloorGpu>, Option<Mat4>, Option<hideout::HideoutUniform>, [[f32; 3]; 5], bool) {
         let aspect = width as f32 / height.max(1) as f32;
         let extent = self.env_extent;
         let (near, far) = self.camera.near_far(extent);
@@ -856,6 +910,8 @@ impl Viewer {
         let key_dir;
         // The light that casts the shadow map, its index in `lights`, and its camera.
         let mut shadow: Option<(usize, Mat4)> = None;
+        let mut shadow_baked = false;
+        let mut chosen: Vec<&scene::SceneLight> = Vec::new();
         let hero_bounds = self.hero.as_ref().map(|h| h.bounds()).unwrap_or(Aabb { min: [-0.5, 0.0, -0.5], max: [0.5, 2.0, 0.5] });
         let hero_radius = math::length(hero_bounds.size()) * 0.5 * 1.05;
         match scene.filter(|s| !s.lights.is_empty()) {
@@ -863,13 +919,16 @@ impl Viewer {
                 // Directional lights first, then the nearest point and spot lights to the hero.
                 let anchor = self.hero_placement().point([0.0; 3]);
                 let mut order: Vec<&scene::SceneLight> = s.lights.iter().collect();
+                // Fog-only lights come after every light that reaches a surface.
                 order.sort_by(|a, b| {
-                    let rank = |l: &scene::SceneLight| if l.kind == scene::LightKind::Directional { 0.0 } else { 1.0 + math::length(math::sub(l.position, anchor)) };
+                    let rank = |l: &scene::SceneLight| (if l.fog_only { 1e6 } else { 0.0 }) + if l.kind == scene::LightKind::Directional { 0.0 } else { 1.0 + math::length(math::sub(l.position, anchor)) };
                     rank(a).total_cmp(&rank(b))
                 });
                 for l in order.into_iter().take(8) {
+                    chosen.push(l);
                     let d = normalize(l.direction);
-                    if shadow.is_none() && l.realtime && self.look.shadows {
+                    if shadow.is_none() && l.realtime && !l.fog_only && self.look.shadows {
+                        shadow_baked = l.shadow_channel.is_some() && self.hideout.as_ref().is_some_and(|h| h.base.lightmap[2] > 0.5);
                         match l.kind {
                             scene::LightKind::Directional => shadow = Some((count, directional_shadow(d, hero_bounds.center(), hero_radius.max(3.0)))),
                             scene::LightKind::Spot => shadow = Some((count, spot_shadow(l.position, d, l.cone.map_or(0.8, |c| c.1), l.range))),
@@ -921,7 +980,7 @@ impl Viewer {
         let eye = self.camera.eye();
         let back = self.camera.back();
         let unit = self.hero.as_ref().map_or(0.0254, |h| h.unit);
-        let fog = scene.and_then(|s| s.fog);
+        let fog = scene.and_then(|s| s.fog.as_ref());
         let frame = FrameGpu {
             view_proj: proj.mul(&view).to_cols_array(),
             view: view.to_cols_array(),
@@ -955,7 +1014,10 @@ impl Viewer {
                 None => [0.0; 4],
             },
         };
-        let mut post = if scene.is_some() { base_post(exposure) } else { hero_post(exposure) };
+        let (mut post, bloom_weights) = match scene {
+            Some(s) => map_post(exposure, &s.post),
+            None => (hero_post(exposure), [[1.0; 3]; 5]),
+        };
         post.top[3] = if self.look.transparent { 1.0 } else { 0.0 };
         if !self.look.bloom {
             post.curve_b[2] = 0.0;
@@ -979,7 +1041,15 @@ impl Viewer {
             let radius = (s[0].max(s[2]) * 0.9).max(s[1] * 0.32);
             FloorGpu { center: [c[0], b.min[1] + 0.002, c[2], radius], shadow: [-key_dir[0] * 0.35, -key_dir[2] * 0.35, 0.85, 0.0] }
         });
-        (frame, post, floor, shadow.map(|s| s.1))
+        let baked = match (&self.hideout, scene) {
+            (Some(h), Some(s)) => {
+                let mut u = h.base;
+                hideout::light_extras(&mut u, &chosen, &h.cookie_layers, &s.lights);
+                Some(u)
+            }
+            _ => None,
+        };
+        (frame, post, floor, shadow.map(|s| s.1), baked, bloom_weights, shadow_baked)
     }
 
     /// Advances the clock by `dt` seconds and renders a `width` by `height` frame. Returns
@@ -1011,7 +1081,7 @@ impl Viewer {
         if self.targets.as_ref().is_none_or(|t| t.width != width || t.height != height) {
             self.targets = Some(Targets::new(&self.gpu, width, height));
         }
-        let (frame, post, floor, shadow) = self.frame_uniforms(width, height);
+        let (frame, post, floor, shadow, baked, bloom_weights, shadow_hero_only) = self.frame_uniforms(width, height);
         let eye = self.camera.eye();
         let dist = |slot: &Slot, c: Vec3, mesh: usize| {
             let m = slot.bases.get(mesh).and_then(|&b| slot.palette.get(b as usize)).copied().unwrap_or_default();
@@ -1033,7 +1103,7 @@ impl Viewer {
             (Compare::Split(_), true) => [Some(&after), Some(&before_list)],
             _ => [Some(&after), None],
         };
-        let inputs = FrameInputs { frame, post, floor, layers, read: !self.skip_read, env_cube: self.reflection.as_ref().map(|c| &c.view), sky_cube: self.sky.as_ref().map(|c| &c.view), shadow: shadow.map(|m| m.to_cols_array()) };
+        let inputs = FrameInputs { frame, post, floor, layers, read: !self.skip_read, env_cube: self.reflection.as_ref().map(|c| &c.view), sky_cube: self.sky.as_ref().map(|c| &c.view), shadow: shadow.map(|m| m.to_cols_array()), hideout: self.hideout.as_ref().zip(baked), bloom_weights, shadow_hero_only };
         let targets = self.targets.as_ref().expect("targets");
         let mut out = std::mem::take(&mut self.frame);
         self.last = gpu::render_frame(&self.gpu, &self.pipes, &self.res, targets, &inputs, &mut out);

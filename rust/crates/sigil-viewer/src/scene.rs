@@ -26,6 +26,12 @@ pub struct ClipInfo {
     pub duration: Option<f32>,
     pub playback: Playmode,
     pub action: Option<String>,
+    /// The friendly name the clip picker shows ("Idle", "Hero pose", or the humanised name).
+    pub label: Option<String>,
+    /// `idle`, `movement`, `combat` or `other`: the picker's groups.
+    pub group: Option<String>,
+    /// The animation graph's playback speed for the clip (Nurse Harrow's shop plays at 0.69).
+    pub speed: f32,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -38,6 +44,10 @@ pub struct Sidecar {
     /// `modded` or `original`.
     pub variant: Option<String>,
     pub issues: Vec<String>,
+    /// The cloth file beside the glb (`<codename>.cloth.json`), relative to the sidecar.
+    pub cloth: Option<String>,
+    /// The particle bundle, relative to the sidecar (`particles/bundle.json`).
+    pub particles: Option<String>,
 }
 
 impl Sidecar {
@@ -60,6 +70,9 @@ impl Sidecar {
                             duration: c.get("durationSeconds").and_then(|d| d.as_f64()).map(|d| d as f32),
                             playback: if c.get("playback").and_then(|p| p.as_str()) == Some("hold") { Playmode::Hold } else { Playmode::Loop },
                             action: c.get("action").and_then(|a| a.as_str()).map(str::to_string),
+                            label: c.get("label").and_then(|a| a.as_str()).map(str::to_string),
+                            group: c.get("group").and_then(|a| a.as_str()).map(str::to_string),
+                            speed: c.get("speed").and_then(|d| d.as_f64()).map(|d| d as f32).filter(|s| s.is_finite() && *s > 0.0).unwrap_or(1.0),
                         })
                     })
                     .collect()
@@ -73,6 +86,8 @@ impl Sidecar {
             display_name: s("displayName"),
             variant: s("variant"),
             issues: v.get("issues").and_then(|i| i.as_array()).map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect()).unwrap_or_default(),
+            cloth: s("cloth"),
+            particles: s("particles"),
         }
     }
 
@@ -92,7 +107,7 @@ pub enum LightKind {
     Spot,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct SceneLight {
     pub kind: LightKind,
     /// Position for point and spot lights.
@@ -106,15 +121,111 @@ pub struct SceneLight {
     pub cone: Option<(f32, f32)>,
     /// Lit in real time (the game draws its shadow), not only kept for fog.
     pub realtime: bool,
+    /// Grimoire's light units: `color` is linear colour times the linear `brightness`, and a
+    /// point or spot falls off as 10000 / d^2 in inches with a skirt window, no 1/PI.
+    pub source_units: bool,
+    /// Fraction of `range` over which the light fades out (Source `skirt`).
+    pub skirt: f32,
+    /// Drawn into fog only, never onto surfaces.
+    pub fog_only: bool,
+    pub fog_strength: Option<f32>,
+    /// The baked shadow mask channel for a stationary light (`direct_light_shadows`).
+    pub shadow_channel: Option<u32>,
+    pub cookie: Option<PathBuf>,
+    /// The light's own axes in glTF space: Source forward, left, up.
+    pub basis: Option<[Vec3; 3]>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Fog {
     /// Linear.
     pub color: Vec3,
     pub start: f32,
     pub end: f32,
     pub strength: f32,
+    pub indirect_strength: f32,
+    /// The fog irradiance volume and the map from world to its [0,1] box.
+    pub irradiance: Option<(PathBuf, Mat4)>,
+    /// Density volumes. Without any, the controller alone draws no volumetric fog (Grimoire's
+    /// march); the renderer then keeps plain distance fog.
+    pub volumes: Vec<FogVolume>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct FogVolume {
+    pub sphere: bool,
+    pub world_to_local: Mat4,
+    pub strength: f32,
+    pub falloff: f32,
+    pub indirect_strength: Option<f32>,
+    /// Linear.
+    pub tint: Option<Vec3>,
+}
+
+/// The map's tone curve (`m_toneMapParams` of its post volume; white point in stops).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Tonemap {
+    pub exposure_bias: f32,
+    pub shoulder: f32,
+    pub linear_strength: f32,
+    pub linear_angle: f32,
+    pub toe: f32,
+    pub toe_num: f32,
+    pub toe_denom: f32,
+    pub white_point: f32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BloomMode {
+    Add,
+    Screen,
+    Blur,
+}
+
+/// The map's bloom (`m_bloomParams`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Bloom {
+    pub mode: BloomMode,
+    pub add: f32,
+    pub screen: f32,
+    pub blur: f32,
+    pub threshold: f32,
+    pub width: f32,
+    pub weights: [f32; 5],
+    pub tints: [Vec3; 5],
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Post {
+    pub tonemap: Option<Tonemap>,
+    pub bloom: Option<Bloom>,
+    /// The colour correction volume: raw RGBA8, `dim`^3 texels, x fastest.
+    pub lut: Option<(PathBuf, u32)>,
+}
+
+/// The baked lightmap: DC irradiance, and for v8/5 maps the SH2 direction and the stationary
+/// lights' shadow mask.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Lightmap {
+    pub file: PathBuf,
+    pub uv_scale: [f32; 2],
+    pub direction: Option<PathBuf>,
+    pub shadows: Option<PathBuf>,
+}
+
+/// A light probe volume (`env_combined_light_probe_volume`): six ambient cube faces per voxel
+/// in one atlas.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ProbeVolume {
+    pub file: PathBuf,
+    pub shadows: Option<PathBuf>,
+    pub world_to_local: Mat4,
+    pub size: Vec3,
+    pub offset: Vec3,
+    pub atlas: Vec3,
+    pub fade: Vec3,
+    pub priority: i32,
+    pub rgbm: bool,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -157,6 +268,11 @@ pub struct SceneDesc {
     pub omissions: Vec<String>,
     pub failures: Vec<String>,
     pub exposure: Option<f32>,
+    pub post: Post,
+    pub lightmap: Option<Lightmap>,
+    pub probes: Vec<ProbeVolume>,
+    /// The map's particle bundle (`particles/bundle.json`).
+    pub particles: Option<PathBuf>,
 }
 
 fn num(v: &Value) -> Option<f32> {
@@ -232,8 +348,10 @@ impl SceneDesc {
                 "spot" => LightKind::Spot,
                 _ => LightKind::Point,
             };
-            let intensity = l.get("intensity").and_then(num).unwrap_or(1.0);
+            let brightness = l.get("brightness").and_then(num);
+            let intensity = brightness.or_else(|| l.get("intensity").and_then(num)).unwrap_or(1.0);
             let c = srgb(l.get("color")).unwrap_or([1.0; 3]);
+            let basis = l.get("basis").and_then(|b| b.as_array()).filter(|b| b.len() == 3).and_then(|b| Some([vec3(b.first())?, vec3(b.get(1))?, vec3(b.get(2))?]));
             let shine = vec3(l.get("direction")).unwrap_or([0.0, -1.0, 0.0]);
             let cone = l.get("cone").and_then(|c| c.as_array()).filter(|c| c.len() == 2).map(|c| {
                 let (inner, outer) = (num(&c[0]).unwrap_or(0.0).to_radians(), num(&c[1]).unwrap_or(45.0).to_radians());
@@ -247,19 +365,103 @@ impl SceneDesc {
                 range: l.get("range").and_then(num).unwrap_or(0.0),
                 cone: if kind == LightKind::Spot { cone } else { None },
                 realtime: l.get("realtime").and_then(|r| r.as_bool()).unwrap_or(true),
+                source_units: brightness.is_some(),
+                skirt: l.get("skirt").and_then(num).unwrap_or(0.1).clamp(0.0, 1.0),
+                fog_only: l.get("fogOnly").and_then(|r| r.as_bool()).unwrap_or(!l.get("realtime").and_then(|r| r.as_bool()).unwrap_or(true)),
+                fog_strength: l.get("fogStrength").and_then(num),
+                shadow_channel: l.get("shadowChannel").and_then(|c| c.as_u64()).map(|c| c as u32),
+                cookie: path(base, l.get("cookie")),
+                basis,
             });
         }
         if let Some(f) = v.get("fog").filter(|f| f.is_object()) {
             let fade = f.get("fadeIn").and_then(|a| a.as_array());
             let start = fade.and_then(|a| a.first()).and_then(num).unwrap_or(0.0);
             let draw = f.get("drawDistance").and_then(num).unwrap_or(60.0);
+            let volumes = f
+                .get("volumes")
+                .and_then(|v| v.as_array())
+                .into_iter()
+                .flatten()
+                .take(16)
+                .filter_map(|v| {
+                    Some(FogVolume {
+                        sphere: v.get("shape").and_then(|x| x.as_str()) == Some("sphere"),
+                        world_to_local: matrix(v.get("worldToLocal"))?,
+                        strength: v.get("strength").and_then(num).unwrap_or(1.0),
+                        falloff: v.get("falloff").and_then(num).unwrap_or(1.0),
+                        indirect_strength: v.get("indirectStrength").and_then(num),
+                        tint: srgb(v.get("tint")),
+                    })
+                })
+                .collect();
+            let irradiance = f.get("irradiance").and_then(|i| Some((path(base, i.get("file"))?, matrix(i.get("worldToLocal"))?)));
             s.fog = Some(Fog {
                 color: srgb(f.get("color")).unwrap_or([0.5; 3]),
                 start,
                 end: draw.max(start + 0.1),
                 strength: f.get("strength").and_then(num).unwrap_or(1.0).clamp(0.0, 1.0),
+                indirect_strength: f.get("indirectStrength").and_then(num).unwrap_or(1.0),
+                irradiance,
+                volumes,
             });
         }
+        if let Some(p) = v.get("post").filter(|p| p.is_object()) {
+            let f = |o: &Value, k: &str, d: f32| o.get(k).and_then(num).unwrap_or(d);
+            s.post.tonemap = p.get("tonemap").filter(|t| t.is_object()).map(|t| Tonemap {
+                exposure_bias: f(t, "exposureBias", 0.0),
+                shoulder: f(t, "shoulderStrength", 0.3538),
+                linear_strength: f(t, "linearStrength", 0.3258),
+                linear_angle: f(t, "linearAngle", 0.2528),
+                toe: f(t, "toeStrength", 0.6966),
+                toe_num: f(t, "toeNum", 0.0),
+                toe_denom: f(t, "toeDenom", 0.7819),
+                white_point: f(t, "whitePoint", 3.9996),
+            });
+            s.post.bloom = p.get("bloom").filter(|b| b.is_object()).map(|b| {
+                let list = |k: &str| b.get(k).and_then(|x| x.as_array()).cloned().unwrap_or_default();
+                let weights = list("blurWeights");
+                let tints = list("blurTints");
+                Bloom {
+                    mode: match b.get("blendMode").and_then(|m| m.as_str()) {
+                        Some("screen") => BloomMode::Screen,
+                        Some("blur") => BloomMode::Blur,
+                        _ => BloomMode::Add,
+                    },
+                    add: f(b, "bloomStrength", 0.0),
+                    screen: f(b, "screenBloomStrength", 0.0),
+                    blur: f(b, "blurBloomStrength", 0.0),
+                    threshold: f(b, "threshold", 1.0),
+                    width: f(b, "thresholdWidth", 1.0).max(1e-3),
+                    weights: std::array::from_fn(|i| weights.get(i).and_then(num).unwrap_or(0.2)),
+                    tints: std::array::from_fn(|i| vec3(tints.get(i)).unwrap_or([1.0; 3])),
+                }
+            });
+            s.post.lut = p.get("colorCorrection").and_then(|c| Some((path(base, c.get("file"))?, c.get("dimension")?.as_u64()? as u32))).filter(|(_, d)| (2..=64).contains(d));
+        }
+        if let Some(l) = v.get("lightmap").filter(|l| l.is_object())
+            && let Some(file) = path(base, l.get("file"))
+        {
+            let scale = l.get("uvScale").and_then(|a| a.as_array()).map(|a| [a.first().and_then(num).unwrap_or(1.0), a.get(1).and_then(num).unwrap_or(1.0)]).unwrap_or([1.0; 2]);
+            s.lightmap = Some(Lightmap { file, uv_scale: scale, direction: path(base, l.get("direction")), shadows: path(base, l.get("shadows")) });
+        }
+        for p in v.get("probes").and_then(|p| p.as_array()).into_iter().flatten() {
+            let (Some(file), Some(m)) = (path(base, p.get("file")), matrix(p.get("worldToLocal"))) else { continue };
+            s.probes.push(ProbeVolume {
+                file,
+                shadows: path(base, p.get("shadows")),
+                world_to_local: m,
+                size: vec3(p.get("size")).unwrap_or([1.0; 3]),
+                offset: vec3(p.get("offset")).unwrap_or([0.0; 3]),
+                atlas: vec3(p.get("atlasSize")).unwrap_or([1.0; 3]),
+                fade: vec3(p.get("fade")).unwrap_or([0.0; 3]),
+                priority: p.get("priority").and_then(|x| x.as_i64()).unwrap_or(0) as i32,
+                rgbm: p.get("encoding").and_then(|e| e.as_str()) == Some("rgbm"),
+            });
+        }
+        // Grimoire's order: higher priority first, then the smaller volume.
+        s.probes.sort_by(|a, b| b.priority.cmp(&a.priority).then((a.size[0] * a.size[1] * a.size[2]).total_cmp(&(b.size[0] * b.size[1] * b.size[2]))));
+        s.particles = path(base, v.get("particles"));
         s.sky = cube(base, v.get("sky"));
         s.reflection = cube(base, v.get("reflection"));
         if let Some(c) = v.get("camera")

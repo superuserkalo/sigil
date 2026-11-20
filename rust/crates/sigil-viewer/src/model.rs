@@ -20,7 +20,13 @@ pub struct Vertex {
     pub color: [f32; 4],
     pub joints: [u32; 4],
     pub weights: [f32; 4],
+    /// The baked lightmap's UVs (`TEXCOORD_3`, the Source semantic morphic keeps), or
+    /// `NO_LIGHTMAP` on surfaces without one (probe lit).
+    pub uv3: [f32; 2],
 }
+
+/// `Vertex::uv3` on a surface the lightmap does not cover.
+pub const NO_LIGHTMAP: [f32; 2] = [-8.0, -8.0];
 
 #[derive(Clone, Debug)]
 pub struct Node {
@@ -297,7 +303,7 @@ fn read_primitive(primitive: &gltf::Primitive, buffers: &[gltf::buffer::Data]) -
         None => (0..n as u32).collect(),
     };
     let indices: Vec<u32> = indices.as_chunks::<3>().0.iter().filter(|t| t.iter().all(|&i| (i as usize) < n)).flatten().copied().collect();
-    let mut vertices = vec![Vertex { color: [1.0; 4], weights: [1.0, 0.0, 0.0, 0.0], ..Default::default() }; n];
+    let mut vertices = vec![Vertex { color: [1.0; 4], weights: [1.0, 0.0, 0.0, 0.0], uv3: NO_LIGHTMAP, ..Default::default() }; n];
     let mut bounds = Aabb::empty();
     for (v, p) in vertices.iter_mut().zip(&positions) {
         v.position = *p;
@@ -326,6 +332,11 @@ fn read_primitive(primitive: &gltf::Primitive, buffers: &[gltf::buffer::Data]) -
     } else {
         for v in &mut vertices {
             v.uv1 = v.uv0;
+        }
+    }
+    if let Some(it) = reader.read_tex_coords(3) {
+        for (v, uv) in vertices.iter_mut().zip(it.into_f32()) {
+            v.uv3 = uv;
         }
     }
     if let Some(it) = reader.read_colors(0) {

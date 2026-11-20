@@ -45,6 +45,7 @@ struct VsIn {
     @location(5) color: vec4<f32>,
     @location(6) joints: vec4<u32>,
     @location(7) weights: vec4<f32>,
+    @location(8) uv3: vec2<f32>,
 };
 
 struct VsOut {
@@ -55,6 +56,7 @@ struct VsOut {
     @location(3) uv0: vec2<f32>,
     @location(4) uv1: vec2<f32>,
     @location(5) color: vec4<f32>,
+    @location(6) uv3: vec2<f32>,
 };
 
 fn skin_matrix(joints: vec4<u32>, weights: vec4<f32>) -> mat4x4<f32> {
@@ -73,6 +75,7 @@ fn skin(v: VsIn) -> VsOut {
     out.tangent = vec4<f32>(normalize(n3 * v.tangent.xyz), v.tangent.w);
     out.uv0 = v.uv0;
     out.uv1 = v.uv1;
+    out.uv3 = v.uv3;
     out.color = v.color;
     out.clip = frame.view_proj * vec4<f32>(out.world, 1.0);
     return out;
@@ -161,7 +164,7 @@ fn expose_ambient(sampled: vec3<f32>, average: vec3<f32>, target_y: f32) -> vec3
 // NPR ambient: a stepped half-Lambert toward the primary light picks a direction between
 // straight down, the horizontal direction to the camera and straight up; the cube is read
 // there and forced to a fixed luminance. Returns rgb and the band (0.25 shadow .. 0.75 lit).
-fn npr_ambient(n: vec3<f32>, to_camera: vec3<f32>, key: vec3<f32>, ao: f32) -> vec4<f32> {
+fn npr_ambient(n: vec3<f32>, to_camera: vec3<f32>, key: vec3<f32>, ao: f32, faces: array<vec3<f32>, 6>) -> vec4<f32> {
     let exposure = frame.key_dir.w;
     let primary = normalize(mix(key, frame.camera_back.xyz, CAMERA_WEIGHT));
     let h = 0.5 + 0.5 * dot(primary, n);
@@ -182,10 +185,54 @@ fn npr_ambient(n: vec3<f32>, to_camera: vec3<f32>, key: vec3<f32>, ao: f32) -> v
         dir = mix(horizontal, vec3<f32>(0.0, 1.0, 0.0), stepped - 0.5);
     }
     dir = normalize(dir);
-    let average = xy_y((frame.ambient[0].rgb + frame.ambient[1].rgb + frame.ambient[2].rgb + frame.ambient[3].rgb + frame.ambient[4].rgb + frame.ambient[5].rgb) / 6.0);
+    let average = xy_y((faces[0] + faces[1] + faces[2] + faces[3] + faces[4] + faces[5]) / 6.0);
     let d2 = dir * dir;
     let target_y = dot(vec3<f32>(TARGETS.y, select(TARGETS.z, TARGETS.x, dir.y > 0.0), TARGETS.y), d2) / exposure;
-    return vec4<f32>(expose_ambient(cube(dir), average, target_y), band);
+    return vec4<f32>(expose_ambient(probe_cube(faces, dir), average, target_y), band);
+}
+
+// The ambient cube at a point: the Hideout's probe volumes where they cover it, blended into
+// the frame's cube (the scene's probe or the studio) for the rest.
+fn faces_at(world: vec3<f32>) -> ProbeSample {
+    var p = probe_at(world);
+    let rest = clamp(1.0 - p.coverage, 0.0, 1.0);
+    for (var f = 0u; f < 6u; f = f + 1u) {
+        p.faces[f] = p.faces[f] + frame.ambient[f].rgb * rest;
+    }
+    return p;
+}
+
+fn faces_fit(faces: array<vec3<f32>, 6>) -> vec4<f32> {
+    var l: array<f32, 6>;
+    for (var f = 0u; f < 6u; f = f + 1u) {
+        l[f] = dot(faces[f], LUMA);
+    }
+    return vec4<f32>((l[0] - l[1]) * 0.5, (l[2] - l[3]) * 0.5, (l[4] - l[5]) * 0.5, (l[0] + l[1] + l[2] + l[3] + l[4] + l[5]) / 6.0);
+}
+
+// A stationary light's baked visibility: the lightmap's shadow mask on lightmapped surfaces,
+// the probe shadow volume elsewhere, squared for point and spot lights (Grimoire).
+fn baked_visibility(i: u32, s: Surface, probe: ProbeSample) -> f32 {
+    let channel = hideout.lights[i].b.y;
+    if (channel < 0.0) {
+        return 1.0;
+    }
+    var v = 1.0;
+    if (lightmapped(s)) {
+        v = lightmap_visibility(s.uv3, channel);
+    } else if (hideout.counts.y > 0.5 && probe.coverage > 0.0) {
+        var mask = vec4<f32>(0.0);
+        mask[u32(channel) & 3u] = 1.0;
+        v = clamp(1.0 - dot(probe.shadow, mask), 0.0, 1.0);
+    }
+    if (frame.lights[i].pos_dir.w > 0.5) {
+        v = v * v;
+    }
+    return v;
+}
+
+fn lightmapped(s: Surface) -> bool {
+    return hideout.lightmap.x > 0.5 && s.uv3.x > -4.0;
 }
 
 fn scene_depth(px: vec2<i32>) -> f32 {
@@ -256,22 +303,63 @@ fn environment(dir: vec3<f32>, roughness: f32) -> vec3<f32> {
 fn light_at(i: u32, world: vec3<f32>) -> vec4<f32> {
     // xyz: direction to the light, w: attenuation.
     let l = frame.lights[i];
+    let ex = hideout.lights[i];
+    let source = ex.a.x > 0.5;
     if (l.pos_dir.w < 0.5) {
-        return vec4<f32>(normalize(l.pos_dir.xyz), 1.0);
+        // Source units carry no 1/PI; the shading divides by PI, so put it back.
+        return vec4<f32>(normalize(l.pos_dir.xyz), select(1.0, 3.14159265, source));
     }
     let d = l.pos_dir.xyz - world;
     let dist2 = max(dot(d, d), 1e-4);
-    var att = 1.0 / dist2;
-    if (l.color.w > 0.0) {
-        let r = clamp(1.0 - pow(sqrt(dist2) / l.color.w, 4.0), 0.0, 1.0);
-        att = att * r * r;
+    let dist = sqrt(dist2);
+    let to_light = d / dist;
+    var att: f32;
+    if (source) {
+        // 10000 / d^2 in inches is 6.4516 / d^2 in meters (source2DynamicLights.ts), with the
+        // skirt fading the last part of the range.
+        att = 6.4516 / max(dist2, 0.00064516) * 3.14159265;
+        if (l.color.w > 0.0) {
+            att = att * smoothstep(0.0, 1.0, clamp((l.color.w - dist) / (l.color.w * ex.a.y), 0.0, 1.0));
+        }
+    } else {
+        att = 1.0 / dist2;
+        if (l.color.w > 0.0) {
+            let r = clamp(1.0 - pow(dist / l.color.w, 4.0), 0.0, 1.0);
+            att = att * r * r;
+        }
     }
-    let to_light = d * inverseSqrt(dist2);
     if (l.pos_dir.w > 1.5) {
         let c = dot(-to_light, normalize(l.spot.xyz));
         att = att * smoothstep(l.spot.w, max(l.spot_inner.x, l.spot.w + 1e-4), c);
     }
+    if (ex.a.z >= 0.0) {
+        att = att * cookie(i, -to_light);
+    }
     return vec4<f32>(to_light, att);
+}
+
+// A light's cookie along `ray` (from the light toward the point): a barn frames it in its
+// cone, an omni wraps it around (source2DynamicLights.ts).
+fn cookie(i: u32, ray: vec3<f32>) -> f32 {
+    let ex = hideout.lights[i];
+    let l = frame.lights[i];
+    let local = vec3<f32>(dot(ray, ex.x.xyz), dot(ray, ex.y.xyz), dot(ray, ex.z.xyz));
+    var uv: vec2<f32>;
+    if (l.pos_dir.w > 1.5) {
+        if (local.x <= 1e-4) {
+            return 0.0;
+        }
+        let tan_outer = tan(acos(clamp(l.spot.w, -0.999, 0.999)));
+        let ndc = vec2<f32>(local.y, local.z) / (local.x * max(tan_outer, 1e-3));
+        let half_texel = 0.5 / 256.0;
+        uv = clamp(ndc * -0.5 + 0.5, vec2<f32>(half_texel), vec2<f32>(1.0 - half_texel));
+    } else {
+        let r = normalize(local);
+        uv = vec2<f32>(fract(atan2(r.y, -r.x) / 6.2831853), acos(clamp(r.z, -1.0, 1.0)) / 3.14159265);
+    }
+    let layers = max(hideout.counts.z, 1.0);
+    let c = textureSampleLevel(t_cookies, s_env, vec2<f32>((ex.a.z + uv.x) / layers, uv.y), 0.0).rgb;
+    return dot(c, vec3<f32>(0.2125, 0.7154, 0.0721));
 }
 
 fn decode_normal(tex: vec4<f32>, hemi_oct: bool) -> vec3<f32> {
@@ -293,7 +381,97 @@ fn color_correct(c: vec3<f32>) -> vec3<f32> {
     return r * csb.y + gray * (1.0 - csb.y);
 }
 
+// Grimoire's volumetric fog (source2Atmosphere.ts), marched along the view ray to the
+// surface: density from the fog volumes, light from the irradiance volume and the fog lights,
+// in-scattered and extinguished at 0.01 per inch (0.3937 per meter).
+fn fog_density(p: vec3<f32>) -> vec4<f32> {
+    // xyz unused here; returns density, indirect strength, tint index (as float), 0.
+    var best = 0.0;
+    var indirect = hideout.fog.y;
+    var tint_from = -1.0;
+    let n = u32(hideout.fog_fade.z);
+    for (var i = 0u; i < 16u; i = i + 1u) {
+        if (i >= n) {
+            break;
+        }
+        let v = hideout.fog_volumes[i];
+        let q = (v.world_to_local * vec4<f32>(p, 1.0)).xyz * 2.0 - 1.0;
+        var edge: f32;
+        if (v.params.x > 0.5) {
+            edge = 1.0 - length(q);
+        } else {
+            edge = 1.0 - max(abs(q.x), max(abs(q.y), abs(q.z)));
+        }
+        if (edge <= 0.0) {
+            continue;
+        }
+        let fall = pow(clamp(edge, 0.0, 1.0), v.params.z);
+        let d = clamp(fall * v.params.y, 0.0, 1.0);
+        if (d > best) {
+            best = d;
+            if (v.params.w >= 0.0) {
+                indirect = mix(hideout.fog.y, v.params.w, fall);
+            }
+            if (v.tint.w > 0.5) {
+                tint_from = f32(i);
+            }
+        }
+    }
+    return vec4<f32>(best, indirect, tint_from, 0.0);
+}
+
+fn volumetric_fog(c: vec3<f32>, world: vec3<f32>) -> vec3<f32> {
+    let eye = frame.camera_pos.xyz;
+    let ray = world - eye;
+    let full = length(ray);
+    let len = min(full, max(hideout.fog.w, 0.1));
+    if (len <= 1e-3) {
+        return c;
+    }
+    let dir = ray / full;
+    let steps = max(hideout.fog_fade.w, 4.0);
+    let stride = len / steps;
+    var optical = 0.0;
+    var scatter = vec3<f32>(0.0);
+    let count = u32(frame.counts.x);
+    for (var k = 0.0; k < steps; k = k + 1.0) {
+        let t = (k + 0.5) * stride;
+        let p = eye + dir * t;
+        let d = fog_density(p);
+        if (d.x <= 0.0) {
+            continue;
+        }
+        var rgb = vec3<f32>(0.0);
+        if (hideout.fog.x > 0.5) {
+            let q = (hideout.fog_irradiance * vec4<f32>(p, 1.0)).xyz;
+            rgb = textureSampleLevel(t_fog, s_env, clamp(q, vec3<f32>(0.0), vec3<f32>(1.0)), 0.0).rgb * d.y;
+        }
+        for (var i = 0u; i < 8u; i = i + 1u) {
+            if (i >= count) {
+                break;
+            }
+            let strength = hideout.lights[i].a.w;
+            if (strength <= 0.0) {
+                continue;
+            }
+            let l = light_at(i, p);
+            rgb = rgb + frame.lights[i].color.rgb * l.w / PI * strength;
+        }
+        if (d.z >= 0.0) {
+            rgb = rgb * hideout.fog_volumes[u32(d.z)].tint.rgb;
+        }
+        let fade = clamp((t - hideout.fog_fade.x) / max(hideout.fog_fade.y - hideout.fog_fade.x, 1e-3), 0.0, 1.0);
+        let ext = d.x * 0.3937 * hideout.fog.z * stride * fade;
+        scatter = scatter + rgb * ext * exp(-optical);
+        optical = optical + ext;
+    }
+    return c * exp(-optical) + scatter;
+}
+
 fn apply_fog(c: vec3<f32>, world: vec3<f32>) -> vec3<f32> {
+    if (hideout.fog_fade.z > 0.5) {
+        return volumetric_fog(c, world);
+    }
     if (frame.fog_color.w < 0.5) {
         return c;
     }
@@ -314,6 +492,7 @@ struct Surface {
     rim_mask: f32,
     emissive: vec3<f32>,
     si_mask: f32,
+    uv3: vec2<f32>,
 };
 
 fn surface(in: VsOut, front: bool) -> Surface {
@@ -376,6 +555,7 @@ fn surface(in: VsOut, front: bool) -> Surface {
         s.emissive = mat.emissive.rgb * mat.emissive.w;
     }
     s.si_mask = select(1.0, emis_t.r, mat.illum.x > 0.5);
+    s.uv3 = in.uv3;
     return s;
 }
 
@@ -397,19 +577,23 @@ fn shade_npr(s: Surface, world: vec3<f32>, frag: vec2<f32>) -> vec3<f32> {
     let count = u32(frame.counts.x);
     let shadowed = u32(frame.shadow.y);
     let lit = shadow_at(world, n);
+    let probe = faces_at(world);
     for (var i = 0u; i < 8u; i = i + 1u) {
         if (i >= count) {
             break;
         }
+        if (hideout.lights[i].b.x > 0.5) {
+            continue;
+        }
         let l = light_at(i, world);
         let n_dot_l = dot(n, l.xyz);
         if (n_dot_l > 0.0) {
-            let c = frame.lights[i].color.rgb * l.w * select(1.0, lit, i == shadowed) / PI;
+            let c = frame.lights[i].color.rgb * l.w * select(1.0, lit, i == shadowed) * baked_visibility(i, s, probe) / PI;
             direct = direct + c * direct_diffuse(n_dot_l);
             spec = spec + c * direct_specular(n, l.xyz, v, s.rough, f0);
         }
     }
-    let amb = npr_ambient(n, v, normalize(frame.key_dir.xyz), s.ao);
+    let amb = npr_ambient(n, v, normalize(frame.key_dir.xyz), s.ao, probe.faces);
     let bounce = mix(vec3<f32>(1.0), multi_bounce(s.ao, base), PBR_BLEND);
     let diffuse = (direct + amb.rgb * bounce) * base * (1.0 - s.metal);
     let rim = (direct + amb.rgb) * npr_rim(n, v, s.ao, s.rim_mask) * rim_occlusion(world, n, frag);
@@ -421,8 +605,9 @@ fn shade_npr(s: Surface, world: vec3<f32>, frag: vec2<f32>) -> vec3<f32> {
     let env = environment(r, s.rough);
     let n_dot_v = clamp(dot(n, v), 0.0, 1.0);
     let fab = env_brdf(s.rough, n_dot_v);
-    let probe = dot(vec4<f32>(n, 1.0), frame.ambient_fit);
-    let ratio = select(1.0, min(dot(amb.rgb, LUMA) / probe, 32.0), probe > 0.0);
+    let fit = select(frame.ambient_fit, faces_fit(probe.faces), probe.coverage > 0.0);
+    let probe_l = dot(vec4<f32>(n, 1.0), fit);
+    let ratio = select(1.0, min(dot(amb.rgb, LUMA) / probe_l, 32.0), probe_l > 0.0);
     let spec_occ = clamp(pow(n_dot_v + s.ao, a) - 1.0 + s.ao, 0.0, 1.0);
     let ibl = mix(vec3<f32>(fab.y), vec3<f32>(fab.x + fab.y), f0) * env * ratio * spec_occ;
     return diffuse + rim + emission + spec + ibl;
@@ -438,22 +623,45 @@ fn shade_pbr(s: Surface, world: vec3<f32>) -> vec3<f32> {
     let count = u32(frame.counts.x);
     let shadowed = u32(frame.shadow.y);
     let lit = shadow_at(world, n);
+    let baked = lightmapped(s);
+    var probe: ProbeSample;
+    if (!baked) {
+        probe = faces_at(world);
+    }
     for (var i = 0u; i < 8u; i = i + 1u) {
         if (i >= count) {
             break;
         }
+        if (hideout.lights[i].b.x > 0.5) {
+            continue;
+        }
         let l = light_at(i, world);
         let n_dot_l = dot(n, l.xyz);
         if (n_dot_l > 0.0) {
-            let c = frame.lights[i].color.rgb * l.w * select(1.0, lit, i == shadowed);
+            let c = frame.lights[i].color.rgb * l.w * select(1.0, lit, i == shadowed) * baked_visibility(i, s, probe);
             direct = direct + c * n_dot_l / PI;
             spec = spec + c / PI * direct_specular(n, l.xyz, v, s.rough, f0);
         }
     }
-    let irradiance = cube(n);
+    // Diffuse ambient: the SH2 lightmap where the surface is baked, else the probe volume
+    // (or the scene's cube). Both are irradiance over PI already, as the albedo wants it.
+    var irradiance: vec3<f32>;
+    if (baked) {
+        irradiance = lightmap_irradiance(n, s.uv3);
+    } else {
+        irradiance = probe_cube(probe.faces, n);
+    }
     let n_dot_v = clamp(dot(n, v), 0.0, 1.0);
     let fab = env_brdf(s.rough, n_dot_v);
-    let env = environment(reflect(-v, n), s.rough);
+    var env = environment(reflect(-v, n), s.rough);
+    if (baked) {
+        // Rough baked surfaces reflect the lightmap rather than the far probe.
+        let a = s.rough * s.rough;
+        let k = 1.0 - a;
+        let dom = normalize(mix(n, reflect(-v, n), k * (sqrt(k) + a)));
+        let w = clamp(-2.0 + 10.0 * s.rough, 0.0, 1.0) * (1.0 - s.metal);
+        env = mix(env, lightmap_irradiance(dom, s.uv3), w);
+    }
     let ibl = mix(vec3<f32>(fab.y), vec3<f32>(fab.x + fab.y), f0) * env * s.ao;
     return (direct + irradiance * s.ao) * base * (1.0 - s.metal) + spec + ibl + s.emissive;
 }
