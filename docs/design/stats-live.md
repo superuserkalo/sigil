@@ -1,131 +1,126 @@
 # A live match view
 
-Status: design only. Nothing here is built. The rows it would fill in
-`docs/design/feature-parity.md` (Stats: "Live match view") stay missing until the two data lanes
-below exist. Updated 2026-11-17.
+Status: built 2026-11-20, real game unverified. The console lane, the bridge builder, the panel and
+the settings are built and tested on fixtures and headless scenes; nobody has watched a real match
+with the bridge yet (no Deadlock install on the build Mac). Fills the Stats row "Live match view"
+in `docs/design/feature-parity.md`.
 
-Deadlock Mod Manager shows a live match overlay (souls, timers, net worth). Grimoire does not. The
-row is marked L because no public endpoint carries a player's own live state, and reading it needs
-two things Sigil does not have yet: the game's console log written by `-condebug`, and a HUD bridge
-mod that exposes the pause-screen numbers. This note fixes what those are, what the screen would
-show, and what it refuses to do.
-
-## What exists today
-
-- `deadlock_core::game_session` already tails `game/citadel/console.log` (with `-condebug` on) and
-  reads the phase, the map, the hero codename, the party size, the player count and bots. The
-  Discord presence and Settings > Game watching use it. Polling is incremental: `Tail::poll` reads
-  only the new bytes.
-- `GET /v1/matches/active?account_ids=<id>` returns the active matches the game's Watch tab lists
-  (the top 200 by spectators). A row carries the match id, the game mode, the two team net worths,
-  the twelve account ids, the hero ids and the objectives mask. It is anonymous and has no
-  per-player items, positions, cooldowns or timer detail.
-- `GET /v1/matches/{id}/metadata` is the same payload the scoreboard reads, but only after the match
-  ends. It is not a live feed.
-
-So: the console tells Sigil *that* a match is running and with which hero; the API occasionally
-tells it the ceiling (is this match in the Watch tab); neither tells it the player's own souls,
-items or cooldowns.
+Deadlock Mod Manager has a Live tab: both teams as the in-game top bar shows them, read from the
+game's console log, which a small HUD mod (its "live bridge") writes into. Grimoire has nothing
+like it. Sigil builds the same two lanes, from DMM's behaviour (GPL-3.0, no code or text taken).
 
 ## The two lanes
 
 ### 1. Console log (`-condebug`)
 
-Read-only, local, no network. Already implemented and tested in `game_session`.
+`deadlock_core::live_match` follows `game/citadel/console.log` by offset. Local, no network.
 
-| What | Source line | Use |
+| What | Console line | Use |
 | --- | --- | --- |
-| In a match, hero | `[Server] Loaded hero N/hero_<codename>`, map and game-state changes | Show the live strip only while `Phase::InMatch`, name the hero |
-| Party size | `party ... members` | "Duo", "party of 4" |
-| Mode | map name (`street_test`), bots flag | Standard, Street Brawl, bot match |
-| Match end | `Lobby N for Match M destroyed`, disconnect lines | Close the strip and offer the scoreboard |
+| Searching | `k_EMsgClientToGCStartMatchmaking` / `...StopMatchmaking` | "Searching for a match, 1:23" |
+| Match found | `Lobby <lobby> for Match <match> created` | The match id, a fresh board |
+| In progress | `OnGameStateChanged: GameInProgress (7)` | The clock "since the horn" when there is no bridge |
+| Match over | `Lobby <lobby> for Match <match> destroyed`, or the game closing | The last board stays until the next queue |
+| Hero, mode, party | the presence rules in `game_session` | "In a match as Haze, Standard (6v6), party of 2" |
 
-Limits, stated on the screen: the log has no souls, items, cooldowns, positions or objective health.
-A `-condebug` game writes a file that grows; `Tail` already caps its replay at 4 MB and reads from
-the end.
+The hideout's own server logs `ChangeGameState` lines straight through to `GameInProgress`; a state
+only counts while a lobby is open, so the hideout never reads as a match. A lobby left in hero select
+is not kept as a finished match.
 
-### 2. HUD bridge mod (the missing half)
+The first read takes up to 16 MB from the end of the log (a match writes a few MB at most), so
+opening Sigil in the middle of a match still finds its lobby. Later reads take only the appended
+bytes. A log that shrank or was created again (the game restarted) starts over.
 
-A normal Sigil mod (a `pakNN_dir.vpk` in `citadel/addons`) that replaces the pause screen HUD layout
-and, once per second while the match runs, writes one small JSON file:
+### 2. The live bridge (an opt-in HUD mod)
 
-```json
-{
-  "match_id": 138737576,
-  "time_s": 942,
-  "hero": "hero_haze",
-  "souls": 28450,
-  "souls_per_min": 1812,
-  "items": [548943648, 3452399392],
-  "kills": 7, "deaths": 3, "assists": 11,
-  "team_souls": [163473, 165228]
-}
+Panorama cannot write files, so the first design here (a `sigil-live.json` the mod writes) was
+wrong. What works, and what DMM ships: a script on the top bar prints the numbers to the console
+with `$.Msg`, and `-condebug` puts them in `console.log` next to the game's own lines.
+
+`deadlock_core::live_bridge` builds the mod on the player's computer from their own game:
+
+- `panorama/layout/citadel_hud_top_bar_team.vxml_c`: the game's top bar team layout from
+  `pak01_dir.vpk` with one script include added (a `SCRIPTS` section shaped like the layout's own
+  `STYLES` section, or one more include in an existing `SCRIPTS` section). KV3 patching is
+  morphic's (vpkmerge, MIT).
+- `panorama/scripts/sigil_live_bridge.vjs_c`: `live_bridge.js` in a compiled script container.
+  The container is the smallest of the game's own `.vjs_c` files whose `DATA` block is plain text
+  and whose other blocks are only edit info, with the `DATA` swapped. No Valve compiler, nothing
+  from the game shipped with Sigil.
+
+The script runs once per top bar team panel. Every two seconds it reads, for each player panel,
+the dialog variables the top bar already binds (`player_name`, `hero_name`, `hero_id`, `gold`,
+`player_level`, `kills`, `deaths`, `assists`, `objective_damage`) and the `LocalPlayer` and `Dead`
+classes, plus the clock, and prints one line when anything changed (and every 20 seconds anyway, so
+a quiet board is told from a dead bridge):
+
+```text
+11/20 20:20:02 [PanoramaScript] [SIGIL-LIVE] {"v":1,"side":"friendly","clock":"12:34","players":[{"name":"Wren","hero":"Haze","hero_id":13,"souls":"12.3k","level":14,"k":5,"d":1,"a":7,"obj":4210,"me":true,"dead":false}]}
+11/20 20:04:01 [PanoramaScript] [SIGIL-LIVE-ROSTER] {"v":1,"teams":[[{"name":"Wren","id":"76561198..."}],[...]]}
 ```
 
-- Written to `game/citadel/sigil-live.json`, overwritten atomically (write a `.part` file, then
-  rename) so Sigil never reads half a line.
-- Panorama can read the local player's stats through the HUD's own panel data. It cannot read the
-  other eleven players' items or cooldowns; those stay unavailable until Valve exposes them.
-- The mod is a normal addon: Sigil packs it, installs it into an addon slot from a user action, and
-  the user can remove it. Nothing about it is special-cased in the agent tools.
-- It is opt-in: a switch in Settings > Game watching, "Live match numbers (HUD mod)", off by
-  default, because it changes the HUD and because a third-party HUD may interact with how Valve
-  treats a session. The screen says so in one line, not a paragraph.
+The roster line comes from the versus screen before the match, the one place the HUD ties a name to
+an account. `TeamFriendly` and `TeamEnemy` are fixed slots (teams 2 and 3, Hidden King and
+Archmother), not relative to the player: the team holding the `LocalPlayer` is "your team". Lines
+from another wire version are skipped; `v` is bumped with every change, in both files, and a test
+checks they agree.
 
-The mod is the one place Sigil would ship game-facing code. Until it exists and is verified in a
-real match, the live view stays unbuilt: a strip that shows only "you are in a match" is not worth
-the row.
+What the bridge cannot give: other players' items, cooldowns and positions, objective health,
+camp and rune timers. The top bar does not show them, so the script does not read them.
 
-## The screen
+## Installing, updating, removing
 
-Shown at the top of Stats only while `Phase::InMatch`, above the brief, and gone when the match
-ends. One row, 52 points tall, no card:
+- Off by default. Settings > Game > Live match > "Live bridge (HUD mod)", or "Set up the live
+  bridge" on the Stats panel, opens one explanation (what it reads, that it draws nothing and sends
+  nothing, that it needs `-condebug`, that another top bar mod can hide it) and Install.
+- Install builds into the workspace, then goes through the normal install pipeline into the lowest
+  free slot, switched on, with a library entry "Sigil live bridge". If `-condebug` is missing from
+  the Steam launch options, the usual launch options confirm opens to add it.
+- Every change waits for Deadlock to close (the game keeps its addons open).
+- `live_bridge::check` finds the bridge (a VPK holding exactly its two files), compares it byte for
+  byte with a build from the current game, and reports: not installed, off, current, outdated
+  (Rebuild), incompatible (the top bar changed shape: Remove), or unknown (the game could not be
+  read). It also lists other switched-on mods that replace the same layout; one in a lower slot wins
+  and silences the bridge, and the panel says so.
+- Rebuild replaces the installed file in place, and refuses a file that holds anything but the
+  bridge. Remove moves the slot to Sigil's trash.
 
-- Hero chip and name, mode, party size, and the match clock from the bridge (or the console's last
-  state change when the bridge is absent).
-- Souls and souls a minute; the team soul lead from `/v1/matches/active` when the match is in the
-  Watch tab, otherwise a dash with "not in the Watch tab".
-- A single action: "Open live on deadlock-api" is wrong (there is no live page); instead "Show this
-  match when it ends" sets a marker so the Stats page opens the scoreboard for that match id the
-  next time it appears in the history.
+## The panel
 
-When the match ends, the strip becomes one line for a minute: "Match ended, 31 minutes. Scoreboard
-when the API has it." with a button that opens the scoreboard once `/v1/matches/{id}/metadata`
-answers.
+At the top of Stats while Deadlock runs, and for two hours after the last match when it does not:
 
-Nothing here is an overlay. Sigil does not draw over the game, read game memory, hook DirectX, or
-sniff packets. Anything that needs that is out of scope, not deferred.
+| State | Shows |
+| --- | --- |
+| Console log off | "Add -condebug to the launch options" |
+| Hideout or menus | "No match running" |
+| Searching | the queue time |
+| Match found | loading in, the match id |
+| In a match, no bridge | hero, mode, party, the clock since the horn, "Set up the live bridge" |
+| Bridge installed, no report | "Waiting for the live bridge" and why (restart the game, top bar mod) |
+| Bridge reporting | soul lead, team souls, kills, your souls and souls a minute, the soul lead curve from the bridge's own samples, both teams sorted by souls with hero, level, K/D/A, souls and objective damage, respawning marks, "From the live bridge, 2 s ago" or "No signal" after 45 s |
+| Match over | the last board, match length, Scoreboard (once deadlock-api has the match) and Statlocker |
 
-## Polling and budget
+Earlier match ids of the session are listed under the panel. Bridge warnings (off, outdated,
+incompatible, shadowed) sit in the panel with their one action.
 
-| Lane | Frequency | Cost |
+Scenes: `stats-live-idle`, `-console`, `-bridge`, `-waiting`, `-ended`, `-confirm`, `-condebug`, and
+`settings-live`.
+
+## Network and budget
+
+| Lane | When | Cost |
 | --- | --- | --- |
-| Console tail | every 500 ms while Deadlock runs | one stat and a seek, no network |
-| `/v1/matches/active` | once at match start, then every 60 s, at most 45 times per match | one request, about 200 KB |
-| HUD bridge file | every second, read only when its length or modified time changed | one stat, no network |
+| Console tail | every 2 s, only while Stats is open and Deadlock runs | one stat, a seek and the new bytes |
+| Bridge check | when Stats or Settings opens, after a bridge action, then every 10 minutes | reads the addons' directories and `pak01`'s directory |
+| Player lookup | once per match, only with "Look up players in the live match" on (off by default) and Player stats allowed | one `/v1/players/steam` request for the lobby's account ids, then `/v1/players/{id}/rank` per account, all on `api.deadlock-api.com` |
 
-No request carries an account id anywhere except `api.deadlock-api.com`, which is already on the
-network allowlist for Stats. Offline mode disables the active-match lane and leaves the console
-strip working.
+Nothing else leaves the computer. Sigil does not draw over the game, read its memory, hook its
+renderer or watch its traffic.
 
-## What stays unavailable
+## To verify on a real game (Windows)
 
-- Other players' souls, items and cooldowns in real time. The Watch tab data has team totals only,
-  and it only covers the top 200 matches.
-- Positions and objective health. The demo query lane is asynchronous and takes 13 seconds.
-- Last-hit and deny timers, camp timers and rune timers: these are game client knowledge, not in any
-  public endpoint, and the HUD mod would have to read them from panels that do not expose them.
-
-The screen shows what it has and says what it does not. It never estimates a live number.
-
-## Steps to build it
-
-1. Verify the HUD panel data in one real match: which values the pause-screen panel exposes and
-   whether a mod can write a file from Panorama. If it cannot, stop; do not guess a schema.
-2. Write the bridge mod, package it with Sigil, and add the opt-in switch.
-3. Add a `deadlock-core` reader for `sigil-live.json` with unit tests against a captured file, and a
-   `StatsClient::fetch_active_matches(account_id)` parsed into the fields listed above.
-4. Add the strip to the Stats page with a scene fixture for each state: in match with the bridge, in
-   match without it, match ended, and stale bridge file (older than 10 seconds reads as "no signal").
-5. Update this note, `docs/research/stats.md` and the feature-parity row when the first real match
-   has been watched end to end.
+1. Install the bridge from Settings with Deadlock closed; check a slot holds a two-file VPK.
+2. Launch with `-condebug`, play a bot match: `console.log` gets `[SIGIL-LIVE]` lines, the panel
+   fills both teams, the clock follows the top bar, the top bar itself looks unchanged.
+3. Check the roster line names accounts (the avatar property is a guess from DMM's script).
+4. After a game update: the panel offers Rebuild, and the rebuilt bridge reports again.

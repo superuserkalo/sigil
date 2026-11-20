@@ -66,6 +66,8 @@ pub mod mod_lookup;
 pub mod mod_merge;
 pub mod mod_safety;
 pub mod game_session;
+pub mod live_bridge;
+pub mod live_match;
 pub mod fast_download;
 pub mod mod_sources;
 pub mod file_servers;

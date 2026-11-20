@@ -1,6 +1,6 @@
 # Settings parity: Grimoire and Deadlock Mod Manager
 
-Status: audit done 2026-11-17; smalls round 2026-11-19 (rows G47, G99, G100, D129, D194 built); parity round built 2026-11-17; wave 3 rows updated 2026-11-18 (pages, preview volume, map mods, fix before launch, Remote Install backlogged); wave 4 UI B rows updated 2026-11-18 (SOCKS5, checklist, catalog, logs, AI help, launch options, vanilla, update marks, channel notes, seasons). Every settings item in both apps, from their source, with what Sigil does about it.
+Status: audit done 2026-11-17; bookkeeping 2026-11-20 (3D preview, Hideout, signed updates and the tray hooks covered); smalls round 2026-11-19 (rows G47, G99, G100, D129, D194 built); parity round built 2026-11-17; wave 3 rows updated 2026-11-18 (pages, preview volume, map mods, fix before launch, Remote Install backlogged); wave 4 UI B rows updated 2026-11-18 (SOCKS5, checklist, catalog, logs, AI help, launch options, vanilla, update marks, channel notes, seasons). Every settings item in both apps, from their source, with what Sigil does about it.
 
 Sources: Grimoire (`vendor/grimoire`, MIT) `src/pages/Settings.tsx`, `src/components/settings/**`, `electron/main/services/settings.ts`; Deadlock Mod Manager (`vendor/dmm`, GPL-3.0, behaviour only) `apps/desktop/src/pages/settings.tsx`, `apps/desktop/src/components/settings/*.tsx`, `plugins/themes`.
 
@@ -12,16 +12,16 @@ Status words: **Had it** (Sigil had it before this round), **Built now**, **Buil
 | --- | --- | --- |
 | Items | 159 | 232 |
 | Had it | 27 | 42 |
-| Built now | 84 | 117 |
-| Built, hook pending | 0 | 3 |
-| Elsewhere in Sigil | 35 | 27 |
+| Built now | 84 | 119 |
+| Built, hook pending | 0 | 1 |
+| Elsewhere in Sigil | 36 | 28 |
 | Needs a backend | 8 | 6 |
 | Declined (rule) | 5 | 38 |
-| Not built yet | 1 | 2 |
-| **Covered** (had, built, elsewhere) | **141** | **186** |
-| Covered or deliberately declined | 146 | 224 |
+| Not built yet | 0 | 1 |
+| **Covered** (had, built, elsewhere) | **142** | **189** |
+| Covered or deliberately declined | 147 | 227 |
 
-The parity round (2026-11-17) built every row that was **Not built yet** except the two 3D model previews (no 3D renderer in Rune yet) and the two update rows the updater owns. **Built, hook pending** means the setting, its storage and its getter work, and one line in a page another agent owns still has to read it; `.scratch/sigil-redesign/` lists the lines.
+The parity round (2026-11-17) built every row that was **Not built yet** except the two 3D model previews and the two update rows the updater owns. Since then the signed updater shipped and the 3D viewer shipped in 0.1.16 to 0.1.18 (Locker 3D view, Preview in 3D, Hideout), so those rows are covered; the only open row is D145, backlogged by the owner. **Built, hook pending** means the setting, its storage and its getter work, and one line in a page another agent owns still has to read it; `.scratch/sigil-redesign/` lists the lines.
 
 ## Sigil's categories
 
@@ -132,7 +132,7 @@ Grouped by task, thirteen categories in three groups, a search field over all of
 | 95 | Updates | Check automatically | Startup check | Had it | Network > Check for Sigil updates, Privacy > Update check |
 | 96 | Updates | Current version | Version and state | Had it | About and updates |
 | 97 | Updates | What's new | Release notes | Built now | About and updates > Release notes when newer |
-| 98 | Updates | Check / Download / Install | Contextual update button | Had it | Check now; download and install need signed builds (later) |
+| 98 | Updates | Check / Download / Install | Contextual update button | Had it | About and updates: Check now, then the signed update downloads in the background (verified against the signed manifest) and Restart to update installs it; a failed start rolls back (`updater.rs`, shipped 0.1.x) |
 | 99 | Updates | Download progress | Progress | Built now | About > Updates and the update banner show bytes and percent while Sigil downloads its update (`settings/smalls.rs::progress_line`, `shell_w4::update_banner`) |
 | 100 | Updates | Package manager note | Managed installs | Built now | A copy under winget, Scoop, Chocolatey, Homebrew's Caskroom, Nix, Snap, Flatpak or `/usr`/`/opt` (path only, `package_manager.rs`) says updates come from that manager; the installer row and the automatic download are off |
 | 101 | Updates | Manual download note | Ad-hoc signed macOS | Had it | Release notes opens the release page |
@@ -144,7 +144,7 @@ Grouped by task, thirteen categories in three groups, a search field over all of
 | 107 | Experimental | Mod safety | Flag | Elsewhere in Sigil | Always on: payload validator |
 | 108 | Experimental | Deadworks servers | Flag | Built now | Experimental > Servers |
 | 109 | Experimental | Door Stuck | Foundry flag | Elsewhere in Sigil | Agent page builds mods; Experimental > Agent |
-| 110 | Experimental | Hideout 3D models | Flag | Not built yet | Needs a 3D model renderer; Rune has no mesh pipeline yet, so this cannot be built this round |
+| 110 | Experimental | Hideout 3D models | Flag | Elsewhere in Sigil | Built 0.1.16 to 0.1.18 with Sigil's own wgpu renderer: Locker rail > Hideout shows the menu map with the player's mods and the hero; no flag, it is always there (`docs/design/3d-viewer.md`; real game unverified) |
 | 111 | Experimental | Developer mode | Dummy game dir | Elsewhere in Sigil | DAH_GAME_DIR and demo scenes; Game > Choose any folder |
 | 112 | Experimental | Dev Deadlock path | Info | Elsewhere in Sigil | Game > Deadlock folder line (Set by DAH_GAME_DIR) |
 | 113 | Experimental | Copy mods to dev mode | Copy library | Built now | Experimental > Tools > Copy mods to a developer folder |
@@ -257,8 +257,8 @@ Grouped by task, thirteen categories in three groups, a search field over all of
 | 56 | Mods | Move download cache | Move | Built now | Mods > Downloads > Download cache > Move (folder moved, link left in place) |
 | 57 | Mods | Move cache back | Move | Built now | Mods > Downloads > Download cache > Move back |
 | 58 | Application | Vanilla mode | Launch without mods | Built now | Game > Launch options > Vanilla launches without launch options (off; Steam's options are kept and written back at the next modded launch, wave 4) |
-| 59 | Application | Minimize to tray | Tray | Built, hook pending | General > Window; `tray.rs` is done, `main.rs` needs `keep_running`, `on_close` and `tray::install` (owner listed); Rune has no macOS tray backend |
-| 60 | Application | Close to tray | Tray | Built, hook pending | General > Window; same hooks as Minimize to tray |
+| 59 | Application | Minimize to tray | Tray | Built now | General > Window; `main.rs` wires `keep_running`, `on_close` and `tray::install`; the tray is on Windows and Linux (Rune has no macOS tray backend) |
+| 60 | Application | Close to tray | Tray | Built now | General > Window; same hooks as Minimize to tray, wired in `main.rs` |
 | 61 | Application | Automatic updates | Check | Had it | Network > Check for Sigil updates |
 | 62 | Application | Update channel | Stable or nightly | Built now | About and updates > Release channel |
 | 63 | Application | Developer mode | Dev page | Elsewhere in Sigil | Experimental > Agent shows the developer tools |
@@ -267,7 +267,7 @@ Grouped by task, thirteen categories in three groups, a search field over all of
 | 66 | Application | Theme light / dark / system | Theme | Had it | Appearance > Theme |
 | 67 | Application | Audio volume | Preview volume | Built now | Status bar volume (popover, mute) and Browse > View menu move the one preview volume (wave 3) |
 | 68 | Application | Show feature tips | Tips | Built now | General > Setup and tips > Show page tips |
-| 69 | Application | 3D model preview | Toggle | Not built yet | Needs a 3D model renderer; Rune has no mesh pipeline yet |
+| 69 | Application | 3D model preview | Toggle | Elsewhere in Sigil | Built 0.1.16 to 0.1.18: Preview in 3D in a mod's details and Installed's card menu, and the Locker's 3D view; no toggle needed, the viewer opens on request (`docs/design/3d-viewer.md`; real game unverified) |
 | 70 | Application | Language | 18 languages | Built now | General > Language (English, Deutsch; tables for more) |
 | 71 | Features | Minimal mode | All features off | Built now | General > Pages > Mods only: every optional page off, each switch comes back after (wave 3) |
 | 72 | Features | Stats | Feature | Built now | General > Pages > Stats hides the page and its route; Privacy > Player stats stops its reads |

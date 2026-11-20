@@ -263,7 +263,7 @@ pub const DE: &[(&str, &str)] = &[
 
 pub fn get(text: &str) -> Option<&'static str> {
     static MAP: OnceLock<HashMap<&'static str, &'static str>> = OnceLock::new();
-    MAP.get_or_init(|| DE.iter().copied().collect())
+    MAP.get_or_init(|| DE.iter().chain(super::live_de::DE).copied().collect())
         .get(text)
         .copied()
 }
@@ -325,7 +325,7 @@ pub fn routed(source: &str) -> Vec<String> {
 mod tests {
     use super::*;
 
-    const SOURCES: [&str; 11] = [
+    const SOURCES: [&str; 12] = [
         include_str!("more.rs"),
         include_str!("mod.rs"),
         include_str!("brief.rs"),
@@ -337,6 +337,7 @@ mod tests {
         include_str!("map.rs"),
         include_str!("demos.rs"),
         include_str!("w4.rs"),
+        include_str!("live.rs"),
     ];
 
     #[test]
@@ -354,7 +355,7 @@ mod tests {
     #[test]
     fn table_is_clean() {
         let mut seen = std::collections::HashSet::new();
-        for (en, de) in DE {
+        for (en, de) in DE.iter().chain(super::super::live_de::DE) {
             assert!(seen.insert(*en), "duplicate {en:?}");
             assert_eq!(en.matches("{}").count(), de.matches("{}").count(), "holes in {en:?}");
             assert!(!en.contains('\u{2014}') && !de.contains('\u{2014}'), "em dash in {en:?}");

@@ -216,6 +216,10 @@ Nothing about you is sent beyond what answering those requests requires.
   `metadata_salt` or `replay_salt`, and `username: "Sigil"` to `/v1/matches/salts`. No account id,
   login or file is sent. Each batch is recorded in `<data>/match-sharing.json` and shown in
   Settings; Forget deletes that log.
+- Live match player lookup (opt-in, off by default, and only with Player and match stats on): once
+  per match, the account ids the game's versus screen showed are sent to `/v1/players/steam` and
+  `/v1/players/{id}/rank` for match counts and ranks. The live match view itself reads only the
+  game's `console.log` on this computer; the live bridge HUD mod draws and sends nothing.
 
 ## GitHub
 
@@ -353,6 +357,9 @@ host fails.
 | Player and match stats | Settings > Privacy | On |
 | Crosshair share codes | Settings > Privacy | On |
 | Share match data with deadlock-api | Settings > Privacy | Off |
+| Live match view (reads console.log, local) | Settings > Game | On |
+| Live bridge HUD mod | Settings > Game | Off |
+| Look up players in the live match | Settings > Game | Off |
 | Discord Rich Presence | Settings > Integrations | Off |
 | 1-click installs from DeadlockForge | Settings > Privacy | Off |
 | Check for Sigil updates | Settings > About and updates | Off |

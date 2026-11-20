@@ -1,6 +1,6 @@
 # Feature parity: Grimoire and Deadlock Mod Manager
 
-Status: audit 2026-11-17, updated the same day; smalls round 2026-11-19 (custom maps page, update progress, package manager note); wave 3 rows updated 2026-11-18; wave 4 (UI B) rows updated 2026-11-18. Browse and mod details are built, including a
+Status: audit 2026-11-17, updated the same day; live match view built 2026-11-20; smalls round 2026-11-19 (custom maps page, update progress, package manager note); wave 3 rows updated 2026-11-18; wave 4 (UI B) rows updated 2026-11-18. Browse and mod details are built, including a
 bounded local catalog mirror (JSONL, no new crate, no SQLite), the inline sound player and the
 multi-VPK picker. The Installed page has its first round. The global shell has its round: drop
 anywhere, zoom chords, the shortcuts sheet, What's new after an update, the tray, density, and a
@@ -272,7 +272,7 @@ Endpoints, verified with curl against the live API on 2026-11-17 (Deadlock game 
 | Match detail scoreboard | G+D | Both teams, final builds, souls over time, damage and healing | has | M | P2 |
 | Social: teammates, opponents | G | Best teammates, frequent opponents, win rate with and against, premade flag | has | M | P3 |
 | Leaderboard | G | Region and season, the player's place marked | has | S | P3 |
-| Live match view | D | Needs `-condebug` plus a HUD bridge mod; designed in `docs/design/stats-live.md` | missing | L | P3 |
+| Live match view | D | Live tab: both teams from the top bar, souls, K/D/A, clock, last match | has, real game unverified (Stats > Live match panel while Deadlock runs: queue, match found, the console's hero, mode, party and match clock; with the opt-in live bridge HUD mod (Settings > Game > Live match, off by default, built from the player's own `pak01` and installed into a free slot) both teams with hero, level, K/D/A, souls and objective damage, team soul and kill totals, the player's souls a minute and a soul lead curve; the last board kept until the next queue with Scoreboard and Statlocker; bridge state (off, outdated with Rebuild, moved top bar, shadowed by another top bar mod); opt-in player lookup on deadlock-api for ranks. Checked on fixtures and headless scenes only: no Deadlock install on the build Mac; `docs/design/stats-live.md`) | L | P3 |
 | Open on Statlocker | G | Links to statlocker.gg | has (wave 3: the player in the header and tracked list, teammates and opponents, an open match and the scoreboard; a browser link, no app request) | S | P3 |
 | Items tab | D | Item win rates and purchase timelines | has (wave 3, `stats/more.rs`: the player's item rows against everyone's, buy time against everyone's, and an open match's purchase timeline) | M | P3 |
 | Ranked and date filters | D | Scope Overview, Heroes, Items | has (wave 4: the filter sits on top and scopes every section; with a filter set the overview and Heroes read `fetch_snapshot_filtered` on a worker) | M | P3 |
@@ -368,7 +368,7 @@ Endpoints, verified with curl against the live API on 2026-11-17 (Deadlock game 
 | What's new dialog | D | Per-version notes | has (built: shown once per version after an update, from the release notes the update check already fetched) | S | P3 |
 | gameinfo.gi banner with fix | G+D | Reset after updates | has (`banner.rs`: every page, Fix behind a confirm, rechecked on startup, focus, launch, rescan; wave 4: Fix keeps mounts another tool added (`game_apply::apply_gameinfo_repair`, falls back to the plain repair), and Grimoire's Hide until next launch per message) | S | P1 |
 | Sidebar badges (installed, overlap counts) | G+D | Counts | has (built: Installed count and the overlap count in amber) | S | P3 |
-| i18n | G+D | Languages | missing | L | P3 |
+| i18n | G+D | Languages | partial (General > Language: System, English, Deutsch; every routed UI string has a German entry, checked by tests. G and D ship more languages) | L | P3 |
 | Theming | G+D | Themes and accent | has (Settings) | - | - |
 | Tray | D | Close to tray | has (built: Windows and Linux tray, default close still quits; macOS rows explain no tray backend) | S | P3 |
 | Single instance lock | G | One process | has (Rune pipe or socket; a lock and socket on macOS) | - | - |

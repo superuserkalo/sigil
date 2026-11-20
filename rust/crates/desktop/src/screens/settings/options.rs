@@ -98,6 +98,12 @@ pub struct Options {
     pub forge: bool,
     /// Read console.log for the match phase and hero.
     pub presence_game: bool,
+    /// Stats shows the match being played, read from console.log (local only).
+    pub live_view: bool,
+    /// The player turned on the live bridge HUD mod (off by default).
+    pub live_bridge: bool,
+    /// Look up the live match's players on deadlock-api (off by default).
+    pub live_lookup: bool,
     /// Discord lines per phase id; missing phases use the defaults.
     pub presence_lines: BTreeMap<String, Lines>,
     /// Discord lines per hero name, used in a match.
@@ -191,6 +197,9 @@ impl Default for Options {
             repair_before_launch: false,
             forge: false,
             presence_game: false,
+            live_view: true,
+            live_bridge: false,
+            live_lookup: false,
             presence_lines: BTreeMap::new(),
             hero_lines: BTreeMap::new(),
             imprint: false,
@@ -343,6 +352,9 @@ impl Options {
             repair_before_launch: b("repair_before_launch", d.repair_before_launch),
             forge: b("forge", d.forge),
             presence_game: b("presence_game", d.presence_game),
+            live_view: b("live_view", d.live_view),
+            live_bridge: b("live_bridge", d.live_bridge),
+            live_lookup: b("live_lookup", d.live_lookup),
             presence_lines: lines_map(map.get("presence_lines")),
             hero_lines: lines_map(map.get("hero_lines")),
             imprint: b("imprint", d.imprint),
@@ -438,6 +450,9 @@ impl Options {
         m.insert("repair_before_launch".into(), json!(self.repair_before_launch));
         m.insert("forge".into(), json!(self.forge));
         m.insert("presence_game".into(), json!(self.presence_game));
+        m.insert("live_view".into(), json!(self.live_view));
+        m.insert("live_bridge".into(), json!(self.live_bridge));
+        m.insert("live_lookup".into(), json!(self.live_lookup));
         m.insert("presence_lines".into(), lines_json(&self.presence_lines));
         m.insert("hero_lines".into(), lines_json(&self.hero_lines));
         m.insert("imprint".into(), json!(self.imprint));
@@ -666,6 +681,9 @@ mod tests {
             repair_before_launch: true,
             forge: true,
             presence_game: true,
+            live_view: false,
+            live_bridge: true,
+            live_lookup: true,
             presence_lines: BTreeMap::new(),
             hero_lines: BTreeMap::new(),
             imprint: true,
