@@ -1362,7 +1362,12 @@ fn sidebar(s: &State, u: &Ui, insets: rune::ChromeInsets) -> El {
             .child(if s.prefs.single_launch { el() } else { compact_launch(s, u, true) })
             .child(el().h(4.0))
             .children(crate::shell_tips::season_mark(s, u))
-            .child(crate::shell_w4::collapse_button(s, u))
+            // macOS: the traffic lights fill the narrow top row, so Expand sits here, centred.
+            .child(if insets.leading > 0.0 {
+                row().w_full().center().child(crate::shell_w4::collapse_button(s, u))
+            } else {
+                el()
+            })
             .child(settings_item(s, u))
     } else {
         col()
@@ -1393,7 +1398,6 @@ fn sidebar(s: &State, u: &Ui, insets: rune::ChromeInsets) -> El {
             })
             .child(el().h(4.0))
             .children(crate::shell_tips::season_mark(s, u))
-            .child(crate::shell_w4::collapse_button(s, u))
             .child(settings_item(s, u))
     };
     col()
@@ -1408,7 +1412,8 @@ fn sidebar(s: &State, u: &Ui, insets: rune::ChromeInsets) -> El {
                 .w_full()
                 .h(TITLEBAR_H)
                 .pl(brand_left)
-                .pr(12.0)
+                // Collapsed with a free row: 18 on both sides centres the 28 point button.
+                .pr(if collapsed { 18.0 } else { 12.0 })
                 .center_y()
                 .window_drag()
                 .child(if collapsed {
@@ -1418,6 +1423,13 @@ fn sidebar(s: &State, u: &Ui, insets: rune::ChromeInsets) -> El {
                     el().on_press(crate::shell_tips::knock).child(crate::brand::header(s, u))
                 } else {
                     crate::brand::header(s, u)
+                })
+                // Collapse sits on the wordmark's row (Expand too, when the row is free).
+                .child(spacer())
+                .child(if !collapsed || insets.leading <= 0.0 {
+                    crate::shell_w4::collapse_button(s, u)
+                } else {
+                    el()
                 }),
         )
         .child(
