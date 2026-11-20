@@ -11,7 +11,7 @@ use crate::icons;
 use crate::model::Screen;
 use crate::screens::settings::i18n::{fill, tr};
 use crate::screens::settings::options;
-use crate::ui::{ActionKind, BODY, BODY_MED, MICRO, Ui};
+use crate::ui::{ActionKind, BODY_MED, MICRO, Ui};
 
 /// The sidebar's width with icons only.
 pub const COLLAPSED_W: f32 = 64.0;
@@ -80,18 +80,18 @@ pub fn toggle_sidebar(st: &mut State) {
     options::edit(st, |o| o.sidebar_collapsed = collapsed);
 }
 
-/// The collapse control at the foot of the sidebar.
+/// The collapse control: a square icon button, on the wordmark's row while the sidebar is
+/// open, its name and shortcut in the tooltip.
 pub fn collapse_button(s: &State, u: &Ui) -> El {
     let collapsed = s.shell.w4.collapsed;
     let label = tr(if collapsed { "Expand sidebar" } else { "Collapse sidebar" });
-    let mut button = row()
+    row()
         .key("sidebar-collapse")
-        .h(30.0)
-        .px(10.0)
-        .gap(10.0)
-        .center_y()
-        .radius(crate::ui::r(8.0))
+        .size(28.0, 28.0)
+        .center()
+        .radius(crate::ui::r(6.0))
         .hover(u.hover)
+        .press(Color::WHITE.alpha(0.06))
         .focusable(true)
         .role("button")
         .label(label)
@@ -102,15 +102,7 @@ pub fn collapse_button(s: &State, u: &Ui) -> El {
             rune::icon(if collapsed { &icons::CHEVRON_RIGHT } else { &icons::PANEL_LEFT }, 15.0)
                 .color(u.faint)
                 .a11y_hidden(),
-        );
-    if collapsed {
-        button = button.w_full().px(0.0).center();
-    } else {
-        button = button
-            .w_full()
-            .child(text(label).font(BODY).color(u.muted).grow(1.0).a11y_hidden());
-    }
-    button
+        )
 }
 
 fn shortcut_label() -> &'static str {
