@@ -104,6 +104,39 @@ pub fn allow_scripts() -> bool {
     ALLOW_SCRIPTS.load(std::sync::atomic::Ordering::SeqCst)
 }
 
+/// What makes a file a script mod, in the sense of Settings > Allow script mods. The install
+/// check and the safety scan (`mod_safety`) both read this, so they agree on what the setting
+/// covers.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ScriptModKind {
+    /// `*.vnmskel_c`: replaces a skeleton, which can break hero animations.
+    Skeleton,
+    /// `scripts/**/*.vdata_c`: gameplay data, which changes gameplay and goes stale.
+    GameplayData,
+}
+
+impl ScriptModKind {
+    /// The install review's line for this file.
+    pub fn message(self) -> &'static str {
+        match self {
+            ScriptModKind::Skeleton => "Script mod: replaces a skeleton, which can break hero animations.",
+            ScriptModKind::GameplayData => "Script mod: changes gameplay data, which goes stale after game updates.",
+        }
+    }
+}
+
+/// Whether `entry` (a VPK path with forward slashes) makes a mod a script mod.
+pub fn script_mod_kind(entry: &str) -> Option<ScriptModKind> {
+    let lowered = entry.trim().to_lowercase();
+    if lowered.ends_with(".vnmskel_c") {
+        return Some(ScriptModKind::Skeleton);
+    }
+    if lowered.split('/').next() == Some("scripts") && lowered.ends_with(".vdata_c") {
+        return Some(ScriptModKind::GameplayData);
+    }
+    None
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct PayloadOptions {
     /// Staging folder name that must not appear as the first path segment.
@@ -204,13 +237,15 @@ pub fn validate_payload(entries: &[String], options: &PayloadOptions) -> Vec<Pay
 
         let scripts_allowed = options.staging_folder.is_none() && allow_scripts();
 
-        if lowered.ends_with(".vnmskel_c") {
+        let script_mod = script_mod_kind(entry);
+
+        if script_mod == Some(ScriptModKind::Skeleton) {
             if scripts_allowed {
                 issues.push(PayloadIssue {
                     severity: Severity::Warning,
                     code: "skeleton",
                     entry: Some(entry.to_string()),
-                    message: "Script mod: replaces a skeleton, which can break hero animations.".to_string(),
+                    message: ScriptModKind::Skeleton.message().to_string(),
                 });
             } else {
                 issues.push(PayloadIssue::error(
@@ -222,17 +257,13 @@ pub fn validate_payload(entries: &[String], options: &PayloadOptions) -> Vec<Pay
             rejected = true;
         }
 
-        if segments
-            .first()
-            .is_some_and(|segment| segment.eq_ignore_ascii_case("scripts"))
-            && lowered.ends_with(".vdata_c")
-        {
+        if script_mod == Some(ScriptModKind::GameplayData) {
             if scripts_allowed {
                 issues.push(PayloadIssue {
                     severity: Severity::Warning,
                     code: "gameplay_data",
                     entry: Some(entry.to_string()),
-                    message: "Script mod: changes gameplay data, which goes stale after game updates.".to_string(),
+                    message: ScriptModKind::GameplayData.message().to_string(),
                 });
             } else {
                 issues.push(PayloadIssue::error(
