@@ -444,7 +444,7 @@ fn particles_gpu_pipelines_build_and_draw() {
         }],
     });
     let b = fixture::hero_bundle();
-    let mut pg = ParticleGpu::new(device, &gpu.queue, &frame_layout, gpu.msaa, crate::gpu::HDR, crate::gpu::DEPTH, &b);
+    let mut pg = ParticleGpu::new(device, &gpu.queue, &frame_layout, gpu.msaa, crate::gpu::HDR, crate::gpu::DEPTH, &b, u64::MAX);
     let attach = |n: &str| b.attachment_frame(n, &hand_bone);
     let to_world = crate::fixture::source_to_gltf();
     for _ in 0..60 {
@@ -646,7 +646,7 @@ fn particles_wide_textures_upload_within_the_limits() {
     ember.width = w;
     ember.height = h;
     ember.rgba = vec![255; (w * h * 4) as usize];
-    let pg = ParticleGpu::new(device, &gpu.queue, &frame_layout, gpu.msaa, crate::gpu::HDR, crate::gpu::DEPTH, &b);
+    let pg = ParticleGpu::new(device, &gpu.queue, &frame_layout, gpu.msaa, crate::gpu::HDR, crate::gpu::DEPTH, &b, u64::MAX);
     assert!(pollster::block_on(scope.pop()).is_none(), "no validation error");
     let _ = pg.diagnostics();
 }

@@ -35,6 +35,25 @@ fn time(v: &mut Viewer, label: &str) {
     println!("{label}: {with_read:.2} ms a frame with readback, {without:.2} ms without ({} particles)", v.particle_count());
 }
 
+/// Particle sprites count in the viewer's texture budget, and a spent budget leaves them out
+/// (the effects then draw the soft-dot fallback) instead of failing on the device.
+#[test]
+fn particle_textures_count_in_the_viewer_budget() {
+    let Some(mut v) = viewer() else { return };
+    let side = Sidecar::parse(&fixture::sidecar_json());
+    v.set_hero(model::load_slice(&fixture::hero_glb(fixture::Variant::Modded)).unwrap(), &side);
+    let before = v.usage().texture_bytes;
+    v.set_hero_particles(Some(sigil_viewer::particles::fixture::hero_bundle()));
+    assert!(v.usage().texture_bytes > before, "the sprites are charged");
+    let Some(mut tight) = viewer() else { return };
+    tight.set_budgets(1, u64::MAX);
+    tight.set_hero(model::load_slice(&fixture::hero_glb(fixture::Variant::Modded)).unwrap(), &side);
+    tight.set_hero_particles(Some(sigil_viewer::particles::fixture::hero_bundle()));
+    assert!(tight.particle_diagnostics().iter().any(|d| d.contains("budget")), "{:?}", tight.particle_diagnostics());
+    let _ = tight.render(64, 64, 0.1);
+    assert!(tight.gpu_error().is_none());
+}
+
 #[test]
 #[ignore]
 fn frame_cost_with_cloth_particles_shadows() {

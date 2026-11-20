@@ -41,6 +41,10 @@ struct Draw {
 pub const PARTICLE_TEXTURE_BUDGET: u64 = 256 * 1024 * 1024;
 
 pub struct ParticleGpu {
+    /// Bytes and count of the textures this bundle put on the GPU (the viewer charges them to
+    /// its texture budget).
+    texture_bytes: u64,
+    texture_count: usize,
     effects: Effects,
     sheets: HashMap<String, Sheet>,
     pipes: HashMap<PipeKey, wgpu::RenderPipeline>,
@@ -83,7 +87,10 @@ fn blend_state(blend: u8) -> wgpu::BlendState {
 
 impl ParticleGpu {
     #[allow(clippy::too_many_arguments)]
-    pub fn new(device: &wgpu::Device, queue: &wgpu::Queue, frame_layout: &wgpu::BindGroupLayout, msaa: u32, hdr: wgpu::TextureFormat, depth: wgpu::TextureFormat, bundle: &Bundle) -> ParticleGpu {
+    /// `budget`: the texture bytes the viewer has left; this bundle uses at most that and
+    /// `PARTICLE_TEXTURE_BUDGET`.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(device: &wgpu::Device, queue: &wgpu::Queue, frame_layout: &wgpu::BindGroupLayout, msaa: u32, hdr: wgpu::TextureFormat, depth: wgpu::TextureFormat, bundle: &Bundle, budget: u64) -> ParticleGpu {
         let mut effects = Effects::new(bundle);
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some("particles"), source: wgpu::ShaderSource::Wgsl(include_str!("sprite.wgsl").into()) });
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -122,18 +129,22 @@ impl ParticleGpu {
         // The viewer's texture edge cap (gpu::upload_image's), the device's own limit, and a
         // budget for all of a bundle's textures: a texture past them is left out with a note.
         let device_edge = device.limits().max_texture_dimension_2d;
-        let mut budget = PARTICLE_TEXTURE_BUDGET;
-        let mut upload = |width: u32, height: u32, rgba: &[u8]| -> Option<usize> {
+        let mut budget = budget.min(PARTICLE_TEXTURE_BUDGET);
+        let (mut texture_bytes, mut texture_count) = (0u64, 0usize);
+        // `required`: the 64 px fallback dot, which every effect needs, goes up whatever the budget.
+        let mut upload = |width: u32, height: u32, rgba: &[u8], required: bool| -> Option<usize> {
             let mut chain = crate::gpu::mip_chain(width, height, rgba);
             while chain.len() > 1 && chain[0].0.max(chain[0].1) > crate::gpu::MAX_TEXTURE_EDGE {
                 chain.remove(0);
             }
             let (width, height) = (chain[0].0, chain[0].1);
             let bytes: u64 = chain.iter().map(|l| l.2.len() as u64).sum();
-            if width.max(height) > device_edge || bytes > budget {
+            if !required && (width.max(height) > device_edge || bytes > budget) {
                 return None;
             }
-            budget -= bytes;
+            budget = budget.saturating_sub(bytes);
+            texture_bytes += bytes;
+            texture_count += 1;
             let tex = device.create_texture(&wgpu::TextureDescriptor {
                 label: Some("particle texture"),
                 size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
@@ -156,7 +167,7 @@ impl ParticleGpu {
             textures.push(tex);
             Some(view_list.len() - 1)
         };
-        let fallback = upload(64, 64, &soft_dot(64)).unwrap_or(0);
+        let fallback = upload(64, 64, &soft_dot(64), true).unwrap_or(0);
         let mut sheets = HashMap::new();
         let mut names: Vec<&String> = bundle.textures.keys().collect();
         names.sort();
@@ -165,7 +176,7 @@ impl ParticleGpu {
             if t.width == 0 || t.height == 0 || t.rgba.len() < (t.width * t.height * 4) as usize {
                 continue;
             }
-            match upload(t.width, t.height, &t.rgba) {
+            match upload(t.width, t.height, &t.rgba, false) {
                 Some(view) => {
                     views.insert(name.clone(), view);
                 }
@@ -264,6 +275,8 @@ impl ParticleGpu {
         let capacity = 256;
         let buffer = Self::instance_buffer(device, capacity);
         ParticleGpu {
+            texture_bytes,
+            texture_count,
             effects,
             sheets,
             pipes,
@@ -355,6 +368,11 @@ impl ParticleGpu {
             pass.set_bind_group(1, &d.group, &[]);
             pass.draw(0..6, d.range.0..d.range.1);
         }
+    }
+
+    /// Bytes and count of the textures this bundle holds on the GPU.
+    pub fn textures(&self) -> (u64, usize) {
+        (self.texture_bytes, self.texture_count)
     }
 
     pub fn particle_count(&self) -> usize {
