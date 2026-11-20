@@ -139,6 +139,9 @@ impl Gpu {
             required_limits: wgpu::Limits {
                 max_storage_buffers_per_shader_stage: 4,
                 max_storage_buffer_binding_size: (64 << 20u64).min(available.max_storage_buffer_binding_size),
+                // The Hideout's lightmap, probe, fog and cookie textures join the material's
+                // seven: more sampled textures than the downlevel floor of 16.
+                max_sampled_textures_per_shader_stage: available.max_sampled_textures_per_shader_stage.min(32),
                 ..limits
             },
             experimental_features: Default::default(),
@@ -280,6 +283,9 @@ pub struct PostGpu {
     pub glow_at: [f32; 4],
     pub inv_view_proj: [f32; 16],
     pub sky: [f32; 4],
+    pub bloom2: [f32; 4],
+    pub lut: [f32; 4],
+    pub bloom_w: [[f32; 4]; 5],
 }
 
 #[repr(C)]
@@ -319,6 +325,7 @@ pub struct Pipelines {
     flat_normal: wgpu::TextureView,
     black_hdr: wgpu::TextureView,
     black_cube: wgpu::TextureView,
+    pub(crate) hideout_none: crate::hideout::HideoutDefaults,
 }
 
 fn uniform_entry(binding: u32, visibility: wgpu::ShaderStages) -> wgpu::BindGroupLayoutEntry {
@@ -348,12 +355,21 @@ fn cube_entry(binding: u32, visibility: wgpu::ShaderStages) -> wgpu::BindGroupLa
     }
 }
 
+fn texture3d_entry(binding: u32, visibility: wgpu::ShaderStages) -> wgpu::BindGroupLayoutEntry {
+    wgpu::BindGroupLayoutEntry {
+        binding,
+        visibility,
+        ty: wgpu::BindingType::Texture { sample_type: wgpu::TextureSampleType::Float { filterable: true }, view_dimension: wgpu::TextureViewDimension::D3, multisampled: false },
+        count: None,
+    }
+}
+
 fn sampler_entry(binding: u32, visibility: wgpu::ShaderStages) -> wgpu::BindGroupLayoutEntry {
     wgpu::BindGroupLayoutEntry { binding, visibility, ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering), count: None }
 }
 
-const VERTEX_ATTRS: [wgpu::VertexAttribute; 8] = wgpu::vertex_attr_array![
-    0 => Float32x3, 1 => Float32x3, 2 => Float32x4, 3 => Float32x2, 4 => Float32x2, 5 => Float32x4, 6 => Uint32x4, 7 => Float32x4
+const VERTEX_ATTRS: [wgpu::VertexAttribute; 9] = wgpu::vertex_attr_array![
+    0 => Float32x3, 1 => Float32x3, 2 => Float32x4, 3 => Float32x2, 4 => Float32x2, 5 => Float32x4, 6 => Uint32x4, 7 => Float32x4, 8 => Float32x2
 ];
 
 fn vertex_layout() -> wgpu::VertexBufferLayout<'static> {
@@ -419,6 +435,14 @@ impl Pipelines {
                     count: None,
                 },
                 wgpu::BindGroupLayoutEntry { binding: 5, visibility: wgpu::ShaderStages::FRAGMENT, ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Comparison), count: None },
+                uniform_entry(6, wgpu::ShaderStages::FRAGMENT),
+                texture_entry(7, wgpu::ShaderStages::FRAGMENT),
+                texture_entry(8, wgpu::ShaderStages::FRAGMENT),
+                texture_entry(9, wgpu::ShaderStages::FRAGMENT),
+                texture3d_entry(10, wgpu::ShaderStages::FRAGMENT),
+                texture3d_entry(11, wgpu::ShaderStages::FRAGMENT),
+                texture3d_entry(12, wgpu::ShaderStages::FRAGMENT),
+                texture_entry(13, wgpu::ShaderStages::FRAGMENT),
             ],
         });
         let frame_only_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor { label: Some("viewer frame only"), entries: &[uniform_entry(0, vf)] });
@@ -443,7 +467,15 @@ impl Pipelines {
         let floor_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor { label: Some("viewer floor"), entries: &[uniform_entry(0, vf)] });
         let post_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("viewer post"),
-            entries: &[uniform_entry(0, vf), texture_entry(1, wgpu::ShaderStages::FRAGMENT), texture_entry(2, wgpu::ShaderStages::FRAGMENT), texture_entry(3, wgpu::ShaderStages::FRAGMENT), sampler_entry(4, wgpu::ShaderStages::FRAGMENT), cube_entry(5, wgpu::ShaderStages::FRAGMENT)],
+            entries: &[
+                uniform_entry(0, vf),
+                texture_entry(1, wgpu::ShaderStages::FRAGMENT),
+                texture_entry(2, wgpu::ShaderStages::FRAGMENT),
+                texture_entry(3, wgpu::ShaderStages::FRAGMENT),
+                sampler_entry(4, wgpu::ShaderStages::FRAGMENT),
+                cube_entry(5, wgpu::ShaderStages::FRAGMENT),
+                texture3d_entry(6, wgpu::ShaderStages::FRAGMENT),
+            ],
         });
 
         let common = include_str!("shaders/common.wgsl");
@@ -572,7 +604,11 @@ impl Pipelines {
         let post = full("viewer post", "fs_post", OUTPUT, None);
         let threshold = full("viewer bloom threshold", "fs_threshold", HDR, None);
         let down = full("viewer bloom down", "fs_down", HDR, None);
-        let up = full("viewer bloom up", "fs_up", HDR, Some(additive));
+        let weighted = wgpu::BlendState {
+            color: wgpu::BlendComponent { src_factor: wgpu::BlendFactor::One, dst_factor: wgpu::BlendFactor::Constant, operation: wgpu::BlendOperation::Add },
+            alpha: wgpu::BlendComponent { src_factor: wgpu::BlendFactor::Zero, dst_factor: wgpu::BlendFactor::One, operation: wgpu::BlendOperation::Add },
+        };
+        let up = full("viewer bloom up", "fs_up", HDR, Some(weighted));
         let sampler = |mode: wgpu::AddressMode| {
             device.create_sampler(&wgpu::SamplerDescriptor {
                 label: Some("viewer sampler"),
@@ -595,6 +631,7 @@ impl Pipelines {
             flat_normal: solid(device, q, [128, 128, 255, 255], wgpu::TextureFormat::Rgba8Unorm),
             black_hdr: solid(device, q, [0; 4], HDR),
             black_cube: upload_cube(gpu, &[(1, vec![[0.0f32; 4]; 6])]),
+            hideout_none: crate::hideout::HideoutDefaults::new(gpu),
             frame_layout,
             frame_only_layout,
             material_layout,
@@ -1018,6 +1055,13 @@ pub struct FrameInputs<'a> {
     pub sky_cube: Option<&'a wgpu::TextureView>,
     /// The key light's view projection when it casts a shadow this frame.
     pub shadow: Option<[f32; 16]>,
+    /// Only the hero casts into the shadow map: the light's static shadow is baked (a
+    /// stationary light's lightmap shadow mask), so the room must not shadow itself twice.
+    pub shadow_hero_only: bool,
+    /// The Hideout's baked data and this frame's uniform for it (lights in the frame's order).
+    pub hideout: Option<(&'a crate::hideout::HideoutGpu, crate::hideout::HideoutUniform)>,
+    /// Per bloom level, the weight times tint the map's post gives it (level 0 first).
+    pub bloom_weights: [[f32; 3]; 5],
 }
 
 pub struct FrameResources {
@@ -1061,7 +1105,8 @@ impl FrameResources {
     }
 }
 
-fn post_group(gpu: &Gpu, p: &Pipelines, r: &FrameResources, a: &wgpu::TextureView, b: &wgpu::TextureView, bloom: &wgpu::TextureView, sky: Option<&wgpu::TextureView>) -> wgpu::BindGroup {
+#[allow(clippy::too_many_arguments)]
+fn post_group(gpu: &Gpu, p: &Pipelines, r: &FrameResources, a: &wgpu::TextureView, b: &wgpu::TextureView, bloom: &wgpu::TextureView, sky: Option<&wgpu::TextureView>, lut: Option<&wgpu::TextureView>) -> wgpu::BindGroup {
     gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("viewer post"),
         layout: &p.post_layout,
@@ -1072,6 +1117,7 @@ fn post_group(gpu: &Gpu, p: &Pipelines, r: &FrameResources, a: &wgpu::TextureVie
             wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::TextureView(bloom) },
             wgpu::BindGroupEntry { binding: 4, resource: wgpu::BindingResource::Sampler(&p.sampler_clamp) },
             wgpu::BindGroupEntry { binding: 5, resource: wgpu::BindingResource::TextureView(sky.unwrap_or(&p.black_cube)) },
+            wgpu::BindGroupEntry { binding: 6, resource: wgpu::BindingResource::TextureView(lut.unwrap_or(&p.hideout_none.d3)) },
         ],
     })
 }
@@ -1109,8 +1155,22 @@ pub fn render_frame(gpu: &Gpu, p: &Pipelines, r: &FrameResources, t: &Targets, i
             wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::Sampler(&p.sampler_clamp) },
             wgpu::BindGroupEntry { binding: 4, resource: wgpu::BindingResource::TextureView(&r.shadow_map) },
             wgpu::BindGroupEntry { binding: 5, resource: wgpu::BindingResource::Sampler(&r.shadow_sampler) },
+            wgpu::BindGroupEntry { binding: 6, resource: match &inputs.hideout {
+                Some((h, _)) => h.buffer.as_entire_binding(),
+                None => p.hideout_none.buffer.as_entire_binding(),
+            } },
+            wgpu::BindGroupEntry { binding: 7, resource: wgpu::BindingResource::TextureView(inputs.hideout.as_ref().map_or(&p.hideout_none.d2_hdr, |h| &h.0.lightmap)) },
+            wgpu::BindGroupEntry { binding: 8, resource: wgpu::BindingResource::TextureView(inputs.hideout.as_ref().map_or(&p.hideout_none.d2, |h| &h.0.direction)) },
+            wgpu::BindGroupEntry { binding: 9, resource: wgpu::BindingResource::TextureView(inputs.hideout.as_ref().map_or(&p.hideout_none.d2, |h| &h.0.shadows)) },
+            wgpu::BindGroupEntry { binding: 10, resource: wgpu::BindingResource::TextureView(inputs.hideout.as_ref().map_or(&p.hideout_none.d3, |h| &h.0.probes)) },
+            wgpu::BindGroupEntry { binding: 11, resource: wgpu::BindingResource::TextureView(inputs.hideout.as_ref().map_or(&p.hideout_none.d3, |h| &h.0.probe_shadows)) },
+            wgpu::BindGroupEntry { binding: 12, resource: wgpu::BindingResource::TextureView(inputs.hideout.as_ref().map_or(&p.hideout_none.d3, |h| &h.0.fog)) },
+            wgpu::BindGroupEntry { binding: 13, resource: wgpu::BindingResource::TextureView(inputs.hideout.as_ref().map_or(&p.hideout_none.d2, |h| &h.0.cookies)) },
         ],
     });
+    if let Some((h, u)) = &inputs.hideout {
+        gpu.queue.write_buffer(&h.buffer, 0, bytemuck::bytes_of(u));
+    }
     if let Some(m) = inputs.shadow {
         let mut light = inputs.frame;
         light.view_proj = m;
@@ -1131,7 +1191,7 @@ pub fn render_frame(gpu: &Gpu, p: &Pipelines, r: &FrameResources, t: &Targets, i
             });
             pass.set_pipeline(&p.shadow);
             pass.set_bind_group(0, &r.shadow_only, &[]);
-            for s in shown.iter() {
+            for s in shown.iter().filter(|s| s.hero || !inputs.shadow_hero_only) {
                 for prim in s.model.prims.iter().filter(|q| q.visible && q.blend == Blend::Opaque && !q.masked) {
                     pass.set_bind_group(2, &s.model.draws[prim.mesh], &[]);
                     pass.set_vertex_buffer(0, prim.vertices.slice(..));
@@ -1215,8 +1275,8 @@ pub fn render_frame(gpu: &Gpu, p: &Pipelines, r: &FrameResources, t: &Targets, i
     // Bloom from the "after" layer: threshold to half size, down the chain, back up.
     let bloom_on = inputs.post.curve_b[2] > 0.0;
     if bloom_on {
-        let full = |enc: &mut wgpu::CommandEncoder, pipeline: &wgpu::RenderPipeline, src: &wgpu::TextureView, dst: &wgpu::TextureView, clear: bool| {
-            let group = post_group(gpu, p, r, src, &p.black_hdr, &p.black_hdr, None);
+        let full = |enc: &mut wgpu::CommandEncoder, pipeline: &wgpu::RenderPipeline, src: &wgpu::TextureView, dst: &wgpu::TextureView, clear: bool, weight: Option<([f32; 3], u32)>| {
+            let group = post_group(gpu, p, r, src, &p.black_hdr, &p.black_hdr, None, None);
             let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("viewer bloom"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -1232,20 +1292,30 @@ pub fn render_frame(gpu: &Gpu, p: &Pipelines, r: &FrameResources, t: &Targets, i
             });
             pass.set_pipeline(pipeline);
             pass.set_bind_group(0, &group, &[]);
-            pass.draw(0..3, 0..1);
+            let level = match weight {
+                Some((w, level)) => {
+                    pass.set_blend_constant(wgpu::Color { r: w[0] as f64, g: w[1] as f64, b: w[2] as f64, a: 1.0 });
+                    level
+                }
+                None => 0,
+            };
+            // The instance index carries the source level to fs_up (the coarsest scales itself).
+            pass.draw(0..3, level..level + 1);
         };
-        full(&mut enc, &p.threshold, &t.resolved[0], &t.bloom[0].2, true);
+        full(&mut enc, &p.threshold, &t.resolved[0], &t.bloom[0].2, true, None);
         for i in 1..t.bloom.len() {
-            full(&mut enc, &p.down, &t.bloom[i - 1].2, &t.bloom[i].2, true);
+            full(&mut enc, &p.down, &t.bloom[i - 1].2, &t.bloom[i].2, true, None);
         }
+        // Each level ends up weighted once: the destination by the blend constant as the
+        // coarser sum is added, the coarsest by itself in fs_up.
         for i in (1..t.bloom.len()).rev() {
-            full(&mut enc, &p.up, &t.bloom[i].2, &t.bloom[i - 1].2, false);
+            full(&mut enc, &p.up, &t.bloom[i].2, &t.bloom[i - 1].2, false, Some((inputs.bloom_weights[i - 1], i as u32)));
         }
     }
     {
         let before = if inputs.layers[1].is_some() { &t.resolved[1] } else { &p.black_hdr };
         let bloom = if bloom_on { &t.bloom[0].2 } else { &p.black_hdr };
-        let group = post_group(gpu, p, r, &t.resolved[0], before, bloom, inputs.sky_cube);
+        let group = post_group(gpu, p, r, &t.resolved[0], before, bloom, inputs.sky_cube, inputs.hideout.as_ref().and_then(|h| h.0.lut.as_ref().map(|l| &l.0)));
         let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("viewer post"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {

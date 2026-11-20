@@ -17,6 +17,13 @@ struct Post {
     glow_at: vec4<f32>,  // glow centre (0..1), radius x, radius y
     inv_view_proj: mat4x4<f32>,
     sky: vec4<f32>,      // linear scale (rgb), sky cube on
+    // The map's bloom (VRF's PostProcessRenderer): mode (0 add, 1 screen, 2 blur), screen
+    // strength, blur strength (both normalized by the largest), threshold width (0: Sigil's
+    // studio soft knee instead of VRF's threshold).
+    bloom2: vec4<f32>,
+    lut: vec4<f32>,      // colour correction on, its edge, threshold strength, unused
+    // Per bloom level: weight times tint (rgb), level count in [0].w.
+    bloom_w: array<vec4<f32>, 5>,
 };
 
 @group(0) @binding(0) var<uniform> post: Post;
@@ -25,15 +32,19 @@ struct Post {
 @group(0) @binding(3) var t_bloom: texture_2d<f32>;
 @group(0) @binding(4) var s_linear: sampler;
 @group(0) @binding(5) var t_sky: texture_cube<f32>;
+@group(0) @binding(6) var t_lut: texture_3d<f32>;
 
 struct FsIn {
     @builtin(position) pos: vec4<f32>,
     @location(0) uv: vec2<f32>,
+    // The bloom level a pass reads (its draw's instance).
+    @location(1) @interpolate(flat) level: u32,
 };
 
 @vertex
-fn vs_full(@builtin(vertex_index) i: u32) -> FsIn {
+fn vs_full(@builtin(vertex_index) i: u32, @builtin(instance_index) level: u32) -> FsIn {
     var out: FsIn;
+    out.level = level;
     let x = f32((i << 1u) & 2u);
     let y = f32(i & 2u);
     out.pos = vec4<f32>(x * 2.0 - 1.0, 1.0 - y * 2.0, 0.0, 1.0);
@@ -61,6 +72,26 @@ fn tonemap(x: vec3<f32>) -> vec3<f32> {
         return pow(pow(enc, vec3<f32>(post.exposure.w)), vec3<f32>(2.2));
     }
     return mapped;
+}
+
+fn srgb_encode(c: vec3<f32>) -> vec3<f32> {
+    let x = clamp(c, vec3<f32>(0.0), vec3<f32>(1.0));
+    return select(1.055 * pow(x, vec3<f32>(1.0 / 2.4)) - 0.055, x * 12.92, x <= vec3<f32>(0.0031308));
+}
+
+fn srgb_decode(c: vec3<f32>) -> vec3<f32> {
+    return select(pow((c + 0.055) / 1.055, vec3<f32>(2.4)), c / 12.92, c <= vec3<f32>(0.04045));
+}
+
+// The map's colour correction volume, indexed by the display-encoded colour.
+fn color_correct(linear: vec3<f32>) -> vec3<f32> {
+    if (post.lut.x < 0.5) {
+        return linear;
+    }
+    let dim = post.lut.y;
+    let enc = srgb_encode(linear);
+    let graded = textureSampleLevel(t_lut, s_linear, enc * (1.0 - 1.0 / dim) + 0.5 / dim, 0.0).rgb;
+    return srgb_decode(graded);
 }
 
 fn backdrop(uv: vec2<f32>) -> vec3<f32> {
@@ -93,10 +124,26 @@ fn fs_post(in: FsIn) -> @location(0) vec4<f32> {
     let bloom = textureSample(t_bloom, s_linear, in.uv).rgb * post.curve_b.z;
     let a = clamp(hdr.a, 0.0, 1.0);
     var scene = vec3<f32>(0.0);
+    let mode = post.bloom2.x;
     if (a > 1e-4) {
-        scene = tonemap(hdr.rgb / a * post.exposure.x + bloom);
+        var c = hdr.rgb / a * post.exposure.x;
+        if (mode > 1.5) {
+            // BLUR: the scene gives way to its blurred copy.
+            c = c * (1.0 - post.bloom2.z) + bloom * post.exposure.x;
+        } else if (mode < 0.5) {
+            c = c + bloom;
+        }
+        scene = tonemap(c);
+        if (mode > 0.5 && mode < 1.5) {
+            // SCREEN, on the display-encoded value.
+            let b = bloom * post.exposure.x;
+            let s = clamp(b / (b + vec3<f32>(0.187)) * 1.035, vec3<f32>(0.0), vec3<f32>(1.0)) * post.bloom2.y;
+            let e = srgb_encode(scene);
+            scene = srgb_decode(e + s - e * s);
+        }
+        scene = color_correct(scene);
     }
-    let glow = tonemap(bloom) * (1.0 - a);
+    let glow = select(tonemap(bloom), vec3<f32>(0.0), mode > 0.5) * (1.0 - a);
     var out: vec3<f32>;
     var alpha = 1.0;
     if (post.top.w > 0.5) {
@@ -129,6 +176,13 @@ fn fs_threshold(in: FsIn) -> @location(0) vec4<f32> {
         }
     }
     c = c / 9.0;
+    if (post.bloom2.w > 0.0) {
+        // VRF: luminance over a threshold window, after the exposure scalar.
+        let lum = dot(c, vec3<f32>(0.3, 0.59, 0.11));
+        let width = post.bloom2.w;
+        let w = clamp(post.exposure.x * lum / width - post.curve_b.w / width, 0.0, 1.0);
+        return vec4<f32>(c * w * post.lut.z, 1.0);
+    }
     let peak = max(c.r, max(c.g, c.b));
     let t = post.curve_b.w;
     let k = clamp((peak - t) / max(peak, 1e-4), 0.0, 1.0);
@@ -160,5 +214,11 @@ fn fs_up(in: FsIn) -> @location(0) vec4<f32> {
     c = c + textureSampleLevel(t_after, s_linear, in.uv - o, 0.0).rgb;
     c = c + textureSampleLevel(t_after, s_linear, in.uv + vec2<f32>(o.x, -o.y), 0.0).rgb;
     c = c + textureSampleLevel(t_after, s_linear, in.uv + vec2<f32>(-o.x, o.y), 0.0).rgb;
-    return vec4<f32>(c / 16.0, 1.0);
+    var out = c / 16.0;
+    // The coarsest level is weighted here; finer ones by the blend constant as this adds.
+    let count = u32(post.bloom_w[0].w);
+    if (count > 0u && in.level + 1u == count) {
+        out = out * post.bloom_w[in.level].rgb;
+    }
+    return vec4<f32>(out, 1.0);
 }

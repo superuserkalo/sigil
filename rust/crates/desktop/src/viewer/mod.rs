@@ -945,7 +945,7 @@ pub fn scene_viewer_split(s: &mut State) {
 /// files are written once under the data folder's `viewer-demo`.
 pub fn scene_viewer_hideout(s: &mut State) {
     let dir = PathBuf::from(&s.paths.data).join("viewer-demo").join("hideout");
-    match sigil_viewer::fixture::write_hideout(&dir, Variant::Modded) {
+    match sigil_viewer::fixture::write_hideout(&dir, Variant::Modded).and_then(|scene| sigil_viewer::fixture_room::upgrade_hideout(&scene).map(|_| scene)) {
         Ok(scene) => open_scene(s, "demo", "Hideout", scene, None),
         Err(e) => s.status = e.to_string(),
     }

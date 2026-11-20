@@ -89,3 +89,146 @@ fn shadow_at(world: vec3<f32>, n: vec3<f32>) -> f32 {
     return sum / 9.0;
 }
 
+// The Hideout's baked and volumetric lighting (hideout.rs `HideoutUniform`).
+struct Probe {
+    world_to_local: mat4x4<f32>,
+    size: vec4<f32>,     // voxels, rgbm
+    offset: vec4<f32>,   // atlas offset in voxels
+    fade: vec4<f32>,     // size over the edge fade distances
+};
+
+struct FogVolume {
+    world_to_local: mat4x4<f32>,
+    params: vec4<f32>,   // sphere, strength, falloff, indirect strength override (< 0 none)
+    tint: vec4<f32>,     // linear tint, has tint
+};
+
+struct LightEx {
+    a: vec4<f32>,        // Source units, skirt, cookie layer (< 0 none), fog strength
+    b: vec4<f32>,        // fog only, baked shadow channel (< 0 none)
+    x: vec4<f32>,        // the light's Source forward, left, up in glTF space
+    y: vec4<f32>,
+    z: vec4<f32>,
+};
+
+struct HideoutUniform {
+    lightmap: vec4<f32>,        // on, direction on, shadows on
+    lightmap_scale: vec4<f32>,  // uv scale
+    counts: vec4<f32>,          // probes, probe shadows on, cookie layers
+    atlas: vec4<f32>,           // probe atlas texels (w, h, depth / 6)
+    probes: array<Probe, 8>,
+    fog_irradiance: mat4x4<f32>,
+    fog: vec4<f32>,             // irradiance on, indirect strength, strength, draw distance
+    fog_fade: vec4<f32>,        // fade in start, end, volume count, steps
+    fog_volumes: array<FogVolume, 16>,
+    lights: array<LightEx, 8>,
+};
+
+@group(0) @binding(6) var<uniform> hideout: HideoutUniform;
+@group(0) @binding(7) var t_lightmap: texture_2d<f32>;
+@group(0) @binding(8) var t_lm_direction: texture_2d<f32>;
+@group(0) @binding(9) var t_lm_shadows: texture_2d<f32>;
+@group(0) @binding(10) var t_probes: texture_3d<f32>;
+@group(0) @binding(11) var t_probe_shadows: texture_3d<f32>;
+@group(0) @binding(12) var t_fog: texture_3d<f32>;
+@group(0) @binding(13) var t_cookies: texture_2d<f32>;
+
+// glTF world directions to Source's: Source x is glTF z, y is x, z is y.
+fn to_source(d: vec3<f32>) -> vec3<f32> {
+    return vec3<f32>(d.z, d.x, d.y);
+}
+
+// The SH2 lightmap's irradiance along `n` (VRF's lighting.slang as Grimoire's
+// source2Lightmap.ts ports it). Already divided by PI.
+fn lightmap_irradiance(n_world: vec3<f32>, uv: vec2<f32>) -> vec3<f32> {
+    let lmuv = uv * hideout.lightmap_scale.xy;
+    let dc = textureSampleLevel(t_lightmap, s_env, lmuv, 0.0).rgb;
+    if (hideout.lightmap.y < 0.5) {
+        return dc / 3.14159265;
+    }
+    let n = to_source(n_world);
+    var band = (textureSampleLevel(t_lm_direction, s_env, lmuv, 0.0).rgb * 2.0 - 1.0) * sqrt(3.0);
+    band = vec3<f32>(-band.z, -band.x, band.y);
+    let lin_r = band * dc.r;
+    let lin_g = band * dc.g;
+    let lin_b = band * dc.b;
+    let axis = normalize(lin_r * 0.2125 + lin_g * 0.7154 + lin_b * 0.0721 + vec3<f32>(1e-7));
+    let ratio = vec3<f32>(abs(dot(lin_r, axis)), abs(dot(lin_g, axis)), abs(dot(lin_b, axis))) / max(vec3<f32>(1e-5), dc);
+    let zonal = dc * ratio * (0.08 + 0.6 * ratio) * 0.25 * sqrt(5.0 / (16.0 * 3.14159265));
+    let linear = (0.886227 * dc + 1.023328 * vec3<f32>(dot(lin_r, n), dot(lin_g, n), dot(lin_b, n))) / 3.14159265;
+    let a = dot(axis, n);
+    return max(vec3<f32>(0.0), linear + zonal * (3.0 * a * a - 1.0));
+}
+
+// The stationary light's visibility from the baked shadow mask: 1 lit.
+fn lightmap_visibility(uv: vec2<f32>, channel: f32) -> f32 {
+    if (hideout.lightmap.z < 0.5 || channel < 0.0) {
+        return 1.0;
+    }
+    let s = textureSampleLevel(t_lm_shadows, s_env, uv * hideout.lightmap_scale.xy, 0.0);
+    var mask = vec4<f32>(0.0);
+    mask[u32(channel) & 3u] = 1.0;
+    return clamp(1.0 - dot(s, mask), 0.0, 1.0);
+}
+
+struct ProbeSample {
+    // glTF axis order +X, -X, +Y, -Y, +Z, -Z.
+    faces: array<vec3<f32>, 6>,
+    shadow: vec4<f32>,
+    coverage: f32,
+};
+
+fn decode_probe(c: vec4<f32>, rgbm: bool) -> vec3<f32> {
+    if (!rgbm) {
+        return c.rgb;
+    }
+    let enc = select(1.055 * pow(c.rgb, vec3<f32>(1.0 / 2.4)) - 0.055, c.rgb * 12.92, c.rgb <= vec3<f32>(0.0031308));
+    let v = enc * c.a * 6.0;
+    return v * v;
+}
+
+// The light probe volumes at `world` (source2ProbeVolume.ts): priority order, each fading at
+// its edges, until the point is covered.
+fn probe_at(world: vec3<f32>) -> ProbeSample {
+    var out: ProbeSample;
+    let count = u32(hideout.counts.x);
+    let atlas = hideout.atlas.xyz;
+    // Source faces +X, +Y, +Z, -X, -Y, -Z land on glTF +Z, +X, +Y, -Z, -X, -Y.
+    var to_gltf = array<u32, 6>(4u, 0u, 2u, 5u, 1u, 3u);
+    for (var i = 0u; i < 8u; i = i + 1u) {
+        if (i >= count || out.coverage > 0.99) {
+            break;
+        }
+        let p = hideout.probes[i];
+        let local = (p.world_to_local * vec4<f32>(world, 1.0)).xyz;
+        if (any(local < vec3<f32>(0.0)) || any(local > vec3<f32>(1.0))) {
+            continue;
+        }
+        var fade = vec3<f32>(1.0);
+        if (p.fade.x > 0.0 || p.fade.y > 0.0 || p.fade.z > 0.0) {
+            fade = clamp(min(local, 1.0 - local) * select(vec3<f32>(1e6), p.fade.xyz, p.fade.xyz > vec3<f32>(0.0)), vec3<f32>(0.0), vec3<f32>(1.0));
+        }
+        let w = smoothstep(0.0, 1.0, min(fade.x, min(fade.y, fade.z))) * (1.0 - out.coverage);
+        let size = p.size.xyz;
+        let voxel = clamp(local * size, vec3<f32>(0.5), size - vec3<f32>(0.5)) + p.offset.xyz;
+        var coord = voxel / atlas;
+        coord.z = coord.z / 6.0;
+        for (var f = 0u; f < 6u; f = f + 1u) {
+            let c = textureSampleLevel(t_probes, s_env, coord + vec3<f32>(0.0, 0.0, f32(f) / 6.0), 0.0);
+            let g = to_gltf[f];
+            out.faces[g] = out.faces[g] + decode_probe(c, p.size.w > 0.5) * w;
+        }
+        if (hideout.counts.y > 0.5) {
+            let sc = (clamp(local, vec3<f32>(0.0), vec3<f32>(1.0)) * size + p.offset.xyz) / vec3<f32>(atlas.xy, atlas.z * 6.0);
+            out.shadow = out.shadow + textureSampleLevel(t_probe_shadows, s_env, sc, 0.0) * w;
+        }
+        out.coverage = out.coverage + w;
+    }
+    return out;
+}
+
+fn probe_cube(faces: array<vec3<f32>, 6>, d: vec3<f32>) -> vec3<f32> {
+    let w = d * d;
+    return w.x * select(faces[1], faces[0], d.x >= 0.0) + w.y * select(faces[3], faces[2], d.y >= 0.0) + w.z * select(faces[5], faces[4], d.z >= 0.0);
+}
+
