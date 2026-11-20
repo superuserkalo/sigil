@@ -26,6 +26,39 @@ pub const DE: &[(&str, &str)] = &[
         "Drag to turn, scroll to zoom, Shift-drag to move, double-click to reset.",
         "Ziehen zum Drehen, Scrollen zum Zoomen, Umschalt-Ziehen zum Verschieben, Doppelklick zum Zurücksetzen.",
     ),
+    // Where the viewer appears (`viewer/prepare.rs`, `viewer/dialog.rs`, Locker, Installed).
+    ("Reading your mods for {}", "Deine Mods für {} werden gelesen"),
+    ("Building the Hideout with your mods", "Das Hideout wird mit deinen Mods gebaut"),
+    ("Preparing {} with your mods", "{} wird mit deinen Mods vorbereitet"),
+    ("Preparing {} without mods", "{} wird ohne Mods vorbereitet"),
+    ("No installed mod changes {}.", "Kein installierter Mod verändert {}."),
+    ("Preparing {} with this mod", "{} wird mit diesem Mod vorbereitet"),
+    ("Preparing {} without this mod", "{} wird ohne diesen Mod vorbereitet"),
+    (
+        "This mod is off: you see it as it would look switched on.",
+        "Dieser Mod ist aus: Du siehst ihn so, wie er eingeschaltet aussähe.",
+    ),
+    ("{} does not change how {} looks.", "{} verändert nicht, wie {} aussieht."),
+    ("{} changes nothing this view draws.", "{} verändert nichts, was diese Ansicht zeigt."),
+    ("The preview worker stopped before it finished.", "Die Vorschau wurde beendet, bevor sie fertig war."),
+    ("With this mod", "Mit diesem Mod"),
+    ("Without this mod", "Ohne diesen Mod"),
+    (
+        "The first time takes a while; after that it opens at once.",
+        "Beim ersten Mal dauert es etwas, danach öffnet es sofort.",
+    ),
+    ("Set the game folder in Settings to see heroes in 3D.", "Lege den Spielordner in den Einstellungen fest, um Helden in 3D zu sehen."),
+    ("The 3D preview could not be made.", "Die 3D-Vorschau konnte nicht erstellt werden."),
+    ("{} does not change a hero model.", "{} verändert kein Heldenmodell."),
+    ("Preview in 3D", "In 3D ansehen"),
+    ("Changes", "Verändert"),
+    ("3D view", "3D-Ansicht"),
+    ("Preview {} in 3D", "{} in 3D ansehen"),
+    ("while off", "solange aus"),
+    (
+        "No 3D on this machine: it has no GPU adapter Sigil can use.",
+        "Kein 3D auf diesem Rechner: Er hat keinen Grafikadapter, den Sigil nutzen kann.",
+    ),
 ];
 
 /// Literals in the viewer files that are not UI text: demo titles (data, like a hero name) and
@@ -73,7 +106,12 @@ mod tests {
     /// Every UI literal in the viewer files has German here or in another table.
     #[test]
     fn every_string_in_the_viewer_is_translated() {
-        let sources = [include_str!("../../viewer/mod.rs"), include_str!("../../viewer/worker.rs")];
+        let sources = [
+            include_str!("../../viewer/mod.rs"),
+            include_str!("../../viewer/worker.rs"),
+            include_str!("../../viewer/prepare.rs"),
+            include_str!("../../viewer/dialog.rs"),
+        ];
         let mut table = others();
         table.extend(super::DE.iter().map(|(en, _)| en.to_string()));
         let mut missing = Vec::new();

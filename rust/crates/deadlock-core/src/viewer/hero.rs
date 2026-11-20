@@ -331,6 +331,9 @@ pub struct HeroExportRequest<'a> {
     pub variant: Variant,
     /// Disabled slots to include, to preview a mod before switching it on.
     pub extra_slots: &'a [u16],
+    /// Enabled slots to leave out, to show a hero without one mod (the "before" side of a
+    /// mod's preview while that mod is on).
+    pub exclude_slots: &'a [u16],
     /// Names the mods in the sidecar.
     pub library: Option<&'a Library>,
     /// Longest texture edge embedded, `None` for full size. Default 1024 (Grimoire's preview
@@ -346,6 +349,7 @@ impl<'a> HeroExportRequest<'a> {
             hero,
             variant,
             extra_slots: &[],
+            exclude_slots: &[],
             library: None,
             max_texture_edge: Some(1024),
         }
@@ -389,6 +393,12 @@ pub(crate) fn plan_hero(request: &HeroExportRequest<'_>) -> Result<HeroPlan> {
         request.variant,
         Some(request.extra_slots),
     );
+    all.retain(|source| {
+        source.kind != stack::SourceKind::Addon
+            || !source
+                .slot
+                .is_some_and(|slot| request.exclude_slots.contains(&slot))
+    });
     if let Some(library) = request.library {
         stack::name_sources(&mut all, library);
     }

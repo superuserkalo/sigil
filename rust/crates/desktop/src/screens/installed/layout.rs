@@ -302,6 +302,16 @@ pub fn picker_dialog(s: &State, u: &Ui) -> Option<El> {
                 };
                 line = line.child(b);
             }
+            // A file of a skin, in 3D on its hero, on or off.
+            if !crate::viewer::dialog::heroes_of(s, slot).is_empty() {
+                let file_name = format!("{name}: {}", notes::label_for(s, addon));
+                line = line.child(
+                    u.icon_button(&icons::BOX, tr(crate::viewer::dialog::LABEL))
+                        .key(format!("variant-3d-{slot:02}"))
+                        .cursor(rune::Cursor::Pointer)
+                        .on_press(move |st: &mut State| crate::viewer::dialog::open(st, slot, &file_name)),
+                );
+            }
             line = line.child(
                 u.icon_button(&icons::SQUARE_PEN, "Rename this file")
                     .key(format!("variant-rename-{slot:02}"))

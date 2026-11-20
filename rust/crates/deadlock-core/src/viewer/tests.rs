@@ -245,6 +245,17 @@ fn viewer_plan_keeps_only_mods_that_change_the_hero() {
     assert_eq!(haze_preview.variant, Variant::Modded);
     assert_ne!(haze_preview.key, haze_original.key);
     assert_eq!(haze_preview.sources[0].slot, Some(3));
+
+    // Leaving out an enabled slot shows the hero without that mod.
+    let mut without = HeroExportRequest::new(&root, &cache, "inferno", Variant::Modded);
+    without.exclude_slots = &[1];
+    let inferno_without = plan_hero(&without).unwrap();
+    let slots: Vec<Option<u16>> = inferno_without.sources.iter().map(|source| source.slot).collect();
+    assert_eq!(slots, [Some(2), None, None]);
+    assert_ne!(inferno_without.key, inferno.key);
+    without.exclude_slots = &[1, 2];
+    let inferno_bare = plan_hero(&without).unwrap();
+    assert_eq!(inferno_bare.variant, Variant::Original);
 }
 
 fn sidecar(codename: &str, key: &str) -> HeroSidecar {
