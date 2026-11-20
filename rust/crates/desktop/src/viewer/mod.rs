@@ -25,9 +25,11 @@
 //! preview; `main::poll` calls `viewer::poll`. Screens ask for a view through `prepare` (the
 //! export job that makes the files) rather than opening files themselves.
 
+pub mod controls;
 pub mod dialog;
 pub mod icons;
 pub mod prepare;
+mod parity_scenes;
 mod scenes;
 pub mod worker;
 
@@ -108,6 +110,12 @@ pub struct View {
     elapsed: LiveText,
     /// Where the load is (`Loading` only).
     pub progress: Option<sigil_viewer::LoadProgress>,
+    /// The Controls panel, the turntable and the recordings (`controls`).
+    pub ui: controls::ViewUi,
+    /// The view shows a Hideout scene (it brings its own lighting and background).
+    pub scene: bool,
+    gif_preview: Pixels,
+    gif_strip: Pixels,
 }
 
 impl Drop for View {
@@ -141,6 +149,8 @@ pub struct Viewers {
     prune: crate::jobs::Job<String>,
     /// The size a headless snapshot renders a key at, when not full screen.
     headless: HashMap<String, [f32; 2]>,
+    /// The kept look new views open with (`controls::Prefs`); read from disk on first use.
+    pub prefs: Option<controls::Prefs>,
 }
 
 fn send(s: &mut State, key: &str, cmd: Cmd) {
@@ -176,6 +186,10 @@ fn new_view(title: &str) -> View {
         cancel: Arc::new(AtomicBool::new(false)),
         elapsed: LiveText::new("0:00"),
         progress: None,
+        ui: controls::ViewUi::default(),
+        scene: false,
+        gif_preview: Pixels::new(),
+        gif_strip: Pixels::new(),
     }
 }
 
@@ -190,6 +204,8 @@ fn outputs(view: &View, wake: Option<rune::Waker>) -> Outputs {
         wake,
         cancel: view.cancel.clone(),
         elapsed: view.elapsed.clone(),
+        gif_preview: view.gif_preview.clone(),
+        gif_strip: view.gif_strip.clone(),
     }
 }
 
@@ -218,12 +234,18 @@ pub fn headless_points(s: &mut State, key: &str, points: [f32; 2]) {
 fn open(s: &mut State, key: &str, title: &str, source: Source, before: Option<Source>, compare: CompareMode) {
     let mut view = new_view(title);
     view.compare = compare;
+    view.scene = matches!(source, Source::Scene { .. });
+    // Headless scenes start from the defaults (or what the scene sets), never the disk.
+    let prefs = s.viewers.prefs.get_or_insert_with(|| if rune::is_headless() { controls::Prefs::default() } else { controls::Prefs::load() }).clone();
+    view.ui.auto_rotate = prefs.auto_rotate;
+    view.ui.look = prefs.look;
+    view.ui.image = prefs.image.clone();
     let outputs = outputs(&view, s.wake.clone());
     if rune::is_headless() {
         // Snapshots render one fixed frame on this thread: no clock, no GPU timing.
         let points = s.viewers.headless.get(key).copied().filter(|_| s.viewers.fullscreen.as_deref() != Some(key)).unwrap_or(HEADLESS_POINTS);
         view.points = points;
-        render_still(&mut view, &outputs, &source, before.as_ref(), points);
+        render_still(&mut view, &outputs, &source, before.as_ref(), points, &prefs);
     } else {
         let (tx, rx) = mpsc::channel();
         let spawned = std::thread::Builder::new().name(format!("sigil-viewer-{key}")).spawn(move || worker::run(source, before, rx, outputs));
@@ -232,6 +254,9 @@ fn open(s: &mut State, key: &str, title: &str, source: Source, before: Option<So
                 if compare != CompareMode::After {
                     let c = if compare == CompareMode::Split { sigil_viewer::Compare::Split(view.split) } else { sigil_viewer::Compare::Before };
                     let _ = tx.send(Cmd::Compare(c));
+                }
+                for cmd in controls::initial(&prefs) {
+                    let _ = tx.send(cmd);
                 }
                 view.tx = Some(tx);
             }
@@ -246,10 +271,17 @@ fn open(s: &mut State, key: &str, title: &str, source: Source, before: Option<So
 pub const HEADLESS_POINTS: [f32; 2] = [1360.0, 860.0];
 const HEADLESS_TIME: f32 = 1.0;
 
-fn render_still(view: &mut View, out: &Outputs, source: &Source, before: Option<&Source>, points: [f32; 2]) {
+fn render_still(view: &mut View, out: &Outputs, source: &Source, before: Option<&Source>, points: [f32; 2], prefs: &controls::Prefs) {
     match worker::prepare(source, before, &AtomicBool::new(false), &mut |_| {}) {
         Ok(mut viewer) => {
             viewer.playback.playing = false;
+            let l = prefs.look;
+            (viewer.look.backdrop, viewer.look.lighting, viewer.look.bloom, viewer.look.shadows) = (l.backdrop, l.lighting, l.bloom, l.shadows);
+            (viewer.look.cloth, viewer.look.particles, viewer.look.transparent, viewer.look.floor) = (l.cloth, l.particles, l.transparent, !l.transparent);
+            if let Some(Ok(img)) = prefs.image.as_deref().filter(|_| l.backdrop == sigil_viewer::Backdrop::Image).map(image::open) {
+                let img = img.into_rgba8();
+                viewer.set_backdrop_image(Some((img.width(), img.height(), img.as_raw())));
+            }
             viewer.seek(HEADLESS_TIME);
             let scale = 2.0;
             let (w, h) = ((points[0] * scale) as u32, (points[1] * scale) as u32);
@@ -330,11 +362,15 @@ fn absorb(view: &mut View) -> Option<String> {
     }
     view.status = sh.status.clone();
     view.clips = sh.clips.clone();
+    view.ui.labels = sh.labels.clone();
+    view.ui.gif = sh.gif.clone();
+    view.ui.video = sh.video;
     view.clip = sh.clip.clone();
     view.has_before = sh.has_before;
     view.adapter = sh.adapter.clone();
     view.progress = sh.progress;
     sh.captured.take().map(|r| match r {
+        Ok(path) if path.extension().is_some_and(|e| e != "png") => fill(tr("Saved a recording to {}"), &[&path.display().to_string()]),
         Ok(path) => fill(tr("Saved a picture to {}"), &[&path.display().to_string()]),
         Err(e) => fill(tr("Could not save the picture: {}"), &[&e]),
     })
@@ -435,9 +471,23 @@ fn on_key(s: &mut State, key: &str, ev: &KeyEvent) -> bool {
         Key::Up => send(s, key, Cmd::Orbit(0.0, -18.0)),
         Key::Down => send(s, key, Cmd::Orbit(0.0, 18.0)),
         Key::Home => reset(s, key),
+        Key::Escape if s.viewers.map.get(key).is_some_and(|v| v.ui.panel) => {
+            if let Some(v) = s.viewers.map.get_mut(key) {
+                v.ui.panel = false;
+            }
+        }
         Key::Escape if s.viewers.fullscreen.as_deref() == Some(key) => {
             escape(s);
         }
+        // Grimoire's keys: WASD orbit, Q and E zoom, R resets, T turns the turntable.
+        Key::Text(t) if t == "a" => send(s, key, Cmd::Orbit(-24.0, 0.0)),
+        Key::Text(t) if t == "d" => send(s, key, Cmd::Orbit(24.0, 0.0)),
+        Key::Text(t) if t == "w" => send(s, key, Cmd::Orbit(0.0, -18.0)),
+        Key::Text(t) if t == "s" => send(s, key, Cmd::Orbit(0.0, 18.0)),
+        Key::Text(t) if t == "q" => send(s, key, Cmd::Zoom(1.0 / 1.1)),
+        Key::Text(t) if t == "e" => send(s, key, Cmd::Zoom(1.1)),
+        Key::Text(t) if t == "r" => reset(s, key),
+        Key::Text(t) if t == "t" => controls::toggle_rotate(s, key),
         Key::Text(t) if t == " " => toggle_play(s, key),
         Key::Text(t) if t == "+" || t == "=" => send(s, key, Cmd::Zoom(0.85)),
         Key::Text(t) if t == "-" => send(s, key, Cmd::Zoom(1.0 / 0.85)),
@@ -495,11 +545,15 @@ fn waiting(s: &State, u: &Ui, key: &str, fullscreen: bool) -> Option<El> {
         let line = if p.arg.is_empty() { tr(p.stage).to_string() } else { fill(tr(p.stage), &[&p.arg]) };
         let (at, of) = p.step;
         let mut steps = row().gap(4.0).w(220.0).a11y_hidden();
+        let segment = (220.0 - 4.0 * (of.max(1) as f32 - 1.0)) / of.max(1) as f32;
         for i in 1..=of.max(1) {
             let done = i < at;
             let now = i == at;
-            steps = steps.child(el().grow(1.0).h(3.0).radius(1.5).fill(if done { Color::WHITE.alpha(0.85) } else if now { u.accent } else { Color::WHITE.alpha(0.14) }));
+            // The current step fills as its export reports progress.
+            let bar = el().w(segment).h(3.0).radius(1.5).fill(if done { Color::WHITE.alpha(0.85) } else { Color::WHITE.alpha(0.14) });
+            steps = steps.child(if now { bar.child(el().w((segment * p.fraction.clamp(0.0, 1.0)).max(3.0)).h(3.0).radius(1.5).fill(u.accent)) } else { bar });
         }
+        let percent = (p.overall() * 100.0).round() as u32;
         let mut card = col()
             .gap(10.0)
             .w_full()
@@ -510,7 +564,8 @@ fn waiting(s: &State, u: &Ui, key: &str, fullscreen: bool) -> Option<El> {
             .child(rune::icon(&crate::icons::BOX, 28.0).color(Color::WHITE.alpha(0.55)).a11y_hidden())
             .child(text(title).font(BODY_MED).color(Color::WHITE.alpha(0.92)).align(rune::Align::Center))
             .child(text(line).font(SMALL).color(Color::WHITE.alpha(0.62)).wrap().align(rune::Align::Center).a11y_hidden())
-            .child(steps);
+            .child(steps)
+            .child(text(fill(tr("{}% done"), &[&percent.to_string()])).font(MICRO).color(Color::WHITE.alpha(0.7)).role("progressbar").label(fill(tr("{}% done"), &[&percent.to_string()])));
         card = card.child(text(tr("The first time takes a while; after that it opens at once.")).font(MICRO).color(Color::WHITE.alpha(0.45)).wrap().align(rune::Align::Center));
         card = card.child(row().pt(4.0).child(close(close_label)));
         return Some(stage().child(card));
@@ -875,7 +930,8 @@ fn strip(v: &View, u: &Ui, key: &str, fullscreen: bool, only_full: bool) -> El {
             compare = compare.child(strip_text(u, label.to_string(), label, v.compare == mode).on_press(move |st: &mut State| set_compare(st, &kk, mode)));
         }
     }
-    let tools = [
+    let mut tools = controls::tools(v, u, key);
+    tools.extend([
         strip_button(u, &crate::icons::ROTATE_CCW, tr("Reset camera"), false).on_press(move |st: &mut State| reset(st, &kr)),
         strip_button(u, &icons::CAMERA, tr("Save a picture"), false).on_press(move |st: &mut State| capture(st, &kc)),
         if only_full {
@@ -886,7 +942,7 @@ fn strip(v: &View, u: &Ui, key: &str, fullscreen: bool, only_full: bool) -> El {
             strip_button(u, &icons::MAXIMIZE, tr("Full screen"), false)
         }
         .on_press(move |st: &mut State| toggle_fullscreen(st, &kf)),
-    ];
+    ]);
     let mut layer = col().absolute(0.0, 0.0).w_full().h_full().padding(12.0).gap(8.0);
     let mut head = col().gap(2.0).max_w(if compact { v.points[0] - 24.0 } else { 560.0 }).child(text(v.title.clone()).font(BODY_MED).color(Color::WHITE.alpha(0.92)).truncate());
     if !compact {
@@ -902,7 +958,14 @@ fn strip(v: &View, u: &Ui, key: &str, fullscreen: bool, only_full: bool) -> El {
                 .child(text(note.clone()).font(MICRO).color(Color::WHITE.alpha(0.72)).wrap().grow(1.0).min_w(0.0)),
         );
     }
-    layer = layer.child(row().w_full().child(head)).child(el().grow(1.0));
+    layer = layer.child(row().w_full().child(head));
+    if let Some(pill) = controls::recording_pill(v, u, key) {
+        layer = layer.child(row().w_full().center().child(pill));
+    }
+    layer = layer.child(el().grow(1.0));
+    if let Some(review) = controls::gif_review(v, u, key) {
+        layer = layer.child(row().w_full().center().child(review));
+    }
     if compact {
         if v.has_before {
             layer = layer.child(row().w_full().center().child(compare));
@@ -952,6 +1015,8 @@ pub fn scene_viewer_hideout(s: &mut State) {
     s.viewers.fullscreen = Some("demo".into());
 }
 
+pub use controls::popover;
+pub use parity_scenes::SCENES as PARITY_SCENES;
 pub use scenes::SCENES;
 
 #[cfg(test)]

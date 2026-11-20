@@ -69,6 +69,16 @@ pub struct Pending {
     pub stage: &'static str,
     pub arg: String,
     pub step: (u8, u8),
+    /// How far the current step is, 0 to 1 (the export's own progress report).
+    pub fraction: f32,
+}
+
+impl Pending {
+    /// The whole job's share done, over every step.
+    pub fn overall(&self) -> f32 {
+        let (at, of) = (self.step.0.max(1) as f32, self.step.1.max(1) as f32);
+        ((at - 1.0 + self.fraction.clamp(0.0, 1.0)) / of).clamp(0.0, 1.0)
+    }
 }
 
 impl Drop for Pending {
@@ -88,6 +98,8 @@ pub enum Problem {
 
 enum Msg {
     Stage(&'static str, String, (u8, u8)),
+    /// The current step's export reported this share done.
+    Progress(f32),
     Done(Result<Ready, String>),
 }
 
@@ -169,7 +181,7 @@ pub fn request(s: &mut State, key: &str, ask: Ask, owner: Owner, still: Option<S
     match spawned {
         Ok(_) => {
             let (stage, arg) = first_stage(&work_ask(s, key));
-            s.viewers.pending.insert(key.to_string(), Pending { cancel, rx, stage, arg, step: (0, 0) });
+            s.viewers.pending.insert(key.to_string(), Pending { cancel, rx, stage, arg, step: (0, 0), fraction: 0.0 });
         }
         Err(e) => {
             s.viewers.problems.insert(key.to_string(), Problem::Failed(e.to_string()));
@@ -203,7 +215,7 @@ pub fn stage_loading(s: &mut State, key: &str, ask: Ask, owner: Owner, stage: &'
         s.viewers.fullscreen = Some(key.to_string());
     }
     let (_tx, rx) = mpsc::channel();
-    s.viewers.pending.insert(key.to_string(), Pending { cancel: Arc::new(AtomicBool::new(false)), rx, stage, arg, step });
+    s.viewers.pending.insert(key.to_string(), Pending { cancel: Arc::new(AtomicBool::new(false)), rx, stage, arg, step, fraction: 0.42 });
 }
 
 /// A failed or game-less key for headless scenes.
@@ -238,7 +250,7 @@ fn open_stand_in(s: &mut State, key: &str, title: &str, ask: &Ask) {
         }
         Ask::Hideout { .. } => {
             let dir = PathBuf::from(&s.paths.data).join("viewer-demo").join("hideout");
-            match sigil_viewer::fixture::write_hideout(&dir, Variant::Modded) {
+            match sigil_viewer::fixture::write_hideout(&dir, Variant::Modded).and_then(|scene| sigil_viewer::fixture_room::upgrade_hideout(&scene).map(|_| scene)) {
                 Ok(scene) => super::open_scene(s, key, title, scene, None),
                 Err(e) => {
                     s.viewers.problems.insert(key.to_string(), Problem::Failed(e.to_string()));
@@ -264,6 +276,18 @@ impl Out<'_> {
     fn stage(&self, line: &'static str, arg: &str, step: (u8, u8)) {
         self.send(Msg::Stage(line, arg.to_string(), step));
     }
+
+    /// A progress callback for an export: reports whole percents only, so the UI wakes a
+    /// hundred times at most per step.
+    fn meter(&self) -> impl Fn(f32) + Sync + '_ {
+        let last = std::sync::atomic::AtomicU32::new(u32::MAX);
+        move |f: f32| {
+            let percent = (f.clamp(0.0, 1.0) * 100.0) as u32;
+            if last.swap(percent, Ordering::Relaxed) != percent {
+                self.send(Msg::Progress(percent as f32 / 100.0));
+            }
+        }
+    }
 }
 
 /// Everything the worker needs, owned.
@@ -286,20 +310,23 @@ impl Work {
         result.map_err(|e| e.to_string())
     }
 
-    fn export(&self, hero: &str, look: Look, extra: &[u16], exclude: &[u16], cancel: &AtomicBool) -> deadlock_core::Result<core::Exported> {
+    #[allow(clippy::too_many_arguments)]
+    fn export(&self, hero: &str, look: Look, extra: &[u16], exclude: &[u16], cancel: &AtomicBool, out: &Out) -> deadlock_core::Result<core::Exported> {
+        let meter = out.meter();
         let mut request = HeroExportRequest::new(&self.game, &self.cache, hero, look);
         request.extra_slots = extra;
         request.exclude_slots = exclude;
         request.library = Some(&self.library);
+        request.progress = Some(&meter);
         core::export_hero_with(&request, cancel)
     }
 
     fn hero(&self, hero: &str, cancel: &AtomicBool, out: &Out) -> deadlock_core::Result<Ready> {
         let name = hero_name(hero);
         out.stage("Preparing {} with your mods", &name, (1, 2));
-        let after = self.export(hero, Look::Modded, &[], &[], cancel)?;
+        let after = self.export(hero, Look::Modded, &[], &[], cancel, out)?;
         out.stage("Preparing {} without mods", &name, (2, 2));
-        let before = self.export(hero, Look::Original, &[], &[], cancel)?;
+        let before = self.export(hero, Look::Original, &[], &[], cancel, out)?;
         let mut notes = hidden_changes(&after.sidecar);
         let before = if before.key == after.key {
             notes.insert(0, fill(tr("No installed mod changes {}."), &[&name]));
@@ -314,9 +341,9 @@ impl Work {
         let name = hero_name(hero);
         let on = self.enabled.unwrap_or(false);
         out.stage("Preparing {} with this mod", &name, (1, 2));
-        let after = if on { self.export(hero, Look::Modded, &[], &[], cancel)? } else { self.export(hero, Look::Modded, &[slot], &[], cancel)? };
+        let after = if on { self.export(hero, Look::Modded, &[], &[], cancel, out)? } else { self.export(hero, Look::Modded, &[slot], &[], cancel, out)? };
         out.stage("Preparing {} without this mod", &name, (2, 2));
-        let before = if on { self.export(hero, Look::Modded, &[], &[slot], cancel)? } else { self.export(hero, Look::Modded, &[], &[], cancel)? };
+        let before = if on { self.export(hero, Look::Modded, &[], &[slot], cancel, out)? } else { self.export(hero, Look::Modded, &[], &[], cancel, out)? };
         let mut notes = Vec::new();
         if !on {
             notes.push(tr("This mod is off: you see it as it would look switched on.").to_string());
@@ -333,9 +360,11 @@ impl Work {
 
     fn hideout(&self, hero: Option<&str>, cancel: &AtomicBool, out: &Out) -> deadlock_core::Result<Ready> {
         out.stage("Building the Hideout with your mods", "", (1, 1));
+        let meter = out.meter();
         let mut request = HideoutExportRequest::new(&self.game, &self.cache, Look::Modded);
         request.hero = hero;
         request.library = Some(&self.library);
+        request.progress = Some(&meter);
         let scene = core::export_hideout_with(&request, cancel)?;
         Ok(Ready { source: Source::Scene { scene, hero: None }, before: None, notes: Vec::new(), labels: super::DEFAULT_LABELS })
     }
@@ -374,6 +403,11 @@ pub fn poll(s: &mut State) -> bool {
                 match p.rx.try_recv() {
                     Ok(Msg::Stage(line, arg, step)) => {
                         (p.stage, p.arg, p.step) = (line, arg, step);
+                        p.fraction = 0.0;
+                        changed = true;
+                    }
+                    Ok(Msg::Progress(f)) => {
+                        p.fraction = f;
                         changed = true;
                     }
                     Ok(Msg::Done(result)) => {
@@ -564,6 +598,7 @@ mod tests {
             model_entry: String::new(),
             clip_info: Vec::new(),
             cloth: None,
+            particles: None,
             units: "meters".into(),
             up: "+Y".into(),
             forward: "+Z".into(),
