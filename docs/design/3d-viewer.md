@@ -375,6 +375,21 @@ let png = v.capture_png(width, height)?;
   backdrop and the reflection cube for reflections and ambient.
 - Frame: hero depth prepass, 4x MSAA HDR pass per shown model, bloom (threshold, five-level
   chain), post into an sRGB target, read back.
+- Bounds (`load_scene_with`, `set_scene_with`): each distinct glb is read and uploaded once and
+  its placements share it (an aggregate is placed once per fragment; reading it per placement
+  ran the app out of memory and is what hung the first Windows Hideout). At most 2,048 files and
+  20,000 placements, files over 512 MB unread, 2 GB of decoded models. On the GPU every buffer is
+  checked against the device's `max_buffer_size`, textures against `max_texture_dimension_2d`,
+  and a viewer keeps to 1 GB of textures and 1.5 GB of geometry (half on integrated and software
+  adapters): past that textures lose their top mips, then are dropped, and meshes are left out,
+  each recorded in `Viewer::usage`. Prop bounds are measured once and still props posed once.
+  The load reports progress and stops when the view closes.
+- Errors: the device's uncaptured-error and lost-device handlers record the first error instead
+  of panicking; the pipelines are built inside error scopes, and when the driver rejects them
+  (FXC on D3D12 is the risk) the software adapter (WARP) is tried before the view fails with the
+  reason. A frame waits at most 20 seconds on the GPU. The render thread runs under
+  `catch_unwind`, so a panic is a "could not open" state with its message, never a view left on
+  Loading. Adapter, counts, sizes, timings and what was left out go to Sigil's log.
 
 Not consumed yet: `lightmap` (room glbs carry no lightmap UVs today), `cloth`, the fog box and
 its `indirectStrength`, light `temperature` and `shadowChannel`, shadows of any kind (the studio
@@ -399,7 +414,11 @@ viewer::close(s, key);
 ```
 
 Drag orbits, the wheel zooms, Shift-drag pans, double-click resets, and with the view focused the
-arrows orbit, + and - zoom, Space plays, Home resets, F toggles full screen and Escape leaves it.
+arrows orbit, + and - zoom, Space plays, Home resets, F toggles full screen. Escape leaves full
+screen from anywhere in the window (and closes the Hideout, which lives only there). Every state
+has a way out: Loading shows what it does ("Reading the room's models: 137 of 412"), the time so
+far and Cancel or Close, which stops the load; Failed shows the reason with Try again, Send
+feedback and Close; full screen keeps a close button in the corner whatever the state.
 The strip has play and pause, seek (pauses), speed, the clip, With mods / Without mods / Split
 (the split line drags), camera reset, a PNG capture into `Pictures/Sigil`, and full screen
 (`viewer::overlay`, placed by `app::view`). Below 720 points wide the strip folds into two rows

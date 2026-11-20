@@ -1093,6 +1093,9 @@ fn with_resource<T>(
     result
 }
 
+/// The most models exported at once.
+const MAX_EXPORT_WORKERS: usize = 4;
+
 fn export_models(
     stack: &Stack,
     requests: &[ModelRequest],
@@ -1103,9 +1106,11 @@ fn export_models(
     std::fs::create_dir_all(out.join("models"))?;
     let next = AtomicUsize::new(0);
     let results: Mutex<Vec<Option<Outcome>>> = Mutex::new(vec![None; requests.len()]);
+    // Each worker holds a decoded model and its textures at once; four bound the peak memory on
+    // a machine with many cores (eight decoding the largest props together ran short).
     let workers = std::thread::available_parallelism()
         .map_or(4, |count| count.get())
-        .clamp(1, 8);
+        .clamp(1, MAX_EXPORT_WORKERS);
     std::thread::scope(|scope| {
         for _ in 0..workers {
             scope.spawn(|| {
@@ -1117,8 +1122,12 @@ fn export_models(
                     let Some(request) = requests.get(index) else {
                         return;
                     };
-                    let outcome = export_model(stack, request, max_texture_edge, out)
-                        .unwrap_or_else(|error| Outcome::Failed(error.to_string()));
+                    // A model the decoder panics on is one failed prop, not a failed room.
+                    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        export_model(stack, request, max_texture_edge, out)
+                    }))
+                    .unwrap_or_else(|_| Err(Error::msg("the exporter stopped on this model")))
+                    .unwrap_or_else(|error| Outcome::Failed(error.to_string()));
                     if let Ok(mut guard) = results.lock() {
                         guard[index] = Some(outcome);
                     }

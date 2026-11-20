@@ -36,6 +36,7 @@ pub(crate) mod locales;
 
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Sender};
 use std::sync::{Arc, Mutex};
 
@@ -79,7 +80,7 @@ pub struct View {
     tx: Option<Sender<Cmd>>,
     pixels: Pixels,
     shared: Arc<Mutex<Shared>>,
-    progress: Live<[f32; 2]>,
+    progress_bar: Live<[f32; 2]>,
     knob: Live<[f32; 2]>,
     time: LiveText,
     pub status: Status,
@@ -101,10 +102,17 @@ pub struct View {
     gesture: Gesture,
     last: [f32; 2],
     points: [f32; 2],
+    /// Stops the render thread's load when the view goes.
+    cancel: Arc<AtomicBool>,
+    /// Time spent loading, ticked by the thread.
+    elapsed: LiveText,
+    /// Where the load is (`Loading` only).
+    pub progress: Option<sigil_viewer::LoadProgress>,
 }
 
 impl Drop for View {
     fn drop(&mut self) {
+        self.cancel.store(true, Ordering::Relaxed);
         if let Some(tx) = &self.tx {
             let _ = tx.send(Cmd::Stop);
         }
@@ -147,7 +155,7 @@ fn new_view(title: &str) -> View {
         tx: None,
         pixels: Pixels::new(),
         shared: Arc::new(Mutex::new(Shared::default())),
-        progress: Live::new([0.0, 0.0]),
+        progress_bar: Live::new([0.0, 0.0]),
         knob: Live::new([0.0, 0.0]),
         time: LiveText::new("0:00.0 / 0:00.0"),
         status: Status::Loading,
@@ -165,6 +173,23 @@ fn new_view(title: &str) -> View {
         gesture: Gesture::None,
         last: [0.0; 2],
         points: [0.0; 2],
+        cancel: Arc::new(AtomicBool::new(false)),
+        elapsed: LiveText::new("0:00"),
+        progress: None,
+    }
+}
+
+fn outputs(view: &View, wake: Option<rune::Waker>) -> Outputs {
+    Outputs {
+        pixels: view.pixels.clone(),
+        shared: view.shared.clone(),
+        progress: view.progress_bar.clone(),
+        knob: view.knob.clone(),
+        time: view.time.clone(),
+        seek_width: SEEK_W,
+        wake,
+        cancel: view.cancel.clone(),
+        elapsed: view.elapsed.clone(),
     }
 }
 
@@ -193,15 +218,7 @@ pub fn headless_points(s: &mut State, key: &str, points: [f32; 2]) {
 fn open(s: &mut State, key: &str, title: &str, source: Source, before: Option<Source>, compare: CompareMode) {
     let mut view = new_view(title);
     view.compare = compare;
-    let outputs = Outputs {
-        pixels: view.pixels.clone(),
-        shared: view.shared.clone(),
-        progress: view.progress.clone(),
-        knob: view.knob.clone(),
-        time: view.time.clone(),
-        seek_width: SEEK_W,
-        wake: s.wake.clone(),
-    };
+    let outputs = outputs(&view, s.wake.clone());
     if rune::is_headless() {
         // Snapshots render one fixed frame on this thread: no clock, no GPU timing.
         let points = s.viewers.headless.get(key).copied().filter(|_| s.viewers.fullscreen.as_deref() != Some(key)).unwrap_or(HEADLESS_POINTS);
@@ -230,7 +247,7 @@ pub const HEADLESS_POINTS: [f32; 2] = [1360.0, 860.0];
 const HEADLESS_TIME: f32 = 1.0;
 
 fn render_still(view: &mut View, out: &Outputs, source: &Source, before: Option<&Source>, points: [f32; 2]) {
-    match worker::prepare(source, before) {
+    match worker::prepare(source, before, &AtomicBool::new(false), &mut |_| {}) {
         Ok(mut viewer) => {
             viewer.playback.playing = false;
             viewer.seek(HEADLESS_TIME);
@@ -262,6 +279,21 @@ pub fn close(s: &mut State, key: &str) {
     if s.viewers.fullscreen.as_deref() == Some(key) {
         s.viewers.fullscreen = None;
     }
+}
+
+/// A view held in one state with no render thread (headless scenes): loading at `progress`,
+/// failed, or without a GPU.
+pub(crate) fn stage_status(s: &mut State, key: &str, title: &str, status: Status, progress: Option<sigil_viewer::LoadProgress>) {
+    let view = new_view(title);
+    if let Ok(mut sh) = view.shared.lock() {
+        sh.status = status;
+        sh.progress = progress;
+        sh.changed = true;
+    }
+    view.elapsed.set("0:14");
+    let mut view = view;
+    absorb(&mut view);
+    s.viewers.map.insert(key.to_string(), view);
 }
 
 pub fn set_still(s: &mut State, key: &str, still: Pixels) {
@@ -301,6 +333,7 @@ fn absorb(view: &mut View) -> Option<String> {
     view.clip = sh.clip.clone();
     view.has_before = sh.has_before;
     view.adapter = sh.adapter.clone();
+    view.progress = sh.progress;
     sh.captured.take().map(|r| match r {
         Ok(path) => fill(tr("Saved a picture to {}"), &[&path.display().to_string()]),
         Err(e) => fill(tr("Could not save the picture: {}"), &[&e]),
@@ -402,7 +435,9 @@ fn on_key(s: &mut State, key: &str, ev: &KeyEvent) -> bool {
         Key::Up => send(s, key, Cmd::Orbit(0.0, -18.0)),
         Key::Down => send(s, key, Cmd::Orbit(0.0, 18.0)),
         Key::Home => reset(s, key),
-        Key::Escape if s.viewers.fullscreen.as_deref() == Some(key) => s.viewers.fullscreen = None,
+        Key::Escape if s.viewers.fullscreen.as_deref() == Some(key) => {
+            escape(s);
+        }
         Key::Text(t) if t == " " => toggle_play(s, key),
         Key::Text(t) if t == "+" || t == "=" => send(s, key, Cmd::Zoom(0.85)),
         Key::Text(t) if t == "-" => send(s, key, Cmd::Zoom(1.0 / 0.85)),
@@ -570,9 +605,12 @@ fn viewport(s: &State, u: &Ui, key: &str, fullscreen: bool) -> El {
         .on_drag(move |st: &mut State, d: &mut Drag, tx: &mut Tx| on_drag(st, &k3, d, tx))
         .on_wheel(move |st: &mut State, w: WheelEvent, _tx: &mut Tx| on_wheel(st, &k4, w))
         .on_key(move |st: &mut State, ev: &KeyEvent, _tx: &mut Tx| on_key(st, &k5, ev));
+    let only_full = s.viewers.asks.get(key).is_some_and(|a| a.owner == prepare::Owner::FullScreen);
     match &v.status {
-        Status::Loading => stage = stage.child(notice(u, tr("Loading the 3D view"), None)),
-        Status::NoGpu(_) if v.still.is_none() => stage = stage.child(notice(u, tr("The 3D view needs a working graphics driver."), Some(tr("This machine has no GPU adapter Sigil can use.").to_string()))),
+        Status::Loading => stage = stage.child(loading(v, u, key, fullscreen, only_full)),
+        Status::NoGpu(_) if v.still.is_none() => {
+            stage = stage.child(notice(tr("The 3D view needs a working graphics driver."), Some(tr("This machine has no GPU adapter Sigil can use.").to_string()), Some(leave_button(key, fullscreen, only_full))))
+        }
         // The picture stands in; a quiet line says why it does not turn.
         Status::NoGpu(_) => {
             stage = stage.child(
@@ -588,13 +626,105 @@ fn viewport(s: &State, u: &Ui, key: &str, fullscreen: bool) -> El {
                 ),
             )
         }
-        Status::Failed(e) => stage = stage.child(notice(u, tr("The 3D view could not open."), Some(e.clone()))),
-        Status::Ready => {
-            let only_full = s.viewers.asks.get(key).is_some_and(|a| a.owner == prepare::Owner::FullScreen);
-            stage = stage.child(strip(v, u, key, fullscreen, only_full));
+        Status::Failed(e) => {
+            let head = tr("The 3D view could not open.");
+            let k = key.to_string();
+            let mut actions = row().gap(6.0).center_y().flex_wrap();
+            if s.viewers.asks.contains_key(key) {
+                actions = actions.child(strip_text_dark(tr("Try again")).key(format!("viewer-{key}-retry")).on_press(move |st: &mut State| prepare::retry(st, &k)));
+            }
+            actions = actions.child(crate::notify::feedback::button(u, &format!("viewer-{key}-feedback"), head, e)).child(leave_button(key, fullscreen, only_full));
+            stage = stage.child(notice(head, Some(e.clone()), Some(actions)));
         }
+        Status::Ready => stage = stage.child(strip(v, u, key, fullscreen, only_full)),
+    }
+    // Full screen always has a way out, whatever the state (the strip has its own when ready).
+    if fullscreen && v.status != Status::Ready {
+        stage = stage.child(el().pin(Some(12.0), Some(12.0), None, None).child(corner_close(u, key, only_full)));
     }
     stage
+}
+
+/// Leaves a view the way its state allows: out of full screen for a view that also lives on the
+/// page, closed for one that lives only full screen (the Hideout) or a view not full screen
+/// (the Locker's 3D view off, the dialog shut). Stops its load.
+pub fn leave(s: &mut State, key: &str, fullscreen: bool, only_full: bool) {
+    if fullscreen && !only_full {
+        s.viewers.fullscreen = None;
+    } else {
+        prepare::dismiss(s, key);
+    }
+}
+
+/// Escape anywhere in the window leaves full screen (and closes a view that lives only there),
+/// whether or not the stage has focus. True when it did.
+pub fn escape(s: &mut State) -> bool {
+    let Some(key) = s.viewers.fullscreen.clone() else { return false };
+    let only_full = s.viewers.asks.get(&key).is_none_or(|a| a.owner == prepare::Owner::FullScreen);
+    leave(s, &key, true, only_full);
+    true
+}
+
+fn leave_label(fullscreen: bool, only_full: bool) -> &'static str {
+    match (fullscreen, only_full) {
+        (true, false) => tr("Exit full screen"),
+        (true, true) => tr("Close"),
+        (false, _) => tr("Cancel"),
+    }
+}
+
+fn leave_button(key: &str, fullscreen: bool, only_full: bool) -> El {
+    let k = key.to_string();
+    strip_text_dark(leave_label(fullscreen, only_full)).key(format!("viewer-{key}-leave")).on_press(move |st: &mut State| leave(st, &k, fullscreen, only_full))
+}
+
+fn corner_close(u: &Ui, key: &str, only_full: bool) -> El {
+    let k = key.to_string();
+    let label = leave_label(true, only_full);
+    strip_button(u, if only_full { &crate::icons::X } else { &icons::MINIMIZE }, label, false)
+        .key(format!("viewer-{key}-close"))
+        .fill(shade("#0d0d0f").alpha(0.78))
+        .border(1.0, Color::WHITE.alpha(0.08))
+        .cursor(rune::Cursor::Pointer)
+        .on_press(move |st: &mut State| leave(st, &k, true, only_full))
+}
+
+/// The line under "Loading the 3D view": what the load does now.
+fn loading_line(p: Option<sigil_viewer::LoadProgress>) -> Option<String> {
+    use sigil_viewer::LoadStage;
+    let p = p?;
+    let (done, of) = (p.done.min(p.of).to_string(), p.of.to_string());
+    Some(match p.stage {
+        LoadStage::Reading => fill(tr("Reading the room's models: {} of {}"), &[&done, &of]),
+        LoadStage::Lighting => tr("Lighting the room").to_string(),
+        LoadStage::Uploading => fill(tr("Putting the room on the graphics card: {} of {}"), &[&done, &of]),
+    })
+}
+
+/// The render thread's load: what it does, how far, how long so far, and a way to stop it.
+fn loading(v: &View, u: &Ui, key: &str, fullscreen: bool, only_full: bool) -> El {
+    let mut card = col()
+        .gap(8.0)
+        .w_full()
+        .max_w(420.0)
+        .padding(18.0)
+        .items_center()
+        .radius(crate::ui::r(12.0))
+        .fill(shade("#000000").alpha(0.55))
+        .role("status")
+        .label(tr("Loading the 3D view").to_string())
+        .child(text(tr("Loading the 3D view")).font(BODY_MED).color(Color::WHITE.alpha(0.92)).align(rune::Align::Center));
+    if let Some(line) = loading_line(v.progress) {
+        card = card.child(text(line).font(SMALL).color(Color::WHITE.alpha(0.62)).wrap().align(rune::Align::Center));
+        if let Some(p) = v.progress.filter(|p| p.of > 0) {
+            let f = (p.done as f32 / p.of as f32).clamp(0.0, 1.0);
+            card = card.child(row().w(220.0).h(3.0).radius(1.5).fill(Color::WHITE.alpha(0.14)).a11y_hidden().child(el().w(220.0 * f).h(3.0).radius(1.5).fill(u.accent)));
+        }
+    }
+    card = card
+        .child(row().gap(6.0).child(text(tr("Elapsed")).font(MICRO).color(Color::WHITE.alpha(0.45))).child(text(String::new()).live_text(&v.elapsed).font(MICRO).color(Color::WHITE.alpha(0.6)).w(44.0)))
+        .child(row().pt(4.0).child(leave_button(key, fullscreen, only_full)));
+    el().absolute(0.0, 0.0).w_full().h_full().center().padding(20.0).child(card)
 }
 
 /// A fixed dark from hex (the viewer's stage is always dark, whatever the theme).
@@ -602,12 +732,24 @@ fn shade(hex: &str) -> Color {
     rune::color::hex(hex).unwrap_or(Color::BLACK)
 }
 
-fn notice(u: &Ui, title: &str, detail: Option<String>) -> El {
-    let mut c = col().gap(6.0).max_w(420.0).padding(16.0).radius(crate::ui::r(10.0)).fill(shade("#000000").alpha(0.55)).child(text(title.to_string()).font(BODY_MED).color(u.ink));
+fn notice(title: &str, detail: Option<String>, actions: Option<El>) -> El {
+    let mut c = col()
+        .gap(6.0)
+        .w_full()
+        .max_w(460.0)
+        .padding(16.0)
+        .radius(crate::ui::r(10.0))
+        .fill(shade("#000000").alpha(0.55))
+        .role("alert")
+        .label(title.to_string())
+        .child(text(title.to_string()).font(BODY_MED).color(Color::WHITE.alpha(0.92)));
     if let Some(d) = detail {
-        c = c.child(text(d).font(SMALL).color(u.muted));
+        c = c.child(text(d).font(SMALL).color(Color::WHITE.alpha(0.62)).wrap().selectable(true));
     }
-    el().absolute(0.0, 0.0).w_full().h_full().center().child(c)
+    if let Some(actions) = actions {
+        c = c.child(row().w_full().pt(6.0).child(actions));
+    }
+    el().absolute(0.0, 0.0).w_full().h_full().center().padding(20.0).child(c)
 }
 
 fn strip_button(u: &Ui, glyph: &'static rune::Icon, label: &str, on: bool) -> El {
@@ -651,7 +793,7 @@ fn seek_bar(v: &View, key: &str) -> El {
         .label(tr("Seek").to_string())
         .cursor(rune::Cursor::Pointer)
         .child(el().absolute(0.0, 0.0).w(SEEK_W).h(24.0).shape(track).a11y_hidden())
-        .child(el().absolute(0.0, 0.0).w(SEEK_W).h(24.0).shape(filled).live_trim(&v.progress).a11y_hidden())
+        .child(el().absolute(0.0, 0.0).w(SEEK_W).h(24.0).shape(filled).live_trim(&v.progress_bar).a11y_hidden())
         .child(el().absolute(0.0, 6.0).size(KNOB, KNOB).radius(KNOB / 2.0).fill(Color::WHITE).shadow(1.0, 3.0, Color::BLACK.alpha(0.4)).live_offset(&v.knob).a11y_hidden())
         .on_drag(move |st: &mut State, d: &mut Drag, tx: &mut Tx| {
             if d.phase == Phase::Up && d.cancelled() {
@@ -668,7 +810,7 @@ fn seek_bar(v: &View, key: &str) -> El {
         })
         .on_key(move |st: &mut State, ev: &KeyEvent, _tx: &mut Tx| {
             let Some(v) = st.viewers.map.get(&k2) else { return false };
-            let now = v.progress.get()[1];
+            let now = v.progress_bar.get()[1];
             let step = match ev.key {
                 Key::Left | Key::Down => -0.05,
                 Key::Right | Key::Up => 0.05,
@@ -828,7 +970,7 @@ mod tests {
     #[test]
     fn the_render_thread_draws_into_the_pixels() {
         let view = new_view("test");
-        let outputs = Outputs { pixels: view.pixels.clone(), shared: view.shared.clone(), progress: view.progress.clone(), knob: view.knob.clone(), time: view.time.clone(), seek_width: SEEK_W, wake: None };
+        let outputs = outputs(&view, None);
         let (tx, rx) = mpsc::channel();
         let thread = std::thread::spawn(move || worker::run(Source::StandIn(Variant::Stock), Some(Source::StandIn(Variant::Modded)), rx, outputs));
         tx.send(Cmd::Size(96, 64)).unwrap();
@@ -856,6 +998,61 @@ mod tests {
         assert_eq!(view.pixels.size(), (48, 48));
         tx.send(Cmd::Stop).unwrap();
         thread.join().unwrap();
+    }
+
+    /// A panic on the render thread ends in Failed with its message, not a view stuck on Loading.
+    #[test]
+    fn a_render_thread_panic_reports_failed() {
+        let view = new_view("test");
+        let outputs = outputs(&view, None);
+        let (tx, rx) = mpsc::channel();
+        let thread = std::thread::spawn(move || worker::run(Source::StandIn(Variant::Stock), None, rx, outputs));
+        tx.send(Cmd::Panic).unwrap();
+        thread.join().expect("the panic is caught on the thread");
+        let status = view.shared.lock().unwrap().status.clone();
+        match status {
+            Status::NoGpu(_) => eprintln!("skipped: no GPU adapter"),
+            Status::Failed(e) => assert!(e.contains("a test panic"), "{e}"),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    /// Closing a view while it loads stops its thread's load (the flag the load checks).
+    #[test]
+    fn closing_a_view_cancels_its_load() {
+        let mut st = crate::data::init_state();
+        stage_status(&mut st, "t", "Hideout", Status::Loading, None);
+        let cancel = st.viewers.map.get("t").unwrap().cancel.clone();
+        close(&mut st, "t");
+        assert!(cancel.load(Ordering::Relaxed));
+    }
+
+    /// Every state of a full-screen view has a way out: Escape anywhere closes the Hideout (it
+    /// lives only full screen) and leaves full screen for a view that also lives on the page.
+    #[test]
+    fn escape_leaves_full_screen_in_every_state() {
+        use prepare::{Ask, Owner};
+        for status in [Status::Loading, Status::Failed("x".into()), Status::NoGpu("x".into()), Status::Ready] {
+            let mut st = crate::data::init_state();
+            prepare::stage_view(&mut st, prepare::HIDEOUT_KEY, Ask::Hideout { hero: None }, Owner::FullScreen, status.clone(), None);
+            assert_eq!(st.viewers.fullscreen.as_deref(), Some(prepare::HIDEOUT_KEY));
+            assert!(escape(&mut st), "{status:?}");
+            assert!(st.viewers.fullscreen.is_none() && !st.viewers.map.contains_key(prepare::HIDEOUT_KEY), "{status:?}");
+            assert!(!escape(&mut st), "nothing left to leave");
+
+            prepare::stage_view(&mut st, "dlg", Ask::Hero { hero: "Haze".into() }, Owner::Dialog, status.clone(), None);
+            st.viewers.fullscreen = Some("dlg".into());
+            assert!(escape(&mut st));
+            assert!(st.viewers.fullscreen.is_none() && st.viewers.map.contains_key("dlg"), "{status:?}");
+        }
+    }
+
+    #[test]
+    fn the_loading_line_says_what_the_load_does() {
+        use sigil_viewer::{LoadProgress, LoadStage};
+        assert_eq!(loading_line(None), None);
+        assert_eq!(loading_line(Some(LoadProgress { stage: LoadStage::Reading, done: 3, of: 9 })).as_deref(), Some("Reading the room's models: 3 of 9"));
+        assert_eq!(loading_line(Some(LoadProgress { stage: LoadStage::Uploading, done: 12, of: 9 })).as_deref(), Some("Putting the room on the graphics card: 9 of 9"));
     }
 
     #[test]

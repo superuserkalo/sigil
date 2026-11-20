@@ -19,14 +19,17 @@ pub mod math;
 pub mod model;
 pub mod scene;
 
-use std::path::Path;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 pub use camera::OrbitCamera;
-pub use gpu::{GpuError, Timings};
+pub use gpu::{GpuError, Timings, Usage};
 pub use model::Model;
 pub use scene::{Playmode, SceneDesc, Sidecar};
 
-use gpu::{FloorGpu, FrameGpu, FrameInputs, FrameResources, Gpu, GpuModel, LightGpu, Pipelines, PostGpu, Shown, Targets};
+use gpu::{FloorGpu, FrameGpu, FrameInputs, FrameResources, Gpu, GpuMesh, LightGpu, Pipelines, PostGpu, Shown, Targets};
 use math::{Aabb, Mat4, Vec3, normalize};
 
 #[derive(Debug, Clone, PartialEq)]
@@ -35,6 +38,8 @@ pub enum ViewerError {
     NoGpu(String),
     Device(String),
     Load(String),
+    /// The caller cancelled the load.
+    Cancelled,
 }
 
 impl std::fmt::Display for ViewerError {
@@ -43,6 +48,7 @@ impl std::fmt::Display for ViewerError {
             ViewerError::NoGpu(e) => write!(f, "no GPU adapter: {e}"),
             ViewerError::Device(e) => write!(f, "GPU device: {e}"),
             ViewerError::Load(e) => f.write_str(e),
+            ViewerError::Cancelled => f.write_str("cancelled"),
         }
     }
 }
@@ -105,24 +111,45 @@ pub struct HeroInfo {
 }
 
 struct Slot {
-    model: Model,
-    gpu: GpuModel,
+    /// Shared by every placement of the same file.
+    model: Arc<Model>,
+    gpu: gpu::GpuModel,
     placement: Mat4,
     clip: Option<usize>,
     palette: Vec<Mat4>,
     bases: Vec<u32>,
     unit: f32,
+    /// A scene prop's bounds, measured once: props never move, and measuring hundreds of them
+    /// every frame (CPU skinning of every vertex) froze the Hideout.
+    fixed_bounds: Option<Aabb>,
+    /// A still prop is posed once.
+    still: bool,
+    posed: bool,
 }
 
 impl Slot {
-    fn new(gpu: &Gpu, p: &Pipelines, model: Model, placement: Mat4, clip: Option<usize>, tint: [f32; 4], only: Option<usize>) -> Slot {
+    fn new(gpu: &Gpu, p: &Pipelines, model: Arc<Model>, placement: Mat4, clip: Option<usize>, tint: [f32; 4], only: Option<usize>) -> Slot {
+        let mesh = GpuMesh::new(gpu, p, &model, "the hero");
+        Slot::placed(gpu, p, model, &mesh, placement, clip, tint, only)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn placed(gpu: &Gpu, p: &Pipelines, model: Arc<Model>, mesh: &GpuMesh, placement: Mat4, clip: Option<usize>, tint: [f32; 4], only: Option<usize>) -> Slot {
         let locals = model::sample_pose(&model, clip.and_then(|c| model.clips.get(c)), 0.0);
         let globals = model::globals(&model, &locals);
         let mut palette = Vec::new();
         let bases = model::palettes(&model, &globals, &placement, &mut palette);
         let unit = model::game_unit(&model, &globals) * placement.scale_factor();
-        let g = GpuModel::new(gpu, p, &model, palette.len(), &bases, tint, only);
-        Slot { model, gpu: g, placement, clip, palette, bases, unit }
+        let g = mesh.instance(gpu, p, palette.len(), &bases, tint, only);
+        Slot { model, gpu: g, placement, clip, palette, bases, unit, fixed_bounds: None, still: false, posed: false }
+    }
+
+    /// A scene prop: bounds measured now (only its fragment when `only`), posed once when still.
+    fn prop(mut self, only: Option<usize>) -> Slot {
+        let visible: Vec<bool> = self.model.primitives.iter().map(|p| !p.authored_shell && only.is_none_or(|i| i == p.index_in_mesh)).collect();
+        self.fixed_bounds = Some(model::posed_bounds(&self.model, &self.palette, &self.bases, |i| visible[i]));
+        self.still = self.clip.is_none();
+        self
     }
 
     fn duration(&self) -> f32 {
@@ -130,6 +157,10 @@ impl Slot {
     }
 
     fn pose(&mut self, gpu: &Gpu, time: f32) {
+        if self.still && self.posed {
+            return;
+        }
+        self.posed = true;
         let clip = self.clip.and_then(|c| self.model.clips.get(c));
         let locals = model::sample_pose(&self.model, clip, time);
         let globals = model::globals(&self.model, &locals);
@@ -138,6 +169,9 @@ impl Slot {
     }
 
     fn bounds(&self) -> Aabb {
+        if let Some(b) = self.fixed_bounds {
+            return b;
+        }
         let visible: Vec<bool> = self.model.primitives.iter().map(|p| !p.authored_shell).collect();
         model::posed_bounds(&self.model, &self.palette, &self.bases, |i| visible[i])
     }
@@ -300,20 +334,60 @@ pub fn load_cube(cube: &scene::Cube) -> Result<CubeData, String> {
     Ok(CubeData { levels, face_means, scale: cube.scale })
 }
 
-/// Everything a Hideout needs, read on the CPU: the description, its props (a failed one is
-/// `None`), the sky and the reflection probe, and what failed to load.
+/// Everything a Hideout needs, read on the CPU: the description, its props (one per
+/// `desc.models` entry; placements of the same file share one `Model`, a failed or left-out one
+/// is `None`), the sky and the reflection probe, and what failed or was left out.
 pub struct SceneAssets {
     pub desc: SceneDesc,
-    pub models: Vec<Option<Model>>,
+    pub models: Vec<Option<Arc<Model>>>,
     pub sky: Option<CubeData>,
     pub reflection: Option<CubeData>,
     pub errors: Vec<String>,
+    /// Files and placements left out to stay inside the bounds below.
+    pub skipped: Vec<String>,
+    /// Distinct model files read.
+    pub files: usize,
+}
+
+/// The most distinct model files and placements a scene loads. A real `dl_hideout` has a few
+/// hundred files and a few thousand placements; past these the rest are left out.
+pub const MAX_SCENE_FILES: usize = 2048;
+pub const MAX_SCENE_PLACEMENTS: usize = 20_000;
+/// A model file larger than this is left out unread (the whole file is read into memory).
+pub const MAX_MODEL_FILE: u64 = 512 << 20;
+/// What the scene's decoded models may hold in memory together (vertices, indices, pixels).
+pub const SCENE_MEMORY_BUDGET: u64 = 2 << 30;
+
+/// Where a scene load is, for the loading screen.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LoadStage {
+    /// Reading model files: `done` of `of` distinct files.
+    Reading,
+    /// The sky and reflection cubes.
+    Lighting,
+    /// Putting placements on the GPU: `done` of `of`.
+    Uploading,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct LoadProgress {
+    pub stage: LoadStage,
+    pub done: usize,
+    pub of: usize,
 }
 
 /// Reads a `scene.json` and everything it names (any thread). The hero is not loaded here.
 pub fn load_scene(path: &Path) -> Result<SceneAssets, String> {
-    let desc = SceneDesc::read(path)?;
-    let (models, mut errors) = load_scene_models(&desc);
+    load_scene_with(path, &AtomicBool::new(false), &mut |_| {}).map_err(|e| e.to_string())
+}
+
+/// `load_scene` that reports progress and stops early (`ViewerError::Cancelled`) when `cancel`
+/// is set.
+pub fn load_scene_with(path: &Path, cancel: &AtomicBool, progress: &mut dyn FnMut(LoadProgress)) -> Result<SceneAssets, ViewerError> {
+    let desc = SceneDesc::read(path).map_err(ViewerError::Load)?;
+    let loaded = load_scene_models(&desc, cancel, progress)?;
+    let mut errors = loaded.errors;
+    progress(LoadProgress { stage: LoadStage::Lighting, done: 0, of: 2 });
     let mut cube = |c: &Option<scene::Cube>| {
         c.as_ref().and_then(|c| match load_cube(c) {
             Ok(d) => Some(d),
@@ -325,7 +399,95 @@ pub fn load_scene(path: &Path) -> Result<SceneAssets, String> {
     };
     let sky = cube(&desc.sky);
     let reflection = cube(&desc.reflection);
-    Ok(SceneAssets { desc, models, sky, reflection, errors })
+    if cancel.load(Ordering::Relaxed) {
+        return Err(ViewerError::Cancelled);
+    }
+    Ok(SceneAssets { desc, models: loaded.models, sky, reflection, errors, skipped: loaded.skipped, files: loaded.files })
+}
+
+/// Bytes a decoded model holds (vertices, indices, pixels, clips), for the memory budget.
+pub fn model_bytes(m: &Model) -> u64 {
+    let prims: u64 = m.primitives.iter().map(|p| (p.vertices.len() * std::mem::size_of::<model::Vertex>() + p.indices.len() * 4) as u64).sum();
+    let images: u64 = m.images.iter().map(|i| i.rgba.len() as u64).sum();
+    let clips: u64 = m.clips.iter().flat_map(|c| &c.channels).map(|ch| ((ch.times.len() + ch.values.len()) * 4) as u64).sum();
+    prims + images + clips
+}
+
+/// What `load_scene_models` read.
+pub struct LoadedModels {
+    pub models: Vec<Option<Arc<Model>>>,
+    pub errors: Vec<String>,
+    pub skipped: Vec<String>,
+    pub files: usize,
+}
+
+/// Loads every prop a scene lists, each distinct file once (a room places one aggregate glb
+/// hundreds of times, one fragment each: reading it per placement ran the app out of memory).
+/// A file that fails is an error; one past the bounds above is left out.
+pub fn load_scene_models(desc: &SceneDesc, cancel: &AtomicBool, progress: &mut dyn FnMut(LoadProgress)) -> Result<LoadedModels, ViewerError> {
+    let mut skipped = Vec::new();
+    let placements = desc.models.len().min(MAX_SCENE_PLACEMENTS);
+    if desc.models.len() > placements {
+        skipped.push(format!("{} placements past the first {MAX_SCENE_PLACEMENTS}", desc.models.len() - placements));
+    }
+    let mut order: Vec<&PathBuf> = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for m in &desc.models[..placements] {
+        if seen.insert(&m.glb) {
+            order.push(&m.glb);
+        }
+    }
+    if order.len() > MAX_SCENE_FILES {
+        skipped.push(format!("{} model files past the first {MAX_SCENE_FILES}", order.len() - MAX_SCENE_FILES));
+        order.truncate(MAX_SCENE_FILES);
+    }
+    let mut errors = Vec::new();
+    let mut by_path: HashMap<&PathBuf, Arc<Model>> = HashMap::new();
+    let mut used = 0u64;
+    for (i, path) in order.iter().enumerate() {
+        if cancel.load(Ordering::Relaxed) {
+            return Err(ViewerError::Cancelled);
+        }
+        progress(LoadProgress { stage: LoadStage::Reading, done: i, of: order.len() });
+        let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        match std::fs::metadata(path) {
+            Ok(meta) if meta.len() > MAX_MODEL_FILE => {
+                skipped.push(format!("{name}: a {} MB file", meta.len() >> 20));
+                continue;
+            }
+            Err(e) => {
+                errors.push(format!("{}: {e}", path.display()));
+                continue;
+            }
+            Ok(_) => {}
+        }
+        match model::load_path(path) {
+            Ok(model) => {
+                let bytes = model_bytes(&model);
+                if used + bytes > SCENE_MEMORY_BUDGET {
+                    skipped.push(format!("{name}: over the {} MB memory budget", SCENE_MEMORY_BUDGET >> 20));
+                    continue;
+                }
+                used += bytes;
+                by_path.insert(*path, Arc::new(model));
+            }
+            Err(e) => errors.push(e.0),
+        }
+    }
+    progress(LoadProgress { stage: LoadStage::Reading, done: order.len(), of: order.len() });
+    let files = by_path.len();
+    let models = desc.models.iter().enumerate().map(|(i, m)| if i < placements { by_path.get(&m.glb).cloned() } else { None }).collect();
+    Ok(LoadedModels { models, errors, skipped, files })
+}
+
+/// What `set_scene` put up.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct SceneReport {
+    /// Distinct model files uploaded.
+    pub files: usize,
+    pub placements: usize,
+    pub triangles: u64,
+    pub cancelled: bool,
 }
 
 struct GpuCube {
@@ -357,13 +519,46 @@ pub struct Viewer {
     skip_read: bool,
     sky: Option<GpuCube>,
     reflection: Option<GpuCube>,
+    /// The props' largest extent, for the depth range (measured once per scene).
+    env_extent: f32,
+    /// How the device came up: the software adapter after the driver failed, how long the
+    /// pipelines took. For the app's log.
+    notes: Vec<String>,
 }
 
 impl Viewer {
+    /// The first GPU error since the last call (validation, out of memory, lost device). The
+    /// caller stops drawing and says why instead of waiting on a frame that never comes.
+    pub fn gpu_error(&self) -> Option<String> {
+        self.gpu.take_error()
+    }
+
     /// Opens the viewer's own GPU device. `ViewerError::NoGpu` when the machine has none.
+    /// The pipelines are built inside error scopes; when the driver rejects them (a shader its
+    /// compiler fails on) the software adapter is tried before giving up with the reason.
     pub fn new() -> Result<Viewer, ViewerError> {
         let gpu = Gpu::new()?;
-        let pipes = Pipelines::new(&gpu);
+        let started = std::time::Instant::now();
+        let mut notes = Vec::new();
+        let (gpu, pipes) = match Pipelines::new(&gpu) {
+            Ok(pipes) => {
+                notes.push(format!("pipelines built in {} ms", started.elapsed().as_millis()));
+                (gpu, pipes)
+            }
+            Err(error) => {
+                let failed = format!("{} ({:?})", gpu.info.name, gpu.info.backend);
+                notes.push(format!("{failed} could not build the pipelines: {error}"));
+                drop(gpu);
+                let soft = Gpu::software().ok().and_then(|soft| Pipelines::new(&soft).ok().map(|p| (soft, p)));
+                match soft {
+                    Some((soft, pipes)) => {
+                        notes.push(format!("using the software adapter {} instead", soft.info.name));
+                        (soft, pipes)
+                    }
+                    None => return Err(ViewerError::Device(format!("{failed} could not build the 3D view's shaders: {error}"))),
+                }
+            }
+        };
         let res = FrameResources::new(&gpu, &pipes);
         Ok(Viewer {
             gpu,
@@ -388,7 +583,31 @@ impl Viewer {
             skip_read: false,
             sky: None,
             reflection: None,
+            env_extent: 3.0,
+            notes,
         })
+    }
+
+    /// Caps what later loads may put on the GPU (bytes of textures, of vertex and index
+    /// buffers). For tests, and for a caller that knows the machine is short of memory.
+    pub fn set_budgets(&mut self, texture: u64, buffer: u64) {
+        self.gpu.texture_budget = texture;
+        self.gpu.buffer_budget = buffer;
+    }
+
+    /// The largest frame edge this device renders; `render` clamps to it.
+    pub fn max_edge(&self) -> u32 {
+        self.gpu.max_edge()
+    }
+
+    /// How the device came up (see `notes` on the struct).
+    pub fn notes(&self) -> &[String] {
+        &self.notes
+    }
+
+    /// What is on the GPU and what was left out to fit it.
+    pub fn usage(&self) -> Usage {
+        self.gpu.usage()
     }
 
     /// The adapter, for diagnostics ("Apple M2 (Metal)").
@@ -410,7 +629,7 @@ impl Viewer {
     /// the idle the sidecar names and frames the camera on the next render.
     pub fn set_hero(&mut self, model: Model, sidecar: &Sidecar) -> HeroInfo {
         let clip = Self::pick_clip(&model, sidecar);
-        let slot = Slot::new(&self.gpu, &self.pipes, model, self.hero_placement(), clip, [1.0; 4], None);
+        let slot = Slot::new(&self.gpu, &self.pipes, Arc::new(model), self.hero_placement(), clip, [1.0; 4], None);
         self.playmode = clip.map(|c| sidecar.playmode(&slot.model.clips[c].name)).unwrap_or_default();
         self.sidecar = sidecar.clone();
         let info = HeroInfo {
@@ -429,7 +648,7 @@ impl Viewer {
     pub fn set_before(&mut self, model: Option<Model>, sidecar: &Sidecar) {
         self.before = model.map(|m| {
             let clip = Self::pick_clip(&m, sidecar);
-            Slot::new(&self.gpu, &self.pipes, m, self.hero_placement(), clip, [1.0; 4], None)
+            Slot::new(&self.gpu, &self.pipes, Arc::new(m), self.hero_placement(), clip, [1.0; 4], None)
         });
         if self.before.is_none() {
             self.compare = Compare::After;
@@ -442,18 +661,45 @@ impl Viewer {
 
     /// A Hideout scene (see `load_scene`): its props, lights, fog, sky, reflection probe and
     /// camera. The hero moves to the scene's anchor.
-    pub fn set_scene(&mut self, assets: SceneAssets) {
+    pub fn set_scene(&mut self, assets: SceneAssets) -> SceneReport {
+        self.set_scene_with(assets, &AtomicBool::new(false), &mut |_| {})
+    }
+
+    /// `set_scene` that reports progress and stops early when `cancel` is set (`cancelled` in
+    /// the report; what was placed so far stays). Each distinct file is uploaded once and its
+    /// placements share it; what does not fit the device is left out (`usage`).
+    pub fn set_scene_with(&mut self, assets: SceneAssets, cancel: &AtomicBool, progress: &mut dyn FnMut(LoadProgress)) -> SceneReport {
         let SceneAssets { desc, models, sky, reflection, .. } = assets;
-        self.env = desc
-            .models
+        let mut report = SceneReport::default();
+        let mut meshes: HashMap<*const Model, GpuMesh> = HashMap::new();
+        self.env.clear();
+        let of = models.len();
+        for (i, (m, model)) in desc.models.iter().zip(models).enumerate() {
+            if cancel.load(Ordering::Relaxed) {
+                report.cancelled = true;
+                break;
+            }
+            if i % 16 == 0 {
+                progress(LoadProgress { stage: LoadStage::Uploading, done: i, of });
+            }
+            let Some(model) = model else { continue };
+            let what = m.glb.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+            let mesh = meshes.entry(Arc::as_ptr(&model)).or_insert_with(|| GpuMesh::new(&self.gpu, &self.pipes, &model, &what));
+            let clip = m.animation.as_deref().and_then(|a| model.clips.iter().position(|c| c.name == a));
+            let slot = Slot::placed(&self.gpu, &self.pipes, model, mesh, m.transform, clip, m.tint, m.primitive).prop(m.primitive);
+            report.triangles += u64::from(slot.gpu.triangle_count());
+            self.env.push(slot);
+        }
+        progress(LoadProgress { stage: LoadStage::Uploading, done: of, of });
+        report.files = meshes.len();
+        report.placements = self.env.len();
+        self.env_extent = self
+            .env
             .iter()
-            .zip(models)
-            .filter_map(|(m, model)| {
-                let model = model?;
-                let clip = m.animation.as_deref().and_then(|a| model.clips.iter().position(|c| c.name == a));
-                Some(Slot::new(&self.gpu, &self.pipes, model, m.transform, clip, m.tint, m.primitive))
-            })
-            .collect();
+            .map(|s| math::length(s.bounds().size()))
+            .filter(|e| e.is_finite())
+            .fold(3.0, f32::max);
+        // Cube edges are fixed small (`CUBE_EDGE`); a device below that has no 3D anyway.
         let upload = |gpu: &Gpu, d: CubeData| GpuCube { view: gpu::upload_cube(gpu, &d.levels), top_mip: (d.levels.len() - 1) as f32, data: d };
         self.sky = sky.map(|d| upload(&self.gpu, d));
         self.reflection = reflection.map(|d| upload(&self.gpu, d));
@@ -463,10 +709,12 @@ impl Viewer {
             slot.placement = placement;
         }
         self.home = None;
+        report
     }
 
     pub fn clear_scene(&mut self) {
         self.env.clear();
+        self.env_extent = 3.0;
         self.scene = None;
         self.sky = None;
         self.reflection = None;
@@ -573,7 +821,7 @@ impl Viewer {
 
     fn frame_uniforms(&self, width: u32, height: u32) -> (FrameGpu, PostGpu, Option<FloorGpu>, f32) {
         let aspect = width as f32 / height.max(1) as f32;
-        let extent = self.env.iter().map(|s| math::length(s.bounds().size())).fold(3.0, f32::max);
+        let extent = self.env_extent;
         let (near, far) = self.camera.near_far(extent);
         let view = self.camera.view();
         let proj = Mat4::perspective(self.camera.fov_y, aspect, near, far);
@@ -694,7 +942,8 @@ impl Viewer {
     /// Advances the clock by `dt` seconds and renders a `width` by `height` frame. Returns
     /// tightly packed sRGB RGBA8 rows, top first, opaque unless `look.transparent`.
     pub fn render(&mut self, width: u32, height: u32, dt: f32) -> &[u8] {
-        let (width, height) = (width.clamp(1, 8192), height.clamp(1, 8192));
+        let edge = self.gpu.max_edge();
+        let (width, height) = (width.clamp(1, edge), height.clamp(1, edge));
         self.advance(dt);
         let time = self.playback.time;
         let hero_duration = self.duration();
@@ -762,8 +1011,9 @@ impl Viewer {
 
     /// Renders one frame without advancing the clock and encodes it as PNG.
     pub fn capture_png(&mut self, width: u32, height: u32) -> Result<Vec<u8>, ViewerError> {
+        let edge = self.gpu.max_edge();
         let rgba = self.render(width, height, 0.0).to_vec();
-        encode_png(width.clamp(1, 8192), height.clamp(1, 8192), &rgba)
+        encode_png(width.clamp(1, edge), height.clamp(1, edge), &rgba)
     }
 
     /// Loads a hero file and its sidecar beside it (same stem, `.json`) or at `sidecar`.
@@ -785,21 +1035,4 @@ impl LightGpu {
     fn zeroed_light() -> LightGpu {
         LightGpu { pos_dir: [0.0; 4], color: [0.0; 4], spot: [0.0, -1.0, 0.0, -1.0], spot_inner: [-1.0, 0.0, 0.0, 0.0] }
     }
-}
-
-/// Loads every prop a scene lists, skipping the ones that fail (their errors are returned).
-pub fn load_scene_models(desc: &SceneDesc) -> (Vec<Option<Model>>, Vec<String>) {
-    let mut errors = Vec::new();
-    let models = desc
-        .models
-        .iter()
-        .map(|m| match model::load_path(&m.glb) {
-            Ok(model) => Some(model),
-            Err(e) => {
-                errors.push(e.0);
-                None
-            }
-        })
-        .collect();
-    (models, errors)
 }

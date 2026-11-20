@@ -59,6 +59,12 @@ pub const DE: &[(&str, &str)] = &[
         "No 3D on this machine: it has no GPU adapter Sigil can use.",
         "Kein 3D auf diesem Rechner: Er hat keinen Grafikadapter, den Sigil nutzen kann.",
     ),
+    // Loading and failure on the stage (`viewer/mod.rs`, `viewer/worker.rs`).
+    ("Reading the room's models: {} of {}", "Modelle des Raums werden gelesen: {} von {}"),
+    ("Lighting the room", "Der Raum wird beleuchtet"),
+    ("Putting the room on the graphics card: {} of {}", "Der Raum wird auf die Grafikkarte geladen: {} von {}"),
+    ("Elapsed", "Vergangen"),
+    ("The graphics card reported an error: {}", "Die Grafikkarte hat einen Fehler gemeldet: {}"),
 ];
 
 /// Literals in the viewer files that are not UI text: demo titles (data, like a hero name) and

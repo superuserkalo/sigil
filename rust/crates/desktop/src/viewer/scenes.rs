@@ -9,7 +9,7 @@ use crate::model::Screen;
 /// A headless scene: its name and how it sets the state up.
 pub type Scene = (&'static str, fn(&mut State));
 
-pub const SCENES: [Scene; 14] = [
+pub const SCENES: [Scene; 18] = [
     ("viewer", super::scene_viewer),
     ("viewer-split", super::scene_viewer_split),
     ("viewer-hideout", super::scene_viewer_hideout),
@@ -20,6 +20,10 @@ pub const SCENES: [Scene; 14] = [
     ("viewer-locker-nogpu", locker_no_gpu),
     ("viewer-locker-hideout", locker_hideout),
     ("viewer-hideout-loading", hideout_loading),
+    ("viewer-hideout-opening", hideout_opening),
+    ("viewer-hideout-failed", hideout_failed),
+    ("viewer-locker-opening", locker_opening),
+    ("viewer-locker-gpu-failed", locker_gpu_failed),
     ("viewer-installed-menu", installed_menu),
     ("viewer-mod-dialog", mod_dialog),
     ("viewer-mod-dialog-loading", mod_dialog_loading),
@@ -88,6 +92,37 @@ fn locker_hideout(s: &mut State) {
 fn hideout_loading(s: &mut State) {
     crate::screens::locker::scene_view3d(s);
     prepare::stage_loading(s, prepare::HIDEOUT_KEY, Ask::Hideout { hero: Some("Haze".into()) }, Owner::FullScreen, "Building the Hideout with your mods", (1, 1));
+}
+
+fn hideout() -> Ask {
+    Ask::Hideout { hero: Some("Haze".into()) }
+}
+
+/// The Hideout's files are made; the render thread reads them: a way out, what it does, how long.
+fn hideout_opening(s: &mut State) {
+    crate::screens::locker::scene_view3d(s);
+    let progress = sigil_viewer::LoadProgress { stage: sigil_viewer::LoadStage::Reading, done: 137, of: 412 };
+    prepare::stage_view(s, prepare::HIDEOUT_KEY, hideout(), Owner::FullScreen, Status::Loading, Some(progress));
+}
+
+/// The render thread could not open the Hideout: the reason, Try again, Send feedback, Close.
+fn hideout_failed(s: &mut State) {
+    crate::screens::locker::scene_view3d(s);
+    let error = "The graphics card reported an error: Validation Error: Buffer size 3221225472 is greater than the maximum buffer size (2147483648).";
+    prepare::stage_view(s, prepare::HIDEOUT_KEY, hideout(), Owner::FullScreen, Status::Failed(error.into()), None);
+}
+
+/// The Locker's 3D view while its render thread loads the hero.
+fn locker_opening(s: &mut State) {
+    crate::screens::locker::scene_view3d(s);
+    prepare::stage_view(s, prepare::LOCKER_KEY, haze(), Owner::Locker, Status::Loading, None);
+}
+
+/// The Locker's 3D view when the device failed to build its pipelines.
+fn locker_gpu_failed(s: &mut State) {
+    crate::screens::locker::scene_view3d(s);
+    let error = "NVIDIA GeForce GTX 1060 (Dx12) could not build the 3D view's shaders: Internal error in ShaderStages(FRAGMENT) shader: FXC D3DCompile error (0x80004005)";
+    prepare::stage_view(s, prepare::LOCKER_KEY, haze(), Owner::Locker, Status::Failed(error.into()), None);
 }
 
 fn demo_heroes(s: &mut State) {
