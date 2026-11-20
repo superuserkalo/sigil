@@ -303,6 +303,16 @@ pub fn upgrade_hideout(scene: &Path) -> std::io::Result<()> {
     std::fs::write(dir.join("probes/0.vtv"), volume)?;
     std::fs::write(dir.join("post/color-correction.bin"), lut())?;
     std::fs::write(dir.join("cookies/blinds.png"), cookie())?;
+    // The map's candle and dust, and the hero's ember plume beside its sidecar.
+    crate::particles::fixture::write_hideout_fixture(&dir.join("particles"))?;
+    crate::particles::fixture::write_fixture(&dir.join("hero/particles"))?;
+    let side_path = dir.join("hero/stand_in.json");
+    if let Ok(text) = std::fs::read_to_string(&side_path)
+        && let Ok(mut side) = serde_json::from_str::<serde_json::Value>(&text)
+    {
+        side["particles"] = "particles/bundle.json".into();
+        std::fs::write(&side_path, side.to_string())?;
+    }
     let text = std::fs::read_to_string(scene)?;
     let mut v: serde_json::Value = serde_json::from_str(&text).map_err(std::io::Error::other)?;
     let spot = normalize(SPOT_DIR);
@@ -330,6 +340,7 @@ pub fn upgrade_hideout(scene: &Path) -> std::io::Result<()> {
         fog["irradiance"] = serde_json::Value::Null;
         fog["drawDistance"] = 14.0.into();
     }
+    v["particles"] = "particles/bundle.json".into();
     v["omissions"] = serde_json::json!(["autoExposure", "fogShadows", "staticBundle"]);
     std::fs::write(scene, serde_json::to_vec_pretty(&v).map_err(std::io::Error::other)?)
 }

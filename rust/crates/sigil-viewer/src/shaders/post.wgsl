@@ -24,6 +24,11 @@ struct Post {
     lut: vec4<f32>,      // colour correction on, its edge, threshold strength, unused
     // Per bloom level: weight times tint (rgb), level count in [0].w.
     bloom_w: array<vec4<f32>, 5>,
+    bg: vec4<f32>,       // mode (0 studio, 1 radial, 2 vertical, 3 plain, 4 image), spread, vignette, mid stop
+    bg_at: vec4<f32>,    // centre, frame aspect, image aspect
+    bg0: vec4<f32>,      // sRGB stops
+    bg1: vec4<f32>,
+    bg2: vec4<f32>,
 };
 
 @group(0) @binding(0) var<uniform> post: Post;
@@ -33,6 +38,7 @@ struct Post {
 @group(0) @binding(4) var s_linear: sampler;
 @group(0) @binding(5) var t_sky: texture_cube<f32>;
 @group(0) @binding(6) var t_lut: texture_3d<f32>;
+@group(0) @binding(7) var t_backdrop: texture_2d<f32>;
 
 struct FsIn {
     @builtin(position) pos: vec4<f32>,
@@ -103,6 +109,48 @@ fn backdrop(uv: vec2<f32>) -> vec3<f32> {
         let dir = normalize(far.xyz / far.w - near.xyz / near.w);
         let sky = textureSampleLevel(t_sky, s_linear, dir, 0.0).rgb * post.sky.rgb;
         return tonemap(sky * post.exposure.x);
+    }
+    let mode = post.bg.x;
+    if (mode > 3.5) {
+        // The player's picture, cover cropped about the centre.
+        var st = uv;
+        let frame = post.bg_at.z;
+        let image = max(post.bg_at.w, 1e-3);
+        if (frame > image) {
+            st.y = 0.5 + (uv.y - 0.5) * image / frame;
+        } else {
+            st.x = 0.5 + (uv.x - 0.5) * frame / image;
+        }
+        return textureSampleLevel(t_backdrop, s_linear, st, 0.0).rgb;
+    }
+    if (mode > 2.5) {
+        return post.bg0.rgb;
+    }
+    if (mode > 0.5) {
+        // Grimoire's soul backdrops: three sRGB stops, then a vignette, blended as a 2D canvas
+        // does (in sRGB) and decoded for the linear frame.
+        var t: f32;
+        let aspect = post.bg_at.z;
+        if (mode < 1.5) {
+            let d = (uv - post.bg_at.xy) * vec2<f32>(aspect, 1.0);
+            t = length(d) / (sqrt(aspect * aspect + 1.0) * post.bg.y);
+        } else {
+            t = uv.y;
+        }
+        t = clamp(t, 0.0, 1.0);
+        let mid = clamp(post.bg.w, 0.01, 0.99);
+        var g = mix(post.bg0.rgb, post.bg1.rgb, clamp(t / mid, 0.0, 1.0));
+        if (t > mid) {
+            g = mix(post.bg1.rgb, post.bg2.rgb, (t - mid) / (1.0 - mid));
+        }
+        if (post.bg.z > 0.0) {
+            let p = (uv - vec2<f32>(0.5, 0.475)) * vec2<f32>(aspect, 1.0);
+            let r0 = 0.18 * min(aspect, 1.0);
+            let r1 = 0.62 * sqrt(aspect * aspect + 1.0);
+            let v = clamp((length(p) - r0) / (r1 - r0), 0.0, 1.0);
+            g = g * (1.0 - v * post.bg.z);
+        }
+        return srgb_decode(g);
     }
     var c = mix(post.top.rgb, post.bottom.rgb, smoothstep(0.0, 1.0, uv.y));
     let d = (uv - post.glow_at.xy) / max(post.glow_at.zw, vec2<f32>(1e-3));

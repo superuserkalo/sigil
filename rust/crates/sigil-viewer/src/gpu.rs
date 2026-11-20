@@ -286,6 +286,13 @@ pub struct PostGpu {
     pub bloom2: [f32; 4],
     pub lut: [f32; 4],
     pub bloom_w: [[f32; 4]; 5],
+    /// Backdrop: mode (0 studio, 1 radial, 2 vertical, 3 plain, 4 image), spread, vignette,
+    /// middle stop; centre, frame aspect, image aspect; three sRGB stops.
+    pub bg: [f32; 4],
+    pub bg_at: [f32; 4],
+    pub bg0: [f32; 4],
+    pub bg1: [f32; 4],
+    pub bg2: [f32; 4],
 }
 
 #[repr(C)]
@@ -303,7 +310,7 @@ enum Blend {
 }
 
 pub struct Pipelines {
-    frame_layout: wgpu::BindGroupLayout,
+    pub(crate) frame_layout: wgpu::BindGroupLayout,
     frame_only_layout: wgpu::BindGroupLayout,
     material_layout: wgpu::BindGroupLayout,
     draw_layout: wgpu::BindGroupLayout,
@@ -475,6 +482,7 @@ impl Pipelines {
                 sampler_entry(4, wgpu::ShaderStages::FRAGMENT),
                 cube_entry(5, wgpu::ShaderStages::FRAGMENT),
                 texture3d_entry(6, wgpu::ShaderStages::FRAGMENT),
+                texture_entry(7, wgpu::ShaderStages::FRAGMENT),
             ],
         });
 
@@ -1053,6 +1061,8 @@ pub struct FrameInputs<'a> {
     /// The reflection probe and the sky, when the scene has them.
     pub env_cube: Option<&'a wgpu::TextureView>,
     pub sky_cube: Option<&'a wgpu::TextureView>,
+    /// The player's backdrop picture.
+    pub backdrop: Option<&'a wgpu::TextureView>,
     /// The key light's view projection when it casts a shadow this frame.
     pub shadow: Option<[f32; 16]>,
     /// Only the hero casts into the shadow map: the light's static shadow is baked (a
@@ -1062,6 +1072,8 @@ pub struct FrameInputs<'a> {
     pub hideout: Option<(&'a crate::hideout::HideoutGpu, crate::hideout::HideoutUniform)>,
     /// Per bloom level, the weight times tint the map's post gives it (level 0 first).
     pub bloom_weights: [[f32; 3]; 5],
+    /// Particle effects, drawn in the "after" layer once its surfaces are down.
+    pub particles: &'a [&'a crate::particles::ParticleGpu],
 }
 
 pub struct FrameResources {
@@ -1106,7 +1118,7 @@ impl FrameResources {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn post_group(gpu: &Gpu, p: &Pipelines, r: &FrameResources, a: &wgpu::TextureView, b: &wgpu::TextureView, bloom: &wgpu::TextureView, sky: Option<&wgpu::TextureView>, lut: Option<&wgpu::TextureView>) -> wgpu::BindGroup {
+fn post_group(gpu: &Gpu, p: &Pipelines, r: &FrameResources, a: &wgpu::TextureView, b: &wgpu::TextureView, bloom: &wgpu::TextureView, sky: Option<&wgpu::TextureView>, lut: Option<&wgpu::TextureView>, backdrop: Option<&wgpu::TextureView>) -> wgpu::BindGroup {
     gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("viewer post"),
         layout: &p.post_layout,
@@ -1118,6 +1130,7 @@ fn post_group(gpu: &Gpu, p: &Pipelines, r: &FrameResources, a: &wgpu::TextureVie
             wgpu::BindGroupEntry { binding: 4, resource: wgpu::BindingResource::Sampler(&p.sampler_clamp) },
             wgpu::BindGroupEntry { binding: 5, resource: wgpu::BindingResource::TextureView(sky.unwrap_or(&p.black_cube)) },
             wgpu::BindGroupEntry { binding: 6, resource: wgpu::BindingResource::TextureView(lut.unwrap_or(&p.hideout_none.d3)) },
+            wgpu::BindGroupEntry { binding: 7, resource: wgpu::BindingResource::TextureView(backdrop.unwrap_or(&p.black)) },
         ],
     })
 }
@@ -1271,12 +1284,18 @@ pub fn render_frame(gpu: &Gpu, p: &Pipelines, r: &FrameResources, t: &Targets, i
             pass.set_index_buffer(prim.indices.slice(..), wgpu::IndexFormat::Uint32);
             pass.draw_indexed(0..prim.count, 0, 0..1);
         }
+        // Particles last: depth tested against the scene, never writing it.
+        if layer == 0 {
+            for pg in inputs.particles {
+                pg.draw(&mut pass);
+            }
+        }
     }
     // Bloom from the "after" layer: threshold to half size, down the chain, back up.
     let bloom_on = inputs.post.curve_b[2] > 0.0;
     if bloom_on {
         let full = |enc: &mut wgpu::CommandEncoder, pipeline: &wgpu::RenderPipeline, src: &wgpu::TextureView, dst: &wgpu::TextureView, clear: bool, weight: Option<([f32; 3], u32)>| {
-            let group = post_group(gpu, p, r, src, &p.black_hdr, &p.black_hdr, None, None);
+            let group = post_group(gpu, p, r, src, &p.black_hdr, &p.black_hdr, None, None, None);
             let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("viewer bloom"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -1315,7 +1334,7 @@ pub fn render_frame(gpu: &Gpu, p: &Pipelines, r: &FrameResources, t: &Targets, i
     {
         let before = if inputs.layers[1].is_some() { &t.resolved[1] } else { &p.black_hdr };
         let bloom = if bloom_on { &t.bloom[0].2 } else { &p.black_hdr };
-        let group = post_group(gpu, p, r, &t.resolved[0], before, bloom, inputs.sky_cube, inputs.hideout.as_ref().and_then(|h| h.0.lut.as_ref().map(|l| &l.0)));
+        let group = post_group(gpu, p, r, &t.resolved[0], before, bloom, inputs.sky_cube, inputs.hideout.as_ref().and_then(|h| h.0.lut.as_ref().map(|l| &l.0)), inputs.backdrop);
         let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("viewer post"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -1373,6 +1392,12 @@ pub fn render_frame(gpu: &Gpu, p: &Pipelines, r: &FrameResources, t: &Targets, i
     t.readback.unmap();
     timings.unpad_ms = mapped.elapsed().as_secs_f32() * 1000.0;
     timings
+}
+
+/// An sRGB RGBA8 picture with its mips (a backdrop), capped at 2048 px; `None` past the
+/// device's texture budget.
+pub fn upload_srgb(gpu: &Gpu, width: u32, height: u32, rgba: &[u8]) -> Option<wgpu::TextureView> {
+    upload_image(gpu, &crate::model::Image { width, height, rgba: rgba.to_vec() }, true)
 }
 
 /// Half floats from f32 (round to nearest, no NaN payloads), for HDR uploads.
