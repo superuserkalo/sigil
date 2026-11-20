@@ -5,10 +5,22 @@
 //! eyes). No Valve asset is involved; it exists so tests, the demo scene and a machine without
 //! Deadlock can exercise the whole renderer. `Variant::Modded` recolors the coat through the
 //! tint and the glow, as a skin mod would.
+//!
+//! Coat tails hang behind the coat on three `$cloth_cape_*` bone chains (a second skin, so the
+//! body skin keeps its 17 joints), and `cloth_json` is their `m_pFeModel`, shaped like the
+//! sidecar Sigil exports beside a real hero: pinned body and chain-root nodes, goal-damped
+//! dynamic links, rods (scalar and packed), bends, ropes and tapered capsules on the pelvis and
+//! legs.
+//!
+//! Coat tails hang behind the coat on three `$cloth_cape_*` bone chains (a second skin, so the
+//! body skin keeps its 17 joints), and `cloth_json` is their `m_pFeModel`, shaped like the
+//! sidecar Sigil exports beside a real hero: pinned body and chain-root nodes, goal-damped
+//! dynamic links, rods (scalar and packed), bends, ropes and tapered capsules on the pelvis and
+//! legs.
 
 use std::f32::consts::{PI, TAU};
 
-use crate::math::{Mat4, Quat, Vec3, quat_axis_angle, quat_mul};
+use crate::math::{Mat4, Quat, Vec3, quat_axis_angle, quat_mul, quat_normalize};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Variant {
@@ -61,7 +73,8 @@ struct Mesh {
     pos: Vec<Vec3>,
     nrm: Vec<Vec3>,
     uv: Vec<[f32; 2]>,
-    joint: Vec<u16>,
+    joint: Vec<[u16; 4]>,
+    weight: Vec<[f32; 4]>,
     idx: Vec<u32>,
 }
 
@@ -105,7 +118,8 @@ impl Mesh {
                 self.nrm.push(n);
                 let vv = (i as f32 / total as f32).clamp(0.0, 1.0);
                 self.uv.push([j as f32 / seg as f32, (row + 0.06 + vv * 0.88) / 8.0]);
-                self.joint.push(bone as u16);
+                self.joint.push([bone as u16, 0, 0, 0]);
+                self.weight.push([1.0, 0.0, 0.0, 0.0]);
             }
         }
         let stride = seg as u32 + 1;
@@ -130,7 +144,8 @@ impl Mesh {
                 self.pos.push([c[0] + d[0] * r[0], c[1] + d[1] * r[1], c[2] + d[2] * r[2]]);
                 self.nrm.push(crate::math::normalize([d[0] / r[0], d[1] / r[1], d[2] / r[2]]));
                 self.uv.push([j as f32 / seg as f32, (row + 0.06 + (i as f32 / rings as f32) * 0.88) / 8.0]);
-                self.joint.push(bone as u16);
+                self.joint.push([bone as u16, 0, 0, 0]);
+                self.weight.push([1.0, 0.0, 0.0, 0.0]);
             }
         }
         let stride = seg as u32 + 1;
@@ -179,6 +194,145 @@ fn body() -> (Mesh, Mesh) {
     }
     glow.sphere([7.6, 2.8, 52.5], [0.5, 1.0, 1.0], 2, Swatch::Shirt);
     (m, glow)
+}
+
+/// Coat tail chains (left, center, right): their angle around the coat axis, seen from above
+/// in Source space (+X forward, +Y left), and the five levels each chain hangs through.
+const CAPE_CHAINS: [(&str, f32); 3] = [("l", 140.0), ("c", 180.0), ("r", 220.0)];
+const CAPE_LEVELS: usize = 5;
+const CAPE_TOP: f32 = 47.0;
+const CAPE_SPACING: f32 = 8.0;
+
+/// The coat cone's axis and radius at height `z` (the `body()` coat: chest to below the knees,
+/// skinned to the pelvis, squashed 0.95 across and 1.05 front to back).
+fn coat_at(z: f32) -> (f32, f32) {
+    let k = (50.0 - z) / 35.0;
+    (-0.5 * k, 7.9 + 3.6 * k)
+}
+
+/// A point on the coat tails: `angle` in degrees around the coat axis, `level` down the chain
+/// (fractional between nodes), `offset` out from the cape's mid-surface.
+fn cape_point(angle: f32, level: f32, offset: f32) -> Vec3 {
+    let z = CAPE_TOP - CAPE_SPACING * level;
+    let (axis_x, r) = coat_at(z);
+    let radius = 1.05 * r + 1.2 + offset;
+    let (s, c) = angle.to_radians().sin_cos();
+    [axis_x + radius * c, radius * s, z]
+}
+
+/// A bone in the exported skeleton, Source space: global bind position and rotation.
+struct SkelBone {
+    name: String,
+    parent: Option<usize>,
+    head: Vec3,
+    rot: Quat,
+}
+
+/// Rotation whose columns are the given orthonormal axes.
+fn quat_from_basis(x: Vec3, y: Vec3, z: Vec3) -> Quat {
+    let (m00, m11, m22) = (x[0], y[1], z[2]);
+    let trace = m00 + m11 + m22;
+    let q = if trace > 0.0 {
+        let s = 0.5 / (trace + 1.0).sqrt();
+        [(y[2] - z[1]) * s, (z[0] - x[2]) * s, (x[1] - y[0]) * s, 0.25 / s]
+    } else if m00 > m11 && m00 > m22 {
+        let s = 2.0 * (1.0 + m00 - m11 - m22).sqrt();
+        [0.25 * s, (y[0] + x[1]) / s, (z[0] + x[2]) / s, (y[2] - z[1]) / s]
+    } else if m11 > m22 {
+        let s = 2.0 * (1.0 + m11 - m00 - m22).sqrt();
+        [(y[0] + x[1]) / s, 0.25 * s, (z[1] + y[2]) / s, (z[0] - x[2]) / s]
+    } else {
+        let s = 2.0 * (1.0 + m22 - m00 - m11).sqrt();
+        [(z[0] + x[2]) / s, (z[1] + y[2]) / s, 0.25 * s, (x[1] - y[0]) / s]
+    };
+    quat_normalize(q)
+}
+
+fn quat_rotate(q: Quat, v: Vec3) -> Vec3 {
+    let u = [q[0], q[1], q[2]];
+    let t = crate::math::scale(crate::math::cross(u, v), 2.0);
+    crate::math::add(crate::math::add(v, crate::math::scale(t, q[3])), crate::math::cross(u, t))
+}
+
+fn quat_conj(q: Quat) -> Quat {
+    [-q[0], -q[1], -q[2], q[3]]
+}
+
+/// Index of the cape bone for `chain` at `level` within `skeleton()`.
+fn cape_bone(chain: usize, level: usize) -> usize {
+    BONES.len() + chain * CAPE_LEVELS + level
+}
+
+/// The body bones followed by the coat tail chains. Each chain hangs from `spine_0`; a chain
+/// bone's X axis points down the chain, as Source cloth ropes are authored.
+fn skeleton() -> Vec<SkelBone> {
+    let mut bones: Vec<SkelBone> = BONES.iter().map(|b| SkelBone { name: b.name.to_string(), parent: b.parent, head: b.head, rot: [0.0, 0.0, 0.0, 1.0] }).collect();
+    for (chain, (side, angle)) in CAPE_CHAINS.iter().enumerate() {
+        for level in 0..CAPE_LEVELS {
+            let head = cape_point(*angle, level as f32, 0.0);
+            let (a, b) = if level + 1 < CAPE_LEVELS { (level, level + 1) } else { (level - 1, level) };
+            let x = crate::math::normalize(crate::math::sub(cape_point(*angle, b as f32, 0.0), cape_point(*angle, a as f32, 0.0)));
+            let (s, c) = angle.to_radians().sin_cos();
+            let side_axis = [-s, c, 0.0];
+            let z = crate::math::normalize(crate::math::cross(x, side_axis));
+            let y = crate::math::cross(z, x);
+            let parent = if level == 0 { Some(1) } else { Some(cape_bone(chain, level - 1)) };
+            bones.push(SkelBone { name: format!("$cloth_cape_{side}_{level}"), parent, head, rot: quat_from_basis(x, y, z) });
+        }
+    }
+    bones
+}
+
+/// The coat tails: a two-sided curved sheet over the three chains, blending the two nearest
+/// chains across and the two nearest levels down (joint indices are into the cape skin, which
+/// lists the cape bones in `skeleton()` order).
+fn cape() -> Mesh {
+    let mut m = Mesh::default();
+    let (cols, rows) = (24usize, 26usize);
+    let (first, last) = (CAPE_CHAINS[0].1 - 14.0, CAPE_CHAINS[2].1 + 14.0);
+    let bottom = (CAPE_LEVELS - 1) as f32 + 0.25;
+    let row = Swatch::Coat as u32 as f32;
+    for (outer, offset) in [(true, 0.16f32), (false, -0.16)] {
+        let start = m.pos.len() as u32;
+        for j in 0..=rows {
+            let level = bottom * j as f32 / rows as f32;
+            let k0 = (level.floor() as usize).min(CAPE_LEVELS - 2);
+            let tv = (level - k0 as f32).clamp(0.0, 1.0);
+            for i in 0..=cols {
+                let angle = first + (last - first) * i as f32 / cols as f32;
+                let p = cape_point(angle, level, offset);
+                let (ca, cb, th) = if angle <= CAPE_CHAINS[1].1 {
+                    (0usize, 1usize, ((angle - CAPE_CHAINS[0].1) / (CAPE_CHAINS[1].1 - CAPE_CHAINS[0].1)).clamp(0.0, 1.0))
+                } else {
+                    (1, 2, ((angle - CAPE_CHAINS[1].1) / (CAPE_CHAINS[2].1 - CAPE_CHAINS[1].1)).clamp(0.0, 1.0))
+                };
+                let joint = |chain: usize, level: usize| (chain * CAPE_LEVELS + level) as u16;
+                m.joint.push([joint(ca, k0), joint(ca, k0 + 1), joint(cb, k0), joint(cb, k0 + 1)]);
+                m.weight.push([(1.0 - th) * (1.0 - tv), (1.0 - th) * tv, th * (1.0 - tv), th * tv]);
+                let (s, c) = angle.to_radians().sin_cos();
+                let out = if outer { 1.0 } else { -1.0 };
+                m.pos.push(p);
+                m.nrm.push([c * out, s * out, 0.0]);
+                m.uv.push([i as f32 / cols as f32, (row + 0.06 + 0.88 * j as f32 / rows as f32) / 8.0]);
+            }
+        }
+        let stride = cols as u32 + 1;
+        for j in 0..rows as u32 {
+            for i in 0..cols as u32 {
+                let a = start + j * stride + i;
+                let (b, c, d) = (a + 1, a + stride, a + stride + 1);
+                // Wind each face so it faces along its sheet's normal.
+                let pa = m.pos[a as usize];
+                let n = crate::math::cross(crate::math::sub(m.pos[b as usize], pa), crate::math::sub(m.pos[c as usize], pa));
+                if crate::math::dot(n, m.nrm[a as usize]) > 0.0 {
+                    m.idx.extend_from_slice(&[a, b, c, b, d, c]);
+                } else {
+                    m.idx.extend_from_slice(&[a, c, b, b, c, d]);
+                }
+            }
+        }
+    }
+    m
 }
 
 fn noise(x: u32, y: u32, seed: u32) -> f32 {
@@ -295,7 +449,9 @@ fn idle_rotations(t: f32) -> Vec<(usize, Quat)> {
     let sway = (t * w * 0.5).sin();
     vec![
         (0, quat_axis_angle([1.0, 0.0, 0.0], sway * 0.035)),
-        (1, quat_axis_angle([0.0, 1.0, 0.0], breathe * 0.025)),
+        // The upper body turns a little with each breath (and a quicker beat on top), which
+        // swings the coat tails hanging from the spine.
+        (1, quat_mul(quat_axis_angle([0.0, 0.0, 1.0], breathe * 0.12 + (t * w * 2.0).sin() * 0.05), quat_axis_angle([0.0, 1.0, 0.0], breathe * 0.025))),
         (2, quat_mul(quat_axis_angle([0.0, 1.0, 0.0], -breathe * 0.03), quat_axis_angle([0.0, 0.0, 1.0], sway * 0.06))),
         (4, quat_mul(quat_axis_angle([0.0, 0.0, 1.0], (t * w * 0.5 + 0.6).sin() * 0.22), quat_axis_angle([0.0, 1.0, 0.0], breathe * 0.05))),
         (5, quat_axis_angle([1.0, 0.0, 0.0], 0.12 + breathe * 0.04)),
@@ -310,10 +466,14 @@ fn idle_rotations(t: f32) -> Vec<(usize, Quat)> {
 /// The stand-in hero as `.glb` bytes.
 pub fn hero_glb(variant: Variant) -> Vec<u8> {
     let (body, glow) = body();
+    let cape = cape();
+    let skel = skeleton();
     let (albedo, mask, orm) = atlases();
     let mut bin = Bin { data: Vec::new(), views: Vec::new(), accessors: Vec::new() };
     let mut meshes = Vec::new();
-    for (mesh, material) in [(&body, 0), (&glow, 1)] {
+    let mut mesh_skins = Vec::new();
+    for (mesh, material, name, skin) in [(&body, 0, "body", 0), (&glow, 1, "eyes", 0), (&cape, 0, "coat_tails", 1)] {
+        mesh_skins.push(skin);
         let n = mesh.pos.len();
         let flat: Vec<f32> = mesh.pos.iter().flatten().copied().collect();
         let mut min = vec![f32::MAX; 3];
@@ -327,20 +487,24 @@ pub fn hero_glb(variant: Variant) -> Vec<u8> {
         let pos = bin.accessor(&f32s(&flat), 5126, n, "VEC3", Some(34962), Some((min, max)));
         let nrm = bin.accessor(&f32s(&mesh.nrm.iter().flatten().copied().collect::<Vec<_>>()), 5126, n, "VEC3", Some(34962), None);
         let uv = bin.accessor(&f32s(&mesh.uv.iter().flatten().copied().collect::<Vec<_>>()), 5126, n, "VEC2", Some(34962), None);
-        let joints: Vec<u8> = mesh.joint.iter().flat_map(|&j| [j, 0, 0, 0]).flat_map(|v| v.to_le_bytes()).collect();
+        let joints: Vec<u8> = mesh.joint.iter().flatten().flat_map(|v| v.to_le_bytes()).collect();
         let jo = bin.accessor(&joints, 5123, n, "VEC4", Some(34962), None);
-        let weights: Vec<f32> = mesh.joint.iter().flat_map(|_| [1.0f32, 0.0, 0.0, 0.0]).collect();
+        let weights: Vec<f32> = mesh.weight.iter().flatten().copied().collect();
         let we = bin.accessor(&f32s(&weights), 5126, n, "VEC4", Some(34962), None);
         let idx: Vec<u8> = mesh.idx.iter().flat_map(|i| i.to_le_bytes()).collect();
         let ix = bin.accessor(&idx, 5125, mesh.idx.len(), "SCALAR", Some(34963), None);
         meshes.push(serde_json::json!({
-            "name": if material == 0 { "body" } else { "eyes" },
+            "name": name,
             "primitives": [{ "attributes": { "POSITION": pos, "NORMAL": nrm, "TEXCOORD_0": uv, "JOINTS_0": jo, "WEIGHTS_0": we }, "indices": ix, "material": material }]
         }));
     }
-    // Skeleton: bone locals relative to their parent (bind rotations are identity).
-    let ibm: Vec<f32> = BONES.iter().flat_map(|b| Mat4::translation([-b.head[0], -b.head[1], -b.head[2]]).to_cols_array()).collect();
+    // Skeleton: bone locals relative to their parent. Body bind rotations are identity; the
+    // body skin lists the body bones, the cape skin the coat tail chains.
+    let ibm_of = |b: &SkelBone| if b.rot == [0.0, 0.0, 0.0, 1.0] { Mat4::translation([-b.head[0], -b.head[1], -b.head[2]]) } else { Mat4::from_trs(b.head, b.rot, [1.0; 3]).inverse() };
+    let ibm: Vec<f32> = skel[..BONES.len()].iter().flat_map(|b| ibm_of(b).to_cols_array()).collect();
     let ibm_acc = bin.accessor(&f32s(&ibm), 5126, BONES.len(), "MAT4", None, None);
+    let cape_ibm: Vec<f32> = skel[BONES.len()..].iter().flat_map(|b| ibm_of(b).to_cols_array()).collect();
+    let cape_ibm_acc = bin.accessor(&f32s(&cape_ibm), 5126, skel.len() - BONES.len(), "MAT4", None, None);
     // Idle clip: 3.2 s at 30 keys per second.
     let keys: Vec<f32> = (0..=96).map(|i| i as f32 / 30.0).collect();
     let input = bin.accessor(&f32s(&keys), 5126, keys.len(), "SCALAR", None, Some((vec![0.0], vec![*keys.last().unwrap()])));
@@ -398,29 +562,35 @@ pub fn hero_glb(variant: Variant) -> Vec<u8> {
         "textures": { "g_tSelfIllumMask": 3 }
     });
     let mut nodes = vec![serde_json::json!({ "name": "skeleton", "matrix": source_to_gltf().to_cols_array(), "children": [1] })];
-    for (i, b) in BONES.iter().enumerate() {
-        let local = match b.parent {
-            Some(p) => crate::math::sub(b.head, BONES[p].head),
-            None => b.head,
+    for (i, b) in skel.iter().enumerate() {
+        let (local, rot) = match b.parent {
+            Some(p) => {
+                let inv = quat_conj(skel[p].rot);
+                (quat_rotate(inv, crate::math::sub(b.head, skel[p].head)), quat_normalize(quat_mul(inv, b.rot)))
+            }
+            None => (b.head, b.rot),
         };
-        let children: Vec<usize> = BONES.iter().enumerate().filter(|(_, c)| c.parent == Some(i)).map(|(j, _)| j + 1).collect();
-        let mut node = serde_json::json!({ "name": b.name, "translation": local, "rotation": [0.0, 0.0, 0.0, 1.0] });
+        let children: Vec<usize> = skel.iter().enumerate().filter(|(_, c)| c.parent == Some(i)).map(|(j, _)| j + 1).collect();
+        let mut node = serde_json::json!({ "name": b.name, "translation": local, "rotation": rot });
         if !children.is_empty() {
             node["children"] = children.into();
         }
         nodes.push(node);
     }
     let first_mesh_node = nodes.len();
-    for m in 0..meshes.len() {
-        nodes.push(serde_json::json!({ "name": format!("mesh_{m}"), "mesh": m, "skin": 0, "matrix": source_to_gltf().to_cols_array() }));
+    for (m, skin) in mesh_skins.iter().enumerate() {
+        nodes.push(serde_json::json!({ "name": format!("mesh_{m}"), "mesh": m, "skin": skin, "matrix": source_to_gltf().to_cols_array() }));
     }
     let doc = serde_json::json!({
         "asset": { "version": "2.0", "generator": "sigil-viewer fixture" },
         "scene": 0,
-        "scenes": [{ "nodes": [0, first_mesh_node, first_mesh_node + 1] }],
+        "scenes": [{ "nodes": [0, first_mesh_node, first_mesh_node + 1, first_mesh_node + 2] }],
         "nodes": nodes,
         "meshes": meshes,
-        "skins": [{ "joints": (1..=BONES.len()).collect::<Vec<_>>(), "inverseBindMatrices": ibm_acc, "skeleton": 0 }],
+        "skins": [
+            { "joints": (1..=BONES.len()).collect::<Vec<_>>(), "inverseBindMatrices": ibm_acc, "skeleton": 0 },
+            { "joints": (BONES.len() + 1..=skel.len()).collect::<Vec<_>>(), "inverseBindMatrices": cape_ibm_acc, "skeleton": 0 }
+        ],
         "animations": [{ "name": "hero_shop", "samplers": samplers, "channels": channels }],
         "materials": [
             {
@@ -471,7 +641,145 @@ pub fn glb(json: &[u8], mut bin: Vec<u8>) -> Vec<u8> {
 
 /// The sidecar vpkmerge's pipeline writes beside a hero, for the stand-in.
 pub fn sidecar_json() -> String {
-    serde_json::json!({ "clips": [{ "name": "hero_shop", "duration": 3.2 }], "idleClip": "hero_shop" }).to_string()
+    serde_json::json!({ "clips": [{ "name": "hero_shop", "duration": 3.2 }], "idleClip": "hero_shop", "cloth": "stand_in.cloth.json" }).to_string()
+}
+
+/// The stand-in's cloth sidecar: the coat tails' `PHYS.m_pFeModel` as JSON with the KV3 key
+/// names verbatim, in Source units (inches, Z up, model space, quaternions `[x, y, z, w]`).
+/// Static nodes come first: the pelvis, spine and legs the colliders hang on, then the pinned
+/// chain roots. The dynamic links follow, chain by chain.
+pub fn cloth_json() -> String {
+    let skel = skeleton();
+    let body = ["pelvis", "spine_0", "leg_upper_L", "leg_lower_L", "leg_upper_R", "leg_lower_R"];
+    let body_parent: [i64; 6] = [-1, 0, 0, 2, 0, 4];
+    let chains = CAPE_CHAINS.len();
+    let statics = body.len() + chains;
+    // FeModel node index of a cape chain node.
+    let node = |chain: usize, level: usize| if level == 0 { body.len() + chain } else { statics + chain * (CAPE_LEVELS - 1) + level - 1 };
+    let mut order: Vec<(String, usize, i64)> = Vec::new();
+    for (i, name) in body.iter().enumerate() {
+        let bone = skel.iter().position(|b| b.name == *name).expect("body bone");
+        order.push((name.to_string(), bone, body_parent[i]));
+    }
+    for chain in 0..chains {
+        order.push((skel[cape_bone(chain, 0)].name.clone(), cape_bone(chain, 0), 1));
+    }
+    for chain in 0..chains {
+        for level in 1..CAPE_LEVELS {
+            order.push((skel[cape_bone(chain, level)].name.clone(), cape_bone(chain, level), node(chain, level - 1) as i64));
+        }
+    }
+    let n = order.len();
+    let dynamic = n - statics;
+    let pose: Vec<[f32; 8]> = order
+        .iter()
+        .map(|(_, b, _)| {
+            let (h, q) = (skel[*b].head, skel[*b].rot);
+            [h[0], h[1], h[2], 1.0, q[0], q[1], q[2], q[3]]
+        })
+        .collect();
+    let pos = |i: usize| [pose[i][0], pose[i][1], pose[i][2]];
+    let dist = |a: usize, b: usize| crate::math::length(crate::math::sub(pos(a), pos(b)));
+    let inv_mass = |i: usize| if i < statics { 0.0f32 } else { 1.0 };
+    let integrator: Vec<serde_json::Value> = (0..n)
+        .map(|i| {
+            if i < statics {
+                return serde_json::json!({ "flGravity": 0.0, "flPointDamping": 0.0, "flAnimationForceAttraction": 0.0, "flAnimationVertexAttraction": 0.0 });
+            }
+            let level = (i - statics) % (CAPE_LEVELS - 1) + 1;
+            let force = [0.012f32, 0.008, 0.005, 0.003][level - 1];
+            serde_json::json!({ "flGravity": 360.0, "flPointDamping": 0.3, "flAnimationForceAttraction": force, "flAnimationVertexAttraction": 0.002 })
+        })
+        .collect();
+    // (a, b, min, max, relaxation, weight of a): chain links hold their length; links across
+    // chains allow a little slack.
+    let mut rods: Vec<(usize, usize, f32, f32, f32, f32)> = Vec::new();
+    for chain in 0..chains {
+        for level in 1..CAPE_LEVELS {
+            let (a, b) = (node(chain, level - 1), node(chain, level));
+            let d = dist(a, b);
+            let w = inv_mass(a) / (inv_mass(a) + inv_mass(b));
+            rods.push((a, b, d * 0.9, d, 1.0, w));
+        }
+    }
+    for level in 1..CAPE_LEVELS {
+        for chain in 0..chains - 1 {
+            let (a, b) = (node(chain, level), node(chain + 1, level));
+            let d = dist(a, b);
+            rods.push((a, b, d * 0.85, d * 1.05, 0.5, 0.5));
+        }
+    }
+    let scalar_rods: Vec<serde_json::Value> =
+        rods.iter().map(|&(a, b, min, max, relax, w)| serde_json::json!({ "nNode": [a, b], "flMinDist": min, "flMaxDist": max, "flRelaxationFactor": relax, "flWeight0": w })).collect();
+    // Packed four-lane blocks: no node twice in a block, short blocks padded with their last rod.
+    let mut blocks: Vec<Vec<usize>> = Vec::new();
+    for (r, &(a, b, ..)) in rods.iter().enumerate() {
+        let free = blocks.iter().position(|blk| blk.len() < 4 && blk.iter().all(|&o| ![rods[o].0, rods[o].1].contains(&a) && ![rods[o].0, rods[o].1].contains(&b)));
+        match free {
+            Some(k) => blocks[k].push(r),
+            None => blocks.push(vec![r]),
+        }
+    }
+    let simd_rods: Vec<serde_json::Value> = blocks
+        .iter()
+        .map(|blk| {
+            let lanes: Vec<_> = (0..4).map(|l| rods[blk[l.min(blk.len() - 1)]]).collect();
+            serde_json::json!({
+                "nNode": [lanes.iter().map(|r| r.0).collect::<Vec<_>>(), lanes.iter().map(|r| r.1).collect::<Vec<_>>()],
+                "f4MinDist": lanes.iter().map(|r| r.2).collect::<Vec<_>>(),
+                "f4MaxDist": lanes.iter().map(|r| r.3).collect::<Vec<_>>(),
+                "f4RelaxationFactor": lanes.iter().map(|r| r.4).collect::<Vec<_>>(),
+                "f4Weight0": lanes.iter().map(|r| r.5).collect::<Vec<_>>()
+            })
+        })
+        .collect();
+    let mut bends = Vec::new();
+    for chain in 0..chains {
+        for level in 1..CAPE_LEVELS - 1 {
+            let (a, b, c) = (node(chain, level), node(chain, level - 1), node(chain, level + 1));
+            let w = if level == 1 { [-1.0f32, 0.0, 0.5] } else { [-1.0, 0.5, 0.5] };
+            bends.push(serde_json::json!({ "nNode": [a, b, c], "flWeight": w, "flHeight0": 1.0 }));
+        }
+    }
+    let mut ropes: Vec<usize> = (1..=chains).map(|k| chains + k * CAPE_LEVELS).collect();
+    for chain in 0..chains {
+        ropes.extend((0..CAPE_LEVELS).map(|level| node(chain, level)));
+    }
+    // The coat cone on the pelvis (its back, where the tails rest) and the legs.
+    let pelvis = pos(0);
+    let local = |z: f32| {
+        let (axis_x, r) = coat_at(z);
+        [axis_x - pelvis[0], -pelvis[1], z - pelvis[2], 1.05 * r - 0.3]
+    };
+    let mut capsules = vec![serde_json::json!({ "nNode": 0, "vSphere": [local(CAPE_TOP), local(15.0)], "nCollisionMask": 1 })];
+    for (upper, lower) in [(2usize, 3usize), (4, 5)] {
+        capsules.push(serde_json::json!({ "nNode": upper, "vSphere": [[0.0, 0.0, 0.0, 3.7], [0.0, 0.0, -16.5, 2.9]], "nCollisionMask": 1 }));
+        capsules.push(serde_json::json!({ "nNode": lower, "vSphere": [[0.0, 0.0, 0.0, 2.9], [0.0, 0.0, -15.5, 2.4]], "nCollisionMask": 1 }));
+    }
+    serde_json::json!({
+        "m_CtrlName": order.iter().map(|o| o.0.clone()).collect::<Vec<_>>(),
+        "m_SkelParents": order.iter().map(|o| o.2).collect::<Vec<_>>(),
+        "m_NodeInvMasses": (0..n).map(inv_mass).collect::<Vec<_>>(),
+        "m_InitPose": pose,
+        "m_NodeIntegrator": integrator,
+        "m_nStaticNodes": statics,
+        "m_nStaticNodeFlags": 0,
+        "m_nDynamicNodeFlags": 0,
+        "m_nFirstPositionDrivenNode": n,
+        "m_flDefaultGravityScale": 1.0,
+        "m_nExtraIterations": 2,
+        "m_nExtraGoalIterations": 0,
+        "m_Rods": scalar_rods,
+        "m_SimdRods": simd_rods,
+        "m_KelagerBends": bends,
+        "m_nRopeCount": chains,
+        "m_Ropes": ropes,
+        "m_NodeCollisionRadii": vec![0.6f32; dynamic],
+        "m_DynNodeFriction": vec![0.2f32; dynamic],
+        "m_TreeCollisionMasks": vec![1u32; 2 * dynamic - 1],
+        "m_TaperedCapsuleRigids": capsules
+    })
+    .to_string()
 }
 
 /// A stand-in Hideout room: a floor, two walls, a desk and a lamp, as one unskinned glb with
@@ -568,6 +876,7 @@ pub fn write_hideout(dir: &std::path::Path, variant: Variant) -> std::io::Result
     std::fs::write(dir.join("models/room.glb"), room_glb())?;
     std::fs::write(dir.join("hero/stand_in.glb"), hero_glb(variant))?;
     std::fs::write(dir.join("hero/stand_in.json"), sidecar_json())?;
+    std::fs::write(dir.join("hero/stand_in.cloth.json"), cloth_json())?;
     // Sky faces in Source axes: dusk above, dark below.
     for (name, up) in [("px", 0.0f32), ("nx", 0.0), ("py", 0.0), ("ny", 0.0), ("pz", 1.0), ("nz", -1.0)] {
         let edge = 16u32;

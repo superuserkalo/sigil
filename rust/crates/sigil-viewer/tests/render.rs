@@ -21,8 +21,10 @@ fn hero(variant: fixture::Variant) -> model::Model {
 #[test]
 fn the_stand_in_is_a_skinned_animated_npr_hero() {
     let m = hero(fixture::Variant::Stock);
-    assert_eq!(m.skins.len(), 1);
+    // The body, and the coat tails skinned to the cloth chains.
+    assert_eq!(m.skins.len(), 2);
     assert_eq!(m.skins[0].joints.len(), 17);
+    assert_eq!(m.skins[1].joints.len(), 15);
     assert_eq!(model::default_idle(&m).map(|c| c.name.as_str()), Some("hero_shop"));
     let body = m.materials[0].resolve();
     assert!(body.npr && body.tint_mask.is_some() && body.outline_thickness > 0.0);
