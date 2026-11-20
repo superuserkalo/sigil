@@ -780,7 +780,7 @@ fn take_result(st: &mut State) -> bool {
             }
             crate::notify::push(st, crate::notify::Notice::info(fill(tr("{} was cancelled"), &[&name])));
         }
-        Err(error) if error.contains("more than one pakNN_dir.vpk") => {
+        Err(error) if error.contains("more than one VPK") => {
             // A real choice: the archive holds several mods. The picker installs the one
             // picked straight away.
             let entry = st.browse_view.installs.items.remove(&id);

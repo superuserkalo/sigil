@@ -47,7 +47,7 @@ pub fn after_install(st: &mut State, plan_landed: bool, applied: bool, failed: b
             .install
             .log
             .as_deref()
-            .is_some_and(|log| log.contains("more than one pakNN_dir.vpk"));
+            .is_some_and(|log| log.contains("more than one VPK"));
         if !choosing {
             st.install.auto = false;
             st.browse_view.queue.clear();
