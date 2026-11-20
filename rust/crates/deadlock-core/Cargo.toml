@@ -19,9 +19,11 @@ ureq = { workspace = true, features = ["socks-proxy"] }
 sha2 = "0.10"
 # Git blob hashes for fetched performance configs. Already in the lock.
 sha1 = "0.10"
+# GameBanana lists an MD5 per file; a download that misses it is fetched again. Already in the lock.
+md5 = "0.7"
 getrandom = "0.3"
 base64 = "0.22"
-zip = { version = "2", default-features = false, features = ["deflate"] }
+zip = { version = "2", default-features = false, features = ["deflate", "deflate64", "lzma", "bzip2", "zstd"] }
 # .7z and .rar mods open in process, as Deadlock Mod Manager does: no 7-Zip, WinRAR or
 # unrar on PATH. sevenz-rust2 is pure Rust (Apache-2.0); unrar builds RARLAB's UnRAR source
 # (freeware licence: extraction only, see THIRD_PARTY_NOTICES.md).

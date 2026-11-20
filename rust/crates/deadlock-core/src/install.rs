@@ -54,14 +54,21 @@ use crate::util::{now_iso, write_atomic};
 use crate::vpk::{read_vpk_directory_with, ReadVpkOptions};
 use crate::vpk_write::{pack_vpk, PackOptions};
 
+#[path = "install_shapes.rs"]
+mod shapes;
+
+#[cfg(test)]
+#[path = "install_shape_tests.rs"]
+mod shape_tests;
+
 /// Schema version for plan files and journal entries.
 pub const INSTALL_SCHEMA: u32 = 1;
 /// Hard cap on one downloaded archive.
 pub const MAX_DOWNLOAD_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 /// Hard cap on one extracted tree.
-pub const MAX_EXTRACTED_BYTES: u64 = 4 * 1024 * 1024 * 1024;
+pub const MAX_EXTRACTED_BYTES: u64 = 8 * 1024 * 1024 * 1024;
 /// Hard cap on archive entries.
-pub const MAX_ARCHIVE_ENTRIES: usize = 10_000;
+pub const MAX_ARCHIVE_ENTRIES: usize = 50_000;
 /// Compression ratio cap for entries above [`RATIO_FLOOR_BYTES`].
 pub const MAX_COMPRESSION_RATIO: u64 = 500;
 /// Entries smaller than this are exempt from the ratio cap, so a small header
@@ -684,6 +691,11 @@ pub fn download_with_cancel(
         )));
     }
 
+    let declared_length = response
+        .headers()
+        .get("content-length")
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.parse::<u64>().ok());
     let file_name = file_name_for(&final_url, &response);
     let final_path = destination_dir.join(&file_name);
     let partial_path = destination_dir.join(format!("{file_name}.part"));
@@ -778,6 +790,17 @@ pub fn download_with_cancel(
     file.flush()?;
     drop(file);
 
+    // A connection the server closed cleanly before the end still reads as "done": the length
+    // it declared says otherwise, and a cut archive must never reach the extractor.
+    if let Some(length) = declared_length
+        && length != total
+    {
+        let _ = fs::remove_file(&partial_path);
+        return Err(Error::Network(format!(
+            "Download from {final_url} ended after {total} of {length} bytes. Nothing was kept."
+        )));
+    }
+
     // A cancel that lands after the last chunk still wins: the bytes are complete, but the plan
     // was stopped, so the cache does not gain an archive for a run the player ended.
     if cancelled(cancel) {
@@ -796,6 +819,71 @@ pub fn download_with_cancel(
         bytes: total,
         sha256: hex(&hasher.finalize()),
     })
+}
+
+/// [`download_with_cancel`] with retries for a dropped connection or a server hiccup, as Deadlock
+/// Mod Manager retries (1 s, then 3 s). A refusal (an origin off the allowlist, a size cap, an
+/// HTTP 4xx answer) and a cancel are not retried.
+pub fn download_retrying(
+    url: &str,
+    destination_dir: &Path,
+    policy: &DownloadPolicy,
+    cancel: Option<&AtomicBool>,
+) -> Result<DownloadReport> {
+    let mut attempt = 0;
+    loop {
+        match download_with_cancel(url, destination_dir, policy, cancel) {
+            Err(Error::Network(text)) if attempt < 2 && is_transient(&text) => {
+                attempt += 1;
+                for _ in 0..(attempt * 10) {
+                    check_cancel(cancel)?;
+                    std::thread::sleep(Duration::from_millis(100));
+                }
+            }
+            other => return other,
+        }
+    }
+}
+
+fn is_transient(text: &str) -> bool {
+    if text.contains("allowlist") || text.contains("cap") || text.contains("redirect") {
+        return false;
+    }
+    if let Some(at) = text.find("returned HTTP ") {
+        let code = &text[at + 14..];
+        return code.starts_with('5') || code.starts_with("429") || code.starts_with("408");
+    }
+    true
+}
+
+/// How a GameBanana download differs from its file record, or None when it matches.
+fn integrity_problem(file: &GameBananaFile, report: &DownloadReport) -> Option<String> {
+    if let Some(expected) = file.size_bytes
+        && expected > 0
+        && expected != report.bytes
+    {
+        return Some(format!("is {} bytes where GameBanana lists {expected}", report.bytes));
+    }
+    let expected = file.md5.as_deref()?.trim().to_ascii_lowercase();
+    if expected.len() != 32 {
+        return None;
+    }
+    let actual = md5_file(&report.path).ok()?;
+    (actual != expected).then(|| "does not match the checksum GameBanana lists".to_string())
+}
+
+fn md5_file(path: &Path) -> Result<String> {
+    let mut file = File::open(path)?;
+    let mut context = md5::Context::new();
+    let mut buffer = vec![0u8; READ_BUFFER_BYTES];
+    loop {
+        let read = file.read(&mut buffer)?;
+        if read == 0 {
+            break;
+        }
+        context.consume(&buffer[..read]);
+    }
+    Ok(format!("{:x}", context.compute()))
 }
 
 /// Hash a local archive in place. Nothing is copied or moved.
@@ -1035,6 +1123,9 @@ pub enum ArchiveFormat {
     Zip,
     SevenZip,
     Rar,
+    /// A bare `.vpk` download or file: nothing to unpack, the VPK (and its numbered parts next to
+    /// it) is the mod. GameBanana hosts some mods this way, and Grimoire imports them directly.
+    Vpk,
     Unknown,
 }
 
@@ -1044,6 +1135,7 @@ impl ArchiveFormat {
             Self::Zip => "zip",
             Self::SevenZip => "7z",
             Self::Rar => "rar",
+            Self::Vpk => "vpk",
             Self::Unknown => "unknown",
         }
     }
@@ -1119,6 +1211,9 @@ pub fn detect_archive_format(path: &Path) -> ArchiveFormat {
     if read >= 6 && &magic[..4] == b"Rar!" {
         return ArchiveFormat::Rar;
     }
+    if read >= 4 && u32::from_le_bytes([magic[0], magic[1], magic[2], magic[3]]) == 0x55aa_1234 {
+        return ArchiveFormat::Vpk;
+    }
 
     let extension = path
         .extension()
@@ -1131,6 +1226,25 @@ pub fn detect_archive_format(path: &Path) -> ArchiveFormat {
         "rar" => ArchiveFormat::Rar,
         _ => ArchiveFormat::Unknown,
     }
+}
+
+/// What a file that is no archive looks like, for the "could not open" message: a web page
+/// GameBanana served instead of the file, an empty download, or something else entirely.
+fn describe_unknown_file(path: &Path) -> String {
+    let mut head = [0u8; 512];
+    let read = File::open(path).and_then(|mut file| file.read(&mut head)).unwrap_or(0);
+    let text = String::from_utf8_lossy(&head[..read]).to_ascii_lowercase();
+    let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    if read == 0 {
+        return format!("{name} is empty: the download did not finish. Sigil deleted it; press Install again to download it fresh.");
+    }
+    if text.trim_start().starts_with("<!doctype html") || text.trim_start().starts_with("<html") || text.contains("<head") {
+        return format!("{name} is a web page, not a mod archive: GameBanana or a network filter answered with a page instead of the file. Sigil deleted it; press Install again, and if it repeats, download the file in your browser and import it.");
+    }
+    if head[..read.min(2)] == [0x1f, 0x8b] || head[..read.min(3)] == *b"BZh" || (read >= 262 && &head[257..262] == b"ustar") {
+        return format!("{name} is a .tar, .gz or .bz2 archive. Neither Sigil nor the other Deadlock mod managers open those: unpack it with 7-Zip and import the .vpk inside.");
+    }
+    format!("{name} is not a .zip, .7z, .rar or .vpk file (its first bytes match none of them), so Sigil cannot open it. If it is a mod, unpack it with 7-Zip and import the .vpk inside.")
 }
 
 fn backend_unavailable(format: ArchiveFormat) -> Error {
@@ -1216,7 +1330,7 @@ pub fn extract_archive_with_cancel(
     }
 
     if destination.exists() {
-        fs::remove_dir_all(destination)?;
+        shapes::remove_tree(destination)?;
     }
     fs::create_dir_all(destination)?;
 
@@ -1225,47 +1339,72 @@ pub fn extract_archive_with_cancel(
     let result = if cancelled(cancel) {
         Err(Error::Cancelled)
     } else {
-        match format {
-            ArchiveFormat::Zip => extract_zip(archive, destination, limits, cancel),
-            // Built in, as for ZIP: no 7-Zip, WinRAR or unrar needed. A tool on PATH (or DAH_7Z /
-            // DAH_UNRAR) is only a fallback for a method the built-in reader lacks, and never a
-            // path out of a cancel.
-            ArchiveFormat::SevenZip | ArchiveFormat::Rar => {
-                let built_in = match format {
-                    ArchiveFormat::SevenZip => extract_7z(archive, destination, limits, cancel),
-                    _ => extract_rar(archive, destination, limits, cancel),
-                };
-                match (built_in, tools.for_format(format)) {
-                    (Ok(done), _) => Ok(done),
-                    (Err(error), _) if is_cancelled(&error) => Err(error),
-                    (Err(error), Some(tool)) => {
-                        let _ = fs::remove_dir_all(destination);
-                        fs::create_dir_all(destination)?;
-                        extract_with_tool(format, tool, archive, destination, limits, cancel)
-                            .map_err(|tool_error| Error::msg(format!("{error} The {} fallback also failed: {tool_error}", format.tool_name())))
-                    }
-                    (Err(error), None) => Err(error),
-                }
-            }
-            ArchiveFormat::Unknown => Err(Error::msg(format!(
-                "Could not identify the archive format of {}. Sigil opens .zip, .7z and .rar mods.",
-                archive.display()
-            ))),
-        }
+        extract_one(format, archive, destination, limits, tools, cancel)
     };
 
+    // Nested archives (a .zip of variant .zips, a .rar inside the .7z), junk such as __MACOSX,
+    // and read-only flags are dealt with on the written tree, before anything classifies it.
+    let result = result.and_then(|_| {
+        let mut warnings = Vec::new();
+        shapes::tidy_tree(destination)?;
+        shapes::expand_nested(destination, limits, tools, cancel, &mut warnings)?;
+        let (files, bytes) = verify_tree(format.as_str(), archive, destination, limits)?;
+        Ok((files, bytes, warnings))
+    });
+
     match result {
-        Ok((files, bytes)) => Ok(ExtractReport {
+        Ok((files, bytes, warnings)) => Ok(ExtractReport {
             format,
             directory: destination.to_path_buf(),
             files,
             bytes,
-            warnings: Vec::new(),
+            warnings,
         }),
         Err(error) => {
-            let _ = fs::remove_dir_all(destination);
+            let _ = shapes::remove_tree(destination);
             Err(error)
         }
+    }
+}
+
+/// Unpack one archive of a known format into `destination` (already empty).
+fn extract_one(
+    format: ArchiveFormat,
+    archive: &Path,
+    destination: &Path,
+    limits: &ExtractLimits,
+    tools: &ToolPaths,
+    cancel: Option<&AtomicBool>,
+) -> Result<(Vec<String>, u64)> {
+    // A web page or an empty file saved under an archive's name reads as one by its extension:
+    // say what it really is before a reader calls it damaged.
+    if format != ArchiveFormat::Vpk && shapes::not_an_archive(archive) {
+        return Err(Error::msg(describe_unknown_file(archive)));
+    }
+    match format {
+        ArchiveFormat::Zip => extract_zip(archive, destination, limits, cancel),
+        // Built in, as for ZIP: no 7-Zip, WinRAR or unrar needed. A tool on PATH (or DAH_7Z /
+        // DAH_UNRAR) is only a fallback for a method the built-in reader lacks, and never a
+        // path out of a cancel.
+        ArchiveFormat::SevenZip | ArchiveFormat::Rar => {
+            let built_in = match format {
+                ArchiveFormat::SevenZip => extract_7z(archive, destination, limits, cancel),
+                _ => extract_rar(archive, destination, limits, cancel),
+            };
+            match (built_in, tools.for_format(format)) {
+                (Ok(done), _) => Ok(done),
+                (Err(error), _) if is_cancelled(&error) || shapes::is_password_error(&error) => Err(error),
+                (Err(error), Some(tool)) => {
+                    let _ = shapes::remove_tree(destination);
+                    fs::create_dir_all(destination)?;
+                    extract_with_tool(format, tool, archive, destination, limits, cancel)
+                        .map_err(|tool_error| Error::msg(format!("{error} The {} fallback also failed: {tool_error}", format.tool_name())))
+                }
+                (Err(error), None) => Err(error),
+            }
+        }
+        ArchiveFormat::Vpk => shapes::copy_bare_vpk(archive, destination, limits),
+        ArchiveFormat::Unknown => Err(Error::msg(describe_unknown_file(archive))),
     }
 }
 
@@ -1276,8 +1415,7 @@ fn extract_zip(
     cancel: Option<&AtomicBool>,
 ) -> Result<(Vec<String>, u64)> {
     let file = File::open(archive)?;
-    let mut zip = zip::ZipArchive::new(file)
-        .map_err(|error| Error::msg(format!("{} is not a readable ZIP: {error}", archive.display())))?;
+    let mut zip = zip::ZipArchive::new(file).map_err(|error| Error::msg(damaged_archive("ZIP", archive, &error.to_string())))?;
 
     if zip.len() > limits.max_entries {
         return Err(Error::msg(format!(
@@ -1295,19 +1433,29 @@ fn extract_zip(
         check_cancel(cancel)?;
 
         let mut entry = zip.by_index(index).map_err(|error| {
-            Error::msg(format!(
-                "ZIP entry {index} of {} could not be read: {error}",
-                archive.display()
-            ))
+            let text = error.to_string();
+            if text.to_ascii_lowercase().contains("password") || text.contains("encrypt") {
+                Error::msg(shapes::password_message(archive))
+            } else {
+                Error::msg(format!(
+                    "ZIP entry {index} of {} could not be read: {error}",
+                    archive.display()
+                ))
+            }
         })?;
 
-        let raw_name = std::str::from_utf8(entry.name_raw())
-            .map_err(|_| {
-                Error::msg(format!(
-                    "ZIP entry {index} has a name that is not valid UTF-8. Refusing to extract it."
-                ))
-            })?
-            .to_string();
+        if entry.encrypted() {
+            return Err(Error::msg(shapes::password_message(archive)));
+        }
+
+        // A name that is not UTF-8 (a ZIP made on a Chinese or Japanese Windows without the UTF-8
+        // flag) is read as the ZIP default code page instead of refused, as Grimoire does: the
+        // name only labels a variant folder, game paths are ASCII. Windows tools also write `\`.
+        let raw_name = match std::str::from_utf8(entry.name_raw()) {
+            Ok(name) => name.to_string(),
+            Err(_) => entry.name().to_string(),
+        };
+        let raw_name = portable_name(&raw_name);
 
         // Directory entries end with a slash. The slash is not a path segment.
         let is_dir = entry.is_dir();
@@ -1355,8 +1503,10 @@ fn extract_zip(
             }
 
             let read = entry.read(&mut buffer).map_err(|error| {
-                Error::msg(format!(
-                    "ZIP entry {raw_name} failed after {written} bytes: {error}"
+                Error::msg(damaged_archive(
+                    "ZIP",
+                    archive,
+                    &format!("entry {raw_name} failed after {written} bytes: {error}"),
                 ))
             })?;
             if read == 0 {
@@ -1387,6 +1537,19 @@ fn portable_name(raw: &str) -> String {
     raw.replace('\\', "/")
 }
 
+/// The marker every "damaged or partly downloaded archive" message carries, so the plan can
+/// delete a cached download that will never open and a retry downloads it again.
+pub const DAMAGED_ARCHIVE_MARKER: &str = "is damaged or only partly downloaded";
+
+/// A reader could not get through an archive: almost always a download cut short or a broken
+/// upload. Says so, and what to do, with the reader's own words at the end for a bug report.
+fn damaged_archive(kind: &str, archive: &Path, detail: &str) -> String {
+    let name = archive.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    format!(
+        "The {kind} archive {name} {DAMAGED_ARCHIVE_MARKER}, so it cannot be unpacked. Press Install again to download a fresh copy. If it fails the same way twice, the upload itself is broken: try another file of the mod, or tell the creator. (Reader said: {detail})"
+    )
+}
+
 /// A .7z mod, in process (sevenz-rust2). Each name goes through [`safe_entry_path`]; the entry
 /// count and the bytes written are capped while writing, not after.
 fn extract_7z(
@@ -1397,11 +1560,8 @@ fn extract_7z(
 ) -> Result<(Vec<String>, u64)> {
     let mut reader = sevenz_rust2::ArchiveReader::open(archive, sevenz_rust2::Password::empty())
         .map_err(|error| match error {
-            sevenz_rust2::Error::PasswordRequired => Error::msg(format!(
-                "{} is password protected, so Sigil cannot open it.",
-                archive.display()
-            )),
-            other => Error::msg(format!("{} is not a readable 7z archive: {other}", archive.display())),
+            sevenz_rust2::Error::PasswordRequired => Error::msg(shapes::password_message(archive)),
+            other => Error::msg(damaged_archive("7z", archive, &other.to_string())),
         })?;
     let mut files: Vec<String> = Vec::new();
     let mut total: u64 = 0;
@@ -1452,15 +1612,13 @@ fn extract_7z(
     }
     outcome.map_err(|error| match error {
         // AES is the only 7z cipher, and it means a password.
-        sevenz_rust2::Error::PasswordRequired | sevenz_rust2::Error::MaybeBadPassword(_) => Error::msg(format!(
-            "{} is password protected, so Sigil cannot open it.",
-            archive.display()
-        )),
-        sevenz_rust2::Error::UnsupportedCompressionMethod(method) if method.contains("AES") => Error::msg(format!(
-            "{} is password protected, so Sigil cannot open it.",
-            archive.display()
-        )),
-        other => Error::msg(format!("Could not extract {}: {other}", archive.display())),
+        sevenz_rust2::Error::PasswordRequired | sevenz_rust2::Error::MaybeBadPassword(_) => {
+            Error::msg(shapes::password_message(archive))
+        }
+        sevenz_rust2::Error::UnsupportedCompressionMethod(method) if method.contains("AES") => {
+            Error::msg(shapes::password_message(archive))
+        }
+        other => Error::msg(damaged_archive("7z", archive, &other.to_string())),
     })?;
     // The same tree check as a tool's output: no links, nothing outside, caps.
     verify_tree("7z", archive, destination, limits)
@@ -1476,7 +1634,12 @@ fn extract_rar(
     cancel: Option<&AtomicBool>,
 ) -> Result<(Vec<String>, u64)> {
     let fail = |error: unrar::error::UnrarError| {
-        Error::msg(format!("Could not extract {}: {error}", archive.display()))
+        let text = error.to_string();
+        if text.to_ascii_lowercase().contains("password") {
+            Error::msg(shapes::password_message(archive))
+        } else {
+            Error::msg(damaged_archive("RAR", archive, &text))
+        }
     };
     let mut open = unrar::Archive::new(archive).open_for_processing().map_err(fail)?;
     let mut count = 0usize;
@@ -1486,14 +1649,11 @@ fn extract_rar(
 
         let entry = header.entry();
         if entry.is_encrypted() {
-            return Err(Error::msg(format!(
-                "{} is password protected, so Sigil cannot open it.",
-                archive.display()
-            )));
+            return Err(Error::msg(shapes::password_message(archive)));
         }
         if entry.is_split_before() {
             return Err(Error::msg(format!(
-                "{} is one part of a multi-part RAR; Sigil needs the whole archive.",
+                "{} is a later part of a split RAR (name.part2.rar and on). Download every part into one folder and import the first one (name.part1.rar).",
                 archive.display()
             )));
         }
@@ -1872,10 +2032,10 @@ struct Candidate {
     warnings: Vec<String>,
 }
 
-/// Prefixes a mod archive may carry before the game path, deepest first.
-const GAME_PATH_PREFIXES: [&str; 4] = ["game/citadel/", "citadel/", "game/", ""];
-
 /// Walk an extracted tree and group it into one VPK or one compiled tree.
+///
+/// `chosen` is a path from [`vpk_choices`]: a VPK file, or a loose mod folder ending in `/`
+/// (`./` for files at the top of the archive).
 fn classify_extracted(
     extracted: &Path,
     limits: &ExtractLimits,
@@ -1902,9 +2062,18 @@ fn classify_extracted(
     let vpks: Vec<&(String, u64)> = vpk_dir_files(extracted, &files);
 
     if let Some(chosen) = chosen_vpk.map(str::trim).filter(|vpk| !vpk.is_empty()) {
+        if chosen.ends_with('/') {
+            let folder = if chosen == "./" { "" } else { chosen };
+            return classify_tree(extracted, files.clone(), Some(folder));
+        }
         let picked = vpks
             .iter()
-            .find(|(path, _)| path.eq_ignore_ascii_case(chosen) || path.ends_with(&format!("/{chosen}")))
+            .find(|(path, _)| path == chosen)
+            .or_else(|| {
+                vpks.iter().find(|(path, _)| {
+                    path.eq_ignore_ascii_case(chosen) || path.ends_with(&format!("/{chosen}"))
+                })
+            })
             .ok_or_else(|| {
                 Error::msg(format!(
                     "The archive has no VPK called {chosen}. It ships: {}.",
@@ -1929,12 +2098,78 @@ fn classify_extracted(
         return classify_vpk(extracted, relative, &files);
     }
 
-    classify_tree(extracted, files)
+    let groups = loose_groups(&files);
+    if groups.len() > 1 {
+        let names: Vec<String> = groups.iter().map(|(prefix, _)| folder_label(prefix).to_string()).collect();
+        return Err(Error::msg(format!(
+            "The archive ships more than one VPK or mod folder ({}). Choose the one you want.",
+            names.join(", ")
+        )));
+    }
+    let prefix = groups.first().map(|(prefix, _)| prefix.clone());
+    classify_tree(extracted, files, prefix.as_deref())
 }
 
-/// The file name without folders, lower case.
+/// A loose mod folder's label for the picker: the creator's folder name, or "top level".
+fn folder_label(prefix: &str) -> &str {
+    let mut trimmed = prefix.trim_end_matches('/');
+    for tail in ["/game/citadel", "/citadel", "/game", "/addons"] {
+        if trimmed.len() > tail.len() && trimmed.to_ascii_lowercase().ends_with(tail) {
+            trimmed = &trimmed[..trimmed.len() - tail.len()];
+        }
+    }
+    if trimmed.is_empty() || trimmed == "." || ["game/citadel", "citadel", "game", "addons"].contains(&trimmed.to_ascii_lowercase().as_str()) {
+        return "top level files";
+    }
+    trimmed
+}
+
+/// The loose mod folders of an archive: each packaging prefix above a game folder that holds at
+/// least one installable file, with the bytes it would install. Variant folders (`Red/materials`,
+/// `Blue/materials`) are separate groups the player chooses between. A second engine tree
+/// (`game/core/...` next to `game/citadel/...`) is not a variant and is dropped.
+fn loose_groups(files: &[(String, u64)]) -> Vec<(String, u64)> {
+    let mut groups: std::collections::BTreeMap<String, u64> = std::collections::BTreeMap::new();
+    for (relative, size) in files {
+        if let Some((prefix, game_path)) = shapes::split_at_game_root(relative)
+            && shapes::is_loose_payload(&game_path)
+        {
+            *groups.entry(prefix).or_default() += size;
+        }
+    }
+    // A font pack ships `fonts/Name.ttf` and a script to copy it: the fonts alone are a mod.
+    if groups.is_empty() {
+        let fonts: u64 = files
+            .iter()
+            .filter(|(relative, _)| shapes::loose_font_path(relative).is_some())
+            .map(|(_, size)| size)
+            .sum();
+        if fonts > 0 {
+            groups.insert(String::new(), fonts);
+        }
+    }
+    let citadel = groups.keys().any(|prefix| {
+        let lower = prefix.to_ascii_lowercase();
+        lower.is_empty() || lower.ends_with("citadel/")
+    });
+    if citadel && groups.len() > 1 {
+        groups.retain(|prefix, _| {
+            let lower = prefix.to_ascii_lowercase();
+            !(lower.ends_with("core/") || lower.ends_with("bin/"))
+        });
+    }
+    groups.into_iter().collect()
+}
+
+/// The file name without folders, lower case, with copy decorations (`pak01_dir (1).vpk`)
+/// removed.
 fn vpk_file_name(relative: &str) -> String {
-    relative.rsplit('/').next().unwrap_or(relative).to_lowercase()
+    shapes::canonical_vpk_name(relative.rsplit('/').next().unwrap_or(relative))
+}
+
+/// The folder part of an archive path, with its trailing slash, or "" at the top.
+fn parent_of(relative: &str) -> &str {
+    relative.rfind('/').map(|at| &relative[..=at]).unwrap_or("")
 }
 
 /// `<base>` when `name` is a numbered part `<base>_NNN.vpk`.
@@ -1954,27 +2189,39 @@ fn vpk_chunk_prefix(relative: &str) -> String {
         .to_string()
 }
 
-/// Every VPK directory file an archive ships, under any name, as Grimoire and Deadlock Mod
-/// Manager accept them: `pakNN_dir.vpk`, `<name>_dir.vpk` with its `<name>_NNN.vpk` parts, or one
-/// self-contained `<name>.vpk`. A numbered part next to its `_dir.vpk` is not a VPK of its own,
-/// and a loose `.vpk` counts only when its header says it is one.
+/// True when a `.vpk` at this archive path is a map, which ships inside an addon VPK at
+/// `maps/<name>.vpk` rather than being an addon itself.
+fn is_map_vpk_path(relative: &str) -> bool {
+    shapes::split_at_game_root(relative)
+        .is_some_and(|(_, game_path)| game_path.to_ascii_lowercase().starts_with("maps/"))
+}
+
+/// Every VPK directory file an archive ships, under any name and case, at any depth, as
+/// Grimoire and Deadlock Mod Manager accept them: `pakNN_dir.vpk`, `<name>_dir.vpk` with its
+/// `<name>_NNN.vpk` parts in the same folder, or one self-contained `<name>.vpk`. A numbered
+/// part next to its `_dir.vpk` is not a VPK of its own, a map under `maps/` is payload, not an
+/// addon, and every candidate must carry the VPK header (a renamed text file is not a mod).
 fn vpk_dir_files<'a>(extracted: &Path, files: &'a [(String, u64)]) -> Vec<&'a (String, u64)> {
     let dirs: std::collections::BTreeSet<String> = files
         .iter()
-        .map(|(path, _)| vpk_file_name(path))
-        .filter(|name| name.ends_with("_dir.vpk"))
+        .filter(|(path, _)| vpk_file_name(path).ends_with("_dir.vpk"))
+        .map(|(path, _)| format!("{}{}", parent_of(path), vpk_file_name(path)))
         .collect();
     files
         .iter()
         .filter(|(path, _)| {
             let name = vpk_file_name(path);
-            if !name.ends_with(".vpk") {
+            if !name.ends_with(".vpk") || is_map_vpk_path(path) {
                 return false;
             }
+            // A `_dir.vpk` name is a VPK on its name alone, as before: one with a broken header
+            // then fails on its file list with a message that says so.
             if name.ends_with("_dir.vpk") {
                 return true;
             }
-            if vpk_chunk_base(&name).is_some_and(|base| dirs.contains(&format!("{base}_dir.vpk"))) {
+            if let Some(base) = vpk_chunk_base(&name)
+                && dirs.contains(&format!("{}{base}_dir.vpk", parent_of(path)))
+            {
                 return false;
             }
             has_vpk_magic(&extracted.join(path))
@@ -1998,11 +2245,14 @@ fn classify_vpk(
 ) -> Result<Candidate> {
     let dir_path = extracted.join(relative);
     let prefix = vpk_chunk_prefix(relative);
+    let folder = parent_of(relative);
 
+    // Parts sit next to their directory file: a second variant folder with the same names
+    // keeps its own parts.
     let chunk_relatives: Vec<String> = files
         .iter()
         .map(|(path, _)| path.clone())
-        .filter(|path| is_chunk_for(path, &prefix))
+        .filter(|path| parent_of(path) == folder && path != relative && is_chunk_for(path, &prefix))
         .collect();
 
     let chunks: Vec<PathBuf> = chunk_relatives
@@ -2012,6 +2262,11 @@ fn classify_vpk(
 
     let directory = read_vpk_directory_with(&dir_path, &ReadVpkOptions {
         keep_preload: false,
+    })
+    .map_err(|error| {
+        Error::msg(format!(
+            "{relative} has a VPK header but its file list cannot be read ({error}). The file {DAMAGED_ARCHIVE_MARKER} or broken: press Install again to download a fresh copy, and if it repeats, tell the creator."
+        ))
     })?;
 
     let mut mapped = Vec::with_capacity(directory.entries.len());
@@ -2031,16 +2286,13 @@ fn classify_vpk(
         }
 
         let expected = format!("{prefix}_{:03}.vpk", entry.archive_index);
-        let present = chunk_relatives.iter().any(|path| {
-            path.rsplit('/')
-                .next()
-                .map(|value| value.eq_ignore_ascii_case(&expected))
-                .unwrap_or(false)
-        });
+        let present = chunk_relatives
+            .iter()
+            .any(|path| vpk_file_name(path) == expected);
 
         if !present {
             return Err(Error::msg(format!(
-                "The archive VPK {relative} references chunk {expected}, which is not next to it. The mod would load with missing data, so nothing was installed."
+                "The archive VPK {relative} needs its part {expected}, which is not next to it. The mod would load with missing data, so nothing was installed. Multi-part mods are sometimes uploaded as several files on GameBanana: download every part into one folder and import the _dir.vpk from there."
             )));
         }
     }
@@ -2081,28 +2333,25 @@ fn is_chunk_for(relative: &str, prefix: &str) -> bool {
     vpk_chunk_base(&name) == Some(prefix)
 }
 
-fn classify_tree(extracted: &Path, files: Vec<(String, u64)>) -> Result<Candidate> {
-    let paths: Vec<String> = files.iter().map(|(path, _)| path.clone()).collect();
-    let (prefix, mapped_paths, unmapped) = detect_prefix(&paths);
-
+/// Loose files under `prefix` (the packaging folders above the game folders), mapped to game
+/// paths. Only files the game reads as they are ship ([`shapes::is_loose_payload`]); source
+/// files, notes and programs are listed in a warning and left out, never a reason to refuse.
+fn classify_tree(extracted: &Path, files: Vec<(String, u64)>, prefix: Option<&str>) -> Result<Candidate> {
     let mut mapped = Vec::new();
     let mut skipped = Vec::new();
+    let mut programs = Vec::new();
+    let mut unmapped = Vec::new();
     let mut payload = Vec::new();
     let mut payload_bytes = 0;
 
     for (relative, size) in &files {
-        if !mapped_paths.iter().any(|path| path == relative) {
+        let game_path = prefix.and_then(|prefix| {
+            shapes::game_path_under(prefix, relative).or_else(|| shapes::loose_font_path(relative))
+        });
+        let Some(game_path) = game_path else {
+            unmapped.push(relative.clone());
             continue;
-        }
-
-        let game_path = match prefix.as_deref() {
-            Some(value) if !value.is_empty() => relative[value.len()..].to_string(),
-            _ => relative.clone(),
         };
-
-        if game_path.is_empty() {
-            continue;
-        }
 
         mapped.push(CandidateFile {
             path: game_path.clone(),
@@ -2110,7 +2359,7 @@ fn classify_tree(extracted: &Path, files: Vec<(String, u64)>) -> Result<Candidat
             size: *size,
         });
 
-        if game_path.to_ascii_lowercase().ends_with("_c") {
+        if shapes::is_loose_payload(&game_path) {
             payload.push(game_path);
             payload_bytes += size;
         } else {
@@ -2118,11 +2367,21 @@ fn classify_tree(extracted: &Path, files: Vec<(String, u64)>) -> Result<Candidat
         }
     }
 
+    for path in unmapped.iter().chain(skipped.iter()) {
+        let lower = path.to_ascii_lowercase();
+        if [".exe", ".bat", ".cmd", ".ps1", ".msi", ".dll", ".vbs", ".scr", ".py", ".sh"]
+            .iter()
+            .any(|extension| lower.ends_with(extension))
+        {
+            programs.push(path.clone());
+        }
+    }
+
     let mut warnings = Vec::new();
 
     if !skipped.is_empty() {
         warnings.push(format!(
-            "{} mapped file(s) are not compiled and are not shipped: {}",
+            "{} file(s) at game paths are not compiled and are left out (the game reads only compiled _c files): {}",
             skipped.len(),
             preview(&skipped)
         ));
@@ -2130,9 +2389,17 @@ fn classify_tree(extracted: &Path, files: Vec<(String, u64)>) -> Result<Candidat
 
     if !unmapped.is_empty() {
         warnings.push(format!(
-            "{} file(s) could not be mapped to a game path and are not installed: {}",
+            "{} file(s) outside the mod's game folders are not installed: {}",
             unmapped.len(),
             preview(&unmapped)
+        ));
+    }
+
+    if !programs.is_empty() {
+        warnings.push(format!(
+            "The archive ships {} program(s) or script(s); Sigil never installs or runs them: {}",
+            programs.len(),
+            preview(&programs)
         ));
     }
 
@@ -2140,56 +2407,13 @@ fn classify_tree(extracted: &Path, files: Vec<(String, u64)>) -> Result<Candidat
         artifact: CandidateArtifact::Tree {
             root: extracted.to_path_buf(),
         },
-        prefix,
+        prefix: prefix.map(str::to_string),
         mapped,
         payload,
         payload_bytes,
         unmapped,
         warnings,
     })
-}
-
-/// Detect the game path prefix for an archive tree.
-///
-/// The deepest known prefix that covers at least one compiled file wins.
-/// A more specific prefix is preferred even when a shallower one would cover
-/// more files, because mapping a second tree such as `game/core/...` into the
-/// citadel root would ship the wrong game paths. Everything outside the chosen
-/// prefix is reported as unmapped, never guessed.
-fn detect_prefix(paths: &[String]) -> (Option<String>, Vec<String>, Vec<String>) {
-    let mut chosen = "";
-
-    for prefix in GAME_PATH_PREFIXES {
-        let covered = paths
-            .iter()
-            .filter(|path| {
-                path.starts_with(prefix) && path.len() > prefix.len() && path.ends_with("_c")
-            })
-            .count();
-
-        if covered > 0 {
-            chosen = prefix;
-            break;
-        }
-    }
-
-    let mapped: Vec<String> = paths
-        .iter()
-        .filter(|path| path.starts_with(chosen) && path.len() > chosen.len())
-        .cloned()
-        .collect();
-
-    if mapped.is_empty() {
-        return (None, Vec::new(), paths.to_vec());
-    }
-
-    let unmapped: Vec<String> = paths
-        .iter()
-        .filter(|path| !mapped.iter().any(|candidate| candidate == *path))
-        .cloned()
-        .collect();
-
-    (Some(chosen.to_string()), mapped, unmapped)
 }
 
 // ---------------------------------------------------------------------------
@@ -2349,7 +2573,12 @@ fn prepare_archive(request: &InstallRequest, options: &PlanOptions) -> Result<Pr
                 .map(|metadata| metadata.len());
 
             let report = match (&cached, file.size_bytes, cached_size) {
-                (Some(path), Some(expected), Some(size)) if expected == size => {
+                (Some(path), Some(expected), Some(size))
+                    if expected == size
+                        && file.md5.as_deref().is_none_or(|md5| {
+                            md5_file(path).map(|actual| actual.eq_ignore_ascii_case(md5.trim())).unwrap_or(false)
+                        }) =>
+                {
                     warnings.push(format!(
                         "Reused the cached download {} because its size matches the GameBanana file record. Run `dah install cache prune` to force a fresh download.",
                         path.display()
@@ -2364,22 +2593,33 @@ fn prepare_archive(request: &InstallRequest, options: &PlanOptions) -> Result<Pr
                         sha256: sha256_file(path)?,
                     }
                 }
-                _ => download_with_cancel(&file.download_url, &cache, &options.policy, cancel)?,
+                _ => download_retrying(&file.download_url, &cache, &options.policy, cancel)?,
             };
 
-            if let Some(expected) = file.size_bytes
-                && expected != report.bytes
-            {
-                warnings.push(format!(
-                    "GameBanana declared {expected} bytes for {} but the download is {} bytes.",
-                    file.file_name, report.bytes
-                ));
-            }
+            // GameBanana lists each file's size and MD5. A download that matches neither is
+            // cut short or swapped for an error page: it is deleted and fetched once more, and a
+            // second miss is an error rather than a broken install.
+            let report = match integrity_problem(&file, &report) {
+                None => report,
+                Some(problem) => {
+                    let _ = fs::remove_file(&report.path);
+                    warnings.push(format!("The first download of {} {problem}; it was downloaded again.", file.file_name));
+                    let again = download_retrying(&file.download_url, &cache, &options.policy, cancel)?;
+                    if let Some(problem) = integrity_problem(&file, &again) {
+                        let _ = fs::remove_file(&again.path);
+                        return Err(Error::Network(format!(
+                            "The download of {} {problem}, twice. The file was deleted and nothing was installed. GameBanana or a network filter is serving a broken copy: try again later, switch the download server in Settings > Network, or download it in your browser and import it.",
+                            file.file_name
+                        )));
+                    }
+                    again
+                }
+            };
 
             gamebanana = Some(file);
             report
         }
-        InstallSource::DirectUrl(url) => download_with_cancel(url, &cache, &options.policy, cancel)?,
+        InstallSource::DirectUrl(url) => download_retrying(url, &cache, &options.policy, cancel)?,
         InstallSource::LocalFile(path) => describe_local_file(path)?,
     };
 
@@ -2389,7 +2629,19 @@ fn prepare_archive(request: &InstallRequest, options: &PlanOptions) -> Result<Pr
 
     let extracted = cache.join("extracted");
     let extract =
-        extract_archive_with_cancel(&fetched.path, &extracted, &options.limits, &options.tools, cancel)?;
+        match extract_archive_with_cancel(&fetched.path, &extracted, &options.limits, &options.tools, cancel) {
+            Ok(extract) => extract,
+            Err(error) => {
+                // A downloaded archive that will not open is deleted, so the next press downloads a
+                // fresh copy instead of failing on the same bytes. A player's own file stays.
+                let downloaded = !matches!(request.source, InstallSource::LocalFile(_));
+                let text = error.to_string();
+                if downloaded && (text.contains(DAMAGED_ARCHIVE_MARKER) || text.contains("not a .zip, .7z, .rar") || text.contains("is a web page") || text.contains("is empty")) {
+                    let _ = fs::remove_file(&fetched.path);
+                }
+                return Err(error);
+            }
+        };
 
     // A stop between the extract and the return removes the half tree, or the whole tree when
     // the extract had just finished: a cancelled plan has no extracted folder behind it.
@@ -2408,6 +2660,14 @@ fn prepare_archive(request: &InstallRequest, options: &PlanOptions) -> Result<Pr
         gamebanana,
         warnings,
     })
+}
+
+/// The GameBanana mod id an install came from, when there is one.
+fn gamebanana_mod_id(source: &InstallSource) -> Option<u64> {
+    match source {
+        InstallSource::GameBananaId(id) => Some(*id),
+        _ => None,
+    }
 }
 
 /// The marker files creators put in an archive to say "no one-click installs".
@@ -2451,9 +2711,20 @@ pub struct VpkChoice {
 }
 
 impl VpkChoice {
-    /// The file name without folders, for a row.
+    /// The row label: the path inside the archive, so two variant folders that both ship a
+    /// `pak01_dir.vpk` read apart, or the creator's folder name for a loose mod folder.
     pub fn name(&self) -> &str {
-        self.path.rsplit('/').next().unwrap_or(&self.path)
+        if self.path.ends_with('/') {
+            return if self.path == "./" { "top level files" } else { folder_label(&self.path) };
+        }
+        let mut label = self.path.as_str();
+        while let Some((first, rest)) = label.split_once('/') {
+            if !["game", "citadel", "addons"].contains(&first.to_ascii_lowercase().as_str()) {
+                break;
+            }
+            label = rest;
+        }
+        label
     }
 }
 
@@ -2467,11 +2738,23 @@ pub fn vpk_choices(request: &InstallRequest, options: &PlanOptions) -> Result<Ve
 
 fn collect_vpk_choices(extracted: &Path, files: &[(String, u64)]) -> Vec<VpkChoice> {
     let mut choices = Vec::new();
-    for (relative, bytes) in vpk_dir_files(extracted, files) {
+    let vpks = vpk_dir_files(extracted, files);
+    if vpks.is_empty() {
+        // Loose variant folders: each one is a choice, packed into its own VPK.
+        for (prefix, bytes) in loose_groups(files) {
+            choices.push(VpkChoice {
+                path: if prefix.is_empty() { "./".to_string() } else { prefix },
+                bytes,
+                chunks: 0,
+            });
+        }
+    }
+    for (relative, bytes) in vpks {
         let prefix = vpk_chunk_prefix(relative);
+        let folder = parent_of(relative);
         let chunks: Vec<&(String, u64)> = files
             .iter()
-            .filter(|(path, _)| is_chunk_for(path, &prefix))
+            .filter(|(path, _)| parent_of(path) == folder && path != relative && is_chunk_for(path, &prefix))
             .collect();
         let total = bytes + chunks.iter().map(|(_, size)| *size).sum::<u64>();
         choices.push(VpkChoice {
@@ -2555,8 +2838,35 @@ pub fn plan_install(request: &InstallRequest, options: &PlanOptions) -> Result<I
     warnings.extend(extract.warnings);
     warnings.extend(candidate.warnings.clone());
 
-    let mapped_paths: Vec<String> = candidate.mapped.iter().map(|file| file.path.clone()).collect();
-    let issues = validate_payload(&mapped_paths, &PayloadOptions::default());
+    if candidate.payload.is_empty() {
+        let files = walk_tree(&extracted)?;
+        let mut message = shapes::nothing_installable(&files);
+        // A GameBanana config Sigil already lists on the Performance page: name it there.
+        if let Some(id) = gamebanana_mod_id(&request.source)
+            && let Some(config) = crate::performance::catalog::CONFIGS
+                .iter()
+                .find(|config| config.gamebanana.as_ref().is_some_and(|hosted| hosted.mod_id == id))
+        {
+            message.push_str(&format!(
+                " Sigil lists this mod on the Performance page as \"{}\": apply it from there.",
+                config.name
+            ));
+        }
+        return Err(Error::msg(message));
+    }
+
+    // The rules run over what ships: a packed tree's payload, or every entry of a VPK. A source
+    // file inside a creator's VPK is harmless (the game ignores it), as both Grimoire and Deadlock
+    // Mod Manager treat it, so it is a warning there rather than a refusal.
+    let is_vpk = matches!(candidate.artifact, CandidateArtifact::Vpk { .. });
+    let mut issues = validate_payload(&candidate.payload, &PayloadOptions::default());
+    if is_vpk {
+        for issue in &mut issues {
+            if matches!(issue.code, "source_file" | "archive" | "duplicate_path" | "tool_cache") {
+                issue.severity = Severity::Warning;
+            }
+        }
+    }
 
     if has_errors(&issues) {
         let errors: Vec<PayloadIssue> = issues
@@ -2565,8 +2875,14 @@ pub fn plan_install(request: &InstallRequest, options: &PlanOptions) -> Result<I
             .cloned()
             .collect();
 
+        let script = errors.iter().any(|issue| matches!(issue.code, "skeleton" | "gameplay_data"));
+        let hint = if script {
+            "\nThis is a script mod. To install it anyway, turn on Settings > Preferences > Allow script mods."
+        } else {
+            ""
+        };
         return Err(Error::msg(format!(
-            "Payload rejected: the archive ships files a Deadlock mod may not contain. Nothing was installed.\n{}\nPaths: {}",
+            "Payload rejected: the archive ships files a Deadlock mod may not contain. Nothing was installed.{hint}\n{}\nPaths: {}",
             format_payload_issues(&errors),
             preview(
                 &errors
@@ -2597,15 +2913,6 @@ pub fn plan_install(request: &InstallRequest, options: &PlanOptions) -> Result<I
         ));
     }
 
-    if !candidate
-        .payload
-        .iter()
-        .any(|path| path.to_ascii_lowercase().ends_with("_c"))
-    {
-        return Err(Error::msg(
-            "No compiled _c files were found in the archive, so there is nothing to install. A Deadlock mod payload is compiled files at exact game paths.",
-        ));
-    }
 
     // Staging copies the payload into the cache, so a stop checked here saves that work.
     check_cancel(cancel)?;
@@ -2699,7 +3006,7 @@ pub fn plan_install(request: &InstallRequest, options: &PlanOptions) -> Result<I
 
 fn prepare_staging(root: &Path, candidate: &Candidate, staging: &Path) -> Result<()> {
     if staging.exists() {
-        fs::remove_dir_all(staging)?;
+        shapes::remove_tree(staging)?;
     }
     fs::create_dir_all(staging)?;
 
@@ -2722,6 +3029,7 @@ fn prepare_staging(root: &Path, candidate: &Candidate, staging: &Path) -> Result
                 file.path
             ))
         })?;
+        shapes::make_writable(&destination);
     }
 
     Ok(())
@@ -3412,6 +3720,13 @@ fn copy_into_place(source: &Path, destination: &Path) -> Result<()> {
         return Err(error.into());
     }
 
+    // A read-only flag from the archive must not follow the file into the game folder, where
+    // it would block the next update, disable or uninstall.
+    shapes::make_writable(&temporary);
+    if destination.exists() {
+        shapes::make_writable(destination);
+    }
+
     if let Err(error) = fs::rename(&temporary, destination) {
         let _ = fs::remove_file(&temporary);
         return Err(error.into());
@@ -4022,7 +4337,7 @@ mod tests {
     // ------------------------------------------------------------------
 
     /// Scratch root under `.scratch/install-test`, removed at the start of a run.
-    fn scratch(name: &str) -> PathBuf {
+    pub(super) fn scratch(name: &str) -> PathBuf {
         let root = repo_root()
             .join(".scratch")
             .join("install-test")
@@ -4046,7 +4361,7 @@ mod tests {
         }
     }
 
-    fn fake_game(root: &Path) -> PathBuf {
+    pub(super) fn fake_game(root: &Path) -> PathBuf {
         let game_root = root.join("Deadlock");
         fs::create_dir_all(game_root.join("game").join("citadel")).unwrap();
         fs::write(
@@ -4059,7 +4374,7 @@ mod tests {
 
     /// Minimal stored ZIP writer. The zip crate writer is not used on purpose:
     /// hostile entry names and file types have to survive into the fixture.
-    fn build_stored_zip(entries: &[(&str, &[u8], u32)]) -> Vec<u8> {
+    pub(super) fn build_stored_zip(entries: &[(&str, &[u8], u32)]) -> Vec<u8> {
         let mut output = Vec::new();
         let mut central = Vec::new();
         let mut offsets = Vec::new();
@@ -4234,7 +4549,7 @@ mod tests {
     }
 
     /// Build a real pakNN_dir.vpk plus chunk through the crate writer.
-    fn make_vpk(directory: &Path, base: &str, game_paths: &[(&str, &[u8])]) -> (PathBuf, Vec<PathBuf>) {
+    pub(super) fn make_vpk(directory: &Path, base: &str, game_paths: &[(&str, &[u8])]) -> (PathBuf, Vec<PathBuf>) {
         let staging = directory.join(format!("staging-{base}"));
         let _ = fs::remove_dir_all(&staging);
 
@@ -4366,11 +4681,7 @@ mod tests {
             ("nested", "materials/../../evil.vmat_c", "escapes the extract folder"),
             ("absolute", "/tmp/evil.vmat_c", "absolute path"),
             ("drive", "C:/evil.vmat_c", "drive letter"),
-            (
-                "backslash",
-                "materials\\heroes\\evil.vmat_c",
-                "uses backslashes",
-            ),
+            ("backslash", "materials\\..\\..\\evil.vmat_c", "escapes the extract folder"),
         ] {
             let archive = root.join(format!("{name}.zip"));
             fs::write(&archive, build_stored_zip(&[(entry, b"payload", 0o100644)])).unwrap();
@@ -4543,39 +4854,33 @@ mod tests {
 
     #[test]
     fn detects_the_game_path_prefix() {
-        let (prefix, mapped, unmapped) = detect_prefix(&[
-            "game/citadel/materials/heroes/billy/billy_color.vmat_c".to_string(),
-            "game/citadel/models/heroes_wip/billy/billy.vmdl_c".to_string(),
-            "readme.md".to_string(),
-        ]);
-        assert_eq!(prefix.as_deref(), Some("game/citadel/"));
-        assert_eq!(mapped.len(), 2);
-        assert_eq!(unmapped, vec!["readme.md".to_string()]);
-
-        let (prefix, mapped, unmapped) =
-            detect_prefix(&["materials/heroes/billy/billy_color.vmat_c".to_string()]);
-        assert_eq!(prefix.as_deref(), Some(""));
-        assert_eq!(mapped.len(), 1);
-        assert!(unmapped.is_empty());
-
-        let (prefix, _, _) =
-            detect_prefix(&["citadel/materials/heroes/billy/billy_color.vmat_c".to_string()]);
-        assert_eq!(prefix.as_deref(), Some("citadel/"));
-
-        // Deepest prefix wins a tie, so `game/citadel` is not read as `game`.
-        let (prefix, _, _) = detect_prefix(&[
-            "game/citadel/materials/a.vmat_c".to_string(),
-            "game/core/materials/b.vmat_c".to_string(),
-        ]);
-        assert_eq!(prefix.as_deref(), Some("game/citadel/"));
-
-        // No compiled file means the plan later fails with "nothing to install".
-        let (prefix, mapped, unmapped) = detect_prefix(&["docs/readme.md".to_string()]);
-        assert_eq!(prefix.as_deref(), Some(""));
-        assert_eq!(mapped, vec!["docs/readme.md".to_string()]);
-        assert!(unmapped.is_empty());
-
-        assert_eq!(detect_prefix(&[]), (None, Vec::new(), Vec::new()));
+        let files = |paths: &[&str]| paths.iter().map(|p| (p.to_string(), 1u64)).collect::<Vec<_>>();
+        let prefixes = |paths: &[&str]| {
+            loose_groups(&files(paths)).into_iter().map(|(prefix, _)| prefix).collect::<Vec<_>>()
+        };
+        assert_eq!(
+            prefixes(&[
+                "game/citadel/materials/heroes/billy/billy_color.vmat_c",
+                "game/citadel/models/heroes_wip/billy/billy.vmdl_c",
+                "readme.md",
+            ]),
+            vec!["game/citadel/".to_string()]
+        );
+        assert_eq!(prefixes(&["materials/heroes/billy/billy_color.vmat_c"]), vec![String::new()]);
+        assert_eq!(prefixes(&["citadel/materials/a.vmat_c"]), vec!["citadel/".to_string()]);
+        // Any packaging above the game folders: a folder named after the mod, addons/.
+        assert_eq!(prefixes(&["Cool Mod v2/materials/a.vmat_c", "Cool Mod v2/readme.txt"]), vec!["Cool Mod v2/".to_string()]);
+        assert_eq!(prefixes(&["addons/sounds/a.vsnd_c"]), vec!["addons/".to_string()]);
+        // A second engine tree is not a variant.
+        assert_eq!(
+            prefixes(&["game/citadel/materials/a.vmat_c", "game/core/materials/b.vmat_c"]),
+            vec!["game/citadel/".to_string()]
+        );
+        // Variant folders are separate groups for the picker.
+        assert_eq!(prefixes(&["Red/materials/a.vmat_c", "Blue/materials/a.vmat_c"]).len(), 2);
+        // Source files and notes are no group at all.
+        assert!(prefixes(&["docs/readme.md", "materials/a.vmat", "materials/a.png"]).is_empty());
+        assert!(prefixes(&[]).is_empty());
     }
 
     #[test]
@@ -4712,13 +5017,9 @@ mod tests {
             "{:?}",
             plan.warnings
         );
-        assert!(
-            plan.warnings
-                .iter()
-                .any(|warning| warning.contains("__MACOSX/._junk")),
-            "{:?}",
-            plan.warnings
-        );
+        // macOS junk is dropped at extract time, before anything reads the tree.
+        assert!(!plan.extracted.join("__MACOSX").exists());
+        assert!(!plan.warnings.iter().any(|warning| warning.contains("__MACOSX")), "{:?}", plan.warnings);
         assert!(plan.plan_path.is_file());
         assert!(plan.extracted.is_dir());
 
@@ -5093,13 +5394,9 @@ mod tests {
                 "citadel/models/heroes_wip/billy/billy.vnmskel_c",
                 "models/heroes_wip/billy/billy.vnmskel_c",
             ),
-            (
-                "source",
-                "citadel/materials/heroes/billy/billy_color.vmat",
-                "materials/heroes/billy/billy_color.vmat",
-            ),
-            ("binary", "citadel/tools/setup.exe", "tools/setup.exe"),
         ];
+        // Source files and programs next to compiled files are left out with a warning, not a
+        // refusal (install_shape_tests.rs covers them).
 
         for (name, entry, expected) in cases {
             let archive = root.join(format!("{name}.zip"));

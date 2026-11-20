@@ -44,6 +44,7 @@ Every doc starts with a status line. Values: `active`, `draft`, `planned`, `supe
 | `runbooks/releasing.md` | draft | Signing key, release manifest, signing and publishing steps; the self-updater. |
 | `runbooks/performance.md` | active | Startup, frame time, size and memory: method, measured results, remaining work. |
 | `design/mod-manager-shell.md` | draft | Mod-manager-first sidebar, screens and real data sources. |
+| `design/install-robustness.md` | current | Every archive and mod shape Grimoire and Deadlock Mod Manager accept, every install failure they handle, Sigil's status for each, and the GameBanana regression corpus. |
 | `design/feature-parity.md` | current | Every Grimoire and Deadlock Mod Manager feature outside Settings, with Sigil's status, effort and priority. |
 | `design/locker-3d.md` | superseded | What a posed 3D hero viewer needed from Rune; superseded by `design/3d-viewer.md`. |
 | `design/3d-viewer.md` | active | 3D viewer: asset pipeline and file contract, the wgpu renderer (`sigil-viewer`), the Rune viewport and its cost, and where it appears (Locker, Installed, mod details, Hideout). Real-game output unverified. |
