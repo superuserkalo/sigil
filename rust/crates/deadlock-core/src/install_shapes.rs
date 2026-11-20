@@ -29,6 +29,33 @@ use crate::error::{Error, Result};
 /// variant `.zip`s); three levels leave room without inviting a recursion bomb.
 pub(super) const MAX_NESTING: usize = 3;
 
+/// How many archives inside an archive are unpacked in all. Real uploads ship a handful of
+/// variant archives; this bounds the work a crafted archive can ask for.
+pub(super) const MAX_INNER_ARCHIVES: usize = 64;
+
+/// What the tree under `root` already holds, against the one budget the outer extract and every
+/// nested one share: `None` when it is over.
+fn remaining_budget(root: &Path, limits: &ExtractLimits) -> Result<Option<ExtractLimits>> {
+    let files = walk_tree(root)?;
+    let bytes: u64 = files.iter().map(|(_, size)| *size).sum();
+    if files.len() >= limits.max_entries || bytes >= limits.max_total_bytes {
+        return Ok(None);
+    }
+    Ok(Some(ExtractLimits {
+        max_entries: limits.max_entries - files.len(),
+        max_total_bytes: limits.max_total_bytes - bytes,
+        ..limits.clone()
+    }))
+}
+
+fn over_budget(limits: &ExtractLimits) -> Error {
+    Error::msg(format!(
+        "The archive and the archives inside it unpack to more than Sigil installs ({} or {} files in all), so nothing was installed and the unpacked files were deleted. A real mod is far smaller: this upload is broken or built to fill the disk.",
+        human_bytes(limits.max_total_bytes),
+        limits.max_entries
+    ))
+}
+
 /// The top folders of Deadlock's game content. A loose file's game path starts at the first of
 /// these in its archive path; everything above it is the creator's packaging.
 pub(super) const GAME_ROOT_FOLDERS: [&str; 15] = [
@@ -271,13 +298,23 @@ pub(super) fn not_an_archive(path: &Path) -> bool {
     text.starts_with("<!doctype html") || text.starts_with("<html") || text.starts_with("<?xml") || text.starts_with("{\"")
 }
 
+/// An extract that stopped on the byte, entry or ratio caps (the readers' own wording).
+fn is_cap_error(error: &Error) -> bool {
+    let text = error.to_string();
+    text.contains(" cap") || text.contains("larger than Sigil unpacks") || text.contains("larger than Sigil installs")
+}
+
 pub(super) fn is_password_error(error: &Error) -> bool {
     error.to_string().contains("password protected")
 }
 
 /// Unpack every archive found inside `root`, in a folder named after it, then look again, up to
-/// [`MAX_NESTING`] levels. An inner archive that cannot be opened stays as it is with a warning:
-/// the classifier reports it if nothing else is installable.
+/// [`MAX_NESTING`] levels and [`MAX_INNER_ARCHIVES`] archives. Every inner extract draws on one
+/// budget with the outer one: it gets only the bytes and entries `limits` has left, and the whole
+/// tree is checked again after it, so archives inside archives can never write more than the
+/// caps between them. Running out is an error (the caller deletes the tree). An inner archive
+/// that cannot be opened for another reason stays as it is with a warning: the classifier
+/// reports it if nothing else is installable.
 pub(super) fn expand_nested(
     root: &Path,
     limits: &ExtractLimits,
@@ -286,6 +323,7 @@ pub(super) fn expand_nested(
     warnings: &mut Vec<String>,
 ) -> Result<()> {
     let mut failed: Vec<String> = Vec::new();
+    let mut unpacked = 0usize;
     for _ in 0..MAX_NESTING {
         let inner: Vec<String> = walk_tree(root)?
             .into_iter()
@@ -324,14 +362,31 @@ pub(super) fn expand_nested(
                 target = parent.join(format!("{stem} ({counter})"));
                 counter += 1;
             }
+            unpacked += 1;
+            if unpacked > MAX_INNER_ARCHIVES {
+                return Err(Error::msg(format!(
+                    "The archive holds more than {MAX_INNER_ARCHIVES} archives inside it, more than any mod ships, so nothing was installed and the unpacked files were deleted."
+                )));
+            }
+            let budget = remaining_budget(root, limits)?.ok_or_else(|| over_budget(limits))?;
             fs::create_dir_all(&target)?;
-            match extract_one(format, &path, &target, limits, tools, cancel) {
+            match extract_one(format, &path, &target, &budget, tools, cancel) {
                 Ok(_) => {
                     make_writable(&path);
                     fs::remove_file(&path)?;
                     tidy_tree(&target)?;
+                    let files = walk_tree(root)?;
+                    let bytes: u64 = files.iter().map(|(_, size)| *size).sum();
+                    if files.len() > limits.max_entries || bytes > limits.max_total_bytes {
+                        return Err(over_budget(limits));
+                    }
                 }
                 Err(error) if super::is_cancelled(&error) => return Err(error),
+                // The inner extract stopped on the shared caps: the whole archive is refused.
+                Err(error) if is_cap_error(&error) => {
+                    let _ = remove_tree(&target);
+                    return Err(over_budget(limits));
+                }
                 Err(error) => {
                     let _ = remove_tree(&target);
                     warnings.push(format!("The archive inside it, {relative}, could not be opened: {error}"));

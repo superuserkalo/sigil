@@ -438,3 +438,63 @@ fn odd_names_long_paths_and_read_only_trees_extract() {
     assert!(!again.extracted.join("locked").exists());
     let _ = fs::remove_dir_all(&root);
 }
+
+/// A deflated ZIP of one file of zeros: tiny on disk, `size` bytes unpacked.
+fn deflated_zip(name: &str, size: usize) -> Vec<u8> {
+    use std::io::Write as _;
+    let mut writer = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    let options = zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+    writer.start_file(name, options).unwrap();
+    writer.write_all(&vec![0u8; size]).unwrap();
+    writer.finish().unwrap().into_inner()
+}
+
+#[test]
+fn nested_archives_share_one_size_budget() {
+    let root = scratch("shape-nested-budget");
+    let limits = ExtractLimits { max_total_bytes: 64 * 1024, ..ExtractLimits::default() };
+    // Five inner archives of 20 KiB each: every one fits the 64 KiB cap alone, the five do not.
+    let inner: Vec<(String, Vec<u8>)> =
+        (0..5).map(|index| (format!("part{index}.zip"), deflated_zip(&format!("materials/{index}.vtex_c"), 20 * 1024))).collect();
+    let entries: Vec<(&str, &[u8])> = inner.iter().map(|(name, data)| (name.as_str(), data.as_slice())).collect();
+    let outer = root.join("bomb.zip");
+    fs::write(&outer, zip_of(&entries)).unwrap();
+    assert!(fs::metadata(&outer).unwrap().len() < 8 * 1024, "the outer archive itself is small");
+    let out = root.join("out");
+    let error = extract_archive(&outer, &out, &limits, &ToolPaths::default()).unwrap_err().to_string();
+    assert!(error.contains("archives inside it unpack to more than"), "{error}");
+    assert!(!out.exists(), "a refused extract leaves no files behind");
+
+    // Under the budget, the same shape unpacks.
+    let roomy = ExtractLimits { max_total_bytes: 256 * 1024, ..ExtractLimits::default() };
+    let report = extract_archive(&outer, &out, &roomy, &ToolPaths::default()).unwrap();
+    assert_eq!(report.files.len(), 5);
+
+    // The entry budget is shared too: five archives of three files each against eight entries.
+    let threes: Vec<(String, Vec<u8>)> = (0..5)
+        .map(|index| {
+            let files = [(format!("{index}/a"), b"a" as &[u8]), (format!("{index}/b"), b"b"), (format!("{index}/c"), b"c")];
+            let refs: Vec<(&str, &[u8])> = files.iter().map(|(name, data)| (name.as_str(), *data)).collect();
+            (format!("t{index}.zip"), zip_of(&refs))
+        })
+        .collect();
+    let entries: Vec<(&str, &[u8])> = threes.iter().map(|(name, data)| (name.as_str(), data.as_slice())).collect();
+    let wide = root.join("wide.zip");
+    fs::write(&wide, zip_of(&entries)).unwrap();
+    let few = ExtractLimits { max_entries: 8, ..ExtractLimits::default() };
+    let error = extract_archive(&wide, &out, &few, &ToolPaths::default()).unwrap_err().to_string();
+    assert!(error.contains("archives inside it unpack to more than"), "{error}");
+    assert!(!out.exists());
+
+    // And the number of inner archives is capped, however small they are.
+    let many: Vec<(String, Vec<u8>)> = (0..=shapes::MAX_INNER_ARCHIVES)
+        .map(|index| (format!("v{index}.zip"), deflated_zip("a.txt", 1)))
+        .collect();
+    let entries: Vec<(&str, &[u8])> = many.iter().map(|(name, data)| (name.as_str(), data.as_slice())).collect();
+    let crowded = root.join("crowded.zip");
+    fs::write(&crowded, zip_of(&entries)).unwrap();
+    let error = extract_archive(&crowded, &out, &ExtractLimits::default(), &ToolPaths::default()).unwrap_err().to_string();
+    assert!(error.contains("more than 64 archives"), "{error}");
+    assert!(!out.exists());
+    let _ = fs::remove_dir_all(&root);
+}
