@@ -104,6 +104,8 @@ pub struct SceneLight {
     pub range: f32,
     /// Spot cone, inner and outer half-angles in radians.
     pub cone: Option<(f32, f32)>,
+    /// Lit in real time (the game draws its shadow), not only kept for fog.
+    pub realtime: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -244,6 +246,7 @@ impl SceneDesc {
                 color: c.map(|x| x * intensity),
                 range: l.get("range").and_then(num).unwrap_or(0.0),
                 cone: if kind == LightKind::Spot { cone } else { None },
+                realtime: l.get("realtime").and_then(|r| r.as_bool()).unwrap_or(true),
             });
         }
         if let Some(f) = v.get("fog").filter(|f| f.is_object()) {

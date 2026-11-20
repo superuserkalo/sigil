@@ -29,6 +29,15 @@ fn vs_floor(@builtin(vertex_index) i: u32) -> FloorOut {
 @fragment
 fn fs_floor(in: FloorOut) -> @location(0) vec4<f32> {
     let core = 1.0 - smoothstep(0.0, 0.42, length(in.local * vec2<f32>(1.0, 1.15)));
+    let edge = 1.0 - smoothstep(0.7, 1.0, length(in.local));
+    if (frame.shadow.x > 0.5) {
+        // The key light's real shadow on a catcher at Grimoire's 0.25 opacity, and a faint
+        // contact darkening under the feet.
+        let shade = (1.0 - shadow_at(in.world, vec3<f32>(0.0, 1.0, 0.0))) * 0.25;
+        let a = clamp(shade + core * 0.18, 0.0, 1.0) * edge * floor_draw.shadow.z;
+        return vec4<f32>(0.0, 0.0, 0.0, a);
+    }
+    // No shadow map (a stand-in where shadows are off): the old soft blob toward the far side.
     let thrown = 1.0 - smoothstep(0.0, 0.85, length((in.local - floor_draw.shadow.xy) * vec2<f32>(1.0, 1.3)));
     let a = clamp(core * 0.55 + thrown * 0.35, 0.0, 1.0) * floor_draw.shadow.z;
     return vec4<f32>(0.0, 0.0, 0.0, a);

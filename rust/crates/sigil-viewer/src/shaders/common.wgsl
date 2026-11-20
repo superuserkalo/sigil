@@ -27,6 +27,9 @@ struct Frame {
     counts: vec4<f32>,       // light count, npr enabled, reflection cube on, its top mip
     env_scale: vec4<f32>,    // reflection cube scale (rgb)
     lights: array<Light, 8>,
+    // The shadow-casting light's view projection (world to its clip space).
+    shadow_matrix: mat4x4<f32>,
+    shadow: vec4<f32>,       // on, light index, texel size (uv), normal offset (world units)
 };
 
 struct Material {
@@ -57,4 +60,32 @@ struct Draw {
 // A scene's reflection probe (linear HDR, glTF cube order); 1x1 black without one.
 @group(0) @binding(2) var env_cube: texture_cube<f32>;
 @group(0) @binding(3) var s_env: sampler;
+// The key light's shadow map (one directional or spot light; 1x1 lit without one).
+@group(0) @binding(4) var shadow_map: texture_depth_2d;
+@group(0) @binding(5) var s_shadow: sampler_comparison;
+
+// 1 lit, 0 in shadow: a 3x3 percentage-closer filter over the key light's depth, the surface
+// pushed out along its normal by a texel or so against acne.
+fn shadow_at(world: vec3<f32>, n: vec3<f32>) -> f32 {
+    if (frame.shadow.x < 0.5) {
+        return 1.0;
+    }
+    let p = frame.shadow_matrix * vec4<f32>(world + n * frame.shadow.w, 1.0);
+    if (p.w <= 0.0) {
+        return 1.0;
+    }
+    let ndc = p.xyz / p.w;
+    let uv = vec2<f32>(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
+    if (uv.x < 0.0 || uv.y < 0.0 || uv.x > 1.0 || uv.y > 1.0 || ndc.z > 1.0 || ndc.z < 0.0) {
+        return 1.0;
+    }
+    let texel = frame.shadow.z;
+    var sum = 0.0;
+    for (var y = -1; y <= 1; y = y + 1) {
+        for (var x = -1; x <= 1; x = x + 1) {
+            sum = sum + textureSampleCompareLevel(shadow_map, s_shadow, uv + vec2<f32>(f32(x), f32(y)) * texel, ndc.z);
+        }
+    }
+    return sum / 9.0;
+}
 

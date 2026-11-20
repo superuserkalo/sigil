@@ -243,6 +243,9 @@ pub struct FrameGpu {
     pub counts: [f32; 4],
     pub env_scale: [f32; 4],
     pub lights: [LightGpu; 8],
+    /// The shadow-casting light's view projection, and on, light index, texel, normal offset.
+    pub shadow_matrix: [f32; 16],
+    pub shadow: [f32; 4],
 }
 
 #[repr(C)]
@@ -308,6 +311,7 @@ pub struct Pipelines {
     threshold: wgpu::RenderPipeline,
     down: wgpu::RenderPipeline,
     up: wgpu::RenderPipeline,
+    shadow: wgpu::RenderPipeline,
     sampler_repeat: wgpu::Sampler,
     sampler_clamp: wgpu::Sampler,
     white: wgpu::TextureView,
@@ -408,6 +412,13 @@ impl Pipelines {
                 },
                 cube_entry(2, wgpu::ShaderStages::FRAGMENT),
                 sampler_entry(3, wgpu::ShaderStages::FRAGMENT),
+                wgpu::BindGroupLayoutEntry {
+                    binding: 4,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture { sample_type: wgpu::TextureSampleType::Depth, view_dimension: wgpu::TextureViewDimension::D2, multisampled: false },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry { binding: 5, visibility: wgpu::ShaderStages::FRAGMENT, ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Comparison), count: None },
             ],
         });
         let frame_only_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor { label: Some("viewer frame only"), entries: &[uniform_entry(0, vf)] });
@@ -505,6 +516,25 @@ impl Pipelines {
             multiview_mask: None,
             cache: None,
         });
+        // The key light's shadow map: depth only, both faces (cloth and capes are thin), with a
+        // slope-scaled bias against acne.
+        let shadow = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("viewer shadow"),
+            layout: Some(&depth_layout),
+            vertex: wgpu::VertexState { module: &scene, entry_point: Some("vs_depth"), compilation_options: Default::default(), buffers: &[Some(vertex_layout())] },
+            primitive: wgpu::PrimitiveState { cull_mode: None, ..Default::default() },
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: DEPTH,
+                depth_write_enabled: Some(true),
+                depth_compare: Some(wgpu::CompareFunction::LessEqual),
+                stencil: Default::default(),
+                bias: wgpu::DepthBiasState { constant: 2, slope_scale: 2.0, clamp: 0.0 },
+            }),
+            multisample: Default::default(),
+            fragment: None,
+            multiview_mask: None,
+            cache: None,
+        });
         let floor = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("viewer floor"),
             layout: Some(&floor_pl),
@@ -579,6 +609,7 @@ impl Pipelines {
             threshold,
             down,
             up,
+            shadow,
             sampler_repeat,
             sampler_clamp,
         }
@@ -681,6 +712,8 @@ pub struct GpuPrim {
     blend: Blend,
     double: bool,
     outline: bool,
+    /// Alpha-tested (hair cards, foliage): left out of the shadow map rather than cast as quads.
+    masked: bool,
     pub visible: bool,
     pub center: Vec3,
     /// The material's own blend, before an instance's tint turns it translucent.
@@ -806,6 +839,7 @@ impl GpuMesh {
                     blend,
                     double: m.double_sided || m.morphic.as_ref().is_some_and(|x| x.flag("F_RENDER_BACKFACES")),
                     outline: r.outline_thickness > 0.0 && r.outline_mask.is_some() && !prim.authored_shell,
+                    masked: matches!(m.alpha, AlphaMode::Mask(_)),
                     visible: shown,
                     center: prim.bounds.center(),
                     own_blend: blend,
@@ -982,6 +1016,8 @@ pub struct FrameInputs<'a> {
     /// The reflection probe and the sky, when the scene has them.
     pub env_cube: Option<&'a wgpu::TextureView>,
     pub sky_cube: Option<&'a wgpu::TextureView>,
+    /// The key light's view projection when it casts a shadow this frame.
+    pub shadow: Option<[f32; 16]>,
 }
 
 pub struct FrameResources {
@@ -990,7 +1026,15 @@ pub struct FrameResources {
     floor_buf: wgpu::Buffer,
     frame_only: wgpu::BindGroup,
     floor_group: wgpu::BindGroup,
+    /// The light's camera for the shadow pass (only `view_proj` is read there).
+    shadow_buf: wgpu::Buffer,
+    shadow_only: wgpu::BindGroup,
+    shadow_map: wgpu::TextureView,
+    shadow_sampler: wgpu::Sampler,
 }
+
+/// The shadow map's edge in texels.
+pub const SHADOW_SIZE: u32 = 2048;
 
 impl FrameResources {
     pub fn new(gpu: &Gpu, p: &Pipelines) -> FrameResources {
@@ -1001,7 +1045,19 @@ impl FrameResources {
         let floor_buf = buf(std::mem::size_of::<FloorGpu>(), "viewer floor");
         let frame_only = device.create_bind_group(&wgpu::BindGroupDescriptor { label: Some("viewer frame only"), layout: &p.frame_only_layout, entries: &[wgpu::BindGroupEntry { binding: 0, resource: frame_buf.as_entire_binding() }] });
         let floor_group = device.create_bind_group(&wgpu::BindGroupDescriptor { label: Some("viewer floor"), layout: &p.floor_layout, entries: &[wgpu::BindGroupEntry { binding: 0, resource: floor_buf.as_entire_binding() }] });
-        FrameResources { frame_buf, post_buf, floor_buf, frame_only, floor_group }
+        let shadow_buf = buf(std::mem::size_of::<FrameGpu>(), "viewer shadow camera");
+        let shadow_only = device.create_bind_group(&wgpu::BindGroupDescriptor { label: Some("viewer shadow camera"), layout: &p.frame_only_layout, entries: &[wgpu::BindGroupEntry { binding: 0, resource: shadow_buf.as_entire_binding() }] });
+        let shadow_map = target(device, SHADOW_SIZE, SHADOW_SIZE, DEPTH, 1, wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING).create_view(&Default::default());
+        let shadow_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("viewer shadow"),
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            compare: Some(wgpu::CompareFunction::LessEqual),
+            ..Default::default()
+        });
+        FrameResources { frame_buf, post_buf, floor_buf, frame_only, floor_group, shadow_buf, shadow_only, shadow_map, shadow_sampler }
     }
 }
 
@@ -1051,11 +1107,39 @@ pub fn render_frame(gpu: &Gpu, p: &Pipelines, r: &FrameResources, t: &Targets, i
             wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(&t.rim_depth) },
             wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::TextureView(inputs.env_cube.unwrap_or(&p.black_cube)) },
             wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::Sampler(&p.sampler_clamp) },
+            wgpu::BindGroupEntry { binding: 4, resource: wgpu::BindingResource::TextureView(&r.shadow_map) },
+            wgpu::BindGroupEntry { binding: 5, resource: wgpu::BindingResource::Sampler(&r.shadow_sampler) },
         ],
     });
+    if let Some(m) = inputs.shadow {
+        let mut light = inputs.frame;
+        light.view_proj = m;
+        gpu.queue.write_buffer(&r.shadow_buf, 0, bytemuck::bytes_of(&light));
+    }
     let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("viewer frame") });
     for (layer, shown) in inputs.layers.iter().enumerate() {
         let Some(shown) = shown else { continue };
+        // The key light's shadow map, from this layer's models (the before side casts its own).
+        if inputs.shadow.is_some() {
+            let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("viewer shadow"),
+                color_attachments: &[],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment { view: &r.shadow_map, depth_ops: Some(wgpu::Operations { load: wgpu::LoadOp::Clear(1.0), store: wgpu::StoreOp::Store }), stencil_ops: None }),
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            pass.set_pipeline(&p.shadow);
+            pass.set_bind_group(0, &r.shadow_only, &[]);
+            for s in shown.iter() {
+                for prim in s.model.prims.iter().filter(|q| q.visible && q.blend == Blend::Opaque && !q.masked) {
+                    pass.set_bind_group(2, &s.model.draws[prim.mesh], &[]);
+                    pass.set_vertex_buffer(0, prim.vertices.slice(..));
+                    pass.set_index_buffer(prim.indices.slice(..), wgpu::IndexFormat::Uint32);
+                    pass.draw_indexed(0..prim.count, 0, 0..1);
+                }
+            }
+        }
         // Hero depth for the rim occlusion test.
         {
             let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
