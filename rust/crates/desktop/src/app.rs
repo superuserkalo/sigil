@@ -2092,6 +2092,10 @@ pub fn on_key(s: &mut State, ev: &KeyEvent, tx: &mut Tx) -> bool {
     if crate::shell::on_key(s, ev, tx) {
         return true;
     }
+    // Escape leaves the 3D viewer's full screen wherever focus is (it covers the whole window).
+    if ev.key == Key::Escape && crate::viewer::escape(s) {
+        return true;
+    }
     // Installed: Ctrl or Cmd+A selects every shown mod, with nothing focused (A3).
     if screens::installed::select_all_key(s, ev) {
         return true;

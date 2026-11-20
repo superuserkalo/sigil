@@ -17,6 +17,44 @@ pub const OUTPUT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
 /// Textures larger than this are downsampled on load (a hero's 4K maps fill no viewport).
 pub const MAX_TEXTURE_EDGE: u32 = 2048;
 const BLOOM_LEVELS: usize = 5;
+/// What one viewer may put on the GPU in textures and in vertex and index buffers. Past it a
+/// texture is downscaled (then dropped) and a mesh is left out, with the reason recorded: a whole
+/// room on a 4 GB card must open, not run the driver out of memory. Integrated and software
+/// adapters share system memory and get half.
+pub const TEXTURE_BUDGET: u64 = 1 << 30;
+pub const BUFFER_BUDGET: u64 = 1536 << 20;
+/// The longest a frame may take on the GPU before the viewer gives up on it (a lost or hung
+/// device) instead of waiting forever.
+pub const FRAME_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
+/// The most "left out" lines kept; the rest are counted.
+const SKIPPED_LINES: usize = 64;
+
+/// What one viewer has on the GPU and what it left out to stay inside the device's limits and
+/// the budgets above.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Usage {
+    pub textures: usize,
+    pub texture_bytes: u64,
+    pub buffer_bytes: u64,
+    /// Textures uploaded smaller than the file to fit the budget.
+    pub downscaled: usize,
+    /// Textures, meshes and palettes left out, and why (the first `SKIPPED_LINES`).
+    pub skipped: Vec<String>,
+    pub skipped_count: usize,
+}
+
+impl Usage {
+    pub fn skip(&mut self, why: String) {
+        self.skipped_count += 1;
+        if self.skipped.len() < SKIPPED_LINES {
+            self.skipped.push(why);
+        }
+    }
+}
+
+fn mb(bytes: u64) -> u64 {
+    bytes.div_ceil(1 << 20)
+}
 
 #[derive(Debug, Clone)]
 pub enum GpuError {
@@ -39,6 +77,15 @@ pub struct Gpu {
     pub queue: wgpu::Queue,
     pub info: wgpu::AdapterInfo,
     pub msaa: u32,
+    /// The first GPU error since the last [`Gpu::take_error`]: validation, out of memory or a lost
+    /// device. wgpu's default handler panics on these, which killed the viewer's thread (and on
+    /// some drivers the app) with the view stuck on "Loading"; the viewer reports them instead.
+    errors: std::sync::Arc<std::sync::Mutex<Option<String>>>,
+    /// The device's limits: every buffer and texture is checked against them before it is made.
+    pub limits: wgpu::Limits,
+    pub texture_budget: u64,
+    pub buffer_budget: u64,
+    usage: std::sync::Mutex<Usage>,
 }
 
 fn instance() -> wgpu::Instance {
@@ -62,20 +109,38 @@ impl Gpu {
     /// The viewer's own device on the high-performance adapter (a hero at 60 fps wants the
     /// discrete GPU where there is one). A software adapter is accepted.
     pub fn new() -> Result<Gpu, GpuError> {
+        Gpu::on_adapter(false)
+    }
+
+    /// The software adapter (WARP on Windows), for a machine whose driver cannot build the
+    /// pipelines. `NoAdapter` where the platform has none.
+    pub fn software() -> Result<Gpu, GpuError> {
+        Gpu::on_adapter(true)
+    }
+
+    fn on_adapter(software: bool) -> Result<Gpu, GpuError> {
         let instance = instance();
         let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
             power_preference: wgpu::PowerPreference::HighPerformance,
-            force_fallback_adapter: false,
+            force_fallback_adapter: software,
             compatible_surface: None,
             apply_limit_buckets: false,
         }))
         .map_err(|e| GpuError::NoAdapter(e.to_string()))?;
         let info = adapter.get_info();
-        let limits = wgpu::Limits::downlevel_defaults().using_resolution(adapter.limits()).using_alignment(adapter.limits());
+        let available = adapter.limits();
+        let limits = wgpu::Limits::downlevel_defaults().using_resolution(available.clone()).using_alignment(available.clone());
+        // A whole room (the Hideout) needs more than the 256 MB downlevel buffer cap; ask for what
+        // the adapter has rather than failing validation mid-load.
+        let limits = wgpu::Limits { max_buffer_size: available.max_buffer_size, ..limits };
         let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
             label: Some("sigil-viewer"),
             required_features: wgpu::Features::empty(),
-            required_limits: wgpu::Limits { max_storage_buffers_per_shader_stage: 4, max_storage_buffer_binding_size: 64 << 20, ..limits },
+            required_limits: wgpu::Limits {
+                max_storage_buffers_per_shader_stage: 4,
+                max_storage_buffer_binding_size: (64 << 20u64).min(available.max_storage_buffer_binding_size),
+                ..limits
+            },
             experimental_features: Default::default(),
             memory_hints: wgpu::MemoryHints::MemoryUsage,
             trace: Default::default(),
@@ -83,7 +148,70 @@ impl Gpu {
         .map_err(|e| GpuError::Device(e.to_string()))?;
         let flags = adapter.get_texture_format_features(HDR).flags;
         let msaa = if flags.sample_count_supported(4) && adapter.get_texture_format_features(DEPTH).flags.sample_count_supported(4) { 4 } else { 1 };
-        Ok(Gpu { device, queue, info, msaa })
+        let errors = std::sync::Arc::new(std::sync::Mutex::new(None::<String>));
+        let sink = errors.clone();
+        device.on_uncaptured_error(std::sync::Arc::new(move |error: wgpu::Error| {
+            if let Ok(mut slot) = sink.lock() {
+                slot.get_or_insert_with(|| error.to_string());
+            }
+        }));
+        let sink = errors.clone();
+        device.set_device_lost_callback(move |_reason, message| {
+            if let Ok(mut slot) = sink.lock() {
+                slot.get_or_insert_with(|| format!("The graphics device was lost: {message}"));
+            }
+        });
+        let limits = device.limits();
+        let shared = matches!(info.device_type, wgpu::DeviceType::IntegratedGpu | wgpu::DeviceType::Cpu);
+        let (texture_budget, buffer_budget) = if shared { (TEXTURE_BUDGET / 2, BUFFER_BUDGET / 2) } else { (TEXTURE_BUDGET, BUFFER_BUDGET) };
+        Ok(Gpu { device, queue, info, msaa, errors, limits, texture_budget, buffer_budget, usage: Default::default() })
+    }
+
+    /// The first GPU error since the last call, if any.
+    pub fn take_error(&self) -> Option<String> {
+        self.errors.lock().ok().and_then(|mut slot| slot.take())
+    }
+
+    /// Records an error the way the device's own handler does (the first one wins).
+    pub fn report(&self, error: String) {
+        if let Ok(mut slot) = self.errors.lock() {
+            slot.get_or_insert(error);
+        }
+    }
+
+    /// What is on the GPU and what was left out.
+    pub fn usage(&self) -> Usage {
+        self.usage.lock().map(|u| u.clone()).unwrap_or_default()
+    }
+
+    fn with_usage<T>(&self, f: impl FnOnce(&mut Usage) -> T) -> T {
+        let mut guard = self.usage.lock().unwrap_or_else(|e| e.into_inner());
+        f(&mut guard)
+    }
+
+    /// Reserves `bytes` of buffer memory for `what`. False (and recorded) when one buffer would
+    /// pass the device's `max_buffer_size` or the total would pass the budget.
+    pub fn reserve_buffers(&self, sizes: &[u64], what: &str) -> bool {
+        let total: u64 = sizes.iter().sum();
+        let limit = self.limits.max_buffer_size;
+        let budget = self.buffer_budget;
+        self.with_usage(|u| {
+            if let Some(big) = sizes.iter().find(|s| **s > limit) {
+                u.skip(format!("{what}: a {} MB buffer is over this GPU's {} MB limit", mb(*big), mb(limit)));
+                false
+            } else if u.buffer_bytes + total > budget {
+                u.skip(format!("{what}: over the {} MB geometry budget", mb(budget)));
+                false
+            } else {
+                u.buffer_bytes += total;
+                true
+            }
+        })
+    }
+
+    /// The largest render target edge this device takes (and the viewer allows).
+    pub fn max_edge(&self) -> u32 {
+        self.limits.max_texture_dimension_2d.clamp(1, 8192)
     }
 }
 
@@ -250,7 +378,22 @@ fn solid(device: &wgpu::Device, queue: &wgpu::Queue, rgba: [u8; 4], format: wgpu
 }
 
 impl Pipelines {
-    pub fn new(gpu: &Gpu) -> Pipelines {
+    /// Compiles the shaders and builds every pipeline. An error (a shader the driver's compiler
+    /// rejects, FXC on D3D12 among them) is returned with its message instead of reaching the
+    /// device's handler, so the viewer can say why or try another adapter.
+    pub fn new(gpu: &Gpu) -> Result<Pipelines, String> {
+        let validation = gpu.device.push_error_scope(wgpu::ErrorFilter::Validation);
+        let internal = gpu.device.push_error_scope(wgpu::ErrorFilter::Internal);
+        let memory = gpu.device.push_error_scope(wgpu::ErrorFilter::OutOfMemory);
+        let pipes = Pipelines::build(gpu);
+        let errors = [pollster::block_on(memory.pop()), pollster::block_on(internal.pop()), pollster::block_on(validation.pop())];
+        match errors.into_iter().flatten().next() {
+            Some(error) => Err(error.to_string()),
+            None => Ok(pipes),
+        }
+    }
+
+    fn build(gpu: &Gpu) -> Pipelines {
         let device = &gpu.device;
         let vf = wgpu::ShaderStages::VERTEX_FRAGMENT;
         let frame_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -469,11 +612,41 @@ pub fn mip_chain(width: u32, height: u32, rgba: &[u8]) -> Vec<(u32, u32, Vec<u8>
     levels
 }
 
-fn upload_image(gpu: &Gpu, image: &crate::model::Image, srgb: bool) -> wgpu::TextureView {
-    let mut levels = mip_chain(image.width, image.height, &image.rgba);
+/// Uploads an image with its mips, inside the device's edge limit and the texture budget:
+/// past the budget the largest mips go first (down to 64 pixels), then the texture is left out
+/// (`None`, and the material falls back to a flat one).
+fn upload_image(gpu: &Gpu, image: &crate::model::Image, srgb: bool) -> Option<wgpu::TextureView> {
+    let (iw, ih) = (image.width, image.height);
+    if iw == 0 || ih == 0 || (image.rgba.len() as u64) < u64::from(iw) * u64::from(ih) * 4 {
+        gpu.with_usage(|u| u.skip(format!("a {iw}x{ih} texture with missing pixels")));
+        return None;
+    }
+    let mut levels = mip_chain(iw, ih, &image.rgba);
+    let max_edge = MAX_TEXTURE_EDGE.min(gpu.limits.max_texture_dimension_2d).max(1);
     // Drop levels above the edge cap.
-    while levels.len() > 1 && levels[0].0.max(levels[0].1) > MAX_TEXTURE_EDGE {
+    while levels.len() > 1 && levels[0].0.max(levels[0].1) > max_edge {
         levels.remove(0);
+    }
+    let bytes = |levels: &[(u32, u32, Vec<u8>)]| levels.iter().map(|l| l.2.len() as u64).sum::<u64>();
+    let budget = gpu.texture_budget;
+    let fits = gpu.with_usage(|u| {
+        let mut downscaled = false;
+        while levels.len() > 1 && levels[0].0.max(levels[0].1) > 64 && u.texture_bytes + bytes(&levels) > budget {
+            levels.remove(0);
+            downscaled = true;
+        }
+        let size = bytes(&levels);
+        if u.texture_bytes + size > budget {
+            u.skip(format!("a {iw}x{ih} texture: over the {} MB texture budget", mb(budget)));
+            return false;
+        }
+        u.texture_bytes += size;
+        u.textures += 1;
+        u.downscaled += downscaled as usize;
+        true
+    });
+    if !fits {
+        return None;
     }
     let (w, h) = (levels[0].0, levels[0].1);
     let format = if srgb { wgpu::TextureFormat::Rgba8UnormSrgb } else { wgpu::TextureFormat::Rgba8Unorm };
@@ -495,9 +668,10 @@ fn upload_image(gpu: &Gpu, image: &crate::model::Image, srgb: bool) -> wgpu::Tex
             wgpu::Extent3d { width: *lw, height: *lh, depth_or_array_layers: 1 },
         );
     }
-    texture.create_view(&Default::default())
+    Some(texture.create_view(&Default::default()))
 }
 
+#[derive(Clone)]
 pub struct GpuPrim {
     vertices: wgpu::Buffer,
     indices: wgpu::Buffer,
@@ -509,9 +683,21 @@ pub struct GpuPrim {
     outline: bool,
     pub visible: bool,
     pub center: Vec3,
+    /// The material's own blend, before an instance's tint turns it translucent.
+    own_blend: Blend,
+    /// Shown by the shell rule, before an instance draws only one primitive.
+    shown: bool,
+    index_in_mesh: usize,
 }
 
-/// A model's buffers. Palettes are written each frame from the posed skeleton.
+/// A model's textures, materials and vertex and index buffers, uploaded once and shared by
+/// every placement of it (a room places one aggregate glb hundreds of times, one fragment each).
+pub struct GpuMesh {
+    prims: Vec<GpuPrim>,
+    materials: Vec<wgpu::BindGroup>,
+}
+
+/// A placed model: the shared mesh plus its own palette, draw uniforms and visibility.
 pub struct GpuModel {
     prims: Vec<GpuPrim>,
     materials: Vec<wgpu::BindGroup>,
@@ -521,16 +707,18 @@ pub struct GpuModel {
     _draw_buffers: Vec<wgpu::Buffer>,
 }
 
-impl GpuModel {
-    pub fn new(gpu: &Gpu, p: &Pipelines, model: &Model, palette_len: usize, bases: &[u32], tint: [f32; 4], only_primitive: Option<usize>) -> GpuModel {
+impl GpuMesh {
+    /// Uploads `model`. A primitive whose buffers pass the device's limit or the geometry budget
+    /// is left out (recorded in `Gpu::usage`); `what` names the model there.
+    pub fn new(gpu: &Gpu, p: &Pipelines, model: &Model, what: &str) -> GpuMesh {
         use wgpu::util::DeviceExt;
         let device = &gpu.device;
-        let mut cache: HashMap<(usize, bool), wgpu::TextureView> = HashMap::new();
+        let mut cache: HashMap<(usize, bool), Option<wgpu::TextureView>> = HashMap::new();
         let mut view_for = |slot: Option<crate::material::Slot>, srgb: bool| -> Option<wgpu::TextureView> {
             let slot = slot?;
             let tex = model.textures.get(slot.texture)?;
             let image = model.images.get(tex.image)?;
-            Some(cache.entry((tex.image, srgb)).or_insert_with(|| upload_image(gpu, image, srgb)).clone())
+            cache.entry((tex.image, srgb)).or_insert_with(|| upload_image(gpu, image, srgb)).clone()
         };
         let resolved: Vec<Resolved> = model.materials.iter().map(|m| m.resolve()).collect();
         let default_material = crate::material::Material::default();
@@ -588,6 +776,61 @@ impl GpuModel {
             entries.push(wgpu::BindGroupEntry { binding: 8, resource: wgpu::BindingResource::Sampler(if repeat { &p.sampler_repeat } else { &p.sampler_clamp }) });
             materials.push(device.create_bind_group(&wgpu::BindGroupDescriptor { label: Some("viewer material"), layout: &p.material_layout, entries: &entries }));
         }
+        let mut prims = Vec::new();
+        for (mi, mesh) in model.meshes.iter().enumerate() {
+            for &pi in &mesh.primitives {
+                let Some(prim) = model.primitives.get(pi) else { continue };
+                if prim.indices.is_empty() || prim.vertices.is_empty() {
+                    continue;
+                }
+                let sizes = [(prim.vertices.len() * std::mem::size_of::<Vertex>()) as u64, (prim.indices.len() * 4) as u64];
+                if !gpu.reserve_buffers(&sizes, what) {
+                    continue;
+                }
+                let material = prim.material.unwrap_or(0).min(material_count - 1);
+                let m = model.materials.get(material).unwrap_or(&default_material);
+                let r = &resolved.get(material).cloned().unwrap_or_else(|| m.resolve());
+                let shown = !prim.authored_shell || (m.shell_visible(r) && shell_wants_no_growth(model, m, r));
+                let blend = match m.alpha {
+                    AlphaMode::Opaque | AlphaMode::Mask(_) => Blend::Opaque,
+                    AlphaMode::Blend => Blend::Alpha,
+                    AlphaMode::Additive => Blend::Additive,
+                };
+                let blend = if m.transmission > 0.0 && blend == Blend::Opaque { Blend::Alpha } else { blend };
+                prims.push(GpuPrim {
+                    vertices: device.create_buffer_init(&wgpu::util::BufferInitDescriptor { label: Some("viewer vertices"), contents: bytemuck::cast_slice(&prim.vertices), usage: wgpu::BufferUsages::VERTEX }),
+                    indices: device.create_buffer_init(&wgpu::util::BufferInitDescriptor { label: Some("viewer indices"), contents: bytemuck::cast_slice(&prim.indices), usage: wgpu::BufferUsages::INDEX }),
+                    count: prim.indices.len() as u32,
+                    material,
+                    mesh: mi,
+                    blend,
+                    double: m.double_sided || m.morphic.as_ref().is_some_and(|x| x.flag("F_RENDER_BACKFACES")),
+                    outline: r.outline_thickness > 0.0 && r.outline_mask.is_some() && !prim.authored_shell,
+                    visible: shown,
+                    center: prim.bounds.center(),
+                    own_blend: blend,
+                    shown,
+                    index_in_mesh: prim.index_in_mesh,
+                });
+            }
+        }
+        GpuMesh { prims, materials }
+    }
+
+    /// One placement: its own palette of `palette_len` matrices, draw uniforms per mesh
+    /// (`bases`), tint, and only primitive `only` of each mesh when given (an aggregate
+    /// fragment). The textures and buffers are the mesh's.
+    pub fn instance(&self, gpu: &Gpu, p: &Pipelines, palette_len: usize, bases: &[u32], tint: [f32; 4], only: Option<usize>) -> GpuModel {
+        use wgpu::util::DeviceExt;
+        let device = &gpu.device;
+        // A palette past the storage binding limit is cut (the bones past it read zero).
+        let max_len = (gpu.limits.max_storage_buffer_binding_size / 64).max(1) as usize;
+        let palette_len = if palette_len > max_len {
+            gpu.with_usage(|u| u.skip(format!("a skeleton of {palette_len} bones: over this GPU's {max_len}")));
+            max_len
+        } else {
+            palette_len
+        };
         let palette = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("viewer palette"),
             size: (palette_len.max(1) * 64) as u64,
@@ -609,38 +852,25 @@ impl GpuModel {
             }));
             draw_buffers.push(buffer);
         }
-        let mut prims = Vec::new();
-        for (mi, mesh) in model.meshes.iter().enumerate() {
-            for &pi in &mesh.primitives {
-                let prim = &model.primitives[pi];
-                if prim.indices.is_empty() {
-                    continue;
-                }
-                let material = prim.material.unwrap_or(0).min(material_count - 1);
-                let m = model.materials.get(material).unwrap_or(&default_material);
-                let r = &resolved.get(material).cloned().unwrap_or_else(|| m.resolve());
-                let visible = (!prim.authored_shell || (m.shell_visible(r) && shell_wants_no_growth(model, m, r))) && only_primitive.is_none_or(|i| i == prim.index_in_mesh);
-                let blend = match m.alpha {
-                    AlphaMode::Opaque | AlphaMode::Mask(_) => Blend::Opaque,
-                    AlphaMode::Blend => Blend::Alpha,
-                    AlphaMode::Additive => Blend::Additive,
-                };
-                let blend = if (m.transmission > 0.0 || tint[3] < 0.999) && blend == Blend::Opaque { Blend::Alpha } else { blend };
-                prims.push(GpuPrim {
-                    vertices: device.create_buffer_init(&wgpu::util::BufferInitDescriptor { label: Some("viewer vertices"), contents: bytemuck::cast_slice(&prim.vertices), usage: wgpu::BufferUsages::VERTEX }),
-                    indices: device.create_buffer_init(&wgpu::util::BufferInitDescriptor { label: Some("viewer indices"), contents: bytemuck::cast_slice(&prim.indices), usage: wgpu::BufferUsages::INDEX }),
-                    count: prim.indices.len() as u32,
-                    material,
-                    mesh: mi,
-                    blend,
-                    double: m.double_sided || m.morphic.as_ref().is_some_and(|x| x.flag("F_RENDER_BACKFACES")),
-                    outline: r.outline_thickness > 0.0 && r.outline_mask.is_some() && !prim.authored_shell,
-                    visible,
-                    center: prim.bounds.center(),
-                });
-            }
-        }
-        GpuModel { prims, materials, draws, palette, palette_len, _draw_buffers: draw_buffers }
+        // A fragment keeps only its primitive: the frame never walks the others.
+        let prims = self
+            .prims
+            .iter()
+            .filter(|q| only.is_none_or(|i| i == q.index_in_mesh) && q.mesh < draws.len())
+            .map(|q| {
+                let mut q = q.clone();
+                q.blend = if tint[3] < 0.999 && q.own_blend == Blend::Opaque { Blend::Alpha } else { q.own_blend };
+                q.visible = q.shown;
+                q
+            })
+            .collect();
+        GpuModel { prims, materials: self.materials.clone(), draws, palette, palette_len, _draw_buffers: draw_buffers }
+    }
+}
+
+impl GpuModel {
+    pub fn new(gpu: &Gpu, p: &Pipelines, model: &Model, palette_len: usize, bases: &[u32], tint: [f32; 4], only_primitive: Option<usize>) -> GpuModel {
+        GpuMesh::new(gpu, p, model, "a model").instance(gpu, p, palette_len, bases, tint, only_primitive)
     }
 
     pub fn write_palette(&self, gpu: &Gpu, palette: &[Mat4]) {
@@ -959,14 +1189,21 @@ pub fn render_frame(gpu: &Gpu, p: &Pipelines, r: &FrameResources, t: &Targets, i
     gpu.queue.submit([enc.finish()]);
     let encoded = Instant::now();
     let mut timings = Timings { encode_ms: (encoded - started).as_secs_f32() * 1000.0, ..Default::default() };
+    // A bounded wait: a hung or lost device becomes an error the caller reports, not a thread
+    // stuck here with the view on its last frame.
+    let wait = || {
+        if let Err(error) = device.poll(wgpu::PollType::Wait { submission_index: None, timeout: Some(FRAME_TIMEOUT) }) {
+            gpu.report(format!("the frame did not finish on the GPU: {error}"));
+        }
+    };
     if !inputs.read {
-        let _ = device.poll(wgpu::PollType::wait_indefinitely());
+        wait();
         timings.gpu_wait_ms = encoded.elapsed().as_secs_f32() * 1000.0;
         return timings;
     }
     let slice = t.readback.slice(..);
     slice.map_async(wgpu::MapMode::Read, |_| {});
-    let _ = device.poll(wgpu::PollType::wait_indefinitely());
+    wait();
     let mapped = Instant::now();
     timings.gpu_wait_ms = (mapped - encoded).as_secs_f32() * 1000.0;
     {

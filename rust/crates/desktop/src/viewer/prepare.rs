@@ -214,6 +214,17 @@ pub fn stage_problem(s: &mut State, key: &str, ask: Ask, owner: Owner, problem: 
     s.viewers.problems.insert(key.to_string(), problem);
 }
 
+/// A view whose render thread is loading or failed, for headless scenes.
+pub fn stage_view(s: &mut State, key: &str, ask: Ask, owner: Owner, status: Status, progress: Option<sigil_viewer::LoadProgress>) {
+    super::close(s, key);
+    let title = title_of(&ask);
+    s.viewers.asks.insert(key.to_string(), Asked { ask, owner, title: title.clone(), sig: mods_sig(s), still: None });
+    if owner == Owner::FullScreen {
+        s.viewers.fullscreen = Some(key.to_string());
+    }
+    super::stage_status(s, key, &title, status, progress);
+}
+
 fn open_stand_in(s: &mut State, key: &str, title: &str, ask: &Ask) {
     match ask {
         Ask::Hero { .. } => {

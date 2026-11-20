@@ -191,7 +191,12 @@ fn build(doc: &gltf::Document, buffers: &[gltf::buffer::Data], images: Vec<gltf:
         Some(scene) => scene.nodes().collect(),
         None => doc.nodes().filter(|n| model.nodes[n.index()].parent.is_none()).collect(),
     };
+    // Each node once: a file whose children loop back would otherwise never finish.
+    let mut visited = vec![false; model.nodes.len()];
     while let Some(node) = stack.pop() {
+        if std::mem::replace(&mut visited[node.index()], true) {
+            continue;
+        }
         if let Some(mesh) = node.mesh() {
             placed.push((node.index(), node.skin().map(|s| s.index()), mesh));
         }
