@@ -12,6 +12,7 @@
 //! (`model::load_path`) is plain CPU work and can run anywhere.
 
 pub mod camera;
+pub mod capture;
 pub mod fixture;
 pub mod gpu;
 pub mod material;
