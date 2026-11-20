@@ -47,7 +47,7 @@ Every doc starts with a status line. Values: `active`, `draft`, `planned`, `supe
 | `design/install-robustness.md` | current | Every archive and mod shape Grimoire and Deadlock Mod Manager accept, every install failure they handle, Sigil's status for each, and the GameBanana regression corpus. |
 | `design/feature-parity.md` | current | Every Grimoire and Deadlock Mod Manager feature outside Settings, with Sigil's status, effort and priority. |
 | `design/locker-3d.md` | superseded | What a posed 3D hero viewer needed from Rune; superseded by `design/3d-viewer.md`. |
-| `design/3d-viewer.md` | active | 3D viewer: asset pipeline and file contract, the wgpu renderer (`sigil-viewer`), the Rune viewport and its cost, and where it appears (Locker, Installed, mod details, Hideout). Real-game output unverified. |
+| `design/3d-viewer.md` | active | 3D viewer: asset pipeline and file contract (with particle bundles), the wgpu renderer (`sigil-viewer`: shadows, cloth, particles, the Hideout's lightmap, probes, fog and post), the Rune viewport (Controls panel, GIF and video capture) and its cost, and where it appears (Locker, Installed, mod details, Hideout). Real-game output unverified. |
 | `design/stats-live.md` | design | Live match strip: what `-condebug` gives, what a HUD bridge mod must add, the polling budget. |
 | `design/settings-parity.md` | current | Every Grimoire and Deadlock Mod Manager setting, with Sigil's status and place. |
 | `design/deep-links.md` | current | Install with Sigil links: accepted formats, OS registration, single instance, GameBanana 1-Click listing. |
