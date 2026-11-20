@@ -1295,6 +1295,10 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
     if let Some(full) = crate::viewer::overlay(s, &u) {
         root = root.child(full);
     }
+    // The viewer's Controls panel, anchored to its strip button.
+    if let Some(panel) = crate::viewer::popover(s, &u) {
+        root = root.child(panel);
+    }
     // Toasts sit above everything, dialogs included, as Grimoire's do.
     if let Some(toasts) = crate::notify::region(s, &u) {
         root = root.child(toasts);

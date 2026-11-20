@@ -94,6 +94,26 @@ for redistribution.
   `viewerAmbientLight.ts` and `HeroPoseViewer.tsx`; the hero and base post curves from
   `src/lib/particles/render/post/sourcePostProcess.ts`. The playback strip (pause, seek, speed,
   camera reset, full screen, capture) follows `src/components/locker/HeroPoseViewer.tsx`.
+- 3D viewer parity (2026-11-20), ported code, no assets:
+  - Cloth: `rust/crates/sigil-viewer/src/cloth.rs` ports the FeModel parser, solver kernels,
+    driver and recovery guards of `src/lib/feModel.ts`, `clothConstraints.ts`, `clothMath.ts`
+    and `useClothSim.ts`.
+  - Particles: `rust/crates/sigil-viewer/src/particles/` ports a subset of the Source 2 particle
+    simulation and spritecard renderer in `src/lib/particles/` (itself a port of
+    ValveResourceFormat's); `rust/crates/deadlock-core/src/viewer/particles.rs` ports
+    `heroAmbientDiscovery.ts`, `heroParticleBundle.ts`, `hideoutParticles.ts` and the sheet reader.
+  - Hideout: the SH2 lightmap, probe volumes, light units and cookies, the volumetric fog, the
+    map post (tone curve, bloom, colour correction) from `source2Lightmap.ts`,
+    `source2ProbeVolume.ts`, `source2DynamicLights.ts`, `source2LightCookies.ts`,
+    `source2Atmosphere.ts`, `sourcePostProcess.ts` and `hideoutScene.ts` / `hideoutAtmosphere.ts`.
+  - Animation: the UI AnimGraph2 showcase reader, metadata rules, clip labels and groups from
+    `heroRiggedClips.ts`, `heroAnimationMetadata.ts`, `heroAnimationCatalog.ts` and
+    `heroViewerPlayback.ts`.
+  - Viewer UI: the GIF capture (median cut, Bayer dither, review and trim) from `viewerGif.ts`,
+    `ViewerGifReview.tsx` and `ViewerGifTimeline.tsx`; the soul backdrop gradients from
+    `soulBackdrops.ts`; the lighting scenes, turntable speed, keys and Controls panel from
+    `HeroPoseViewer.tsx` and `HeroViewerToolbar.tsx`. The viewer's film, video and rotate icons
+    are Lucide (ISC).
 - Settings: the light theme neutrals and the eight accent presets in
   `rust/crates/desktop/src/ui.rs` and `prefs.rs` follow Grimoire's `src/index.css` and
   `src/lib/accentColor.ts`; the Steam launch options edit in
