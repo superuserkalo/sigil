@@ -19,6 +19,12 @@ How to read the tables:
 - **Priority**: P1 (players notice it is missing), P2 (expected by power users), P3 (nice to have
   or niche). Items that conflict with Sigil's rules are marked "won't" with the reason.
 
+Deferred as one package, "Sigil accounts" (owner 2026-11-20): Grimoire Social sign-in, cloud
+backup, DMM's Discover publishing, the community library, announcements and feature flags. They
+come later on Sigil's own backend (the telemetry Worker is the likely start), not on Grimoire's or
+DMM's. Rows marked "won't" for style or rules are closed by the owner and are not raised again,
+except the relay region picker, which stays open for a decision.
+
 Two architectural differences drive many rows:
 
 1. Both apps mirror the GameBanana catalog into a local SQLite + FTS5 database. That is how they
@@ -230,7 +236,7 @@ Endpoints, verified with curl against the live API on 2026-11-17 (Deadlock game 
 | Pin window always on top | G | Always on top | has (Crosshair "Pin window" calls `shell::set_always_on_top`; shell state, survives a recreated window) | - | - |
 | Custom colour and outline colour | G | RGB sliders, outline colour | has (Color group: Red, Green, Blue, outline colour and its RGB) | - | - |
 | Remove from autoexec | G | Clear the active crosshair | has (backup, toast with Undo) | - | - |
-| Community library | D | Needs D's backend | won't (no backend) | - | - |
+| Community library | D | Needs D's backend | deferred: Sigil accounts (see below) | - | - |
 
 ## Autoexec
 
@@ -283,7 +289,7 @@ Endpoints, verified with curl against the live API on 2026-11-17 (Deadlock game 
 | Snapshots (automatic recovery points) | G | Before updates and applies | has (`profiles/snapshots.rs`: a JSON manifest of slots, GameBanana ids and fingerprints in the app data dir; sections with Restore, delete and bulk delete; taken before applies, profile updates and imports) | M | P2 |
 | Profile switcher in the titlebar | D | One-click switch | has (`profiles::titlebar_switcher`: the active profile and a menu of saved ones) | S | P3 |
 | Separate addons folder per profile | D | Isolation | has (`profiles/isolation.rs`: copies into `citadel/addons/sigil-<slug>`, mounts it through a marked `gameinfo.gi` block with a backup) | M | P3 |
-| Cloud backup / Discover publishing | G+D | Needs a backend and sign-in | won't (no backend, opt-in only if ever) | - | - |
+| Cloud backup / Discover publishing | G+D | Needs a backend and sign-in | deferred: Sigil accounts (see below) | - | - |
 | Undo a profile switch | - | Sigil extra | has (apply returns the slot changes, the autoexec backup and the previous profile; the toast's Undo puts them back) | S | - |
 | File pickers for import and export | - | Sigil extra | has (Rune `file_dialog`; export writes where the player picks) | S | - |
 
@@ -297,7 +303,7 @@ Endpoints, verified with curl against the live API on 2026-11-17 (Deadlock game 
 | Filters: has space, password | G+D | Filters | has | - | - |
 | Region and map filters, sortable columns | G+D | Filters | has (region grouped by continent, game mode, map, password; every column sorts ascending, descending, off with missing values last) | S | P2 |
 | Removable filter chips | D | Chips | has (one chip per filter, Clear (N)) | S | P3 |
-| Valve relay region picker (firewall) | D | Server picker | won't (owner decision 2026-11-17: admin firewall change) | L | P3 |
+| Valve relay region picker (firewall) | D | Server picker | open: owner to decide (blocks Valve relay locations with Windows Firewall rules behind the admin prompt; Sigil already makes firewall rules for hosting) | L | P3 |
 | Favorites, recent servers, direct connect | - | Sigil extras | has (`.dah/servers.json`; favorites and recent scopes, address dialog that runs the same join check) | M | - |
 | Maps view and Launch map | D | Custom map help for custom/Deadworks servers | has (`servers_maps.rs`: GameBanana Maps category, console name from the description or installed VPK, copyable `map <name>`, Launch writes a managed autoexec block with a backup and starts the game) | M | P3 |
 | Custom maps page, How to play, Invite friends | D | Experimental custom-maps: Maps page, How to play This Map, Launch Map, Invite Friends (connect code from console.log) | has (2026-11-19, `screens/maps.rs`, `deadlock_core::maps`: off by default; map name from the addon VPK's `maps/<name>.vpk`; Launch map through the gameinfo gate; Host this map hands off to Servers > Host) | M | P3 |
@@ -374,7 +380,7 @@ Endpoints, verified with curl against the live API on 2026-11-17 (Deadlock game 
 | Seasonal themes | D | Holiday looks by date | has, off by default (wave 4: DMM's five windows and overlap rule, a seasonal mark in the sidebar with a small toy each, Turn off until next time, and Seasonal effects (snow, sparks, lanterns, petals; 28 particles stepped at 15 frames a second, off by default); Sigil's own look, no DMM art) | M | P3 |
 | Analytics | D | Consent-gated usage events | has (wave 3, ADR 0014, `settings/telemetry.rs`: a first-start question, Privacy switches for usage events, crash reports and unknown-mod lookup, Send diagnostics with a preview and a reference code; Sigil's own Worker, not Google Analytics) | M | P3 |
 | Unknown-mod hash lookup | D | Name a VPK from a hash index | has (wave 3: Identify's Look it up through `telemetry::identify` with lookup consent; GameBanana installs add their hash) | S | P3 |
-| Announcements, feature flags | D | Needs D's backend | won't | - | - |
+| Announcements, feature flags | D | Needs D's backend | deferred: Sigil accounts (see below) | - | - |
 
 ## Next, by priority
 

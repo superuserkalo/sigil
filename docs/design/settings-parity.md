@@ -272,7 +272,7 @@ Grouped by task, thirteen categories in three groups, a search field over all of
 | 71 | Features | Minimal mode | All features off | Built now | General > Pages > Mods only: every optional page off, each switch comes back after (wave 3) |
 | 72 | Features | Stats | Feature | Built now | General > Pages > Stats hides the page and its route; Privacy > Player stats stops its reads |
 | 73 | Features | Server browser | Feature | Built now | General > Pages > Servers (moved from Experimental; the saved value is kept) |
-| 74 | Features | Server picker | Block relay regions | Declined (rule) | Matchmaking advantage risk (cosmetic-only rule) |
+| 74 | Features | Server picker | Block relay regions | Open | Owner to decide; the cosmetic-only rule it cited was removed (ADR 0011) |
 | 75 | Features | Crosshairs | Feature | Built now | General > Pages > Crosshair; community crosshairs need DMM API (backend) |
 | 76 | Features | Hero skins | Feature | Built now | General > Pages > Locker; off also stops the launch shuffle |
 | 77 | Features | Performance | Feature | Built now | General > Pages > Performance |
