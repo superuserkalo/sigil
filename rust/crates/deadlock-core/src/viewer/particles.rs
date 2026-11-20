@@ -1144,21 +1144,74 @@ fn read_texture_sheet(bytes: &[u8]) -> std::result::Result<Option<Sheet>, ()> {
     Ok(None)
 }
 
-/// `Texture.GetSpriteSheetData`: offsets are relative to where they are stored.
+/// The most a sprite sheet may hold. A sheet comes from a mod's file: its counts are read
+/// from the file, so each level and the whole sheet are capped before anything is read.
+const MAX_SHEET_SEQUENCES: u32 = 1024;
+const MAX_SHEET_FRAMES: u32 = 1024;
+const MAX_SHEET_FRAME_IMAGES: u32 = 16;
+const MAX_SHEET_IMAGES: usize = 65_536;
+
+/// The table of `count` records of `stride` bytes at `offset`, as a byte range of the block,
+/// or `Err` when it runs outside it.
+fn sheet_table(reader: &Reader<'_>, offset: i64, count: u32, stride: i64) -> std::result::Result<(i64, i64), ()> {
+    let len = i64::from(count).checked_mul(stride).ok_or(())?;
+    let end = offset.checked_add(len).ok_or(())?;
+    if offset < 0 || end > reader.bytes.len() as i64 {
+        return Err(());
+    }
+    Ok((offset, end))
+}
+
+/// True when two tables overlap without being the same table (frames may share an image
+/// table; a table that runs into another is malformed).
+fn tables_cross(a: (i64, i64), b: (i64, i64)) -> bool {
+    a != b && a.0 < b.1 && b.0 < a.1 && a.1 > a.0 && b.1 > b.0
+}
+
+/// `Texture.GetSpriteSheetData`: offsets are relative to where they are stored. Bounded: at
+/// most `MAX_SHEET_SEQUENCES` sequences of `MAX_SHEET_FRAMES` frames of
+/// `MAX_SHEET_FRAME_IMAGES` images, `MAX_SHEET_IMAGES` images in all, every table inside the
+/// block and no two tables crossing.
 fn read_sheet(reader: &Reader<'_>) -> std::result::Result<Sheet, ()> {
     const UNNAMED_SEQUENCE: &str = "CDmeSheetSequence";
     let sequences_offset = i64::from(reader.i32(0)?);
     let sequence_count = reader.u32(4)?;
+    if sequence_count > MAX_SHEET_SEQUENCES {
+        return Err(());
+    }
+    let sequence_table = sheet_table(reader, sequences_offset, sequence_count, 32)?;
+    let mut tables: Vec<(i64, i64)> = vec![sequence_table];
+    let mut total_images = 0usize;
     let mut sequences = Vec::new();
     for sequence in 0..i64::from(sequence_count) {
         let header = sequences_offset + sequence * 32;
         let frames_offset = reader.relative(header + 8)?;
         let frame_count = reader.u32(header + 12)?;
+        if frame_count > MAX_SHEET_FRAMES {
+            return Err(());
+        }
+        let frame_table = sheet_table(reader, frames_offset, frame_count, 12)?;
+        if tables_cross(frame_table, sequence_table) {
+            return Err(());
+        }
+        tables.push(frame_table);
         let mut frames = Vec::new();
         for frame in 0..i64::from(frame_count) {
             let frame = frames_offset + frame * 12;
             let images_offset = reader.relative(frame + 4)?;
             let image_count = reader.u32(frame + 8)?;
+            if image_count > MAX_SHEET_FRAME_IMAGES {
+                return Err(());
+            }
+            total_images += image_count as usize;
+            if total_images > MAX_SHEET_IMAGES {
+                return Err(());
+            }
+            let image_table = sheet_table(reader, images_offset, image_count, 32)?;
+            if tables_cross(image_table, sequence_table) || tables_cross(image_table, frame_table) {
+                return Err(());
+            }
+            tables.push(image_table);
             let mut images = Vec::new();
             for image in 0..i64::from(image_count) {
                 let image = images_offset + image * 32;
@@ -1196,6 +1249,12 @@ fn read_sheet(reader: &Reader<'_>) -> std::result::Result<Sheet, ()> {
             duration: reader.f32(header + 16)?,
             frames,
         });
+    }
+    // No table runs into another (identical tables are shared, not crossing).
+    tables.sort_unstable();
+    tables.dedup();
+    if tables.windows(2).any(|w| tables_cross(w[0], w[1])) {
+        return Err(());
     }
     Ok(Sheet { sequences })
 }
@@ -1586,6 +1645,53 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(named.sequences[1].id, -1);
+    }
+
+    /// A bare sheet block: `sequences` headers at 8, each with `frames` frames in one shared
+    /// frame table, each frame with `images` images in one shared image table.
+    fn crafted_sheet(sequences: u32, frames: u32, images: u32, frame_table_at: Option<usize>) -> Vec<u8> {
+        let seq_at = 8usize;
+        let frame_at = frame_table_at.unwrap_or(seq_at + sequences as usize * 32);
+        let image_at = frame_at + frames as usize * 12;
+        let mut b = vec![0u8; image_at + images as usize * 32 + 4];
+        let put = |b: &mut Vec<u8>, at: usize, v: u32| b[at..at + 4].copy_from_slice(&v.to_le_bytes());
+        put(&mut b, 0, seq_at as u32);
+        put(&mut b, 4, sequences);
+        for s in 0..sequences as usize {
+            let h = seq_at + s * 32;
+            if h + 32 > b.len() {
+                break;
+            }
+            put(&mut b, h + 8, (frame_at as i64 - (h + 8) as i64) as i32 as u32);
+            put(&mut b, h + 12, frames);
+        }
+        for f in 0..frames as usize {
+            let at = frame_at + f * 12;
+            if at + 12 > b.len() {
+                break;
+            }
+            put(&mut b, at + 4, (image_at as i64 - (at + 4) as i64) as i32 as u32);
+            put(&mut b, at + 8, images);
+        }
+        b
+    }
+
+    #[test]
+    fn particles_sheet_reader_caps_crafted_counts() {
+        let read = |bytes: &[u8]| read_sheet(&Reader { bytes });
+        // In bounds and small: reads.
+        assert_eq!(read(&crafted_sheet(2, 3, 2, None)).unwrap().sequences.len(), 2);
+        // A count far past the buffer or the caps fails before anything is read.
+        let mut huge = crafted_sheet(1, 1, 1, None);
+        huge[4..8].copy_from_slice(&u32::MAX.to_le_bytes());
+        assert_eq!(read(&huge), Err(()));
+        assert_eq!(read(&crafted_sheet(MAX_SHEET_SEQUENCES + 1, 1, 1, None)), Err(()));
+        assert_eq!(read(&crafted_sheet(1, MAX_SHEET_FRAMES + 1, 1, None)), Err(()));
+        assert_eq!(read(&crafted_sheet(1, 1, MAX_SHEET_FRAME_IMAGES + 1, None)), Err(()));
+        // Every level inside its cap, shared tables, but too many images in all.
+        assert_eq!(read(&crafted_sheet(5, MAX_SHEET_FRAMES, MAX_SHEET_FRAME_IMAGES, None)), Err(()));
+        // A frame table that runs into the sequence table.
+        assert_eq!(read(&crafted_sheet(4, 2, 1, Some(8 + 32))), Err(()));
     }
 
     #[test]

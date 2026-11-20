@@ -21,6 +21,10 @@ pub struct ParseCx {
     pub random_inputs: bool,
     pub next_slot: i32,
     pub system: String,
+    /// Systems loaded for the whole bundle, and for the effect being loaded (`System::load`
+    /// stops at `MAX_BUNDLE_SYSTEMS` and `MAX_EFFECT_SYSTEMS`).
+    pub loaded: usize,
+    pub effect_loaded: usize,
 }
 
 impl ParseCx {

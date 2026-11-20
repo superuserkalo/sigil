@@ -786,6 +786,7 @@ fn build_room(
         let target = out.join("lightmap").join("irradiance.hdr");
         let exported = with_resource(stack, irradiance, out, |file| {
             std::fs::create_dir_all(out.join("lightmap"))?;
+            bake::check_texture_file(file)?;
             vpkmerge_core::cubemap::export_texture_hdr(file, None, &target, 2048)
                 .map_err(|error| exporter_error("lightmap", error))
         });
@@ -1125,6 +1126,7 @@ fn build_room(
     if let Some((texture, slice, position)) = probe {
         let faces_dir = out.join("reflection");
         let exported = with_resource(stack, texture, out, |file| {
+            bake::check_texture_file(file)?;
             vpkmerge_core::cubemap::export_cubemap_hdr_at(file, None, &faces_dir, slice)
                 .map_err(|error| exporter_error("reflection", error))
         });
@@ -1604,6 +1606,7 @@ fn export_sky(
     };
     let faces_dir = out.join("sky");
     let faces = with_resource(stack, texture, out, |file| {
+        bake::check_texture_file(file)?;
         vpkmerge_core::cubemap::export_cubemap_hdr(file, None, &faces_dir)
             .map_err(|error| exporter_error("sky", error))
     })?;

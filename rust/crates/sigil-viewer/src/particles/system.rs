@@ -17,6 +17,12 @@ use crate::math::Vec3;
 const FIRST_FRAME_STEP: f32 = 0.05;
 const MINIMUM_FRAME_TIME: f32 = 1e-22;
 pub const MAX_DEPTH: usize = 12;
+/// A wide tree loads exponentially many systems even within `MAX_DEPTH`: an effect loads at
+/// most this many, a bundle at most `MAX_BUNDLE_SYSTEMS`, and a system at most
+/// `MAX_CHILDREN` children. Past them the rest are diagnostics, not loads.
+pub const MAX_EFFECT_SYSTEMS: usize = 256;
+pub const MAX_BUNDLE_SYSTEMS: usize = 512;
+pub const MAX_CHILDREN: usize = 32;
 
 /// Where definitions come from: the bundle's systems by lowercase name, with their stored
 /// KV3 format.
@@ -121,6 +127,12 @@ impl System {
     /// collect in `cx`. `None` when the definition is missing or not a particle system.
     pub fn load(name: &str, src: &dyn Source, cap: usize, cx: &mut ParseCx, ancestors: &mut Vec<String>) -> Option<System> {
         let key = name.trim_end_matches("_c").to_ascii_lowercase();
+        if cx.effect_loaded >= MAX_EFFECT_SYSTEMS || cx.loaded >= MAX_BUNDLE_SYSTEMS {
+            cx.note(format!("skipped {key}: past the budget of {MAX_EFFECT_SYSTEMS} systems an effect, {MAX_BUNDLE_SYSTEMS} a bundle"));
+            return None;
+        }
+        cx.effect_loaded += 1;
+        cx.loaded += 1;
         let Some((raw, format)) = src.definition(&key) else {
             cx.diagnostics.push(format!("missing system {key}"));
             return None;
@@ -246,6 +258,10 @@ impl System {
         sys.child_slot_count = children.len();
         ancestors.push(key.clone());
         for (slot, c) in children.iter().enumerate() {
+            if slot >= MAX_CHILDREN {
+                cx.note(format!("skipped {} children past the first {MAX_CHILDREN}", children.len() - MAX_CHILDREN));
+                break;
+            }
             if kv::b(c, "m_bDisableChild", false) {
                 continue;
             }
