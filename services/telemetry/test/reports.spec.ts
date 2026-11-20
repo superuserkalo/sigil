@@ -101,9 +101,9 @@ describe("crash reports", () => {
     expect(count?.rows).toBe(2);
   });
 
-  it("rejects a crash body over 64 KiB", async () => {
+  it("rejects a crash body over 96 KiB", async () => {
     const response = await call("/v1/crash", {
-      body: crashBody("Error: huge", "x".repeat(70 * 1024)),
+      body: { ...crashBody("Error: huge", "x".repeat(40 * 1024)), context: "y".repeat(60 * 1024) },
     });
 
     expect(response.status).toBe(413);
@@ -115,6 +115,40 @@ describe("crash reports", () => {
 
     expect(response.status).toBe(400);
     expect((await readJson<ErrorBody>(response)).error).toBe("bad_message");
+  });
+
+  it("stores the kind and the scrubbed log tail, keeping the newest tail on a repeat", async () => {
+    const first = {
+      ...crashBody("Sigil did not exit cleanly (no panic was recorded)", "no panic was recorded\nlast log line: INFO  Opened the 3D view"),
+      kind: "unclean_exit",
+      context: "last log lines:\nINFO  Library at C:\\Users\\Alice\\Deadlock\nINFO  key sk-ant-api03-abcdefghijklmnopqrstuvwxyz0123456789",
+    };
+    expect((await call("/v1/crash", { body: first })).status).toBe(202);
+    const row = await env.DB.prepare("SELECT kind, context FROM crashes").first<{ kind: string; context: string }>();
+    expect(row?.kind).toBe("unclean_exit");
+    expect(row?.context).toContain("C:\\Users\\<user>");
+    expect(row?.context).not.toContain("Alice");
+    expect(row?.context).not.toContain("sk-ant-api03");
+
+    const second = { ...first, context: "last log lines:\nINFO  newer session" };
+    expect(await readJson<CrashResponse>(await call("/v1/crash", { body: second }))).toEqual({ repeats: 2 });
+    const third = { ...first, context: undefined };
+    expect(await readJson<CrashResponse>(await call("/v1/crash", { body: third }))).toEqual({ repeats: 3 });
+    const kept = await env.DB.prepare("SELECT context FROM crashes").first<{ context: string }>();
+    expect(kept?.context).toContain("newer session");
+  });
+
+  it("reads a report without a kind as a panic and rejects an unknown kind", async () => {
+    expect((await call("/v1/crash", { body: crashBody("Error: old app", "") })).status).toBe(202);
+    const row = await env.DB.prepare("SELECT kind, context FROM crashes").first<{ kind: string; context: string }>();
+    expect(row?.kind).toBe("panic");
+    expect(row?.context).toBe("");
+
+    const bad = await call("/v1/crash", { body: { ...crashBody("Error: x", ""), kind: "meltdown" } });
+    expect(bad.status).toBe(400);
+    expect((await readJson<ErrorBody>(bad)).error).toBe("bad_kind");
+    const long = await call("/v1/crash", { body: { ...crashBody("Error: x", ""), context: "z".repeat(17 * 1024) } });
+    expect((await readJson<ErrorBody>(long)).error).toBe("bad_context");
   });
 
   it("accepts a crash without a backtrace", async () => {

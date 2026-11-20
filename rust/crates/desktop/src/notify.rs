@@ -8,6 +8,11 @@
 //! `State::status` still works: whatever a handler writes there becomes a toast on the next
 //! frame (`poll` reads it, classifies it and clears it), so the old call sites need no edits.
 //!
+//! Every error and warning toast carries Send feedback (`feedback.rs`), prefilled with its title,
+//! detail and page, whoever pushed it: a `Notice::error`, a `Notice::warning` or a status line
+//! classified as one. Errors stay until closed; warnings stay at least [`WARNING_MIN`] seconds.
+//! The same title pushed again folds into one toast with a repeat count instead of stacking.
+//!
 //! Each toast is an explicit state machine (`Phase`): queued behind the cap, shown with an
 //! auto-dismiss timer, held while the pointer is over it, then leaving while its exit plays.
 //! Timers are events: `step` returns `Effect::WakeAt` instead of sleeping, the shell hands it to
@@ -20,7 +25,7 @@ use rune::{Color, El, Key, KeyEvent, Tx, col, el, row, text};
 use crate::app::State;
 use crate::icons;
 use crate::screens::settings::i18n::tr;
-use crate::ui::{BODY, BODY_MED, PAGE_X, Ui};
+use crate::ui::{BODY, BODY_MED, PAGE_X, SMALL, Ui};
 
 pub mod feedback;
 
@@ -34,6 +39,8 @@ pub const LEAVE: f64 = 0.2;
 pub const RESUME_MIN: f64 = 2.0;
 /// A toast with a button stays at least this long, so there is time to press it.
 pub const ACTION_MIN: f64 = 8.0;
+/// A warning stays at least this long: time to read it and press Send feedback.
+pub const WARNING_MIN: f64 = 20.0;
 /// Reading time per word: about 200 words a minute (issue #5).
 pub const PER_WORD: f64 = 0.3;
 /// Longest detail drawn on a toast; the rest is in Send feedback and Copy details.
@@ -53,7 +60,7 @@ impl Kind {
     pub fn duration(self) -> Option<f64> {
         match self {
             Kind::Info | Kind::Success => Some(4.0),
-            Kind::Warning => Some(8.0),
+            Kind::Warning => Some(WARNING_MIN),
             Kind::Error => None,
         }
     }
@@ -66,6 +73,11 @@ impl Kind {
             Kind::Warning => 2,
             Kind::Error => 3,
         }
+    }
+
+    /// Errors and warnings offer Send feedback.
+    pub fn loud(self) -> bool {
+        matches!(self, Kind::Warning | Kind::Error)
     }
 
     /// Warnings and errors interrupt a screen reader; the rest wait their turn.
@@ -87,6 +99,8 @@ pub struct Notice<C> {
     pub detail: Option<String>,
     action: Option<(String, Run<C>)>,
     undo: Option<Run<C>>,
+    /// How many times this was pushed while on screen or waiting (1 the first time).
+    pub repeats: u32,
 }
 
 impl<C> Notice<C> {
@@ -97,6 +111,7 @@ impl<C> Notice<C> {
             detail: None,
             action: None,
             undo: None,
+            repeats: 1,
         }
     }
 
@@ -175,6 +190,7 @@ impl<C> Notice<C> {
     /// Fold a repeat into this toast: the louder kind, the newer detail and buttons, keeping
     /// any the repeat does not bring.
     fn absorb(&mut self, newer: Notice<C>) {
+        self.repeats = self.repeats.saturating_add(newer.repeats);
         if newer.kind.rank() >= self.kind.rank() {
             self.kind = newer.kind;
         }
@@ -822,13 +838,7 @@ fn card(toast: &Toast<State>, u: &Ui) -> El {
         .min_w(0.0)
         .gap(2.0)
         .a11y_hidden()
-        .child(
-            text(notice.title.clone())
-                .font(BODY_MED)
-                .color(u.ink)
-                .wrap()
-                .w_full(),
-        );
+        .child(title_line(notice, u));
     if let Some(detail) = notice.short_detail() {
         words = words.child(text(detail).font(BODY).color(u.muted).wrap().w_full());
     }
@@ -838,9 +848,10 @@ fn card(toast: &Toast<State>, u: &Ui) -> El {
         .items_start()
         .child(el().size(16.0, 20.0).center().child(kind_icon(notice.kind, u)))
         .child(words);
-    // One format: at most one action (Undo, Show, Retry) beside the words. An error puts its
-    // action and Send feedback on a row of their own under the words, so long titles keep room.
-    let error = notice.kind == Kind::Error;
+    // One format: at most one action (Undo, Show, Retry) beside the words. An error or a
+    // warning puts its action and Send feedback on a row of their own under the words, so long
+    // titles keep room.
+    let error = notice.kind.loud();
     let mut buttons: Vec<El> = Vec::new();
     if let Some(label) = notice.action_label() {
         buttons.push(
@@ -915,10 +926,11 @@ fn card(toast: &Toast<State>, u: &Ui) -> El {
         .child(body);
     if error {
         let (title, detail) = (notice.title.clone(), notice.detail.clone().unwrap_or_default());
+        let warning = notice.kind == Kind::Warning;
         let feedback = feedback::button_look(u, &format!("toast-{id}-feedback"))
             .on_press_tx(move |st: &mut State, tx: &mut Tx| {
                 dismiss(st, id, tx);
-                feedback::open(st, &title, &detail);
+                feedback::open_as(st, warning, &title, &detail);
             });
         card = card.child(
             row()
@@ -935,6 +947,25 @@ fn card(toast: &Toast<State>, u: &Ui) -> El {
         card = card.description(detail.clone());
     }
     card
+}
+
+/// The title, and a quiet repeat count when the same thing was pushed more than once.
+fn title_line<C>(notice: &Notice<C>, u: &Ui) -> El {
+    let title = text(notice.title.clone()).font(BODY_MED).color(u.ink).wrap();
+    if notice.repeats < 2 {
+        return title.w_full();
+    }
+    row()
+        .w_full()
+        .gap(6.0)
+        .items_start()
+        .child(title.grow(1.0).shrink().min_w(0.0))
+        .child(
+            text(format!("\u{00d7}{}", notice.repeats))
+                .font(SMALL)
+                .color(u.faint)
+                .mt(2.0),
+        )
 }
 
 /// A compact text button for a toast: 24 points tall, ink text, a hover fill.
@@ -967,6 +998,22 @@ pub fn scene_stack(s: &mut State) {
     push(
         s,
         Notice::error("Could not write autoexec.cfg").detail("Permission denied. Close the game and try again."),
+    );
+}
+
+/// `notify-feedback`: an error pushed three times (one toast, a count) and a warning, both with
+/// Send feedback.
+pub fn scene_feedback(s: &mut State) {
+    crate::app::scene_demo_installed(s);
+    for _ in 0..3 {
+        push(
+            s,
+            Notice::error("Could not write autoexec.cfg").detail("Permission denied. Close the game and try again."),
+        );
+    }
+    push(
+        s,
+        Notice::warning("2 mods were not installed").detail("Install them from Browse, then apply the profile again."),
     );
 }
 
@@ -1021,7 +1068,7 @@ mod tests {
     fn errors_stay_until_closed_and_buttons_get_time() {
         let mut n = N::default();
         assert!(push(&mut n, Notice::error("Broke"), 0.0).is_empty());
-        assert_eq!(push(&mut n, Notice::warning("Careful"), 0.0), vec![8.0]);
+        assert_eq!(push(&mut n, Notice::warning("Careful"), 0.0), vec![WARNING_MIN]);
         assert_eq!(
             push(&mut n, Notice::success("Done").undo(|log: &mut Log| log.push("undo")), 0.0),
             vec![ACTION_MIN]
@@ -1082,6 +1129,37 @@ mod tests {
     }
 
     #[test]
+    fn errors_and_warnings_offer_feedback_and_the_rest_do_not() {
+        assert!(Kind::Error.loud() && Kind::Warning.loud());
+        assert!(!Kind::Info.loud() && !Kind::Success.loud());
+        // A status line classified as an error or a warning gets the same.
+        assert!(from_status::<Log>("Repair failed: permission denied").kind.loud());
+        assert!(from_status::<Log>("Find the game folder first.").kind.loud());
+        // Warnings stay long enough to read and press, even with few words.
+        assert!(Notice::<Log>::warning("Hm").duration().unwrap() >= WARNING_MIN);
+        assert!(WARNING_MIN > Kind::Info.duration().unwrap() * 4.0);
+    }
+
+    #[test]
+    fn repeats_collapse_into_one_toast_with_a_count() {
+        let mut n = N::default();
+        for at in 0..4 {
+            push(&mut n, Notice::error("Could not write autoexec.cfg"), at as f64);
+        }
+        assert_eq!(n.len(), 1);
+        assert_eq!(n.get(1).unwrap().notice.repeats, 4);
+        // A different title is its own toast with its own count.
+        push(&mut n, Notice::warning("Disk almost full"), 5.0);
+        assert_eq!(n.len(), 2);
+        assert_eq!(n.get(2).unwrap().notice.repeats, 1);
+        // A dismissed toast starts over.
+        n.step(Event::Dismiss { id: 1, now: 6.0 });
+        n.tick(6.0 + LEAVE);
+        push(&mut n, Notice::error("Could not write autoexec.cfg"), 7.0);
+        assert_eq!(n.get(3).unwrap().notice.repeats, 1);
+    }
+
+    #[test]
     fn errors_are_sticky_through_hover_and_close_on_dismiss() {
         let mut n = N::default();
         push(&mut n, Notice::error("Could not write"), 0.0);
@@ -1103,7 +1181,7 @@ mod tests {
         let info: Notice<Log> = Notice::info("Read me").detail(words.clone());
         assert!((info.duration().unwrap() - 62.0 * PER_WORD).abs() < 1e-9);
         let warning: Notice<Log> = Notice::warning("Short");
-        assert_eq!(warning.duration(), Some(8.0));
+        assert_eq!(warning.duration(), Some(WARNING_MIN));
         let short: Notice<Log> = Notice::info("Short");
         assert_eq!(short.duration(), Some(4.0));
     }

@@ -1995,7 +1995,7 @@ fn name_dialog(u: &Ui, renaming: bool, name: &TextEdit, error: Option<&str>) -> 
             ),
     );
     if let Some(error) = error {
-        body = body.child(text(error.to_string()).font(SMALL).color(u.rose).wrap());
+        body = body.child(crate::notify::feedback::error_line(u, "crosshair-name-error", error));
     }
     let confirm = u
         .action(if renaming { "Rename" } else { "Save" }, ActionKind::Primary)
@@ -2070,7 +2070,7 @@ fn import_dialog(s: &State, u: &Ui, input: &TextEdit, error: Option<&str>) -> El
                 ),
         );
     if let Some(error) = error {
-        body = body.child(text(error.to_string()).font(SMALL).color(u.rose).wrap());
+        body = body.child(crate::notify::feedback::error_line(u, "crosshair-import-error", error));
     }
     let from_game = u
         .action("Read from game", ActionKind::Secondary)
