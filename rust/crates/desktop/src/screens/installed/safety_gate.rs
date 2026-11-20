@@ -44,7 +44,10 @@ fn version_key(st: &State, slot: u16) -> Option<String> {
 
 /// Risks that stop a switch. Every finding the scan makes is one: it lists nothing for show.
 pub fn gating(risk: Risk) -> bool {
-    matches!(risk, Risk::Program | Risk::Script | Risk::Remote | Risk::Dynamic | Risk::ScriptMod)
+    matches!(
+        risk,
+        Risk::Program | Risk::Script | Risk::Remote | Risk::Dynamic | Risk::ScriptMod | Risk::Unchecked
+    )
 }
 
 /// What to show before `slot` turns on, or `None` to go ahead. The scan is cached per slot file
@@ -70,19 +73,20 @@ pub fn needs_review(st: &mut State, slot: u16) -> Option<Vec<String>> {
 
 /// "Program: bin/x.exe" lines for the gating findings, with what matched when a call did:
 /// "Reaches out: panorama/scripts/hud.vjs_c ($.AsyncWebRequest)".
+/// A VPK the scan could not open asks too: being unreadable is no way past the gate.
 pub fn findings(report: &mod_safety::ScanReport) -> Vec<String> {
-    report
-        .findings
-        .iter()
-        .filter(|f| gating(f.risk))
-        .map(|f| {
-            if f.call.is_empty() {
-                format!("{}: {}", tr(f.risk.label()), f.path)
-            } else {
-                format!("{}: {} ({})", tr(f.risk.label()), f.path, f.call)
-            }
-        })
-        .collect()
+    let unread = report
+        .error
+        .as_ref()
+        .map(|error| format!("{}: {} ({error})", tr(Risk::Unchecked.label()), tr("the whole file")));
+    let lines = report.findings.iter().filter(|f| gating(f.risk)).map(|f| {
+        if f.call.is_empty() {
+            format!("{}: {}", tr(f.risk.label()), f.path)
+        } else {
+            format!("{}: {} ({})", tr(f.risk.label()), f.path, f.call)
+        }
+    });
+    unread.into_iter().chain(lines).collect()
 }
 
 fn trust(st: &mut State, slot: u16) {
@@ -123,7 +127,7 @@ pub fn dialog(s: &State, u: &Ui, slot: u16, findings: &[String]) -> El {
         .modal(true, close)
         .child(text(fill(tr("{} ships code"), &[&name])).font(H1).color(u.ink).wrap())
         .child(
-            text(tr("Each line names a file and why it is listed: a program, a script the game does not run, a script mod, or a call that opens a web page or reaches the network. Images, layouts and styles are never listed. Turn it on only when you trust where it came from."))
+            text(tr("Each line names a file and why it is listed: a program, a script the game does not run, a script mod, a call that opens a web page or reaches the network, or a file Sigil could not check. Images are never listed, and layouts and styles only for one of these reasons. Turn it on only when you trust where it came from."))
                 .font(BODY)
                 .color(u.muted)
                 .wrap(),
@@ -187,6 +191,14 @@ mod tests {
         assert_eq!(lines, ["Program: bin/a.exe", "Reaches out: panorama/scripts/hud.vjs_c ($.AsyncWebRequest)"]);
         // A skin or HUD mod's scan has no findings, so nothing asks.
         assert!(findings(&ScanReport::default()).is_empty());
+        // Files the scan could not check ask, and so does a VPK it could not open.
+        let unchecked = ScanReport {
+            findings: vec![finding("panorama/layout/big.vxml_c", Risk::Unchecked, mod_safety::TOO_LARGE)],
+            ..ScanReport::default()
+        };
+        assert_eq!(findings(&unchecked), ["Not checked: panorama/layout/big.vxml_c (too large)"]);
+        let broken = ScanReport { error: Some("bad header".into()), ..ScanReport::default() };
+        assert_eq!(findings(&broken), ["Not checked: the whole file (bad header)"]);
     }
 
     /// GameBanana mod 679331 (Shiv "Josuke Remaster") ships Shiv's icons as `vsvg_c`. The scan
