@@ -13,6 +13,7 @@
 
 pub mod camera;
 pub mod capture;
+pub mod cloth;
 pub mod fixture;
 pub mod fixture_room;
 pub mod gpu;
@@ -223,6 +224,11 @@ struct Slot {
     posed: bool,
     /// The node matrices of the last pose (the glb's frame), for attachments.
     globals: Vec<Mat4>,
+    /// The hero's cloth (Grimoire's solver), stepped from the clip's own clock; off when the
+    /// player switches cloth off.
+    cloth: Option<cloth::Cloth>,
+    cloth_time: f32,
+    cloth_on: bool,
 }
 
 impl Slot {
@@ -239,7 +245,7 @@ impl Slot {
         let bases = model::palettes(&model, &globals, &placement, &mut palette);
         let unit = model::game_unit(&model, &globals) * placement.scale_factor();
         let g = mesh.instance(gpu, p, palette.len(), &bases, tint, only);
-        Slot { model, gpu: g, placement, clip, palette, bases, unit, fixed_bounds: None, still: false, posed: false, globals }
+        Slot { model, gpu: g, placement, clip, palette, bases, unit, fixed_bounds: None, still: false, posed: false, globals, cloth: None, cloth_time: 0.0, cloth_on: true }
     }
 
     /// A scene prop: bounds measured now (only its fragment when `only`), posed once when still.
@@ -260,10 +266,37 @@ impl Slot {
         }
         self.posed = true;
         let clip = self.clip.and_then(|c| self.model.clips.get(c));
-        let locals = model::sample_pose(&self.model, clip, time);
-        self.globals = model::globals(&self.model, &locals);
+        self.globals = match self.cloth.as_mut().filter(|_| self.cloth_on) {
+            Some(cloth) => {
+                // The animation advances inside the solver's substeps (Grimoire's driver),
+                // by the clip time that passed, wrapped at the loop.
+                let d = clip.map_or(0.0, |c| c.duration);
+                let mut dt = time - self.cloth_time;
+                if d > 0.0 && dt < 0.0 {
+                    dt += d;
+                }
+                let (model, mut t) = (&self.model, self.cloth_time);
+                cloth.set_placement(&self.placement);
+                cloth.step(dt.min(0.1), &mut |sub| {
+                    t += sub;
+                    model::sample_pose(model, clip, if d > 0.0 { t.rem_euclid(d) } else { t })
+                });
+                self.cloth_time = time;
+                cloth.pose()
+            }
+            None => model::globals(&self.model, &model::sample_pose(&self.model, clip, time)),
+        };
         self.bases = model::palettes(&self.model, &self.globals, &self.placement, &mut self.palette);
         self.gpu.write_palette(gpu, &self.palette);
+    }
+
+    /// The cloth starts over from the pose at `time` (a clip change or a seek).
+    fn reset_cloth(&mut self, time: f32) {
+        if let Some(cloth) = &mut self.cloth {
+            let clip = self.clip.and_then(|c| self.model.clips.get(c));
+            cloth.reset(&model::sample_pose(&self.model, clip, time));
+        }
+        self.cloth_time = time;
     }
 
     /// The glb's Source-to-glTF node (`skeleton`) as posed, so Source-space effects can follow.
@@ -928,6 +961,7 @@ impl Viewer {
         let Some(i) = hero.model.clips.iter().position(|c| c.name == name) else { return false };
         hero.clip = Some(i);
         self.playmode = self.sidecar.playmode(name);
+        hero.reset_cloth(0.0);
         if let Some(before) = &mut self.before
             && let Some(j) = before.model.clips.iter().position(|c| c.name == name)
         {
@@ -956,6 +990,21 @@ impl Viewer {
         let d = self.duration();
         let held = self.playmode == Playmode::Hold && self.playback.time >= d;
         (self.playback.playing && d > 0.0 && !held) || self.env.iter().any(|e| e.clip.is_some()) || (self.auto_rotate && self.hero.is_some())
+    }
+
+    /// The hero's cloth: the `<codename>.cloth.json` text beside its sidecar (`PHYS.m_pFeModel`),
+    /// or none. A model the solver cannot fit plays without cloth.
+    pub fn set_hero_cloth(&mut self, json: Option<&str>) -> Option<cloth::ClothStats> {
+        let hero = self.hero.as_mut()?;
+        hero.cloth = json.and_then(|j| cloth::Cloth::new(&hero.model, j).ok().flatten());
+        let time = self.playback.time;
+        hero.reset_cloth(time);
+        hero.cloth.as_ref().map(|c| c.stats())
+    }
+
+    /// The hero's cloth solver, for its statistics.
+    pub fn cloth_stats(&self) -> Option<cloth::ClothStats> {
+        self.hero.as_ref()?.cloth.as_ref().map(|c| c.stats())
     }
 
     /// The hero's particle effects (`particles/bundle.json` beside its sidecar), or none.
@@ -1049,6 +1098,10 @@ impl Viewer {
             (true, Playmode::Loop) => time.rem_euclid(d),
             (true, Playmode::Hold) => time.clamp(0.0, d),
         };
+        let t = self.playback.time;
+        if let Some(h) = &mut self.hero {
+            h.reset_cloth(t);
+        }
     }
 
     pub fn reset_camera(&mut self) {
@@ -1278,7 +1331,12 @@ impl Viewer {
         }
         let time = self.playback.time;
         let hero_duration = self.duration();
+        let cloth_on = self.look.cloth;
         if let Some(h) = &mut self.hero {
+            if h.cloth_on != cloth_on {
+                h.cloth_on = cloth_on;
+                h.reset_cloth(time);
+            }
             h.pose(&self.gpu, time);
         }
         if let Some(b) = &mut self.before {

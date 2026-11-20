@@ -192,6 +192,11 @@ fn hero_particles(sidecar_path: &std::path::Path, side: &Sidecar) -> Option<sigi
     sigil_viewer::particles::Bundle::read(&sidecar_path.parent()?.join(rel)).ok()
 }
 
+/// The hero's cloth file (`PHYS.m_pFeModel` as JSON), named by its sidecar.
+fn hero_cloth(sidecar_path: &std::path::Path, side: &Sidecar) -> Option<String> {
+    std::fs::read_to_string(sidecar_path.parent()?.join(side.cloth.as_deref()?)).ok()
+}
+
 fn load_model(path: &std::path::Path) -> Result<model::Model, String> {
     model::load_path(path).map_err(|e| e.0)
 }
@@ -211,11 +216,13 @@ pub fn prepare(source: &Source, before: Option<&Source>, cancel: &AtomicBool, pr
                 let side = Sidecar::read(&path);
                 viewer.set_hero(load_model(glb).map_err(ViewerError::Load)?, &side);
                 viewer.set_hero_particles(hero_particles(&path, &side));
+                viewer.set_hero_cloth(hero_cloth(&path, &side).as_deref());
             }
             Source::StandIn(v) => {
                 let side = Sidecar::parse(&fixture::sidecar_json());
                 viewer.set_hero(model::load_slice(&fixture::hero_glb(*v)).map_err(|e| ViewerError::Load(e.0))?, &side);
                 viewer.set_hero_particles(Some(sigil_viewer::particles::fixture::hero_bundle()));
+                viewer.set_hero_cloth(Some(&fixture::cloth_json()));
             }
             Source::Scene { scene, hero } => {
                 let read = Instant::now();
@@ -239,6 +246,7 @@ pub fn prepare(source: &Source, before: Option<&Source>, cancel: &AtomicBool, pr
                     let side = sidecar.as_deref().map(Sidecar::read).unwrap_or_default();
                     viewer.set_hero(load_model(&glb).map_err(ViewerError::Load)?, &side);
                     viewer.set_hero_particles(sidecar.as_deref().and_then(|p| hero_particles(p, &side)));
+                    viewer.set_hero_cloth(sidecar.as_deref().and_then(|p| hero_cloth(p, &side)).as_deref());
                 }
                 let upload = Instant::now();
                 let report = viewer.set_scene_with(assets, cancel, progress);
