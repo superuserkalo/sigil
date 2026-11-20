@@ -3816,7 +3816,7 @@ pub fn apply_install_outcome(state: &mut State, outcome: crate::screens::browse:
     }
     // An archive with several VPKs is a choice: read them and show the picker.
     if let Some(error) = error
-        && error.contains("more than one pakNN_dir.vpk")
+        && error.contains("more than one VPK")
     {
         start_vpk_scan(state);
     }

@@ -1899,10 +1899,7 @@ fn classify_extracted(
         )));
     }
 
-    let vpks: Vec<&(String, u64)> = files
-        .iter()
-        .filter(|(path, _)| is_pak_dir_file(path))
-        .collect();
+    let vpks: Vec<&(String, u64)> = vpk_dir_files(extracted, &files);
 
     if let Some(chosen) = chosen_vpk.map(str::trim).filter(|vpk| !vpk.is_empty()) {
         let picked = vpks
@@ -1923,7 +1920,7 @@ fn classify_extracted(
     if vpks.len() > 1 {
         let names: Vec<&str> = vpks.iter().map(|(path, _)| path.as_str()).collect();
         return Err(Error::msg(format!(
-            "The archive ships more than one pakNN_dir.vpk ({}). Choose the one you want.",
+            "The archive ships more than one VPK ({}). Choose the one you want.",
             names.join(", ")
         )));
     }
@@ -1935,20 +1932,63 @@ fn classify_extracted(
     classify_tree(extracted, files)
 }
 
-fn is_pak_dir_file(relative: &str) -> bool {
-    let name = relative.rsplit('/').next().unwrap_or(relative);
+/// The file name without folders, lower case.
+fn vpk_file_name(relative: &str) -> String {
+    relative.rsplit('/').next().unwrap_or(relative).to_lowercase()
+}
 
-    if !name.is_ascii() {
-        return false;
-    }
+/// `<base>` when `name` is a numbered part `<base>_NNN.vpk`.
+fn vpk_chunk_base(name: &str) -> Option<&str> {
+    let stem = name.strip_suffix(".vpk")?;
+    let (base, digits) = stem.rsplit_once('_')?;
+    (digits.len() == 3 && digits.bytes().all(|b| b.is_ascii_digit()) && !base.is_empty()).then_some(base)
+}
 
-    let lowered = name.to_ascii_lowercase();
-    let bytes = lowered.as_bytes();
+/// The prefix a VPK's numbered parts share: `pak05` for `pak05_dir.vpk`, `josuke` for
+/// `josuke_dir.vpk`, and the stem of a self-contained `Josuke Remaster.vpk`.
+fn vpk_chunk_prefix(relative: &str) -> String {
+    let name = vpk_file_name(relative);
+    name.strip_suffix("_dir.vpk")
+        .or_else(|| name.strip_suffix(".vpk"))
+        .unwrap_or(&name)
+        .to_string()
+}
 
-    bytes.len() == "pak00_dir.vpk".len()
-        && lowered.starts_with("pak")
-        && lowered.ends_with("_dir.vpk")
-        && bytes[3..5].iter().all(|byte| byte.is_ascii_digit())
+/// Every VPK directory file an archive ships, under any name, as Grimoire and Deadlock Mod
+/// Manager accept them: `pakNN_dir.vpk`, `<name>_dir.vpk` with its `<name>_NNN.vpk` parts, or one
+/// self-contained `<name>.vpk`. A numbered part next to its `_dir.vpk` is not a VPK of its own,
+/// and a loose `.vpk` counts only when its header says it is one.
+fn vpk_dir_files<'a>(extracted: &Path, files: &'a [(String, u64)]) -> Vec<&'a (String, u64)> {
+    let dirs: std::collections::BTreeSet<String> = files
+        .iter()
+        .map(|(path, _)| vpk_file_name(path))
+        .filter(|name| name.ends_with("_dir.vpk"))
+        .collect();
+    files
+        .iter()
+        .filter(|(path, _)| {
+            let name = vpk_file_name(path);
+            if !name.ends_with(".vpk") {
+                return false;
+            }
+            if name.ends_with("_dir.vpk") {
+                return true;
+            }
+            if vpk_chunk_base(&name).is_some_and(|base| dirs.contains(&format!("{base}_dir.vpk"))) {
+                return false;
+            }
+            has_vpk_magic(&extracted.join(path))
+        })
+        .collect()
+}
+
+fn has_vpk_magic(path: &Path) -> bool {
+    use std::io::Read;
+    let mut magic = [0u8; 4];
+    std::fs::File::open(path)
+        .and_then(|mut file| file.read_exact(&mut magic))
+        .is_ok()
+        && u32::from_le_bytes(magic) == 0x55aa_1234
 }
 
 fn classify_vpk(
@@ -1957,13 +1997,12 @@ fn classify_vpk(
     files: &[(String, u64)],
 ) -> Result<Candidate> {
     let dir_path = extracted.join(relative);
-    let name = relative.rsplit('/').next().unwrap_or(relative).to_ascii_lowercase();
-    let slot_digits = &name[3..5];
+    let prefix = vpk_chunk_prefix(relative);
 
     let chunk_relatives: Vec<String> = files
         .iter()
         .map(|(path, _)| path.clone())
-        .filter(|path| is_chunk_for(path, slot_digits))
+        .filter(|path| is_chunk_for(path, &prefix))
         .collect();
 
     let chunks: Vec<PathBuf> = chunk_relatives
@@ -1991,7 +2030,7 @@ fn classify_vpk(
             continue;
         }
 
-        let expected = format!("pak{slot_digits}_{:03}.vpk", entry.archive_index);
+        let expected = format!("{prefix}_{:03}.vpk", entry.archive_index);
         let present = chunk_relatives.iter().any(|path| {
             path.rsplit('/')
                 .next()
@@ -2037,22 +2076,9 @@ fn classify_vpk(
     })
 }
 
-fn is_chunk_for(relative: &str, slot_digits: &str) -> bool {
-    let name = relative.rsplit('/').next().unwrap_or(relative);
-
-    if !name.is_ascii() {
-        return false;
-    }
-
-    let lowered = name.to_ascii_lowercase();
-    let bytes = lowered.as_bytes();
-
-    bytes.len() == "pak00_000.vpk".len()
-        && lowered.starts_with("pak")
-        && lowered.ends_with(".vpk")
-        && &lowered[3..5] == slot_digits
-        && bytes[5] == b'_'
-        && bytes[6..9].iter().all(|byte| byte.is_ascii_digit())
+fn is_chunk_for(relative: &str, prefix: &str) -> bool {
+    let name = vpk_file_name(relative);
+    vpk_chunk_base(&name) == Some(prefix)
 }
 
 fn classify_tree(extracted: &Path, files: Vec<(String, u64)>) -> Result<Candidate> {
@@ -2436,20 +2462,16 @@ impl VpkChoice {
 pub fn vpk_choices(request: &InstallRequest, options: &PlanOptions) -> Result<Vec<VpkChoice>> {
     let prepared = prepare_archive(request, options)?;
     let files = walk_tree(&prepared.extracted)?;
-    Ok(collect_vpk_choices(&files))
+    Ok(collect_vpk_choices(&prepared.extracted, &files))
 }
 
-fn collect_vpk_choices(files: &[(String, u64)]) -> Vec<VpkChoice> {
+fn collect_vpk_choices(extracted: &Path, files: &[(String, u64)]) -> Vec<VpkChoice> {
     let mut choices = Vec::new();
-    for (relative, bytes) in files.iter().filter(|(path, _)| is_pak_dir_file(path)) {
-        let digits = relative
-            .rsplit('/')
-            .next()
-            .and_then(|name| name.get(3..5))
-            .unwrap_or("");
+    for (relative, bytes) in vpk_dir_files(extracted, files) {
+        let prefix = vpk_chunk_prefix(relative);
         let chunks: Vec<&(String, u64)> = files
             .iter()
-            .filter(|(path, _)| is_chunk_for(path, digits))
+            .filter(|(path, _)| is_chunk_for(path, &prefix))
             .collect();
         let total = bytes + chunks.iter().map(|(_, size)| *size).sum::<u64>();
         choices.push(VpkChoice {
@@ -3365,18 +3387,11 @@ fn slot_chunks_present(addons: &Path, slot: u16) -> Result<bool> {
 }
 
 fn rename_chunk(name: &str, slot: u16) -> Result<String> {
-    let lowered = name.to_ascii_lowercase();
-
-    if !name.is_ascii()
-        || lowered.len() != "pak00_000.vpk".len()
-        || !lowered.ends_with(".vpk")
-    {
-        return Err(Error::msg(format!(
-            "Chunk {name:?} is not named pakNN_MMM.vpk."
-        )));
-    }
-
-    Ok(format!("pak{:02}_{}.vpk", crate::addons::local_slot(slot), &name[6..9]))
+    let lowered = name.to_lowercase();
+    let digits = vpk_chunk_base(&lowered)
+        .map(|base| &lowered[base.len() + 1..base.len() + 4])
+        .ok_or_else(|| Error::msg(format!("Chunk {name:?} is not named <name>_NNN.vpk.")))?;
+    Ok(format!("pak{:02}_{digits}.vpk", crate::addons::local_slot(slot)))
 }
 
 fn copy_into_place(source: &Path, destination: &Path) -> Result<()> {
@@ -5191,6 +5206,65 @@ mod tests {
     }
 
     #[test]
+    fn a_vpk_under_any_name_is_a_vpk() {
+        // GameBanana mods ship `Josuke Remaster.vpk` or `skin_dir.vpk` as often as pakNN_dir.vpk.
+        let root = scratch("vpk-names");
+        let files: Vec<(String, u64)> = [
+            "Josuke Remaster.vpk",
+            "skin_dir.vpk",
+            "skin_000.vpk",
+            "notes.vpk",
+            "readme.txt",
+        ]
+        .iter()
+        .map(|name| (name.to_string(), 1))
+        .collect();
+        fs::write(root.join("Josuke Remaster.vpk"), [0x34, 0x12, 0xaa, 0x55, 2, 0, 0, 0]).unwrap();
+        fs::write(root.join("notes.vpk"), b"not a vpk").unwrap();
+        let found: Vec<&str> = vpk_dir_files(&root, &files).iter().map(|(path, _)| path.as_str()).collect();
+        assert_eq!(found, vec!["Josuke Remaster.vpk", "skin_dir.vpk"]);
+        assert_eq!(vpk_chunk_prefix("a/Josuke Remaster.vpk"), "josuke remaster");
+        assert_eq!(vpk_chunk_prefix("skin_dir.vpk"), "skin");
+        assert!(is_chunk_for("x/skin_000.vpk", "skin") && !is_chunk_for("skin_dir.vpk", "skin"));
+        assert_eq!(rename_chunk("Skin_002.vpk", 7).unwrap(), "pak07_002.vpk");
+        assert_eq!(rename_chunk("pak03_011.vpk", 7).unwrap(), "pak07_011.vpk");
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn installs_an_archive_whose_vpk_has_its_own_name() {
+        let root = scratch("vpk-named");
+        let game_root = fake_game(&root);
+        let source_dir = root.join("source");
+        fs::create_dir_all(&source_dir).unwrap();
+        let (dir_vpk, chunks) = make_vpk(
+            &source_dir,
+            "pak02",
+            &[("materials/heroes/billy/billy_color.vmat_c", b"packed payload")],
+        );
+        let mut entries: Vec<(String, Vec<u8>, u32)> =
+            vec![("Josuke Remaster_dir.vpk".to_string(), fs::read(&dir_vpk).unwrap(), 0o100644)];
+        for chunk in &chunks {
+            let name = chunk.file_name().unwrap().to_string_lossy().replace("pak02", "Josuke Remaster");
+            entries.push((name, fs::read(chunk).unwrap(), 0o100644));
+        }
+        let refs: Vec<(&str, &[u8], u32)> =
+            entries.iter().map(|(name, data, mode)| (name.as_str(), data.as_slice(), *mode)).collect();
+        let archive = root.join("josuke.zip");
+        fs::write(&archive, build_stored_zip(&refs)).unwrap();
+
+        let options = PlanOptions { game_root: Some(game_root.clone()), tools: ToolPaths::default(), ..PlanOptions::default() };
+        let request = InstallRequest::new(archive.display().to_string(), root.join("workspace")).unwrap();
+        let plan = plan_install(&request, &options).unwrap();
+        assert!(matches!(plan.artifact, InstallArtifact::Vpk { .. }));
+        assert_eq!(plan.files, vec!["materials/heroes/billy/billy_color.vmat_c".to_string()]);
+        let record = apply_install(&plan, true).unwrap();
+        assert_eq!(record.entry.chunk_files, vec!["pak01_000.vpk".to_string()]);
+        assert!(addons_dir(&game_root).join("pak01_000.vpk").is_file());
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
     fn installs_an_archive_that_already_ships_a_vpk() {
         let root = scratch("vpk-candidate");
         let game_root = fake_game(&root);
@@ -5341,7 +5415,7 @@ mod tests {
             .unwrap()
             .with_one_click(false);
         let error = plan_install(&request, &options).unwrap_err().to_string();
-        assert!(error.contains("more than one pakNN_dir.vpk"), "{error}");
+        assert!(error.contains("more than one VPK"), "{error}");
 
         let choices = vpk_choices(&request, &options).unwrap();
         assert_eq!(choices.len(), 2, "{choices:?}");
@@ -5412,7 +5486,7 @@ mod tests {
             ("game/citadel/pak02_dir.vpk".to_string(), 200),
             ("game/citadel/readme.txt".to_string(), 5),
         ];
-        let choices = collect_vpk_choices(&files);
+        let choices = collect_vpk_choices(Path::new("/nonexistent"), &files);
         assert_eq!(choices.len(), 2);
         assert_eq!(choices[0].name(), "pak01_dir.vpk");
         assert_eq!(choices[0].bytes, 200);
