@@ -10,6 +10,8 @@ deadlock-core = { path = "../deadlock-core" }
 # Folded helpers: `Sigil cli ...` runs the dah CLI and `Sigil agent-host` the TinyAgent host.
 dah-rs = { path = "../dah-rs" }
 dah-agent = { path = "../agent-host" }
+# The 3D viewer's renderer (src/viewer/): its own wgpu device on a render thread.
+sigil-viewer = { path = "../sigil-viewer" }
 serde_json = { workspace = true }
 ureq = { workspace = true }
 # Self-update (src/updater.rs): Ed25519 verify through ring (already linked for rustls), sha256,

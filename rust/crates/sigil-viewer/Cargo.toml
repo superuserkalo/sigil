@@ -1,0 +1,27 @@
+[package]
+name = "sigil-viewer"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Sigil's offscreen wgpu hero and Hideout renderer: glTF, GPU skinning, Citadel NPR lighting"
+
+[dependencies]
+serde_json = { workspace = true }
+# The same glTF reader vpkmerge's morphic links (names and extras), plus the material
+# extensions morphic writes. `import` decodes the embedded PNGs with the `image` crate the
+# desktop already links.
+gltf = { version = "1.4", features = ["names", "extras", "KHR_materials_emissive_strength", "KHR_materials_transmission", "KHR_materials_ior", "KHR_materials_unlit"] }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "hdr"] }
+bytemuck = { version = "1", features = ["derive"] }
+pollster = "1"
+
+# wgpu matches Rune's pin (`~30.0.1`) and its per-platform backends, so the desktop compiles
+# one wgpu: Metal on Apple, D3D12 on Windows, Vulkan elsewhere.
+[target.'cfg(target_vendor = "apple")'.dependencies]
+wgpu = { version = "~30.0.1", default-features = false, features = ["std", "parking_lot", "metal", "wgsl"] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+wgpu = { version = "~30.0.1", default-features = false, features = ["std", "parking_lot", "dx12", "wgsl"] }
+
+[target.'cfg(all(not(target_vendor = "apple"), not(target_os = "windows")))'.dependencies]
+wgpu = { version = "~30.0.1", default-features = false, features = ["std", "parking_lot", "vulkan", "wgsl"] }

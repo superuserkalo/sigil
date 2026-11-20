@@ -6,6 +6,7 @@ members = [
     "crates/agent-host",
     "crates/dah-rs",
     "crates/desktop",
+    "crates/sigil-viewer",
 ]
 
 [workspace.package]

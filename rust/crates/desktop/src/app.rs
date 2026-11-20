@@ -137,6 +137,8 @@ pub struct State {
     pub launch_extras: screens::launch_extras::LaunchExtras,
     /// Custom maps (`screens::maps`).
     pub maps: screens::maps::Page,
+    /// The 3D viewer's open viewports (`crate::viewer`).
+    pub viewers: crate::viewer::Viewers,
 }
 
 impl Default for State {
@@ -235,6 +237,7 @@ impl Default for State {
             bar: crate::statusbar::Bar::default(),
             launch_extras: Default::default(),
             maps: Default::default(),
+            viewers: Default::default(),
         }
     }
 }
@@ -1285,6 +1288,10 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
         && let Some(tip) = crate::shell_tips::view(s, &u, false)
     {
         root = root.child(tip);
+    }
+    // The 3D viewer full screen, over the pages and dialogs.
+    if let Some(full) = crate::viewer::overlay(s, &u) {
+        root = root.child(full);
     }
     // Toasts sit above everything, dialogs included, as Grimoire's do.
     if let Some(toasts) = crate::notify::region(s, &u) {
