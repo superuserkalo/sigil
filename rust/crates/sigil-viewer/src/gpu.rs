@@ -3,7 +3,6 @@
 //! occlusion, a 4x MSAA HDR pass per shown model, bloom, then post into an sRGB target that is
 //! read back as RGBA8.
 
-use std::borrow::Cow;
 use std::collections::HashMap;
 use std::time::Instant;
 
@@ -418,6 +417,11 @@ fn solid(device: &wgpu::Device, queue: &wgpu::Queue, rgba: [u8; 4], format: wgpu
 }
 
 impl Pipelines {
+    /// The frame bind group layout (group 0), which particle pipelines share.
+    pub fn frame_layout(&self) -> &wgpu::BindGroupLayout {
+        &self.frame_layout
+    }
+
     /// Compiles the shaders and builds every pipeline. An error (a shader the driver's compiler
     /// rejects, FXC on D3D12 among them) is returned with its message instead of reaching the
     /// device's handler, so the viewer can say why or try another adapter.
@@ -499,12 +503,9 @@ impl Pipelines {
             ],
         });
 
-        let common = include_str!("shaders/common.wgsl");
-        let scene_src = format!("{common}\n{}", include_str!("shaders/scene.wgsl"));
-        let floor_src = format!("{common}\n{}", include_str!("shaders/floor.wgsl"));
-        let scene = device.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some("viewer scene"), source: wgpu::ShaderSource::Wgsl(Cow::Owned(scene_src)) });
-        let floor_module = device.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some("viewer floor"), source: wgpu::ShaderSource::Wgsl(Cow::Owned(floor_src)) });
-        let post_module = device.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some("viewer post"), source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(include_str!("shaders/post.wgsl"))) });
+        let scene = device.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some("viewer scene"), source: wgpu::ShaderSource::Wgsl(crate::shaders::scene()) });
+        let floor_module = device.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some("viewer floor"), source: wgpu::ShaderSource::Wgsl(crate::shaders::floor()) });
+        let post_module = device.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some("viewer post"), source: wgpu::ShaderSource::Wgsl(crate::shaders::post()) });
 
         let main_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("viewer main"),

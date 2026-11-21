@@ -92,7 +92,7 @@ impl ParticleGpu {
     #[allow(clippy::too_many_arguments)]
     pub fn new(device: &wgpu::Device, queue: &wgpu::Queue, frame_layout: &wgpu::BindGroupLayout, msaa: u32, hdr: wgpu::TextureFormat, depth: wgpu::TextureFormat, bundle: &Bundle, budget: u64) -> ParticleGpu {
         let mut effects = Effects::new(bundle);
-        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some("particles"), source: wgpu::ShaderSource::Wgsl(include_str!("sprite.wgsl").into()) });
+        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some("particles"), source: wgpu::ShaderSource::Wgsl(crate::shaders::particles()) });
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("particles renderer"),
             entries: &[

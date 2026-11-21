@@ -23,6 +23,7 @@ pub mod math;
 pub mod model;
 pub mod particles;
 pub mod scene;
+pub mod shaders;
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -756,13 +757,18 @@ impl Viewer {
                 let failed = format!("{} ({:?})", gpu.info.name, gpu.info.backend);
                 notes.push(format!("{failed} could not build the pipelines: {error}"));
                 drop(gpu);
-                let soft = Gpu::software().ok().and_then(|soft| Pipelines::new(&soft).ok().map(|p| (soft, p)));
+                // The report names the software try too: WARP compiles with the same FXC, so a
+                // shader FXC rejects fails on both, and the feedback should say it was tried.
+                let soft = Gpu::software().map_err(|_| "no software adapter to try".to_string()).and_then(|soft| {
+                    let name = format!("{} ({:?})", soft.info.name, soft.info.backend);
+                    Pipelines::new(&soft).map(|p| (soft, p)).map_err(|_| format!("the software adapter {name} failed too"))
+                });
                 match soft {
-                    Some((soft, pipes)) => {
+                    Ok((soft, pipes)) => {
                         notes.push(format!("using the software adapter {} instead", soft.info.name));
                         (soft, pipes)
                     }
-                    None => return Err(ViewerError::Device(format!("{failed} could not build the 3D view's shaders: {error}"))),
+                    Err(soft) => return Err(ViewerError::Device(format!("{failed} could not build the 3D view's shaders ({soft}): {error}"))),
                 }
             }
         };
