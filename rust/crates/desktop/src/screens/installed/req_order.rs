@@ -23,7 +23,7 @@ use crate::jobs::Job;
 use crate::screens::settings::i18n::{fill, tr};
 use crate::ui::{SMALL, Ui};
 
-use super::{Menu, display_name, meta_for, notes};
+use super::{Menu, display_name};
 
 /// Grimoire's texture-overlay narrowing (C6): the game paths of the mods in a problem, by
 /// GameBanana id, with the file size they were read at. Read on a worker, never per frame.
@@ -48,17 +48,30 @@ pub fn refresh(st: &mut State) -> bool {
         }
         st.installed.order_files.generation += 1;
     }
+    // Runs on every poll: work the problems out again only when what they come from changed.
+    let key = (
+        super::keys::addons(st),
+        super::keys::library(st),
+        super::keys::always_first(st),
+        super::keys::requirements(st),
+        st.installed.order_files.generation,
+    );
+    if st.installed.order_key == Some(key) {
+        return false;
+    }
+    st.installed.order_key = Some(key);
+    let idx = super::index::Index::new(st);
     let mods: Vec<OrderedMod> = st
         .addons
         .addons
         .iter()
         .filter_map(|addon| {
-            let id = meta_for(st, addon)?.gamebanana_id?;
+            let id = idx.meta(st, addon)?.gamebanana_id?;
             Some(OrderedMod {
                 gamebanana_id: id,
                 slot: addon.slot,
                 enabled: addon.enabled,
-                always_first: notes::extra(st, addon).always_first,
+                always_first: idx.extra_ref(st, addon).is_some_and(|e| e.always_first),
             })
         })
         .collect();

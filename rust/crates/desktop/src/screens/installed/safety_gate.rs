@@ -23,6 +23,19 @@ use crate::app::State;
 use crate::screens::settings::i18n::{fill, tr};
 use crate::ui::{ActionKind, BODY, H1, MONO, SMALL, Ui};
 
+/// Bumped after Sigil writes the trusted file, so the Review list reads it again at once.
+static TRUSTED_WRITES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Note a write of the trusted file.
+pub fn trusted_written() {
+    TRUSTED_WRITES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// How many times Sigil has written the trusted file.
+pub fn trusted_writes() -> u64 {
+    TRUSTED_WRITES.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 pub fn trusted_path() -> PathBuf {
     crate::data::data_dir().join("safety-trusted.json")
 }
@@ -144,11 +157,13 @@ pub fn trust(st: &mut State, slot: u16) {
         st.installed.gates.open = None;
         return;
     }
-    if let Some(key) = version_key(st, slot)
-        && let Err(error) = mod_safety::review::trust(&trusted_path(), &key)
-    {
-        st.status = error.to_string();
-        return;
+    if let Some(key) = version_key(st, slot) {
+        let written = mod_safety::review::trust(&trusted_path(), &key);
+        trusted_written();
+        if let Err(error) = written {
+            st.status = error.to_string();
+            return;
+        }
     }
     super::enable::switch_reviewed(st, slot, true);
 }

@@ -47,6 +47,21 @@ pub enum Dialog {
 /// Bumped whenever the cached ignore list changes, so counts built from it know to redo.
 static IGNORES_GEN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
+/// Changes whenever the ignore list does.
+pub fn ignores_generation() -> u64 {
+    IGNORES_GEN.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// What an overlap check reads of the rows (paths, slots, winners), folded without
+/// allocating: a rescan or a load order change that moves a winner changes it.
+pub fn rows_key(conflicts: &[crate::model::ConflictRow]) -> u64 {
+    conflicts.iter().fold(conflicts.len() as u64, |h, c| {
+        let path = c.path.bytes().fold(0xcbf2_9ce4_8422_2325u64, |f, b| (f ^ u64::from(b)).wrapping_mul(0x100_0000_01b3));
+        let row = c.slots.iter().fold(path ^ u64::from(c.winner), |r, &slot| r.rotate_left(7) ^ u64::from(slot));
+        h.rotate_left(5) ^ row.wrapping_mul(0x9E37_79B9_7F4A_7C15)
+    })
+}
+
 /// How many overlaps a player still has to look at. Drives the sidebar badge, so it runs on
 /// every view of every page: the count is kept until the conflicts or the ignore list change
 /// (it cloned the whole ignore list and checked every per-file row each time).
@@ -56,15 +71,7 @@ pub fn badge_count(s: &State) -> usize {
         static LAST: Cell<Option<((u64, usize, u64), usize)>> = const { Cell::new(None) };
     }
     let conflicts = &s.addons.conflicts;
-    let generation = IGNORES_GEN.load(std::sync::atomic::Ordering::Relaxed);
-    // What `hides` reads of each row, folded without allocating: a rescan or a load order
-    // change that moves a winner changes it.
-    let rows = conflicts.iter().fold(0u64, |h, c| {
-        let path = c.path.bytes().fold(0xcbf2_9ce4_8422_2325u64, |f, b| (f ^ u64::from(b)).wrapping_mul(0x100_0000_01b3));
-        let row = c.slots.iter().fold(path ^ u64::from(c.winner), |r, &slot| r.rotate_left(7) ^ u64::from(slot));
-        h.rotate_left(5) ^ row.wrapping_mul(0x9E37_79B9_7F4A_7C15)
-    });
-    let key = (rows, conflicts.len(), generation);
+    let key = (rows_key(conflicts), conflicts.len(), ignores_generation());
     if let Some((seen, count)) = LAST.with(Cell::get)
         && seen == key
     {

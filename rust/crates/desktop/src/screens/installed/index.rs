@@ -31,8 +31,16 @@ pub struct Index {
     updates: RefCell<HashMap<u16, Option<RemoteFile>>>,
 }
 
+#[cfg(test)]
+thread_local! {
+    /// Indexes built on this thread, for tests that hold a quiet poll to building none.
+    pub static BUILT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 impl Index {
     pub fn new(s: &State) -> Self {
+        #[cfg(test)]
+        BUILT.with(|n| n.set(n.get() + 1));
         let mut meta = HashMap::with_capacity(s.installed.library.mods.len());
         for (i, m) in s.installed.library.mods.iter().enumerate() {
             meta.insert((m.slot, m.size_bytes), i);
@@ -103,6 +111,25 @@ impl Index {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Installed's poll runs on every animating frame. With nothing changed it must not walk
+    /// the library again: no index, no order check, no preview list.
+    #[test]
+    fn a_quiet_poll_rebuilds_nothing() {
+        let mut s = crate::data::init_state();
+        crate::bench_scenes::installed_stress_of(&mut s, 120);
+        super::super::poll(&mut s);
+        super::super::poll(&mut s);
+        let before = BUILT.with(|n| n.get());
+        for _ in 0..5 {
+            super::super::poll(&mut s);
+        }
+        assert_eq!(BUILT.with(|n| n.get()), before, "a poll with nothing changed built an index");
+        // A change to the rows is picked up on the next poll.
+        s.addons.addons[0].enabled = !s.addons.addons[0].enabled;
+        super::super::poll(&mut s);
+        assert!(BUILT.with(|n| n.get()) > before);
+    }
 
     /// The index answers exactly what the linear lookups it replaces answer, for every row.
     #[test]

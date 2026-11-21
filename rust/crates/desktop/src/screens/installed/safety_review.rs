@@ -46,7 +46,13 @@ pub struct Review {
     /// The trusted keys, re-read when the file changes.
     pub trusted: BTreeSet<String>,
     trusted_stamp: Option<Option<SystemTime>>,
+    /// `safety_gate::trusted_writes` when the date was last looked at, and when that was.
+    trusted_writes: u64,
+    trusted_looked: Option<std::time::Instant>,
 }
+
+/// How often poll looks at the trusted file's date when Sigil has not written it.
+const TRUSTED_EVERY: std::time::Duration = std::time::Duration::from_secs(2);
 
 // --- poll ---------------------------------------------------------------------------------
 
@@ -64,12 +70,21 @@ pub fn poll(st: &mut State) -> bool {
         }
         changed = true;
     }
-    // The trusted file: the gate writes it too, so it is read again when it changes.
-    let stamp = std::fs::metadata(super::safety_gate::trusted_path()).and_then(|m| m.modified()).ok();
-    if st.installed.tools.review.trusted_stamp != Some(stamp) {
-        st.installed.tools.review.trusted_stamp = Some(stamp);
-        st.installed.tools.review.trusted = super::safety_gate::read_trusted();
-        changed = true;
+    // The trusted file: the gate writes it too, so it is read again when it changes. Its
+    // date is looked at right after Sigil writes it and otherwise every two seconds, not on
+    // every poll: poll runs on every animating frame, and a file stat there costs most on
+    // Windows, where antivirus filters see each one.
+    let review = &st.installed.tools.review;
+    let writes = super::safety_gate::trusted_writes();
+    if writes != review.trusted_writes || review.trusted_looked.is_none_or(|at| at.elapsed() >= TRUSTED_EVERY) {
+        st.installed.tools.review.trusted_writes = writes;
+        st.installed.tools.review.trusted_looked = Some(std::time::Instant::now());
+        let stamp = std::fs::metadata(super::safety_gate::trusted_path()).and_then(|m| m.modified()).ok();
+        if st.installed.tools.review.trusted_stamp != Some(stamp) {
+            st.installed.tools.review.trusted_stamp = Some(stamp);
+            st.installed.tools.review.trusted = super::safety_gate::read_trusted();
+            changed = true;
+        }
     }
     if st.screen == Screen::Installed && st.addons.scanned && !st.installed.tools.review.checked && active(st) {
         st.installed.tools.review.checked = true;
@@ -191,7 +206,9 @@ pub fn disallow(st: &mut State, slot: u16) {
             return;
         }
     }
-    match review::revoke(&super::safety_gate::trusted_path(), &key) {
+    let revoked = review::revoke(&super::safety_gate::trusted_path(), &key);
+    super::safety_gate::trusted_written();
+    match revoked {
         Ok(_) => {
             st.installed.tools.review.trusted = super::safety_gate::read_trusted();
             let name = st
@@ -221,7 +238,9 @@ fn allow_scripts(st: &mut State) {
     let Some(game_root) = super::writable_game(st) else { return };
     let path = super::safety_gate::trusted_path();
     for (_, key) in &picks {
-        if let Err(error) = review::trust(&path, key) {
+        let written = review::trust(&path, key);
+        super::safety_gate::trusted_written();
+        if let Err(error) = written {
             st.status = error.to_string();
             return;
         }

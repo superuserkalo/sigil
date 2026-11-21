@@ -821,6 +821,13 @@ pub static EYE_OFF: rune::Icon = rune::Icon {
 /// Recompute the hidden-model slots after a scan.
 pub fn refresh_hidden(st: &mut State) -> bool {
     let enabled: BTreeSet<u16> = st.addons.addons.iter().filter(|a| a.enabled).map(|a| a.slot).collect();
+    // Runs on every poll: lowercasing every per-file row's path waits until the rows or the
+    // enabled set change.
+    let key = (crate::screens::conflicts::rows_key(&st.addons.conflicts), super::overlap::enabled_key(&enabled));
+    if st.installed.hidden_key == Some(key) {
+        return false;
+    }
+    st.installed.hidden_key = Some(key);
     let hidden = hidden_models(&st.addons.conflicts, &enabled);
     if hidden != st.installed.hidden {
         st.installed.hidden = hidden;

@@ -62,7 +62,13 @@ pub struct Notes {
     /// A picture the player picked for a local mod.
     pub image: Option<PathBuf>,
     pub error: Option<String>,
+    /// Pictures a mod names that were not on disk, and when that was seen: poll looked each
+    /// one up again on every frame.
+    pub missing_images: std::collections::HashMap<PathBuf, std::time::Instant>,
 }
+
+/// How long a missing picture waits before poll looks for it again.
+const MISSING_IMAGE_RETRY: std::time::Duration = std::time::Duration::from_secs(30);
 
 /// The open editor.
 pub enum Dialog {
@@ -210,15 +216,17 @@ fn poll_backfill(st: &mut State) -> bool {
         return changed;
     }
     let mut wanted: Vec<(String, u16, u64, u64)> = Vec::new();
+    let idx = super::index::Index::new(st);
     for addon in &st.addons.addons {
-        let Some(id) = meta_for(st, addon).and_then(|meta| meta.gamebanana_id) else {
+        let Some(id) = idx.meta(st, addon).and_then(|meta| meta.gamebanana_id) else {
             continue;
         };
-        let entry = extra(st, addon);
+        // A blank entry has no uid, so a mod without one is skipped as before.
+        let Some(entry) = idx.extra_ref(st, addon) else { continue };
         if entry.fetched || entry.uid.is_empty() {
             continue;
         }
-        wanted.push((entry.uid, addon.slot, addon.size_bytes, id));
+        wanted.push((entry.uid.clone(), addon.slot, addon.size_bytes, id));
     }
     let ids: Vec<u64> = wanted.iter().map(|(_, _, _, id)| *id).collect();
     if wanted.is_empty()
@@ -268,25 +276,39 @@ pub fn apply_profile(entry: &mut ModExtra, profile: &gamebanana::ModProfile, her
 /// thread; headless scenes collect the bytes for `setup`.
 fn load_local_images(st: &mut State) -> bool {
     let mut changed = false;
-    for entry in st.installed.notes.extras.mods.clone() {
-        let Some(path) = entry.image else { continue };
+    // Only the pictures not loaded yet, and not one seen missing a moment ago: this ran
+    // through a copy of the whole notes store and asked the disk about every missing picture
+    // on every poll.
+    let notes = &st.installed.notes;
+    let wanted: Vec<PathBuf> = notes
+        .extras
+        .mods
+        .iter()
+        .filter_map(|entry| entry.image.clone())
+        .filter(|path| !st.thumbnails.contains_key(path.to_string_lossy().as_ref()))
+        .filter(|path| notes.missing_images.get(path).is_none_or(|seen| seen.elapsed() >= MISSING_IMAGE_RETRY))
+        .collect();
+    for path in wanted {
         let key = path.to_string_lossy().into_owned();
-        if st.thumbnails.contains_key(&key) {
-            continue;
-        }
         match st.images.as_ref() {
             Some(cache) => {
                 if path.is_file() {
                     let image = cache.file(&path, 1.0, 1.0);
                     st.thumbnails.insert(key, image.pixels().clone());
+                    st.installed.notes.missing_images.remove(&path);
                     changed = true;
+                } else {
+                    st.installed.notes.missing_images.insert(path, std::time::Instant::now());
                 }
             }
             None => {
-                if !st.pending_thumbs.iter().any(|(known, _)| *known == key)
-                    && let Ok(bytes) = std::fs::read(&path)
-                {
-                    st.pending_thumbs.push((key, bytes));
+                if !st.pending_thumbs.iter().any(|(known, _)| *known == key) {
+                    match std::fs::read(&path) {
+                        Ok(bytes) => st.pending_thumbs.push((key, bytes)),
+                        Err(_) => {
+                            st.installed.notes.missing_images.insert(path, std::time::Instant::now());
+                        }
+                    }
                 }
             }
         }

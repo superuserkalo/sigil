@@ -22,6 +22,7 @@ pub mod locales_ux;
 pub mod sound;
 mod drag;
 pub(crate) mod index;
+mod keys;
 pub mod enable;
 pub mod folder_fix;
 mod layout;
@@ -127,6 +128,13 @@ pub struct View {
     pub gates: enable::Gates,
     /// Slots whose model another enabled mod hides, from the last scan.
     pub hidden: BTreeSet<u16>,
+    /// The preview addresses and what they were worked out from (`keys`).
+    pub preview_urls: Option<((u64, u64), Vec<String>)>,
+    /// What `req_order::refresh` last worked from.
+    pub order_key: Option<(u64, u64, u64, u64, usize)>,
+    /// What `overlap::refresh` and `enable::refresh_hidden` last worked from.
+    pub overlaps_key: Option<(u64, u64, u64)>,
+    pub hidden_key: Option<(u64, u64)>,
     /// A card being dragged to a new load order.
     pub drag: Option<drag::Dragging>,
     /// The section's cards, by slot, as they stood when the drag began (`drag::order`), so a
@@ -2371,14 +2379,19 @@ pub(super) fn menu_item(
 /// Reread the library after a scan changed the slots, and fetch previews that are missing.
 /// Previews Installed shows: library entries for slots on disk, plus the open import review.
 fn preview_urls(st: &State) -> Vec<String> {
-    let mut wanted: Vec<String> = st
-        .addons
-        .addons
-        .iter()
-        .filter_map(|addon| meta_for(st, addon).and_then(|meta| meta.thumbnail_url.clone()))
-        .collect();
+    let mut wanted = library_previews(st);
     wanted.extend(importer::wanted_thumbs(st));
     wanted
+}
+
+/// The preview of every slot on disk that has one in the library.
+fn library_previews(st: &State) -> Vec<String> {
+    let idx = index::Index::new(st);
+    st.addons
+        .addons
+        .iter()
+        .filter_map(|addon| idx.meta(st, addon).and_then(|meta| meta.thumbnail_url.clone()))
+        .collect()
 }
 
 /// Leaving Installed: drop the decoded previews and forget the batch, so coming back fetches
@@ -2503,16 +2516,24 @@ pub fn poll(st: &mut State) -> bool {
     }
 
     // Previews: library entries for slots on disk, plus the open import review.
-    let wanted = preview_urls(st);
-    let missing: Vec<String> = wanted
-        .into_iter()
+    // The library's part is worked out again only when the rows or the library change.
+    let key = (keys::addons(st), keys::library(st));
+    if st.installed.preview_urls.as_ref().map(|(known, _)| *known) != Some(key) {
+        st.installed.preview_urls = Some((key, library_previews(st)));
+    }
+    let importing = importer::wanted_thumbs(st);
+    let library = st.installed.preview_urls.as_ref().map_or(&[][..], |(_, urls)| urls.as_slice());
+    let mut seen: HashSet<&str> = HashSet::new();
+    let missing: Vec<String> = library
+        .iter()
+        .chain(importing.iter())
         .filter(|url| {
             allowed_image(url)
-                && !st.thumbnails.contains_key(url)
-                && !st.installed.failed.contains(url)
+                && !st.thumbnails.contains_key(url.as_str())
+                && !st.installed.failed.contains(url.as_str())
+                && seen.insert(url.as_str())
         })
-        .collect::<HashSet<_>>()
-        .into_iter()
+        .cloned()
         .collect();
     let fresh = missing.iter().any(|url| !st.installed.batch.contains(url));
     // Previews decode only while Installed shows them (about 1 MB each); they go on leave.

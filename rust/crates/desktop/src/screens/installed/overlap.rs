@@ -43,6 +43,11 @@ pub fn by_slot(conflicts: &[ConflictRow], enabled: &BTreeSet<u16>, hidden: impl 
     out
 }
 
+/// The enabled slots, folded.
+pub fn enabled_key(enabled: &BTreeSet<u16>) -> u64 {
+    enabled.iter().fold(enabled.len() as u64, |h, &slot| h.rotate_left(9) ^ u64::from(slot).wrapping_mul(0x9E37_79B9_7F4A_7C15))
+}
+
 /// The winner of a pair: the lower slot loads first, and the game keeps its copy.
 pub fn winner(a: u16, b: u16) -> u16 {
     a.min(b)
@@ -51,6 +56,13 @@ pub fn winner(a: u16, b: u16) -> u16 {
 /// Recompute after a scan or an ignore change. Cheap: the rows are already in memory.
 pub fn refresh(st: &mut State) -> bool {
     let enabled: BTreeSet<u16> = st.addons.addons.iter().filter(|a| a.enabled).map(|a| a.slot).collect();
+    // Runs on every poll: skip the walk over every per-file row (and the copy of the ignore
+    // list) while the rows, the enabled set and the ignores are what they were.
+    let key = (crate::screens::conflicts::rows_key(&st.addons.conflicts), enabled_key(&enabled), crate::screens::conflicts::ignores_generation());
+    if st.installed.overlaps_key == Some(key) {
+        return false;
+    }
+    st.installed.overlaps_key = Some(key);
     let ignores = crate::screens::conflicts::ignore_list();
     let fresh = by_slot(&st.addons.conflicts, &enabled, |row| ignores.hides(&row.path, &row.slots, row.winner));
     if fresh != st.installed.overlaps {
