@@ -1116,7 +1116,9 @@ pub(crate) fn virtual_grid(s: &State, shown: Rc<Vec<usize>>, cols: usize, card_w
                     .and_then(|&index| s.browse.page.as_ref()?.mods.get(index))
                     .map(|card| card.id)
                     .unwrap_or(0);
-                Cow::Owned(format!("browse-row-{cols}-{first}"))
+                // Keyed by the first card alone: with the column count in the key every row
+                // changed key at a column break, and the page scrolled by itself on resize.
+                Cow::Owned(format!("browse-row-{first}"))
             },
             move |s: &State, i| {
                 let u = Ui::new();
