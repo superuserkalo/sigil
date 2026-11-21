@@ -1,0 +1,58 @@
+name: windows-shaders
+
+# Compiles the 3D viewer's shaders where players run them: D3D12 with FXC (shader model 5.1) on
+# Windows. Sigil 0.1.20 shipped a scene shader FXC rejected (X3500, X3511) that no macOS check
+# could see. The runner has no GPU, so the test builds every pipeline on WARP, Windows' software
+# D3D12 adapter, which uses the same FXC as a player's driver path. The naga HLSL checks in
+# sigil-viewer (src/shaders/fxc.rs) run here too.
+# Free: GitHub-hosted runners cost nothing for a public repository.
+
+on:
+  push:
+    paths:
+      - "rust/crates/sigil-viewer/**"
+      - ".github/workflows/windows-shaders.yml"
+  pull_request:
+    paths:
+      - "rust/crates/sigil-viewer/**"
+      - ".github/workflows/windows-shaders.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-shaders-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  d3d12:
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
+        with:
+          toolchain: stable
+
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          workspaces: rust
+
+      # The workspace patches wgpu-hal with Rune's vendored copy (the D3D12 backend players run),
+      # and the desktop member's path dependencies must exist for Cargo to load the workspace.
+      - name: Vendor Rune
+        shell: bash
+        run: ./scripts/vendor-rune.sh
+
+      - name: Build every viewer pipeline on D3D12 (FXC)
+        shell: bash
+        env:
+          SIGIL_REQUIRE_GPU: "1"
+        run: |
+          set -euo pipefail
+          cargo test --locked --manifest-path rust/Cargo.toml -p sigil-viewer --test pipelines -- --nocapture
+          cargo test --locked --manifest-path rust/Cargo.toml -p sigil-viewer --lib shaders::
