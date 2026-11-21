@@ -94,18 +94,20 @@ impl Fit {
     }
 }
 
-static FIT: std::sync::Mutex<Fit> = std::sync::Mutex::new(Fit::Full);
+thread_local! {
+    /// Per thread, as the view that sets it runs on the UI thread: a process-wide value let a
+    /// view on one thread (a test's window) read the width another had set.
+    static FIT: std::cell::Cell<Fit> = const { std::cell::Cell::new(Fit::Full) };
+}
 
 /// Set by the view each frame from the window and sidebar widths.
 pub fn set_fit(fit: Fit) {
-    if let Ok(mut f) = FIT.lock() {
-        *f = fit;
-    }
+    FIT.with(|f| f.set(fit));
 }
 
 /// The toolbar fit for this frame. Pages read it to fold their own actions and filters.
 pub fn fit() -> Fit {
-    FIT.lock().map(|f| *f).unwrap_or(Fit::Full)
+    FIT.with(|f| f.get())
 }
 
 static WINDOW: std::sync::Mutex<(f32, f32)> = std::sync::Mutex::new((1280.0, 800.0));
@@ -251,6 +253,16 @@ impl Look {
 
 static LOOK: std::sync::Mutex<Look> = std::sync::Mutex::new(Look::DEFAULT);
 
+/// `Look::radius` and `Look::density` as f32 bits, beside the lock: `r` and `density` run
+/// hundreds of times a build (every corner), and each took the lock.
+static RADIUS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(Look::DEFAULT.radius.to_bits());
+static DENSITY: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(Look::DEFAULT.density.to_bits());
+
+fn store_fast(look: &Look) {
+    RADIUS.store(look.radius.to_bits(), std::sync::atomic::Ordering::Relaxed);
+    DENSITY.store(look.density.to_bits(), std::sync::atomic::Ordering::Relaxed);
+}
+
 /// Set the theme and accent. Personalize's palette and radius stay as they are.
 pub fn set_look(theme: Theme, accent: Option<Color>) {
     if let Ok(mut look) = LOOK.lock() {
@@ -264,6 +276,7 @@ pub fn set_personal(custom: Option<Palette>, radius: f32) {
     if let Ok(mut look) = LOOK.lock() {
         look.custom = custom;
         look.radius = if radius.is_finite() { radius.clamp(0.0, 2.0) } else { 1.0 };
+        store_fast(&look);
     }
 }
 
@@ -275,17 +288,18 @@ pub fn look() -> Look {
 pub fn set_density(scale: f32) {
     if let Ok(mut look) = LOOK.lock() {
         look.density = if scale.is_finite() { scale.clamp(0.8, 1.2) } else { 1.0 };
+        store_fast(&look);
     }
 }
 
 pub fn density() -> f32 {
-    look().density
+    f32::from_bits(DENSITY.load(std::sync::atomic::Ordering::Relaxed))
 }
 
 /// A corner radius on the house grid, scaled by the Personalize radius choice. Block, the
 /// default, maps every corner to 4 points (outer) or 2 (inner); Soft (1.0) is exact.
 pub fn r(points: f32) -> f32 {
-    let k = look().radius;
+    let k = f32::from_bits(RADIUS.load(std::sync::atomic::Ordering::Relaxed));
     if k == 1.0 {
         points
     } else if k == BLOCK_RADIUS {

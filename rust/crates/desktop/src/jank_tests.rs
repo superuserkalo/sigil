@@ -235,6 +235,26 @@ fn targets(rt: &Runtime<State>) -> Vec<(String, [i32; 4])> {
 /// jumps on frame two, on every open and every resize.
 #[test]
 fn first_frame_is_laid_out_at_the_real_width() {
+    let wrong = same_language(first_frame_moves);
+    assert!(wrong.is_empty(), "laid out again after the first frame:\n{}", wrong.join("\n"));
+}
+
+/// Runs `check` until no other test switched the interface language while it ran: tests run
+/// in parallel and the language is process-wide, so a switch mid-run moves text for reasons
+/// that have nothing to do with the check.
+fn same_language(check: impl Fn() -> Vec<String>) -> Vec<String> {
+    let mut found = Vec::new();
+    for _ in 0..4 {
+        let before = crate::screens::settings::i18n::current();
+        found = check();
+        if crate::screens::settings::i18n::current() == before {
+            break;
+        }
+    }
+    found
+}
+
+fn first_frame_moves() -> Vec<String> {
     let mut wrong = Vec::new();
     for name in ["browse-card-stress", "locker", "demo-installed", "stats"] {
         for size in [(1040.0, 680.0), (1600.0, 900.0)] {
@@ -263,7 +283,7 @@ fn first_frame_is_laid_out_at_the_real_width() {
             }
         }
     }
-    assert!(wrong.is_empty(), "laid out again after the first frame:\n{}", wrong.join("\n"));
+    wrong
 }
 
 /// Dragging the window narrower than a column break must not scroll the page. The grid's
