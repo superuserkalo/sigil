@@ -586,15 +586,18 @@ fn result_view(s: &State, u: &Ui, run: &RunRecord) -> El {
     }
     sub.push(when(&run.spec.created_at));
     let (a, b, c, d) = (id.clone(), id.clone(), id.clone(), id.clone());
-    let actions = row()
-        .gap(8.0)
-        .center_y()
-        .child(
+    // A card needs a measured pass: a run that failed before one has nothing to draw.
+    let measured = run.passes.iter().any(|p| !p.warmup && p.summary.is_some());
+    let mut actions = row().gap(8.0).center_y();
+    if measured {
+        actions = actions.child(
             u.icon_action(&icons::DOWNLOAD, tr("Save card"), ActionKind::Secondary)
                 .key("bench-card")
                 .cursor(rune::Cursor::Pointer)
                 .on_press_tx(move |st: &mut State, tx: &mut Tx| super::save_card(st, tx, &a)),
-        )
+        );
+    }
+    let actions = actions
         .child(u.action(tr("JSON"), ActionKind::Ghost).key("bench-json").cursor(rune::Cursor::Pointer).on_press_tx(move |st: &mut State, tx: &mut Tx| super::export_json(st, tx, &b)))
         .child(u.action(tr("CSV"), ActionKind::Ghost).key("bench-csv").cursor(rune::Cursor::Pointer).on_press_tx(move |st: &mut State, tx: &mut Tx| super::export_csv(st, tx, &c)))
         .child(u.icon_button(&icons::FOLDER_OPEN, tr("Open logs")).key("bench-logs").cursor(rune::Cursor::Pointer).on_press(move |st: &mut State| super::open_logs(st, &d)))

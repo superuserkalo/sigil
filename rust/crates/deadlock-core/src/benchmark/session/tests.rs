@@ -272,3 +272,40 @@ fn the_replay_hash_is_checked_before_a_pass() {
     assert!(verify_demo(&demo, &sha).unwrap_err().to_string().contains("changed since the run started"));
     let _ = fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn a_showfps_name_from_the_log_must_be_a_bare_prof_csv() {
+    assert_eq!(showfps_name(" prof_dl_midtown.csv "), Some("prof_dl_midtown.csv".into()));
+    for bad in [
+        "C:\\Users\\x\\prof_a.csv",
+        "/etc/prof_a.csv",
+        "\\\\host\\share\\prof_a.csv",
+        "\\\\?\\C:\\prof_a.csv",
+        "../prof_a.csv",
+        "..\\prof_a.csv",
+        "prof_..csv",
+        "cfg/prof_a.csv",
+        "secrets.txt",
+        "",
+    ] {
+        assert_eq!(showfps_name(bad), None, "{bad}");
+    }
+}
+
+#[test]
+fn a_named_showfps_log_outside_the_game_is_never_read() {
+    let (game, _data) = game("named", &[]);
+    let since = SystemTime::now() - Duration::from_secs(5);
+    let mut log = String::from("Time,Player 1 Position,Smooth FPS,Frame FPS,Smooth MS,Frame MS,Server Frame MS\n");
+    for i in 0..150 {
+        log.push_str(&format!("{i},0 0 0,200,200,5,5,0\n"));
+    }
+    let outside = game.parent().unwrap().join("prof_outside.csv");
+    fs::write(&outside, &log).unwrap();
+    for name in [outside.display().to_string(), "..\\prof_outside.csv".into(), "../../prof_outside.csv".into(), "\\\\host\\share\\prof_outside.csv".into()] {
+        let followed = Followed { events: vec![LogEvent::ShowFpsLog(name.clone())], end: End::Exited, last_line: None, lines: Vec::new() };
+        let (source, _, file) = collect_frames(&game, since, &followed);
+        assert_eq!((source, file), (FrameSource::None, None), "{name}");
+    }
+    let _ = fs::remove_dir_all(game.parent().unwrap());
+}

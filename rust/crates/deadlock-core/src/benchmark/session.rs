@@ -696,6 +696,21 @@ fn newest_since(dirs: &[PathBuf], since: SystemTime, matches: impl Fn(&str) -> b
     best.map(|(_, p)| p)
 }
 
+/// A `cl_showfps 4` log name from console.log, accepted only as one plain `prof_*.csv` file
+/// name: no folder, no `..`, no drive, UNC or verbatim prefix.
+pub fn showfps_name(raw: &str) -> Option<String> {
+    let name = raw.trim();
+    if name.is_empty() || name.contains(['/', '\\', ':']) || name.contains("..") {
+        return None;
+    }
+    let mut parts = Path::new(name).components();
+    if !matches!((parts.next(), parts.next()), (Some(std::path::Component::Normal(_)), None)) {
+        return None;
+    }
+    let lower = name.to_ascii_lowercase();
+    (lower.starts_with("prof_") && lower.ends_with(".csv")).then(|| name.to_string())
+}
+
 /// Folders the game may write its frame files to.
 pub fn frame_dirs(game_root: &Path) -> Vec<PathBuf> {
     let game = game_root.join("game");
@@ -740,13 +755,15 @@ pub fn collect_frames(game_root: &Path, since: SystemTime, followed: &Followed) 
             return (FrameSource::TimedemoProfile, frames, Some(path));
         }
     }
-    let named = followed.showfps_log().map(|name| {
-        let name = Path::new(name);
-        if name.is_absolute() { vec![name.to_path_buf()] } else { dirs.iter().map(|d| d.join(name)).collect() }
+    let is_prof = |n: &str| n.starts_with("prof_") && n.ends_with(".csv");
+    // The name console.log gives is untrusted (mods and servers can print into the log): only a
+    // bare `prof_*.csv` name, joined onto the known frame folders and written during this pass.
+    let named = followed.showfps_log().and_then(showfps_name).and_then(|name| {
+        dirs.iter().map(|d| d.join(&name)).find(|p| {
+            p.is_file() && fs::metadata(p).and_then(|m| m.modified()).is_ok_and(|t| t >= since)
+        })
     });
-    let showfps = named
-        .and_then(|candidates| candidates.into_iter().find(|p| p.is_file()))
-        .or_else(|| newest_since(&dirs, since, |n| n.starts_with("prof_") && n.ends_with(".csv")));
+    let showfps = named.or_else(|| newest_since(&dirs, since, |n| is_prof(n)));
     if let Some(path) = showfps
         && let Ok(text) = fs::read_to_string(&path)
     {
