@@ -708,7 +708,7 @@ pub fn season_mark(s: &State, u: &Ui) -> Option<El> {
     let mut mark = row()
         .key("season-mark")
         .w_full()
-        .h(30.0)
+        .h(crate::ui::CONTROL_L)
         .px(10.0)
         .gap(10.0)
         .center_y()

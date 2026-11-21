@@ -1160,10 +1160,16 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
         .layout_size("root")
         .map_or((1360.0, 860.0), |size| (size[0], size[1]));
     let u = Ui::new();
+    PAGE_SEARCH.with(|on| on.set(false));
     cx.foreground(u.ink);
     cx.caption_color(u.muted);
     cx.focus_ring(crate::ui::FOCUS_W, crate::ui::FOCUS_GAP, u.accent);
+    cx.help_look(u.help_look());
     let insets = cx.chrome_insets();
+    // The page toolbars fold by width alone: the window less the sidebar and the page margins.
+    crate::ui::set_fit(crate::ui::Fit::from_width(
+        window.0 - crate::shell_w4::sidebar_width(s, insets.leading) - 2.0 * PAGE_X,
+    ));
     // A status line a handler wrote since the last poll becomes a toast on the next one.
     crate::notify::needs_poll(s);
     let body = match s.screen {
@@ -1786,7 +1792,7 @@ fn titlebar(s: &State, u: &Ui, insets: rune::ChromeInsets) -> El {
                 .on_press(|st: &mut State| st.go(Screen::Agent)),
         );
     }
-    if s.screen.searches() {
+    if s.screen.searches() && !PAGE_SEARCH.with(|on| on.get()) {
         bar = bar.child(search(s, u));
     }
     bar = bar.child(
@@ -1798,9 +1804,26 @@ fn titlebar(s: &State, u: &Ui, insets: rune::ChromeInsets) -> El {
     bar
 }
 
+thread_local! {
+    /// Set when the page drew its own search this frame (`page_search`), so the top bar
+    /// leaves its own out. The page is built before the top bar.
+    static PAGE_SEARCH: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// The current page's search field for its own toolbar line (`Ui::page_toolbar`). A page that
+/// shows it takes the search out of the top bar on the same frame.
+pub fn page_search(s: &State, u: &Ui) -> El {
+    PAGE_SEARCH.with(|on| on.set(true));
+    u.page_search(search_field(s, u))
+}
+
 fn search(s: &State, u: &Ui) -> El {
+    u.search_shell(search_field(s, u))
+}
+
+fn search_field(s: &State, u: &Ui) -> El {
     let field = match s.screen {
-        Screen::Installed => rune::text_input(&s.installed_query, SMALL)
+        Screen::Installed => rune::text_input(&s.installed_query, crate::ui::BODY)
             .key("search-installed")
             .label("Search installed addons")
             .single_line()
@@ -1808,7 +1831,7 @@ fn search(s: &State, u: &Ui) -> El {
             .placeholder("Search installed", u.faint)
             .caret(u.accent, u.accent.alpha(0.20))
             .on_edit(|st: &mut State| &mut st.installed_query),
-        Screen::Browse => rune::text_input(&s.browse_query, SMALL)
+        Screen::Browse => rune::text_input(&s.browse_query, crate::ui::BODY)
             .key("search-browse")
             .label("Search GameBanana")
             .single_line()
@@ -1816,7 +1839,7 @@ fn search(s: &State, u: &Ui) -> El {
             .placeholder("Search GameBanana", u.faint)
             .caret(u.accent, u.accent.alpha(0.20))
             .on_edit(|st: &mut State| &mut st.browse_query),
-        Screen::Servers => rune::text_input(&s.servers.query, SMALL)
+        Screen::Servers => rune::text_input(&s.servers.query, crate::ui::BODY)
             .key("search-servers")
             .label("Search servers")
             .single_line()
@@ -1824,7 +1847,7 @@ fn search(s: &State, u: &Ui) -> El {
             .placeholder("Search servers or maps", u.faint)
             .caret(u.accent, u.accent.alpha(0.20))
             .on_edit(|st: &mut State| &mut st.servers.query),
-        _ => rune::text_input(&s.conflicts_query, SMALL)
+        _ => rune::text_input(&s.conflicts_query, crate::ui::BODY)
             .key("search-conflicts")
             .label("Search conflicting paths")
             .single_line()
@@ -1833,7 +1856,7 @@ fn search(s: &State, u: &Ui) -> El {
             .caret(u.accent, u.accent.alpha(0.20))
             .on_edit(|st: &mut State| &mut st.conflicts_query),
     };
-    u.search_shell(field)
+    field
 }
 
 /// The launch confirm. Opening Steam is the only thing it does; the app never renames or copies

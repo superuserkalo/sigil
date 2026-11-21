@@ -676,7 +676,7 @@ fn shortcut_group(u: &Ui, title: &str, rows: &[(&str, &str)]) -> El {
         group = group.child(
             row()
                 .w_full()
-                .h(26.0)
+                .h(crate::ui::CONTROL_M)
                 .gap(12.0)
                 .center_y()
                 .child(text(tr(action)).font(BODY).color(u.ink).grow(1.0))

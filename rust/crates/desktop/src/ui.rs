@@ -17,30 +17,96 @@ pub const STATUS_H: f32 = 0.0;
 pub const PAGE_X: f32 = 32.0;
 pub const PAGE_TOP: f32 = 24.0;
 
-// The type scale: 13 for controls and body, 11 to 12 for metadata, 14 to 16 for section titles,
-// 20 for a page title. Regular is 420, medium about 510, titles about 580.
-pub const HERO: TextStyle = TextStyle::new(20.0, 580.0).lh(26.0).tracking(-0.2);
-pub const DISPLAY: TextStyle = TextStyle::new(20.0, 580.0).lh(26.0).tracking(-0.2);
-pub const H1: TextStyle = TextStyle::new(16.0, 580.0).lh(22.0).tracking(-0.1);
-pub const H2: TextStyle = TextStyle::new(14.0, 560.0).lh(20.0);
-pub const LEAD: TextStyle = TextStyle::new(14.0, 420.0).lh(22.0);
-pub const BODY: TextStyle = TextStyle::new(13.0, 420.0).lh(20.0);
-pub const CHAT: TextStyle = TextStyle::new(14.0, 420.0).lh(23.0);
-pub const BODY_MED: TextStyle = TextStyle::new(13.0, 510.0).lh(20.0);
-pub const SMALL: TextStyle = TextStyle::new(12.0, 420.0).lh(16.0);
+// The type scale. Rune bundles three Inter faces (Regular 400, Medium 500, SemiBold 600) and
+// matches weights the CSS way, so a weight between faces draws in the next heavier one: write
+// only 400, 500 and 600. 13 is body, 12 the floor for words, 11 only for badges and keycaps.
+// Emphasis is one step (400 to 500); 600 is for the page title, section headers and stat values.
+/// The one title a page shows, on its toolbar line; also dialog and empty-state titles.
+pub const PAGE_TITLE: TextStyle = TextStyle::new(16.0, 600.0).lh(24.0).tracking(-0.1);
+pub const HERO: TextStyle = PAGE_TITLE;
+pub const DISPLAY: TextStyle = PAGE_TITLE;
+pub const H1: TextStyle = PAGE_TITLE;
+/// A section header inside a page: the only 600 weight in content, in `muted`.
+pub const SECTION: TextStyle = TextStyle::new(12.0, 600.0).lh(16.0).tracking(0.1);
+pub const H2: TextStyle = SECTION;
+pub const BODY: TextStyle = TextStyle::new(13.0, 400.0).lh(20.0);
+pub const LEAD: TextStyle = BODY;
+pub const CHAT: TextStyle = TextStyle::new(14.0, 400.0).lh(22.0);
+pub const BODY_MED: TextStyle = TextStyle::new(13.0, 500.0).lh(20.0);
+/// Body numbers whose digits line up: values in rows and tables.
+pub const BODY_NUM: TextStyle = TextStyle::new(13.0, 400.0).lh(20.0).features("'tnum' 1");
+pub const SMALL: TextStyle = TextStyle::new(12.0, 400.0).lh(16.0);
 /// Small text whose digits line up: counts, sizes, versions.
-pub const SMALL_NUM: TextStyle = TextStyle::new(12.0, 420.0).lh(16.0).features("'tnum' 1");
+pub const SMALL_NUM: TextStyle = TextStyle::new(12.0, 400.0).lh(16.0).features("'tnum' 1");
 pub const LABEL: TextStyle = TextStyle::new(12.0, 500.0).lh(16.0);
-pub const NAV: TextStyle = TextStyle::new(13.0, 480.0).lh(20.0);
-pub const WORDMARK: TextStyle = TextStyle::new(15.0, 640.0).lh(20.0).tracking(-0.2);
-pub const MICRO: TextStyle = TextStyle::new(11.0, 500.0).lh(14.0).features("'tnum' 1");
-pub const MONO: TextStyle = TextStyle::new(12.0, 430.0)
+pub const NAV: TextStyle = TextStyle::new(13.0, 500.0).lh(20.0);
+pub const WORDMARK: TextStyle = TextStyle::new(15.0, 600.0).lh(20.0).tracking(-0.2);
+/// Badges, keycaps and slot numbers only: at most four characters.
+pub const MICRO: TextStyle = TextStyle::new(11.0, 500.0)
+    .lh(16.0)
+    .tracking(0.1)
+    .features("'tnum' 1");
+pub const MONO: TextStyle = TextStyle::new(12.0, 400.0)
     .lh(18.0)
     .family(Family::SystemMono);
-pub const MONO_MED: TextStyle = TextStyle::new(12.0, 540.0)
+pub const MONO_MED: TextStyle = TextStyle::new(12.0, 500.0)
     .lh(18.0)
     .family(Family::SystemMono);
-pub const NUM: TextStyle = TextStyle::new(16.0, 570.0).lh(22.0).features("'tnum' 1");
+pub const NUM: TextStyle = TextStyle::new(16.0, 600.0).lh(24.0).features("'tnum' 1");
+
+/// Every shared text style, for the weight test.
+#[cfg(test)]
+const STYLES: [TextStyle; 15] = [
+    PAGE_TITLE, SECTION, BODY, CHAT, BODY_MED, BODY_NUM, SMALL, SMALL_NUM, LABEL, NAV, WORDMARK,
+    MICRO, MONO, MONO_MED, NUM,
+];
+
+/// How much room a page's toolbar line has, from the window size alone (never hover or data),
+/// so the line never shifts while the pointer moves or a list loads.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Fit {
+    /// 960 points or more of content width: everything labelled.
+    Full,
+    /// 760 to 959: labelled actions become icon buttons, search narrows to 176.
+    Compact,
+    /// Under 760: dropdown filters fold into one Filters menu, search 144.
+    Tight,
+}
+
+impl Fit {
+    pub fn from_width(content_w: f32) -> Fit {
+        if content_w >= 960.0 {
+            Fit::Full
+        } else if content_w >= 760.0 {
+            Fit::Compact
+        } else {
+            Fit::Tight
+        }
+    }
+
+    /// The page search field's width at this fit.
+    pub fn search_w(self) -> f32 {
+        match self {
+            Fit::Full => 240.0,
+            Fit::Compact => 176.0,
+            Fit::Tight => 144.0,
+        }
+    }
+}
+
+static FIT: std::sync::Mutex<Fit> = std::sync::Mutex::new(Fit::Full);
+
+/// Set by the view each frame from the window and sidebar widths.
+pub fn set_fit(fit: Fit) {
+    if let Ok(mut f) = FIT.lock() {
+        *f = fit;
+    }
+}
+
+/// The toolbar fit for this frame. Pages read it to fold their own actions and filters.
+pub fn fit() -> Fit {
+    FIT.lock().map(|f| *f).unwrap_or(Fit::Full)
+}
 
 /// The control heights. Every button, field, tab and menu row sits on one of these.
 pub const CONTROL_S: f32 = 24.0;
@@ -584,9 +650,9 @@ impl Ui {
         u.raised = oklch(raised, chroma * 1.2, hue);
         u.well = oklch(well, chroma, hue);
         u.field = u.well;
-        u.prose = oklch(0.87, chroma.min(0.012), hue);
-        u.muted = oklch(0.71, (chroma * 1.5).clamp(0.008, 0.03), hue);
-        u.faint = oklch(0.55, (chroma * 1.5).clamp(0.008, 0.03), hue);
+        u.prose = oklch(0.88, chroma.min(0.012), hue);
+        u.muted = oklch(0.72, (chroma * 1.5).clamp(0.008, 0.03), hue);
+        u.faint = oklch(0.65, (chroma * 1.5).clamp(0.008, 0.03), hue);
         u
     }
 
@@ -597,10 +663,10 @@ impl Ui {
         let mut u = Ui::dark_variant(0.225, 0.2, 0.268, 0.185, 0.0, 0.0);
         u.hair = Color::WHITE.alpha(0.085);
         u.hair_strong = Color::WHITE.alpha(0.15);
-        u.ink = oklch(0.95, 0.0, 0.0);
-        u.prose = oklch(0.86, 0.0, 0.0);
-        u.muted = oklch(0.75, 0.0, 0.0);
-        u.faint = oklch(0.68, 0.0, 0.0);
+        u.ink = oklch(0.96, 0.0, 0.0);
+        u.prose = oklch(0.88, 0.0, 0.0);
+        u.muted = oklch(0.72, 0.0, 0.0);
+        u.faint = oklch(0.65, 0.0, 0.0);
         u.hover = Color::WHITE.alpha(0.05);
         u.selected = Color::WHITE.alpha(0.09);
         u.shadow = Color::BLACK.alpha(0.40);
@@ -621,7 +687,7 @@ impl Ui {
             ink: oklch(0.22, 0.006, 85.0),
             prose: oklch(0.32, 0.008, 85.0),
             muted: oklch(0.47, 0.01, 85.0),
-            faint: oklch(0.6, 0.01, 85.0),
+            faint: oklch(0.52, 0.01, 85.0),
             accent: oklch(0.68, 0.175, 48.0),
             accent_ink: Color::WHITE,
             teal: oklch(0.52, 0.12, 155.0),
@@ -653,8 +719,8 @@ impl Ui {
             hair_strong: Color::WHITE.alpha(0.10),
             ink: oklch(0.967, 0.001, 286.0),
             prose: oklch(0.87, 0.004, 286.0),
-            muted: oklch(0.71, 0.012, 286.0),
-            faint: oklch(0.55, 0.012, 286.0),
+            muted: oklch(0.72, 0.012, 286.0),
+            faint: oklch(0.65, 0.012, 286.0),
             accent: oklch(0.735, 0.155, 52.0),
             accent_ink: oklch(0.20, 0.04, 50.0),
             teal: oklch(0.78, 0.12, 155.0),
@@ -1038,11 +1104,87 @@ impl Ui {
             .child(text(title).font(LABEL).color(self.muted))
     }
 
+    /// Sigil's tooltip for every `El::help`: a raised graphite block with a 1 point line, 4
+    /// point corners, small text, a short delay and no fade, so it never lags or moves. Rune
+    /// draws it on macOS too instead of AppKit's yellow-grey tip.
+    pub fn help_look(&self) -> rune::HelpLook {
+        rune::HelpLook::system(!self.light)
+            .fill(self.raised.alpha(1.0))
+            .ink(self.ink)
+            .ring(1.0, self.hair_strong)
+            .radius(r(8.0))
+            .padding(8.0, 4.0)
+            .font(SMALL)
+            .max_width(Some(280.0))
+            .gap(6.0)
+            .margin(8.0)
+            .delay(0.35)
+            .skip_delay(0.3)
+            .keycaps(self.over.alpha(0.08), self.muted, MICRO, false)
+            .shadows([rune::Shadow {
+                x: 0.0,
+                y: 4.0,
+                blur: 12.0,
+                spread: 0.0,
+                color: Color::BLACK.alpha(if self.light { 0.12 } else { 0.35 }),
+                inset: false,
+            }])
+    }
+
+    /// A page's one toolbar line, 32 points high: the lead (the page title from `page_title`,
+    /// or the page's tabs), then its filters, then its own search (`page_search`), then its
+    /// actions on the trailing edge. Filters give way first when the window narrows.
+    pub fn page_toolbar(
+        &self,
+        lead: El,
+        filters: Vec<El>,
+        search: Option<El>,
+        actions: Vec<El>,
+    ) -> El {
+        let mut line = row()
+            .key("page-toolbar")
+            .w_full()
+            .h(CONTROL_L)
+            .gap(8.0)
+            .center_y()
+            .child(lead);
+        if !filters.is_empty() {
+            line = line.child(
+                row()
+                    .key("page-toolbar-filters")
+                    .gap(8.0)
+                    .center_y()
+                    .shrink()
+                    .children(filters),
+            );
+        }
+        line = line.child(spacer());
+        if let Some(search) = search {
+            line = line.child(search);
+        }
+        line.children(actions)
+    }
+
+    /// The page title on its toolbar line: one per page.
+    pub fn page_title(&self, title: &str) -> El {
+        text(title.to_string())
+            .font(PAGE_TITLE)
+            .color(self.ink)
+            .role("heading")
+            .level(1)
+    }
+
+    /// A page's own search field for its toolbar line, 32 points high. The field comes from
+    /// `rune::text_input` so the page owns its `TextEdit`.
+    pub fn page_search(&self, field: El) -> El {
+        self.search_shell(field).w(fit().search_w())
+    }
+
     /// The toolbar search field. The field itself comes from `rune::text_input` so each screen
     /// owns its own `TextEdit`.
     pub fn search_shell(&self, field: El) -> El {
         row()
-            .h(32.0)
+            .h(CONTROL_L)
             .w(280.0)
             .pl(10.0)
             .pr(10.0)
@@ -1172,6 +1314,32 @@ mod look_tests {
             for layer in [u.bg, u.sidebar, u.raised, u.well] {
                 let layer = layer.alpha(1.0);
                 assert!(contrast(switch_green(), layer) >= 3.0, "green on {}", hex6(layer));
+            }
+        }
+    }
+
+    /// Rune has Inter at 400, 500 and 600 only; any other weight draws in the next heavier face.
+    #[test]
+    fn shared_weights_are_real_faces() {
+        for style in STYLES {
+            assert!(
+                [400.0, 500.0, 600.0].contains(&style.weight),
+                "weight {} has no face",
+                style.weight
+            );
+        }
+    }
+
+    /// Muted and faint text clear AA on every layer of every dark theme.
+    #[test]
+    fn secondary_text_reads_on_every_layer() {
+        for theme in Theme::ALL {
+            let u = Ui::themed(theme, None);
+            for layer in [u.bg, u.sidebar, u.raised, u.well] {
+                for ink in [u.muted, u.faint] {
+                    let ratio = contrast(ink.alpha(1.0), layer.alpha(1.0));
+                    assert!(ratio >= AA_TEXT, "{theme:?} {} on {}: {ratio}", hex6(ink), hex6(layer));
+                }
             }
         }
     }
