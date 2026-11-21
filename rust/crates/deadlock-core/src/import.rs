@@ -420,8 +420,13 @@ pub fn read_dmm(app_dirs: &[PathBuf], game_root: Option<&Path>) -> DetectedSourc
     let ids: BTreeSet<String> = records.keys().chain(manifest.keys()).cloned().collect();
     let base = game_root.map(addons_dir);
     let mut mods = Vec::new();
+    // DMM's stamps in the addon folders, read once when a mod's manifest names no file on
+    // disk (the player renamed or moved it) and for stamped files DMM's state lost.
+    let mut stamped: Option<Vec<(PathBuf, crate::dmm_stamp::DmmStamp)>> = None;
+    let mut used: BTreeSet<PathBuf> = BTreeSet::new();
 
-    for id in ids {
+    for id in &ids {
+        let id = id.clone();
         let record = records.get(&id);
         let entry = manifest.get(&id);
         let enabled = entry
@@ -474,6 +479,14 @@ pub fn read_dmm(app_dirs: &[PathBuf], game_root: Option<&Path>) -> DetectedSourc
                 }
             }
         }
+        if files.is_empty()
+            && let Some(base) = &base
+        {
+            let stamps = stamped.get_or_insert_with(|| dmm_stamped_files(base));
+            if let Some((file, _)) = stamps.iter().find(|(file, stamp)| stamp.mod_id.trim() == id && !used.contains(file)) {
+                files.push(file.clone());
+            }
+        }
         if files.is_empty() {
             for dir in app_dirs {
                 if let Some((file, _)) = dir_vpks_under(&dir.join("mods").join(&id).join("files"))
@@ -513,6 +526,7 @@ pub fn read_dmm(app_dirs: &[PathBuf], game_root: Option<&Path>) -> DetectedSourc
                 })
         });
 
+        used.insert(file.clone());
         mods.push(ForeignMod {
             name,
             author: field("author"),
@@ -526,12 +540,69 @@ pub fn read_dmm(app_dirs: &[PathBuf], game_root: Option<&Path>) -> DetectedSourc
         });
     }
 
+    // Stamped files no state or manifest entry claims: still DMM's, still tied to their mod.
+    if let Some(base) = &base {
+        let stamps = stamped.get_or_insert_with(|| dmm_stamped_files(base));
+        for (file, stamp) in stamps.iter() {
+            let id = stamp.mod_id.trim();
+            if used.contains(file) || ids.contains(id) {
+                continue;
+            }
+            used.insert(file.clone());
+            let name = stamp
+                .original_stem()
+                .map(|stem| pretty_name(&stem))
+                .unwrap_or_else(|| format!("Mod {id}"));
+            mods.push(ForeignMod {
+                name,
+                author: None,
+                thumbnail_url: None,
+                gamebanana_id: stamp.gamebanana_id(),
+                chunks: chunks_for(file),
+                size_bytes: file_size(file),
+                file: file.clone(),
+                enabled_in_source: false,
+                archive: false,
+            });
+        }
+    }
+
     DetectedSource {
         kind: SourceKind::Dmm,
         root,
         mods,
         warnings,
     }
+}
+
+/// Every VPK in the addon folder and DMM's shard folders (`addons2`, `addons3`, ...) that
+/// carries Deadlock Mod Manager's stamp, sorted by path. Read only.
+fn dmm_stamped_files(addons: &Path) -> Vec<(PathBuf, crate::dmm_stamp::DmmStamp)> {
+    let mut folders = vec![addons.to_path_buf()];
+    for shard in 2..=32 {
+        let folder = addons.with_file_name(format!("addons{shard}"));
+        if folder.is_dir() {
+            folders.push(folder);
+        }
+    }
+    let mut out = Vec::new();
+    for folder in folders {
+        let Ok(entries) = fs::read_dir(&folder) else {
+            continue;
+        };
+        let mut files: Vec<PathBuf> = entries
+            .flatten()
+            .map(|entry| entry.path())
+            .filter(|path| path.is_file() && file_name_of(path).to_ascii_lowercase().ends_with(".vpk"))
+            .collect();
+        files.sort();
+        for file in files {
+            if let Some(stamp) = crate::dmm_stamp::read(&file) {
+                out.push((file, stamp));
+            }
+        }
+    }
+    out
 }
 
 /// Files the user picked: a directory VPK (its chunks are found next to it), an archive, or a
@@ -580,7 +651,17 @@ pub fn local_mods(paths: &[PathBuf]) -> Vec<ForeignMod> {
 
 /// One local directory VPK with the readable name [`local_mods`] describes.
 fn local_vpk(path: &Path, chunks: Vec<PathBuf>) -> ForeignMod {
-    let embedded = crate::identify::read_embedded(path).unwrap_or_default();
+    let mut embedded = crate::identify::read_embedded(path).unwrap_or_default();
+    // A Deadlock Mod Manager file carries its mod id in DMM's stamp (`dmm_stamp.rs`).
+    if embedded.gamebanana_id.is_none()
+        && let Some(stamp) = crate::dmm_stamp::read(path)
+    {
+        embedded.gamebanana_id = stamp.gamebanana_id();
+        let file_name = file_name_of(path);
+        if embedded.title.is_none() && pretty_name(&file_name) == file_name {
+            embedded.title = stamp.original_stem().map(|stem| pretty_name(&stem));
+        }
+    }
     let file_name = file_name_of(path);
     let mut name = pretty_name(&file_name);
     if name == file_name
@@ -1292,6 +1373,51 @@ mod tests {
         // The parked file is in addons but not under a slot name: it is copied.
         let plan = plan_import(SourceKind::Dmm, &addons, source.mods.clone()).unwrap();
         assert_eq!(plan.items[0].action, ImportAction::Copy { slot: 1 });
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn dmm_stamps_find_renamed_and_unclaimed_files() {
+        let root = scratch("dmm-stamp");
+        let game = fake_game(&root);
+        let addons = addons_dir(&game);
+        let data = root.join("data");
+        fs::create_dir_all(data.join(DMM_IDENTIFIER)).unwrap();
+        let stamp = |id: &str, original: &str| {
+            format!(r#"{{"version":1,"id":"f{id}","modId":"{id}","originalName":"{original}","issuedAt":1,"contentHash":"x"}}"#)
+        };
+        let renamed = stamp("715100", "asa_paige_dir.vpk");
+        let orphan = stamp("612000", "neon_haze_dir.vpk");
+        // The manifest says pak01, but the player renamed the file to pak05.
+        make_vpk(&addons, "pak05_dir.vpk", &[("materials/a.vmat_c", b"a"), (crate::dmm_stamp::STAMP_PATH, renamed.as_bytes())]);
+        make_vpk(&addons, "pak09_dir.vpk", &[("materials/b.vmat_c", b"b"), (crate::dmm_stamp::STAMP_PATH, orphan.as_bytes())]);
+        make_vpk(&addons, "pak11_dir.vpk", &[("materials/c.vmat_c", b"c")]);
+        fs::write(
+            addons.join(".dmm.json"),
+            r#"{"version":3,"mods":{"715100":{"enabled":true,"shard":1,"currentVpks":["pak01_dir.vpk"],"disabledVpks":[]}}}"#,
+        )
+        .unwrap();
+
+        let roots = DetectRoots { config: Vec::new(), data: vec![data] };
+        let sources = detect_sources(&roots, Some(&game));
+        let source = &sources[0];
+        assert_eq!(source.kind, SourceKind::Dmm);
+        let found: Vec<(&str, Option<u64>, String)> = source
+            .mods
+            .iter()
+            .map(|m| (m.name.as_str(), m.gamebanana_id, file_name_of(&m.file)))
+            .collect();
+        assert_eq!(
+            found,
+            vec![
+                ("Mod 715100", Some(715_100), "pak05_dir.vpk".to_string()),
+                ("Neon haze", Some(612_000), "pak09_dir.vpk".to_string()),
+            ]
+        );
+
+        // A picked file with no addoninfo still names its mod through the stamp.
+        let picked = local_mods(&[addons.join("pak09_dir.vpk")]);
+        assert_eq!((picked[0].name.as_str(), picked[0].gamebanana_id), ("Neon haze", Some(612_000)));
         let _ = fs::remove_dir_all(&root);
     }
 

@@ -14,6 +14,7 @@ pub mod demo;
 pub mod diagnostics;
 pub mod discovery;
 pub mod divine_skins;
+pub mod dmm_stamp;
 pub mod download_queue;
 pub mod error;
 pub mod extract;
