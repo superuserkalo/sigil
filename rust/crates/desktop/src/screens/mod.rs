@@ -18,6 +18,7 @@ pub mod locker;
 pub mod maps;
 pub mod patches;
 pub mod performance;
+pub mod one_skin;
 pub mod profile_favorites;
 pub mod profile_tools_de;
 pub mod profiles;
