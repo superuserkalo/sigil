@@ -122,7 +122,7 @@ fn count_cell(u: &Ui, key: String, glyph: &'static Icon, name: &str, value: Opti
 
 /// One mod: a 16:9 image flush with the top, the title, the author and when it changed, and
 /// the same three counts in equal columns, and a full-width action row.
-pub(crate) fn card_el(s: &State, u: &Ui, card: &BrowseCard, card_w: f32) -> El {
+pub(crate) fn card_el(s: &State, u: &Ui, card: &BrowseCard) -> El {
     let inner = (crate::ui::r(CARD_RADIUS) - 1.0).max(0.0);
     let id = card.id;
     let veil = veiled(s, id, card.nsfw);

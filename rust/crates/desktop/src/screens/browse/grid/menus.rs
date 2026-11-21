@@ -917,7 +917,7 @@ pub(crate) fn virtual_grid(s: &State, shown: Rc<Vec<usize>>, cols: usize, card_w
                 if let Some(page) = s.browse.page.as_ref() {
                     for &index in build.iter().skip(i * cols).take(cols) {
                         if let Some(card) = page.mods.get(index) {
-                            grid = grid.child(card_el(s, &u, card, card_w));
+                            grid = grid.child(card_el(s, &u, card));
                         }
                     }
                 }
