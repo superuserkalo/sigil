@@ -5,6 +5,10 @@
 
 pub const DE: &[(&str, &str)] = &[
 // BEGIN TABLE
+    // The In-game card dialog's 3D view (`locker/card_art.rs`).
+    ("Use the 3D view", "3D-Ansicht verwenden"),
+    ("Use the 3D view for {}", "3D-Ansicht für {} verwenden"),
+    ("Open the hero's 3D view first, then try again.", "Öffne zuerst die 3D-Ansicht des Helden und versuche es dann erneut."),
     ("Cards and portraits", "Karten und Porträts"),
     ("Ability icons", "Fähigkeitssymbole"),
     ("Skin textures", "Skin-Texturen"),
