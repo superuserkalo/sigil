@@ -73,7 +73,7 @@ fn main() -> std::process::ExitCode {
     brand::install_app_icon();
     let scenes: &'static [(&'static str, fn(&mut State))] =
         Box::leak(
-            [app::scenes(), &deeplink::SCENES[..], &screens::settings::personalize::SCENES[..], screens::w4a_scenes::SCENES, screens::upstream_scenes::SCENES, screens::explorer::SCENES, screens::w4c_scenes::SCENES, screens::servers::host::scenes::SCENES, screens::servers::regions::scenes::SCENES, screens::explorer::SCENES, &viewer::SCENES[..], &viewer::PARITY_SCENES[..]]
+            [app::scenes(), &deeplink::SCENES[..], &screens::settings::personalize::SCENES[..], screens::w4a_scenes::SCENES, screens::upstream_scenes::SCENES, screens::explorer::SCENES, screens::w4c_scenes::SCENES, screens::servers::host::scenes::SCENES, screens::servers::regions::scenes::SCENES, screens::project_tools::SCENES, &viewer::SCENES[..], &viewer::PARITY_SCENES[..]]
                 .concat()
                 .into_boxed_slice(),
         );
