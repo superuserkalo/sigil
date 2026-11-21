@@ -21,7 +21,7 @@ use crate::icons;
 use crate::screens::settings::i18n::{fill, tr};
 use crate::screens::settings::options;
 use crate::model::AddonRow;
-use crate::ui::{ActionKind, BODY, BODY_MED, H1, MICRO, SMALL, Ui};
+use crate::ui::{ActionKind, BODY, BODY_MED, H1, SMALL, Ui};
 
 use super::notes;
 use super::{meta_for, open_menu, Menu};
@@ -412,13 +412,13 @@ pub fn list_row(s: &State, u: &Ui, idx: &super::index::Index, card: &Group) -> E
     let pixels = key.as_ref().and_then(|key| s.thumbnails.get(key));
     let thumb = match pixels {
         Some(pixels) => el()
-            .size(64.0, 36.0)
-            .corners([crate::ui::r(6.0); 4])
-            .clip_corners([crate::ui::r(6.0); 4])
+            .size(56.0, 32.0)
+            .corners([crate::ui::r(4.0); 4])
+            .clip_corners([crate::ui::r(4.0); 4])
             .pixels_fit(pixels, rune::SurfaceFit::Fill),
         None => el()
-            .size(64.0, 36.0)
-            .radius(crate::ui::r(6.0))
+            .size(56.0, 32.0)
+            .radius(crate::ui::r(4.0))
             .fill(u.hover)
             .center()
             .child(icon(&icons::PACKAGE, 16.0).color(u.faint).a11y_hidden()),
@@ -426,22 +426,28 @@ pub fn list_row(s: &State, u: &Ui, idx: &super::index::Index, card: &Group) -> E
     let selected = s.installed.selected.contains(&slot);
     let menu_open = s.installed.menu == Some(Menu::Card(slot));
     let enable = !addon.enabled;
-    let mut chips = row().gap(6.0).center_y();
-    for chip in notes::card_chips(s, u, addon) {
-        chips = chips.child(chip);
+    // Two fixed columns on the right, so every row's chips and marks share their edges: the
+    // word chips (right aligned, cut at the column's edge) and the marks.
+    let wide = crate::ui::fit() == crate::ui::Fit::Full;
+    let mut chips = row().w(if wide { CHIPS_W } else { 0.0 }).gap(6.0).center_y().clip_rounded(0.0).child(spacer());
+    if wide {
+        for chip in notes::card_chips(s, u, addon) {
+            chips = chips.child(chip);
+        }
     }
+    let mut marks = row().w(MARKS_W).gap(4.0).center_y().child(spacer());
     if let Some(badge) = super::req_order::badge(s, u, slot, false) {
-        chips = chips.child(badge);
+        marks = marks.child(badge);
     }
     if let Some(badge) = super::overlap::badge(s, u, slot, false) {
-        chips = chips.child(badge);
+        marks = marks.child(badge);
     }
     let dragging = s.installed.drag.is_some_and(|d| d.slot == slot);
     let drop = super::drag::drop_mark(s, slot, addon.enabled);
     let mut line = row()
         .key(format!("addon-row-{slot:02}"))
         .w_full()
-        .h(52.0)
+        .h(ROW_H)
         .gap(12.0)
         .center_y()
         .px(8.0)
@@ -459,17 +465,20 @@ pub fn list_row(s: &State, u: &Ui, idx: &super::index::Index, card: &Group) -> E
         .hover(u.hover)
         // The grip and the box fade in on hover without a commit (`super::hover_reveal`).
         .hover_group();
-    if super::drag::allowed(s) {
-        line = line.child(super::drag::grip(
+    // The grip keeps its box when the sort cannot drag, so rows never slide sideways.
+    line = line.child(if super::drag::allowed(s) {
+        super::drag::grip(
             u,
             slot,
             addon.enabled,
-            [0.0, 52.0],
+            [0.0, ROW_H],
             1,
             dragging,
             s.installed.hovered == Some(slot),
-        ));
-    }
+        )
+    } else {
+        el().size(28.0, 28.0).a11y_hidden()
+    });
     line = line
         .child(super::hover_reveal(
             el()
@@ -498,25 +507,33 @@ pub fn list_row(s: &State, u: &Ui, idx: &super::index::Index, card: &Group) -> E
                         .color(if addon.enabled { u.ink } else { u.prose })
                         .truncate(),
                 )
-                .child(text(detail).font(SMALL).color(u.faint).truncate()),
+                .child(text(detail).font(SMALL).color(u.muted).truncate()),
         )
         .child(chips)
+        .child(marks)
         .child(
-            text(deadlock_core::addons::slot_label(slot)).font(MICRO).color(u.faint).w(28.0),
+            text(deadlock_core::addons::slot_label(slot))
+                .font(crate::ui::SMALL_NUM)
+                .color(u.muted)
+                .w(28.0)
+                .align(rune::Align::End),
         );
-    if card.is_variants() {
+    // The variants button keeps its slot on every row, so the menu and switch line up.
+    line = line.child(if card.is_variants() {
         let group_key = card.key.clone();
-        line = line.child(
-            u.icon_button(&icons::LAYERS, "Choose the file")
-                .key(format!("row-variants-{slot:02}"))
-                .cursor(rune::Cursor::Pointer)
-                .on_press(move |st: &mut State| open_group(st, group_key.clone(), slot)),
-        );
-    }
+        u.icon_button(&icons::LAYERS, "Choose the file")
+            .size(28.0, 28.0)
+            .key(format!("row-variants-{slot:02}"))
+            .cursor(rune::Cursor::Pointer)
+            .on_press(move |st: &mut State| open_group(st, group_key.clone(), slot))
+    } else {
+        el().size(28.0, 28.0).a11y_hidden()
+    });
     let group_key = card.key.clone();
     line = line
         .child(
             u.icon_button(&icons::ELLIPSIS, &format!("More for {name}"))
+                .size(28.0, 28.0)
                 .key(format!("installed-more-{slot:02}"))
                 .fill(if menu_open { u.selected } else { Color::TRANSPARENT })
                 .cursor(rune::Cursor::Pointer)
@@ -543,6 +560,12 @@ pub fn list_row(s: &State, u: &Ui, idx: &super::index::Index, card: &Group) -> E
         });
     line
 }
+
+/// One row of the list look: fixed, so the virtual list steps by it.
+pub const ROW_H: f32 = 48.0;
+/// The word chip column of a list row (Full width only) and its marks column.
+const CHIPS_W: f32 = 240.0;
+const MARKS_W: f32 = 60.0;
 
 /// Lucide arrow-down (ISC), drawn like `icons.rs`.
 static ARROW_DOWN: rune::Icon = rune::Icon {

@@ -161,37 +161,30 @@ pub fn solo_restore(st: &mut State) {
     super::rescan(st);
 }
 
-/// The line above the cards while a solo test runs.
-pub fn solo_banner(s: &State, u: &Ui) -> Option<El> {
+/// The solo test as a status row chip: "Testing {name} alone" with an inline Restore.
+pub fn solo_chip(s: &State, u: &Ui) -> Option<El> {
     let solo = s.installed.solo.as_ref()?;
+    let label = crate::screens::settings::i18n::fill(crate::screens::settings::i18n::tr("Testing {} alone"), &[&solo.name]);
     Some(
-        row()
+        u.state_chip(&icons::POWER, &label, crate::ui::Tone::Accent)
             .key("installed-solo")
-            .w_full()
-            .h(44.0)
-            .gap(10.0)
-            .px(12.0)
-            .center_y()
-            .radius(crate::ui::r(8.0))
-            .border(1.0, u.accent.alpha(0.3))
-            .fill(u.accent.alpha(0.05))
-            .child(icon(&icons::POWER, 14.0).color(u.accent).a11y_hidden())
+            .max_w(320.0)
+            .help(crate::screens::settings::i18n::tr("Everything else is off until you restore it."))
+            .pr(2.0)
             .child(
-                text(format!(
-                    "Testing {} alone. Everything else is off until you restore it.",
-                    solo.name
-                ))
-                .font(BODY)
-                .color(u.prose)
-                .truncate()
-                .grow(1.0)
-                .min_w(0.0),
-            )
-            .child(
-                u.action("Restore", ActionKind::Secondary)
+                row()
                     .key("installed-solo-restore")
+                    .h(20.0)
+                    .px(6.0)
+                    .center_y()
+                    .radius(crate::ui::r(4.0))
+                    .hover(u.hover)
+                    .focusable(true)
+                    .role("button")
+                    .label(crate::screens::settings::i18n::tr("Restore"))
                     .cursor(rune::Cursor::Pointer)
-                    .on_press(|st: &mut State| solo_restore(st)),
+                    .on_press(|st: &mut State| solo_restore(st))
+                    .child(text(crate::screens::settings::i18n::tr("Restore")).font(crate::ui::LABEL).color(u.ink).a11y_hidden()),
             ),
     )
 }

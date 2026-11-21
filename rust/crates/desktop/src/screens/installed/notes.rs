@@ -340,7 +340,7 @@ pub fn heroes(st: &State) -> Vec<String> {
 }
 
 /// `!heroes(st).is_empty()`, stopping at the first hero.
-fn has_heroes(st: &State) -> bool {
+pub(super) fn has_heroes(st: &State) -> bool {
     st.installed.notes.extras.mods.iter().any(|entry| entry.hero.as_ref().is_some_and(|h| !h.trim().is_empty()))
         || st
             .addons
@@ -350,7 +350,7 @@ fn has_heroes(st: &State) -> bool {
 }
 
 /// `!tag_options(st).is_empty()`, stopping at the first tag.
-fn has_tags(st: &State) -> bool {
+pub(super) fn has_tags(st: &State) -> bool {
     st.addons.addons.iter().any(|addon| !tags_of(st, addon).is_empty())
         || !st.installed.notes.extras.all_tags().is_empty()
 }
@@ -557,126 +557,9 @@ pub fn clear(st: &mut State) {
     notes.list = None;
 }
 
-/// The filter buttons and the active filter values, under the status switch.
-pub fn filter_row(s: &State, u: &Ui) -> Option<El> {
-    // Only whether each kind exists matters here, so stop at the first one found: building
-    // every hero guess and every tag of the library took 3 ms a build at 96 mods, 9 at 300.
-    let has_categories = !categories(s).is_empty();
-    let has_tags = has_tags(s);
-    let lists = &s.installed.notes.extras.lists;
-    if !has_categories && !has_tags && lists.is_empty() && !has_heroes(s) {
-        return None;
-    }
-    let notes = &s.installed.notes;
-    let mut line = row().key("installed-notes-filters").w_full().gap(8.0).center_y();
-    let mut any = false;
-    for (key, label, value, menu) in [
-        (
-            "installed-hero",
-            "Hero",
-            notes.hero.clone(),
-            super::Menu::Hero,
-        ),
-        (
-            "installed-category",
-            "Category",
-            notes.category.clone(),
-            super::Menu::Category,
-        ),
-        ("installed-tag", "Tag", tag_summary(notes), super::Menu::Tag),
-        (
-            "installed-list",
-            "List",
-            notes
-                .list
-                .as_ref()
-                .and_then(|id| s.installed.notes.extras.list(id))
-                .map(|list| list.name.clone()),
-            super::Menu::List,
-        ),
-    ] {
-        if value.is_none() {
-            continue;
-        }
-        any = true;
-        let text_value = value.clone().unwrap_or_default();
-        let shown = format!("{label}: {text_value}");
-        let close: fn(&mut State) = match menu {
-            super::Menu::Hero => |st: &mut State| st.installed.notes.hero = None,
-            super::Menu::Category => |st: &mut State| st.installed.notes.category = None,
-            super::Menu::Tag => |st: &mut State| {
-                st.installed.notes.tags_in.clear();
-                st.installed.notes.tags_out.clear();
-            },
-            _ => |st: &mut State| st.installed.notes.list = None,
-        };
-        line = line.child(
-            row()
-                .key(key)
-                .h(28.0)
-                .pl(10.0)
-                .pr(6.0)
-                .gap(4.0)
-                .center_y()
-                .radius(crate::ui::r(6.0))
-                .fill(u.selected)
-                .border(1.0, u.hair)
-                .hover(u.hover)
-                .focusable(true)
-                .role("button")
-                .label(format!("Remove the {label} filter"))
-                .cursor(rune::Cursor::Pointer)
-                .on_press(close)
-                .child(text(shown).font(SMALL).color(u.prose).a11y_hidden())
-                .child(icon(&icons::X, 12.0).color(u.muted).a11y_hidden()),
-        );
-    }
-    if !any {
-        // No filter is on: the buttons that open one.
-        line = line.child(
-            dropdown(u, "installed-hero", "Hero", &icons::USER)
-                .on_press(|st: &mut State| super::open_menu(st, super::Menu::Hero)),
-        );
-        if has_categories {
-            line = line.child(
-                dropdown(u, "installed-category", "Category", &icons::LAYERS)
-                    .on_press(|st: &mut State| super::open_menu(st, super::Menu::Category)),
-            );
-        }
-        if has_tags {
-            line = line.child(
-                dropdown(u, "installed-tag", "Tag", &icons::FILTER)
-                    .on_press(|st: &mut State| super::open_menu(st, super::Menu::Tag)),
-            );
-        }
-        if !lists.is_empty() {
-            line = line.child(
-                dropdown(u, "installed-list", "List", &icons::LIST)
-                    .on_press(|st: &mut State| super::open_menu(st, super::Menu::List)),
-            );
-        }
-    } else {
-        line = line.child(
-            row()
-                .key("installed-notes-clear")
-                .h(28.0)
-                .px(8.0)
-                .center_y()
-                .radius(crate::ui::r(6.0))
-                .hover(u.hover)
-                .focusable(true)
-                .role("button")
-                .label("Clear the filters")
-                .cursor(rune::Cursor::Pointer)
-                .on_press(clear)
-                .child(text("Clear").font(SMALL).color(u.muted).a11y_hidden()),
-        );
-    }
-    Some(line)
-}
 
 /// The tag filter chip's value: the one tag with its sign, or the counts.
-fn tag_summary(notes: &Notes) -> Option<String> {
+pub(super) fn tag_summary(notes: &Notes) -> Option<String> {
     let (inc, exc) = (notes.tags_in.len(), notes.tags_out.len());
     match (inc, exc) {
         (0, 0) => None,
@@ -695,27 +578,6 @@ fn tag_summary(notes: &Notes) -> Option<String> {
     }
 }
 
-/// A 28 point filter chip with a glyph and a chevron.
-fn dropdown(u: &Ui, key: &str, label: &str, glyph: &'static rune::Icon) -> El {
-    row()
-        .key(key)
-        .h(28.0)
-        .pl(8.0)
-        .pr(6.0)
-        .gap(6.0)
-        .center_y()
-        .radius(crate::ui::r(8.0))
-        .border(1.0, u.hair_strong)
-        .hover(u.hover)
-        .press(u.over.alpha(0.08))
-        .focusable(true)
-        .role("button")
-        .label(label)
-        .cursor(rune::Cursor::Pointer)
-        .child(icon(glyph, 14.0).color(u.muted).a11y_hidden())
-        .child(text(label.to_string()).font(BODY).color(u.prose).a11y_hidden())
-        .child(icon(&icons::CHEVRON_DOWN, 12.0).color(u.faint).a11y_hidden())
-}
 
 // --- menus -------------------------------------------------------------------
 

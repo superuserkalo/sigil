@@ -20,7 +20,7 @@ use std::time::SystemTime;
 
 use deadlock_core::mod_safety::review::{self, Candidate, Row, Standing};
 use deadlock_core::mod_safety::{self, ScanReport};
-use rune::{El, Key, KeyEvent, col, icon, row, spacer, text};
+use rune::{El, Key, KeyEvent, col, el, icon, row, spacer, text};
 
 use crate::app::State;
 use crate::icons;
@@ -253,9 +253,8 @@ fn allow_scripts(st: &mut State) {
 
 // --- the notice -----------------------------------------------------------------------------
 
-/// "N mods need attention" with Review mods and a dismiss, while a flagged mod is new to the
-/// player. Off with Allow script mods.
-pub fn notice(s: &State, u: &Ui) -> Option<El> {
+/// Mods to review as a status row chip; it opens the safety review.
+pub fn chip(s: &State, u: &Ui) -> Option<El> {
     if crate::screens::settings::options::get().allow_scripts {
         return None;
     }
@@ -264,47 +263,33 @@ pub fn notice(s: &State, u: &Ui) -> Option<El> {
     if !review::has_new(&pending, &s.installed.tools.review.dismissed) {
         return None;
     }
-    let count = pending.len();
-    let line = if count == 1 { tr("1 mod needs attention").to_string() } else { fill(tr("{} mods need attention"), &[&count.to_string()]) };
+    let label = fill(tr("{} to review"), &[&pending.len().to_string()]);
     Some(
-        row()
+        u.state_chip(&icons::SHIELD, &label, crate::ui::Tone::Warn)
             .key("installed-safety-notice")
-            .w_full()
-            .min_h(44.0)
-            .px(14.0)
-            .py(6.0)
-            .gap(10.0)
-            .center_y()
-            .radius(crate::ui::r(10.0))
-            .fill(u.amber.alpha(0.08))
-            .border(1.0, u.amber.alpha(0.35))
-            .child(icon(&icons::SHIELD, 16.0).color(u.amber).a11y_hidden())
+            .help(tr("They ship programs, scripts or network calls. Look at each one before it runs."))
+            .hover(u.hover)
+            .focusable(true)
+            .role("button")
+            .cursor(rune::Cursor::Pointer)
+            .on_press(open)
+            .pr(2.0)
             .child(
-                col()
-                    .grow(1.0)
-                    .min_w(0.0)
-                    .child(text(line).font(BODY_MED).color(u.ink).truncate())
-                    .child(
-                        text(tr("They ship programs, scripts or network calls. Look at each one before it runs."))
-                            .font(SMALL)
-                            .color(u.muted)
-                            .truncate(),
-                    ),
-            )
-            .child(
-                u.icon_action(&icons::SHIELD, tr("Review mods"), ActionKind::Secondary)
-                    .key("installed-safety-notice-open")
-                    .cursor(rune::Cursor::Pointer)
-                    .on_press(open),
-            )
-            .child(
-                u.icon_button(&icons::X, tr("Dismiss mod safety notice"))
-                    .key("installed-safety-notice-dismiss")
+                el().key("installed-safety-notice-dismiss")
+                    .size(20.0, 20.0)
+                    .center()
+                    .radius(crate::ui::r(4.0))
+                    .hover(u.hover)
+                    .focusable(true)
+                    .role("button")
+                    .label(tr("Dismiss mod safety notice"))
+                    .help(tr("Dismiss mod safety notice"))
                     .cursor(rune::Cursor::Pointer)
                     .on_press(move |st: &mut State| {
                         let pending = review::pending(&rows_of(st));
                         st.installed.tools.review.dismissed.extend(pending);
-                    }),
+                    })
+                    .child(icon(&icons::X, 12.0).color(u.muted).a11y_hidden()),
             ),
     )
 }

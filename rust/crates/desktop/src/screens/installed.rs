@@ -55,7 +55,7 @@ use crate::jobs::Job;
 use crate::model::{AddonRow, Screen};
 use crate::screens::import as importer;
 use crate::screens::settings::i18n::{fill, tr};
-use crate::ui::{ActionKind, BODY, BODY_MED, H1, H2, LABEL, MICRO, PAGE_TOP, PAGE_X, SMALL, Ui};
+use crate::ui::{ActionKind, BODY, BODY_MED, H1, H2, LABEL, MICRO, PAGE_TOP, PAGE_X, SMALL, SMALL_NUM, Ui};
 
 const GRID_GAP: f32 = 16.0;
 /// An empty 24 point glyph, so unchecked menu rows keep the checked rows' text edge.
@@ -421,6 +421,8 @@ pub enum Menu {
     Order(u16),
     /// The selection bar's More: group as one mod, add to a Locker category.
     Selection,
+    /// The toolbar's Filters: source, hero, category, tag and mod list, each opening its menu.
+    Filters,
 }
 
 /// The mods the page shows: search, source and group applied, in the chosen order.
@@ -540,7 +542,7 @@ pub fn view(s: &State, u: &Ui) -> El {
             cards_block(s, u, &idx, &refs)
         })
     } else {
-        let mut list = col().w_full().gap(24.0).pb(32.0);
+        let mut list = col().w_full().gap(24.0);
         if !enabled.is_empty() {
             list = list.child(section(s, u, &idx, Section::Enabled, &enabled));
         }
@@ -550,45 +552,35 @@ pub fn view(s: &State, u: &Ui) -> El {
         list
     };
 
-    let trailing = if has_mods { Some(toolbar(s, u, &idx)) } else { None };
-
-    let mut page = col()
-        .key("installed-page")
+    // Toolbar and status row stay put; only the body under them scrolls.
+    let mut head = col()
+        .key("installed-head")
         .w_full()
         .px(PAGE_X)
         .pt(PAGE_TOP)
-        .gap(16.0)
-        .child(u.page_toolbar(
-            u.page_title(crate::screens::settings::i18n::tr("Installed")),
-            Vec::new(),
-            Some(crate::app::page_search(s, u)),
-            trailing.into_iter().collect(),
-        ));
-    if has_mods {
-        page = page.child(if s.installed.selected.is_empty() {
-            filter_bar(s, u)
-        } else {
-            selection_bar(s, u, &idx)
-        });
-        if let Some(line) = notes::filter_row(s, u) {
-            page = page.child(line);
-        }
-        if let Some(banner) = search::solo_banner(s, u) {
-            page = page.child(banner);
-        }
-        if let Some(notice) = safety_review::notice(s, u) {
-            page = page.child(notice);
-        }
+        .gap(8.0)
+        .child(toolbar_line(s, u, has_mods));
+    if s.game_detected {
+        head = head.child(status_row(s, u, &idx, shown.len()));
     }
     let scroll = col()
         .key("installed-scroll")
         .w_full()
-        .h_full()
+        .grow(1.0)
         .min_h(0.0)
         .scroll(ScrollSpec {
             stick_bottom: false,
         })
-        .child(page.child(body));
+        .child(
+            col()
+                .key("installed-page")
+                .w_full()
+                .px(PAGE_X)
+                .pt(16.0)
+                // Room for the selection bar, always, so the last row never hides under it.
+                .pb(72.0)
+                .child(body),
+        );
 
     // Files dropped anywhere on the page open the import review, which asks before writing.
     let mut root = col()
@@ -609,7 +601,11 @@ pub fn view(s: &State, u: &Ui) -> El {
         // Ctrl+A (Cmd+A) selects every mod the page shows, as a file manager does; a text field
         // with focus keeps the chord for its own text.
         .on_key(|st: &mut State, ev: &rune::KeyEvent, _tx: &mut Tx| select_all_key(st, ev))
+        .child(head)
         .child(scroll);
+    if has_mods && !s.installed.selected.is_empty() {
+        root = root.child(selection_bar(s, u, &idx));
+    }
     if s.installed.drop_hover {
         root = root.child(drop_veil(u));
     }
@@ -668,14 +664,22 @@ fn drop_veil(u: &Ui) -> El {
         )
 }
 
-// --- filters -----------------------------------------------------------------
+// --- toolbar and status row ------------------------------------------------------
 
-fn filter_bar(s: &State, u: &Ui) -> El {
+/// The scope control's width, fixed per language so a count change never moves the line.
+fn scope_w() -> f32 {
+    use crate::screens::settings::i18n::{self, Lang};
+    if i18n::current() == Lang::German { 268.0 } else { 236.0 }
+}
+
+/// All, Enabled, Disabled with their counts: one segmented control at a fixed width.
+fn scope(s: &State, u: &Ui) -> El {
     let v = &s.installed;
     let on = s.addons.addons.iter().filter(|a| a.enabled).count();
     let off = s.addons.addons.len() - on;
     let mut seg = row()
         .key("installed-show")
+        .w(scope_w())
         .h(32.0)
         .padding(2.0)
         .gap(2.0)
@@ -683,17 +687,20 @@ fn filter_bar(s: &State, u: &Ui) -> El {
         .fill(u.well)
         .border(1.0, u.hair)
         .role("radiogroup");
-    for (show, label) in [
-        (Show::All, format!("All {}", s.addons.addons.len())),
-        (Show::Enabled, format!("Enabled {on}")),
-        (Show::Disabled, format!("Disabled {off}")),
+    for (show, word, count) in [
+        (Show::All, tr("All"), s.addons.addons.len()),
+        (Show::Enabled, tr("Enabled"), on),
+        (Show::Disabled, tr("Disabled"), off),
     ] {
         let active = v.show == show;
         seg = seg.child(
             row()
                 .key(format!("installed-show-{show:?}"))
-                .h_full()
-                .px(12.0)
+                .h(28.0)
+                .grow(1.0)
+                .min_w(0.0)
+                .px(10.0)
+                .gap(6.0)
                 .center()
                 .radius(crate::ui::r(6.0))
                 .fill(if active { u.raised } else { Color::TRANSPARENT })
@@ -701,104 +708,303 @@ fn filter_bar(s: &State, u: &Ui) -> El {
                 .hover(if active { u.raised } else { u.hover })
                 .focusable(true)
                 .role("radio")
-                .label(label.clone())
+                .checked(active)
+                .label(format!("{word} {count}"))
                 .cursor(rune::Cursor::Pointer)
                 .on_press(move |st: &mut State| st.installed.show = show)
+                .child(text(word).font(BODY_MED).color(if active { u.ink } else { u.muted }).a11y_hidden())
+                .child(text(count.to_string()).font(SMALL_NUM).color(u.faint).a11y_hidden()),
+        );
+    }
+    seg
+}
+
+/// How many filter rows are not at "Any". Search text is not counted.
+fn filter_count(s: &State) -> usize {
+    let n = &s.installed.notes;
+    [
+        s.installed.source != Source::Any,
+        n.hero.is_some(),
+        n.category.is_some(),
+        !n.tags_in.is_empty() || !n.tags_out.is_empty(),
+        n.list.is_some(),
+    ]
+    .iter()
+    .filter(|on| **on)
+    .count()
+}
+
+/// The one Filters button: icon, the word at Full width, and the count in a reserved slot.
+fn filters_button(s: &State, u: &Ui) -> El {
+    let count = filter_count(s);
+    let full = crate::ui::fit() == crate::ui::Fit::Full;
+    let mut b = row()
+        .key("installed-filters-button")
+        .w(if full { 104.0 } else { 48.0 })
+        .h(32.0)
+        .gap(6.0)
+        .center()
+        .radius(crate::ui::r(8.0))
+        .fill(if count > 0 { u.selected } else { u.over.alpha(0.035) })
+        .border(1.0, u.hair_strong)
+        .hover(u.hover)
+        .press(u.over.alpha(0.08))
+        .focusable(true)
+        .role("button")
+        .label(tr("Filters"))
+        .help(tr("Filters"))
+        .cursor(rune::Cursor::Pointer)
+        .on_press(|st: &mut State| open_menu(st, Menu::Filters))
+        .child(icon(&icons::SLIDERS_HORIZONTAL, 16.0).color(u.ink).a11y_hidden());
+    if full {
+        b = b.child(text(tr("Filters")).font(BODY_MED).color(u.ink).a11y_hidden());
+    }
+    b.child(
+        text(if count > 0 { count.to_string() } else { String::new() })
+            .font(SMALL_NUM)
+            .color(u.accent)
+            .w(12.0)
+            .a11y_hidden(),
+    )
+}
+
+/// Sort: a fixed 136 dropdown at Full width, an icon button narrower.
+fn sort_button(s: &State, u: &Ui) -> El {
+    let label = tr(s.installed.sort.label());
+    if crate::ui::fit() != crate::ui::Fit::Full {
+        return u
+            .icon_button(&order::ARROW_UP_DOWN, &fill(tr("Sort: {}"), &[label]))
+            .key("installed-sort")
+            .border(1.0, u.hair_strong)
+            .cursor(rune::Cursor::Pointer)
+            .on_press(|st: &mut State| open_menu(st, Menu::Sort));
+    }
+    row()
+        .key("installed-sort")
+        .w(136.0)
+        .h(32.0)
+        .pl(10.0)
+        .pr(10.0)
+        .gap(6.0)
+        .center_y()
+        .radius(crate::ui::r(8.0))
+        .fill(u.over.alpha(0.035))
+        .border(1.0, u.hair_strong)
+        .hover(u.hover)
+        .press(u.over.alpha(0.08))
+        .focusable(true)
+        .role("button")
+        .label(fill(tr("Sort: {}"), &[label]))
+        .cursor(rune::Cursor::Pointer)
+        .on_press(|st: &mut State| open_menu(st, Menu::Sort))
+        .child(icon(&order::ARROW_UP_DOWN, 16.0).color(u.ink).a11y_hidden())
+        .child(text(label).font(BODY_MED).color(u.ink).truncate().grow(1.0).min_w(0.0).a11y_hidden())
+        .child(icon(&icons::CHEVRON_DOWN, 12.0).color(u.muted).a11y_hidden())
+}
+
+/// The page's one toolbar line: title, scope, Filters, search, sort, view, import, more.
+fn toolbar_line(s: &State, u: &Ui, has_mods: bool) -> El {
+    let ready = has_mods;
+    let dim = |e: El| if ready { e } else { e.disabled(true).opacity(0.45) };
+    let view_glyph = if s.installed.layout == layout::Layout::List { &icons::LIST } else { &icons::LAYOUT_GRID };
+    let mut actions = vec![
+        dim(sort_button(s, u)),
+        dim(
+            u.icon_button(view_glyph, tr("View"))
+                .key("installed-view")
+                .border(1.0, u.hair_strong)
+                .cursor(rune::Cursor::Pointer)
+                .on_press(move |st: &mut State| {
+                    if ready {
+                        open_menu(st, Menu::View)
+                    }
+                }),
+        ),
+        u.icon_button(&icons::DOWNLOAD, tr("Import mods"))
+            .key("installed-import")
+            .border(1.0, u.hair_strong)
+            .cursor(rune::Cursor::Pointer)
+            .on_press(|st: &mut State| open_menu(st, Menu::Import)),
+    ];
+    actions.push(
+        u.icon_button(&icons::ELLIPSIS, tr("More"))
+            .key("installed-bulk")
+            .border(1.0, u.hair_strong)
+            .cursor(rune::Cursor::Pointer)
+            .on_press(|st: &mut State| open_menu(st, Menu::More)),
+    );
+    let filters = vec![dim(scope(s, u)), dim(filters_button(s, u))];
+    u.page_toolbar(
+        u.page_title(tr("Installed")).pr(8.0),
+        filters,
+        Some(crate::app::page_search(s, u)),
+        actions,
+    )
+}
+
+/// A removable filter chip for the status row: the value, then a 12 point x.
+fn filter_chip(u: &Ui, key: &str, label: String, clear: fn(&mut State)) -> El {
+    row()
+        .key(key.to_string())
+        .h(24.0)
+        .max_w(160.0)
+        .pl(8.0)
+        .pr(6.0)
+        .gap(4.0)
+        .center_y()
+        .radius(crate::ui::r(4.0))
+        .fill(u.over.alpha(0.06))
+        .hover(u.hover)
+        .focusable(true)
+        .role("button")
+        .label(fill(tr("Remove the filter {}"), &[&label]))
+        .cursor(rune::Cursor::Pointer)
+        .on_press(clear)
+        .child(text(label.clone()).font(LABEL).color(u.prose).truncate().min_w(0.0).shrink().help_when_truncated(label).a11y_hidden())
+        .child(icon(&icons::X, 12.0).color(u.muted).a11y_hidden())
+}
+
+/// The status row under the toolbar: state chips in a fixed order, then the filter chips,
+/// then the shown count. Always 24 high, empty when nothing applies.
+fn status_row(s: &State, u: &Ui, idx: &index::Index, shown: usize) -> El {
+    let mut left: Vec<El> = Vec::new();
+    if let Some(chip) = search::solo_chip(s, u) {
+        left.push(chip);
+    }
+    if let Some(chip) = safety_review::chip(s, u) {
+        left.push(chip);
+    }
+    let overlaps = s.addons.conflicts.len();
+    if overlaps > 0 {
+        let label = if overlaps == 1 { tr("1 overlap").to_string() } else { fill(tr("{} overlaps"), &[&overlaps.to_string()]) };
+        left.push(
+            u.state_chip(&icons::TRIANGLE_ALERT, &label, crate::ui::Tone::Warn)
+                .key("installed-overlaps")
+                .hover(u.hover)
+                .focusable(true)
+                .role("button")
+                .cursor(rune::Cursor::Pointer)
+                .on_press(|st: &mut State| st.go(Screen::Conflicts)),
+        );
+    }
+    if let Some(chip) = updates_chip(s, u, idx) {
+        left.push(chip);
+    }
+    let n = &s.installed.notes;
+    let mut chips: Vec<El> = Vec::new();
+    if s.installed.source != Source::Any {
+        chips.push(filter_chip(u, "installed-chip-source", tr(s.installed.source.label()).to_string(), |st| st.installed.source = Source::Any));
+    }
+    if let Some(hero) = &n.hero {
+        chips.push(filter_chip(u, "installed-chip-hero", hero.clone(), |st| st.installed.notes.hero = None));
+    }
+    if let Some(category) = &n.category {
+        chips.push(filter_chip(u, "installed-chip-category", category.clone(), |st| st.installed.notes.category = None));
+    }
+    if let Some(tags) = notes::tag_summary(n) {
+        chips.push(filter_chip(u, "installed-chip-tag", tags, |st| {
+            st.installed.notes.tags_in.clear();
+            st.installed.notes.tags_out.clear();
+        }));
+    }
+    if let Some(list) = n.list.as_ref().and_then(|id| n.extras.list(id)) {
+        chips.push(filter_chip(u, "installed-chip-list", list.name.clone(), |st| st.installed.notes.list = None));
+    }
+    let query = s.installed_query.text.trim();
+    if !query.is_empty() {
+        chips.push(filter_chip(u, "installed-chip-search", format!("\u{201c}{query}\u{201d}"), |st| st.installed_query = TextEdit::new("")));
+    }
+    let filtering = !chips.is_empty() || s.installed.show != Show::All;
+    let room = if crate::ui::fit() == crate::ui::Fit::Full { 3 } else { 1 };
+    let total = chips.len();
+    for chip in chips.into_iter().take(room) {
+        left.push(chip);
+    }
+    if total > room {
+        left.push(
+            u.state_chip(&icons::SLIDERS_HORIZONTAL, &format!("+{}", total - room), crate::ui::Tone::Quiet)
+                .key("installed-chip-rest")
+                .hover(u.hover)
+                .focusable(true)
+                .role("button")
+                .cursor(rune::Cursor::Pointer)
+                .on_press(|st: &mut State| open_menu(st, Menu::Filters)),
+        );
+    }
+    if total > 0 {
+        left.push(
+            u.action(tr("Clear"), ActionKind::Ghost)
+                .key("installed-clear-filters")
+                .h(24.0)
+                .px(8.0)
+                .cursor(rune::Cursor::Pointer)
+                .on_press(|st: &mut State| {
+                    st.installed_query = TextEdit::new("");
+                    st.installed.source = Source::Any;
+                    notes::clear(st);
+                }),
+        );
+    }
+    let right = filtering.then(|| {
+        text(fill(tr("{} of {} shown"), &[&shown.to_string(), &s.addons.addons.len().to_string()]))
+            .font(SMALL_NUM)
+            .color(u.muted)
+            .min_w(112.0)
+            .align(rune::Align::End)
+    });
+    u.status_row("installed-status", left, right)
+}
+
+/// Updates as a status chip: "{n} updates" opens Update all; while running, the progress and a
+/// cancel x, at one fixed minimum width in both states.
+fn updates_chip(s: &State, u: &Ui, idx: &index::Index) -> Option<El> {
+    let updates = &s.installed.updates;
+    if updates.running.is_some() {
+        let left = updates.queue.len();
+        let label = if update_cancelling(s) {
+            tr("Cancelling").to_string()
+        } else if left == 0 {
+            tr("Updating").to_string()
+        } else {
+            fill(tr("Updating, {} more"), &[&left.to_string()])
+        };
+        return Some(
+            u.state_chip(&icons::LOADER, &label, crate::ui::Tone::Accent)
+                .key("installed-update-all")
+                .min_w(136.0)
+                .pr(2.0)
+                .child(spacer())
                 .child(
-                    text(label)
-                        .font(LABEL)
-                        .color(if active { u.ink } else { u.muted })
-                        .a11y_hidden(),
+                    el().key("installed-update-cancel")
+                        .size(20.0, 20.0)
+                        .center()
+                        .radius(crate::ui::r(4.0))
+                        .hover(u.hover)
+                        .focusable(!update_cancelling(s))
+                        .role("button")
+                        .label(if left == 0 { tr("Cancel") } else { tr("Cancel all") })
+                        .help(if left == 0 { tr("Cancel") } else { tr("Cancel all") })
+                        .cursor(rune::Cursor::Pointer)
+                        .on_press(cancel_updates)
+                        .child(icon(&icons::X, 12.0).color(u.muted).a11y_hidden()),
                 ),
         );
     }
-    let source = dropdown_button(
-        u,
-        "installed-source",
-        v.source.label(),
-        None,
+    let slots = available_updates_in(s, idx);
+    if slots.is_empty() {
+        return None;
+    }
+    let label = if slots.len() == 1 { tr("1 update").to_string() } else { fill(tr("{} updates"), &[&slots.len().to_string()]) };
+    Some(
+        u.state_chip(&icons::ARROW_UP, &label, crate::ui::Tone::Accent)
+            .key("installed-update-all")
+            .min_w(136.0)
+            .hover(u.hover)
+            .focusable(true)
+            .role("button")
+            .cursor(rune::Cursor::Pointer)
+            .on_press(move |st: &mut State| ask(st, Confirm::UpdateAll(slots.clone()))),
     )
-    .on_press(|st: &mut State| open_menu(st, Menu::Source));
-    let sort = dropdown_button(u, "installed-sort", v.sort.label(), None)
-        .on_press(|st: &mut State| open_menu(st, Menu::Sort));
-    let more = u
-        .icon_button(&icons::ELLIPSIS, "Bulk actions")
-        .key("installed-bulk")
-        .border(1.0, u.hair_strong)
-        .cursor(rune::Cursor::Pointer)
-        .on_press(|st: &mut State| open_menu(st, Menu::More));
-    let view = dropdown_button(u, "installed-view", v.layout.label(), Some(&icons::LAYOUT_GRID))
-        .on_press(|st: &mut State| open_menu(st, Menu::View));
-    row()
-        .key("installed-filters")
-        .w_full()
-        .gap(8.0)
-        .center_y()
-        .child(seg)
-        .child(source)
-        .child(spacer())
-        .child(sort)
-        .child(view)
-        .children(order::open_button(s, u))
-        .child(more)
-}
-
-// --- toolbar -----------------------------------------------------------------
-
-fn toolbar(s: &State, u: &Ui, idx: &index::Index) -> El {
-    let mut actions = row().gap(8.0).center_y();
-    if !s.addons.conflicts.is_empty() {
-        let count = s.addons.conflicts.len();
-        let label = format!("{count} overlap{}", if count == 1 { "" } else { "s" });
-        actions = actions.child(
-            row()
-                .key("installed-overlaps")
-                .h(32.0)
-                .pl(10.0)
-                .pr(12.0)
-                .gap(6.0)
-                .center_y()
-                .radius(crate::ui::r(8.0))
-                .border(1.0, u.amber.alpha(0.28))
-                .fill(u.amber.alpha(0.06))
-                .hover(u.amber.alpha(0.10))
-                .focusable(true)
-                .role("button")
-                .label(label.clone())
-                .cursor(rune::Cursor::Pointer)
-                .on_press(|st: &mut State| st.go(Screen::Conflicts))
-                .child(icon(&icons::TRIANGLE_ALERT, 14.0).color(u.amber).a11y_hidden())
-                .child(text(label).font(BODY_MED).color(u.amber).a11y_hidden()),
-        );
-    }
-    if let Some(button) = update_all_button(s, u, idx) {
-        actions = actions.child(button);
-    }
-    actions
-        .child(
-            dropdown_button(u, "installed-import", "Import", Some(&icons::DOWNLOAD))
-                .on_press(|st: &mut State| open_menu(st, Menu::Import)),
-        )
-        .child(
-            u.icon_button(&icons::FOLDER_OPEN, "Open the addon folder")
-                .key("installed-open-folder")
-                .cursor(rune::Cursor::Pointer)
-                .on_press(|st: &mut State| {
-                    let folder = addons_folder(st);
-                    reveal(&mut st.status, folder);
-                }),
-        )
-        .child(
-            u.icon_button(&icons::REFRESH_CW, "Rescan")
-                .key("installed-rescan")
-                .cursor(rune::Cursor::Pointer)
-                .on_press(|st: &mut State| {
-                    if !st.demo {
-                        st.installed.library_sig = None;
-                        crate::data::start_addon_scan(st);
-                    }
-                }),
-        )
 }
 
 /// A 32 point secondary button with an optional leading icon and a trailing chevron.
@@ -1013,13 +1219,13 @@ fn section(s: &State, u: &Ui, idx: &std::rc::Rc<index::Index>, which: Section, c
     let count: usize = cards.iter().map(|card| card.addons.len()).sum();
     let head = row()
         .key(format!("group-{}", label.to_lowercase()))
-        .h(28.0)
+        .h(24.0)
         .gap(6.0)
         .center_y()
         .focusable(true)
         .role("button")
         .checked(!collapsed)
-        .label(format!("{label}, {count} mods"))
+        .label(fill(tr("{}, {} mods"), &[tr(label), &count.to_string()]))
         .cursor(rune::Cursor::Pointer)
         .on_press(move |st: &mut State| match which {
             Section::Enabled => st.installed.collapsed_enabled = !st.installed.collapsed_enabled,
@@ -1038,12 +1244,12 @@ fn section(s: &State, u: &Ui, idx: &std::rc::Rc<index::Index>, which: Section, c
             .a11y_hidden(),
         )
         .child(
-            text(format!("{label} ({count})"))
-                .font(BODY_MED)
-                .color(u.muted)
+            text(tr(label))
+                .font(crate::ui::SECTION)
+                .color(u.prose)
                 .a11y_hidden(),
         );
-    let c = col().w_full().gap(12.0).child(head);
+    let c = col().w_full().gap(8.0).child(head);
     if collapsed {
         return c;
     }
@@ -1126,7 +1332,7 @@ fn cards_block(s: &State, u: &Ui, idx: &std::rc::Rc<index::Index>, cards: &[&lay
 /// The footer under a card's image: name, detail line and switch, with their padding.
 const CARD_FOOTER_H: f32 = 58.0;
 /// One row of the list look.
-const LIST_ROW_H: f32 = 52.0;
+const LIST_ROW_H: f32 = layout::ROW_H;
 
 /// A card as the row builders keep it: no borrow of the state.
 struct CardSlots {
@@ -1660,21 +1866,32 @@ pub fn overlay(s: &State, u: &Ui) -> Option<El> {
         }
         Menu::Import => ("installed-import".to_string(), Align::End, 288.0),
         Menu::Managers => ("installed-import-managers".to_string(), Align::Start, 288.0),
-        Menu::Source => ("installed-source".to_string(), Align::Start, 224.0),
+        Menu::Source => ("installed-filters-button".to_string(), Align::Start, 320.0),
         Menu::Sort => ("installed-sort".to_string(), Align::End, 200.0),
         Menu::View => ("installed-view".to_string(), Align::End, 200.0),
-        Menu::Hero => ("installed-hero".to_string(), Align::Start, 220.0),
-        Menu::Category => ("installed-category".to_string(), Align::Start, 220.0),
-        Menu::Tag => ("installed-tag".to_string(), Align::Start, 320.0),
-        Menu::List => ("installed-list".to_string(), Align::Start, 240.0),
+        Menu::Hero => ("installed-filters-button".to_string(), Align::Start, 320.0),
+        Menu::Category => ("installed-filters-button".to_string(), Align::Start, 320.0),
+        Menu::Tag => ("installed-filters-button".to_string(), Align::Start, 320.0),
+        Menu::List => ("installed-filters-button".to_string(), Align::Start, 320.0),
         Menu::More => ("installed-bulk".to_string(), Align::End, 260.0),
         Menu::Overlap(slot) => (format!("installed-overlap-{slot:02}"), Align::End, 340.0),
         Menu::Order(slot) => (format!("installed-order-{slot:02}"), Align::End, 340.0),
         Menu::Selection => ("installed-selection-more".to_string(), Align::End, 280.0),
+        Menu::Filters => ("installed-filters-button".to_string(), Align::Start, 320.0),
     };
+    // A filter's own menu opens inside the Filters popover, with a way back.
+    let back = matches!(menu, Menu::Source | Menu::Hero | Menu::Category | Menu::Tag | Menu::List);
     let mut items: Vec<El> = Vec::new();
+    if back {
+        items.push(
+            menu_item(u, "menu-filters-back", Some(&icons::CHEVRON_LEFT), tr("Filters"), "", true)
+                .on_press(|st: &mut State| st.installed.menu = Some(Menu::Filters)),
+        );
+        items.push(menu_rule(u));
+    }
 
     match menu {
+        Menu::Filters => items = filters_menu(s, u),
         Menu::Card(slot) => {
             let addon = s.addons.addons.iter().find(|addon| addon.slot == slot)?;
             let extra = notes::extra(s, addon);
@@ -2017,7 +2234,7 @@ pub fn overlay(s: &State, u: &Ui) -> Option<El> {
                         u,
                         &format!("menu-source-{source:?}"),
                         Some(if on { &icons::CHECK } else { &NO_ICON }),
-                        source.label(),
+                        tr(source.label()),
                         "",
                         true,
                     )
@@ -2036,7 +2253,7 @@ pub fn overlay(s: &State, u: &Ui) -> Option<El> {
                         u,
                         &format!("menu-sort-{sort:?}"),
                         Some(if on { &icons::CHECK } else { &NO_ICON }),
-                        sort.label(),
+                        tr(sort.label()),
                         "",
                         true,
                     )
@@ -2090,6 +2307,31 @@ pub fn overlay(s: &State, u: &Ui) -> Option<El> {
         Menu::Order(slot) => items = req_order::menu_items(s, u, slot),
         Menu::Selection => items = selection::menu_items(s, u),
         Menu::More => {
+            items.push(menu_label(u, tr("Library")));
+            items.push(
+                menu_item(u, "menu-open-folder", Some(&icons::FOLDER_OPEN), tr("Open the addon folder"), "", true).on_press(|st: &mut State| {
+                    st.installed.menu = None;
+                    let folder = addons_folder(st);
+                    reveal(&mut st.status, folder);
+                }),
+            );
+            items.push(
+                menu_item(u, "menu-rescan", Some(&icons::REFRESH_CW), tr("Rescan"), "", true).on_press(|st: &mut State| {
+                    st.installed.menu = None;
+                    if !st.demo {
+                        st.installed.library_sig = None;
+                        crate::data::start_addon_scan(st);
+                    }
+                }),
+            );
+            items.push(
+                menu_item(u, "installed-load-order", Some(&order::ARROW_UP_DOWN), tr("Change the load order"), "", st_on(s) >= 2)
+                    .on_press(|st: &mut State| {
+                        st.installed.menu = None;
+                        order::open(st);
+                    }),
+            );
+            items.push(menu_rule(u));
             let shown = shown_addons(s);
             let picked = !s.installed.selected.is_empty();
             let off = bulk_targets(s, true).len();
@@ -2271,6 +2513,73 @@ pub fn overlay(s: &State, u: &Ui) -> Option<El> {
         .modal(true, |st: &mut State| st.installed.menu = None)
         .child(list);
     Some(panel)
+}
+
+/// The Filters popover: a header with Clear all, then one row per filter with its value. A row
+/// opens that filter's own menu in the same place. Rows with nothing to pick from are drawn
+/// disabled, not removed.
+fn filters_menu(s: &State, u: &Ui) -> Vec<El> {
+    let n = &s.installed.notes;
+    let any = tr("Any");
+    let mut items = vec![
+        row()
+            .key("menu-filters-head")
+            .w_full()
+            .h(32.0)
+            .pl(10.0)
+            .pr(4.0)
+            .center_y()
+            .child(text(tr("Filters")).font(crate::ui::SECTION).color(u.muted))
+            .child(spacer())
+            .child(
+                u.action(tr("Clear all"), ActionKind::Ghost)
+                    .key("menu-filters-clear")
+                    .h(24.0)
+                    .px(8.0)
+                    .disabled(filter_count(s) == 0)
+                    .cursor(rune::Cursor::Pointer)
+                    .on_press(|st: &mut State| {
+                        st.installed.source = Source::Any;
+                        notes::clear(st);
+                    }),
+            ),
+    ];
+    let list_name = n.list.as_ref().and_then(|id| n.extras.list(id)).map(|list| list.name.clone());
+    let rows: [(&str, &str, String, bool, Menu); 5] = [
+        ("menu-filter-source", tr("Source"), if s.installed.source == Source::Any { any.to_string() } else { tr(s.installed.source.label()).to_string() }, true, Menu::Source),
+        ("menu-filter-hero", tr("Hero"), n.hero.clone().unwrap_or_else(|| any.to_string()), notes::has_heroes(s), Menu::Hero),
+        ("menu-filter-category", tr("Category"), n.category.clone().unwrap_or_else(|| any.to_string()), !notes::categories(s).is_empty(), Menu::Category),
+        ("menu-filter-tag", tr("Tag"), notes::tag_summary(n).unwrap_or_else(|| any.to_string()), notes::has_tags(s), Menu::Tag),
+        ("menu-filter-list", tr("Mod list"), list_name.unwrap_or_else(|| any.to_string()), !n.extras.lists.is_empty(), Menu::List),
+    ];
+    for (key, label, value, enabled, menu) in rows {
+        let mut r = row()
+            .key(key)
+            .w_full()
+            .h(32.0)
+            .px(10.0)
+            .gap(10.0)
+            .center_y()
+            .radius(crate::ui::r(4.0))
+            .role("menuitem")
+            .label(format!("{label}: {value}"));
+        r = if enabled {
+            r.focusable(true)
+                .hover(u.hover)
+                .press(u.over.alpha(0.08))
+                .cursor(rune::Cursor::Pointer)
+                .on_press(move |st: &mut State| st.installed.menu = Some(menu))
+        } else {
+            r.disabled(true).opacity(0.45)
+        };
+        items.push(
+            r.child(text(label.to_string()).font(BODY).color(u.prose).a11y_hidden())
+                .child(spacer())
+                .child(text(value).font(SMALL).color(u.muted).max_w(160.0).truncate().a11y_hidden())
+                .child(icon(&icons::CHEVRON_RIGHT, 12.0).color(u.muted).a11y_hidden()),
+        );
+    }
+    items
 }
 
 /// How many mods are on.
@@ -3336,52 +3645,15 @@ fn select_all_shown(st: &mut State) {
     st.installed.selected.extend(order);
 }
 
-/// The bar that replaces the filters while cards are picked.
+/// The selection bar: an overlay at the bottom of the page while mods are picked, so the
+/// toolbar, the status row and the list never move. Buttons that do not apply are disabled in
+/// place.
 fn selection_bar(s: &State, u: &Ui, idx: &index::Index) -> El {
     let count = s.installed.selected.len();
     let shown = shown_order(s);
     let all = shown.iter().all(|slot| s.installed.selected.contains(slot));
     let on = bulk_targets(s, true).len();
     let off = bulk_targets(s, false).len();
-    let mut bar = row()
-        .key("installed-selection")
-        .w_full()
-        .h(32.0)
-        .gap(8.0)
-        .center_y()
-        .child(
-            u.icon_button(&icons::X, "Clear the selection")
-                .key("installed-select-clear")
-                .cursor(rune::Cursor::Pointer)
-                .on_press(|st: &mut State| {
-                    st.installed.selected.clear();
-                    st.installed.anchor = None;
-                }),
-        )
-        .child(text(format!("{count} selected")).font(BODY_MED).color(u.ink));
-    if !all {
-        bar = bar.child(
-            row()
-                .key("installed-select-all")
-                .h(28.0)
-                .px(8.0)
-                .center_y()
-                .radius(crate::ui::r(6.0))
-                .hover(u.hover)
-                .focusable(true)
-                .role("button")
-                .label(format!("Select all {}", shown.len()))
-                .cursor(rune::Cursor::Pointer)
-                .on_press(select_all_shown)
-                .child(
-                    text(format!("Select all {}", shown.len()))
-                        .font(BODY)
-                        .color(u.muted)
-                        .a11y_hidden(),
-                ),
-        );
-    }
-    use crate::screens::settings::i18n::{fill, tr};
     let available = available_updates_in(s, idx);
     let updates: Vec<u16> = s
         .installed
@@ -3390,56 +3662,95 @@ fn selection_bar(s: &State, u: &Ui, idx: &index::Index) -> El {
         .copied()
         .filter(|slot| available.contains(slot))
         .collect();
-    bar = bar.child(spacer());
-    if !updates.is_empty() {
-        bar = bar.child(
-            u.icon_action(&icons::ARROW_UP, &fill(tr("Update {}"), &[&updates.len().to_string()]), ActionKind::Secondary)
-                .key("installed-selection-update")
-                .cursor(rune::Cursor::Pointer)
-                .on_press(move |st: &mut State| ask(st, Confirm::UpdateAll(updates.clone()))),
-        );
-    }
-    bar.child(
-            u.icon_action(&icons::COPY, tr("Copy"), ActionKind::Secondary)
-                .key("installed-selection-copy")
+    let small = |label: &str, key: &str, enabled: bool| {
+        u.action_m(label, ActionKind::Secondary)
+            .key(key.to_string())
+            .disabled(!enabled)
+            .opacity(if enabled { 1.0 } else { 0.45 })
+            .cursor(if enabled { rune::Cursor::Pointer } else { rune::Cursor::Default })
+    };
+    let lead = vec![
+        u.close_button(tr("Clear the selection"))
+            .key("installed-select-clear")
+            .cursor(rune::Cursor::Pointer)
+            .on_press(|st: &mut State| {
+                st.installed.selected.clear();
+                st.installed.anchor = None;
+            }),
+        text(fill(tr("{} selected"), &[&count.to_string()]))
+            .font(crate::ui::BODY_NUM)
+            .color(u.ink)
+            .min_w(96.0),
+        u.action_m(&fill(tr("Select all {}"), &[&shown.len().to_string()]), ActionKind::Ghost)
+            .key("installed-select-all")
+            .disabled(all)
+            .opacity(if all { 0.45 } else { 1.0 })
+            .cursor(rune::Cursor::Pointer)
+            .on_press(move |st: &mut State| {
+                if !all {
+                    select_all_shown(st)
+                }
+            }),
+    ];
+    let has_updates = !updates.is_empty();
+    let update_label = if has_updates { fill(tr("Update {}"), &[&updates.len().to_string()]) } else { tr("Update").to_string() };
+    let mut actions = vec![
+        small(&update_label, "installed-selection-update", has_updates).on_press(move |st: &mut State| {
+            if !updates.is_empty() {
+                ask(st, Confirm::UpdateAll(updates.clone()))
+            }
+        }),
+        small(tr("Turn on"), "installed-selection-on", off > 0).on_press(move |st: &mut State| {
+            if off > 0 {
+                ask_bulk(st, true)
+            }
+        }),
+        small(tr("Turn off"), "installed-selection-off", on > 0).on_press(move |st: &mut State| {
+            if on > 0 {
+                ask_bulk(st, false)
+            }
+        }),
+    ];
+    if crate::ui::fit() == crate::ui::Fit::Full {
+        actions.push(
+            small(tr("Copy"), "installed-selection-copy", true)
                 .label(tr("Copy the selected mods as a list"))
-                .cursor(rune::Cursor::Pointer)
                 .on_press_tx(|st: &mut State, tx: &mut Tx| {
                     let picked = st.installed.selected.clone();
                     tx.copy(copy_lines_of(st, Some(&picked)));
                     st.status = tr("Mod list copied.").to_string();
                 }),
-        )
-        .child(
-            u.icon_action(&icons::POWER, "Turn on", ActionKind::Secondary)
-                .key("installed-selection-on")
-                .disabled(on == 0)
-                .cursor(rune::Cursor::Pointer)
-                .on_press(|st: &mut State| ask_bulk(st, true)),
-        )
-        .child(
-            u.icon_action(&icons::POWER, "Turn off", ActionKind::Secondary)
-                .key("installed-selection-off")
-                .disabled(off == 0)
-                .cursor(rune::Cursor::Pointer)
-                .on_press(|st: &mut State| ask_bulk(st, false)),
-        )
-        .child(
-            u.icon_action(&icons::TRASH_2, "Delete", ActionKind::Danger)
-                .key("installed-selection-delete")
-                .cursor(rune::Cursor::Pointer)
-                .on_press(|st: &mut State| {
-                    let slots: Vec<u16> = st.installed.selected.iter().copied().collect();
-                    ask(st, Confirm::Delete(slots));
-                }),
-        )
-        .child(
-            u.icon_button(&icons::ELLIPSIS, tr("More for the selection"))
-                .key("installed-selection-more")
-                .border(1.0, u.hair_strong)
-                .cursor(rune::Cursor::Pointer)
-                .on_press(|st: &mut State| open_menu(st, Menu::Selection)),
-        )
+        );
+    }
+    actions.push(
+        row()
+            .key("installed-selection-delete")
+            .h(28.0)
+            .px(10.0)
+            .center()
+            .radius(crate::ui::r(8.0))
+            .fill(u.over.alpha(0.035))
+            .border(1.0, u.hair_strong)
+            .hover(u.rose.alpha(0.10))
+            .focusable(true)
+            .role("button")
+            .label(tr("Delete"))
+            .cursor(rune::Cursor::Pointer)
+            .on_press(|st: &mut State| {
+                let slots: Vec<u16> = st.installed.selected.iter().copied().collect();
+                ask(st, Confirm::Delete(slots));
+            })
+            .child(text(tr("Delete")).font(BODY_MED).color(u.rose).a11y_hidden()),
+    );
+    actions.push(
+        u.icon_button(&icons::ELLIPSIS, tr("More for the selection"))
+            .size(28.0, 28.0)
+            .border(1.0, u.hair_strong)
+            .key("installed-selection-more")
+            .cursor(rune::Cursor::Pointer)
+            .on_press(|st: &mut State| open_menu(st, Menu::Selection)),
+    );
+    u.selection_bar("installed-selection", lead, actions)
 }
 
 // --- writes ----------------------------------------------------------------------------
@@ -4083,47 +4394,6 @@ fn available_updates_in(s: &State, idx: &index::Index) -> Vec<u16> {
         .collect()
 }
 
-fn update_all_button(s: &State, u: &Ui, idx: &index::Index) -> Option<El> {
-    let updates = &s.installed.updates;
-    if let Some(slot) = updates.running {
-        let left = updates.queue.len();
-        let label = if update_cancelling(s) {
-            tr("Cancelling").to_string()
-        } else if left == 0 {
-            tr("Updating").to_string()
-        } else {
-            fill(tr("Updating, {} more"), &[&left.to_string()])
-        };
-        let _ = slot;
-        return Some(
-            row()
-                .gap(8.0)
-                .center_y()
-                .child(
-                    u.icon_action(&icons::LOADER, &label, ActionKind::Secondary)
-                        .key("installed-update-all")
-                        .disabled(true),
-                )
-                .child(
-                    u.action(if left == 0 { tr("Cancel") } else { tr("Cancel all") }, ActionKind::Ghost)
-                        .key("installed-update-cancel")
-                        .disabled(update_cancelling(s))
-                        .cursor(rune::Cursor::Pointer)
-                        .on_press(cancel_updates),
-                ),
-        );
-    }
-    let slots = available_updates_in(s, idx);
-    if slots.is_empty() {
-        return None;
-    }
-    Some(
-        u.icon_action(&icons::ARROW_UP, &format!("Update all ({})", slots.len()), ActionKind::Secondary)
-            .key("installed-update-all")
-            .cursor(rune::Cursor::Pointer)
-            .on_press(move |st: &mut State| ask(st, Confirm::UpdateAll(slots.clone()))),
-    )
-}
 
 /// GameBanana ids of the slots on disk that have a library entry with one.
 fn gamebanana_ids(s: &State) -> Vec<u64> {

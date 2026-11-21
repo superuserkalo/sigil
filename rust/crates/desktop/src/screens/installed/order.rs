@@ -226,20 +226,6 @@ fn row_key(slot: u16) -> String {
     format!("order-row-{slot:02}")
 }
 
-/// The toolbar button that opens the dialog. Shown while two or more mods are on.
-pub fn open_button(s: &State, u: &Ui) -> Option<El> {
-    let on = s.addons.addons.iter().filter(|a| a.enabled).count();
-    if on < 2 {
-        return None;
-    }
-    Some(
-        u.icon_button(&ARROW_UP_DOWN, tr("Change the load order"))
-            .key("installed-load-order")
-            .border(1.0, u.hair_strong)
-            .cursor(rune::Cursor::Pointer)
-            .on_press(open),
-    )
-}
 
 /// The dialog, mounted with Installed's dialogs.
 pub fn dialog(s: &State, u: &Ui) -> Option<El> {
@@ -533,7 +519,7 @@ fn place_chip(dialog: &OrderDialog, u: &Ui, index: usize, slot: u16) -> El {
 }
 
 /// Lucide arrow-up-down (ISC), drawn like `icons.rs`.
-static ARROW_UP_DOWN: rune::Icon = rune::Icon {
+pub(super) static ARROW_UP_DOWN: rune::Icon = rune::Icon {
     name: "sigil-order-arrow-up-down",
     view: 24.0,
     body: r#"<g fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="m21 16-4 4-4-4"/><path d="M17 20V4"/><path d="m3 8 4-4 4 4"/><path d="M7 4v16"/></g>"#,
