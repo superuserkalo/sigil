@@ -27,6 +27,7 @@ mod layout;
 pub mod notes;
 pub mod order;
 pub mod pack_all;
+pub mod pack_all;
 mod overlap;
 pub mod repair;
 mod req_order;
@@ -2052,6 +2053,10 @@ pub fn overlay(s: &State, u: &Ui) -> Option<El> {
                     .on_press(|st: &mut State| tools::open_merge(st)),
             );
             items.push(
+                menu_item(u, "menu-pack-all", Some(&icons::LAYERS), tr("Pack all enabled"), tr("into 2 to 8 VPKs"), true)
+                    .on_press(pack_all::open),
+            );
+            items.push(
                 menu_item(u, "menu-analyze", Some(&icons::WRENCH), "Analyze the addons folder", "and check HUD mods", true)
                     .on_press(|st: &mut State| checks::open(st)),
             );
@@ -2364,6 +2369,7 @@ pub fn poll(st: &mut State) -> bool {
     changed |= importer::poll(st);
     changed |= notes::poll(st);
     changed |= tools::poll(st);
+    changed |= pack_all::poll(st);
     changed |= poll_changes(st);
     changed |= enable::poll(st);
     changed |= enable::refresh_hidden(st);
@@ -2674,6 +2680,9 @@ pub fn dialog(s: &State, u: &Ui) -> Option<El> {
         return Some(dialog);
     }
     if let Some(dialog) = tools::merge_dialog(s, u) {
+        return Some(dialog);
+    }
+    if let Some(dialog) = pack_all::dialog(s, u) {
         return Some(dialog);
     }
     if let Some(dialog) = tools::fonts_dialog(s, u) {
