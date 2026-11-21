@@ -223,9 +223,9 @@ All rows in the area tables above (the benchmark list is one row).
 
 | Sigil status | Rows |
 | --- | ---: |
-| has | 21 |
-| partial | 18 |
-| missing | 15 |
+| has | 26 |
+| partial | 15 |
+| missing | 13 |
 | in progress | 10 |
 | excluded | 6 |
 | owner decision | 3 |

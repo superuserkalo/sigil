@@ -1301,27 +1301,8 @@ pub fn restore_snapshot(
 
 /// Is Deadlock running? Used to refuse a profile switch that would edit files mid-session.
 pub fn game_running() -> bool {
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        std::process::Command::new("tasklist")
-            .args(["/NH", "/FI", "IMAGENAME eq deadlock.exe"])
-            .creation_flags(0x0800_0000)
-            .output()
-            .is_ok_and(|out| {
-                String::from_utf8_lossy(&out.stdout)
-                    .to_ascii_lowercase()
-                    .contains("deadlock.exe")
-            })
-    }
-    #[cfg(unix)]
-    {
-        // Proton and CrossOver run the Windows build, so its name shows in the arguments.
-        std::process::Command::new("pgrep")
-            .args(["-if", r"deadlock\.exe"])
-            .output()
-            .is_ok_and(|out| out.status.success())
-    }
+    // One process check for the whole app: it skips a Deadlock stuck while closing.
+    crate::launch::game_running()
 }
 
 fn installed_label(entry: &ProfileSlot, state: &EntryState, installed: &[AddonIdentity]) -> String {

@@ -2,6 +2,9 @@
 //! apart from `locales.rs` so the two tables never collide in an edit. `i18n` reads both.
 
 pub const DE: &[(&str, &str)] = &[
+    // The Linux AppImage updater
+    ("The update is not an x86-64 AppImage.", "Das Update ist kein x86-64-AppImage."),
+    ("Only the AppImage updates itself. Update this copy the way it was installed, or switch to the AppImage from the release page.", "Nur das AppImage aktualisiert sich selbst. Aktualisiere diese Kopie so, wie sie installiert wurde, oder wechsle zum AppImage von der Release-Seite."),
     // Installs that land on pass the mod safety scan first
     ("{} was installed switched off", "{} wurde ausgeschaltet installiert"),
     (
@@ -699,6 +702,8 @@ pub const DE: &[(&str, &str)] = &[
 /// folder names, HTTP reason phrases the forge listener sends, log lines, report lines,
 /// Discord's built-in presence text (kept in English like the rest of presence) and demo data.
 pub const NOT_TEXT: &[&str] = &[
+    // File formats and names
+    "AIx02", "ClientVersion=", "Sigil.AppImage",
     // Names
     "BBEdit", "CotEditor", "Cursor", "GNOME Text Editor", "Geany", "KWrite", "Kate", "Mousepad",
     "Notepad", "Notepad++", "Nova", "Pluma", "Sublime Text", "TextEdit", "VSCodium",

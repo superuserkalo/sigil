@@ -234,6 +234,8 @@ pub fn restore(backup: &Path, approve: bool) -> Result<RestoreResult> {
         )));
     }
     let bytes = fs::read(backup)?;
+    // A backup that would not parse is refused before anything is set aside.
+    crate::game_apply::refuse_malformed_config(&target, &bytes)?;
     let previous = if target.is_file() {
         let name = target
             .file_name()
@@ -480,14 +482,19 @@ mod tests {
         let root = scratch("restore");
         let citadel = game(&root);
         let backup = citadel.join("gameinfo.gi.dah-backup-a");
-        fs::write(&backup, "old").unwrap();
+        fs::write(&backup, "GameInfo { game old }").unwrap();
 
         assert!(restore(&backup, false).is_err());
         assert_eq!(fs::read_to_string(citadel.join("gameinfo.gi")).unwrap(), "current");
 
         let result = restore(&backup, true).unwrap();
         assert_eq!(result.target, citadel.join("gameinfo.gi"));
-        assert_eq!(fs::read_to_string(&result.target).unwrap(), "old");
+        assert_eq!(fs::read_to_string(&result.target).unwrap(), "GameInfo { game old }");
+        // A backup that does not parse is refused: the game's file stays as it is.
+        let broken = citadel.join("gameinfo.gi.dah-backup-b");
+        fs::write(&broken, "GameInfo {").unwrap();
+        assert!(restore(&broken, true).is_err());
+        assert_eq!(fs::read_to_string(&result.target).unwrap(), "GameInfo { game old }");
         let previous = result.previous.unwrap();
         assert_eq!(fs::read_to_string(&previous).unwrap(), "current");
         assert_eq!(target_for(&previous), Some(citadel.join("gameinfo.gi")));

@@ -1348,25 +1348,10 @@ pub fn channel_row(s: &State, u: &Ui) -> El {
 
 // --- background work -------------------------------------------------------------
 
-/// Is Deadlock running? A process name check, off the UI thread.
+/// Is Deadlock running? The core's process check (it skips a Deadlock stuck while closing), off
+/// the UI thread.
 pub fn game_running() -> bool {
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        std::process::Command::new("tasklist")
-            .args(["/NH", "/FI", "IMAGENAME eq deadlock.exe"])
-            .creation_flags(0x0800_0000)
-            .output()
-            .is_ok_and(|o| String::from_utf8_lossy(&o.stdout).to_ascii_lowercase().contains("deadlock.exe"))
-    }
-    #[cfg(unix)]
-    {
-        // Proton and CrossOver run the Windows build, so its name shows in the arguments.
-        std::process::Command::new("pgrep")
-            .args(["-if", r"deadlock\.exe"])
-            .output()
-            .is_ok_and(|o| o.status.success())
-    }
+    deadlock_core::launch::game_running()
 }
 
 /// The background half of Settings: presence, timers, start minimized. Runs every poll.

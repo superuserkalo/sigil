@@ -35,6 +35,7 @@ pub fn hidden_command(program: impl AsRef<std::ffi::OsStr>) -> std::process::Com
 }
 
 pub(crate) fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
+    crate::game_apply::refuse_malformed_config(path, bytes)?;
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }

@@ -121,7 +121,7 @@ pub const DE: &[(&str, &str)] = &[
     ("{} pages paused. Your choices come back when you turn this off.", "{} Seiten pausiert. Deine Auswahl kommt zurück, wenn du das ausschaltest."),
     ("{} of {} pages on.", "{} von {} Seiten an."),
     ("Pick a skin per hero and shuffle skins on each launch. Turning it off also stops the shuffle.", "Wähle einen Skin pro Held und mische Skins bei jedem Start. Ausschalten beendet auch das Mischen."),
-    ("Design a crosshair and write it into the game's config.", "Gestalte ein Fadenkreuz und schreibe es in die Spielkonfiguration."),
+    ("Design a crosshair and write it into the game's config. Turning it off takes Sigil's crosshair out of autoexec.cfg, so the game keeps the one you set in game.", "Gestalte ein Fadenkreuz und schreibe es in die Spielkonfiguration. Beim Ausschalten nimmt Sigil sein Fadenkreuz aus der autoexec.cfg, damit das Spiel das im Spiel eingestellte behält."),
     ("Edit autoexec.cfg and the game's launch options.", "Bearbeite autoexec.cfg und die Startoptionen des Spiels."),
     ("Apply community configs that trade visual detail for frame rate.", "Wende Community-Konfigurationen an, die Grafikdetails gegen Bildrate tauschen."),
     ("Player stats and match history. Sends the Steam account ids you look up to deadlock-api.", "Spielerstatistiken und Matchverlauf. Sendet die Steam-Konto-IDs, die du nachschlägst, an deadlock-api."),

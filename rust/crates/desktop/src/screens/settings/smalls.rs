@@ -123,6 +123,9 @@ pub fn banner_body(s: &State, u: &Ui) -> Option<(String, El)> {
 
 /// Why this copy does not install updates itself, when a package manager owns it.
 pub fn managed_reason(manager: Manager) -> String {
+    if manager == Manager::SigilDeb {
+        return tr("This copy came from Sigil's .deb package. Install the new .deb from the release page, or switch to the AppImage, which updates itself.").to_string();
+    }
     match manager.name() {
         Some(name) => fill(tr("Updates for this copy come from {}. Update Sigil there."), &[name]),
         None => tr("Updates for this copy come from your system's package manager. Update Sigil there.").to_string(),
@@ -210,5 +213,6 @@ mod tests {
     fn the_managed_reason_names_the_manager() {
         assert!(managed_reason(Manager::Scoop).contains("Scoop"));
         assert!(managed_reason(Manager::System).contains("system's package manager"));
+        assert!(managed_reason(Manager::SigilDeb).contains(".deb"));
     }
 }
