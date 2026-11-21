@@ -131,7 +131,8 @@ pub fn poll(st: &mut State) -> bool {
             let mut urls: Vec<String> = Vec::new();
             urls.extend(page.extras.hd_avatar.clone().or_else(|| page.profile.avatar_url.clone()));
             urls.extend(page.extras.banner.clone());
-            urls.retain(|url| !url.to_ascii_lowercase().ends_with(".gif"));
+            // The avatar comes from the API response: only GameBanana's own hosts are fetched.
+            urls.retain(|url| deadlock_core::gamebanana::is_gamebanana_url(url) && !url.to_ascii_lowercase().ends_with(".gif"));
             crate::data::queue_images(st, urls, false);
         }
         st.browse_view.w4.creator.pages.insert(id, result);
@@ -307,7 +308,10 @@ pub fn header(s: &State, u: &Ui) -> Option<El> {
                         .color(u.faint),
                 );
             }
-            let url = page.profile.profile_url.clone();
+            // From the API response: the button only ever opens a GameBanana page.
+            let url = Some(page.profile.profile_url.clone())
+                .filter(|url| deadlock_core::gamebanana::is_gamebanana_url(url))
+                .unwrap_or_default();
             card = card
                 .child(picture(s, u, page.extras.hd_avatar.as_ref().or(page.profile.avatar_url.as_ref()), &name, 64.0))
                 .child(body)

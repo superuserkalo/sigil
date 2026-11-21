@@ -2457,11 +2457,7 @@ pub fn poll(st: &mut State) -> bool {
 /// Previews come from GameBanana's image hosts only, the one image source on the network
 /// allowlist. Another manager's record could name any URL; those stay placeholders.
 fn allowed_image(url: &str) -> bool {
-    let Some(rest) = url.strip_prefix("https://") else {
-        return false;
-    };
-    let host = rest.split(['/', '?', '#', ':']).next().unwrap_or("");
-    host == "gamebanana.com" || host.ends_with(".gamebanana.com")
+    deadlock_core::gamebanana::is_gamebanana_url(url)
 }
 
 // --- fixtures ----------------------------------------------------------------------
