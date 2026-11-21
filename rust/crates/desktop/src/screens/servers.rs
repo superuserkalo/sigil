@@ -26,7 +26,7 @@ use crate::app::State;
 use crate::icons;
 use crate::jobs::Job;
 use crate::model::Screen;
-use crate::ui::{ActionKind, BODY, BODY_MED, H1, MICRO, MONO, PAGE_TOP, PAGE_X, SMALL, Ui};
+use crate::ui::{ActionKind, BODY, BODY_MED, BODY_NUM, H1, MICRO, MONO, PAGE_TITLE, PAGE_TOP, PAGE_X, SMALL, SMALL_NUM, Ui};
 
 
 #[path = "servers_de.rs"]
@@ -72,11 +72,11 @@ const PING_TIMEOUT: Duration = Duration::from_millis(1500);
 const REFRESH_SECONDS: f64 = 15.0;
 
 const COL_NAME: f32 = 0.0;
-const COL_MAP: f32 = 156.0;
-const COL_PLAYERS: f32 = 92.0;
+const COL_MAP: f32 = 140.0;
+const COL_PLAYERS: f32 = 88.0;
 const COL_PING: f32 = 64.0;
-const COL_REGION: f32 = 72.0;
-const COL_JOIN: f32 = 76.0;
+const COL_REGION: f32 = 56.0;
+const COL_JOIN: f32 = 72.0;
 const PANEL_W: f32 = 360.0;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -96,6 +96,8 @@ pub enum Scope {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum FilterMenu {
+    /// The Filters menu: password, then Mode, Region and Map rows that open their lists.
+    Filters,
     Mode,
     Region,
     Map,
@@ -104,9 +106,10 @@ pub enum FilterMenu {
 impl FilterMenu {
     fn anchor(self) -> &'static str {
         match self {
-            FilterMenu::Mode => "servers-mode",
-            FilterMenu::Region => "servers-region",
-            FilterMenu::Map => "servers-map",
+            // Every list opens in place of the Filters menu, under its button.
+            FilterMenu::Filters | FilterMenu::Mode | FilterMenu::Region | FilterMenu::Map => {
+                "servers-filters"
+            }
         }
     }
 }
@@ -556,137 +559,107 @@ fn visible(s: &State) -> Vec<Server> {
 
 pub fn view(s: &State, u: &Ui) -> El {
     let loading = s.servers.list_job.is_running();
-    let mut actions = row().gap(8.0).center_y();
-    if s.servers.tab == Tab::Servers {
-        actions = actions
-            .child(
-                u.icon_action(&icons::LOG_IN, tr("Connect"), ActionKind::Ghost)
-                    .key("servers-connect")
-                    .cursor(rune::Cursor::Pointer)
-                    .on_press(|st: &mut State| open_direct(st)),
-            )
-            .child(
-                u.icon_action(&icons::USER, tr("Join with invite"), ActionKind::Ghost)
-                    .key("servers-invite")
-                    .cursor(rune::Cursor::Pointer)
-                    .on_press(|st: &mut State| invite::open(st, "")),
-            )
-            .child(
-                u.icon_action(&SERVER_ICON, tr("Host a server"), ActionKind::Ghost)
-                    .key("servers-host")
-                    .cursor(rune::Cursor::Pointer)
-                    .on_press(|st: &mut State| {
-                        st.servers.tab = Tab::Host;
-                        st.servers.menu = None;
-                    }),
-            );
+    let compact = crate::ui::fit() != crate::ui::Fit::Full;
+    let tab = s.servers.tab;
+    let listing = tab == Tab::Servers || tab == Tab::Maps;
+    let off = |e: El, off: bool| e.disabled(off).opacity(if off { 0.45 } else { 1.0 });
+    // Every tab keeps the same action slots; an action that does not apply is disabled.
+    let invite = if compact {
+        u.icon_button(&icons::USER, tr("Join with invite"))
+    } else {
+        u.icon_action(&icons::USER, tr("Join with invite"), ActionKind::Secondary)
     }
-    if s.servers.tab == Tab::Host {
-        if s.servers.host.windows {
-            actions = actions.child(
-                u.icon_action(&icons::REFRESH_CW, host_tr("Check again"), ActionKind::Secondary)
-                    .key("servers-refresh")
-                    .cursor(rune::Cursor::Pointer)
-                    .on_press(host::recheck),
-            );
-        }
-    } else if s.servers.tab != Tab::Regions {
-        // Regions has its own Refresh beside the list.
-        actions = actions.child(
-            u.icon_action(&icons::REFRESH_CW, tr("Refresh"), ActionKind::Secondary)
-                .key("servers-refresh")
-                .opacity(if loading { 0.5 } else { 1.0 })
-                .cursor(rune::Cursor::Pointer)
-                .on_press(|st: &mut State| {
-                    if st.servers.tab == Tab::Maps {
-                        st.servers.maps.entries = None;
-                        crate::screens::servers_maps::start_load(st);
-                        st.servers.maps.error = None;
-                    } else {
-                        refresh(st);
-                    }
-                }),
-        );
-    }
-
-    let _detail = match &s.servers.list {
-        _ if s.servers.tab == Tab::Host || s.servers.tab == Tab::Regions => String::new(),
-        Some(Ok(list)) => {
-            let playing: u32 = list.servers.iter().map(|sv| sv.players).sum();
-            format!(
-                "{} server{}, {playing} playing",
-                list.servers.len(),
-                if list.servers.len() == 1 { "" } else { "s" }
-            )
-        }
-        _ => String::new(),
-    };
-
-    let mut page = col()
-        .key("servers-page")
-        .w_full()
-        .px(PAGE_X)
-        .pt(PAGE_TOP)
-        .pb(40.0)
-        .gap(16.0)
-        .child(u.page_toolbar(
-            u.page_title(tr("Servers")),
-            Vec::new(),
-            Some(crate::app::page_search(s, u)),
-            vec![actions],
-        ))
-        .child(tabs(s, u));
-
-    if s.servers.tab == Tab::Maps || s.servers.tab == Tab::Host || s.servers.tab == Tab::Regions {
-        page = page.child(if s.servers.tab == Tab::Host {
-            host::view(s, u)
-        } else if s.servers.tab == Tab::Regions {
-            regions::view(s, u)
+    .key("servers-invite")
+    .cursor(rune::Cursor::Pointer)
+    .on_press(|st: &mut State| invite::open(st, ""));
+    let connect = if tab == Tab::Host {
+        let check = if compact {
+            u.icon_button(&icons::REFRESH_CW, host_tr("Check again"))
         } else {
-            crate::screens::servers_maps::view(s, u)
-        });
+            u.icon_action(&icons::REFRESH_CW, host_tr("Check again"), ActionKind::Secondary)
+        };
+        off(
+            check.key("servers-connect").cursor(rune::Cursor::Pointer).on_press(host::recheck),
+            !s.servers.host.windows,
+        )
+    } else {
+        let c = if compact {
+            u.icon_button(&icons::LOG_IN, tr("Connect"))
+        } else {
+            u.icon_action(&icons::LOG_IN, tr("Connect"), ActionKind::Secondary)
+        };
+        off(
+            c.key("servers-connect")
+                .cursor(rune::Cursor::Pointer)
+                .on_press(|st: &mut State| open_direct(st)),
+            !listing,
+        )
+    };
+    let refresh_button = off(
+        u.icon_button(&icons::REFRESH_CW, tr("Refresh"))
+            .key("servers-refresh")
+            .opacity(if loading { 0.5 } else { 1.0 })
+            .cursor(rune::Cursor::Pointer)
+            .on_press(|st: &mut State| {
+                if st.servers.tab == Tab::Maps {
+                    st.servers.maps.entries = None;
+                    crate::screens::servers_maps::start_load(st);
+                    st.servers.maps.error = None;
+                } else {
+                    refresh(st);
+                }
+            }),
+        !listing,
+    );
+    let lead = row()
+        .gap(16.0)
+        .center_y()
+        .child(u.page_title(tr("Servers")))
+        .child(tabs(s, u));
+    let toolbar = u.page_toolbar(
+        lead,
+        Vec::new(),
+        Some(crate::app::page_search(s, u)),
+        vec![invite, connect, refresh_button],
+    );
+
+    if tab != Tab::Servers {
+        let page = col()
+            .key("servers-page")
+            .w_full()
+            .px(PAGE_X)
+            .pt(16.0)
+            .pb(40.0)
+            .gap(16.0)
+            .child(if tab == Tab::Host {
+                host::view(s, u)
+            } else if tab == Tab::Regions {
+                regions::view(s, u)
+            } else {
+                crate::screens::servers_maps::view(s, u)
+            });
         return col()
-            .key("servers-scroll")
+            .key("servers-frame")
             .w_full()
             .h_full()
             .min_h(0.0)
-            .scroll(ScrollSpec {
-                stick_bottom: false,
+            .child({
+                let mut top = col().w_full().px(PAGE_X).pt(PAGE_TOP).gap(8.0).child(toolbar);
+                if tab == Tab::Host {
+                    // The server's state, where the tab row used to show it.
+                    top = top.child(u.status_row("servers-host-status", vec![host::tab_status(s, u).h(24.0)], None));
+                }
+                top
             })
-            .child(page);
-    }
-
-    let mut body = col().w_full().gap(16.0);
-    if !s.game_detected {
-        body = body.child(
-            row()
-                .w_full()
-                .gap(8.0)
-                .center_y()
-                .child(
-                    text("Set the game folder in Settings to join a server.")
-                        .font(BODY)
-                        .color(u.muted),
-                )
-                .child(
-                    u.action("Open Settings", ActionKind::Ghost)
-                        .cursor(rune::Cursor::Pointer)
-                        .on_press(|st: &mut State| st.go(Screen::Settings)),
-                ),
-        );
-    }
-    if let Some(Ok(list)) = &s.servers.list
-        && list.steam_degraded
-    {
-        body = body.child(
-            text("Steam's server list is down. Showing servers registered with Deadworks.")
-                .font(SMALL)
-                .color(u.amber),
-        );
-    }
-    body = body.child(filters(s, u));
-    if s.servers.filters.active_count() > 0 || !s.servers.query.text.trim().is_empty() {
-        body = body.child(chips(s, u));
+            .child(
+                col()
+                    .key("servers-scroll")
+                    .w_full()
+                    .grow(1.0)
+                    .min_h(0.0)
+                    .scroll(ScrollSpec { stick_bottom: false })
+                    .child(page),
+            );
     }
 
     let shown = visible(s);
@@ -731,22 +704,41 @@ pub fn view(s: &State, u: &Ui) -> El {
         _ => table(s, u, &shown),
     };
 
-    let mut content = row().w_full().gap(20.0).items_start().child(table);
+    // The toolbar and the filter row never scroll; the table scrolls under them and the
+    // drawer floats over its right side, so the table never changes width.
+    let mut stage = el()
+        .key("servers-stage")
+        .w_full()
+        .grow(1.0)
+        .min_h(0.0)
+        .child(
+            col()
+                .key("servers-scroll")
+                .w_full()
+                .h_full()
+                .min_h(0.0)
+                .scroll(ScrollSpec { stick_bottom: false })
+                .child(col().w_full().px(PAGE_X).pb(40.0).child(table)),
+        );
     if let Some(server) = &s.servers.selected {
-        content = content.child(detail_panel(s, u, server));
+        stage = stage.child(detail_panel(s, u, server));
     }
-    body = body.child(content);
-    page = page.child(body);
-
     col()
-        .key("servers-scroll")
+        .key("servers-frame")
         .w_full()
         .h_full()
         .min_h(0.0)
-        .scroll(ScrollSpec {
-            stick_bottom: false,
-        })
-        .child(page)
+        .child(
+            col()
+                .w_full()
+                .px(PAGE_X)
+                .pt(PAGE_TOP)
+                .pb(16.0)
+                .gap(8.0)
+                .child(toolbar)
+                .child(filters(s, u)),
+        )
+        .child(stage)
 }
 
 fn clear_filters(st: &mut State) {
@@ -754,207 +746,185 @@ fn clear_filters(st: &mut State) {
     st.servers.query = TextEdit::new("");
 }
 
+/// The page's tabs as one segmented box on the toolbar line: List, Maps, Host, Regions.
 fn tabs(s: &State, u: &Ui) -> El {
-    let servers = tab_button(u, "servers-tab-servers", tr("Servers"), s.servers.tab == Tab::Servers);
-    let maps = tab_button(u, "servers-tab-maps", tr("Maps"), s.servers.tab == Tab::Maps);
-    let hosting = tab_button(u, "servers-tab-host", host_tr("Host"), s.servers.tab == Tab::Host);
-    let relay = tab_button(u, "servers-tab-regions", host_tr("Regions"), s.servers.tab == Tab::Regions);
-    let bar = row()
+    let items = [
+        (Tab::Servers, "servers-tab-servers", tr("List")),
+        (Tab::Maps, "servers-tab-maps", tr("Maps")),
+        (Tab::Host, "servers-tab-host", host_tr("Host")),
+        (Tab::Regions, "servers-tab-regions", host_tr("Regions")),
+    ];
+    let mut bar = row()
         .key("servers-tabs")
-        .w_full()
-        .gap(4.0)
+        .role("tablist")
+        .h(32.0)
+        .padding(2.0)
+        .gap(2.0)
         .center_y()
-        .border_sides([0.0, 0.0, 1.0, 0.0], u.hair)
-        .child(servers.on_press(|st: &mut State| st.servers.tab = Tab::Servers))
-        .child(maps.on_press(|st: &mut State| st.servers.tab = Tab::Maps))
-        .child(hosting.on_press(|st: &mut State| st.servers.tab = Tab::Host))
-        .child(relay.on_press(|st: &mut State| st.servers.tab = Tab::Regions))
-        .child(spacer());
-    if s.servers.tab == Tab::Host {
-        return bar.child(host::tab_status(s, u));
-    }
-    if s.servers.tab == Tab::Regions {
-        return bar;
+        .radius(crate::ui::r(4.0))
+        .fill(u.well)
+        .border(1.0, u.hair);
+    for (tab, key, label) in items {
+        let on = s.servers.tab == tab;
+        bar = bar.child(
+            segment(u, key, label, on, "tab").on_press(move |st: &mut State| {
+                st.servers.tab = tab;
+                st.servers.menu = None;
+            }),
+        );
     }
     bar
-        .child(scope_button(
-            u,
-            "servers-scope-all",
-            tr("All servers"),
-            s.servers.scope == Scope::All,
-            Scope::All,
-        ))
-        .child(scope_button(
-            u,
-            "servers-scope-favorites",
-            &format!("Favorites ({})", s.servers.saved.favorites.len()),
-            s.servers.scope == Scope::Favorites,
-            Scope::Favorites,
-        ))
-        .child(scope_button(
-            u,
-            "servers-scope-recent",
-            &format!("Recent ({})", s.servers.saved.recent.len()),
-            s.servers.scope == Scope::Recent,
-            Scope::Recent,
-        ))
 }
 
-fn tab_button(u: &Ui, key: &str, label: &str, on: bool) -> El {
-    row()
-        .key(key.to_string())
-        .h(36.0)
-        .px(2.0)
-        .pr(16.0)
-        .gap(0.0)
-        .center_y()
-        .focusable(true)
-        .role("tab")
-        .checked(on)
-        .label(label.to_string())
-        .cursor(rune::Cursor::Pointer)
-        .child(
-            col()
-                .gap(4.0)
-                .child(
-                    text(label.to_string())
-                        .font(BODY_MED)
-                        .color(if on { u.ink } else { u.muted })
-                        .a11y_hidden(),
-                )
-                .child(
-                    el()
-                        .h(2.0)
-                        .w_full()
-                        .radius(crate::ui::r(1.0))
-                        .fill(if on { u.ink } else { Color::TRANSPARENT }),
-                ),
-        )
-}
-
-fn scope_button(u: &Ui, key: &str, label: &str, on: bool, scope: Scope) -> El {
+/// One 28 point segment: `BODY_MED`, the selected one raised.
+fn segment(u: &Ui, key: &str, label: &str, on: bool, role: &'static str) -> El {
     row()
         .key(key.to_string())
         .h(28.0)
         .px(10.0)
         .gap(6.0)
         .center_y()
-        .radius(crate::ui::r(8.0))
-        .fill(if on { u.selected } else { Color::TRANSPARENT })
-        .hover(u.hover)
+        .radius(crate::ui::r(4.0))
+        .fill(if on { u.raised } else { Color::TRANSPARENT })
+        .border(1.0, if on { u.hair_strong } else { Color::TRANSPARENT })
+        .hover(if on { u.raised } else { u.hover })
         .focusable(true)
-        .role("button")
+        .role(role)
         .checked(on)
         .label(label.to_string())
         .cursor(rune::Cursor::Pointer)
-        .on_press(move |st: &mut State| {
-            st.servers.scope = scope;
-            st.servers.selected = None;
-        })
         .child(
             text(label.to_string())
-                .font(SMALL)
+                .font(BODY_MED)
                 .color(if on { u.ink } else { u.muted })
                 .a11y_hidden(),
         )
 }
 
-/// One filter row: presets, the password segment and the three dropdowns.
+/// The filter row, 32 high with 28 controls: scope, three toggle chips, the Filters menu,
+/// and Clear at the right (always drawn, disabled with nothing to clear).
 fn filters(s: &State, u: &Ui) -> El {
     let f = &s.servers.filters;
     let joinable = f.has_players && f.has_space && f.password == PasswordFilter::Open;
-    let mut top = row()
-        .w_full()
-        .gap(4.0)
+    let mut scope = row()
+        .key("servers-scope")
+        .h(32.0)
+        .padding(2.0)
+        .gap(2.0)
         .center_y()
-        .child(toggle_chip(
-            u,
-            "servers-joinable",
-            tr("Joinable"),
-            joinable,
-            |st| {
-                let preset = st.servers.filters.has_players
-                    && st.servers.filters.has_space
-                    && st.servers.filters.password == PasswordFilter::Open;
-                if preset {
-                    st.servers.filters.has_players = false;
-                    st.servers.filters.has_space = false;
-                    st.servers.filters.password = PasswordFilter::All;
-                } else {
-                    st.servers.filters.has_players = true;
-                    st.servers.filters.has_space = true;
-                    st.servers.filters.password = PasswordFilter::Open;
-                }
+        .radius(crate::ui::r(4.0))
+        .fill(u.well)
+        .border(1.0, u.hair);
+    for (key, label, count, value) in [
+        ("servers-scope-all", tr("All"), None, Scope::All),
+        (
+            "servers-scope-favorites",
+            tr("Favorites"),
+            Some(s.servers.saved.favorites.len()),
+            Scope::Favorites,
+        ),
+        ("servers-scope-recent", tr("Recent"), Some(s.servers.saved.recent.len()), Scope::Recent),
+    ] {
+        let mut seg = segment(u, key, label, s.servers.scope == value, "radio").on_press(
+            move |st: &mut State| {
+                st.servers.scope = value;
+                st.servers.selected = None;
             },
-        ))
-        .child(el().w(8.0))
-        .child(toggle_chip(
-            u,
-            "servers-has-players",
-            tr("With players"),
-            f.has_players,
-            |st| st.servers.filters.has_players = !st.servers.filters.has_players,
-        ))
-        .child(toggle_chip(
-            u,
-            "servers-has-space",
-            tr("Has space"),
-            f.has_space,
-            |st| st.servers.filters.has_space = !st.servers.filters.has_space,
-        ))
-        .child(el().w(8.0))
-        .child(password_segment(u, f.password))
+        );
+        if let Some(n) = count {
+            seg = seg.child(text(n.to_string()).font(SMALL_NUM).color(u.faint).a11y_hidden());
+        }
+        scope = scope.child(seg);
+    }
+    // Password, Mode, Region and Map live in the Filters menu; its count says how many.
+    let hidden = [
+        f.password != PasswordFilter::All,
+        f.mode.is_some(),
+        f.continent.is_some() || f.country.is_some(),
+        f.map.is_some(),
+    ]
+    .into_iter()
+    .filter(|on| *on)
+    .count();
+    let open = s.servers.menu.is_some();
+    let filters_button = row()
+        .key("servers-filters")
+        .w(104.0)
+        .h(28.0)
+        .px(8.0)
+        .gap(6.0)
+        .center_y()
+        .radius(crate::ui::r(4.0))
+        .border(1.0, u.hair_strong)
+        .fill(if open { u.selected } else { Color::TRANSPARENT })
+        .hover(u.hover)
+        .focusable(true)
+        .role("button")
+        .label(tr("Filters"))
+        .cursor(rune::Cursor::Pointer)
+        .on_press(|st: &mut State| {
+            st.servers.menu = if st.servers.menu.is_some() { None } else { Some(FilterMenu::Filters) }
+        })
+        .child(icon(&icons::SLIDERS_HORIZONTAL, 14.0).color(u.muted).a11y_hidden())
+        .child(text(tr("Filters")).font(BODY_MED).color(u.ink).grow(1.0).min_w(0.0).a11y_hidden())
+        .child(
+            row().w(16.0).justify_end().child(if hidden > 0 {
+                text(hidden.to_string()).font(SMALL_NUM).color(u.ink).a11y_hidden()
+            } else {
+                el()
+            }),
+        );
+    let nothing = f.active_count() == 0 && s.servers.query.text.trim().is_empty();
+    row()
+        .key("servers-filter-row")
+        .w_full()
+        .h(32.0)
+        .gap(8.0)
+        .center_y()
+        .child(scope)
+        .child(toggle_chip(u, "servers-joinable", tr("Joinable"), joinable, |st| {
+            let preset = st.servers.filters.has_players
+                && st.servers.filters.has_space
+                && st.servers.filters.password == PasswordFilter::Open;
+            if preset {
+                st.servers.filters.has_players = false;
+                st.servers.filters.has_space = false;
+                st.servers.filters.password = PasswordFilter::All;
+            } else {
+                st.servers.filters.has_players = true;
+                st.servers.filters.has_space = true;
+                st.servers.filters.password = PasswordFilter::Open;
+            }
+        }))
+        .child(toggle_chip(u, "servers-has-players", tr("With players"), f.has_players, |st| {
+            st.servers.filters.has_players = !st.servers.filters.has_players
+        }))
+        .child(toggle_chip(u, "servers-has-space", tr("Has space"), f.has_space, |st| {
+            st.servers.filters.has_space = !st.servers.filters.has_space
+        }))
+        .child(filters_button)
         .child(spacer())
-        .child(dropdown(
-            u,
-            FilterMenu::Mode,
-            tr("Mode"),
-            f.mode.as_deref().unwrap_or(tr("All modes")),
-            f.mode.is_some(),
-            s.servers.menu == Some(FilterMenu::Mode),
-        ))
-        .child(dropdown(
-            u,
-            FilterMenu::Region,
-            tr("Region"),
-            &f.country
-                .as_ref()
-                .map(|country| dw::region_label(country))
-                .unwrap_or_else(|| {
-                    f.continent
-                        .map(|continent| continent.label().to_string())
-                        .unwrap_or_else(|| tr("Every region").to_string())
-                }),
-            f.continent.is_some() || f.country.is_some(),
-            s.servers.menu == Some(FilterMenu::Region),
-        ))
-        .child(dropdown(
-            u,
-            FilterMenu::Map,
-            tr("Map"),
-            f.map.as_deref().unwrap_or(tr("All maps")),
-            f.map.is_some(),
-            s.servers.menu == Some(FilterMenu::Map),
-        ));
-    if f.active_count() > 0 {
-        top = top.child(
+        .child(
             u.action(tr("Clear"), ActionKind::Ghost)
+                .h(24.0)
+                .px(8.0)
                 .key("servers-clear-filters")
+                .disabled(nothing)
+                .opacity(if nothing { 0.45 } else { 1.0 })
                 .cursor(rune::Cursor::Pointer)
                 .on_press(clear_filters),
-        );
-    }
-    top
+        )
 }
 
 fn toggle_chip(u: &Ui, key: &str, label: &str, on: bool, press: impl Fn(&mut State) + 'static) -> El {
     row()
         .key(key.to_string())
-        .h(32.0)
+        .h(28.0)
         .px(10.0)
         .gap(6.0)
         .center_y()
-        .radius(crate::ui::r(8.0))
+        .radius(crate::ui::r(4.0))
+        .border(1.0, if on { u.hair_strong } else { u.hair })
         .fill(if on { u.selected } else { Color::TRANSPARENT })
         .hover(u.hover)
         .focusable(true)
@@ -965,7 +935,7 @@ fn toggle_chip(u: &Ui, key: &str, label: &str, on: bool, press: impl Fn(&mut Sta
         .on_press(press)
         .child(
             text(label.to_string())
-                .font(SMALL)
+                .font(BODY_MED)
                 .color(if on { u.ink } else { u.muted })
                 .a11y_hidden(),
         )
@@ -974,12 +944,12 @@ fn toggle_chip(u: &Ui, key: &str, label: &str, on: bool, press: impl Fn(&mut Sta
 fn password_segment(u: &Ui, current: PasswordFilter) -> El {
     let mut segment = row()
         .key("servers-password-filter")
-        .h(32.0)
+        .h(28.0)
         .px(2.0)
         .py(2.0)
         .gap(2.0)
         .center_y()
-        .radius(crate::ui::r(8.0))
+        .radius(crate::ui::r(4.0))
         .fill(u.well)
         .border(1.0, u.hair);
     for option in PasswordFilter::ALL {
@@ -987,10 +957,10 @@ fn password_segment(u: &Ui, current: PasswordFilter) -> El {
         segment = segment.child(
             row()
                 .key(format!("servers-password-{}", option.id()))
-                .h(28.0)
-                .px(10.0)
+                .h(22.0)
+                .px(8.0)
                 .center_y()
-                .radius(crate::ui::r(6.0))
+                .radius(crate::ui::r(4.0))
                 .fill(if on { u.selected } else { Color::TRANSPARENT })
                 .focusable(true)
                 .role("button")
@@ -1009,95 +979,6 @@ fn password_segment(u: &Ui, current: PasswordFilter) -> El {
     segment
 }
 
-fn dropdown(
-    u: &Ui,
-    menu: FilterMenu,
-    label: &str,
-    value: &str,
-    active: bool,
-    open: bool,
-) -> El {
-    row()
-        .key(menu.anchor().to_string())
-        .h(32.0)
-        .px(10.0)
-        .gap(6.0)
-        .center_y()
-        .radius(crate::ui::r(8.0))
-        .fill(if open { u.selected } else { Color::TRANSPARENT })
-        .hover(u.hover)
-        .focusable(true)
-        .role("button")
-        .label(format!("{label}: {value}"))
-        .cursor(rune::Cursor::Pointer)
-        .on_press(move |st: &mut State| {
-            st.servers.menu = if st.servers.menu == Some(menu) {
-                None
-            } else {
-                Some(menu)
-            }
-        })
-        .child(
-            text(value.to_string())
-                .font(SMALL)
-                .color(if active { u.ink } else { u.muted })
-                .a11y_hidden(),
-        )
-        .child(icon(&icons::CHEVRON_DOWN, 12.0).color(u.faint).a11y_hidden())
-}
-
-fn chips(s: &State, u: &Ui) -> El {
-    let mut filters = s.servers.filters.clone();
-    filters.query = s.servers.query.text.clone();
-    let labels = active_labels(&filters);
-    let count = labels.len();
-    let mut bar = row()
-        .key("servers-chips")
-        .w_full()
-        .gap(6.0)
-        .center_y()
-        .child(text("Active").font(SMALL).color(u.faint));
-    for (label, kind) in labels {
-        bar = bar.child(
-            row()
-                .key(format!("servers-chip-{:?}", kind))
-                .h(26.0)
-                .px(8.0)
-                .gap(6.0)
-                .center_y()
-                .radius(crate::ui::r(6.0))
-                .fill(u.well)
-                .border(1.0, u.hair)
-                .child(text(truncate(&label, 28)).font(SMALL).color(u.prose))
-                .child(
-                    row()
-                        .key(format!("servers-chip-x-{:?}", kind))
-                        .size(16.0, 16.0)
-                        .center()
-                        .radius(crate::ui::r(4.0))
-                        .hover(u.hover)
-                        .focusable(true)
-                        .role("button")
-                        .label(format!("Remove {label}"))
-                        .cursor(rune::Cursor::Pointer)
-                        .on_press(move |st: &mut State| {
-                            clear_chip(&mut st.servers.filters, kind);
-                            if kind == FilterChipKind::Search {
-                                st.servers.query = TextEdit::new("");
-                            }
-                        })
-                        .child(icon(&icons::X, 10.0).color(u.muted).a11y_hidden()),
-                ),
-        );
-    }
-    bar.child(spacer()).child(
-        u.action(&format!("Clear ({count})"), ActionKind::Ghost)
-            .key("servers-clear-all")
-            .cursor(rune::Cursor::Pointer)
-            .on_press(clear_filters),
-    )
-}
-
 fn truncate(value: &str, max: usize) -> String {
     if value.chars().count() <= max {
         return value.to_string();
@@ -1107,12 +988,12 @@ fn truncate(value: &str, max: usize) -> String {
     out
 }
 
-fn head(u: &Ui, key: ServerSortKey, width: f32, _end: bool, sort: Option<ServerSort>) -> El {
+fn head(u: &Ui, key: ServerSortKey, width: f32, end: bool, sort: Option<ServerSort>) -> El {
     let label = key.label();
     let direction = sort.filter(|sort| sort.key == key).map(|sort| sort.direction);
     let mut cell = row()
         .key(format!("servers-head-{}", key.id()))
-        .h(32.0)
+        .h(28.0)
         .gap(4.0)
         .center_y()
         .hover(u.hover)
@@ -1127,16 +1008,19 @@ fn head(u: &Ui, key: ServerSortKey, width: f32, _end: bool, sort: Option<ServerS
         .child(
             text(label)
                 .font(SMALL)
-                .color(if direction.is_some() { u.ink } else { u.faint })
+                .color(if direction.is_some() { u.ink } else { u.muted })
                 .a11y_hidden(),
         );
-    if let Some(direction) = direction {
-        cell = cell.child(
-            text(if direction == SortDirection::Asc { "↑" } else { "↓" })
-                .font(SMALL)
-                .color(u.muted)
-                .a11y_hidden(),
-        );
+    // The arrow has a reserved 12 point slot, so sorting never moves the labels.
+    cell = cell.child(el().w(12.0).child(match direction {
+        Some(direction) => text(if direction == SortDirection::Asc { "↑" } else { "↓" })
+            .font(SMALL)
+            .color(u.muted)
+            .a11y_hidden(),
+        None => el(),
+    }));
+    if end {
+        cell = cell.justify_end();
     }
     if width > 0.0 {
         cell.w(width)
@@ -1150,7 +1034,7 @@ fn table(s: &State, u: &Ui, shown: &[Server]) -> El {
     let header = row()
         .key("servers-head")
         .w_full()
-        .h(32.0)
+        .h(28.0)
         .px(8.0)
         .gap(12.0)
         .center_y()
@@ -1158,15 +1042,28 @@ fn table(s: &State, u: &Ui, shown: &[Server]) -> El {
         .child(el().w(16.0))
         .child(head(u, ServerSortKey::Name, COL_NAME, false, sort))
         .child(head(u, ServerSortKey::Map, COL_MAP, false, sort))
-        .child(head(u, ServerSortKey::Players, COL_PLAYERS, true, sort))
+        .child(head(u, ServerSortKey::Players, COL_PLAYERS, false, sort))
         .child(head(u, ServerSortKey::Ping, COL_PING, true, sort))
-        .child(head(u, ServerSortKey::Region, COL_REGION, true, sort))
-        .child(el().w(COL_JOIN));
+        .child(head(u, ServerSortKey::Region, COL_REGION, false, sort))
+        .child(row().w(COL_JOIN).justify_end().child(steam_down(s, u)));
     let mut rows = col().w_full().grow(1.0).min_w(0.0).child(header);
     for server in shown {
         rows = rows.child(server_row(s, u, server));
     }
     rows
+}
+
+/// "Steam's server list is down", in the table head's last slot, only while it is.
+fn steam_down(s: &State, u: &Ui) -> El {
+    match &s.servers.list {
+        Some(Ok(list)) if list.steam_degraded => el()
+            .size(16.0, 16.0)
+            .center()
+            .label(tr("Steam's server list is down. Showing servers registered with Deadworks."))
+            .help(tr("Steam's server list is down. Showing servers registered with Deadworks."))
+            .child(icon(&icons::TRIANGLE_ALERT, 14.0).color(u.amber).a11y_hidden()),
+        _ => el(),
+    }
 }
 
 fn ping_label(s: &State, server: &Server) -> (String, Option<u32>) {
@@ -1207,24 +1104,28 @@ fn server_row(s: &State, u: &Ui, server: &Server) -> El {
     } else {
         Color::WHITE.alpha(0.22)
     };
-    let mut name_line = row().gap(6.0).center_y().min_w(0.0).child(
-        text(server.name.clone())
-            .font(BODY_MED)
-            .color(u.ink)
-            .truncate(),
-    );
-    if server.password {
-        name_line = name_line.child(icon(&icons::LOCK, 12.0).color(u.faint).a11y_hidden());
-    }
     let favorite = dw::is_favorite(&s.servers.saved, &server.address);
-    if favorite {
-        name_line = name_line.child(icon(&icons::HEART, 12.0).color(u.muted).a11y_hidden());
-    }
+    // Lock and heart sit in two fixed 16 point slots, so names line up on every row.
+    let mark = |on: bool, glyph: &'static rune::Icon| {
+        el().size(16.0, 16.0).center().child(if on {
+            icon(glyph, 12.0).color(u.muted).a11y_hidden()
+        } else {
+            el()
+        })
+    };
+    let name_line = row()
+        .gap(4.0)
+        .center_y()
+        .min_w(0.0)
+        .child(text(server.name.clone()).font(BODY_MED).color(u.ink).truncate().grow(1.0).min_w(0.0))
+        .child(mark(server.password, &icons::LOCK))
+        .child(mark(favorite, &icons::HEART));
     let meta = server_meta(server);
-    let mut name_col = col().grow(1.0).min_w(0.0).gap(2.0).child(name_line);
-    if !meta.is_empty() {
-        name_col = name_col.child(text(meta).font(SMALL).color(u.faint).truncate());
-    }
+    let name_col = col()
+        .grow(1.0)
+        .min_w(200.0)
+        .child(name_line)
+        .child(text(meta).font(SMALL).color(u.muted).truncate());
     let select = server.clone();
     let join_target = server.clone();
     let chosen = s
@@ -1235,11 +1136,11 @@ fn server_row(s: &State, u: &Ui, server: &Server) -> El {
     row()
         .key(format!("server-{}", server.id))
         .w_full()
-        .h(56.0)
+        .h(48.0)
         .px(8.0)
         .gap(12.0)
         .center_y()
-        .radius(crate::ui::r(6.0))
+        .radius(crate::ui::r(4.0))
         .fill(if chosen { u.selected } else { Color::TRANSPARENT })
         .border_sides([0.0, 0.0, 1.0, 0.0], u.hair)
         .hover(u.hover)
@@ -1271,7 +1172,7 @@ fn server_row(s: &State, u: &Ui, server: &Server) -> El {
         .child(capacity(u, server))
         .child(
             text(ping)
-                .font(BODY)
+                .font(BODY_NUM)
                 .color(match ms {
                     Some(ms) if ms >= 150 => u.amber,
                     Some(_) => u.prose,
@@ -1287,7 +1188,7 @@ fn server_row(s: &State, u: &Ui, server: &Server) -> El {
                 .w(COL_REGION),
         )
         .child(
-            u.icon_action(&icons::PLAY, tr("Join"), ActionKind::Secondary)
+            u.action_m(tr("Join"), ActionKind::Secondary)
                 .key(format!("server-join-{}", server.id))
                 .w(COL_JOIN)
                 .opacity(if can_join { 1.0 } else { 0.4 })
@@ -1322,52 +1223,67 @@ fn capacity(u: &Ui, server: &Server) -> El {
             } else {
                 format!("{}/{}", server.players, server.max_players)
             })
-            .font(BODY)
+            .font(BODY_NUM)
             .color(if full { u.amber } else { u.prose }),
         )
         .child(
             row()
                 .w(56.0)
-                .h(3.0)
+                .h(2.0)
                 .radius(crate::ui::r(2.0))
                 .fill(Color::WHITE.alpha(0.08))
                 .child(
                     el()
                         .grow(fraction.max(0.02))
-                        .h(3.0)
+                        .h(2.0)
                         .radius(crate::ui::r(2.0))
                         .fill(if full { u.amber } else { u.muted }),
                 )
-                .child(el().grow((1.0 - fraction).max(0.02)).h(3.0)),
+                .child(el().grow((1.0 - fraction).max(0.02)).h(2.0)),
         )
 }
 
+/// One drawer fact: a 32 point row, key `SMALL` `muted` in 96, the value after it.
+fn fact(u: &Ui, key: &str, value: El) -> El {
+    row()
+        .w_full()
+        .h(32.0)
+        .gap(8.0)
+        .center_y()
+        .child(text(key.to_string()).font(SMALL).color(u.muted).w(96.0))
+        .child(value.grow(1.0).min_w(0.0))
+}
+
+fn fact_text(_u: &Ui, value: &str, color: Color) -> El {
+    text(value.to_string()).font(BODY).color(color).truncate().help_when_truncated(value.to_string())
+}
+
+/// The server's drawer: name, star and close, the facts, who is playing, and Join at the foot.
 fn detail_panel(s: &State, u: &Ui, server: &Server) -> El {
     let (ping, _) = ping_label(s, server);
-    let mut body = col()
-        .key("server-panel")
-        .w(PANEL_W)
-        .min_w(PANEL_W)
-        .gap(10.0)
-        .pt(4.0);
     let favorite = dw::is_favorite(&s.servers.saved, &server.address);
     let favorite_target = server.clone();
+    let mut body = col().key("server-panel").w_full().gap(0.0);
     body = body.child(
         row()
             .w_full()
-            .gap(8.0)
+            .gap(4.0)
+            .pb(8.0)
+            .pr(32.0)
             .items_start()
             .child(
                 text(server.name.clone())
-                    .font(H1)
+                    .font(PAGE_TITLE)
                     .color(u.ink)
                     .grow(1.0)
                     .min_w(0.0)
-                    .wrap(),
+                    .max_lines(2),
             )
             .child(
                 u.icon_button(&icons::HEART, if favorite { tr("Remove favorite") } else { tr("Keep") })
                     .key("server-favorite")
+                    .size(28.0, 28.0)
+                    .checked(favorite)
                     .cursor(rune::Cursor::Pointer)
                     .on_press(move |st: &mut State| {
                         let workspace = crate::data::workspace_dir();
@@ -1386,46 +1302,32 @@ fn detail_panel(s: &State, u: &Ui, server: &Server) -> El {
                             Err(error) => st.status = error.to_string(),
                         }
                     }),
-            )
-            .child(
-                u.icon_button(&icons::X, tr("Close details"))
-                    .key("server-panel-close")
-                    .cursor(rune::Cursor::Pointer)
-                    .on_press(|st: &mut State| st.servers.selected = None),
             ),
     );
-    body = body.child(
-        text(
-            [server.map_label().to_string(), server.mode_label(), dw::region_label(&server.country)]
-                .into_iter()
-                .filter(|part| !part.is_empty() && part != "-")
-                .collect::<Vec<_>>()
-                .join("  ·  "),
-        )
-        .font(BODY)
-        .color(u.muted),
-    );
-    if let Some(port) = server.address.rsplit(':').next() {
-        body = body.child(u.kv(tr("Port"), port, u.ink));
-    }
     body = body
-        .child(u.kv(
+        .child(fact(u, tr("Map"), fact_text(u, server.map_label(), u.ink)))
+        .child(fact(u, tr("Mode"), fact_text(u, &server.mode_label(), u.ink)))
+        .child(fact(
+            u,
             tr("Players"),
-            &format!("{} of {}", server.players, server.max_players.max(server.players)),
-            if server.is_full() { u.amber } else { u.ink },
+            fact_text(
+                u,
+                &format!("{} of {}", server.players, server.max_players.max(server.players)),
+                if server.is_full() { u.amber } else { u.ink },
+            ),
         ))
-        .child(u.kv(tr("Ping"), &ping, u.ink));
+        .child(fact(u, tr("Ping"), fact_text(u, &ping, u.ink)))
+        .child(fact(u, tr("Region"), fact_text(u, &dw::region_label(&server.country), u.ink)));
     if !server.version.is_empty() {
-        body = body.child(u.kv(tr("Version"), &format!("Deadworks {}", server.version), u.ink));
+        body = body.child(fact(u, tr("Version"), fact_text(u, &format!("Deadworks {}", server.version), u.ink)));
     }
-    body = body.child(u.kv(tr("Region"), &dw::region_label(&server.country), u.ink));
     let address = server.address.clone();
-    body = body.child(
+    body = body.child(fact(
+        u,
+        tr("Address"),
         row()
-            .w_full()
-            .gap(8.0)
+            .gap(4.0)
             .center_y()
-            .child(text("Address").font(SMALL).color(u.muted).w(72.0))
             .child(
                 text(server.address.clone())
                     .font(MONO)
@@ -1437,56 +1339,50 @@ fn detail_panel(s: &State, u: &Ui, server: &Server) -> El {
             .child(
                 u.icon_button(&icons::COPY, tr("Copy address"))
                     .key("server-copy-address")
+                    .size(24.0, 24.0)
                     .cursor(rune::Cursor::Pointer)
                     .on_press_tx(move |st: &mut State, tx: &mut Tx| {
                         tx.copy(address.clone());
                         st.status = "Address copied.".to_string();
                     }),
             ),
-    );
+    ));
     let mods: Vec<String> = server
         .content_hint
         .iter()
         .filter(|name| !name.trim().is_empty())
         .cloned()
         .collect();
-    if mods.is_empty() {
-        body = body.child(u.kv(tr("Required mods"), tr("None"), u.muted));
-    } else {
-        body = body.child(u.kv(tr("Required mods"), &mods.join(", "), u.ink));
-    }
+    body = body.child(fact(
+        u,
+        tr("Required mods"),
+        if mods.is_empty() {
+            fact_text(u, tr("None"), u.muted)
+        } else {
+            fact_text(u, &mods.join(", "), u.ink)
+        },
+    ));
 
     if !server.roster.is_empty() {
         let mut roster = server.roster.clone();
         roster.sort_by(|a, b| a.team.cmp(&b.team).then(b.kills.cmp(&a.kills)));
-        let mut list = col().w_full().pt(6.0).child(
-            row()
-                .w_full()
-                .pb(4.0)
-                .center_y()
-                .child(text(tr("Playing now")).font(BODY_MED).color(u.ink))
-                .child(spacer())
-                .child(text("K / D / A").font(MICRO).color(u.faint)),
-        );
+        let mut list = col()
+            .w_full()
+            .pt(24.0)
+            .child(el().pb(8.0).w_full().child(u.section_head(tr("Playing now"), Some(roster.len()), None)));
         let mut last_team = None;
         for player in roster.iter().take(12) {
             if last_team.is_some_and(|team| team != player.team) {
-                list = list.child(el().h(10.0));
+                list = list.child(el().h(8.0));
             }
             last_team = Some(player.team);
             list = list.child(
                 row()
                     .w_full()
-                    .h(30.0)
+                    .h(24.0)
                     .gap(8.0)
                     .center_y()
-                    .border_sides([0.0, 0.0, 1.0, 0.0], u.hair)
-                    .child(
-                        text(team_label(player.team))
-                            .font(MICRO)
-                            .color(u.faint)
-                            .w(28.0),
-                    )
+                    .child(text(team_label(player.team)).font(SMALL).color(u.muted).w(16.0))
                     .child(
                         text(player.name.clone())
                             .font(BODY)
@@ -1495,19 +1391,14 @@ fn detail_panel(s: &State, u: &Ui, server: &Server) -> El {
                             .min_w(0.0)
                             .truncate(),
                     )
-                    .child(
-                        text(player.hero.clone())
-                            .font(SMALL)
-                            .color(u.muted)
-                            .w(74.0)
-                            .truncate(),
-                    )
+                    .child(text(player.hero.clone()).font(SMALL).color(u.muted).w(72.0).truncate())
                     .child(
                         text(format!("{} / {} / {}", player.kills, player.deaths, player.assists))
-                            .font(MICRO)
-                            .color(u.faint)
+                            .font(SMALL_NUM)
+                            .color(u.prose)
                             .w(64.0)
-                            .align(Align::End),
+                            .align(Align::End)
+                            .help("K / D / A"),
                     ),
             );
         }
@@ -1515,8 +1406,8 @@ fn detail_panel(s: &State, u: &Ui, server: &Server) -> El {
             list = list.child(
                 text(format!("and {} more", roster.len() - 12))
                     .font(SMALL)
-                    .color(u.faint)
-                    .pt(6.0),
+                    .color(u.muted)
+                    .pt(8.0),
             );
         }
         body = body.child(list);
@@ -1524,16 +1415,45 @@ fn detail_panel(s: &State, u: &Ui, server: &Server) -> El {
 
     let can_join = s.game_detected && !server.is_full();
     let target = server.clone();
-    body = body.child(
-        u.icon_action(&icons::PLAY, tr("Join"), ActionKind::Primary)
-            .key("server-panel-join")
-            .w_full()
-            .opacity(if can_join { 1.0 } else { 0.4 })
-            .disabled(!can_join)
+    let join = u
+        .action(tr("Join"), ActionKind::Secondary)
+        .key("server-panel-join")
+        .w_full()
+        .opacity(if can_join { 1.0 } else { 0.45 })
+        .disabled(!can_join)
+        .help(if server.is_full() {
+            "This server is full"
+        } else if !s.game_detected {
+            "Set the game folder in Settings first"
+        } else {
+            tr("Join")
+        })
+        .cursor(rune::Cursor::Pointer)
+        .on_press(move |st: &mut State| open_join(st, target.clone()));
+    // Join pinned to the drawer's foot, outside its scroll.
+    u.drawer(
+        "server-drawer",
+        u.close_button(tr("Close details"))
+            .key("server-panel-close")
             .cursor(rune::Cursor::Pointer)
-            .on_press(move |st: &mut State| open_join(st, target.clone())),
-    );
-    body
+            .on_press(|st: &mut State| st.servers.selected = None),
+        body,
+    )
+    .on_key(|st: &mut State, ev: &KeyEvent, _| {
+        if ev.key == Key::Escape {
+            st.servers.selected = None;
+            true
+        } else {
+            false
+        }
+    })
+    .child(
+        el().key("server-drawer-foot")
+            .w_full()
+            .padding(16.0)
+            .border_sides([1.0, 0.0, 0.0, 0.0], u.hair)
+            .child(join),
+    )
 }
 
 fn team_label(team: i64) -> &'static str {
@@ -1949,18 +1869,102 @@ pub fn overlay(s: &State, u: &Ui) -> Option<El> {
         return None;
     }
     let servers = scoped(s);
+    let f = &s.servers.filters;
     let mut items = col().w_full().gap(0.0);
-    items = items.child(
-        menu_row(u, tr("All"), "", "", true)
-            .on_press(|st: &mut State| {
-                st.servers.filters.mode = None;
-                st.servers.filters.continent = None;
-                st.servers.filters.country = None;
-                st.servers.filters.map = None;
-                st.servers.menu = None;
-            }),
-    );
+    if menu == FilterMenu::Filters {
+        items = items
+            .child(
+                row()
+                    .w_full()
+                    .h(32.0)
+                    .px(8.0)
+                    .gap(8.0)
+                    .center_y()
+                    .child(text(tr("Password")).font(BODY).color(u.prose).grow(1.0))
+                    .child(password_segment(u, f.password)),
+            )
+            .child(el().w_full().h(1.0).my(4.0).fill(u.hair).a11y_hidden());
+        let region = f
+            .country
+            .as_ref()
+            .map(|country| dw::region_label(country))
+            .unwrap_or_else(|| {
+                f.continent
+                    .map(|continent| continent.label().to_string())
+                    .unwrap_or_else(|| tr("Every region").to_string())
+            });
+        for (sub, label, value) in [
+            (FilterMenu::Mode, tr("Mode"), f.mode.clone().unwrap_or_else(|| tr("All modes").to_string())),
+            (FilterMenu::Region, tr("Region"), region),
+            (FilterMenu::Map, tr("Map"), f.map.clone().unwrap_or_else(|| tr("All maps").to_string())),
+        ] {
+            items = items.child(
+                row()
+                    .key(format!("servers-filter-{}", label))
+                    .w_full()
+                    .h(32.0)
+                    .px(8.0)
+                    .gap(8.0)
+                    .center_y()
+                    .radius(crate::ui::r(4.0))
+                    .hover(u.hover)
+                    .focusable(true)
+                    .role("menuitem")
+                    .label(format!("{label}: {value}"))
+                    .cursor(rune::Cursor::Pointer)
+                    .on_press(move |st: &mut State| st.servers.menu = Some(sub))
+                    .child(text(label.to_string()).font(BODY).color(u.prose).w(72.0).a11y_hidden())
+                    .child(
+                        text(value)
+                            .font(BODY)
+                            .color(u.ink)
+                            .grow(1.0)
+                            .min_w(0.0)
+                            .truncate()
+                            .a11y_hidden(),
+                    )
+                    .child(icon(&icons::CHEVRON_RIGHT, 12.0).color(u.muted).a11y_hidden()),
+            );
+        }
+    } else {
+        // A list opened from the Filters menu: a way back, then "All" for this filter only.
+        items = items.child(
+            row()
+                .key("servers-filter-back")
+                .w_full()
+                .h(32.0)
+                .px(8.0)
+                .gap(8.0)
+                .center_y()
+                .radius(crate::ui::r(4.0))
+                .hover(u.hover)
+                .focusable(true)
+                .role("menuitem")
+                .label(tr("Filters"))
+                .cursor(rune::Cursor::Pointer)
+                .on_press(|st: &mut State| st.servers.menu = Some(FilterMenu::Filters))
+                .child(icon(&icons::CHEVRON_LEFT, 12.0).color(u.muted).a11y_hidden())
+                .child(text(tr("Filters")).font(BODY_MED).color(u.prose).a11y_hidden()),
+        );
+        let all_on = match menu {
+            FilterMenu::Mode => f.mode.is_none(),
+            FilterMenu::Region => f.continent.is_none() && f.country.is_none(),
+            _ => f.map.is_none(),
+        };
+        items = items.child(menu_row(u, tr("All"), "", "all", all_on).on_press(move |st: &mut State| {
+            match menu {
+                FilterMenu::Mode => st.servers.filters.mode = None,
+                FilterMenu::Region => {
+                    st.servers.filters.continent = None;
+                    st.servers.filters.country = None;
+                }
+                _ => st.servers.filters.map = None,
+            }
+            st.servers.menu = Some(FilterMenu::Filters);
+        }));
+    }
     match menu {
+        FilterMenu::Filters => {}
         FilterMenu::Mode => {
             let mut modes: BTreeMap<String, usize> = BTreeMap::new();
             for server in &servers {
@@ -2070,12 +2074,12 @@ pub fn overlay(s: &State, u: &Ui) -> Option<El> {
         col()
             .key("servers-menu")
             .role("menu")
-            .w(248.0)
+            .w(280.0)
             .padding(4.0)
-            .fill(u.raised)
-            .radius(crate::ui::r(10.0))
+            .fill(u.raised.mix(u.over, 0.04).alpha(1.0))
+            .radius(crate::ui::r(8.0))
             .border(1.0, u.hair_strong)
-            .shadow(12.0, 32.0, crate::ui::soft(Color::BLACK.alpha(0.5)))
+            .shadow(4.0, 12.0, Color::BLACK.alpha(if u.light { 0.12 } else { 0.35 }))
             .anchored(menu.anchor(), Side::Bottom, Align::Start, 6.0)
             .modal(true, |st: &mut State| st.servers.menu = None)
             .on_key(|st: &mut State, ev: &KeyEvent, _| {
@@ -2086,7 +2090,7 @@ pub fn overlay(s: &State, u: &Ui) -> Option<El> {
                     false
                 }
             })
-            .child(col().w_full().max_h(360.0).scroll(ScrollSpec { stick_bottom: false }).child(items)),
+            .child(col().w_full().max_h(400.0).scroll(ScrollSpec { stick_bottom: false }).child(items)),
     )
 }
 

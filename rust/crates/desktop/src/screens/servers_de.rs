@@ -5,6 +5,10 @@ use std::collections::HashMap;
 use std::sync::OnceLock;
 
 pub const DE: &[(&str, &str)] = &[
+    ("List", "Liste"),
+    ("Filters", "Filter"),
+    ("Address", "Adresse"),
+    ("Steam's server list is down. Showing servers registered with Deadworks.", "Die Serverliste von Steam ist ausgefallen. Angezeigt werden die bei Deadworks registrierten Server."),
     ("Active", "Aktiv"),
     ("All", "Alle"),
     ("All maps", "Alle Karten"),

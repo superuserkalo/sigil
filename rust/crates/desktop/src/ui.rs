@@ -1320,7 +1320,8 @@ impl Ui {
 
     /// A detail drawer over the right of the content: 360 wide, full height, raised, a 1 point
     /// line on its left, its own scroll. The list under it keeps its width. `close` is the
-    /// page's close button (28, it owns the press); Esc is the page's to handle.
+    /// page's close button (28, it owns the press), pinned 12 from the top right: leave 32
+    /// points free at the right of the body's first row. Esc is the page's to handle.
     pub fn drawer(&self, key: &str, close: El, body: El) -> El {
         col()
             .key(key.to_string())
@@ -1342,7 +1343,7 @@ impl Ui {
                     .grow(1.0)
                     .min_h(0.0)
                     .scroll(rune::ScrollSpec { stick_bottom: false })
-                    .child(col().w_full().padding(16.0).pr(48.0).gap(8.0).child(body)),
+                    .child(col().w_full().padding(16.0).gap(8.0).child(body)),
             )
     }
 

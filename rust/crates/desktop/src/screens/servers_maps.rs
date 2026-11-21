@@ -210,11 +210,6 @@ pub fn view(s: &State, u: &Ui) -> El {
         }
     };
 
-    page = page.child(
-        text(crate::screens::servers::tr("Maps for custom and Deadworks servers."))
-            .font(SMALL)
-            .color(u.faint),
-    );
     let launch = s.game_root.as_deref().and_then(dw::read_map_launch);
     if let Some(current) = launch {
         let mut line = row()
