@@ -652,6 +652,9 @@ screen from anywhere in the window (and closes the Hideout, which lives only the
 has a way out: Loading shows what it does ("Reading the room's models: 137 of 412"), the time so
 far and Cancel or Close, which stops the load; Failed shows the reason with Try again, Send
 feedback and Close; full screen keeps a close button in the corner whatever the state.
+The loader holds the preview until it is whole (Grimoire's `PreviewLoader`): the hero, the
+compare side, the room and its upload all load before the view turns Ready, and Ready waits for
+the first frame ("Drawing the first frame"), with a 20 second fallback when no frame comes.
 The strip has play and pause, seek (pauses), speed, the clip, With mods / Without mods / Split
 (the split line drags), camera reset, a PNG capture into `Pictures/Sigil`, and full screen
 (`viewer::overlay`, placed by `app::view`). Below 720 points wide the strip folds into two rows
@@ -663,7 +666,13 @@ a video. The Controls panel (Grimoire's, anchored to its button by `viewer::popo
 clip picker grouped Idle, Movement, Combat, Other with the sidecar's friendly names, Lighting
 (Studio, Midtown dusk), Background (Studio, None, Transparent, Deadlock Mod Manager's studio
 gradient, Grimoire's ten soul gradients, a picture of the player's up to 12 MB) and switches for
-Auto-rotate, Cloth, Particles, Bloom and Shadows, kept across sessions in `<data>/viewer.json`.
+Auto-rotate, Cloth, Particles, Bloom, Shadows and (where the device can draw lines) Deadlock Mod
+Manager's Wireframe, its exposure slider (plus
+or minus two stops in quarter stops over the scene's exposure; the value resets it) and "Ask
+where to save", kept across sessions in `<data>/viewer.json`. The studio camera's angle (yaw,
+pitch and zoom over the framing) is kept per hero in `<data>/viewer-camera.json` when a view
+closes and restored when that hero opens again; Reset camera returns to the framing. A Hideout
+keeps its own camera.
 GIF (Grimoire's `viewerGif.ts`): up to four seconds at 12 frames a second and 480 px, then a review
 that loops the take, trims start and end on a strip of six thumbnails (arrows step a frame, Shift
 twelve), and saves, retakes or cancels. Video (Deadlock Mod Manager's): up to ten seconds at 30
@@ -673,7 +682,15 @@ intra and whole-pixel motion compensated inter frames, a key frame every 3 secon
 filter, encoded on its own thread with the long edge capped at 1280 (about 25 ms a frame there,
 under 5 ms at 640x400). ffmpeg's decode matches the encoder's reconstruction bit for bit. Motion
 JPEG `.mov` and `.avi` remain as fallback formats in the library. Recordings and pictures go to
-`Pictures/Sigil`. Grimoire's keys join: W A S D orbit, Q and E zoom, R resets, T turns the
+`Pictures/Sigil`; with "Ask where to save" on, a picture and a GIF open a save dialog instead
+(a video still lands in `Pictures/Sigil`). Taking a picture flashes the stage until it is saved
+(Deadlock Mod Manager's capture flash). A one-mod view (Preview in 3D) has "Use this view as
+the mod's cover": the frame is saved into `<data>/mod-images` and becomes the mod's picture,
+Deadlock Mod Manager's rendered cover for local mods, done by the player's framing instead of
+a background render. The Locker's In-game card dialog has "Use the 3D view" per card variant
+while the hero page's 3D view is open: its frame, posed and framed by the player, is centre
+cropped to the variant like a chosen image (Grimoire's 3D card snapshots; the panorama card as
+backdrop and the pose-cycle arrows are not built). Grimoire's keys join: W A S D orbit, Q and E zoom, R resets, T turns the
 turntable. The export panel shows a real percentage from the pipeline's progress callback.
 
 ### Cost
