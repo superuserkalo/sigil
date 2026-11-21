@@ -373,7 +373,7 @@ pub fn refresh(remote: &dyn Remote, data_dir: &Path, now: &str) -> Result<Refres
     let mut releases: BTreeMap<&'static str, Release> = BTreeMap::new();
     let mut any = false;
     for source in catalog::SOURCES {
-        if source.id == "gamebanana" {
+        if source.id == "gamebanana" || source.id == "mod" {
             continue;
         }
         match resolve(remote, source) {

@@ -313,7 +313,7 @@ fn an_archive_with_nothing_installable_says_what_it_holds() {
     let game_root = fake_game(&root);
     type Case<'a> = (&'a str, Vec<(&'a str, &'a [u8])>, &'a [&'a str]);
     let cases: [Case; 5] = [
-        ("gameinfo", vec![("piggy's config/gameinfo.gi", b"\"GameInfo\" {}"), ("piggy's config/video.txt", b"v")], &["gameinfo.gi", "Performance page"]),
+        ("gameinfo", vec![("piggy's config/gameinfo.gi", b"\"GameInfo\" {}"), ("piggy's config/video.txt", b"v")], &["gameinfo.gi", "Review in Performance"]),
         ("config", vec![("chat/cfg/chat/preset_1.cfg", b"bind"), ("chat/README.md", b"r")], &["config mod", "Autoexec"]),
         ("cursor", vec![("Cursors/cursor.bmp", b"BM"), ("Cursors/cursor_shop.bmp", b"BM")], &["cursor pack", "Locker > Cursors"]),
         ("source", vec![("materials/heroes/a.vmat", b"src"), ("materials/heroes/a.png", b"png")], &["uncompiled source", "Workshop Tools"]),
@@ -324,6 +324,7 @@ fn an_archive_with_nothing_installable_says_what_it_holds() {
         fs::write(&archive, zip_of(&entries)).unwrap();
         let error = plan_of(&root, &game_root, &archive).unwrap_err().to_string();
         assert!(error.contains("No compiled _c files and no .vpk"), "{name}: {error}");
+        assert!(error.starts_with(super::NOTHING_INSTALLABLE), "{name}: the app tells this refusal apart");
         for needle in needles {
             assert!(error.contains(needle), "{name}: {needle} missing from {error}");
         }

@@ -111,6 +111,10 @@ pub const BASELINE: BaselineDef = BaselineDef {
     path: "clean gameinfo.gi/gameinfo.gi",
 };
 
+/// The catalog id of a gameinfo.gi that came inside a mod the player installed
+/// (`crate::mod_settings`). Never fetched: it is cached from the mod's own files.
+pub const FROM_MOD_ID: &str = "from-mod";
+
 pub const SOURCES: &[SourceDef] = &[
     SourceDef {
         id: "optimizationlock",
@@ -134,6 +138,14 @@ pub const SOURCES: &[SourceDef] = &[
         name: "OptiLock",
         license: "GPL-3.0",
         versioning: Versioning::Tag,
+        verbatim_video: true,
+    },
+    SourceDef {
+        id: "mod",
+        repo: "",
+        name: "A mod you installed",
+        license: "See the mod page",
+        versioning: Versioning::Commit,
         verbatim_video: true,
     },
 ];
@@ -413,17 +425,41 @@ pub const CONFIGS: &[ConfigDef] = &[
             hint: "gameinfo.gi",
         }),
     },
+    ConfigDef {
+        id: FROM_MOD_ID,
+        name: "Config from a mod",
+        author: "The mod's creator",
+        tier: Tier::Balanced,
+        source: "mod",
+        folders: &[],
+        file: "gameinfo.gi",
+        videos: &[],
+        testing: false,
+        note: "The gameinfo.gi and video.txt settings a mod shipped, reviewed when it was installed.",
+        gamebanana: None,
+    },
 ];
 
 pub fn source(id: &str) -> &'static SourceDef {
     SOURCES
         .iter()
         .find(|source| source.id == id)
+        .or_else(|| super::repos::lookup(id).map(|(_, source)| source))
         .unwrap_or(&SOURCES[0])
 }
 
+/// A built-in config, or a custom preset from a GitHub repository once it was loaded
+/// (`repos`).
 pub fn config(id: &str) -> Option<&'static ConfigDef> {
-    CONFIGS.iter().find(|config| config.id == id)
+    CONFIGS
+        .iter()
+        .find(|config| config.id == id)
+        .or_else(|| super::repos::lookup(id).map(|(config, _)| config))
+}
+
+/// Whether `id` names a custom preset from a GitHub repository.
+pub fn is_custom(id: &str) -> bool {
+    id.starts_with(super::repos::ID_PREFIX)
 }
 
 /// The version an untagged file states in a comment, such as

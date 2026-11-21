@@ -22,6 +22,9 @@ use deadlock_core::install::InstallJournalEntry;
 use super::*;
 use crate::screens::settings::i18n::{fill, tr};
 
+#[path = "settings_review.rs"]
+pub mod settings_review;
+
 /// Where one mod's install is.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Step {
@@ -115,12 +118,21 @@ pub struct Installs {
     owned_sig: Option<(bool, usize, usize, u64)>,
     /// The details' file menu beside its Install button, for this mod.
     pub files_menu: Option<u64>,
+    /// A one-press Install that first asks GameBanana how many files the mod has: the mod id
+    /// and its name, then the count of current files.
+    ask_job: Job<(u64, String, usize)>,
+    /// The mod whose details open with the file menu, once they have loaded.
+    pub choose: Option<u64>,
+    /// The review of a gameinfo.gi, .cfg or video.txt that came inside a mod.
+    pub settings: settings_review::SettingsReview,
 }
 
 /// What the install worker reports.
 pub struct Finished {
     pub slot: u16,
     pub journal: Vec<InstallJournalEntry>,
+    /// It was to land on but stayed off for the mod safety gate: what the gate asks about.
+    pub gated: Option<Vec<String>>,
 }
 
 fn now_ms() -> i64 {
@@ -331,7 +343,7 @@ pub fn refresh_owned(st: &mut State) -> bool {
 /// open Installed once it is there.
 pub fn press(st: &mut State, id: u64, name: &str) {
     match button(st, id) {
-        Button::Install => start(st, id, name, id.to_string(), None, Vec::new()),
+        Button::Install => install_or_choose(st, id, name),
         Button::Retry(_) => retry(st, id),
         Button::Update => {
             let slots = owned_slots(st, id);
@@ -358,6 +370,73 @@ pub fn press_file(st: &mut State, id: u64, name: &str, target: String, file: u64
     }
     st.browse_view.installs.files_menu = None;
     start(st, id, name, target, Some(file), Vec::new());
+}
+
+/// The current files of a mod: what the file menu lists and Install picks from.
+fn current_files(profile: &ModProfile) -> usize {
+    profile.files.iter().filter(|f| !f.archived && !f.download_url.is_empty()).count()
+}
+
+/// A one-press Install by mod id. With one file it starts at once; with several the player
+/// picks in the details' file menu instead of Sigil taking the newest (Deadlock Mod Manager's
+/// file choice). The details, when open on this mod, already show the files: the main button
+/// there installs the newest, the menu the others.
+fn install_or_choose(st: &mut State, id: u64, name: &str) {
+    let open = st.browse_view.details.as_ref().is_some_and(|d| d.id == id && d.profile.is_some());
+    if open || st.game_root.is_none() || st.demo || rune::is_headless() || st.prefs.offline || st.browse_view.installs.ask_job.is_running() {
+        start(st, id, name, id.to_string(), None, Vec::new());
+        return;
+    }
+    let name = name.to_string();
+    let wake = st.wake.clone();
+    st.status = fill(tr("Checking the files of {}."), &[&name]);
+    st.browse_view.installs.ask_job.start(wake, move || {
+        // A failed read installs the newest file, as before; the queue reports its own errors.
+        let count = gamebanana::fetch_mod_profile(id).map(|p| current_files(&p)).unwrap_or(1);
+        Ok((id, name, count))
+    });
+}
+
+/// The file count came back: install, or open the details with the file menu.
+fn take_ask(st: &mut State) -> bool {
+    let Some(Ok((id, name, count))) = st.browse_view.installs.ask_job.try_take() else {
+        return false;
+    };
+    if count > 1 {
+        st.status = fill(tr("{} has {} files. Pick the one to install."), &[&name, &count.to_string()]);
+        super::detail_state::open_submission(st, BrowseSection::Mods, id);
+        st.browse_view.installs.choose = Some(id);
+    } else {
+        start(st, id, &name, id.to_string(), None, Vec::new());
+    }
+    true
+}
+
+/// Open the file menu on the details once they have loaded (after a press, or a link that names
+/// a mod with several files and no file).
+fn open_chooser(st: &mut State) -> bool {
+    let Some(id) = st.browse_view.installs.choose else { return false };
+    let Some(d) = st.browse_view.details.as_ref() else {
+        st.browse_view.installs.choose = None;
+        return false;
+    };
+    if d.id != id {
+        st.browse_view.installs.choose = None;
+        return false;
+    }
+    if d.loading {
+        return false;
+    }
+    st.browse_view.installs.choose = None;
+    if d.profile.as_ref().is_some_and(|p| current_files(p) > 1) {
+        st.browse_view.installs.files_menu = Some(id);
+    }
+    true
+}
+
+/// A link to a mod with no file named: open its file menu when it has several.
+pub fn choose_after_load(st: &mut State, id: u64) {
+    st.browse_view.installs.choose = Some(id);
 }
 
 fn retry(st: &mut State, id: u64) {
@@ -394,7 +473,8 @@ pub fn start(st: &mut State, id: u64, name: &str, target: String, file: Option<u
         .downloads
         .ensure(crate::data::data_dir(), crate::data::workspace_dir(), st.wake.clone());
     if let Some(handle) = &st.launch.downloads.handle {
-        handle.send(Command::Add(target));
+        // Marked for install, so a restart before it lands can still install it.
+        handle.send(Command::AddInstall(target));
     }
     st.browse_view.installs.items.insert(id, entry);
     st.status = fill(tr("Downloading {}."), &[name]);
@@ -411,12 +491,35 @@ fn fail(st: &mut State, id: u64, name: &str, target: String, file: Option<u64>, 
     );
 }
 
+/// Take a queue row back after a restart: a one-press install whose download was cut off, or
+/// landed and was never installed. Its button follows the row again and it installs when done.
+pub fn adopt(st: &mut State, item: &deadlock_core::download_queue::Item) {
+    let id = item.mod_id.or_else(|| item.target.trim().parse::<u64>().ok());
+    let Some(id) = id else { return };
+    if st.browse_view.installs.items.get(&id).is_some_and(Entry::busy) {
+        return;
+    }
+    let step = match item.state {
+        Row::Done => Step::Installing,
+        Row::Paused => Step::Paused(item.fraction()),
+        _ => Step::Queued,
+    };
+    let name = if item.name.trim().is_empty() { id.to_string() } else { item.name.clone() };
+    let mut entry = Entry::new(&name, item.target.clone(), None, Vec::new(), step);
+    entry.row = Some(item.id.clone());
+    entry.archive = item.path.clone();
+    st.browse_view.installs.items.insert(id, entry);
+}
+
 // --- the frame loop ------------------------------------------------------------------------
 
 /// Follow the queue rows, take the worker's result and start the next install. Called from
 /// Browse's poll every frame.
 pub fn poll(st: &mut State) -> bool {
     let mut changed = take_result(st);
+    changed |= take_ask(st);
+    changed |= settings_review::poll(st);
+    changed |= open_chooser(st);
     changed |= super::multi::poll(st);
     // The update check and the install journal, so cards can say Installed and Update.
     if st.screen == Screen::Browse {
@@ -676,15 +779,15 @@ fn install(work: Work) -> Result<Finished, String> {
     )
     .map_err(super::plan_error)?;
     store_plan(&plan).map_err(|e| e.to_string())?;
-    let record = apply_install_with(
-        &plan,
-        true,
-        ApplyOptions {
-            land_disabled: work.land_disabled,
-        },
-    )
-    .map_err(|e| e.to_string())?;
+    // Always written switched off; one that should land on is turned on only after the mod
+    // safety scan has nothing to ask.
+    let record = apply_install_with(&plan, true, ApplyOptions { land_disabled: true }).map_err(|e| e.to_string())?;
     let bytes = std::fs::metadata(&record.target).map(|m| m.len()).unwrap_or(0);
+    let gated = if work.land_disabled {
+        None
+    } else {
+        crate::screens::installed::safety_gate::land_checked(&work.game_root, plan.slot, &record.target, Some(work.id))
+    };
     // The card or details showed no picture (a rail, a menu, a link): ask GameBanana, so the
     // Installed card has one.
     let thumbnail = work.thumbnail.clone().or_else(|| crate::screens::installed::preview_of(work.id));
@@ -712,6 +815,7 @@ fn install(work: Work) -> Result<Finished, String> {
     Ok(Finished {
         slot: plan.slot,
         journal: read_journal(&work.workspace).unwrap_or_default(),
+        gated,
     })
 }
 
@@ -732,8 +836,13 @@ fn take_result(st: &mut State) -> bool {
     };
     let name = entry.name.clone();
     let row = entry.row.clone();
+    let unpacked = settings_review::extracted_dir(&entry.target);
     match outcome {
         Ok(done) => {
+            // A gameinfo.gi, .cfg or video.txt beside the VPK: offer the review.
+            if let Some(dir) = unpacked.clone() {
+                settings_review::start(st, dir, &name, Some(id), false);
+            }
             if let Some(entry) = st.browse_view.installs.items.get_mut(&id) {
                 entry.step = Step::Done;
             }
@@ -757,19 +866,25 @@ fn take_result(st: &mut State) -> bool {
             if let (Some(row), Some(handle)) = (row, &st.launch.downloads.handle) {
                 handle.send(Command::Remove(row));
             }
-            let slot = format!("{:02}", done.slot);
-            let detail = if st.prefs.land_disabled {
-                fill(tr("Slot {}. It is switched off: turn it on in Installed."), &[&slot])
+            if let Some(findings) = done.gated.clone() {
+                // Held off for the mod safety gate: say so, with the question one press away.
+                st.status = fill(tr("{} was installed switched off"), &[&name]);
+                crate::screens::installed::safety_gate::landed_off(st, done.slot, &name, findings);
             } else {
-                fill(tr("Slot {}. It loads the next time you start Deadlock."), &[&slot])
-            };
-            st.status = format!("{} {}", fill(tr("Installed {}."), &[&name]), detail);
-            crate::notify::push(
-                st,
-                crate::notify::Notice::success(fill(tr("Installed {}"), &[&name]))
-                    .detail(detail)
-                    .action(tr("Open Installed"), |st: &mut State| st.go(Screen::Installed)),
-            );
+                let slot = format!("{:02}", done.slot);
+                let detail = if st.prefs.land_disabled {
+                    fill(tr("Slot {}. It is switched off: turn it on in Installed."), &[&slot])
+                } else {
+                    fill(tr("Slot {}. It loads the next time you start Deadlock."), &[&slot])
+                };
+                st.status = format!("{} {}", fill(tr("Installed {}."), &[&name]), detail);
+                crate::notify::push(
+                    st,
+                    crate::notify::Notice::success(fill(tr("Installed {}"), &[&name]))
+                        .detail(detail)
+                        .action(tr("Open Installed"), |st: &mut State| st.go(Screen::Installed)),
+                );
+            }
         }
         Err(error) if error == super::CANCELLED => {
             crate::screens::settings::telemetry::event(st, "install:cancel", Some("page:browse"));
@@ -798,6 +913,12 @@ fn take_result(st: &mut State) -> bool {
             crate::data::start_vpk_scan(st);
         }
         Err(error) => {
+            // Nothing to install but settings files: the review is the way to use them.
+            if error.contains(deadlock_core::install::NOTHING_INSTALLABLE)
+                && let Some(dir) = unpacked
+            {
+                settings_review::start(st, dir, &name, Some(id), true);
+            }
             if let Some(entry) = st.browse_view.installs.items.get_mut(&id) {
                 entry.step = Step::Failed(error.clone());
             }

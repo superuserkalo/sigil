@@ -55,6 +55,9 @@ pub const READ_BUFFER: usize = 64 * 1024;
 /// How long the worker waits between checks when there is nothing to do.
 pub const IDLE: Duration = Duration::from_millis(200);
 
+/// How often the queue file is written while an archive streams.
+pub const STORE_EVERY: Duration = Duration::from_secs(5);
+
 /// The shortest gap between two progress wakes of the UI while an archive streams.
 pub const PROGRESS_WAKE: Duration = Duration::from_millis(150);
 
@@ -171,6 +174,17 @@ pub struct Item {
     pub added_at: String,
     pub finished_at: Option<String>,
     pub scan: ScanReport,
+    /// The player asked to install it once it lands (a one-press install from Browse), so a
+    /// download resumed after a restart still installs.
+    #[serde(default)]
+    pub install: bool,
+    /// It was streaming when Sigil closed; it came back paused and Resume continues it.
+    #[serde(default)]
+    pub interrupted: bool,
+    /// The server's `ETag` (strong) or `Last-Modified` for the bytes in the part file, sent as
+    /// `If-Range` on a resume so a file that changed since starts over instead of mixing.
+    #[serde(default)]
+    pub validator: Option<String>,
     /// Speed and the slow window while this row streams. Cleared on a new run and never saved:
     /// a speed from the last launch means nothing.
     #[serde(skip)]
@@ -196,6 +210,9 @@ impl Item {
             added_at: Utc::now().to_rfc3339(),
             finished_at: None,
             scan: ScanReport::default(),
+            install: false,
+            interrupted: false,
+            validator: None,
             rate: Rate::default(),
         }
     }
@@ -420,6 +437,8 @@ impl Queue {
                 item.bytes_done = 0;
                 item.scan = ScanReport::default();
                 item.rate = Rate::default();
+                item.validator = None;
+                item.interrupted = false;
                 true
             }
             _ => false,
@@ -446,6 +465,7 @@ impl Queue {
         };
         if item.state == State::Paused {
             item.state = State::Queued;
+            item.interrupted = false;
             true
         } else {
             false
@@ -584,9 +604,26 @@ pub fn load_queue(data_dir: &Path) -> Queue {
     for item in &mut queue.items {
         if item.state == State::Running {
             item.state = State::Paused;
+            item.interrupted = true;
         }
     }
     queue
+}
+
+/// What a restart left unfinished: rows that were streaming when Sigil closed (paused now, with
+/// their part file), rows still waiting, and one-press installs whose archive landed but was
+/// never installed. Reads the queue file only; nothing starts.
+pub fn left_after_restart(data_dir: &Path) -> Vec<Item> {
+    load_queue(data_dir)
+        .items
+        .into_iter()
+        .filter(|item| match item.state {
+            State::Paused => item.interrupted,
+            State::Queued => true,
+            State::Done => item.install,
+            _ => false,
+        })
+        .collect()
 }
 
 /// Write the queue. App data write, atomic.
@@ -645,6 +682,8 @@ pub struct Control {
     cancel: AtomicBool,
     /// The host the current stream reads from, once its redirects are followed.
     server: Mutex<Option<String>>,
+    /// The validator of the bytes in the part file ([`Item::validator`]).
+    validator: Mutex<Option<String>>,
 }
 
 impl Control {
@@ -679,6 +718,26 @@ impl Control {
     pub fn server(&self) -> Option<String> {
         self.server.lock().ok().and_then(|slot| slot.clone())
     }
+
+    /// Record the validator of the bytes the part file holds.
+    pub fn set_validator(&self, value: Option<String>) {
+        if let Ok(mut slot) = self.validator.lock() {
+            *slot = value;
+        }
+    }
+
+    pub fn validator(&self) -> Option<String> {
+        self.validator.lock().ok().and_then(|slot| slot.clone())
+    }
+}
+
+/// What a response says identifies its bytes: a strong `ETag`, else `Last-Modified`. A weak
+/// `ETag` (`W/...`) may not be sent as `If-Range`.
+pub fn validator_of(etag: Option<&str>, last_modified: Option<&str>) -> Option<String> {
+    let etag = etag.map(str::trim).filter(|tag| !tag.is_empty() && !tag.starts_with("W/"));
+    etag.or(last_modified.map(str::trim).filter(|date| !date.is_empty()))
+        .filter(|value| value.len() <= 200 && value.bytes().all(|b| (0x20..0x7f).contains(&b)))
+        .map(str::to_string)
 }
 
 /// How a stream ended.
@@ -735,6 +794,7 @@ fn open(
     policy: &DownloadPolicy,
     server: Option<&str>,
     from: u64,
+    if_range: Option<&str>,
 ) -> Result<(WebUrl, ureq::http::Response<ureq::Body>)> {
     let mut current = WebUrl::parse(url)?;
     for _ in 0..=install::MAX_REDIRECTS {
@@ -750,6 +810,11 @@ fn open(
             .header("Accept", "application/octet-stream, */*");
         if from > 0 {
             request = request.header("Range", &format!("bytes={from}-"));
+            // The bytes on disk came from a file with this validator: a server whose file
+            // changed since answers 200 with all of it, and the stream starts over.
+            if let Some(validator) = if_range {
+                request = request.header("If-Range", validator);
+            }
         }
         let response = request
             .call()
@@ -819,8 +884,11 @@ pub fn stream(
     control: &Control,
     progress: &mut dyn FnMut(u64, Option<u64>),
 ) -> Result<StreamEnd> {
-    let (final_url, mut response) = open(agent, url, policy, None, from)?;
+    let validator = control.validator();
+    let (final_url, mut response) = open(agent, url, policy, None, from, validator.as_deref())?;
     control.set_server(file_host(&final_url));
+    let header = |name: &str| response.headers().get(name).and_then(|value| value.to_str().ok()).map(str::to_string);
+    let fresh = validator_of(header("etag").as_deref(), header("last-modified").as_deref());
     let status = response.status().as_u16();
     let length = response
         .headers()
@@ -829,6 +897,11 @@ pub fn stream(
         .and_then(|value| value.parse::<u64>().ok());
     let part = part_path(path);
     let resumed = status == 206 && from > 0;
+    // A full answer replaces the part file, so its validator is the new one; a resumed one keeps
+    // the old unless the server sent one.
+    if !resumed || fresh.is_some() {
+        control.set_validator(fresh);
+    }
     let total = if resumed { from + length.unwrap_or(0) } else { length.unwrap_or(0) };
     let mut done = if resumed { from } else { 0 };
 
@@ -1065,6 +1138,8 @@ pub fn download_with_failover(
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Command {
     Add(String),
+    /// Add a target to install once it lands ([`Item::install`]).
+    AddInstall(String),
     Retry(String),
     Pause(String),
     Resume(String),
@@ -1249,11 +1324,12 @@ fn apply(
     #[allow(unused_assignments)]
     let mut changed = false;
     match command {
-        Command::Add(target) => {
+        Command::Add(target) | Command::AddInstall(target) => {
             match queue.add(target) {
                 Ok(id) => {
                     if let Some(item) = queue.get_mut(&id) {
                         item.error = None;
+                        item.install = matches!(command, Command::AddInstall(_));
                     }
                     changed = true;
                 }
@@ -1317,7 +1393,7 @@ fn publish(shared: &Arc<Mutex<Queue>>, queue: &Queue) {
 /// Resolve, stream and scan one item.
 #[allow(clippy::too_many_arguments)]
 fn run_item(
-    _data_dir: &Path,
+    data_dir: &Path,
     workspace: &Path,
     shared: &Arc<Mutex<Queue>>,
     rx: &Receiver<Command>,
@@ -1331,6 +1407,7 @@ fn run_item(
         return;
     };
     let item_control = Control::new();
+    item_control.set_validator(item.validator.clone());
     *control = Some(Arc::clone(&item_control));
 
     let set_state = |state: State| {
@@ -1348,6 +1425,8 @@ fn run_item(
         live.rate = Rate::default();
     }
     publish(shared, queue);
+    // On disk as Running too: if Sigil closes mid-stream, the next start knows it was cut off.
+    let _ = store_queue(data_dir, queue);
     if let Some(wake) = wake {
         wake();
     }
@@ -1400,6 +1479,10 @@ fn run_item(
     let progress_wake = wake.clone();
     let pending = &mut *deferred;
     let mut last_wake: Option<Instant> = None;
+    // The queue file follows the bytes every few seconds, so a restart resumes near where the
+    // stream was and not from the last row that finished.
+    let mut last_store = Instant::now();
+    let store_dir = data_dir.to_path_buf();
     // One clock for the whole transfer: speed is bytes over time since this call, so the
     // window never spans the resolve that came before it.
     let started = Instant::now();
@@ -1419,6 +1502,7 @@ fn run_item(
             if let Some(server) = progress_control.server() {
                 live.server = Some(server);
             }
+            live.validator = progress_control.validator();
             if let Some(total) = total.filter(|total| *total > 0) {
                 live.bytes_total = total;
             }
@@ -1427,6 +1511,12 @@ fn run_item(
             } else {
                 State::Running
             };
+        }
+        if last_store.elapsed() >= STORE_EVERY
+            && let Ok(slot) = progress_shared.lock()
+        {
+            last_store = Instant::now();
+            let _ = store_queue(&store_dir, &slot);
         }
         // A few repaints a second, so a progress bar moves without a frame per chunk.
         if last_wake.is_none_or(|at| at.elapsed() >= PROGRESS_WAKE)
@@ -1447,7 +1537,7 @@ fn run_item(
 
     // The server list costs one GameBanana request, so it is only fetched after a failure.
     let mut servers = healthy_servers;
-    let outcome = download_with_failover(
+    let mut outcome = download_with_failover(
         &url,
         &resolved.path,
         &policy,
@@ -1456,6 +1546,16 @@ fn run_item(
         &mut servers,
         &mut progress,
     );
+    // A resumed GameBanana file is held to the file record's MD5: bytes from two sessions that
+    // do not add up start once more from zero (the install checks size and MD5 again).
+    if from > 0
+        && let (Ok(fetched), Some(expected)) = (&outcome, resolved.md5.as_deref())
+        && !install::md5_file_matches(&fetched.path, expected)
+    {
+        let _ = fs::remove_file(&fetched.path);
+        item_control.set_validator(None);
+        outcome = download_with_failover(&url, &resolved.path, &policy, 0, &item_control, &mut servers, &mut progress);
+    }
     // Commands left over after the stream finished.
     while let Ok(command) = rx.try_recv() {
         if handle_mid_stream(&command, id, &item_control) {
@@ -1552,6 +1652,8 @@ fn finish(
 /// A mod id, link or path resolved into something downloadable.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Resolved {
+    /// GameBanana's MD5 for the file, when it lists one.
+    pub md5: Option<String>,
     pub name: String,
     pub mod_id: Option<u64>,
     pub url: Option<String>,
@@ -1571,6 +1673,7 @@ fn resolve(item: &Item, workspace: &Path) -> Result<Resolved> {
                 .map(|name| name.to_string_lossy().into_owned())
                 .unwrap_or_else(|| "archive".to_string());
             Ok(Resolved {
+                md5: None,
                 name: stem(&file_name),
                 mod_id: None,
                 url: None,
@@ -1584,6 +1687,7 @@ fn resolve(item: &Item, workspace: &Path) -> Result<Resolved> {
             let file_name = safe_file_name(&file.file_name)
                 .ok_or_else(|| Error::msg(format!("GameBanana returned an odd file name: {:?}", file.file_name)))?;
             Ok(Resolved {
+                md5: file.md5.clone(),
                 name: stem(&file_name),
                 mod_id: Some(id),
                 url: Some(file.download_url),
@@ -1596,6 +1700,7 @@ fn resolve(item: &Item, workspace: &Path) -> Result<Resolved> {
             let file_name = safe_file_name(WebUrl::parse(&url)?.file_name().as_deref().unwrap_or("archive"))
                 .ok_or_else(|| Error::msg("The link has no usable file name."))?;
             Ok(Resolved {
+                md5: None,
                 name: stem(&file_name),
                 mod_id: None,
                 url: Some(url),

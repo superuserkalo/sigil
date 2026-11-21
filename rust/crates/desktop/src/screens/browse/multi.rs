@@ -18,6 +18,8 @@ use crate::screens::settings::i18n::{fill, tr};
 
 /// What the multi-file worker reports.
 pub struct Done {
+    /// Slots that were to land on but stayed off for the mod safety gate, with its findings.
+    pub gated: Vec<(u16, Vec<String>)>,
     pub slots: Vec<u16>,
     pub error: Option<String>,
 }
@@ -196,16 +198,29 @@ fn install(work: Work) -> Done {
     use deadlock_core::install::{ApplyOptions, InstallRequest, PlanOptions, install_vpks};
     let request = match InstallRequest::new(work.target.clone(), work.workspace.clone()) {
         Ok(request) => request.with_one_click(work.one_click),
-        Err(error) => return Done { slots: Vec::new(), error: Some(error.to_string()) },
+        Err(error) => return Done { slots: Vec::new(), gated: Vec::new(), error: Some(error.to_string()) },
     };
     let options = PlanOptions { game_root: Some(work.game_root.clone()), ..Default::default() };
-    let result = install_vpks(&request, &work.paths, &options, ApplyOptions { land_disabled: work.land_disabled }, true);
+    // Written switched off; those that should land on go on once the safety scan passes.
+    let result = install_vpks(&request, &work.paths, &options, ApplyOptions { land_disabled: true }, true);
     let mut slots = Vec::new();
+    let mut gated = Vec::new();
     for (plan, record) in &result.installed {
         slots.push(plan.slot);
+        let size_bytes = std::fs::metadata(&record.target).map(|m| m.len()).unwrap_or(0);
+        if !work.land_disabled
+            && let Some(findings) = crate::screens::installed::safety_gate::land_checked(
+                &work.game_root,
+                plan.slot,
+                &record.target,
+                (work.mod_id > 0).then_some(work.mod_id),
+            )
+        {
+            gated.push((plan.slot, findings));
+        }
         let meta = deadlock_core::import::ModMeta {
             slot: plan.slot,
-            size_bytes: std::fs::metadata(&record.target).map(|m| m.len()).unwrap_or(0),
+            size_bytes,
             name: work.name.clone(),
             author: work.author.clone(),
             thumbnail_url: work.thumbnail.clone(),
@@ -218,7 +233,7 @@ fn install(work: Work) -> Done {
         }
         crate::screens::settings::tools::imprint_after_install(&work.game_root, plan.slot, &meta);
     }
-    Done { slots, error: result.error.map(|e| e.to_string()) }
+    Done { slots, gated, error: result.error.map(|e| e.to_string()) }
 }
 
 /// Take the worker's result: say what went in, rescan, and carry on with a collection.
@@ -226,7 +241,7 @@ pub fn poll(st: &mut State) -> bool {
     let Some(result) = st.install.multi.try_take() else {
         return false;
     };
-    let done = result.unwrap_or_else(|error| Done { slots: Vec::new(), error: Some(error) });
+    let done = result.unwrap_or_else(|error| Done { slots: Vec::new(), gated: Vec::new(), error: Some(error) });
     let name = st.install.label.clone();
     if !done.slots.is_empty() {
         st.installed.library = deadlock_core::import::read_library(&deadlock_core::import::library_path(
@@ -236,6 +251,9 @@ pub fn poll(st: &mut State) -> bool {
         st.installed.library_sig = None;
         crate::data::scan_addons_now(st);
         super::quick::refresh_owned(st);
+    }
+    for (slot, findings) in done.gated.clone() {
+        crate::screens::installed::safety_gate::landed_off(st, slot, &name, findings);
     }
     let slots = done.slots.iter().map(|s| format!("{s:02}")).collect::<Vec<_>>().join(", ");
     match done.error {

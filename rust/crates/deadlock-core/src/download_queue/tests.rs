@@ -554,3 +554,115 @@ fn order(queue: &Queue) -> Vec<String> {
     queue.items.iter().map(|item| item.id.clone()).collect()
 }
 
+
+/// A file server that honours `Range` only while `If-Range` names its current `ETag` ("v1").
+fn range_server(body: Vec<u8>) -> u16 {
+    use std::io::{BufRead, BufReader};
+    use std::net::TcpListener;
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    std::thread::spawn(move || {
+        for stream in listener.incoming().flatten() {
+            let body = body.clone();
+            std::thread::spawn(move || {
+                let mut stream = stream;
+                let mut reader = BufReader::new(stream.try_clone().unwrap());
+                let (mut from, mut if_range) = (None, None);
+                loop {
+                    let mut line = String::new();
+                    if reader.read_line(&mut line).unwrap_or(0) == 0 || line == "\r\n" {
+                        break;
+                    }
+                    let lower = line.to_ascii_lowercase();
+                    if let Some(rest) = lower.strip_prefix("range: bytes=") {
+                        from = rest.trim().trim_end_matches('-').parse::<usize>().ok();
+                    }
+                    if lower.starts_with("if-range:") {
+                        if_range = Some(line["if-range:".len()..].trim().to_string());
+                    }
+                }
+                let head = match from {
+                    Some(start) if if_range.as_deref() == Some("\"v1\"") => format!(
+                        "HTTP/1.1 206 Partial Content\r\nETag: \"v1\"\r\nContent-Range: bytes {start}-{}/{}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                        body.len() - 1,
+                        body.len(),
+                        body.len() - start
+                    ),
+                    _ => format!("HTTP/1.1 200 OK\r\nETag: \"v1\"\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len()),
+                };
+                let start = match from {
+                    Some(start) if head.starts_with("HTTP/1.1 206") => start,
+                    _ => 0,
+                };
+                let _ = stream.write_all(head.as_bytes());
+                let _ = stream.write_all(&body[start..]);
+            });
+        }
+    });
+    port
+}
+
+#[test]
+fn a_resume_continues_while_the_file_is_the_same_and_starts_over_when_it_changed() {
+    let body: Vec<u8> = (0..120_000).map(|i| (i % 241) as u8).collect();
+    let port = range_server(body.clone());
+    let dir = scratch("resume");
+    let path = dir.join("a.zip");
+    let policy = DownloadPolicy::gamebanana().with_mirror(&format!("http://127.0.0.1:{port}")).unwrap();
+    let url = format!("http://127.0.0.1:{port}/a.zip");
+
+    // The bytes a closed Sigil left, from the same file: only the rest is fetched.
+    fs::write(part_path(&path), &body[..50_000]).unwrap();
+    let control = Control::new();
+    control.set_validator(Some("\"v1\"".into()));
+    let mut first = None;
+    stream(&agent(&policy), &url, &path, &policy, 50_000, &control, &mut |done, _| {
+        first.get_or_insert(done);
+    })
+    .unwrap();
+    assert_eq!(first, Some(50_000), "it picked up where the part file ends");
+    assert_eq!(fs::read(&path).unwrap(), body);
+
+    // The file changed since (another validator): the server sends all of it and the stream
+    // starts over instead of appending to bytes from another file.
+    let _ = fs::remove_file(&path);
+    fs::write(part_path(&path), vec![7u8; 50_000]).unwrap();
+    let control = Control::new();
+    control.set_validator(Some("\"v0\"".into()));
+    stream(&agent(&policy), &url, &path, &policy, 50_000, &control, &mut |_, _| {}).unwrap();
+    assert_eq!(fs::read(&path).unwrap(), body);
+    assert_eq!(control.validator().as_deref(), Some("\"v1\""), "the new validator is kept");
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn validators_skip_weak_tags_and_odd_bytes() {
+    assert_eq!(validator_of(Some("\"abc\""), Some("Tue, 01 Jan 2026 00:00:00 GMT")).as_deref(), Some("\"abc\""));
+    assert_eq!(validator_of(Some("W/\"abc\""), Some("Tue, 01 Jan 2026 00:00:00 GMT")).as_deref(), Some("Tue, 01 Jan 2026 00:00:00 GMT"));
+    assert_eq!(validator_of(None, None), None);
+    assert_eq!(validator_of(Some("\"a\r\nX: y\""), None), None, "no header can ride along");
+}
+
+#[test]
+fn a_restart_lists_cut_off_waiting_and_uninstalled_rows() {
+    let dir = scratch("restart");
+    let mut queue = Queue::default();
+    let streaming = queue.add("715100").unwrap();
+    let waiting = queue.add("715101").unwrap();
+    let paused = queue.add("715102").unwrap();
+    let landed = queue.add("715103").unwrap();
+    let done = queue.add("715104").unwrap();
+    queue.get_mut(&streaming).unwrap().state = State::Running;
+    queue.get_mut(&paused).unwrap().state = State::Paused;
+    queue.get_mut(&landed).unwrap().state = State::Done;
+    queue.get_mut(&landed).unwrap().install = true;
+    queue.get_mut(&done).unwrap().state = State::Done;
+    store_queue(&dir, &queue).unwrap();
+    let left: Vec<String> = left_after_restart(&dir).into_iter().map(|i| i.id).collect();
+    assert_eq!(left, vec![streaming.clone(), waiting, landed], "a paused row the player paused stays out");
+    let mut loaded = load_queue(&dir);
+    assert!(loaded.get(&streaming).unwrap().interrupted);
+    assert!(loaded.resume(&streaming));
+    assert!(!loaded.get(&streaming).unwrap().interrupted, "Resume clears the mark");
+    let _ = fs::remove_dir_all(&dir);
+}

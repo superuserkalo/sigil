@@ -51,6 +51,9 @@ pub struct Downloads {
     /// Wave 4 (Grimoire's "Switching from X"): each running row's last file server, and the one
     /// it failed over from with when, by row id.
     pub servers: ServersSeen,
+    /// The one read at startup of what the last run left unfinished.
+    restart_job: crate::jobs::Job<Vec<Item>>,
+    restart_checked: bool,
 }
 
 impl Default for Downloads {
@@ -65,6 +68,8 @@ impl Default for Downloads {
             demo_rates: std::collections::HashMap::new(),
             slow_told: std::collections::HashSet::new(),
             servers: std::collections::HashMap::new(),
+            restart_job: crate::jobs::Job::default(),
+            restart_checked: false,
         }
     }
 }
@@ -156,7 +161,7 @@ impl Downloads {
 /// The same state changes the worker makes, for fixture rows.
 fn demo_apply(queue: &mut queue::Queue, command: queue::Command) {
     match command {
-        queue::Command::Add(target) => {
+        queue::Command::Add(target) | queue::Command::AddInstall(target) => {
             let _ = queue.add(&target);
         }
         queue::Command::Retry(id) => {
@@ -367,10 +372,64 @@ pub fn newly_slow<'a>(
 
 /// The first time a download crawls, one warning toast says why, with a way to the list. It is
 /// never repeated for that download; the row's own warning in the list stays while it crawls.
+/// Once per run: read what the last run left in the queue (no network) and offer to carry on.
+fn check_restart(st: &mut State) -> bool {
+    if !st.launch.downloads.restart_checked && !st.demo && !rune::is_headless() {
+        st.launch.downloads.restart_checked = true;
+        let data = crate::data::data_dir();
+        let wake = st.wake.clone();
+        st.launch.downloads.restart_job.start(wake, move || Ok(queue::left_after_restart(&data)));
+    }
+    let Some(Ok(left)) = st.launch.downloads.restart_job.try_take() else { return false };
+    offer_resume(st, left);
+    true
+}
+
+/// The notice after a restart: how many downloads did not finish, with Resume. Resume starts
+/// the queue, continues each cut-off row from its part file (HTTP Range, checked against
+/// GameBanana's size and MD5 when it lands), and hands one-press installs back to Browse so
+/// they still install.
+pub fn offer_resume(st: &mut State, left: Vec<Item>) {
+    if left.is_empty() {
+        return;
+    }
+    let count = left.len();
+    let title = if count == 1 {
+        let name = left[0].name.trim();
+        if name.is_empty() {
+            tr("A download did not finish").to_string()
+        } else {
+            fill(tr("{} did not finish downloading"), &[name])
+        }
+    } else {
+        fill(tr("{} downloads did not finish"), &[&count.to_string()])
+    };
+    crate::notify::push(
+        st,
+        crate::notify::Notice::info(title)
+            .detail(tr("Sigil closed while they were downloading. Resume continues from the bytes already on disk."))
+            .action(tr("Resume"), move |st: &mut State| resume_after_restart(st, left)),
+    );
+}
+
+fn resume_after_restart(st: &mut State, left: Vec<Item>) {
+    st.launch.downloads.ensure(crate::data::data_dir(), crate::data::workspace_dir(), st.wake.clone());
+    for item in &left {
+        if item.state == ItemState::Paused {
+            st.launch.downloads.send(queue::Command::Resume(item.id.clone()));
+        }
+        if item.install {
+            crate::screens::browse::quick::adopt(st, item);
+        }
+    }
+    st.launch.downloads.panel = true;
+}
+
 pub fn poll(st: &mut State) -> bool {
+    let restarted = check_restart(st);
     let downloads = &st.launch.downloads;
     if downloads.handle.is_none() && downloads.demo.is_none() {
-        return false;
+        return restarted;
     }
     let queue = downloads.snapshot();
     let switched = track_servers(&mut st.launch.downloads.servers, &queue.items);
@@ -380,7 +439,7 @@ pub fn poll(st: &mut State) -> bool {
         .map(|item| (item.id.clone(), item.name.clone()))
         .collect();
     if fresh.is_empty() {
-        return switched;
+        return switched || restarted;
     }
     for (id, name) in fresh {
         st.launch.downloads.slow_told.insert(id);

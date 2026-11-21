@@ -1240,6 +1240,7 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
         ("profiles-modal", screens::profiles::dialog(s, &u)),
         ("autoexec-modal", screens::autoexec::dialog(s, &u)),
         ("performance-modal", screens::performance::dialog(s, &u)),
+        ("settings-review-modal", screens::browse::quick::settings_review::dialog(s, &u)),
         ("servers-modal", screens::servers::dialog(s, &u)),
         ("launch-modal", screens::launch::dialog(s, &u)),
         ("toolchain-modal", screens::toolchain::dialog(s, &u)),

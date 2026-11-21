@@ -271,7 +271,13 @@ pub fn poll(s: &mut State) -> bool {
     }
     PENDING.with(|p| p.borrow_mut().take());
     let (Some(file_id), Some(profile)) = (link.file_id, d.profile.as_ref()) else {
-        // No file named, or the read failed: the details view says which.
+        // No file named: a mod with several files opens its file menu to pick from. A failed
+        // read: the details view says so.
+        if link.file_id.is_none() && d.profile.is_some() {
+            let id = d.id;
+            crate::screens::browse::quick::choose_after_load(s, id);
+            return true;
+        }
         return false;
     };
     let Some(file) = profile
