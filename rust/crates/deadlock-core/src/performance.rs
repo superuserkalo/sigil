@@ -29,6 +29,7 @@
 //! change the number of braces is refused. A file carrying Grimoire's own
 //! `grimoire-perf` markers is left alone.
 
+pub mod as_written;
 pub mod catalog;
 pub mod classify;
 pub mod edits;
@@ -36,6 +37,7 @@ pub mod exchange;
 pub mod fetch;
 pub mod generate;
 pub mod hosted;
+pub mod repos;
 pub mod video;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -409,6 +411,8 @@ pub fn load(data_dir: &Path) -> Catalog {
             game.as_ref(),
         ));
     }
+    // Custom presets from GitHub repositories the player added (#572), after the built-ins.
+    catalog.configs.extend(repos::configs(data_dir, &baseline, game.as_ref()));
     catalog.configs.sort_by_key(|config| config.def.tier);
     catalog
 }
@@ -753,6 +757,10 @@ pub fn remove_from_install(game_root: &Path) -> Result<bool> {
     let text = std::fs::read_to_string(&path)?;
     if !text.contains(MARKER) {
         return Ok(false);
+    }
+    // Applied as written (#590): the stock copy goes back, not a line by line undo.
+    if as_written::is_applied(&text) {
+        return as_written::remove_from_install(game_root);
     }
     write_atomic(&path, remove_text(&text).as_bytes())?;
     Ok(true)
