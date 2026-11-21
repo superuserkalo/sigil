@@ -814,3 +814,55 @@ pub fn stage_notices(s: &mut State) {
         });
     }
 }
+
+/// The worst cards side by side: long names and authors, big counts, every download count,
+/// a sample button, no image, and each install state. The action row must stay inside all of
+/// them at every grid width (`--size 1040x680` is the narrowest window).
+pub fn scene_card_stress(s: &mut State) {
+    scene_with(s, |_| {});
+    let long = "Extremely Long Community Skin Name With Several Extra Words For Testing Overflow";
+    let author = "AnAuthorNameThatJustKeepsGoingAndGoingWithoutASingleSpace";
+    let steps = [
+        None,
+        Some(quick::Step::Queued),
+        Some(quick::Step::Downloading(Some(0.42))),
+        Some(quick::Step::Paused(Some(0.42))),
+        Some(quick::Step::Installing),
+        Some(quick::Step::Failed("The file server closed the connection".into())),
+        Some(quick::Step::Done),
+        None,
+    ];
+    let Some(page) = s.browse.page.as_mut() else { return };
+    let Some(base) = page.mods.first().cloned() else { return };
+    let mut mods = Vec::new();
+    for (index, step) in steps.into_iter().enumerate() {
+        let id = 9_000_000 + index as u64;
+        let mut card = base.clone();
+        card.id = id;
+        card.name = if index % 2 == 0 { long.to_string() } else { "Hat".to_string() };
+        card.author = if index % 3 == 0 { author.to_string() } else { "kalo".to_string() };
+        card.likes = 1_234_567 + index as u64;
+        card.views = 987_654_321;
+        card.thumbnail_url = None;
+        if index == 7 {
+            card.model = "Sound".into();
+            card.audio_url = Some("https://example.invalid/sample.mp3".into());
+            card.thumbnail_url = base.thumbnail_url.clone();
+        }
+        s.browse_view.download_counts.insert(id, 45_678_901);
+        if let Some(step) = step {
+            let entry = quick::Entry::new(&card.name, id.to_string(), None, Vec::new(), step);
+            s.browse_view.installs.items.insert(id, entry);
+        }
+        mods.push(card);
+    }
+    page.mods = mods;
+    page.total = page.mods.len();
+}
+
+/// The same cards in German, whose install labels are the longest.
+pub fn scene_card_stress_de(s: &mut State) {
+    s.prefs.language = crate::screens::settings::i18n::Lang::German;
+    crate::screens::settings::i18n::set(crate::screens::settings::i18n::Lang::German);
+    scene_card_stress(s);
+}

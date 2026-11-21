@@ -74,7 +74,7 @@ pub struct Entry {
 }
 
 impl Entry {
-    fn new(name: &str, target: String, file: Option<u64>, update: Vec<u16>, step: Step) -> Self {
+    pub(super) fn new(name: &str, target: String, file: Option<u64>, update: Vec<u16>, step: Step) -> Self {
         Entry {
             name: name.to_string(),
             target,

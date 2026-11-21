@@ -554,6 +554,7 @@ impl AddonLibrary {
 }
 
 /// One GameBanana row, read only until the download and install backend exists.
+#[derive(Clone)]
 pub struct BrowseCard {
     pub id: u64,
     pub name: String,

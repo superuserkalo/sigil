@@ -884,6 +884,8 @@ pub(crate) fn virtual_grid(s: &State, shown: Rc<Vec<usize>>, cols: usize, card_w
         s.browse_view.hidden_authors.len(),
         s.browse_view.card_size,
         s.browse_view.paged,
+        // The footer picks its label and counts from the card's width.
+        card_w.round() as i32,
     );
     col()
         .key("browse-rows")
