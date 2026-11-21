@@ -98,12 +98,18 @@ pub struct Options {
     pub forge: bool,
     /// Read console.log for the match phase and hero.
     pub presence_game: bool,
+    /// Leave the party size out of Sigil's own presence lines (DMM's switch).
+    pub presence_hide_party: bool,
     /// Stats shows the match being played, read from console.log (local only).
     pub live_view: bool,
     /// The player turned on the live bridge HUD mod (off by default).
     pub live_bridge: bool,
     /// Look up the live match's players on deadlock-api (off by default).
     pub live_lookup: bool,
+    /// Rebuild the live bridge by itself after a game update, without asking (off by default).
+    pub live_bridge_auto: bool,
+    /// The game build the live bridge was last found current for, or asked about.
+    pub live_bridge_build: String,
     /// Discord lines per phase id; missing phases use the defaults.
     pub presence_lines: BTreeMap<String, Lines>,
     /// Discord lines per hero name, used in a match.
@@ -197,9 +203,12 @@ impl Default for Options {
             repair_before_launch: false,
             forge: false,
             presence_game: false,
+            presence_hide_party: false,
             live_view: true,
             live_bridge: false,
             live_lookup: false,
+            live_bridge_auto: false,
+            live_bridge_build: String::new(),
             presence_lines: BTreeMap::new(),
             hero_lines: BTreeMap::new(),
             imprint: false,
@@ -352,9 +361,12 @@ impl Options {
             repair_before_launch: b("repair_before_launch", d.repair_before_launch),
             forge: b("forge", d.forge),
             presence_game: b("presence_game", d.presence_game),
+            presence_hide_party: b("presence_hide_party", d.presence_hide_party),
             live_view: b("live_view", d.live_view),
             live_bridge: b("live_bridge", d.live_bridge),
             live_lookup: b("live_lookup", d.live_lookup),
+            live_bridge_auto: b("live_bridge_auto", d.live_bridge_auto),
+            live_bridge_build: s("live_bridge_build").unwrap_or_default(),
             presence_lines: lines_map(map.get("presence_lines")),
             hero_lines: lines_map(map.get("hero_lines")),
             imprint: b("imprint", d.imprint),
@@ -450,9 +462,12 @@ impl Options {
         m.insert("repair_before_launch".into(), json!(self.repair_before_launch));
         m.insert("forge".into(), json!(self.forge));
         m.insert("presence_game".into(), json!(self.presence_game));
+        m.insert("presence_hide_party".into(), json!(self.presence_hide_party));
         m.insert("live_view".into(), json!(self.live_view));
         m.insert("live_bridge".into(), json!(self.live_bridge));
         m.insert("live_lookup".into(), json!(self.live_lookup));
+        m.insert("live_bridge_auto".into(), json!(self.live_bridge_auto));
+        m.insert("live_bridge_build".into(), json!(self.live_bridge_build));
         m.insert("presence_lines".into(), lines_json(&self.presence_lines));
         m.insert("hero_lines".into(), lines_json(&self.hero_lines));
         m.insert("imprint".into(), json!(self.imprint));
@@ -681,9 +696,12 @@ mod tests {
             repair_before_launch: true,
             forge: true,
             presence_game: true,
+            presence_hide_party: true,
             live_view: false,
             live_bridge: true,
             live_lookup: true,
+            live_bridge_auto: true,
+            live_bridge_build: "6123:1a2b".into(),
             presence_lines: BTreeMap::new(),
             hero_lines: BTreeMap::new(),
             imprint: true,

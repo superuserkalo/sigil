@@ -441,6 +441,14 @@ fn live_section(s: &State, u: &Ui) -> El {
             ),
             toggle_row(
                 u,
+                "settings-live-bridge-auto",
+                "Rebuild the bridge after game updates",
+                "Sigil notices a new game version and builds the bridge again by itself, never while Deadlock runs. Off: it asks once per update.",
+                o.live_bridge_auto,
+                crate::screens::stats::live::toggle_auto_rebuild,
+            ),
+            toggle_row(
+                u,
                 "settings-live-lookup",
                 "Look up players in the live match",
                 "Sends the account ids the versus screen shows to deadlock-api once per match, for ranks and match counts. Needs Player stats.",

@@ -1,6 +1,19 @@
 //! German for the live match panel (`live.rs`). `german::tr` reads it with the page's table.
 
 pub const DE: &[(&str, &str)] = &[
+    // After a game update
+    ("Live bridge rebuilt for the new game version", "Live-Brücke für die neue Spielversion neu gebaut"),
+    (
+        "Deadlock updated, so Sigil built the bridge again from your game. It reports from the next match.",
+        "Deadlock wurde aktualisiert, daher hat Sigil die Brücke aus deinem Spiel neu gebaut. Sie meldet sich ab dem nächsten Match.",
+    ),
+    ("The live bridge could not be rebuilt", "Die Live-Brücke konnte nicht neu gebaut werden"),
+    ("Open Stats", "Statistiken öffnen"),
+    ("Deadlock updated: rebuild the live bridge?", "Deadlock wurde aktualisiert: Live-Brücke neu bauen?"),
+    (
+        "The bridge was built for the old game version and stays silent until it is rebuilt. Settings > Game > Live match can rebuild it by itself next time.",
+        "Die Brücke wurde für die alte Spielversion gebaut und bleibt stumm, bis sie neu gebaut ist. Einstellungen > Spiel > Live-Match kann sie beim nächsten Mal selbst neu bauen.",
+    ),
     ("Demo data: nothing was changed.", "Demodaten: Es wurde nichts geändert."),
     ("Close Deadlock first. The game keeps its mods open while it runs.", "Schließe zuerst Deadlock. Das Spiel hält seine Mods geöffnet, solange es läuft."),
     ("Find the game folder first.", "Suche zuerst den Spielordner."),

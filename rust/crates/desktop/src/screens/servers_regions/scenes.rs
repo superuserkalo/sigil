@@ -29,7 +29,19 @@ pub const SCENES: &[Scene] = &[
     ("regions-all-blocked", all_blocked),
     ("regions-not-windows", not_windows),
     ("regions-indicator", indicator),
+    ("regions-search", search),
+    ("regions-where-i-play", where_i_play),
+    ("regions-health", health),
+    ("regions-health-de", health_german),
+    // The install and live leftovers of the same round, kept in one list.
+    ("install-settings-review", review::scene_review),
+    ("install-landed-off", review::scene_landed_off),
+    ("downloads-resume", review::scene_resume),
+    ("browse-file-choice", review::scene_file_choice),
+    ("live-update-ask", review::scene_live_update),
 ];
+
+use crate::screens::browse::quick::settings_review as review;
 
 const FIXTURE: &str = include_str!("../../../../deadlock-core/src/relays/fixtures/sdr_config.json");
 
@@ -230,4 +242,41 @@ fn indicator(s: &mut State) {
     blocked(s);
     s.screen = Screen::Installed;
     super::remind_at_launch(s);
+}
+
+/// Search and sort: "fr" narrowed, fastest first, a range ticked with shift.
+fn search(s: &mut State) {
+    with_catalog(s, &[]);
+    let regions = &mut s.servers.regions;
+    regions.search = rune::TextEdit::new("fr");
+    regions.sort = super::Sort::Ping;
+    regions.draft = ["dfra".to_string(), "fra".to_string()].into_iter().collect();
+    regions.edited = true;
+}
+
+/// Match history in: the "Where I play" preset and the counts beside each location.
+fn where_i_play(s: &mut State) {
+    with_catalog(s, &[]);
+    let regions = &mut s.servers.regions;
+    regions.history = Some([("fra".to_string(), 41u64), ("ams".to_string(), 12), ("sto".to_string(), 3)].into_iter().collect());
+    regions.sort = super::Sort::Matches;
+    if let Some(blocked) = regions.where_i_play() {
+        regions.draft = blocked.into_iter().collect();
+        regions.edited = true;
+    }
+}
+
+/// Another page after a sweep: the status bar's relay chip with its popover open.
+fn health(s: &mut State) {
+    with_catalog(s, &[]);
+    s.servers.regions.pings.insert("sgp".into(), None);
+    s.servers.regions.health_open = true;
+    s.screen = Screen::Installed;
+    crate::statusbar::refresh(s);
+}
+
+fn health_german(s: &mut State) {
+    s.prefs.language = crate::screens::settings::i18n::Lang::German;
+    crate::screens::settings::i18n::set(s.prefs.language);
+    health(s);
 }

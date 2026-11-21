@@ -37,6 +37,8 @@ use super::shared::{TNUM, TNUM_SMALL, open_statlocker, signed, souls, statlocker
 const READ_EVERY: Duration = Duration::from_secs(2);
 /// How often the bridge is compared with the game's files again.
 const CHECK_EVERY: Duration = Duration::from_secs(600);
+/// How often the game build is read while the bridge is on, to notice a game update.
+const BUILD_EVERY: Duration = Duration::from_secs(60);
 const CURVE_H: f32 = 72.0;
 const CURVE_VB: f32 = 1000.0;
 
@@ -68,6 +70,23 @@ pub struct Live {
     icons_loaded: BTreeSet<String>,
     /// Scenes: the game counts as running.
     pub scene_running: Option<bool>,
+    /// The game build read last (`live_bridge::game_build`), on a worker every minute.
+    build_job: Job<Option<String>>,
+    build_read_at: Option<Instant>,
+    /// A build the bridge has not been checked against yet, or found outdated for.
+    pub update: Option<Update>,
+    /// The running rebuild came from a game update, so it ends in a toast.
+    auto_rebuild: bool,
+    /// The last rebuild try after an update, so a refused one waits a minute before the next.
+    tried_at: Option<Instant>,
+}
+
+/// A game update the live bridge has to follow.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Update {
+    pub build: String,
+    /// The check found the bridge outdated; it waits for the game to close.
+    pub outdated: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -98,8 +117,10 @@ pub fn poll(st: &mut State) -> bool {
     }
     if let Some(result) = st.stats.live.check_job.try_take() {
         st.stats.live.check = result.ok();
+        after_check(st);
         changed = true;
     }
+    changed |= follow_updates(st);
     if let Some(result) = st.stats.live.lookup_job.try_take() {
         if let Ok(found) = result {
             st.stats.live.lookup.extend(found);
@@ -254,6 +275,10 @@ fn start_action(st: &mut State, action: Action) {
         let message = match action {
             Action::Install => install(&root)?,
             Action::Rebuild => {
+                // Asked here too: the watcher that feeds `running` is not always on.
+                if crate::screens::settings::tabs::game_running() {
+                    return Err(tr("Close Deadlock first. The game keeps its mods open while it runs.").to_string());
+                }
                 let file = check.and_then(|c| c.file).ok_or_else(missing)?;
                 live_bridge::rebuild_installed(&root, &file, &bridge_work(), true).map_err(|e| e.to_string())?;
                 tr("Live bridge rebuilt for this game version.").to_string()
@@ -311,6 +336,35 @@ fn install(root: &std::path::Path) -> Result<String, String> {
 
 fn finish_action(st: &mut State, result: Result<(Action, String), String>) {
     let action = st.stats.live.busy.take();
+    let auto = std::mem::take(&mut st.stats.live.auto_rebuild);
+    if auto && action == Some(Action::Rebuild) {
+        match &result {
+            Ok(_) => {
+                if let Some(update) = st.stats.live.update.take() {
+                    options::edit_quiet(|o| o.live_bridge_build = update.build);
+                }
+                crate::notify::push(
+                    st,
+                    crate::notify::Notice::success(tr("Live bridge rebuilt for the new game version"))
+                        .detail(tr("Deadlock updated, so Sigil built the bridge again from your game. It reports from the next match.")),
+                );
+            }
+            // The game started meanwhile: try again quietly once it closed.
+            Err(error) if error == tr("Close Deadlock first. The game keeps its mods open while it runs.") => {}
+            Err(error) => {
+                // Not again for this build; the panel keeps Rebuild.
+                if let Some(update) = st.stats.live.update.take() {
+                    options::edit_quiet(|o| o.live_bridge_build = update.build);
+                }
+                crate::notify::push(
+                    st,
+                    crate::notify::Notice::warning(tr("The live bridge could not be rebuilt"))
+                        .detail(error.clone())
+                        .action(tr("Open Stats"), |st: &mut State| st.go(Screen::Stats)),
+                );
+            }
+        }
+    }
     match result {
         Ok((done, message)) => {
             st.stats.live.note = Some((message, false));
@@ -332,6 +386,112 @@ fn finish_action(st: &mut State, result: Result<(Action, String), String>) {
     }
     crate::data::rescan_game(st);
     start_check(st);
+}
+
+// --- after a game update ------------------------------------------------------------------
+
+/// While the bridge is on: read the game build every minute (two stats and a small read on a
+/// worker) and check the bridge again when it changed. Runs on every page.
+fn follow_updates(st: &mut State) -> bool {
+    let mut changed = false;
+    if let Some(Ok(build)) = st.stats.live.build_job.try_take() {
+        let known = options::get().live_bridge_build;
+        if let Some(build) = build
+            && build != known
+            && st.stats.live.update.as_ref().is_none_or(|u| u.build != build)
+        {
+            st.stats.live.update = Some(Update { build, outdated: false });
+            if !st.stats.live.check_job.is_running() {
+                start_check(st);
+            }
+            changed = true;
+        }
+    }
+    if st.demo || rune::is_headless() || !options::get().live_bridge {
+        return changed;
+    }
+    let Some(root) = st.game_root.clone() else { return changed };
+    let live = &st.stats.live;
+    if live.build_read_at.is_none_or(|at| at.elapsed() >= BUILD_EVERY) && !live.build_job.is_running() {
+        st.stats.live.build_read_at = Some(Instant::now());
+        let wake = st.wake.clone();
+        st.stats.live.build_job.start(wake, move || Ok(live_bridge::game_build(&root)));
+    }
+    // An outdated bridge found while the game ran: act once it closed.
+    let waited = st.stats.live.tried_at.is_none_or(|at| at.elapsed() >= BUILD_EVERY);
+    if st.stats.live.update.as_ref().is_some_and(|u| u.outdated) && waited && !running(st) && st.stats.live.busy.is_none() {
+        rebuild_after_update(st);
+        changed = true;
+    }
+    changed
+}
+
+/// The check that a new build asked for came back: record it, or follow the update.
+fn after_check(st: &mut State) {
+    let Some(update) = st.stats.live.update.clone() else { return };
+    if update.outdated {
+        return;
+    }
+    match st.stats.live.check.as_ref().map(|c| c.state) {
+        Some(BridgeState::Outdated) => {
+            st.stats.live.update = Some(Update { outdated: true, ..update });
+            let waited = st.stats.live.tried_at.is_none_or(|at| at.elapsed() >= BUILD_EVERY);
+            if waited && !running(st) && st.stats.live.busy.is_none() {
+                rebuild_after_update(st);
+            }
+        }
+        // Current, off, not there or not comparable: nothing to follow for this build.
+        Some(_) => {
+            st.stats.live.update = None;
+            options::edit_quiet(|o| o.live_bridge_build = update.build);
+        }
+        None => st.stats.live.update = None,
+    }
+}
+
+/// Rebuild by itself when the player said so once, else ask once for this build.
+fn rebuild_after_update(st: &mut State) {
+    let Some(update) = st.stats.live.update.clone() else { return };
+    if options::get().live_bridge_auto {
+        st.stats.live.tried_at = Some(Instant::now());
+        st.stats.live.auto_rebuild = true;
+        start_action(st, Action::Rebuild);
+        if st.stats.live.busy.is_none() {
+            // Refused before it started (the game runs, a job runs): a minute later again.
+            st.stats.live.auto_rebuild = false;
+            st.stats.live.note = None;
+        }
+        return;
+    }
+    // Asked once per build: the answer, or no answer, does not ask again for it.
+    st.stats.live.update = None;
+    options::edit_quiet(|o| o.live_bridge_build = update.build.clone());
+    let build = update.build;
+    crate::notify::push(
+        st,
+        crate::notify::Notice::warning(tr("Deadlock updated: rebuild the live bridge?"))
+            .detail(tr("The bridge was built for the old game version and stays silent until it is rebuilt. Settings > Game > Live match can rebuild it by itself next time."))
+            .action(tr("Rebuild"), move |st: &mut State| {
+                st.stats.live.update = Some(Update { build, outdated: true });
+                st.stats.live.auto_rebuild = true;
+                start_action(st, Action::Rebuild);
+                if st.stats.live.busy.is_none() {
+                    st.stats.live.auto_rebuild = false;
+                }
+            }),
+    );
+}
+
+/// Scene: the question after a game update.
+pub fn scene_update_ask(st: &mut State) {
+    st.stats.live.update = Some(Update { build: "6200:1-1".into(), outdated: true });
+    options::edit_quiet(|o| o.live_bridge_auto = false);
+    rebuild_after_update(st);
+}
+
+/// Settings > Game > Live match: rebuild after game updates without asking.
+pub fn toggle_auto_rebuild(st: &mut State) {
+    options::edit(st, |o| o.live_bridge_auto = !o.live_bridge_auto);
 }
 
 /// The settings switch: on asks first, off removes the bridge.
