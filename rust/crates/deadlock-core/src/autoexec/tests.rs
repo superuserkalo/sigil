@@ -231,6 +231,26 @@ fn write_refuses_nul_bytes() {
 }
 
 #[test]
+fn malformed_cfg_is_refused_and_names_the_line() {
+    let root = temp_root("malformed");
+    let path = autoexec_path(&root);
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(&path, "fps_max 240\n").unwrap();
+    let error = write_autoexec(&root, "fps_max 240\nbind \"MOUSE1\n", true)
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("autoexec.cfg") && error.contains("line 2"), "{error}");
+    assert!(error.contains("Nothing was written"), "{error}");
+    assert_eq!(fs::read_to_string(&path).unwrap(), "fps_max 240\n");
+
+    assert_eq!(autoexec_syntax_error("bind \"MOUSE1\" \"+attack\"\n"), None);
+    assert_eq!(autoexec_syntax_error("// a comment with \" no close\nfps_max 0\n"), None);
+    assert_eq!(autoexec_syntax_error("fps_max 0\r\n"), None);
+    assert!(autoexec_syntax_error("fps_max 0\n\u{0007}\n").is_some_and(|why| why.contains("U+0007")));
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
 fn write_creates_the_file_then_backs_up_before_replacing() {
     let root = temp_root("write");
     let first = write_autoexec(&root, "fps_max 0", true).unwrap();

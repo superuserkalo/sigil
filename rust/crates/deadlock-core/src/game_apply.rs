@@ -169,6 +169,142 @@ pub fn make_writable(addons_dir: &Path, paths: &[PathBuf], approve: bool) -> Res
     Ok(changed)
 }
 
+/// The game config files Sigil refuses to rewrite when the new text does not parse, DMM's
+/// "malformed game configs are refused instead of rewritten" rule. Matched by exact file name,
+/// so stamped backups beside them are not checked.
+const GUARDED_CONFIGS: [&str; 2] = ["gameinfo.gi", "video.txt"];
+
+/// Refuse a write of `bytes` to a guarded game config (`gameinfo.gi`, `video.txt`) when the text
+/// is not well-formed KeyValues. Every game config write goes through `util::write_atomic`, which
+/// calls this first, so a broken edit (or an edit of a file that was already broken) never
+/// replaces the game's file. Other paths pass untouched.
+pub(crate) fn refuse_malformed_config(path: &Path, bytes: &[u8]) -> Result<()> {
+    let Some(name) = path.file_name().map(|n| n.to_string_lossy().to_ascii_lowercase()) else {
+        return Ok(());
+    };
+    if !GUARDED_CONFIGS.contains(&name.as_str()) {
+        return Ok(());
+    }
+    let text = String::from_utf8_lossy(bytes);
+    match keyvalues_syntax_error(&text) {
+        None => Ok(()),
+        Some(reason) => Err(Error::msg(format!(
+            "{} would not parse after this change ({reason}), so Sigil left it as it is. If the file on \
+             disk is already broken, verify the game files in Steam or restore it in Settings > Backups. \
+             Nothing was written.",
+            path.display()
+        ))),
+    }
+}
+
+/// The first syntax error in a KeyValues (KV1) text such as `gameinfo.gi` or `video.txt`, or
+/// `None` when it parses. Accepts quoted and bare tokens, `//` comments, `[$PLATFORM]`
+/// conditionals and `#base` lines; rejects unclosed quotes, unbalanced braces, a key with no
+/// value, a block with no name, and an empty file.
+pub fn keyvalues_syntax_error(text: &str) -> Option<String> {
+    #[derive(PartialEq)]
+    enum Token {
+        Word(String),
+        Open,
+        Close,
+    }
+    let text = text.strip_prefix('\u{feff}').unwrap_or(text);
+    let mut tokens: Vec<(Token, usize)> = Vec::new();
+    let mut line = 1usize;
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '\n' => line += 1,
+            c if c.is_whitespace() => {}
+            '/' if chars.peek() == Some(&'/') => {
+                for next in chars.by_ref() {
+                    if next == '\n' {
+                        line += 1;
+                        break;
+                    }
+                }
+            }
+            '{' => tokens.push((Token::Open, line)),
+            '}' => tokens.push((Token::Close, line)),
+            '[' => {
+                // A platform conditional such as `[$WIN64]`; it qualifies the token before it.
+                let start = line;
+                loop {
+                    match chars.next() {
+                        Some(']') => break,
+                        Some('\n') | None => {
+                            return Some(format!("line {start}: a `[` condition is never closed"));
+                        }
+                        Some(_) => {}
+                    }
+                }
+            }
+            '"' => {
+                let start = line;
+                let mut word = String::new();
+                loop {
+                    match chars.next() {
+                        Some('"') => break,
+                        Some('\n') => {
+                            line += 1;
+                            word.push('\n');
+                        }
+                        Some(other) => word.push(other),
+                        None => return Some(format!("line {start}: a quoted string is never closed")),
+                    }
+                }
+                tokens.push((Token::Word(word), start));
+            }
+            other => {
+                let mut word = String::from(other);
+                while let Some(&next) = chars.peek() {
+                    if next.is_whitespace() || matches!(next, '{' | '}' | '"') {
+                        break;
+                    }
+                    if next == '/' {
+                        let mut ahead = chars.clone();
+                        ahead.next();
+                        if ahead.peek() == Some(&'/') {
+                            break;
+                        }
+                    }
+                    word.push(next);
+                    chars.next();
+                }
+                tokens.push((Token::Word(word), line));
+            }
+        }
+    }
+    if tokens.is_empty() {
+        return Some("the file is empty".to_string());
+    }
+    let mut open: Vec<usize> = Vec::new();
+    let mut index = 0;
+    while index < tokens.len() {
+        let (token, at) = &tokens[index];
+        match token {
+            Token::Close => {
+                if open.pop().is_none() {
+                    return Some(format!("line {at}: a closing brace has no opening brace"));
+                }
+                index += 1;
+            }
+            Token::Open => return Some(format!("line {at}: a block has no name")),
+            Token::Word(key) => match tokens.get(index + 1) {
+                Some((Token::Open, brace)) => {
+                    open.push(*brace);
+                    index += 2;
+                }
+                Some((Token::Word(_), _)) => index += 2,
+                Some((Token::Close, _)) | None => {
+                    return Some(format!("line {at}: `{key}` has no value"));
+                }
+            },
+        }
+    }
+    open.last().map(|at| format!("the block opened on line {at} is never closed"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -188,6 +324,35 @@ mod tests {
         assert!(apply_crosshair_hero_settings(&[file.clone()], &backup, None, false).is_err());
         assert!(!file.exists() && !backup.exists());
         assert!(make_writable(&root, &[], false).is_err());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn keyvalues_checker_accepts_game_configs_and_names_the_error() {
+        let gameinfo = "\u{feff}\"GameInfo\"\r\n{\r\n\tgame \"Deadlock\" // name\r\n\tFileSystem\r\n\t{\r\n\t\tSearchPaths\r\n\t\t{\r\n\t\t\tGame\t\tcitadel/addons\r\n\t\t\tGame\t\tcitadel\r\n\t\t\tGame_LowViolence  citadel_lv [$LOWVIOLENCE]\r\n\t\t}\r\n\t}\r\n\tConVars { \"r_x\" \"1\" }\r\n}\r\n";
+        assert_eq!(keyvalues_syntax_error(gameinfo), None);
+        assert_eq!(keyvalues_syntax_error("\"config\"\n{\n\t\"setting.fullscreen\"\t\t\"1\"\n}\n"), None);
+        assert_eq!(keyvalues_syntax_error("   // only a comment\n"), Some("the file is empty".into()));
+        assert!(keyvalues_syntax_error("GameInfo\n{\n game x\n").unwrap().contains("line 2"));
+        assert!(keyvalues_syntax_error("a b\n}\n").unwrap().contains("closing brace"));
+        assert!(keyvalues_syntax_error("a \"b\n").unwrap().contains("never closed"));
+        assert!(keyvalues_syntax_error("a { b }").unwrap().contains("`b` has no value"));
+        assert!(keyvalues_syntax_error("{ a b }").unwrap().contains("no name"));
+    }
+
+    #[test]
+    fn malformed_game_configs_are_refused_and_left_untouched() {
+        let root = root("malformed");
+        let gameinfo = root.join("gameinfo.gi");
+        fs::write(&gameinfo, "GameInfo { game x }").unwrap();
+        let error = crate::util::write_atomic(&gameinfo, b"GameInfo { game x ").unwrap_err().to_string();
+        assert!(error.contains("gameinfo.gi") && error.contains("Nothing was written"), "{error}");
+        assert_eq!(fs::read_to_string(&gameinfo).unwrap(), "GameInfo { game x }");
+        crate::util::write_atomic(&gameinfo, b"GameInfo { game y }").unwrap();
+        // Backups and other files are not checked.
+        crate::util::write_atomic(&root.join("gameinfo.gi.dah-backup-1"), b"{").unwrap();
+        crate::util::write_atomic(&root.join("video.txt"), b"\"config\" { }").unwrap();
+        assert!(crate::util::write_atomic(&root.join("video.txt"), b"\"config\" {").is_err());
         let _ = fs::remove_dir_all(root);
     }
 
