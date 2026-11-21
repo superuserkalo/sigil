@@ -36,6 +36,8 @@ pub struct Tools {
     pub merge: Option<MergeUi>,
     pub merge_preview: Job<MergePreview>,
     pub merge_run: Job<MergedMod>,
+    /// Pack all enabled into N (`pack_all.rs`).
+    pub pack_all: super::pack_all::PackAll,
     pub fonts: Option<FontUi>,
     pub fonts_job: Job<Vec<Font>>,
     pub font_install: Job<fonts::FontReport>,

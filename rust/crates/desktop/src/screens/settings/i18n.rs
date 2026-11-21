@@ -119,7 +119,7 @@ pub fn current() -> Lang {
 
 fn maps() -> &'static [HashMap<&'static str, &'static str>; 3] {
     static MAPS: OnceLock<[HashMap<&'static str, &'static str>; 3]> = OnceLock::new();
-    MAPS.get_or_init(|| Lang::ALL.map(|lang| lang.table().iter().chain(lang.more()).chain(lang.wave()).chain(if lang == Lang::German { super::locales_w4b::DE } else { &[] }).chain(if lang == Lang::German { locales_w4a::DE } else { &[] }).chain(if lang == Lang::German { locales_w4c::DE } else { &[] }).chain(if lang == Lang::German { crate::screens::servers::host::locales::DE } else { &[] }).chain(if lang == Lang::German { crate::screens::servers::regions::locales::DE } else { &[] }).chain(if lang == Lang::German { super::locales_smalls::DE } else { &[] }).chain(if lang == Lang::German { super::locales_upstream::DE } else { &[] }).chain(if lang == Lang::German { crate::viewer::locales::DE } else { &[] }).chain(if lang == Lang::German { crate::screens::installed::locales_ux::DE } else { &[] }).chain(if lang == Lang::German { crate::screens::profile_tools_de::DE } else { &[] }).chain(if lang == Lang::German { crate::screens::installed::locales_ux::DE } else { &[] }).copied().collect()))
+    MAPS.get_or_init(|| Lang::ALL.map(|lang| lang.table().iter().chain(lang.more()).chain(lang.wave()).chain(if lang == Lang::German { super::locales_w4b::DE } else { &[] }).chain(if lang == Lang::German { locales_w4a::DE } else { &[] }).chain(if lang == Lang::German { locales_w4c::DE } else { &[] }).chain(if lang == Lang::German { crate::screens::servers::host::locales::DE } else { &[] }).chain(if lang == Lang::German { crate::screens::servers::regions::locales::DE } else { &[] }).chain(if lang == Lang::German { super::locales_smalls::DE } else { &[] }).chain(if lang == Lang::German { super::locales_upstream::DE } else { &[] }).chain(if lang == Lang::German { crate::viewer::locales::DE } else { &[] }).chain(if lang == Lang::German { crate::screens::installed::locales_ux::DE } else { &[] }).chain(if lang == Lang::German { crate::screens::profile_tools_de::DE } else { &[] }).chain(if lang == Lang::German { crate::screens::installed::locales_ux::DE } else { &[] }).chain(if lang == Lang::German { crate::screens::profile_tools_de::DE } else { &[] }).copied().collect()))
 }
 
 #[cfg(test)]
@@ -274,6 +274,7 @@ mod tests {
         ];
         let table: std::collections::HashSet<&str> = locales::DE
             .iter()
+            .chain(crate::screens::profile_tools_de::DE)
             .chain(super::super::locales_parity::DE)
             .chain(super::super::locales_wave::DE)
             .chain(super::super::locales_w4b::DE)

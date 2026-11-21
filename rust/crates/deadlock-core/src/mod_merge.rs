@@ -483,6 +483,77 @@ pub fn slots_label(slots: &[u16]) -> String {
         .join(", ")
 }
 
+/// The most packs "Pack all enabled" makes (DMM's mod compression offers 2 to 8).
+pub const MAX_PACKS: usize = 8;
+
+/// Split `mods` (enabled, sorted by slot) into at most `packs` runs of neighbouring slots, so
+/// each pack keeps its mods' load order and the packs keep theirs. Runs differ by at most one
+/// mod and none is a lone mod: one left outside would keep its low slot and beat the packs,
+/// which land in later free slots. Pure.
+pub fn pack_groups(mods: &[MergeInput], packs: usize) -> Vec<Vec<MergeInput>> {
+    let packs = packs.clamp(1, MAX_PACKS);
+    if mods.len() < 2 {
+        return Vec::new();
+    }
+    let count = packs.min(mods.len() / 2);
+    let (size, extra) = (mods.len() / count, mods.len() % count);
+    let mut start = 0;
+    (0..count)
+        .map(|index| {
+            let end = start + size + usize::from(index < extra);
+            let run = mods[start..end].to_vec();
+            start = end;
+            run
+        })
+        .collect()
+}
+
+/// Pack every enabled mod into `packs` merged mods (DMM's unreleased mod compression, behaviour
+/// only): [`pack_groups`] in slot order, each merged with [`merge_mods`] and switched on. The
+/// packs are made lowest slots first, so each takes a lower free slot than the next and the
+/// load order holds. Every source stays on disk switched off; [`unmerge`] takes a pack apart.
+/// Game install write. Stops at the first failure and returns the packs made so far with it.
+pub fn pack_all(
+    game_root: &Path,
+    workspace: &Path,
+    store_path: &Path,
+    enabled: &[MergeInput],
+    packs: usize,
+    approve: bool,
+) -> (Vec<MergedMod>, Option<Error>) {
+    if !approve {
+        return (Vec::new(), Some(Error::msg("Not approved: pack the enabled mods. Nothing was written.")));
+    }
+    let mut mods: Vec<MergeInput> = enabled.iter().filter(|m| (1..=99).contains(&m.slot)).cloned().collect();
+    mods.sort_by_key(|m| m.slot);
+    if mods.len() > packs.clamp(1, MAX_PACKS) * MAX_SOURCES {
+        return (
+            Vec::new(),
+            Some(Error::msg(format!(
+                "{} mods do not fit in {} packs of {MAX_SOURCES}. Nothing was written.",
+                mods.len(),
+                packs
+            ))),
+        );
+    }
+    let groups = pack_groups(&mods, packs);
+    let total = groups.len();
+    let mut made = Vec::new();
+    for (index, group) in groups.iter().enumerate() {
+        let name = format!("Pack {} of {total}", index + 1);
+        let merged = match merge_mods(game_root, workspace, store_path, group, &name, false, true) {
+            Ok(merged) => merged,
+            Err(error) => return (made, Some(error)),
+        };
+        if let Err(error) = set_enabled(game_root, merged.slot, true, true) {
+            made.push(merged);
+            return (made, Some(error));
+        }
+        made.push(merged);
+    }
+    (made, None)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -576,6 +647,44 @@ mod tests {
         assert!(!addons.join("pak03_dir.vpk.disabled").exists());
         assert!(read_merged(&store).for_dir(&addons).is_empty());
         assert_eq!(crate::trash::list_trash(&trash).len(), 1);
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn pack_groups_keep_neighbours_together_and_leave_no_lone_mod() {
+        let mods: Vec<MergeInput> =
+            (1..=7).map(|slot| MergeInput { slot, name: format!("M{slot}") }).collect();
+        let slots = |groups: Vec<Vec<MergeInput>>| -> Vec<Vec<u16>> {
+            groups.iter().map(|g| g.iter().map(|m| m.slot).collect()).collect()
+        };
+        assert_eq!(slots(pack_groups(&mods, 2)), vec![vec![1, 2, 3, 4], vec![5, 6, 7]]);
+        assert_eq!(slots(pack_groups(&mods, 3)), vec![vec![1, 2, 3], vec![4, 5], vec![6, 7]]);
+        assert_eq!(slots(pack_groups(&mods[..3], 4)), vec![vec![1, 2, 3]], "more packs than pairs");
+        assert_eq!(slots(pack_groups(&mods, 1)), vec![(1..=7).collect::<Vec<u16>>()]);
+        assert!(pack_groups(&mods[..1], 4).is_empty());
+    }
+
+    #[test]
+    fn pack_all_merges_in_order_and_turns_the_packs_on() {
+        let root = root("pack-all");
+        let game = game(&root);
+        let addons = addons_dir(&game);
+        for (slot, data) in [(1, b"a" as &[u8]), (2, b"b"), (3, b"c"), (4, b"d")] {
+            vpk_into(&addons, &format!("pak0{slot}"), &[("materials/shared.vmat_c", data)]);
+        }
+        let store = merged_path(&root.join("app"));
+        let enabled: Vec<MergeInput> =
+            (1..=4).map(|slot| MergeInput { slot, name: format!("M{slot}") }).collect();
+        assert!(pack_all(&game, &root.join("w"), &store, &enabled, 2, false).1.is_some());
+        let (made, error) = pack_all(&game, &root.join("w"), &store, &enabled, 2, true);
+        assert!(error.is_none(), "{error:?}");
+        assert_eq!(made.iter().map(|m| m.slot).collect::<Vec<_>>(), vec![5, 6]);
+        assert!(addons.join("pak05_dir.vpk").is_file(), "packs are on");
+        assert!(addons.join("pak01_dir.vpk.disabled").is_file(), "sources are off");
+        // Pack 1 holds slot 1's copy: the lowest slot still wins.
+        let directory = read_vpk_directory(&addons.join("pak05_dir.vpk")).unwrap();
+        let entry = directory.by_path.get("materials/shared.vmat_c").unwrap();
+        assert_eq!(read_vpk_entry_data(&directory, entry).unwrap(), b"a");
         let _ = fs::remove_dir_all(&root);
     }
 
