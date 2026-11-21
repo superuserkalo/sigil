@@ -232,9 +232,9 @@ pub fn merge_mods(
     }
     let mut slots: BTreeSet<u16> = BTreeSet::new();
     for source in sources {
-        if !(1..=99).contains(&source.slot) || !slots.insert(source.slot) {
+        if !(1..=crate::addons::MAX_SLOT).contains(&source.slot) || !slots.insert(source.slot) {
             return Err(Error::msg(format!(
-                "Slot {:02} is named twice or is outside 01 to 99. Nothing was written.",
+                "Slot {:02} is named twice or is not an addon slot. Nothing was written.",
                 source.slot
             )));
         }
@@ -404,7 +404,19 @@ pub fn unmerge(
             addons.display()
         )));
     }
-    let files: Vec<String> = merged.files.clone();
+    // The record holds the name from when the merge landed switched off; it may be on by now.
+    let folder = crate::addons::slot_folder(&addons, merged.slot);
+    let files: Vec<String> = merged
+        .files
+        .iter()
+        .map(|name| {
+            let toggled = match name.strip_suffix(DISABLED_SUFFIX) {
+                Some(on) => on.to_string(),
+                None => format!("{name}{DISABLED_SUFFIX}"),
+            };
+            if !folder.join(name).exists() && folder.join(&toggled).exists() { toggled } else { name.clone() }
+        })
+        .collect();
     crate::trash::trash_named(game_root, trash_root, merged.slot, &files, true)?;
 
     let mut back = Vec::new();
@@ -509,13 +521,19 @@ pub fn pack_groups(mods: &[MergeInput], packs: usize) -> Vec<Vec<MergeInput>> {
 }
 
 /// Pack every enabled mod into `packs` merged mods (DMM's unreleased mod compression, behaviour
-/// only): [`pack_groups`] in slot order, each merged with [`merge_mods`] and switched on. The
-/// packs are made lowest slots first, so each takes a lower free slot than the next and the
-/// load order holds. Every source stays on disk switched off; [`unmerge`] takes a pack apart.
-/// Game install write. Stops at the first failure and returns the packs made so far with it.
+/// only): [`pack_groups`] in slot order, each merged with [`merge_mods`] and switched on. Every
+/// enabled slot goes in, past 99 too: one left out could sit below a pack and start beating
+/// mods it used to lose to. The packs are made lowest slots first, so each takes a lower free
+/// slot than the next and the load order holds. Every source stays on disk switched off;
+/// [`unmerge`] takes a pack apart. Game install write.
+///
+/// All or nothing: a half-done run would leave finished packs in high slots under sources
+/// still on in low ones, so on a failure the packs made so far are taken apart again. A pack
+/// that cannot be taken apart is returned with the error.
 pub fn pack_all(
     game_root: &Path,
     workspace: &Path,
+    trash_root: &Path,
     store_path: &Path,
     enabled: &[MergeInput],
     packs: usize,
@@ -524,8 +542,20 @@ pub fn pack_all(
     if !approve {
         return (Vec::new(), Some(Error::msg("Not approved: pack the enabled mods. Nothing was written.")));
     }
-    let mut mods: Vec<MergeInput> = enabled.iter().filter(|m| (1..=99).contains(&m.slot)).cloned().collect();
+    let mut mods: Vec<MergeInput> = enabled.to_vec();
     mods.sort_by_key(|m| m.slot);
+    let installed = match crate::addons::list_installed(game_root) {
+        Ok(installed) => installed,
+        Err(error) => return (Vec::new(), Some(error)),
+    };
+    let on_disk: BTreeSet<u16> = installed.iter().filter(|addon| addon.enabled).map(|addon| addon.slot).collect();
+    let asked: BTreeSet<u16> = mods.iter().map(|m| m.slot).collect();
+    if on_disk != asked {
+        return (
+            Vec::new(),
+            Some(Error::msg("The enabled mods changed. Scan again, then pack. Nothing was written.")),
+        );
+    }
     if mods.len() > packs.clamp(1, MAX_PACKS) * MAX_SOURCES {
         return (
             Vec::new(),
@@ -537,21 +567,59 @@ pub fn pack_all(
         );
     }
     let groups = pack_groups(&mods, packs);
+    let free = (crate::addons::MAX_SLOT as usize).saturating_sub(installed.len());
+    if free < groups.len() {
+        return (
+            Vec::new(),
+            Some(Error::msg(format!(
+                "{} packs need {} free slots and {free} are left. Nothing was written.",
+                groups.len(),
+                groups.len()
+            ))),
+        );
+    }
     let total = groups.len();
-    let mut made = Vec::new();
+    let mut made: Vec<MergedMod> = Vec::new();
     for (index, group) in groups.iter().enumerate() {
         let name = format!("Pack {} of {total}", index + 1);
-        let merged = match merge_mods(game_root, workspace, store_path, group, &name, false, true) {
-            Ok(merged) => merged,
-            Err(error) => return (made, Some(error)),
+        let failure = match merge_mods(game_root, workspace, store_path, group, &name, false, true) {
+            Ok(merged) => {
+                let switched = set_enabled(game_root, merged.slot, true, true);
+                made.push(merged);
+                switched.err()
+            }
+            Err(error) => Some(error),
         };
-        if let Err(error) = set_enabled(game_root, merged.slot, true, true) {
-            made.push(merged);
-            return (made, Some(error));
+        if let Some(error) = failure {
+            return roll_back(game_root, trash_root, store_path, made, error);
         }
-        made.push(merged);
     }
     (made, None)
+}
+
+/// Take the packs of a failed run apart, newest first, so every source is back on.
+fn roll_back(
+    game_root: &Path,
+    trash_root: &Path,
+    store_path: &Path,
+    made: Vec<MergedMod>,
+    error: Error,
+) -> (Vec<MergedMod>, Option<Error>) {
+    let mut stuck = Vec::new();
+    for merged in made.into_iter().rev() {
+        if unmerge(game_root, trash_root, store_path, &merged, true).is_err() {
+            stuck.push(merged);
+        }
+    }
+    if stuck.is_empty() {
+        return (Vec::new(), Some(Error::msg(format!("{error} Your mods are back as they were."))));
+    }
+    stuck.reverse();
+    let message = format!(
+        "{error} {} pack(s) could not be taken apart: use Unmerge in the merge list to restore the load order.",
+        stuck.len()
+    );
+    (stuck, Some(Error::msg(message)))
 }
 
 #[cfg(test)]
@@ -675,8 +743,9 @@ mod tests {
         let store = merged_path(&root.join("app"));
         let enabled: Vec<MergeInput> =
             (1..=4).map(|slot| MergeInput { slot, name: format!("M{slot}") }).collect();
-        assert!(pack_all(&game, &root.join("w"), &store, &enabled, 2, false).1.is_some());
-        let (made, error) = pack_all(&game, &root.join("w"), &store, &enabled, 2, true);
+        let trash = root.join("trash");
+        assert!(pack_all(&game, &root.join("w"), &trash, &store, &enabled, 2, false).1.is_some());
+        let (made, error) = pack_all(&game, &root.join("w"), &trash, &store, &enabled, 2, true);
         assert!(error.is_none(), "{error:?}");
         assert_eq!(made.iter().map(|m| m.slot).collect::<Vec<_>>(), vec![5, 6]);
         assert!(addons.join("pak05_dir.vpk").is_file(), "packs are on");
@@ -685,6 +754,87 @@ mod tests {
         let directory = read_vpk_directory(&addons.join("pak05_dir.vpk")).unwrap();
         let entry = directory.by_path.get("materials/shared.vmat_c").unwrap();
         assert_eq!(read_vpk_entry_data(&directory, entry).unwrap(), b"a");
+        // A pack that is on comes apart too: its record holds the switched-off name.
+        for merged in made.iter().rev() {
+            unmerge(&game, &trash, &store, merged, true).unwrap();
+        }
+        for slot in 1..=4 {
+            assert!(addons.join(format!("pak0{slot}_dir.vpk")).is_file(), "slot {slot} is back on");
+        }
+        assert!(!addons.join("pak05_dir.vpk").exists() && !addons.join("pak06_dir.vpk").exists());
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    /// The bug this guards: a mod past slot 99 stayed out of the packs, and a pack landing after
+    /// it (slots 1 to 99 full) lost to it, so a mod that used to lose started to win.
+    #[test]
+    fn pack_all_takes_mods_past_slot_99_so_the_order_holds() {
+        let root = root("pack-past-99");
+        let game = game(&root);
+        let addons = addons_dir(&game);
+        vpk_into(&addons, "pak01", &[("materials/shared.vmat_c", b"first")]);
+        vpk_into(&addons, "pak02", &[("materials/two.vmat_c", b"two")]);
+        for slot in 3..=99 {
+            fs::write(addons.join(format!("pak{slot:02}_dir.vpk.disabled")), b"off").unwrap();
+        }
+        let hundred = crate::addons::slot_path(&addons, 100, "_dir.vpk");
+        let folder = hundred.parent().unwrap().to_path_buf();
+        fs::create_dir_all(&folder).unwrap();
+        let name = hundred.file_name().unwrap().to_str().unwrap().strip_suffix("_dir.vpk").unwrap().to_string();
+        vpk_into(&folder, &name, &[("materials/shared.vmat_c", b"late")]);
+
+        let store = merged_path(&root.join("app"));
+        let enabled: Vec<MergeInput> =
+            [1, 2, 100].into_iter().map(|slot| MergeInput { slot, name: format!("M{slot}") }).collect();
+        let (made, error) = pack_all(&game, &root.join("w"), &root.join("trash"), &store, &enabled, 1, true);
+        assert!(error.is_none(), "{error:?}");
+        assert_eq!(made.len(), 1);
+        assert_eq!(made[0].slot, 101, "1 to 100 are taken");
+        assert!(!hundred.is_file(), "slot 100 went into the pack and is off");
+        let pack = crate::addons::slot_path(&addons, 101, "_dir.vpk");
+        let directory = read_vpk_directory(&pack).unwrap();
+        let entry = directory.by_path.get("materials/shared.vmat_c").unwrap();
+        assert_eq!(read_vpk_entry_data(&directory, entry).unwrap(), b"first", "slot 1 still wins");
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_failed_pack_all_puts_every_mod_back() {
+        let root = root("pack-rollback");
+        let game = game(&root);
+        let addons = addons_dir(&game);
+        for slot in 1..=3 {
+            vpk_into(&addons, &format!("pak0{slot}"), &[("materials/shared.vmat_c", b"x")]);
+        }
+        fs::write(addons.join("pak04_dir.vpk"), b"not a vpk").unwrap();
+        let store = merged_path(&root.join("app"));
+        let enabled: Vec<MergeInput> =
+            (1..=4).map(|slot| MergeInput { slot, name: format!("M{slot}") }).collect();
+        let (made, error) = pack_all(&game, &root.join("w"), &root.join("trash"), &store, &enabled, 2, true);
+        assert!(made.is_empty());
+        assert!(error.unwrap().to_string().contains("back as they were"));
+        for slot in 1..=3 {
+            assert!(addons.join(format!("pak0{slot}_dir.vpk")).is_file(), "slot {slot} is on again");
+        }
+        assert!(!addons.join("pak05_dir.vpk").exists() && !addons.join("pak05_dir.vpk.disabled").exists());
+        assert!(read_merged(&store).merged.is_empty());
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn pack_all_refuses_a_stale_list() {
+        let root = root("pack-stale");
+        let game = game(&root);
+        let addons = addons_dir(&game);
+        for slot in 1..=3 {
+            vpk_into(&addons, &format!("pak0{slot}"), &[("materials/a.vmat_c", b"x")]);
+        }
+        let store = merged_path(&root.join("app"));
+        let enabled: Vec<MergeInput> =
+            (1..=2).map(|slot| MergeInput { slot, name: format!("M{slot}") }).collect();
+        let (made, error) = pack_all(&game, &root.join("w"), &root.join("trash"), &store, &enabled, 1, true);
+        assert!(made.is_empty() && error.unwrap().to_string().contains("Scan again"));
+        assert!(addons.join("pak01_dir.vpk").is_file(), "nothing changed");
         let _ = fs::remove_dir_all(&root);
     }
 
