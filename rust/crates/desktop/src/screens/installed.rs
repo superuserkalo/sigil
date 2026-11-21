@@ -27,7 +27,6 @@ mod layout;
 pub mod notes;
 pub mod order;
 pub mod pack_all;
-pub mod pack_all;
 mod overlap;
 pub mod repair;
 mod req_order;
