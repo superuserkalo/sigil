@@ -959,7 +959,8 @@ impl Ui {
             )
     }
 
-    /// A square 32 point icon button, labelled for assistive tech.
+    /// A square 32 point icon button, labelled for assistive tech and with its label as the
+    /// tooltip (every icon-only control has one; a caller may replace it with `.help`).
     pub fn icon_button(&self, glyph: &'static Icon, label: &str) -> El {
         el().size(CONTROL_L, CONTROL_L)
             .center()
@@ -969,6 +970,7 @@ impl Ui {
             .focusable(true)
             .role("button")
             .label(label)
+            .help(label)
             .child(icon(glyph, 16.0).color(self.muted).a11y_hidden())
     }
 
