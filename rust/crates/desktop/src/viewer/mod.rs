@@ -116,10 +116,27 @@ pub struct View {
     pub scene: bool,
     gif_preview: Pixels,
     gif_strip: Pixels,
+    /// The hero whose studio camera angle this view remembers when it goes (none in a scene
+    /// or a headless snapshot).
+    pose_key: Option<String>,
+    /// A one-mod view: its slot, so the frame can become that mod's cover.
+    cover_slot: Option<u16>,
+    /// A frame being saved for another screen (a mod cover, card art), handed to its callback
+    /// by `poll` once the file is written.
+    snap: Option<(PathBuf, Snap)>,
+    snap_done: Option<(PathBuf, Snap)>,
 }
+
+/// What happens with a saved frame (`snapshot`).
+pub type Snap = Box<dyn FnOnce(&mut State, PathBuf)>;
 
 impl Drop for View {
     fn drop(&mut self) {
+        if let Some(hero) = &self.pose_key
+            && let Some(pose) = self.shared.lock().ok().and_then(|s| s.pose)
+        {
+            controls::save_pose(hero, pose);
+        }
         self.cancel.store(true, Ordering::Relaxed);
         if let Some(tx) = &self.tx {
             let _ = tx.send(Cmd::Stop);
@@ -190,6 +207,10 @@ fn new_view(title: &str) -> View {
         scene: false,
         gif_preview: Pixels::new(),
         gif_strip: Pixels::new(),
+        pose_key: None,
+        cover_slot: None,
+        snap: None,
+        snap_done: None,
     }
 }
 
@@ -232,6 +253,8 @@ pub fn headless_points(s: &mut State, key: &str, points: [f32; 2]) {
 }
 
 fn open(s: &mut State, key: &str, title: &str, source: Source, before: Option<Source>, compare: CompareMode) {
+    // The view it replaces goes first: its drop keeps the camera angle this one starts from.
+    s.viewers.map.remove(key);
     let mut view = new_view(title);
     view.compare = compare;
     view.scene = matches!(source, Source::Scene { .. });
@@ -240,6 +263,17 @@ fn open(s: &mut State, key: &str, title: &str, source: Source, before: Option<So
     view.ui.auto_rotate = prefs.auto_rotate;
     view.ui.look = prefs.look;
     view.ui.image = prefs.image.clone();
+    view.ui.ask_where = prefs.ask_where;
+    if !view.scene && !rune::is_headless() {
+        view.pose_key = match s.viewers.asks.get(key).map(|a| &a.ask) {
+            Some(prepare::Ask::Hero { hero } | prepare::Ask::Mod { hero, .. }) => Some(hero.clone()),
+            _ => None,
+        };
+    }
+    if let Some(prepare::Ask::Mod { slot, .. }) = s.viewers.asks.get(key).map(|a| &a.ask) {
+        view.cover_slot = Some(*slot);
+    }
+    let pose = view.pose_key.as_deref().and_then(controls::load_pose);
     let outputs = outputs(&view, s.wake.clone());
     if rune::is_headless() {
         // Snapshots render one fixed frame on this thread: no clock, no GPU timing.
@@ -257,6 +291,9 @@ fn open(s: &mut State, key: &str, title: &str, source: Source, before: Option<So
                 }
                 for cmd in controls::initial(&prefs) {
                     let _ = tx.send(cmd);
+                }
+                if let Some(p) = pose {
+                    let _ = tx.send(Cmd::Pose(p));
                 }
                 view.tx = Some(tx);
             }
@@ -278,6 +315,8 @@ fn render_still(view: &mut View, out: &Outputs, source: &Source, before: Option<
             let l = prefs.look;
             (viewer.look.backdrop, viewer.look.lighting, viewer.look.bloom, viewer.look.shadows) = (l.backdrop, l.lighting, l.bloom, l.shadows);
             (viewer.look.cloth, viewer.look.particles, viewer.look.transparent, viewer.look.floor) = (l.cloth, l.particles, l.transparent, !l.transparent);
+            viewer.look.exposure = l.exposure;
+            viewer.look.wireframe = l.wireframe;
             if let Some(Ok(img)) = prefs.image.as_deref().filter(|_| l.backdrop == sigil_viewer::Backdrop::Image).map(image::open) {
                 let img = img.into_rgba8();
                 viewer.set_backdrop_image(Some((img.width(), img.height(), img.as_raw())));
@@ -341,11 +380,17 @@ pub fn poll(s: &mut State) -> bool {
     changed |= dialog::poll(s);
     changed |= prepare::prune_when_idle(s);
     let mut notes = Vec::new();
+    let mut snaps = Vec::new();
     for view in s.viewers.map.values_mut() {
         if let Some(note) = absorb(view) {
             notes.push(note);
         }
+        snaps.extend(view.snap_done.take());
         changed |= view.shared.lock().map(|mut sh| std::mem::take(&mut sh.changed)).unwrap_or(false);
+    }
+    for (path, then) in snaps {
+        then(s, path);
+        changed = true;
     }
     for note in notes {
         s.status = note;
@@ -369,6 +414,21 @@ fn absorb(view: &mut View) -> Option<String> {
     view.has_before = sh.has_before;
     view.adapter = sh.adapter.clone();
     view.progress = sh.progress;
+    view.ui.can_wireframe = sh.can_wireframe;
+    if sh.captured.is_some() {
+        view.ui.flash = false;
+    }
+    if let (Some(Ok(saved)), Some((path, _))) = (&sh.captured, &view.snap)
+        && saved == path
+    {
+        view.snap_done = view.snap.take();
+        sh.captured = None;
+        return None;
+    }
+    // A snapshot that failed to save is reported like a picture.
+    if matches!(sh.captured, Some(Err(_))) {
+        view.snap = None;
+    }
     sh.captured.take().map(|r| match r {
         Ok(path) if path.extension().is_some_and(|e| e != "png") => fill(tr("Saved a recording to {}"), &[&path.display().to_string()]),
         Ok(path) => fill(tr("Saved a picture to {}"), &[&path.display().to_string()]),
@@ -415,9 +475,55 @@ fn toggle_fullscreen(s: &mut State, key: &str) {
     s.viewers.fullscreen = if s.viewers.fullscreen.as_deref() == Some(key) { None } else { Some(key.to_string()) };
 }
 
-fn capture(s: &mut State, key: &str) {
+/// Saves a picture to Pictures/Sigil, or where the player says when "Ask where to save" is on.
+fn capture(s: &mut State, key: &str, tx: &mut Tx) {
     let Some(v) = s.viewers.map.get(key) else { return };
-    let path = pictures_dir().join(capture_name(&v.title));
+    let name = capture_name(&v.title);
+    if !v.ui.ask_where {
+        return take_picture(s, key, pictures_dir().join(name));
+    }
+    let k = key.to_string();
+    controls::ask_save_path(tx, name, "png", move |st, path| take_picture(st, &k, path));
+}
+
+/// Saves the view's current frame to `path` and runs `then` with it once written. False when
+/// the view is not open and drawing, or is saving another snapshot.
+pub fn snapshot(s: &mut State, key: &str, path: PathBuf, then: Snap) -> bool {
+    let Some(v) = s.viewers.map.get_mut(key) else { return false };
+    if v.status != Status::Ready || v.snap.is_some() {
+        return false;
+    }
+    v.snap = Some((path.clone(), then));
+    take_picture(s, key, path);
+    true
+}
+
+/// Whether `key` is open and drawing, so `snapshot` can take its frame.
+pub fn can_snapshot(s: &State, key: &str) -> bool {
+    s.viewers.map.get(key).is_some_and(|v| v.status == Status::Ready && v.snap.is_none())
+}
+
+/// Deadlock Mod Manager's rendered cover for a local mod: the frame, saved into Sigil's mod
+/// pictures, becomes the mod's picture.
+fn capture_cover(s: &mut State, key: &str) {
+    let Some(slot) = s.viewers.map.get(key).and_then(|v| v.cover_slot) else { return };
+    let path = crate::data::data_dir().join("mod-images").join(format!("slot{slot:02}-{}.png", deadlock_core::mod_extras::new_uid()));
+    snapshot(
+        s,
+        key,
+        path,
+        Box::new(move |st: &mut State, path: PathBuf| {
+            crate::screens::installed::notes::edit_slot(st, slot, |entry| entry.image = Some(path));
+            st.status = tr("Saved the view as this mod's cover.").to_string();
+        }),
+    );
+}
+
+/// The stage flashes (Deadlock Mod Manager's capture flash) until the picture is saved.
+fn take_picture(s: &mut State, key: &str, path: PathBuf) {
+    if let Some(v) = s.viewers.map.get_mut(key) {
+        v.ui.flash = true;
+    }
     send(s, key, Cmd::Capture(path));
 }
 
@@ -693,6 +799,9 @@ fn viewport(s: &State, u: &Ui, key: &str, fullscreen: bool) -> El {
         }
         Status::Ready => stage = stage.child(strip(v, u, key, fullscreen, only_full)),
     }
+    if v.ui.flash {
+        stage = stage.child(el().key(format!("viewer-{key}-flash")).absolute(0.0, 0.0).w_full().h_full().fill(Color::WHITE.alpha(0.55)).transition(rune::Transition::opacity()).a11y_hidden());
+    }
     // Full screen always has a way out, whatever the state (the strip has its own when ready).
     if fullscreen && v.status != Status::Ready {
         stage = stage.child(el().pin(Some(12.0), Some(12.0), None, None).child(corner_close(u, key, only_full)));
@@ -932,9 +1041,13 @@ fn strip(v: &View, u: &Ui, key: &str, fullscreen: bool, only_full: bool) -> El {
         }
     }
     let mut tools = controls::tools(v, u, key);
+    if v.cover_slot.is_some() {
+        let k = key.to_string();
+        tools.push(strip_button(u, &icons::IMAGE, tr("Use this view as the mod's cover"), v.snap.is_some()).on_press(move |st: &mut State| capture_cover(st, &k)));
+    }
     tools.extend([
         strip_button(u, &crate::icons::ROTATE_CCW, tr("Reset camera"), false).on_press(move |st: &mut State| reset(st, &kr)),
-        strip_button(u, &icons::CAMERA, tr("Save a picture"), false).on_press(move |st: &mut State| capture(st, &kc)),
+        strip_button(u, &icons::CAMERA, tr("Save a picture"), false).on_press_tx(move |st: &mut State, tx: &mut Tx| capture(st, &kc, tx)),
         if only_full {
             strip_button(u, &crate::icons::X, tr("Close"), false)
         } else if fullscreen {
@@ -1042,7 +1155,8 @@ mod tests {
         tx.send(Cmd::Size(96, 64)).unwrap();
         tx.send(Cmd::Play(false)).unwrap();
         let waited = std::time::Instant::now();
-        while view.pixels.size() != (96, 64) && waited.elapsed().as_secs() < 30 {
+        // The loader holds until the first frame is drawn, then the view turns Ready.
+        while (view.pixels.size() != (96, 64) || view.shared.lock().unwrap().status != Status::Ready) && waited.elapsed().as_secs() < 30 {
             if matches!(view.shared.lock().unwrap().status, Status::NoGpu(_)) {
                 eprintln!("skipped: no GPU adapter");
                 return;
