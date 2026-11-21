@@ -111,7 +111,9 @@ for redistribution.
     (`rust/crates/sigil-viewer/src/clearance.rs`) from `hideoutClearance.ts` and `HideoutScene.tsx`.
   - Animation: the UI AnimGraph2 showcase reader, metadata rules, clip labels and groups from
     `heroRiggedClips.ts`, `heroAnimationMetadata.ts`, `heroAnimationCatalog.ts` and
-    `heroViewerPlayback.ts`.
+    `heroViewerPlayback.ts`; the staged-pose test and per-clip floor offsets in
+    `rust/crates/deadlock-core/src/viewer/staged.rs` from `electron/main/services/heroStagedPose.ts`
+    and `writeHeroAnimationPolicy` in `heroAnimationExport.ts`.
   - Viewer UI: the GIF capture (median cut, Bayer dither, review and trim) from `viewerGif.ts`,
     `ViewerGifReview.tsx` and `ViewerGifTimeline.tsx`; the soul backdrop gradients from
     `soulBackdrops.ts`; the lighting scenes, turntable speed, keys and Controls panel from

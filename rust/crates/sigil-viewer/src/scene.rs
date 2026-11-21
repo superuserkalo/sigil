@@ -32,6 +32,8 @@ pub struct ClipInfo {
     pub group: Option<String>,
     /// The animation graph's playback speed for the clip (Nurse Harrow's shop plays at 0.69).
     pub speed: f32,
+    /// How far the clip lowers the hero's floor contact, in meters (negative, else 0).
+    pub floor: f32,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -73,6 +75,7 @@ impl Sidecar {
                             label: c.get("label").and_then(|a| a.as_str()).map(str::to_string),
                             group: c.get("group").and_then(|a| a.as_str()).map(str::to_string),
                             speed: c.get("speed").and_then(|d| d.as_f64()).map(|d| d as f32).filter(|s| s.is_finite() && *s > 0.0).unwrap_or(1.0),
+                            floor: c.get("floor").and_then(|d| d.as_f64()).map(|d| d as f32).filter(|f| f.is_finite() && *f < 0.0).unwrap_or(0.0),
                         })
                     })
                     .collect()
@@ -102,6 +105,12 @@ impl Sidecar {
     /// The animation graph's speed for a clip (1 when the sidecar gives none).
     pub fn speed(&self, clip: &str) -> f32 {
         self.clip_info.iter().find(|c| c.name == clip).map(|c| c.speed).filter(|s| s.is_finite() && *s > 0.0).unwrap_or(1.0)
+    }
+
+    /// How far a clip lowers the hero's floor contact, in meters: the floor goes down with it
+    /// (Grimoire's `grimoireFloor`). 0 when the sidecar gives none.
+    pub fn floor(&self, clip: &str) -> f32 {
+        self.clip_info.iter().find(|c| c.name == clip).map_or(0.0, |c| c.floor)
     }
 
     /// The clip picker's name for a clip: the sidecar's label, else the clip name made readable.
@@ -600,6 +609,16 @@ mod tests {
         assert_eq!(s.issues.len(), 1);
         assert_eq!(Sidecar::parse(r#"{"idleClip":null}"#).idle, None);
         assert_eq!(Sidecar::parse("not json"), Sidecar::default());
+    }
+
+    #[test]
+    fn sidecar_reads_a_clip_floor() {
+        let s = Sidecar::parse(r#"{"clipInfo":[{"name":"ui_shop","floor":-0.03},{"name":"idle","floor":null},{"name":"up","floor":0.2}]}"#);
+        assert_eq!(s.floor("ui_shop"), -0.03);
+        assert_eq!(s.floor("idle"), 0.0);
+        // Lifts never raise the floor, and an unknown clip has none.
+        assert_eq!(s.floor("up"), 0.0);
+        assert_eq!(s.floor("other"), 0.0);
     }
 
     #[test]

@@ -1346,7 +1346,10 @@ impl Viewer {
             let c = b.center();
             let s = b.size();
             let radius = (s[0].max(s[2]) * 0.9).max(s[1] * 0.32);
-            FloorGpu { center: [c[0], b.min[1] + 0.002, c[2], radius], shadow: [-key_dir[0] * 0.35, -key_dir[2] * 0.35, 0.85, 0.0] }
+            // Grimoire's ground: the hero's origin unless the pose lifts it all above, lowered by
+            // the playing clip's floor offset (feet a UI clip sinks stay on the floor).
+            let ground = self.hero.as_ref().map_or(b.min[1], |h| h.placement.point([0.0; 3])[1].max(b.min[1]) + self.clip().map_or(0.0, |n| self.sidecar.floor(&n)) * h.placement.scale_factor());
+            FloorGpu { center: [c[0], ground + 0.002, c[2], radius], shadow: [-key_dir[0] * 0.35, -key_dir[2] * 0.35, 0.85, 0.0] }
         });
         let baked = match (&self.hideout, scene) {
             (Some(h), Some(s)) => {
