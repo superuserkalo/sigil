@@ -24,7 +24,7 @@ use crate::model::Screen;
 use crate::prefs::ZOOMS;
 use crate::screens;
 use crate::screens::settings::i18n::{fill, tr};
-use crate::ui::{ActionKind, BODY, BODY_MED, H1, MONO, Ui};
+use crate::ui::{ActionKind, BODY, BODY_MED, H1, Ui};
 
 /// Files Sigil can import, the same list Installed accepts.
 pub const MODS: [&str; 4] = ["vpk", "zip", "7z", "rar"];
@@ -582,7 +582,7 @@ pub fn shortcuts_dialog(s: &State, u: &Ui) -> Option<El> {
                 ("Zoom out", "⌘-"),
                 ("Reset zoom", "⌘0"),
                 ("Open mods folder", "⇧⌘M"),
-                ("Toggle fullscreen", "Alt+Enter / F11"),
+                ("Toggle fullscreen", "F11, Alt+Enter"),
                 ("Shortcuts", "?"),
                 ("Close window", "⌘W"),
                 ("Quit Sigil", "⌘Q"),
@@ -601,6 +601,7 @@ pub fn shortcuts_dialog(s: &State, u: &Ui) -> Option<El> {
             &[
                 ("Move between rows", "↑ ↓"),
                 ("Pick a row", "Enter"),
+                ("Search the page", "⌘F, /"),
                 ("Close a dialog", "Esc"),
             ],
         ),
@@ -612,10 +613,10 @@ pub fn shortcuts_dialog(s: &State, u: &Ui) -> Option<El> {
     ];
     for (index, (title, rows)) in groups.into_iter().enumerate() {
         let group = shortcut_group(u, title, rows);
+        // Pages fill the first column; Window the second; Installed and Lists share the third.
         let column = match index {
             1 => 1,
-            2 => 2,
-            3 => 1,
+            2 | 3 => 2,
             _ => 0,
         };
         columns[column] = std::mem::replace(&mut columns[column], col()).child(group);
@@ -666,12 +667,7 @@ pub fn shortcuts_dialog(s: &State, u: &Ui) -> Option<El> {
 /// One titled group of shortcuts: the action left, its keys right.
 fn shortcut_group(u: &Ui, title: &str, rows: &[(&str, &str)]) -> El {
     let mut group = col().key(format!("shortcuts-{title}")).w_full().gap(0.0);
-    group = group.child(
-        text(tr(title))
-            .font(BODY_MED)
-            .color(u.muted)
-            .pb(4.0),
-    );
+    group = group.child(u.section(tr(title)).mb(4.0));
     for (action, keys) in rows {
         group = group.child(
             row()
@@ -679,8 +675,8 @@ fn shortcut_group(u: &Ui, title: &str, rows: &[(&str, &str)]) -> El {
                 .h(crate::ui::CONTROL_M)
                 .gap(12.0)
                 .center_y()
-                .child(text(tr(action)).font(BODY).color(u.ink).grow(1.0))
-                .child(text((*keys).to_string()).font(MONO).color(u.faint)),
+                .child(text(tr(action)).font(BODY).color(u.ink).grow(1.0).min_w(0.0).truncate())
+                .child(text(tr(keys).to_string()).font(crate::ui::SMALL_NUM).color(u.muted)),
         );
     }
     group

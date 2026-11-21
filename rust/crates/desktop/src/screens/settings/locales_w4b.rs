@@ -292,6 +292,8 @@ pub const DE: &[(&str, &str)] = &[
     ("Ctrl", "Strg"),
     ("Cmd", "Cmd"),
     ("Catalog {}", "Katalog {}"),
+    ("Search the page", "Seite durchsuchen"),
+    ("F11, Alt+Enter", "F11, Alt+Eingabe"),
 ];
 
 /// Literals in the routed files that read as words but are not UI text.
