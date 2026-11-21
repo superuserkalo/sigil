@@ -1,6 +1,6 @@
 # Feature parity: Grimoire and Deadlock Mod Manager
 
-Status: audit 2026-11-17, updated the same day; upstream round 2026-11-21 (mod safety review list, sources in Browse, GameBanana notices, hidden lists, Locker shuffle in profiles, Hide party size, Street Brawl in Stats; Summary recounted, Recolor marked partial); live match view built 2026-11-20; smalls round 2026-11-19 (custom maps page, update progress, package manager note); wave 3 rows updated 2026-11-18; wave 4 (UI B) rows updated 2026-11-18. Browse and mod details are built, including a
+Status: audit 2026-11-17, updated the same day; upstream round 2026-11-21 (mod safety review list, sources in Browse, GameBanana notices, hidden lists, Locker shuffle in profiles, Hide party size, Street Brawl in Stats; Summary recounted, Recolor marked partial); statuses rechecked against `rust/crates` after 0.1.22 (2026-11-21); live match view built 2026-11-20; smalls round 2026-11-19 (custom maps page, update progress, package manager note); wave 3 rows updated 2026-11-18; wave 4 (UI B) rows updated 2026-11-18. Browse and mod details are built, including a
 bounded local catalog mirror (JSONL, no new crate, no SQLite), the inline sound player and the
 multi-VPK picker. The Installed page has its first round. The global shell has its round: drop
 anywhere, zoom chords, the shortcuts sheet, What's new after an update, the tray, density, and a
@@ -48,16 +48,17 @@ Two architectural differences drive many rows:
 | Performance | 8 | 0 | 0 | 0 |
 | Stats | 12 | 0 | 0 | 0 |
 | Profiles | 10 | 0 | 0 | 1 |
-| Servers | 9 | 2 | 0 | 0 |
+| Servers | 11 | 0 | 0 | 0 |
 | Launch | 8 | 0 | 0 | 0 |
 | Overlap | 7 | 0 | 0 | 0 |
-| Downloads | 8 | 0 | 0 | 0 |
+| Downloads | 11 | 0 | 0 | 0 |
 | Global shell | 26 | 1 | 1 | 1 |
-| **Total** | 229 | 4 | 1 | 3 |
+| **Total** | 234 | 2 | 1 | 3 |
 
-Counted from the rows below on 2026-11-21. Deferred rows wait for Sigil accounts; the partial rows
-are Locker Recolor (briefs only), the relay region picker, hosting a server and i18n; the missing
-row is GameBanana Remote Install.
+Counted from the rows below on 2026-11-21 after 0.1.22. Deferred rows wait for Sigil accounts; the
+two partial rows are Locker Recolor (briefs only) and i18n; the missing row is GameBanana Remote
+Install. The relay region picker and hosting a server read "has, real game unverified": built and
+checked in headless scenes, never run on a Windows PC.
 
 ## Browse
 
@@ -148,7 +149,7 @@ Endpoints, verified with curl against the live API on 2026-11-17 (Deadlock game 
 | Copy link, view on GameBanana | G | Header actions | has (built: copy icon in the header) | S | P3 |
 | Previous / next mod with arrow keys | G | Walk the grid | has (built: left and right in the details) | S | P2 |
 | Requirements panel | G+D | Required and recommended mods | has (built: requirements section, install and open) | M | P2 |
-| Installed / update / outdated tags, ignore updates | G+D | Status tags | has tags and ignore in Browse; Installed's update check needs the ignore hook | M | P2 |
+| Installed / update / outdated tags, ignore updates | G+D | Status tags | has (tags and ignore in Browse; Installed's update check reads the ignored file or mod, `mod_extras::ignored_update`, `installed/notes.rs` `ignore_update` / `unignore_update`) | - | - |
 | Embedded videos | D | Video embeds | has (built: a Videos list; each opens in the browser) | M | P3 |
 | Donation / Ko-fi, socials | G+D | Support the creator | has (built: donation links from the creator profile; wave 4: the creator's own links from `Member/<id>/ProfilePage`, a Discord user name copies) | S | P3 |
 | 3D model preview | D | three.js viewer | has, real game unverified (Preview in 3D beside "Installed in slot NN" in a mod's details, and in Installed's card menu and file list: the mod's hero with the mod, on or off, against the hero without it; hero picker for several heroes; `docs/design/3d-viewer.md`. Checked on stand-ins only: no Deadlock install on the build Mac) | L | P3 |
@@ -312,11 +313,11 @@ Endpoints, verified with curl against the live API on 2026-11-17 (Deadlock game 
 | Filters: has space, password | G+D | Filters | has | - | - |
 | Region and map filters, sortable columns | G+D | Filters | has (region grouped by continent, game mode, map, password; every column sorts ascending, descending, off with missing values last) | S | P2 |
 | Removable filter chips | D | Chips | has (one chip per filter, Clear (N)) | S | P3 |
-| Valve relay region picker (firewall) | D | Server picker | partial (ADR 0016, Servers > Regions, off by default: Valve's relay list from `GetSDRConfig` cached a day, locations grouped by region with ping and health from a bounded, cancellable `ping` sweep, fastest open location, tick to block, region Block all and Allow all, presets saved, loaded and deleted, Apply and Reset as one elevated `netsh -f` batch of `Sigil-Relay-*` rules for `deadlock.exe` only, read back after each change with partial, stale, disabled and firewall-off warnings, a status bar mark on every page (shown even with the bar hidden) and a notice at every launch while any region is blocked; macOS and Linux list and ping but say blocking needs Windows. Round 2: search by city, country or id, sort by name, ping or your matches, shift-click range ticking, D's "Where I play" preset and per-location match counts from deadlock-api's `/v1/players/{id}/region` (only with Player and match stats on and a Stats account set), and a relay health chip in the status bar after a sweep (popover per region with best ping, Measure again, Open Regions; "Relay health in the status bar" keeps it there and measures at startup and every 30 minutes, off by default). Built and checked in headless scenes; not yet run on a Windows PC; the region history endpoint's datacenter codes are mapped as D does and not checked against a live account) | L | P3 |
+| Valve relay region picker (firewall) | D | Server picker | has, real game unverified (ADR 0016, Servers > Regions, off by default: Valve's relay list from `GetSDRConfig` cached a day, locations grouped by region with ping and health from a bounded, cancellable `ping` sweep, fastest open location, tick to block, region Block all and Allow all, presets saved, loaded and deleted, Apply and Reset as one elevated `netsh -f` batch of `Sigil-Relay-*` rules for `deadlock.exe` only, read back after each change with partial, stale, disabled and firewall-off warnings, a status bar mark on every page (shown even with the bar hidden) and a notice at every launch while any region is blocked; macOS and Linux list and ping but say blocking needs Windows. Round 2: search by city, country or id, sort by name, ping or your matches, shift-click range ticking, D's "Where I play" preset and per-location match counts from deadlock-api's `/v1/players/{id}/region` (only with Player and match stats on and a Stats account set), and a relay health chip in the status bar after a sweep (popover per region with best ping, Measure again, Open Regions; "Relay health in the status bar" keeps it there and measures at startup and every 30 minutes, off by default). Built and checked in headless scenes; not yet run on a Windows PC; the region history endpoint's datacenter codes are mapped as D does and not checked against a live account) | L | P3 |
 | Favorites, recent servers, direct connect | - | Sigil extras | has (`.dah/servers.json`; favorites and recent scopes, address dialog that runs the same join check) | M | - |
 | Maps view and Launch map | D | Custom map help for custom/Deadworks servers | has (`servers_maps.rs`: GameBanana Maps category, console name from the description or installed VPK, copyable `map <name>`, Launch writes a managed autoexec block with a backup and starts the game) | M | P3 |
 | Custom maps page, How to play, Invite friends | D | Experimental custom-maps: Maps page, How to play This Map, Launch Map, Invite Friends (connect code from console.log) | has (2026-11-19, `screens/maps.rs`, `deadlock_core::maps`: off by default; map name from the addon VPK's `maps/<name>.vpk`; Launch map through the gameinfo gate; Host this map hands off to Servers > Host) | M | P3 |
-| Host a server from this PC | - | Neither G nor D hosts (G's empty list only says "hosting requires Windows") | partial (ADR 0015, Servers > Host: setup checklist for .NET 10, free space, SteamCMD, server files and the pinned Deadworks release; SteamCMD opens in its own window so the Steam sign-in never reaches Sigil; server settings with a map picker that lists stock and installed custom maps, Start and Stop, live console with a command line; plugins on and off; firewall rule behind Windows' admin prompt; LAN join, copyable `connect ip:port`, router forwarding steps, custom-map invite; "older than your game" update banner; no-forwarding hosting (ADR 0015 second amendment): Steam relay mode by default with the join code from the console, Direct mode, an opt-in UPnP switch, Sigil invites that carry GameBanana ids and a Join with invite flow that installs them, and "Play with friends, no setup" (the in-game host, D's Invite friends, with -condebug added for the launch); macOS and Linux show why it needs Windows. Built and checked in headless scenes; not yet run on a Windows PC. No player list beyond typing `status`) | L | P2 |
+| Host a server from this PC | - | Neither G nor D hosts (G's empty list only says "hosting requires Windows") | has, real game unverified (ADR 0015, Servers > Host: setup checklist for .NET 10, free space, SteamCMD, server files and the pinned Deadworks release; SteamCMD opens in its own window so the Steam sign-in never reaches Sigil; server settings with a map picker that lists stock and installed custom maps, Start and Stop, live console with a command line; plugins on and off; firewall rule behind Windows' admin prompt; LAN join, copyable `connect ip:port`, router forwarding steps, custom-map invite; "older than your game" update banner; no-forwarding hosting (ADR 0015 second amendment): Steam relay mode by default with the join code from the console, Direct mode, an opt-in UPnP switch, Sigil invites that carry GameBanana ids and a Join with invite flow that installs them, and "Play with friends, no setup" (the in-game host, D's Invite friends, with -condebug added for the launch); macOS and Linux show why it needs Windows. Built and checked in headless scenes; not yet run on a Windows PC. No player list beyond typing `status`) | L | P2 |
 
 ## Launch
 
@@ -396,14 +397,21 @@ Endpoints, verified with curl against the live API on 2026-11-17 (Deadlock game 
 
 ## Next, by priority
 
-Waves 1 and 2 of `.scratch/parity-2026-11-18/plan.md` shipped in 0.1.5; wave 3 is next.
-Translation is deferred by the owner until the launcher is ready.
+Everything in waves 1 to 4 and the 0.1.22 upstream round shipped. What is left:
 
-1. Installed: a live archive CRC scan for unknown VPKs, a vdata diff in the
-   compatibility review, and a fonts prompt inside the install review (today it is on the card).
-2. Shell: the GameBanana 1-Click listing request (`deep-links.md`), coachmarks, and Undo
-   for profile apply and the Installed delete, update and reorder actions.
-3. Locker: "Browse skins for this hero" (sets the new hero filter), shuffle, variants.
-4. Crosshair presets; Overlap "make X win" and ignores.
-5. Browse leftovers: inline audio (needs an audio backend crate), requirements panel, prev/next
-   in details, download counts (from `ProfilePage` on open), persisted filters.
+1. Browse: GameBanana Remote Install (backlogged until GameBanana lists Sigil as a 1-Click
+   manager; the protocol is in `deadlock_core::remote_install`, not wired), custom mod sources
+   (another builder), and the unbuilt browse leftovers in `grimoire-unreleased-2026-11-21.md`.
+2. Installed: Issues button pulse, attaching local files to a GameBanana card, Add files and Add
+   images in the variant picker, floating preview panels, and GameBanana schema tag rules. All are
+   listed with issue links and effort in `grimoire-unreleased-2026-11-21.md`.
+3. Locker: the skin to card icon link, the cursor cropper, Locker cards' hover 3D and saved angle,
+   and the empty-hero suggestions on the Hero Skins page. Locker ability recolor waits on the
+   owner's Foundry decision.
+4. Viewer: motion previews against a second hero (issue #8), custom animations (issue #9), and the
+   Windows checks for texture-only skins, partial mods and the real Hideout.
+5. Performance: GitHub presets' per-setting switches in the UI, and keeping an author's gameinfo
+   comments and formatting.
+6. Imports: local imports following "Enable mods after download" once the scan is clear, and the
+   gallery and tags in the import dialog.
+7. Distribution: Flatpak (issue #16) and the Linux runtime checks on a distro.

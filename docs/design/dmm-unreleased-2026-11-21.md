@@ -1,9 +1,11 @@
 # Deadlock Mod Manager: unreleased and planned work against Sigil
 
-Status: research snapshot, 2026-11-21. Read only for Sigil's code; nothing here is built. Companion
-to `upstream-gaps-2026-11-21.md`, which covers both reference apps; this doc covers only Deadlock
-Mod Manager (DMM, GPL-3.0) and every source of work it has not released yet. Behaviour only: no
-DMM code or text is copied, only short feature names.
+Status: research snapshot, 2026-11-21; status column rechecked against `rust/crates` after 0.1.22
+(2026-11-21). Companion to `upstream-gaps-2026-11-21.md`, which covers both reference apps; this
+doc covers only Deadlock Mod Manager (DMM, GPL-3.0) and every source of work it has not released
+yet. Behaviour only: no DMM code or text is copied, only short feature names. A row marked "has,
+real game unverified" is built and tested on fixtures or headless scenes but has never run on a
+real Deadlock install.
 
 ## Sources read
 
@@ -55,12 +57,13 @@ work), `profile-export-load-order` (#414), `feature/parse-heros`, `fix/local-upl
   backup, Discover publishing, community library, announcements, feature flags, author
   verification); on hold (more languages, Mod Foundry heavy edits: recolor, painting, removing hero
   sections or parts, sound editing).
-- **in progress** rows are on the owner's current build list: 3D viewer extras, region picker
-  "where I play", health dot and search, the install review step for gameinfo and cfg, resumable
+- **in progress** rows are on the owner's current build list. The 2026-11-21 list (3D viewer
+  extras, region picker "where I play", the install review step for gameinfo and cfg, resumable
   downloads, one-click file choice, live bridge auto rebuild, the add mods dialog with several VPKs
-  as one mod (queued), the safety review list, Browse custom sources, refusing toggles while the
-  game runs, obsolete and withheld notes, profiles keeping shuffle, hidden lists, Discord party
-  size, the Street Brawl tag and a benchmark.
+  as one mod, the safety review list, refusing toggles while the game runs, obsolete and withheld
+  notes, profiles keeping shuffle, hidden lists, Discord party size, the Street Brawl tag and a
+  benchmark) shipped in 0.1.22. Only Browse custom sources and its website links stay in progress,
+  and another builder owns them.
 
 Columns: the feature as a player sees it; where it is upstream; maturity (merged-unreleased, PR
 open, branch WIP, issue only; "PR closed" means the branch's PR was closed unmerged and the branch
@@ -76,8 +79,8 @@ days, L a week or more); a build note for missing and partial rows.
 | DMM's own built-in mod source | 2.4.0 `8774679` | merged-unreleased | excluded: needs DMM's backend (owner left it out in `upstream-gaps-2026-11-21.md`) | - | - |
 | Category trees across Mods, Sounds, Maps and WiPs, third level, breadcrumbs, a hero pick that follows the section | 2.4.0 `cd622cb` | merged-unreleased | has: third level read after the first two (`gamebanana::deepen_categories`), styles listed under the picked hero, a breadcrumb in the chip row, a pick matches its subtree by leaf id, the hero pick follows Mods, Sounds, WiPs and All (`desktop/src/screens/browse/tree.rs`) | - | - |
 | Drag to scroll the landing rails, draggable scrollbars | 2.4.0 `2d8ba44` | merged-unreleased | has: the Browse by hero rail drags and has a grabbable bar (`desktop/src/screens/browse/rail.rs`); the other landing rails are fixed grids | - | - |
-| Obsolete mods: a status row and the author's note | 2.4.0 `304c1dd` | merged-unreleased | in progress (`browse/details.rs` reads `obsolete_note`) | S | - |
-| Withheld mods: staff's reason on the page, left out of the store and Featured, no error toasts | 2.4.0 `cba597f`, `208df74`, `6bdb297` | merged-unreleased | in progress (obsolete and withheld notes) | S | - |
+| Obsolete mods: a status row and the author's note | 2.4.0 `304c1dd` | merged-unreleased | has: `browse/details.rs` reads and shows `obsolete_note` | - | - |
+| Withheld mods: staff's reason on the page, left out of the store and Featured, no error toasts | 2.4.0 `cba597f`, `208df74`, `6bdb297` | merged-unreleased | has: `browse/details.rs` shows the staff's rules, note, name and date; a withheld page drops the mod from the saved catalog and Featured | - | - |
 | YouTube and Vimeo videos on mod pages | 2.4.0 `9fab2e1` | merged-unreleased | has: a Videos list that opens the browser (`feature-parity.md`, Mod details); an embedded player is a web view, ruled out by ADR 0006 | - | - |
 | Map console names read inside inline code in descriptions | branch `bugfix/map-command-inline-code-context` | branch WIP | has: `<code>` and `<pre>` mark a command, prose does not (`deadlock-core/src/servers/map_name.rs`) | - | - |
 | Custom Maps tab shows the right map names | changeset `steady-maps-resolve` | merged-unreleased | has: name from the addon VPK's `maps/<name>.vpk` (`deadlock-core/src/maps.rs`) | - | - |
@@ -86,9 +89,9 @@ days, L a week or more); a build note for missing and partial rows.
 
 | Feature | Source | Maturity | Sigil | Effort | Build note |
 | --- | --- | --- | --- | --- | --- |
-| Add several VPKs as one custom mod whose parts switch in Manage files | changeset `amber-parts-gather` | merged-unreleased | in progress (queued: add mods dialog) | M | - |
-| Add mods dialog that detects category, cover and map name from the files | changeset `vivid-covers-render` | merged-unreleased | in progress (queued) | M | - |
-| Local mods get a rendered 3D preview as their cover in the library and details | 2.4.0 `e5d22b1` | merged-unreleased | missing: covers are GameBanana's picture or one the player picks (`installed` picture editor) | M | Capture one viewer frame per local mod on a worker and store it through `mod_extras` as the picture |
+| Add several VPKs as one custom mod whose parts switch in Manage files | changeset `amber-parts-gather` | merged-unreleased | has: the add-mods dialog imports several loose files as one variant group (`screens/import/parts.rs`, `deadlock-core/src/import/parts.rs`); parts switch in Manage files | - | - |
+| Add mods dialog that detects category, cover and map name from the files | changeset `vivid-covers-render` | merged-unreleased | has: the local import review reads each VPK on a worker and shows category, hero, map console name and cover (`import/parts.rs`) | - | - |
+| Local mods get a rendered 3D preview as their cover in the library and details | 2.4.0 `e5d22b1` | merged-unreleased | has, real game unverified: Preview in 3D has "Use this view as the mod's cover", which saves the frame as the picture (`viewer/mod.rs` `capture_cover`); not rendered automatically in the background | - | Built (player-triggered) |
 | Unticking every variant in Manage files turns the mod off | 2.4.0 `08ccbaa` | merged-unreleased | has: one switch per file in the variant picker | - | - |
 | HUD mods checked against the game's current layouts, with related `console.log` errors | 2.4.0 `f173624` | merged-unreleased | has: `deadlock-core/src/addon_checks.rs` HUD check and `console_layout_lines` | - | - |
 | Compatibility reports with copyable diagnostics | 2.4.0 `f173624` | merged-unreleased | has: the Compatibility review's Copy details on each finding and on the whole review (`installed/repair.rs`) | S | - |
@@ -127,10 +130,10 @@ days, L a week or more); a build note for missing and partial rows.
 
 | Feature | Source | Maturity | Sigil | Effort | Build note |
 | --- | --- | --- | --- | --- | --- |
-| Hero Skins redesign: banners, sound rows, shuffle pool mode, a hero with no skins shows popular ones | 2.4.0 `1733766`, `933a8bc` | merged-unreleased | partial: hero page, sounds, shuffle pools and the 3D switch exist (`feature-parity.md`, Locker); no suggestions for an empty hero | S | Show the most downloaded skins for that hero from the saved catalog |
-| Texture-only hero skins recognised and previewed on the full character | 2.4.0 `e5d22b1` | merged-unreleased | in progress (3D viewer extras; `docs/design/3d-viewer.md`) | S | - |
-| Partial mods previewed and compared with the original model | 2.4.0 `e5d22b1` | merged-unreleased | in progress (With mods, Without mods and Split exist) | S | - |
-| Animated materials, particle effects and heavy cloth rigs in 3D previews | 2.4.0 `34fd9ca`, `274cc1e` | merged-unreleased | in progress (3D viewer extras) | M | - |
+| Hero Skins redesign: banners, sound rows, shuffle pool mode, a hero with no skins shows popular ones | 2.4.0 `1733766`, `933a8bc` | merged-unreleased | partial: hero page, sounds, shuffle pools and the 3D switch exist (`feature-parity.md`, Locker); no suggestions for an empty hero | S | Open: show the most downloaded skins for that hero |
+| Texture-only hero skins recognised and previewed on the full character | 2.4.0 `e5d22b1` | merged-unreleased | partial: With mods / Without mods / Split exist; never checked on a real install (`docs/design/3d-viewer.md`) | S | Verify on Windows |
+| Partial mods previewed and compared with the original model | 2.4.0 `e5d22b1` | merged-unreleased | partial: With mods, Without mods and Split exist (`docs/design/3d-viewer.md`); never checked on a real install | S | Verify on Windows |
+| Animated materials, particle effects and heavy cloth rigs in 3D previews | 2.4.0 `34fd9ca`, `274cc1e` | merged-unreleased | partial: particles (including animation-event effects) and the cloth solver render (`sigil-viewer/src/particles/`, `cloth.rs`); no animated material (UV scroll) was found | M | Open: animated materials |
 | Sound-only hero mods listed under Hero Sounds instead of skins | 2.4.0 `66424d2` | merged-unreleased | has: Weapons and voice and Sounds sections (`locker/parts.rs`, `feature-parity.md` Locker) | - | - |
 | Randomising hero skins runs out of memory | issue #1311 | issue only | has: the shuffle is a seeded pick over file lists, no images loaded (`locker_parts::shuffle_wanted`) | - | - |
 | Remove hero sections such as hats or capes | 2.4.0 `6cf08ef` | merged-unreleased | excluded: Mod Foundry heavy edits (on hold) | - | - |
@@ -142,10 +145,10 @@ days, L a week or more); a build note for missing and partial rows.
 | Feature | Source | Maturity | Sigil | Effort | Build note |
 | --- | --- | --- | --- | --- | --- |
 | Party tab that rates every lineup a party can queue | 2.4.0 `3e8248a` | merged-unreleased | has (`feature-parity.md`, Stats, Party tab) | - | - |
-| Filter stats by ranked season, plus an end date | PR #1391, issue #1383 | PR open | partial: `deadlock-core/src/stats/filters.rs` has ranked and a start time only | S | Read deadlock-api's ranked seasons list, add a season picker and an until time (`max_unix_timestamp`) |
-| Match details show abandoned matches and the teammates who left | changeset `quiet-hawks-wave` | merged-unreleased | partial: `stats.rs` reads `abandoned_time_s`; no screen shows it | S | A leaver mark on the scoreboard and an Abandoned tag in the list |
+| Filter stats by ranked season, plus an end date | PR #1391, issue #1383 | PR open | has: `stats/filters.rs` reads the ranked season and an end time, and the Stats filter offers both (`screens/stats/`) | - | - |
+| Match details show abandoned matches and the teammates who left | changeset `quiet-hawks-wave` | merged-unreleased | has: `stats/notes.rs` tags the player's own abandon in the list and the scoreboard, and `stats/board.rs` notes who abandoned | - | - |
 | Non-scored matches are not losses; empty hero win rates hidden | changeset `calm-owls-rest`, PR branch `bugfix/1371-non-scored-matches` | merged-unreleased | has: `stats.rs` `NotScored` | - | - |
-| Item stats show an error with Retry when they fail | changeset `lofty-meadows-count` | merged-unreleased | missing: no retry in `desktop/src/screens/stats/more.rs` | S | Error box with Try again on the Items and Item meta views |
+| Item stats show an error with Retry when they fail | changeset `lofty-meadows-count` | merged-unreleased | has: `screens/stats/more.rs` `problem_retry` on the Items and item timeline views | - | - |
 | The Live tab keeps the last match until the next search | 2.4.0 `03c0d62` | merged-unreleased | has (`feature-parity.md`, Live match view) | - | - |
 | Live stats not updating on Linux | issue #1320 | issue only | n/a: Sigil ships no Linux build yet (`docs/runbooks/packaging.md`) | - | - |
 | Match sync: per-account switch, batching, skip stored matches, quota, friend history, ConnectCache fix | 2.4.0 `b8f0b24`, `d7cfaf5`, `81a7862`; branches `feat/match-sync-batch-and-reports`, `feature/match-sync-friend-history`, `feature/match-sync-skip-stored-own-matches`; PR #1413 | merged-unreleased / branch WIP / PR open | excluded: Steam-login match sync | - | - |
@@ -157,7 +160,7 @@ days, L a week or more); a build note for missing and partial rows.
 | Performance configs written in full, `video.txt` included, with a backup | 2.4.0 `0544a01` | merged-unreleased | has: Performance writes through `apply_to_install` with a backup (`feature-parity.md`, Performance) | - | - |
 | `video.txt` settings the game changed are shown; keep a config's `video.txt` | 2.4.0 `e6dd365`, branch `feature/perf-video-tracking` | merged-unreleased | has: Write adopts, Keep forgets, Restore (`feature-parity.md`, Performance) | - | - |
 | Malformed game config files are refused instead of rewritten | 2.4.0 `4b641d9` | merged-unreleased | has: every `gameinfo.gi` or `video.txt` write is parsed as KeyValues first and refused with the file and line when it would not load (`game_apply::refuse_malformed_config`, called from `util::write_atomic`); `autoexec.cfg` refuses a command with an unclosed quote (`autoexec::autoexec_syntax_error`) | - | - |
-| Review configs bundled in mod packs before they are written | 2.4.0 `8774679` | merged-unreleased | in progress (install review step for gameinfo and cfg) | M | - |
+| Review configs bundled in mod packs before they are written | 2.4.0 `8774679` | merged-unreleased | has: `mod_settings.rs` opens a review of a bundled gameinfo.gi, video.txt and cfg files with what each would change; nothing is copied into the game as it ships (`feature-parity.md`, Downloads) | - | - |
 | Game presets page: named option sets with a picker, an editor and an apply preview | `feature/game-presets` (2025, "ui wip") | branch WIP | has: Autoexec command library by category and crosshair presets (`feature-parity.md`, Autoexec, Crosshair) | - | - |
 | Performance catalog data refresh | PR #1416 | PR open | has: versions read from GitHub (`feature-parity.md`, Performance) | - | - |
 
@@ -165,8 +168,8 @@ days, L a week or more); a build note for missing and partial rows.
 
 | Feature | Source | Maturity | Sigil | Effort | Build note |
 | --- | --- | --- | --- | --- | --- |
-| Standalone server picker for Valve relay blocks | 2.4.0 `9068f5f` | merged-unreleased | has, not yet run on Windows (ADR 0016, Servers > Regions) | - | - |
-| "Where I play" preset and recent match counts in the picker | 2.4.0 `5d38b7c`, branch `feature/server-picker-match-history` | merged-unreleased | in progress (region picker extras) | S | - |
+| Standalone server picker for Valve relay blocks | 2.4.0 `9068f5f` | merged-unreleased | has, real game unverified: `screens/servers_regions/` (ADR 0016); never run on a Windows PC | - | - |
+| "Where I play" preset and recent match counts in the picker | 2.4.0 `5d38b7c`, branch `feature/server-picker-match-history` | merged-unreleased | has: `servers_regions/mod.rs` `where_i_play` and per-location counts from deadlock-api's region history, only with player stats on | - | - |
 | Turn off the map mod launch warning from the dialog or Settings | 2.4.0 `0bf0688`, issue #1313 | merged-unreleased | has: Don't ask again and the Settings > Mods switch (`launch_extras.rs`) | - | - |
 
 ## Launch and game health
@@ -178,16 +181,16 @@ days, L a week or more); a build note for missing and partial rows.
 | An error when cancelling a launch fails, with the progress kept visible | changeset `brief-comets-turn` | merged-unreleased | has: Cancel keeps the overlay up with a Closing Deadlock line; a failed stop comes back with the error, Close and Try again (`desktop/src/screens/launch_progress.rs`) | - | - |
 | Custom game search paths kept when launching or disabling mods | 2.4.0 `4b641d9`, branch `bugfix/1257-preserve-search-paths` | merged-unreleased | has: `game_apply::apply_gameinfo_repair` keeps other mounts | - | - |
 | Steam found on Windows when its registry path is stale | 2.4.0 `ee0bf0e`, branch `bugfix/windows-steam-path-fallbacks` | merged-unreleased | has: registry, then the usual drives (`deadlock-core/src/discovery.rs` line 173) | - | - |
-| Linux runtime fixes: NixOS launch, Flatpak running-game detection, Flatpak audio, host process scan without a fork per process | 2.4.0 `9a070af`, `e02703c`, `ac42377`; PR #1349 | merged-unreleased / PR open | partial: process-table detection exists; no Linux build is shipped or tested (`docs/runbooks/packaging.md`) | S | Verify once a Linux build exists |
+| Linux runtime fixes: NixOS launch, Flatpak running-game detection, Flatpak audio, host process scan without a fork per process | 2.4.0 `9a070af`, `e02703c`, `ac42377`; PR #1349 | merged-unreleased / PR open | partial: process-table detection exists and the Linux AppImage and `.deb` are built (`docs/runbooks/packaging.md`); Flatpak detection and the Linux build have never run on a Linux desktop. Issue superuserkalo/sigil#16 | S | Verify once a Linux build runs on a distro |
 
 ## Downloads and installs
 
 | Feature | Source | Maturity | Sigil | Effort | Build note |
 | --- | --- | --- | --- | --- | --- |
 | Missing variant downloads streamed with size limits, checksums and server fallback | changeset `sturdy-rivers-flow` | merged-unreleased | has: `install::MAX_DOWNLOAD_BYTES`, the queue's `max_bytes` and MD5 check (`deadlock-core/src/download_queue.rs` line 1549), failover | - | - |
-| Pause and resume downloads | `stormix/dmm-37-ability-to-pause-and-resume-downloads` | branch WIP | in progress (resumable downloads; pause and resume exist in `download_queue.rs`) | S | - |
+| Pause and resume downloads | `stormix/dmm-37-ability-to-pause-and-resume-downloads` | branch WIP | has: pause keeps the part file, resume continues with Range, cancel removes it, retry starts again (`download_queue.rs`) | - | - |
 | Download routing used for updates, profile imports and file changes; Default routing falls back to other servers and starts without waiting for server checks | 2.4.0 `7c5922a`, `fdd81c8`, `dc570da` | merged-unreleased | has: every queue user goes through `download_queue.rs` failover (`feature-parity.md`, Downloads) | - | - |
-| Remember the chosen file for a 1-click install; restore variant choice from the 3D tab | 2.4.0 `b692e28`, `9c762f0` | merged-unreleased | in progress (one-click file choice) | S | - |
+| Remember the chosen file for a 1-click install; restore variant choice from the 3D tab | 2.4.0 `b692e28`, `9c762f0` | merged-unreleased | has: a card's, row's or link's Install by mod id asks GameBanana for the file list first, and with several current files opens the existing file menu (`browse/quick.rs`); the details' own Install keeps taking the newest (`feature-parity.md`, Downloads) | - | - |
 | Zip and 7z imports read the file list instead of unpacking | 2.4.0 `abe0090` | merged-unreleased | has: `list_7z` reads the header with sevenz-rust2, with an unpack fallback for a damaged or encrypted header (`download_queue/scan.rs`) | S | - |
 | GameBanana catalog and mod data downloaded compressed | 2.4.0 `4061643` | merged-unreleased | has: `ureq` 3 sends gzip by default (`rust/Cargo.toml`) | - | - |
 | Updates found for single-file mods whose file name changes | 2.4.0 `7a7b75b` | merged-unreleased | has: "Match remaining update files" pairs a leftover slot with a leftover upload (`installed/update_match.rs`) | - | - |
@@ -200,7 +203,7 @@ days, L a week or more); a build note for missing and partial rows.
 | Plugins toggle in Optional Features | changeset `hollow-pines-wake` | merged-unreleased | excluded: external plugin system | - | - |
 | Contextual tips for new features | 2.4.0 `2a5c1fc` | merged-unreleased | has: `shell_tips.rs` (`feature-parity.md`, Feature hints) | - | - |
 | Nightly and rollback explained; older nightlies not offered | 2.4.0 `75e4fe8`, issue #1362 | merged-unreleased | has: Release channel and Going back (`settings-parity.md` G row 94) | - | - |
-| Discord Rich Presence: hide party size | 2.4.0 `97c0754` | merged-unreleased | in progress | S | - |
+| Discord Rich Presence: hide party size | 2.4.0 `97c0754` | merged-unreleased | has: `settings/templates.rs` drops the count from Sigil's own party lines and leaves a player-written line as written | - | - |
 | New themes (Le Deadlock, Gridline, Lovelock, seasonal art) | 2.4.0 `02a1482`; branches `feature/theme-gridline`, `feature/lovelock-theme`, `feature/seasonal-themes` | merged-unreleased / released | excluded: DMM theme names and palettes | - | - |
 | Load only the language in use; translation updates | 2.4.0 `65c32aa`, `l10n_crowdin_*` | merged-unreleased | excluded: translation on hold | - | - |
 | Linux freezes from backdrop blur removed | changeset `quiet-lanterns-drift` | merged-unreleased | n/a: native renderer, no web view blur (`settings-parity.md` D row 214) | - | - |
@@ -220,22 +223,22 @@ screens (`docs/architecture.md`, Tool catalog).
 | Content search inside archive files with matching-line previews, pause and progress | same | branch WIP | has: Search contents on a worker with live hits, Pause and Stop, capped (`explorer/search.rs`); agent tool `files_search` | M | Search decoded text resources on a worker, capped, with a Stop |
 | Source 2 data and text previews (KV3, vdata, text DMX) in addons, archives and comparisons | same | branch WIP | has: KV3 data, Panorama and text DMX summaries in the preview pane (`explorer/preview.rs`, `explorer/dmx.rs`); agent tool `files_show` | M | A read-only text pane for decoded resources beside the tree |
 | Comparison workspace: drop two sources side by side, detachable window | same | branch WIP | partial: Compare mode with a tree diff and a line diff of one file (`explorer/compare.rs`); no detachable window | M | Two panes over the same previewers; the viewer's Split covers models only |
-| Tool setup with download progress, the current hotfix, installed CSDK without Dota downloads or patches | same | branch WIP | partial: `screens/toolchain.rs` checks and runs CSDK on Windows (ADR 0003); the compiler line names CSDK 12 or 13 from the install (`toolchain::csdk_generation`); never downloaded or patched | M | Detect CSDK 13 too; never download or patch it, only point at the player's install |
-| Pack and Test: close Deadlock, pack, install into a slot and open the addon folder | same | branch WIP | has: Projects, Pack and Test (`deadlock-core/src/project_test.rs`, `screens/project_tools.rs`): validates, packs a throwaway build, shows the plan, installs after a confirm; refuses while Deadlock runs; not run against a real install yet | S | One app action that runs pack, the deploy plan and the gated install in a row |
-| Compile selected files, batch builds, skip unchanged assets with an explicit Rebuild, actionable build errors | same | branch WIP | partial: Projects, Compile changed and Rebuild all (`project_build::run_build`, hash manifest in `.dah/build.json`), per-file errors; no file selection; not verified with a real CSDK | M | Hash inputs per asset and recompile only changed ones |
+| Tool setup with download progress, the current hotfix, installed CSDK without Dota downloads or patches | same | branch WIP | partial: `screens/toolchain.rs` checks and runs CSDK on Windows (ADR 0003); the compiler line names CSDK 12 or 13 from the install (`toolchain::csdk_generation`); never downloaded or patched. Issue superuserkalo/sigil#14 | M | Open: issue #14 |
+| Pack and Test: close Deadlock, pack, install into a slot and open the addon folder | same | branch WIP | has, real game unverified: Projects, Pack and Test (`deadlock-core/src/project_test.rs`, `screens/project_tools.rs`) validates, packs a throwaway build, shows the plan and installs after a confirm; refuses while Deadlock runs | S | - |
+| Compile selected files, batch builds, skip unchanged assets with an explicit Rebuild, actionable build errors | same | branch WIP | partial: Projects, Compile changed and Rebuild all (`project_build::run_build`, hash manifest in `.dah/build.json`), per-file errors; no file selection; not verified with a real CSDK. Issue superuserkalo/sigil#13 | M | Open: issue #13 |
 | Reversible Scan and Repair for source assets | same | branch WIP | has: Projects, Scan and Repair with Undo (`project_build`, undo copy in `.dah/repair-undo`) | M | Rules per asset kind, a preview of changes and an undo copy in the project |
 | Bulk rename assets after showing addon and game references | same | branch WIP | has: Projects, Bulk rename lists project and game references before moving (`project_build::{plan_rename, apply_rename}`); references are shown, not rewritten | M | Reference scan through the game index before a rename plan |
 | Flag misplaced Panorama images; a code editor in Inspect | same | branch WIP | has: `misplaced_panorama_image` payload warning (core, host and TypeScript validators); a plain text editor for a project's own files in the Files tab | S | Payload rule for images outside `panorama/images`, plus a plain text editor pane |
 | Image compiler lists kept in sync when images are added, moved or removed | same | branch WIP | partial: `project_build::sync_image_list` regenerates the list on every build and never ships it; the list format is not verified with a real CSDK | S | Regenerate the compile list from the project tree on each change |
-| Source model previews (VMDL with DMX meshes, switchable parts, skeleton layers) | same | branch WIP | partial: the viewer renders compiled models (`docs/design/3d-viewer.md`) | L | Read text DMX in `sigil-viewer` |
+| Source model previews (VMDL with DMX meshes, switchable parts, skeleton layers) | same | branch WIP | partial: the viewer renders compiled models (`docs/design/3d-viewer.md`). Issue superuserkalo/sigil#15 | L | Open: issue #15 |
 | Model painting, image and GIF stickers, particle recolor, material and vertex editing | same | branch WIP | excluded: Mod Foundry heavy edits (on hold) | - | - |
-| A mod package format with a packaging wizard (variants, layers, dependencies, authors) and author metadata in `dmm.json` | `feature/dmodpkg` (2025), `stormix/dmm-32-allow-mod-authors-to-include-metadata-that-influence` | branch WIP | partial: `project_release` and `publish_prepare` write a release manifest; `deadlock-core/src/import.rs` reads DMM's `.dmm.json` | M | Read an author's variant and dependency metadata on import; a format of our own stays a decision |
+| A mod package format with a packaging wizard (variants, layers, dependencies, authors) and author metadata in `dmm.json` | `feature/dmodpkg` (2025), `stormix/dmm-32-allow-mod-authors-to-include-metadata-that-influence` | branch WIP | partial: `project_release` and `publish_prepare` write a release manifest; `deadlock-core/src/import.rs` reads DMM's `.dmm.json`. Issue superuserkalo/sigil#12 | M | Open: issue #12 |
 
 ## Other
 
 | Feature | Source | Maturity | Sigil | Effort | Build note |
 | --- | --- | --- | --- | --- | --- |
-| Linux AppImages next to Flatpaks; Flatpak on Flathub; Flatpak start-up crash | PR #923, issue #477, issue #1418 | PR open / issue only | missing: Sigil packages Windows and macOS zips only (`docs/runbooks/packaging.md`) | M | A Linux build and AppImage in the release script, verified on one distro |
+| Linux AppImages next to Flatpaks; Flatpak on Flathub; Flatpak start-up crash | PR #923, issue #477, issue #1418 | PR open / issue only | partial: `scripts/package-linux.sh` builds the AppImage and `.deb` in CI (`docs/runbooks/packaging.md`); no Flatpak and no distro has run it. Sigil issue superuserkalo/sigil#16 | M | Open: Flatpak |
 | Accounts: author verification, Discord sign-in, friends, dev sign-in, Better Auth update | `feature/author-verification`, `feat/discord-sign-in`, PRs #151, #175, #180 (closed), PR #1410 | branch WIP / PR open | excluded: Sigil accounts package | - | - |
 | Foundry exports and found files kept out of cloud backups | 2.4.0 `6f49788` | merged-unreleased | excluded: cloud backup is Sigil accounts | - | - |
 | DMM's own defects and speedups with no new player behaviour (about 45 patch entries: Analyze speed, state saves, profile switch races, extraction hangs, sidebar clipping, crosshair gap preview, interrupted first save, cache watcher, gameinfo tooltip languages, installer size) | 2.4.0 patch section, 11 changesets | merged-unreleased | n/a: DMM's code paths; nothing to port | - | - |
@@ -246,10 +249,10 @@ Rows in the area tables above (the last "Other" row is a bundle and is counted o
 
 | Sigil status | Rows |
 | --- | ---: |
-| has | 60 |
-| partial | 10 |
-| missing | 10 |
-| in progress | 14 |
+| has (3 of them real game unverified) | 77 |
+| partial | 12 |
+| missing | 0 |
+| in progress (custom mod sources, another builder) | 2 |
 | excluded | 11 |
 | n/a | 3 |
 | **Total** | **108** |
@@ -263,50 +266,23 @@ Rows in the area tables above (the last "Other" row is a bundle and is counted o
 | mixed (one row, several sources of different maturity) | 6 |
 | **Total** | **108** |
 
-Partial and missing rows, by effort: 8 S, 11 M, 1 L.
+Partial rows, by effort: 5 S, 6 M, 1 L. Two more rows are in progress (custom mod sources) and one
+row carries an outside issue (#16, Flatpak).
 
 ## Build list
 
-Only missing and partial rows. Grouped so builders in the same round touch different code; each
-round's areas are listed with the files they own.
+Rounds 1 and 2 from the 2026-11-21 snapshot shipped in 0.1.22. What is left, grouped so builders in
+the same round touch different code:
 
-### Round 1 (parallel, 4 lanes, 19 rows)
-
-- **Browse lane** (`desktop/src/screens/browse/`, `deadlock-core/src/gamebanana.rs`,
-  `servers_maps.rs`), 3 rows: category trees with breadcrumbs and a hero pick that follows the
-  section (M), drag-scroll rails (S), map names inside inline code (S).
-- **Stats lane** (`deadlock-core/src/stats/`, `desktop/src/screens/stats/`), 3 rows: ranked season
-  and end date filter (S), abandoned matches and leavers (S), item stats Retry (S).
-- **Launch and shell lane** (`deadlock-core/src/launch.rs`, `game_apply.rs`,
-  `desktop/src/screens/launch_progress.rs`, `shell*.rs`), 4 rows: Alt+Enter and F11 fullscreen (S),
-  stuck-closing process (S), cancel-launch failure (S), refuse malformed config files (S).
-- **Installed health lane** (`desktop/src/screens/installed/{checks,repair}.rs`,
-  `deadlock-core/src/{compat_repair,addon_checks,trash}.rs`), 9 rows: copyable diagnostics (S),
-  rebuild repairs on game exit and after an update (S), two-worker recheck (S), review choices keyed
-  on the file hash (S), remove leftovers from Analyze (S), name the blocking file on removal (S),
-  camera attachment rule (S), strict game text baseline (M), 7z header listing (S, `download_queue.rs`
-  is touched by no other lane this round).
-
-### Round 2 (parallel, 3 lanes, 9 rows)
-
-- **Locker and viewer lane** (`desktop/src/screens/locker/`, `desktop/src/viewer/`,
-  `mod_extras`), 2 rows: rendered 3D covers for local mods (M), popular skins for an empty hero (S).
-  Waits for the 3D viewer extras in progress.
-- **Profiles and library lane** (`deadlock-core/src/profiles.rs`, `screens/profiles.rs`,
-  `mod_merge.rs`, `import.rs`), 5 rows: early downloads during a profile import (S), per-profile
-  favourites (S), Pack all enabled into N (M), read DMM's VPK stamp on import (S), one-skin-per-hero
-  question in the install review (S, after the install review step in progress lands).
-- **Distribution lane** (`scripts/`, `docs/runbooks/packaging.md`), 2 rows: a Linux build with an
-  AppImage (M), then the Linux runtime checks (S).
-
-### Round 3 (creator, one lane or two that split by file, 13 rows)
-
-`desktop/src/screens/{index,projects,toolchain,workbench}.rs`, `deadlock-core/src/{project,
-toolchain,game_index}.rs`, `sigil-viewer`. Order inside the round: VPK tree browser with export
-(M), text and data previews (M), content search (M), comparison panes (M), Pack and Test as one
-gated app action (S), misplaced image rule and text editor pane (S), image compile list sync (S),
-incremental compile with Rebuild (M), Scan and Repair (M), bulk rename with references (M), CSDK 13
-detection (M), author metadata on import (M), text DMX previews (L). A second builder can take the
-viewer row and the toolchain rows while the first owns the browser and previews.
-
-Rounds total: 41 rows (26 S, 14 M, 1 L) across 10 lanes.
+- **Installed and Locker** (`desktop/src/screens/installed/`, `screens/locker/`), 4 rows: Hero
+  Skins empty-hero suggestions (S), the Locker card's hover 3D and saved angle (M), animated
+  materials in the viewer (M), cursor cropper (M, from the Grimoire doc).
+- **Viewer verification** (`docs/design/3d-viewer.md`), 3 rows: texture-only skins, partial mods
+  compared with the original, and particles and cloth on a real install (S each, needs Windows).
+- **Creator** (`desktop/src/screens/{index,projects,toolchain}.rs`,
+  `deadlock-core/src/{project,toolchain}.rs`, `sigil-viewer`), 6 rows: comparison panes (M),
+  tool setup (M, issue #14), compile selected files (M, issue #13), image list sync (S), source
+  model previews (L, issue #15), author metadata on import (M, issue #12).
+- **Distribution** (`scripts/`, `docs/runbooks/packaging.md`), 2 rows: a Flatpak (M, issue #16)
+  and the Linux runtime checks on a distro (S).
+- **Custom mod sources**, 2 rows, owned by another builder.
