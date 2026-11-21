@@ -1,14 +1,22 @@
-//! Apply a config "as written": the author's own `gameinfo.gi`, with its formatting, sections
-//! and comments, instead of Sigil's line edits (Grimoire issue #590).
+//! Apply a config "as written" (Grimoire issue #590): the author's own `ConVars` lines, with
+//! their order, spacing and comments, instead of Sigil's per-value edits.
 //!
-//! Only a config that ships a whole file is offered (it has a `ConVars` section and a
-//! `FileSystem` > `SearchPaths` section). The install's own `SearchPaths` body replaces the
-//! author's, so the addons folders, Sigil's extra slot folders and a profile's own folder keep
-//! loading. The BEGIN and END marker lines sit above the file, so the page still knows what is
-//! applied, and the stock file is kept beside it (`gameinfo.gi.sigil-stock`) so Turn off puts it
-//! back exactly. The player's switches and convar edits do not apply in this mode.
+//! Safety (lead review, 2026-11-21): only the author's `ConVars` section is read, and from it
+//! only entries `repos::allowed` passes (a lowercase convar set to a number or true/false, never
+//! a console command), plus plain comment lines. Every other section of the author's file
+//! (`FileSystem`, `SearchPaths`, anything else) is ignored: the player's own file stays as it
+//! is around the merged `ConVars` body, so the addons folders and Sigil's slot folders keep
+//! loading. Custom presets from GitHub repositories (`repos::ID_PREFIX`) never get this mode;
+//! they go through the normal allowlisted apply only.
+//!
+//! The BEGIN and END marker lines sit above the file, so the page still knows what is applied,
+//! and the stock file is kept beside it (`gameinfo.gi.sigil-stock`) so Turn off puts it back
+//! exactly. The player's switches and convar edits do not apply in this mode.
 
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
+
+use regex::Regex;
 
 use super::{
     BACKUP_SUFFIX, Config, FOREIGN_MARKER, MARKER, Patched, brace_count, fetch, find_section_by_path,
@@ -20,8 +28,15 @@ use crate::util::write_atomic;
 /// The tag on the marker lines of a file applied as written.
 pub const TAG: &str = "sigil-perf as-written";
 
+const NOT_WHOLE: &str = "This config does not ship a whole gameinfo.gi, so it cannot be used as written.";
+const CUSTOM: &str = "A custom preset from a GitHub repository cannot be applied as written.";
+
 fn search_paths() -> [String; 2] {
     ["FileSystem".to_string(), "SearchPaths".to_string()]
+}
+
+fn convars() -> [String; 1] {
+    ["ConVars".to_string()]
 }
 
 /// The copy of the stock file taken before an as-written apply, beside `gameinfo.gi`.
@@ -33,12 +48,20 @@ pub fn stock_path(game_root: &Path) -> PathBuf {
 /// section. A ConVars block or a video-only config is not.
 pub fn is_whole_file(text: &str) -> bool {
     let content = text.replace("\r\n", "\n");
-    find_section_by_path(&content, &["ConVars".to_string()]).is_some()
-        && find_section_by_path(&content, &search_paths()).is_some()
+    find_section_by_path(&content, &convars()).is_some() && find_section_by_path(&content, &search_paths()).is_some()
 }
 
-/// The author's file for `config`, when the cache holds a whole one. Disk only.
+/// Whether `config` may be applied as written at all: never a custom preset.
+pub fn offered(config: &Config) -> bool {
+    !config.id().starts_with(super::repos::ID_PREFIX)
+}
+
+/// The author's file for `config`, when the cache holds a whole one and the config is not a
+/// custom preset. Disk only.
 pub fn author_file(data_dir: &Path, config: &Config) -> Option<String> {
+    if !offered(config) {
+        return None;
+    }
     let text = std::fs::read_to_string(fetch::file_path(data_dir, config.id(), "gameinfo.gi")).ok()?;
     is_whole_file(&text).then_some(text)
 }
@@ -48,42 +71,121 @@ pub fn is_applied(text: &str) -> bool {
     text.contains(TAG)
 }
 
-/// The author's file with the install's `SearchPaths` body and Sigil's marker lines on top.
-/// `current` is the install's file now; its line endings are kept.
-pub fn apply_text(current: &str, author: &str, config: &Config) -> Result<Patched> {
-    if current.contains(FOREIGN_MARKER) {
+fn entry_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        Regex::new(r#"^[ \t]*"?([A-Za-z0-9_.]+)"?[ \t]+(?:"([^"\n]*)"|([^\s"/]+))[ \t]*(//[^{}"\n]*)?$"#).unwrap()
+    })
+}
+
+/// The author's `ConVars` body cut down to what may be written: allowlisted entries and plain
+/// comment or blank lines. Nested blocks and anything else are dropped. Returns the kept lines
+/// and the keys they set.
+fn allowed_lines(author_body: &str) -> (Vec<String>, Vec<String>) {
+    let mut kept = Vec::new();
+    let mut keys = Vec::new();
+    let mut depth = 0usize;
+    for line in author_body.split('\n') {
+        let opens = line.matches('{').count();
+        let closes = line.matches('}').count();
+        if depth > 0 || opens > 0 || closes > 0 {
+            depth = (depth + opens).saturating_sub(closes);
+            continue;
+        }
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            kept.push(String::new());
+            continue;
+        }
+        if trimmed.starts_with("//") {
+            if !trimmed.contains('"') {
+                kept.push(line.trim_end().to_string());
+            }
+            continue;
+        }
+        if let Some(caps) = entry_re().captures(line) {
+            let key = caps.get(1).map_or("", |m| m.as_str());
+            let value = caps.get(2).or_else(|| caps.get(3)).map_or("", |m| m.as_str());
+            if super::repos::allowed(key, value) {
+                keys.push(key.to_string());
+                kept.push(line.trim_end().to_string());
+            }
+        }
+    }
+    while kept.first().is_some_and(String::is_empty) {
+        kept.remove(0);
+    }
+    while kept.last().is_some_and(String::is_empty) {
+        kept.pop();
+    }
+    (kept, keys)
+}
+
+/// The player's file with the author's allowlisted `ConVars` lines merged in and Sigil's marker
+/// lines on top. `base` is the install's stock file (no Sigil edits); its line endings are kept.
+/// The author's other sections are never used.
+pub fn apply_text(base: &str, author: &str, config: &Config) -> Result<Patched> {
+    if !offered(config) {
+        return Err(Error::msg(CUSTOM));
+    }
+    if base.contains(FOREIGN_MARKER) {
         return Err(Error::msg(
             "Grimoire has a performance config in this file. Turn it off there first.",
         ));
     }
-    let crlf = current.contains("\r\n");
-    let current = current.replace("\r\n", "\n");
+    let crlf = base.contains("\r\n");
+    let base = base.replace("\r\n", "\n");
     let mut author = author.replace("\r\n", "\n");
     if author.contains(MARKER) || author.contains(FOREIGN_MARKER) {
         author = remove_markers(&author);
     }
-    let Some((cur_start, cur_end)) = find_section_by_path(&current, &search_paths()) else {
+    if !is_whole_file(&author) {
+        return Err(Error::msg(NOT_WHOLE));
+    }
+    let (start, end) = find_section_by_path(&author, &convars()).ok_or_else(|| Error::msg(NOT_WHOLE))?;
+    let Some((cur_start, cur_end)) = find_section_by_path(&base, &convars()) else {
         return Err(Error::msg(
-            "Your gameinfo.gi has no SearchPaths section. Verify the game files in Steam, then try again.",
+            "Your gameinfo.gi has no ConVars section. Verify the game files in Steam, then try again.",
         ));
     };
-    let Some((start, end)) = find_section_by_path(&author, &search_paths()) else {
-        return Err(Error::msg("This config does not ship a whole gameinfo.gi, so it cannot be used as written."));
-    };
-    if find_section_by_path(&author, &["ConVars".to_string()]).is_none() {
-        return Err(Error::msg("This config does not ship a whole gameinfo.gi, so it cannot be used as written."));
+    let (lines, keys) = allowed_lines(&author[start..end]);
+    if keys.is_empty() {
+        return Err(Error::msg("This config sets no value Sigil can write as written."));
     }
-    let body = format!("{}{}{}", &author[..start], &current[cur_start..cur_end], &author[end..]);
-    if brace_count(&author[start..end]) % 2 != 0
-        || brace_count(&current[cur_start..cur_end]) % 2 != 0
-        || find_section_by_path(&body, &["ConVars".to_string()]).is_none()
-    {
+    let current_body = &base[cur_start..cur_end];
+    let indent = current_body
+        .split('\n')
+        .find(|line| !line.trim().is_empty())
+        .map(|line| line.chars().take_while(|c| *c == ' ' || *c == '\t').collect::<String>())
+        .unwrap_or_else(|| "\t\t".to_string());
+    // The player's own entries stay unless the author sets the same key.
+    let mut body: Vec<String> = current_body
+        .split('\n')
+        .filter(|line| {
+            entry_re()
+                .captures(line)
+                .and_then(|caps| caps.get(1))
+                .is_none_or(|key| !keys.iter().any(|k| k.eq_ignore_ascii_case(key.as_str())))
+        })
+        .map(str::to_string)
+        .collect();
+    while body.last().is_some_and(|line| line.trim().is_empty()) {
+        body.pop();
+    }
+    let closing_indent = current_body.rsplit('\n').next().unwrap_or_default().to_string();
+    body.push(format!("{indent}// {}, as written [{TAG}]", config.name()));
+    body.extend(lines.into_iter().map(|line| {
+        if line.is_empty() { line } else { format!("{indent}{}", line.trim_start()) }
+    }));
+    let merged = format!("{}\n{closing_indent}", body.join("\n"));
+    let text_body = format!("{}{}{}", &base[..cur_start], merged, &base[cur_end..]);
+    if brace_count(&text_body) != brace_count(&base) || find_section_by_path(&text_body, &convars()).is_none() {
         return Err(Error::msg("The change would unbalance gameinfo.gi, so nothing was written."));
     }
     let commit = &config.commit[..config.commit.len().min(12)];
     let mut text = format!(
         "// ==== Sigil Performance Config BEGIN (preset={} v{} @{commit}) ====\n\
-         // {}: the author's own file, as written, from {} ({}). SearchPaths are kept from your install. [{TAG}]\n\
+         // {}: the author's ConVars lines, as written, from {} ({}). Only plain values are used; the rest of the file is yours. [{TAG}]\n\
          // turn it off in Sigil > Performance to put your stock file back [{TAG}]\n\
          // ==== Sigil Performance Config END ====\n",
         config.id(),
@@ -92,8 +194,8 @@ pub fn apply_text(current: &str, author: &str, config: &Config) -> Result<Patche
         config.credit(),
         config.source.license,
     );
-    text.push_str(&body);
-    let written = super::convar_values(&text).len();
+    text.push_str(&text_body);
+    let written = keys.len();
     Ok(Patched {
         text: if crlf { text.replace('\n', "\r\n") } else { text },
         skipped: Vec::new(),
@@ -103,20 +205,25 @@ pub fn apply_text(current: &str, author: &str, config: &Config) -> Result<Patche
 
 /// GAME WRITE. Apply `config` as written. Called only from the "Apply as written" confirm.
 /// The stock file (Sigil's own edits taken out) is kept beside it first, unless the file on
-/// disk is already an as-written apply, whose stock copy stays.
+/// disk is already an as-written apply, whose stock copy stays and is the base again.
 pub fn apply_to_install(game_root: &Path, data_dir: &Path, config: &Config) -> Result<Patched> {
-    let author = author_file(data_dir, config)
-        .ok_or_else(|| Error::msg("This config does not ship a whole gameinfo.gi, so it cannot be used as written."))?;
+    if !offered(config) {
+        return Err(Error::msg(CUSTOM));
+    }
+    let author = author_file(data_dir, config).ok_or_else(|| Error::msg(NOT_WHOLE))?;
     let path = gameinfo_path(game_root);
     let current = std::fs::read_to_string(&path)?;
-    let patched = apply_text(&current, &author, config)?;
     let stock = stock_path(game_root);
+    let base = if is_applied(&current) {
+        std::fs::read_to_string(&stock).map_err(|_| {
+            Error::msg("The stock copy of gameinfo.gi is missing. Verify the game files in Steam, then try again.")
+        })?
+    } else {
+        super::remove_text(&current)
+    };
+    let patched = apply_text(&base, &author, config)?;
     if !is_applied(&current) {
-        write_atomic(&stock, super::remove_text(&current).as_bytes())?;
-    } else if !stock.exists() {
-        return Err(Error::msg(
-            "The stock copy of gameinfo.gi is missing. Verify the game files in Steam, then try again.",
-        ));
+        write_atomic(&stock, base.as_bytes())?;
     }
     write_atomic(&path, patched.text.as_bytes())?;
     Ok(patched)
@@ -163,15 +270,41 @@ mod tests {
     }
 
     #[test]
-    fn keeps_the_authors_text_and_the_installs_search_paths() {
+    fn keeps_the_authors_lines_and_the_installs_search_paths() {
         let patched = apply_text(CURRENT, AUTHOR, &config()).unwrap();
         let text = patched.text.replace("\r\n", "\n");
         assert!(patched.text.contains("\r\n"), "the install's line endings are kept");
-        assert!(text.contains("// my favourite section"));
         assert!(text.contains("r_shadows \"0\"   // no shadows"));
+        assert!(!text.contains("r_shadows \"1\""), "the author's value replaces the player's");
         assert!(text.contains("Game citadel/addons\n\t\t\tGame citadel/sigil-addons2"));
+        assert!(!text.contains("Tuned by an author"), "nothing outside ConVars is taken");
         assert!(is_applied(&text));
         assert!(matches!(crate::performance::applied(&text), crate::performance::Applied::Config { .. }));
+    }
+
+    /// Lead review: an author's extra SearchPaths or FileSystem block and a value outside the
+    /// allowlist never reach the install.
+    #[test]
+    fn only_allowlisted_convars_are_taken() {
+        let author = "\"GameInfo\"\n{\n\tFileSystem\n\t{\n\t\tSearchPaths\n\t\t{\n\t\t\tGame evil/folder\n\t\t\tGame citadel\n\t\t}\n\t}\n\tConVars\n\t{\n\t\tr_shadows \"0\"\n\t\tsv_cheats \"hello\"\n\t\texec_this \"1\"\n\t\tbind \"x\"\n\t\tSearchPaths\n\t\t{\n\t\t\tGame evil/inner\n\t\t}\n\t}\n}\n";
+        let patched = apply_text(CURRENT, author, &config()).unwrap();
+        let text = patched.text;
+        assert!(text.contains("r_shadows \"0\""));
+        for bad in ["evil", "sv_cheats", "exec_this", "bind"] {
+            assert!(!text.contains(bad), "{bad} must not be written");
+        }
+        assert_eq!(text.matches("SearchPaths").count(), 1);
+    }
+
+    #[test]
+    fn a_custom_preset_is_never_applied_as_written() {
+        let mut custom = config();
+        let mut def = custom.def.clone();
+        def.id = "custom-someone-fps";
+        custom.def = Box::leak(Box::new(def));
+        assert!(!offered(&custom));
+        assert!(apply_text(CURRENT, AUTHOR, &custom).is_err());
+        assert!(author_file(Path::new("/nonexistent"), &custom).is_none());
     }
 
     #[test]
