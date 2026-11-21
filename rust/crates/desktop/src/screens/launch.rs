@@ -245,7 +245,7 @@ pub fn view(s: &State, u: &Ui) -> El {
             Some(crate::notify::feedback::button(u, "launch-error-feedback", tr("Launch status could not be read"), error)),
         )
     } else {
-        let mut body = col().w_full().max_w(COLUMN_W).gap(24.0).child(
+        let mut game = col().w_full().gap(24.0).child(
             col()
                 .w_full()
                 .gap(8.0)
@@ -266,9 +266,20 @@ pub fn view(s: &State, u: &Ui) -> El {
                 .child(game_panel(s, u, read, &process, running)),
         );
         if let Some(crash) = read.and_then(|read| read.crash.as_ref()) {
-            body = body.child(crash_card(s, u, crash));
+            game = game.child(crash_card(s, u, crash));
         }
-        body.child(downloads::section(s, u))
+        // Full width: the game and its crash on the left, downloads on the right, one top
+        // edge. Narrower: one reading column.
+        if crate::ui::fit() == crate::ui::Fit::Full {
+            row()
+                .w_full()
+                .gap(24.0)
+                .items_start()
+                .child(game.grow(1.0).min_w(0.0))
+                .child(col().grow(1.0).min_w(0.0).child(downloads::section(s, u)))
+        } else {
+            game.max_w(COLUMN_W).child(downloads::section(s, u))
+        }
     };
 
     col()
@@ -298,7 +309,7 @@ pub fn view(s: &State, u: &Ui) -> El {
         )
 }
 
-/// The reading column: launch rows, the crash card and downloads read better short.
+/// The reading column when the page is too narrow for two.
 const COLUMN_W: f32 = 720.0;
 /// One Game panel row, a crash suspect row and a download row: all the same 56 points.
 const PANEL_ROW_H: f32 = 56.0;

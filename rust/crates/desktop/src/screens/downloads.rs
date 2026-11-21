@@ -229,11 +229,7 @@ fn head(u: &Ui, queue: &queue::Queue, title: bool) -> El {
     let meta = if active == 0 {
         String::new()
     } else if queue.total_bytes() > 0 {
-        format!(
-            "{} · {}",
-            fill(tr("{} in the queue"), &[&active.to_string()]),
-            fill(tr("{} of {}"), &[&queue::size(queue.done_bytes()), &queue::size(queue.total_bytes())])
-        )
+        fill(tr("{} of {}"), &[&queue::size(queue.done_bytes()), &queue::size(queue.total_bytes())])
     } else {
         fill(tr("{} in the queue"), &[&active.to_string()])
     };
