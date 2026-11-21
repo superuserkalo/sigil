@@ -732,6 +732,8 @@ pub fn dialog(s: &State, u: &Ui) -> Option<El> {
 
 /// `autoexec-convars`: the catalogue open on a search with one convar in edit.
 pub fn stage_scene(s: &mut State) {
+    // The catalogue lives in the right column's All convars tab.
+    s.autoexec.all_convars = true;
     let c = &mut s.autoexec.convars;
     c.catalog = Some(sample_catalog());
     c.game = core::parse_vcfg("\"convars\"\n{\n\t\"fps_max\"\t\t\"240\"\n}\n");
@@ -751,6 +753,7 @@ pub fn stage_preview(s: &mut State) {
 
 /// `next-convars-empty`: no cached list yet, with the button that fetches it.
 pub fn stage_empty(s: &mut State) {
+    s.autoexec.all_convars = true;
     s.autoexec.convars.catalog = Some(Catalog::default());
 }
 

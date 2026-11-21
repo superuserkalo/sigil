@@ -46,11 +46,13 @@ fn tr(text: &str) -> &str {
 }
 
 /// A command row, a comment heading and a blank line, in points. The drag math walks these.
-const COMMAND_H: f32 = 40.0;
-const COMMENT_H: f32 = 44.0;
-const BLANK_H: f32 = 12.0;
+const COMMAND_H: f32 = 32.0;
+const COMMENT_H: f32 = 32.0;
+const BLANK_H: f32 = 8.0;
 /// The right end of a block: the preset name at rest, the row's actions on hover.
 const TRAIL_W: f32 = 168.0;
+/// The right column: premade commands and the convar catalogue.
+const RIGHT_W: f32 = 360.0;
 
 const DESCRIPTION: &str = "Console commands the game runs every time it starts.";
 
@@ -154,6 +156,12 @@ pub struct View {
     pub launch: Launch,
     /// The console variable catalogue and game presets (`autoexec_convars.rs`).
     pub convars: crate::screens::autoexec_convars::Convars,
+    /// The right column's tab: false Premade, true All convars.
+    pub all_convars: bool,
+    /// The premade category menu is open.
+    pub category_open: bool,
+    /// The removed-commands popover from the status row is open.
+    pub flags_open: bool,
 }
 
 /// The launch options section: the saved value, the field, and what Steam holds.
@@ -204,6 +212,9 @@ impl Default for View {
             scratch: TextEdit::new(""),
             launch: Launch::default(),
             convars: Default::default(),
+            all_convars: false,
+            category_open: false,
+            flags_open: false,
         }
     }
 }
@@ -451,39 +462,119 @@ pub fn drop_index(heights: &[f32], from: usize, dy: f32) -> usize {
 
 pub fn view(s: &State, u: &Ui) -> El {
     let v = &s.autoexec;
+    let ready = s.game_detected && s.game_root.is_some() && v.loaded && v.error.is_none();
+    let dirty = ready && v.dirty(&s.autoexec_original);
+    let empty = v.blocks.is_empty();
+    let text_now = v.text();
+    let copied = v.copied.as_deref() == Some(text_now.as_str()) && !empty;
+    let off = |e: El, off: bool| e.disabled(off).opacity(if off { 0.45 } else { 1.0 });
 
-    let mut actions = row().gap(8.0).center_y();
-    if s.game_detected && s.game_root.is_some() {
-        actions = actions
-            .child(
-                u.icon_action(&icons::SQUARE_PEN, tr("Edit in editor"), ActionKind::Secondary)
-                    .key("autoexec-edit-external")
-                    .cursor(rune::Cursor::Pointer)
-                    .on_press(open_in_editor),
+    // Every action is drawn in every state; one that does not apply is disabled. Save is
+    // Secondary and always there, enabled once something changed.
+    let actions = vec![
+        off(
+            u.icon_button(if copied { &icons::CHECK } else { &icons::COPY }, tr(if copied { "Copied" } else { "Copy all" }))
+                .key("autoexec-copy")
+                .cursor(rune::Cursor::Pointer)
+                .on_press_tx(|st: &mut State, tx: &mut Tx| {
+                    if st.autoexec.blocks.is_empty() {
+                        return;
+                    }
+                    let all = st.autoexec.text();
+                    tx.copy(all.clone());
+                    st.autoexec.copied = Some(all);
+                }),
+            !ready || empty,
+        ),
+        off(
+            u.icon_button(&icons::SQUARE_PEN, tr("Edit in editor"))
+                .key("autoexec-edit-external")
+                .cursor(rune::Cursor::Pointer)
+                .on_press(open_in_editor),
+            !ready,
+        ),
+        off(
+            u.icon_button(&icons::FOLDER_OPEN, tr("Open"))
+                .key("autoexec-open")
+                .cursor(rune::Cursor::Pointer)
+                .on_press(reveal_autoexec),
+            !ready,
+        ),
+        off(
+            u.icon_button(&icons::TRASH_2, tr("Clear all"))
+                .key("autoexec-clear")
+                .cursor(rune::Cursor::Pointer)
+                .on_press(|st: &mut State| {
+                    if !st.autoexec.blocks.is_empty() {
+                        st.autoexec.confirm_clear = true;
+                    }
+                }),
+            !ready || empty,
+        ),
+        off(
+            u.action(tr("Save"), ActionKind::Secondary)
+                .ml(8.0)
+                .key("autoexec-save")
+                .cursor(rune::Cursor::Pointer)
+                .on_press(|st: &mut State| {
+                    if st.autoexec.loaded {
+                        st.autoexec.conflict = None;
+                        st.autoexec.confirm_save = true;
+                    }
+                }),
+            !dirty,
+        ),
+    ];
+
+    // Status row: the dirty mark, the last result, and the removed-commands chip.
+    let mut status = Vec::new();
+    if dirty {
+        status.push(
+            row()
+                .key("autoexec-dirty")
+                .gap(6.0)
+                .center_y()
+                .child(u.mark(u.amber))
+                .child(text(tr("Unsaved changes")).font(SMALL).color(u.prose)),
+        );
+    }
+    if let Some(last) = &v.last {
+        let lower = last.to_lowercase();
+        let bad = ["not ", "could not", "failed", "nothing", "refus", "error"]
+            .iter()
+            .any(|word| lower.contains(word));
+        status.push(
+            u.status_line(
+                if bad { &icons::TRIANGLE_ALERT } else { &icons::CHECK },
+                last,
+                if bad { crate::ui::Tone::Warn } else { crate::ui::Tone::Quiet },
             )
-            .child(
-                u.icon_action(&icons::FOLDER_OPEN, tr("Open"), ActionKind::Secondary)
-                    .key("autoexec-open")
-                    .cursor(rune::Cursor::Pointer)
-                    .on_press(reveal_autoexec),
-            );
+            .key("autoexec-result"),
+        );
+    }
+    if ready && let Some(label) = crate::screens::autoexec_flags::summary(s) {
+        status.push(
+            u.state_chip(&icons::TRIANGLE_ALERT, &label, crate::ui::Tone::Warn)
+                .key("autoexec-flags-chip")
+                .hover(u.over.alpha(0.10))
+                .focusable(true)
+                .role("button")
+                .cursor(rune::Cursor::Pointer)
+                .on_press(|st: &mut State| st.autoexec.flags_open = !st.autoexec.flags_open),
+        );
     }
 
-    let mut page = col()
-        .key("autoexec-page")
+    let top = col()
         .w_full()
         .px(PAGE_X)
         .pt(PAGE_TOP)
-        .pb(48.0)
-        .gap(16.0)
-        .child(u.page_head("", tr("Autoexec"), tr(DESCRIPTION), Some(actions)));
+        .pb(16.0)
+        .gap(8.0)
+        .child(u.page_toolbar(u.page_title(tr("Autoexec")).help(tr(DESCRIPTION)), Vec::new(), None, actions))
+        .child(u.status_row("autoexec-status", status, None));
 
-    if let Some(last) = &v.last {
-        page = page.child(result_line(u, last));
-    }
-
-    if !s.game_detected {
-        page = page.child(u.empty_state(
+    let body = if !s.game_detected {
+        col().w_full().px(PAGE_X).child(u.empty_state(
             "",
             tr("Deadlock was not found"),
             tr("Set the game folder in Settings to edit autoexec.cfg."),
@@ -492,33 +583,117 @@ pub fn view(s: &State, u: &Ui) -> El {
                     .cursor(rune::Cursor::Pointer)
                     .on_press(|st: &mut State| st.go(Screen::Settings)),
             ),
-        ));
+        ).pt(0.0))
     } else if let Some(error) = &v.error {
-        page = page.child(u.empty_state("", tr("autoexec.cfg could not be read"), error, None));
-    } else if v.loaded {
-        page = page
-            .child(premade(s, u))
-            .child(el().h(8.0))
-            .child(editor(s, u))
-            .child(el().h(8.0))
-            .child(crate::screens::autoexec_convars::section(s, u))
-            .child(el().h(8.0))
-            .child(launch_section(s, u));
-    }
+        col().w_full().px(PAGE_X).child(u.empty_state("", tr("autoexec.cfg could not be read"), error, None).pt(0.0))
+    } else {
+        // Two columns: the file on the left (its own scroll), the premade commands and the
+        // convar catalogue on the right (its own scroll). A category change on the right never
+        // moves the editor.
+        let left = col()
+            .key("autoexec-left-scroll")
+            .grow(1.0)
+            .min_w(360.0)
+            .h_full()
+            .scroll(ScrollSpec { stick_bottom: false })
+            .child(
+                col()
+                    .key("autoexec-page")
+                    .w_full()
+                    .pl(PAGE_X)
+                    .pr(8.0)
+                    .pb(32.0)
+                    .gap(24.0)
+                    .child(if v.loaded { editor(s, u) } else { loading_rows(u) })
+                    .children(v.loaded.then(|| launch_section(s, u))),
+            );
+        let right = col()
+            .key("autoexec-right")
+            .w(RIGHT_W)
+            .h_full()
+            .mr(PAGE_X)
+            .gap(8.0)
+            .child(right_tabs(s, u))
+            .child(
+                col()
+                    .key("autoexec-right-scroll")
+                    .w_full()
+                    .grow(1.0)
+                    .min_h(0.0)
+                    .scroll(ScrollSpec { stick_bottom: false })
+                    .child(if v.all_convars {
+                        crate::screens::autoexec_convars::section(s, u)
+                    } else {
+                        premade(s, u)
+                    }),
+            );
+        row().key("autoexec-body").w_full().h_full().gap(24.0).child(left).child(right)
+    };
 
     col()
-        .key("autoexec-scroll")
+        .key("autoexec-frame")
         .w_full()
         .h_full()
         .min_h(0.0)
-        .scroll(ScrollSpec {
-            stick_bottom: false,
-        })
-        .child(page)
+        .child(top)
+        .child(el().w_full().grow(1.0).min_h(0.0).child(body))
+}
+
+/// Six 32 point skeleton rows while the file loads.
+fn loading_rows(u: &Ui) -> El {
+    let mut c = col().key("autoexec-loading").w_full();
+    for _ in 0..6 {
+        c = c.child(
+            row()
+                .w_full()
+                .h(COMMAND_H)
+                .center_y()
+                .border_sides([0.0, 0.0, 1.0, 0.0], u.hair)
+                .child(el().w(160.0).h(12.0).radius(crate::ui::r(2.0)).fill(u.hover)),
+        );
+    }
+    c
+}
+
+/// Premade or All convars, as one segmented box.
+fn right_tabs(s: &State, u: &Ui) -> El {
+    let seg = |key: &str, label: &str, on: bool, value: bool| {
+        row()
+            .key(key.to_string())
+            .grow(1.0)
+            .h(28.0)
+            .center()
+            .radius(crate::ui::r(4.0))
+            .fill(if on { u.raised } else { rune::Color::TRANSPARENT })
+            .border(1.0, if on { u.hair_strong } else { rune::Color::TRANSPARENT })
+            .hover(if on { u.raised } else { u.hover })
+            .focusable(true)
+            .role("tab")
+            .checked(on)
+            .label(label.to_string())
+            .cursor(rune::Cursor::Pointer)
+            .on_press(move |st: &mut State| st.autoexec.all_convars = value)
+            .child(text(label.to_string()).font(BODY_MED).color(if on { u.ink } else { u.muted }).a11y_hidden())
+    };
+    row()
+        .key("autoexec-right-tabs")
+        .role("tablist")
+        .w_full()
+        .h(32.0)
+        .padding(2.0)
+        .gap(2.0)
+        .radius(crate::ui::r(4.0))
+        .fill(u.well)
+        .border(1.0, u.hair)
+        .child(seg("autoexec-right-premade", tr("Premade"), !s.autoexec.all_convars, false))
+        .child(seg("autoexec-right-convars", tr("All convars"), s.autoexec.all_convars, true))
 }
 
 /// Mounted at the root so the save and clear confirms overlay the shell.
 pub fn dialog(s: &State, u: &Ui) -> Option<El> {
+    if s.screen == Screen::Autoexec && (s.autoexec.category_open || s.autoexec.flags_open) {
+        return Some(popover_layer(s, u));
+    }
     if s.autoexec.confirm_save {
         Some(save_layer(s, u))
     } else if s.autoexec.confirm_clear {
@@ -528,108 +703,113 @@ pub fn dialog(s: &State, u: &Ui) -> Option<El> {
     }
 }
 
-/// The outcome of the last save, as one quiet line.
-fn result_line(u: &Ui, message: &str) -> El {
-    let lower = message.to_lowercase();
-    let bad = ["not ", "could not", "failed", "nothing", "refus", "error"]
-        .iter()
-        .any(|word| lower.contains(word));
-    row()
-        .key("autoexec-result")
-        .w_full()
-        .gap(8.0)
-        .items_start()
-        .child(
-            el().pt(2.0).child(
-                icon(
-                    if bad {
-                        &icons::TRIANGLE_ALERT
-                    } else {
-                        &icons::CHECK
-                    },
-                    14.0,
-                )
-                .color(if bad { u.amber } else { u.muted })
-                .a11y_hidden(),
-            ),
-        )
-        .child(
-            text(message.to_string())
-                .font(BODY)
-                .color(u.muted)
-                .grow(1.0)
-                .min_w(0.0)
-                .wrap(),
-        )
-}
-
 // --- premade -------------------------------------------------------------------------------
 
 fn premade(s: &State, u: &Ui) -> El {
     let catalog = core::autoexec_presets();
     let selected = s.autoexec.category.min(catalog.len().saturating_sub(1));
+    let name = catalog.get(selected).map(|c| c.name.clone()).unwrap_or_default();
+    let open = s.autoexec.category_open;
+    let picker = u
+        .select_box(&name, 160.0)
+        .key("autoexec-category")
+        .fill(if open { u.selected } else { u.well })
+        .on_press(|st: &mut State| st.autoexec.category_open = !st.autoexec.category_open);
 
-    let mut tabs = row().key("autoexec-tabs").gap(4.0).center_y();
-    for (index, category) in catalog.iter().enumerate() {
-        let on = index == selected;
-        tabs = tabs.child(
-            row()
-                .key(format!("autoexec-tab-{}", category.id))
-                .h(28.0)
-                .px(10.0)
-                .center()
-                .radius(crate::ui::r(6.0))
-                .fill(if on { u.selected } else { rune::Color::TRANSPARENT })
-                .hover(u.hover)
-                .focusable(true)
-                .role("tab")
-                .checked(on)
-                .label(category.name.clone())
-                .cursor(rune::Cursor::Pointer)
-                .on_press(move |st: &mut State| st.autoexec.category = index)
-                .child(
-                    text(category.name.clone())
-                        .font(BODY_MED)
-                        .color(if on { u.ink } else { u.muted })
-                        .a11y_hidden(),
-                ),
-        );
-    }
-
-    let mut grid = col().key("autoexec-presets").w_full();
+    let mut list = col().key("autoexec-presets").w_full();
     if let Some(category) = catalog.get(selected) {
-        for pair in category.presets.chunks(2) {
-            let mut line = row().w_full().gap(32.0);
-            for preset in pair {
-                line = line.child(preset_row(s, u, preset));
-            }
-            if pair.len() == 1 {
-                line = line.child(el().grow(1.0));
-            }
-            grid = grid.child(line);
+        for preset in &category.presets {
+            list = list.child(preset_row(s, u, preset));
         }
     }
-
     col()
         .key("autoexec-premade")
         .w_full()
-        .gap(12.0)
-        .child(
-            row()
-                .w_full()
-                .h(32.0)
-                .gap(16.0)
-                .center_y()
-                .child(u.section(tr("Premade commands")))
-                .child(spacer())
-                .child(tabs),
-        )
-        .child(grid)
+        .gap(8.0)
+        .child(row().w_full().h(32.0).center_y().child(picker))
+        .child(list)
+}
+
+/// The category menu and the removed-commands popover, mounted at the root.
+fn popover_layer(s: &State, u: &Ui) -> El {
+    let close = |st: &mut State| {
+        st.autoexec.category_open = false;
+        st.autoexec.flags_open = false;
+    };
+    let shell = |key: &str, w: f32| {
+        col()
+            .key(key.to_string())
+            .w(w)
+            .padding(4.0)
+            .radius(crate::ui::r(8.0))
+            .fill(u.raised.mix(u.over, 0.04).alpha(1.0))
+            .border(1.0, u.hair_strong)
+            .shadow(4.0, 12.0, rune::Color::BLACK.alpha(if u.light { 0.12 } else { 0.35 }))
+            .on_key(move |st: &mut State, ev: &KeyEvent, _| {
+                if ev.key == Key::Escape {
+                    close(st);
+                    true
+                } else {
+                    false
+                }
+            })
+    };
+    let mut layer = el()
+        .key("autoexec-popover-layer")
+        .absolute(0.0, 0.0)
+        .w_full()
+        .h_full()
+        .child(el().absolute(0.0, 0.0).w_full().h_full().on_press(close));
+    if s.autoexec.category_open {
+        let catalog = core::autoexec_presets();
+        let mut menu = shell("autoexec-category-menu", 200.0)
+            .role("listbox")
+            .anchored("autoexec-category", rune::Side::Bottom, rune::Align::Start, 4.0);
+        for (index, category) in catalog.iter().enumerate() {
+            let on = index == s.autoexec.category;
+            menu = menu.child(
+                row()
+                    .key(format!("autoexec-tab-{}", category.id))
+                    .w_full()
+                    .h(32.0)
+                    .px(8.0)
+                    .gap(8.0)
+                    .center_y()
+                    .radius(crate::ui::r(4.0))
+                    .hover(u.hover)
+                    .focusable(true)
+                    .role("option")
+                    .checked(on)
+                    .label(category.name.clone())
+                    .cursor(rune::Cursor::Pointer)
+                    .on_press(move |st: &mut State| {
+                        st.autoexec.category = index;
+                        st.autoexec.category_open = false;
+                    })
+                    .child(text(category.name.clone()).font(BODY).color(if on { u.ink } else { u.prose }).grow(1.0).a11y_hidden())
+                    .child(el().size(12.0, 12.0).child(if on {
+                        icon(&icons::CHECK, 12.0).color(u.ink).a11y_hidden()
+                    } else {
+                        el()
+                    })),
+            );
+        }
+        layer = layer.child(menu);
+    } else if let Some(notice) = crate::screens::autoexec_flags::notice(s, u) {
+        layer = layer.child(
+            shell("autoexec-flags-popover", 560.0)
+                .padding(8.0)
+                .anchored("autoexec-flags-chip", rune::Side::Bottom, rune::Align::Start, 4.0)
+                .child(notice),
+        );
+    }
+    layer
 }
 
 fn preset_row(s: &State, u: &Ui, preset: &'static core::AutoexecPreset) -> El {
     let placement = s.autoexec.placement(&preset.command);
     let present = matches!(placement, Placement::Present(_));
+    let replaces = matches!(placement, Placement::Replace(_));
     let (detail, label) = match placement {
         Placement::Present(_) => (
             preset.description.clone(),
@@ -652,32 +832,28 @@ fn preset_row(s: &State, u: &Ui, preset: &'static core::AutoexecPreset) -> El {
 
     let mut r = row()
         .key(format!("autoexec-preset-{}", preset.id))
-        .grow(1.0)
-        .min_w(0.0)
-        .h(56.0)
+        .w_full()
+        .h(48.0)
         .gap(12.0)
         .center_y()
         .border_sides([0.0, 0.0, 1.0, 0.0], u.hair)
         .label(label)
+        .help(preset.description.clone())
         .child(
             col()
                 .grow(1.0)
                 .min_w(0.0)
-                .gap(2.0)
                 .child(
                     text(preset.name.clone())
                         .font(BODY_MED)
-                        .color(if present { u.muted } else { u.ink })
+                        .color(u.ink)
                         .truncate(),
                 )
-                .child(text(detail).font(SMALL).color(u.faint).truncate()),
-        )
-        .child(
-            text(preset.command.clone())
-                .font(MONO)
-                .color(u.faint)
-                .max_w(220.0)
-                .truncate(),
+                .child(if replaces {
+                    text(detail).font(SMALL).color(u.muted).truncate()
+                } else {
+                    text(preset.command.clone()).font(MONO).color(u.muted).truncate()
+                }),
         )
         .child(
             el().size(28.0, 28.0).center().child(
@@ -702,80 +878,26 @@ fn preset_row(s: &State, u: &Ui, preset: &'static core::AutoexecPreset) -> El {
 
 fn editor(s: &State, u: &Ui) -> El {
     let v = &s.autoexec;
-    let dirty = v.dirty(&s.autoexec_original);
     let empty = v.blocks.is_empty();
     let count = v.command_count();
-    let text_now = v.text();
-    let copied = v.copied.as_deref() == Some(text_now.as_str()) && !empty;
 
-    let mut tools = row().gap(8.0).center_y();
-    if dirty {
-        tools = tools.child(text(tr("Unsaved changes")).font(SMALL).color(u.muted));
-    }
-    tools = tools
-        .child(
-            u.icon_action(&icons::PLUS, tr("Add custom"), ActionKind::Ghost)
-                .key("autoexec-add")
-                .cursor(rune::Cursor::Pointer)
-                .on_press(|st: &mut State| {
-                    st.autoexec.insert_after(None);
-                }),
+    let head = u
+        .section_head(
+            tr("Your commands"),
+            Some(count),
+            Some(
+                u.icon_action(&icons::PLUS, tr("Add"), ActionKind::Ghost)
+                    .h(24.0)
+                    .pl(6.0)
+                    .pr(8.0)
+                    .key("autoexec-add")
+                    .cursor(rune::Cursor::Pointer)
+                    .on_press(|st: &mut State| {
+                        st.autoexec.insert_after(None);
+                    }),
+            ),
         )
-        .child(
-            u.action(tr("Clear all"), ActionKind::Ghost)
-                .key("autoexec-clear")
-                .disabled(empty)
-                .opacity(if empty { 0.45 } else { 1.0 })
-                .cursor(rune::Cursor::Pointer)
-                .on_press(|st: &mut State| {
-                    if !st.autoexec.blocks.is_empty() {
-                        st.autoexec.confirm_clear = true;
-                    }
-                }),
-        )
-        .child(
-            u.icon_action(
-                if copied { &icons::CHECK } else { &icons::COPY },
-                tr(if copied { "Copied" } else { "Copy all" }),
-                ActionKind::Ghost,
-            )
-            .key("autoexec-copy")
-            .disabled(empty)
-            .opacity(if empty { 0.45 } else { 1.0 })
-            .cursor(rune::Cursor::Pointer)
-            .on_press_tx(|st: &mut State, tx: &mut Tx| {
-                if st.autoexec.blocks.is_empty() {
-                    return;
-                }
-                let all = st.autoexec.text();
-                tx.copy(all.clone());
-                st.autoexec.copied = Some(all);
-            }),
-        );
-    if dirty {
-        tools = tools.child(
-            u.action(tr("Save"), ActionKind::Primary)
-                .key("autoexec-save")
-                .cursor(rune::Cursor::Pointer)
-                .on_press(|st: &mut State| {
-                    if st.autoexec.loaded {
-                        st.autoexec.conflict = None;
-                        st.autoexec.confirm_save = true;
-                    }
-                }),
-        );
-    }
-
-    let head = row()
-        .key("autoexec-editor-head")
-        .w_full()
-        .h(32.0)
-        .gap(8.0)
-        .center_y()
-        .child(u.section(tr("Your commands")))
-        .child(text(count.to_string()).font(BODY).color(u.faint))
-        .child(spacer())
-        .child(tools);
+        .key("autoexec-editor-head");
 
     let mut list = col().key("autoexec-blocks").w_full();
     if empty {
@@ -804,12 +926,7 @@ fn editor(s: &State, u: &Ui) -> El {
     }
     list = list.child(add_row(u));
 
-    let mut editor = col().key("autoexec-editor").w_full().gap(8.0).child(head);
-    // Commands the game no longer has, with a fix for each rename.
-    if let Some(flags) = crate::screens::autoexec_flags::notice(s, u) {
-        editor = editor.child(flags);
-    }
-    editor.child(list)
+    col().key("autoexec-editor").w_full().gap(8.0).child(head).child(list)
 }
 
 /// The quiet last row: a click adds a command at the end.

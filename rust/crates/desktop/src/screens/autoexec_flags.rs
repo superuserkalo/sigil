@@ -81,6 +81,23 @@ pub fn row_mark(u: &Ui, id: u64, line: &str) -> Option<El> {
 
 /// The notice above the commands: every line the game no longer reads, with a fix for each
 /// rename. `None` when there is nothing to say.
+/// The status row's chip text: "1 command the game no longer has", or None when every command
+/// is current.
+pub fn summary(s: &State) -> Option<String> {
+    let n: usize = s
+        .autoexec
+        .blocks
+        .iter()
+        .filter(|block| block.kind == crate::screens::autoexec::BlockKind::Command)
+        .map(|block| line_findings(&block.edit.text).len())
+        .sum();
+    match n {
+        0 => None,
+        1 => Some(tr("1 command the game no longer has").to_string()),
+        n => Some(fill(tr("{} commands the game no longer has"), &[&n.to_string()])),
+    }
+}
+
 pub fn notice(s: &State, u: &Ui) -> Option<El> {
     let mut rows: Vec<(u64, CommandFinding)> = Vec::new();
     for block in &s.autoexec.blocks {

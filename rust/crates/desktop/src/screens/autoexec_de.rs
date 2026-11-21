@@ -6,6 +6,9 @@ use std::collections::HashMap;
 use std::sync::OnceLock;
 
 pub const DE: &[(&str, &str)] = &[
+    ("Premade", "Vorgefertigt"),
+    ("Add", "Hinzufügen"),
+    ("All convars", "Alle Konsolenvariablen"),
     ("Add custom", "Eigenen hinzufügen"),
     ("Autoexec", "Autoexec"),
     ("Cancel", "Abbrechen"),
