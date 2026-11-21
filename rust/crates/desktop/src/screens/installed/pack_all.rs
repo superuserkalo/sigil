@@ -1,6 +1,6 @@
 //! Pack all enabled into N (DMM's unreleased mod compression, behaviour only): every enabled
-//! mod in slots 01 to 99 is merged into two to eight shared VPKs, neighbouring slots together so
-//! the load order holds, and each pack is switched on. The sources stay on disk switched off;
+//! mod, past slot 99 too, is merged into two to eight shared VPKs, neighbouring slots together so
+//! the load order holds, and each pack is switched on. A failure puts every mod back. The sources stay on disk switched off;
 //! each pack appears in the merge list and Unmerge takes it apart again. Core:
 //! `deadlock_core::mod_merge::pack_all`. Game install write, only from the dialog's button.
 
@@ -30,7 +30,7 @@ fn enabled(s: &State) -> Vec<MergeInput> {
         .addons
         .addons
         .iter()
-        .filter(|addon| addon.enabled && (1..=99).contains(&addon.slot))
+        .filter(|addon| addon.enabled)
         .map(|addon| MergeInput { slot: addon.slot, name: super::display_name(s, addon) })
         .collect();
     mods.sort_by_key(|m| m.slot);
@@ -53,10 +53,11 @@ fn run(st: &mut State) {
     let packs = st.installed.tools.pack_all.packs;
     let workspace = crate::data::workspace_dir();
     let store = mod_merge::merged_path(&crate::data::data_dir());
+    let trash = deadlock_core::trash::trash_root(&crate::data::data_dir());
     let wake = st.wake.clone();
     st.installed.tools.pack_all.error = None;
     st.installed.tools.pack_all.job.start(wake, move || {
-        let (made, error) = mod_merge::pack_all(&game_root, &workspace, &store, &mods, packs, true);
+        let (made, error) = mod_merge::pack_all(&game_root, &workspace, &trash, &store, &mods, packs, true);
         Ok((made, error.map(|error| error.to_string())))
     });
 }
@@ -118,7 +119,7 @@ pub fn dialog(s: &State, u: &Ui) -> Option<El> {
                 .center_y()
                 .child(text(fill(tr("Pack {}"), &[&(index + 1).to_string()])).font(BODY).color(u.ink).w(64.0))
                 .child(
-                    text(fill(tr("{} mods, slots {} to {}"), &[&group.len().to_string(), &format!("{first:02}"), &format!("{last:02}")]))
+                    text(fill(tr("{} mods, slots {} to {}"), &[&group.len().to_string(), &deadlock_core::addons::slot_label(first), &deadlock_core::addons::slot_label(last)]))
                         .font(SMALL)
                         .color(u.muted)
                         .truncate()
