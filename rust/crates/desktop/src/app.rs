@@ -322,6 +322,16 @@ impl State {
         }
         // A page turned off in Settings has no route: a shortcut or a link lands on Browse.
         let screen = if self.prefs.page_on(screen) { screen } else { Screen::Browse };
+        // The mouse buttons walk this history; `shell::back` and `shell::forward` move it
+        // themselves and set `navigating` so the move is not recorded again.
+        if self.screen != screen && !self.shell.navigating {
+            self.shell.back.push(self.screen);
+            if self.shell.back.len() > 64 {
+                self.shell.back.remove(0);
+            }
+            self.shell.forward.clear();
+        }
+        self.shell.navigating = false;
         self.settings.open = false;
         if under_agent(screen) {
             self.ensure_host();
@@ -1197,6 +1207,13 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
             crate::shell::dropped(st, files)
         })
         .on_drop_hover(|st: &mut State, over: bool, _tx: &mut Tx| st.shell.drop_hover = over)
+        // Mouse Back and Forward walk pages and the details or creator opened over them.
+        .pointer_buttons([rune::PointerButton::Back, rune::PointerButton::Forward])
+        .on_press_tx(|st: &mut State, tx: &mut Tx| match tx.button() {
+            rune::PointerButton::Back => crate::shell::back(st),
+            rune::PointerButton::Forward => crate::shell::forward(st),
+            _ => {}
+        })
         // Back in front: a game update or Steam's file check may have reset gameinfo.gi.
         .on_window_focus(|st: &mut State, focused: bool, _tx: &mut Tx| {
             if focused {
