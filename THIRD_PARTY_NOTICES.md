@@ -109,6 +109,9 @@ for redistribution.
     block decode), `utils/snapshotBinding.ts`, `utils/skinnedSnapshot.ts`,
     `initializers/initSkinnedPositionFromCPSnapshot.ts` and
     `operators/snapshotRigidSkinToBones.ts` (`sigil-viewer/src/particles/snapshot.rs`).
+  - Alt albedo reveal (2026-11-21): `rust/crates/sigil-viewer/src/material/alt_reveal.rs` and
+    the reveal in `shaders/scene.wgsl` port `src/lib/source2AltReveal.ts` and the tier 1
+    evaluator of `src/lib/dynamicScalar.ts`.
   - Hideout: the SH2 lightmap, probe volumes, light units and cookies, the volumetric fog, the
     map post (tone curve, bloom, colour correction) from `source2Lightmap.ts`,
     `source2ProbeVolume.ts`, `source2DynamicLights.ts`, `source2LightCookies.ts`,

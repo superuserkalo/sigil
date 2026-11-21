@@ -15,6 +15,8 @@
 @group(1) @binding(6) var t_tint: texture_2d<f32>;
 @group(1) @binding(7) var t_outline: texture_2d<f32>;
 @group(1) @binding(8) var s_material: sampler;
+// pbr.vfx's g_tAltColor_Reveal: alt albedo (rgb) and reveal mask (alpha).
+@group(1) @binding(9) var t_alt: texture_2d<f32>;
 
 @group(2) @binding(0) var<uniform> draw: Draw;
 @group(2) @binding(1) var<storage, read> palette: array<mat4x4<f32>>;
@@ -652,6 +654,19 @@ struct Surface {
     uv3: vec2<f32>,
 };
 
+// How much of the alt albedo a texel shows (material/alt_reveal.rs `factor`): the amount
+// wipes across the reveal mask, low mask values first, with a smoothstep edge `softness` wide.
+fn alt_reveal(mask: f32) -> f32 {
+    let amount = mat.alt.y;
+    let softness = mat.alt.z;
+    let threshold = clamp(mask, 0.0001, 0.9999) * (1.0 - 2.0 * softness) + softness;
+    let distance = amount - threshold;
+    let hard = select(0.0, 1.0, distance > 0.0);
+    let soft = smoothstep(0.0, 1.0, clamp((distance + softness) / max(2.0 * softness, 0.0001), 0.0, 1.0));
+    let f = select(soft, hard, softness <= 0.0);
+    return select(f, 1.0, amount >= 1.0);
+}
+
 fn surface(in: VsOut, front: bool) -> Surface {
     let base_t = textureSample(t_base, s_material, in.uv0);
     let normal_t = textureSample(t_normal, s_material, in.uv0);
@@ -659,10 +674,15 @@ fn surface(in: VsOut, front: bool) -> Surface {
     let occ_t = textureSample(t_occlusion, s_material, in.uv0);
     let emis_t = textureSample(t_emissive, s_material, in.uv0);
     let tint_t = textureSample(t_tint, s_material, in.uv0);
+    let alt_t = textureSample(t_alt, s_material, in.uv0);
     var s: Surface;
     var base = mat.base_factor;
+    var color_t = base_t;
+    if (mat.alt.x > 0.5) {
+        color_t = vec4<f32>(mix(base_t.rgb, alt_t.rgb, alt_reveal(alt_t.a)), base_t.a);
+    }
     if (mat.has.x > 0.5) {
-        base = base * base_t;
+        base = base * color_t;
     }
     if (mat.extra.y > 0.5) {
         base = base * in.color;

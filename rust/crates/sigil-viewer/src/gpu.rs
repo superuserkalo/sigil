@@ -283,6 +283,8 @@ struct MaterialGpu {
     illum: [f32; 4],
     illum_tint: [f32; 4],
     extra: [f32; 4],
+    /// `pbr.vfx`'s alt albedo: on, amount, softness.
+    alt: [f32; 4],
 }
 
 #[repr(C)]
@@ -501,6 +503,7 @@ impl Pipelines {
             material_entries.push(texture_entry(b, vf));
         }
         material_entries.push(sampler_entry(8, vf));
+        material_entries.push(texture_entry(9, vf));
         let material_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor { label: Some("viewer material"), entries: &material_entries });
         let draw_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("viewer draw"),
@@ -889,6 +892,8 @@ impl GpuMesh {
             let emissive = view_for(si_mask.or(m.emissive_tex), r.self_illum.is_none());
             let tint = view_for(r.tint_mask, false);
             let outline = view_for(r.outline_mask, false);
+            // sRGB: the alt albedo is color; its alpha (the reveal mask) stays linear.
+            let alt = r.alt_reveal.as_ref().and_then(|a| view_for(Some(a.texture), true));
             let alpha_mode = match m.alpha {
                 AlphaMode::Opaque => 0.0,
                 AlphaMode::Mask(_) => 1.0,
@@ -918,6 +923,10 @@ impl GpuMesh {
                     [t[0], t[1], t[2], r.outline_thickness]
                 },
                 extra: [outline.is_some() as u8 as f32, if m.morphic.is_none() { 1.0 } else { 0.0 }, m.transmission, 0.0],
+                alt: match (&r.alt_reveal, &alt) {
+                    (Some(a), Some(_)) => [1.0, a.amount, a.softness, 0.0],
+                    _ => [0.0; 4],
+                },
             };
             let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor { label: Some("viewer material"), contents: bytemuck::bytes_of(&uniform), usage: wgpu::BufferUsages::UNIFORM });
             let repeat = m.base_tex.and_then(|s| model.textures.get(s.texture)).is_none_or(|t| t.repeat);
@@ -928,6 +937,7 @@ impl GpuMesh {
                 entries.push(wgpu::BindGroupEntry { binding: i as u32 + 1, resource: wgpu::BindingResource::TextureView(v) });
             }
             entries.push(wgpu::BindGroupEntry { binding: 8, resource: wgpu::BindingResource::Sampler(if repeat { &p.sampler_repeat } else { &p.sampler_clamp }) });
+            entries.push(wgpu::BindGroupEntry { binding: 9, resource: wgpu::BindingResource::TextureView(alt.as_ref().unwrap_or(&p.white)) });
             materials.push(device.create_bind_group(&wgpu::BindGroupDescriptor { label: Some("viewer material"), layout: &p.material_layout, entries: &entries }));
         }
         let mut prims = Vec::new();
