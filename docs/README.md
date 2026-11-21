@@ -40,7 +40,7 @@ Every doc starts with a status line. Values: `active`, `draft`, `planned`, `supe
 | `research/meshy-reverse-engineering.md` | active | Evidence-led study of the Meshy pipeline and our own stage graph. |
 | `runbooks/acceptance.md` | active | Tier 5 acceptance result and the unverified rows. |
 | `runbooks/windows.md` | draft | Windows bundle, first run and unverified rows. |
-| `runbooks/packaging.md` | draft | One-executable packaging (CLI and agent host folded in), with the unverified rows listed. |
+| `runbooks/packaging.md` | draft | One-executable packaging (CLI and agent host folded in), plus the Linux AppImage and `.deb`; the unverified rows are listed. |
 | `runbooks/releasing.md` | draft | Signing key, release manifest, signing and publishing steps; the self-updater. |
 | `runbooks/performance.md` | active | Startup, frame time, size and memory: method, measured results, remaining work. |
 | `design/mod-manager-shell.md` | draft | Mod-manager-first sidebar, screens and real data sources. |
