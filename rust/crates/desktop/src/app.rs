@@ -2662,6 +2662,7 @@ pub fn scenes() -> &'static [(&'static str, fn(&mut State))] {
         ("profiles-import-input", screens::profiles::scene_import_input),
         ("profiles-import-early", screens::profiles::scene_import_early),
         ("profiles-pack-all", screens::installed::pack_all::scene),
+        ("profiles-one-skin", screens::one_skin::scene),
         ("profiles-create", screens::profiles::scene_create),
         ("autoexec", scene_autoexec),
         ("autoexec-file", screens::autoexec::scene_file),

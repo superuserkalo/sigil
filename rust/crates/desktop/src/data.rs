@@ -3820,6 +3820,11 @@ pub fn apply_install_outcome(state: &mut State, outcome: crate::screens::browse:
         .unwrap_or_default();
         state.installed.library_sig = None;
         crate::screens::browse::quick::refresh_owned(state);
+        // A second skin for a hero: ask whether to keep only the new one (DMM).
+        if let Some(slot) = state.install.plan.as_ref().map(|plan| plan.slot) {
+            let name = state.install.label.clone();
+            crate::screens::one_skin::after_install(state, slot, &name);
+        }
     }
     // A gameinfo.gi, .cfg or video.txt in the archive: offer the review (it opens at once when
     // the archive had nothing else to install).
