@@ -744,12 +744,38 @@ impl Ui {
 
     /// A quiet section label in sentence case. Kept for old call sites; prefer `section`.
     pub fn eyebrow(&self, s: impl Into<String>) -> El {
-        text(sentence(&s.into())).font(LABEL).color(self.faint)
+        self.section(&sentence(&s.into()))
     }
 
-    /// A section heading inside a page: one weight step up from body, no rule, no box.
+    /// A section header inside a page: `SECTION` (12/600) in `muted` on a 24 point row. The
+    /// only 600 weight in content, so it reads as a header without being loud. Leave 24
+    /// points above it (none when first on the page) and 8 below.
     pub fn section(&self, title: &str) -> El {
-        text(title.to_string()).font(H2).color(self.ink)
+        self.section_head(title, None, None)
+    }
+
+    /// `section` with a count after the title (`SMALL_NUM` faint, no parentheses) and an
+    /// optional trailing control (a 24 point ghost button) on the right.
+    pub fn section_head(&self, title: &str, count: Option<usize>, trailing: Option<El>) -> El {
+        let mut line = row()
+            .w_full()
+            .h(CONTROL_S)
+            .gap(6.0)
+            .center_y()
+            .child(
+                text(title.to_string())
+                    .font(SECTION)
+                    .color(self.muted)
+                    .role("heading")
+                    .level(2),
+            );
+        if let Some(count) = count {
+            line = line.child(text(count.to_string()).font(SMALL_NUM).color(self.faint));
+        }
+        if let Some(trailing) = trailing {
+            line = line.child(spacer()).child(trailing);
+        }
+        line
     }
 
     /// A group of rows separated by hairlines. Not a card: no fill, a 1 point border.
@@ -998,29 +1024,24 @@ impl Ui {
             )
     }
 
-    /// An empty state: centred title and one line, no box, no icon tile.
+    /// An empty state on the page's left edge: title, one line, then the action 16 below.
+    /// No box, no icon tile, no centred block in a void.
     pub fn empty_state(&self, _glyph: &str, title: &str, detail: &str, action: Option<El>) -> El {
         let mut c = col()
             .w_full()
-            .py(64.0)
-            .gap(6.0)
-            .items_center()
-            .child(
-                text(title.to_string())
-                    .font(H1)
-                    .color(self.ink)
-                    .align(rune::Align::Center),
-            )
+            .pt(48.0)
+            .gap(4.0)
+            .items_start()
+            .child(text(title.to_string()).font(PAGE_TITLE).color(self.ink))
             .child(
                 text(detail.to_string())
                     .font(BODY)
-                    .color(self.muted)
-                    .max_w(440.0)
-                    .wrap()
-                    .align(rune::Align::Center),
+                    .color(self.prose)
+                    .max_w(560.0)
+                    .wrap(),
             );
         if let Some(a) = action {
-            c = c.child(el().h(10.0)).child(a);
+            c = c.child(el().h(12.0)).child(a);
         }
         c
     }
@@ -1036,7 +1057,7 @@ impl Ui {
     pub fn panel_header(&self, title: &str, meta: &str) -> El {
         row()
             .w_full()
-            .h(40.0)
+            .h(CONTROL_L)
             .px(16.0)
             .gap(12.0)
             .items_center()
@@ -1047,9 +1068,9 @@ impl Ui {
     }
 
     pub fn table_head(&self, cols: &[(&str, f32)]) -> El {
-        let mut r = row().w_full().px(16.0).h(32.0).items_center().gap(12.0);
+        let mut r = row().w_full().px(16.0).h(CONTROL_M).items_center().gap(12.0);
         for (label, w) in cols {
-            let e = text(sentence(label)).font(SMALL).color(self.faint);
+            let e = text(sentence(label)).font(SMALL).color(self.muted);
             r = r.child(if *w > 0.0 { e.w(*w) } else { e.grow(1.0) });
         }
         r.border_sides([0.0, 0.0, 1.0, 0.0], self.hair)
@@ -1064,23 +1085,10 @@ impl Ui {
         text(sentence(s)).font(LABEL).color(self.muted)
     }
 
-    /// A collapsible-style group heading above a grid: `Enabled (6)`.
+    /// A group heading above a grid: the section header with its count, `Enabled  6`.
     pub fn grid_head(&self, label: &str, meta: &str) -> El {
-        let title = if meta.is_empty() {
-            sentence(label)
-        } else {
-            format!(
-                "{} ({})",
-                sentence(label),
-                meta.split_whitespace().next().unwrap_or(meta)
-            )
-        };
-        row()
-            .w_full()
-            .h(28.0)
-            .gap(8.0)
-            .center_y()
-            .child(text(title).font(LABEL).color(self.muted))
+        let count = meta.split_whitespace().next().and_then(|n| n.replace(',', "").parse().ok());
+        self.section_head(&sentence(label), count, None)
     }
 
     /// Sigil's tooltip for every `El::help`: a raised graphite block with a 1 point line, 4
@@ -1088,18 +1096,19 @@ impl Ui {
     /// draws it on macOS too instead of AppKit's yellow-grey tip.
     pub fn help_look(&self) -> rune::HelpLook {
         rune::HelpLook::system(!self.light)
-            .fill(self.raised.alpha(1.0))
+            .fill(self.raised.mix(self.over, 0.06).alpha(1.0))
             .ink(self.ink)
             .ring(1.0, self.hair_strong)
             .radius(r(8.0))
             .padding(8.0, 4.0)
-            .font(SMALL)
-            .max_width(Some(280.0))
-            .gap(6.0)
+            .font(LABEL)
+            .max_width(Some(240.0))
+            .gap(4.0)
             .margin(8.0)
-            .delay(0.35)
+            .delay(0.4)
             .skip_delay(0.3)
             .keycaps(self.over.alpha(0.08), self.muted, MICRO, false)
+            .keycap_shape(16.0, 4.0, 2.0, 2.0, 8.0)
             .shadows([rune::Shadow {
                 x: 0.0,
                 y: 4.0,
