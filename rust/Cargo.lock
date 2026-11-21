@@ -4484,6 +4484,7 @@ dependencies = [
  "gif",
  "gltf",
  "image",
+ "image-webp",
  "naga",
  "pollster",
  "serde_json",

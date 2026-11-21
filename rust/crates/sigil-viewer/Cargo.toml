@@ -21,6 +21,8 @@ gif = "0.14"
 # The shader checks translate every WGSL module to HLSL as wgpu's DX12 backend does (the same
 # naga wgpu links).
 naga = { version = "30.0.2", features = ["wgsl-in", "hlsl-out"] }
+# The VP8 encoder's tests decode key frames with the WebP decoder the workspace already locks.
+image-webp = "0.2"
 
 # wgpu matches Rune's pin (`~30.0.1`) and its per-platform backends, so the desktop compiles
 # one wgpu: Metal on Apple, D3D12 on Windows, Vulkan elsewhere.

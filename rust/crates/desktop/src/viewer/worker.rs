@@ -680,8 +680,8 @@ impl Recording {
     fn video(&mut self, cmd: VideoCmd, w: u32, h: u32, out: &Outputs) {
         match cmd {
             VideoCmd::Start(path) if self.video.is_none() && w > 0 && h > 0 => {
-                // Encoded off the render thread: a Motion JPEG frame costs 20 to 60 ms.
-                let size = sigil_viewer::capture::fit_dimensions(w, h, 1280);
+                // Encoded off the render thread at the recorder's size cap (VP8 for WebM).
+                let size = sigil_viewer::capture::fit_dimensions(w, h, sigil_viewer::capture::VIDEO_MAX_EDGE);
                 let (tx, rx) = std::sync::mpsc::sync_channel::<Vec<u8>>(6);
                 let shared = out.shared.clone();
                 let wake = out.wake.clone();

@@ -13,12 +13,20 @@
 //! `n1 * n2 / (n1 + n2) * distance^2`) on those weighted colors. Pixels get a 4x4 Bayer offset
 //! before mapping, and the nearest palette entry is cached per rgb565 key, as gifenc does.
 //!
-//! The video matches Deadlock Mod Manager's recorder in behaviour (30 fps, at most 10 seconds).
-//! No VP8 or VP9 encoder is available, so frames are Motion JPEG in a QuickTime `.mov` (plays in
-//! QuickTime and VLC) or a RIFF `.avi` (plays in Windows' players and VLC).
+//! The video matches Deadlock Mod Manager's recorder (30 fps, at most 10 seconds, WebM): frames
+//! go through the VP8 encoder in `capture/vp8.rs` (pure Rust, written here from RFC 6386) into
+//! the WebM writer in `capture/webm.rs`, which plays in browsers, Discord, VLC and most players.
+//! Motion JPEG in a QuickTime `.mov` or a RIFF `.avi` stays available as a fallback format.
 
 use std::ops::Range;
 use std::time::Duration;
+
+mod vp8;
+mod vp8_tables;
+mod webm;
+
+pub use vp8::{DEFAULT_KEYFRAME_INTERVAL, DEFAULT_Q_INDEX, Vp8Encoder, Vp8Frame, Vp8Options};
+pub use webm::mux_webm;
 
 /// Grimoire's recording limits.
 pub const GIF_MAX_SECONDS: f32 = 4.0;
@@ -29,8 +37,15 @@ pub const GIF_MAX_BYTES: usize = 24 * 1024 * 1024;
 /// Deadlock Mod Manager's recording limits.
 pub const VIDEO_FPS: u32 = 30;
 pub const VIDEO_MAX_SECONDS: u32 = 10;
-/// Motion JPEG quality for video frames.
+/// Video quality (1 to 100): the Motion JPEG quality, and the VP8 quantizer through
+/// `vp8_q_index` (85 gives `DEFAULT_Q_INDEX`).
 pub const VIDEO_JPEG_QUALITY: u8 = 85;
+
+/// The VP8 quantizer index for a 1 to 100 quality: 100 is the finest (0), 85 the default.
+pub fn vp8_q_index(quality: u8) -> u8 {
+    let q = 100 - quality.clamp(1, 100) as u32;
+    ((q * DEFAULT_Q_INDEX as u32 + 7) / 15).min(127) as u8
+}
 
 const MAX_BOXES: usize = 512;
 const PALETTE_SAMPLES: f64 = 8192.0;
@@ -529,6 +544,8 @@ impl GifRecorder {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum VideoFormat {
+    /// WebM with VP8: browsers, Discord, VLC and most players, on every platform.
+    WebM,
     /// QuickTime with Photo JPEG samples: QuickTime Player, macOS and VLC.
     Mov,
     /// RIFF AVI with MJPG: Windows' players and VLC.
@@ -538,6 +555,7 @@ pub enum VideoFormat {
 impl VideoFormat {
     pub fn extension(self) -> &'static str {
         match self {
+            VideoFormat::WebM => "webm",
             VideoFormat::Mov => "mov",
             VideoFormat::Avi => "avi",
         }
@@ -545,19 +563,25 @@ impl VideoFormat {
 
     pub fn mime(self) -> &'static str {
         match self {
+            VideoFormat::WebM => "video/webm",
             VideoFormat::Mov => "video/quicktime",
             VideoFormat::Avi => "video/x-msvideo",
         }
     }
 }
 
-/// The container the platform's own player opens: `.mov` on macOS, `.avi` elsewhere.
+/// The recording format: WebM (VP8) everywhere, as Deadlock Mod Manager records.
 pub fn native_video_format() -> VideoFormat {
-    if cfg!(target_os = "macos") { VideoFormat::Mov } else { VideoFormat::Avi }
+    VideoFormat::WebM
 }
 
-/// Records viewer frames as Motion JPEG. Each push encodes its JPEG right away, so memory holds
-/// compressed frames only. Odd sizes are cropped to even (at least 2).
+/// The longest edge a video recording keeps; larger viewports are scaled down before encoding
+/// so one VP8 encoder thread keeps up with 30 fps.
+pub const VIDEO_MAX_EDGE: u32 = 1280;
+
+/// Records viewer frames. Each push encodes its frame right away (VP8 for WebM, a JPEG for
+/// `.mov` and `.avi`), so memory holds compressed frames only. Odd sizes are cropped to even
+/// (at least 2).
 #[derive(Debug, Clone)]
 pub struct VideoRecorder {
     format: VideoFormat,
@@ -568,6 +592,9 @@ pub struct VideoRecorder {
     fps: u32,
     quality: u8,
     frames: Vec<Vec<u8>>,
+    /// Key frame flags of WebM frames.
+    keys: Vec<bool>,
+    vp8: Option<Box<Vp8Encoder>>,
     rgb: Vec<u8>,
 }
 
@@ -582,11 +609,14 @@ impl VideoRecorder {
             fps: fps.max(1),
             quality: VIDEO_JPEG_QUALITY,
             frames: Vec::new(),
+            keys: Vec::new(),
+            vp8: None,
             rgb: Vec::new(),
         }
     }
 
-    /// JPEG quality 1 to 100 for frames pushed after this call.
+    /// Quality 1 to 100: the JPEG quality of frames pushed after this call, or the VP8
+    /// quantizer (`vp8_q_index`) when set before the first WebM frame.
     pub fn set_quality(&mut self, quality: u8) {
         self.quality = quality.clamp(1, 100);
     }
@@ -643,6 +673,9 @@ impl VideoRecorder {
         if self.is_full() {
             return Ok(false);
         }
+        if self.format == VideoFormat::WebM {
+            return self.push_vp8(rgba).map(|_| true);
+        }
         let (w, h) = (self.width as usize, self.height as usize);
         self.rgb.clear();
         self.rgb.resize(w * h * 3, 0);
@@ -664,12 +697,40 @@ impl VideoRecorder {
         Ok(true)
     }
 
+    /// Encode one frame as VP8, cropped to the even size when the source is odd.
+    fn push_vp8(&mut self, rgba: &[u8]) -> Result<(), String> {
+        if self.vp8.is_none() {
+            let opts = Vp8Options { q_index: vp8_q_index(self.quality), ..Vp8Options::default() };
+            self.vp8 = Some(Box::new(Vp8Encoder::new(self.width, self.height, opts)?));
+        }
+        let (sw, w, h) = (self.src_w as usize, self.width as usize, self.height as usize);
+        let frame = if sw == w {
+            &rgba[..w * h * 4]
+        } else {
+            self.rgb.clear();
+            for y in 0..h {
+                self.rgb.extend_from_slice(&rgba[y * sw * 4..y * sw * 4 + w * 4]);
+            }
+            &self.rgb[..]
+        };
+        let Some(enc) = self.vp8.as_mut() else { return Err("VP8 encoder missing".into()) };
+        let f = enc.encode_rgba(frame)?;
+        self.frames.push(f.data);
+        self.keys.push(f.key);
+        Ok(())
+    }
+
     /// The finished file in this recorder's format.
     pub fn finish(&self) -> Result<Vec<u8>, String> {
         if self.frames.is_empty() {
             return Err("Empty recording".into());
         }
         match self.format {
+            VideoFormat::WebM => {
+                let frames: Vec<(&[u8], bool)> =
+                    self.frames.iter().map(Vec::as_slice).zip(self.keys.iter().copied()).collect();
+                mux_webm(&frames, self.width, self.height, self.fps)
+            }
             VideoFormat::Mov => mux_mov(&self.frames, self.width, self.height, self.fps),
             VideoFormat::Avi => mux_avi(&self.frames, self.width, self.height, self.fps),
         }
@@ -1254,6 +1315,167 @@ mod tests {
         assert!(VideoRecorder::new(4, 4, 30, VideoFormat::Avi).finish().is_err());
     }
 
+    /// EBML elements in `b[start..end]`: (id, data range).
+    fn ebml_children(b: &[u8], start: usize, end: usize) -> Vec<(u32, Range<usize>)> {
+        let vint = |at: usize, keep_marker: bool| -> (u64, usize) {
+            let n = b[at].leading_zeros() as usize + 1;
+            let mut v = if keep_marker { b[at] as u64 } else { (b[at] as u64) & (0xFF >> n) };
+            for i in 1..n {
+                v = (v << 8) | b[at + i] as u64;
+            }
+            (v, n)
+        };
+        let mut out = Vec::new();
+        let mut at = start;
+        while at < end {
+            let (id, idn) = vint(at, true);
+            let (size, sn) = vint(at + idn, false);
+            let data = at + idn + sn;
+            assert!(data + size as usize <= end, "element {id:x} at {at} overruns");
+            out.push((id as u32, data..data + size as usize));
+            at = data + size as usize;
+        }
+        assert_eq!(at, end);
+        out
+    }
+
+    fn ebml_uint(b: &[u8], r: &Range<usize>) -> u64 {
+        b[r.clone()].iter().fold(0, |v, &x| (v << 8) | x as u64)
+    }
+
+    #[test]
+    fn capture_webm_is_a_valid_element_tree() {
+        let mut rec = VideoRecorder::new(65, 33, VIDEO_FPS, VideoFormat::WebM);
+        assert_eq!(rec.size(), (64, 32));
+        assert_eq!(rec.extension(), "webm");
+        for t in 0..95 {
+            assert!(rec.push(&vp8::test_scene(65, 33, t)).unwrap());
+        }
+        assert!(rec.bytes() > 0);
+        let bytes = rec.finish().unwrap();
+        let top = ebml_children(&bytes, 0, bytes.len());
+        assert_eq!(top.len(), 2);
+        let header = ebml_children(&bytes, top[0].1.start, top[0].1.end);
+        let doc = header.iter().find(|(id, _)| *id == 0x4282).unwrap();
+        assert_eq!(&bytes[doc.1.clone()], b"webm");
+        assert_eq!(top[1].0, 0x1853_8067);
+        let seg = top[1].1.clone();
+        let kids = ebml_children(&bytes, seg.start, seg.end);
+        let ids: Vec<u32> = kids.iter().map(|k| k.0).collect();
+        // SeekHead, Info, Tracks, two clusters (key frames at 0 and 90), Cues.
+        assert_eq!(ids, [0x114D_9B74, 0x1549_A966, 0x1654_AE6B, 0x1F43_B675, 0x1F43_B675, 0x1C53_BB6B]);
+        // Every SeekHead entry points at the element it names.
+        for seek in ebml_children(&bytes, kids[0].1.start, kids[0].1.end) {
+            let e = ebml_children(&bytes, seek.1.start, seek.1.end);
+            let id = ebml_uint(&bytes, &e[0].1) as u32;
+            let pos = ebml_uint(&bytes, &e[1].1) as usize;
+            let target = kids.iter().find(|k| k.0 == id).unwrap();
+            let idlen = 4;
+            let sizelen = target.1.start - (seg.start + pos + idlen);
+            assert!((1..=8).contains(&sizelen), "seek to {id:x}");
+        }
+        let track = ebml_children(&bytes, kids[2].1.start, kids[2].1.end);
+        let entry = ebml_children(&bytes, track[0].1.start, track[0].1.end);
+        let codec = entry.iter().find(|(id, _)| *id == 0x86).unwrap();
+        assert_eq!(&bytes[codec.1.clone()], b"V_VP8");
+        let mut blocks = 0;
+        let mut keys = Vec::new();
+        for c in &kids[3..5] {
+            for (id, r) in ebml_children(&bytes, c.1.start, c.1.end) {
+                if id == 0xA3 {
+                    assert_eq!(bytes[r.start], 0x81);
+                    keys.push(bytes[r.start + 3] & 0x80 != 0);
+                    blocks += 1;
+                }
+            }
+        }
+        assert_eq!(blocks, 95);
+        assert!(keys[0] && keys[90]);
+        assert_eq!(keys.iter().filter(|&&k| k).count(), 2);
+        // Cues point at the clusters.
+        let cues = ebml_children(&bytes, kids[5].1.start, kids[5].1.end);
+        assert_eq!(cues.len(), 2);
+        for (cue, cluster) in cues.iter().zip(&kids[3..5]) {
+            let cp = ebml_children(&bytes, cue.1.start, cue.1.end);
+            let tp = ebml_children(&bytes, cp[1].1.start, cp[1].1.end);
+            let pos = ebml_uint(&bytes, &tp[1].1) as usize;
+            assert_eq!(&bytes[seg.start + pos..seg.start + pos + 4], &[0x1F, 0x43, 0xB6, 0x75]);
+            assert!(seg.start + pos < cluster.1.start);
+        }
+        assert_eq!(ebml_uint(&bytes, &ebml_children(&bytes, cues[1].1.start, cues[1].1.end)[0].1), 3000);
+        assert!(mux_webm(&[(&[0u8; 4], false)], 4, 4, 30).is_err());
+        assert!(mux_webm(&[], 4, 4, 30).is_err());
+    }
+
+    /// Encode a moving test scene, save `sigil-vp8-sample.webm`, and when ffmpeg is installed
+    /// check that its decode matches the encoder's reconstruction bit for bit on every frame.
+    /// `SIGIL_CAPTURE_OUT=dir cargo test --release -p sigil-viewer capture_webm_sample -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn capture_webm_sample() {
+        let (w, h, n) = (640u32, 400u32, 150u32);
+        let out = std::env::var("SIGIL_CAPTURE_OUT").map(std::path::PathBuf::from).unwrap_or_else(|_| {
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../.scratch/viewer-shots/leftovers")
+        });
+        std::fs::create_dir_all(&out).unwrap();
+        let mut enc = Vp8Encoder::new(w, h, Vp8Options::default()).unwrap();
+        let mut frames = Vec::new();
+        let mut recon = Vec::new();
+        let t = std::time::Instant::now();
+        for i in 0..n {
+            let f = enc.encode_rgba(&vp8::test_scene(w, h, i)).unwrap();
+            let (y, u, v, mbw) = enc.reconstruction();
+            let mut planes = Vec::with_capacity((w * h * 3 / 2) as usize);
+            for row in 0..h as usize {
+                planes.extend_from_slice(&y[row * mbw * 16..row * mbw * 16 + w as usize]);
+            }
+            for plane in [u, v] {
+                for row in 0..(h as usize).div_ceil(2) {
+                    planes.extend_from_slice(&plane[row * mbw * 8..row * mbw * 8 + (w as usize).div_ceil(2)]);
+                }
+            }
+            recon.push(planes);
+            frames.push(f);
+        }
+        let elapsed = t.elapsed();
+        let refs: Vec<(&[u8], bool)> = frames.iter().map(|f| (f.data.as_slice(), f.key)).collect();
+        let bytes = mux_webm(&refs, w, h, VIDEO_FPS).unwrap();
+        let path = out.join("sigil-vp8-sample.webm");
+        std::fs::write(&path, &bytes).unwrap();
+        let secs = n as f64 / VIDEO_FPS as f64;
+        eprintln!(
+            "{}: {n} frames {w}x{h}, {} bytes ({:.0} bytes/s), {:?} per frame",
+            path.display(),
+            bytes.len(),
+            bytes.len() as f64 / secs,
+            elapsed / n
+        );
+        let ffmpeg = std::path::Path::new("/opt/homebrew/bin/ffmpeg");
+        if !ffmpeg.exists() {
+            eprintln!("no ffmpeg: skipping the decode check");
+            return;
+        }
+        let yuv = out.join("sigil-vp8-sample.yuv");
+        let status = std::process::Command::new(ffmpeg)
+            .args(["-v", "error", "-y", "-i"])
+            .arg(&path)
+            .args(["-f", "rawvideo", "-pix_fmt", "yuv420p"])
+            .arg(&yuv)
+            .status()
+            .unwrap();
+        assert!(status.success());
+        let decoded = std::fs::read(&yuv).unwrap();
+        std::fs::remove_file(&yuv).ok();
+        let size = recon[0].len();
+        assert_eq!(decoded.len(), size * n as usize, "decoded frame count");
+        for (i, r) in recon.iter().enumerate() {
+            let d = &decoded[i * size..(i + 1) * size];
+            let diff = r.iter().zip(d).filter(|(a, b)| a != b).count();
+            assert_eq!(diff, 0, "frame {i} differs from ffmpeg's decode in {diff} samples");
+        }
+        eprintln!("ffmpeg decode matches the reconstruction on all {n} frames");
+    }
+
     /// `cargo test --release -p sigil-viewer capture_bench -- --ignored --nocapture`
     #[test]
     #[ignore]
@@ -1292,6 +1514,25 @@ mod tests {
             let per = t.elapsed() / 30;
             let mov = rec.finish().unwrap();
             eprintln!("video: {vw}x{vh} jpeg {per:?} per frame, 30 frames {} bytes", mov.len());
+        }
+        for (vw, vh) in [(640u32, 400u32), (1280, 800), (1920, 1080)] {
+            let scenes: Vec<Vec<u8>> = (0..90).map(|t| vp8::test_scene(vw, vh, t)).collect();
+            for search in [true, false] {
+                let opts = Vp8Options { motion_search: search, ..Vp8Options::default() };
+                let mut enc = Vp8Encoder::new(vw, vh, opts).unwrap();
+                let (mut key, mut inter, mut bytes) = (Duration::ZERO, Duration::ZERO, 0usize);
+                for s in &scenes {
+                    let t = std::time::Instant::now();
+                    let f = enc.encode_rgba(s).unwrap();
+                    if f.key { key += t.elapsed() } else { inter += t.elapsed() }
+                    bytes += f.data.len();
+                }
+                eprintln!(
+                    "video: {vw}x{vh} vp8 (search {search}) key frame {key:?}, inter frame {:?} average, {:.0} bytes/s",
+                    inter / 89,
+                    bytes as f64 / 3.0
+                );
+            }
         }
     }
 }

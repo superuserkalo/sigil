@@ -8,7 +8,7 @@
 //! - Grimoire's GIF capture (viewer-gif-capture.md): record up to four seconds, then review it
 //!   looping, trim its start and end on a strip of thumbnails, save, retake or cancel.
 //! - Deadlock Mod Manager's video recording: up to ten seconds, a REC pill with the clock,
-//!   saved when it stops (behaviour only; Sigil writes Motion JPEG, see `sigil_viewer::capture`).
+//!   saved as WebM (VP8) when it stops, see `sigil_viewer::capture`.
 //!
 //! Recordings and pictures go to `Pictures/Sigil`.
 
@@ -193,7 +193,8 @@ fn toggle_gif(s: &mut State, key: &str) {
 
 fn toggle_video(s: &mut State, key: &str) {
     let Some(v) = s.viewers.map.get(key) else { return };
-    let cmd = if v.ui.video.is_some() { VideoCmd::Stop } else { VideoCmd::Start(recording_path(&v.title, "mov")) };
+    let ext = sigil_viewer::capture::native_video_format().extension();
+    let cmd = if v.ui.video.is_some() { VideoCmd::Stop } else { VideoCmd::Start(recording_path(&v.title, ext)) };
     send(s, key, Cmd::Video(cmd));
 }
 
