@@ -19,6 +19,8 @@
 //! in its app data folder (`dev.stormix.deadlock-mod-manager`) and a `.dmm.json` manifest in
 //! the addon folder that maps each mod id to its VPK names.
 
+pub mod parts;
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};

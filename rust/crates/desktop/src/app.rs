@@ -2339,6 +2339,18 @@ pub fn scene_installed_import(s: &mut State) {
     screens::import::stage_demo_review(s, &thumbs);
 }
 
+/// The local import review of three loose files read as one Haze skin with parts.
+pub fn scene_gaps_add_mods(s: &mut State) {
+    scene_demo_installed(s);
+    screens::import::parts::stage_scene(s, false);
+}
+
+/// The same review with "Import as one mod" switched off.
+pub fn scene_gaps_add_mods_separate(s: &mut State) {
+    scene_demo_installed(s);
+    screens::import::parts::stage_scene(s, true);
+}
+
 pub fn scene_installed_empty(s: &mut State) {
     screens::installed::stage_empty(s);
 }
@@ -2796,6 +2808,8 @@ pub fn scenes() -> &'static [(&'static str, fn(&mut State))] {
         ("autoexec-flags", screens::autoexec::scene_flags),
         ("installed-import-menu", scene_installed_import_menu),
         ("installed-import", scene_installed_import),
+        ("gaps-add-mods", scene_gaps_add_mods),
+        ("gaps-add-mods-separate", scene_gaps_add_mods_separate),
         ("installed-empty", scene_installed_empty),
         ("installed-empty-menu", scene_installed_empty_menu),
         ("demo-conflicts", scene_demo_conflicts),

@@ -54,7 +54,7 @@ Ordered by value to players.
    Settings dialog that installs a listing's first file. D puts the source picker in the store
    header, with cards, release history, Markdown descriptions, a file picker and deep links.
 5. **Add mods dialog that reads the files** (D `c60a5792`, M). Detect category, cover and map name
-   while importing, and import several loose VPKs as one mod with parts.
+   while importing, and import several loose VPKs as one mod with parts. Built 2026-11-21.
 6. **Installed refuses changes while the game runs** (settings row G32, S). The hook is pending in
    Installed toggles and deletes; Grimoire's Disallow and the startup check depend on the same
    guard.
@@ -93,7 +93,7 @@ that shows it; effort (S under a day, M a few days, L a week or more); recommend
 | Text layouts (`vxml_c` with a DATA block and no LaCo) are read | G #578 | has: the scan searches layout bytes (`docs/design/mod-safety.md`, "Limits") | - | - |
 | Enable anyway for a file the scan cannot read | G #578 | has: the gate lists "Not checked: the whole file" with Turn on this once (`installed/safety_gate.rs`) | - | - |
 | Name a pack's members from their imprints | G #582, `src/lib/customModImport.ts` | has: each VPK is named from its own `addoninfo.txt` or `modinfo.json` first (`deadlock-core/src/import.rs`, line 538) | - | - |
-| Add mods dialog: detects category, cover and map name from the files; several loose VPKs become one mod whose parts switch in Manage files | D `c60a5792`, changesets `vivid-covers-render`, `amber-parts-gather` | partial: the import review lists names and previews (`screens/import.rs`); grouping is a later step (Installed > Group as one mod); no category, cover or map detection there | M | Build (top 5) |
+| Add mods dialog: detects category, cover and map name from the files; several loose VPKs become one mod whose parts switch in Manage files | D `c60a5792`, changesets `vivid-covers-render`, `amber-parts-gather` | has (2026-11-21): a local import review reads each loose VPK on a worker (`deadlock-core/src/import/parts.rs`) and shows what each file holds, a category read from the files (the player can change it), the hero, the map's console name and a cover (a picture beside the VPK, the skin's own hero card, or the hero's render); two or more loose files get "Import as one mod" with a name, and after the copy they land as one variant group whose parts switch in Manage files (`screens/import/parts.rs`, scenes `gaps-add-mods` and `gaps-add-mods-separate`). Add files and Add a folder grow an open review | M | Built |
 
 ### Installed
 
