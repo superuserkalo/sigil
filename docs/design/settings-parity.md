@@ -1,27 +1,28 @@
 # Settings parity: Grimoire and Deadlock Mod Manager
 
-Status: audit done 2026-11-17; upstream round 2026-11-21 (rows G77, G80, G83, G86, D32, D152); bookkeeping 2026-11-20 (3D preview, Hideout, signed updates and the tray hooks covered); smalls round 2026-11-19 (rows G47, G99, G100, D129, D194 built); parity round built 2026-11-17; wave 3 rows updated 2026-11-18 (pages, preview volume, map mods, fix before launch, Remote Install backlogged); wave 4 UI B rows updated 2026-11-18 (SOCKS5, checklist, catalog, logs, AI help, launch options, vanilla, update marks, channel notes, seasons). Every settings item in both apps, from their source, with what Sigil does about it.
+Status: audit done 2026-11-17; upstream round 2026-11-21 (rows G77, G80, G83, G86, D32, D152); statuses rechecked after 0.1.22 (2026-11-21); bookkeeping 2026-11-20 (3D preview, Hideout, signed updates and the tray hooks covered); smalls round 2026-11-19 (rows G47, G99, G100, D129, D194 built); parity round built 2026-11-17; wave 3 rows updated 2026-11-18 (pages, preview volume, map mods, fix before launch, Remote Install backlogged); wave 4 UI B rows updated 2026-11-18 (SOCKS5, checklist, catalog, logs, AI help, launch options, vanilla, update marks, channel notes, seasons). Every settings item in both apps, from their source, with what Sigil does about it.
 
 Sources: Grimoire (`vendor/grimoire`, MIT) `src/pages/Settings.tsx`, `src/components/settings/**`, `electron/main/services/settings.ts`; Deadlock Mod Manager (`vendor/dmm`, GPL-3.0, behaviour only) `apps/desktop/src/pages/settings.tsx`, `apps/desktop/src/components/settings/*.tsx`, `plugins/themes`.
 
-Status words: **Had it** (Sigil had it before this round), **Built now**, **Built, hook pending** (the setting works and persists; a page owned elsewhere still has to read it), **Elsewhere in Sigil** (a page outside Settings owns it), **Needs a backend** (see `settings-social.md`), **Declined (rule)** (conflicts with AGENTS.md hard rules or the house style, reason given), **Not built yet** (buildable, reason given).
+Status words: **Had it** (Sigil had it before this round), **Built now**, **Built, hook pending** (the setting works and persists; a page owned elsewhere still has to read it), **Elsewhere in Sigil** (a page outside Settings owns it), **Needs a backend** (see `settings-social.md`), **Declined (rule)** (conflicts with AGENTS.md hard rules or the house style, reason given), **On hold (owner)** (the owner set it aside), **Not built yet** (buildable, reason given).
 
 ## Counts
 
 | | Grimoire | Deadlock Mod Manager |
 | --- | --- | --- |
 | Items | 159 | 232 |
-| Had it | 27 | 42 |
-| Built now | 84 | 120 |
+| Had it | 26 | 38 |
+| Built now | 86 | 136 |
 | Built, hook pending | 0 | 0 |
-| Elsewhere in Sigil | 36 | 28 |
-| Needs a backend | 8 | 6 |
-| Declined (rule) | 5 | 38 |
+| Elsewhere in Sigil | 36 | 24 |
+| Needs a backend | 8 | 4 |
+| Declined (rule) | 3 | 27 |
+| On hold (owner) | 0 | 2 |
 | Not built yet | 0 | 1 |
-| **Covered** (had, built, elsewhere) | **142** | **190** |
-| Covered or deliberately declined | 147 | 228 |
+| **Covered** (had, built, elsewhere) | **148** | **198** |
+| Covered or deliberately declined | 151 | 225 |
 
-The parity round (2026-11-17) built every row that was **Not built yet** except the two 3D model previews and the two update rows the updater owns. Since then the signed updater shipped and the 3D viewer shipped in 0.1.16 to 0.1.18 (Locker 3D view, Preview in 3D, Hideout), so those rows are covered; the only open row is D145, backlogged by the owner. **Built, hook pending** means the setting, its storage and its getter work, and one line in a page another agent owns still has to read it; `.scratch/sigil-redesign/` lists the lines.
+The counts are from the rows below after 0.1.22. The parity round (2026-11-17) built every row that was **Not built yet** except the 3D model previews and the two update rows the updater owns. The signed updater shipped and the 3D viewer shipped in 0.1.16 to 0.1.18 (Locker 3D view, Preview in 3D, Hideout), so those rows are covered. The only open row is D145, backlogged by the owner, plus D80 and D198 on hold. **Built, hook pending** means the setting, its storage and its getter work, and one line in a page another agent owns still has to read it; `.scratch/sigil-redesign/` lists the lines.
 
 ## Sigil's categories
 
@@ -272,7 +273,7 @@ Grouped by task, thirteen categories in three groups, a search field over all of
 | 71 | Features | Minimal mode | All features off | Built now | General > Pages > Mods only: every optional page off, each switch comes back after (wave 3) |
 | 72 | Features | Stats | Feature | Built now | General > Pages > Stats hides the page and its route; Privacy > Player stats stops its reads |
 | 73 | Features | Server browser | Feature | Built now | General > Pages > Servers (moved from Experimental; the saved value is kept) |
-| 74 | Features | Server picker | Block relay regions | Built now | Servers > Regions (ADR 0016, owner yes 2026-11-20): off by default, nothing changes until Apply; Windows only for blocking |
+| 74 | Features | Server picker | Block relay regions | Built now | Servers > Regions (ADR 0016, owner yes 2026-11-20): off by default, nothing changes until Apply; Windows only for blocking. Checked in headless scenes, never run on a Windows PC |
 | 75 | Features | Crosshairs | Feature | Built now | General > Pages > Crosshair; community crosshairs need DMM API (backend) |
 | 76 | Features | Hero skins | Feature | Built now | General > Pages > Locker; off also stops the launch shuffle |
 | 77 | Features | Performance | Feature | Built now | General > Pages > Performance |
