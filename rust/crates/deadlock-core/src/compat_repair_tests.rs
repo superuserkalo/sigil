@@ -407,3 +407,76 @@ fn a_mod_with_its_own_text_is_not_blocked_by_the_game_lacking_it() {
     assert_eq!(game_text_problem(&base, &mod_vpk).unwrap(), None);
     let _ = fs::remove_dir_all(&root);
 }
+
+/// A compiled model whose root `DATA` holds `m_modelInfo.m_keyValueText`, as the game and a mod
+/// store it. The header is the smallest resource container vpkmerge's reader accepts.
+fn model_resource(metadata: &str) -> Vec<u8> {
+    let value = morphic::kv3::Value::Object(vec![(
+        "m_modelInfo".to_string(),
+        morphic::kv3::Value::Object(vec![(
+            "m_keyValueText".to_string(),
+            morphic::kv3::Value::String(metadata.to_string()),
+        )]),
+    )]);
+    let payload = morphic::kv3::encode_flagged(
+        &value,
+        &morphic::kv3::Format([0; 16]),
+        &morphic::kv3::ValueFlags::new(),
+    );
+    let mut bytes = vec![0; 28];
+    bytes[4..6].copy_from_slice(&12_u16.to_le_bytes());
+    bytes[8..12].copy_from_slice(&8_u32.to_le_bytes());
+    bytes[12..16].copy_from_slice(&1_u32.to_le_bytes());
+    bytes[16..20].copy_from_slice(b"DATA");
+    bytes[20..24].copy_from_slice(&8_u32.to_le_bytes());
+    bytes[24..28].copy_from_slice(&u32::try_from(payload.len()).unwrap().to_le_bytes());
+    bytes.extend(payload);
+    let len = u32::try_from(bytes.len()).unwrap();
+    bytes[..4].copy_from_slice(&len.to_le_bytes());
+    bytes
+}
+
+/// vpkmerge PR #95: a model the game ships no data for (soul container, urn, effect meshes) binds
+/// no sounds, so the sound heal has nothing to restore and must not report a finding.
+#[test]
+fn a_model_without_game_data_has_no_sound_finding() {
+    let root = root("model-empty-data");
+    let entry = "models/props/soul_container.vmdl_c";
+    let stock = model_resource("");
+    let authored = model_resource("classname = \"prop_dynamic\"");
+    let base = single_file_vpk(&root, "pak01", &[(entry, stock.as_slice())]);
+    let mod_vpk = single_file_vpk(&root, "pak03", &[(entry, authored.as_slice())]);
+
+    assert!(model_metadata_empty(&stock));
+    assert!(!model_metadata_empty(&authored));
+
+    let findings = check(&base, &mod_vpk, RepairKind::Data, false).unwrap();
+    assert!(
+        findings.iter().all(|finding| finding.kind != "sounds"),
+        "the game binds no sounds on this model: {findings:#?}"
+    );
+
+    let _ = fs::remove_dir_all(&root);
+}
+
+/// The skip is only for empty game data: unreadable but present metadata stays a finding, so an
+/// author knows the model needs one.
+#[test]
+fn a_model_with_unreadable_game_data_keeps_its_sound_finding() {
+    let root = root("model-bad-data");
+    let entry = "models/heroes/atlas/atlas.vmdl_c";
+    let stock = model_resource("not kv3 metadata");
+    let authored = model_resource("classname = \"prop_dynamic\"");
+    let base = single_file_vpk(&root, "pak01", &[(entry, stock.as_slice())]);
+    let mod_vpk = single_file_vpk(&root, "pak03", &[(entry, authored.as_slice())]);
+
+    assert!(!model_metadata_empty(&stock));
+
+    let findings = check(&base, &mod_vpk, RepairKind::Data, false).unwrap();
+    let sounds: Vec<_> = findings.iter().filter(|finding| finding.kind == "sounds").collect();
+    assert_eq!(sounds.len(), 1, "{findings:#?}");
+    assert!(!sounds[0].repairable);
+    assert!(!sounds[0].detail.is_empty(), "the finding says why");
+
+    let _ = fs::remove_dir_all(&root);
+}
