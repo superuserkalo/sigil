@@ -144,6 +144,11 @@ pub struct View {
     pub invite: invite::InviteState,
     /// The clock time the next automatic refresh is due.
     pub next_refresh: Option<f64>,
+    /// The row order on show, by server id. The 15 second refresh updates values in place and
+    /// keeps this order; it is rebuilt only by a sort press, Refresh, or the first load.
+    pub order: Vec<String>,
+    /// Rebuild `order` when the next list and its pings land.
+    pub resort: bool,
     pub started: bool,
 }
 
@@ -175,6 +180,8 @@ impl Default for View {
             regions: regions::RegionsState::default(),
             invite: invite::InviteState::default(),
             next_refresh: None,
+            order: Vec::new(),
+            resort: true,
             started: false,
         }
     }
@@ -233,12 +240,28 @@ fn start_pings(st: &mut State) {
         .start(wake, move || Ok(dw::ping_many(targets, PING_TIMEOUT)));
 }
 
+/// Refresh pressed by the player: the rows may re-sort once the new list lands.
 fn refresh(st: &mut State) {
+    st.servers.resort = true;
+    reload(st);
+}
+
+/// Fetch the list again. Pings stay until new ones land, so values update in place.
+fn reload(st: &mut State) {
     if st.servers.list_job.is_running() {
         return;
     }
-    st.servers.pings.clear();
     start_list(st);
+}
+
+/// Pin the current sort as the row order.
+fn pin_order(st: &mut State) {
+    let all = scoped(st);
+    let refs: Vec<&Server> = all.iter().collect();
+    st.servers.order = dw::sorted_servers(refs, st.servers.sort, &st.servers.pings)
+        .into_iter()
+        .map(|server| server.id.clone())
+        .collect();
 }
 
 /// The 15 second heartbeat. Only the visible Servers tab asks for the next one.
@@ -250,7 +273,7 @@ fn schedule_refresh(st: &mut State, now: f64, tx: &mut Tx) {
     let due = st.servers.next_refresh.unwrap_or(now);
     if now >= due {
         if !st.servers.list_job.is_running() && !st.demo && !rune::is_headless() {
-            refresh(st);
+            reload(st);
         }
         st.servers.next_refresh = Some(now + REFRESH_SECONDS);
     }
@@ -355,10 +378,18 @@ pub fn poll(st: &mut State, now: f64, tx: &mut Tx) -> bool {
         if ok {
             start_pings(st);
         }
+        if st.servers.resort || st.servers.order.is_empty() {
+            pin_order(st);
+        }
         changed = true;
     }
     if let Some(Ok(pings)) = st.servers.ping_job.try_take() {
         st.servers.pings = pings;
+        // A sort by ping settles once the pings of a requested re-sort are in.
+        if st.servers.resort {
+            pin_order(st);
+            st.servers.resort = false;
+        }
         changed = true;
     }
     if let Some(result) = st.servers.check_job.try_take() {
@@ -549,8 +580,22 @@ fn visible(s: &State) -> Vec<Server> {
         .filter(|server| filters.matches(server))
         .collect();
     let refs: Vec<&Server> = shown.iter().collect();
-    let sorted: Vec<&Server> = dw::sorted_servers(refs, s.servers.sort, &s.servers.pings);
-    sorted.into_iter().cloned().collect()
+    let mut sorted: Vec<Server> = dw::sorted_servers(refs, s.servers.sort, &s.servers.pings)
+        .into_iter()
+        .cloned()
+        .collect();
+    // Keep the pinned order: known servers in their place, new ones after them in sort order.
+    if !s.servers.order.is_empty() {
+        let place: HashMap<&str, usize> = s
+            .servers
+            .order
+            .iter()
+            .enumerate()
+            .map(|(i, id)| (id.as_str(), i))
+            .collect();
+        sorted.sort_by_key(|server| place.get(server.id.as_str()).copied().unwrap_or(usize::MAX));
+    }
+    sorted
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -829,6 +874,7 @@ fn filters(s: &State, u: &Ui) -> El {
             move |st: &mut State| {
                 st.servers.scope = value;
                 st.servers.selected = None;
+                pin_order(st);
             },
         );
         if let Some(n) = count {
@@ -1004,6 +1050,7 @@ fn head(u: &Ui, key: ServerSortKey, width: f32, end: bool, sort: Option<ServerSo
         .on_press(move |st: &mut State| {
             st.servers.sort = dw::next_sort(st.servers.sort, key);
             st.servers.selected = None;
+            pin_order(st);
         })
         .child(
             text(label)
