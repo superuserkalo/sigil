@@ -872,6 +872,11 @@ fn integrity_problem(file: &GameBananaFile, report: &DownloadReport) -> Option<S
     (actual != expected).then(|| "does not match the checksum GameBanana lists".to_string())
 }
 
+/// The file's MD5 is `expected` (hex, any case). A file that cannot be read does not match.
+pub fn md5_file_matches(path: &Path, expected: &str) -> bool {
+    md5_file(path).is_ok_and(|actual| actual.eq_ignore_ascii_case(expected.trim()))
+}
+
 fn md5_file(path: &Path) -> Result<String> {
     let mut file = File::open(path)?;
     let mut context = md5::Context::new();
@@ -2804,6 +2809,10 @@ pub fn install_vpks(
     }
     MultiInstall { installed, error: None }
 }
+
+/// The start of the message for an archive with nothing to install, so the app can tell that
+/// refusal apart (and offer the settings review, `crate::mod_settings`).
+pub const NOTHING_INSTALLABLE: &str = "Nothing in this archive is a mod Sigil can install.";
 
 pub fn plan_install(request: &InstallRequest, options: &PlanOptions) -> Result<InstallPlan> {
     if let Some(slot) = request.slot

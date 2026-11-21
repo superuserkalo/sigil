@@ -73,8 +73,9 @@ does for each shape.
 | fonts (`panorama/fonts/*.ttf`, or a font pack's `fonts/*.otf`) | no | "Install Fonts" offer | packed at `panorama/fonts/`; Installed > tools installs them into `fonts.conf` |
 | localization text (`resource/localization/**/*.txt`), Panorama movies (`.webm`) | in a VPK only | in a VPK only | also loose, packed |
 | cursor pack (`cursor*.bmp`, `cursor.res`) | installed loose | no | message: import from Locker > Cursors (Sigil's port of Grimoire's packs) |
-| `gameinfo.gi` replacement | no | staged for review | refused with why; points to the Performance page, which applies the listed GameBanana configs as a reversible merge |
-| `.cfg` / autoexec mod | no | staged for review | refused with what to do (Autoexec page, or copy to `game/citadel/cfg`) |
+| `gameinfo.gi` replacement | no | staged for review | never copied; the review shows each convar against the stock file, Review in Performance caches it as "Config from a mod" and Apply writes it as a reversible merge |
+| `.cfg` / autoexec mod | no | staged for review | never copied; the review lists each command (new, replaces yours, already there) and Add to Autoexec puts them on the Autoexec page for its Save |
+| `video.txt` | no | staged for review | never copied; the review lists the settings that differ from yours and Performance's video step writes them with its backup |
 | gameplay data (`scripts/*.vdata_c`) or skeletons | installed | installed | refused unless Settings > Preferences > Allow script mods is on; the message names the setting |
 
 ## Downloads
@@ -87,6 +88,8 @@ does for each shape.
 | GameBanana size check | yes | yes | yes |
 | GameBanana MD5 check | no | yes | yes, one fresh download, then a clear error |
 | cached archive reused | no | partial resume | only when size and MD5 match the file record |
+| resume after a restart | partial file | partial file with its ETag | the queue keeps the part file, its `ETag` or `Last-Modified` and an install mark; Resume after restart sends `Range` with `If-Range`, a resumed GameBanana file is held to its MD5 |
+| a mod with several files | newest, picker in the mod view | file choice dialog | one-press Install asks GameBanana first; several files open the details' file menu |
 | archive that will not open | deleted | kept | deleted when downloaded (never a player's own file), so Install again re-downloads |
 
 ## Files on disk
@@ -111,10 +114,16 @@ refused for a tool cache inside the VPK, 2 maps refused for having no `_c` files
 program or a `.png` beside them, and 4 config mods refused with the generic "No compiled _c files".
 After it, 64 of 64 pass.
 
+## Settings files inside a mod (2026-11-21)
+
+`deadlock_core::mod_settings` reads `gameinfo.gi`, `*.cfg` and `video*.txt` from the unpacked
+archive (eight folders deep, 400 files, 512 KiB each) after an install, and after the refusal of
+an archive that holds only settings. The review dialog (`screens/browse/settings_review.rs`)
+shows what each would change; nothing is copied into the game as it ships. Not yet run against
+a real config mod on Windows.
+
 ## Not done
 
-- DMM's staged review of `gameinfo.gi`, `.cfg` and `video.txt` files is not built: Sigil explains
-  and points to Performance and Autoexec instead.
-- Resumable downloads across a restart (both references keep a partial file with its ETag).
-- Splitting one GameBanana mod with several files: the newest file is taken unless the player
-  picks another in Browse.
+- The install dialog's own download (outside the queue) still starts over after a restart; only
+  queue downloads resume.
+- Resume against a real GameBanana file server is checked with a local test server only.

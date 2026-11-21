@@ -123,6 +123,15 @@ impl Config {
         if let Some(hosted) = self.def.gamebanana {
             return format!("https://gamebanana.com/mods/{}", hosted.mod_id);
         }
+        // A mod's own gameinfo: the mod page, when it came from GameBanana (`mod<id>`).
+        if self.source.id == "mod" {
+            return self
+                .commit
+                .strip_prefix("mod")
+                .and_then(|id| id.parse::<u64>().ok())
+                .map(|id| format!("https://gamebanana.com/mods/{id}"))
+                .unwrap_or_default();
+        }
         format!(
             "https://github.com/{}/blob/{}/{}",
             self.source.repo,

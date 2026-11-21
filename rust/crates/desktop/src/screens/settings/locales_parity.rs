@@ -2,6 +2,12 @@
 //! apart from `locales.rs` so the two tables never collide in an edit. `i18n` reads both.
 
 pub const DE: &[(&str, &str)] = &[
+    // Installs that land on pass the mod safety scan first
+    ("{} was installed switched off", "{} wurde ausgeschaltet installiert"),
+    (
+        "It holds files the mod safety check asks about ({}). Review them to turn it on.",
+        "Er enthält Dateien, nach denen die Mod-Sicherheitsprüfung fragt ({}). Sieh sie dir an, um ihn einzuschalten.",
+    ),
     // Game watching
     ("A crash dump or crash exit code was found after the last launch.", "Nach dem letzten Start wurde ein Absturzabbild oder ein Absturz-Exitcode gefunden."),
     ("Block changes while the game runs", "Änderungen sperren, solange das Spiel läuft"),
@@ -607,6 +613,46 @@ pub const DE: &[(&str, &str)] = &[
     ("{} file · {}", "{} Datei · {}"),
     ("{} {}", "{} {}"),
     // Browse: one-press installs (screens/browse/quick.rs)
+    // Settings files inside a mod (screens/browse/settings_review.rs)
+    ("{} also ships settings files", "{} bringt auch Einstellungsdateien mit"),
+    (
+        "A gameinfo.gi, .cfg or video.txt came with it. Sigil did not copy them; review what they would change.",
+        "Eine gameinfo.gi, .cfg oder video.txt war dabei. Sigil hat sie nicht kopiert; sieh dir an, was sie ändern würden.",
+    ),
+    ("The mod's settings are on the Performance page", "Die Einstellungen des Mods sind auf der Leistungsseite"),
+    (
+        "Press Apply there to write them into your gameinfo.gi. Turn off takes them out again.",
+        "Drücke dort Übernehmen, um sie in deine gameinfo.gi zu schreiben. Ausschalten nimmt sie wieder heraus.",
+    ),
+    ("{} commands added to Autoexec. Press Save to write them.", "{} Befehle zu Autoexec hinzugefügt. Drücke Speichern, um sie zu schreiben."),
+    (
+        "This mod is not a VPK: it changes game settings. Sigil never copies these files into the game. Here is what they would change; each one goes through the page that owns that file.",
+        "Dieser Mod ist keine VPK: Er ändert Spieleinstellungen. Sigil kopiert diese Dateien nie ins Spiel. Hier steht, was sie ändern würden; jede geht über die Seite, der diese Datei gehört.",
+    ),
+    (
+        "These files came with the mod. Sigil did not copy them into the game. Here is what they would change; each one goes through the page that owns that file.",
+        "Diese Dateien kamen mit dem Mod. Sigil hat sie nicht ins Spiel kopiert. Hier steht, was sie ändern würden; jede geht über die Seite, der diese Datei gehört.",
+    ),
+    ("{} settings, {} engine edits", "{} Einstellungen, {} Engine-Änderungen"),
+    ("With {}", "Mit {}"),
+    ("Review in Performance", "In Leistung ansehen"),
+    ("{} graphics settings differ from yours", "{} Grafikeinstellungen weichen von deinen ab"),
+    ("already there", "schon vorhanden"),
+    ("replaces yours", "ersetzt deinen"),
+    ("new", "neu"),
+    ("Add to Autoexec", "Zu Autoexec hinzufügen"),
+    ("{} commands, {} not in your autoexec yet", "{} Befehle, {} noch nicht in deiner Autoexec"),
+    ("Settings files in {}", "Einstellungsdateien in {}"),
+    ("Config from a mod", "Konfiguration aus einem Mod"),
+    ("A download did not finish", "Ein Download wurde nicht fertig"),
+    ("{} did not finish downloading", "{} wurde nicht fertig heruntergeladen"),
+    ("{} downloads did not finish", "{} Downloads wurden nicht fertig"),
+    (
+        "Sigil closed while they were downloading. Resume continues from the bytes already on disk.",
+        "Sigil wurde während des Downloads geschlossen. Fortsetzen macht mit den Bytes weiter, die schon auf der Festplatte liegen.",
+    ),
+    ("Checking the files of {}.", "Die Dateien von {} werden geprüft."),
+    ("{} has {} files. Pick the one to install.", "{} hat {} Dateien. Wähle die, die installiert werden soll."),
     ("Choose another file", "Andere Datei wählen"),
     ("Downloading", "Wird heruntergeladen"),
     ("Downloading {}%", "Wird heruntergeladen {}%"),
@@ -663,6 +709,7 @@ pub const NOT_TEXT: &[&str] = &[
     "Sigil {} did not start; went back to {}", "Installed Sigil {} over {}",
     "Installed Sigil {} over {}; restarting", "Sigil {} is downloaded and verified",
     "Installed {} in slot {:02}, switched off.", "Installed {} in slot {:02}.",
+    "Installed {} in slot {:02}, switched off: the mod safety check asks about {} files. Turn it on in Installed to review them.",
     "The signed manifest is for {}, but the release is {version}.",
     // Discord presence built-ins
     "In the main menu", "In the hideout", "Playing solo", "Match over", "Watching a match",

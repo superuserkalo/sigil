@@ -510,12 +510,13 @@ pub(super) fn nothing_installable(files: &[(String, u64)]) -> String {
         .map(|(kind, names)| format!("{} {kind} file{}", names.len(), if names.len() == 1 { "" } else { "s" }))
         .collect();
     let mut message = format!(
-        "Nothing in this archive is a mod Sigil can install. No compiled _c files and no .vpk were found. It holds {}.",
+        "{} No compiled _c files and no .vpk were found. It holds {}.",
+        super::NOTHING_INSTALLABLE,
         found.join(", ")
     );
     let advice: &[(&str, &str)] = &[
-        ("gameinfo", "It replaces gameinfo.gi ({}). Sigil manages that file itself and never installs a replacement: a copied gameinfo.gi drops the addons line and breaks every mod after the next game update. Performance configs like this one are applied from Sigil's Performance page, which merges the author's settings into your own gameinfo.gi and takes them out again exactly."),
-        ("config", "It is a config mod ({}). Configs are not VPK mods: paste the commands into Sigil's Autoexec page, or copy the file into game/citadel/cfg yourself."),
+        ("gameinfo", "It replaces gameinfo.gi ({}). Sigil manages that file itself and never installs a replacement: a copied gameinfo.gi drops the addons line and breaks every mod after the next game update. Sigil shows what it would change; Review in Performance merges the author's settings into your own gameinfo.gi, and Turn off takes them out again exactly."),
+        ("config", "It is a config mod ({}). Configs are not VPK mods: Sigil shows its commands, and Add to Autoexec puts them on the Autoexec page, where Save writes them."),
         ("cursor", "It is a cursor pack ({}). Import it from Locker > Cursors: the game reads cursors as loose files, not from a VPK."),
         ("source", "It ships uncompiled source files ({}). The game reads only compiled _c files: the creator has to compile the mod with the Workshop Tools."),
         ("program", "It ships a program or script ({}). Sigil never runs programs from a mod; read the mod page for what it does."),

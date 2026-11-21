@@ -3706,18 +3706,20 @@ pub fn start_install_apply(state: &mut State) {
             let plan = deadlock_core::install::load_plan(&workspace, &summary.id)
                 .map_err(|error| error.to_string())?;
             // Browse installs land switched off unless Settings says otherwise; the user turns
-            // them on in Installed.
+            // them on in Installed. One that should land on is written off too and turned on
+            // only when the mod safety scan has nothing to ask.
             let record = deadlock_core::install::apply_install_with(
                 &plan,
                 true,
-                deadlock_core::install::ApplyOptions {
-                    land_disabled,
-                },
+                deadlock_core::install::ApplyOptions { land_disabled: true },
             )
             .map_err(|error| error.to_string())?;
             let bytes = std::fs::metadata(&record.target)
                 .map(|meta| meta.len())
                 .unwrap_or(0);
+            let gated = (!land_disabled)
+                .then(|| crate::screens::installed::safety_gate::land_checked(&plan.game_root, plan.slot, &record.target, mod_id))
+                .flatten();
             let meta = deadlock_core::import::ModMeta {
                 slot: plan.slot,
                 size_bytes: bytes,
@@ -3742,13 +3744,16 @@ pub fn start_install_apply(state: &mut State) {
                 // Settings > Experimental > Imprint installed mods.
                 crate::screens::settings::tools::imprint_after_install(root, plan.slot, &meta);
             }
-            Ok::<_, String>((
-                plan_summary(&plan),
-                format!(
-                    "Installed in slot {:02}, switched off. Turn it on in Installed.",
-                    plan.slot
+            let applied = match (land_disabled, gated) {
+                (false, None) => format!("Installed in slot {:02}. It loads the next time you start Deadlock.", plan.slot),
+                (false, Some(found)) => format!(
+                    "Installed in slot {:02}, switched off: the mod safety check asks about {} files. Turn it on in Installed to review them.",
+                    plan.slot,
+                    found.len()
                 ),
-            ))
+                (true, _) => format!("Installed in slot {:02}, switched off. Turn it on in Installed.", plan.slot),
+            };
+            Ok::<_, String>((plan_summary(&plan), applied))
         })();
         Ok(match outcome {
             Ok((plan, applied)) => crate::screens::browse::InstallOutcome {
@@ -3807,6 +3812,16 @@ pub fn apply_install_outcome(state: &mut State, outcome: crate::screens::browse:
         .unwrap_or_default();
         state.installed.library_sig = None;
         crate::screens::browse::quick::refresh_owned(state);
+    }
+    // A gameinfo.gi, .cfg or video.txt in the archive: offer the review (it opens at once when
+    // the archive had nothing else to install).
+    let only = error.as_deref().is_some_and(|e| e.contains(deadlock_core::install::NOTHING_INSTALLABLE));
+    if (applied_ok || only)
+        && let Some(dir) = crate::screens::browse::quick::settings_review::extracted_dir(&state.install.target)
+    {
+        let name = state.install.label.clone();
+        let mod_id = state.install.target.trim().parse::<u64>().ok();
+        crate::screens::browse::quick::settings_review::start(state, dir, &name, mod_id, only);
     }
     if let Some(error) = outcome.error {
         crate::screens::settings::telemetry::event(state, "install:failed", Some("page:browse"));

@@ -449,11 +449,16 @@ pub fn accept(st: &mut State) {
                 },
             )
             .map_err(|e| e.to_string())?;
-            let record = deadlock_core::install::apply_install_with(&plan, true, deadlock_core::install::ApplyOptions { land_disabled })
+            // Written switched off; one that should land on goes on once the safety scan passes.
+            let record = deadlock_core::install::apply_install_with(&plan, true, deadlock_core::install::ApplyOptions { land_disabled: true })
                 .map_err(|e| e.to_string())?;
+            let size_bytes = std::fs::metadata(&record.target).map(|m| m.len()).unwrap_or(0);
+            let gated = (!land_disabled)
+                .then(|| crate::screens::installed::safety_gate::land_checked(&game_root, plan.slot, &record.target, None))
+                .flatten();
             let meta = deadlock_core::import::ModMeta {
                 slot: plan.slot,
-                size_bytes: std::fs::metadata(&record.target).map(|m| m.len()).unwrap_or(0),
+                size_bytes,
                 name: p.name.clone(),
                 author: (!p.author.is_empty()).then(|| p.author.clone()),
                 thumbnail_url: None,
@@ -463,7 +468,16 @@ pub fn accept(st: &mut State) {
             };
             let _ = deadlock_core::import::record_meta(&library, meta.clone());
             super::tools::imprint_after_install(&game_root, plan.slot, &meta);
-            Ok(format!("Installed {} in slot {:02}, switched off.", p.name, plan.slot))
+            Ok(match (land_disabled, gated) {
+                (false, None) => format!("Installed {} in slot {:02}.", p.name, plan.slot),
+                (false, Some(found)) => format!(
+                    "Installed {} in slot {:02}, switched off: the mod safety check asks about {} files. Turn it on in Installed to review them.",
+                    p.name,
+                    plan.slot,
+                    found.len()
+                ),
+                (true, _) => format!("Installed {} in slot {:02}, switched off.", p.name, plan.slot),
+            })
         })();
         let _ = std::fs::remove_file(&p.path);
         let _ = std::fs::remove_file(&zip_path);

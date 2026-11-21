@@ -865,7 +865,8 @@ fn current(s: &State, u: &Ui) -> El {
 /// A config's version as a player reads it. GameBanana configs keep the file
 /// name, which says what the download is.
 fn display_version(config: &Config) -> String {
-    if config.def.gamebanana.is_some() {
+    // A mod's own gameinfo keeps the mod's name, like a GameBanana file name.
+    if config.def.gamebanana.is_some() || config.source.id == "mod" {
         if config.version.is_empty() {
             String::new()
         } else {

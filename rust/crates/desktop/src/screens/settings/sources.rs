@@ -96,7 +96,7 @@ pub fn poll(st: &mut State) -> bool {
     changed
 }
 
-fn start_fetch(st: &mut State, url: String, preview: bool) {
+pub(crate) fn start_fetch(st: &mut State, url: String, preview: bool) {
     if st.settings.extra.sources.job.is_running() {
         return;
     }
@@ -430,12 +430,22 @@ fn listing_row(s: &State, u: &Ui, index: usize, url: &str, l: &Listing) -> El {
 
 /// Download, check and install a listing's first file, landing off like Browse installs.
 fn install(st: &mut State, url: &str, listing_id: &str) {
+    install_artifact(st, url, listing_id, None);
+}
+
+/// Download, check and install one file of a listing (its first when `artifact_id` is
+/// `None`): Browse's file choice for a source mod.
+pub(crate) fn install_artifact(st: &mut State, url: &str, listing_id: &str, artifact_id: Option<&str>) {
     if super::watch::refuse_while_running(st) {
         return;
     }
     let Some(sync) = st.settings.extra.sources.synced.get(url).cloned() else { return };
     let Some(listing) = sync.listings.iter().find(|l| l.id == listing_id).cloned() else { return };
-    let Some(artifact) = listing.artifacts.first().cloned() else { return };
+    let artifact = match artifact_id {
+        Some(id) => listing.artifacts.iter().find(|a| a.id == id).cloned(),
+        None => listing.artifacts.first().cloned(),
+    };
+    let Some(artifact) = artifact else { return };
     if st.demo || rune::is_headless() {
         return say(st, tr("Demo data: nothing was changed."), false);
     }
@@ -462,10 +472,14 @@ fn install(st: &mut State, url: &str, listing_id: &str) {
         let record = deadlock_core::install::apply_install_with(
             &plan,
             true,
-            deadlock_core::install::ApplyOptions { land_disabled },
+            // Written switched off; one that should land on goes on once the safety scan passes.
+            deadlock_core::install::ApplyOptions { land_disabled: true },
         )
         .map_err(|e| e.to_string())?;
         let bytes = std::fs::metadata(&record.target).map(|m| m.len()).unwrap_or(0);
+        let gated = (!land_disabled)
+            .then(|| crate::screens::installed::safety_gate::land_checked(&plan.game_root, plan.slot, &record.target, None))
+            .flatten();
         let _ = deadlock_core::import::record_meta(
             &library,
             deadlock_core::import::ModMeta {
@@ -479,7 +493,15 @@ fn install(st: &mut State, url: &str, listing_id: &str) {
                 recorded_at: String::new(),
             },
         );
-        Ok(format!("Installed {} in slot {:02}.", listing.title, plan.slot))
+        Ok(match (land_disabled, gated) {
+            (false, Some(found)) => format!(
+                "Installed {} in slot {:02}, switched off: the mod safety check asks about {} files. Turn it on in Installed to review them.",
+                listing.title,
+                plan.slot,
+                found.len()
+            ),
+            _ => format!("Installed {} in slot {:02}.", listing.title, plan.slot),
+        })
     });
 }
 

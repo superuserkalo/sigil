@@ -706,7 +706,15 @@ fn source(u: &Ui, config: &Config) -> El {
                 .child(subpage::kv(
                     u,
                     tr("Project"),
-                    if let Some(hosted) = config.def.gamebanana {
+                    if config.source.id == "mod" {
+                        // A mod's own gameinfo: its GameBanana page, when it came from there.
+                        let url = config.link();
+                        if url.is_empty() {
+                            subpage::val(u, &config.version)
+                        } else {
+                            link(config.version.clone(), url, "perf-link-repo")
+                        }
+                    } else if let Some(hosted) = config.def.gamebanana {
                         link(
                             fill(tr("GameBanana (mod {})"), &[&hosted.mod_id.to_string()]),
                             config.link(),

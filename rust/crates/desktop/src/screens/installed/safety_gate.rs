@@ -71,6 +71,56 @@ pub fn needs_review(st: &mut State, slot: u16) -> Option<Vec<String>> {
     (!lines.is_empty()).then_some(lines)
 }
 
+/// An install that should land switched on (Settings > Mods > New mods start turned off is off)
+/// is written switched off first; this scans the written file and turns it on only when the
+/// gate would have nothing to ask (Grimoire #591: only what passed the review goes live).
+/// Returns the findings when the mod stays off for the gate. Worker thread: it reads the VPK.
+pub fn land_checked(game_root: &std::path::Path, slot: u16, written: &std::path::Path, gamebanana_id: Option<u64>) -> Option<Vec<String>> {
+    let ask = if crate::screens::settings::options::get().allow_scripts {
+        None
+    } else {
+        let size = std::fs::metadata(written).map(|m| m.len()).unwrap_or(0);
+        let who = gamebanana_id.map(|id| format!("gb{id}")).unwrap_or_else(|| {
+            written
+                .file_name()
+                .map(|n| n.to_string_lossy().trim_end_matches(".disabled").to_string())
+                .unwrap_or_default()
+        });
+        if read_trusted().contains(&format!("{who}:{size}")) {
+            None
+        } else {
+            let lines = findings(&mod_safety::scan_vpk(written));
+            (!lines.is_empty()).then_some(lines)
+        }
+    };
+    if ask.is_some() {
+        return ask;
+    }
+    match deadlock_core::addons::set_enabled(game_root, slot, true, true) {
+        Ok(_) => None,
+        // Left off: the Installed switch turns it on and says why if that fails too.
+        Err(error) => Some(vec![error.to_string()]),
+    }
+}
+
+/// After an install that stayed off for the gate: say so and offer the review. The review is
+/// the same question Installed's switch asks.
+pub fn landed_off(st: &mut State, slot: u16, name: &str, findings: Vec<String>) {
+    let detail = fill(
+        tr("It holds files the mod safety check asks about ({}). Review them to turn it on."),
+        &[&findings.len().to_string()],
+    );
+    crate::notify::push(
+        st,
+        crate::notify::Notice::warning(fill(tr("{} was installed switched off"), &[name]))
+            .detail(detail)
+            .action(tr("Review"), move |st: &mut State| {
+                st.go(crate::model::Screen::Installed);
+                st.installed.gates.open = Some(super::enable::Gate::Safety { slot, findings });
+            }),
+    );
+}
+
 /// "Program: bin/x.exe" lines for the gating findings, with what matched when a call did:
 /// "Reaches out: panorama/scripts/hud.vjs_c ($.AsyncWebRequest)".
 /// A VPK the scan could not open asks too: being unreadable is no way past the gate.
