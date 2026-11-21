@@ -993,6 +993,9 @@ impl ModelRefs {
 pub(crate) struct GraphClips {
     /// Compiled `.vnmclip_c` paths in graph order (the `ui` graph first), present in the stack.
     pub resources: Vec<String>,
+    /// The `resources` the `ui` graph names, in its order (their animation events feed the
+    /// particle bundle, as Grimoire's `discoverAnimationEvents` reads them).
+    pub ui: Vec<String>,
     /// Showcase per compiled clip path. A shop state wins over hero select for one clip.
     pub showcases: BTreeMap<String, Showcase>,
 }
@@ -1018,10 +1021,13 @@ pub(crate) fn read_graphs(
                 continue;
             };
             let compiled = super::stack::compiled(resource);
-            if compiled.ends_with(".vnmclip_c")
-                && available(&compiled)
-                && !out.resources.contains(&compiled)
-            {
+            if !compiled.ends_with(".vnmclip_c") || !available(&compiled) {
+                continue;
+            }
+            if id.eq_ignore_ascii_case("ui") && !out.ui.contains(&compiled) {
+                out.ui.push(compiled.clone());
+            }
+            if !out.resources.contains(&compiled) {
                 out.resources.push(compiled);
             }
         }

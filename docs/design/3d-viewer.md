@@ -80,7 +80,7 @@ key, same files, `variant: "original"` in the sidecar). The UI can compare the t
 <cache>/hideout/<key>/reflection/{px,nx,py,ny,pz,nz}.hdr
 ```
 
-A key is 24 hex characters of SHA-256 over: the pipeline version (`sigil-viewer-3`), the pinned
+A key is 24 hex characters of SHA-256 over: the pipeline version (`sigil-viewer-4`), the pinned
 vpkmerge revision, the hero codename and model entry (heroes), the texture cap, the effective
 variant, and for every VPK in the stack its kind, path, size and modification time (mods also
 their chunk files). A game update, a new exporter, a changed or reordered mod all make a new key;
@@ -137,7 +137,7 @@ Binary glTF 2.0 written by `morphic::model::to_glb_textured`:
   "forward": "+Z",
   "key": "3f0c...",
   "issues": [],
-  "pipeline": "sigil-viewer-3"
+  "pipeline": "sigil-viewer-4"
 }
 ```
 
@@ -269,7 +269,7 @@ them on the floor.
   "sources": [ { "slot": null, "file": "maps/dl_hideout.vpk", "name": "Hideout", "kind": "map", "enabled": true, "used": 412 } ],
   "failures": [],
   "omissions": ["particles", "staticBundle"],
-  "pipeline": "sigil-viewer-3"
+  "pipeline": "sigil-viewer-4"
 }
 ```
 
@@ -393,18 +393,54 @@ Source space (inches, Z up); the renderer applies Source to glTF and the placeme
                      "influences": [ { "bone": "hand_R", "offset": [0, 0, 0], "rotation": [0, 0, 0, 1], "weight": 1.0, "rootTransform": false } ] } ],
   "effects": [ { "id": "ambient_0", "system": "particles/x/y.vpcf", "source": "model-particles-list",
                  "attachment": { "type": "point_follow", "point": "attach_hand_r", "offset": [0, 0, 0] }, "attachmentCp1": null,
-                 "configuration": null, "transform": null, "controlPoints": [], "startActive": true, "seed": 12345 } ],
-  "issues": []
+                 "configuration": null, "transform": null, "controlPoints": [], "startActive": true, "seed": 12345 },
+               { "id": "anim_1", "system": "particles/x/burst.vpcf", "source": "anim-event",
+                 "attachment": { "type": "point_follow", "point": "head", "offset": [0, 0, 0] }, "attachmentCp1": null,
+                 "configuration": null, "transform": null, "controlPoints": [], "startActive": false, "seed": 6789,
+                 "clip": { "name": "hero_shop", "start": 0.25, "stops": [ { "time": 0.75, "immediately": true, "endCap": false } ],
+                           "stopOnClipChange": true } } ],
+  "issues": [],
+  "bones": [ { "name": "hand_R", "bind": [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 1.5, -10.8, 31, 1] } ],
+  "snapshots": { "particles/x/y.vsnap": { "numParticles": 2, "strings": ["hand_R"], "columns": [
+                 { "name": "position", "type": "float3", "data": "vector", "values": [0, 0, 1, 0, 0, 2] },
+                 { "name": "skinning", "type": "skinning", "data": "skinning",
+                   "values": { "joints": [0, 0, 0, 0, 0, 0, 0, 0], "weights": [1, 0, 0, 0, 1, 0, 0, 0] } } ] } }
 }
 ```
 
 Textures are top-mip PNGs (straight alpha, at most 1024 px); sheet rects are uv `[u0, v0, u1, v1]`.
 `source` is one of `model-particles-list`, `model-particle-cfg`, `model-ambient`, `hero-ambient`
-(kept with `startActive: false`, as Grimoire leaves it out of the showcase), `weapon-passive` and
-`map-entity` (with `transform`, the entity matrix, and `controlPoints` from `cpointN`, `tint_cp`,
-`data_cp`). Limits: 160 systems 12 levels deep and 128 textures a bundle when written; the renderer
-loads at most 256 systems an effect, 512 a bundle and 32 children a system, sheets at most 1024
-sequences of 1024 frames of 16 images (65,536 in all), textures at most 4096 x 4096.
+(kept with `startActive: false`, as Grimoire leaves it out of the showcase), `weapon-passive`,
+`anim-event` and `map-entity` (with `transform`, the entity matrix, and `controlPoints` from
+`cpointN`, `tint_cp`, `data_cp`). Limits: 160 systems 12 levels deep and 128 textures a bundle
+when written; the renderer loads at most 256 systems an effect, 512 a bundle and 32 children a
+system, sheets at most 1024 sequences of 1024 frames of 16 images (65,536 in all), textures at
+most 4096 x 4096.
+
+`anim-event` effects (Grimoire's `discoverAnimationEvents`) come from the `AE_CL_CREATE_PARTICLE_EFFECT`
+and `AE_CL_CREATE_PARTICLE_EFFECT_CFG` events of the clips the glb plays (their `.vnmclip_c`
+`m_events[]`, or for an embedded clip the model's legacy `ANIM` block `m_eventArray[]` of that
+name), then the rest of the `ui` graph's clips (named by file stem), at most 48 clip files. Only
+`clip` effects carry `clip` (the key is absent otherwise): `name` is the glb animation name,
+`start` and each stop's `time` are normalized clip time (0 to 1), `stops` are the same clip's
+`AE_CL_STOP_PARTICLE_EFFECT` events naming the same system at or after the start
+(`stop_instantly` or `stop_immediately` set `immediately`, `play_endcap` sets `endCap`), and
+`stopOnClipChange` is `stop_on_seq_change`. The attachment comes from `attachment_type` (default
+`absorigin_follow`, lowercased, `pattach_` dropped) and `attachment_point`, `attachmentCp1` from
+the `_cp1` keys; a `_CFG` event names a `configuration` and no attachment. They are written with
+`startActive: false` and started by the renderer as the clip passes them.
+
+`bones` (hero bundles, present only when the model has a skeleton) are the model's bones with
+their model-space bind poses (Source space, column major), which skinned snapshots deform by.
+`snapshots` holds every `.vsnap_c` a system names in `m_hSnapshot`, decoded from its DATA block
+and block compressed SNAP block; `strings` is the DATA block's string list (joint and hitbox
+names), `values` are numbers for `float`, `int` and `vector` (three a row, flattened), indices
+into `strings` for `string`/`bone` (-1 for one outside it), and `{ joints, weights }` with four of
+each a row for `skinning`. Names are never copied per row, so a small file cannot decode into a
+large one. Limits: 4 MB a compiled file, 65,536 rows, 4,096 strings of at most 256 bytes, a SNAP
+block that inflates to at most 16 MB and holds exactly the rows its attributes ask for (up to 16
+bytes of padding), and 32 MB of decoded rows and strings for all of a bundle's snapshots. Both
+keys are absent when empty.
 
 ## Not done yet
 
@@ -415,9 +451,15 @@ sequences of 1024 frames of 16 images (65,536 in all), textures at most 4096 x 4
   clips: the pinned vpkmerge does not report them, so only clip file metadata (additive, root
   motion) feeds the filter, and step 5 of the clip choice finds nothing yet.
 - The Hideout's meshopt static bundle and height fog volumes. Each is listed in `omissions`.
-- Particle animation-event effects (`AE_CL_CREATE_PARTICLE_EFFECT` in the played clips),
-  snapshots, particle models and ropes; material groups and skins per hero form; WIP heroes
-  whose pose lives only in a loose NM pose clip.
+- Particle models (`C_OP_RenderModels`): the bundle carries no meshes yet and the renderer has
+  no model draw path (bind-pose meshes per particle need a mesh export into the bundle and an
+  instanced lit pipeline), so the class stays in `Viewer::particle_diagnostics`. Also not ported:
+  `C_OP_MaintainEmitter` (so its snapshot count), the other snapshot functions, a snapshot that
+  `info_particle_system` overrides with `snapshot_file`, and per-effect model bones other than
+  control point 0's hero. Animation-event effects keep at most two playing instances each
+  (Grimoire makes one per event); a third event restarts the oldest.
+- Material groups and skins per hero form; WIP heroes whose pose lives only in a loose NM pose
+  clip.
 - A real-game run. The ignored test and the CLI are ready for the first machine with Deadlock.
 
 ## Where it appears
@@ -561,7 +603,21 @@ let png = v.capture_png(width, height)?;
   on its posed attachments and the map's effects lit by its sun, simulated in Source space,
   drawn as instanced spritecards (and trails) in the scene pass after the surfaces. Classes the
   port lacks are listed in `Viewer::particle_diagnostics`, never guessed. A new bundle gets a
-  second of simulation before its first frame so a still shows it.
+  second of simulation before its first frame so a still shows it. Ropes (`C_OP_RenderRopes`,
+  Grimoire's `renderRopes.ts`) are Catmull-Rom ribbons through the particles, cut into a power of
+  two of pieces from the rope's screen coverage, V from world arc length over
+  `m_flTextureVWorldSize` with scroll, offset and the carried V when the first particle dies,
+  closed loops and split segments; each piece is a strip quad (instance mode 3) in the same
+  spritecard pipeline. Animation-event effects start and stop as the playing clip passes their
+  events (`ParticleGpu::set_clip`, called from `Viewer::step_particles` with the clip's glb name
+  and `time / duration`): the events in (last, now] pass, a loop passes both ends, a clip change
+  stops the effects with `stopOnClipChange`, and a finished one goes idle (no auto restart).
+  Skinned snapshots (`C_INIT_InitSkinnedPositionFromCPSnapshot`, `C_OP_SnapshotRigidSkinToBones`,
+  snapshot counts on the instantaneous and continuous emitters, `PF_TYPE_SNAPSHOT_COUNT`) bind a
+  system's `m_hSnapshot` to its control point and deform the points by control point 0's bones:
+  each frame the host builds a palette of `posed bone * inverse bind` from the bundle's `bones`
+  and the attachment lookup (a bone name resolves to the bone, unless an attachment has that
+  name).
 - Looks (`Look`): Grimoire's backgrounds (None, Transparent, a picture, the ten soul gradients),
   Deadlock Mod Manager's studio gradient, Midtown dusk lighting, bloom, shadows, cloth and
   particles switches; `auto_rotate` turns the hero at 0.25 rad/s (Grimoire's turntable).

@@ -137,6 +137,8 @@ pub struct Continuous {
     window_start: f32,
     emitting: bool,
     force_pending: bool,
+    /// The rate scales by the bound snapshot's row count.
+    snapshot: super::snapshot::Binding,
 }
 
 #[derive(Clone, Debug)]
@@ -152,7 +154,56 @@ pub struct Instant {
     time_base: f32,
     computed: bool,
     event_settled: bool,
+    /// One particle per row of the bound snapshot, at the rows' creation times.
+    snapshot: super::snapshot::Binding,
+    reset_on_changes: bool,
+    snap_index: usize,
+    snap_emit_index: usize,
+    /// The snapshot the walk last read (its address), to restart it on a change.
+    walked: usize,
     emitting: bool,
+}
+
+impl Instant {
+    fn snapshot_bound(&self) -> bool {
+        self.snapshot.is_bound()
+    }
+
+    /// The snapshot walk (Grimoire's `updateParticlesToEmit`): one particle per row, released
+    /// as the time since the emitter started passes each row's creation time (all at once
+    /// without that column). With `m_bResetSnapshotIndexOnChanges` a changed snapshot starts
+    /// the walk over, and the walk never finishes.
+    fn walk_snapshot(&mut self, st: &State, time: f32) {
+        let snap = self.snapshot.resolve(st).cloned();
+        let address = snap.as_ref().map_or(0, |s| std::sync::Arc::as_ptr(s) as usize);
+        if self.reset_on_changes && address != self.walked {
+            self.snap_index = 0;
+            self.snap_emit_index = 0;
+        }
+        self.walked = address;
+        let can_finish = !self.reset_on_changes;
+        let Some(snap) = snap else {
+            self.computed = can_finish;
+            return;
+        };
+        let count = snap.count;
+        let Some(created) = snap.scalar(fl::CREATION) else {
+            self.remaining += count.saturating_sub(self.snap_index) as i64;
+            self.snap_index = self.snap_index.max(count);
+            self.computed = can_finish;
+            return;
+        };
+        if self.snap_emit_index >= count {
+            self.remaining = 0;
+            self.computed = can_finish;
+            return;
+        }
+        let elapsed = time - self.time_base;
+        while self.snap_index < count && (self.snap_index >= created.len() || created[self.snap_index] <= elapsed) {
+            self.snap_index += 1;
+            self.remaining += 1;
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -191,6 +242,7 @@ impl Emitter {
                 window_start: -1.0,
                 emitting: true,
                 force_pending: false,
+                snapshot: super::snapshot::Binding::parse(v, "m_nSnapshotControlPoint", -1, false),
             }),
             "C_OP_InstantaneousEmitter" => EmitterKind::Instant(Instant {
                 count: NumIn::parse_or(v, "m_nParticlesToEmit", 100.0, cx),
@@ -204,6 +256,11 @@ impl Emitter {
                 time_base: 0.0,
                 computed: false,
                 event_settled: false,
+                snapshot: super::snapshot::Binding::parse(v, "m_nSnapshotControlPoint", -1, false),
+                reset_on_changes: kv::b(v, "m_bResetSnapshotIndexOnChanges", false),
+                snap_index: 0,
+                snap_emit_index: 0,
+                walked: 0,
                 emitting: true,
             }),
             _ => return None,
@@ -243,6 +300,9 @@ impl Emitter {
                 e.time_base = 0.0;
                 e.computed = false;
                 e.event_settled = false;
+                e.snap_index = 0;
+                e.snap_emit_index = 0;
+                e.walked = 0;
                 e.emitting = true;
             }
         }
@@ -337,6 +397,9 @@ impl Emitter {
                     if e.scale_per_parent > 0.0 {
                         rate *= parent_count.map_or(e.scale_per_parent, |n| n as f32 * e.scale_per_parent);
                     }
+                    if e.snapshot.has_cp() {
+                        rate *= e.snapshot.count(st) as f32;
+                    }
                     if rate <= 0.0 || (!e.emitting && !e.force_pending) || past_fade {
                         return;
                     }
@@ -397,16 +460,20 @@ impl Emitter {
                     if e.emit_time > time {
                         return;
                     }
-                    if !e.computed {
-                        let mut k = 1.0;
-                        if let Some(n) = parent_count {
-                            let ps = e.parent_scale.next(st);
-                            if ps != -1.0 {
-                                k = n as f32 * ps;
+                    if !e.snapshot_bound() {
+                        if !e.computed {
+                            let mut k = 1.0;
+                            if let Some(n) = parent_count {
+                                let ps = e.parent_scale.next(st);
+                                if ps != -1.0 {
+                                    k = n as f32 * ps;
+                                }
                             }
+                            e.remaining = ((k * e.count.next(st)) as i64).max(0);
+                            e.computed = true;
                         }
-                        e.remaining = ((k * e.count.next(st)) as i64).max(0);
-                        e.computed = true;
+                    } else if !e.computed {
+                        e.walk_snapshot(st, time);
                     }
                 }
                 if e.emit_time > st.age || e.remaining <= 0 {
@@ -416,8 +483,12 @@ impl Emitter {
                 let claimed = cap.min(e.remaining);
                 e.remaining -= claimed;
                 let count = (free as i64).min((claimed as f32 * strength) as i64);
+                let snap = if e.snapshot_bound() { e.snapshot.resolve(st).cloned() } else { None };
+                let created = snap.as_ref().and_then(|s| s.scalar(fl::CREATION));
                 for _ in 0..count.max(0) {
-                    times.push(e.emit_time);
+                    let offset = created.and_then(|c| c.get(e.snap_emit_index)).copied().unwrap_or(0.0);
+                    e.snap_emit_index += 1;
+                    times.push(e.emit_time + offset);
                 }
             }
         }
@@ -496,6 +567,7 @@ pub enum Init {
     DistanceToCp { field: i32, in_min: NumIn, in_max: NumIn, out_min: NumIn, out_max: NumIn, cp: i32, method: i32, active: bool, scale: Vec3, bias: f32 },
     ScalarExpr { field: i32, a: NumIn, b: NumIn, expr: i32, method: i32, remap: Option<Mapping> },
     FromParentKilled { field: i32 },
+    Skinned(Box<super::snapshot::SkinnedInit>),
 }
 
 #[derive(Clone, Debug)]
@@ -649,6 +721,11 @@ impl Initializer {
                     mask(field),
                 )
             }
+            "C_INIT_InitSkinnedPositionFromCPSnapshot" => {
+                cx.skinned = true;
+                let (init, written) = super::snapshot::SkinnedInit::parse(v, cx);
+                (Init::Skinned(Box::new(init)), written)
+            }
             "C_INIT_InitFromParentKilled" => {
                 let field = kv::field(v, "m_nAttributeToCopy", usize::MAX);
                 let copies = field >= 0 && field != fl::NONE as i32;
@@ -662,6 +739,7 @@ impl Initializer {
     pub fn reset(&mut self, st: &mut State) {
         match &mut self.kind {
             Init::Ring { orbit, .. } => *orbit = 0,
+            Init::Skinned(s) => s.reset(),
             Init::Sequence { min, max, shuffle, linear, cursor0, cursor, table, next, .. } => {
                 *cursor = *cursor0;
                 *table = [0; 64];
@@ -949,6 +1027,7 @@ impl Initializer {
                     p.s[f][i] = apply_set(v, cur, cur, st.current_step, *method).clamp(lo, hi);
                 }
             }
+            Init::Skinned(s) => s.run(st, p, first, n, &mut sc.a),
             Init::FromParentKilled { field } => {
                 let f = *field;
                 let Some((parent, indices)) = parent else { return };
@@ -1081,6 +1160,7 @@ impl ForceGen {
 #[derive(Clone, Debug)]
 pub enum Op {
     Decay { rope: bool },
+    RigidSkin(super::snapshot::RigidSkin),
     Movement { gravity: VecIn, drag: NumIn },
     PositionLock {
         xf: TransIn,
@@ -1197,6 +1277,10 @@ impl Operator {
                 method,
                 remap: kv::get(v, "m_flOutputRemap").filter(|x| x.is_object()).map(Mapping::parse_remap),
             },
+            "C_OP_SnapshotRigidSkinToBones" => {
+                cx.skinned = true;
+                Op::RigidSkin(super::snapshot::RigidSkin::parse(v))
+            }
             "C_OP_OscillateVectorSimple" => Op::Oscillate {
                 field: kv::field(v, "m_nField", fl::POSITION),
                 rate: kv::v3(v, "m_Rate", [0.0; 3]),
@@ -1221,6 +1305,7 @@ impl Operator {
     pub fn operate(&mut self, st: &mut State, p: &mut Particles, dt: f32, strength: f32, forces: &[ForceGen], sc: &mut Scratch) {
         let n = p.len;
         match &mut self.kind {
+            Op::RigidSkin(o) => o.operate(st, p),
             Op::Decay { rope } => {
                 if !*rope {
                     for i in 0..n {

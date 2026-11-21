@@ -296,7 +296,8 @@ fn particles_grimoire_fixture_systems_load_and_report_unknown_classes() {
         }
         all_unknown.extend(cx.diagnostics);
     }
-    assert!(all_unknown.iter().any(|d| d.contains("unsupported renderer C_OP_RenderRopes")), "{all_unknown:?}");
+    assert!(all_unknown.iter().any(|d| d.contains("unsupported renderer C_OP_RenderModels")), "{all_unknown:?}");
+    assert!(!all_unknown.iter().any(|d| d.contains("unsupported renderer C_OP_RenderRopes")), "ropes are drawn");
     assert!(all_unknown.iter().any(|d| d.contains("unsupported initializer C_INIT_NormalAlignToCP")));
     assert!(!all_unknown.iter().any(|d| d.contains("C_OP_RenderSprites") || d.contains("C_INIT_InitFloat") || d.contains("C_OP_Decay ")));
 }
@@ -357,8 +358,8 @@ fn particles_standin_bundle_round_trips_and_plays() {
     let dir = scratch_dir("hero");
     let path = fixture::write_fixture(&dir).expect("write");
     let b = Bundle::read(&dir).expect("read");
-    assert_eq!(Bundle::read(&path).expect("read json").systems.len(), 3);
-    assert_eq!(b.systems.len(), 3);
+    assert_eq!(Bundle::read(&path).expect("read json").systems.len(), 4);
+    assert_eq!(b.systems.len(), 4);
     let sheet_tex = &b.textures[fixture::GLOW_TEXTURE];
     assert_eq!((sheet_tex.width, sheet_tex.height), (256, 256));
     assert_eq!(sheet_tex.sheet.as_ref().unwrap().sequences[0].frames.len(), 16);
@@ -390,9 +391,11 @@ fn particles_standin_bundle_round_trips_and_plays() {
     let mut out = Vec::new();
     let (mut ranges, mut shading) = (Vec::new(), Vec::new());
     let sheets = b.textures.iter().filter_map(|(k, t)| t.sheet.clone().map(|s| (k.clone(), s))).collect();
-    let view = View { camera: [100.0, 0.0, 50.0], to_world: crate::fixture::source_to_gltf(), world_scale: 0.0254 };
+    let view = View { camera: [100.0, 0.0, 50.0], to_world: crate::fixture::source_to_gltf(), world_scale: 0.0254, projection: 2.0 };
     fx.build(&view, &sheets, &mut out, &mut ranges, &mut shading);
-    assert_eq!(ranges.len(), 3);
+    // The plume, its two children, and the wisp's two idle event instances.
+    assert_eq!(ranges.len(), 5);
+    assert_eq!(ranges[3].0, ranges[3].1, "an idle event effect draws nothing");
     assert!(!out.is_empty() && out.len() <= fx.particle_count());
     let glow_cards = &out[ranges[1].0 as usize..ranges[1].1 as usize];
     for c in glow_cards {
@@ -447,9 +450,13 @@ fn particles_gpu_pipelines_build_and_draw() {
     let mut pg = ParticleGpu::new(device, &gpu.queue, &frame_layout, gpu.msaa, crate::gpu::HDR, crate::gpu::DEPTH, &b, u64::MAX);
     let attach = |n: &str| b.attachment_frame(n, &hand_bone);
     let to_world = crate::fixture::source_to_gltf();
+    // Fire the wisp so its rope strip quads go through the pipeline too.
+    pg.set_clip(Some((fixture::WISP_CLIP, 0.0)));
+    pg.set_fov(0.8);
     for _ in 0..60 {
         pg.step(1.0 / 60.0, &to_world, &attach, [0.0, 1.0, 3.0]);
     }
+    assert_eq!(pg.active_effects(), 2);
     pg.upload(&gpu.queue);
     assert!(pg.particle_count() > 0 && pg.instance_count() > 0);
     let mut frame = vec![0.0f32; 512];
@@ -527,7 +534,7 @@ fn particles_timing_2000() {
         fx.step(1.0 / 60.0, &none, [200.0, 0.0, 0.0]);
     }
     assert!(fx.particle_count() >= 1900, "{}", fx.particle_count());
-    let view = View { camera: [200.0, 0.0, 0.0], to_world: crate::fixture::source_to_gltf(), world_scale: 0.0254 };
+    let view = View { camera: [200.0, 0.0, 0.0], to_world: crate::fixture::source_to_gltf(), world_scale: 0.0254, projection: 2.0 };
     let sheets = std::collections::HashMap::new();
     let (mut out, mut ranges, mut shading) = (Vec::new(), Vec::new(), Vec::new());
     let frames = 200;
@@ -649,4 +656,330 @@ fn particles_wide_textures_upload_within_the_limits() {
     let pg = ParticleGpu::new(device, &gpu.queue, &frame_layout, gpu.msaa, crate::gpu::HDR, crate::gpu::DEPTH, &b, u64::MAX);
     assert!(pollster::block_on(scope.pop()).is_none(), "no validation error");
     let _ = pg.diagnostics();
+}
+
+/// The stand-in bundle's wisp: an animation-event effect with two idle instances.
+fn wisp_hosts(fx: &Effects) -> Vec<usize> {
+    (0..fx.hosts.len()).filter(|&k| fx.hosts[k].effect.system == fixture::WISP).collect()
+}
+
+#[test]
+fn particles_animation_events_follow_the_clip() {
+    let b = fixture::hero_bundle();
+    let wisp = b.effects.iter().find(|e| e.system == fixture::WISP).expect("wisp effect");
+    assert_eq!(wisp.source, "anim-event");
+    let clip = wisp.clip.as_ref().expect("clip");
+    assert_eq!((clip.name.as_str(), clip.start, clip.stop_on_clip_change), (fixture::WISP_CLIP, 0.0, true));
+    assert_eq!(clip.stops, vec![ClipStop { time: fixture::WISP_STOP, immediately: false, end_cap: false }]);
+
+    let mut fx = Effects::new(&b);
+    let hosts = wisp_hosts(&fx);
+    assert_eq!(hosts.len(), super::host::EVENT_INSTANCES);
+    // Only the ambient plays until the clip passes an event.
+    assert_eq!(fx.active_count(), 1);
+    let attach = |n: &str| b.attachment_frame(n, &hand_bone);
+    let run = |fx: &mut Effects, frames: usize| {
+        for _ in 0..frames {
+            fx.step(1.0 / 60.0, &attach, [100.0, 0.0, 50.0]);
+        }
+    };
+    // A clip that names no event fires nothing.
+    fx.set_clip(Some(("other_clip", 0.0)));
+    assert_eq!(fx.active_count(), 1);
+
+    // Switching to the clip passes its events from the start: the wisp at 0 fires.
+    fx.set_clip(Some((fixture::WISP_CLIP, 0.0)));
+    assert_eq!(fx.active_count(), 2);
+    let first = hosts.iter().copied().find(|&k| fx.hosts[k].active).unwrap();
+    run(&mut fx, 30);
+    let wisp_p = &fx.hosts[first].sys.p;
+    assert!(wisp_p.len > 5, "wisp particles {}", wisp_p.len);
+    // The wisp rises from the hand (here the model origin, 2 inches down).
+    let top = (0..wisp_p.len).map(|i| wisp_p.v[fl::POSITION][i][2]).fold(f32::MIN, f32::max);
+    assert!(top > 3.0, "{:?}", (0..wisp_p.len).map(|i| wisp_p.v[fl::POSITION][i]).collect::<Vec<_>>());
+    // Moving on inside the clip passes nothing new.
+    fx.set_clip(Some((fixture::WISP_CLIP, 0.5)));
+    assert!(!fx.hosts[first].stopped);
+    // Its stop at 0.85 stops emission; the particles live out their life, then it idles.
+    fx.set_clip(Some((fixture::WISP_CLIP, 0.9)));
+    assert!(fx.hosts[first].stopped && fx.hosts[first].active);
+    run(&mut fx, 150);
+    assert!(!fx.hosts[first].active, "a finished event effect is removed");
+    assert_eq!(fx.active_count(), 1);
+
+    // The clip loops: the start fires again (on an idle instance).
+    fx.set_clip(Some((fixture::WISP_CLIP, 0.1)));
+    assert_eq!(fx.active_count(), 2);
+    let second = hosts.iter().copied().find(|&k| fx.hosts[k].active).unwrap();
+    run(&mut fx, 10);
+    // Another loop passes the stop (the playing one fades out) and the start, which takes
+    // the other instance while the first still plays.
+    fx.set_clip(Some((fixture::WISP_CLIP, 0.05)));
+    assert!(fx.hosts[second].stopped);
+    assert_eq!(fx.active_count(), 3);
+    run(&mut fx, 10);
+    let order: Vec<bool> = hosts.iter().map(|&k| fx.hosts[k].active).collect();
+    assert_eq!(order, vec![true, true]);
+    // A third with none idle reuses the oldest.
+    fx.set_clip(Some((fixture::WISP_CLIP, 0.01)));
+    assert_eq!(fx.active_count(), 3);
+    assert!(!fx.hosts[second].stopped, "refired");
+
+    // A clip change stops the effects that end with their clip (not at once: they fade out).
+    fx.set_clip(Some(("other_clip", 0.0)));
+    assert!(hosts.iter().all(|&k| fx.hosts[k].stopped));
+    run(&mut fx, 150);
+    assert_eq!(fx.active_count(), 1);
+    // No clip at all stops nothing more and fires nothing.
+    fx.set_clip(None);
+    assert_eq!(fx.active_count(), 1);
+}
+
+#[test]
+fn particles_animation_event_immediate_stop_drops_the_particles() {
+    let mut json = fixture::hero_json();
+    json["effects"][1]["clip"]["stops"][0]["immediately"] = json!(true);
+    let b = Bundle::from_json(&json, |_| Ok((1, 1, vec![255; 4]))).unwrap();
+    let mut fx = Effects::new(&b);
+    let k = wisp_hosts(&fx)[0];
+    let none = |_: &str| None;
+    fx.set_clip(Some((fixture::WISP_CLIP, 0.0)));
+    for _ in 0..30 {
+        fx.step(1.0 / 60.0, &none, [100.0, 0.0, 50.0]);
+    }
+    assert!(fx.hosts[k].sys.p.len > 0);
+    fx.set_clip(Some((fixture::WISP_CLIP, 0.9)));
+    assert_eq!(fx.hosts[k].sys.p.len, 0, "an immediate stop removes every particle");
+    fx.step(1.0 / 60.0, &none, [100.0, 0.0, 50.0]);
+    assert!(!fx.hosts[k].active);
+}
+
+fn rope_renderer(extra: Value) -> super::render::Renderer {
+    let mut v = json!({
+        "_class": "C_OP_RenderRopes",
+        "m_flTextureVWorldSize": lit(10.0),
+        "m_nMinTesselation": 1,
+        "m_nMaxTesselation": 1,
+        "m_bGammaCorrectVertexColors": false
+    });
+    for (k, x) in extra.as_object().unwrap() {
+        v[k] = x.clone();
+    }
+    let mut cx = ParseCx::default();
+    let r = super::render::Renderer::parse("C_OP_RenderRopes", &v, 12, &mut cx).expect("rope renderer");
+    assert!(cx.diagnostics.is_empty(), "{:?}", cx.diagnostics);
+    r
+}
+
+/// Four particles on a 10 inch square in the XY plane, oldest first.
+fn square(segments: [f32; 4]) -> Particles {
+    let mut consts_s = [0.0; fl::COUNT];
+    consts_s[fl::ALPHA] = 1.0;
+    consts_s[fl::ALPHA2] = 1.0;
+    consts_s[fl::RADIUS] = 2.0;
+    let mut consts_v = [[0.0; 3]; fl::COUNT];
+    consts_v[fl::COLOR] = [1.0; 3];
+    let mut p = Particles::new(consts_s, consts_v, 8);
+    for (i, pos) in [[0.0, 0.0, 0.0], [10.0, 0.0, 0.0], [10.0, 10.0, 0.0], [0.0, 10.0, 0.0]].into_iter().enumerate() {
+        p.push(0.0);
+        p.v[fl::POSITION][i] = pos;
+        p.s[fl::PARTICLE_ID][i] = i as f32;
+        p.s[47][i] = segments[i];
+    }
+    p
+}
+
+fn build_rope(r: &mut super::render::Renderer, p: &Particles) -> Vec<Instance> {
+    let mut st = State::new(8);
+    let view = View { camera: [5.0, 5.0, 200.0], to_world: Mat4::IDENTITY, world_scale: 1.0, projection: 2.0 };
+    let (mut out, mut order, mut dist) = (Vec::new(), Vec::new(), Vec::new());
+    r.build(&mut st, p, &view, None, &mut out, &mut order, &mut dist);
+    out
+}
+
+#[test]
+fn particles_ropes_thread_strip_quads_through_the_particles() {
+    let p = square([0.0; 4]);
+    let mut open = rope_renderer(json!({}));
+    let quads = build_rope(&mut open, &p);
+    assert_eq!(quads.len(), 3, "an open rope of 4 particles has 3 segments");
+    for q in &quads {
+        assert_eq!(q.axis_u[3], 3.0, "strip quad mode");
+        assert_eq!((q.pos_radius[3], q.axis_v[3]), (2.0, 2.0));
+        // A unit width axis across the spline, nearly flat under the camera above.
+        let across = [q.axis_u[0], q.axis_u[1], q.axis_u[2]];
+        assert!((length(across) - 1.0).abs() < 1e-4 && across[2].abs() < 0.1, "{across:?}");
+    }
+    // The first quad starts along +X, so its width runs along Y.
+    assert!(quads[0].axis_u[1].abs() > 0.99, "{:?}", quads[0].axis_u);
+    // Consecutive quads share their joint, V runs on with the arc length over the world size.
+    assert_eq!([quads[0].axis_v[0], quads[0].axis_v[1]], [quads[1].pos_radius[0], quads[1].pos_radius[1]]);
+    assert_eq!((quads[0].uv_a[1], quads[0].uv_a[3]), (0.0, 1.0));
+    assert_eq!((quads[1].uv_a[1], quads[1].uv_a[3]), (1.0, 2.0));
+    // u runs against the width axis: 1 on the minus side.
+    assert_eq!((quads[0].uv_a[0], quads[0].uv_a[2]), (1.0, 0.0));
+    // The width axis keeps one hemisphere along the strip.
+    for w in quads.windows(2) {
+        assert!(crate::math::dot([w[0].misc[0], w[0].misc[1], w[0].misc[2]], [w[1].axis_u[0], w[1].axis_u[1], w[1].axis_u[2]]) >= 0.0);
+    }
+
+    // A closed loop adds the segment back to the first particle.
+    let mut closed = rope_renderer(json!({ "m_bClosedLoop": true }));
+    let quads = build_rope(&mut closed, &p);
+    assert_eq!(quads.len(), 4);
+    assert_eq!([quads[3].axis_v[0], quads[3].axis_v[1]], [0.0, 0.0]);
+
+    // The split field breaks the rope where the segment id changes.
+    let split = square([0.0, 0.0, 1.0, 1.0]);
+    let quads = build_rope(&mut rope_renderer(json!({})), &split);
+    assert_eq!(quads.len(), 2);
+
+    // Tessellation subdivides each segment into a power of two of pieces along the spline.
+    let mut fine = rope_renderer(json!({ "m_nMinTesselation": 3, "m_nMaxTesselation": 3 }));
+    let quads = build_rope(&mut fine, &p);
+    assert_eq!(quads.len(), 3 * 4);
+    // The spline passes through the particles.
+    assert_eq!([quads[3].axis_v[0], quads[3].axis_v[1]], [10.0, 0.0]);
+
+    // V offsets by its input, and clamps on request.
+    let mut offset = rope_renderer(json!({ "m_flTextureVOffset": lit(5.0) }));
+    let quads = build_rope(&mut offset, &p);
+    assert_eq!((quads[0].uv_a[1], quads[0].uv_a[3]), (0.5, 1.5));
+    let mut clamped = rope_renderer(json!({ "m_bClampV": true }));
+    let quads = build_rope(&mut clamped, &p);
+    assert_eq!((quads[2].uv_a[1], quads[2].uv_a[3]), (1.0, 1.0));
+}
+
+#[test]
+fn particles_ropes_carry_v_when_the_first_particle_dies() {
+    let mut r = rope_renderer(json!({ "m_flTextureVWorldSize": lit(25.0) }));
+    let p = square([0.0; 4]);
+    let _ = build_rope(&mut r, &p);
+    // The oldest particle goes: the next frame's rope carries the last measured segment's
+    // length (10), wrapped to the world size, into its V.
+    let mut q = square([0.0; 4]);
+    q.s[fl::PARTICLE_ID][0] = 9.0;
+    let quads = build_rope(&mut r, &q);
+    assert!((quads[0].uv_a[1] - 0.4).abs() < 1e-6, "{}", quads[0].uv_a[1]);
+    // Another frame with the same first particle carries nothing more.
+    let quads = build_rope(&mut r, &q);
+    assert!((quads[0].uv_a[1] - 0.4).abs() < 1e-6);
+}
+
+/// A bundle whose system emits one particle per row of a skinned snapshot and keeps them on
+/// the bones: three points, two on `hand` (bound 10 inches along X), one on `root`.
+fn snapshot_bundle(emitter: Value, extra_ops: Vec<Value>) -> Bundle {
+    let mut ops = vec![json!({ "_class": "C_OP_SnapshotRigidSkinToBones", "m_nControlPointNumber": 0 })];
+    ops.extend(extra_ops);
+    let def = json!({
+        "_class": "CParticleSystemDefinition", "m_nBehaviorVersion": 12, "m_nMaxParticles": 16,
+        "m_hSnapshot": "particles/sigil/points.vsnap", "m_nSnapshotControlPoint": 1,
+        "m_flConstantLifespan": 100.0,
+        "m_Emitters": [emitter],
+        "m_Initializers": [{ "_class": "C_INIT_InitSkinnedPositionFromCPSnapshot", "m_nSnapshotControlPointNumber": 1, "m_nControlPointNumber": 0 }],
+        "m_Operators": ops,
+        "m_Renderers": [{ "_class": "C_OP_RenderSprites" }]
+    });
+    let identity = [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0];
+    let mut hand = identity;
+    hand[12] = 10.0;
+    let json = json!({
+        "schema": 1,
+        "systems": { "particles/sigil/points.vpcf": { "data": def, "format": "vpcf66" } },
+        "textures": {}, "attachments": [],
+        "effects": [{ "id": "e", "system": "particles/sigil/points.vpcf", "source": "model-particles-list",
+                      "attachment": { "type": "absorigin_follow", "point": "", "offset": [0, 0, 0] } }],
+        "bones": [{ "name": "root", "bind": identity }, { "name": "hand", "bind": hand }],
+        "snapshots": { "particles/sigil/points.vsnap": { "numParticles": 3, "strings": ["root", "hand"], "columns": [
+            { "name": "position", "type": "float3", "data": "vector", "values": [10.0, 0.0, 1.0, 10.0, 0.0, 2.0, 0.0, 0.0, 0.0] },
+            { "name": "skinning", "type": "skinning", "data": "skinning", "values": {
+                "joints": [1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0],
+                "weights": [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0] } },
+            { "name": "creation_time", "type": "float", "data": "float", "values": [0.0, 0.0, 0.5] }
+        ] } }
+    });
+    Bundle::from_json(&json, |_| Err("none".into())).unwrap()
+}
+
+#[test]
+fn particles_snapshots_skin_points_to_the_bones() {
+    let b = snapshot_bundle(json!({ "_class": "C_OP_InstantaneousEmitter", "m_nParticlesToEmit": lit(1.0), "m_nSnapshotControlPoint": 1 }), vec![]);
+    assert_eq!(b.bones.len(), 2);
+    let snap = &b.snapshots["particles/sigil/points.vsnap"];
+    assert_eq!((snap.count, snap.skinned_rows()), (3, 3));
+    let mut fx = Effects::new(&b);
+    assert!(fx.diagnostics().is_empty(), "{:?}", fx.diagnostics());
+    // The hand is raised 5 inches from its bind pose.
+    let lift = std::cell::Cell::new(5.0f32);
+    let posed = |n: &str| match n {
+        "hand" => Some(Mat4::translation([10.0, 0.0, lift.get()])),
+        "root" => Some(Mat4::IDENTITY),
+        _ => None,
+    };
+    fx.step(1.0 / 30.0, &posed, [100.0, 0.0, 0.0]);
+    let p = &fx.hosts[0].sys.p;
+    // The instantaneous emitter releases a row as its creation time passes, not its count.
+    assert_eq!(p.len, 2, "rows at 0 s; the third waits for 0.5 s");
+    assert_eq!(p.v[fl::POSITION][0], [10.0, 0.0, 6.0]);
+    assert_eq!(p.v[fl::POSITION][1], [10.0, 0.0, 7.0]);
+    for _ in 0..20 {
+        fx.step(1.0 / 30.0, &posed, [100.0, 0.0, 0.0]);
+    }
+    let p = &fx.hosts[0].sys.p;
+    assert_eq!(p.len, 3);
+    assert_eq!(p.v[fl::POSITION][2], [0.0, 0.0, 0.0]);
+    // The rigid skin operator keeps them on the moving bones.
+    lift.set(9.0);
+    fx.step(1.0 / 30.0, &posed, [100.0, 0.0, 0.0]);
+    let p = &fx.hosts[0].sys.p;
+    assert_eq!(p.v[fl::POSITION][0], [10.0, 0.0, 10.0]);
+    assert_eq!(p.v[fl::POSITION][2], [0.0, 0.0, 0.0]);
+}
+
+#[test]
+fn particles_snapshot_counts_scale_emitters_and_inputs() {
+    // A continuous rate scales by the bound snapshot's rows: 2 a second times 3 rows.
+    let b = snapshot_bundle(json!({ "_class": "C_OP_ContinuousEmitter", "m_flEmitRate": lit(2.0), "m_nSnapshotControlPoint": 1 }), vec![]);
+    let mut fx = Effects::new(&b);
+    let none = |_: &str| None;
+    for _ in 0..30 {
+        fx.step(1.0 / 30.0, &none, [100.0, 0.0, 0.0]);
+    }
+    assert_eq!(fx.hosts[0].sys.p.len, 6);
+    // Without a model on control point 0 the points are taken as they are.
+    assert_eq!(fx.hosts[0].sys.p.v[fl::POSITION][0], [10.0, 0.0, 1.0]);
+
+    // PF_TYPE_SNAPSHOT_COUNT reads the row count of its control point's snapshot.
+    let count = json!({ "m_nType": "PF_TYPE_SNAPSHOT_COUNT", "m_nControlPoint": 1, "m_nMapType": "PF_MAP_TYPE_DIRECT" });
+    let b = snapshot_bundle(json!({ "_class": "C_OP_InstantaneousEmitter", "m_nParticlesToEmit": count }), vec![]);
+    let mut fx = Effects::new(&b);
+    fx.step(1.0 / 30.0, &none, [100.0, 0.0, 0.0]);
+    assert_eq!(fx.hosts[0].sys.p.len, 3);
+
+    // A snapshot the bundle lacks is a diagnostic, not a guess.
+    let mut b = snapshot_bundle(json!({ "_class": "C_OP_InstantaneousEmitter", "m_nParticlesToEmit": lit(1.0), "m_nSnapshotControlPoint": 1 }), vec![]);
+    b.snapshots.clear();
+    let mut fx = Effects::new(&b);
+    assert!(fx.diagnostics().iter().any(|d| d.contains("snapshot particles/sigil/points.vsnap is not in the bundle")), "{:?}", fx.diagnostics());
+    fx.step(1.0 / 30.0, &none, [100.0, 0.0, 0.0]);
+    assert_eq!(fx.hosts[0].sys.p.len, 0, "a bound emitter with no snapshot emits nothing");
+}
+
+#[test]
+fn particles_snapshot_skin_blends_weights() {
+    let a = Mat4::translation([2.0, 0.0, 0.0]);
+    let b = Mat4::translation([0.0, 4.0, 0.0]);
+    let palette = [a, b];
+    // One valid bone takes its matrix whole, whatever the weight.
+    let m = snapshot::skin_matrix(&palette, [1.0, fl::BONE_NONE, fl::BONE_NONE, fl::BONE_NONE], [0.25, 0.0, 0.0]).unwrap();
+    assert_eq!(m.point([0.0; 3]), [0.0, 4.0, 0.0]);
+    // Two blend: the last weight is what the first three leave.
+    let m = snapshot::skin_matrix(&palette, [0.0, 1.0, fl::BONE_NONE, fl::BONE_NONE], [0.25, 0.0, 0.0]).unwrap();
+    assert_eq!(m.point([0.0; 3]), [0.5, 0.0, 0.0]);
+    let m = snapshot::skin_matrix(&palette, [0.0, fl::BONE_NONE, fl::BONE_NONE, 1.0], [0.25, 0.0, 0.0]).unwrap();
+    assert_eq!(m.point([0.0; 3]), [0.5, 3.0, 0.0]);
+    assert!(snapshot::skin_matrix(&palette, [fl::BONE_NONE, 7.0, fl::BONE_NONE, fl::BONE_NONE], [1.0, 0.0, 0.0]).is_none());
+    // The walk wraps past the last row, moved on by the full loop increment.
+    assert_eq!(snapshot::SkinnedInit::walk_row(5, 4, 0), 1);
+    assert_eq!(snapshot::SkinnedInit::walk_row(5, 4, 1), 2);
 }

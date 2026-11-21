@@ -26,10 +26,19 @@ pub const FORCE_SCALE: usize = 34;
 pub const MANUAL_FRAME: usize = 38;
 pub const EXTRA1: usize = 39;
 pub const EXTRA2: usize = 40;
-pub const COUNT: usize = 49;
+/// The rest position a skinned particle keeps (VRF `HitboxOffsetPosition`).
+pub const HITBOX_OFFSET: usize = 15;
+/// Bone slots 0 to 2 of a skinned particle (VRF packs four 16-bit indices in `BoneIndices`;
+/// here three ride in this vector and the fourth in [`BONE_INDEX3`]). [`BONE_NONE`] is empty.
+pub const BONE_INDICES: usize = 31;
+pub const BONE_WEIGHTS: usize = 32;
+/// Bone slot 3, a column past VRF's fields.
+pub const BONE_INDEX3: usize = 49;
+pub const BONE_NONE: f32 = 65535.0;
+pub const COUNT: usize = 50;
 
-const SCALARS: &[usize] = &[1, 3, 4, 5, 7, 8, 9, 10, 11, 12, 13, 14, 16, 18, 20, 23, 26, 27, 33, 34, 38, 39, 40, 44, 45, 46, 47];
-const VECTORS: &[usize] = &[0, 2, 6, 15, 17, 21, 22, 30, 32, 41, 42, 43, 48];
+const SCALARS: &[usize] = &[1, 3, 4, 5, 7, 8, 9, 10, 11, 12, 13, 14, 16, 18, 20, 23, 26, 27, 33, 34, 38, 39, 40, 44, 45, 46, 47, 49];
+const VECTORS: &[usize] = &[0, 2, 6, 15, 17, 21, 22, 30, 31, 32, 41, 42, 43, 48];
 
 pub fn is_scalar(f: i32) -> bool {
     f >= 0 && SCALARS.contains(&(f as usize))

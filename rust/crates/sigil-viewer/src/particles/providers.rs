@@ -25,6 +25,8 @@ pub struct ParseCx {
     /// stops at `MAX_BUNDLE_SYSTEMS` and `MAX_EFFECT_SYSTEMS`).
     pub loaded: usize,
     pub effect_loaded: usize,
+    /// A loaded function skins particles to control point 0's bones.
+    pub skinned: bool,
 }
 
 impl ParseCx {
@@ -369,6 +371,8 @@ pub enum NumIn {
     CpDistance { a: i32, b: i32, map: Mapping },
     Named(Mapping),
     Lod(f32),
+    /// `PF_TYPE_SNAPSHOT_COUNT`: the rows of the snapshot bound to `m_nControlPoint`.
+    SnapshotCount { snapshot: super::snapshot::Binding, map: Mapping },
 }
 
 const RANDOM_SIGN_OFFSET: i32 = 37;
@@ -422,6 +426,7 @@ impl NumIn {
             "PF_TYPE_CONTROL_POINT_DISTANCE" => NumIn::CpDistance { a: kv::i(v, "m_nControlPoint", 0), b: kv::i(v, "m_nControlPointCompare", 0), map: map() },
             "PF_TYPE_NAMED_VALUE" => NumIn::Named(map()),
             "PF_TYPE_PARTICLE_DETAIL_LEVEL" => NumIn::Lod(kv::f(v, "m_flLOD0", 0.0)),
+            "PF_TYPE_SNAPSHOT_COUNT" => NumIn::SnapshotCount { snapshot: super::snapshot::Binding::parse(v, "m_nControlPoint", 0, false), map: map() },
             other => {
                 cx.note(format!("float input {other} is not supported, using its literal value"));
                 NumIn::Lit(kv::f(v, "m_flLiteralValue", 0.0))
@@ -472,6 +477,7 @@ impl NumIn {
             NumIn::CpDistance { a, b, map } => map.apply(length(sub(st.cp(*a).pos, st.cp(*b).pos))),
             NumIn::Named(m) => m.apply(0.0),
             NumIn::Lod(x) => *x,
+            NumIn::SnapshotCount { snapshot, map } => map.apply(snapshot.count(st) as f32),
             _ => 0.0,
         }
     }

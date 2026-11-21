@@ -28,6 +28,11 @@ pub const MAX_CHILDREN: usize = 32;
 /// KV3 format.
 pub trait Source {
     fn definition(&self, name: &str) -> Option<(&Value, Option<&str>)>;
+
+    /// A decoded snapshot by path (`particles/x/y.vsnap`, lowercase), when the source has it.
+    fn snapshot(&self, _path: &str) -> Option<std::sync::Arc<super::snapshot::Snapshot>> {
+        None
+    }
 }
 
 pub struct System {
@@ -164,6 +169,8 @@ impl System {
         consts_s[fl::EXTRA1] = 1.0;
         consts_s[fl::EXTRA2] = 1.0;
         consts_s[33] = -1.0;
+        consts_v[fl::BONE_INDICES] = [fl::BONE_NONE; 3];
+        consts_s[fl::BONE_INDEX3] = fl::BONE_NONE;
         if let Some(c) = kv::get(&def, "m_ConstantColor").and_then(Value::as_array) {
             consts_v[fl::COLOR] = kv::color(&def, "m_ConstantColor", [1.0; 3]);
             if let Some(a) = c.get(3) {
@@ -288,9 +295,39 @@ impl System {
                 sys.listen_mask |= e.event_mask();
             }
         }
+        // The authored snapshot, bound to its control point here and below (Grimoire's
+        // `publishSnapshot`).
+        if let Some(path) = kv::s(&def, "m_hSnapshot").filter(|p| !p.is_empty()) {
+            let key = path.replace('\\', "/").trim_end_matches("_c").to_ascii_lowercase();
+            match src.snapshot(&key) {
+                Some(snap) => sys.set_snapshot(kv::i(&def, "m_nSnapshotControlPoint", 0), &snap),
+                None => cx.note(format!("snapshot {key} is not in the bundle")),
+            }
+        }
         cx.system = prev_system;
         sys.seed(super::smath::string_token(&key) as i32);
         Some(sys)
+    }
+
+    /// Binds `snapshot` to control point `cp` here and in every descendant.
+    pub fn set_snapshot(&mut self, cp: i32, snapshot: &std::sync::Arc<super::snapshot::Snapshot>) {
+        if !(0..super::state::CONTROL_POINTS as i32).contains(&cp) {
+            return;
+        }
+        self.st.snapshots[cp as usize] = Some(snapshot.clone());
+        for c in &mut self.children {
+            c.set_snapshot(cp, snapshot);
+        }
+    }
+
+    /// Hands the tree control point 0's bone palette for this frame (the last one becomes
+    /// the previous, for bone velocity).
+    pub fn set_skin(&mut self, palette: &std::sync::Arc<Vec<crate::math::Mat4>>) {
+        self.st.skin_prev = self.st.skin.take();
+        self.st.skin = Some((palette.clone(), self.st.age));
+        for c in &mut self.children {
+            c.set_skin(palette);
+        }
     }
 
     /// Seeds the tree (VRF `SeedRandom`): children take `seed + 129 * (slot + 1)`, this system

@@ -22,6 +22,10 @@ impl Source for Bundle {
     fn definition(&self, name: &str) -> Option<(&Value, Option<&str>)> {
         self.systems.get(name).map(|s| (&s.data, s.format.as_deref()))
     }
+
+    fn snapshot(&self, path: &str) -> Option<std::sync::Arc<super::snapshot::Snapshot>> {
+        self.snapshots.get(path).cloned()
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -52,6 +56,16 @@ pub struct EffectHost {
     pending_restart: bool,
     seeded_frame: Option<Mat4>,
     looping: bool,
+    /// Stepped and drawn. An animation-event host waits idle until its clip fires it.
+    pub active: bool,
+    /// A stop was asked for; the host runs on until its particles are gone.
+    pub stopped: bool,
+    /// A stop asked for before the first step, applied once seeding has reset the emitters.
+    deferred_stop: Option<(bool, bool)>,
+    /// The bundle effect this host plays (an event effect has several hosts).
+    group: usize,
+    /// When this host was last fired, to reuse the oldest of an event's hosts.
+    fired: u64,
 }
 
 fn rigid_axes(m: &Mat4) -> [Vec3; 3] {
@@ -103,8 +117,42 @@ impl EffectHost {
             seeded: false,
             pending_restart: false,
             seeded_frame: None,
-            looping: effect.source != "anim-event",
+            // An animation-event effect plays once per event (Grimoire's `effectHost.ts`).
+            looping: effect.source != "anim-event" && effect.clip.is_none(),
+            active: effect.clip.is_none(),
+            stopped: false,
+            deferred_stop: None,
+            group: 0,
+            fired: 0,
         })
+    }
+
+    /// Starts this host over as a new instance of its effect (Grimoire creates a host per
+    /// event): placed, seeded from the placement and started on the next step.
+    pub fn fire(&mut self, order: u64) {
+        self.sys.replay();
+        self.placed_once = false;
+        self.seeded = false;
+        self.pending_restart = false;
+        self.seeded_frame = None;
+        self.stopped = false;
+        self.deferred_stop = None;
+        self.active = true;
+        self.fired = order;
+    }
+
+    /// Stops emission, with the end cap or not; an immediate stop drops the particles too.
+    pub fn stop(&mut self, immediately: bool, end_cap: bool) {
+        if !self.active || self.stopped {
+            return;
+        }
+        self.stopped = true;
+        if self.seeded {
+            self.sys.stop_emission(immediately, end_cap);
+        } else {
+            // Seeding on the first step resets the emitters: stop after it.
+            self.deferred_stop = Some((immediately, end_cap));
+        }
     }
 
     fn attached_frame(a: &EffectAttach, attachment: &dyn Fn(&str) -> Option<Mat4>) -> Mat4 {
@@ -222,14 +270,23 @@ impl EffectHost {
             self.seeded = true;
             let seed = self.placement_seed();
             self.sys.seed(seed);
+            // An event effect stopped before its first step stays stopped.
+            if let Some((immediately, end_cap)) = self.deferred_stop.take() {
+                self.sys.stop_emission(immediately, end_cap);
+            }
         }
         if self.pending_restart {
             self.pending_restart = false;
             self.sys.replay();
         }
         self.sys.update(dt.min(0.1), camera);
-        if self.looping && self.sys.is_finished() {
-            self.pending_restart = true;
+        if self.sys.is_finished() {
+            if self.looping && !self.stopped {
+                self.pending_restart = true;
+            } else {
+                // A finished event effect (or a stopped one) is removed until fired again.
+                self.active = false;
+            }
         }
     }
 }
@@ -243,6 +300,11 @@ pub struct Slot {
     pub renderer: usize,
 }
 
+/// How many instances of one animation-event effect may play at once. Grimoire makes a host
+/// per event and drops it when it finishes; here each event effect keeps this many hosts (so
+/// the renderer's draws stay fixed) and a new event reuses an idle one, else the oldest.
+pub const EVENT_INSTANCES: usize = 2;
+
 /// Every active effect of a bundle, simulated on the CPU.
 pub struct Effects {
     pub hosts: Vec<EffectHost>,
@@ -250,6 +312,11 @@ pub struct Effects {
     diagnostics: Vec<String>,
     order: Vec<u32>,
     dist: Vec<f32>,
+    /// The clip the viewer plays and how far through it (0 to 1) it was last frame.
+    clip: Option<(String, f32)>,
+    fired: u64,
+    /// The model bones (name, inverse bind pose) skinned snapshots deform by.
+    bones: Vec<(String, Mat4)>,
 }
 
 fn collect_slots(sys: &System, host: usize, path: &mut Vec<usize>, out: &mut Vec<Slot>) {
@@ -274,9 +341,20 @@ impl Effects {
     pub fn new(bundle: &Bundle) -> Effects {
         let mut cx = ParseCx::default();
         let mut hosts = Vec::new();
-        for e in bundle.effects.iter().filter(|e| e.start_active) {
-            if let Some(h) = EffectHost::new(e, bundle, &mut cx) {
-                hosts.push(h);
+        for (group, e) in bundle.effects.iter().enumerate() {
+            // Animation-event effects wait for their clip; the rest play when active.
+            let count = if e.clip.is_some() {
+                EVENT_INSTANCES
+            } else if e.start_active {
+                1
+            } else {
+                0
+            };
+            for _ in 0..count {
+                if let Some(mut h) = EffectHost::new(e, bundle, &mut cx) {
+                    h.group = group;
+                    hosts.push(h);
+                }
             }
         }
         let mut slots = Vec::new();
@@ -285,7 +363,72 @@ impl Effects {
         }
         let mut diagnostics = bundle.issues.clone();
         diagnostics.extend(cx.diagnostics);
-        Effects { hosts, slots, diagnostics, order: Vec::new(), dist: Vec::new() }
+        // Bones and inverse bind poses, kept only when a function skins to them.
+        let bones = if cx.skinned { bundle.bones.iter().map(|(n, bind)| (n.clone(), bind.inverse())).collect() } else { Vec::new() };
+        Effects { hosts, slots, diagnostics, order: Vec::new(), dist: Vec::new(), clip: None, fired: 0, bones }
+    }
+
+    /// Reports the clip the viewer plays (its glb name and how far through it, 0 to 1), or
+    /// none, for the animation-event effects (Grimoire's `heroParticleHost.ts` `setClip`): a
+    /// clip change stops the effects that end with their clip and passes the new clip's
+    /// events from its start; otherwise the events in (last, now] pass, both sides of a loop.
+    pub fn set_clip(&mut self, state: Option<(&str, f32)>) {
+        let state = state.map(|(name, f)| (name, if f.is_finite() { f.clamp(0.0, 1.0) } else { 0.0 }));
+        let previous = self.clip.take();
+        match (state, previous) {
+            (Some((name, now)), Some((was, last))) if was == name => {
+                if now >= last {
+                    self.pass_events(name, last, now);
+                } else {
+                    // The clip looped (or was sought back).
+                    self.pass_events(name, last, 1.0);
+                    self.pass_events(name, -1.0, now);
+                }
+                self.clip = Some((was, now));
+            }
+            (state, previous) => {
+                if let Some((was, _)) = &previous {
+                    for h in &mut self.hosts {
+                        let ends = h.effect.clip.as_ref().is_some_and(|c| c.name == *was && c.stop_on_clip_change);
+                        if ends {
+                            h.stop(false, false);
+                        }
+                    }
+                }
+                if let Some((name, now)) = state {
+                    self.pass_events(name, -1.0, now);
+                    self.clip = Some((name.to_string(), now));
+                }
+            }
+        }
+    }
+
+    /// Stops and fires the event effects of `clip` whose times fall in (from, to].
+    fn pass_events(&mut self, clip: &str, from: f32, to: f32) {
+        let within = |t: f32| t > from && t <= to;
+        let mut k = 0;
+        while k < self.hosts.len() {
+            // One effect's hosts sit together: handle them as a group.
+            let group = self.hosts[k].group;
+            let end = (k..self.hosts.len()).find(|&j| self.hosts[j].group != group).unwrap_or(self.hosts.len());
+            let Some(events) = self.hosts[k].effect.clip.clone().filter(|c| c.name == clip) else {
+                k = end;
+                continue;
+            };
+            for stop in events.stops.iter().filter(|s| within(s.time)) {
+                for h in &mut self.hosts[k..end] {
+                    h.stop(stop.immediately, stop.end_cap);
+                }
+            }
+            if within(events.start) {
+                let pick = (k..end).find(|&j| !self.hosts[j].active).or_else(|| (k..end).min_by_key(|&j| self.hosts[j].fired));
+                if let Some(j) = pick {
+                    self.fired += 1;
+                    self.hosts[j].fire(self.fired);
+                }
+            }
+            k = end;
+        }
     }
 
     /// Unsupported classes and inputs, missing systems and textures, as `system: what`.
@@ -302,13 +445,26 @@ impl Effects {
     /// Steps every effect; `attachment` resolves a name to its Source-space frame now and
     /// `camera` is in Source space.
     pub fn step(&mut self, dt: f32, attachment: &dyn Fn(&str) -> Option<Mat4>, camera: Vec3) {
-        for h in &mut self.hosts {
+        if !self.bones.is_empty() {
+            // Control point 0's bones this frame, for the skinned snapshot functions.
+            let palette: Vec<Mat4> = self.bones.iter().map(|(name, inverse)| attachment(name).map_or(Mat4::IDENTITY, |m| m.mul(inverse))).collect();
+            let palette = std::sync::Arc::new(palette);
+            for h in self.hosts.iter_mut().filter(|h| h.active) {
+                h.sys.set_skin(&palette);
+            }
+        }
+        for h in self.hosts.iter_mut().filter(|h| h.active) {
             h.step(dt, attachment, camera);
         }
     }
 
     pub fn particle_count(&self) -> usize {
-        self.hosts.iter().map(|h| h.sys.particle_count()).sum()
+        self.hosts.iter().filter(|h| h.active).map(|h| h.sys.particle_count()).sum()
+    }
+
+    /// Effect instances playing now (an idle animation-event host does not count).
+    pub fn active_count(&self) -> usize {
+        self.hosts.iter().filter(|h| h.active).count()
     }
 
     /// Builds every slot's cards into `out`, recording each slot's instance range in
@@ -319,11 +475,12 @@ impl Effects {
         shading.clear();
         for s in &self.slots {
             let start = out.len() as u32;
+            let active = self.hosts[s.host].active;
             let sys = system_at(&mut self.hosts[s.host].sys, &s.path);
             let System { renderers, st, p, .. } = sys;
-            let r = &renderers[s.renderer];
+            let r = &mut renderers[s.renderer];
             shading.push(r.shading(st));
-            if out.len() < TOTAL_CAP {
+            if active && out.len() < TOTAL_CAP {
                 r.build(st, p, view, sheets.get(&r.texture), out, &mut self.order, &mut self.dist);
                 out.truncate(TOTAL_CAP);
             }

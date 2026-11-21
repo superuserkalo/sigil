@@ -101,7 +101,14 @@ for redistribution.
   - Particles: `rust/crates/sigil-viewer/src/particles/` ports a subset of the Source 2 particle
     simulation and spritecard renderer in `src/lib/particles/` (itself a port of
     ValveResourceFormat's); `rust/crates/deadlock-core/src/viewer/particles.rs` ports
-    `heroAmbientDiscovery.ts`, `heroParticleBundle.ts`, `hideoutParticles.ts` and the sheet reader.
+    `heroAmbientDiscovery.ts` (with `discoverAnimationEvents`), `heroParticleBundle.ts`,
+    `hideoutParticles.ts` and the sheet reader.
+  - Particle leftovers (2026-11-21): animation-event effects from `host/heroParticleHost.ts`
+    and `host/effectHost.ts`; ropes (`render/ropes.rs`) from `render/renderRopes.ts`;
+    snapshots from `snapshotResource.ts` (`deadlock-core/src/viewer/snapshot.rs`, the SNAP
+    block decode), `utils/snapshotBinding.ts`, `utils/skinnedSnapshot.ts`,
+    `initializers/initSkinnedPositionFromCPSnapshot.ts` and
+    `operators/snapshotRigidSkinToBones.ts` (`sigil-viewer/src/particles/snapshot.rs`).
   - Hideout: the SH2 lightmap, probe volumes, light units and cookies, the volumetric fog, the
     map post (tone curve, bloom, colour correction) from `source2Lightmap.ts`,
     `source2ProbeVolume.ts`, `source2DynamicLights.ts`, `source2LightCookies.ts`,

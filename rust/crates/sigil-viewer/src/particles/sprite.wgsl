@@ -107,14 +107,33 @@ fn vs_sprite(@builtin(vertex_index) vi: u32, inst: Inst) -> VsOut {
     }
     let half_u = inst.pos_radius.w;
     let half_v = select(half_u, inst.misc.z, inst.misc.z > 0.0);
-    let world = inst.pos_radius.xyz + u * (corner.x * half_u) + v * (corner.y * half_v);
+    var world = inst.pos_radius.xyz + u * (corner.x * half_u) + v * (corner.y * half_v);
+    var color = inst.color;
+    var uv_a = mix(inst.uv_a.xy, inst.uv_a.zw, card_uv);
+    var uv_b = mix(inst.uv_b.xy, inst.uv_b.zw, card_uv);
+    var blend = inst.misc.x;
+    if (mode > 2.5) {
+        // A rope's strip quad (Grimoire's renderRopes.ts): the top corners at the start
+        // sample, the bottom ones at the end, each on its own width axis and half-width;
+        // the end's colour rides in uv_b.
+        let at_start = corner.y > 0.0;
+        let centre = select(inst.axis_v.xyz, inst.pos_radius.xyz, at_start);
+        let across = select(inst.misc.xyz, inst.axis_u.xyz, at_start);
+        let half = select(inst.axis_v.w, inst.pos_radius.w, at_start);
+        world = centre + across * (corner.x * half);
+        let uv = vec2<f32>(select(inst.uv_a.z, inst.uv_a.x, corner.x < 0.0), select(inst.uv_a.w, inst.uv_a.y, at_start));
+        uv_a = uv;
+        uv_b = uv;
+        color = select(inst.uv_b, inst.color, at_start);
+        blend = 0.0;
+    }
 
     var out: VsOut;
     out.clip = frame.view_proj * vec4<f32>(world, 1.0);
-    out.color = inst.color;
-    out.uv_a = mix(inst.uv_a.xy, inst.uv_a.zw, card_uv);
-    out.uv_b = mix(inst.uv_b.xy, inst.uv_b.zw, card_uv);
-    out.blend = inst.misc.x;
+    out.color = color;
+    out.uv_a = uv_a;
+    out.uv_b = uv_b;
+    out.blend = blend;
     return out;
 }
 

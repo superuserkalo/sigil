@@ -1,9 +1,11 @@
 //! A stand-in particle bundle built in code, no Valve asset: an ember plume rising from the
 //! stand-in hero's right hand (bone `hand_R` of `crate::fixture`), with a sheet-animated glow
 //! child that follows the hand and a spark child born where embers die; and a Hideout variant
-//! with a candle flame and dust motes at fixed Source-space transforms. Written in the
-//! bundle contract's shape (`bundle.json` plus `tex/*.png`), so the loader, the simulation
-//! and the renderer run end to end on any machine.
+//! with a candle flame and dust motes at fixed Source-space transforms. The hero also carries
+//! an animation-event effect: a rope wisp rising from the left hand that the idle clip starts
+//! at its first frame and stops near its end. Written in the bundle contract's shape
+//! (`bundle.json` plus `tex/*.png`), so the loader, the simulation and the renderer run end
+//! to end on any machine.
 
 use std::path::{Path, PathBuf};
 
@@ -13,6 +15,12 @@ use super::bundle::Bundle;
 
 pub const EMBER_TEXTURE: &str = "materials/particle/sigil_ember.vtex";
 pub const GLOW_TEXTURE: &str = "materials/particle/sigil_glow_sheet.vtex";
+pub const WISP_TEXTURE: &str = "materials/particle/sigil_wisp_rope.vtex";
+pub const WISP: &str = "particles/sigil/hand_wisp_rope.vpcf";
+/// The stand-in hero's clip (`crate::fixture`), which starts and stops the wisp.
+pub const WISP_CLIP: &str = "hero_shop";
+/// Where in the clip the wisp stops (its start is the clip's first frame).
+pub const WISP_STOP: f32 = 0.85;
 pub const PLUME: &str = "particles/sigil/hand_ember_plume.vpcf";
 pub const GLOW: &str = "particles/sigil/hand_glow.vpcf";
 pub const SPARKS: &str = "particles/sigil/ember_sparks.vpcf";
@@ -74,6 +82,57 @@ pub fn glow_sheet_rgba() -> (u32, u32, Vec<u8>) {
         }
     }
     (n, n, out)
+}
+
+/// A 32 x 64 rope texture: soft across its width (u), faint streaks along its length (v).
+pub fn wisp_rgba() -> (u32, u32, Vec<u8>) {
+    let (w, h) = (32u32, 64u32);
+    let mut out = Vec::with_capacity((w * h * 4) as usize);
+    for y in 0..h {
+        for x in 0..w {
+            let across = ((x as f32 + 0.5) / w as f32 - 0.5).abs() * 2.0;
+            let edge = (1.0 - across).clamp(0.0, 1.0);
+            let streak = 0.75 + 0.25 * (y as f32 / h as f32 * std::f32::consts::TAU * 2.0 + across * 3.0).sin();
+            let a = edge * edge * streak;
+            let v = (200.0 + 55.0 * (1.0 - across)) as u8;
+            out.extend_from_slice(&[v, v, v, (a * 255.0) as u8]);
+        }
+    }
+    (w, h, out)
+}
+
+/// A wisp of smoke threaded as a rope: particles stream up from the hand, swirl and widen,
+/// and `C_OP_RenderRopes` splines a ribbon through them.
+fn wisp() -> Value {
+    json!({
+        "_class": "CParticleSystemDefinition",
+        "m_nBehaviorVersion": 12,
+        "m_nMaxParticles": 48,
+        "m_ConstantColor": [140, 210, 255, 255],
+        "m_Emitters": [{ "_class": "C_OP_ContinuousEmitter", "m_flEmitRate": lit(24.0) }],
+        "m_Initializers": [
+            { "_class": "C_INIT_CreateWithinSphereTransform", "m_fRadiusMax": lit(0.2), "m_fSpeedMin": lit(1.0), "m_fSpeedMax": lit(2.0) },
+            init_float(1, lit(1.4)),
+            init_float(3, lit(1.2))
+        ],
+        "m_Operators": [
+            { "_class": "C_OP_BasicMovement", "m_Gravity": [0.0, 0.0, 70.0], "m_fDrag": lit(0.04) },
+            { "_class": "C_OP_OscillateVectorSimple", "m_Rate": [2.0, 2.0, 0.0], "m_Frequency": [1.1, 0.8, 0.0] },
+            { "_class": "C_OP_Decay" },
+            { "_class": "C_OP_FadeInSimple", "m_flFadeInTime": 0.15 },
+            { "_class": "C_OP_FadeOutSimple", "m_flFadeOutTime": 0.6 },
+            { "_class": "C_OP_InterpolateRadius", "m_flStartScale": lit(1.0), "m_flEndScale": lit(3.0) }
+        ],
+        "m_Renderers": [{
+            "_class": "C_OP_RenderRopes",
+            "m_nOutputBlendMode": "PARTICLE_OUTPUT_BLEND_MODE_ADD",
+            "m_flOverbrightFactor": lit(1.6),
+            "m_flTextureVWorldSize": lit(12.0),
+            "m_flTextureVScrollRate": lit(-6.0),
+            "m_nMaxTesselation": 8,
+            "m_vecTexturesInput": [{ "m_hTexture": WISP_TEXTURE }]
+        }]
+    })
 }
 
 fn sheet_json() -> Value {
@@ -242,8 +301,9 @@ fn texture_entry(name: &str, w: u32, h: u32, sheet: Value) -> (String, Value) {
 fn textures_json() -> Value {
     let (ew, eh, _) = ember_rgba();
     let (gw, gh, _) = glow_sheet_rgba();
+    let (ww, wh, _) = wisp_rgba();
     let mut t = serde_json::Map::new();
-    for (k, v) in [texture_entry(EMBER_TEXTURE, ew, eh, Value::Null), texture_entry(GLOW_TEXTURE, gw, gh, sheet_json())] {
+    for (k, v) in [texture_entry(EMBER_TEXTURE, ew, eh, Value::Null), texture_entry(GLOW_TEXTURE, gw, gh, sheet_json()), texture_entry(WISP_TEXTURE, ww, wh, Value::Null)] {
         t.insert(k, v);
     }
     Value::Object(t)
@@ -258,7 +318,8 @@ pub fn hero_json() -> Value {
         "systems": {
             PLUME: { "data": plume(), "format": "vpcf66" },
             GLOW: { "data": glow(), "format": "vpcf66" },
-            SPARKS: { "data": sparks(), "format": "vpcf66" }
+            SPARKS: { "data": sparks(), "format": "vpcf66" },
+            WISP: { "data": wisp(), "format": "vpcf66" }
         },
         "textures": textures_json(),
         "attachments": [{ "name": "attach_hand_r", "ignoreRotation": false,
@@ -267,6 +328,11 @@ pub fn hero_json() -> Value {
             "id": "ambient_0", "system": PLUME, "source": "hero-ambient",
             "attachment": { "type": "point_follow", "point": "attach_hand_r", "offset": [0.0, 0.0, 0.0] },
             "attachmentCp1": null, "configuration": null, "transform": null, "controlPoints": [], "startActive": true, "seed": null
+        }, {
+            "id": "anim_1", "system": WISP, "source": "anim-event",
+            "attachment": { "type": "point_follow", "point": "hand_L", "offset": [0.0, 0.0, -2.0] },
+            "attachmentCp1": null, "configuration": null, "transform": null, "controlPoints": [], "startActive": false, "seed": null,
+            "clip": { "name": WISP_CLIP, "start": 0.0, "stops": [{ "time": WISP_STOP, "immediately": false, "endCap": false }], "stopOnClipChange": true }
         }],
         "issues": []
     })
@@ -304,7 +370,13 @@ pub fn hideout_json() -> Value {
 }
 
 fn texture_pixels(file: &str) -> (u32, u32, Vec<u8>) {
-    if file.contains("glow_sheet") { glow_sheet_rgba() } else { ember_rgba() }
+    if file.contains("glow_sheet") {
+        glow_sheet_rgba()
+    } else if file.contains("wisp_rope") {
+        wisp_rgba()
+    } else {
+        ember_rgba()
+    }
 }
 
 /// The hero bundle, in memory.
