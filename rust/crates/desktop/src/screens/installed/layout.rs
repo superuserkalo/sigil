@@ -446,7 +446,9 @@ pub fn list_row(s: &State, u: &Ui, card: &Group) -> El {
             },
             if drop.is_some() { u.accent } else { u.hair },
         )
-        .hover(u.hover);
+        .hover(u.hover)
+        // The grip and the box fade in on hover without a commit (`super::hover_reveal`).
+        .hover_group();
     if super::drag::allowed(s) {
         line = line.child(super::drag::grip(
             u,
@@ -459,11 +461,10 @@ pub fn list_row(s: &State, u: &Ui, card: &Group) -> El {
         ));
     }
     line = line
-        .child(
+        .child(super::hover_reveal(
             el()
                 .size(18.0, 18.0)
                 .center()
-                .opacity(if selected || s.installed.hovered == Some(slot) { 1.0 } else { 0.0 })
                 .focusable(true)
                 .role("checkbox")
                 .checked(selected)
@@ -473,7 +474,8 @@ pub fn list_row(s: &State, u: &Ui, card: &Group) -> El {
                     super::pick(st, slot, tx.mods().shift)
                 })
                 .child(super::check_box(u, selected, false)),
-        )
+            selected || s.installed.hovered == Some(slot),
+        ))
         .child(thumb)
         .child(
             col()

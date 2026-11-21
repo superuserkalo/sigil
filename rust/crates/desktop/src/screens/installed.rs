@@ -1059,6 +1059,13 @@ fn cards_block(s: &State, u: &Ui, cards: &[&layout::Group]) -> El {
     c
 }
 
+/// A control that shows on hover: always when `shown` (picking, its menu open, a scene's
+/// pinned hover), else faded in by the nearest `hover_group` (the card or row), which also
+/// lights when keyboard focus is inside. Paint only: hovering commits nothing and moves nothing.
+pub(crate) fn hover_reveal(control: El, shown: bool) -> El {
+    if shown { control.opacity(1.0) } else { control.group_opacity(0.0, 1.0) }
+}
+
 /// The library entry for a slot, if its file still matches.
 pub fn meta_for<'a>(s: &'a State, addon: &AddonRow) -> Option<&'a ModMeta> {
     s.installed.library.find(addon.slot, addon.size_bytes)
@@ -1146,19 +1153,18 @@ fn card_view(s: &State, u: &Ui, card: &layout::Group, pitch: [f32; 2], cols: usi
         .radius(crate::ui::r(8.0))
         .fill(Color::BLACK.alpha(if menu_open { 0.78 } else { 0.6 }))
         .hover(Color::BLACK.alpha(0.78))
-        .opacity(if show_more { 1.0 } else { 0.0 })
         .focusable(true)
         .role("button")
         .label(format!("More for {name}"))
         .cursor(rune::Cursor::Pointer)
         .on_press(move |st: &mut State| open_menu(st, Menu::Card(slot)))
         .child(icon(&icons::ELLIPSIS, 16.0).color(Color::WHITE.alpha(0.9)).a11y_hidden());
+    let more = hover_reveal(more, show_more);
     // The selection box shows on hover, and on every card once one is picked.
     let pick_box = el()
         .key(format!("installed-pick-{slot:02}"))
         .size(28.0, 28.0)
         .center()
-        .opacity(if hovered || selecting { 1.0 } else { 0.0 })
         .focusable(true)
         .role("checkbox")
         .checked(selected)
@@ -1166,6 +1172,7 @@ fn card_view(s: &State, u: &Ui, card: &layout::Group, pitch: [f32; 2], cols: usi
         .cursor(rune::Cursor::Pointer)
         .on_press_tx(move |st: &mut State, tx: &mut Tx| pick(st, slot, tx.mods().shift))
         .child(check_box(u, selected, true));
+    let pick_box = hover_reveal(pick_box, hovered || selecting);
     let mut media = el()
         .key(format!("installed-media-{slot:02}"))
         .w_full()
@@ -1295,13 +1302,9 @@ fn card_view(s: &State, u: &Ui, card: &layout::Group, pitch: [f32; 2], cols: usi
             if drop { 2.0 } else { 1.0 },
             if drop || selected { u.accent.alpha(0.85) } else { Color::WHITE.alpha(0.07) },
         )
-        .on_hover_change(move |st: &mut State, inside: bool, _tx: &mut Tx| {
-            if inside {
-                st.installed.hovered = Some(slot);
-            } else if st.installed.hovered == Some(slot) {
-                st.installed.hovered = None;
-            }
-        })
+        // Hover paints the reveals below (`hover_reveal`) without running the view: a commit per
+        // card crossed rebuilt the whole library and lagged a large one.
+        .hover_group()
         .child(media)
         .child(footer)
 }

@@ -85,18 +85,18 @@ pub fn drop_mark(s: &State, slot: u16, enabled: bool) -> Option<bool> {
 
 /// The grip on a card or row. `pitch` is one card and its gap; `cols` the cards across.
 pub fn grip(u: &Ui, slot: u16, enabled: bool, pitch: [f32; 2], cols: usize, dragging: bool, show: bool) -> El {
-    el().key(format!("installed-grip-{slot:02}"))
+    let grip = el().key(format!("installed-grip-{slot:02}"))
         .size(28.0, 28.0)
         .center()
         .radius(crate::ui::r(8.0))
         .fill(rune::Color::BLACK.alpha(0.6))
-        .opacity(if show || dragging { 1.0 } else { 0.0 })
         .hover(rune::Color::BLACK.alpha(0.78))
         .press(u.over.alpha(0.08))
         .label(tr("Drag to change the load order"))
         .cursor(if dragging { rune::Cursor::Grabbing } else { rune::Cursor::Grab })
         .on_drag(move |st: &mut State, d: &mut Drag, _tx: &mut Tx| drag(st, slot, enabled, pitch, cols, d))
-        .child(icon(&GRIP_VERTICAL, 14.0).color(rune::Color::WHITE.alpha(0.9)).a11y_hidden())
+        .child(icon(&GRIP_VERTICAL, 14.0).color(rune::Color::WHITE.alpha(0.9)).a11y_hidden());
+    super::hover_reveal(grip, show || dragging)
 }
 
 fn drag(st: &mut State, slot: u16, enabled: bool, pitch: [f32; 2], cols: usize, d: &mut Drag) {
