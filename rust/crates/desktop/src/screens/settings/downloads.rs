@@ -189,7 +189,7 @@ pub fn section_el(s: &State, u: &Ui) -> El {
                 .child(
                     rune::el()
                         .size(16.0, 16.0)
-                        .radius(crate::ui::r(8.0))
+                        .radius(8.0)
                         .border(if on { 5.0 } else { 1.5 }, if on { u.accent } else { u.hair_strong })
                         .a11y_hidden(),
                 )

@@ -610,7 +610,7 @@ pub fn panel(s: &State, u: &Ui) -> Option<El> {
             .fill(u.raised)
             .radius(crate::ui::r(12.0))
             .border(1.0, u.hair_strong)
-            .shadow(16.0, 40.0, Color::BLACK.alpha(0.5))
+            .shadow(16.0, 40.0, crate::ui::soft(Color::BLACK.alpha(0.5)))
             .anchored_fit("titlebar-downloads", Side::Bottom, Align::End, 6.0)
             .modal(true, close)
             .on_key(|st: &mut State, ev: &rune::KeyEvent, _| {
@@ -924,7 +924,7 @@ fn item_row(
             .w(16.0)
             .h(24.0)
             .center()
-            .radius(4.0)
+            .radius(crate::ui::r(4.0))
             .hover(u.hover)
             .label(tr("Drag to reorder"))
             .cursor(if dragging { rune::Cursor::Grabbing } else { rune::Cursor::Grab })
@@ -988,7 +988,7 @@ fn progress_line(u: &Ui, item: &Item) -> El {
                     el()
                         .h(3.0)
                         .grow(done)
-                        .radius(1.5)
+                        .radius(crate::ui::r(1.5))
                         .fill(if item.state == ItemState::Paused {
                             u.muted
                         } else {
@@ -999,7 +999,7 @@ fn progress_line(u: &Ui, item: &Item) -> El {
                     el()
                         .h(3.0)
                         .grow((1.0 - fraction).max(0.0))
-                        .radius(1.5)
+                        .radius(crate::ui::r(1.5))
                         .fill(u.hair_strong),
                 ),
         )

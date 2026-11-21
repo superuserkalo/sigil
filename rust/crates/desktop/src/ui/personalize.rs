@@ -264,18 +264,22 @@ impl Art {
 /// Corner radius for the shared controls.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum Radius {
+    /// The house look: at most 2 points on any corner.
+    #[default]
+    Block,
     Square,
     Sharp,
-    #[default]
+    /// The original rounded look. Its saved id stays "default".
     Default,
     Round,
 }
 
 impl Radius {
-    pub const ALL: [Radius; 4] = [Radius::Square, Radius::Sharp, Radius::Default, Radius::Round];
+    pub const ALL: [Radius; 5] = [Radius::Block, Radius::Square, Radius::Sharp, Radius::Default, Radius::Round];
 
     pub fn id(self) -> &'static str {
         match self {
+            Radius::Block => "block",
             Radius::Square => "square",
             Radius::Sharp => "sharp",
             Radius::Default => "default",
@@ -285,15 +289,17 @@ impl Radius {
 
     pub fn label(self) -> &'static str {
         match self {
+            Radius::Block => "Block",
             Radius::Square => "Square",
             Radius::Sharp => "Sharp",
-            Radius::Default => "Default",
+            Radius::Default => "Soft",
             Radius::Round => "Round",
         }
     }
 
     pub fn scale(self) -> f32 {
         match self {
+            Radius::Block => crate::ui::BLOCK_RADIUS,
             Radius::Square => 0.0,
             Radius::Sharp => 0.5,
             Radius::Default => 1.0,
@@ -1034,7 +1040,7 @@ mod tests {
         assert_eq!(p.art.tab.source, ArtSource::Off);
         assert!(!p.background.statusbar, "the status bar stays out of the image by default");
         assert_eq!(p.art.volume.source, ArtSource::Off, "the volume bar has no art by default");
-        assert_eq!(p.radius, Radius::Default);
+        assert_eq!(p.radius, Radius::Block);
         assert_eq!(p.density, Density::Default);
     }
 

@@ -399,7 +399,7 @@ pub(crate) fn details_info(s: &State, u: &Ui, d: &Details) -> El {
         Some(pixels) => {
             chips = chips.child(
                 el().size(22.0, 22.0)
-                    .radius(4.0)
+                    .radius(crate::ui::r(4.0))
                     .pixels_fit(pixels, SurfaceFit::Fill)
                     .label(profile.category.clone()),
             );

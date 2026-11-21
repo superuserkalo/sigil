@@ -790,8 +790,8 @@ fn palette_picture(p: &Palette, h: f32) -> El {
                 .pt(8.0)
                 .px(5.0)
                 .gap(4.0)
-                .child(el().w(12.0).h(3.0).radius(1.5).fill(t.ink.alpha(0.6)))
-                .child(el().w(10.0).h(3.0).radius(1.5).fill(t.muted.alpha(0.5))),
+                .child(el().w(12.0).h(3.0).radius(crate::ui::r(1.5)).fill(t.ink.alpha(0.6)))
+                .child(el().w(10.0).h(3.0).radius(crate::ui::r(1.5)).fill(t.muted.alpha(0.5))),
         )
         .child(
             col()
@@ -800,15 +800,15 @@ fn palette_picture(p: &Palette, h: f32) -> El {
                 .pt(8.0)
                 .px(7.0)
                 .gap(4.0)
-                .child(el().w(28.0).h(4.0).radius(2.0).fill(t.ink.alpha(0.85)))
-                .child(el().w_full().h(3.0).radius(1.5).fill(t.muted.alpha(0.45)))
+                .child(el().w(28.0).h(4.0).radius(crate::ui::r(2.0)).fill(t.ink.alpha(0.85)))
+                .child(el().w_full().h(3.0).radius(crate::ui::r(1.5)).fill(t.muted.alpha(0.45)))
                 .child(spacer())
                 .child(
                     row()
                         .w_full()
                         .pb(7.0)
                         .child(spacer())
-                        .child(el().w(18.0).h(8.0).radius(3.0).fill(t.accent)),
+                        .child(el().w(18.0).h(8.0).radius(crate::ui::r(3.0)).fill(t.accent)),
                 ),
         )
 }
@@ -1357,7 +1357,7 @@ fn slider(u: &Ui, key: &str, label: &str, frac: f32, set: fn(&mut State, f32), s
             el().absolute(0.0, track_y)
                 .w(SLIDER_W)
                 .h(4.0)
-                .radius(2.0)
+                .radius(crate::ui::r(2.0))
                 .fill(u.over.alpha(0.10))
                 .a11y_hidden(),
         )
@@ -1365,7 +1365,7 @@ fn slider(u: &Ui, key: &str, label: &str, frac: f32, set: fn(&mut State, f32), s
             el().absolute(0.0, track_y)
                 .w((SLIDER_W * frac).max(0.0))
                 .h(4.0)
-                .radius(2.0)
+                .radius(crate::ui::r(2.0))
                 .fill(u.muted)
                 .a11y_hidden(),
         )
@@ -1460,7 +1460,7 @@ fn coverage_picture(s: &State, u: &Ui) -> El {
     .child(
         el().absolute(side + 10.0, bar + 10.0)
             .size(48.0, 5.0)
-            .radius(2.5)
+            .radius(crate::ui::r(2.5))
             .fill(u.ink.alpha(0.7))
             .a11y_hidden(),
     )

@@ -801,7 +801,7 @@ fn comparison(u: &Ui, cmp: &Comparison, changed: Option<El>) -> El {
             row()
                 .gap(12.0)
                 .center_y()
-                .child(el().w(4.0).h(24.0).radius(2.0).fill(tone).a11y_hidden())
+                .child(el().w(4.0).h(24.0).radius(crate::ui::r(2.0)).fill(tone).a11y_hidden())
                 .child(text(words).font(H1).color(u.ink).wrap().grow(1.0).min_w(0.0)),
         )
         .child(line(noise, u.faint))
@@ -853,7 +853,7 @@ fn cost(s: &State, u: &Ui, run: &RunRecord) -> El {
                 .child(text(if slots.len() == 1 { tr("1 mod").to_string() } else { fill(tr("{} mods"), &[&slots.len().to_string()]) }).font(TNUM_SMALL).color(u.faint).w(56.0))
                 .child(text(label).font(BODY).color(u.prose).grow(1.0).min_w(0.0).truncate())
                 .child(
-                    row().w(120.0).h(6.0).radius(3.0).fill(u.hair).child(el().w((share.min(20.0) / 20.0 * 120.0) as f32).h_full().radius(3.0).fill(if gain > 0.0 { u.rose } else { u.faint })),
+                    row().w(120.0).h(6.0).radius(crate::ui::r(3.0)).fill(u.hair).child(el().w((share.min(20.0) / 20.0 * 120.0) as f32).h_full().radius(crate::ui::r(3.0)).fill(if gain > 0.0 { u.rose } else { u.faint })),
                 )
                 .child(text(format!("{:+.1} FPS", gain)).font(TNUM).color(u.ink).w(90.0).align(rune::Align::End)),
         );
@@ -869,7 +869,7 @@ fn graph_card(s: &State, u: &Ui, run: &RunRecord) -> El {
     let mut head = row().w_full().gap(16.0).center_y().child(text(tr("Frame time")).font(H2).color(u.ink)).child(spacer());
     if two && let Some((a, b)) = run.spec.test.sides() {
         for (label, color) in [(a, u.muted), (b, u.accent)] {
-            head = head.child(row().gap(6.0).center_y().child(el().size(8.0, 8.0).radius(2.0).fill(color).a11y_hidden()).child(text(tr(label).to_string()).font(SMALL).color(u.muted)));
+            head = head.child(row().gap(6.0).center_y().child(el().size(8.0, 8.0).radius(crate::ui::r(2.0)).fill(color).a11y_hidden()).child(text(tr(label).to_string()).font(SMALL).color(u.muted)));
         }
     }
     c = c.child(head);

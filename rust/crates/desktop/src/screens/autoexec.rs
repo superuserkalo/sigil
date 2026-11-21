@@ -993,7 +993,7 @@ fn grip(u: &Ui, index: usize, comment: bool, dragging: bool) -> El {
     el().absolute(-26.0, top)
         .size(20.0, 20.0)
         .center()
-        .radius(4.0)
+        .radius(crate::ui::r(4.0))
         .group_opacity(if dragging { 1.0 } else { 0.0 }, 1.0)
         .hover(u.hover)
         .label("Drag to reorder")

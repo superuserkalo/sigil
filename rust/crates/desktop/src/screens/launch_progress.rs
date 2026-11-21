@@ -428,8 +428,8 @@ pub fn overlay(s: &State, u: &Ui) -> Option<El> {
     let bar = row()
         .w_full()
         .h(3.0)
-        .radius(1.5)
-        .clip_rounded(1.5)
+        .radius(crate::ui::r(1.5))
+        .clip_rounded(crate::ui::r(1.5))
         .fill(u.hair_strong)
         .child(el().h_full().grow(share.max(0.02)).fill(u.accent))
         .child(el().h_full().grow((1.0 - share).max(0.0)));

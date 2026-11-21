@@ -314,12 +314,12 @@ pub(crate) fn hero_picker_dialog(s: &State, u: &Ui) -> Option<El> {
                 .child(match portrait {
                     Some(pixels) => el()
                         .size(28.0, 28.0)
-                        .radius(crate::ui::r(14.0))
+                        .radius(14.0)
                         .pixels_fit(pixels, SurfaceFit::Fill)
                         .a11y_hidden(),
                     None => el()
                         .size(28.0, 28.0)
-                        .radius(crate::ui::r(14.0))
+                        .radius(14.0)
                         .center()
                         .fill(u.hover)
                         .child(

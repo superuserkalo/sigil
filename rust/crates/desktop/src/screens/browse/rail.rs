@@ -132,7 +132,7 @@ pub fn bar(s: &State, u: &Ui, key: &'static str, label: &str) -> El {
             el().absolute(0.0, (BAR_H - LINE_H) / 2.0)
                 .w_full()
                 .h(LINE_H)
-                .radius(LINE_H / 2.0)
+                .radius(crate::ui::r(LINE_H / 2.0))
                 .fill(u.over.alpha(0.06))
                 .a11y_hidden(),
         )
@@ -140,7 +140,7 @@ pub fn bar(s: &State, u: &Ui, key: &'static str, label: &str) -> El {
             el().absolute(0.0, (BAR_H - LINE_H) / 2.0)
                 .w_frac(ratio)
                 .h(LINE_H)
-                .radius(LINE_H / 2.0)
+                .radius(crate::ui::r(LINE_H / 2.0))
                 .fill(u.accent.alpha(0.55))
                 .live_offset(&rail.thumb)
                 .a11y_hidden(),

@@ -387,7 +387,7 @@ pub fn details_dialog(s: &State, u: &Ui) -> Option<El> {
                         .label(fill(tr("Image {}"), &[&(index + 1).to_string()]))
                         .cursor(rune::Cursor::Pointer)
                         .on_press(move |st: &mut State| st.browse_view.sources.image = index)
-                        .child(image_fill(s, format!("browse-source-image-thumb-{index}"), Some(image), [6.0; 4], blur)),
+                        .child(image_fill(s, format!("browse-source-image-thumb-{index}"), Some(image), [crate::ui::r(6.0); 4], blur)),
                 );
             }
             c = c.child(strip);

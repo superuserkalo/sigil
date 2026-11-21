@@ -145,11 +145,11 @@ pub fn overlay(s: &State, u: &Ui) -> Option<El> {
                 let lead = match portrait {
                     Some(pixels) => Some(
                         el().size(20.0, 20.0)
-                            .radius(4.0)
+                            .radius(crate::ui::r(4.0))
                             .pixels_fit(pixels, SurfaceFit::Fill)
                             .a11y_hidden(),
                     ),
-                    None if portraits => Some(el().size(20.0, 20.0).radius(4.0).fill(u.hover)),
+                    None if portraits => Some(el().size(20.0, 20.0).radius(crate::ui::r(4.0)).fill(u.hover)),
                     None => None,
                 };
                 let item = menu_item(
@@ -582,7 +582,7 @@ pub fn overlay(s: &State, u: &Ui) -> Option<El> {
             .fill(u.raised)
             .radius(crate::ui::r(10.0))
             .border(1.0, u.hair_strong)
-            .shadow(12.0, 32.0, Color::BLACK.alpha(0.5))
+            .shadow(12.0, 32.0, crate::ui::soft(Color::BLACK.alpha(0.5)))
             .anchored(menu.anchor(), Side::Bottom, align, 6.0)
             .modal(true, |st: &mut State| st.browse_view.menu = None)
             .on_key(|st: &mut State, ev: &KeyEvent, _| {
@@ -723,7 +723,7 @@ pub(crate) fn context_menu(s: &State, u: &Ui) -> Option<El> {
             .fill(u.raised)
             .radius(crate::ui::r(10.0))
             .border(1.0, u.hair_strong)
-            .shadow(12.0, 32.0, Color::BLACK.alpha(0.5))
+            .shadow(12.0, 32.0, crate::ui::soft(Color::BLACK.alpha(0.5)))
             .anchored(format!("browse-card-{id}"), Side::Bottom, Align::Start, 6.0)
             .modal(true, |st: &mut State| st.browse_view.context = None)
             .on_key(|st: &mut State, ev: &KeyEvent, _| {
@@ -756,7 +756,7 @@ pub(crate) fn audio_slider(s: &State, u: &Ui, key: &str) -> El {
             el().absolute(0.0, track_y)
                 .w(width)
                 .h(4.0)
-                .radius(2.0)
+                .radius(crate::ui::r(2.0))
                 .fill(u.over.alpha(0.10))
                 .a11y_hidden(),
         )
@@ -764,7 +764,7 @@ pub(crate) fn audio_slider(s: &State, u: &Ui, key: &str) -> El {
             el().absolute(0.0, track_y)
                 .w((width * frac).max(0.0))
                 .h(4.0)
-                .radius(2.0)
+                .radius(crate::ui::r(2.0))
                 .fill(u.muted)
                 .a11y_hidden(),
         )
@@ -1078,7 +1078,7 @@ pub(crate) fn list_row(s: &State, u: &Ui, card: &BrowseCard) -> El {
                     s,
                     format!("list-thumb-{id}"),
                     card.thumbnail_url.as_ref(),
-                    [6.0; 4],
+                    [crate::ui::r(6.0); 4],
                     veil,
                 )),
         )

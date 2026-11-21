@@ -550,6 +550,8 @@ pub const DE: &[(&str, &str)] = &[
     ("Themes, a background, glow and art. Each stays off until you turn it on.", "Designs, Hintergrund, Leuchten und Bilder. Alles bleibt aus, bis du es einschaltest."),
     ("Background image", "Hintergrundbild"),
     ("Active tab", "Aktiver Reiter"),
+    ("Block", "Block"),
+    ("Soft", "Weich"),
     ("Square", "Eckig"),
     ("Sharp", "Knapp"),
     ("Default", "Standard"),

@@ -847,7 +847,7 @@ fn snapshot_row(u: &Ui, snapshot: &SnapshotRow, selected: bool) -> El {
         .child(
             el()
                 .size(16.0, 16.0)
-                .radius(4.0)
+                .radius(crate::ui::r(4.0))
                 .center()
                 .role("checkbox")
                 .checked(selected)
@@ -1208,7 +1208,7 @@ fn mod_line(u: &Ui, line: &ModLine) -> El {
 fn swatch(crosshair: &Crosshair) -> El {
     let channel = |value: i32| value.clamp(0, 255) as f32 / 255.0;
     el().size(14.0, 14.0)
-        .radius(4.0)
+        .radius(crate::ui::r(4.0))
         .fill(rune::Color {
             r: channel(crosshair.color_r),
             g: channel(crosshair.color_g),
@@ -1254,10 +1254,10 @@ fn loading(u: &Ui) -> El {
                 .child(
                     el().h(10.0)
                         .w(140.0 + (n % 2) as f32 * 60.0)
-                        .radius(3.0)
+                        .radius(crate::ui::r(3.0))
                         .fill(u.hover),
                 )
-                .child(el().h(8.0).w(220.0).radius(3.0).fill(u.hover)),
+                .child(el().h(8.0).w(220.0).radius(crate::ui::r(3.0)).fill(u.hover)),
         );
     }
     list
@@ -2110,7 +2110,7 @@ fn name_field(edit: &TextEdit, key: &str, placeholder: &str, u: &Ui, bind: fn(&m
 }
 
 fn checkbox(u: &Ui, on: bool) -> El {
-    let base = el().size(16.0, 16.0).radius(4.0).center().a11y_hidden();
+    let base = el().size(16.0, 16.0).radius(crate::ui::r(4.0)).center().a11y_hidden();
     if on {
         base.fill(u.ink)
             .child(icon(&icons::CHECK, 12.0).color(u.bg).a11y_hidden())
@@ -2803,7 +2803,7 @@ fn import_row(
         .center_y()
         .border_sides([0.0, 0.0, 1.0, 0.0], u.hair);
     line = if unavailable {
-        line.child(el().size(16.0, 16.0).radius(4.0).border(1.0, rune::Color::WHITE.alpha(0.10)))
+        line.child(el().size(16.0, 16.0).radius(crate::ui::r(4.0)).border(1.0, rune::Color::WHITE.alpha(0.10)))
     } else if installing || looking_up {
         line.child(checkbox(u, keep).opacity(0.5))
     } else {
@@ -3105,7 +3105,7 @@ pub fn titlebar_switcher(s: &State, u: &Ui) -> El {
             .fill(u.raised)
             .radius(crate::ui::r(10.0))
             .border(1.0, u.hair_strong)
-            .shadow(12.0, 32.0, rune::Color::BLACK.alpha(0.5))
+            .shadow(12.0, 32.0, crate::ui::soft(rune::Color::BLACK.alpha(0.5)))
             .anchored("titlebar-profile", Side::Bottom, Align::Start, 6.0)
             .modal(true, |st: &mut State| st.profiles.titlebar_open = false)
             .on_key(|st: &mut State, ev: &KeyEvent, _| {

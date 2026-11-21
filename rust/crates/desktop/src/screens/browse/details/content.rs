@@ -271,7 +271,7 @@ pub(crate) fn donation_row(u: &Ui, member: &ModMember) -> El {
                 .h(26.0)
                 .px(10.0)
                 .center_y()
-                .radius(13.0)
+                .radius(crate::ui::r(13.0))
                 .fill(u.over.alpha(0.05))
                 .border(1.0, u.hair_strong)
                 .hover(u.hover)
@@ -425,7 +425,7 @@ pub(crate) fn update_card(u: &Ui, d: &Details, update: &ModUpdate) -> El {
                 .h(18.0)
                 .px(6.0)
                 .center()
-                .radius(9.0)
+                .radius(crate::ui::r(9.0))
                 .fill(Color::WHITE.alpha(0.06))
                 .child(
                     text(update.changes.len().to_string())
@@ -489,7 +489,7 @@ pub(crate) fn update_card(u: &Ui, d: &Details, update: &ModUpdate) -> El {
                             .px(6.0)
                             .mt(1.0)
                             .center()
-                            .radius(4.0)
+                            .radius(crate::ui::r(4.0))
                             .border(1.0, u.hair_strong)
                             .child(text(label.to_uppercase()).font(MICRO_CAPS).color(u.muted)),
                     );

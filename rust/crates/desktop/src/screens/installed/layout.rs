@@ -403,8 +403,8 @@ pub fn list_row(s: &State, u: &Ui, card: &Group) -> El {
     let thumb = match pixels {
         Some(pixels) => el()
             .size(64.0, 36.0)
-            .corners([6.0, 6.0, 6.0, 6.0])
-            .clip_corners([6.0, 6.0, 6.0, 6.0])
+            .corners([crate::ui::r(6.0); 4])
+            .clip_corners([crate::ui::r(6.0); 4])
             .pixels_fit(pixels, rune::SurfaceFit::Fill),
         None => el()
             .size(64.0, 36.0)

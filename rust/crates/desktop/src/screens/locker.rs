@@ -655,9 +655,9 @@ fn card_frame(key: String, label: String, card_w: f32) -> El {
         .w_full()
         .min_w(0.0)
         .h((card_w * 4.0 / 3.0).round())
-        .radius(CARD_RADIUS)
+        .radius(crate::ui::r(CARD_RADIUS))
         .fill(Color::WHITE.alpha(0.03))
-        .clip_rounded(CARD_RADIUS)
+        .clip_rounded(crate::ui::r(CARD_RADIUS))
         .hover_group()
         .focusable(true)
         .role("button")
@@ -683,8 +683,8 @@ fn card_chrome() -> [El; 2] {
         el().absolute(0.0, 0.0)
             .w_full()
             .h_full()
-            .radius(CARD_RADIUS)
-            .border(1.0, Color::WHITE.alpha(0.07))
+            .radius(crate::ui::r(CARD_RADIUS))
+            .border(1.0, crate::ui::Ui::new().hair)
             .fill(Color::WHITE.alpha(0.05))
             .group_opacity(0.0, 1.0)
             .a11y_hidden(),
@@ -722,7 +722,7 @@ fn hero_card(s: &State, u: &Ui, v: &View, hero: &HeroCard, card_w: f32) -> El {
             .px(8.0)
             .gap(4.0)
             .center_y()
-            .radius(11.0)
+            .radius(crate::ui::r(11.0))
             .fill(Color::BLACK.alpha(0.55))
             .a11y_hidden();
         if hero.mod_count > 0 {
@@ -871,7 +871,7 @@ fn loading(cols: usize) -> El {
         grid = grid.child(
             el().w_full()
                 .aspect_ratio(3.0 / 4.0)
-                .radius(CARD_RADIUS)
+                .radius(crate::ui::r(CARD_RADIUS))
                 .fill(Color::WHITE.alpha(0.04)),
         );
     }
@@ -2210,7 +2210,7 @@ fn picker_dialog(s: &State, u: &Ui, id: &str) -> El {
                 .child(
                     el().size(16.0, 16.0)
                         .center()
-                        .radius(4.0)
+                        .radius(crate::ui::r(4.0))
                         .fill(if filed { u.accent } else { Color::TRANSPARENT })
                         .border(1.0, if filed { u.accent } else { u.hair_strong })
                         .child(if filed {

@@ -41,7 +41,7 @@ pub(crate) fn nsfw_veil(u: &Ui, scope: &str, id: u64, compact: bool) -> El {
                 .px(14.0)
                 .gap(6.0)
                 .center()
-                .radius(15.0)
+                .radius(crate::ui::r(15.0))
                 .fill(Color::BLACK.alpha(0.35))
                 .border(1.0, Color::WHITE.alpha(0.18))
                 .hover(Color::WHITE.alpha(0.08))
@@ -128,7 +128,7 @@ fn stats_that_fit(room: f32, actions: f32, labels: &[String]) -> usize {
 /// One mod: a 16:9 image flush with the top, the title, the author and when it changed, and
 /// a footer with likes, views and Install.
 pub(crate) fn card_el(s: &State, u: &Ui, card: &BrowseCard, card_w: f32) -> El {
-    let inner = CARD_RADIUS - 1.0;
+    let inner = (crate::ui::r(CARD_RADIUS) - 1.0).max(0.0);
     let id = card.id;
     let veil = veiled(s, id, card.nsfw);
     let age = gamebanana::relative_age(card.updated_ts, gamebanana::now_unix());
@@ -307,7 +307,7 @@ pub(crate) fn card_el(s: &State, u: &Ui, card: &BrowseCard, card_w: f32) -> El {
         .key(format!("browse-card-{id}"))
         .min_w(0.0)
         .padding(1.0)
-        .radius(CARD_RADIUS)
+        .radius(crate::ui::r(CARD_RADIUS))
         .on_hover_change(move |st: &mut State, over: bool, _tx: &mut Tx| {
             if over {
                 st.browse_view.hovered = Some(id);
@@ -322,7 +322,7 @@ pub(crate) fn card_el(s: &State, u: &Ui, card: &BrowseCard, card_w: f32) -> El {
             st.browse_view.menu = None;
         })
         .fill(u.well)
-        .border(1.0, Color::WHITE.alpha(0.07))
+        .border(1.0, u.hair)
         .hover(Color::WHITE.alpha(0.025))
         .focusable(true)
         .role("button")
@@ -348,7 +348,7 @@ pub(crate) fn card_el(s: &State, u: &Ui, card: &BrowseCard, card_w: f32) -> El {
 }
 
 pub(crate) fn skeleton(u: &Ui, w: f32, h: f32) -> El {
-    el().h(h).w(w).radius(4.0).fill(u.hover)
+    el().h(h).w(w).radius(crate::ui::r(4.0)).fill(u.hover)
 }
 
 pub(crate) fn loading_grid(u: &Ui, cols: usize) -> El {
@@ -358,13 +358,13 @@ pub(crate) fn loading_grid(u: &Ui, cols: usize) -> El {
             col()
                 .min_w(0.0)
                 .padding(1.0)
-                .radius(CARD_RADIUS)
+                .radius(crate::ui::r(CARD_RADIUS))
                 .fill(u.well)
-                .border(1.0, Color::WHITE.alpha(0.07))
+                .border(1.0, u.hair)
                 .child(
                     el().w_full()
                         .aspect_ratio(16.0 / 9.0)
-                        .corners([CARD_RADIUS - 1.0, CARD_RADIUS - 1.0, 0.0, 0.0])
+                        .corners([(crate::ui::r(CARD_RADIUS) - 1.0).max(0.0), (crate::ui::r(CARD_RADIUS) - 1.0).max(0.0), 0.0, 0.0])
                         .fill(u.hover),
                 )
                 .child(

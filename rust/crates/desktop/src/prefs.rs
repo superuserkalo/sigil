@@ -393,7 +393,7 @@ pub struct Prefs {
 impl Default for Prefs {
     fn default() -> Self {
         Prefs {
-            theme: Theme::Dark,
+            theme: Theme::Graphite,
             accent: Accent::Theme,
             zoom: 1.0,
             startup: Screen::Browse,
@@ -464,8 +464,23 @@ impl Prefs {
                 .filter(|v| allowed.contains(v))
                 .unwrap_or(default)
         };
+        // Files from before the Graphite default always wrote "dark" and a "default" radius,
+        // picked or not, so that pair reads as "never chose". Any other theme, a Personalize
+        // palette or a chosen radius is a real choice and keeps its exact look.
+        let before_block = !map.contains_key("look");
+        let mut personal = crate::ui::personalize::Personal::from_value(map.get("personalize"));
+        let saved_theme = s("theme").and_then(Theme::from_id);
+        let untouched = before_block
+            && matches!(saved_theme, None | Some(Theme::Dark))
+            && personal.theme.is_none();
+        if before_block && !untouched && personal_radius_is_unset(map.get("personalize")) {
+            personal.radius = crate::ui::personalize::Radius::Default;
+        }
+        if untouched && personal.radius == crate::ui::personalize::Radius::Default {
+            personal.radius = crate::ui::personalize::Radius::Block;
+        }
         Prefs {
-            theme: s("theme").and_then(Theme::from_id).unwrap_or(d.theme),
+            theme: if untouched { d.theme } else { saved_theme.unwrap_or(d.theme) },
             accent: s("accent").map(Accent::from_id).unwrap_or(d.accent),
             zoom: map
                 .get("zoom")
@@ -555,7 +570,7 @@ impl Prefs {
                 .and_then(Value::as_array)
                 .map(|a| a.iter().filter_map(Value::as_str).map(str::to_string).collect())
                 .unwrap_or_default(),
-            personal: crate::ui::personalize::Personal::from_value(map.get("personalize")),
+            personal,
         }
     }
 
@@ -602,6 +617,8 @@ impl Prefs {
     pub fn to_json(&self) -> String {
         let mut map = Map::new();
         map.insert("schema".into(), json!(1));
+        // Marks a file written since Graphite became the default: its theme is a real choice.
+        map.insert("look".into(), json!(2));
         map.insert("theme".into(), json!(self.theme.id()));
         map.insert("accent".into(), json!(self.accent.id()));
         map.insert("zoom".into(), json!(self.zoom));
@@ -715,9 +732,45 @@ pub fn game_dir_from_env() -> bool {
     *FROM_USER.get_or_init(|| std::env::var_os("DAH_GAME_DIR").is_some())
 }
 
+/// A file from before the Block radius with no radius saved had the old rounded default.
+fn personal_radius_is_unset(personal: Option<&Value>) -> bool {
+    personal.and_then(|p| p.get("radius")).and_then(Value::as_str).is_none()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_graphite_default_keeps_real_choices() {
+        use crate::ui::personalize::{Radius, ThemePick};
+        // Fresh, and an old file that only ever held the old defaults.
+        for text in ["{}", r#"{"schema":1,"theme":"dark","personalize":{"radius":"default"}}"#] {
+            let p = Prefs::from_json(text);
+            assert!(p.theme == Theme::Graphite, "{text}");
+            assert_eq!(p.personal.radius, Radius::Block, "{text}");
+        }
+        // An old file with a real theme keeps it and its rounded corners.
+        let p = Prefs::from_json(r#"{"schema":1,"theme":"midnight","personalize":{"radius":"default"}}"#);
+        assert!(p.theme == Theme::Midnight);
+        assert_eq!(p.personal.radius, Radius::Default);
+        // A Personalize preset over the old Dark base is a choice too.
+        let p = Prefs::from_json(r#"{"schema":1,"theme":"dark","personalize":{"theme":"preset:brass","radius":"default"}}"#);
+        assert!(p.theme == Theme::Dark);
+        assert_eq!(p.personal.theme, Some(ThemePick::Preset("brass")));
+        assert_eq!(p.personal.radius, Radius::Default);
+        // An old chosen radius survives the move.
+        let p = Prefs::from_json(r#"{"schema":1,"theme":"dark","personalize":{"radius":"round"}}"#);
+        assert!(p.theme == Theme::Graphite);
+        assert_eq!(p.personal.radius, Radius::Round);
+        // After the move, picking Dark and Soft sticks.
+        let mut p = Prefs::default();
+        p.theme = Theme::Dark;
+        p.personal.radius = Radius::Default;
+        let back = Prefs::from_json(&p.to_json());
+        assert!(back.theme == Theme::Dark);
+        assert_eq!(back.personal.radius, Radius::Default);
+    }
 
     #[test]
     fn round_trips_every_field() {
@@ -779,7 +832,12 @@ mod tests {
         assert!(p.theme == Theme::Midnight);
         assert_eq!(p.accent, Accent::Custom("#12ab34".into()));
         assert!(p.transparent_sidebar);
-        assert_eq!(p.personal, crate::ui::personalize::Personal::default());
+        // A real old theme keeps the rounded corners it was seen with.
+        let expected = crate::ui::personalize::Personal {
+            radius: crate::ui::personalize::Radius::Default,
+            ..Default::default()
+        };
+        assert_eq!(p.personal, expected);
         assert!(p.personal.palette().is_none());
         let back = Prefs::from_json(&p.to_json());
         assert!(back == p);

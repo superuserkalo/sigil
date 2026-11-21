@@ -443,7 +443,7 @@ pub(crate) fn trending_rail(s: &State, u: &Ui, period: &str, title: &str) -> Opt
                             s,
                             format!("top-thumb-{id}"),
                             item.image_url.as_ref(),
-                            [6.0; 4],
+                            [crate::ui::r(6.0); 4],
                             veil,
                         )),
                 )

@@ -906,7 +906,7 @@ fn card(toast: &Toast<State>, u: &Ui) -> El {
         .shadow(
             12.0,
             32.0,
-            Color::BLACK.alpha(if u.light { 0.14 } else { 0.45 }),
+            crate::ui::soft(Color::BLACK.alpha(if u.light { 0.14 } else { 0.45 })),
         )
         .on_hover_change(move |st: &mut State, inside: bool, tx: &mut Tx| {
             hover(st, id, inside, tx)

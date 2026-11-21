@@ -322,7 +322,7 @@ pub fn overlay(s: &State, u: &Ui) -> Option<El> {
     for (i, _) in Step::ALL.iter().enumerate() {
         dots = dots.child(
             el().size(if i == step.index() { 18.0 } else { 6.0 }, 6.0)
-                .radius(3.0)
+                .radius(crate::ui::r(3.0))
                 .fill(if i <= step.index() { u.accent } else { u.hair_strong }),
         );
     }

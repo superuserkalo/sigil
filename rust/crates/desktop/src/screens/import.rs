@@ -540,7 +540,7 @@ fn item_list(s: &State, u: &Ui, d: &Dialog, plan: &ImportPlan) -> El {
 }
 
 fn checkbox(u: &Ui, on: bool, disabled: bool) -> El {
-    let base = el().size(16.0, 16.0).radius(4.0).center().a11y_hidden();
+    let base = el().size(16.0, 16.0).radius(crate::ui::r(4.0)).center().a11y_hidden();
     if disabled {
         base.border(1.0, u.hair)
     } else if on {
@@ -576,12 +576,12 @@ fn loading_rows(u: &Ui) -> El {
                 .gap(12.0)
                 .center_y()
                 .border_sides([0.0, 0.0, 1.0, 0.0], u.hair)
-                .child(el().size(16.0, 16.0).radius(4.0).fill(u.hover))
+                .child(el().size(16.0, 16.0).radius(crate::ui::r(4.0)).fill(u.hover))
                 .child(el().size(64.0, 36.0).radius(crate::ui::r(6.0)).fill(u.hover))
                 .child(
                     el().h(10.0)
                         .w(140.0 + (n % 3) as f32 * 48.0)
-                        .radius(3.0)
+                        .radius(crate::ui::r(3.0))
                         .fill(u.hover),
                 ),
         );

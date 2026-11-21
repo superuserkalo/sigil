@@ -2959,7 +2959,7 @@ pub fn filter_chip(u: &Ui, label: &str, on: bool) -> El {
         .h(27.0)
         .px(10.0)
         .center()
-        .radius(13.0)
+        .radius(crate::ui::r(13.0))
         .fill(if on {
             u.accent.alpha(0.16)
         } else {

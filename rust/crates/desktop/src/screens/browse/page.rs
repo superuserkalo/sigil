@@ -207,7 +207,7 @@ pub(crate) fn creator_rail(s: &State, u: &Ui) -> Option<El> {
                 .pr(12.0)
                 .gap(8.0)
                 .center_y()
-                .radius(18.0)
+                .radius(crate::ui::r(18.0))
                 .fill(u.over.alpha(0.04))
                 .border(1.0, u.hair_strong)
                 .hover(u.hover)
@@ -224,7 +224,7 @@ pub(crate) fn creator_rail(s: &State, u: &Ui) -> Option<El> {
                 })
                 .child(
                     el().size(28.0, 28.0)
-                        .radius(crate::ui::r(14.0))
+                        .radius(14.0)
                         .center()
                         .fill(u.accent.alpha(0.15))
                         .border(1.0, u.accent.alpha(0.30))

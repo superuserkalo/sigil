@@ -1410,7 +1410,7 @@ pub fn files_menu(s: &State, u: &Ui) -> Option<El> {
             .fill(u.raised)
             .radius(crate::ui::r(10.0))
             .border(1.0, u.hair_strong)
-            .shadow(12.0, 32.0, Color::BLACK.alpha(0.5))
+            .shadow(12.0, 32.0, crate::ui::soft(Color::BLACK.alpha(0.5)))
             .anchored(format!("details-install-more-{id}"), Side::Bottom, Align::End, 6.0)
             .modal(true, |st: &mut State| st.browse_view.installs.files_menu = None)
             .on_key(|st: &mut State, ev: &KeyEvent, _| {

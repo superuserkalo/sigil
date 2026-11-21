@@ -137,12 +137,16 @@ pub struct Look {
     pub density: f32,
 }
 
+/// The house corner: the Block choice in Personalize. Radii scale down to at most 2 points.
+pub const BLOCK_RADIUS: f32 = 0.2;
+const BLOCK_MAX: f32 = 2.0;
+
 impl Look {
     pub const DEFAULT: Look = Look {
-        theme: Theme::Dark,
+        theme: Theme::Graphite,
         accent: None,
         custom: None,
-        radius: 1.0,
+        radius: BLOCK_RADIUS,
         density: 1.0,
     };
 }
@@ -180,11 +184,24 @@ pub fn density() -> f32 {
     look().density
 }
 
-/// A corner radius on the house grid, scaled by the Personalize radius choice. Exact at the
-/// default, so the default look keeps its numbers.
+/// A corner radius on the house grid, scaled by the Personalize radius choice. Block, the
+/// default, keeps every corner at 2 points or less; Soft (1.0) is exact.
 pub fn r(points: f32) -> f32 {
     let k = look().radius;
-    if k == 1.0 { points } else { (points * k).round() }
+    if k == 1.0 {
+        points
+    } else if k == BLOCK_RADIUS {
+        (points * k).round().min(BLOCK_MAX)
+    } else {
+        (points * k).round()
+    }
+}
+
+/// A floating layer's shadow colour. Graphite separates layers with hard borders, so its
+/// shadow is off; every other look keeps the colour it asked for.
+pub fn soft(color: Color) -> Color {
+    let look = look();
+    if look.custom.is_none() && look.theme == Theme::Graphite { Color::TRANSPARENT } else { color }
 }
 
 // --- palettes ---------------------------------------------------------------------
@@ -518,7 +535,7 @@ impl Ui {
             Theme::Light => Ui::light_palette(),
             Theme::Oled => Ui::dark_variant(0.0, 0.0, 0.17, 0.12, 0.0, 286.0),
             Theme::Midnight => Ui::dark_variant(0.18, 0.155, 0.22, 0.205, 0.022, 262.0),
-            Theme::Graphite => Ui::dark_variant(0.255, 0.225, 0.295, 0.275, 0.004, 286.0),
+            Theme::Graphite => Ui::graphite(),
             Theme::Mocha => Ui::dark_variant(0.19, 0.165, 0.228, 0.212, 0.013, 55.0),
         };
         if let Some(accent) = accent {
@@ -539,6 +556,22 @@ impl Ui {
         u.prose = oklch(0.87, chroma.min(0.012), hue);
         u.muted = oklch(0.71, (chroma * 1.5).clamp(0.008, 0.03), hue);
         u.faint = oklch(0.55, (chroma * 1.5).clamp(0.008, 0.03), hue);
+        u
+    }
+
+    /// The house look: neutral graphite in clear tonal steps (well, sidebar, page, raised),
+    /// hard lines instead of shadows, and text that clears AA on every layer.
+    fn graphite() -> Ui {
+        let mut u = Ui::dark_variant(0.235, 0.205, 0.285, 0.19, 0.0, 0.0);
+        u.hair = Color::WHITE.alpha(0.11);
+        u.hair_strong = Color::WHITE.alpha(0.19);
+        u.ink = oklch(0.97, 0.0, 0.0);
+        u.prose = oklch(0.88, 0.0, 0.0);
+        u.muted = oklch(0.77, 0.0, 0.0);
+        u.faint = oklch(0.70, 0.0, 0.0);
+        u.hover = Color::WHITE.alpha(0.06);
+        u.selected = Color::WHITE.alpha(0.11);
+        u.shadow = Color::TRANSPARENT;
         u
     }
 
@@ -652,7 +685,7 @@ impl Ui {
             .shadow(
                 24.0,
                 64.0,
-                Color::BLACK.alpha(if self.light { 0.18 } else { 0.55 }),
+                soft(Color::BLACK.alpha(if self.light { 0.18 } else { 0.55 })),
             )
     }
 
@@ -1067,6 +1100,27 @@ mod look_tests {
             ]
         };
         fields(a) == fields(b) && a.light == b.light
+    }
+
+    /// Graphite is neutral, and its text clears AA on every layer it sits on.
+    #[test]
+    fn graphite_is_neutral_and_readable() {
+        let u = Ui::themed(Theme::Graphite, None);
+        for layer in [u.bg, u.sidebar, u.raised, u.well] {
+            assert!((layer.r - layer.g).abs() < 0.004 && (layer.g - layer.b).abs() < 0.004);
+            for ink in [u.ink, u.prose, u.muted, u.faint] {
+                assert!(contrast(ink, layer) >= AA_TEXT, "{} on {}", hex6(ink), hex6(layer));
+            }
+        }
+    }
+
+    #[test]
+    fn block_corners_stay_at_two_points() {
+        set_personal(None, BLOCK_RADIUS);
+        for points in [2.0, 4.0, 8.0, 10.0, 14.0, 22.0] {
+            assert!(r(points) <= 2.0, "{points}");
+        }
+        set_personal(None, 1.0);
     }
 
     /// With Personalize untouched, `Ui::new` paints exactly the theme it always did and every

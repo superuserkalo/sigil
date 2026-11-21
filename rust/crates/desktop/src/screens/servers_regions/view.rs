@@ -574,7 +574,7 @@ fn group(s: &State, u: &Ui, region: Region, locations: &[&Location]) -> El {
 }
 
 fn checkbox(u: &Ui, on: bool, disabled: bool) -> El {
-    let base = el().size(16.0, 16.0).radius(4.0).center().a11y_hidden();
+    let base = el().size(16.0, 16.0).radius(crate::ui::r(4.0)).center().a11y_hidden();
     if disabled {
         base.border(1.0, u.hair)
     } else if on {
@@ -931,7 +931,7 @@ pub fn health_popover(s: &State, u: &Ui, sum: &probe::Summary) -> El {
         .fill(u.raised)
         .radius(crate::ui::r(10.0))
         .border(1.0, u.hair_strong)
-        .shadow(12.0, 32.0, Color::BLACK.alpha(0.5))
+        .shadow(12.0, 32.0, crate::ui::soft(Color::BLACK.alpha(0.5)))
         .anchored("statusbar-relays", rune::Side::Top, rune::Align::Start, 8.0)
         .modal(true, |st: &mut State| st.servers.regions.health_open = false)
         .on_key(|st: &mut State, ev: &KeyEvent, _| {

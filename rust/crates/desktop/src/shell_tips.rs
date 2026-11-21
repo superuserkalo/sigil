@@ -231,7 +231,7 @@ pub fn view(s: &State, u: &Ui, in_settings: bool) -> Option<El> {
             .fill(u.raised)
             .radius(crate::ui::r(10.0))
             .border(1.0, u.accent.alpha(0.5))
-            .shadow(12.0, 32.0, Color::BLACK.alpha(0.45))
+            .shadow(12.0, 32.0, crate::ui::soft(Color::BLACK.alpha(0.45)))
             .anchored(hint.anchor, if hint.id == "mods-folder" || hint.id == "sidebar-collapse" { Side::Right } else { Side::Bottom }, Align::Start, 8.0)
             .on_key(|st: &mut State, ev: &KeyEvent, _| {
                 if ev.key == Key::Escape {

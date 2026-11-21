@@ -199,7 +199,7 @@ pub fn zoom_bar(s: &State, u: &Ui) -> El {
         .px(2.0)
         .gap(2.0)
         .center_y()
-        .radius(16.0)
+        .radius(crate::ui::r(16.0))
         .fill(Color::BLACK.alpha(0.6))
         .border(1.0, Color::WHITE.alpha(0.15))
         .child(round("lightbox-zoom-out", &icons::MINUS, "Zoom out").on_press(|st: &mut State| {
@@ -211,7 +211,7 @@ pub fn zoom_bar(s: &State, u: &Ui) -> El {
                 .h(28.0)
                 .px(6.0)
                 .center()
-                .radius(14.0)
+                .radius(crate::ui::r(14.0))
                 .hover(Color::WHITE.alpha(0.12))
                 .role("button")
                 .label(tr("Actual size"))
@@ -428,7 +428,7 @@ pub fn featured_rail(s: &State, u: &Ui) -> Option<El> {
                 el().w(92.0)
                     .h_full()
                     .clip_rounded(crate::ui::r(6.0))
-                    .child(image_fill(s, format!("featured-thumb-{id}"), card.thumbnail_url.as_ref(), [6.0; 4], false)),
+                    .child(image_fill(s, format!("featured-thumb-{id}"), card.thumbnail_url.as_ref(), [crate::ui::r(6.0); 4], false)),
             )
             .child(
                 col()
@@ -525,7 +525,7 @@ pub fn author_links(s: &State, u: &Ui, member_id: u64) -> Option<El> {
             .px(10.0)
             .gap(6.0)
             .center_y()
-            .radius(13.0)
+            .radius(crate::ui::r(13.0))
             .fill(u.over.alpha(0.05))
             .border(1.0, u.hair_strong)
             .hover(u.hover)
@@ -647,7 +647,7 @@ pub fn image_menu(s: &State, u: &Ui) -> Option<El> {
             .fill(u.raised)
             .radius(crate::ui::r(10.0))
             .border(1.0, u.hair_strong)
-            .shadow(12.0, 32.0, Color::BLACK.alpha(0.5))
+            .shadow(12.0, 32.0, crate::ui::soft(Color::BLACK.alpha(0.5)))
             .anchored(anchor, Side::Bottom, Align::Start, 6.0)
             .modal(true, close)
             .on_key(|st: &mut State, ev: &KeyEvent, _| {

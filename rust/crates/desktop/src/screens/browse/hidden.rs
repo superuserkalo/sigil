@@ -264,7 +264,7 @@ fn row_el(
                     to_browse(st);
                     show_details(st, Details::from_id(section, id, &title, Some(url.clone())));
                 })
-                .child(image_fill(s, format!("{scope}-{slug}-img-{id}"), Some(&picture.url), [6.0; 4], blur)),
+                .child(image_fill(s, format!("{scope}-{slug}-img-{id}"), Some(&picture.url), [crate::ui::r(6.0); 4], blur)),
         );
     }
 

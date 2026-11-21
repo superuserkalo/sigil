@@ -276,7 +276,7 @@ fn big_number(u: &Ui, value: &str, label: &str) -> El {
 
 fn spot_badge(u: &Ui, n: usize, color: Color) -> El {
     el().size(20.0, 20.0)
-        .radius(crate::ui::r(10.0))
+        .radius(10.0)
         .border(1.5, color)
         .center()
         .a11y_hidden()

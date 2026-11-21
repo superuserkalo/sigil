@@ -389,7 +389,7 @@ fn header(s: &State, u: &Ui, roll: &Roll, data: &RollData) -> El {
 
 fn focus_strip(u: &Ui, roll: &Roll) -> El {
     let total = roll.total().max(1) as f32;
-    let mut bar = row().w_full().h(6.0).radius(3.0).fill(u.hair);
+    let mut bar = row().w_full().h(6.0).radius(crate::ui::r(3.0)).fill(u.hair);
     for category in Category::ALL {
         let part = roll.souls[category.index()] as f32 / total;
         if part > 0.0 {

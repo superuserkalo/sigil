@@ -101,9 +101,9 @@ pub fn bar(u: &Ui, frac: f32) -> El {
     row()
         .w_full()
         .h(4.0)
-        .radius(2.0)
+        .radius(crate::ui::r(2.0))
         .fill(u.well)
-        .child(el().w_frac(frac.clamp(0.0, 1.0)).h_full().radius(2.0).fill(u.accent))
+        .child(el().w_frac(frac.clamp(0.0, 1.0)).h_full().radius(crate::ui::r(2.0)).fill(u.accent))
 }
 
 /// The update banner's body while Sigil downloads its update: the progress line over a bar.

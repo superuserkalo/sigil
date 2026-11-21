@@ -812,7 +812,7 @@ fn tab_button(u: &Ui, key: &str, label: &str, on: bool) -> El {
                     el()
                         .h(2.0)
                         .w_full()
-                        .radius(1.0)
+                        .radius(crate::ui::r(1.0))
                         .fill(if on { u.ink } else { Color::TRANSPARENT }),
                 ),
         )
@@ -1060,7 +1060,7 @@ fn chips(s: &State, u: &Ui) -> El {
                         .key(format!("servers-chip-x-{:?}", kind))
                         .size(16.0, 16.0)
                         .center()
-                        .radius(4.0)
+                        .radius(crate::ui::r(4.0))
                         .hover(u.hover)
                         .focusable(true)
                         .role("button")
@@ -1315,13 +1315,13 @@ fn capacity(u: &Ui, server: &Server) -> El {
             row()
                 .w(56.0)
                 .h(3.0)
-                .radius(2.0)
+                .radius(crate::ui::r(2.0))
                 .fill(Color::WHITE.alpha(0.08))
                 .child(
                     el()
                         .grow(fraction.max(0.02))
                         .h(3.0)
-                        .radius(2.0)
+                        .radius(crate::ui::r(2.0))
                         .fill(if full { u.amber } else { u.muted }),
                 )
                 .child(el().grow((1.0 - fraction).max(0.02)).h(3.0)),
@@ -1677,9 +1677,9 @@ fn progress_bar(u: &Ui, fraction: Option<f32>) -> El {
     row()
         .w_full()
         .h(4.0)
-        .radius(2.0)
+        .radius(crate::ui::r(2.0))
         .fill(Color::WHITE.alpha(0.08))
-        .child(el().grow(f.max(0.001)).h(4.0).radius(2.0).fill(u.accent))
+        .child(el().grow(f.max(0.001)).h(4.0).radius(crate::ui::r(2.0)).fill(u.accent))
         .child(el().grow((1.0 - f).max(0.001)).h(4.0))
 }
 
@@ -2061,7 +2061,7 @@ pub fn overlay(s: &State, u: &Ui) -> Option<El> {
             .fill(u.raised)
             .radius(crate::ui::r(10.0))
             .border(1.0, u.hair_strong)
-            .shadow(12.0, 32.0, Color::BLACK.alpha(0.5))
+            .shadow(12.0, 32.0, crate::ui::soft(Color::BLACK.alpha(0.5)))
             .anchored(menu.anchor(), Side::Bottom, Align::Start, 6.0)
             .modal(true, |st: &mut State| st.servers.menu = None)
             .on_key(|st: &mut State, ev: &KeyEvent, _| {

@@ -587,14 +587,14 @@ pub fn modal(s: &State, u: &Ui, window: (f32, f32)) -> Option<El> {
         .label(tr("Settings"))
         .w(width)
         .h(height)
-        .radius(RADIUS)
-        .clip_rounded(RADIUS)
+        .radius(crate::ui::r(RADIUS))
+        .clip_rounded(crate::ui::r(RADIUS))
         .fill(u.bg)
         .border(1.0, u.hair_strong)
         .shadow(
             24.0,
             64.0,
-            Color::BLACK.alpha(if u.light { 0.18 } else { 0.55 }),
+            crate::ui::soft(Color::BLACK.alpha(if u.light { 0.18 } else { 0.55 })),
         )
         .modal(true, close)
         .on_key(|st: &mut State, ev: &KeyEvent, tx: &mut rune::Tx| {
@@ -1683,9 +1683,9 @@ fn theme_tile(s: &State, u: &Ui, theme: Theme) -> El {
                 .pt(12.0)
                 .px(7.0)
                 .gap(5.0)
-                .child(el().w(22.0).h(4.0).radius(2.0).fill(t.ink.alpha(0.6)))
-                .child(el().w(18.0).h(4.0).radius(2.0).fill(t.muted.alpha(0.5)))
-                .child(el().w(20.0).h(4.0).radius(2.0).fill(t.muted.alpha(0.5))),
+                .child(el().w(22.0).h(4.0).radius(crate::ui::r(2.0)).fill(t.ink.alpha(0.6)))
+                .child(el().w(18.0).h(4.0).radius(crate::ui::r(2.0)).fill(t.muted.alpha(0.5)))
+                .child(el().w(20.0).h(4.0).radius(crate::ui::r(2.0)).fill(t.muted.alpha(0.5))),
         )
         .child(
             col()
@@ -1694,16 +1694,16 @@ fn theme_tile(s: &State, u: &Ui, theme: Theme) -> El {
                 .pt(12.0)
                 .px(10.0)
                 .gap(6.0)
-                .child(el().w(52.0).h(6.0).radius(3.0).fill(t.ink.alpha(0.85)))
-                .child(el().w_full().h(4.0).radius(2.0).fill(t.muted.alpha(0.45)))
-                .child(el().w(46.0).h(4.0).radius(2.0).fill(t.muted.alpha(0.45)))
+                .child(el().w(52.0).h(6.0).radius(crate::ui::r(3.0)).fill(t.ink.alpha(0.85)))
+                .child(el().w_full().h(4.0).radius(crate::ui::r(2.0)).fill(t.muted.alpha(0.45)))
+                .child(el().w(46.0).h(4.0).radius(crate::ui::r(2.0)).fill(t.muted.alpha(0.45)))
                 .child(spacer())
                 .child(
                     row()
                         .w_full()
                         .pb(10.0)
                         .child(spacer())
-                        .child(el().w(30.0).h(12.0).radius(4.0).fill(t.accent)),
+                        .child(el().w(30.0).h(12.0).radius(crate::ui::r(4.0)).fill(t.accent)),
                 ),
         );
     col()
@@ -1725,7 +1725,7 @@ fn theme_tile(s: &State, u: &Ui, theme: Theme) -> El {
             col()
                 .w_full()
                 .padding(3.0)
-                .radius(11.0)
+                .radius(crate::ui::r(11.0))
                 .border(2.0, if on { u.accent } else { Color::TRANSPARENT })
                 .child(picture.border(1.0, t.hair_strong)),
         )

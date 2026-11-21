@@ -263,11 +263,11 @@ pub(crate) fn collections_page(s: &State, u: &Ui) -> El {
             col()
                 .key(format!("collection-{}", summary.id))
                 .min_w(0.0)
-                .radius(CARD_RADIUS)
+                .radius(crate::ui::r(CARD_RADIUS))
                 .fill(u.well)
-                .border(1.0, Color::WHITE.alpha(0.07))
+                .border(1.0, u.hair)
                 .hover(Color::WHITE.alpha(0.025))
-                .clip_rounded(CARD_RADIUS)
+                .clip_rounded(crate::ui::r(CARD_RADIUS))
                 .focusable(true)
                 .role("button")
                 .label(format!("{} by {}", summary.name, summary.author))
@@ -276,12 +276,12 @@ pub(crate) fn collections_page(s: &State, u: &Ui) -> El {
                 .child(
                     el().w_full()
                         .aspect_ratio(16.0 / 7.0)
-                        .clip_corners([CARD_RADIUS - 1.0, CARD_RADIUS - 1.0, 0.0, 0.0])
+                        .clip_corners([(crate::ui::r(CARD_RADIUS) - 1.0).max(0.0), (crate::ui::r(CARD_RADIUS) - 1.0).max(0.0), 0.0, 0.0])
                         .child(image_fill(
                             s,
                             format!("collection-thumb-{}", summary.id),
                             image.as_ref(),
-                            [CARD_RADIUS - 1.0, CARD_RADIUS - 1.0, 0.0, 0.0],
+                            [(crate::ui::r(CARD_RADIUS) - 1.0).max(0.0), (crate::ui::r(CARD_RADIUS) - 1.0).max(0.0), 0.0, 0.0],
                             false,
                         )),
                 )
@@ -403,7 +403,7 @@ pub(crate) fn collection_dialog(s: &State, u: &Ui) -> Option<El> {
         row = row
             .child(
                 el().size(20.0, 20.0)
-                    .radius(4.0)
+                    .radius(crate::ui::r(4.0))
                     .center()
                     .border(1.0, if ticked { u.accent.alpha(0.7) } else { u.hair_strong })
                     .fill(if ticked { u.accent.alpha(0.18) } else { Color::TRANSPARENT })
@@ -421,7 +421,7 @@ pub(crate) fn collection_dialog(s: &State, u: &Ui) -> Option<El> {
                         s,
                         format!("collection-item-thumb-{id}"),
                         thumb.as_ref(),
-                        [6.0; 4],
+                        [crate::ui::r(6.0); 4],
                         veiled(s, id, card.nsfw),
                     )),
             )

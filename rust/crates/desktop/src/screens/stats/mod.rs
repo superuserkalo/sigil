@@ -1047,7 +1047,7 @@ fn entry(s: &State, u: &Ui) -> El {
 
 /// Placeholder shapes in the page's own layout while the first load runs.
 fn skeleton(u: &Ui) -> El {
-    let bar = |w: f32, h: f32| el().w(w).h(h).radius(4.0).fill(u.hover);
+    let bar = |w: f32, h: f32| el().w(w).h(h).radius(crate::ui::r(4.0)).fill(u.hover);
     let mut c = col()
         .key("stats-skeleton")
         .w_full()

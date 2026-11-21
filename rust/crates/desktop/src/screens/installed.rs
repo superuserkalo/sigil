@@ -1068,7 +1068,7 @@ fn card_view(s: &State, u: &Ui, card: &layout::Group, pitch: [f32; 2], cols: usi
     let enable = !addon.enabled;
     let meta = meta_for(s, addon);
     let compact = s.installed.layout == layout::Layout::Compact;
-    let inner = CARD_RADIUS - 1.0;
+    let inner = (crate::ui::r(CARD_RADIUS) - 1.0).max(0.0);
     let name = meta
         .map(|meta| meta.name.clone())
         .unwrap_or_else(|| "Unnamed mod".to_string());
@@ -1281,7 +1281,7 @@ fn card_view(s: &State, u: &Ui, card: &layout::Group, pitch: [f32; 2], cols: usi
         .key(format!("addon-{slot:02}"))
         .min_w(0.0)
         .padding(1.0)
-        .radius(CARD_RADIUS)
+        .radius(crate::ui::r(CARD_RADIUS))
         .opacity(if dragging { 0.55 } else { 1.0 })
         .fill(if selected { u.selected } else { u.well })
         .border(
@@ -1409,7 +1409,7 @@ pub(super) fn check_box(u: &Ui, on: bool, on_image: bool) -> El {
     let mut b = el()
         .size(18.0, 18.0)
         .center()
-        .radius(5.0)
+        .radius(crate::ui::r(5.0))
         .a11y_hidden();
     b = if on {
         b.fill(u.accent).border(1.0, u.accent)
@@ -1529,13 +1529,13 @@ fn loading(u: &Ui) -> El {
             col()
                 .min_w(0.0)
                 .padding(1.0)
-                .radius(CARD_RADIUS)
+                .radius(crate::ui::r(CARD_RADIUS))
                 .fill(u.well)
-                .border(1.0, Color::WHITE.alpha(0.07))
+                .border(1.0, u.hair)
                 .child(
                     el().w_full()
                         .aspect_ratio(16.0 / 9.0)
-                        .corners([CARD_RADIUS - 1.0, CARD_RADIUS - 1.0, 0.0, 0.0])
+                        .corners([(crate::ui::r(CARD_RADIUS) - 1.0).max(0.0), (crate::ui::r(CARD_RADIUS) - 1.0).max(0.0), 0.0, 0.0])
                         .fill(u.hover),
                 )
                 .child(
@@ -1544,8 +1544,8 @@ fn loading(u: &Ui) -> El {
                         .pt(14.0)
                         .pb(18.0)
                         .gap(10.0)
-                        .child(el().h(10.0).w(120.0).radius(3.0).fill(u.hover))
-                        .child(el().h(8.0).w(72.0).radius(3.0).fill(u.hover)),
+                        .child(el().h(10.0).w(120.0).radius(crate::ui::r(3.0)).fill(u.hover))
+                        .child(el().h(8.0).w(72.0).radius(crate::ui::r(3.0)).fill(u.hover)),
                 ),
         );
     }
@@ -2173,7 +2173,7 @@ pub fn overlay(s: &State, u: &Ui) -> Option<El> {
         .fill(u.raised)
         .radius(crate::ui::r(10.0))
         .border(1.0, u.hair_strong)
-        .shadow(12.0, 32.0, Color::BLACK.alpha(0.5))
+        .shadow(12.0, 32.0, crate::ui::soft(Color::BLACK.alpha(0.5)))
         .anchored_fit(anchor, Side::Bottom, align, 6.0)
         .modal(true, |st: &mut State| st.installed.menu = None)
         .child(list);

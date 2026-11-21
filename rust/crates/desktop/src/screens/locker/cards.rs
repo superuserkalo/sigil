@@ -118,7 +118,7 @@ fn el_slider(u: &Ui, track_y: f32, knob: f32, frac: f32) -> El {
                 .absolute(0.0, track_y)
                 .w(SLIDER_W)
                 .h(4.0)
-                .radius(2.0)
+                .radius(crate::ui::r(2.0))
                 .fill(u.over.alpha(0.10))
                 .a11y_hidden(),
         )
@@ -127,7 +127,7 @@ fn el_slider(u: &Ui, track_y: f32, knob: f32, frac: f32) -> El {
                 .absolute(0.0, track_y)
                 .w((SLIDER_W * frac).max(0.0))
                 .h(4.0)
-                .radius(2.0)
+                .radius(crate::ui::r(2.0))
                 .fill(u.muted)
                 .a11y_hidden(),
         )

@@ -694,7 +694,7 @@ fn bar() -> El {
         .center_y()
         .radius(crate::ui::r(10.0))
         .fill(Color::BLACK.alpha(0.55))
-        .border(1.0, Color::WHITE.alpha(0.08))
+        .border(1.0, crate::ui::Ui::new().hair)
 }
 
 fn scene_bar(s: &State, u: &Ui) -> El {

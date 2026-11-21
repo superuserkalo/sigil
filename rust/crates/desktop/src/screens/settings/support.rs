@@ -123,7 +123,7 @@ fn checkbox(u: &Ui, on: bool) -> El {
     rune::el()
         .size(18.0, 18.0)
         .center()
-        .radius(5.0)
+        .radius(crate::ui::r(5.0))
         .fill(if on { u.accent } else { rune::Color::TRANSPARENT })
         .border(1.5, if on { u.accent } else { u.hair_strong })
         .role("checkbox")
