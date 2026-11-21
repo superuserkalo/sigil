@@ -951,6 +951,8 @@ pub enum Size {
     Row,
     /// The details' main button: the full words, a little taller.
     Wide,
+    /// A details file row: 28 high, 88 wide, a ghost while it only offers Install.
+    File,
 }
 
 fn glyph(b: &Button) -> &'static Icon {
@@ -992,6 +994,7 @@ fn progress_fill(fraction: f32, color: Color) -> El {
 /// card's; pressing it acts on `id` alone.
 pub fn button_el(u: &Ui, b: &Button, key: String, id: u64, name: &str, size: Size) -> El {
     let (ink, glyph_ink, fill_color, border) = match b {
+        Button::Install if size == Size::File => (u.prose, u.muted, Color::TRANSPARENT, u.hair),
         Button::Install => (u.ink, u.ink, Color::WHITE.alpha(0.035), u.hair_strong),
         Button::Retry(_) => (u.ink, u.rose, u.rose.alpha(0.08), u.rose.alpha(0.45)),
         Button::Queued => (u.muted, u.faint, Color::TRANSPARENT, u.hair_strong),
@@ -1008,7 +1011,8 @@ pub fn button_el(u: &Ui, b: &Button, key: String, id: u64, name: &str, size: Siz
             matches!(b, Button::Downloading(Some(_)) | Button::Paused(Some(_))).then(|| b.short()),
         ),
         Size::Row => (32.0, Some(b.label())),
-        Size::Wide => (36.0, Some(b.label())),
+        Size::File => (28.0, Some(b.short())),
+        Size::Wide => (32.0, Some(b.label())),
     };
     let radius = crate::ui::r(8.0);
     let mut button = row()
@@ -1026,6 +1030,7 @@ pub fn button_el(u: &Ui, b: &Button, key: String, id: u64, name: &str, size: Siz
         (None, _) => button.w(h),
         (Some(_), Size::Wide) => button.px(16.0).min_w(148.0),
         (Some(_), Size::Row) => button.pl(10.0).pr(12.0).min_w(112.0),
+        (Some(_), Size::File) => button.w(88.0).px(8.0),
         (Some(_), Size::Fill) => button.grow(1.0).shrink().min_w(0.0).px(8.0),
         (Some(_), _) => button.pl(8.0).pr(10.0),
     };
@@ -1247,30 +1252,8 @@ pub fn details_install(s: &State, u: &Ui, d: &Details, profile: &ModProfile) -> 
             press_file(st, id, &name, target.clone(), file);
         });
     }
-    let others = profile.files.len() > 1;
-    let mut line = row().key("details-install-row").w_full().gap(8.0).center_y().child(main);
-    if others {
-        let open = s.browse_view.installs.files_menu == Some(id);
-        line = line.child(
-            el().key(format!("details-install-more-{id}"))
-                .size(36.0, 36.0)
-                .center()
-                .radius(crate::ui::r(8.0))
-                .border(1.0, u.hair_strong)
-                .fill(if open { u.hover } else { Color::TRANSPARENT })
-                .hover(u.hover)
-                .press(Color::WHITE.alpha(0.08))
-                .focusable(true)
-                .role("button")
-                .label(tr("Choose another file"))
-                .cursor(rune::Cursor::Pointer)
-                .on_press(move |st: &mut State| {
-                    let menu = &mut st.browse_view.installs.files_menu;
-                    *menu = if *menu == Some(id) { None } else { Some(id) };
-                })
-                .child(icon(&icons::CHEVRON_DOWN, 16.0).color(u.muted).a11y_hidden()),
-        );
-    }
+    // One full-width button; the Files list under it picks any other file.
+    let main = main.w_full();
     let which = s
         .browse_view
         .installs
@@ -1279,14 +1262,17 @@ pub fn details_install(s: &State, u: &Ui, d: &Details, profile: &ModProfile) -> 
         .and_then(|e| e.file)
         .and_then(|file| profile.files.iter().find(|f| f.id == file))
         .unwrap_or(primary);
-    line = line.child(
-        text(which.name.clone())
-            .font(SMALL)
-            .color(u.faint)
-            .truncate()
-            .min_w(0.0)
-            .shrink(),
-    );
+    let line = col()
+        .key("details-install-row")
+        .w_full()
+        .gap(6.0)
+        .child(main)
+        .child(
+            text(format!("{} · {}", which.name, crate::model::format_size(which.size_bytes)))
+                .font(crate::ui::SMALL_NUM)
+                .color(u.muted)
+                .truncate(),
+        );
     let mut c = col().key("details-install").w_full().gap(6.0).child(line);
     if let Button::Retry(error) = &b {
         c = c.child(
@@ -1326,7 +1312,7 @@ pub fn file_button(s: &State, u: &Ui, d: &Details, profile: &ModProfile, file: &
     let b = if mine { button(s, id) } else { Button::Install };
     let key = format!("file-install-{}", file.id);
     if mine && !matches!(b, Button::Install | Button::Retry(_)) {
-        let mut el = button_el(u, &b, key, id, &file.name, Size::Row);
+        let mut el = button_el(u, &b, key, id, &file.name, Size::File);
         if b == Button::Installed {
             // The file is in; its button rests.
             el = el.on_press(|_st: &mut State| {});
@@ -1337,7 +1323,7 @@ pub fn file_button(s: &State, u: &Ui, d: &Details, profile: &ModProfile, file: &
     let name = d.name.clone();
     let target = file_target(d, profile, file);
     let file_id = file.id;
-    let el = button_el(u, &b, key, id, &file.name, Size::Row);
+    let el = button_el(u, &b, key, id, &file.name, Size::File);
     if busy {
         // Another file of this mod is on its way; one at a time.
         return el.opacity(0.45).on_press(|_st: &mut State| {});

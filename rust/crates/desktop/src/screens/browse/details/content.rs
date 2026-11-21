@@ -3,12 +3,18 @@
 use super::*;
 
 pub(crate) fn files_section(s: &State, u: &Ui, d: &Details, profile: &ModProfile) -> El {
-    let mut c = col().w_full().gap(8.0).child(section_head(
-        u,
-        None,
-        "Files",
-        (profile.files.len() > 1).then_some(profile.files.len() as u64),
-    ));
+    // Wave 4: the slots this mod is installed in, each with Delete (Grimoire).
+    let copies = super::super::w4::installed_copies(s, u, d);
+    let mut c = col().w_full().gap(8.0);
+    let alone = profile.files.len() == 1 && copies.is_none() && profile.archived_files.is_empty();
+    if !alone {
+        c = c.child(section_head(
+            u,
+            None,
+            "Files",
+            (profile.files.len() > 1).then_some(profile.files.len() as u64),
+        ));
+    }
     if profile.files.is_empty() {
         c = c.child(
             text("This mod has no downloadable files.")
@@ -16,13 +22,14 @@ pub(crate) fn files_section(s: &State, u: &Ui, d: &Details, profile: &ModProfile
                 .color(u.muted),
         );
     }
-    // Wave 4: the slots this mod is installed in, each with Delete (Grimoire).
-    if let Some(copies) = super::super::w4::installed_copies(s, u, d) {
+    if let Some(copies) = copies {
         c = c.child(copies);
     }
+    // With one file the Install block above already says it all.
     let only = profile.files.len() == 1;
-    for file in &profile.files {
-        c = c.child(file_card(s, u, d, file, only));
+    if !only {
+        let rows = profile.files.iter().map(|file| file_card(s, u, d, file, only)).collect();
+        c = c.child(file_list(rows, u));
     }
     if !profile.archived_files.is_empty() {
         let open = d.archived_open;
@@ -64,97 +71,61 @@ pub(crate) fn files_section(s: &State, u: &Ui, d: &Details, profile: &ModProfile
                 ),
         );
         if open {
-            for file in &profile.archived_files {
-                c = c.child(file_card(s, u, d, file, false));
-            }
+            let rows = profile.archived_files.iter().map(|file| file_card(s, u, d, file, false)).collect();
+            c = c.child(file_list(rows, u));
         }
     }
     c
 }
 
-pub(crate) fn file_card(s: &State, u: &Ui, d: &Details, file: &ModFile, only: bool) -> El {
-    let mut meta = row()
-        .gap(6.0)
-        .center_y()
-        .flex_wrap()
-        .child(
-            text(crate::model::format_size(file.size_bytes))
-                .font(SMALL)
-                .color(u.muted),
-        )
-        .child(text("-").font(SMALL).color(u.faint))
-        .child(
-            text(format!(
-                "{} download{}",
-                group_digits(file.downloads),
-                if file.downloads == 1 { "" } else { "s" }
-            ))
-            .font(SMALL)
-            .color(u.muted),
-        );
+/// One file row, 52 high: what it is (its description, or its name), then name, size,
+/// downloads and date in one quiet line, and its own Install. Rows share one bordered list.
+pub(crate) fn file_card(s: &State, u: &Ui, d: &Details, file: &ModFile, _only: bool) -> El {
+    let lead = if file.description.trim().is_empty() { file.name.clone() } else { file.description.clone() };
+    // Size, downloads and date first, so a long file name is what truncates.
+    let mut meta = vec![crate::model::format_size(file.size_bytes)];
+    meta.push(format!("{} download{}", group_digits(file.downloads), if file.downloads == 1 { "" } else { "s" }));
     if file.added_ts > 0 {
-        // The separator travels with the date, so a wrapped line never ends on a dash.
-        meta = meta.child(
-                row()
-                    .gap(4.0)
-                    .center_y()
-                    .child(text("-").font(SMALL).color(u.faint).mr(2.0))
-                    .child(icon(&CLOCK, 12.0).color(u.faint).a11y_hidden())
-                    .child(
-                        text(gamebanana::calendar_date(file.added_ts))
-                            .font(SMALL)
-                            .color(u.muted),
-                    ),
-            );
+        meta.push(gamebanana::calendar_date(file.added_ts));
     }
-    let mut middle = col()
-        .grow(1.0)
-        .min_w(0.0)
-        .gap(2.0)
-        .child(text(file.name.clone()).font(BODY_MED).color(u.ink).truncate());
-    if !file.description.is_empty() {
-        middle = middle.child(
-            text(file.description.clone())
-                .font(SMALL)
-                .color(u.muted)
-                .truncate(),
-        );
+    if lead != file.name {
+        meta.push(file.name.clone());
     }
-    middle = middle.child(meta);
-
     // This file's own state while it installs; the press installs it at once.
     let install = match d.profile.as_ref() {
         Some(profile) => super::super::replace::file_actions(s, u, d, profile, file),
         None => el(),
     };
-    let _ = only;
-
     row()
         .key(format!("file-{}", file.id))
         .w_full()
-        .padding(12.0)
+        .h(52.0)
+        .px(12.0)
         .gap(12.0)
         .center_y()
-        .radius(crate::ui::r(8.0))
-        .fill(if file.archived {
-            Color::WHITE.alpha(0.012)
-        } else {
-            Color::WHITE.alpha(0.025)
-        })
-        .border(1.0, u.hair_strong)
         .child(
-            el().size(40.0, 40.0)
-                .center()
-                .radius(crate::ui::r(6.0))
-                .fill(Color::WHITE.alpha(0.05))
-                .child(
-                    icon(&FILE_ARCHIVE, 20.0)
-                        .color(if file.archived { u.faint } else { u.muted })
-                        .a11y_hidden(),
-                ),
+            col()
+                .grow(1.0)
+                .min_w(0.0)
+                .gap(2.0)
+                .child(text(lead).font(BODY_MED).color(if file.archived { u.muted } else { u.ink }).truncate())
+                .child(text(meta.join(" · ")).font(crate::ui::SMALL_NUM).color(u.muted).truncate()),
         )
-        .child(middle)
         .child(install)
+}
+
+/// Rows in one bordered list with hairlines between them.
+fn file_list(rows: Vec<El>, u: &Ui) -> El {
+    let mut list = col()
+        .key("details-file-list")
+        .w_full()
+        .radius(crate::ui::r(8.0))
+        .clip_rounded(crate::ui::r(8.0))
+        .border(1.0, u.hair);
+    for (i, row) in rows.into_iter().enumerate() {
+        list = list.child(if i == 0 { row } else { row.border_sides([1.0, 0.0, 0.0, 0.0], u.hair) });
+    }
+    list
 }
 
 pub(crate) fn artist_card(s: &State, u: &Ui, member: &ModMember, fallback: &str) -> El {

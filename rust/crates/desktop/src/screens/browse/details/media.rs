@@ -26,102 +26,53 @@ pub(crate) fn image_badge(u: &Ui, label: String) -> El {
         .child(text(label).font(SMALL).color(u.prose))
 }
 
-/// Every preview stacked at its own aspect ratio; a press opens the lightbox there.
-pub(crate) fn gallery_stack(s: &State, u: &Ui, d: &Details) -> El {
+/// The gallery: the main image in its fixed 16:9 box, then one row of thumbs, paged so the
+/// current image's page shows. The box is there from the first frame.
+pub(crate) fn carousel(s: &State, u: &Ui, d: &Details) -> El {
     let images = d.images();
-    let veil = veiled(s, d.id, d.nsfw);
-    if images.is_empty() {
-        // Before the profile lands, the card image holds the first slot.
-        let mut frame = el()
-            .key("gallery-pending")
-            .w_full()
-            .aspect_ratio(16.0 / 9.0)
-            .radius(crate::ui::r(8.0))
-            .border(1.0, u.hair)
-            .clip_rounded(crate::ui::r(8.0))
-            .child(image_fill(
-                s,
-                "gallery-card".to_string(),
-                d.thumbnail_url.as_ref(),
-                [8.0; 4],
-                veil,
-            ));
-        if veil {
-            frame = frame.child(nsfw_veil(u, "pending", d.id, false));
-        }
-        let mut c = col().w_full().gap(12.0).child(frame);
-        if d.loading {
-            c = c.child(
-                el().w_full()
-                    .aspect_ratio(16.0 / 10.0)
-                    .radius(crate::ui::r(8.0))
-                    .fill(u.hover),
-            );
-        } else if d.profile.is_some() {
-            c = c.child(text("No preview images.").font(SMALL).color(u.faint));
-        }
-        return c;
-    }
     let count = images.len();
-    let mut c = col().w_full().gap(12.0);
-    for (index, image) in images.iter().enumerate() {
-        let aspect = if image.aspect > 0.2 {
-            image.aspect
-        } else {
-            16.0 / 9.0
-        };
-        let mut frame = el()
-            .key(format!("gallery-{index}"))
-            .w_full()
-            .aspect_ratio(aspect)
-            .radius(crate::ui::r(8.0))
-            .fill(Color::WHITE.alpha(0.03))
-            .border(1.0, u.hair)
-            .clip_rounded(crate::ui::r(8.0))
-            .focusable(true)
-            .role("button")
-            .label(format!("View image {} of {count} full size", index + 1))
-            .cursor(rune::Cursor::Pointer)
-            .on_press(move |st: &mut State| open_lightbox(st, index))
-            .on_secondary_press({
-                // Wave 4: Grimoire's image menu; Copy takes the full size picture.
-                let url = if image.full_url.is_empty() { image.url.clone() } else { image.full_url.clone() };
-                move |st: &mut State, _press, _tx: &mut Tx| {
-                    super::super::w4::open_image_menu(st, format!("gallery-{index}"), url.clone())
-                }
-            })
-            .child(image_fill(
-                s,
-                format!("gallery-image-{index}"),
-                Some(&image.url),
-                [8.0; 4],
-                veil,
-            ));
-        if veil {
-            frame = frame.child(nsfw_veil(u, &format!("gallery{index}"), d.id, false));
-        } else {
-            if count > 1 {
-                frame = frame.child(
-                    image_badge(u, format!("{} / {count}", index + 1)).absolute(8.0, 8.0),
-                );
-            }
-            frame = frame.child(
-                el().pin(None, Some(8.0), Some(8.0), None)
-                    .size(28.0, 28.0)
-                    .center()
-                    .radius(crate::ui::r(6.0))
-                    .fill(Color::BLACK.alpha(0.55))
-                    .border(1.0, Color::WHITE.alpha(0.10))
-                    .child(icon(&MAXIMIZE_2, 14.0).color(u.prose).a11y_hidden()),
-            );
-        }
-        c = c.child(frame);
+    let main = carousel_frame(s, u, d);
+    if count < 2 || veiled(s, d.id, d.nsfw) {
+        return main;
     }
-    c
+    const PER: usize = 6;
+    let index = d.image.min(count - 1);
+    let start = (index / PER) * PER;
+    let mut thumbs = row().key("carousel-thumbs").w_full().h(36.0).gap(8.0);
+    for (i, image) in images.iter().enumerate().skip(start).take(PER) {
+        let on = i == index;
+        thumbs = thumbs.child(
+            el().key(format!("carousel-thumb-{i}"))
+                .size(64.0, 36.0)
+                .min_w(64.0)
+                .radius(crate::ui::r(4.0))
+                .clip_rounded(crate::ui::r(4.0))
+                .fill(u.hover)
+                .focusable(true)
+                .role("button")
+                .label(format!("Image {}", i + 1))
+                .checked(on)
+                .cursor(rune::Cursor::Pointer)
+                .on_press(move |st: &mut State| {
+                    if let Some(details) = st.browse_view.details.as_mut() {
+                        details.image = i;
+                    }
+                })
+                .child(image_fill(s, format!("carousel-thumb-img-{i}"), Some(&image.url), [crate::ui::r(4.0); 4], false))
+                .child(
+                    el().absolute(0.0, 0.0)
+                        .w_full()
+                        .h_full()
+                        .radius(crate::ui::r(4.0))
+                        .border(if on { 2.0 } else { 1.0 }, if on { u.ink } else { u.hair })
+                        .a11y_hidden(),
+                ),
+        );
+    }
+    col().key("carousel-gallery").w_full().gap(8.0).child(main).child(thumbs)
 }
 
-/// The docked view's single image slot with arrows and a counter.
-pub(crate) fn carousel(s: &State, u: &Ui, d: &Details) -> El {
+fn carousel_frame(s: &State, u: &Ui, d: &Details) -> El {
     let images = d.images();
     let veil = veiled(s, d.id, d.nsfw);
     let count = images.len();
@@ -135,7 +86,7 @@ pub(crate) fn carousel(s: &State, u: &Ui, d: &Details) -> El {
         .w_full()
         .aspect_ratio(16.0 / 9.0)
         .radius(crate::ui::r(8.0))
-        .fill(Color::WHITE.alpha(0.03))
+        .fill(u.well)
         .border(1.0, u.hair)
         .clip_rounded(crate::ui::r(8.0))
         .child(image_fill(
@@ -159,9 +110,9 @@ pub(crate) fn carousel(s: &State, u: &Ui, d: &Details) -> El {
     if count > 1 {
         let step = |next: bool| {
             el().key(if next { "carousel-next" } else { "carousel-prev" })
-                .size(30.0, 30.0)
+                .size(28.0, 28.0)
                 .center()
-                .radius(15.0)
+                .radius(crate::ui::r(8.0))
                 .fill(Color::BLACK.alpha(0.55))
                 .border(1.0, Color::WHITE.alpha(0.15))
                 .hover(Color::BLACK.alpha(0.8))
@@ -170,6 +121,7 @@ pub(crate) fn carousel(s: &State, u: &Ui, d: &Details) -> El {
                 .label(if next { "Next image" } else { "Previous image" })
                 .cursor(rune::Cursor::Pointer)
                 .on_press(move |st: &mut State| step_carousel(st, next))
+                // On a darkened image in every theme, so the ink is always white.
                 .child(
                     icon(
                         if next {
@@ -179,7 +131,7 @@ pub(crate) fn carousel(s: &State, u: &Ui, d: &Details) -> El {
                         },
                         16.0,
                     )
-                    .color(u.ink)
+                    .color(Color::WHITE)
                     .a11y_hidden(),
                 )
         };

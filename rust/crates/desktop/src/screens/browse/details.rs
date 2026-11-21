@@ -90,8 +90,8 @@ pub(crate) fn details_modal(s: &State, u: &Ui, d: &Details) -> El {
         .max_w(DETAILS_MAX_W)
         .h_full()
         .max_h(DETAILS_MAX_H)
-        .radius(crate::ui::r(12.0))
-        .clip_rounded(crate::ui::r(12.0))
+        .radius(crate::ui::r(8.0))
+        .clip_rounded(crate::ui::r(8.0))
         .modal(true, close)
         .on_key(move |st: &mut State, ev: &KeyEvent, _| match ev.key {
             Key::Escape => {
@@ -110,42 +110,45 @@ pub(crate) fn details_modal(s: &State, u: &Ui, d: &Details) -> El {
         })
         .child(details_header(s, u, d, false))
         .child(
-            row()
-                .key("browse-details-body")
+            col()
+                .key("browse-details-scroll")
                 .w_full()
                 .grow(1.0)
                 .min_h(0.0)
+                .scroll(ScrollSpec {
+                    stick_bottom: false,
+                })
                 .child(
-                    col()
-                        .key("browse-details-gallery")
-                        .w(GALLERY_W)
-                        .h_full()
-                        .scroll(ScrollSpec {
-                            stick_bottom: false,
-                        })
+                    row()
+                        .key("browse-details-body")
+                        .w_full()
+                        .padding(24.0)
+                        .gap(24.0)
+                        .items_start()
+                        // The reading column: the gallery, then About, videos, changes, comments.
                         .child(
                             col()
-                                .w_full()
-                                .pl(20.0)
-                                .pr(12.0)
-                                .py(20.0)
-                                .gap(12.0)
-                                .child(gallery_stack(s, u, d)),
+                                .key("browse-details-reading")
+                                .grow(1.0)
+                                .min_w(0.0)
+                                .gap(24.0)
+                                .child(carousel(s, u, d))
+                                .child(details_reading(s, u, d)),
+                        )
+                        // The action column: who, counts, Install, files, needs, creator.
+                        .child(
+                            col()
+                                .key("browse-details-info")
+                                .w(ACTION_W)
+                                .min_w(ACTION_W)
+                                .child(details_actions(s, u, d)),
                         ),
-                )
-                .child(
-                    col()
-                        .key("browse-details-info")
-                        .grow(1.0)
-                        .min_w(0.0)
-                        .h_full()
-                        .scroll(ScrollSpec {
-                            stick_bottom: false,
-                        })
-                        .child(details_info(s, u, d).pl(12.0).pr(20.0).py(20.0)),
                 ),
         )
 }
+
+/// The details' action column width.
+const ACTION_W: f32 = 360.0;
 
 /// The docked form: one column beside the grid, a carousel instead of the image stack.
 pub(crate) fn details_sidebar(s: &State, u: &Ui, d: &Details) -> El {
@@ -188,143 +191,83 @@ pub(crate) fn details_sidebar(s: &State, u: &Ui, d: &Details) -> El {
                         .padding(16.0)
                         .gap(20.0)
                         .child(carousel(s, u, d))
-                        .child(details_info(s, u, d)),
+                        .child(details_actions(s, u, d))
+                        .child(details_reading(s, u, d)),
                 ),
         )
 }
 
-pub(crate) fn bordered_icon_button(u: &Ui, glyph: &'static Icon, label: &str) -> El {
-    u.icon_button(glyph, label).border(1.0, u.hair_strong)
-}
-
-pub(crate) fn meta_item(u: &Ui, glyph: &'static Icon, label: Option<&str>, value: String) -> El {
-    let mut r = row()
-        .gap(4.0)
-        .center_y()
-        .child(icon(glyph, 12.0).color(u.faint).a11y_hidden());
-    if let Some(label) = label {
-        r = r.child(text(label.to_string()).font(SMALL).color(u.faint));
-    }
-    r.child(text(value).font(LABEL).color(u.ink))
-}
-
-pub(crate) fn details_header(s: &State, u: &Ui, d: &Details, docked: bool) -> El {
-    let url = d.profile_url.clone();
-    let title = row()
-        .key("details-title")
-        .min_w(0.0)
-        .shrink()
-        .gap(6.0)
-        .center_y()
+/// One 28 point ghost icon button of the details header.
+fn head_button(u: &Ui, key: &'static str, glyph: &'static Icon, label: &str) -> El {
+    el().key(key)
+        .size(28.0, 28.0)
+        .center()
+        .radius(crate::ui::r(8.0))
+        .hover(u.hover)
+        .press(u.over.alpha(0.08))
         .focusable(true)
-        .role("link")
-        .label(format!("Open {} on GameBanana", d.name))
+        .role("button")
+        .label(label.to_string())
+        .help(label.to_string())
         .cursor(rune::Cursor::Pointer)
-        .on_press_tx(move |st: &mut State, tx: &mut Tx| open_url(st, tx, &url))
-        .child(
-            text(d.name.clone())
-                .font(if docked { H1 } else { TITLE })
-                .color(u.ink)
-                .truncate()
-                .min_w(0.0)
-                .shrink(),
-        )
-        .child(icon(&icons::EXTERNAL_LINK, 14.0).color(u.faint).a11y_hidden());
+        .child(icon(glyph, 16.0).color(u.muted).a11y_hidden())
+}
 
-    let mut head = row()
-        .key("details-head")
-        .w_full()
-        .h(56.0)
-        .px(if docked { 16.0 } else { 20.0 })
-        .gap(12.0)
-        .center_y()
-        .border_sides([0.0, 0.0, 1.0, 0.0], u.hair)
-        .child(title)
-        .child(spacer());
-
-    if !docked {
-        let profile = d.profile.as_ref();
-        let added = profile.map(|p| p.added_ts).unwrap_or(d.added_ts);
-        let updated = profile.map(|p| p.updated_ts).unwrap_or(d.updated_ts);
-        let mut meta = row().gap(12.0).center_y();
-        if added > 0 {
-            meta = meta.child(meta_item(
-                u,
-                &CLOCK,
-                Some("Added"),
-                gamebanana::calendar_date(added),
-            ));
-        }
-        if updated > added + 86_400 {
-            meta = meta.child(meta_item(
-                u,
-                &icons::REFRESH_CW,
-                Some("Updated"),
-                gamebanana::calendar_date(updated),
-            ));
-        }
-        if let Some(profile) = profile {
-            meta = meta.child(meta_item(
-                u,
-                &icons::DOWNLOAD,
-                None,
-                group_digits(profile.downloads),
-            ));
-        }
-        head = head.child(meta).child(el().w(4.0));
-    }
-
+/// The 48 point header: the title alone, then five actions in one style, then Close. Dates and
+/// counts live in the action column.
+pub(crate) fn details_header(s: &State, u: &Ui, d: &Details, docked: bool) -> El {
     let id = d.id;
     let saved = is_favorite(s, d.section.model(), id);
     let favorite = d.favorite();
     let link = d.profile_url.clone();
-    head.child(
-        row()
-            .gap(8.0)
-            .center_y()
-            .child(
-                bordered_icon_button(
-                    u,
-                    if saved { &STAR_FILLED } else { &STAR },
-                    if saved { "Remove from favorites" } else { "Save to favorites" },
-                )
-                .key("details-favorite")
-                .cursor(rune::Cursor::Pointer)
-                .on_press(move |st: &mut State| toggle_favorite(st, favorite.clone())),
+    let url = d.profile_url.clone();
+    row()
+        .key("details-head")
+        .w_full()
+        .h(48.0)
+        .px(if docked { 16.0 } else { 24.0 })
+        .gap(4.0)
+        .center_y()
+        .border_sides([0.0, 0.0, 1.0, 0.0], u.hair)
+        .child(
+            text(d.name.clone())
+                .font(H1)
+                .color(u.ink)
+                .truncate()
+                .min_w(0.0)
+                .shrink()
+                .grow(1.0)
+                .mr(8.0),
+        )
+        .child(
+            head_button(
+                u,
+                "details-favorite",
+                if saved { &STAR_FILLED } else { &STAR },
+                if saved { "Remove from favorites" } else { "Save to favorites" },
             )
-            .child(
-                // A quiet icon so the header keeps the title's room.
-                u.icon_button(&icons::COPY, "Copy link")
-                    .key("details-copy")
-                    .cursor(rune::Cursor::Pointer)
-                    .on_press_tx(move |st: &mut State, tx: &mut Tx| {
-                        tx.copy(link.clone());
-                        st.status = "Link copied.".to_string();
-                    }),
+            .on_press(move |st: &mut State| toggle_favorite(st, favorite.clone())),
+        )
+        .child(head_button(u, "details-copy", &icons::COPY, "Copy link").on_press_tx(move |st: &mut State, tx: &mut Tx| {
+            tx.copy(link.clone());
+            st.status = "Link copied.".to_string();
+        }))
+        .child(
+            head_button(u, "details-open", &icons::EXTERNAL_LINK, "Open on GameBanana")
+                .on_press_tx(move |st: &mut State, tx: &mut Tx| open_url(st, tx, &url)),
+        )
+        .child(head_button(u, "details-hide", &EYE_OFF, "Hide this mod").on_press(move |st: &mut State| hide_mod(st, id)))
+        .child(
+            head_button(
+                u,
+                "details-dock",
+                if docked { &MAXIMIZE_2 } else { &PANEL_RIGHT },
+                if docked { "Pop out" } else { "Dock to the side" },
             )
-            .child(
-                bordered_icon_button(u, &EYE_OFF, "Hide this mod")
-                    .key("details-hide")
-                    .cursor(rune::Cursor::Pointer)
-                    .on_press(move |st: &mut State| hide_mod(st, id)),
-            )
-            .child(
-                bordered_icon_button(
-                    u,
-                    if docked { &MAXIMIZE_2 } else { &PANEL_RIGHT },
-                    if docked { "Pop out" } else { "Dock to the side" },
-                )
-                .key("details-dock")
-                .cursor(rune::Cursor::Pointer)
-                .on_press(|st: &mut State| st.browse_view.docked = !st.browse_view.docked),
-            )
-            .child(
-                bordered_icon_button(u, &icons::X, "Close")
-                    .key("details-close")
-                    .cursor(rune::Cursor::Pointer)
-                    .on_press(close_details),
-            ),
-    )
+            .on_press(|st: &mut State| st.browse_view.docked = !st.browse_view.docked),
+        )
+        .child(el().w(8.0))
+        .child(head_button(u, "details-close", &icons::X, "Close").on_press(close_details))
 }
 
 /// `25901` as `25,901`.
@@ -333,9 +276,9 @@ pub(crate) fn section_head(u: &Ui, glyph: Option<&'static Icon>, label: &str, co
     if let Some(glyph) = glyph {
         r = r.child(icon(glyph, 14.0).color(u.muted).a11y_hidden());
     }
-    r = r.child(text(label.to_string()).font(BODY_MED).color(u.muted));
+    r = r.child(text(label.to_string()).font(H2).color(u.ink));
     if let Some(count) = count.filter(|count| *count > 0) {
-        r = r.child(text(format!("({count})")).font(SMALL).color(u.faint));
+        r = r.child(text(group_digits(count)).font(crate::ui::SMALL_NUM).color(u.muted));
     }
     r
 }
@@ -380,8 +323,11 @@ pub(crate) fn avatar(s: &State, u: &Ui, member: Option<&ModMember>, name: &str, 
 }
 
 /// The right column: category, files, artist, about, changelog, comments, and the link out.
-pub(crate) fn details_info(s: &State, u: &Ui, d: &Details) -> El {
-    let mut c = col().w_full().gap(20.0);
+/// The action column: identity, counts, the last update, notices, Install and its state, the
+/// hero, the sample, the files, requirements, the map tools and the creator. Before the profile
+/// lands, a skeleton holds the same places.
+pub(crate) fn details_actions(s: &State, u: &Ui, d: &Details) -> El {
+    let mut c = col().key("details-actions").w_full().gap(16.0);
     let Some(profile) = d.profile.as_ref() else {
         if let Some(error) = &d.error {
             return c.child(details_error(u, error));
@@ -389,37 +335,60 @@ pub(crate) fn details_info(s: &State, u: &Ui, d: &Details) -> El {
         return c.child(info_skeleton(u));
     };
 
-    // Category: the hero portrait when GameBanana has one, then the section tag.
-    let mut chips = row().gap(8.0).center_y().flex_wrap();
-    match profile
-        .category_icon
-        .as_ref()
-        .and_then(|url| s.thumbnails.get(url))
-    {
-        Some(pixels) => {
-            chips = chips.child(
-                el().size(22.0, 22.0)
-                    .radius(crate::ui::r(4.0))
-                    .pixels_fit(pixels, SurfaceFit::Fill)
-                    .label(profile.category.clone()),
-            );
-        }
-        None if !profile.category.is_empty() => chips = chips.child(tag(u, &profile.category)),
-        None => {}
+    // Who and what: the hero portrait when GameBanana has one, the category, the 18+ tag.
+    let mut identity = row().key("details-identity").w_full().h(24.0).gap(8.0).center_y();
+    if let Some(pixels) = profile.category_icon.as_ref().and_then(|url| s.thumbnails.get(url)) {
+        identity = identity.child(
+            el().size(24.0, 24.0)
+                .radius(crate::ui::r(4.0))
+                .clip_rounded(crate::ui::r(4.0))
+                .pixels_fit(pixels, SurfaceFit::Fill)
+                .label(profile.category.clone()),
+        );
+    }
+    if !profile.category.is_empty() {
+        identity = identity.child(text(profile.category.clone()).font(BODY).color(u.prose).truncate().min_w(0.0).shrink());
     }
     if !profile.super_category.is_empty() {
-        chips = chips.child(tag(u, &profile.super_category));
+        identity = identity.child(tag(u, &profile.super_category));
     }
     if d.nsfw {
-        chips = chips.child(nsfw_tag(u));
+        identity = identity.child(nsfw_tag(u));
     }
-    c = c.child(chips);
+    c = c.child(
+        col()
+            .w_full()
+            .gap(6.0)
+            .child(identity)
+            // The same counts, icons and order as a card.
+            .child(
+                row()
+                    .key("details-counts")
+                    .h(16.0)
+                    .gap(16.0)
+                    .center_y()
+                    .child(details_count(u, &icons::THUMBS_UP, "Likes", profile.likes))
+                    .child(details_count(u, &icons::EYE, "Views", profile.views))
+                    .child(details_count(u, &icons::DOWNLOAD, "Downloads", profile.downloads)),
+            )
+            .child({
+                let updated = if profile.updated_ts > 0 { profile.updated_ts } else { d.updated_ts };
+                text(if updated > 0 {
+                    format!("Updated {}", gamebanana::calendar_date(updated))
+                } else {
+                    String::new()
+                })
+                .font(SMALL)
+                .color(u.muted)
+                .h(16.0)
+            }),
+    );
 
     for notice in notices(u, d, profile) {
         c = c.child(notice);
     }
 
-    // Install at once: the newest file, the others from the chevron beside it.
+    // Install at once: the newest file. The Files list below picks any other.
     if let Some(install) = super::quick::details_install(s, u, d, profile) {
         c = c.child(install);
     }
@@ -463,46 +432,57 @@ pub(crate) fn details_info(s: &State, u: &Ui, d: &Details) -> El {
     ) {
         c = c.child(play);
     }
-
     if let Some(member) = &profile.submitter {
         c = c.child(artist_card(s, u, member, &d.author));
     }
-
-    if !profile.text.is_empty() {
-        c = c.child(
-            col()
-                .w_full()
-                .gap(8.0)
-                .child(section_head(u, None, "About", None))
-                .child(
-                    text(profile.text.clone())
-                        .font(BODY)
-                        .color(u.prose)
-                        .wrap()
-                        .selectable(true),
-                ),
-        );
-    }
-
-    c = c.child(videos_section(u, d, profile));
-    c = c.child(changelog_section(u, d, profile));
-    c = c.child(comments_section(s, u, d, profile));
-
-    let url = d.profile_url.clone();
-    c.child(
-        row()
-            .key("details-view-on-gb")
-            .gap(8.0)
-            .center_y()
-            .focusable(true)
-            .role("link")
-            .label("View on GameBanana")
-            .cursor(rune::Cursor::Pointer)
-            .on_press_tx(move |st: &mut State, tx: &mut Tx| open_url(st, tx, &url))
-            .child(icon(&icons::EXTERNAL_LINK, 16.0).color(u.accent).a11y_hidden())
-            .child(text("View on GameBanana").font(BODY).color(u.accent)),
-    )
+    c
 }
+
+/// One count in the details: icon and tabular number, named for assistive tech.
+fn details_count(u: &Ui, glyph: &'static Icon, name: &str, value: u64) -> El {
+    row()
+        .gap(4.0)
+        .center_y()
+        .label(format!("{name}: {}", group_digits(value)))
+        .child(icon(glyph, 12.0).color(u.faint).a11y_hidden())
+        .child(text(group_digits(value)).font(crate::ui::SMALL_NUM).color(u.muted).a11y_hidden())
+}
+
+/// The reading column: About (with the date it was added), videos, changes and comments.
+pub(crate) fn details_reading(s: &State, u: &Ui, d: &Details) -> El {
+    let mut c = col().key("details-reading").w_full().gap(24.0);
+    let Some(profile) = d.profile.as_ref() else {
+        return c;
+    };
+    let added = if profile.added_ts > 0 { profile.added_ts } else { d.added_ts };
+    if !profile.text.is_empty() || added > 0 {
+        let mut about = col().w_full().gap(8.0).child(section_head(u, None, "About", None));
+        if !profile.text.is_empty() {
+            about = about.child(
+                text(profile.text.clone())
+                    .font(BODY)
+                    .color(u.prose)
+                    .wrap()
+                    .max_w(READING_MAX_W)
+                    .selectable(true),
+            );
+        }
+        if added > 0 {
+            about = about.child(
+                text(format!("Added {}", gamebanana::calendar_date(added)))
+                    .font(SMALL)
+                    .color(u.muted),
+            );
+        }
+        c = c.child(about);
+    }
+    c.child(videos_section(u, d, profile))
+        .child(changelog_section(u, d, profile))
+        .child(comments_section(s, u, d, profile))
+}
+
+/// About's line length: about 72 characters of 13 point text.
+const READING_MAX_W: f32 = 560.0;
 
 /// GameBanana's own warnings about a submission, before its files.
 pub(crate) fn notices(u: &Ui, _d: &Details, profile: &ModProfile) -> Vec<El> {

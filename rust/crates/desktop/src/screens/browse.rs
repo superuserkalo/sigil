@@ -101,12 +101,10 @@ const THUMB_MARGIN_ROWS: usize = 2;
 
 const DETAILS_MAX_W: f32 = 1152.0;
 const DETAILS_MAX_H: f32 = 920.0;
-const GALLERY_W: f32 = 460.0;
 const SIDEBAR_W: f32 = 440.0;
 const COMMENTS_PER_PAGE: usize = 20;
 const UPDATES_PER_PAGE: usize = 10;
 
-const TITLE: TextStyle = TextStyle::new(18.0, 650.0).lh(24.0).tracking(-0.2);
 const MICRO_CAPS: TextStyle = TextStyle::new(10.0, 650.0).lh(12.0).tracking(0.6);
 
 // Lucide (ISC) icons this screen needs beyond the shared set.
