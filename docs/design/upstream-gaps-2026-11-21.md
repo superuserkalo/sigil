@@ -100,7 +100,7 @@ that shows it; effort (S under a day, M a few days, L a week or more); recommend
 | Feature | Upstream | Sigil | Effort | Recommendation |
 | --- | --- | --- | --- | --- |
 | Refuse toggles and deletes while Deadlock runs | G (Disallow and the startup check rely on it), settings row G32 | partial: `settings/watch.rs` `refuse_while_running` guards Browse, Overlap, Crosshair, tools and Forge; Installed toggles and deletes do not call it yet (`docs/design/settings-parity.md` row 32, "hook pending") | S | Build (top 6) |
-| Local mods get a rendered 3D preview as their cover | D `e5d22b18`, `apps/desktop/src/lib/mod-thumbnails.ts` | missing: covers are the GameBanana picture or one the player picks (`installed` picture editor) | M | Build once the viewer has run on a real install |
+| Local mods get a rendered 3D preview as their cover | D `e5d22b18`, `apps/desktop/src/lib/mod-thumbnails.ts` | has (2026-11-21): Preview in 3D has "Use this view as the mod's cover", which saves the frame as the mod's picture (`viewer/mod.rs` `capture_cover`); not rendered automatically in the background | M | Built (player-triggered) |
 | A multi-file card opens the mod page; Choose files in the menu | G #576 | has: `installed/layout.rs` `open_group` with the Settings option | - | - |
 | Manage files: unticking every file turns the mod off | D `08ccbaac` | has: one switch per file in the variant picker | - | - |
 
@@ -126,7 +126,7 @@ that shows it; effort (S under a day, M a few days, L a week or more); recommend
 
 | Feature | Upstream | Sigil | Effort | Recommendation |
 | --- | --- | --- | --- | --- |
-| A preview appears only when whole: a loader with build progress covers it until the hero, the room and any staged heroes are ready, 20 s fallback | G #588, `src/components/locker/HeroPoseViewer.tsx`, `src/components/common/PreviewLoader.tsx` | partial: loading and failed states exist (`docs/design/3d-viewer.md`, `viewer-locker-loading`, `viewer-hideout-loading`); no gate for staged heroes or Hideout progress | S | Build with the staged pose work |
+| A preview appears only when whole: a loader with build progress covers it until the hero, the room and any staged heroes are ready, 20 s fallback | G #588, `src/components/locker/HeroPoseViewer.tsx`, `src/components/common/PreviewLoader.tsx` | has (2026-11-21): the loader covers the view until the hero, compare side and room are loaded and the first frame is drawn, with a 20 s fallback (`viewer/worker.rs`); Sigil has no staged extra heroes | S | Built |
 | Motion previews: dash, heavy melee and parry mods play on a hero against a second hero; an animation mod plays its own clips with a clip strip and pause | G #571, `src/lib/movementGraphClips.ts`, `export-animation-mod-preview` IPC | partial: the clip picker has dash and heavy melee (`3d-viewer.md`, `clipInfo`); no second hero and no per-mod clip strip | M | Build after the staged pose; G's Parry editor stays on hold (Foundry) |
 | Texture-only skins previewed on the full character; partial mods compared with the original | D `e5d22b18` | partial: With mods / Without mods / Split exist; the texture-only case is unverified on a real install (`3d-viewer.md` status) | S | Verify on a Windows install before building anything |
 
