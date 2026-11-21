@@ -131,7 +131,7 @@ Implemented today:
 | `watch_projects` | Reviews every project after a patch | yes | none |
 | `publish_prepare` | Builds a release folder and metadata | no | none |
 | `game_textures` | Lists game textures by hero and kind (pak directory only) | yes | none |
-| `game_sounds` | Lists a hero's sound events and clips, or the heroes with sounds | yes | none |
+| `game_sounds` | Lists a hero's sound events and clips, or the heroes with sounds; first call writes a workspace cache | no | none (workspace only) |
 | `files_list` | One folder level of a game VPK, addon or workspace folder | yes | none |
 | `files_show` | Decoded text preview of one file (KV3 data, Panorama, text DMX, hex) | yes | none |
 | `files_search` | Content search over text and decoded data, capped | yes | none |
