@@ -998,11 +998,11 @@ pub fn button_el(u: &Ui, b: &Button, key: String, id: u64, name: &str, size: Siz
         Button::Downloading(_) | Button::Installing => (u.ink, u.accent, u.accent.alpha(0.08), u.accent.alpha(0.45)),
         Button::Paused(_) => (u.muted, u.muted, Color::WHITE.alpha(0.02), u.hair_strong),
         Button::Installed => (u.muted, u.teal, Color::TRANSPARENT, u.hair),
-        Button::Update => (u.ink, u.accent, u.accent.alpha(0.10), u.accent.alpha(0.55)),
+        Button::Update => (u.ink, u.ink, Color::WHITE.alpha(0.035), u.hair_strong),
         Button::Enable => (u.ink, u.teal, Color::WHITE.alpha(0.035), u.hair_strong),
     };
     let (h, words) = match size {
-        Size::Fill => (32.0, Some(b.short())),
+        Size::Fill => (28.0, Some(b.short())),
         Size::Icon => (
             28.0,
             matches!(b, Button::Downloading(Some(_)) | Button::Paused(Some(_))).then(|| b.short()),
@@ -1191,12 +1191,11 @@ pub fn installed_badge(s: &State, id: u64) -> Option<El> {
     Some(
         row()
             .key(format!("installed-badge-{id}"))
-            .pin(None, None, Some(8.0), Some(8.0))
-            .h(22.0)
-            .px(8.0)
+            .h(20.0)
+            .px(6.0)
             .gap(4.0)
             .center()
-            .radius(crate::ui::r(6.0))
+            .radius(crate::ui::r(4.0))
             .fill(Color::BLACK.alpha(0.62))
             .border(1.0, Color::WHITE.alpha(0.16))
             // On a darkened image in every theme, so the ink is always white.

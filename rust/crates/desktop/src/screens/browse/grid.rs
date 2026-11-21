@@ -9,91 +9,6 @@ pub mod menus;
 
 // --- filter bar ------------------------------------------------------------------
 
-/// The tab row: the mixed feed, each section, Collections and Maps.
-pub(crate) fn tab_switch(s: &State, u: &Ui) -> El {
-    let current = s.browse_view.tab;
-    let mut r = row()
-        .key("browse-sections")
-        .h(32.0)
-        .padding(2.0)
-        .gap(2.0)
-        .radius(crate::ui::r(8.0))
-        .fill(u.well)
-        .border(1.0, u.hair)
-        .role("radiogroup");
-    for tab in Tab::ALL {
-        let on = tab == current;
-        r = r.child(
-            row()
-                .key(format!("browse-tab-{}", tab.id()))
-                .h_full()
-                .px(12.0)
-                .center()
-                .radius(crate::ui::r(6.0))
-                .fill(if on { u.raised } else { Color::TRANSPARENT })
-                .border(1.0, if on { u.hair_strong } else { Color::TRANSPARENT })
-                .hover(if on { u.raised } else { u.hover })
-                .focusable(true)
-                .role("radio")
-                .label(tab.label())
-                .checked(on)
-                .cursor(rune::Cursor::Pointer)
-                .on_press_tx(move |st: &mut State, tx: &mut Tx| set_tab(st, Some(tx), tab))
-                .child(
-                    text(tab.label())
-                        .font(LABEL)
-                        .color(if on { u.ink } else { u.muted })
-                        .a11y_hidden(),
-                ),
-        );
-    }
-    r
-}
-
-/// A long category or hero name truncates here instead of pushing the filter row around.
-const FILTER_MAX_W: f32 = 220.0;
-/// A filter chip holding a long search or a long category name.
-const CHIP_MAX_W: f32 = 280.0;
-
-/// A 32 point dropdown trigger. Active ones read in ink and name their value.
-pub(crate) fn filter_button(
-    u: &Ui,
-    menu: FilterMenu,
-    open: bool,
-    glyph: Option<&'static Icon>,
-    label: &str,
-    active: bool,
-) -> El {
-    let ink = if active { u.ink } else { u.muted };
-    let mut b = row()
-        .key(menu.anchor())
-        .h(32.0)
-        .max_w(FILTER_MAX_W)
-        .pl(if glyph.is_some() { 10.0 } else { 12.0 })
-        .pr(8.0)
-        .gap(6.0)
-        .center_y()
-        .radius(crate::ui::r(8.0))
-        .fill(if active || open { u.over.alpha(0.06) } else { u.over.alpha(0.025) })
-        .border(1.0, if open { u.over.alpha(0.18) } else { u.hair_strong })
-        .hover(u.hover)
-        .press(u.over.alpha(0.08))
-        .focusable(true)
-        .role("button")
-        .label(label.to_string())
-        .cursor(rune::Cursor::Pointer)
-        .on_press(move |st: &mut State| {
-            let v = &mut st.browse_view;
-            v.menu = if v.menu == Some(menu) { None } else { Some(menu) };
-            v.menu_query = TextEdit::new("");
-        });
-    if let Some(glyph) = glyph {
-        b = b.child(icon(glyph, 14.0).color(ink).a11y_hidden());
-    }
-    b.child(text(label.to_string()).font(LABEL).color(ink).truncate().min_w(0.0).shrink().a11y_hidden())
-        .child(icon(&icons::CHEVRON_DOWN, 14.0).color(u.faint).a11y_hidden())
-}
-
 /// "Hero" under Skins, "Type" under any other category.
 pub(crate) fn sub_noun(category: &str) -> &'static str {
     if category.eq_ignore_ascii_case("skins") {
@@ -101,163 +16,6 @@ pub(crate) fn sub_noun(category: &str) -> &'static str {
     } else {
         "Type"
     }
-}
-
-pub(crate) fn filter_bar(s: &State, u: &Ui) -> El {
-    let f = &s.browse_view.filters;
-    let open = s.browse_view.menu;
-    let local = f.favorites || f.owned == Owned::Installed;
-    let collecting = s.browse_view.tab == Tab::Collections;
-    let mut left = row()
-        .grow(1.0)
-        .min_w(0.0)
-        .gap(8.0)
-        .center_y()
-        .flex_wrap()
-        .child(tab_switch(s, u));
-
-    if !local && !collecting {
-        // Maps is a category of its own; its name stands in the chip, so the picker stays.
-        if s.browse_view.tab != Tab::Maps {
-            left = left.child(filter_button(
-                u,
-                FilterMenu::Category,
-                open == Some(FilterMenu::Category),
-                None,
-                f.category.as_ref().map(|p| p.name.as_str()).unwrap_or("Category"),
-                f.category.is_some(),
-            ));
-        }
-        let children = f.category.as_ref().and_then(|pick| {
-            categories_of(s, f.section)?
-                .iter()
-                .find(|root| root.id == pick.id)
-                .filter(|root| !root.children.is_empty())
-        });
-        if let (Some(category), Some(_)) = (f.category.as_ref(), children) {
-            left = left.child(filter_button(
-                u,
-                FilterMenu::Sub,
-                open == Some(FilterMenu::Sub),
-                None,
-                f.sub
-                    .as_ref()
-                    .map(|p| p.name.as_str())
-                    .unwrap_or(sub_noun(&category.name)),
-                f.sub.is_some(),
-            ));
-        }
-        // Sounds and WiPs have no hero categories, so a name match stands in.
-        let skins = f
-            .category
-            .as_ref()
-            .is_some_and(|pick| pick.name.eq_ignore_ascii_case("Skins"));
-        if s.browse_view.tab != Tab::Mods || !skins {
-            left = left.child(
-                row()
-                    .key("browse-filter-hero")
-                    .h(32.0)
-                    .max_w(FILTER_MAX_W)
-                    .px(12.0)
-                    .gap(6.0)
-                    .center_y()
-                    .radius(crate::ui::r(8.0))
-                    .fill(if f.hero.is_some() { u.over.alpha(0.06) } else { u.over.alpha(0.025) })
-                    .border(1.0, if f.hero.is_some() { u.over.alpha(0.18) } else { u.hair_strong })
-                    .hover(u.hover)
-                    .press(u.over.alpha(0.08))
-                    .focusable(true)
-                    .role("button")
-                    .label(f.hero.as_deref().unwrap_or("Hero"))
-                    .cursor(rune::Cursor::Pointer)
-                    .on_press(|st: &mut State| {
-                        st.browse_view.hero_picker = Some(HeroTarget::Filter);
-                        st.browse_view.hero_query = TextEdit::new("");
-                    })
-                    .child(
-                        icon(&icons::USER, 14.0)
-                            .color(if f.hero.is_some() { u.ink } else { u.muted })
-                            .a11y_hidden(),
-                    )
-                    .child(
-                        text(f.hero.clone().unwrap_or_else(|| "Hero".into()))
-                            .font(LABEL)
-                            .color(if f.hero.is_some() { u.ink } else { u.muted })
-                            .truncate()
-                            .min_w(0.0)
-                            .shrink()
-                            .a11y_hidden(),
-                    )
-                    .child(icon(&icons::CHEVRON_DOWN, 14.0).color(u.faint).a11y_hidden()),
-            );
-        }
-        left = left.child(filter_button(
-            u,
-            FilterMenu::Date,
-            open == Some(FilterMenu::Date),
-            Some(&CLOCK),
-            &date_label(f),
-            f.window(),
-        ));
-    }
-
-    let mut right = row().gap(8.0).center_y();
-    if !collecting {
-        let saved = favorites(s).len();
-        let star = if f.favorites { &STAR_FILLED } else { &STAR };
-        right = right.child(
-            u.icon_button(star, &if saved > 0 { format!("Favorites ({saved})") } else { "Favorites".to_string() })
-                .key("browse-favorites")
-                .border(1.0, if f.favorites { u.over.alpha(0.18) } else { u.hair_strong })
-                .fill(if f.favorites { u.over.alpha(0.06) } else { u.over.alpha(0.025) })
-                .cursor(rune::Cursor::Pointer)
-                .on_press_tx(|st: &mut State, tx: &mut Tx| {
-                    ensure_favorites(st);
-                    set_filters(st, Some(tx), |f| f.favorites = !f.favorites)
-                }),
-        );
-
-        let more = [
-            f.owned != Owned::Any,
-            f.mature != MatureView::Setting,
-            f.hide_outdated,
-            f.exclude,
-        ]
-        .iter()
-        .filter(|on| **on)
-        .count();
-        let mut filters = u
-            .icon_button(&icons::SLIDERS_HORIZONTAL, "Filters")
-            .key("browse-filter-more")
-            .border(1.0, if more > 0 { u.over.alpha(0.18) } else { u.hair_strong })
-            .fill(if more > 0 { u.over.alpha(0.06) } else { u.over.alpha(0.025) })
-            .cursor(rune::Cursor::Pointer)
-            .on_press(|st: &mut State| {
-                let v = &mut st.browse_view;
-                v.menu = if v.menu == Some(FilterMenu::More) {
-                    None
-                } else {
-                    Some(FilterMenu::More)
-                };
-            });
-        if more > 0 {
-            // The count needs its own room beside the icon.
-            filters = filters.w(48.0).gap(4.0).child(
-                text(more.to_string())
-                    .font(SMALL)
-                    .color(u.ink)
-                    .a11y_hidden(),
-            );
-        }
-        right = right.child(filters);
-    }
-    row()
-        .key("browse-filters")
-        .w_full()
-        .gap(8.0)
-        .items_start()
-        .child(left)
-        .child(right)
 }
 
 /// The date button names the window it keeps.
@@ -271,117 +29,12 @@ pub(crate) fn date_label(f: &Filters) -> String {
     "Any time".to_string()
 }
 
-/// One removable chip per active filter, and Clear all. Nothing when no filter is on.
-pub(crate) fn active_chips(s: &State, u: &Ui) -> Option<El> {
-    let f = &s.browse_view.filters;
-    let search = s.browse_view.applied_search.trim();
-    if f.active() == 0 && search.is_empty() {
-        return None;
-    }
-    let chip = |key: &str, label: String| {
-        row()
-            .key(format!("browse-chip-{key}"))
-            .h(28.0)
-            .max_w(CHIP_MAX_W)
-            .pl(10.0)
-            .pr(6.0)
-            .gap(4.0)
-            .center_y()
-            .radius(crate::ui::r(14.0))
-            .fill(u.over.alpha(0.06))
-            .hover(u.hover)
-            .focusable(true)
-            .role("button")
-            .label(format!("Remove {label}"))
-            .cursor(rune::Cursor::Pointer)
-            .child(text(label).font(LABEL).color(u.prose).truncate().min_w(0.0).shrink().a11y_hidden())
-            .child(icon(&icons::X, 12.0).color(u.faint).a11y_hidden())
-    };
-    let clearing = |key: &str, label: String, clear: fn(&mut Filters)| {
-        chip(key, label)
-            .on_press_tx(move |st: &mut State, tx: &mut Tx| set_filters(st, Some(tx), clear))
-    };
-    let mut r = row().key("browse-chips").w_full().gap(8.0).center_y().flex_wrap();
-    if !search.is_empty() {
-        r = r.child(
-            chip("search", format!("\u{201c}{search}\u{201d}")).on_press(|st: &mut State| {
-                st.browse_query = TextEdit::new("");
-            }),
-        );
-    }
-    let not = if f.exclude { "Not " } else { "" };
-    if let Some(pick) = &f.category {
-        r = r.child(clearing("category", format!("{not}{}", pick.name), |f| {
-            f.category = None;
-            f.sub = None;
-        }));
-    }
-    if let Some(pick) = &f.sub {
-        // A third-level pick reads as a breadcrumb: Skins > Haze > Faithful/Vanilla+, each
-        // step back up one press.
-        for step in super::tree::middle(s) {
-            r = r.child(super::tree::chevron(u)).child(super::tree::crumb(u, step));
-        }
-        if f.category.is_some() {
-            r = r.child(super::tree::chevron(u));
-        }
-        r = r.child(clearing("sub", format!("{not}{}", pick.name), |f| f.sub = None));
-    }
-    if let Some(hero) = &f.hero {
-        r = r.child(clearing("hero", format!("Hero: {hero}"), |f| f.hero = None));
-    }
-    if f.window() {
-        r = r.child(clearing("period", date_label(f), |f| {
-            f.period = BrowsePeriod::Any;
-            f.date_from = 0;
-            f.date_to = 0;
-        }));
-    }
-    if f.exclude {
-        r = r.child(clearing("exclude", "Excluding".into(), |f| f.exclude = false));
-    }
-    if f.featured {
-        r = r.child(clearing("featured", "Featured".into(), |f| f.featured = false));
-    }
-    if let Some(pick) = &f.creator {
-        r = r.child(clearing("creator", format!("By {}", pick.name), |f| f.creator = None));
-    }
-    if f.owned != Owned::Any {
-        r = r.child(clearing("owned", f.owned.label().to_string(), |f| f.owned = Owned::Any));
-    }
-    if f.mature != MatureView::Setting {
-        r = r.child(clearing("mature", f.mature.label().to_string(), |f| {
-            f.mature = MatureView::Setting
-        }));
-    }
-    if f.hide_outdated {
-        r = r.child(clearing("outdated", "Hide outdated".into(), |f| f.hide_outdated = false));
-    }
-    if f.favorites {
-        r = r.child(clearing("favorites", "Favorites".into(), |f| f.favorites = false));
-    }
-    Some(
-        r.child(
-            row()
-                .key("browse-clear-all")
-                .h(28.0)
-                .px(8.0)
-                .center_y()
-                .radius(crate::ui::r(6.0))
-                .hover(u.hover)
-                .focusable(true)
-                .role("button")
-                .label("Clear all filters")
-                .cursor(rune::Cursor::Pointer)
-                .on_press_tx(clear_filters)
-                .child(text("Clear all").font(LABEL).color(u.muted).a11y_hidden()),
-        ),
-    )
-}
-
-/// The landing dashboard over the plain catalog: the quick stats strip, trending rails and
-/// browse by hero. No announcements; nothing here needs a server of Sigil's own.
+/// The landing over the plain catalog (`design/browse.md` 2): the quick stats strip, then the
+/// shelves, Steam and Netflix style, then the "All mods" header over the grid. Every shelf is
+/// drawn at its final size from the first frame (placeholders until its read lands), so the
+/// grid below never moves. No announcements; nothing here needs a server of Sigil's own.
 pub(crate) fn dashboard(s: &State, u: &Ui) -> Option<El> {
+    use super::shelf;
     let f = &s.browse_view.filters;
     let plain = matches!(s.browse_view.tab, Tab::Mods | Tab::All)
         && f.active() == 0
@@ -391,142 +44,145 @@ pub(crate) fn dashboard(s: &State, u: &Ui) -> Option<El> {
     if !plain {
         return None;
     }
+    let width = super::toolbar::page_width(s);
+    let n = shelf::per_page(width);
+    let w = shelf::card_width(width, n);
+    let hide = s.prefs.mature == crate::prefs::Mature::Hide;
+    let feeds = s.browse_view.shelves.feeds.as_ref();
+    // A mod shows on one shelf only: the month shelf skips this week's, all time skips both.
+    let mut seen: HashSet<u64> = HashSet::new();
+    let mut tiles = |scope: &str, list: Option<&Vec<BrowseCard>>| -> Vec<El> {
+        match list {
+            Some(list) => list
+                .iter()
+                .filter(|c| !(hide && c.nsfw))
+                .filter(|c| seen.insert(c.id))
+                .take(shelf::PER_SHELF)
+                .map(|c| shelf::card(s, u, scope, c, w))
+                .collect(),
+            None => (0..n).map(|_| shelf::placeholder(u, w)).collect(),
+        }
+    };
+    let see = |key: &'static str, period: BrowsePeriod| {
+        shelf::see_all(u, key).on_press_tx(move |st: &mut State, tx: &mut Tx| {
+            set_filters(st, Some(tx), move |f| {
+                f.order = Some(BrowseOrder::MostLiked);
+                f.period = period;
+            })
+        })
+    };
     // DMM's quick stats strip: always on the plain landing, each number a shortcut.
-    let mut rails = col().key("browse-dashboard").w_full().gap(20.0).child(super::strip::view(s, u));
-    if let Some(rail) = trending_rail(s, u, "week", "Trending this week") {
-        rails = rails.child(rail);
-    }
-    if let Some(rail) = trending_rail(s, u, "month", "Popular this month") {
-        rails = rails.child(rail);
-    }
-    // Wave 4: one featured mod per category this week (DMM), from the saved catalog.
-    if let Some(rail) = super::w4::featured_rail(s, u) {
-        rails = rails.child(rail);
-    }
-    if let Some(rail) = hero_rail(s, u) {
-        rails = rails.child(rail);
-    }
-    Some(rails.child(el().h(4.0)))
-}
-
-pub(crate) fn trending_rail(s: &State, u: &Ui, period: &str, title: &str) -> Option<El> {
-    let top = s.browse_view.top.as_ref()?;
-    let items: Vec<&TopSub> = top
+    let mut rails = col().key("browse-dashboard").w_full().gap(24.0).child(super::strip::view(s, u));
+    rails = rails
+        .child(shelf::shelf(
+            s,
+            u,
+            shelf::TRENDING,
+            "browse-shelf-week",
+            "Trending this week",
+            Some(see("browse-shelf-week-all", BrowsePeriod::Week)),
+            tiles("week", feeds.map(|f| &f.week)),
+            n,
+            w,
+            shelf::GAP,
+        ))
+        .child(shelf::shelf(
+            s,
+            u,
+            shelf::MONTH,
+            "browse-shelf-month",
+            "Popular this month",
+            Some(see("browse-shelf-month-all", BrowsePeriod::Month)),
+            tiles("month", feeds.map(|f| &f.month)),
+            n,
+            w,
+            shelf::GAP,
+        ));
+    // Wave 4: one featured mod per category this week (DMM), from the saved catalog. Known
+    // before the page draws, so it never pops in above the grid.
+    let featured: Vec<BrowseCard> = s
+        .browse_view
+        .w4
+        .featured
         .iter()
-        .filter(|t| t.period == period && t.model.eq_ignore_ascii_case("mod"))
-        .filter(|t| !(t.nsfw && s.prefs.mature == crate::prefs::Mature::Hide))
-        .take(3)
+        .map(|(_, card)| card.clone())
         .collect();
-    if items.is_empty() {
-        return None;
+    if !featured.is_empty() {
+        rails = rails.child(shelf::shelf(
+            s,
+            u,
+            shelf::FEATURED,
+            "browse-shelf-featured",
+            crate::screens::settings::i18n::tr("Featured this week"),
+            Some(shelf::see_all(u, "browse-shelf-featured-all").on_press_tx(|st: &mut State, tx: &mut Tx| {
+                set_filters(st, Some(tx), |f| f.featured = true)
+            })),
+            tiles("featured", Some(&featured)),
+            n,
+            w,
+            shelf::GAP,
+        ));
     }
-    let mut tiles = el().w_full().equal_columns(3).gap(GRID_GAP);
-    for item in items {
-        let id = item.id;
-        let name = item.name.clone();
-        let image = item.image_url.clone();
-        let veil = item.nsfw
-            && s.prefs.mature == crate::prefs::Mature::Blur
-            && !s.browse_view.revealed.contains(&id)
-            && !crate::screens::settings::nsfw::remembered(id);
-        tiles = tiles.child(
-            row()
-                .key(format!("browse-top-{period}-{id}"))
-                .min_w(0.0)
-                .h(64.0)
-                .padding(6.0)
-                .gap(12.0)
-                .center_y()
-                .radius(crate::ui::r(10.0))
-                .border(1.0, u.hair)
-                .hover(u.hover)
-                .focusable(true)
-                .role("button")
-                .label(format!("{} by {}", item.name, item.author))
-                .cursor(rune::Cursor::Pointer)
-                .on_press(move |st: &mut State| {
-                    show_details(st, Details::from_id(BrowseSection::Mods, id, &name, image.clone()))
-                })
-                .child(
-                    el().w(92.0)
-                        .h_full()
-                        .clip_rounded(crate::ui::r(6.0))
-                        .child(image_fill(
-                            s,
-                            format!("top-thumb-{id}"),
-                            item.image_url.as_ref(),
-                            [crate::ui::r(6.0); 4],
-                            veil,
-                        )),
-                )
-                .child(
-                    col()
-                        .grow(1.0)
-                        .min_w(0.0)
-                        .gap(2.0)
-                        .child(text(item.name.clone()).font(BODY_MED).color(u.ink).truncate())
-                        .child(
-                            row()
-                                .gap(8.0)
-                                .center_y()
-                                .child(
-                                    text(if item.author.is_empty() {
-                                        item.category.clone()
-                                    } else {
-                                        format!("by {}", item.author)
-                                    })
-                                    .font(SMALL)
-                                    .color(u.muted)
-                                    .truncate()
-                                    .min_w(0.0)
-                                    .shrink(),
-                                )
-                                .child(stat(u, &icons::THUMBS_UP, item.likes)),
-                        ),
-                ),
-        );
+    if let Some(heroes) = hero_shelf(s, u, width) {
+        rails = rails.child(heroes);
     }
+    rails = rails.child(shelf::shelf(
+        s,
+        u,
+        shelf::ALL_TIME,
+        "browse-shelf-all",
+        "All-time favorites",
+        Some(see("browse-shelf-all-all", BrowsePeriod::Any)),
+        tiles("all", feeds.map(|f| &f.all)),
+        n,
+        w,
+        shelf::GAP,
+    ));
     Some(
-        col()
-            .key(format!("browse-rail-{period}"))
-            .w_full()
-            .gap(12.0)
-            .child(text(title).font(BODY_MED).color(u.muted))
-            .child(tiles),
+        rails.child(
+            row()
+                .key("browse-all-head")
+                .w_full()
+                .h(24.0)
+                .center_y()
+                .child(text("All mods").font(H2).color(u.ink)),
+        ),
     )
 }
 
-/// Hero portraits from the Skins tree, as a filmstrip. A press opens that hero's skins.
-pub(crate) fn hero_rail(s: &State, u: &Ui) -> Option<El> {
+/// Hero portraits from the Skins tree as a shelf of 72 point tiles. A press opens that hero's
+/// skins. Paged like every shelf; "Random" stands where "See all" is.
+pub(crate) fn hero_shelf(s: &State, u: &Ui, width: f32) -> Option<El> {
+    use super::shelf;
     let heroes = hero_list(s);
     if heroes.is_empty() {
         return None;
     }
-    // DMM 2.4.0: the rail scrolls under a drag, with a bar under it a mouse can grab.
-    let mut strip = row().key("browse-heroes").w_full().gap(12.0).scroll_x();
-    for hero in heroes.into_iter().take(24) {
-        let name = hero.name.clone();
-        let portrait = hero_portrait(s, &hero.name);
-        strip = strip.child(super::rail::tile(
+    const TILE: f32 = 72.0;
+    let n = shelf::heroes_per_page(width);
+    let gap = if n > 1 { ((width - TILE * n as f32) / (n as f32 - 1.0)).floor() } else { 0.0 };
+    let tiles: Vec<El> = heroes
+        .into_iter()
+        .map(|hero| {
+            let name = hero.name.clone();
+            let portrait = hero_portrait(s, &hero.name);
             col()
                 .key(format!("browse-hero-{}", hero.id))
-                .w(88.0)
-                .gap(6.0)
+                .w(TILE)
+                .min_w(TILE)
+                .gap(8.0)
                 .items_center()
                 .focusable(true)
                 .role("button")
                 .label(format!("Browse {} skins", hero.name))
                 .cursor(rune::Cursor::Pointer)
-                .on_press_tx(move |st: &mut State, tx: &mut Tx| {
-                    if !super::rail::took_drag(st) {
-                        open_skins_for(st, tx, &name);
-                    }
-                })
+                .on_press_tx(move |st: &mut State, tx: &mut Tx| open_skins_for(st, tx, &name))
                 .child(
                     el().size(56.0, 56.0)
-                        .radius(28.0)
-                        .clip_rounded(28.0)
+                        .radius(crate::ui::r(8.0))
+                        .clip_rounded(crate::ui::r(8.0))
                         .fill(u.hover)
+                        .hover(u.over.alpha(0.12))
                         .child(match portrait {
                             Some(pixels) => el()
                                 .absolute(0.0, 0.0)
@@ -552,28 +208,24 @@ pub(crate) fn hero_rail(s: &State, u: &Ui) -> Option<El> {
                         .font(SMALL)
                         .color(u.muted)
                         .truncate()
-                        .max_w(88.0),
-                ),
-            "browse-heroes",
-        ));
-    }
-    Some(
-        col()
-            .key("browse-hero-rail")
-            .w_full()
-            .gap(12.0)
-            .child(
-                row()
-                    .w_full()
-                    .center_y()
-                    .child(text("Browse by hero").font(BODY_MED).color(u.muted))
-                    .child(spacer())
-                    // Wave 4: DMM's random hero.
-                    .child(super::w4::random_button(u)),
-            )
-            .child(super::rail::strip(s, strip, "browse-heroes"))
-            .child(super::rail::bar(s, u, "browse-heroes", super::tree::tr("Scroll the heroes"))),
-    )
+                        .max_w(TILE)
+                        .align(rune::Align::Center),
+                )
+        })
+        .collect();
+    Some(shelf::shelf(
+        s,
+        u,
+        shelf::HEROES,
+        "browse-heroes",
+        "Browse by hero",
+        // Wave 4: DMM's random hero.
+        Some(super::w4::random_button(u)),
+        tiles,
+        n,
+        TILE,
+        gap,
+    ))
 }
 
 pub(crate) fn hero_portrait<'a>(s: &'a State, hero: &str) -> Option<&'a rune::Pixels> {

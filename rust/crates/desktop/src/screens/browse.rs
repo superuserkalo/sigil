@@ -59,7 +59,8 @@ pub mod replace;
 pub mod scenes;
 pub mod store;
 pub mod strip;
-pub mod rail;
+pub mod shelf;
+pub mod toolbar;
 pub mod tree;
 
 use self::collections::*;
@@ -75,15 +76,15 @@ pub use self::hero::open_for_hero;
 pub use self::install::{InstallOutcome, InstallView, PlanSummary, after_install};
 pub use self::scenes::*;
 
-const GRID_GAP: f32 = 16.0;
-const CARD_RADIUS: f32 = 12.0;
+const GRID_GAP: f32 = 12.0;
+const CARD_RADIUS: f32 = 8.0;
 /// Card width bounds, as Grimoire's `clamp(220, 118 + 7vw + 3vh, 300)` with a little more room
 /// for the Install button.
 const CARD_MIN: f32 = 220.0;
 const CARD_MAX: f32 = 320.0;
 /// Card text block under the image, fixed so every card and the virtual row estimate agree:
 /// 10 padding, 22 title, 2 + 18 byline, 8 + 20 counts, 6 + 32 action row, 10 padding.
-const CARD_TEXT_H: f32 = 128.0;
+const CARD_TEXT_H: f32 = 112.0;
 /// Grid width before the first layout reports one: the default window minus the sidebar.
 const DEFAULT_GRID_W: f32 = 1064.0;
 /// Rows one browsed page holds, matching `data::BROWSE_PER_PAGE` and GameBanana's cap.
@@ -336,6 +337,12 @@ pub struct View {
     pub sources: sources::SourceView,
     /// The third level of the category tree and the landing rail's drag (`tree.rs`).
     pub tree: tree::Tree,
+    /// The landing shelves' scroll positions (`shelf.rs`).
+    pub shelves: shelf::Shelves,
+    /// The open menu is a sub panel of Filters: a pick goes back to Filters.
+    pub from_filters: bool,
+    /// The search field is open over the narrowest toolbar line.
+    pub search_open: bool,
     pub details: Option<Details>,
     /// The details view sits beside the grid instead of over it.
     pub docked: bool,
@@ -507,6 +514,15 @@ impl Owned {
         }
     }
 
+    /// The Filters menu's segment words, under the label "Installed".
+    fn short(self) -> &'static str {
+        match self {
+            Owned::Any => "Any",
+            Owned::Installed => "Yes",
+            Owned::NotInstalled => "No",
+        }
+    }
+
     fn id(self) -> &'static str {
         match self {
             Owned::Any => "any",
@@ -541,6 +557,15 @@ impl MatureView {
             MatureView::Setting => "As in Settings",
             MatureView::Hide => "Hide mature",
             MatureView::Only => "Mature only",
+        }
+    }
+
+    /// The Filters menu's segment words.
+    fn short(self) -> &'static str {
+        match self {
+            MatureView::Setting => "Setting",
+            MatureView::Hide => "Hide",
+            MatureView::Only => "Only",
         }
     }
 
@@ -628,8 +653,13 @@ pub enum FilterMenu {
     Sub,
     Date,
     Sort,
+    /// The Filters menu.
     More,
     View,
+    /// The section tabs as one dropdown, on a narrow line.
+    Section,
+    /// More: refresh, paste, sources, hidden items, volume, the saved catalog.
+    Tools,
 }
 
 impl FilterMenu {
@@ -641,6 +671,8 @@ impl FilterMenu {
             FilterMenu::Sort => "browse-filter-sort",
             FilterMenu::More => "browse-filter-more",
             FilterMenu::View => "browse-filter-view",
+            FilterMenu::Section => "browse-filter-section",
+            FilterMenu::Tools => "browse-filter-tools",
         }
     }
 }
@@ -973,7 +1005,10 @@ pub fn order_window(mods: &mut [BrowseMod], order: BrowseOrder) {
 fn set_filters(st: &mut State, tx: Option<&mut Tx>, edit: impl FnOnce(&mut Filters)) {
     let before = st.browse_view.filters.clone();
     edit(&mut st.browse_view.filters);
-    st.browse_view.menu = None;
+    // A change made in the Filters menu or one of its panels keeps Filters open.
+    let in_filters = st.browse_view.menu == Some(FilterMenu::More) || st.browse_view.from_filters;
+    st.browse_view.from_filters = false;
+    st.browse_view.menu = in_filters.then_some(FilterMenu::More);
     if st.browse_view.filters == before {
         return;
     }

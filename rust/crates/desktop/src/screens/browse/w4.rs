@@ -238,10 +238,22 @@ pub fn random_hero(heroes: &[String], last: Option<&str>, seed: u64) -> Option<S
 }
 
 pub fn random_button(u: &Ui) -> El {
-    u.icon_action(&DICE, tr("Random"), ActionKind::Ghost)
+    row()
         .key("browse-hero-random")
+        .h(24.0)
+        .px(8.0)
+        .gap(6.0)
+        .center_y()
+        .radius(crate::ui::r(4.0))
+        .hover(u.hover)
+        .press(u.over.alpha(0.08))
+        .focusable(true)
+        .role("button")
+        .label(tr("Random"))
         .help(tr("Open a random hero's skins"))
         .cursor(rune::Cursor::Pointer)
+        .child(icon(&DICE, 14.0).color(u.muted).a11y_hidden())
+        .child(text(tr("Random")).font(crate::ui::LABEL).color(u.muted).a11y_hidden())
         .on_press_tx(|st: &mut State, tx: &mut Tx| {
             let heroes: Vec<String> = hero_list(st).into_iter().map(|h| h.name).collect();
             let last = st.browse_view.w4.last_random.clone();
@@ -389,81 +401,6 @@ fn chrono_now() -> i64 {
 }
 
 /// One tile per category with this week's pick; a sound pick has its play button.
-pub fn featured_rail(s: &State, u: &Ui) -> Option<El> {
-    let picks: Vec<&(String, BrowseCard)> = s
-        .browse_view
-        .w4
-        .featured
-        .iter()
-        .filter(|(_, card)| !(card.nsfw && s.prefs.mature == crate::prefs::Mature::Hide))
-        .take(6)
-        .collect();
-    if picks.is_empty() {
-        return None;
-    }
-    let mut tiles = el().w_full().equal_columns(3).gap(GRID_GAP);
-    for (category, card) in picks {
-        let id = card.id;
-        let name = card.name.clone();
-        let image = card.thumbnail_url.clone();
-        let playing = s.browse_view.audio.playing == Some(id);
-        let mut tile = row()
-            .key(format!("browse-featured-{id}"))
-            .min_w(0.0)
-            .h(72.0)
-            .padding(6.0)
-            .gap(12.0)
-            .center_y()
-            .radius(crate::ui::r(10.0))
-            .border(1.0, u.hair)
-            .hover(u.hover)
-            .focusable(true)
-            .role("button")
-            .label(fill(tr("Featured in {}: {}"), &[category, &card.name]))
-            .cursor(rune::Cursor::Pointer)
-            .on_press(move |st: &mut State| {
-                show_details(st, Details::from_id(BrowseSection::Mods, id, &name, image.clone()))
-            })
-            .child(
-                el().w(92.0)
-                    .h_full()
-                    .clip_rounded(crate::ui::r(6.0))
-                    .child(image_fill(s, format!("featured-thumb-{id}"), card.thumbnail_url.as_ref(), [crate::ui::r(6.0); 4], false)),
-            )
-            .child(
-                col()
-                    .grow(1.0)
-                    .min_w(0.0)
-                    .gap(2.0)
-                    .child(text(category.clone()).font(crate::ui::MICRO).color(u.accent).truncate())
-                    .child(text(card.name.clone()).font(BODY_MED).color(u.ink).truncate())
-                    .child(
-                        text(fill(tr("by {}"), &[&card.author]))
-                            .font(SMALL)
-                            .color(u.muted)
-                            .truncate(),
-                    ),
-            );
-        if let Some(url) = card.audio_url.clone() {
-            tile = tile.child(
-                u.icon_button(if playing { &icons::SQUARE_STOP } else { &icons::PLAY }, tr(if playing { "Pause" } else { "Play" }))
-                    .key(format!("browse-featured-play-{id}"))
-                    .cursor(rune::Cursor::Pointer)
-                    .on_press(move |st: &mut State| st.browse_view.audio.toggle(id, url.clone())),
-            );
-        }
-        tiles = tiles.child(tile);
-    }
-    Some(
-        col()
-            .key("browse-rail-featured")
-            .w_full()
-            .gap(12.0)
-            .child(text(tr("Featured this week")).font(BODY_MED).color(u.muted))
-            .child(tiles),
-    )
-}
-
 // --- creator links --------------------------------------------------------------------------
 
 /// Read the open mod's creator links once per member, on a worker.

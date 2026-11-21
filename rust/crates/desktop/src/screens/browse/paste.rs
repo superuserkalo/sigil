@@ -562,15 +562,6 @@ fn files_list(s: &State, u: &Ui, id: u64) -> El {
     c
 }
 
-/// The toolbar button that opens it.
-pub fn button(u: &Ui) -> El {
-    u.icon_button(&icons::PAPERCLIP, tr("Paste mods"))
-        .key("browse-paste-open")
-        .help(tr("Paste many mod links at once"))
-        .cursor(rune::Cursor::Pointer)
-        .on_press(open)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -273,6 +273,7 @@ pub fn poll(st: &mut State, tx: &mut Tx) -> bool {
     if st.screen == Screen::Browse {
         // All guard themselves: one read per session, none while one runs.
         start_top(st);
+        super::shelf::start(st);
         start_persisted_load(st);
         start_mirror_load(st);
         let section = st.browse_view.filters.section;
@@ -440,6 +441,7 @@ pub fn poll(st: &mut State, tx: &mut Tx) -> bool {
         }
         changed = true;
     }
+    changed |= super::shelf::poll(st);
     if let Some(result) = st.browse_view.top_job.try_take() {
         let top = result.unwrap_or_default();
         // Only the tiles the two rails draw (three mods per period); each decoded image holds

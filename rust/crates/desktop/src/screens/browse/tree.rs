@@ -31,8 +31,6 @@ pub fn tr(text: &str) -> &str {
 
 #[derive(Default)]
 pub struct Tree {
-    /// The landing rail's drag and scroll bar (`rail.rs`).
-    pub rail: super::rail::Rail,
     /// The third level being read for a section.
     deepen: Job<(BrowseSection, Vec<BrowseCategory>)>,
     /// Sections whose third level was asked for this run, read or failed.
@@ -190,11 +188,6 @@ pub fn crumb(u: &Ui, pick: Pick) -> El {
             set_filters(st, Some(tx), move |f| f.sub = Some(pick));
         })
         .child(text(label).font(LABEL).color(u.prose).a11y_hidden())
-}
-
-/// The separator between breadcrumb steps.
-pub fn chevron(u: &Ui) -> El {
-    text("\u{203a}").font(LABEL).color(u.faint).a11y_hidden()
 }
 
 /// Give Haze two styles in the stored tree, as a deepened read would.

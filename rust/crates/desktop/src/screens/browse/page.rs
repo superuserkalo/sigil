@@ -33,13 +33,7 @@ pub(crate) fn grid_page(s: &State, u: &Ui) -> El {
         .is_some_and(|page| page.key != current);
     let collecting = s.browse_view.tab == Tab::Collections;
 
-    let width = if s.browse_view.width > 0.0 {
-        s.browse_view.width
-    } else if s.browse_view.docked && s.browse_view.details.is_some() {
-        DEFAULT_GRID_W - SIDEBAR_W
-    } else {
-        DEFAULT_GRID_W
-    };
+    let width = super::toolbar::page_width(s);
     let (cols, card_w) = grid_columns(width, s.browse_view.card_size);
     // Card thumbnails are fetched at this width (`data::shrink_card_thumb`).
     crate::data::set_card_points(card_w);
@@ -174,9 +168,14 @@ pub(crate) fn grid_page(s: &State, u: &Ui) -> El {
                 .px(PAGE_X)
                 .pt(PAGE_TOP)
                 .gap(16.0)
-                .child(u.page_head("", "Browse", "", Some(toolbar(s, u, &detail))))
-                .child(filter_bar(s, u))
-                .children(active_chips(s, u))
+                .child(
+                    col()
+                        .key("browse-head")
+                        .w_full()
+                        .gap(8.0)
+                        .child(super::toolbar::line(s, u))
+                        .child(super::toolbar::status_row(s, u, &detail)),
+                )
                 .child(body),
         )
 }
@@ -372,61 +371,3 @@ pub(crate) fn result_line(s: &State, shown: usize, stale: bool) -> String {
         if total == 1 { noun.0 } else { noun.1 }
     )
 }
-
-pub(crate) fn toolbar(s: &State, u: &Ui, detail: &str) -> El {
-    let mut r = row()
-        .gap(12.0)
-        .center_y()
-        .child(text(detail.to_string()).font(SMALL).color(u.faint));
-    if s.browse_view.from_mirror {
-        r = r.child(
-            row()
-                .h(24.0)
-                .px(8.0)
-                .center()
-                .radius(crate::ui::r(6.0))
-                .fill(u.over.alpha(0.05))
-                .border(1.0, u.hair_strong)
-                .child(text("Saved copy").font(SMALL).color(u.muted)),
-        );
-    }
-    let f = &s.browse_view.filters;
-    let local = f.favorites || f.owned == Owned::Installed;
-    if s.browse_view.tab != Tab::Collections && !local {
-        let query = current_query(s);
-        r = r
-            .child(filter_button(
-                u,
-                FilterMenu::Sort,
-                s.browse_view.menu == Some(FilterMenu::Sort),
-                Some(&SORT),
-                query.shown_order().label(),
-                false,
-            ))
-            .child(
-                u.icon_button(&icons::LAYOUT_GRID, "View options")
-                    .key("browse-filter-view")
-                    .cursor(rune::Cursor::Pointer)
-                    .on_press(|st: &mut State| {
-                        let v = &mut st.browse_view;
-                        v.menu = if v.menu == Some(FilterMenu::View) {
-                            None
-                        } else {
-                            Some(FilterMenu::View)
-                        };
-                    }),
-            );
-    }
-    // DMM: the source picker sits in the store header.
-    if let Some(picker) = super::sources::picker(s, u) {
-        r = r.child(picker);
-    }
-    // Wave 4: paste many mod links at once (Grimoire).
-    r.child(super::paste::button(u)).child(
-        u.icon_button(&icons::REFRESH_CW, "Refresh")
-            .key("browse-refresh")
-            .cursor(rune::Cursor::Pointer)
-            .on_press_tx(refresh),
-    )
-}
-

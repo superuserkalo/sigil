@@ -22,13 +22,28 @@ pub fn overlay(s: &State, u: &Ui) -> Option<El> {
     let menu = s.browse_view.menu?;
     let f = &s.browse_view.filters;
     let (align, width) = match menu {
-        FilterMenu::Sort => (Align::End, 232.0),
+        FilterMenu::Sort => (Align::Start, 232.0),
         FilterMenu::Sub => (Align::Start, 288.0),
-        FilterMenu::Date => (Align::Start, 312.0),
-        FilterMenu::View => (Align::End, 268.0),
-        _ => (Align::Start, 248.0),
+        FilterMenu::Date => (Align::Start, 320.0),
+        FilterMenu::More => (Align::Start, 320.0),
+        FilterMenu::View => (Align::End, 280.0),
+        FilterMenu::Tools => (Align::End, 260.0),
+        FilterMenu::Section => (Align::Start, 160.0),
+        FilterMenu::Category => (Align::Start, 248.0),
     };
     let mut items = col().w_full().gap(0.0);
+    // A panel opened from Filters leads with the way back.
+    if s.browse_view.from_filters && matches!(menu, FilterMenu::Category | FilterMenu::Sub | FilterMenu::Date) {
+        items = items
+            .child(
+                menu_item(u, "menu-back", Some(icon(&icons::CHEVRON_LEFT, 14.0).color(u.muted).a11y_hidden()), "Filters", "", false)
+                    .on_press(|st: &mut State| {
+                        st.browse_view.from_filters = false;
+                        st.browse_view.menu = Some(FilterMenu::More);
+                    }),
+            )
+            .child(menu_rule(u));
+    }
     match menu {
         FilterMenu::Category => match categories_of(s, f.section) {
             Some(list) => {
@@ -219,111 +234,132 @@ pub fn overlay(s: &State, u: &Ui) -> Option<El> {
             }
         }
         FilterMenu::More => {
-            items = items.child(
-                menu_item(
-                    u,
-                    "menu-featured",
-                    Some(icon(&icons::SPARKLES, 14.0).color(u.muted).a11y_hidden()),
-                    "Featured only",
-                    "",
-                    f.featured,
-                )
-                .on_press_tx(|st: &mut State, tx: &mut Tx| {
-                    set_filters(st, Some(tx), |f| f.featured = !f.featured)
-                }),
-            );
-            items = items
-                .child(el().w_full().h(1.0).my(4.0).fill(u.hair))
-                .child(menu_label(u, "Installed"));
-            for owned in Owned::ALL {
-                items = items.child(
-                    menu_item(u, &format!("menu-owned-{owned:?}"), None, owned.label(), "", f.owned == owned)
-                        .on_press_tx(move |st: &mut State, tx: &mut Tx| {
-                            set_filters(st, Some(tx), move |f| f.owned = owned)
-                        }),
+            let count = f.active();
+            let mut head = row()
+                .w_full()
+                .h(28.0)
+                .px(10.0)
+                .center_y()
+                .child(text("Filters").font(LABEL).color(u.muted))
+                .child(spacer());
+            if count > 0 {
+                head = head.child(
+                    row()
+                        .key("menu-filters-clear")
+                        .h(24.0)
+                        .px(6.0)
+                        .center_y()
+                        .radius(crate::ui::r(4.0))
+                        .hover(u.hover)
+                        .focusable(true)
+                        .role("button")
+                        .label("Clear all filters")
+                        .cursor(rune::Cursor::Pointer)
+                        .on_press_tx(clear_filters)
+                        .child(text("Clear all").font(LABEL).color(u.muted).a11y_hidden()),
                 );
             }
-            items = items
-                .child(el().w_full().h(1.0).my(4.0).fill(u.hair))
-                .child(menu_label(u, "Mature content"));
-            for mature in MatureView::ALL {
-                items = items.child(
-                    menu_item(
-                        u,
-                        &format!("menu-mature-{mature:?}"),
-                        None,
-                        mature.label(),
-                        "",
-                        f.mature == mature,
-                    )
-                    .on_press_tx(move |st: &mut State, tx: &mut Tx| {
-                        set_filters(st, Some(tx), move |f| f.mature = mature)
+            let saved = favorites(s).len();
+            items = items.child(head).child(
+                toggle_row(u, "menu-favorites", "Favorites only", &format_count(saved as u64), f.favorites)
+                    .on_press_tx(|st: &mut State, tx: &mut Tx| {
+                        ensure_favorites(st);
+                        set_filters(st, Some(tx), |f| f.favorites = !f.favorites)
                     }),
+            );
+            let collecting = s.browse_view.tab == Tab::Collections;
+            let local = f.favorites || f.owned == Owned::Installed;
+            let pickers = !collecting && !local;
+            items = items.child(menu_rule(u)).child(usable_row(
+                picker_row(
+                    u,
+                    "menu-pick-category",
+                    "Category",
+                    f.category.as_ref().map(|p| p.name.as_str()).unwrap_or("All categories"),
+                )
+                .on_press(|st: &mut State| open_panel(st, FilterMenu::Category)),
+                pickers && s.browse_view.tab != Tab::Maps,
+            ));
+            let children = f.category.as_ref().and_then(|pick| {
+                categories_of(s, f.section)?
+                    .iter()
+                    .find(|root| root.id == pick.id)
+                    .filter(|root| !root.children.is_empty())
+            });
+            if let Some(root) = children {
+                items = items.child(usable_row(
+                    picker_row(
+                        u,
+                        "menu-pick-sub",
+                        sub_noun(&root.name),
+                        f.sub.as_ref().map(|p| p.name.as_str()).unwrap_or("Any"),
+                    )
+                    .on_press(|st: &mut State| open_panel(st, FilterMenu::Sub)),
+                    pickers,
+                ));
+            }
+            // Sounds and WiPs have no hero categories, so a name match stands in. Under
+            // Mods > Skins the Type row above picks the hero.
+            let skins = f
+                .category
+                .as_ref()
+                .is_some_and(|pick| pick.name.eq_ignore_ascii_case("Skins"));
+            items = items
+                .child(usable_row(
+                    picker_row(u, "menu-pick-hero", "Hero", f.hero.as_deref().unwrap_or("Any"))
+                        .on_press(|st: &mut State| {
+                            st.browse_view.menu = None;
+                            st.browse_view.from_filters = false;
+                            st.browse_view.hero_picker = Some(HeroTarget::Filter);
+                            st.browse_view.hero_query = TextEdit::new("");
+                        }),
+                    pickers && !(s.browse_view.tab == Tab::Mods && skins),
+                ))
+                .child(usable_row(
+                    picker_row(u, "menu-pick-date", "Date", &date_label(f))
+                        .on_press(|st: &mut State| open_panel(st, FilterMenu::Date)),
+                    !collecting,
+                ))
+                .child(menu_rule(u));
+            let mut owned = Vec::new();
+            for o in Owned::ALL {
+                owned.push(
+                    segment(u, &format!("menu-owned-{o:?}"), o.short(), f.owned == o)
+                        .on_press_tx(move |st: &mut State, tx: &mut Tx| set_filters(st, Some(tx), move |f| f.owned = o)),
                 );
             }
-            items = items
-                .child(el().w_full().h(1.0).my(4.0).fill(u.hair))
-                .child(menu_label(u, "Match"));
+            let mut mature = Vec::new();
+            for m in MatureView::ALL {
+                mature.push(
+                    segment(u, &format!("menu-mature-{m:?}"), m.short(), f.mature == m)
+                        .on_press_tx(move |st: &mut State, tx: &mut Tx| set_filters(st, Some(tx), move |f| f.mature = m)),
+                );
+            }
+            let mut matching = Vec::new();
             for exclude in [false, true] {
-                items = items.child(
-                    menu_item(
+                matching.push(
+                    segment(
                         u,
                         if exclude { "menu-exclude" } else { "menu-include" },
-                        None,
-                        if exclude { "Exclude the picks" } else { "Include the picks" },
-                        "",
+                        if exclude { "Exclude" } else { "Include" },
                         f.exclude == exclude,
                     )
-                    .on_press_tx(move |st: &mut State, tx: &mut Tx| {
-                        set_filters(st, Some(tx), move |f| f.exclude = exclude)
-                    }),
+                    .on_press_tx(move |st: &mut State, tx: &mut Tx| set_filters(st, Some(tx), move |f| f.exclude = exclude)),
                 );
             }
-            items = items.child(el().w_full().h(1.0).my(4.0).fill(u.hair)).child(
-                menu_item(
-                    u,
-                    "menu-outdated",
-                    None,
-                    "Hide outdated",
-                    "Before Jan 22",
-                    f.hide_outdated,
-                )
-                .on_press_tx(|st: &mut State, tx: &mut Tx| {
-                    set_filters(st, Some(tx), |f| f.hide_outdated = !f.hide_outdated)
-                }),
-            );
             items = items
-                .child(el().w_full().h(1.0).my(4.0).fill(u.hair))
+                .child(segmented(u, "Installed", owned))
+                .child(segmented(u, "Mature", mature))
+                .child(segmented(u, "Match", matching))
+                .child(menu_rule(u))
                 .child(
-                    menu_item(
-                        u,
-                        "menu-hidden",
-                        Some(icon(&EYE_OFF, 14.0).color(u.muted).a11y_hidden()),
-                        "Hidden items",
-                        &format_count(
-                            (s.browse_view.hidden_mods.len() + s.browse_view.hidden_authors.len())
-                                as u64,
-                        ),
-                        false,
-                    )
-                    .on_press(|st: &mut State| {
-                        st.browse_view.panel = Some(Panel::Hidden);
-                        st.browse_view.menu = None;
-                    }),
+                    toggle_row(u, "menu-featured", "Featured only", "", f.featured)
+                        .on_press_tx(|st: &mut State, tx: &mut Tx| set_filters(st, Some(tx), |f| f.featured = !f.featured)),
                 )
                 .child(
-                    menu_item(
-                        u,
-                        "menu-ignored",
-                        Some(icon(&icons::REFRESH_CW, 14.0).color(u.muted).a11y_hidden()),
-                        "Ignored updates",
-                        &format_count(s.browse_view.ignored_updates.len() as u64),
-                        false,
-                    )
-                    .on_press(|st: &mut State| {
-                        st.browse_view.panel = Some(Panel::Ignored);
-                        st.browse_view.menu = None;
-                    }),
+                    toggle_row(u, "menu-outdated", "Hide outdated", "Before Jan 22", f.hide_outdated).on_press_tx(
+                        |st: &mut State, tx: &mut Tx| set_filters(st, Some(tx), |f| f.hide_outdated = !f.hide_outdated),
+                    ),
                 );
         }
         FilterMenu::Date => {
@@ -421,7 +457,7 @@ pub fn overlay(s: &State, u: &Ui) -> Option<El> {
                                 }),
                         )
                         .child(
-                            u.action("Apply", ActionKind::Primary)
+                            u.action("Apply", ActionKind::Secondary)
                                 .key("menu-date-apply")
                                 .cursor(rune::Cursor::Pointer)
                                 .on_press_tx(|st: &mut State, tx: &mut Tx| {
@@ -455,54 +491,32 @@ pub fn overlay(s: &State, u: &Ui) -> Option<El> {
                 );
         }
         FilterMenu::View => {
-            items = items.child(menu_label(u, "Layout"));
+            let mut layouts = Vec::new();
             for layout in Layout::ALL {
-                items = items.child(
-                    menu_item(
-                        u,
-                        &format!("menu-layout-{}", layout.id()),
-                        None,
-                        layout.label(),
-                        "",
-                        s.browse_view.layout == layout,
-                    )
-                    .on_press(move |st: &mut State| {
-                        st.browse_view.layout = layout;
-                        save_browse_state(st);
-                    }),
+                layouts.push(
+                    segment(u, &format!("menu-layout-{}", layout.id()), layout.label(), s.browse_view.layout == layout)
+                        .on_press(move |st: &mut State| {
+                            st.browse_view.layout = layout;
+                            save_browse_state(st);
+                        }),
                 );
             }
-            items = items
-                .child(el().w_full().h(1.0).my(4.0).fill(u.hair))
-                .child(menu_label(u, "Card size"));
+            let mut sizes = Vec::new();
             for size in CardSize::ALL {
-                items = items.child(
-                    menu_item(
-                        u,
-                        &format!("menu-size-{}", size.id()),
-                        None,
-                        size.label(),
-                        "",
-                        s.browse_view.card_size == size,
-                    )
-                    .on_press(move |st: &mut State| {
-                        st.browse_view.card_size = size;
-                        save_browse_state(st);
-                    }),
+                sizes.push(
+                    segment(u, &format!("menu-size-{}", size.id()), size.label(), s.browse_view.card_size == size)
+                        .on_press(move |st: &mut State| {
+                            st.browse_view.card_size = size;
+                            save_browse_state(st);
+                        }),
                 );
             }
             items = items
-                .child(el().w_full().h(1.0).my(4.0).fill(u.hair))
+                .child(segmented(u, "Layout", layouts))
+                .child(segmented(u, "Cards", sizes))
+                .child(menu_rule(u))
                 .child(
-                    menu_item(
-                        u,
-                        "menu-paged",
-                        None,
-                        "Numbered pages",
-                        "",
-                        s.browse_view.paged,
-                    )
-                    .on_press(|st: &mut State| {
+                    toggle_row(u, "menu-paged", "Numbered pages", "", s.browse_view.paged).on_press(|st: &mut State| {
                         st.browse_view.paged = !st.browse_view.paged;
                         st.browse_view.auto_streak = 0;
                         save_browse_state(st);
@@ -510,8 +524,91 @@ pub fn overlay(s: &State, u: &Ui) -> Option<El> {
                             crate::data::start_browse_fetch(st, 1);
                         }
                     }),
+                );
+            if crate::screens::browse::toolbar::tier(s) == crate::screens::browse::toolbar::Tier::D {
+                items = items.child(menu_rule(u));
+            }
+        }
+        FilterMenu::Section => {
+            for tab in Tab::ALL {
+                items = items.child(
+                    menu_item(u, &format!("menu-section-{}", tab.id()), None, tab.label(), "", s.browse_view.tab == tab)
+                        .on_press_tx(move |st: &mut State, tx: &mut Tx| {
+                            st.browse_view.menu = None;
+                            set_tab(st, Some(tx), tab);
+                        }),
+                );
+            }
+        }
+        FilterMenu::Tools => {
+            items = items
+                .child(
+                    menu_item(u, "menu-refresh", Some(icon(&icons::REFRESH_CW, 14.0).color(u.muted).a11y_hidden()), "Refresh", "", false)
+                        .on_press_tx(|st: &mut State, tx: &mut Tx| {
+                            st.browse_view.menu = None;
+                            refresh(st, tx);
+                        }),
                 )
-                .child(el().w_full().h(1.0).my(4.0).fill(u.hair))
+                .child(
+                    menu_item(u, "menu-paste", Some(icon(&icons::PAPERCLIP, 14.0).color(u.muted).a11y_hidden()), "Paste mod links", "", false)
+                        .on_press(|st: &mut State| {
+                            st.browse_view.menu = None;
+                            crate::screens::browse::paste::open(st);
+                        }),
+                );
+            if crate::screens::browse::toolbar::tier(s) == crate::screens::browse::toolbar::Tier::D {
+                items = items.child(
+                    menu_item(u, "menu-view", Some(icon(&icons::LAYOUT_GRID, 14.0).color(u.muted).a11y_hidden()), "View options", "", false)
+                        .on_press(|st: &mut State| st.browse_view.menu = Some(FilterMenu::View)),
+                );
+            }
+            let sources = crate::screens::browse::sources::enabled(s);
+            if !sources.is_empty() {
+                items = items.child(menu_rule(u)).child(menu_label(u, "Source"));
+                let current = s.browse_view.sources.url.clone();
+                let choices = std::iter::once((None, "GameBanana".to_string()))
+                    .chain(sources.into_iter().map(|(url, name)| (Some(url), name)));
+                for (index, (url, name)) in choices.enumerate() {
+                    let on = url == current;
+                    items = items.child(
+                        menu_item(u, &format!("menu-source-{index}"), None, &name, "", on).on_press(move |st: &mut State| {
+                            st.browse_view.menu = None;
+                            crate::screens::browse::sources::pick(st, url.clone());
+                        }),
+                    );
+                }
+            }
+            items = items
+                .child(menu_rule(u))
+                .child(
+                    menu_item(
+                        u,
+                        "menu-hidden",
+                        Some(icon(&EYE_OFF, 14.0).color(u.muted).a11y_hidden()),
+                        "Hidden items",
+                        &format_count((s.browse_view.hidden_mods.len() + s.browse_view.hidden_authors.len()) as u64),
+                        false,
+                    )
+                    .on_press(|st: &mut State| {
+                        st.browse_view.panel = Some(Panel::Hidden);
+                        st.browse_view.menu = None;
+                    }),
+                )
+                .child(
+                    menu_item(
+                        u,
+                        "menu-ignored",
+                        Some(icon(&icons::REFRESH_CW, 14.0).color(u.muted).a11y_hidden()),
+                        "Ignored updates",
+                        &format_count(s.browse_view.ignored_updates.len() as u64),
+                        false,
+                    )
+                    .on_press(|st: &mut State| {
+                        st.browse_view.panel = Some(Panel::Ignored);
+                        st.browse_view.menu = None;
+                    }),
+                )
+                .child(menu_rule(u))
                 .child(menu_label(u, "Preview volume"))
                 .child(
                     row()
@@ -523,30 +620,24 @@ pub fn overlay(s: &State, u: &Ui) -> Option<El> {
                         .child(audio_slider(s, u, "browse-audio-volume"))
                         .child(
                             text(format!("{}%", (s.browse_view.audio.volume * 100.0).round() as i32))
-                                .font(SMALL)
-                                .color(u.faint)
+                                .font(crate::ui::SMALL_NUM)
+                                .color(u.muted)
                                 .w(40.0),
                         ),
                 )
-                .child(el().w_full().h(1.0).my(4.0).fill(u.hair))
+                .child(menu_rule(u))
                 .child(
                     row()
                         .w_full()
-                        .px(10.0)
-                        .py(6.0)
+                        .h(32.0)
+                        .pl(10.0)
                         .gap(8.0)
-                        .items_start()
-                        .child(icon(&icons::BOX, 14.0).color(u.faint).a11y_hidden())
+                        .center_y()
                         .child(
                             col()
                                 .grow(1.0)
                                 .min_w(0.0)
-                                .gap(2.0)
-                                .child(
-                                    text("Saved catalog")
-                                        .font(BODY)
-                                        .color(u.prose),
-                                )
+                                .child(text("Saved catalog").font(BODY).color(u.prose))
                                 .child(
                                     text(if s.browse_view.mirror_summary.is_empty() {
                                         "Not saved yet".to_string()
@@ -554,16 +645,10 @@ pub fn overlay(s: &State, u: &Ui) -> Option<El> {
                                         s.browse_view.mirror_summary.clone()
                                     })
                                     .font(SMALL)
-                                    .color(u.faint)
-                                    .wrap(),
+                                    .color(u.muted)
+                                    .truncate(),
                                 ),
-                        ),
-                )
-                .child(
-                    row()
-                        .w_full()
-                        .py(4.0)
-                        .child(spacer())
+                        )
                         .child(
                             u.action("Save now", ActionKind::Ghost)
                                 .key("menu-mirror-sync")
@@ -578,23 +663,148 @@ pub fn overlay(s: &State, u: &Ui) -> Option<El> {
             .key("browse-menu")
             .role("menu")
             .w(width)
-            .padding(4.0)
+            .max_h(MENU_MAX_H)
             .fill(u.raised)
-            .radius(crate::ui::r(10.0))
+            .radius(crate::ui::r(8.0))
             .border(1.0, u.hair_strong)
             .shadow(12.0, 32.0, crate::ui::soft(Color::BLACK.alpha(0.5)))
-            .anchored(menu.anchor(), Side::Bottom, align, 6.0)
-            .modal(true, |st: &mut State| st.browse_view.menu = None)
+            .anchored(crate::screens::browse::toolbar::anchor(s, menu), Side::Bottom, align, 8.0)
+            .modal(true, |st: &mut State| {
+                st.browse_view.menu = None;
+                st.browse_view.from_filters = false;
+            })
             .on_key(|st: &mut State, ev: &KeyEvent, _| {
                 if ev.key == Key::Escape {
-                    st.browse_view.menu = None;
+                    let back = std::mem::take(&mut st.browse_view.from_filters);
+                    st.browse_view.menu = back.then_some(FilterMenu::More);
                     true
                 } else {
                     false
                 }
             })
-            .child(items),
+            .child(
+                col()
+                    .key("browse-menu-scroll")
+                    .w_full()
+                    .min_h(0.0)
+                    .shrink()
+                    .padding(4.0)
+                    .scroll(ScrollSpec { stick_bottom: false })
+                    .child(items),
+            ),
     )
+}
+
+/// The tallest a filter menu gets before it scrolls inside.
+const MENU_MAX_H: f32 = 480.0;
+
+/// A hairline between groups of menu rows.
+pub(crate) fn menu_rule(u: &Ui) -> El {
+    el().w_full().h(1.0).my(4.0).fill(u.hair)
+}
+
+/// Open a Filters sub panel (category, type, date) over the Filters menu's place.
+pub(crate) fn open_panel(st: &mut State, menu: FilterMenu) {
+    st.browse_view.menu = Some(menu);
+    st.browse_view.from_filters = true;
+    st.browse_view.menu_query = TextEdit::new("");
+}
+
+/// A row that names a choice and opens its picker: label, current value, chevron.
+pub(crate) fn picker_row(u: &Ui, key: &str, label: &str, value: &str) -> El {
+    row()
+        .key(key.to_string())
+        .w_full()
+        .h(32.0)
+        .px(10.0)
+        .gap(8.0)
+        .center_y()
+        .radius(crate::ui::r(4.0))
+        .hover(u.hover)
+        .press(u.over.alpha(0.08))
+        .focusable(true)
+        .role("button")
+        .label(format!("{label}: {value}"))
+        .cursor(rune::Cursor::Pointer)
+        .child(text(label.to_string()).font(BODY).color(u.prose).w(72.0).a11y_hidden())
+        .child(text(value.to_string()).font(BODY).color(u.muted).truncate().min_w(0.0).grow(1.0).a11y_hidden())
+        .child(icon(&icons::CHEVRON_RIGHT, 14.0).color(u.faint).a11y_hidden())
+}
+
+/// A menu row with a squared switch at its end, pressed as a whole.
+pub(crate) fn toggle_row(u: &Ui, key: &str, label: &str, detail: &str, on: bool) -> El {
+    let mut r = row()
+        .key(key.to_string())
+        .w_full()
+        .h(32.0)
+        .pl(10.0)
+        .pr(4.0)
+        .gap(8.0)
+        .center_y()
+        .radius(crate::ui::r(4.0))
+        .hover(u.hover)
+        .press(u.over.alpha(0.08))
+        .focusable(true)
+        .role("switch")
+        .checked(on)
+        .label(label.to_string())
+        .cursor(rune::Cursor::Pointer)
+        .child(text(label.to_string()).font(BODY).color(u.prose).truncate().min_w(0.0).grow(1.0).a11y_hidden());
+    if !detail.is_empty() {
+        r = r.child(text(detail.to_string()).font(crate::ui::SMALL_NUM).color(u.muted).a11y_hidden());
+    }
+    r.child(u.toggle_mark(on))
+}
+
+/// One segment of a segmented choice.
+pub(crate) fn segment(u: &Ui, key: &str, label: &str, on: bool) -> El {
+    row()
+        .key(key.to_string())
+        .h_full()
+        .grow(1.0)
+        .min_w(0.0)
+        .px(6.0)
+        .center()
+        .radius(crate::ui::r(4.0))
+        .fill(if on { u.selected } else { Color::TRANSPARENT })
+        .border(1.0, if on { u.hair_strong } else { Color::TRANSPARENT })
+        .hover(if on { u.selected } else { u.hover })
+        .focusable(true)
+        .role("radio")
+        .checked(on)
+        .label(label.to_string())
+        .cursor(rune::Cursor::Pointer)
+        .child(text(label.to_string()).font(LABEL).color(if on { u.ink } else { u.muted }).truncate().min_w(0.0).a11y_hidden())
+}
+
+/// A labelled row of segments, 28 high, inside a menu.
+pub(crate) fn segmented(u: &Ui, label: &str, segments: Vec<El>) -> El {
+    row()
+        .w_full()
+        .h(36.0)
+        .px(10.0)
+        .gap(8.0)
+        .center_y()
+        .child(text(label.to_string()).font(BODY).color(u.prose).w(72.0))
+        .child(
+            row()
+                .h(28.0)
+                .grow(1.0)
+                .min_w(0.0)
+                .padding(2.0)
+                .gap(2.0)
+                .radius(crate::ui::r(8.0))
+                .fill(u.well)
+                .border(1.0, u.hair)
+                .role("radiogroup")
+                .label(label.to_string())
+                .children(segments),
+        )
+}
+
+/// A row that does not apply here, greyed in place.
+pub(crate) fn usable_row(e: El, on: bool) -> El {
+    if on { e } else { e.disabled(true).opacity(0.4) }
 }
 
 /// The card's right-click menu, anchored to the card itself so it never leaves the window.
@@ -953,7 +1163,7 @@ pub(crate) fn list_view(s: &State, _u: &Ui, shown: Rc<Vec<usize>>) -> El {
         })
         .virtual_rows(
             count,
-            77.0,
+            LIST_ROW_H + 1.0,
             move |s: &State, i| -> Cow<'_, str> {
                 let id = keys
                     .get(i)
@@ -980,80 +1190,104 @@ pub(crate) fn list_view(s: &State, _u: &Ui, shown: Rc<Vec<usize>>) -> El {
         })
 }
 
+/// One count column in a list row: fixed width, right aligned, tabular digits. Unknown is "-".
+fn list_count(u: &Ui, key: String, glyph: &'static Icon, name: &str, value: Option<u64>) -> El {
+    let words = value.map_or_else(|| "-".to_string(), card_count);
+    row()
+        .key(key)
+        .w(LIST_COUNT_W)
+        .h_full()
+        .gap(4.0)
+        .center_y()
+        .justify_end()
+        .label(format!("{name}: {words}"))
+        .child(icon(glyph, 12.0).color(u.faint).a11y_hidden())
+        .child(text(words).font(crate::ui::SMALL_NUM).color(u.muted).a11y_hidden())
+}
+
+const LIST_ROW_H: f32 = 64.0;
+const LIST_COUNT_W: f32 = 56.0;
+const LIST_AGE_W: f32 = 64.0;
+
+/// One list row (`design/browse.md` 3.2): thumb, title over "by author · category", the three
+/// counts and the age in fixed columns, the star and Install. Every row at one width has the
+/// same fields in the same places.
 pub(crate) fn list_row(s: &State, u: &Ui, card: &BrowseCard) -> El {
     let id = card.id;
+    let nsfw = card.nsfw;
     let veil = veiled(s, id, card.nsfw);
     let age = gamebanana::relative_age(card.updated_ts, gamebanana::now_unix());
     let is_mod = card.model.eq_ignore_ascii_case("mod");
     let playing = s.browse_view.audio.playing == Some(id);
-    let install = if is_mod {
+    let width = crate::screens::browse::toolbar::page_width(s);
+    let state = if is_mod {
         // The row reads its own mod's state, so one install never changes another row.
-        let state = super::super::quick::button(s, id);
-        super::super::quick::button_el(
-            u,
-            &state,
-            format!("list-install-{id}"),
-            id,
-            &card.name,
-            super::super::quick::Size::Row,
-        )
+        super::super::quick::button(s, id)
     } else {
-        super::super::quick::button_el(
-            u,
-            &super::super::quick::Button::Install,
-            format!("list-install-{id}"),
-            id,
-            &card.name,
-            super::super::quick::Size::Row,
-        )
-        .on_press(move |st: &mut State| open_details(st, id))
+        super::super::quick::Button::Install
     };
+    let install = super::super::quick::button_el(
+        u,
+        &state,
+        format!("list-install-{id}"),
+        id,
+        &card.name,
+        super::super::quick::Size::Fill,
+    );
+    let install = if is_mod { install } else { install.on_press(move |st: &mut State| open_details(st, id)) };
     let status = is_mod.then(|| super::super::quick::status_line(s, u, id)).flatten();
 
     let saved = is_favorite(s, &card.model, id);
     let favorite = Favorite::from_card(card);
-    let star = u
-        .icon_button(if saved { &STAR_FILLED } else { &STAR }, if saved { "Remove from favorites" } else { "Save to favorites" })
+    let star = el()
         .key(format!("list-star-{id}"))
+        .size(28.0, 28.0)
+        .center()
+        .radius(crate::ui::r(8.0))
+        .hover(u.hover)
+        .press(u.over.alpha(0.08))
+        .focusable(true)
+        .role("button")
+        .label(if saved { "Remove from favorites" } else { "Save to favorites" })
         .cursor(rune::Cursor::Pointer)
-        .on_press(move |st: &mut State| toggle_favorite(st, favorite.clone()));
+        .on_press(move |st: &mut State| toggle_favorite(st, favorite.clone()))
+        .child(icon(if saved { &STAR_FILLED } else { &STAR }, 14.0).color(if saved { u.ink } else { u.muted }).a11y_hidden());
 
-    let mut stats = row().gap(12.0).center_y().child(stat(u, &icons::THUMBS_UP, card.likes));
-    stats = stats.child(stat(u, &icons::EYE, card.views));
-    // The same three counts as a card: a dash until the catalog knows the downloads.
-    stats = stats.child(match s.browse_view.download_counts.get(&id) {
-        Some(downloads) => stat(u, &icons::DOWNLOAD, *downloads),
-        None => row()
-            .gap(4.0)
-            .center_y()
-            .child(icon(&icons::DOWNLOAD, 14.0).color(u.faint).a11y_hidden())
-            .child(text("-").font(SMALL).color(u.faint)),
-    });
-
-    let audio = card.audio_url.clone().map(|url| {
-        el().key(format!("list-sample-{id}"))
-            .size(32.0, 32.0)
-            .center()
-            .radius(crate::ui::r(8.0))
-            .hover(u.hover)
-            .focusable(true)
-            .role("button")
-            .label(if playing { "Stop the sample" } else { "Play the sample" })
-            .cursor(rune::Cursor::Pointer)
-            .on_press(move |st: &mut State| st.browse_view.audio.toggle(id, url.clone()))
-            .child(
-                icon(if playing { &icons::SQUARE_STOP } else { &icons::PLAY }, 14.0)
-                    .color(if playing { u.accent } else { u.muted })
-                    .a11y_hidden(),
-            )
-    });
+    let counts = row()
+        .key(format!("list-counts-{id}"))
+        .h(16.0)
+        .gap(12.0)
+        .center_y()
+        .child(list_count(u, format!("list-likes-{id}"), &icons::THUMBS_UP, "Likes", Some(card.likes)))
+        .child(list_count(u, format!("list-views-{id}"), &icons::EYE, "Views", Some(card.views)))
+        .child(list_count(
+            u,
+            format!("list-downloads-{id}"),
+            &icons::DOWNLOAD,
+            "Downloads",
+            s.browse_view.download_counts.get(&id).copied(),
+        ));
+    let age_color = if outdated(card) { u.amber } else { u.muted };
+    let age_column = width >= 720.0;
+    let counts_inline = width >= 528.0;
+    let author = if card.author.is_empty() { "Unknown author".to_string() } else { format!("by {}", card.author) };
+    let mut sub = format!("{author} · {}", card.category);
+    if !age_column && !age.is_empty() {
+        sub = format!("{sub} · {age}");
+    }
+    let sub_line = text(sub).font(SMALL).color(u.muted).truncate().min_w(0.0);
+    let second = match status {
+        Some(line) => line,
+        None if counts_inline => row().w_full().h(16.0).center_y().child(sub_line),
+        None => counts.clone(),
+    };
 
     let mut line = row()
         .key(format!("browse-card-{id}"))
         .w_full()
-        .h(76.0)
+        .h(LIST_ROW_H)
         .px(8.0)
-        .gap(14.0)
+        .gap(12.0)
         .center_y()
         .border_sides([0.0, 0.0, 1.0, 0.0], u.hair)
         .hover(u.hover)
@@ -1061,7 +1295,10 @@ pub(crate) fn list_row(s: &State, u: &Ui, card: &BrowseCard) -> El {
         .role("button")
         .label(format!("{} by {}", card.name, card.author))
         .cursor(rune::Cursor::Pointer)
-        .on_hover_change(move |st: &mut State, over: bool, _tx: &mut Tx| {
+        .on_hover_change(move |st: &mut State, over: bool, tx: &mut Tx| {
+            if !(nsfw && crate::screens::settings::nsfw::reveal_on_hover()) {
+                tx.live_only();
+            }
             if over {
                 st.browse_view.hovered = Some(id);
                 st.browse_view.hover_since = Some((id, Instant::now()));
@@ -1076,50 +1313,54 @@ pub(crate) fn list_row(s: &State, u: &Ui, card: &BrowseCard) -> El {
         })
         .on_press(move |st: &mut State| open_details(st, id))
         .child(
-            el().w(112.0)
-                .h(63.0)
-                .radius(crate::ui::r(6.0))
-                .clip_rounded(crate::ui::r(6.0))
-                .child(image_fill(
-                    s,
-                    format!("list-thumb-{id}"),
-                    card.thumbnail_url.as_ref(),
-                    [crate::ui::r(6.0); 4],
-                    veil,
-                )),
+            el().w(96.0)
+                .h(54.0)
+                .radius(crate::ui::r(4.0))
+                .clip_rounded(crate::ui::r(4.0))
+                .fill(u.hover)
+                .child(image_fill(s, format!("list-thumb-{id}"), card.thumbnail_url.as_ref(), [crate::ui::r(4.0); 4], veil)),
         )
         .child(
             col()
                 .grow(1.0)
-                .min_w(0.0)
-                .gap(3.0)
-                .child(text(card.name.clone()).font(BODY_MED).color(u.ink).truncate())
-                .child(
-                    text(format!(
-                        "{} · {}{}",
-                        if card.author.is_empty() {
-                            "Unknown author".to_string()
-                        } else {
-                            format!("by {}", card.author)
-                        },
-                        card.category,
-                        if age.is_empty() {
-                            String::new()
-                        } else {
-                            format!(" · {age}")
-                        },
-                    ))
-                    .font(SMALL)
-                    .color(if outdated(card) { u.amber } else { u.muted })
-                    .truncate(),
-                )
-                .child(status.unwrap_or(stats)),
-        )
-        .child(spacer());
-    if let Some(audio) = audio {
-        line = line.child(audio);
+                .min_w(160.0)
+                .gap(4.0)
+                .child(row().w_full().h(20.0).center_y().child(text(card.name.clone()).font(H2).color(u.ink).truncate().min_w(0.0)))
+                .child(second),
+        );
+    if counts_inline {
+        line = line.child(counts);
     }
-    line.child(star).child(install)
+    if age_column {
+        line = line.child(
+            text(age)
+                .font(crate::ui::SMALL_NUM)
+                .color(age_color)
+                .w(LIST_AGE_W)
+                .align(rune::Align::End),
+        );
+    }
+    if let Some(url) = card.audio_url.clone() {
+        line = line.child(
+            el().key(format!("list-sample-{id}"))
+                .size(28.0, 28.0)
+                .center()
+                .radius(crate::ui::r(8.0))
+                .border(1.0, u.hair_strong)
+                .hover(u.hover)
+                .focusable(true)
+                .role("button")
+                .label(if playing { "Stop the sample" } else { "Play the sample" })
+                .cursor(rune::Cursor::Pointer)
+                .on_press(move |st: &mut State| st.browse_view.audio.toggle(id, url.clone()))
+                .child(
+                    icon(if playing { &icons::SQUARE_STOP } else { &icons::PLAY }, 14.0)
+                        .color(if playing { u.accent } else { u.muted })
+                        .a11y_hidden(),
+                ),
+        );
+    }
+    line.child(star).child(row().w(104.0).h(28.0).child(install))
 }
 
 /// The last row: a loading line while the next page reads, a retry after a failed read, or

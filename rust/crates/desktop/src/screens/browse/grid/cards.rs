@@ -61,21 +61,13 @@ pub(crate) fn nsfw_veil(u: &Ui, scope: &str, id: u64, compact: bool) -> El {
 
 pub(crate) fn nsfw_tag(u: &Ui) -> El {
     row()
-        .h(22.0)
-        .px(8.0)
+        .h(20.0)
+        .px(6.0)
         .center()
-        .radius(crate::ui::r(6.0))
+        .radius(crate::ui::r(4.0))
         .fill(u.rose.alpha(0.16))
         .border(1.0, u.rose.alpha(0.45))
         .child(text("NSFW").font(MICRO_CAPS).color(u.rose))
-}
-
-pub(crate) fn stat(u: &Ui, glyph: &'static Icon, value: u64) -> El {
-    row()
-        .gap(4.0)
-        .center_y()
-        .child(icon(glyph, 14.0).color(u.faint).a11y_hidden())
-        .child(text(format_count(value)).font(SMALL).color(u.faint))
 }
 
 pub(crate) fn veiled(s: &State, id: u64, nsfw: bool) -> bool {
@@ -117,7 +109,7 @@ fn count_cell(u: &Ui, key: String, glyph: &'static Icon, name: &str, value: Opti
         .center_y()
         .label(label)
         .child(icon(glyph, 12.0).color(u.faint).a11y_hidden())
-        .child(text(words).font(crate::ui::SMALL_NUM).color(u.faint).a11y_hidden())
+        .child(text(words).font(crate::ui::SMALL_NUM).color(u.muted).a11y_hidden())
 }
 
 /// One mod: a 16:9 image flush with the top, the title, the author and when it changed, and
@@ -125,6 +117,7 @@ fn count_cell(u: &Ui, key: String, glyph: &'static Icon, name: &str, value: Opti
 pub(crate) fn card_el(s: &State, u: &Ui, card: &BrowseCard) -> El {
     let inner = (crate::ui::r(CARD_RADIUS) - 1.0).max(0.0);
     let id = card.id;
+    let nsfw = card.nsfw;
     let veil = veiled(s, id, card.nsfw);
     let age = gamebanana::relative_age(card.updated_ts, gamebanana::now_unix());
 
@@ -139,11 +132,13 @@ pub(crate) fn card_el(s: &State, u: &Ui, card: &BrowseCard) -> El {
             [inner, inner, 0.0, 0.0],
             veil,
         ));
+    // Tags sit together at the top left: the 18+ tag, then the installed state.
+    let mut tags = row().key(format!("card-tags-{id}")).pin(Some(8.0), Some(8.0), None, None).gap(4.0);
     if veil {
         frame = frame.child(nsfw_veil(u, "card", id, true));
     } else if card.nsfw && crate::screens::settings::nsfw::always_tag() {
         // Settings > Mods > Always show the 18+ tag.
-        frame = frame.child(el().pin(Some(8.0), Some(8.0), None, None).child(nsfw_tag(u)));
+        tags = tags.child(nsfw_tag(u));
     }
 
     let byline = row()
@@ -165,8 +160,8 @@ pub(crate) fn card_el(s: &State, u: &Ui, card: &BrowseCard) -> El {
         .child(spacer())
         .child(
             text(age)
-                .font(SMALL)
-                .color(if outdated(card) { u.amber } else { u.faint }),
+                .font(crate::ui::SMALL_NUM)
+                .color(if outdated(card) { u.amber } else { u.muted }),
         );
 
     let is_mod = card.model.eq_ignore_ascii_case("mod");
@@ -193,7 +188,7 @@ pub(crate) fn card_el(s: &State, u: &Ui, card: &BrowseCard) -> El {
             frame = frame.child(bar);
         }
         if !veil && let Some(badge) = super::super::quick::installed_badge(s, id) {
-            frame = frame.child(badge);
+            tags = tags.child(badge);
         }
     }
 
@@ -201,10 +196,10 @@ pub(crate) fn card_el(s: &State, u: &Ui, card: &BrowseCard) -> El {
     let favorite = Favorite::from_card(card);
     let star = el()
         .key(format!("star-{id}"))
-        .pin(Some(8.0), None, Some(8.0), None)
-        .size(28.0, 28.0)
+        .pin(None, Some(8.0), Some(8.0), None)
+        .size(24.0, 24.0)
         .center()
-        .radius(crate::ui::r(14.0))
+        .radius(crate::ui::r(4.0))
         .fill(Color::BLACK.alpha(0.45))
         .hover(Color::BLACK.alpha(0.7))
         .focusable(true)
@@ -218,9 +213,9 @@ pub(crate) fn card_el(s: &State, u: &Ui, card: &BrowseCard) -> El {
                 .color(Color::WHITE)
                 .a11y_hidden(),
         );
-    let hovered = s.browse_view.hovered == Some(id);
-    if !veil && (saved || hovered) {
-        frame = frame.child(star);
+    // Always drawn, so hovering a card never rebuilds it (`design/browse.md` 5.10).
+    if !veil {
+        frame = frame.child(tags).child(star);
     }
 
     let playing = s.browse_view.audio.playing == Some(id);
@@ -266,7 +261,7 @@ pub(crate) fn card_el(s: &State, u: &Ui, card: &BrowseCard) -> El {
                 .h_full()
                 .center()
                 .gap(8.0)
-                .child(sample(48.0, true))
+                .child(sample(40.0, true))
                 .child(text(card.category.clone()).font(SMALL).color(u.faint).truncate()),
         );
     }
@@ -274,8 +269,8 @@ pub(crate) fn card_el(s: &State, u: &Ui, card: &BrowseCard) -> El {
     let counts = el()
         .key(format!("card-counts-{id}"))
         .w_full()
-        .h(20.0)
-        .mt(8.0)
+        .h(16.0)
+        .mt(4.0)
         .equal_columns(3)
         .gap(4.0)
         .child(count_cell(u, format!("card-stat-likes-{id}"), &icons::THUMBS_UP, "Likes", Some(card.likes)))
@@ -287,9 +282,9 @@ pub(crate) fn card_el(s: &State, u: &Ui, card: &BrowseCard) -> El {
             "Downloads",
             s.browse_view.download_counts.get(&id).copied(),
         ));
-    let mut actions = row().key(format!("card-actions-{id}")).w_full().h(32.0).mt(6.0).gap(6.0).center_y();
+    let mut actions = row().key(format!("card-actions-{id}")).w_full().h(28.0).mt(8.0).gap(6.0).center_y();
     if card.audio_url.is_some() && !bare_sound {
-        actions = actions.child(sample(32.0, false));
+        actions = actions.child(sample(28.0, false));
     }
     let actions = actions.child(install);
 
@@ -298,7 +293,12 @@ pub(crate) fn card_el(s: &State, u: &Ui, card: &BrowseCard) -> El {
         .min_w(0.0)
         .padding(1.0)
         .radius(crate::ui::r(CARD_RADIUS))
-        .on_hover_change(move |st: &mut State, over: bool, _tx: &mut Tx| {
+        .on_hover_change(move |st: &mut State, over: bool, tx: &mut Tx| {
+            // Only a hidden mature image that reveals on hover changes how the card draws; the
+            // hover itself is for the details prefetch, which reads it from the poll.
+            if !(nsfw && crate::screens::settings::nsfw::reveal_on_hover()) {
+                tx.live_only();
+            }
             if over {
                 st.browse_view.hovered = Some(id);
                 st.browse_view.hover_since = Some((id, Instant::now()));
@@ -313,7 +313,7 @@ pub(crate) fn card_el(s: &State, u: &Ui, card: &BrowseCard) -> El {
         })
         .fill(u.well)
         .border(1.0, u.hair)
-        .hover(Color::WHITE.alpha(0.025))
+        .hover(u.hover)
         .focusable(true)
         .role("button")
         .label(format!("{} by {}", card.name, card.author))
@@ -324,11 +324,11 @@ pub(crate) fn card_el(s: &State, u: &Ui, card: &BrowseCard) -> El {
             col()
                 .w_full()
                 .h(CARD_TEXT_H)
-                .px(11.0)
-                .pt(10.0)
-                .pb(10.0)
-                .child(row().w_full().h(22.0).center_y().child(text(card.name.clone()).font(H2).color(u.ink).truncate().min_w(0.0).shrink()))
-                .child(row().w_full().h(18.0).mt(2.0).center_y().child(byline))
+                .px(10.0)
+                .pt(8.0)
+                .pb(8.0)
+                .child(row().w_full().h(20.0).center_y().child(text(card.name.clone()).font(H2).color(u.ink).truncate().min_w(0.0).shrink()))
+                .child(row().w_full().h(16.0).mt(4.0).center_y().child(byline))
                 .child(counts)
                 .child(actions),
         );
@@ -361,7 +361,7 @@ pub(crate) fn loading_grid(u: &Ui, cols: usize) -> El {
                 .child(
                     col()
                         .h(CARD_TEXT_H)
-                        .px(11.0)
+                        .px(10.0)
                         .pt(14.0)
                         .pb(16.0)
                         .gap(10.0)
