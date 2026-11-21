@@ -41,6 +41,7 @@ node scripts/release-sign.mjs pubkey            # prints the public key and key 
 | --- | --- |
 | `Sigil-<version>-windows-x64.zip` | the `build-windows` workflow on a tag, or `scripts/package-windows.sh` |
 | `Sigil-<version>-macos-arm64.zip` | `scripts/package-desktop.sh` on a Mac (`Sigil.app` at the top) |
+| `Sigil-<version>-x86_64.AppImage` | the `linux-build` workflow, or `scripts/package-linux.sh` on Linux |
 | `sigil-update.json` | the same scripts (`release-sign.mjs manifest`), unsigned |
 | `sigil-update.json.sig` | `scripts/sign-release.sh`, on the maintainer's machine only |
 
@@ -62,6 +63,24 @@ The manifest:
 A Windows release is one file, `Sigil.exe` (the art is built in), so its entry has no
 `assets` flag. Older installs that kept an `assets/` folder beside the executable leave it in
 place; the new executable no longer reads it.
+
+Linux goes under a separate top-level key, `extra_platforms`, and its asset is the AppImage
+itself, not a zip:
+
+```json
+{
+  "extra_platforms": {
+    "linux-x86_64": { "asset": "Sigil-0.2.0-x86_64.AppImage", "size": 89234567, "sha256": "<hex>" }
+  }
+}
+```
+
+Sigil 0.1.x refuses an unknown key under `platforms` and ignores `extra_platforms`, so adding
+Linux still updates every older Windows and macOS copy. A manifest with no Windows or macOS entry
+cannot be signed (`scripts/release-sign.mjs` refuses it); the Linux-only manifest a Linux build
+writes stays unsigned and is merged into the release manifest first. See
+`docs/runbooks/packaging.md`.
+
 The signature covers `sigil-update-manifest v1\n` followed by the exact manifest bytes, so any
 edit after signing (even whitespace) needs a new signature.
 
@@ -82,18 +101,32 @@ edit after signing (even whitespace) needs a new signature.
    ```
 
    Skip this step for a Windows-only release.
-4. Sign. This checks each listed zip's size and SHA-256 against the manifest, signs, and verifies
-   the result with the public key compiled into Sigil:
+4. Add Linux from the `linux-build` workflow's `Sigil-linux-x86_64` artifact (manual dispatch or a
+   push to `main`; nothing is published there). Download the artifact, then add its entry:
+
+   ```bash
+   gh run download -n Sigil-linux-x86_64 -D .scratch/package/linux
+   mv .scratch/package/linux/Sigil-<version>-x86_64.AppImage .scratch/package/release-<version>/
+   node scripts/release-sign.mjs manifest .scratch/package/release-<version>/sigil-update.json \
+     --version <version> --platform linux-x86_64 \
+     --zip .scratch/package/release-<version>/Sigil-<version>-x86_64.AppImage
+   ```
+
+   This writes `extra_platforms.linux-x86_64`; `platforms` is untouched. Skip this step for a
+   release without Linux.
+5. Sign. This checks each listed zip and AppImage's size and SHA-256 against the manifest, signs,
+   and verifies the result with the public key compiled into Sigil:
 
    ```bash
    scripts/sign-release.sh .scratch/package/release-<version>/sigil-update.json
    ```
 
-5. Upload and publish:
+6. Upload and publish:
 
    ```bash
    cd .scratch/package/release-<version>
-   gh release upload v<version> sigil-update.json sigil-update.json.sig Sigil-*-macos-*.zip --clobber
+   gh release upload v<version> sigil-update.json sigil-update.json.sig \
+     Sigil-*-macos-*.zip Sigil-*-x86_64.AppImage --clobber
    gh release edit v<version> --draft=false --notes-file notes.md
    ```
 
@@ -113,21 +146,25 @@ from the release page" instead of a download.
   `github.com/superuserkalo/sigil/releases/download/...`. Offline mode blocks all of it.
 - Refuses: a bad or unknown-key signature, a manifest whose version is not the release tag, any
   version not newer than the running one (no downgrades), a platform the manifest does not list.
-- Download: streams the zip to `<data>/updates/download/`, stops at the signed size, checks size
-  and SHA-256, unpacks into `<data>/updates/staged/<version>/tree` (no paths outside it, no
-  links), checks the tree holds `Sigil.exe` or a `Sigil.app` reporting that version, and writes
-  `<data>/updates/pending.json`.
+- Download: streams the asset to `<data>/updates/download/`, stops at the signed size, checks size
+  and SHA-256, unpacks a zip into `<data>/updates/staged/<version>/tree` (no paths outside it, no
+  links) or moves the AppImage there as is, checks the tree holds `Sigil.exe`, a `Sigil.app`
+  reporting that version, or an x86-64 AppImage, and writes `<data>/updates/pending.json`.
 - Install ("Restart to update", or the next launch): copies the tree to `.sigil-update-new`
   beside the install (same volume), renames `Sigil.exe` to `Sigil.exe.old` (and `assets` to
-  `assets.old`) or `Sigil.app` to `.Sigil.app.old`, moves the new files in, writes
+  `assets.old`), `Sigil.app` to `.Sigil.app.old`, or the running AppImage to a hidden
+  `.AppImage.old` under the player's file name, moves the new files in, writes
   `<data>/updates/applied.json`, starts the new version and quits. A failed step undoes the
   renames before it.
 - Rollback: the new version marks `applied.json` confirmed a second after its first frame. A
   launch that finds the record unconfirmed from an earlier launch restores the `.old` files and
   starts the previous version; Settings then says the update was undone. A confirmed update
   deletes the `.old` files on the next start.
-- Where it does not run: a development build (not `Sigil.exe` or not inside `Sigil.app`), a macOS
-  app still in App Translocation (opened from Downloads; move it to Applications), Linux.
+- On Linux it only runs for the AppImage: the layout comes from `$APPIMAGE`, never from the
+  program inside the read-only mount. A `.deb`, a distro package or a dev build is told to
+  download from the release page. It does not run for a development build (not `Sigil.exe`, not
+  inside `Sigil.app`, not an AppImage), or a macOS app still in App Translocation (opened from
+  Downloads; move it to Applications).
 
 Debug builds read `SIGIL_UPDATE_API` to point the check at a local server; release builds ignore
 it. The tests in `updater.rs` use it that way.
@@ -139,5 +176,8 @@ it. The tests in `updater.rs` use it that way.
 - The `build-windows` workflow's release step, `choco install webp` and the 7-Zip archive.
 - A real GitHub release download (the redirect to GitHub's asset host).
 - macOS swap of a real `/Applications/Sigil.app`, and Gatekeeper on the swapped bundle.
+- The Linux AppImage swap and rollback on a real desktop (renaming the running AppImage, the
+  relaunch under `RUNE_RELAUNCH_AFTER`, the `.deb` hand update), and the `linux-build` workflow's
+  first green run.
 - A new version that crashes before `main` cannot roll itself back; the user reinstalls from the
   release page.
