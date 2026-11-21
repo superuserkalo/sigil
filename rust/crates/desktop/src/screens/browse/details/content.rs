@@ -17,7 +17,7 @@ pub(crate) fn files_section(s: &State, u: &Ui, d: &Details, profile: &ModProfile
     }
     if profile.files.is_empty() {
         c = c.child(
-            text("This mod has no downloadable files.")
+            text(super::super::tree::tr("This mod has no downloadable files."))
                 .font(BODY)
                 .color(u.muted),
         );
@@ -62,7 +62,7 @@ pub(crate) fn files_section(s: &State, u: &Ui, d: &Details, profile: &ModProfile
                     .color(u.muted)
                     .a11y_hidden(),
                 )
-                .child(text("Archived files").font(BODY_MED).color(u.muted))
+                .child(text(super::super::tree::tr("Archived files")).font(BODY_MED).color(u.muted))
                 .child(spacer())
                 .child(
                     text(profile.archived_files.len().to_string())
@@ -84,7 +84,7 @@ pub(crate) fn file_card(s: &State, u: &Ui, d: &Details, file: &ModFile, _only: b
     let lead = if file.description.trim().is_empty() { file.name.clone() } else { file.description.clone() };
     // Size, downloads and date first, so a long file name is what truncates.
     let mut meta = vec![crate::model::format_size(file.size_bytes)];
-    meta.push(format!("{} download{}", group_digits(file.downloads), if file.downloads == 1 { "" } else { "s" }));
+    meta.push(crate::screens::settings::i18n::fill(super::super::tree::tr(if file.downloads == 1 { "{} download" } else { "{} downloads" }), &[&group_digits(file.downloads)]));
     if file.added_ts > 0 {
         meta.push(gamebanana::calendar_date(file.added_ts));
     }

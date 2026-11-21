@@ -21,12 +21,12 @@ pub(crate) fn sub_noun(category: &str) -> &'static str {
 /// The date button names the window it keeps.
 pub(crate) fn date_label(f: &Filters) -> String {
     if f.date_from > 0 || f.date_to > 0 {
-        return "Custom range".to_string();
+        return super::tree::tr("Custom range").to_string();
     }
     if f.period != BrowsePeriod::Any {
-        return format!("{}: {}", f.date_field.label(), f.period.label());
+        return format!("{}: {}", super::tree::tr(f.date_field.label()), super::tree::tr(f.period.label()));
     }
-    "Any time".to_string()
+    super::tree::tr("Any time").to_string()
 }
 
 /// The landing over the plain catalog (`design/browse.md` 2): the quick stats strip, then the
@@ -145,12 +145,7 @@ pub(crate) fn dashboard(s: &State, u: &Ui) -> Option<El> {
     ));
     Some(
         rails.child(
-            row()
-                .key("browse-all-head")
-                .w_full()
-                .h(24.0)
-                .center_y()
-                .child(text(super::tree::tr("All mods")).font(H2).color(u.ink)),
+            u.section(super::tree::tr("All mods")).key("browse-all-head"),
         ),
     )
 }

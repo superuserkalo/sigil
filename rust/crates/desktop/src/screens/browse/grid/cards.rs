@@ -147,9 +147,9 @@ pub(crate) fn card_el(s: &State, u: &Ui, card: &BrowseCard) -> El {
         .center_y()
         .child(
             text(if card.author.is_empty() {
-                "Unknown author".to_string()
+                super::super::tree::tr("Unknown author").to_string()
             } else {
-                format!("by {}", card.author)
+                crate::screens::settings::i18n::fill(super::super::tree::tr("by {}"), &[&card.author])
             })
             .font(SMALL)
             .color(u.muted)

@@ -306,19 +306,14 @@ pub fn shelf(
 ) -> El {
     let pages = page_count(tiles.len(), n);
     let page = s.browse_view.shelves.pages[slot].min(pages - 1);
-    let mut head = row()
-        .w_full()
-        .h(24.0)
-        .gap(4.0)
-        .center_y()
-        .child(text(title.to_string()).font(crate::ui::H2).color(u.ink).truncate().min_w(0.0).shrink())
-        .child(spacer());
+    let mut controls = row().gap(4.0).center_y();
     if let Some(action) = action {
-        head = head.child(action.mr(4.0));
+        controls = controls.child(action.mr(4.0));
     }
-    head = head
+    controls = controls
         .child(arrow(u, slot, key, false, page > 0, pages))
         .child(arrow(u, slot, key, true, page + 1 < pages, pages));
+    let head = u.section_head(title, None, Some(controls));
     let mut strip = row().key(key).w_full().gap(gap);
     let mut shown = 0;
     for tile in tiles.into_iter().skip(page * n).take(n) {

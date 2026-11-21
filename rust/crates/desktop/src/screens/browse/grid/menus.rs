@@ -220,7 +220,7 @@ pub fn overlay(s: &State, u: &Ui) -> Option<El> {
                     u,
                     &format!("menu-sort-{}", order.index_token()),
                     None,
-                    order.label(),
+                    super::super::tree::tr(order.label()),
                     if usable { "" } else { "Any time only" },
                     order == shown,
                 );
@@ -370,7 +370,7 @@ pub fn overlay(s: &State, u: &Ui) -> Option<El> {
                         u,
                         &format!("menu-date-field-{}", field.id()),
                         None,
-                        field.label(),
+                        super::super::tree::tr(field.label()),
                         "",
                         f.date_field == field,
                     )
@@ -388,7 +388,7 @@ pub fn overlay(s: &State, u: &Ui) -> Option<El> {
                         u,
                         &format!("menu-date-{}", period.id()),
                         None,
-                        period.label(),
+                        super::super::tree::tr(period.label()),
                         "",
                         f.period == period && f.date_from == 0 && f.date_to == 0,
                     )
@@ -532,7 +532,7 @@ pub fn overlay(s: &State, u: &Ui) -> Option<El> {
         FilterMenu::Section => {
             for tab in Tab::ALL {
                 items = items.child(
-                    menu_item(u, &format!("menu-section-{}", tab.id()), None, tab.label(), "", s.browse_view.tab == tab)
+                    menu_item(u, &format!("menu-section-{}", tab.id()), None, super::super::tree::tr(tab.label()), "", s.browse_view.tab == tab)
                         .on_press_tx(move |st: &mut State, tx: &mut Tx| {
                             st.browse_view.menu = None;
                             set_tab(st, Some(tx), tab);
@@ -1377,14 +1377,14 @@ pub(crate) fn tail_row(s: &State, u: &Ui) -> El {
     if s.browse.loading {
         return base
             .child(icon(&icons::LOADER, 14.0).color(u.faint).a11y_hidden())
-            .child(text("Loading more mods").font(SMALL).color(u.faint));
+            .child(text(super::super::tree::tr("Loading more mods")).font(SMALL).color(u.faint));
     }
     if s.browse.error.is_some() && !s.browse_view.refreshing {
         return base
             .child(icon(&icons::TRIANGLE_ALERT, 14.0).color(u.amber).a11y_hidden())
-            .child(text("The next page did not load.").font(SMALL).color(u.muted))
+            .child(text(super::super::tree::tr("The next page did not load.")).font(SMALL).color(u.muted))
             .child(
-                u.action("Try again", ActionKind::Ghost)
+                u.action(super::super::tree::tr("Try again"), ActionKind::Ghost)
                     .key("browse-more-retry")
                     .cursor(rune::Cursor::Pointer)
                     .on_press(load_next_page),
@@ -1392,7 +1392,7 @@ pub(crate) fn tail_row(s: &State, u: &Ui) -> El {
     }
     if more_to_load(s) && s.browse_view.auto_streak >= AUTO_EMPTY_PAGES {
         return base.child(
-            u.action("Load more", ActionKind::Secondary)
+            u.action(super::super::tree::tr("Load more"), ActionKind::Secondary)
                 .key("browse-more")
                 .cursor(rune::Cursor::Pointer)
                 .on_press(load_more_pressed),
@@ -1407,7 +1407,7 @@ pub(crate) fn tail_row(s: &State, u: &Ui) -> El {
         } else {
             "That is the whole catalog."
         };
-        return base.child(text(end).font(SMALL).color(u.faint));
+        return base.child(text(super::super::tree::tr(end)).font(SMALL).color(u.faint));
     }
     base
 }
@@ -1428,7 +1428,7 @@ pub(crate) fn page_error(u: &Ui) -> El {
                 .grow(1.0),
         )
         .child(
-            u.action("Try again", ActionKind::Ghost)
+            u.action(super::super::tree::tr("Try again"), ActionKind::Ghost)
                 .key("browse-error-retry")
                 .cursor(rune::Cursor::Pointer)
                 .on_press_tx(refresh),

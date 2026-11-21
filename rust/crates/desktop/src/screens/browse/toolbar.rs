@@ -14,8 +14,15 @@ use crate::ui::SMALL_NUM;
 /// label, gap 2. The labels are names (All, Mods, WiPs...) and stay English in every language.
 /// `tabs_width_holds_the_labels` checks it against the font.
 pub(crate) const TABS_W: f32 = 352.0;
+/// The same in German, where "Sammlungen" and "Karten" are longer.
+pub(crate) const TABS_W_DE: f32 = 376.0;
+
+/// The tabs' width in the current language.
+pub(crate) fn tabs_w() -> f32 {
+    use crate::screens::settings::i18n::{self, Lang};
+    if i18n::current() == Lang::German { TABS_W_DE } else { TABS_W }
+}
 const TAB_PX: f32 = 10.0;
-const CATEGORY_W: f32 = 120.0;
 const FILTERS_W: f32 = 92.0;
 const FILTERS_ICON_W: f32 = 48.0;
 const SORT_W: f32 = 128.0;
@@ -39,16 +46,37 @@ pub(crate) enum Tier {
     D,
 }
 
-pub(crate) fn tier_for(width: f32) -> Tier {
-    if width >= TABS_W + 608.0 {
-        Tier::A
-    } else if width >= TABS_W + 348.0 {
-        Tier::B
-    } else if width >= 412.0 {
-        Tier::C
-    } else {
-        Tier::D
+/// The room each tier's line takes with a search field `search` wide. Every width is a constant.
+fn need(t: Tier, search: f32) -> f32 {
+    const TRAILING: f32 = 32.0 + 4.0 + 32.0;
+    const GAPS: f32 = 5.0 * 8.0;
+    match t {
+        Tier::A => tabs_w() + FILTERS_W + SORT_W + search + TRAILING + GAPS,
+        Tier::B => tabs_w() + FILTERS_ICON_W + 32.0 + search + TRAILING + GAPS,
+        Tier::C => SECTION_W + FILTERS_ICON_W + 32.0 + search + TRAILING + GAPS,
+        Tier::D => SECTION_W + FILTERS_ICON_W + 32.0 + 32.0 + 32.0 + 4.0 * 8.0,
     }
+}
+
+/// The tier follows the shell's toolbar fit (`ui::fit`, from the window alone): Full keeps the
+/// labels, Compact turns Filters and Sort into icons, Tight folds the tabs into a dropdown.
+/// A page narrower than its window (details docked beside it) steps further down until the
+/// line fits, so it never runs off the edge.
+pub(crate) fn tier_for(width: f32, fit: crate::ui::Fit) -> Tier {
+    use crate::ui::Fit;
+    let mut t = match fit {
+        Fit::Full => Tier::A,
+        Fit::Compact => Tier::B,
+        Fit::Tight => Tier::C,
+    };
+    while t != Tier::D && need(t, fit.search_w()) > width {
+        t = match t {
+            Tier::A => Tier::B,
+            Tier::B => Tier::C,
+            _ => Tier::D,
+        };
+    }
+    t
 }
 
 /// The page's inner width, as the grid uses it.
@@ -70,7 +98,7 @@ pub(crate) fn page_width(s: &State) -> f32 {
 }
 
 pub(crate) fn tier(s: &State) -> Tier {
-    tier_for(page_width(s))
+    tier_for(page_width(s), crate::ui::fit())
 }
 
 /// Where a filter menu hangs from: its own button when that button is on the line, the Filters
@@ -78,7 +106,6 @@ pub(crate) fn tier(s: &State) -> Tier {
 pub(crate) fn anchor(s: &State, menu: FilterMenu) -> &'static str {
     let t = tier(s);
     match menu {
-        FilterMenu::Category if t == Tier::A && !s.browse_view.from_filters => "browse-filter-category",
         FilterMenu::Category | FilterMenu::Sub | FilterMenu::Date => "browse-filter-more",
         FilterMenu::View if t == Tier::D => "browse-filter-tools",
         other => other.anchor(),
@@ -102,7 +129,7 @@ fn tabs(s: &State, u: &Ui) -> El {
     let current = s.browse_view.tab;
     let mut r = row()
         .key("browse-sections")
-        .w(TABS_W)
+        .w(tabs_w())
         .h(32.0)
         .padding(2.0)
         .gap(2.0)
@@ -124,12 +151,12 @@ fn tabs(s: &State, u: &Ui) -> El {
                 .hover(if on { u.selected } else { u.hover })
                 .focusable(true)
                 .role("radio")
-                .label(tab.label())
+                .label(super::tree::tr(tab.label()))
                 .checked(on)
                 .cursor(rune::Cursor::Pointer)
                 .on_press_tx(move |st: &mut State, tx: &mut Tx| set_tab(st, Some(tx), tab))
                 .child(
-                    text(tab.label())
+                    text(super::tree::tr(tab.label()))
                         .font(LABEL)
                         .color(if on { u.ink } else { u.muted })
                         .a11y_hidden(),
@@ -218,24 +245,10 @@ fn filters_button(s: &State, u: &Ui, t: Tier) -> El {
     )
 }
 
-/// The Browse search field, the shell's own `s.browse_query` field moved onto this line. Taking
-/// it here takes it out of the top bar on the same frame (`app::page_search`). It takes the
-/// slack up to 240 and gives way down to `min`.
-fn search_field(s: &State, u: &Ui, w: f32) -> El {
-    crate::app::page_search(s, u).key("browse-search-box").w(w)
-}
-
-/// The search field's width at a tier: the room the fixed controls leave, between the tier's
-/// minimum and 240. Every other width on the line is a constant, so this is exact.
-pub(crate) fn search_width(width: f32, t: Tier) -> f32 {
-    const TRAILING: f32 = 32.0 + 4.0 + 32.0;
-    let (fixed, min) = match t {
-        Tier::A => (TABS_W + CATEGORY_W + FILTERS_W + SORT_W + TRAILING + 6.0 * 8.0, 160.0),
-        Tier::B => (TABS_W + FILTERS_ICON_W + 32.0 + TRAILING + 5.0 * 8.0, 160.0),
-        Tier::C => (SECTION_W + FILTERS_ICON_W + 32.0 + TRAILING + 5.0 * 8.0, 120.0),
-        Tier::D => return 0.0,
-    };
-    (width - fixed).clamp(min, 240.0)
+/// The Browse search field, the shell's own `s.browse_query` field on this line, at the
+/// shell's fit width (240, 176 or 144). Drawing it here keeps it out of the top bar.
+fn search_field(s: &State, u: &Ui) -> El {
+    crate::app::page_search_as(s, u, super::tree::tr("Search mods")).key("browse-search-box")
 }
 
 /// The one toolbar line.
@@ -254,7 +267,7 @@ pub(crate) fn line(s: &State, u: &Ui) -> El {
             .h(32.0)
             .gap(8.0)
             .center_y()
-            .child(search_field(s, u, (page_width(s) - 40.0).max(0.0)))
+            .child(search_field(s, u).w((page_width(s) - 40.0).max(0.0)))
             .child(
                 square(u, "browse-search-close", &icons::X, super::tree::tr("Close search"), false)
                     .on_press(|st: &mut State| st.browse_view.search_open = false),
@@ -270,34 +283,18 @@ pub(crate) fn line(s: &State, u: &Ui) -> El {
             "browse-filter-section",
             SECTION_W,
             None,
-            s.browse_view.tab.label(),
+            super::tree::tr(s.browse_view.tab.label()),
             false,
             open == Some(FilterMenu::Section),
         )
         .on_press(|st: &mut State| toggle_menu(st, FilterMenu::Section))
     });
-    if t == Tier::A {
-        let maps = s.browse_view.tab == Tab::Maps;
-        r = r.child(usable(
-            dropdown(
-                u,
-                "browse-filter-category",
-                CATEGORY_W,
-                None,
-                f.category.as_ref().map(|p| p.name.as_str()).unwrap_or(super::tree::tr("Category")),
-                f.category.is_some(),
-                open == Some(FilterMenu::Category) && !s.browse_view.from_filters,
-            )
-            .on_press(|st: &mut State| toggle_menu(st, FilterMenu::Category)),
-            !collecting && !local && !maps,
-        ));
-    }
     r = r.child(usable(filters_button(s, u, t), !collecting));
     let order = current_query(s).shown_order();
     let sort = if t == Tier::A {
-        dropdown(u, "browse-filter-sort", SORT_W, Some(&SORT), order.label(), false, open == Some(FilterMenu::Sort))
+        dropdown(u, "browse-filter-sort", SORT_W, Some(&SORT), super::tree::tr(order.label()), false, open == Some(FilterMenu::Sort))
     } else {
-        square(u, "browse-filter-sort", &SORT, &crate::screens::settings::i18n::fill(super::tree::tr("Sort: {}"), &[order.label()]), open == Some(FilterMenu::Sort))
+        square(u, "browse-filter-sort", &SORT, &crate::screens::settings::i18n::fill(super::tree::tr("Sort: {}"), &[super::tree::tr(order.label())]), open == Some(FilterMenu::Sort))
     };
     r = r.child(usable(
         sort.on_press(|st: &mut State| toggle_menu(st, FilterMenu::Sort)),
@@ -308,7 +305,7 @@ pub(crate) fn line(s: &State, u: &Ui) -> El {
         square(u, "browse-search-open", &icons::SEARCH, "Search mods", !s.browse_query.text.is_empty())
             .on_press(|st: &mut State| st.browse_view.search_open = true)
     } else {
-        search_field(s, u, search_width(page_width(s), t))
+        search_field(s, u)
     });
     let trailing = row().gap(4.0).center_y();
     let trailing = if t == Tier::D {
@@ -402,10 +399,10 @@ fn chips(s: &State, u: &Ui) -> Vec<El> {
         out.push(clearing("creator", format!("By {}", pick.name), |f| f.creator = None));
     }
     if f.owned != Owned::Any {
-        out.push(clearing("owned", f.owned.label().to_string(), |f| f.owned = Owned::Any));
+        out.push(clearing("owned", super::tree::tr(f.owned.label()).to_string(), |f| f.owned = Owned::Any));
     }
     if f.mature != MatureView::Setting {
-        out.push(clearing("mature", f.mature.label().to_string(), |f| f.mature = MatureView::Setting));
+        out.push(clearing("mature", super::tree::tr(f.mature.label()).to_string(), |f| f.mature = MatureView::Setting));
     }
     if f.hide_outdated {
         out.push(clearing("outdated", "Hide outdated".into(), |f| f.hide_outdated = false));
@@ -512,30 +509,37 @@ mod tests {
     use super::*;
 
     #[test]
-    fn tiers_follow_the_spec() {
-        assert_eq!(tier_for(984.0), Tier::A, "1280 window");
-        assert_eq!(tier_for(744.0), Tier::B, "1040 window");
-        assert_eq!(tier_for(544.0), Tier::C, "1280 docked");
-        assert_eq!(tier_for(304.0), Tier::D, "1040 docked");
-    }
-
-    #[test]
-    fn the_search_field_takes_the_slack_up_to_240() {
-        assert_eq!(search_width(984.0, Tier::A), 176.0);
-        assert_eq!(search_width(744.0, Tier::B), 204.0);
-        assert_eq!(search_width(1400.0, Tier::A), 240.0);
-        assert_eq!(search_width(544.0, Tier::C), 240.0);
+    fn tiers_follow_the_fit_and_never_overflow() {
+        use crate::ui::Fit;
+        assert_eq!(tier_for(1016.0, Fit::Full), Tier::A, "1280 window");
+        assert_eq!(tier_for(776.0, Fit::Compact), Tier::B, "1040 window");
+        assert_eq!(tier_for(576.0, Fit::Full), Tier::C, "1280 with details docked");
+        assert_eq!(tier_for(336.0, Fit::Compact), Tier::D, "1040 with details docked");
+        for fit in [Fit::Full, Fit::Compact, Fit::Tight] {
+            for w in (300..1400).step_by(4) {
+                let w = w as f32;
+                let t = tier_for(w, fit);
+                assert!(t == Tier::D || need(t, fit.search_w()) <= w, "{fit:?} {w} {t:?}");
+            }
+        }
     }
 
     #[test]
     fn tabs_width_holds_the_labels() {
-        let labels: f32 = Tab::ALL
-            .iter()
-            .map(|tab| rune::text::measure(tab.label(), &[], LABEL, None).0 + 2.0 * TAB_PX)
-            .sum();
-        // Container padding 2 each side, five gaps of 2, a 2 point border.
-        let need = labels + 4.0 + 10.0 + 2.0;
-        assert!(need <= TABS_W, "tabs need {need}");
-        assert!(TABS_W - need < 24.0, "TABS_W wastes {} points", TABS_W - need);
+        // English and German: the tab names are measured in both.
+        for german in [false, true] {
+            let labels: f32 = Tab::ALL
+                .iter()
+                .map(|tab| {
+                    let label = if german { super::super::tree::german(tab.label()) } else { tab.label() };
+                    rune::text::measure(label, &[], LABEL, None).0 + 2.0 * TAB_PX
+                })
+                .sum();
+            // Container padding 2 each side, five gaps of 2, a 2 point border.
+            let need = labels + 4.0 + 10.0 + 2.0;
+            let have = if german { TABS_W_DE } else { TABS_W };
+            assert!(need <= have, "tabs need {need} (german {german})");
+            assert!(have - need < 24.0, "tab width wastes {} points (german {german})", have - need);
+        }
     }
 }

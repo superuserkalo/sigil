@@ -244,43 +244,36 @@ pub(crate) fn details_header(s: &State, u: &Ui, d: &Details, docked: bool) -> El
                 u,
                 "details-favorite",
                 if saved { &STAR_FILLED } else { &STAR },
-                if saved { "Remove from favorites" } else { "Save to favorites" },
+                super::tree::tr(if saved { "Remove from favorites" } else { "Save to favorites" }),
             )
             .on_press(move |st: &mut State| toggle_favorite(st, favorite.clone())),
         )
-        .child(head_button(u, "details-copy", &icons::COPY, "Copy link").on_press_tx(move |st: &mut State, tx: &mut Tx| {
+        .child(head_button(u, "details-copy", &icons::COPY, super::tree::tr("Copy link")).on_press_tx(move |st: &mut State, tx: &mut Tx| {
             tx.copy(link.clone());
-            st.status = "Link copied.".to_string();
+            st.status = super::tree::tr("Link copied.").to_string();
         }))
         .child(
-            head_button(u, "details-open", &icons::EXTERNAL_LINK, "Open on GameBanana")
+            head_button(u, "details-open", &icons::EXTERNAL_LINK, super::tree::tr("Open on GameBanana"))
                 .on_press_tx(move |st: &mut State, tx: &mut Tx| open_url(st, tx, &url)),
         )
-        .child(head_button(u, "details-hide", &EYE_OFF, "Hide this mod").on_press(move |st: &mut State| hide_mod(st, id)))
+        .child(head_button(u, "details-hide", &EYE_OFF, super::tree::tr("Hide this mod")).on_press(move |st: &mut State| hide_mod(st, id)))
         .child(
             head_button(
                 u,
                 "details-dock",
                 if docked { &MAXIMIZE_2 } else { &PANEL_RIGHT },
-                if docked { "Pop out" } else { "Dock to the side" },
+                super::tree::tr(if docked { "Pop out" } else { "Dock to the side" }),
             )
             .on_press(|st: &mut State| st.browse_view.docked = !st.browse_view.docked),
         )
         .child(el().w(8.0))
-        .child(head_button(u, "details-close", &icons::X, "Close").on_press(close_details))
+        .child(head_button(u, "details-close", &icons::X, super::tree::tr("Close")).on_press(close_details))
 }
 
 /// `25901` as `25,901`.
 pub(crate) fn section_head(u: &Ui, glyph: Option<&'static Icon>, label: &str, count: Option<u64>) -> El {
-    let mut r = row().gap(8.0).center_y();
-    if let Some(glyph) = glyph {
-        r = r.child(icon(glyph, 14.0).color(u.muted).a11y_hidden());
-    }
-    r = r.child(text(label.to_string()).font(H2).color(u.ink));
-    if let Some(count) = count.filter(|count| *count > 0) {
-        r = r.child(text(group_digits(count)).font(crate::ui::SMALL_NUM).color(u.muted));
-    }
-    r
+    let _ = glyph;
+    u.section_head(super::tree::tr(label), count.filter(|count| *count > 0).map(|count| count as usize), None)
 }
 
 pub(crate) fn tag(u: &Ui, label: &str) -> El {
@@ -374,7 +367,7 @@ pub(crate) fn details_actions(s: &State, u: &Ui, d: &Details) -> El {
             .child({
                 let updated = if profile.updated_ts > 0 { profile.updated_ts } else { d.updated_ts };
                 text(if updated > 0 {
-                    format!("Updated {}", gamebanana::calendar_date(updated))
+                    crate::screens::settings::i18n::fill(super::tree::tr("Updated {}"), &[&gamebanana::calendar_date(updated)])
                 } else {
                     String::new()
                 })
@@ -407,7 +400,7 @@ pub(crate) fn details_actions(s: &State, u: &Ui, d: &Details) -> El {
         c = c.child(
             u.icon_action(
                 &icons::PLAY,
-                if playing { "Stop the sample" } else { "Play the sample" },
+                super::tree::tr(if playing { "Stop the sample" } else { "Play the sample" }),
                 ActionKind::Secondary,
             )
             .key("details-sample")
@@ -469,7 +462,7 @@ pub(crate) fn details_reading(s: &State, u: &Ui, d: &Details) -> El {
         }
         if added > 0 {
             about = about.child(
-                text(format!("Added {}", gamebanana::calendar_date(added)))
+                text(crate::screens::settings::i18n::fill(super::tree::tr("Added {}"), &[&gamebanana::calendar_date(added)]))
                     .font(SMALL)
                     .color(u.muted),
             );

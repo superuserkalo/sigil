@@ -48,17 +48,17 @@ pub(crate) fn grid_page(s: &State, u: &Ui) -> El {
             if s.browse.error.as_deref().is_some_and(super::w4::is_rate_limit) {
                 crate::screens::settings::i18n::tr("GameBanana is rate-limiting Sigil")
             } else if s.browse.error.is_some() {
-                "GameBanana did not respond"
+                super::tree::tr("GameBanana did not respond")
             } else {
-                "Nothing loaded yet"
+                super::tree::tr("Nothing loaded yet")
             },
             if s.browse.error.as_deref().is_some_and(super::w4::is_rate_limit) {
                 crate::screens::settings::i18n::tr("Wait a minute, then try again.")
             } else {
-                "Check your connection, then try again."
+                super::tree::tr("Check your connection, then try again.")
             },
             Some(
-                u.icon_action(&icons::REFRESH_CW, "Try again", ActionKind::Secondary)
+                u.icon_action(&icons::REFRESH_CW, super::tree::tr("Try again"), ActionKind::Secondary)
                     .key("browse-retry")
                     .cursor(rune::Cursor::Pointer)
                     .on_press_tx(refresh),
@@ -72,7 +72,7 @@ pub(crate) fn grid_page(s: &State, u: &Ui) -> El {
         let only_favorites = f.favorites && f.active() == 1 && s.browse_query.text.trim().is_empty();
         if only_favorites {
             action = action.child(
-                u.action("Show everything", ActionKind::Secondary)
+                u.action(super::tree::tr("Show everything"), ActionKind::Secondary)
                     .key("browse-all")
                     .cursor(rune::Cursor::Pointer)
                     .on_press_tx(|st: &mut State, tx: &mut Tx| {
@@ -81,7 +81,7 @@ pub(crate) fn grid_page(s: &State, u: &Ui) -> El {
             );
         } else if filtered {
             action = action.child(
-                u.action("Clear filters", ActionKind::Secondary)
+                u.action(super::tree::tr("Clear filters"), ActionKind::Secondary)
                     .key("browse-clear")
                     .cursor(rune::Cursor::Pointer)
                     .on_press_tx(clear_filters),
@@ -89,7 +89,7 @@ pub(crate) fn grid_page(s: &State, u: &Ui) -> El {
         }
         if more_to_load(s) {
             action = action.child(
-                u.action("Load more", ActionKind::Secondary)
+                u.action(super::tree::tr("Load more"), ActionKind::Secondary)
                     .key("browse-more-empty")
                     .disabled(s.browse.loading)
                     .cursor(rune::Cursor::Pointer)
@@ -105,7 +105,7 @@ pub(crate) fn grid_page(s: &State, u: &Ui) -> El {
         } else {
             ("Nothing to show", "")
         };
-        u.empty_state("", title, detail, Some(action))
+        u.empty_state("", super::tree::tr(title), super::tree::tr(detail), Some(action))
     } else {
         let mut c = col().w_full().gap(16.0).pb(16.0);
         if s.browse.error.is_some() && s.browse_view.refreshing {
@@ -252,7 +252,7 @@ pub(crate) fn creator_rail(s: &State, u: &Ui) -> Option<El> {
             .key("browse-creator-rail")
             .w_full()
             .gap(8.0)
-            .child(text("Creators").font(BODY_MED).color(u.muted))
+            .child(u.section(super::tree::tr("Creators")))
             .child(strip),
     )
 }
@@ -321,7 +321,7 @@ pub(crate) fn pagination(s: &State, u: &Ui) -> Option<El> {
             }),
     );
     Some(bar.child(
-        text(format!("Page {current} of {count}"))
+        text(crate::screens::settings::i18n::fill(super::tree::tr("Page {} of {}"), &[&current.to_string(), &count.to_string()]))
             .font(SMALL)
             .color(u.faint)
             .ml(8.0),
@@ -332,7 +332,7 @@ pub(crate) fn pagination(s: &State, u: &Ui) -> Option<El> {
 /// How many results the filters give, as the toolbar shows it.
 pub(crate) fn result_line(s: &State, shown: usize, stale: bool) -> String {
     if stale || (s.browse.loading && s.browse.page.is_none()) {
-        return "Loading".to_string();
+        return super::tree::tr("Loading").to_string();
     }
     let Some(page) = s.browse.page.as_ref() else {
         return String::new();
@@ -351,7 +351,7 @@ pub(crate) fn result_line(s: &State, shown: usize, stale: bool) -> String {
         return if shown == 0 {
             String::new()
         } else {
-            plural(shown, "favorite", "favorites")
+            format!("{} {}", shown, super::tree::tr(if shown == 1 { "favorite" } else { "favorites" }))
         };
     }
     // A complete or locally filtered list counts what shows; an open feed counts the server's
@@ -368,6 +368,6 @@ pub(crate) fn result_line(s: &State, shown: usize, stale: bool) -> String {
     format!(
         "{} {}",
         group_digits(total as u64),
-        if total == 1 { noun.0 } else { noun.1 }
+        super::tree::tr(if total == 1 { noun.0 } else { noun.1 })
     )
 }
