@@ -112,8 +112,12 @@ pub fn wants_watch(st: &State) -> bool {
 pub fn poll(st: &mut State) -> bool {
     let mut changed = false;
     if let Some(Ok(tail)) = st.stats.live.job.try_take() {
+        // The log is read every two seconds; rebuild the page only when what it shows moved.
+        let same = st.stats.live.tail.as_ref().is_some_and(|old| {
+            old.state == tail.state && old.found == tail.found && old.modified == tail.modified
+        });
         st.stats.live.tail = Some(tail);
-        changed = true;
+        changed |= !same;
     }
     if let Some(result) = st.stats.live.check_job.try_take() {
         st.stats.live.check = result.ok();
