@@ -188,6 +188,11 @@ impl Monitor {
     pub fn running(&self) -> bool {
         self.snapshot().running
     }
+
+    /// True once the watch thread runs (never in headless renders).
+    pub fn is_started(&self) -> bool {
+        self.started
+    }
 }
 
 impl Drop for Monitor {

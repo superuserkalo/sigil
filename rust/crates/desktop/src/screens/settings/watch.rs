@@ -217,7 +217,16 @@ pub fn poll(st: &mut State, tx: &mut Tx) -> bool {
         st.settings.extra.watch.started = true;
         on_startup(st);
     }
-    if let Some(Ok(running)) = st.settings.extra.watch.job.try_take() {
+    // The launch monitor already reads the process list every two seconds for the whole
+    // session (a `tasklist` run on Windows). Follow it rather than run a second reader.
+    // Only while wanted, as the reader it replaces ran: a session starts only then.
+    let monitored = st.launch.monitor.is_started();
+    let seen = if monitored {
+        (!st.demo && wanted(st)).then(|| st.launch.monitor.running())
+    } else {
+        st.settings.extra.watch.job.try_take().and_then(Result::ok)
+    };
+    if let Some(running) = seen {
         let was = st.settings.extra.watch.running;
         st.settings.extra.watch.running = running;
         st.settings.game_running = running;
@@ -241,7 +250,7 @@ pub fn poll(st: &mut State, tx: &mut Tx) -> bool {
         return changed;
     }
     let w = &st.settings.extra.watch;
-    if w.last_check.is_none_or(|t| t.elapsed() >= CHECK_EVERY) && !w.job.is_running() {
+    if !monitored && w.last_check.is_none_or(|t| t.elapsed() >= CHECK_EVERY) && !w.job.is_running() {
         let wake = st.wake.clone();
         st.settings.extra.watch.last_check = Some(Instant::now());
         st.settings.extra.watch.job.start(wake, || Ok(super::tabs::game_running()));
@@ -263,7 +272,12 @@ pub fn poll(st: &mut State, tx: &mut Tx) -> bool {
             Ok((tail, moved))
         });
     }
-    tx.wake_after(TAIL_EVERY);
+    // The monitor wakes the window when the game starts or stops, so a timer is needed only
+    // for this module's own process check or the console tail Discord presence reads.
+    let tail = o.presence_game && st.prefs.discord && st.settings.extra.watch.running;
+    if !monitored || tail {
+        tx.wake_after(TAIL_EVERY);
+    }
     changed
 }
 
