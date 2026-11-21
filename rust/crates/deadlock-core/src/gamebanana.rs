@@ -2151,8 +2151,58 @@ fn decode_entities(text: &str) -> String {
     out
 }
 
+/// True for an `https` address on GameBanana or one of its subdomains, and nothing that only
+/// looks like one: the host is plain letters, digits, dots and hyphens up to the first `/`, `?`
+/// or `#`, so a user name, port, backslash or percent escape in front of a real host fails.
+/// Addresses from an API response go through this before Sigil fetches or opens them.
+pub fn is_gamebanana_url(url: &str) -> bool {
+    let Some(rest) = url.strip_prefix("https://") else {
+        return false;
+    };
+    if url.chars().any(|c| c.is_control() || c.is_whitespace() || c == '\\') {
+        return false;
+    }
+    let host = rest.split(['/', '?', '#']).next().unwrap_or("");
+    let plain = host.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'.' || b == b'-');
+    plain
+        && !host.contains("..")
+        && (host == "gamebanana.com" || host.ends_with(".gamebanana.com"))
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn only_real_gamebanana_addresses_pass() {
+        for good in [
+            "https://gamebanana.com/members/42",
+            "https://images.gamebanana.com/img/ss/mods/a.jpg",
+            "https://gamebanana.com?x=1",
+        ] {
+            assert!(is_gamebanana_url(good), "{good}");
+        }
+        for bad in [
+            "http://gamebanana.com/x",
+            "https://evil.com/gamebanana.com",
+            "https://gamebanana.com.evil.com/x",
+            "https://notgamebanana.com/x",
+            "https://user@gamebanana.com/x",
+            "https://evil.com@gamebanana.com/x",
+            "https://gamebanana.com:8080/x",
+            "https://evil.com\\.gamebanana.com/x",
+            "https://evil.com\\@gamebanana.com/x",
+            "https://evil.com%2f.gamebanana.com/x",
+            "https://evil.com#.gamebanana.com",
+            "https://evil.com?.gamebanana.com",
+            "https://a..gamebanana.com/x",
+            "https://gamebanana.com/a b",
+            "https://gamebanana.com/a\nb",
+            "file:///C:/x",
+            "javascript:alert(1)",
+        ] {
+            assert!(!is_gamebanana_url(bad), "{bad}");
+        }
+    }
+
     use super::*;
 
     #[test]

@@ -43,10 +43,7 @@ pub struct ProfileExtras {
 }
 
 fn gamebanana_image(url: &str) -> Option<String> {
-    let rest = url.strip_prefix("https://")?;
-    let host = rest.split('/').next().unwrap_or("");
-    let ok = (host == "gamebanana.com" || host.ends_with(".gamebanana.com")) && !host.contains('@') && !host.contains(':');
-    (ok && !url.contains("/static/img/defaults/")).then(|| url.to_string())
+    (crate::gamebanana::is_gamebanana_url(url) && !url.contains("/static/img/defaults/")).then(|| url.to_string())
 }
 
 /// Read the extras from a `ProfilePage` body. A private or banned member yields none.
