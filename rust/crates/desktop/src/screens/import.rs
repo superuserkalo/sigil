@@ -18,6 +18,9 @@ use crate::icons;
 use crate::jobs::Job;
 use crate::ui::{ActionKind, BODY, BODY_MED, H1, SMALL, Ui};
 
+pub(crate) mod locales;
+pub mod parts;
+
 #[derive(Default)]
 pub struct Flow {
     /// What detection found. `None` until it ran once.
@@ -26,6 +29,8 @@ pub struct Flow {
     pub dialog: Option<Dialog>,
     pub plan_job: Job<ImportPlan>,
     pub apply_job: Job<ImportReport>,
+    /// What the chosen local files hold, and whether they import as one mod with parts.
+    pub parts: parts::Parts,
 }
 
 pub struct Dialog {
@@ -149,6 +154,7 @@ pub fn pick_local(st: &mut State, tx: &mut Tx) {
 }
 
 pub fn open_local(st: &mut State, paths: Vec<PathBuf>) {
+    parts::on_open_local(st, &paths);
     let mods = import::local_mods(&paths);
     start_plan(st, SourceKind::Local, mods);
 }
@@ -184,12 +190,14 @@ fn set_plan(st: &mut State, plan: ImportPlan) {
         .collect();
     dialog.plan = Some(plan);
     dialog.stage = Stage::Review;
+    parts::on_plan(st);
 }
 
 // --- apply -------------------------------------------------------------------
 
 /// The user's confirm: copy the selected mods into the addon folder on a worker.
 fn confirm(st: &mut State) {
+    parts::prepare(st);
     let Some(dialog) = st.installed.import.dialog.as_mut() else {
         return;
     };
@@ -237,6 +245,13 @@ fn confirm(st: &mut State) {
 }
 
 fn finish(st: &mut State, result: Result<ImportReport, String>) {
+    match &result {
+        Ok(report) => parts::after_import(st, report),
+        Err(_) => {
+            st.installed.import.parts.pending.clear();
+            st.installed.import.parts.pending_group = None;
+        }
+    }
     if let Some(dialog) = st.installed.import.dialog.as_mut() {
         dialog.stage = Stage::Done;
         match result {
@@ -284,6 +299,7 @@ pub fn poll(st: &mut State) -> bool {
         finish(st, result);
         changed = true;
     }
+    changed |= parts::poll(st);
     changed
 }
 
@@ -334,7 +350,12 @@ pub fn dialog(s: &State, u: &Ui) -> Option<El> {
 
     match (d.stage, plan) {
         (Stage::Planning, _) => body = body.child(loading_rows(u)),
-        (Stage::Review | Stage::Applying, Some(plan)) => body = body.child(item_list(s, u, d, plan)),
+        (Stage::Review | Stage::Applying, Some(plan)) => {
+            if let Some(panel) = parts::panel(s, u) {
+                body = body.child(panel);
+            }
+            body = body.child(item_list(s, u, d, plan));
+        }
         (Stage::Done, _) => {
             if let Some(report) = &d.report
                 && !report.failed.is_empty()
@@ -354,7 +375,11 @@ pub fn dialog(s: &State, u: &Ui) -> Option<El> {
         _ => {}
     }
 
-    let mut buttons = row().w_full().gap(8.0).center_y().child(spacer());
+    let mut buttons = row().w_full().gap(8.0).center_y();
+    buttons = match parts::add_buttons(s, u) {
+        Some(add) => buttons.child(add),
+        None => buttons.child(spacer()),
+    };
     match d.stage {
         Stage::Done => {
             buttons = buttons.child(
@@ -453,6 +478,9 @@ fn item_list(s: &State, u: &Ui, d: &Dialog, plan: &ImportPlan) -> El {
                 let mut parts = Vec::new();
                 if let Some(author) = &item.source.author {
                     parts.push(format!("by {author}"));
+                }
+                if let Some(note) = parts::row_note(s, index) {
+                    parts.push(note);
                 }
                 parts.push(format!("slot {slot:02}"));
                 (parts.join("  ·  "), u.faint)

@@ -1,0 +1,45 @@
+//! German for the Add mods part of the local import review (`import/parts.rs`). Kept apart from
+//! the other tables so no two agents edit one file; chained into `i18n`'s maps. Strings another
+//! table already translates are left out.
+
+pub use crate::screens::settings::i18n::tr as t;
+
+pub const DE: &[(&str, &str)] = &[
+    ("{} ability sounds", "{} Fähigkeitssounds"),
+    ("{} effects", "{} Effekte"),
+    ("{} files become the parts of one mod. Switch each part in Manage files.", "{} Dateien werden zu Teilen eines Mods. Schalte jeden Teil unter Dateien verwalten um."),
+    ("{} HUD files", "{} HUD-Dateien"),
+    ("{} models", "{} Modelle"),
+    ("{} skin", "{}-Skin"),
+    ("{} voice lines", "{} Sprachzeilen"),
+    ("{} weapon sounds", "{} Waffensounds"),
+    ("{}: start it with map {} in the console.", "{}: starte sie mit map {} in der Konsole."),
+    ("1 ability sound", "1 Fähigkeitssound"),
+    ("1 effect", "1 Effekt"),
+    ("1 HUD file", "1 HUD-Datei"),
+    ("1 model", "1 Modell"),
+    ("1 sound", "1 Sound"),
+    ("1 voice line", "1 Sprachzeile"),
+    ("1 weapon sound", "1 Waffensound"),
+    ("A picture that came with the files.", "Ein Bild, das bei den Dateien lag."),
+    ("Add a folder", "Ordner hinzufügen"),
+    ("Add files", "Dateien hinzufügen"),
+    ("Category", "Kategorie"),
+    ("Cover", "Titelbild"),
+    ("Each file becomes a mod of its own.", "Jede Datei wird ein eigener Mod."),
+    ("Import as one mod", "Als ein Mod importieren"),
+    ("Map {}", "Karte {}"),
+    ("Name of the mod", "Name des Mods"),
+    ("No picture in the files. Pick one later with Edit on the card.", "Kein Bild in den Dateien. Wähle später eins mit Bearbeiten auf der Karte."),
+    ("Not a readable VPK", "Keine lesbare VPK"),
+    ("Read from the files.", "Aus den Dateien gelesen."),
+    ("Reading the files.", "Die Dateien werden gelesen."),
+    ("The files could be several things. Pick one, or leave it.", "Die Dateien könnten mehreres sein. Wähle eins oder lass es offen."),
+    ("The hero card this skin replaces.", "Die Heldenkarte, die dieser Skin ersetzt."),
+    ("The hero's art, since the skin has no picture of its own.", "Das Bild des Helden, da der Skin kein eigenes Bild hat."),
+    ("The mods were imported, but their details could not be saved: {}", "Die Mods wurden importiert, aber ihre Details konnten nicht gespeichert werden: {}"),
+    ("Your pick.", "Deine Wahl."),
+    ("Skin", "Skin"),
+    ("HUD", "HUD"),
+    ("Ability sounds", "Fähigkeitssounds"),
+];
