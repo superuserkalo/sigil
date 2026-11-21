@@ -753,6 +753,7 @@ fn loading_line(p: Option<sigil_viewer::LoadProgress>) -> Option<String> {
         LoadStage::Reading => fill(tr("Reading the room's models: {} of {}"), &[&done, &of]),
         LoadStage::Lighting => tr("Lighting the room").to_string(),
         LoadStage::Uploading => fill(tr("Putting the room on the graphics card: {} of {}"), &[&done, &of]),
+        LoadStage::Drawing => tr("Drawing the first frame").to_string(),
     })
 }
 

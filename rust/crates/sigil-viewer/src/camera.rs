@@ -27,7 +27,7 @@ impl Default for OrbitCamera {
 /// The three-quarter turn a framed hero starts at.
 pub const HOME_YAW: f32 = 0.42;
 pub const HOME_PITCH: f32 = 0.06;
-const PITCH_LIMIT: f32 = 1.45;
+pub const PITCH_LIMIT: f32 = 1.45;
 
 impl OrbitCamera {
     pub fn eye(&self) -> Vec3 {

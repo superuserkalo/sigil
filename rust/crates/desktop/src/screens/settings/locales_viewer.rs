@@ -104,6 +104,7 @@ pub const DE: &[(&str, &str)] = &[
     // Loading and failure on the stage (`viewer/mod.rs`, `viewer/worker.rs`).
     ("Reading the room's models: {} of {}", "Modelle des Raums werden gelesen: {} von {}"),
     ("Lighting the room", "Der Raum wird beleuchtet"),
+    ("Drawing the first frame", "Das erste Bild wird gezeichnet"),
     ("Putting the room on the graphics card: {} of {}", "Der Raum wird auf die Grafikkarte geladen: {} von {}"),
     ("Elapsed", "Vergangen"),
     ("The graphics card reported an error: {}", "Die Grafikkarte hat einen Fehler gemeldet: {}"),

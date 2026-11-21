@@ -85,6 +85,8 @@ pub struct Gpu {
     pub texture_budget: u64,
     pub buffer_budget: u64,
     usage: std::sync::Mutex<Usage>,
+    /// The device draws polygons as lines (`POLYGON_MODE_LINE`), for the wireframe view.
+    pub wireframe: bool,
 }
 
 fn instance() -> wgpu::Instance {
@@ -134,7 +136,8 @@ impl Gpu {
         let limits = wgpu::Limits { max_buffer_size: available.max_buffer_size, ..limits };
         let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
             label: Some("sigil-viewer"),
-            required_features: wgpu::Features::empty(),
+            // Deadlock Mod Manager's wireframe toggle, where the adapter can draw lines.
+            required_features: adapter.features() & wgpu::Features::POLYGON_MODE_LINE,
             required_limits: wgpu::Limits {
                 max_storage_buffers_per_shader_stage: 4,
                 max_storage_buffer_binding_size: (64 << 20u64).min(available.max_storage_buffer_binding_size),
@@ -166,7 +169,8 @@ impl Gpu {
         let limits = device.limits();
         let shared = matches!(info.device_type, wgpu::DeviceType::IntegratedGpu | wgpu::DeviceType::Cpu);
         let (texture_budget, buffer_budget) = if shared { (TEXTURE_BUDGET / 2, BUFFER_BUDGET / 2) } else { (TEXTURE_BUDGET, BUFFER_BUDGET) };
-        Ok(Gpu { device, queue, info, msaa, errors, limits, texture_budget, buffer_budget, usage: Default::default() })
+        let wireframe = device.features().contains(wgpu::Features::POLYGON_MODE_LINE);
+        Ok(Gpu { device, queue, info, msaa, errors, limits, texture_budget, buffer_budget, usage: Default::default(), wireframe })
     }
 
     /// The first GPU error since the last call, if any.
@@ -340,6 +344,8 @@ pub struct Pipelines {
     fog_depth: wgpu::RenderPipeline,
     main: HashMap<(Blend, bool), wgpu::RenderPipeline>,
     outline: wgpu::RenderPipeline,
+    /// Every surface as lines, shaded as usual (when the device can).
+    wire: Option<wgpu::RenderPipeline>,
     depth: wgpu::RenderPipeline,
     floor: wgpu::RenderPipeline,
     post: wgpu::RenderPipeline,
@@ -567,12 +573,12 @@ impl Pipelines {
             alpha: wgpu::BlendComponent { src_factor: wgpu::BlendFactor::Zero, dst_factor: wgpu::BlendFactor::One, operation: wgpu::BlendOperation::Add },
         };
         let msaa = wgpu::MultisampleState { count: gpu.msaa, mask: !0, alpha_to_coverage_enabled: false };
-        let make = |label: &str, vs: &str, fs: &str, blend: Option<wgpu::BlendState>, cull: Option<wgpu::Face>, write: bool, compare: wgpu::CompareFunction| {
+        let make_mode = |label: &str, vs: &str, fs: &str, blend: Option<wgpu::BlendState>, cull: Option<wgpu::Face>, write: bool, compare: wgpu::CompareFunction, polygon_mode: wgpu::PolygonMode| {
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                 label: Some(label),
                 layout: Some(&main_layout),
                 vertex: wgpu::VertexState { module: &scene, entry_point: Some(vs), compilation_options: Default::default(), buffers: &[Some(vertex_layout())] },
-                primitive: wgpu::PrimitiveState { cull_mode: cull, ..Default::default() },
+                primitive: wgpu::PrimitiveState { cull_mode: cull, polygon_mode, ..Default::default() },
                 depth_stencil: Some(wgpu::DepthStencilState { format: DEPTH, depth_write_enabled: Some(write), depth_compare: Some(compare), stencil: Default::default(), bias: Default::default() }),
                 multisample: msaa,
                 fragment: Some(wgpu::FragmentState {
@@ -585,6 +591,8 @@ impl Pipelines {
                 cache: None,
             })
         };
+        let make = |label: &str, vs: &str, fs: &str, blend: Option<wgpu::BlendState>, cull: Option<wgpu::Face>, write: bool, compare: wgpu::CompareFunction| make_mode(label, vs, fs, blend, cull, write, compare, wgpu::PolygonMode::Fill);
+        let wire = gpu.wireframe.then(|| make_mode("viewer wireframe", "vs_main", "fs_main", None, None, true, wgpu::CompareFunction::LessEqual, wgpu::PolygonMode::Line));
         let mut main = HashMap::new();
         for (blend, state, write) in [(Blend::Opaque, None, true), (Blend::Alpha, Some(premultiplied), false), (Blend::Additive, Some(additive), false)] {
             for double in [false, true] {
@@ -727,6 +735,7 @@ impl Pipelines {
             fog_depth,
             main,
             outline,
+            wire,
             depth,
             floor,
             post,
@@ -1168,6 +1177,8 @@ pub struct FrameInputs<'a> {
     pub bloom_weights: [[f32; 3]; 5],
     /// Particle effects, drawn in the "after" layer once its surfaces are down.
     pub particles: &'a [&'a crate::particles::ParticleGpu],
+    /// Draw every surface as lines (when the device can), without outlines.
+    pub wireframe: bool,
 }
 
 pub struct FrameResources {
@@ -1388,6 +1399,30 @@ pub fn render_frame(gpu: &Gpu, p: &Pipelines, r: &FrameResources, t: &Targets, i
         });
         pass.set_bind_group(0, &frame_group, &[]);
         pass.set_bind_group(3, &fog_read, &[]);
+        // The wireframe view: every visible surface as lines, then the floor and particles.
+        if let Some(wire) = p.wire.as_ref().filter(|_| inputs.wireframe) {
+            pass.set_pipeline(wire);
+            for s in shown.iter() {
+                for prim in s.model.prims.iter().filter(|q| q.visible) {
+                    pass.set_bind_group(1, &s.model.materials[prim.material], &[]);
+                    pass.set_bind_group(2, &s.model.draws[prim.mesh], &[]);
+                    pass.set_vertex_buffer(0, prim.vertices.slice(..));
+                    pass.set_index_buffer(prim.indices.slice(..), wgpu::IndexFormat::Uint32);
+                    pass.draw_indexed(0..prim.count, 0, 0..1);
+                }
+            }
+            if inputs.floor.is_some() {
+                pass.set_pipeline(&p.floor);
+                pass.set_bind_group(1, &r.floor_group, &[]);
+                pass.draw(0..6, 0..1);
+            }
+            if layer == 0 {
+                for pg in inputs.particles {
+                    pg.draw(&mut pass);
+                }
+            }
+            continue;
+        }
         // Opaque, then the outline hulls, the floor, then blended back to front.
         for s in shown.iter() {
             for prim in s.model.prims.iter().filter(|q| q.visible && q.blend == Blend::Opaque) {

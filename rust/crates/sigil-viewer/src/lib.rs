@@ -100,11 +100,15 @@ pub struct Look {
     /// March the Hideout's volumetric fog at half resolution and upsample it by depth
     /// (Grimoire's default); off marches it per surface fragment.
     pub half_res_fog: bool,
+    /// Deadlock Mod Manager's exposure slider: stops over the scene's own exposure (-3 to 3).
+    pub exposure: f32,
+    /// Deadlock Mod Manager's wireframe toggle (ignored where the device cannot draw lines).
+    pub wireframe: bool,
 }
 
 impl Default for Look {
     fn default() -> Self {
-        Look { transparent: false, bloom: true, floor: true, shadows: true, backdrop: Backdrop::Studio, lighting: Lighting::Studio, cloth: true, particles: true, half_res_fog: true }
+        Look { transparent: false, bloom: true, floor: true, shadows: true, backdrop: Backdrop::Studio, lighting: Lighting::Studio, cloth: true, particles: true, half_res_fog: true, exposure: 0.0, wireframe: false }
     }
 }
 
@@ -560,6 +564,8 @@ pub enum LoadStage {
     Lighting,
     /// Putting placements on the GPU: `done` of `of`.
     Uploading,
+    /// Everything is loaded; the first frame is being drawn (the preview shows when it is).
+    Drawing,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -711,6 +717,9 @@ pub struct Viewer {
     scene: Option<SceneDesc>,
     pub camera: OrbitCamera,
     home: Option<OrbitCamera>,
+    /// A remembered studio angle (yaw, pitch, distance over the framed distance) applied over
+    /// the framing; `reset_camera` drops it.
+    pose: Option<[f32; 3]>,
     framed_aspect: f32,
     pub playback: Playback,
     pub compare: Compare,
@@ -790,6 +799,7 @@ impl Viewer {
             scene: None,
             camera: OrbitCamera::default(),
             home: None,
+            pose: None,
             framed_aspect: 0.0,
             playback: Playback::default(),
             compare: Compare::After,
@@ -1150,7 +1160,27 @@ impl Viewer {
 
     pub fn reset_camera(&mut self) {
         self.home = None;
+        self.pose = None;
         self.turn = 0.0;
+    }
+
+    /// Starts the studio camera at a remembered angle (`camera_pose`) instead of the framing's.
+    /// A Hideout scene keeps its own camera.
+    pub fn set_camera_pose(&mut self, pose: Option<[f32; 3]>) {
+        self.pose = pose.filter(|p| p.iter().all(|x| x.is_finite()));
+        self.home = None;
+    }
+
+    /// Whether `Look::wireframe` can draw on this device.
+    pub fn can_wireframe(&self) -> bool {
+        self.gpu.wireframe
+    }
+
+    /// The studio camera's angle to remember for this hero: yaw, pitch and distance over the
+    /// framed distance. None in a scene or before the first frame.
+    pub fn camera_pose(&self) -> Option<[f32; 3]> {
+        let home = self.home.filter(|_| self.scene.is_none())?;
+        Some([self.camera.yaw, self.camera.pitch, self.camera.distance / home.distance.max(1e-3)])
     }
 
     pub fn timings(&self) -> Timings {
@@ -1176,6 +1206,12 @@ impl Viewer {
         }
         self.home = Some(self.camera);
         self.framed_aspect = aspect;
+        if let Some([yaw, pitch, zoom]) = self.pose.filter(|_| self.scene.is_none()) {
+            let c = &mut self.camera;
+            c.yaw = yaw.rem_euclid(std::f32::consts::TAU);
+            c.pitch = pitch.clamp(-camera::PITCH_LIMIT, camera::PITCH_LIMIT);
+            c.distance = (c.distance * zoom).clamp(c.min_distance, c.max_distance);
+        }
     }
 
     #[allow(clippy::type_complexity)]
@@ -1307,6 +1343,8 @@ impl Viewer {
             Some(s) => map_post(exposure, &s.post),
             None => (hero_post(exposure), [[1.0; 3]; 5]),
         };
+        let stops = if self.look.exposure.is_finite() { self.look.exposure.clamp(-3.0, 3.0) } else { 0.0 };
+        post.exposure[0] *= 2f32.powf(stops);
         post.top[3] = if self.look.transparent { 1.0 } else { 0.0 };
         match self.look.backdrop {
             Backdrop::Studio => {}
@@ -1431,7 +1469,7 @@ impl Viewer {
             (Compare::Split(_), true) => [Some(&after), Some(&before_list)],
             _ => [Some(&after), None],
         };
-        let inputs = FrameInputs { frame, post, floor, layers, read: !self.skip_read, env_cube: self.reflection.as_ref().map(|c| &c.view), sky_cube: self.sky.as_ref().map(|c| &c.view), backdrop: self.backdrop_image.as_ref().map(|b| &b.0), shadow: shadow.map(|m| m.to_cols_array()), hideout: self.hideout.as_ref().zip(baked), half_res_fog: self.look.half_res_fog, bloom_weights, shadow_hero_only, particles: &particle_list };
+        let inputs = FrameInputs { frame, post, floor, layers, read: !self.skip_read, env_cube: self.reflection.as_ref().map(|c| &c.view), sky_cube: self.sky.as_ref().map(|c| &c.view), backdrop: self.backdrop_image.as_ref().map(|b| &b.0), shadow: shadow.map(|m| m.to_cols_array()), hideout: self.hideout.as_ref().zip(baked), half_res_fog: self.look.half_res_fog, bloom_weights, shadow_hero_only, particles: &particle_list, wireframe: self.look.wireframe };
         let targets = self.targets.as_ref().expect("targets");
         let mut out = std::mem::take(&mut self.frame);
         self.last = gpu::render_frame(&self.gpu, &self.pipes, &self.res, targets, &inputs, &mut out);
