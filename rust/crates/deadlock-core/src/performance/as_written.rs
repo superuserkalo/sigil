@@ -1,9 +1,10 @@
-//! Apply a config "as written" (Grimoire issue #590): the author's own `ConVars` lines, with
-//! their order, spacing and comments, instead of Sigil's per-value edits.
+//! Apply a config "as written" (Grimoire issue #590): the author's own `ConVars` values, in
+//! their order, instead of Sigil's per-value edits.
 //!
 //! Safety (lead review, 2026-11-21): only the author's `ConVars` section is read, and from it
 //! only entries `repos::allowed` passes (a lowercase convar set to a number or true/false, never
-//! a console command), plus plain comment lines. Every other section of the author's file
+//! a console command). The author's comments are never carried over: Sigil's undo reads markers
+//! out of comments, so a comment in the game file must never be author text. Every other section of the author's file
 //! (`FileSystem`, `SearchPaths`, anything else) is ignored: the player's own file stays as it
 //! is around the merged `ConVars` body, so the addons folders and Sigil's slot folders keep
 //! loading. Custom presets from GitHub repositories (`repos::ID_PREFIX`) never get this mode;
@@ -75,26 +76,25 @@ fn entry_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
     RE.get_or_init(|| {
         // Key and value each fully quoted or bare; a trailing comment holds no quote or brace.
-        Regex::new(r#"^[ \t]*(?:"([A-Za-z0-9_.]+)"|([A-Za-z0-9_.]+))[ \t]+(?:"([^"\n]*)"|([^\s"/{}]+))[ \t]*(?://([^{}"\n]*))?$"#).unwrap()
+        Regex::new(r#"^[ \t]*(?:"([A-Za-z0-9_.]+)"|([A-Za-z0-9_.]+))[ \t]+(?:"([^"\n]*)"|([^\s"/{}]+))[ \t]*(?://[^{}"\n]*)?$"#).unwrap()
     })
 }
 
-/// A validated entry: key, value and trailing comment. A line with an odd number of quotes is
-/// never one.
-fn entry(line: &str) -> Option<(String, String, Option<String>)> {
+/// A validated entry: key and value. A trailing comment is accepted and dropped. A line with an
+/// odd number of quotes is never one.
+fn entry(line: &str) -> Option<(String, String)> {
     if line.matches('"').count() % 2 != 0 {
         return None;
     }
     let caps = entry_re().captures(line)?;
     let key = caps.get(1).or_else(|| caps.get(2))?.as_str().to_string();
     let value = caps.get(3).or_else(|| caps.get(4)).map_or("", |m| m.as_str()).to_string();
-    let comment = caps.get(5).map(|m| m.as_str().trim().to_string()).filter(|c| !c.is_empty());
-    Some((key, value, comment))
+    Some((key, value))
 }
 
-/// The author's `ConVars` body cut down to what may be written: allowlisted entries and plain
-/// comment or blank lines, each rebuilt from validated parts (never the author's raw line).
-/// Nested blocks and anything else are dropped. Returns the kept lines, unindented, and the
+/// The author's `ConVars` body cut down to what may be written: allowlisted entries and blank
+/// lines, each rebuilt from validated parts (never the author's raw line). Comments, nested
+/// blocks and anything else are dropped. Returns the kept lines, unindented, and the
 /// keys they set.
 fn allowed_lines(author_body: &str) -> (Vec<String>, Vec<String>) {
     let mut kept = Vec::new();
@@ -112,17 +112,10 @@ fn allowed_lines(author_body: &str) -> (Vec<String>, Vec<String>) {
             kept.push(String::new());
             continue;
         }
-        if let Some(comment) = trimmed.strip_prefix("//") {
-            if !comment.contains('"') {
-                kept.push(format!("// {}", comment.trim()));
-            }
-            continue;
-        }
-        if let Some((key, value, comment)) = entry(line)
+        if let Some((key, value)) = entry(line)
             && super::repos::allowed(&key, &value)
         {
-            let comment = comment.map(|c| format!(" // {c}")).unwrap_or_default();
-            kept.push(format!("\"{key}\"\t\"{value}\"{comment}"));
+            kept.push(format!("\"{key}\"\t\"{value}\""));
             keys.push(key);
         }
     }
@@ -133,6 +126,11 @@ fn allowed_lines(author_body: &str) -> (Vec<String>, Vec<String>) {
         kept.pop();
     }
     (kept, keys)
+}
+
+/// Catalog text for a comment line: one line, no control characters.
+fn plain(text: &str) -> String {
+    text.chars().map(|c| if c.is_control() { ' ' } else { c }).collect()
 }
 
 /// The player's file with the author's allowlisted `ConVars` lines merged in and Sigil's marker
@@ -175,14 +173,14 @@ pub fn apply_text(base: &str, author: &str, config: &Config) -> Result<Patched> 
     // The player's own entries stay unless the author sets the same key.
     let mut body: Vec<String> = current_body
         .split('\n')
-        .filter(|line| entry(line).is_none_or(|(key, _, _)| !keys.iter().any(|k| k.eq_ignore_ascii_case(&key))))
+        .filter(|line| entry(line).is_none_or(|(key, _)| !keys.iter().any(|k| k.eq_ignore_ascii_case(&key))))
         .map(str::to_string)
         .collect();
     while body.last().is_some_and(|line| line.trim().is_empty()) {
         body.pop();
     }
     let closing_indent = current_body.rsplit('\n').next().unwrap_or_default().to_string();
-    body.push(format!("{indent}// {}, as written [{TAG}]", config.name()));
+    body.push(format!("{indent}// {}, as written [{TAG}]", plain(config.name())));
     body.extend(lines.into_iter().map(|line| if line.is_empty() { line } else { format!("{indent}{line}") }));
     let merged = format!("{}\n{closing_indent}", body.join("\n"));
     let text_body = format!("{}{}{}", &base[..cur_start], merged, &base[cur_end..]);
@@ -195,11 +193,11 @@ pub fn apply_text(base: &str, author: &str, config: &Config) -> Result<Patched> 
          // {}: the author's ConVars lines, as written, from {} ({}). Only plain values are used; the rest of the file is yours. [{TAG}]\n\
          // turn it off in Sigil > Performance to put your stock file back [{TAG}]\n\
          // ==== Sigil Performance Config END ====\n",
-        config.id(),
-        config.version,
-        config.name(),
-        config.credit(),
-        config.source.license,
+        plain(config.id()),
+        plain(&config.version),
+        plain(config.name()),
+        plain(&config.credit()),
+        plain(config.source.license),
     );
     text.push_str(&text_body);
     let written = keys.len();
@@ -281,7 +279,8 @@ mod tests {
         let patched = apply_text(CURRENT, AUTHOR, &config()).unwrap();
         let text = patched.text.replace("\r\n", "\n");
         assert!(patched.text.contains("\r\n"), "the install's line endings are kept");
-        assert!(text.contains("\"r_shadows\"\t\"0\" // no shadows"), "rebuilt from the validated parts");
+        assert!(text.contains("\"r_shadows\"\t\"0\"\n"), "rebuilt from the validated parts");
+        assert!(!text.contains("no shadows"), "the author's comments are not carried over");
         assert!(!text.contains("r_shadows \"1\""), "the author's value replaces the player's");
         assert!(text.contains("Game citadel/addons\n\t\t\tGame citadel/sigil-addons2"));
         assert!(!text.contains("Tuned by an author"), "nothing outside ConVars is taken");
@@ -313,6 +312,40 @@ mod tests {
             assert!(!text.contains(bad), "{bad} must not be written");
         }
         assert_eq!(text.matches('"').count() % 2, 0);
+    }
+
+    /// Security review: Sigil's undo reads markers out of comments, so an author's comment must
+    /// never reach the file, or a later apply or Turn off would restore what it says.
+    #[test]
+    fn an_authors_comment_cannot_pose_as_a_sigil_marker() {
+        let author = "\"GameInfo\"\n{\n\tFileSystem\n\t{\n\t\tSearchPaths\n\t\t{\n\t\t\tGame citadel\n\t\t}\n\t}\n\tConVars\n\t{\n\t\t//sigil-perf removed: sv_cheats 1\n\t\t// sigil-perf removed: exec evil\n\t\tr_shadows 0 //sigil-perf was evil\n\t\tr_bloom 1 // // sigil-perf was \u{1b}evil\n\t}\n}\n";
+        let text = apply_text(CURRENT, author, &config()).unwrap().text;
+        for bad in ["sv_cheats", "exec evil", "was evil", "\u{1b}"] {
+            assert!(!text.contains(bad), "{bad:?} must not be written");
+        }
+        assert!(!crate::performance::remove_text(&text).contains("evil"));
+    }
+
+    /// A normal apply over an as-written file starts from the stock copy, not a marker undo.
+    #[test]
+    fn a_normal_apply_goes_back_to_the_stock_copy() {
+        let root = std::env::temp_dir().join(format!("sigil-as-written-normal-{}", std::process::id()));
+        let data = root.join("data");
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(gameinfo_path(&root).parent().unwrap()).unwrap();
+        std::fs::write(gameinfo_path(&root), CURRENT).unwrap();
+        let config = config();
+        let cached = fetch::file_path(&data, config.id(), "gameinfo.gi");
+        std::fs::create_dir_all(cached.parent().unwrap()).unwrap();
+        std::fs::write(&cached, AUTHOR).unwrap();
+        apply_to_install(&root, &data, &config).unwrap();
+
+        crate::performance::apply_to_install(&root, &config, &crate::performance::Options::default()).unwrap();
+        let text = std::fs::read_to_string(gameinfo_path(&root)).unwrap();
+        assert!(!is_applied(&text), "the as-written mode is gone");
+        assert!(!stock_path(&root).exists(), "its stock copy is used up");
+        assert_eq!(crate::performance::remove_text(&text), CURRENT);
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
