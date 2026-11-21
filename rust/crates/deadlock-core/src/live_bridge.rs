@@ -366,6 +366,69 @@ pub fn game_build(game_root: &Path) -> Option<String> {
     Some(format!("{version}:{:x}-{modified:x}", pak.len()))
 }
 
+/// What a game build change asks of the installed bridge.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RebuildAction {
+    /// The build is the one the caller last saw: nothing changed.
+    Unchanged,
+    /// A new build, with nothing for the bridge to do: none installed, switched off, shadowed
+    /// by a lower slot, already current, or a game layout this Sigil cannot patch.
+    Nothing,
+    /// The bridge is outdated and the game is closed: rebuild it now.
+    RebuildNow { slot: u16, file: PathBuf },
+    /// The bridge is outdated but the game is running: wait until it closes, then ask again.
+    WaitForGame { slot: u16, file: PathBuf },
+}
+
+/// The build read now, and what a change since the caller last looked asks.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RebuildPlan {
+    /// The build to remember. None when the game is not there.
+    pub build: Option<String>,
+    pub action: RebuildAction,
+}
+
+/// Decide what a game update means for the live bridge: an outdated bridge is rebuilt after a
+/// build change, but never while Deadlock runs. Reads the game and the addon folder, writes
+/// nothing; the caller runs [`rebuild_when_closed`] on a worker when the answer is
+/// [`RebuildAction::RebuildNow`].
+pub fn rebuild_plan(game_root: &Path, seen_build: Option<&str>, game_running: bool) -> Result<RebuildPlan> {
+    let Some(build) = game_build(game_root) else {
+        return Ok(RebuildPlan { build: None, action: RebuildAction::Nothing });
+    };
+    if seen_build == Some(build.as_str()) {
+        return Ok(RebuildPlan { build: Some(build), action: RebuildAction::Unchanged });
+    }
+    let check = check(game_root)?;
+    let action = if check.state == BridgeState::Outdated {
+        match (check.slot, check.file) {
+            (Some(slot), Some(file)) if game_running => RebuildAction::WaitForGame { slot, file },
+            (Some(slot), Some(file)) => RebuildAction::RebuildNow { slot, file },
+            _ => RebuildAction::Nothing,
+        }
+    } else {
+        RebuildAction::Nothing
+    };
+    Ok(RebuildPlan { build: Some(build), action })
+}
+
+/// GAME WRITE. [`rebuild_installed`], refused while Deadlock runs: the game keeps its addons
+/// open, so a bridge is only ever replaced after it closes.
+pub fn rebuild_when_closed(
+    game_root: &Path,
+    file: &Path,
+    work: &Path,
+    game_running: bool,
+    approve: bool,
+) -> Result<()> {
+    if game_running {
+        return Err(bad(
+            "Close Deadlock first. The game keeps its mods open while it runs.",
+        ));
+    }
+    rebuild_installed(game_root, file, work, approve)
+}
+
 #[cfg(test)]
 mod tests {
     #[test]
@@ -586,6 +649,52 @@ mod tests {
         // Switched off.
         fs::rename(&slot, addons.join("pak07_dir.vpk.disabled")).unwrap();
         assert_eq!(check(&root).unwrap().state, BridgeState::Off);
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_new_game_build_asks_for_a_rebuild_only_when_the_game_is_closed() {
+        let root = std::env::temp_dir().join(format!("sigil-live-update-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        // No game, no build and no plan.
+        let none = rebuild_plan(&root, None, false).unwrap();
+        assert_eq!((none.build, none.action), (None, RebuildAction::Nothing));
+
+        fake_game(&root);
+        let build = game_build(&root).unwrap();
+        // The same build is not looked at again, and a new one with no bridge has nothing to do.
+        assert_eq!(rebuild_plan(&root, Some(&build), false).unwrap().action, RebuildAction::Unchanged);
+        assert_eq!(rebuild_plan(&root, Some("older"), false).unwrap().action, RebuildAction::Nothing);
+
+        // A stale bridge with the game closed is rebuilt now.
+        let addons = root.join("game").join("citadel").join("addons");
+        let socket = addons.join("pak07_dir.vpk");
+        let stale = pack(
+            &[
+                (TEAM_LAYOUT.to_string(), layout(false)),
+                (SCRIPT.to_string(), b"old".to_vec()),
+            ],
+            &root.join("stale"),
+        )
+        .unwrap();
+        fs::copy(&stale, &socket).unwrap();
+        let plan = rebuild_plan(&root, Some("older"), false).unwrap();
+        assert_eq!(plan.build.as_deref(), Some(build.as_str()));
+        assert!(
+            matches!(&plan.action, RebuildAction::RebuildNow { slot: 7, file } if file == &socket),
+            "{:?}",
+            plan.action
+        );
+        // The game running turns it into a wait, and the guarded rebuild writes nothing.
+        assert!(matches!(
+            rebuild_plan(&root, Some("older"), true).unwrap().action,
+            RebuildAction::WaitForGame { slot: 7, .. }
+        ));
+        let before = fs::read(&socket).unwrap();
+        assert!(rebuild_when_closed(&root, &socket, &root.join("work"), true, true).is_err());
+        assert_eq!(fs::read(&socket).unwrap(), before, "nothing is written under a running game");
+        rebuild_when_closed(&root, &socket, &root.join("work"), false, true).unwrap();
+        assert_eq!(check(&root).unwrap().state, BridgeState::Current);
         let _ = fs::remove_dir_all(&root);
     }
 }
