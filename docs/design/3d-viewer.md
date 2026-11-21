@@ -606,9 +606,13 @@ gradient, Grimoire's ten soul gradients, a picture of the player's up to 12 MB) 
 Auto-rotate, Cloth, Particles, Bloom and Shadows, kept across sessions in `<data>/viewer.json`.
 GIF (Grimoire's `viewerGif.ts`): up to four seconds at 12 frames a second and 480 px, then a review
 that loops the take, trims start and end on a strip of six thumbnails (arrows step a frame, Shift
-twelve), and saves, retakes or cancels. Video (Deadlock Mod Manager's, behaviour only): up to ten
-seconds at 30 frames a second, a REC pill with the clock, Motion JPEG encoded on its own thread
-(`.mov` on macOS, `.avi` elsewhere; no VP8/VP9 encoder is linked). Recordings and pictures go to
+twelve), and saves, retakes or cancels. Video (Deadlock Mod Manager's): up to ten seconds at 30
+frames a second, a REC pill with the clock, saved as WebM on every platform. The VP8 encoder and
+WebM writer are Sigil's own pure Rust (`sigil_viewer::capture`, written from RFC 6386): 16x16
+intra and whole-pixel motion compensated inter frames, a key frame every 3 seconds, no loop
+filter, encoded on its own thread with the long edge capped at 1280 (about 25 ms a frame there,
+under 5 ms at 640x400). ffmpeg's decode matches the encoder's reconstruction bit for bit. Motion
+JPEG `.mov` and `.avi` remain as fallback formats in the library. Recordings and pictures go to
 `Pictures/Sigil`. Grimoire's keys join: W A S D orbit, Q and E zoom, R resets, T turns the
 turntable. The export panel shows a real percentage from the pipeline's progress callback.
 
