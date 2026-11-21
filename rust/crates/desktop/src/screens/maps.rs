@@ -816,6 +816,7 @@ fn fixture_mod(id: u64, name: &str, author: &str, likes: u64) -> BrowseMod {
         author: author.to_string(),
         category: "Maps".to_string(),
         subcategory: String::new(),
+        sub_category_id: 0,
         version: None,
         updated_at: String::new(),
         likes,

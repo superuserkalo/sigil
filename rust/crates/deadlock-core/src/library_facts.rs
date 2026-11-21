@@ -448,6 +448,7 @@ mod tests {
             author: String::new(),
             category: category.into(),
             subcategory: String::new(),
+            sub_category_id: 0,
             version: None,
             updated_at: String::new(),
             likes,

@@ -37,8 +37,13 @@ pub struct BrowseMod {
     pub author: String,
     /// Root category, for example `Skins`.
     pub category: String,
-    /// Sub category, for example a hero codename. Empty when absent.
+    /// Sub category, for example a hero codename. Empty when absent. GameBanana names the
+    /// deepest category here: a hero's style under Skins > Haze reads as that style.
     pub subcategory: String,
+    /// The id of `subcategory`, from its profile URL. Zero when absent. Matched against a
+    /// picked category's subtree, since a name alone misses the third level.
+    #[serde(default)]
+    pub sub_category_id: u64,
     pub version: Option<String>,
     /// ISO 8601 timestamp from `_tsDateModified`, falling back to the date added.
     pub updated_at: String,
@@ -553,7 +558,8 @@ pub fn parse_browse(body: &str, page: usize, perpage: usize) -> Result<BrowsePag
     parse_records(body, page, perpage, Record::is_listed)
 }
 
-/// One category in the browse tree. Root categories carry their children.
+/// One category in the browse tree. A category carries its children: heroes under Skins, a
+/// hero's styles under the hero, the NPC kinds under Model Replacement.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct BrowseCategory {
@@ -564,56 +570,120 @@ pub struct BrowseCategory {
     pub count: u64,
     #[serde(default)]
     pub children: Vec<BrowseCategory>,
+    /// `_nCategoryCount`: how many children GameBanana says the category has.
+    #[serde(default)]
+    pub child_count: u64,
 }
 
-/// The two-level category tree of a section: the roots, and the children of
-/// each root that has any (heroes under Skins, kinds of HUD and so on).
-pub fn fetch_categories(section: BrowseSection) -> Result<Vec<BrowseCategory>> {
-    let model = section.model();
-    let url = format!(
-        "{GAMEBANANA_API_BASE}/{model}/Categories?_idGameRow={GAMEBANANA_GAME_ID}&_sSort=a_to_z&_bShowEmpty=true"
-    );
-    let body = get_body(&url, "the category list")?;
-    let mut roots = parse_categories(&body)?;
-    let parents = parse_parent_ids(&body);
-    let children: Vec<(u64, Vec<BrowseCategory>)> = std::thread::scope(|scope| {
-        let handles: Vec<_> = parents
-            .into_iter()
-            .map(|id| {
-                scope.spawn(move || {
-                    let url = format!(
-                        "{GAMEBANANA_API_BASE}/{model}Category/{id}/SubCategories?_bShowEmpty=true"
-                    );
-                    let children = get_body(&url, &format!("category {id}"))
-                        .and_then(|body| parse_categories(&body))
-                        .unwrap_or_default();
-                    (id, children)
-                })
-            })
-            .collect();
-        handles
-            .into_iter()
-            .filter_map(|handle| handle.join().ok())
-            .collect()
-    });
-    for (id, kids) in children {
-        if let Some(root) = roots.iter_mut().find(|root| root.id == id) {
-            root.children = kids;
+impl BrowseCategory {
+    /// The category's own id and every descendant's, for matching a row's leaf category.
+    pub fn subtree_ids(&self) -> Vec<u64> {
+        let mut ids = vec![self.id];
+        for child in &self.children {
+            ids.extend(child.subtree_ids());
+        }
+        ids
+    }
+
+    /// The category with `id` in this subtree.
+    pub fn find(&self, id: u64) -> Option<&BrowseCategory> {
+        if self.id == id {
+            return Some(self);
+        }
+        self.children.iter().find_map(|child| child.find(id))
+    }
+}
+
+/// The path from a root to the category with `id`, root first. Empty when no root holds it.
+pub fn category_path(roots: &[BrowseCategory], id: u64) -> Vec<&BrowseCategory> {
+    fn walk<'a>(node: &'a BrowseCategory, id: u64, path: &mut Vec<&'a BrowseCategory>) -> bool {
+        path.push(node);
+        if node.id == id || node.children.iter().any(|child| walk(child, id, path)) {
+            return true;
+        }
+        path.pop();
+        false
+    }
+    let mut path = Vec::new();
+    for root in roots {
+        if walk(root, id, &mut path) {
+            return path;
         }
     }
+    Vec::new()
+}
+
+/// Category reads in flight at once.
+const CATEGORY_READS: usize = 8;
+
+/// The category tree of a section two levels deep: the roots and the children of each root
+/// that has any (heroes under Skins, kinds of HUD). [`deepen_categories`] reads the third.
+pub fn fetch_categories(section: BrowseSection) -> Result<Vec<BrowseCategory>> {
+    let model = section.model();
+    let body = get_body(&categories_url(model, None), "the category list")?;
+    let mut roots = parse_categories(&body)?;
+    fill_children(model, &mut roots, 1);
     Ok(roots)
 }
 
-/// Root ids whose `_nCategoryCount` says they have children.
-fn parse_parent_ids(body: &str) -> Vec<u64> {
-    let Ok(Value::Array(list)) = serde_json::from_str::<Value>(body) else {
-        return Vec::new();
-    };
-    list.iter()
-        .filter(|item| u64_of(item, "_nCategoryCount") > 0)
-        .map(|item| category_id(item))
-        .filter(|id| *id > 0)
-        .collect()
+/// The third level of a tree [`fetch_categories`] read: a hero's styles, the NPC kinds under
+/// Model Replacement. About one read per hero for Mods, so it runs after the first two levels
+/// show. Only categories GameBanana says have children are read, a few at a time.
+pub fn deepen_categories(section: BrowseSection, mut roots: Vec<BrowseCategory>) -> Vec<BrowseCategory> {
+    fill_children(section.model(), &mut roots, 2);
+    roots
+}
+
+/// `<Model>/Categories` for the game's roots, or for one category's children. Both carry
+/// `_idRow` and `_nCategoryCount`.
+pub fn categories_url(model: &str, parent: Option<u64>) -> String {
+    match parent {
+        None => format!(
+            "{GAMEBANANA_API_BASE}/{model}/Categories?_idGameRow={GAMEBANANA_GAME_ID}&_sSort=a_to_z&_bShowEmpty=true"
+        ),
+        Some(id) => format!(
+            "{GAMEBANANA_API_BASE}/{model}/Categories?_idCategoryRow={id}&_sSort=a_to_z&_bShowEmpty=true"
+        ),
+    }
+}
+
+/// Read the children of every node that has some, `depth` levels down. A failed read leaves
+/// that node without children; the tree still shows what loaded.
+fn fill_children(model: &str, nodes: &mut [BrowseCategory], depth: usize) {
+    if depth == 0 {
+        return;
+    }
+    let parents: Vec<usize> = nodes
+        .iter()
+        .enumerate()
+        .filter(|(_, node)| node.child_count > 0 && node.children.is_empty())
+        .map(|(index, _)| index)
+        .collect();
+    for batch in parents.chunks(CATEGORY_READS) {
+        let read: Vec<Vec<BrowseCategory>> = std::thread::scope(|scope| {
+            let handles: Vec<_> = batch
+                .iter()
+                .map(|index| {
+                    let id = nodes[*index].id;
+                    scope.spawn(move || {
+                        get_body(&categories_url(model, Some(id)), &format!("category {id}"))
+                            .and_then(|body| parse_categories(&body))
+                            .unwrap_or_default()
+                    })
+                })
+                .collect();
+            handles
+                .into_iter()
+                .map(|handle| handle.join().unwrap_or_default())
+                .collect()
+        });
+        for (index, children) in batch.iter().zip(read) {
+            nodes[*index].children = children;
+        }
+    }
+    for node in nodes.iter_mut() {
+        fill_children(model, &mut node.children, depth - 1);
+    }
 }
 
 /// A category's id: `_idRow`, or the number at the end of `_sUrl`, which is
@@ -650,6 +720,7 @@ pub fn parse_categories(body: &str) -> Result<Vec<BrowseCategory>> {
             icon_url: Some(str_of(item, "_sIconUrl")).filter(|url| !url.is_empty()),
             count: u64_of(item, "_nItemCount"),
             children: Vec::new(),
+            child_count: u64_of(item, "_nCategoryCount"),
         })
         .filter(|category| category.id > 0 && !category.name.is_empty())
         .collect())
@@ -1205,6 +1276,7 @@ impl Record {
                 .root_category
                 .map(|value| value.name)
                 .unwrap_or_default(),
+            sub_category_id: self.sub_category.as_ref().map(Named::row_id).unwrap_or(0),
             subcategory: self
                 .sub_category
                 .map(|value| value.name)
@@ -1254,6 +1326,24 @@ struct Named {
     id: u64,
     #[serde(rename = "_sName", default)]
     name: String,
+    /// Categories on list rows carry no `_idRow`; their profile URL ends in the id.
+    #[serde(rename = "_sProfileUrl", default)]
+    profile_url: String,
+}
+
+impl Named {
+    /// `_idRow`, or the number the profile URL ends in.
+    fn row_id(&self) -> u64 {
+        if self.id > 0 {
+            return self.id;
+        }
+        self.profile_url
+            .trim_end_matches('/')
+            .rsplit('/')
+            .next()
+            .and_then(|tail| tail.parse().ok())
+            .unwrap_or(0)
+    }
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -2268,7 +2358,8 @@ mod tests {
         assert_eq!(parsed.len(), 2, "obsolete categories are dropped");
         assert_eq!(parsed[0].id, 33295);
         assert_eq!(parsed[0].icon_url, None);
-        assert_eq!(parse_parent_ids(roots), vec![33295]);
+        assert_eq!(parsed[0].child_count, 44);
+        assert_eq!(parsed[1].child_count, 0);
 
         let subs = r#"[{"_sName": "Mo &amp; Krill", "_sUrl": "https://gamebanana.com/mods/cats/33320",
             "_sIconUrl": "https://images.gamebanana.com/img/ico/ModCategory/x.png", "_nItemCount": 61}]"#;
@@ -2276,6 +2367,31 @@ mod tests {
         assert_eq!(parsed[0].id, 33320, "the id comes from the URL");
         assert_eq!(parsed[0].name, "Mo & Krill");
         assert_eq!(parsed[0].count, 61);
+    }
+
+    #[test]
+    fn a_row_keeps_its_leaf_category_id() {
+        let body = r#"{"_aMetadata": {"_nRecordCount": 1, "_bIsComplete": true, "_nPerpage": 50},
+            "_aRecords": [{"_idRow": 7, "_sModelName": "Mod", "_sName": "Minigun Haze",
+                "_aRootCategory": {"_sName": "Skins", "_sProfileUrl": "https://gamebanana.com/mods/cats/33295"},
+                "_aSubCategory": {"_sName": "Faithful/Vanilla+", "_sProfileUrl": "https://gamebanana.com/mods/cats/50617"}}]}"#;
+        let page = parse_browse(body, 1, 50).unwrap();
+        assert_eq!(page.mods[0].subcategory, "Faithful/Vanilla+");
+        assert_eq!(page.mods[0].sub_category_id, 50617);
+    }
+
+    #[test]
+    fn category_paths_and_subtrees_reach_the_third_level() {
+        let leaf = |id: u64, name: &str| BrowseCategory { id, name: name.into(), ..Default::default() };
+        let haze = BrowseCategory { children: vec![leaf(50617, "Faithful/Vanilla+")], child_count: 1, ..leaf(33311, "Haze") };
+        let skins = BrowseCategory { children: vec![haze, leaf(33306, "Abrams")], child_count: 2, ..leaf(33295, "Skins") };
+        let roots = vec![leaf(31710, "Other/Misc"), skins];
+        let path: Vec<u64> = category_path(&roots, 50617).iter().map(|c| c.id).collect();
+        assert_eq!(path, vec![33295, 33311, 50617]);
+        assert!(category_path(&roots, 9).is_empty());
+        assert_eq!(roots[1].subtree_ids(), vec![33295, 33311, 50617, 33306]);
+        assert_eq!(roots[1].find(33311).map(|c| c.subtree_ids()), Some(vec![33311, 50617]));
+        assert!(categories_url("Sound", Some(6271)).ends_with("Sound/Categories?_idCategoryRow=6271&_sSort=a_to_z&_bShowEmpty=true"));
     }
 
     #[test]

@@ -58,6 +58,8 @@ pub mod replace;
 pub mod scenes;
 pub mod store;
 pub mod strip;
+pub mod rail;
+pub mod tree;
 
 use self::collections::*;
 pub(crate) use self::detail_state::*;
@@ -331,6 +333,8 @@ pub struct View {
     pub hidden_hover: Option<String>,
     /// The custom mod source Browse shows instead of GameBanana (`sources.rs`).
     pub sources: sources::SourceView,
+    /// The third level of the category tree and the landing rail's drag (`tree.rs`).
+    pub tree: tree::Tree,
     pub details: Option<Details>,
     /// The details view sits beside the grid instead of over it.
     pub docked: bool,
@@ -755,6 +759,7 @@ impl Favorite {
             comments: 0,
             author_id: self.author_id,
             obsolete: false,
+            sub_category_id: 0,
         }
     }
 }
@@ -924,6 +929,7 @@ pub fn local_page(st: &mut State, key: u64) -> Option<BrowsePageView> {
                     comments: 0,
                     author_id: 0,
                     obsolete: false,
+                    sub_category_id: 0,
                 })
             })
             .collect()
@@ -1011,7 +1017,8 @@ fn set_tab(st: &mut State, tx: Option<&mut Tx>, tab: Tab) {
             map_name = Some(Pick { id: MAPS_CATEGORY, name: "Maps".into() });
         }
     }
-    st.browse_view.filters = Filters {
+    let hero = tree::picked_hero(st, &st.browse_view.filters);
+    let mut filters = Filters {
         section: tab.section(),
         category: map_name,
         order: st.browse_view.filters.order,
@@ -1019,6 +1026,9 @@ fn set_tab(st: &mut State, tx: Option<&mut Tx>, tab: Tab) {
         hide_outdated: st.browse_view.filters.hide_outdated,
         ..Filters::default()
     };
+    // DMM 2.4.0: a hero pick follows the player from Mods to Sounds and WiPs and back.
+    tree::follow_hero(st, hero, tab, &mut filters);
+    st.browse_view.filters = filters;
     save_browse_state(st);
     if tab == Tab::Collections {
         st.browse_view.collections = None;
@@ -1187,6 +1197,21 @@ fn shown_indices(s: &State) -> Vec<usize> {
         HashSet::new()
     };
     let hide_mature = s.prefs.mature == crate::prefs::Mature::Hide || f.mature == MatureView::Hide;
+    // A pick holds the categories under it: Haze holds its styles (`tree.rs`).
+    let sub_ids = f.sub.as_ref().map(|pick| tree::subtree(s, f.section, pick.id)).unwrap_or_default();
+    let sub_complete = f.sub.as_ref().is_none_or(|pick| tree::subtree_complete(s, f.section, pick.id));
+    let hero_ids = f.hero.as_deref().map(|hero| tree::hero_ids(s, f.section, hero)).unwrap_or_default();
+    let in_sub = |card: &BrowseCard, name: &str| {
+        if card.sub_category_id > 0 && !sub_ids.is_empty() {
+            // Until the third level is read, the server's filter stands for an included pick.
+            sub_ids.contains(&card.sub_category_id) || (!sub_complete && !f.exclude)
+        } else {
+            in_sub(card, name)
+        }
+    };
+    let mentions_hero = |card: &BrowseCard, hero: &str| {
+        (card.sub_category_id > 0 && hero_ids.contains(&card.sub_category_id)) || mentions_hero(card, hero)
+    };
     let window_start = if f.date_from > 0 {
         f.date_from
     } else {
@@ -1316,6 +1341,7 @@ mod tests {
             author: String::new(),
             category: String::new(),
             subcategory: String::new(),
+            sub_category_id: 0,
             version: None,
             updated_at: String::new(),
             likes,

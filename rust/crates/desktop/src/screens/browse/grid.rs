@@ -305,6 +305,14 @@ pub(crate) fn active_chips(s: &State, u: &Ui) -> Option<El> {
         }));
     }
     if let Some(pick) = &f.sub {
+        // A third-level pick reads as a breadcrumb: Skins > Haze > Faithful/Vanilla+, each
+        // step back up one press.
+        for step in super::tree::middle(s) {
+            r = r.child(super::tree::chevron(u)).child(super::tree::crumb(u, step));
+        }
+        if f.category.is_some() {
+            r = r.child(super::tree::chevron(u));
+        }
         r = r.child(clearing("sub", format!("{not}{}", pick.name), |f| f.sub = None));
     }
     if let Some(hero) = &f.hero {
@@ -482,11 +490,12 @@ pub(crate) fn hero_rail(s: &State, u: &Ui) -> Option<El> {
     if heroes.is_empty() {
         return None;
     }
+    // DMM 2.4.0: the rail scrolls under a drag, with a bar under it a mouse can grab.
     let mut strip = row().key("browse-heroes").w_full().gap(12.0).scroll_x();
     for hero in heroes.into_iter().take(24) {
         let name = hero.name.clone();
         let portrait = hero_portrait(s, &hero.name);
-        strip = strip.child(
+        strip = strip.child(super::rail::tile(
             col()
                 .key(format!("browse-hero-{}", hero.id))
                 .w(88.0)
@@ -496,7 +505,11 @@ pub(crate) fn hero_rail(s: &State, u: &Ui) -> Option<El> {
                 .role("button")
                 .label(format!("Browse {} skins", hero.name))
                 .cursor(rune::Cursor::Pointer)
-                .on_press_tx(move |st: &mut State, tx: &mut Tx| open_skins_for(st, tx, &name))
+                .on_press_tx(move |st: &mut State, tx: &mut Tx| {
+                    if !super::rail::took_drag(st) {
+                        open_skins_for(st, tx, &name);
+                    }
+                })
                 .child(
                     el().size(56.0, 56.0)
                         .radius(28.0)
@@ -529,7 +542,8 @@ pub(crate) fn hero_rail(s: &State, u: &Ui) -> Option<El> {
                         .truncate()
                         .max_w(88.0),
                 ),
-        );
+            "browse-heroes",
+        ));
     }
     Some(
         col()
@@ -545,7 +559,8 @@ pub(crate) fn hero_rail(s: &State, u: &Ui) -> Option<El> {
                     // Wave 4: DMM's random hero.
                     .child(super::w4::random_button(u)),
             )
-            .child(strip),
+            .child(super::rail::strip(s, strip, "browse-heroes"))
+            .child(super::rail::bar(s, u, "browse-heroes", super::tree::tr("Scroll the heroes"))),
     )
 }
 
