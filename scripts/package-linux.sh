@@ -99,7 +99,8 @@ if command -v desktop-file-validate >/dev/null 2>&1; then
 fi
 
 echo "== linuxdeploy =="
-mkdir -p "$tools"
+# appimagetool and dpkg-deb write their output here; neither creates the folder.
+mkdir -p "$pkg" "$tools"
 ld="$tools/linuxdeploy-x86_64.AppImage"
 if [ ! -f "$ld" ] || [ "$(sha256 "$ld")" != "$linuxdeploy_sha" ]; then
   rm -f "$ld"
