@@ -112,7 +112,7 @@ Column meanings:
 | --- | --- | --- | --- | --- | --- |
 | deadlock-api rank rework, rank details, scoreboard, leaderboard seasons, crosshair codes | #575 | merged-unreleased | has: `deadlock-core/src/stats.rs`, `stats/leaderboard.rs`, `crosshair.rs` (`upstream-gaps-2026-11-21.md`) | - | - |
 | Street Brawl games tagged in the match list | #575 | merged-unreleased | has (owner's call, 2026-11-21): `stats/filters.rs` `is_street_brawl`, the tag in `stats/matches.rs`, and every aggregate skips them | - | - |
-| Hardening: Top X% only for a current-season match and `<0.1%` for tiny values; a rank endpoint failure leaves the card at `--`; no fallback to old MMR in the chart ("not enough ranked matches yet"); fast season switches never show an old board; Enter on the Statlocker link opens it | #586 `fix(stats)` | branch WIP | partial: `stats.rs` `top_percent` exists; the "not enough ranked matches" state and the season race guard were not found | S | Port the `fix(stats)` commit of `fix/review-followups-2026-11` behaviour by behaviour |
+| Hardening: Top X% only for a current-season match and `<0.1%` for tiny values; a rank endpoint failure leaves the card at `--`; no fallback to old MMR in the chart ("not enough ranked matches yet"); fast season switches never show an old board; Enter on the Statlocker link opens it | #586 `fix(stats)` | branch WIP | has: `stats.rs` `rank_in_current_season` gates the share to a badge earned in the running season (from the ranked-season list) and `RankBenchmark::top_percent_text` writes `<0.1%` under a tenth; a failed rank request leaves `PlayerRank::unavailable` and the brief reads `--`; the chart draws ranked matches only and says "Not enough ranked matches to chart yet."; one leaderboard load at a time (`Job`), so an earlier board can never land over a newer one and the caption names the board's own season and region; the Statlocker link is its own button, so no key event bubbles from a match row | - | - |
 
 ## Performance and config
 
@@ -180,7 +180,7 @@ per-run log folder with Open logs, a fixture hash check, and appendable notes on
 | --- | --- | --- | --- | --- | --- |
 | Diagnostics include the GPU, driver and hardware acceleration state (black screen reports) | branch `claude/grimoire-black-screen-menu-*` (no PR) | branch WIP | has: `diagnostics::machine_line` reads the benchmark's `Machine` and every report carries it (Send diagnostics preview and summary, Copy report, the troubleshooting section); a Mac without a reportable adapter says so instead of claiming software rendering | - | - |
 | Runs on CPUs without AVX2 | issue #574 | issue only | has: no `target-cpu` override in the Rust build (no `rust/.cargo/config.toml`) | - | Keep it that way |
-| Compatibility check skips sound repair for models without game data (soul container, urn, effect meshes), so 13 false "unsupported" findings go away | vpkmerge #95 | PR open | missing: `vpkmerge-core` pinned at df41586 (`rust/crates/deadlock-core/Cargo.toml`) | S | Bump the rev when #95 merges |
+| Compatibility check skips sound repair for models without game data (soul container, urn, effect meshes), so 13 false "unsupported" findings go away | vpkmerge #95 | PR open | has: `compat_repair::check` drops sound findings when the game's own model carries an empty `m_modelInfo.m_keyValueText` (the rule of vpkmerge #95), while present but unreadable metadata still reports why | - | Bump `vpkmerge-core` and drop the local guard when #95 merges |
 
 ## Downloads and installs
 
