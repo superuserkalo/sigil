@@ -44,14 +44,43 @@ pub enum Dialog {
     },
 }
 
-/// How many overlaps a player still has to look at. Drives the sidebar badge.
+/// Bumped whenever the cached ignore list changes, so counts built from it know to redo.
+static IGNORES_GEN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// How many overlaps a player still has to look at. Drives the sidebar badge, so it runs on
+/// every view of every page: the count is kept until the conflicts or the ignore list change
+/// (it cloned the whole ignore list and checked every per-file row each time).
 pub fn badge_count(s: &State) -> usize {
-    let ignores = ignores();
-    s.addons
-        .conflicts
-        .iter()
-        .filter(|conflict| !ignores.hides(&conflict.path, &conflict.slots, conflict.winner))
-        .count()
+    use std::cell::Cell;
+    thread_local! {
+        static LAST: Cell<Option<((u64, usize, u64), usize)>> = const { Cell::new(None) };
+    }
+    let conflicts = &s.addons.conflicts;
+    let generation = IGNORES_GEN.load(std::sync::atomic::Ordering::Relaxed);
+    // What `hides` reads of each row, folded without allocating: a rescan or a load order
+    // change that moves a winner changes it.
+    let rows = conflicts.iter().fold(0u64, |h, c| {
+        let path = c.path.bytes().fold(0xcbf2_9ce4_8422_2325u64, |f, b| (f ^ u64::from(b)).wrapping_mul(0x100_0000_01b3));
+        let row = c.slots.iter().fold(path ^ u64::from(c.winner), |r, &slot| r.rotate_left(7) ^ u64::from(slot));
+        h.rotate_left(5) ^ row.wrapping_mul(0x9E37_79B9_7F4A_7C15)
+    });
+    let key = (rows, conflicts.len(), generation);
+    if let Some((seen, count)) = LAST.with(Cell::get)
+        && seen == key
+    {
+        return count;
+    }
+    let count = cache()
+        .lock()
+        .map(|ignores| {
+            conflicts
+                .iter()
+                .filter(|conflict| !ignores.hides(&conflict.path, &conflict.slots, conflict.winner))
+                .count()
+        })
+        .unwrap_or(conflicts.len());
+    LAST.with(|last| last.set(Some((key, count))));
+    count
 }
 
 /// The ignore list, read once per process. It lives under the app data directory and is edited
@@ -110,6 +139,7 @@ pub fn sync_scope(st: &State) {
     }
     if let Ok(mut cached) = cache().lock() {
         *cached = impact::load_ignores(&dir);
+        IGNORES_GEN.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     }
 }
 
@@ -166,6 +196,7 @@ fn edit(change: impl FnOnce(&mut Ignores) -> bool) -> Ignores {
     let fresh = impact::edit_ignores(&dir, change).unwrap_or_else(|_| impact::load_ignores(&dir));
     if let Ok(mut cached) = cache().lock() {
         *cached = fresh.clone();
+        IGNORES_GEN.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     }
     fresh
 }
@@ -659,6 +690,7 @@ fn restore_list(u: &Ui, list: &Ignores, names: std::collections::BTreeMap<u16, S
                                 .unwrap_or_else(|_| impact::load_ignores(&data));
                             if let Ok(mut cached) = cache().lock() {
                                 *cached = fresh;
+                                IGNORES_GEN.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                             }
                             st.addons.scanned = false;
                             crate::notify::push(
@@ -925,6 +957,7 @@ mod tests {
 fn stage_ignores(list: Ignores) {
     if let Ok(mut cached) = cache().lock() {
         *cached = list;
+        IGNORES_GEN.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     }
 }
 
