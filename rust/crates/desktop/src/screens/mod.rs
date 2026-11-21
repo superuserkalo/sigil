@@ -11,6 +11,7 @@ pub mod index;
 pub mod explorer;
 pub mod installed;
 pub mod launch;
+pub mod launch_crash;
 pub mod launch_extras;
 pub mod launch_gate;
 pub mod launch_progress;
