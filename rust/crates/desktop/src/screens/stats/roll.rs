@@ -20,10 +20,10 @@ use super::german::tr;
 use super::shared::*;
 use super::Fetched;
 
-/// The roll section's state, kept in Stats' view.
 /// The lists and the hero art a Roll reads on its worker.
 pub type RollLoad = (RollData, Vec<(String, Vec<u8>)>);
 
+/// The roll section's state, kept in Stats' view.
 pub struct RollView {
     pub data: Fetched<RollData>,
     pub job: Job<RollLoad>,
