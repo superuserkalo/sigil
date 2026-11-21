@@ -1935,6 +1935,7 @@ pub fn setup(s: &mut State, waker: Waker) {
     }
     screens::settings::on_startup(s);
     crate::shell::on_startup(s);
+    screens::performance::benchmark::on_startup(s);
     crate::banner::recheck(s);
 }
 

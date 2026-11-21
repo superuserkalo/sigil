@@ -33,6 +33,7 @@ use crate::ui::{
 
 mod de;
 
+pub mod benchmark;
 pub mod detail;
 pub mod editor;
 pub mod hosted;
@@ -91,6 +92,8 @@ pub struct View {
     pub editor: Option<editor::Editor>,
     /// A GameBanana config's page, when it is open.
     pub hosted: Option<hosted::Hosted>,
+    /// Performance > Benchmark.
+    pub benchmark: benchmark::Page,
 }
 
 /// What the game files say, read together so the page never shows half a state.
@@ -580,10 +583,14 @@ pub fn poll(st: &mut State) -> bool {
     }
     changed |= editor::poll(st);
     changed |= hosted::poll(st);
+    changed |= benchmark::poll(st);
     changed
 }
 
 pub fn view(s: &State, u: &Ui) -> El {
+    if s.performance.benchmark.open {
+        return scroll("perf-bench", benchmark::view(s, u));
+    }
     if s.performance.hosted.is_some() {
         return scroll("perf-hosted", hosted::view(s, u));
     }
@@ -635,6 +642,12 @@ fn list_page(s: &State, u: &Ui) -> El {
         });
     let mut actions = row().gap(8.0).center_y();
     if s.game_detected && s.game_root.is_some() {
+        actions = actions.child(
+            u.icon_action(&icons::GAUGE, tr("Benchmark"), ActionKind::Secondary)
+                .key("perf-benchmark")
+                .cursor(rune::Cursor::Pointer)
+                .on_press(benchmark::open),
+        );
         actions = actions.child(
             u.icon_action(&icons::SQUARE_PEN, tr("Edit in editor"), ActionKind::Secondary)
                 .key("perf-edit-external")
