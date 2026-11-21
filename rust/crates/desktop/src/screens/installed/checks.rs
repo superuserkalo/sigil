@@ -186,10 +186,14 @@ fn remove_leftovers(st: &mut State) {
     let trash_root = super::trash_dir();
     let mut entries = Vec::new();
     let mut errors = Vec::new();
+    let mut failed = 0usize;
     for (folder, names) in groups {
         match deadlock_core::trash::trash_loose(&folder, &trash_root, &names, true) {
             Ok(entry) => entries.push(entry),
-            Err(error) => errors.push(error.to_string()),
+            Err(error) => {
+                failed += names.len();
+                errors.push(error.to_string());
+            }
         }
     }
     if entries.is_empty() {
@@ -210,7 +214,7 @@ fn remove_leftovers(st: &mut State) {
             st,
             crate::notify::Notice::warning(fill(
                 tr("{} leftover files could not be removed"),
-                &[&errors.len().to_string()],
+                &[&failed.to_string()],
             ))
             .detail(errors.join(" ")),
         );
