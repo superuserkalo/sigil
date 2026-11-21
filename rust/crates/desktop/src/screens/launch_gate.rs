@@ -11,7 +11,7 @@ use rune::{El, Key, KeyEvent, row, spacer, text};
 
 use crate::app::State;
 use crate::screens::settings::i18n::tr;
-use crate::ui::{ActionKind, BODY, H1, Ui};
+use crate::ui::{ActionKind, BODY, PAGE_TITLE, Ui};
 use deadlock_core::deploy::LaunchBlocker;
 
 /// A launch waiting for the player's answer.
@@ -94,7 +94,7 @@ pub fn dialog(s: &State, u: &Ui) -> Option<El> {
             tr("Deadlock needs this file to start. Let Steam restore it with Verify integrity of game files, then launch again."),
         ),
     };
-    let mut buttons = row().w_full().gap(8.0).pt(8.0).child(spacer()).child(
+    let mut buttons = row().w_full().gap(8.0).child(spacer()).child(
         u.action(tr("Cancel"), ActionKind::Ghost)
             .key("launch-gate-cancel")
             .cursor(rune::Cursor::Pointer)
@@ -141,7 +141,7 @@ pub fn dialog(s: &State, u: &Ui) -> Option<El> {
             .key("launch-gate")
             .role("alertdialog")
             .label(title)
-            .w(500.0)
+            .w(480.0)
             .padding(24.0)
             .gap(16.0)
             .modal(true, close)
@@ -153,8 +153,8 @@ pub fn dialog(s: &State, u: &Ui) -> Option<El> {
                     false
                 }
             })
-            .child(text(title).font(H1).color(u.ink).wrap())
-            .child(text(body).font(BODY).color(u.muted).wrap())
+            .child(text(title).font(PAGE_TITLE).color(u.ink).wrap())
+            .child(text(body).font(BODY).color(u.prose).max_w(432.0).wrap())
             .child(buttons),
     )
 }

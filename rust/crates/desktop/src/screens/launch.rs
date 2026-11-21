@@ -15,13 +15,14 @@ use std::time::Duration;
 
 use deadlock_core::impact::{Change, Suspect};
 use deadlock_core::launch::{GameProcess, LaunchMarker};
-use rune::{Color, El, Key, KeyEvent, col, el, icon, row, spacer, text};
+use rune::{Color, El, Key, KeyEvent, col, icon, row, spacer, text};
 
 use crate::app::State;
 use crate::icons;
 use crate::model::Screen;
-use crate::ui::{ActionKind, BODY, BODY_MED, H1, PAGE_TOP, PAGE_X, SMALL, Ui};
-use crate::screens::settings::i18n::{fill, tr};
+use crate::ui::{ActionKind, BODY, BODY_MED, H1, MONO, PAGE_TOP, PAGE_X, SMALL, SMALL_NUM, Ui};
+use crate::screens::launch_progress::tr;
+use crate::screens::settings::i18n::fill;
 
 use crate::screens::conflicts;
 use crate::screens::downloads;
@@ -90,6 +91,8 @@ pub struct View {
     /// Stop game on its worker; `launch_progress::poll` takes the report and says when the game
     /// did not close.
     pub stop: crate::jobs::Job<deadlock_core::launch::StopReport>,
+    /// The crash card's evidence is open (closed by default, so the card keeps one height).
+    pub crash_details: bool,
 }
 
 impl Default for View {
@@ -107,6 +110,7 @@ impl Default for View {
             progress: None,
             gate: None,
             stop: crate::jobs::Job::default(),
+            crash_details: false,
         }
     }
 }
@@ -210,53 +214,17 @@ impl Drop for Monitor {
 pub fn view(s: &State, u: &Ui) -> El {
     let v = &s.launch;
     let read = v.read.as_ref();
-    let pending = read.and_then(|read| read.stash.as_ref());
     let process = v.monitor.snapshot();
     let running = process.running || s.settings.game_running;
 
-    let mut actions = row().gap(8.0).center_y();
-    actions = actions.child(
-        u.icon_button(&icons::REFRESH_CW, tr("Recheck"))
-            .key("launch-recheck")
-            .cursor(rune::Cursor::Pointer)
-            .on_press(|st: &mut State| crate::data::start_launch_read(st)),
-    );
-
-    let detail = match read {
-        Some(_) if running => read
-            .and_then(|read| read.marker.as_ref())
-            .filter(|marker| marker.open())
-            .map(started_line)
-            .unwrap_or_else(|| tr("Running now").to_string()),
-        Some(read) => {
-            if read.enabled == 1 {
-                fill(tr("{} of {} mod on."), &[&read.enabled.to_string(), &read.addon_files.to_string()])
-            } else {
-                fill(
-                    tr("{} of {} mods on."),
-                    &[&read.enabled.to_string(), &read.addon_files.to_string()],
-                )
-            }
-        }
-        None => String::new(),
-    };
-
-    let mut page = col()
-        .key("launch-page")
+    // One toolbar line: the title, then the last result in the room after it. The result
+    // never pushes the page, and Recheck sits on the Game section, on the column's edge.
+    let head = col()
+        .key("launch-head")
         .w_full()
         .px(PAGE_X)
         .pt(PAGE_TOP)
-        .pb(32.0)
-        .gap(16.0)
-        .child(u.page_head("", tr("Launch"), &detail, Some(actions)));
-
-    if let Some(last) = &v.last {
-        page = page.child(if is_bad(last) {
-            crate::notify::feedback::error_box(u, "launch-last-error", last)
-        } else {
-            note_line(u, last, false)
-        });
-    }
+        .child(u.page_toolbar(u.page_title(tr("Launch")), vec![status_line(u, v.last.as_deref())], None, Vec::new()));
 
     let body = if !s.game_detected {
         u.empty_state(
@@ -277,244 +245,329 @@ pub fn view(s: &State, u: &Ui) -> El {
             Some(crate::notify::feedback::button(u, "launch-error-feedback", tr("Launch status could not be read"), error)),
         )
     } else {
-        let stashed = pending.is_some();
-        let ready = !stashed && !v.busy && !running;
-        let mods_on = match read {
-            Some(read) => mods_label(read.enabled),
-            None => tr("Your enabled mods").to_string(),
-        };
-        let mut body = col().w_full().gap(24.0);
-        if running {
-            body = body.child(running_row(u, &process, read));
-        } else {
-            body = body.child(
-                row()
-                    .w_full()
-                    .gap(12.0)
-                    .child(
-                        big_action(u, tr("Launch modded"), &mods_on, !stashed, ready)
-                            .key("launch-go-modded")
-                            .cursor(rune::Cursor::Pointer)
-                            .on_press(move |st: &mut State| {
-                                if ready {
-                                    press_launch(st, false);
-                                }
-                            }),
+        let mut body = col().w_full().max_w(COLUMN_W).gap(24.0).child(
+            col()
+                .w_full()
+                .gap(8.0)
+                .child(
+                    u.section_head(
+                        tr("Game"),
+                        None,
+                        Some(
+                            u.icon_button(&icons::REFRESH_CW, tr("Recheck"))
+                                .size(24.0, 24.0)
+                                .key("launch-recheck")
+                                .cursor(rune::Cursor::Pointer)
+                                .on_press(|st: &mut State| crate::data::start_launch_read(st)),
+                        ),
                     )
-                    .child(
-                        big_action(
-                            u,
-                            tr("Launch vanilla"),
-                            tr("Mods set aside until you restore"),
-                            false,
-                            ready,
-                        )
-                        .key("launch-go-vanilla")
-                        .cursor(rune::Cursor::Pointer)
-                        .on_press(move |st: &mut State| {
-                            if ready {
-                                st.launch.dialog = Dialog::Vanilla;
-                            }
-                        }),
-                    ),
-            );
-        }
-        body = body.child(stash_line(s, u, pending));
-        if let Some(read) = read
-            && (!read.gameinfo_present || !read.gameinfo_addons)
-            && !running
-        {
-            body = body.child(
-                row()
-                    .w_full()
-                    .gap(10.0)
-                    .center_y()
-                    .child(note_line(u, tr("gameinfo.gi does not load mods right now."), true).grow(1.0).shrink().min_w(0.0))
-                    .child(
-                        u.action(tr("Fix mods"), ActionKind::Secondary)
-                            .key("launch-fix-gameinfo")
-                            .cursor(rune::Cursor::Pointer)
-                            .on_press(fix_gameinfo),
-                    ),
-            );
-        }
+                    .pr(16.0 - 4.0),
+                )
+                .child(game_panel(s, u, read, &process, running)),
+        );
         if let Some(crash) = read.and_then(|read| read.crash.as_ref()) {
-            body = body.child(crash_block(s, u, crash));
+            body = body.child(crash_card(s, u, crash));
         }
         body.child(downloads::section(s, u))
     };
 
     col()
-        .key("launch-scroll")
+        .key("launch-root")
         .w_full()
         .h_full()
         .min_h(0.0)
-        .scroll(rune::ScrollSpec {
-            stick_bottom: false,
-        })
-        .child(page.child(body))
-}
-
-/// The running row replaces the launch buttons while Deadlock is up.
-fn running_row(u: &Ui, process: &GameProcess, read: Option<&Read>) -> El {
-    let since = read
-        .and_then(|read| read.marker.as_ref())
-        .filter(|marker| marker.open())
-        .map(started_line)
-        .unwrap_or_else(|| tr("Running now.").to_string());
-    let detail = if process.count() > 1 {
-        fill(tr("{} {}"), &[&since, &process.count_label()])
-    } else {
-        since
-    };
-    row()
-        .key("launch-running")
-        .w_full()
-        .min_h(64.0)
-        .py(12.0)
-        .gap(14.0)
-        .center_y()
-        .child(
-            icon(&icons::PLAY, 18.0)
-                .color(u.teal)
-                .a11y_hidden(),
-        )
+        .child(head)
         .child(
             col()
-                .grow(1.0)
-                .min_w(0.0)
-                .gap(2.0)
-                .child(text(tr("Deadlock is running")).font(BODY_MED).color(u.ink))
-                .child(text(detail).font(SMALL).color(u.muted).truncate()),
-        )
-        .child(
-            u.action(tr("Stop game"), ActionKind::Secondary)
-                .key("launch-stop")
-                .cursor(rune::Cursor::Pointer)
-                .on_press(|st: &mut State| st.launch.dialog = Dialog::StopGame),
-        )
-}
-
-/// The crash advisory for the last session: what happened, the dump's own words, and the mod
-/// that most likely caused it.
-fn crash_block(s: &State, u: &Ui, crash: &Crash) -> El {
-    let mut head = row()
-        .w_full()
-        .h(32.0)
-        .gap(8.0)
-        .center_y()
-        .child(text(tr("Last session")).font(BODY_MED).color(u.muted))
-        .child(
-            text(fill(tr("crash from {}"), &[&crash.when]))
-                .font(SMALL)
-                .color(u.faint),
-        );
-    let at_secs = crash.at_secs;
-    head = head.child(spacer()).child(
-        u.action(tr("Dismiss"), ActionKind::Ghost)
-            .key("launch-crash-dismiss")
-            .cursor(rune::Cursor::Pointer)
-            .on_press(move |st: &mut State| dismiss_crash(st, at_secs)),
-    );
-
-    let kicker = crash
-        .exception
-        .clone()
-        .unwrap_or_else(|| tr("The game closed without an error code").to_string());
-    let mut first = row()
-        .key("launch-crash")
-        .w_full()
-        .min_h(52.0)
-        .py(8.0)
-        .gap(12.0)
-        .center_y()
-        .border_sides([0.0, 0.0, 1.0, 0.0], u.hair)
-        .child(
-            icon(&icons::TRIANGLE_ALERT, 16.0)
-                .color(u.amber)
-                .a11y_hidden(),
-        )
-        .child(
-            col()
-                .grow(1.0)
-                .min_w(0.0)
-                .gap(2.0)
-                .child(text(tr("Deadlock crashed")).font(BODY_MED).color(u.ink))
-                .child(
-                    text(format!("{kicker} · {}", crash.file))
-                        .font(SMALL)
-                        .color(u.muted)
-                        .truncate(),
-                ),
-        );
-    let path = crash.path.clone();
-    first = first.child(
-        u.action(tr("Show dump"), ActionKind::Ghost)
-            .key("launch-crash-dump")
-            .cursor(rune::Cursor::Pointer)
-            .on_press(move |st: &mut State| crate::data::reveal_path(st, path.clone())),
-    );
-
-    let mut block = col().w_full().gap(0.0).child(head).child(first);
-    if let Some(comment) = &crash.comment {
-        block = block.child(
-            row()
+                .key("launch-scroll")
                 .w_full()
-                .min_h(44.0)
-                .py(8.0)
-                .gap(12.0)
-                .items_start()
-                .border_sides([0.0, 0.0, 1.0, 0.0], u.hair)
-                .child(el().w(16.0))
-                .child(
-                    text(comment.chars().take(400).collect::<String>())
-                        .font(SMALL)
-                        .color(u.prose)
-                        .grow(1.0)
-                        .min_w(0.0)
-                        .wrap()
-                        .selectable(true),
-                ),
-        );
-    }
-    block = block.children(crate::screens::launch_crash::rows(u, &crash.evidence, crash.suspect.as_ref()));
-    if let Some(suspect) = &crash.suspect {
-        let slot = suspect.slot;
-        let name = suspect.name.clone();
-        let reason = crate::screens::launch_crash::reason_line(suspect, now_secs());
-        let blocked = s.settings.game_running || s.launch.monitor.running();
-        block = block.child(
-            row()
-                .key("launch-crash-suspect")
-                .w_full()
-                .min_h(52.0)
-                .py(8.0)
-                .gap(12.0)
-                .center_y()
-                .border_sides([0.0, 0.0, 1.0, 0.0], u.hair)
-                .child(el().w(16.0))
+                .grow(1.0)
+                .min_h(0.0)
+                .scroll(rune::ScrollSpec {
+                    stick_bottom: false,
+                })
                 .child(
                     col()
-                        .grow(1.0)
-                        .min_w(0.0)
-                        .gap(2.0)
-                        .child(
-                            text(fill(tr("Probably {}"), &[&name]))
-                                .font(BODY_MED)
-                                .color(u.ink),
-                        )
-                        .child(text(reason).font(SMALL).color(u.muted).wrap()),
-                )
-                .child(if crash.suspect_off {
-                    // Off already (maybe since the crash): nothing to press, say so.
-                    text(tr("Already turned off"))
-                        .key("launch-crash-already-off")
-                        .font(SMALL)
-                        .color(u.muted)
-                } else {
-                    u.action(&fill(tr("Turn off {}"), &[&name]), ActionKind::Secondary)
+                        .key("launch-page")
+                        .w_full()
+                        .px(PAGE_X)
+                        .pt(16.0)
+                        .pb(32.0)
+                        .child(body),
+                ),
+        )
+}
+
+/// The reading column: launch rows, the crash card and downloads read better short.
+const COLUMN_W: f32 = 720.0;
+/// One Game panel row, a crash suspect row and a download row: all the same 56 points.
+const PANEL_ROW_H: f32 = 56.0;
+
+/// The last result on the toolbar line after the title (the shared `status_line`, cut with a
+/// tooltip). Empty when there is none, so a result never pushes the page.
+fn status_line(u: &Ui, last: Option<&str>) -> El {
+    let mut line = row().key("launch-status").pl(8.0).h(24.0).gap(8.0).center_y().min_w(0.0).shrink();
+    if let Some(message) = last {
+        let bad = is_bad(message);
+        line = line.role(if bad { "alert" } else { "status" }).child(u.status_line(
+            if bad { &icons::TRIANGLE_ALERT } else { &icons::CHECK },
+            message,
+            if bad { crate::ui::Tone::Warn } else { crate::ui::Tone::Ok },
+        ));
+        if bad {
+            line = line.child(crate::notify::feedback::button(u, "launch-last-feedback", message, ""));
+        }
+    }
+    line
+}
+
+/// One fixed 56 point row: icon, title over one line, controls on the right.
+fn panel_row(u: &Ui, key: &str, glyph: &'static rune::Icon, tint: Color, title: &str, line: El, trailing: Option<El>, last: bool) -> El {
+    let mut r = row()
+        .key(key.to_string())
+        .w_full()
+        .h(PANEL_ROW_H)
+        .px(16.0)
+        .gap(12.0)
+        .center_y()
+        .child(icon(glyph, 16.0).color(tint).a11y_hidden())
+        .child(
+            col()
+                .grow(1.0)
+                .min_w(0.0)
+                .gap(2.0)
+                .child(text(title.to_string()).font(BODY_MED).color(u.ink).truncate())
+                .child(line),
+        );
+    if let Some(trailing) = trailing {
+        r = r.child(trailing);
+    }
+    if !last {
+        r = r.border_sides([0.0, 0.0, 1.0, 0.0], u.hair);
+    }
+    r
+}
+
+fn line_text(s: impl Into<String>, color: Color) -> El {
+    let s = s.into();
+    text(s.clone()).font(SMALL_NUM).color(color).truncate().help_when_truncated(s)
+}
+
+/// The Game panel: three rows, always all three, at fixed heights. A state change swaps what a
+/// row says, never how tall it is or where it sits.
+fn game_panel(s: &State, u: &Ui, read: Option<&Read>, process: &GameProcess, running: bool) -> El {
+    let v = &s.launch;
+    let pending = read.and_then(|read| read.stash.as_ref());
+    let stashed = pending.is_some();
+    let ready = !stashed && !v.busy && !running;
+
+    // Row 1: the game.
+    let game = if running {
+        let since = read
+            .and_then(|read| read.marker.as_ref())
+            .filter(|marker| marker.open())
+            .map(started_line)
+            .unwrap_or_else(|| tr("Running now.").to_string());
+        let detail = if process.count() > 1 {
+            fill(tr("{} {}"), &[&since, &process.count_label()])
+        } else {
+            since
+        };
+        panel_row(
+            u,
+            "launch-running",
+            &icons::PLAY,
+            u.teal,
+            tr("Deadlock is running"),
+            line_text(detail, u.muted),
+            Some(
+                row().min_w(LAUNCH_PAIR_W).gap(8.0).center_y().child(spacer()).child(
+                    u.action_m(tr("Stop game"), ActionKind::Secondary)
+                        .key("launch-stop")
+                        .cursor(rune::Cursor::Pointer)
+                        .on_press(|st: &mut State| st.launch.dialog = Dialog::StopGame),
+                ),
+            ),
+            false,
+        )
+    } else {
+        let vanilla_help = if stashed {
+            tr("Restore the mods set aside first.")
+        } else {
+            tr("Moves your mods aside, then starts the game. Restore them here afterwards.")
+        };
+        let button = |label: &str, key: &str| {
+            u.action_m(label, ActionKind::Secondary)
+                .key(key.to_string())
+                .disabled(!ready)
+                .opacity(if ready { 1.0 } else { 0.45 })
+                .cursor(if ready { rune::Cursor::Pointer } else { rune::Cursor::Default })
+        };
+        let pair = row()
+            .min_w(LAUNCH_PAIR_W)
+            .gap(8.0)
+            .center_y()
+            .child(spacer())
+            .child(
+                button(tr("Launch vanilla"), "launch-go-vanilla")
+                    .help(vanilla_help)
+                    .on_press(move |st: &mut State| {
+                        if ready {
+                            st.launch.dialog = Dialog::Vanilla;
+                        }
+                    }),
+            )
+            .child(button(tr("Launch modded"), "launch-go-modded").on_press(move |st: &mut State| {
+                if ready {
+                    press_launch(st, false);
+                }
+            }));
+        panel_row(
+            u,
+            "launch-game",
+            &icons::PLAY,
+            u.muted,
+            if stashed { tr("Restore mods to launch") } else { tr("Ready to launch") },
+            line_text(tr("Deadlock is not running"), u.muted),
+            Some(pair),
+            false,
+        )
+    };
+
+    // Row 2: the mods and gameinfo.gi.
+    let broken = read.is_some_and(|read| !read.gameinfo_present || !read.gameinfo_addons);
+    let mods_title = match read {
+        Some(read) => fill(
+            if read.addon_files == 1 { tr("{} of {} mod on") } else { tr("{} of {} mods on") },
+            &[&read.enabled.to_string(), &read.addon_files.to_string()],
+        ),
+        None => tr("Your enabled mods").to_string(),
+    };
+    let mods = if broken {
+        panel_row(
+            u,
+            "launch-mods",
+            &icons::TRIANGLE_ALERT,
+            u.amber,
+            &mods_title,
+            line_text(tr("gameinfo.gi does not load mods"), u.prose),
+            Some(
+                u.action_m(tr("Fix mods"), ActionKind::Secondary)
+                    .key("launch-fix-gameinfo")
+                    .cursor(rune::Cursor::Pointer)
+                    .on_press(fix_gameinfo),
+            ),
+            false,
+        )
+    } else {
+        panel_row(
+            u,
+            "launch-mods",
+            &icons::CHECK,
+            u.teal,
+            &mods_title,
+            line_text(if read.is_some() { tr("gameinfo.gi loads mods") } else { tr("Not read yet") }, u.muted),
+            None,
+            false,
+        )
+    };
+
+    // Row 3: the vanilla stash.
+    let stash = match pending {
+        Some(stash) => {
+            let title = fill(
+                if stash.present == 1 { tr("{} file set aside") } else { tr("{} files set aside") },
+                &[&stash.present.to_string()],
+            );
+            let line = match &stash.problem {
+                Some(problem) => row()
+                    .gap(6.0)
+                    .center_y()
+                    .min_w(0.0)
+                    .child(icon(&icons::TRIANGLE_ALERT, 12.0).color(u.rose).a11y_hidden())
+                    .child(line_text(problem.clone(), u.prose).shrink().min_w(0.0)),
+                None => line_text(
+                    fill(
+                        tr("Since {}. Restore before you change mods."),
+                        &[&format!(
+                            "{} {}",
+                            stash.created_at.chars().take(10).collect::<String>(),
+                            stash.created_at.chars().skip(11).take(5).collect::<String>()
+                        )],
+                    ),
+                    u.muted,
+                ),
+            };
+            panel_row(
+                u,
+                "launch-stash",
+                &icons::BOX,
+                u.amber,
+                &title,
+                line,
+                Some(
+                    u.icon_action_m(&icons::ROTATE_CCW, tr("Restore mods"), ActionKind::Secondary)
+                        .key("launch-restore")
+                        .disabled(v.busy)
+                        .cursor(rune::Cursor::Pointer)
+                        .on_press(|st: &mut State| {
+                            if !st.launch.busy {
+                                st.launch.dialog = Dialog::Restore;
+                            }
+                        }),
+                ),
+                true,
+            )
+        }
+        None => panel_row(u, "launch-no-stash", &icons::BOX, u.faint, tr("Vanilla stash"), line_text(tr("Empty"), u.muted), None, true),
+    };
+
+    u.panel().key("launch-game-panel").w_full().radius(crate::ui::r(8.0)).child(game).child(mods).child(stash)
+}
+
+/// Room for the two launch buttons, so swapping them for Stop game moves nothing.
+const LAUNCH_PAIR_W: f32 = 232.0;
+
+/// The crash advisory: the suspect and its fix first, then the dump, then the evidence behind
+/// a disclosure. Fixed 120 points while Details is closed.
+fn crash_card(s: &State, u: &Ui, crash: &Crash) -> El {
+    let at_secs = crash.at_secs;
+    let head = row()
+        .w_full()
+        .h(24.0)
+        .gap(8.0)
+        .center_y()
+        .pr(8.0)
+        .child(u.section(tr("Last crash")))
+        .child(text(crash.when.clone()).font(SMALL_NUM).color(u.faint))
+        .child(spacer())
+        .child(
+            u.action(tr("Dismiss"), ActionKind::Ghost)
+                .h(24.0)
+                .px(8.0)
+                .key("launch-crash-dismiss")
+                .cursor(rune::Cursor::Pointer)
+                .on_press(move |st: &mut State| dismiss_crash(st, at_secs)),
+        );
+
+    // Row 1: the suspect and the one action that helps.
+    let blocked = s.settings.game_running || s.launch.monitor.running();
+    let suspect = match &crash.suspect {
+        Some(suspect) => {
+            let slot = suspect.slot;
+            let name = suspect.name.clone();
+            let reason = crate::screens::launch_crash::reason_line(suspect, now_secs());
+            let trailing = if crash.suspect_off {
+                text(tr("Already off"))
+                    .key("launch-crash-already-off")
+                    .font(SMALL)
+                    .color(u.muted)
+            } else {
+                u.action_m(&fill(tr("Turn off {}"), &[&name]), ActionKind::Secondary)
                     .key("launch-crash-off")
+                    .max_w(200.0)
                     .disabled(blocked)
+                    .opacity(if blocked { 0.45 } else { 1.0 })
                     .cursor(rune::Cursor::Pointer)
                     .on_press(move |st: &mut State| {
                         if !crate::screens::settings::watch::refuse_while_running(st) {
@@ -523,10 +576,117 @@ fn crash_block(s: &State, u: &Ui, crash: &Crash) -> El {
                             crate::data::start_launch_read(st);
                         }
                     })
-                }),
+            };
+            panel_row(
+                u,
+                "launch-crash-suspect",
+                &icons::TRIANGLE_ALERT,
+                u.amber,
+                &fill(tr("Probably {}"), &[&name]),
+                line_text(reason, u.muted),
+                Some(trailing),
+                false,
+            )
+        }
+        None => panel_row(
+            u,
+            "launch-crash-suspect",
+            &icons::TRIANGLE_ALERT,
+            u.amber,
+            tr("Deadlock crashed"),
+            line_text(tr("No installed mod is named in the report."), u.muted),
+            None,
+            false,
+        ),
+    };
+
+    // Row 2: what the dump says and where it is.
+    let kicker = crash
+        .exception
+        .clone()
+        .unwrap_or_else(|| tr("The game closed without an error code").to_string());
+    let path = crash.path.clone();
+    let dump = row()
+        .key("launch-crash")
+        .w_full()
+        .h(32.0)
+        .pl(16.0)
+        .pr(8.0)
+        .gap(12.0)
+        .center_y()
+        .border_sides([0.0, 0.0, 1.0, 0.0], u.hair)
+        .child(icon(&icons::FILE, 16.0).color(u.faint).a11y_hidden())
+        .child(text(kicker).font(BODY).color(u.prose).truncate())
+        .child(
+            text(crash.file.clone())
+                .font(MONO)
+                .color(u.muted)
+                .truncate_middle()
+                .help_when_truncated(crash.file.clone())
+                .grow(1.0)
+                .min_w(0.0),
+        )
+        .child(
+            u.action(tr("Show dump"), ActionKind::Ghost)
+                .h(24.0)
+                .px(8.0)
+                .key("launch-crash-dump")
+                .cursor(rune::Cursor::Pointer)
+                .on_press(move |st: &mut State| crate::data::reveal_path(st, path.clone())),
+        );
+
+    // Row 3: the evidence, closed by default.
+    let open = s.launch.crash_details;
+    let disclosure = row()
+        .key("launch-crash-details")
+        .w_full()
+        .h(32.0)
+        .px(16.0)
+        .gap(12.0)
+        .center_y()
+        .hover(u.hover)
+        .focusable(true)
+        .role("button")
+        .expanded(open)
+        .label(tr("Details"))
+        .cursor(rune::Cursor::Pointer)
+        .on_press(|st: &mut State| st.launch.crash_details = !st.launch.crash_details)
+        .child(
+            icon(if open { &icons::CHEVRON_DOWN } else { &icons::CHEVRON_RIGHT }, 16.0)
+                .color(u.muted)
+                .a11y_hidden(),
+        )
+        .child(text(tr("Details")).font(BODY).color(u.prose).a11y_hidden());
+
+    let mut card = u
+        .panel()
+        .key("launch-crash-card")
+        .w_full()
+        .radius(crate::ui::r(8.0))
+        .child(suspect)
+        .child(dump)
+        .child(disclosure);
+    if open {
+        card = card.child(
+            col()
+                .w_full()
+                .px(16.0)
+                .pb(16.0)
+                .child(
+                    col()
+                        .key("launch-crash-evidence")
+                        .w_full()
+                        .max_h(240.0)
+                        .padding(12.0)
+                        .gap(8.0)
+                        .fill(u.well)
+                        .radius(crate::ui::r(4.0))
+                        .scroll(rune::ScrollSpec { stick_bottom: false })
+                        .children(crate::screens::launch_crash::groups(u, &crash.evidence, crash.suspect.as_ref(), crash.comment.as_deref())),
+                ),
         );
     }
-    block
+    col().w_full().gap(8.0).child(head).child(card)
 }
 
 fn dismiss_crash(st: &mut State, at_secs: i64) {
@@ -552,14 +712,6 @@ fn now_secs() -> i64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|value| value.as_secs() as i64)
         .unwrap_or(0)
-}
-
-fn mods_label(enabled: usize) -> String {
-    if enabled == 1 {
-        fill(tr("{} mod on"), &[&enabled.to_string()])
-    } else {
-        fill(tr("{} mods on"), &[&enabled.to_string()])
-    }
 }
 
 /// The sidebar's running line: shows only while Deadlock is up, with the way to stop it.
@@ -699,7 +851,8 @@ fn checklist_issues(s: &State) -> Vec<Issue> {
 fn checklist(u: &Ui, s: &State) -> El {
     let issues = checklist_issues(s);
     let close = |st: &mut State| st.launch.dialog = Dialog::None;
-    let mut rows = col().w_full().gap(0.0);
+    let mut rows = u.panel().w_full().radius(crate::ui::r(8.0));
+    let last = issues.len().saturating_sub(1);
     for (index, issue) in issues.iter().enumerate() {
         let fix = match issue.fix {
             Fix::Gameinfo => "Fix mods",
@@ -712,29 +865,15 @@ fn checklist(u: &Ui, s: &State) -> El {
             Fix::Updates => 2,
         };
         rows = rows.child(
-            row()
-                .key(format!("launch-check-{index}"))
-                .w_full()
-                .min_h(52.0)
-                .py(8.0)
-                .gap(12.0)
-                .center_y()
-                .border_sides([0.0, 0.0, 1.0, 0.0], u.hair)
-                .child(
-                    icon(&icons::TRIANGLE_ALERT, 16.0)
-                        .color(u.amber)
-                        .a11y_hidden(),
-                )
-                .child(
-                    col()
-                        .grow(1.0)
-                        .min_w(0.0)
-                        .gap(2.0)
-                        .child(text(tr(issue.title)).font(BODY_MED).color(u.ink))
-                        .child(text(tr(issue.detail)).font(SMALL).color(u.muted).wrap()),
-                )
-                .child(
-                    u.action(tr(fix), ActionKind::Secondary)
+            panel_row(
+                u,
+                &format!("launch-check-{index}"),
+                &icons::TRIANGLE_ALERT,
+                u.amber,
+                tr(issue.title),
+                line_text(tr(issue.detail), u.muted),
+                Some(row().w(128.0).center_y().child(spacer()).child(
+                    u.action_m(tr(fix), ActionKind::Secondary)
                         .key(format!("launch-check-fix-{index}"))
                         .cursor(rune::Cursor::Pointer)
                         .on_press(move |st: &mut State| {
@@ -746,7 +885,9 @@ fn checklist(u: &Ui, s: &State) -> El {
                                 _ => st.go(Screen::Updates),
                             }
                         }),
-                ),
+                )),
+                index == last,
+            ),
         );
     }
     u.dialog_shell()
@@ -766,18 +907,11 @@ fn checklist(u: &Ui, s: &State) -> El {
             }
         })
         .child(text(tr("Before you launch")).font(H1).color(u.ink))
-        .child(
-            text(tr("A few things are off. Fix them, or start the game as it is."))
-                .font(BODY)
-                .color(u.muted)
-                .wrap(),
-        )
         .child(rows)
         .child(
             row()
                 .w_full()
                 .gap(8.0)
-                .pt(8.0)
                 .child(spacer())
                 .child(
                     u.action(tr("Cancel"), ActionKind::Ghost)
@@ -800,7 +934,7 @@ fn stop_confirm(u: &Ui, _s: &State) -> El {
         .key("launch-stop-confirm")
         .role("dialog")
         .label(tr("Stop Deadlock"))
-        .w(440.0)
+        .w(480.0)
         .padding(24.0)
         .gap(16.0)
         .modal(true, close)
@@ -816,14 +950,14 @@ fn stop_confirm(u: &Ui, _s: &State) -> El {
         .child(
             text(tr("The game closes now. A match in progress is lost."))
                 .font(BODY)
-                .color(u.muted)
+                .color(u.prose)
+                .max_w(432.0)
                 .wrap(),
         )
         .child(
             row()
                 .w_full()
                 .gap(8.0)
-                .pt(8.0)
                 .child(spacer())
                 .child(
                     u.action(tr("Cancel"), ActionKind::Ghost)
@@ -937,146 +1071,6 @@ fn is_bad(message: &str) -> bool {
         .any(|word| lower.contains(word))
 }
 
-/// A quiet line with a leading icon: a result, or a real problem in the warn colour.
-fn note_line(u: &Ui, message: &str, bad: bool) -> El {
-    row()
-        .w_full()
-        .gap(8.0)
-        .items_start()
-        .child(
-            el().pt(2.0).child(
-                icon(
-                    if bad {
-                        &icons::TRIANGLE_ALERT
-                    } else {
-                        &icons::CHECK
-                    },
-                    14.0,
-                )
-                .color(if bad { u.amber } else { u.muted })
-                .a11y_hidden(),
-            ),
-        )
-        .child(
-            text(message.to_string())
-                .font(BODY)
-                .color(u.muted)
-                .grow(1.0)
-                .min_w(0.0)
-                .wrap(),
-        )
-}
-
-/// One of the two launch buttons: 64 points tall, an icon, a label and one short line.
-fn big_action(u: &Ui, label: &str, detail: &str, primary: bool, enabled: bool) -> El {
-    // The sidebar's Launch modded is the one solid accent in the shell: here the primary
-    // choice is marked by an accent line and icon.
-    let (fill, ink, sub, border, mark) = if primary {
-        (u.accent.alpha(0.08), u.ink, u.muted, u.accent.alpha(0.55), u.accent)
-    } else {
-        (Color::WHITE.alpha(0.035), u.ink, u.muted, u.hair_strong, u.muted)
-    };
-    row()
-        .grow(1.0)
-        .min_w(0.0)
-        .h(64.0)
-        .px(20.0)
-        .gap(14.0)
-        .center_y()
-        .radius(crate::ui::r(8.0))
-        .fill(fill)
-        .border(1.0, border)
-        .hover(u.hover)
-        .press(Color::WHITE.alpha(0.08))
-        .focusable(enabled)
-        .disabled(!enabled)
-        .opacity(if enabled { 1.0 } else { 0.45 })
-        .role("button")
-        .label(label)
-        .child(icon(&icons::PLAY, 18.0).color(mark).a11y_hidden())
-        .child(
-            col()
-                .grow(1.0)
-                .min_w(0.0)
-                .gap(2.0)
-                .child(
-                    text(label.to_string())
-                        .font(BODY_MED)
-                        .color(ink)
-                        .a11y_hidden(),
-                )
-                .child(
-                    text(detail.to_string())
-                        .font(SMALL)
-                        .color(sub)
-                        .truncate()
-                        .a11y_hidden(),
-                ),
-        )
-}
-
-/// The vanilla stash as one row: what is set aside, and the action that brings it back.
-fn stash_line(s: &State, u: &Ui, stash: Option<&deadlock_core::launch::StashStatus>) -> El {
-    let (title, detail) = match stash {
-        Some(stash) => (
-            if stash.present == 1 {
-                fill(tr("{} file set aside for a vanilla run"), &["1"])
-            } else {
-                fill(
-                    tr("{} files set aside for a vanilla run"),
-                    &[&stash.present.to_string()],
-                )
-            },
-            fill(
-                tr("Since {}. Restore before you change mods."),
-                &[&format!(
-                    "{} {}",
-                    stash.created_at.chars().take(10).collect::<String>(),
-                    stash.created_at.chars().skip(11).take(5).collect::<String>()
-                )],
-            ),
-        ),
-        None => (
-            tr("Nothing set aside").to_string(),
-            tr("A vanilla launch moves your mods aside and lists them here.").to_string(),
-        ),
-    };
-    let mut text_col = col()
-        .grow(1.0)
-        .min_w(0.0)
-        .gap(2.0)
-        .child(text(title).font(BODY_MED).color(u.ink).truncate())
-        .child(text(detail).font(SMALL).color(u.faint).truncate());
-    if let Some(problem) = stash.and_then(|stash| stash.problem.as_ref()) {
-        text_col = text_col.child(text(problem.clone()).font(SMALL).color(u.rose).wrap());
-    }
-    let mut line = row()
-        .key(if stash.is_some() {
-            "launch-stash"
-        } else {
-            "launch-no-stash"
-        })
-        .w_full()
-        .min_h(52.0)
-        .py(8.0)
-        .gap(16.0)
-        .center_y()
-        .border_sides([1.0, 0.0, 1.0, 0.0], u.hair)
-        .child(text_col);
-    if stash.is_some() {
-        line = line.child(
-            u.icon_action(&icons::ROTATE_CCW, tr("Restore mods"), ActionKind::Primary)
-                .key("launch-restore")
-                .disabled(s.launch.busy)
-                .cursor(rune::Cursor::Pointer)
-                .on_press(|st: &mut State| st.launch.dialog = Dialog::Restore),
-        );
-    } else {
-        line = line.child(spacer());
-    }
-    line
-}
-
 fn confirm(u: &Ui, s: &State, dialog: Dialog) -> El {
     let (title, line, action) = match dialog {
         Dialog::Modded => (
@@ -1126,7 +1120,7 @@ fn confirm(u: &Ui, s: &State, dialog: Dialog) -> El {
         .key("launch-confirm")
         .role("dialog")
         .label(title)
-        .w(460.0)
+        .w(480.0)
         .padding(24.0)
         .gap(16.0)
         .modal(true, close)
@@ -1143,14 +1137,13 @@ fn confirm(u: &Ui, s: &State, dialog: Dialog) -> El {
                 .w_full()
                 .gap(6.0)
                 .child(text(title).font(H1).color(u.ink))
-                .child(text(line).font(BODY).color(u.muted).wrap()),
+                .child(text(line).font(BODY).color(u.prose).max_w(432.0).wrap()),
         )
         .child(col().w_full().child(u.kv(tr("Mods"), &mods, u.ink)))
         .child(
             row()
                 .w_full()
                 .gap(8.0)
-                .pt(8.0)
                 .child(spacer())
                 .child(
                     u.action(tr("Cancel"), ActionKind::Ghost)
@@ -1186,8 +1179,6 @@ mod tests {
 
     #[test]
     fn labels_read_like_a_sentence() {
-        assert_eq!(mods_label(1), "1 mod on");
-        assert_eq!(mods_label(4), "4 mods on");
         assert!(is_bad("Mods were not restored"));
         assert!(!is_bad("Steam has the launch request"));
     }

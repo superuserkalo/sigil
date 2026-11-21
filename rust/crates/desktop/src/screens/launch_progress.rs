@@ -18,7 +18,7 @@ use crate::app::State;
 use crate::icons;
 use crate::screens::launch::Dialog;
 use crate::screens::settings::i18n::fill;
-use crate::ui::{ActionKind, BODY, H1, Ui};
+use crate::ui::{ActionKind, BODY, BODY_MED, SMALL, Ui};
 
 #[path = "launch_de.rs"]
 mod de;
@@ -370,77 +370,118 @@ fn hide(st: &mut State) {
     }
 }
 
-/// The overlay card, while a launch runs and is not hidden.
+/// The overlay card, while a launch runs and is not hidden. The step list is fixed when the
+/// launch starts and the footer is one fixed line, so the card keeps one height throughout.
 pub fn overlay(s: &State, u: &Ui) -> Option<El> {
     let progress = s.launch.progress.as_ref().filter(|p| !p.hidden)?;
-    let mut list = col().w_full().gap(10.0).pt(4.0);
+    let mut list = col().w_full();
     for (index, step) in progress.steps.iter().enumerate() {
         let done = index < progress.at;
         let active = index == progress.at;
         let mark = if done {
-            icon(&icons::CIRCLE_CHECK, 16.0).color(u.accent).a11y_hidden()
+            icon(&icons::CHECK, 16.0).color(u.teal).a11y_hidden()
         } else if active {
-            icon(&icons::LOADER, 14.0).color(u.muted).a11y_hidden()
+            icon(&icons::LOADER, 16.0).color(u.muted).a11y_hidden()
         } else {
-            el().size(6.0, 6.0).radius(3.0).fill(u.faint.alpha(0.6)).a11y_hidden()
+            el().size(6.0, 6.0).radius(3.0).fill(u.faint).a11y_hidden()
         };
         list = list.child(
             row()
                 .key(format!("launch-progress-step-{index}"))
                 .w_full()
-                .gap(10.0)
+                .h(24.0)
+                .gap(8.0)
                 .center_y()
                 .child(el().size(16.0, 16.0).center().child(mark))
                 .child(
                     text(tr(step.label()))
                         .font(BODY)
-                        .color(if done || active { u.ink } else { u.muted })
+                        .color(if active { u.ink } else if done { u.prose } else { u.muted })
                         .grow(1.0)
                         .min_w(0.0)
                         .truncate(),
                 ),
         );
     }
-    if progress.stopping {
-        list = list.child(
-            row()
-                .key("launch-progress-closing")
-                .w_full()
-                .gap(10.0)
-                .center_y()
-                .child(el().size(16.0, 16.0).center().child(icon(&icons::LOADER, 14.0).color(u.muted).a11y_hidden()))
-                .child(text(tr("Closing Deadlock")).font(BODY).color(u.ink).grow(1.0).min_w(0.0).truncate()),
-        );
-    }
+    let mut body = col().w_full().padding(16.0).gap(12.0).child(
+        row()
+            .w_full()
+            .h(24.0)
+            .center_y()
+            .child(
+                text(tr(if progress.vanilla { "Launching vanilla" } else { "Launching Deadlock" }))
+                    .font(BODY_MED)
+                    .color(u.ink)
+                    .role("heading")
+                    .grow(1.0),
+            )
+            .child(
+                u.icon_button(&icons::X, tr("Hide. The launch keeps going."))
+                    .size(24.0, 24.0)
+                    .key("launch-progress-hide")
+                    .cursor(rune::Cursor::Pointer)
+                    .on_press(hide),
+            ),
+    );
+    body = body.child(list);
     if let Some(why) = &progress.cancel_error {
-        list = list.child(
+        body = body.child(
             col()
                 .key("launch-progress-error")
                 .role("alert")
                 .w_full()
                 .gap(4.0)
-                .pt(4.0)
-                .child(text(tr("The launch could not be cancelled")).font(BODY).color(u.rose).wrap())
-                .child(text(why.clone()).font(BODY).color(u.muted).wrap()),
+                .child(text(tr("The launch could not be cancelled")).font(BODY_MED).color(u.rose).wrap())
+                .child(text(why.clone()).font(SMALL).color(u.prose).wrap()),
         );
     }
+    let footer = row().key("launch-progress-footer").w_full().h(28.0).gap(8.0).center_y();
+    let footer = if progress.cancel_error.is_some() {
+        footer
+            .child(spacer())
+            .child(
+                u.action_m(tr("Close"), ActionKind::Ghost)
+                    .key("launch-progress-dismiss")
+                    .cursor(rune::Cursor::Pointer)
+                    .on_press(dismiss),
+            )
+            .child(
+                u.action_m(tr("Try again"), ActionKind::Secondary)
+                    .key("launch-progress-retry")
+                    .cursor(rune::Cursor::Pointer)
+                    .on_press(close_for_cancel),
+            )
+    } else if progress.stopping {
+        // Closing the game takes the button's place: same line, same height.
+        footer
+            .key("launch-progress-closing")
+            .child(el().size(16.0, 16.0).center().child(icon(&icons::LOADER, 16.0).color(u.muted).a11y_hidden()))
+            .child(text(tr("Closing Deadlock")).font(BODY).color(u.ink).grow(1.0).min_w(0.0).truncate())
+    } else {
+        footer.child(spacer()).child(
+            u.action_m(tr("Cancel launch"), ActionKind::Secondary)
+                .key("launch-progress-cancel")
+                .cursor(rune::Cursor::Pointer)
+                .on_press(cancel),
+        )
+    };
+    body = body.child(footer);
     let share = progress.at as f32 / progress.steps.len().max(1) as f32;
+    // A 2 point line on the card's bottom edge.
     let bar = row()
+        .key("launch-progress-bar")
         .w_full()
-        .h(3.0)
-        .radius(crate::ui::r(1.5))
-        .clip_rounded(crate::ui::r(1.5))
-        .fill(u.hair_strong)
+        .h(2.0)
+        .a11y_hidden()
         .child(el().h_full().grow(share.max(0.02)).fill(u.accent))
-        .child(el().h_full().grow((1.0 - share).max(0.0)));
+        .child(el().h_full().grow((1.0 - share).max(0.0)).fill(u.hair));
     Some(
         u.dialog_shell()
             .key("launch-progress")
             .role("status")
             .label(tr("Launching Deadlock"))
             .w(340.0)
-            .padding(24.0)
-            .gap(16.0)
+            .clip_rounded(crate::ui::r(14.0))
             .on_key(|st: &mut State, ev: &KeyEvent, _tx: &mut Tx| {
                 if ev.key == Key::Escape {
                     hide(st);
@@ -449,52 +490,8 @@ pub fn overlay(s: &State, u: &Ui) -> Option<El> {
                     false
                 }
             })
-            .child(
-                row()
-                    .w_full()
-                    .center_y()
-                    .child(
-                        text(tr(if progress.vanilla { "Launching vanilla" } else { "Launching Deadlock" }))
-                            .font(H1)
-                            .color(u.ink)
-                            .grow(1.0),
-                    )
-                    .child(
-                        u.icon_button(&icons::X, tr("Hide. The launch keeps going."))
-                            .key("launch-progress-hide")
-                            .cursor(rune::Cursor::Pointer)
-                            .on_press(hide),
-                    ),
-            )
-            .child(list)
-            .child(bar)
-            .child(if progress.cancel_error.is_some() {
-                row()
-                    .w_full()
-                    .gap(8.0)
-                    .child(spacer())
-                    .child(
-                        u.action(tr("Close"), ActionKind::Ghost)
-                            .key("launch-progress-dismiss")
-                            .cursor(rune::Cursor::Pointer)
-                            .on_press(dismiss),
-                    )
-                    .child(
-                        u.action(tr("Try again"), ActionKind::Secondary)
-                            .key("launch-progress-retry")
-                            .cursor(rune::Cursor::Pointer)
-                            .on_press(close_for_cancel),
-                    )
-            } else if progress.stopping {
-                row().w_full()
-            } else {
-                row().w_full().child(spacer()).child(
-                    u.action(tr("Cancel launch"), ActionKind::Secondary)
-                        .key("launch-progress-cancel")
-                        .cursor(rune::Cursor::Pointer)
-                        .on_press(cancel),
-                )
-            }),
+            .child(body)
+            .child(bar),
     )
 }
 

@@ -20,8 +20,9 @@ use rune::{Align, Color, El, Side, TextEdit, col, el, icon, row, spacer, text};
 
 use crate::app::State;
 use crate::icons;
-use crate::ui::{ActionKind, BODY, BODY_MED, H1, MONO, SMALL, Ui};
-use crate::screens::settings::i18n::{fill, tr};
+use crate::ui::{ActionKind, BODY, BODY_MED, H1, MONO, SMALL, SMALL_NUM, Ui};
+use crate::screens::launch_progress::tr;
+use crate::screens::settings::i18n::fill;
 
 /// The dialog this module can open. Mounted through `launch::dialog`.
 #[derive(Clone, PartialEq, Eq)]
@@ -197,103 +198,113 @@ fn demo_apply(queue: &mut queue::Queue, command: queue::Command) {
     }
 }
 
-/// The section on the Launch page: heading, the add row, then one row per archive.
+/// The section on the Launch page: heading with the queue's controls, the add row, then the
+/// list in a panel with one fixed 56 point row per archive.
 pub fn section(s: &State, u: &Ui) -> El {
-    let downloads = &s.launch.downloads;
-    let queue = downloads.snapshot();
-    let active = queue.active();
-    let done = queue.done();
-    let finished = queue.items.iter().filter(|item| item.state.finished()).count();
+    let queue = s.launch.downloads.snapshot();
+    col()
+        .w_full()
+        .gap(8.0)
+        .child(head(u, &queue, true))
+        .child(add_row(s, u))
+        .child(list(s, u, &queue))
+}
 
-    let meta = if queue.items.is_empty() {
+/// A 24 point ghost button in the section header, always drawn so the header never shifts.
+fn head_button(u: &Ui, key: &str, label: &str, enabled: bool) -> El {
+    u.action(label, ActionKind::Ghost)
+        .key(key.to_string())
+        .h(24.0)
+        .px(8.0)
+        .disabled(!enabled)
+        .opacity(if enabled { 1.0 } else { 0.4 })
+        .cursor(if enabled { rune::Cursor::Pointer } else { rune::Cursor::Default })
+}
+
+/// `Downloads  4  16.0 MB of 25.5 MB` with Pause all, Cancel all and Clear finished. The title
+/// is left out in the titlebar panel, which is already called Downloads.
+fn head(u: &Ui, queue: &queue::Queue, title: bool) -> El {
+    let active = queue.active();
+    let finished = queue.items.iter().filter(|item| item.state.finished()).count();
+    let meta = if active == 0 {
         String::new()
-    } else if active == 0 {
-        fill(
-            tr("{} downloaded"),
-            &[&fill(tr("{} of {}"), &[&done.to_string(), &queue.items.len().to_string()])],
-        )
     } else if queue.total_bytes() > 0 {
         format!(
-            "{} · {} of {}",
+            "{} · {}",
             fill(tr("{} in the queue"), &[&active.to_string()]),
-            queue::size(queue.done_bytes()),
-            queue::size(queue.total_bytes())
+            fill(tr("{} of {}"), &[&queue::size(queue.done_bytes()), &queue::size(queue.total_bytes())])
         )
     } else {
         fill(tr("{} in the queue"), &[&active.to_string()])
     };
-
-    let mut head = row()
-        .w_full()
-        .h(32.0)
-        .gap(8.0)
-        .center_y()
-        .child(text(tr("Downloads")).font(BODY_MED).color(u.muted));
-    if !meta.is_empty() {
-        head = head.child(text(meta).font(SMALL).color(u.faint).truncate());
+    let mut head = row().w_full().h(24.0).pr(8.0).gap(8.0).center_y();
+    if title {
+        head = head.child(u.section(tr("Downloads")));
     }
-    head = head.child(spacer());
-    if !queue.items.is_empty() {
-        let (label, command) = if queue.paused {
-            (tr("Resume all"), queue::Command::PauseAll(false))
-        } else {
-            (tr("Pause all"), queue::Command::PauseAll(true))
-        };
-        head = head.child(
-            u.action(label, ActionKind::Ghost)
-                .key("downloads-pause-all")
-                .cursor(rune::Cursor::Pointer)
-                .on_press(move |st: &mut State| st.launch.downloads.send(command.clone())),
-        );
+    head = head
+        .child(text(meta).font(SMALL_NUM).color(u.faint).truncate().shrink().min_w(0.0))
+        .child(spacer());
+    // An empty queue has nothing to pause, cancel or clear. The row keeps its height, and the
+    // buttons sit on the right edge, so their arrival moves nothing.
+    if queue.items.is_empty() {
+        return head;
     }
+    let (label, command) = if queue.paused {
+        (tr("Resume all"), queue::Command::PauseAll(false))
+    } else {
+        (tr("Pause all"), queue::Command::PauseAll(true))
+    };
+    let can_pause = active > 0 || queue.paused;
+    head = head.child(head_button(u, "downloads-pause-all", label, can_pause).on_press(move |st: &mut State| {
+        if can_pause {
+            st.launch.downloads.send(command.clone())
+        }
+    }));
     // Grimoire's Cancel all: every row still waiting, running or paused. A running row stops
     // mid-stream and its partial file goes.
     let unfinished: Vec<String> = queue.items.iter().filter(|item| !item.state.finished()).map(|item| item.id.clone()).collect();
-    if unfinished.len() > 1 {
-        head = head.child(
-            u.action(tr("Cancel all"), ActionKind::Ghost)
-                .key("downloads-cancel-all")
-                .cursor(rune::Cursor::Pointer)
-                .on_press(move |st: &mut State| {
-                    for id in &unfinished {
-                        st.launch.downloads.send(queue::Command::Cancel(id.clone()));
-                    }
-                }),
-        );
-    }
-    if finished > 0 {
-        head = head.child(
-            u.action(tr("Clear finished"), ActionKind::Ghost)
-                .key("downloads-clear")
-                .cursor(rune::Cursor::Pointer)
-                .on_press(|st: &mut State| {
-                    st.launch.downloads.send(queue::Command::ClearFinished)
-                }),
-        );
-    }
+    let can_cancel = unfinished.len() > 1;
+    head = head.child(head_button(u, "downloads-cancel-all", tr("Cancel all"), can_cancel).on_press(move |st: &mut State| {
+        if can_cancel {
+            for id in &unfinished {
+                st.launch.downloads.send(queue::Command::Cancel(id.clone()));
+            }
+        }
+    }));
+    let can_clear = finished > 0;
+    head.child(head_button(u, "downloads-clear", tr("Clear finished"), can_clear).on_press(move |st: &mut State| {
+        if can_clear {
+            st.launch.downloads.send(queue::Command::ClearFinished)
+        }
+    }))
+}
 
-    let mut body = col().w_full().gap(0.0).child(head).child(add_row(s, u));
+/// The rows in a panel. Empty: one quiet row of the same height.
+fn list(s: &State, u: &Ui, queue: &queue::Queue) -> El {
+    let downloads = &s.launch.downloads;
+    let mut panel = u.panel().key("downloads-list").w_full().radius(crate::ui::r(8.0)).clip_rounded(crate::ui::r(8.0));
     if queue.items.is_empty() {
-        body = body.child(
-            text(tr(
-                "Nothing queued. Paste a GameBanana link and the archive downloads in the background.",
-            ))
-            .font(SMALL)
-            .color(u.faint)
-            .w_full()
-            .pt(12.0)
-            .wrap(),
+        return panel.child(
+            row()
+                .key("downloads-empty")
+                .w_full()
+                .h(ROW_H)
+                .px(16.0)
+                .gap(12.0)
+                .center_y()
+                .child(icon(&icons::DOWNLOAD, 16.0).color(u.faint).a11y_hidden())
+                .child(text(tr("Nothing queued")).font(SMALL).color(u.muted)),
         );
-        return body;
     }
     let drag = downloads.drag.as_ref();
+    let last = queue.items.len() - 1;
     for (index, item) in queue.items.iter().enumerate() {
         let target = drag.filter(|(id, from, to)| *id != item.id && *to == index && from != to);
         let speed = rate(&downloads.demo_rates, item);
         let switched = switched_from(&downloads.servers, &item.id);
-        body = body.child(item_row(u, &queue, index, item, speed, switched, drag.is_some_and(|(id, _, _)| *id == item.id), target.map(|(_, from, to)| from < to)));
+        panel = panel.child(item_row(u, queue, index, item, speed, switched, drag.is_some_and(|(id, _, _)| *id == item.id), target.map(|(_, from, to)| from < to), index == last));
     }
-    body
+    panel
 }
 
 // --- reorder ------------------------------------------------------------------------------------
@@ -604,11 +615,11 @@ pub fn panel(s: &State, u: &Ui) -> Option<El> {
             .key("downloads-panel")
             .role("dialog")
             .label(tr("Downloads"))
-            .w(560.0)
+            .w(480.0)
             .shrink()
             .min_h(0.0)
             .fill(u.raised)
-            .radius(crate::ui::r(12.0))
+            .radius(crate::ui::r(8.0))
             .border(1.0, u.hair_strong)
             .shadow(16.0, 40.0, crate::ui::soft(Color::BLACK.alpha(0.5)))
             .anchored_fit("titlebar-downloads", Side::Bottom, Align::End, 6.0)
@@ -628,35 +639,34 @@ pub fn panel(s: &State, u: &Ui) -> Option<El> {
                     .shrink()
                     .min_h(0.0)
                     .max_h(520.0)
-                    .px(16.0)
-                    .pt(8.0)
-                    .pb(12.0)
+                    .padding(12.0)
+                    .gap(8.0)
                     .scroll(rune::ScrollSpec { stick_bottom: false })
-                    .child(section(s, u)),
+                    .child(head(u, &s.launch.downloads.snapshot(), false))
+                    .child(add_row(s, u))
+                    .child(list(s, u, &s.launch.downloads.snapshot())),
             ),
     )
 }
 
 /// The field and the Add button: a queued download starts without leaving the page.
 fn add_row(s: &State, u: &Ui) -> El {
-    let field = rune::text_input(&s.launch.downloads.input, SMALL)
+    let field = rune::text_input(&s.launch.downloads.input, BODY)
         .key("downloads-input")
         .label(tr("A mod link, a mod id or an archive path"))
         .single_line()
         .grow(1.0)
         .color(u.ink)
-        .placeholder(tr("Paste a GameBanana link or mod id"), u.faint)
+        .placeholder(tr("GameBanana link or mod id"), u.faint)
         .caret(u.accent, u.accent.alpha(0.20))
         .on_edit(|st: &mut State| &mut st.launch.downloads.input)
         .on_submit(|st: &mut State, _tx: &mut rune::Tx| queue_target(st));
     row()
         .key("downloads-add")
         .w_full()
-        .min_h(44.0)
-        .py(8.0)
+        .h(32.0)
         .gap(8.0)
         .center_y()
-        .border_sides([0.0, 0.0, 1.0, 0.0], u.hair)
         .child(
             el()
                 .grow(1.0)
@@ -702,8 +712,10 @@ fn resume_note(item: &Item) -> Option<&'static str> {
     }
 }
 
-/// One archive: state, name, the line under it, a progress line while it runs, and its
-/// controls on the right.
+/// One archive in a fixed 56 point row: state glyph (or the grip while it waits), name over one
+/// line, a fixed slot for Install or Review (or the move arrows while it waits), then two fixed
+/// icon slots. Progress is a 2 point
+/// line on the row's bottom edge, so nothing in the row grows while it downloads.
 #[allow(clippy::too_many_arguments)]
 fn item_row(
     u: &Ui,
@@ -714,8 +726,10 @@ fn item_row(
     switched: Option<&str>,
     dragging: bool,
     drop_below: Option<bool>,
+    last: bool,
 ) -> El {
     let (glyph, tint) = match item.state {
+        _ if slow => (&icons::TRIANGLE_ALERT, u.amber),
         ItemState::Queued => (&icons::DOWNLOAD, u.faint),
         ItemState::Running => (&icons::DOWNLOAD, u.ink),
         ItemState::Paused => (&icons::DOWNLOAD, u.muted),
@@ -754,8 +768,9 @@ fn item_row(
         Some(note) => fill(tr("{} · {}"), &[note, &detail]),
         None => detail,
     };
+    let detail = if slow { fill(tr("Slow · {}"), &[&detail]) } else { detail };
 
-    let mut middle = col()
+    let middle = col()
         .grow(1.0)
         .min_w(0.0)
         .gap(2.0)
@@ -770,102 +785,26 @@ fn item_row(
                 .truncate(),
         )
         .child(
-            text(detail)
-                .font(SMALL)
+            text(detail.clone())
+                .font(SMALL_NUM)
                 .color(if item.state == ItemState::Failed {
                     u.rose
                 } else {
                     u.muted
                 })
-                .truncate(),
+                .truncate()
+                .help_when_truncated(detail),
         );
-    if matches!(item.state, ItemState::Running | ItemState::Paused) {
-        middle = middle.child(progress_line(u, item));
-    }
-    if slow {
-        middle = middle.child(
-            row()
-                .key(format!("downloads-slow-{}", item.id))
-                .w_full()
-                .gap(6.0)
-                .items_start()
-                .child(icon(&icons::TRIANGLE_ALERT, 12.0).color(u.amber).mt(2.0).a11y_hidden())
-                .child(
-                    text(tr("Downloading slowly, under 150 KB/s. This is most likely GameBanana's servers under heavy load or your internet provider."))
-                        .font(SMALL)
-                        .color(u.amber)
-                        .wrap()
-                        .grow(1.0)
-                        .min_w(0.0),
-                ),
-        );
-    }
 
-    let mut controls = row().gap(4.0).center_y();
-    if item.state == ItemState::Queued {
-        for (up, glyph, words) in [(true, &icons::ARROW_UP, tr("Move up")), (false, &ARROW_DOWN, tr("Move down"))] {
-            let to = landing(&queue.items, index, if up { -1 } else { 1 });
-            let mv = id.clone();
-            let mut b = u
-                .icon_button(glyph, words)
-                .key(format!("downloads-{}-{}", if up { "up" } else { "down" }, item.id));
-            b = if to == index {
-                b.disabled(true).opacity(0.35)
-            } else {
-                b.cursor(rune::Cursor::Pointer).on_press(move |st: &mut State| {
-                    st.launch.downloads.send(queue::Command::MoveTo { id: mv.clone(), index: to })
-                })
-            };
-            controls = controls.child(b);
-        }
-    }
-    match item.state {
-        ItemState::Queued | ItemState::Running => {
-            let pause = id.clone();
-            controls = controls.child(
-                u.icon_button(&icons::SQUARE_STOP, tr("Pause"))
-                    .key(format!("downloads-pause-{}", item.id))
-                    .cursor(rune::Cursor::Pointer)
-                    .on_press(move |st: &mut State| {
-                        st.launch
-                            .downloads
-                            .send(queue::Command::Pause(pause.clone()))
-                    }),
-            );
-        }
-        ItemState::Paused => {
-            let resume = id.clone();
-            controls = controls.child(
-                u.icon_button(&icons::PLAY, tr("Resume"))
-                    .key(format!("downloads-resume-{}", item.id))
-                    .cursor(rune::Cursor::Pointer)
-                    .on_press(move |st: &mut State| {
-                        st.launch
-                            .downloads
-                            .send(queue::Command::Resume(resume.clone()))
-                    }),
-            );
-        }
-        ItemState::Failed | ItemState::Cancelled | ItemState::Done => {
-            let retry = id.clone();
-            controls = controls.child(
-                u.icon_button(&icons::ROTATE_CCW, tr("Retry"))
-                    .key(format!("downloads-retry-{}", item.id))
-                    .cursor(rune::Cursor::Pointer)
-                    .on_press(move |st: &mut State| {
-                        st.launch
-                            .downloads
-                            .send(queue::Command::Retry(retry.clone()))
-                    }),
-            );
-        }
-    }
+    let slot = |e: El| e.size(SLOT, SLOT);
+
+    // Slot 1, 88 wide: Install or Review once it is done, the move arrows while it waits.
+    let mut first = row().w(ACTION_SLOT).gap(4.0).center_y().child(spacer());
     if item.state == ItemState::Done {
         let path = item.path.clone();
         let review = id.clone();
-        controls = controls.child(
-            u.icon_action(
-                &icons::DOWNLOAD,
+        first = first.child(
+            u.action_m(
                 if item.scan.suspicious() {
                     tr("Review")
                 } else {
@@ -873,6 +812,7 @@ fn item_row(
                 },
                 ActionKind::Secondary,
             )
+            .w(ACTION_SLOT)
             .key(format!("downloads-install-{}", item.id))
             .cursor(rune::Cursor::Pointer)
             .on_press(move |st: &mut State| {
@@ -884,10 +824,40 @@ fn item_row(
                 }
             }),
         );
+    } else if item.state == ItemState::Queued {
+        for (up, glyph, words) in [(true, &icons::ARROW_UP, tr("Move up")), (false, &ARROW_DOWN, tr("Move down"))] {
+            let to = landing(&queue.items, index, if up { -1 } else { 1 });
+            let mv = id.clone();
+            let b = slot(u.icon_button(glyph, words))
+                .key(format!("downloads-{}-{}", if up { "up" } else { "down" }, item.id));
+            first = first.child(if to == index {
+                b.disabled(true).opacity(0.35)
+            } else {
+                b.cursor(rune::Cursor::Pointer).on_press(move |st: &mut State| {
+                    st.launch.downloads.send(queue::Command::MoveTo { id: mv.clone(), index: to })
+                })
+            });
+        }
     }
+    let mut controls = row().gap(4.0).center_y().child(first);
+
+    // Slot 4: pause, resume or retry.
+    let (act_glyph, words, key, command): (&'static rune::Icon, &str, &str, fn(String) -> queue::Command) = match item.state {
+        ItemState::Queued | ItemState::Running => (&icons::SQUARE_STOP, tr("Pause"), "pause", queue::Command::Pause),
+        ItemState::Paused => (&icons::PLAY, tr("Resume"), "resume", queue::Command::Resume),
+        ItemState::Failed | ItemState::Cancelled | ItemState::Done => (&icons::ROTATE_CCW, tr("Retry"), "retry", queue::Command::Retry),
+    };
+    let target = id.clone();
+    controls = controls.child(
+        slot(u.icon_button(act_glyph, words))
+            .key(format!("downloads-{key}-{}", item.id))
+            .cursor(rune::Cursor::Pointer)
+            .on_press(move |st: &mut State| st.launch.downloads.send(command(target.clone()))),
+    );
+    // Slot 5: cancel, or remove a finished row.
     let cancel = id.clone();
     controls = controls.child(
-        u.icon_button(
+        slot(u.icon_button(
             if item.state.finished() {
                 &icons::TRASH_2
             } else {
@@ -898,7 +868,7 @@ fn item_row(
             } else {
                 tr("Cancel")
             },
-        )
+        ))
         .key(format!("downloads-remove-{}", item.id))
         .cursor(rune::Cursor::Pointer)
         .on_press(move |st: &mut State| {
@@ -918,7 +888,7 @@ fn item_row(
     );
 
     // A waiting row's glyph is its drag handle.
-    let lead = if item.state == ItemState::Queued {
+    let lead = if item.state == ItemState::Queued && !slow {
         let drag_id = item.id.clone();
         el().key(format!("downloads-grip-{}", item.id))
             .w(16.0)
@@ -936,15 +906,24 @@ fn item_row(
     let mut r = row()
         .key(format!("downloads-row-{}", item.id))
         .w_full()
-        .min_h(52.0)
-        .py(8.0)
+        .h(ROW_H)
+        .pl(16.0)
+        .pr(12.0)
         .gap(12.0)
         .center_y()
-        .fill(if dragging { u.selected } else { Color::TRANSPARENT })
-        .border_sides([0.0, 0.0, 1.0, 0.0], u.hair)
+        .opacity(if dragging { 0.55 } else { 1.0 })
         .child(lead)
         .child(middle)
         .child(controls);
+    if slow {
+        r = r.help(tr("Downloading slowly, under 150 KB/s. This is most likely GameBanana's servers under heavy load or your internet provider."));
+    }
+    if !last {
+        r = r.border_sides([0.0, 0.0, 1.0, 0.0], u.hair);
+    }
+    if matches!(item.state, ItemState::Running | ItemState::Paused) {
+        r = r.child(progress_line(u, item));
+    }
     if let Some(below) = drop_below {
         let line = el().w_full().h(2.0).fill(u.accent).a11y_hidden();
         r = r.child(
@@ -960,6 +939,11 @@ fn item_row(
     r
 }
 
+/// An icon slot in a download row.
+const SLOT: f32 = 28.0;
+/// The slot for Install or Review, or the two move arrows.
+const ACTION_SLOT: f32 = 88.0;
+
 /// Lucide grip-vertical and arrow-down (ISC), drawn like `icons.rs`.
 static GRIP_VERTICAL: rune::Icon = rune::Icon {
     name: "sigil-downloads-grip-vertical",
@@ -972,37 +956,18 @@ static ARROW_DOWN: rune::Icon = rune::Icon {
     body: r#"<g fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="m19 12-7 7-7-7"/></g>"#,
 };
 
-/// A 3 point track: the ember part grows with the fraction and the rest stays a hairline.
+/// A 2 point line on the row's bottom edge: the ember part grows with the fraction. It sits
+/// over the row, so it adds no height.
 fn progress_line(u: &Ui, item: &Item) -> El {
     let fraction = item.fraction().unwrap_or(0.0).clamp(0.0, 1.0);
     let done = fraction.max(0.02);
     row()
+        .absolute(0.0, ROW_H - 2.0)
         .w_full()
-        .h(7.0)
-        .items_end()
-        .child(
-            row()
-                .w_full()
-                .h(3.0)
-                .child(
-                    el()
-                        .h(3.0)
-                        .grow(done)
-                        .radius(crate::ui::r(1.5))
-                        .fill(if item.state == ItemState::Paused {
-                            u.muted
-                        } else {
-                            u.accent
-                        }),
-                )
-                .child(
-                    el()
-                        .h(3.0)
-                        .grow((1.0 - fraction).max(0.0))
-                        .radius(crate::ui::r(1.5))
-                        .fill(u.hair_strong),
-                ),
-        )
+        .h(2.0)
+        .a11y_hidden()
+        .child(el().h(2.0).grow(done).fill(if item.state == ItemState::Paused { u.muted } else { u.accent }))
+        .child(el().h(2.0).grow((1.0 - fraction).max(0.0)).fill(u.hair_strong))
 }
 
 /// Hand a finished archive to Browse's install dialog. Nothing is written here.

@@ -4,14 +4,16 @@
 //! The reading is `deadlock_core::impact::crash_cause` (after Deadlock Mod Manager's crash
 //! resource attribution, behaviour only, and Grimoire's crash evidence) and
 //! `deadlock_core::addon_checks::hud_check` for the one layout the crash named. `launch.rs`
-//! draws the card and calls in here for the rows below the dump's own words.
+//! draws the card and calls in here for its Details block.
 
 use deadlock_core::addon_checks::HudCheck;
 use deadlock_core::impact::{Reason, Suspect};
-use rune::{El, col, el, row, text};
+use rune::{El, col, icon, row, text};
+
+use crate::icons::TRIANGLE_ALERT;
 
 use crate::screens::settings::i18n::fill;
-use crate::ui::{MONO, SMALL, Ui};
+use crate::ui::{MONO, SMALL, SMALL_NUM, Ui};
 
 const DE: &[(&str, &str)] = &[
     ("The crash report names {}, which this mod replaces.", "Der Absturzbericht nennt {}, das dieser Mod ersetzt."),
@@ -22,7 +24,8 @@ const DE: &[(&str, &str)] = &[
     ("Installed shortly before the crash.", "Kurz vor dem Absturz installiert."),
     ("Loading", "Geladen wurde"),
     ("No mod replaces this file: the game's own copy was loading.", "Kein Mod ersetzt diese Datei: Das Spiel lud seine eigene Kopie."),
-    ("Replaced by the mod below.", "Ersetzt durch den Mod unten."),
+    ("Replaced by the suspect above.", "Ersetzt durch den verdächtigen Mod oben."),
+    ("Crash report", "Absturzbericht"),
     ("HUD layout", "HUD-Layout"),
     (
         "This layout lacks {} panels the current game build has. The mod is behind the game: update it or turn it off.",
@@ -72,20 +75,22 @@ pub struct Evidence {
     pub uptime_seconds: Option<f64>,
 }
 
-fn row_frame(key: &str, u: &Ui) -> El {
-    row()
+/// One labelled group in the Details block: the label in small muted text, then its lines.
+fn group(u: &Ui, key: &str, label: &str) -> El {
+    col()
         .key(key.to_string())
         .w_full()
-        .min_h(40.0)
-        .py(8.0)
-        .gap(12.0)
-        .items_start()
-        .border_sides([0.0, 0.0, 1.0, 0.0], u.hair)
-        .child(el().w(16.0))
+        .gap(2.0)
+        .child(text(label.to_string()).font(SMALL).color(u.muted))
 }
 
-/// Rows for the card, between the dump's words and the suspect.
-pub fn rows(u: &Ui, evidence: &Evidence, suspect: Option<&Suspect>) -> Vec<El> {
+fn mono(u: &Ui, line: String) -> El {
+    text(line).font(MONO).color(u.prose).wrap_anywhere().selectable(true)
+}
+
+/// The Details block of the crash card: the file the game was loading, the HUD check, the
+/// console around the crash and the dump's own words, as labelled groups.
+pub fn groups(u: &Ui, evidence: &Evidence, suspect: Option<&Suspect>, comment: Option<&str>) -> Vec<El> {
     let mut out = Vec::new();
     if let Some(resource) = &evidence.resource {
         let replaced = suspect
@@ -98,63 +103,59 @@ pub fn rows(u: &Ui, evidence: &Evidence, suspect: Option<&Suspect>) -> Vec<El> {
         if let Some(uptime) = evidence.uptime_seconds {
             facts.push(fill(tr("{} seconds after start"), &[&format!("{uptime:.0}")]));
         }
-        let mut body = col()
-            .grow(1.0)
-            .min_w(0.0)
-            .gap(2.0)
-            .child(text(tr("Loading")).font(SMALL).color(u.faint))
-            .child(text(resource.clone()).font(MONO).color(u.ink).wrap_anywhere().selectable(true))
+        let mut body = group(u, "launch-crash-resource", tr("Loading"))
+            .child(mono(u, resource.clone()))
             .child(
                 text(if replaced {
-                    tr("Replaced by the mod below.")
+                    tr("Replaced by the suspect above.")
                 } else {
                     tr("No mod replaces this file: the game's own copy was loading.")
                 })
                 .font(SMALL)
-                .color(u.muted)
+                .color(u.prose)
                 .wrap(),
             );
         if !facts.is_empty() {
-            body = body.child(text(facts.join(" · ")).font(SMALL).color(u.faint));
+            body = body.child(text(facts.join(" · ")).font(SMALL_NUM).color(u.muted));
         }
-        out.push(row_frame("launch-crash-resource", u).child(body));
+        out.push(body);
     }
     if let Some(hud) = &evidence.hud {
         use deadlock_core::addon_checks::HudStatus;
-        let (line, tone) = match hud.status {
+        let (line, warn) = match hud.status {
             HudStatus::Compared if hud.is_outdated() => (
                 fill(
                     tr("This layout lacks {} panels the current game build has. The mod is behind the game: update it or turn it off."),
                     &[&hud.missing_panels.len().to_string()],
                 ),
-                u.amber,
+                true,
             ),
-            HudStatus::Compared => (tr("This layout has every panel the current game build has.").to_string(), u.muted),
-            HudStatus::NoBaseline => (tr("This is the mod's own layout. The game has none to compare with.").to_string(), u.muted),
-            HudStatus::Unsupported => (tr("This layout could not be compared with the game's.").to_string(), u.muted),
+            HudStatus::Compared => (tr("This layout has every panel the current game build has.").to_string(), false),
+            HudStatus::NoBaseline => (tr("This is the mod's own layout. The game has none to compare with.").to_string(), false),
+            HudStatus::Unsupported => (tr("This layout could not be compared with the game's.").to_string(), false),
         };
-        let mut body = col()
-            .grow(1.0)
-            .min_w(0.0)
-            .gap(2.0)
-            .child(text(tr("HUD layout")).font(SMALL).color(u.faint))
-            .child(text(line).font(SMALL).color(tone).wrap());
+        let mut sentence = row().w_full().gap(6.0).items_start();
+        if warn {
+            sentence = sentence.child(icon(&TRIANGLE_ALERT, 12.0).color(u.amber).mt(2.0).a11y_hidden());
+        }
+        sentence = sentence.child(text(line).font(SMALL).color(u.prose).wrap().grow(1.0).min_w(0.0));
+        let mut body = group(u, "launch-crash-hud", tr("HUD layout")).child(sentence);
         if !hud.missing_panels.is_empty() {
             let shown: Vec<&str> = hud.missing_panels.iter().take(8).map(String::as_str).collect();
-            body = body.child(text(fill(tr("Missing: {}"), &[&shown.join(", ")])).font(MONO).color(u.prose).wrap_anywhere());
+            body = body.child(mono(u, fill(tr("Missing: {}"), &[&shown.join(", ")])));
         }
-        out.push(row_frame("launch-crash-hud", u).child(body));
+        out.push(body);
     }
     if !evidence.console.is_empty() {
-        let mut body = col()
-            .grow(1.0)
-            .min_w(0.0)
-            .gap(2.0)
-            .child(text(tr("Console around the crash")).font(SMALL).color(u.faint));
+        let mut body = group(u, "launch-crash-console", tr("Console around the crash"));
         for line in evidence.console.iter().take(4) {
-            body = body.child(text(line.clone()).font(MONO).color(u.prose).wrap_anywhere().selectable(true));
+            body = body.child(mono(u, line.clone()));
         }
-        out.push(row_frame("launch-crash-console", u).child(body));
+        out.push(body);
+    }
+    if let Some(comment) = comment {
+        let words: String = comment.trim().chars().take(400).collect();
+        out.push(group(u, "launch-crash-comment", tr("Crash report")).child(mono(u, words)));
     }
     out
 }
