@@ -1,0 +1,21 @@
+{
+  "format": "dmm-source",
+  "protocolVersion": "1.0",
+  "sourceId": "community",
+  "name": "Community Mods",
+  "gameId": "deadlock",
+  "catalog": {
+    "kind": "static",
+    "indexUrl": "./catalog.json",
+    "releaseHistoryUrlTemplate": "./history/{listingId}"
+  },
+  "networkOrigins": {
+    "api": ["https://mods.example.org"],
+    "downloads": ["https://cdn.example.org"],
+    "media": ["https://media.example.org"]
+  },
+  "capabilities": {
+    "releaseHistory": true
+  },
+  "homepageUrl": "https://mods.example.org"
+}

@@ -93,6 +93,149 @@ pub struct Release {
     pub changelog: String,
 }
 
+/// What a `deadlock-mod-manager://sources/...` link asks for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SourceAction {
+    Add,
+    Install,
+}
+
+/// A parsed `deadlock-mod-manager://sources/add` or `.../install` link. Every value was
+/// percent-decoded and checked as untrusted input; a confirm still comes before anything is
+/// added, enabled or installed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SourceLink {
+    pub action: SourceAction,
+    /// The full descriptor address, on the source's own https origin.
+    pub url: String,
+    /// The descriptor's `sourceId`, required by an install link.
+    pub source: String,
+    /// The listing id, required by an install link.
+    pub listing: Option<String>,
+    /// Pins the current release; the handler refuses any other.
+    pub release: Option<String>,
+    /// Names one file of the current release.
+    pub artifact: Option<String>,
+}
+
+/// Read the part of a `deadlock-mod-manager://` link after its scheme. The path must be
+/// `//sources/add` or `//sources/install`; the query is percent-decoded, one value per name.
+pub fn parse_source_link(rest: &str) -> std::result::Result<SourceLink, String> {
+    let (path, query) = rest
+        .trim()
+        .split_once('?')
+        .ok_or_else(|| "A source link carries a query.".to_string())?;
+    if query.contains('#') {
+        return Err("A source link has no fragment.".into());
+    }
+    let path = path
+        .strip_prefix("//")
+        .ok_or_else(|| "A source link starts with //sources/.".to_string())?;
+    let action = if path.eq_ignore_ascii_case("sources/add") {
+        SourceAction::Add
+    } else if path.eq_ignore_ascii_case("sources/install") {
+        SourceAction::Install
+    } else {
+        return Err("Only sources/add and sources/install links are read.".into());
+    };
+    let mut url: Option<String> = None;
+    let mut source: Option<String> = None;
+    let mut listing: Option<String> = None;
+    let mut release: Option<String> = None;
+    let mut artifact: Option<String> = None;
+    for pair in query.split('&') {
+        if pair.is_empty() {
+            return Err("A source link has an empty field.".into());
+        }
+        let (key, value) = pair
+            .split_once('=')
+            .ok_or_else(|| "A source link field has no value.".to_string())?;
+        let key = decode_value(key)?;
+        let value = decode_value(value)?;
+        let slot = match key.as_str() {
+            "url" => &mut url,
+            "source" => &mut source,
+            "listing" => &mut listing,
+            "release" => &mut release,
+            "artifact" => &mut artifact,
+            _ => continue,
+        };
+        if slot.is_some() {
+            return Err(format!("{key} appears twice in the link."));
+        }
+        *slot = Some(value);
+    }
+    let url = url.ok_or_else(|| "The link has no source address.".to_string())?;
+    check_url(&url).map_err(|e| e.to_string())?;
+    if url.contains('#') || url.contains('\\') {
+        return Err("The source address has characters Sigil does not read.".into());
+    }
+    let source = match action {
+        SourceAction::Add => String::new(),
+        SourceAction::Install => plain(
+            source.as_deref().ok_or_else(|| "The link names no source.".to_string())?,
+            256,
+            "source",
+        )?,
+    };
+    let listing = match action {
+        SourceAction::Add => None,
+        SourceAction::Install => Some(plain(
+            listing.as_deref().ok_or_else(|| "The link names no mod.".to_string())?,
+            256,
+            "listing",
+        )?),
+    };
+    let release = release.map(|value| plain(&value, 256, "release")).transpose()?;
+    let artifact = artifact.map(|value| plain(&value, 256, "artifact")).transpose()?;
+    Ok(SourceLink {
+        action,
+        url,
+        source,
+        listing,
+        release,
+        artifact,
+    })
+}
+
+fn plain(value: &str, max: usize, name: &str) -> std::result::Result<String, String> {
+    if value.is_empty() || value.len() > max || value.chars().any(char::is_control) {
+        return Err(format!("The link's {name} is empty or too long."));
+    }
+    Ok(value.to_string())
+}
+
+/// Percent-decode one query value. `+` stays a plus, as Deadlock Mod Manager reads it.
+fn decode_value(value: &str) -> std::result::Result<String, String> {
+    let bytes = value.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' {
+            if i + 2 >= bytes.len() {
+                return Err("A source link has a broken percent escape.".into());
+            }
+            let high = hex(bytes[i + 1]).ok_or_else(|| "A source link has a broken percent escape.".to_string())?;
+            let low = hex(bytes[i + 2]).ok_or_else(|| "A source link has a broken percent escape.".to_string())?;
+            out.push(high * 16 + low);
+            i += 3;
+        } else {
+            out.push(bytes[i]);
+            i += 1;
+        }
+    }
+    String::from_utf8(out).map_err(|_| "A source link is not valid text.".to_string())
+}
+
+fn hex(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    }
+}
+
 /// Lowercase `scheme://host[:port]` of an absolute URL.
 pub fn origin_of(url: &str) -> Option<String> {
     let (scheme, rest) = url.split_once("://")?;
@@ -252,7 +395,7 @@ pub fn parse_descriptor(url: &str, body: &str) -> Result<Descriptor> {
 pub fn check_on(url: &str, allowed: &[String], role: &str) -> Result<()> {
     check_url(url)?;
     let o = origin_of(url).unwrap_or_default();
-    if allowed.iter().any(|a| *a == o) {
+    if allowed.contains(&o) {
         Ok(())
     } else {
         Err(Error::msg(format!("{url} is not on the source's declared {role} origins.")))
@@ -505,68 +648,10 @@ pub fn image_allowed(d: &Descriptor, url: &str) -> bool {
     check_on(url, &d.media, "media").is_ok() || check_on(url, &d.api, "api").is_ok()
 }
 
-/// Markdown as plain text for a reader without a Markdown view: headings, emphasis, code
-/// marks and link targets are dropped, list items become bullets, images are left out (DMM
-/// drops inline images too), table rows keep their cells.
+/// Markdown as plain text for a line that has no span renderer. The structured reader in
+/// [`crate::mod_markdown`] is what Browse uses; this keeps the older text-only entry point.
 pub fn markdown_to_text(markdown: &str) -> String {
-    static LINK: std::sync::LazyLock<regex::Regex> =
-        std::sync::LazyLock::new(|| regex::Regex::new(r"!?\[([^\]]*)\]\([^)]*\)").unwrap());
-    let mut out: Vec<String> = Vec::new();
-    let mut fenced = false;
-    for raw in markdown.lines() {
-        let line = raw.trim_end();
-        let trimmed = line.trim_start();
-        if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
-            fenced = !fenced;
-            continue;
-        }
-        if fenced {
-            out.push(line.to_string());
-            continue;
-        }
-        // Table rules (`|---|:--:|`) and horizontal rules carry no words.
-        if !trimmed.is_empty() && trimmed.chars().all(|c| matches!(c, '|' | '-' | ':' | ' ' | '*' | '_')) && trimmed.len() >= 3 {
-            continue;
-        }
-        let mut text = trimmed.trim_start_matches('#').trim_start().to_string();
-        if trimmed.starts_with('>') {
-            text = trimmed.trim_start_matches('>').trim_start().to_string();
-        }
-        for marker in ["- [ ] ", "- [x] ", "* [ ] ", "* [x] ", "- ", "* ", "+ "] {
-            if let Some(rest) = text.strip_prefix(marker) {
-                text = format!("• {rest}");
-                break;
-            }
-        }
-        text = LINK
-            .replace_all(&text, |caps: &regex::Captures| {
-                if caps[0].starts_with('!') { String::new() } else { caps[1].to_string() }
-            })
-            .into_owned();
-        if text.starts_with('|') {
-            text = text.trim_matches('|').split('|').map(str::trim).collect::<Vec<_>>().join("  ·  ");
-        }
-        for mark in ["**", "__", "~~", "`"] {
-            text = text.replace(mark, "");
-        }
-        out.push(text.trim_end().to_string());
-    }
-    let joined = out.join("\n");
-    let mut text = String::with_capacity(joined.len());
-    let mut blank = 0;
-    for line in joined.lines() {
-        if line.trim().is_empty() {
-            blank += 1;
-            if blank > 1 {
-                continue;
-            }
-        } else {
-            blank = 0;
-        }
-        text.push_str(line);
-        text.push('\n');
-    }
-    text.trim().to_string()
+    crate::mod_markdown::to_text(markdown)
 }
 
 /// Case-insensitive search over title, author and tags.
@@ -698,12 +783,116 @@ mod tests {
 
     #[test]
     fn markdown_reads_as_plain_text() {
-        let md = "# Blue Haze\n\nA **bold** recolor with `code`.\n\n- one\n- [x] two\n\n![shot](a.png)\nSee [the page](https://x.org).\n\n| a | b |\n|---|---|\n| 1 | 2 |\n\n```\nraw *text*\n```";
+        let md = include_str!("../tests/fixtures/mod-sources/description.md");
+        let text = markdown_to_text(md);
+        assert!(text.starts_with("Blue Haze"), "{text}");
+        assert!(text.contains("A bold recolor with inline code and italic words."), "{text}");
+        assert!(text.contains("• Smaller minimap"), "{text}");
+        assert!(!text.contains("**") && !text.contains('`'), "{text}");
+    }
+
+    #[test]
+    fn fixture_descriptor_catalog_and_history_parse() {
+        let descriptor = include_str!("../tests/fixtures/mod-sources/descriptor.json");
+        let catalog = include_str!("../tests/fixtures/mod-sources/catalog.json");
+        let history = include_str!("../tests/fixtures/mod-sources/history.json");
+        let d = parse_descriptor("https://mods.example.org/dmm-source.json", descriptor).unwrap();
+        assert_eq!(d.source_id, "community");
+        assert!(d.release_history);
+        let (listings, next) = parse_page("https://mods.example.org/catalog.json", catalog).unwrap();
+        assert_eq!(next, None);
+        assert_eq!(listings.len(), 2);
+        let hud = &listings[0];
+        assert!(hud.markdown);
+        assert_eq!(hud.release_id, "clean-hud-r2");
+        assert_eq!(hud.artifacts[0].url.as_deref(), Some("https://mods.example.org/files/clean-hud-blue.zip"));
+        assert_eq!(hud.artifacts[0].sha256.as_deref(), Some("ab"));
+        let base = history_url(&d, hud).unwrap();
+        assert_eq!(base, "https://mods.example.org/history/clean-hud");
+        let (releases, next) = parse_history_page(&base, history).unwrap();
+        assert_eq!(next, None);
+        assert_eq!(releases.len(), 2);
+        assert_eq!(releases[0].id, "clean-hud-r2");
+        assert_eq!(releases[1].changelog, "First release.");
+    }
+
+    #[test]
+    fn reads_source_add_and_install_links() {
+        let add = "//sources/add?url=https%3A%2F%2Fmods.example.org%2Fdmm-source.json";
         assert_eq!(
-            markdown_to_text(md),
-            "Blue Haze\n\nA bold recolor with code.\n\n• one\n• two\n\n\nSee the page.\n\na  ·  b\n1  ·  2\n\nraw *text*"
-                .replace("\n\n\n", "\n\n")
+            parse_source_link(add).unwrap(),
+            SourceLink {
+                action: SourceAction::Add,
+                url: "https://mods.example.org/dmm-source.json".into(),
+                source: String::new(),
+                listing: None,
+                release: None,
+                artifact: None,
+            }
         );
+        let install = "//sources/install?url=https%3A%2F%2Fmods.example.org%2Fdmm-source.json&source=community&listing=blue%20haze&release=clean-hud-r2&artifact=blue";
+        let link = parse_source_link(install).unwrap();
+        assert_eq!(link.action, SourceAction::Install);
+        assert_eq!(link.source, "community");
+        assert_eq!(link.listing.as_deref(), Some("blue haze"));
+        assert_eq!(link.release.as_deref(), Some("clean-hud-r2"));
+        assert_eq!(link.artifact.as_deref(), Some("blue"));
+        // `+` is not a space, and an unknown field is ignored.
+        let plus = "//sources/install?url=https%3A%2F%2Fmods.example.org%2Fdmm-source.json&source=community&listing=a+b&tracking=x";
+        assert_eq!(parse_source_link(plus).unwrap().listing.as_deref(), Some("a+b"));
+        // An add link ignores install-only fields rather than trusting them.
+        let extra = "//sources/add?url=https%3A%2F%2Fmods.example.org%2Fdmm-source.json&source=other&listing=x";
+        let add = parse_source_link(extra).unwrap();
+        assert_eq!(add.source, "");
+        assert_eq!(add.listing, None);
+        // Every link in the fixture is read.
+        let fixtures = include_str!("../tests/fixtures/mod-sources/source-links.txt");
+        let links: Vec<_> = fixtures
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .collect();
+        assert_eq!(links.len(), 3);
+        for link in links {
+            assert!(parse_source_link(link).is_ok(), "{link}");
+        }
+    }
+
+    #[test]
+    fn refuses_hostile_source_links() {
+        let url = "url=https%3A%2F%2Fmods.example.org%2Fdmm-source.json";
+        let long_listing = "a".repeat(257);
+        let bad = [
+            "//sources/add?url=http%3A%2F%2Fmods.example.org%2Fx.json".to_string(),
+            "//sources/add?url=javascript%3Aalert(1)".to_string(),
+            "//sources/add?url=file%3A%2F%2F%2Fetc%2Fpasswd".to_string(),
+            "//sources/add?url=https%3A%2F%2Flocalhost%2Fx.json".to_string(),
+            "//sources/add?url=https%3A%2F%2F127.0.0.1%2Fx.json".to_string(),
+            "//sources/add?url=https%3A%2F%2Fme%3Apw%40mods.example.org%2Fx.json".to_string(),
+            "//sources/add?url=https%3A%2F%2Fmods.example.org%2Fx.json#frag".to_string(),
+            format!("//sources/add?{url}&{url}"),
+            "//sources/add?url=%ZZ".to_string(),
+            "//sources/add?url=%00".to_string(),
+            "//sources/add?url".to_string(),
+            format!("//sources/add?{url}&"),
+            format!("//sources/install?{url}&source=community"),
+            format!("//sources/install?{url}&listing=x"),
+            format!("//sources/install?{url}&source=community&listing=%0A"),
+            format!("//sources/install?{url}&source=community&listing={long_listing}"),
+            format!("//sources/install?{url}&source=community&listing=x&release="),
+            format!("//sources/install?{url}&source=community&listing=x&artifact=%00"),
+            "//sources/remove?url=https%3A%2F%2Fmods.example.org%2Fdmm-source.json".to_string(),
+            "//sources/add/../install?url=https%3A%2F%2Fmods.example.org%2Fx.json".to_string(),
+            "sources/add?url=https%3A%2F%2Fmods.example.org%2Fx.json".to_string(),
+        ];
+        for link in bad {
+            assert!(parse_source_link(&link).is_err(), "{link}");
+        }
+        // Every hostile link in the fixture is refused.
+        let fixtures = include_str!("../tests/fixtures/mod-sources/malicious-links.txt");
+        for link in fixtures.lines().map(str::trim).filter(|line| !line.is_empty()) {
+            assert!(parse_source_link(link).is_err(), "{link}");
+        }
     }
 
     #[test]

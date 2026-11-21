@@ -29,6 +29,8 @@ pub enum Dialog {
     SourceAdd(Box<super::sources::Synced>),
     SourceBrowse(String),
     SourceRemove(String),
+    /// A `deadlock-mod-manager://sources/...` link, before the player has confirmed anything.
+    SourceLink(Box<deadlock_core::mod_sources::SourceLink>),
     Templates,
     AllowScripts,
     Contributors,
@@ -281,6 +283,7 @@ pub fn dialog(s: &State, u: &Ui) -> Option<El> {
         Dialog::SourceAdd(synced) => super::sources::add_dialog(u, synced),
         Dialog::SourceBrowse(url) => super::sources::browse_dialog(s, u, url),
         Dialog::SourceRemove(url) => super::sources::remove_dialog(u, url),
+        Dialog::SourceLink(link) => super::sources::link_dialog(s, u, link),
         Dialog::Templates => super::templates::dialog(s, u),
         Dialog::AllowScripts => super::pages::scripts_dialog(u),
         Dialog::Contributors => contributors_dialog(s, u),

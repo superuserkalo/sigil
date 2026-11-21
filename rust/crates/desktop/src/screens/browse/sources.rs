@@ -8,19 +8,23 @@
 //! - Sigil: Settings > Mods > Sources adds a `dmm-source` 1.0 source after showing every
 //!   origin it contacts (`settings/sources.rs`). Each enabled source is a chip beside
 //!   GameBanana in Browse's header. Its page has a search and cards; a card opens the details
-//!   with every image, tags, the description (Markdown read as plain text), the source's
-//!   release history on demand, and every file of the current release with its own Install.
+//!   with every image, tags, the description (Markdown read as safe text with Sigil's styles,
+//!   https links only), the source's release history on demand, and every file of the current
+//!   release with its own Install.
 //!   Images load only from the source's declared media or api origins. Installs go through the
 //!   source install in `settings/sources.rs`: the declared sha256 is checked, the game folder
 //!   is written only by that press, and it waits while the game runs.
 
 use std::collections::HashMap;
 
+use deadlock_core::mod_markdown::{self, Block, BlockKind};
 use deadlock_core::mod_sources::{self, Descriptor, Listing, Release};
+use rune::{Link, Span, rich};
 
 use super::*;
 use crate::screens::settings::i18n::{fill, tr};
 use crate::screens::settings::options;
+use crate::ui::MONO;
 
 /// What Browse keeps for sources between frames.
 #[derive(Default)]
@@ -407,9 +411,8 @@ pub fn details_dialog(s: &State, u: &Ui) -> Option<El> {
         }
         c = c.child(chips);
     }
-    let description = if l.markdown { mod_sources::markdown_to_text(&l.description) } else { l.description.trim().to_string() };
-    if !description.is_empty() {
-        c = c.child(text(description).font(BODY).color(u.prose).wrap().w_full());
+    if let Some(description) = description_blocks(u, l) {
+        c = c.child(description);
     }
 
     // Files: every one of the current release, each with its own Install (DMM's file picker).
@@ -530,7 +533,104 @@ pub fn details_dialog(s: &State, u: &Ui) -> Option<El> {
     )
 }
 
-/// `upstream-browse-source`: a source with three listings, the second open with two files.
+/// A source description in Sigil's own text styles. A Markdown one is read as blocks with
+/// spans and https links; plain text stays one paragraph. No HTML, no image and no other link
+/// scheme reaches the UI: the reader drops them before this runs.
+fn description_blocks(u: &Ui, l: &Listing) -> Option<El> {
+    if !l.markdown {
+        let plain = l.description.trim();
+        if plain.is_empty() {
+            return None;
+        }
+        return Some(
+            text(plain.to_string())
+                .font(BODY)
+                .color(u.prose)
+                .wrap()
+                .w_full(),
+        );
+    }
+    let blocks = mod_markdown::parse(&l.description);
+    let mut body = col().w_full().gap(8.0);
+    let mut any = false;
+    for block in blocks.into_iter().take(mod_markdown::MAX_BLOCKS) {
+        if block.text.trim().is_empty() {
+            continue;
+        }
+        any = true;
+        let font = match block.kind {
+            BlockKind::Heading(1 | 2) => H2,
+            BlockKind::Heading(_) => BODY_MED,
+            BlockKind::Code => MONO,
+            _ => BODY,
+        };
+        let color = match block.kind {
+            BlockKind::Quote => u.muted,
+            _ => u.prose,
+        };
+        let mut spans = inline_spans(&block, u);
+        for link in &block.links {
+            spans.push(
+                Span::new(link.start as usize, link.end as usize)
+                    .color(u.accent)
+                    .underline(u.accent),
+            );
+        }
+        let mut line = rich(block.text.clone(), spans)
+            .font(font)
+            .color(color)
+            .wrap()
+            .w_full();
+        for span in &block.spans {
+            if span.strike {
+                line = line.strike(span.start as usize, span.end as usize, None);
+            }
+        }
+        for link in &block.links {
+            line = line.link(Link::new(link.start as usize..link.end as usize, link.url.clone()));
+        }
+        if block.kind == BlockKind::Quote {
+            line = line.pl(10.0).border_sides([1.0, 0.0, 0.0, 0.0], u.hair);
+        }
+        if block.kind == BlockKind::Code {
+            line = line
+                .padding(10.0)
+                .radius(crate::ui::r(8.0))
+                .fill(u.well)
+                .border(1.0, u.hair);
+        }
+        if !block.links.is_empty() {
+            line = line.on_link(|st: &mut State, url: &str, tx: &mut Tx| {
+                if deadlock_core::mod_sources::check_url(url).is_ok() {
+                    crate::screens::settings::tabs::open_url(st, tx, url);
+                }
+            });
+        }
+        body = body.child(line);
+    }
+    any.then_some(body)
+}
+
+fn inline_spans(block: &Block, u: &Ui) -> Vec<Span> {
+    block
+        .spans
+        .iter()
+        .map(|span| {
+            let mut out = Span::new(span.start as usize, span.end as usize);
+            if span.bold {
+                out = out.bold();
+            }
+            if span.italic {
+                out = out.italic();
+            }
+            if span.code {
+                out = out.mono().bg(u.well, 3.0);
+            }
+            out
+        })
+        .collect()
+}
+
 pub fn stage_scene(st: &mut State, open: bool) {
     use deadlock_core::mod_sources::{Artifact, Catalog};
     use crate::screens::settings::options::Source;

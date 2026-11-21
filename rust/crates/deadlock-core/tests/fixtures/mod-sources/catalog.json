@@ -1,0 +1,37 @@
+{
+  "snapshotId": "fixture-1",
+  "items": [
+    {
+      "id": "clean-hud",
+      "title": "Clean HUD",
+      "author": "Kalo",
+      "descriptionFormat": "markdown",
+      "description": "See [the guide](https://mods.example.org/guide).",
+      "images": ["./images/clean-hud.png"],
+      "updatedAt": "2026-11-18T10:00:00Z",
+      "release": {
+        "id": "clean-hud-r2",
+        "version": "2.1.0",
+        "artifacts": [
+          {
+            "id": "blue",
+            "filename": "clean-hud-blue.zip",
+            "size": 2400000,
+            "download": { "url": "../files/clean-hud-blue.zip" },
+            "hashes": { "sha256": "AB" }
+          }
+        ]
+      }
+    },
+    {
+      "id": "haze-coat",
+      "title": "Haze Night Coat",
+      "author": "someone",
+      "release": {
+        "id": "haze-coat-r1",
+        "version": "1.0"
+      }
+    }
+  ],
+  "nextCursor": null
+}

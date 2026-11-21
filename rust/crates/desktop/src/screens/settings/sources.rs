@@ -8,7 +8,7 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::time::Instant;
 
-use deadlock_core::mod_sources::{self, Descriptor, Listing};
+use deadlock_core::mod_sources::{self, Descriptor, Listing, SourceAction, SourceLink};
 use rune::{El, Key, KeyEvent, TextEdit, Tx, col, row, spacer, text};
 
 use super::i18n::{fill, tr};
@@ -428,10 +428,246 @@ fn listing_row(s: &State, u: &Ui, index: usize, url: &str, l: &Listing) -> El {
         ))
 }
 
+// --- the link confirm ------------------------------------------------------------------------
+
 /// Download, check and install a listing's first file, landing off like Browse installs.
 fn install(st: &mut State, url: &str, listing_id: &str) {
     install_artifact(st, url, listing_id, None);
 }
+
+/// A `deadlock-mod-manager://sources/...` link: what it asks for, over the source's own
+/// address, before anything is added, enabled or installed. The player's press is the
+/// approval; a link alone never changes a source or the game folder.
+pub fn link_dialog(s: &State, u: &Ui, link: &SourceLink) -> El {
+    let origin = mod_sources::origin_of(&link.url).unwrap_or_else(|| link.url.clone());
+    let saved = options::get();
+    let added = saved.sources.iter().any(|src| src.url == link.url);
+    let enabled = saved.sources.iter().any(|src| src.url == link.url && src.enabled);
+    let title = match link.action {
+        SourceAction::Add => tr("Add this mod source?"),
+        SourceAction::Install => tr("Install from this mod source?"),
+    };
+    let mut body = col().w_full().gap(10.0);
+    let mut actions = row()
+        .w_full()
+        .gap(8.0)
+        .pt(8.0)
+        .child(spacer())
+        .child(
+            button(u, "settings-source-link-cancel", "Cancel", ActionKind::Ghost)
+                .on_press(super::extra::close),
+        );
+    if link.action == SourceAction::Add {
+        body = body.child(
+            text(fill(
+                tr("{} asked Sigil to add this source. Nothing is added until you confirm."),
+                &[&origin],
+            ))
+            .font(BODY)
+            .color(u.muted)
+            .wrap()
+            .w_full(),
+        );
+        body = body.child(address(u, &link.url));
+        let add_url = link.url.clone();
+        actions = actions.child(
+            button(u, "settings-source-link-add", "Add source", ActionKind::Primary)
+                .on_press(move |st: &mut State| start_fetch(st, add_url.clone(), true)),
+        );
+        return super::extra::shell(u, "settings-source-link-dialog", title)
+            .w(560.0)
+            .child(body)
+            .child(actions);
+    }
+    if !added {
+        body = body.child(
+            text(tr("This link's source is not added yet. Add it first; nothing is downloaded now."))
+                .font(BODY)
+                .color(u.muted)
+                .wrap()
+                .w_full(),
+        );
+        body = body.child(address(u, &link.url));
+        let add_url = link.url.clone();
+        actions = actions.child(
+            button(u, "settings-source-link-add", "Add source", ActionKind::Primary)
+                .on_press(move |st: &mut State| start_fetch(st, add_url.clone(), true)),
+        );
+    } else if !enabled {
+        body = body.child(
+            text(tr("This link's source is turned off. Turn it on in Settings, then open the link again."))
+                .font(BODY)
+                .color(u.muted)
+                .wrap()
+                .w_full(),
+        );
+        body = body.child(address(u, &link.url));
+        actions = actions.child(
+            button(u, "settings-source-link-settings", "Open Settings", ActionKind::Secondary)
+                .on_press(|st: &mut State| {
+                    super::extra::close(st);
+                    super::extra::open_on(st, super::Tab::Mods);
+                }),
+        );
+    } else {
+        let x = &s.settings.extra.sources;
+        let sync = x.synced.get(&link.url);
+        if sync.is_none() && x.busy.as_deref() == Some(link.url.as_str()) {
+            body = body.child(
+                text(tr("Reading the source.")).font(BODY).color(u.muted).wrap().w_full(),
+            );
+        } else if sync.is_none() {
+            body = body.child(
+                text(
+                    x.errors
+                        .get(&link.url)
+                        .map(String::as_str)
+                        .unwrap_or(tr("The source has not been read yet.")),
+                )
+                .font(BODY)
+                .color(if x.errors.contains_key(&link.url) { u.amber } else { u.muted })
+                .wrap()
+                .w_full(),
+            );
+            body = body.child(address(u, &link.url));
+            let read_url = link.url.clone();
+            actions = actions.child(
+                button(u, "settings-source-link-read", "Read the source", ActionKind::Secondary)
+                    .on_press(move |st: &mut State| start_fetch(st, read_url.clone(), false)),
+            );
+        } else if let Some(sync) = sync {
+            body = body.child(address(u, &link.url));
+            let Some(listing_id) = link.listing.as_deref() else {
+                body = body.child(
+                    text(tr("The link names no mod.")).font(BODY).color(u.amber).wrap().w_full(),
+                );
+                return super::extra::shell(u, "settings-source-link-dialog", title)
+                    .w(560.0)
+                    .child(body)
+                    .child(actions);
+            };
+            if sync.descriptor.source_id != link.source {
+                body = body.child(
+                    text(tr("The source at that address is not the one the link names."))
+                        .font(BODY)
+                        .color(u.amber)
+                        .wrap()
+                        .w_full(),
+                );
+            } else if !sync.listings.iter().any(|l| l.id == listing_id) {
+                body = body.child(
+                    text(tr("That mod is not in this source any more."))
+                        .font(BODY)
+                        .color(u.amber)
+                        .wrap()
+                        .w_full(),
+                );
+            } else {
+                let listing = sync.listings.iter().find(|l| l.id == listing_id).unwrap();
+                let release_ok = link
+                    .release
+                    .as_ref()
+                    .is_none_or(|release| *release == listing.release_id);
+                let artifact = link
+                    .artifact
+                    .as_ref()
+                    .and_then(|id| listing.artifacts.iter().find(|a| a.id == *id));
+                let file_ok = match (&link.artifact, listing.artifacts.len()) {
+                    (Some(_), _) => artifact.is_some(),
+                    (None, 0) => false,
+                    (None, 1) => true,
+                    (None, _) => false,
+                };
+                let can_install = release_ok && file_ok;
+                body = body.child(
+                    text(fill(tr("Install {} from {}?"), &[&listing.title, &origin]))
+                        .font(BODY_MED)
+                        .color(u.ink)
+                        .wrap()
+                        .w_full(),
+                );
+                let mut facts = Vec::new();
+                if !listing.author.is_empty() {
+                    facts.push(fill(tr("by {}"), &[&listing.author]));
+                }
+                if !listing.version.is_empty() {
+                    facts.push(listing.version.clone());
+                }
+                if !facts.is_empty() {
+                    body = body.child(text(facts.join(" · ")).font(SMALL).color(u.muted).wrap().w_full());
+                }
+                if !release_ok {
+                    body = body.child(
+                        text(tr("This link names an older release. Open the mod to choose the current one."))
+                            .font(BODY)
+                            .color(u.amber)
+                            .wrap()
+                            .w_full(),
+                    );
+                } else if let Some(id) = link.artifact.as_ref()
+                    && artifact.is_none()
+                {
+                    body = body.child(
+                        text(fill(tr("That file is not in the current release: {}."), &[id]))
+                            .font(BODY)
+                            .color(u.amber)
+                            .wrap()
+                            .w_full(),
+                    );
+                } else if listing.artifacts.is_empty() {
+                    body = body.child(
+                        text(tr("This release has no file to install.")).font(BODY).color(u.muted).wrap().w_full(),
+                    );
+                } else if link.artifact.is_none() && listing.artifacts.len() > 1 {
+                    body = body.child(
+                        text(tr("This release has several files. Choose one on the mod's page."))
+                            .font(BODY)
+                            .color(u.muted)
+                            .wrap()
+                            .w_full(),
+                    );
+                } else if let Some(file) = artifact.or_else(|| listing.artifacts.first()) {
+                    let name = if file.filename.is_empty() { file.id.clone() } else { file.filename.clone() };
+                    body = body.child(text(name).font(MONO).color(u.prose).wrap().w_full());
+                }
+                let (open_url, open_listing) = (link.url.clone(), listing.id.clone());
+                actions = actions.child(
+                    button(u, "settings-source-link-open", "Open the mod", ActionKind::Secondary)
+                        .on_press(move |st: &mut State| {
+                            crate::screens::browse::sources::pick(st, Some(open_url.clone()));
+                            st.browse_view.sources.open = Some(open_listing.clone());
+                            st.go(crate::model::Screen::Browse);
+                            super::extra::close(st);
+                        }),
+                );
+                let (install_url, install_listing, install_file) =
+                    (link.url.clone(), listing.id.clone(), link.artifact.clone());
+                actions = actions.child(disabled(
+                    button(u, "settings-source-link-install", "Install", ActionKind::Primary)
+                        .on_press(move |st: &mut State| {
+                            install_artifact(
+                                st,
+                                &install_url,
+                                &install_listing,
+                                install_file.as_deref(),
+                            );
+                            super::extra::close(st);
+                        }),
+                    !can_install || s.game_root.is_none(),
+                ));
+            }
+        }
+    }
+    super::extra::shell(u, "settings-source-link-dialog", title)
+        .w(560.0)
+        .child(body)
+        .child(actions)
+}
+
+fn address(u: &Ui, url: &str) -> El {
+    text(url.to_string()).font(MONO).color(u.prose).wrap().w_full()
+}
+
 
 /// Download, check and install one file of a listing (its first when `artifact_id` is
 /// `None`): Browse's file choice for a source mod.
