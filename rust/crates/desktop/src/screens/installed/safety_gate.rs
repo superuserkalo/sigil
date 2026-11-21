@@ -10,6 +10,8 @@
 //!   file size). Images, layouts, styles and Panorama scripts, which skins and HUD mods ship, do
 //!   not ask unless their text reaches the network. Settings > "Allow script mods" skips the
 //!   gate, as it lets script mods through the install check. Rules: `docs/design/mod-safety.md`.
+//!   Every flagged mod, trusted or not, is also in the review list (`safety_review.rs`), where a
+//!   trust can be taken back.
 
 use std::collections::BTreeSet;
 use std::path::PathBuf;
@@ -21,20 +23,16 @@ use crate::app::State;
 use crate::screens::settings::i18n::{fill, tr};
 use crate::ui::{ActionKind, BODY, H1, MONO, SMALL, Ui};
 
-fn trusted_path() -> PathBuf {
+pub fn trusted_path() -> PathBuf {
     crate::data::data_dir().join("safety-trusted.json")
 }
 
-fn read_trusted() -> BTreeSet<String> {
-    std::fs::read_to_string(trusted_path())
-        .ok()
-        .and_then(|text| serde_json::from_str::<Vec<String>>(&text).ok())
-        .map(|list| list.into_iter().collect())
-        .unwrap_or_default()
+pub fn read_trusted() -> BTreeSet<String> {
+    mod_safety::review::read_trusted(&trusted_path())
 }
 
 /// The version key: the GameBanana id (or the file name) and the file size.
-fn version_key(st: &State, slot: u16) -> Option<String> {
+pub fn version_key(st: &State, slot: u16) -> Option<String> {
     let addon = st.addons.addons.iter().find(|a| a.slot == slot)?;
     let who = super::meta_for(st, addon)
         .and_then(|m| m.gamebanana_id.map(|id| format!("gb{id}")))
@@ -139,14 +137,18 @@ pub fn findings(report: &mod_safety::ScanReport) -> Vec<String> {
     unread.into_iter().chain(lines).collect()
 }
 
-fn trust(st: &mut State, slot: u16) {
-    if let Some(key) = version_key(st, slot) {
-        let mut list = read_trusted();
-        list.insert(key);
-        let list: Vec<String> = list.into_iter().collect();
-        if let Ok(text) = serde_json::to_string_pretty(&list) {
-            let _ = std::fs::write(trusted_path(), text);
-        }
+/// Trust this version of `slot` and turn it on. A trust is never written while the game runs,
+/// so it cannot outlive a switch that was refused.
+pub fn trust(st: &mut State, slot: u16) {
+    if crate::screens::settings::watch::refuse_while_running(st) {
+        st.installed.gates.open = None;
+        return;
+    }
+    if let Some(key) = version_key(st, slot)
+        && let Err(error) = mod_safety::review::trust(&trusted_path(), &key)
+    {
+        st.status = error.to_string();
+        return;
     }
     super::enable::switch_reviewed(st, slot, true);
 }

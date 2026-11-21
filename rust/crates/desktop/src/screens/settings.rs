@@ -34,6 +34,7 @@ mod search;
 pub mod sharing;
 pub mod smalls;
 pub mod locales_smalls;
+pub mod locales_upstream;
 pub mod sources;
 pub mod support;
 pub mod tabs;
@@ -1768,47 +1769,12 @@ fn mods(s: &State, u: &Ui) -> El {
         tr("Nothing hidden. Hide a mod or creator from its menu in Browse.").to_string()
     } else {
         fill(
-            tr("{} mods and {} creators hidden until Sigil restarts."),
+            tr("{} mods and {} creators hidden."),
             &[&hidden_mods.to_string(), &hidden_authors.to_string()],
         )
     };
-    let mut hidden_rows = Vec::new();
-    let mut authors: Vec<&String> = s.browse_view.hidden_authors.iter().collect();
-    authors.sort();
-    for (index, author) in authors.into_iter().enumerate() {
-        let name = author.clone();
-        hidden_rows.push(setting_row(
-            u,
-            &format!("settings-hidden-author-{index}"),
-            author,
-            detail(u, "Creator"),
-            button(u, &format!("settings-hidden-author-show-{index}"), "Show", ActionKind::Ghost)
-                .on_press(move |st: &mut State| {
-                    st.browse_view.hidden_authors.remove(&name);
-                }),
-        ));
-    }
-    let mut ids: Vec<u64> = s.browse_view.hidden_mods.iter().copied().collect();
-    ids.sort_unstable();
-    for id in ids {
-        let page = format!("https://gamebanana.com/mods/{id}");
-        hidden_rows.push(setting_row(
-            u,
-            &format!("settings-hidden-mod-{id}"),
-            &fill(tr("Mod {}"), &[&id.to_string()]),
-            detail(u, "Mod"),
-            trailing(vec![
-                u.icon_button(&icons::EXTERNAL_LINK, tr("Open on GameBanana"))
-                    .key(format!("settings-hidden-mod-open-{id}"))
-                    .cursor(rune::Cursor::Pointer)
-                    .on_press_tx(move |st: &mut State, tx: &mut Tx| tabs::open_url(st, tx, &page)),
-                button(u, &format!("settings-hidden-mod-show-{id}"), "Show", ActionKind::Ghost)
-                    .on_press(move |st: &mut State| {
-                        st.browse_view.hidden_mods.remove(&id);
-                    }),
-            ]),
-        ));
-    }
+    // Grimoire #580: each hidden mod and creator with its pictures, date and note.
+    let hidden_rows = crate::screens::browse::hidden::rows(s, u, "settings-hidden");
     col()
         .w_full()
         .gap(28.0)
@@ -1860,6 +1826,9 @@ fn mods(s: &State, u: &Ui) -> El {
                             .on_press(|st: &mut State| {
                                 st.browse_view.hidden_mods.clear();
                                 st.browse_view.hidden_authors.clear();
+                                st.browse_view.hidden_meta.clear();
+                                st.browse_view.hidden_note = None;
+                                crate::screens::browse::save_browse_state(st);
                             }),
                         hidden_mods + hidden_authors == 0,
                     ),

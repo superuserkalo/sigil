@@ -305,23 +305,34 @@ pub fn icon_key(hero_id: u32) -> String {
     format!("stats-hero:{hero_id}")
 }
 
+/// Everything the view draws from a snapshot. Street Brawl games stay in the sittings (the
+/// match list, tagged); the brief, rank line, win rate, form and streak read normal games only,
+/// as their souls and K/D do not compare (Grimoire tags them for the same reason).
+pub fn derive(snapshot: &StatsSnapshot) -> Derived {
+    let normal = StatsSnapshot {
+        matches: deadlock_core::stats::filters::normal_only(&snapshot.matches),
+        ..snapshot.clone()
+    };
+    let matches = &normal.matches;
+    Derived {
+        brief: insight::brief(&normal),
+        trajectory: insight::rank_trajectory(matches),
+        rolling: insight::rolling_win_rate(matches, insight::RECENT_MATCHES),
+        sessions: insight::sessions(&snapshot.matches, insight::SESSION_GAP_SECONDS),
+        form: insight::form(matches),
+        streak: insight::current_streak(matches),
+    }
+}
+
 /// Store a snapshot and derive everything the view draws from it.
 pub fn set_snapshot(view: &mut View, snapshot: StatsSnapshot) {
-    let matches = &snapshot.matches;
-    let trajectory = insight::rank_trajectory(matches);
-    view.chart = if trajectory.len() >= 2 {
+    let derived = derive(&snapshot);
+    view.chart = if derived.trajectory.len() >= 2 {
         Chart::Rank
     } else {
         Chart::WinRate
     };
-    view.derived = Some(Derived {
-        brief: insight::brief(&snapshot),
-        trajectory,
-        rolling: insight::rolling_win_rate(matches, insight::RECENT_MATCHES),
-        sessions: insight::sessions(matches, insight::SESSION_GAP_SECONDS),
-        form: insight::form(matches),
-        streak: insight::current_streak(matches),
-    });
+    view.derived = Some(derived);
     view.expanded = None;
     view.sittings_shown = SITTINGS_SHOWN;
     view.all_heroes = false;

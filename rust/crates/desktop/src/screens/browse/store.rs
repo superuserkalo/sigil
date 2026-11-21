@@ -44,6 +44,12 @@ pub(crate) fn snapshot(s: &State) -> persist::Persisted {
             })
             .collect(),
         hidden_authors: s.browse_view.hidden_authors.iter().cloned().collect(),
+        hidden_meta: s
+            .browse_view
+            .hidden_meta
+            .iter()
+            .map(|(key, meta)| (key.clone(), meta.clone()))
+            .collect(),
         ignored_updates: s.browse_view.ignored_updates.clone(),
     }
 }
@@ -94,6 +100,7 @@ pub(crate) fn apply_persisted(st: &mut State, saved: persist::Persisted) -> bool
         .map(|hidden| (hidden.id, hidden.name.clone()))
         .collect();
     st.browse_view.hidden_authors = saved.hidden_authors.into_iter().collect();
+    st.browse_view.hidden_meta = saved.hidden_meta.into_iter().collect();
     st.browse_view.ignored_updates = saved.ignored_updates;
     st.browse_view.filters = Filters {
         section: tab.section(),

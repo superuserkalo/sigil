@@ -2527,6 +2527,14 @@ fn locker_cards_dir() -> PathBuf {
 
 /// Store the favourites, shuffle and card choices and show them.
 pub fn save_locker_prefs(state: &mut State) {
+    write_locker_prefs(state);
+    // The active profile keeps the Locker shuffle (Grimoire #587).
+    crate::screens::profiles::sync_locker_to_active_profile(state);
+}
+
+/// Store the Locker's choices without touching the active profile (a profile apply or its
+/// Undo is putting that profile's own state in).
+pub fn write_locker_prefs(state: &mut State) {
     if let Err(error) = locker::write_prefs(&locker_prefs_path(), &state.locker.prefs) {
         state.status = format!("Locker preferences could not be saved: {error}");
     }
@@ -3944,6 +3952,10 @@ pub fn set_addon_enabled(state: &mut State, slot: u16, enable: bool) {
 /// itself the undo.
 fn toggle_addon(state: &mut State, slot: u16, enable: bool, offer_undo: bool) {
     use crate::notify::{self, Notice};
+    if crate::screens::settings::watch::refuse_while_running(state) {
+        state.addon_dialog = None;
+        return;
+    }
     let Some(game_root) = state.game_root.clone() else {
         state.status = "No Deadlock install was found. Nothing was renamed.".to_string();
         state.addon_dialog = None;

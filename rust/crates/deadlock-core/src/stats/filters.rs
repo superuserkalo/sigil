@@ -71,14 +71,36 @@ impl StatsFilter {
 pub const MATCH_MODE_UNRANKED: i32 = 1;
 pub const MATCH_MODE_RANKED: i32 = 4;
 
+/// `game_mode` of a Street Brawl match (Grimoire's `STREET_BRAWL`, deadlock-api's enum).
+pub const GAME_MODE_STREET_BRAWL: i32 = 4;
+
+impl crate::stats::MatchSummary {
+    /// A Street Brawl match. Grimoire lists these with a tag because their souls and K/D do not
+    /// compare with normal games; Sigil lists them the same way and leaves them out of win
+    /// rates, form, streaks and averages.
+    pub fn is_street_brawl(&self) -> bool {
+        self.game_mode == GAME_MODE_STREET_BRAWL
+    }
+}
+
+/// The rows that are not Street Brawl, in the order given: what every aggregate reads.
+pub fn normal_only(matches: &[crate::stats::MatchSummary]) -> Vec<crate::stats::MatchSummary> {
+    matches.iter().filter(|row| !row.is_street_brawl()).cloned().collect()
+}
+
 impl StatsFilter {
     /// True when a match history row is inside this scope: its mode (ranked 4, unranked 1;
     /// private lobbies, bots and other modes never count) and its start time.
     pub fn keeps(&self, row: &crate::stats::MatchSummary) -> bool {
-        let mode_ok = match self.ranked {
+        // Street Brawl is never ranked, so it stays in "both" and "unranked" lists, tagged.
+        let mode_ok = if row.is_street_brawl() {
+            self.ranked != Some(true)
+        } else {
+            match self.ranked {
             Some(true) => row.match_mode == MATCH_MODE_RANKED,
             Some(false) => row.match_mode == MATCH_MODE_UNRANKED,
             None => matches!(row.match_mode, MATCH_MODE_RANKED | MATCH_MODE_UNRANKED),
+            }
         };
         let since_ok = self
             .since
@@ -328,10 +350,25 @@ mod tests {
         let rows = vec![row(100, 4), row(200, 1), row(300, 4), row(400, 2)];
         let both = filter_matches(&rows, &StatsFilter::default());
         assert_eq!(both.len(), 3, "a private lobby is never counted");
-        let ranked = StatsFilter { ranked: Some(true), since: Some(150) };
+        let ranked = StatsFilter { ranked: Some(true), since: Some(150), until: None };
         assert_eq!(filter_matches(&rows, &ranked).iter().map(|r| r.start_time).collect::<Vec<_>>(), [300]);
-        let unranked = StatsFilter { ranked: Some(false), since: Some(0) };
+        let unranked = StatsFilter { ranked: Some(false), since: Some(0), until: None };
         assert_eq!(filter_matches(&rows, &unranked).len(), 1);
+    }
+
+    /// The owner's call (2026-11-21), as Grimoire: Street Brawl games are listed, tagged, and
+    /// never ranked; aggregates read the normal games only.
+    #[test]
+    fn street_brawl_is_listed_but_not_counted() {
+        let mut brawl = row(500, 1);
+        brawl.game_mode = GAME_MODE_STREET_BRAWL;
+        assert!(brawl.is_street_brawl() && !row(500, 1).is_street_brawl());
+        let rows = vec![row(100, 4), brawl.clone(), row(300, 1)];
+        assert_eq!(filter_matches(&rows, &StatsFilter::default()).len(), 3);
+        assert_eq!(filter_matches(&rows, &StatsFilter { ranked: Some(false), ..StatsFilter::default() }).len(), 2);
+        assert_eq!(filter_matches(&rows, &StatsFilter { ranked: Some(true), ..StatsFilter::default() }).len(), 1);
+        assert_eq!(normal_only(&rows).len(), 2);
+        assert!(normal_only(&rows).iter().all(|r| !r.is_street_brawl()));
     }
 
     #[test]

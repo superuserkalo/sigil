@@ -504,7 +504,54 @@ pub fn poll(st: &mut State) -> bool {
 }
 
 /// An apply finished: say what happened, offer Undo, and refresh the pages that changed.
+// --- the Locker shuffle a profile keeps (Grimoire #587) -------------------------------------
+
+/// The Locker's shuffle switches, pool and Equip mode as a profile stores them.
+pub fn locker_shuffle_of(prefs: &deadlock_core::locker::LockerPrefs) -> core::LockerShuffle {
+    core::LockerShuffle {
+        shuffle: prefs.shuffle.clone(),
+        shuffle_pool: prefs.shuffle_pool.clone(),
+        multi_skin: prefs.multi_skin,
+    }
+}
+
+/// Put a profile's Locker shuffle into the Locker. Sigil's data folder only.
+fn set_locker_shuffle(st: &mut State, shuffle: &core::LockerShuffle) {
+    if locker_shuffle_of(&st.locker.prefs) == *shuffle {
+        return;
+    }
+    st.locker.prefs.shuffle = shuffle.shuffle.clone();
+    st.locker.prefs.shuffle_pool = shuffle.shuffle_pool.clone();
+    st.locker.prefs.multi_skin = shuffle.multi_skin;
+    if !st.demo && !st.profiles.fixture && !rune::is_headless() {
+        crate::data::write_locker_prefs(st);
+    }
+}
+
+/// After a Locker shuffle edit: the active profile keeps the new state, so each profile has
+/// its own shuffle without an Update (Grimoire's rule). Nothing happens without an active
+/// profile. Workspace only.
+pub fn sync_locker_to_active_profile(st: &State) {
+    if st.demo || st.profiles.fixture || rune::is_headless() {
+        return;
+    }
+    let workspace = crate::data::workspace_dir();
+    if let Some(slug) = core::active_profile(&workspace) {
+        let _ = core::store_locker_shuffle(&workspace, &slug, &locker_shuffle_of(&st.locker.prefs));
+    }
+}
+
 fn finish_apply(st: &mut State, name: String, applied: core::ProfileApplyResult) {
+    // The profile's Locker shuffle comes with it; a profile saved before profiles kept one
+    // leaves the Locker as it is. Undo puts the earlier shuffle back too.
+    let locker_before = locker_shuffle_of(&st.locker.prefs);
+    let workspace = crate::data::workspace_dir();
+    if let Some(shuffle) = core::active_profile(&workspace)
+        .and_then(|slug| core::read_profile(&workspace, &slug).ok())
+        .and_then(|profile| profile.locker_shuffle())
+    {
+        set_locker_shuffle(st, &shuffle);
+    }
     let switched = applied.changed.len().max(applied.copied);
     let mut detail = Vec::new();
     if applied.copied > 0 {
@@ -541,6 +588,7 @@ fn finish_apply(st: &mut State, name: String, applied: core::ProfileApplyResult)
             crate::notify::push(st, Notice::error("Deadlock folder not found. Nothing was changed."));
             return;
         };
+        set_locker_shuffle(st, &locker_before);
         let workspace = crate::data::workspace_dir();
         let result = for_undo.clone();
         let undo_name = undo_name.clone();
@@ -1260,6 +1308,7 @@ fn create(st: &mut State) {
             if isolated {
                 let _ = core::set_profile_isolated(&workspace, &profile.slug, true);
             }
+            let _ = core::store_locker_shuffle(&workspace, &profile.slug, &locker_shuffle_of(&st.locker.prefs));
             report(
                 st,
                 format!("Saved {} with {}.", profile.name, plural(profile.slots.len(), "mod")),
@@ -1283,11 +1332,18 @@ fn update(st: &mut State, slug: &str) {
         return;
     };
     match core::update_profile(&game_root, &crate::data::workspace_dir(), slug) {
-        Ok(profile) => report(
+        Ok(profile) => {
+            let _ = core::store_locker_shuffle(
+                &crate::data::workspace_dir(),
+                &profile.slug,
+                &locker_shuffle_of(&st.locker.prefs),
+            );
+            report(
             st,
             format!("Updated {} with {}.", profile.name, plural(profile.slots.len(), "mod")),
             false,
-        ),
+            )
+        }
         Err(error) => report(st, error.to_string(), true),
     }
     reload(st);

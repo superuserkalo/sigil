@@ -21,85 +21,19 @@ pub(crate) fn hidden_dialog(s: &State, u: &Ui) -> Option<El> {
                 .child(text("Nothing is hidden.").font(BODY).color(u.muted)),
         );
     }
-    let mut first = true;
-    let mut ids: Vec<u64> = mods.iter().copied().collect();
-    ids.sort_unstable();
-    for id in ids {
-        if !first {
+    for (index, item) in super::hidden::rows(s, u, "hidden").into_iter().enumerate() {
+        if index > 0 {
             rows = rows.child(el().w_full().h(1.0).fill(u.hair));
         }
-        first = false;
-        let name = s
-            .browse_view
-            .hidden_names
-            .get(&id)
-            .cloned()
-            .unwrap_or_else(|| format!("Mod {id}"));
-        rows = rows.child(
-            row()
-                .key(format!("hidden-mod-{id}"))
-                .w_full()
-                .min_h(48.0)
-                .px(12.0)
-                .py(8.0)
-                .gap(12.0)
-                .center_y()
-                .child(
-                    col()
-                        .grow(1.0)
-                        .min_w(0.0)
-                        .gap(2.0)
-                        .child(text(name).font(BODY).color(u.ink).truncate())
-                        .child(text("Hidden mod").font(SMALL).color(u.faint)),
-                )
-                .child(
-                    u.action("Restore", ActionKind::Ghost)
-                        .key(format!("hidden-restore-{id}"))
-                        .cursor(rune::Cursor::Pointer)
-                        .on_press(move |st: &mut State| unhide_mod(st, id)),
-                ),
-        );
-    }
-    let mut author_names: Vec<String> = authors.iter().cloned().collect();
-    author_names.sort_by_key(|name| name.to_lowercase());
-    for author in author_names {
-        if !first {
-            rows = rows.child(el().w_full().h(1.0).fill(u.hair));
-        }
-        first = false;
-        let name = author.clone();
-        rows = rows.child(
-            row()
-                .key(format!("hidden-author-{author}"))
-                .w_full()
-                .min_h(48.0)
-                .px(12.0)
-                .py(8.0)
-                .gap(12.0)
-                .center_y()
-                .child(
-                    col()
-                        .grow(1.0)
-                        .min_w(0.0)
-                        .gap(2.0)
-                        .child(text(author.clone()).font(BODY).color(u.ink).truncate())
-                        .child(text("Creator").font(SMALL).color(u.faint)),
-                )
-                .child(
-                    u.action("Restore", ActionKind::Ghost)
-                        .key(format!("hidden-author-restore-{author}"))
-                        .cursor(rune::Cursor::Pointer)
-                        .on_press(move |st: &mut State| unhide_author(st, &name)),
-                ),
-        );
+        rows = rows.child(item);
     }
     Some(
         u.dialog_shell()
             .key("browse-hidden-dialog")
             .role("dialog")
             .label("Hidden items")
-            .w(520.0)
-            .max_w(520.0)
+            .w(600.0)
+            .max_w(600.0)
             .max_h(640.0)
             .padding(24.0)
             .gap(16.0)
@@ -147,6 +81,8 @@ pub(crate) fn hidden_dialog(s: &State, u: &Ui) -> Option<El> {
                             .on_press(|st: &mut State| {
                                 st.browse_view.hidden_mods.clear();
                                 st.browse_view.hidden_authors.clear();
+                                st.browse_view.hidden_meta.clear();
+                                st.browse_view.hidden_note = None;
                                 save_browse_state(st);
                             }),
                     )

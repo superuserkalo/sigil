@@ -64,6 +64,7 @@ pub const INDEX: &[Entry] = &[
     // Integrations
     e(Tab::Integrations, "Discord Rich Presence", "Shows what you do in Sigil on Discord.", "discord rpc status activity"),
     e(Tab::Integrations, "Show what you are doing", "Off shows only that you use Sigil.", "discord details privacy"),
+    e(Tab::Integrations, "Hide party size", "Leave the party size out of Discord.", "discord party group size privacy"),
     e(Tab::Integrations, "Show your mod count", "How many mods are on, modded or vanilla.", "discord mods"),
     e(Tab::Integrations, "Steam account", "Link the Steam account Stats opens on.", "steam account profile link stats statlocker"),
     e(Tab::Integrations, "GameBanana account", "Open your GameBanana page from Sigil.", "gamebanana profile member link"),

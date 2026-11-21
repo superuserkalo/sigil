@@ -40,6 +40,10 @@ pub struct Descriptor {
     pub homepage: Option<String>,
     /// The descriptor URL's origin.
     pub origin: String,
+    /// `capabilities.releaseHistory`: listings have a read-only changelog of past releases.
+    pub release_history: bool,
+    /// `catalog.releaseHistoryUrlTemplate`, resolved, with `{listingId}` left in.
+    pub history_template: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -66,6 +70,27 @@ pub struct Listing {
     pub artifacts: Vec<Artifact>,
     pub detail_url: Option<String>,
     pub removed: bool,
+    /// Every image the listing names, resolved; `image` is the first.
+    pub images: Vec<String>,
+    /// `descriptionFormat` is `markdown`: [`markdown_to_text`] reads it.
+    pub markdown: bool,
+    /// The listing's own page (`homepageUrl`).
+    pub homepage: Option<String>,
+    /// The current release's id.
+    pub release_id: String,
+    /// `releaseHistoryUrl`, resolved, when the listing names one.
+    pub history_url: Option<String>,
+}
+
+/// One past or current release from a source's release history.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Release {
+    pub id: String,
+    pub version: String,
+    /// RFC 3339, as the source wrote it.
+    pub published_at: String,
+    /// Plain text.
+    pub changelog: String,
 }
 
 /// Lowercase `scheme://host[:port]` of an absolute URL.
@@ -211,6 +236,15 @@ pub fn parse_descriptor(url: &str, body: &str) -> Result<Descriptor> {
         media,
         homepage: v.get("homepageUrl").and_then(Value::as_str).map(str::to_string),
         origin,
+        release_history: v
+            .get("capabilities")
+            .and_then(|c| c.get("releaseHistory"))
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        history_template: cat
+            .get("releaseHistoryUrlTemplate")
+            .and_then(Value::as_str)
+            .map(|t| resolve(url, t)),
     })
 }
 
@@ -246,7 +280,26 @@ pub fn parse_listing(base: &str, v: &Value) -> Option<Listing> {
     let id = v.get("id").and_then(Value::as_str)?.to_string();
     let s = |k: &str| v.get(k).and_then(Value::as_str).unwrap_or("").to_string();
     let release = v.get("release");
+    let images: Vec<String> = v
+        .get("images")
+        .and_then(Value::as_array)
+        .map(|list| {
+            list.iter()
+                .filter_map(|i| i.as_str().or_else(|| i.get("url").and_then(Value::as_str)))
+                .take(20)
+                .map(|u| resolve(base, u))
+                .collect()
+        })
+        .unwrap_or_default();
     Some(Listing {
+        images,
+        markdown: v.get("descriptionFormat").and_then(Value::as_str) == Some("markdown"),
+        homepage: v.get("homepageUrl").and_then(Value::as_str).map(|u| resolve(base, u)),
+        release_id: release
+            .and_then(|r| r.get("id").and_then(Value::as_str))
+            .unwrap_or("")
+            .to_string(),
+        history_url: v.get("releaseHistoryUrl").and_then(Value::as_str).map(|u| resolve(base, u)),
         title: s("title"),
         author: s("author"),
         description: s("description").chars().take(4000).collect(),
@@ -375,6 +428,147 @@ pub fn fetch_catalog(d: &Descriptor) -> Result<Vec<Listing>> {
     Ok(out)
 }
 
+/// Where a listing's release history lives: its own `releaseHistoryUrl`, else the catalog's
+/// template with the id filled in. `None` when the source does not declare the capability.
+pub fn history_url(d: &Descriptor, listing: &Listing) -> Option<String> {
+    if !d.release_history {
+        return None;
+    }
+    listing.history_url.clone().or_else(|| {
+        let id: String = listing
+            .id
+            .bytes()
+            .map(|b| {
+                if b.is_ascii_alphanumeric() || b"-._~".contains(&b) {
+                    (b as char).to_string()
+                } else {
+                    format!("%{b:02X}")
+                }
+            })
+            .collect();
+        d.history_template.as_ref().map(|t| t.replace("{listingId}", &id))
+    })
+}
+
+/// One page of release history: `{ items, nextCursor }`. A cursor becomes `?cursor=` on the
+/// first page's address, as for catalog pages.
+pub fn parse_history_page(base: &str, body: &str) -> Result<(Vec<Release>, Option<String>)> {
+    let v: Value = serde_json::from_str(body).map_err(|e| Error::msg(format!("Not JSON: {e}")))?;
+    let items = v
+        .get("items")
+        .and_then(Value::as_array)
+        .ok_or_else(|| Error::msg("The release history has no items list."))?;
+    let s = |r: &Value, k: &str| r.get(k).and_then(Value::as_str).unwrap_or("").trim().to_string();
+    let releases = items
+        .iter()
+        .take(200)
+        .map(|r| Release {
+            id: s(r, "id"),
+            version: s(r, "version"),
+            published_at: s(r, "publishedAt"),
+            changelog: s(r, "changelog").chars().take(4000).collect(),
+        })
+        .collect();
+    let next = v.get("nextCursor").and_then(Value::as_str).filter(|n| !n.is_empty()).map(|n| {
+        if n.contains('/') || n.contains("://") {
+            resolve(base, n)
+        } else {
+            let sep = if base.contains('?') { '&' } else { '?' };
+            format!("{base}{sep}cursor={n}&limit=100")
+        }
+    });
+    Ok((releases, next))
+}
+
+/// Fetch a listing's release history, newest first as the source orders it. At most 20 pages,
+/// every one on the source's api origins.
+pub fn fetch_history(d: &Descriptor, listing: &Listing) -> Result<Vec<Release>> {
+    let first = history_url(d, listing).ok_or_else(|| Error::msg("This source has no release history."))?;
+    let mut next = Some(first.clone());
+    let mut out = Vec::new();
+    let mut pages = 0;
+    while let Some(url) = next.take() {
+        pages += 1;
+        if pages > 20 {
+            break;
+        }
+        check_on(&url, &d.api, "api")?;
+        let (releases, after) = parse_history_page(&first, &get_json(&url)?)?;
+        out.extend(releases);
+        next = after;
+    }
+    Ok(out)
+}
+
+/// An image a source names may load only from its declared media or api origins.
+pub fn image_allowed(d: &Descriptor, url: &str) -> bool {
+    check_on(url, &d.media, "media").is_ok() || check_on(url, &d.api, "api").is_ok()
+}
+
+/// Markdown as plain text for a reader without a Markdown view: headings, emphasis, code
+/// marks and link targets are dropped, list items become bullets, images are left out (DMM
+/// drops inline images too), table rows keep their cells.
+pub fn markdown_to_text(markdown: &str) -> String {
+    static LINK: std::sync::LazyLock<regex::Regex> =
+        std::sync::LazyLock::new(|| regex::Regex::new(r"!?\[([^\]]*)\]\([^)]*\)").unwrap());
+    let mut out: Vec<String> = Vec::new();
+    let mut fenced = false;
+    for raw in markdown.lines() {
+        let line = raw.trim_end();
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
+            fenced = !fenced;
+            continue;
+        }
+        if fenced {
+            out.push(line.to_string());
+            continue;
+        }
+        // Table rules (`|---|:--:|`) and horizontal rules carry no words.
+        if !trimmed.is_empty() && trimmed.chars().all(|c| matches!(c, '|' | '-' | ':' | ' ' | '*' | '_')) && trimmed.len() >= 3 {
+            continue;
+        }
+        let mut text = trimmed.trim_start_matches('#').trim_start().to_string();
+        if trimmed.starts_with('>') {
+            text = trimmed.trim_start_matches('>').trim_start().to_string();
+        }
+        for marker in ["- [ ] ", "- [x] ", "* [ ] ", "* [x] ", "- ", "* ", "+ "] {
+            if let Some(rest) = text.strip_prefix(marker) {
+                text = format!("• {rest}");
+                break;
+            }
+        }
+        text = LINK
+            .replace_all(&text, |caps: &regex::Captures| {
+                if caps[0].starts_with('!') { String::new() } else { caps[1].to_string() }
+            })
+            .into_owned();
+        if text.starts_with('|') {
+            text = text.trim_matches('|').split('|').map(str::trim).collect::<Vec<_>>().join("  ·  ");
+        }
+        for mark in ["**", "__", "~~", "`"] {
+            text = text.replace(mark, "");
+        }
+        out.push(text.trim_end().to_string());
+    }
+    let joined = out.join("\n");
+    let mut text = String::with_capacity(joined.len());
+    let mut blank = 0;
+    for line in joined.lines() {
+        if line.trim().is_empty() {
+            blank += 1;
+            if blank > 1 {
+                continue;
+            }
+        } else {
+            blank = 0;
+        }
+        text.push_str(line);
+        text.push('\n');
+    }
+    text.trim().to_string()
+}
+
 /// Case-insensitive search over title, author and tags.
 pub fn search<'a>(listings: &'a [Listing], query: &str) -> Vec<&'a Listing> {
     let q = query.trim().to_lowercase();
@@ -473,6 +667,60 @@ mod tests {
         assert_eq!(resolve(b, "../files/x.zip"), "https://h.org/a/files/x.zip");
         assert_eq!(resolve(b, "/root.json"), "https://h.org/root.json");
         assert_eq!(resolve(b, "https://o.org/z"), "https://o.org/z");
+    }
+
+    #[test]
+    fn release_history_follows_the_listing_then_the_template() {
+        let with = DESCRIPTOR
+            .replace(r#""indexUrl": "./catalog.json""#, r#""indexUrl": "./catalog.json", "releaseHistoryUrlTemplate": "./history/{listingId}""#)
+            .replace(r#""gameId": "deadlock","#, r#""gameId": "deadlock", "capabilities": {"releaseHistory": true},"#);
+        let d = parse_descriptor("https://mods.example.org/src/dmm-source.json", &with).unwrap();
+        assert!(d.release_history);
+        let listing = Listing { id: "blue haze".into(), ..Listing::default() };
+        assert_eq!(history_url(&d, &listing).as_deref(), Some("https://mods.example.org/src/history/blue%20haze"));
+        let own = Listing { history_url: Some("https://mods.example.org/h/a.json".into()), ..listing.clone() };
+        assert_eq!(history_url(&d, &own).as_deref(), Some("https://mods.example.org/h/a.json"));
+        // Without the capability there is no history, whatever the template says.
+        let plain = parse_descriptor("https://mods.example.org/src/x.json", DESCRIPTOR).unwrap();
+        assert_eq!(history_url(&plain, &own), None);
+        let (releases, next) = parse_history_page(
+            "https://mods.example.org/src/history/a",
+            r#"{"items":[{"id":"r2","version":"2.0","publishedAt":"2026-02-01T00:00:00Z"},
+                         {"id":"r1","version":"1.0","changelog":"Initial release"}],"nextCursor":"older"}"#,
+        )
+        .unwrap();
+        assert_eq!(releases.len(), 2);
+        assert_eq!(releases[1].changelog, "Initial release");
+        assert_eq!(next.as_deref(), Some("https://mods.example.org/src/history/a?cursor=older&limit=100"));
+        let (_, end) = parse_history_page("https://h.org/x", r#"{"items":[],"nextCursor":null}"#).unwrap();
+        assert_eq!(end, None);
+    }
+
+    #[test]
+    fn markdown_reads_as_plain_text() {
+        let md = "# Blue Haze\n\nA **bold** recolor with `code`.\n\n- one\n- [x] two\n\n![shot](a.png)\nSee [the page](https://x.org).\n\n| a | b |\n|---|---|\n| 1 | 2 |\n\n```\nraw *text*\n```";
+        assert_eq!(
+            markdown_to_text(md),
+            "Blue Haze\n\nA bold recolor with code.\n\n• one\n• two\n\n\nSee the page.\n\na  ·  b\n1  ·  2\n\nraw *text*"
+                .replace("\n\n\n", "\n\n")
+        );
+    }
+
+    #[test]
+    fn listing_images_markdown_and_release_id() {
+        let v: Value = serde_json::from_str(
+            r#"{"id":"a","title":"T","descriptionFormat":"markdown","images":["./a.png",{"url":"https://cdn.example.org/b.png"}],
+                "homepageUrl":"https://mods.example.org/a","release":{"id":"r1","version":"1"}}"#,
+        )
+        .unwrap();
+        let l = parse_listing("https://mods.example.org/src/catalog.json", &v).unwrap();
+        assert!(l.markdown);
+        assert_eq!(l.images, ["https://mods.example.org/src/a.png", "https://cdn.example.org/b.png"]);
+        assert_eq!(l.image.as_deref(), Some("https://mods.example.org/src/a.png"));
+        assert_eq!(l.release_id, "r1");
+        let d = parse_descriptor("https://mods.example.org/src/x.json", DESCRIPTOR).unwrap();
+        assert!(image_allowed(&d, &l.images[0]));
+        assert!(!image_allowed(&d, "https://evil.example.com/x.png"));
     }
 
     #[test]

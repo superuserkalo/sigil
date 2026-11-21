@@ -491,6 +491,225 @@ pub fn file_size(path: &Path) -> u64 {
     fs::metadata(path).map(|meta| meta.len()).unwrap_or(0)
 }
 
+// --- the review list (Grimoire #592) -------------------------------------------------------
+
+/// Trusts and the review list: one place that lists every flagged mod as Review or Allowed,
+/// with a count for the "N mods need attention" notice and the mods Allow N script mods covers.
+/// A trust is a version key (the screen builds it from the mod and its file size), so a mod
+/// that changes asks again. Taking a trust back is [`revoke`]; the screen turns the mod off
+/// first, so a mod is never left on without one.
+pub mod review {
+    use std::collections::BTreeSet;
+    use std::path::Path;
+
+    use super::{Risk, ScanReport};
+
+    /// Read the trusted version keys. A missing or broken file trusts nothing.
+    pub fn read_trusted(path: &Path) -> BTreeSet<String> {
+        std::fs::read_to_string(path)
+            .ok()
+            .and_then(|text| serde_json::from_str::<Vec<String>>(&text).ok())
+            .map(|list| list.into_iter().collect())
+            .unwrap_or_default()
+    }
+
+    /// Write the trusted version keys, sorted, through a file beside the final name.
+    pub fn write_trusted(path: &Path, keys: &BTreeSet<String>) -> crate::error::Result<()> {
+        let list: Vec<&String> = keys.iter().collect();
+        let text = serde_json::to_string_pretty(&list)?;
+        crate::util::write_atomic(path, text.as_bytes())
+    }
+
+    /// Add one trust. True when it was new.
+    pub fn trust(path: &Path, key: &str) -> crate::error::Result<bool> {
+        let mut keys = read_trusted(path);
+        let fresh = keys.insert(key.to_string());
+        if fresh {
+            write_trusted(path, &keys)?;
+        }
+        Ok(fresh)
+    }
+
+    /// Take one trust back (Disallow). True when it was there.
+    pub fn revoke(path: &Path, key: &str) -> crate::error::Result<bool> {
+        let mut keys = read_trusted(path);
+        let had = keys.remove(key);
+        if had {
+            write_trusted(path, &keys)?;
+        }
+        Ok(had)
+    }
+
+    /// Where a flagged mod stands.
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub enum Standing {
+        /// Nobody allowed this version yet.
+        Review,
+        /// The player allowed this version.
+        Allowed,
+    }
+
+    /// One installed mod and what its scan found, as the screen hands it in.
+    #[derive(Clone, Debug)]
+    pub struct Candidate {
+        pub slot: u16,
+        pub name: String,
+        pub enabled: bool,
+        /// The version key a trust is stored under.
+        pub key: String,
+        pub report: ScanReport,
+    }
+
+    /// One row of the list.
+    #[derive(Clone, Debug)]
+    pub struct Row {
+        pub slot: u16,
+        pub name: String,
+        pub enabled: bool,
+        pub key: String,
+        pub standing: Standing,
+        pub report: ScanReport,
+    }
+
+    impl Row {
+        /// The distinct reasons, worst first, for the row's one-line summary. A VPK the scan
+        /// could not open reads as Not checked.
+        pub fn risks(&self) -> Vec<Risk> {
+            let mut risks: Vec<Risk> = self.report.findings.iter().map(|f| f.risk).collect();
+            if self.report.error.is_some() {
+                risks.push(Risk::Unchecked);
+            }
+            risks.sort_by_key(|risk| std::cmp::Reverse(risk.rank()));
+            risks.dedup();
+            risks
+        }
+
+        /// Its only findings are script-mod files, which Settings > Allow script mods covers:
+        /// Allow N script mods may take it with the others.
+        pub fn script_only(&self) -> bool {
+            self.report.error.is_none()
+                && !self.report.findings.is_empty()
+                && self.report.findings.iter().all(|f| f.risk == Risk::ScriptMod)
+        }
+    }
+
+    /// The flagged mods: Review first, then Allowed, each by slot. A clear scan is not listed.
+    pub fn rows(candidates: Vec<Candidate>, trusted: &BTreeSet<String>) -> Vec<Row> {
+        let mut rows: Vec<Row> = candidates
+            .into_iter()
+            .filter(|c| !c.report.is_clear())
+            .map(|c| Row {
+                standing: if trusted.contains(&c.key) { Standing::Allowed } else { Standing::Review },
+                slot: c.slot,
+                name: c.name,
+                enabled: c.enabled,
+                key: c.key,
+                report: c.report,
+            })
+            .collect();
+        rows.sort_by_key(|row| (row.standing == Standing::Allowed, row.slot));
+        rows
+    }
+
+    /// The keys that need the player: every row in Review.
+    pub fn pending(rows: &[Row]) -> BTreeSet<String> {
+        rows.iter()
+            .filter(|row| row.standing == Standing::Review)
+            .map(|row| row.key.clone())
+            .collect()
+    }
+
+    /// Grimoire's notice rule: show it while a pending key is one the player has not
+    /// dismissed. A newly flagged mod brings a dismissed notice back.
+    pub fn has_new(pending: &BTreeSet<String>, dismissed: &BTreeSet<String>) -> bool {
+        pending.iter().any(|key| !dismissed.contains(key))
+    }
+
+    /// The Review rows Allow N script mods takes.
+    pub fn script_only(rows: &[Row]) -> Vec<&Row> {
+        rows.iter()
+            .filter(|row| row.standing == Standing::Review && row.script_only())
+            .collect()
+    }
+}
+
+#[cfg(test)]
+mod review_tests {
+    use super::review::*;
+    use super::{Finding, Risk, ScanReport};
+
+    fn report(risks: &[Risk]) -> ScanReport {
+        ScanReport {
+            findings: risks
+                .iter()
+                .map(|risk| Finding { path: format!("x/{risk:?}"), risk: *risk, call: String::new() })
+                .collect(),
+            entries: 4,
+            ..ScanReport::default()
+        }
+    }
+
+    fn candidate(slot: u16, risks: &[Risk], enabled: bool) -> Candidate {
+        Candidate { slot, name: format!("Mod {slot}"), enabled, key: format!("gb{slot}:100"), report: report(risks) }
+    }
+
+    #[test]
+    fn flagged_mods_are_listed_review_first_and_clear_ones_are_not() {
+        let trusted = ["gb2:100".to_string()].into_iter().collect();
+        let rows = rows(
+            vec![
+                candidate(2, &[Risk::Program], true),
+                candidate(1, &[], true),
+                candidate(5, &[Risk::ScriptMod], false),
+                candidate(3, &[Risk::Remote, Risk::Script], true),
+            ],
+            &trusted,
+        );
+        let order: Vec<(u16, Standing)> = rows.iter().map(|row| (row.slot, row.standing)).collect();
+        assert_eq!(order, [(3, Standing::Review), (5, Standing::Review), (2, Standing::Allowed)]);
+        assert_eq!(rows[0].risks(), [Risk::Remote, Risk::Script]);
+        let pending = pending(&rows);
+        assert_eq!(pending.len(), 2);
+        assert_eq!(script_only(&rows).iter().map(|row| row.slot).collect::<Vec<_>>(), [5]);
+    }
+
+    #[test]
+    fn an_unreadable_vpk_is_listed_as_not_checked() {
+        let broken = Candidate {
+            report: ScanReport { error: Some("bad header".into()), ..ScanReport::default() },
+            ..candidate(4, &[], false)
+        };
+        let rows = rows(vec![broken], &Default::default());
+        assert_eq!(rows[0].risks(), [Risk::Unchecked]);
+        assert!(!rows[0].script_only());
+    }
+
+    #[test]
+    fn a_dismissed_notice_comes_back_for_a_new_mod_only() {
+        let pending: std::collections::BTreeSet<String> = ["a".to_string(), "b".to_string()].into_iter().collect();
+        assert!(has_new(&pending, &Default::default()));
+        assert!(!has_new(&pending, &pending));
+        let more: std::collections::BTreeSet<String> = ["a".into(), "b".into(), "c".into()].into_iter().collect();
+        assert!(has_new(&more, &pending));
+    }
+
+    #[test]
+    fn trust_and_revoke_round_trip_through_the_file() {
+        let dir = std::env::temp_dir().join(format!("sigil-trust-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("safety-trusted.json");
+        assert!(read_trusted(&path).is_empty());
+        assert!(trust(&path, "gb1:10").unwrap());
+        assert!(!trust(&path, "gb1:10").unwrap());
+        assert!(trust(&path, "gb2:20").unwrap());
+        assert!(revoke(&path, "gb1:10").unwrap());
+        assert!(!revoke(&path, "gb1:10").unwrap());
+        assert_eq!(read_trusted(&path).into_iter().collect::<Vec<_>>(), ["gb2:20"]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -775,3 +775,41 @@ pub fn scene_vpk_unchecked(s: &mut State) {
     s.install.vpks.swap(1, 2);
     s.install.unchecked.insert("pak02_dir.vpk".into());
 }
+
+/// `upstream-hidden`: hidden mods and creators with the date, where a creator was hidden from,
+/// and a note (Grimoire #580).
+pub fn stage_hidden(s: &mut State) {
+    scene_hidden(s);
+    let meta = |at: i64, note: &str, from: Option<(u64, &str)>, author: Option<&str>| super::hidden::HiddenMeta {
+        hidden_at: at,
+        note: note.to_string(),
+        from: from.map(|(id, name)| (id, name.to_string())),
+        thumb: None,
+        author: author.map(str::to_string),
+    };
+    let views = &mut s.browse_view;
+    views.hidden_meta.insert(super::hidden::mod_key(741478), meta(1_763_640_000, "Clashes with my HUD", None, Some("747shove")));
+    views.hidden_meta.insert(super::hidden::mod_key(83198), meta(0, "", None, None));
+    views.hidden_meta.insert(
+        super::hidden::author_key("someone"),
+        meta(1_763_400_000, "", Some((741478, "Long Hair Haze")), None),
+    );
+    views.hidden_note = Some((super::hidden::author_key("someone"), TextEdit::new("Too many reuploads")));
+}
+
+/// `upstream-notices`: a mod page GameBanana staff withheld, which its creator also marked
+/// obsolete, with both notices in their own words.
+pub fn stage_notices(s: &mut State) {
+    scene_details(s);
+    if let Some(profile) = s.browse_view.details.as_mut().and_then(|d| d.profile.as_mut()) {
+        profile.withheld = true;
+        profile.obsolete = true;
+        profile.obsolete_note = Some("Replaced by Long Hair Haze 2, which keeps the coat.".into());
+        profile.withhold = Some(gamebanana::WithholdNotice {
+            rules: vec![("R.17".into(), "Broken or misleading downloads".into())],
+            notes: "The archive has no VPK in it. Upload the mod file again.".into(),
+            by: Some("Staffer".into()),
+            at: Some(1_763_640_000),
+        });
+    }
+}

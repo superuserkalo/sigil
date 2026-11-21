@@ -294,6 +294,10 @@ fn dependents_of(st: &State, slot: u16) -> Vec<u16> {
 /// A switch press on one slot: ask first when something needs asking, else switch it.
 pub fn switch(st: &mut State, slot: u16, enable: bool) {
     st.installed.menu = None;
+    // Refuse before any question opens: an answer would only be refused at the write.
+    if crate::screens::settings::watch::refuse_while_running(st) {
+        return;
+    }
     if enable && let Some(findings) = super::safety_gate::needs_review(st, slot) {
         st.installed.gates.open = Some(Gate::Safety { slot, findings });
         return;

@@ -123,6 +123,10 @@ pub struct MirrorMeta {
     pub steps: u64,
     /// By section model name.
     pub sections: BTreeMap<String, SectionProgress>,
+    /// Rows a mod page showed GameBanana no longer serves publicly, as `Model:id`. A later
+    /// index row for one is not kept, so a withheld mod cannot come back through a stale page.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeSet::is_empty")]
+    pub withheld: std::collections::BTreeSet<String>,
 }
 
 impl Default for MirrorMeta {
@@ -132,6 +136,7 @@ impl Default for MirrorMeta {
             synced_at: 0,
             steps: 0,
             sections: BTreeMap::new(),
+            withheld: Default::default(),
         }
     }
 }
@@ -249,6 +254,13 @@ pub struct Mirror {
     pub meta: MirrorMeta,
 }
 
+fn withheld_key(model: &str, id: u64) -> String {
+    let model = model.to_ascii_lowercase();
+    let mut chars = model.chars();
+    let model: String = chars.next().map(|c| c.to_ascii_uppercase()).into_iter().chain(chars).collect();
+    format!("{model}:{id}")
+}
+
 /// The folder the mirror lives in: `<data>/browse/mirror`.
 pub fn mirror_dir(data_dir: &Path) -> PathBuf {
     data_dir.join("browse").join("mirror")
@@ -296,7 +308,7 @@ impl Mirror {
 
     /// Add or replace one row. True when the stored copy changed.
     pub fn upsert(&mut self, mut entry: MirrorEntry) -> bool {
-        if entry.id == 0 {
+        if entry.id == 0 || self.meta.withheld.contains(&withheld_key(&entry.model, entry.id)) {
             return false;
         }
         match self
@@ -320,6 +332,23 @@ impl Mirror {
                 true
             }
         }
+    }
+
+    /// Drop one row: GameBanana no longer shows it publicly (withheld or private, DMM
+    /// `208df742`). The next sync adds it back only if the index lists it again. True when a
+    /// row was dropped.
+    pub fn remove(&mut self, model: &str, id: u64) -> bool {
+        let fresh = self.meta.withheld.insert(withheld_key(model, id));
+        let before = self.entries.len();
+        self.entries
+            .retain(|entry| !(entry.id == id && entry.model.eq_ignore_ascii_case(model)));
+        self.entries.len() != before || fresh
+    }
+
+    /// GameBanana shows the submission again (staff lifted the withhold): its next index row
+    /// is kept. True when it was withheld here.
+    pub fn restore(&mut self, model: &str, id: u64) -> bool {
+        self.meta.withheld.remove(&withheld_key(model, id))
     }
 
     /// Record the download count a mod page reported. True when it was new.
@@ -672,6 +701,22 @@ mod tests {
         mirror.upsert(entry(1, "A renamed", "x", 1, 2));
         assert_eq!(mirror.downloads("Mod", 1), Some(9));
         assert_eq!(mirror.entries[0].name, "A renamed");
+    }
+
+    /// DMM `208df742`: a withheld mod leaves the saved catalog and a stale index row does not
+    /// bring it back; lifting the withhold lets it in again.
+    #[test]
+    fn a_withheld_mod_leaves_the_catalog_and_stays_out() {
+        let mut mirror = Mirror::default();
+        mirror.upsert(entry(1, "A", "x", 1, 1));
+        mirror.upsert(entry(2, "B", "x", 1, 1));
+        assert!(mirror.remove("mod", 1));
+        assert_eq!(mirror.entries.len(), 1);
+        assert!(!mirror.upsert(entry(1, "A", "x", 1, 2)), "a later index row is not kept");
+        assert!(!mirror.remove("Mod", 1), "nothing new to drop");
+        assert!(mirror.restore("Mod", 1));
+        assert!(mirror.upsert(entry(1, "A", "x", 1, 2)));
+        assert_eq!(mirror.entries.len(), 2);
     }
 
     #[test]

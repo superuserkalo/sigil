@@ -1418,7 +1418,8 @@ fn assemble_snapshot(
             .then(left.hero_id.cmp(&right.hero_id))
     });
     let career = career_totals(&heroes);
-    let window = window_stats(&matches);
+    // Street Brawl rows stay in the list, tagged; the window's rates and averages skip them.
+    let window = window_stats(&filters::normal_only(&matches));
     StatsSnapshot {
         account_id,
         source: STATS_API_BASE.to_string(),

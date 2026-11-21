@@ -34,6 +34,7 @@ pub fn dialog(s: &State, u: &Ui) -> Option<El> {
         ("browse-ignored-overlay", super::panels::ignored_dialog(s, u)),
         ("browse-hero-picker-overlay", super::panels::hero_picker_dialog(s, u)),
         ("browse-paste-overlay", super::paste::dialog(s, u)),
+        ("browse-source-overlay", super::sources::details_dialog(s, u)),
     ] {
         if let Some(extra) = extra {
             layers.push(
@@ -505,26 +506,68 @@ pub(crate) fn details_info(s: &State, u: &Ui, d: &Details) -> El {
 
 /// GameBanana's own warnings about a submission, before its files.
 pub(crate) fn notices(u: &Ui, _d: &Details, profile: &ModProfile) -> Vec<El> {
+    use crate::screens::settings::i18n::{fill, tr};
     let mut list = Vec::new();
     if profile.withheld {
-        list.push(note_box(
+        // DMM `cba597f2`: the staff's own reason, the rules and who withheld it when.
+        let notice = profile.withhold.clone().unwrap_or_default();
+        let mut lines = Vec::new();
+        for (code, name) in &notice.rules {
+            lines.push(match (code.is_empty(), name.is_empty()) {
+                (false, false) => format!("{code}: {name}"),
+                (false, true) => code.clone(),
+                _ => name.clone(),
+            });
+        }
+        if !notice.notes.is_empty() {
+            lines.push(notice.notes.clone());
+        }
+        let by = match (&notice.by, notice.at) {
+            (Some(by), Some(at)) => Some(fill(tr("Withheld by {} on {}."), &[by, &super::store::date_input(at)])),
+            (Some(by), None) => Some(fill(tr("Withheld by {}."), &[by])),
+            (None, Some(at)) => Some(fill(tr("Withheld on {}."), &[&super::store::date_input(at)])),
+            (None, None) => None,
+        };
+        lines.extend(by);
+        list.push(notice_box(
             u,
-            "GameBanana withheld this mod. Its files may not download.",
+            "details-withheld",
+            tr("GameBanana staff withheld this mod. Its files may not download until the creator fixes it."),
+            &lines,
         ));
     }
     if profile.private {
-        list.push(note_box(
-            u,
-            "Only the creator can see this mod right now.",
-        ));
+        list.push(note_box(u, tr("Only the creator can see this mod right now.")));
     }
     if profile.obsolete {
-        list.push(note_box(
+        // DMM `7ede98c1`: the author's note, when they wrote one.
+        let lines: Vec<String> = profile.obsolete_note.iter().cloned().collect();
+        list.push(notice_box(
             u,
-            "The creator marked this mod outdated. A newer mod may replace it.",
+            "details-obsolete",
+            tr("The creator marked this mod outdated. A newer mod may replace it."),
+            &lines,
         ));
     }
     list
+}
+
+/// A notice with a heading line and the words GameBanana gave for it.
+fn notice_box(u: &Ui, key: &str, heading: &str, lines: &[String]) -> El {
+    let mut c = col()
+        .key(key.to_string())
+        .w_full()
+        .px(12.0)
+        .py(8.0)
+        .gap(4.0)
+        .radius(crate::ui::r(8.0))
+        .fill(Color::WHITE.alpha(0.025))
+        .border(1.0, u.hair_strong)
+        .child(text(heading.to_string()).font(BODY_MED).color(u.ink).wrap().w_full());
+    for line in lines {
+        c = c.child(text(line.clone()).font(BODY).color(u.muted).wrap().w_full());
+    }
+    c
 }
 
 /// Installed, update and outdated state as tags, with the action each one needs.

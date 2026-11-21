@@ -1,8 +1,10 @@
 # Mod safety scan: what the game loads, what the reference apps flag, what Sigil flags
 
-Status: current, 2026-11-20. Implemented in `rust/crates/deadlock-core/src/mod_safety.rs` (scan),
-`rust/crates/deadlock-core/src/payload.rs` (`script_mod_kind`, shared with the install check) and
-`rust/crates/desktop/src/screens/installed/safety_gate.rs` (the gate). Verified against GameBanana
+Status: current, 2026-11-21. Implemented in `rust/crates/deadlock-core/src/mod_safety.rs` (scan,
+trusts and the review list rules in `mod_safety::review`),
+`rust/crates/deadlock-core/src/payload.rs` (`script_mod_kind`, shared with the install check),
+`rust/crates/desktop/src/screens/installed/safety_gate.rs` (the gate) and
+`rust/crates/desktop/src/screens/installed/safety_review.rs` (the review list, section 5). Verified against GameBanana
 mod 679331 (Shiv "Josuke Remaster", file 1871507): clear. Not verified on Windows.
 
 ## Why
@@ -129,3 +131,27 @@ Limits: the scan matches text, not a parsed AST, so a script that builds an API 
 (`$["Async" + "WebRequest"]`) gets through unless it also uses `atob`, `eval` or the like. A binary
 LaCo `vxml_c` is searched as bytes; its identifiers and strings are stored as text, so names match,
 but this is not a full decode as Grimoire's bundled decoder does.
+
+## 5. The review list (Grimoire #592)
+
+Grimoire's Mod safety page lists every flagged mod as Review or Allowed, shows "N mods need
+attention" over its pages until dismissed, has Check installed mods and Allow N script mods, and
+Disallow takes an approval back (the mod is disabled first, under the mod lock, and refuses while
+the game holds it). Its startup and launch check also disables enabled mods nobody approved.
+
+Sigil, Installed > More > Mod safety (also from the notice and from a card's Check what is inside):
+
+| Part | Sigil |
+| --- | --- |
+| Rows | Every installed mod whose scan has a finding or could not open the VPK. Review rows first, then Allowed, each with its reasons (risk labels, worst first), the files and calls, and whether it is on. |
+| Check | The first time Installed opens in a run, every slot file without a cached report is scanned on a worker (reads only). Check installed mods scans every file again. |
+| Notice | "N mods need attention" on Installed while a Review mod is one the player has not dismissed; a newly flagged mod brings it back (Grimoire's rule). Hidden with Settings > Allow script mods. |
+| Allow this version | Trusts the version key (the GameBanana id or file name, and the file size) and turns the mod on through the hero and requirement questions. |
+| Allow N script mods | Shown with two or more Review mods whose only findings are script-mod files: trusts them and turns them on in one write with one Undo. |
+| Keep it off | For a Review mod that is on: turns it off. |
+| Changed | A Review mod whose name is trusted at another size says it changed since it was allowed. |
+| Disallow | Refused while the game runs (before anything changes); turns the mod off; only when it is off is the trust removed from `safety-trusted.json`. |
+| Startup disable | Not built on purpose: Sigil never writes the addon folder without a press. An enabled mod nobody allowed is listed as on with Keep it off. |
+
+Trust is still keyed by size, not by the bytes' sha256 Grimoire uses; a same-size change is not
+caught yet.

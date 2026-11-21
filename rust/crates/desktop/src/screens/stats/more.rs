@@ -60,6 +60,17 @@ pub struct More {
     pub party_job: Job<Vec<LineupRating>>,
     /// Other players picked for the party, by account id.
     pub members: BTreeSet<u64>,
+    /// Street Brawl games in the match list: shown (tagged), hidden or alone.
+    pub brawl: Brawl,
+}
+
+/// Street Brawl in the match list (owner, 2026-11-21: listed with a tag, as Grimoire does).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Brawl {
+    #[default]
+    Show,
+    Hide,
+    Only,
 }
 
 impl Default for More {
@@ -75,6 +86,7 @@ impl Default for More {
             party: Fetched::Idle,
             party_job: Job::default(),
             members: BTreeSet::new(),
+            brawl: Brawl::Show,
         }
     }
 }
@@ -91,7 +103,15 @@ impl More {
 
 /// Does a match pass the filter? Mode 4 is ranked, 1 unranked; other modes pass "both" only.
 pub fn keeps(more: &More, item: &MatchSummary, now: i64) -> bool {
-    keeps_mode_at(more, item.match_mode, item.start_time, now)
+    let brawl = item.is_street_brawl();
+    let brawl_ok = match more.brawl {
+        Brawl::Show => true,
+        Brawl::Hide => !brawl,
+        Brawl::Only => brawl,
+    };
+    // Street Brawl is never ranked: it shows under "both" and "unranked".
+    let mode = if brawl { 1 } else { item.match_mode };
+    brawl_ok && keeps_mode_at(more, mode, item.start_time, now)
 }
 
 fn keeps_mode_at(more: &More, match_mode: i32, start_time: i64, now: i64) -> bool {
@@ -289,6 +309,13 @@ pub(super) fn filter_bar(s: &State, u: &Ui) -> El {
             }),
         );
     }
+    let mut brawl = row().gap(2.0).padding(2.0).radius(crate::ui::r(8.0)).border(1.0, u.hair);
+    for (label, value) in [("With Street Brawl", Brawl::Show), ("Without Street Brawl", Brawl::Hide), ("Street Brawl only", Brawl::Only)] {
+        brawl = brawl.child(
+            pill(u, format!("stats-filter-brawl-{label}"), label, m.brawl == value)
+                .on_press(move |st: &mut State| st.stats.more.brawl = value),
+        );
+    }
     row()
         .key("stats-filter")
         .w_full()
@@ -297,6 +324,7 @@ pub(super) fn filter_bar(s: &State, u: &Ui) -> El {
         .child(text(tr("Show")).font(SMALL).color(u.faint))
         .child(modes)
         .child(since)
+        .child(brawl)
         .child(spacer())
         .child(text(tr("Filters every section below")).font(SMALL).color(u.faint))
 }
@@ -589,5 +617,43 @@ mod tests {
         assert_eq!(more.filter(10 * 86_400).since, Some(3 * 86_400));
         more.days = 0;
         assert_eq!(more.filter(10 * 86_400).since, None);
+    }
+
+    #[test]
+    fn street_brawl_can_be_shown_hidden_or_alone() {
+        let item = |game_mode: i32, match_mode: i32| MatchSummary {
+            match_id: 1,
+            hero_id: 1,
+            hero_name: None,
+            start_time: 0,
+            started_at: String::new(),
+            duration_seconds: 900,
+            game_mode,
+            match_mode,
+            player_team: 0,
+            kills: 0,
+            deaths: 0,
+            assists: 0,
+            kda: 0.0,
+            net_worth: 0,
+            last_hits: 0,
+            denies: 0,
+            outcome: deadlock_core::stats::MatchOutcome::Win,
+            win: Some(true),
+            abandoned_seconds: None,
+            ranked_badge: None,
+            ranked_delta: None,
+        };
+        let brawl = item(deadlock_core::stats::filters::GAME_MODE_STREET_BRAWL, 1);
+        let normal = item(1, 4);
+        let mut more = More::default();
+        assert!(keeps(&more, &brawl, 0) && keeps(&more, &normal, 0));
+        more.brawl = Brawl::Hide;
+        assert!(!keeps(&more, &brawl, 0) && keeps(&more, &normal, 0));
+        more.brawl = Brawl::Only;
+        assert!(keeps(&more, &brawl, 0) && !keeps(&more, &normal, 0));
+        more.brawl = Brawl::Show;
+        more.ranked = Some(true);
+        assert!(!keeps(&more, &brawl, 0), "Street Brawl is never ranked");
     }
 }
