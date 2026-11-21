@@ -1546,15 +1546,28 @@ fn run_item(
         &mut servers,
         &mut progress,
     );
-    // A resumed GameBanana file is held to the file record's MD5: bytes from two sessions that
-    // do not add up start once more from zero (the install checks size and MD5 again).
-    if from > 0
-        && let (Ok(fetched), Some(expected)) = (&outcome, resolved.md5.as_deref())
-        && !install::md5_file_matches(&fetched.path, expected)
+    // Every GameBanana file is held to the record's size and MD5, resumed or not: a server that
+    // serves a broken or swapped copy is caught before the row says Downloaded. A first miss is
+    // fetched once more from zero; a second one fails the row instead of keeping the file.
+    if let Ok(fetched) = &outcome
+        && gamebanana_problem(&resolved, fetched).is_some()
     {
         let _ = fs::remove_file(&fetched.path);
         item_control.set_validator(None);
-        outcome = download_with_failover(&url, &resolved.path, &policy, 0, &item_control, &mut servers, &mut progress);
+        let again = download_with_failover(&url, &resolved.path, &policy, 0, &item_control, &mut servers, &mut progress);
+        outcome = match again {
+            Ok(fetched) => match gamebanana_problem(&resolved, &fetched) {
+                None => Ok(fetched),
+                Some(problem) => {
+                    let _ = fs::remove_file(&fetched.path);
+                    Err(Error::Network(format!(
+                        "{} {problem}, twice. The file was deleted: GameBanana or a network filter is serving a broken copy. Try again later, or download it in your browser and add it from a file.",
+                        resolved.file_name
+                    )))
+                }
+            },
+            Err(error) => Err(error),
+        };
     }
     // Commands left over after the stream finished.
     while let Ok(command) = rx.try_recv() {
@@ -1660,6 +1673,23 @@ pub struct Resolved {
     pub file_name: String,
     pub bytes_total: u64,
     pub path: PathBuf,
+}
+
+/// How a finished GameBanana download differs from its file record, or None when it matches or
+/// the target is not a GameBanana file. The same size and MD5 rule the install applies, so the
+/// queue never calls a broken copy Downloaded.
+fn gamebanana_problem(resolved: &Resolved, fetched: &Fetched) -> Option<String> {
+    resolved.mod_id?;
+    if resolved.bytes_total > 0 && resolved.bytes_total != fetched.bytes {
+        return Some(format!(
+            "does not match the size GameBanana lists ({} where it lists {})",
+            size(fetched.bytes),
+            size(resolved.bytes_total)
+        ));
+    }
+    let expected = resolved.md5.as_deref()?.trim();
+    (expected.len() == 32 && !install::md5_file_matches(&fetched.path, expected))
+        .then(|| "does not match the checksum GameBanana lists".to_string())
 }
 
 /// Turn a target into a URL and a destination under `<workspace>/downloads`.

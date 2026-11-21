@@ -636,6 +636,45 @@ fn a_resume_continues_while_the_file_is_the_same_and_starts_over_when_it_changed
 }
 
 #[test]
+fn a_finished_gamebanana_file_is_held_to_its_record() {
+    let dir = scratch("gamebanana-integrity");
+    let path = dir.join("mod.zip");
+    fs::write(&path, b"hello").unwrap();
+    let fetched = Fetched {
+        path: path.clone(),
+        bytes: 5,
+        bytes_total: 5,
+        sha256: String::new(),
+        server: None,
+    };
+    let mut resolved = Resolved {
+        md5: Some("5d41402abc4b2a76b9719d911017c592".into()),
+        name: "mod".into(),
+        mod_id: Some(7),
+        url: Some("https://gamebanana.com/dl/1".into()),
+        file_name: "mod.zip".into(),
+        bytes_total: 5,
+        path: path.clone(),
+    };
+    assert_eq!(gamebanana_problem(&resolved, &fetched), None);
+    resolved.bytes_total = 6;
+    let short = gamebanana_problem(&resolved, &fetched).unwrap();
+    assert!(short.contains("size GameBanana lists"), "{short}");
+    resolved.bytes_total = 5;
+    resolved.md5 = Some("00000000000000000000000000000000".into());
+    assert!(gamebanana_problem(&resolved, &fetched).unwrap().contains("checksum"));
+    // A record with no full MD5 checks the size only, and a local file has no record at all.
+    resolved.md5 = Some("abc".into());
+    assert_eq!(gamebanana_problem(&resolved, &fetched), None);
+    resolved.md5 = None;
+    resolved.bytes_total = 6;
+    assert!(gamebanana_problem(&resolved, &fetched).is_some(), "size alone still counts");
+    resolved.mod_id = None;
+    assert_eq!(gamebanana_problem(&resolved, &fetched), None, "a local archive is not a GameBanana file");
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn validators_skip_weak_tags_and_odd_bytes() {
     assert_eq!(validator_of(Some("\"abc\""), Some("Tue, 01 Jan 2026 00:00:00 GMT")).as_deref(), Some("\"abc\""));
     assert_eq!(validator_of(Some("W/\"abc\""), Some("Tue, 01 Jan 2026 00:00:00 GMT")).as_deref(), Some("Tue, 01 Jan 2026 00:00:00 GMT"));
