@@ -116,8 +116,8 @@ fn count_cell(u: &Ui, key: String, glyph: &'static Icon, name: &str, value: Opti
         .gap(4.0)
         .center_y()
         .label(label)
-        .child(icon(glyph, 14.0).color(u.faint).a11y_hidden())
-        .child(text(words).font(SMALL).color(u.faint).a11y_hidden())
+        .child(icon(glyph, 12.0).color(u.faint).a11y_hidden())
+        .child(text(words).font(crate::ui::SMALL_NUM).color(u.faint).a11y_hidden())
 }
 
 /// One mod: a 16:9 image flush with the top, the title, the author and when it changed, and

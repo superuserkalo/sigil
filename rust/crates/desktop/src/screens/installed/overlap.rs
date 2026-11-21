@@ -139,7 +139,7 @@ pub fn menu_items(s: &State, u: &Ui, slot: u16) -> Vec<El> {
             row()
                 .key(format!("overlap-with-{other:02}"))
                 .w_full()
-                .h(36.0)
+                .h(crate::ui::CONTROL_L)
                 .px(10.0)
                 .gap(10.0)
                 .center_y()

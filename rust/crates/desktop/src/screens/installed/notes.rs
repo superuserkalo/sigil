@@ -804,7 +804,7 @@ fn tag_menu_rows(s: &State, u: &Ui) -> Vec<El> {
             row()
                 .key(format!("menu-tag-{key}"))
                 .w_full()
-                .h(36.0)
+                .h(crate::ui::CONTROL_L)
                 .pl(10.0)
                 .pr(4.0)
                 .gap(10.0)
