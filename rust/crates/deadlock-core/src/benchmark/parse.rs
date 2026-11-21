@@ -123,7 +123,8 @@ pub fn scan_line(line: &str) -> Option<LogEvent> {
     }
     if let Some(caps) = re(
         &SHOWFPS,
-        r"Avg FPS\s*\d+, Frame MS\s*[\d.]+, Frame Server MS\s*[\d.]+ log: (\S.*?)\s*$",
+        // Only the engine's own line: at the start, after an optional time stamp and channel tag.
+        r"^\s*(?:\d{2}/\d{2} \d{2}:\d{2}:\d{2}\s+)?(?:\[[A-Za-z0-9_ ]+\]\s*)?Avg FPS\s*\d+, Frame MS\s*[\d.]+, Frame Server MS\s*[\d.]+ log: (\S.*?)\s*$",
     )
     .captures(line)
     {
@@ -240,6 +241,11 @@ mod tests {
             scan_line("Avg FPS 184, Frame MS   5.4, Frame Server MS   0.0 log: prof_dl_midtown.csv"),
             Some(LogEvent::ShowFpsLog("prof_dl_midtown.csv".into()))
         );
+        assert_eq!(
+            scan_line("[Client] Avg FPS 184, Frame MS   5.4, Frame Server MS   0.0 log: prof_dl_midtown.csv"),
+            Some(LogEvent::ShowFpsLog("prof_dl_midtown.csv".into()))
+        );
+        assert_eq!(scan_line("Player: say Avg FPS 1, Frame MS 1.0, Frame Server MS 1.0 log: \\\\host\\x"), None);
         assert!(matches!(scan_line("can't playdemo 'replays/x', disallowed"), Some(LogEvent::DemoError(_))));
         assert!(matches!(
             scan_line("demo recorded with '' addons, currently have 'x' addons"),
