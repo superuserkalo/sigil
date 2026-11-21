@@ -48,6 +48,8 @@ pub enum Cmd {
     Look(LookOptions),
     /// A picture for `Backdrop::Image`, or none.
     BackdropImage(Option<PathBuf>),
+    /// Start the studio camera at this remembered angle (`Viewer::camera_pose`).
+    Pose([f32; 3]),
     Gif(GifCmd),
     Video(VideoCmd),
     Stop,
@@ -66,12 +68,16 @@ pub struct LookOptions {
     pub cloth: bool,
     pub particles: bool,
     pub transparent: bool,
+    /// Stops over the scene's exposure (Deadlock Mod Manager's exposure slider).
+    pub exposure: f32,
+    /// Deadlock Mod Manager's wireframe toggle.
+    pub wireframe: bool,
 }
 
 impl Default for LookOptions {
     fn default() -> Self {
         let l = sigil_viewer::Look::default();
-        LookOptions { backdrop: l.backdrop, lighting: l.lighting, bloom: l.bloom, shadows: l.shadows, cloth: l.cloth, particles: l.particles, transparent: l.transparent }
+        LookOptions { backdrop: l.backdrop, lighting: l.lighting, bloom: l.bloom, shadows: l.shadows, cloth: l.cloth, particles: l.particles, transparent: l.transparent, exposure: l.exposure, wireframe: l.wireframe }
     }
 }
 
@@ -134,6 +140,10 @@ pub struct Shared {
     pub changed: bool,
     /// Where the load is while `Loading` (a scene reports file by file).
     pub progress: Option<LoadProgress>,
+    /// The studio camera's angle after the last frame, remembered per hero when the view goes.
+    pub pose: Option<[f32; 3]>,
+    /// The device can draw the wireframe view.
+    pub can_wireframe: bool,
 }
 
 impl Default for Shared {
@@ -153,6 +163,8 @@ impl Default for Shared {
             readback_ms: 0.0,
             changed: false,
             progress: None,
+            pose: None,
+            can_wireframe: false,
         }
     }
 }
@@ -299,8 +311,10 @@ pub fn ready(out: &Outputs, viewer: &Viewer) {
     let has_before = viewer.has_before();
     let hold = viewer.playmode() == sigil_viewer::Playmode::Hold;
     let adapter = viewer.adapter();
+    let can_wireframe = viewer.can_wireframe();
     report(out, |s| {
         s.status = Status::Ready;
+        s.can_wireframe = can_wireframe;
         s.clips = clips;
         s.labels = labels;
         s.clip = clip;
@@ -348,6 +362,9 @@ pub fn panic_reason(panic: &(dyn std::any::Any + Send)) -> String {
 
 /// Updates the elapsed time on the loading panel twice a second until the load ends or the view
 /// closes. Its own thread: the render thread is busy loading.
+/// The longest the loader holds a loaded preview back waiting for its first frame.
+const HOLD_AT_MOST: Duration = Duration::from_secs(20);
+
 fn tick_while_loading(out: &Outputs) {
     let (shared, elapsed, cancel) = (out.shared.clone(), out.elapsed.clone(), out.cancel.clone());
     let started = Instant::now();
@@ -413,7 +430,12 @@ fn run_inner(source: Source, before: Option<Source>, rx: Receiver<Cmd>, out: Out
     if gpu_failed(&out, &viewer) {
         return;
     }
-    ready(&out, &viewer);
+    // The preview stays behind the loader until it is whole: everything is loaded, and it shows
+    // once the first frame is drawn (Grimoire's PreviewLoader), or after `HOLD_AT_MOST` if no
+    // frame comes (the stage has no size yet).
+    report(&out, |s| s.progress = Some(LoadProgress { stage: sigil_viewer::LoadStage::Drawing, done: 0, of: 0 }));
+    let held_since = Instant::now();
+    let mut held = true;
     let mut rec = Recording::default();
     let frame = Duration::from_micros(16_667);
     let (mut w, mut h) = (0u32, 0u32);
@@ -424,7 +446,17 @@ fn run_inner(source: Source, before: Option<Source>, rx: Receiver<Cmd>, out: Out
     loop {
         // Sleep until the next frame while playing; otherwise until a command arrives.
         let animating = visible && (viewer.animating() || rec.busy()) && w > 0;
-        let first = if animating {
+        if held && held_since.elapsed() >= HOLD_AT_MOST {
+            held = false;
+            ready(&out, &viewer);
+        }
+        let first = if held && !animating {
+            match rx.recv_timeout(HOLD_AT_MOST.saturating_sub(held_since.elapsed())) {
+                Ok(c) => Some(c),
+                Err(RecvTimeoutError::Timeout) => continue,
+                Err(RecvTimeoutError::Disconnected) => return,
+            }
+        } else if animating {
             match rx.recv_timeout(frame.saturating_sub(last.elapsed())) {
                 Ok(c) => Some(c),
                 Err(RecvTimeoutError::Timeout) => None,
@@ -485,6 +517,8 @@ fn run_inner(source: Source, before: Option<Source>, rx: Receiver<Cmd>, out: Out
                     viewer.look.cloth = l.cloth;
                     viewer.look.particles = l.particles;
                     viewer.look.transparent = l.transparent;
+                    viewer.look.exposure = l.exposure;
+                    viewer.look.wireframe = l.wireframe;
                     viewer.look.floor = !l.transparent;
                 }
                 Cmd::BackdropImage(path) => {
@@ -499,6 +533,7 @@ fn run_inner(source: Source, before: Option<Source>, rx: Receiver<Cmd>, out: Out
                         None => viewer.set_backdrop_image(None),
                     }
                 }
+                Cmd::Pose(p) => viewer.set_camera_pose(Some(p)),
                 Cmd::Gif(g) => rec.gif(g, &out),
                 Cmd::Video(v) => rec.video(v, w, h, &out),
                 Cmd::Stop => return,
@@ -508,6 +543,10 @@ fn run_inner(source: Source, before: Option<Source>, rx: Receiver<Cmd>, out: Out
             dirty = true;
         }
         if !visible || w == 0 || h == 0 {
+            // A picture asked for now cannot be drawn: say so, or its flash never ends.
+            if capture.is_some() {
+                report(&out, |s| s.captured = Some(Err(tr("The 3D view is not on screen.").to_string())));
+            }
             continue;
         }
         if let Some(path) = capture {
@@ -538,9 +577,14 @@ fn run_inner(source: Source, before: Option<Source>, rx: Receiver<Cmd>, out: Out
             rec.frame(&rgba, fw, fh, &out);
             out.pixels.set(fw, fh, rgba);
             publish_live(&out, &viewer);
+            if held {
+                held = false;
+                ready(&out, &viewer);
+            }
             if let Ok(mut s) = out.shared.lock() {
                 s.frame_ms = started.elapsed().as_secs_f32() * 1000.0;
                 s.readback_ms = t.gpu_wait_ms + t.unpad_ms;
+                s.pose = viewer.camera_pose();
             }
             dirty = false;
         }

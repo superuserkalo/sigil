@@ -10,7 +10,11 @@
 //! - Deadlock Mod Manager's video recording: up to ten seconds, a REC pill with the clock,
 //!   saved as WebM (VP8) when it stops, see `sigil_viewer::capture`.
 //!
-//! Recordings and pictures go to `Pictures/Sigil`.
+//! - Deadlock Mod Manager's exposure slider, and its camera angle kept per hero
+//!   (`<data>/viewer-camera.json`, studio views only).
+//!
+//! Recordings and pictures go to `Pictures/Sigil`, or where the player says when "Ask where to
+//! save" is on (Deadlock Mod Manager's save dialog).
 
 use std::path::PathBuf;
 
@@ -39,6 +43,12 @@ pub struct ViewUi {
     pub image: Option<PathBuf>,
     /// Which GIF trim handle a drag moves: 0 start, 1 end, 2 the playhead.
     pub gif_drag: u8,
+    /// Pictures and GIFs open a save dialog instead of landing in `Pictures/Sigil`.
+    pub ask_where: bool,
+    /// A picture is being taken: the stage flashes until it is saved.
+    pub flash: bool,
+    /// The device can draw the wireframe view.
+    pub can_wireframe: bool,
 }
 
 /// The choices kept across sessions.
@@ -47,10 +57,51 @@ pub struct Prefs {
     pub auto_rotate: bool,
     pub look: LookOptions,
     pub image: Option<PathBuf>,
+    pub ask_where: bool,
 }
 
 fn prefs_path() -> PathBuf {
     crate::data::data_dir().join("viewer.json")
+}
+
+fn poses_path() -> PathBuf {
+    crate::data::data_dir().join("viewer-camera.json")
+}
+
+/// The most heroes whose camera angle is kept.
+const MAX_POSES: usize = 256;
+
+/// Reads `{ hero: [yaw, pitch, zoom] }`, dropping anything malformed.
+fn parse_poses(text: &str) -> serde_json::Map<String, serde_json::Value> {
+    let Ok(serde_json::Value::Object(map)) = serde_json::from_str::<serde_json::Value>(text) else { return serde_json::Map::new() };
+    map.into_iter().filter(|(_, v)| pose_from(v).is_some()).take(MAX_POSES).collect()
+}
+
+fn pose_from(v: &serde_json::Value) -> Option<[f32; 3]> {
+    let a = v.as_array().filter(|a| a.len() == 3)?;
+    let n = |i: usize| a[i].as_f64().map(|x| x as f32).filter(|x| x.is_finite());
+    let pose = [n(0)?, n(1)?, n(2)?];
+    (pose[2] > 0.0).then_some(pose)
+}
+
+/// The camera angle last left on `hero`'s studio view.
+pub fn load_pose(hero: &str) -> Option<[f32; 3]> {
+    let map = parse_poses(&std::fs::read_to_string(poses_path()).ok()?);
+    map.get(&hero.to_ascii_lowercase()).and_then(pose_from)
+}
+
+/// Keeps `pose` as `hero`'s camera angle.
+pub fn save_pose(hero: &str, pose: [f32; 3]) {
+    if !pose.iter().all(|x| x.is_finite()) {
+        return;
+    }
+    let mut map = std::fs::read_to_string(poses_path()).map(|t| parse_poses(&t)).unwrap_or_default();
+    map.insert(hero.to_ascii_lowercase(), serde_json::json!(pose));
+    while map.len() > MAX_POSES {
+        let Some(first) = map.keys().next().cloned() else { break };
+        map.remove(&first);
+    }
+    let _ = std::fs::write(poses_path(), serde_json::Value::Object(map).to_string());
 }
 
 fn backdrop_id(b: Backdrop) -> String {
@@ -85,8 +136,11 @@ impl Prefs {
                 cloth: flag("cloth", d.cloth),
                 particles: flag("particles", d.particles),
                 transparent: flag("transparent", false),
+                wireframe: flag("wireframe", false),
+                exposure: v.get("exposure").and_then(|x| x.as_f64()).map(|x| x as f32).filter(|x| x.is_finite()).map_or(d.exposure, |x| x.clamp(-EXPOSURE_STOPS, EXPOSURE_STOPS)),
             },
             image: v.get("image").and_then(|x| x.as_str()).map(PathBuf::from),
+            ask_where: flag("askWhere", false),
         }
     }
 
@@ -100,7 +154,10 @@ impl Prefs {
             "cloth": self.look.cloth,
             "particles": self.look.particles,
             "transparent": self.look.transparent,
+            "exposure": self.look.exposure,
+            "wireframe": self.look.wireframe,
             "image": self.image.as_ref().map(|p| p.display().to_string()),
+            "askWhere": self.ask_where,
         })
         .to_string()
     }
@@ -124,7 +181,83 @@ pub fn initial(prefs: &Prefs) -> Vec<Cmd> {
 }
 
 fn remember(v: &View) {
-    Prefs { auto_rotate: v.ui.auto_rotate, look: v.ui.look, image: v.ui.image.clone() }.save();
+    Prefs { auto_rotate: v.ui.auto_rotate, look: v.ui.look, image: v.ui.image.clone(), ask_where: v.ui.ask_where }.save();
+}
+
+/// The exposure slider's range, in stops either way.
+pub const EXPOSURE_STOPS: f32 = 2.0;
+
+fn set_exposure(s: &mut State, key: &str, stops: f32) {
+    // Quarter stops, so the slider lands back on 0.
+    let stops = ((stops * 4.0).round() / 4.0).clamp(-EXPOSURE_STOPS, EXPOSURE_STOPS);
+    set_look(s, key, |l| l.exposure = stops);
+}
+
+fn toggle_ask_where(s: &mut State, key: &str) {
+    let Some(v) = s.viewers.map.get_mut(key) else { return };
+    v.ui.ask_where = !v.ui.ask_where;
+    remember(v);
+}
+
+/// Asks where `name` goes (a save dialog in Pictures/Sigil's place), then runs `then` with it.
+pub fn ask_save_path(tx: &mut Tx, name: String, ext: &'static str, then: impl FnOnce(&mut State, PathBuf) + 'static) {
+    let options = rune::FileDialogOptions { title: tr("Save as").to_string(), file_name: Some(name), ..Default::default() }.filter(ext.to_ascii_uppercase(), &[ext]);
+    tx.save_file(options, move |st: &mut State, result, _tx| match result {
+        Ok(Some(path)) => then(st, path),
+        Ok(None) => {}
+        Err(e) => st.status = fill(tr("The file picker could not open: {}"), &[&e.to_string()]),
+    });
+}
+
+const EXPOSURE_W: f32 = 228.0;
+
+/// Deadlock Mod Manager's exposure slider, in quarter stops; a double press on the value resets.
+fn exposure_row(u: &Ui, key: &str, stops: f32) -> El {
+    let frac = ((stops + EXPOSURE_STOPS) / (2.0 * EXPOSURE_STOPS)).clamp(0.0, 1.0);
+    let (k1, k2, k3) = (key.to_string(), key.to_string(), key.to_string());
+    let value = if stops == 0.0 { "0".to_string() } else { format!("{stops:+.2}") };
+    col()
+        .w_full()
+        .px(8.0)
+        .gap(2.0)
+        .child(
+            row()
+                .w_full()
+                .center_y()
+                .child(text(tr("Exposure").to_string()).font(SMALL).color(Color::WHITE.alpha(0.86)).grow(1.0))
+                .child(text(value).font(MICRO).color(Color::WHITE.alpha(0.6)).key(format!("viewer-{key}-exposure-reset")).role("button").label(tr("Reset exposure").to_string()).cursor(rune::Cursor::Pointer).on_press(move |st: &mut State| set_exposure(st, &k3, 0.0))),
+        )
+        .child(
+            el().key(format!("viewer-{key}-exposure"))
+                .w(EXPOSURE_W)
+                .h(20.0)
+                .focusable(true)
+                .role("slider")
+                .label(tr("Exposure").to_string())
+                .cursor(rune::Cursor::Grab)
+                .child(el().absolute(0.0, 8.0).w(EXPOSURE_W).h(4.0).radius(2.0).fill(Color::WHITE.alpha(0.14)).a11y_hidden())
+                .child(el().absolute(EXPOSURE_W / 2.0 - 0.5, 5.0).w(1.0).h(10.0).fill(Color::WHITE.alpha(0.3)).a11y_hidden())
+                .child(el().absolute((EXPOSURE_W * frac - 7.0).clamp(0.0, EXPOSURE_W - 14.0), 3.0).size(14.0, 14.0).radius(7.0).fill(u.accent).a11y_hidden())
+                .on_drag(move |st: &mut State, d: &mut Drag, _tx: &mut Tx| {
+                    if d.phase == Phase::Up && d.cancelled() {
+                        return;
+                    }
+                    let w = if d.w > 0.0 { d.w } else { EXPOSURE_W };
+                    set_exposure(st, &k1, (d.x / w).clamp(0.0, 1.0) * 2.0 * EXPOSURE_STOPS - EXPOSURE_STOPS);
+                })
+                .on_key(move |st: &mut State, ev: &KeyEvent, _| {
+                    let step = match ev.key {
+                        Key::Left | Key::Down => -0.25,
+                        Key::Right | Key::Up => 0.25,
+                        Key::Home => -2.0 * EXPOSURE_STOPS,
+                        Key::End => 2.0 * EXPOSURE_STOPS,
+                        _ => return false,
+                    };
+                    let now = st.viewers.map.get(&k2).map_or(0.0, |v| v.ui.look.exposure);
+                    set_exposure(st, &k2, now + step);
+                    true
+                }),
+        )
 }
 
 fn set_look(s: &mut State, key: &str, f: impl FnOnce(&mut LookOptions)) {
@@ -319,12 +452,15 @@ pub fn popover(s: &State, u: &Ui) -> Option<El> {
     let k = key.to_string();
     body = body.child(switch_row(u, format!("viewer-{key}-sw-rotate"), tr("Auto-rotate"), v.ui.auto_rotate).on_press(move |st: &mut State| toggle_rotate(st, &k)));
     type Flag = fn(&mut LookOptions) -> &mut bool;
-    let flags: [(&str, bool, Flag); 4] = [
+    let mut flags: Vec<(&str, bool, Flag)> = vec![
         ("Cloth", v.ui.look.cloth, |l| &mut l.cloth),
         ("Particles", v.ui.look.particles, |l| &mut l.particles),
         ("Bloom", v.ui.look.bloom, |l| &mut l.bloom),
         ("Shadows", v.ui.look.shadows, |l| &mut l.shadows),
     ];
+    if v.ui.can_wireframe {
+        flags.push(("Wireframe", v.ui.look.wireframe, |l| &mut l.wireframe));
+    }
     for (label, on, field) in flags {
         let k = key.to_string();
         body = body.child(switch_row(u, format!("viewer-{key}-sw-{label}"), tr(label), on).on_press(move |st: &mut State| {
@@ -334,6 +470,10 @@ pub fn popover(s: &State, u: &Ui) -> Option<El> {
             })
         }));
     }
+    body = body.child(exposure_row(u, key, v.ui.look.exposure));
+    body = body.child(section(tr("Pictures and recordings")));
+    let k = key.to_string();
+    body = body.child(switch_row(u, format!("viewer-{key}-sw-ask-where"), tr("Ask where to save"), v.ui.ask_where).on_press(move |st: &mut State| toggle_ask_where(st, &k)));
     let k = key.to_string();
     Some(
         col()
@@ -487,7 +627,15 @@ pub fn gif_review(v: &View, u: &Ui, key: &str) -> Option<El> {
                 row()
                     .w_full()
                     .gap(6.0)
-                    .child(super::strip_text(u, if saving { tr("Saving...").to_string() } else { tr("Save GIF").to_string() }, tr("Save GIF"), true).on_press(move |st: &mut State| gif(st, &k2, GifCmd::Save(recording_path(&title, "gif")))))
+                    .child(super::strip_text(u, if saving { tr("Saving...").to_string() } else { tr("Save GIF").to_string() }, tr("Save GIF"), true).on_press_tx(move |st: &mut State, tx: &mut Tx| {
+                        let path = recording_path(&title, "gif");
+                        if !st.viewers.map.get(&k2).is_some_and(|v| v.ui.ask_where) {
+                            return gif(st, &k2, GifCmd::Save(path));
+                        }
+                        let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+                        let k = k2.clone();
+                        ask_save_path(tx, name, "gif", move |st, path| gif(st, &k, GifCmd::Save(path)));
+                    }))
                     .child(super::strip_text(u, tr("Retake").to_string(), tr("Retake"), false).on_press(move |st: &mut State| {
                         gif(st, &k3, GifCmd::Cancel);
                         gif(st, &k3, GifCmd::Start);
@@ -505,12 +653,23 @@ mod tests {
     fn prefs_round_trip_and_survive_junk() {
         let p = Prefs {
             auto_rotate: true,
-            look: LookOptions { backdrop: Backdrop::Gradient(3), lighting: Lighting::Midtown, bloom: false, shadows: true, cloth: false, particles: true, transparent: false },
+            look: LookOptions { backdrop: Backdrop::Gradient(3), lighting: Lighting::Midtown, bloom: false, shadows: true, cloth: false, particles: true, transparent: false, exposure: -0.75, wireframe: true },
             image: Some(PathBuf::from("/tmp/x.png")),
+            ask_where: true,
         };
         assert_eq!(Prefs::parse(&p.to_json()), p);
+        assert_eq!(Prefs::parse(r#"{"exposure": 99}"#).look.exposure, EXPOSURE_STOPS);
+        assert_eq!(Prefs::parse(r#"{"exposure": "x"}"#).look.exposure, 0.0);
         assert_eq!(Prefs::parse("nope"), Prefs::default());
         assert_eq!(backdrop_from("gradient:99"), Backdrop::Studio);
+    }
+
+    #[test]
+    fn camera_poses_parse_and_drop_junk() {
+        let map = parse_poses(r#"{"inferno": [0.4, -0.2, 1.5], "bad": [1, 2], "zero": [0, 0, 0], "text": "x", "nan": [1, 2, "y"]}"#);
+        assert_eq!(map.keys().collect::<Vec<_>>(), ["inferno"]);
+        assert_eq!(pose_from(&map["inferno"]), Some([0.4, -0.2, 1.5]));
+        assert!(parse_poses("not json").is_empty());
     }
 
     #[test]
