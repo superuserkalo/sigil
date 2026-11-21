@@ -74,13 +74,28 @@ pub fn is_applied(text: &str) -> bool {
 fn entry_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
     RE.get_or_init(|| {
-        Regex::new(r#"^[ \t]*"?([A-Za-z0-9_.]+)"?[ \t]+(?:"([^"\n]*)"|([^\s"/]+))[ \t]*(//[^{}"\n]*)?$"#).unwrap()
+        // Key and value each fully quoted or bare; a trailing comment holds no quote or brace.
+        Regex::new(r#"^[ \t]*(?:"([A-Za-z0-9_.]+)"|([A-Za-z0-9_.]+))[ \t]+(?:"([^"\n]*)"|([^\s"/{}]+))[ \t]*(?://([^{}"\n]*))?$"#).unwrap()
     })
 }
 
+/// A validated entry: key, value and trailing comment. A line with an odd number of quotes is
+/// never one.
+fn entry(line: &str) -> Option<(String, String, Option<String>)> {
+    if line.matches('"').count() % 2 != 0 {
+        return None;
+    }
+    let caps = entry_re().captures(line)?;
+    let key = caps.get(1).or_else(|| caps.get(2))?.as_str().to_string();
+    let value = caps.get(3).or_else(|| caps.get(4)).map_or("", |m| m.as_str()).to_string();
+    let comment = caps.get(5).map(|m| m.as_str().trim().to_string()).filter(|c| !c.is_empty());
+    Some((key, value, comment))
+}
+
 /// The author's `ConVars` body cut down to what may be written: allowlisted entries and plain
-/// comment or blank lines. Nested blocks and anything else are dropped. Returns the kept lines
-/// and the keys they set.
+/// comment or blank lines, each rebuilt from validated parts (never the author's raw line).
+/// Nested blocks and anything else are dropped. Returns the kept lines, unindented, and the
+/// keys they set.
 fn allowed_lines(author_body: &str) -> (Vec<String>, Vec<String>) {
     let mut kept = Vec::new();
     let mut keys = Vec::new();
@@ -97,19 +112,18 @@ fn allowed_lines(author_body: &str) -> (Vec<String>, Vec<String>) {
             kept.push(String::new());
             continue;
         }
-        if trimmed.starts_with("//") {
-            if !trimmed.contains('"') {
-                kept.push(line.trim_end().to_string());
+        if let Some(comment) = trimmed.strip_prefix("//") {
+            if !comment.contains('"') {
+                kept.push(format!("// {}", comment.trim()));
             }
             continue;
         }
-        if let Some(caps) = entry_re().captures(line) {
-            let key = caps.get(1).map_or("", |m| m.as_str());
-            let value = caps.get(2).or_else(|| caps.get(3)).map_or("", |m| m.as_str());
-            if super::repos::allowed(key, value) {
-                keys.push(key.to_string());
-                kept.push(line.trim_end().to_string());
-            }
+        if let Some((key, value, comment)) = entry(line)
+            && super::repos::allowed(&key, &value)
+        {
+            let comment = comment.map(|c| format!(" // {c}")).unwrap_or_default();
+            kept.push(format!("\"{key}\"\t\"{value}\"{comment}"));
+            keys.push(key);
         }
     }
     while kept.first().is_some_and(String::is_empty) {
@@ -161,12 +175,7 @@ pub fn apply_text(base: &str, author: &str, config: &Config) -> Result<Patched> 
     // The player's own entries stay unless the author sets the same key.
     let mut body: Vec<String> = current_body
         .split('\n')
-        .filter(|line| {
-            entry_re()
-                .captures(line)
-                .and_then(|caps| caps.get(1))
-                .is_none_or(|key| !keys.iter().any(|k| k.eq_ignore_ascii_case(key.as_str())))
-        })
+        .filter(|line| entry(line).is_none_or(|(key, _, _)| !keys.iter().any(|k| k.eq_ignore_ascii_case(&key))))
         .map(str::to_string)
         .collect();
     while body.last().is_some_and(|line| line.trim().is_empty()) {
@@ -174,9 +183,7 @@ pub fn apply_text(base: &str, author: &str, config: &Config) -> Result<Patched> 
     }
     let closing_indent = current_body.rsplit('\n').next().unwrap_or_default().to_string();
     body.push(format!("{indent}// {}, as written [{TAG}]", config.name()));
-    body.extend(lines.into_iter().map(|line| {
-        if line.is_empty() { line } else { format!("{indent}{}", line.trim_start()) }
-    }));
+    body.extend(lines.into_iter().map(|line| if line.is_empty() { line } else { format!("{indent}{line}") }));
     let merged = format!("{}\n{closing_indent}", body.join("\n"));
     let text_body = format!("{}{}{}", &base[..cur_start], merged, &base[cur_end..]);
     if brace_count(&text_body) != brace_count(&base) || find_section_by_path(&text_body, &convars()).is_none() {
@@ -274,7 +281,7 @@ mod tests {
         let patched = apply_text(CURRENT, AUTHOR, &config()).unwrap();
         let text = patched.text.replace("\r\n", "\n");
         assert!(patched.text.contains("\r\n"), "the install's line endings are kept");
-        assert!(text.contains("r_shadows \"0\"   // no shadows"));
+        assert!(text.contains("\"r_shadows\"\t\"0\" // no shadows"), "rebuilt from the validated parts");
         assert!(!text.contains("r_shadows \"1\""), "the author's value replaces the player's");
         assert!(text.contains("Game citadel/addons\n\t\t\tGame citadel/sigil-addons2"));
         assert!(!text.contains("Tuned by an author"), "nothing outside ConVars is taken");
@@ -289,11 +296,23 @@ mod tests {
         let author = "\"GameInfo\"\n{\n\tFileSystem\n\t{\n\t\tSearchPaths\n\t\t{\n\t\t\tGame evil/folder\n\t\t\tGame citadel\n\t\t}\n\t}\n\tConVars\n\t{\n\t\tr_shadows \"0\"\n\t\tsv_cheats \"hello\"\n\t\texec_this \"1\"\n\t\tbind \"x\"\n\t\tSearchPaths\n\t\t{\n\t\t\tGame evil/inner\n\t\t}\n\t}\n}\n";
         let patched = apply_text(CURRENT, author, &config()).unwrap();
         let text = patched.text;
-        assert!(text.contains("r_shadows \"0\""));
+        assert!(text.contains("\"r_shadows\"\t\"0\""));
         for bad in ["evil", "sv_cheats", "exec_this", "bind"] {
             assert!(!text.contains(bad), "{bad} must not be written");
         }
         assert_eq!(text.matches("SearchPaths").count(), 1);
+    }
+
+    /// Lead review: an unbalanced quote cannot smuggle extra tokens past the checks.
+    #[test]
+    fn unbalanced_quotes_are_dropped() {
+        let author = "\"GameInfo\"\n{\n\tFileSystem\n\t{\n\t\tSearchPaths\n\t\t{\n\t\t\tGame citadel\n\t\t}\n\t}\n\tConVars\n\t{\n\t\tr_shadows \"0\"\n\t\t\"fps_max 1\n\t\tr_x \"1\" \"sv_cheats\" \"1\"\n\t\tr_y 1 \"evil\n\t\t// note \"quoted\n\t}\n}\n";
+        let text = apply_text(CURRENT, author, &config()).unwrap().text;
+        assert!(text.contains("\"r_shadows\"\t\"0\""));
+        for bad in ["fps_max", "sv_cheats", "r_x", "r_y", "evil", "quoted"] {
+            assert!(!text.contains(bad), "{bad} must not be written");
+        }
+        assert_eq!(text.matches('"').count() % 2, 0);
     }
 
     #[test]
