@@ -56,13 +56,24 @@ pub fn rows(s: &State, u: &Ui) -> Vec<El> {
     let blurring = s.prefs.mature == Mature::Blur;
     let blurs: Vec<(u32, &str)> = vec![(8, "Light"), (18, "Medium"), (28, "Strong"), (40, "Full")];
     let saved = o.revealed.len();
+    let mature: Vec<(Mature, &str)> = Mature::ALL.iter().map(|m| (*m, m.label())).collect();
     vec![
+        // The section's own switch first: the heading names it, so the row has no line.
+        setting_row(
+            u,
+            "settings-mature",
+            "Mature content",
+            detail(u, ""),
+            segmented(u, "settings-mature-pick", &mature, s.prefs.mature, |st, m| {
+                crate::prefs::edit(st, |p| p.mature = m)
+            }),
+        ),
         disabled(
             setting_row(
                 u,
                 "settings-blur-strength",
                 "Blur strength",
-                detail(u, "How much a mature preview is blurred."),
+                detail(u, ""),
                 segmented(u, "settings-blur-pick", &blurs, o.blur, |st, b| options::edit(st, |o| o.blur = b)),
             ),
             !blurring,

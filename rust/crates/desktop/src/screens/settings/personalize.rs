@@ -711,36 +711,21 @@ fn export_file(st: &mut State, tx: &mut Tx, id: String) {
 
 // --- the view ----------------------------------------------------------------------
 
-/// The Personalize sections under Appearance.
+/// The Personalize sections under Appearance: the theme builder while drafting, then the
+/// background image, glow and sidebar art.
 pub fn view(s: &State, u: &Ui) -> El {
-    let mut c = col()
-        .key("settings-personalize")
-        .w_full()
-        .gap(28.0)
-        .child(
-            col()
-                .w_full()
-                .gap(4.0)
-                .pt(12.0)
-                .child(text(tr("Personalize").to_string()).font(crate::ui::H1).color(u.ink))
-                .child(
-                    text(tr("Themes, a background, glow and art. Each stays off until you turn it on.").to_string())
-                        .font(SMALL)
-                        .color(u.muted)
-                        .wrap(),
-                ),
-        )
-        .child(themes_section(s, u));
+    let mut c = col().key("settings-personalize").w_full().gap(super::LIST_GAP_PUB);
     if let Some(draft) = &s.settings.personalize.draft {
         c = c.child(builder(s, u, draft));
     }
     c.child(background_section(s, u))
         .child(glow_section(s, u))
         .child(art_section(s, u))
-        .child(section(
-            u,
-            "Shape",
-            vec![
+}
+
+/// Density and corners, for Appearance's Interface section.
+pub fn interface_rows(s: &State, u: &Ui) -> Vec<El> {
+    vec![
                 setting_row(
                     u,
                     "settings-radius",
@@ -767,8 +752,7 @@ pub fn view(s: &State, u: &Ui) -> El {
                         |st, density| edit(st, |p| p.density = density),
                     ),
                 ),
-            ],
-        ))
+    ]
 }
 
 /// A small picture of a palette: its sidebar, a page with lines, and the accent.
@@ -819,6 +803,7 @@ fn preset_tile(s: &State, u: &Ui, index: usize) -> El {
     let id = preset.id;
     col()
         .key(format!("settings-preset-{id}"))
+        .w(92.0)
         .gap(6.0)
         .focusable(true)
         .role("radio")
@@ -833,24 +818,26 @@ fn preset_tile(s: &State, u: &Ui, index: usize) -> El {
             col()
                 .w_full()
                 .padding(2.0)
-                .radius(crate::ui::r(10.0))
-                .border(2.0, if on { u.accent } else { Color::TRANSPARENT })
-                .child(palette_picture(&preset.palette(), 52.0)),
+                .radius(crate::ui::r(8.0))
+                .border(1.0, if on { u.ink } else { Color::TRANSPARENT })
+                .child(palette_picture(&preset.palette(), 64.0)),
         )
         .child(
             text(tr(preset.name).to_string())
-                .font(LABEL)
+                .font(SMALL)
                 .color(if on { u.ink } else { u.muted })
                 .a11y_hidden(),
         )
 }
 
-fn themes_section(s: &State, u: &Ui) -> El {
+/// The rows of Appearance's one Theme section after the built-in tiles: presets, your
+/// themes and import.
+pub fn theme_rows(s: &State, u: &Ui) -> Vec<El> {
     let p = &s.prefs.personal;
-    let mut tiles = el()
+    let mut tiles = row()
         .key("settings-presets")
         .w_full()
-        .equal_columns(5)
+        .flex_wrap()
         .gap(12.0);
     for index in 0..PRESETS.len() {
         tiles = tiles.child(preset_tile(s, u, index));
@@ -928,7 +915,7 @@ fn themes_section(s: &State, u: &Ui) -> El {
                     .on_press_tx(|st: &mut State, tx: &mut Tx| import_file(st, tx)),
             ),
     ));
-    section(u, "Themes", rows)
+    rows
 }
 
 fn saved_row(s: &State, u: &Ui, theme: &model::SavedTheme) -> El {

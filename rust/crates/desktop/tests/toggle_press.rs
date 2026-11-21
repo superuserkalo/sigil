@@ -24,7 +24,8 @@ const CASES: &[(&str, &[&str], &str)] = &[
     ("host-setup", &[], "host-upnp-toggle"),
     ("profiles-list", &[], "profile-isolated-ranked"),
     ("settings-advanced", &[], "settings-unknown-alert-switch"),
-    ("personalize", &[], "settings-transparent-sidebar-switch"),
+    // Appearance now opens on its Theme section; its switches use the same `toggle_row`.
+    ("settings-general", &[], "settings-confirm-launch-switch"),
 ];
 
 /// Window height: tall enough that the lowest switch is on screen without scrolling.

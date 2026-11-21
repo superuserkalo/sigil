@@ -480,15 +480,6 @@ pub fn trackers(s: &State, u: &Ui) -> El {
         .w_full()
         .gap(8.0)
         .child(u.section(tr("Stat sites")))
-        .child(
-            text(if account.is_some() {
-                tr("Statlocker opens on your linked account.")
-            } else {
-                tr("Community sites with match stats. They open in your browser.")
-            })
-            .font(SMALL)
-            .color(u.muted),
-        )
         .child(tiles)
 }
 

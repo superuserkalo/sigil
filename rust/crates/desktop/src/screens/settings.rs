@@ -58,11 +58,11 @@ use crate::app::State;
 use crate::icons;
 use crate::jobs::Job;
 use crate::model::{ProviderState, Screen};
-use crate::prefs::{self, ACCENTS, Accent, Mature, OnLaunch, Prefs};
+use crate::prefs::{self, ACCENTS, Accent, OnLaunch, Prefs};
 use i18n::{fill, tr};
-use crate::ui::{ActionKind, BODY, BODY_MED, DISPLAY, H1, LABEL, MONO, SMALL, Theme, Ui};
+use crate::ui::{ActionKind, BODY, BODY_MED, H1, LABEL, MONO, NAV, PAGE_TITLE, SECTION, SMALL, Theme, Ui};
 
-const LIST_W: f32 = 212.0;
+const LIST_W: f32 = 216.0;
 const WIDEST: f32 = 980.0;
 const TALLEST: f32 = 720.0;
 const MARGIN: f32 = 32.0;
@@ -71,7 +71,8 @@ const CONTENT_MAX: f32 = 680.0;
 const ROW_H: f32 = 56.0;
 const FIELD_W: f32 = 280.0;
 /// Space between the sections of a category.
-const LIST_GAP: f32 = 28.0;
+const LIST_GAP: f32 = 24.0;
+pub(crate) const LIST_GAP_PUB: f32 = LIST_GAP;
 
 /// The GitHub repository the update check reads releases from.
 pub const UPDATE_REPO: &str = "superuserkalo/sigil";
@@ -207,6 +208,11 @@ pub use crate::updater::Offer as Release;
 #[derive(Default)]
 pub struct View {
     pub open: bool,
+    /// The settings row a search result opened: drawn with the selected fill until the next
+    /// tab or search change.
+    pub hit: Option<&'static str>,
+    /// The key of the select whose menu is open (a `segmented` with many choices).
+    pub select_open: Option<String>,
     pub tab: Tab,
     pub confirm: Option<Confirm>,
     /// The last outcome, shown at the foot of the pane. True marks an error.
@@ -296,6 +302,8 @@ pub fn close(st: &mut State) {
 
 fn select(st: &mut State, tab: Tab) {
     st.settings.tab = tab;
+    st.settings.hit = None;
+    st.settings.select_open = None;
     st.settings.message = None;
     match tab {
         Tab::Game => read_launch_options(st),
@@ -436,6 +444,9 @@ pub fn modal(s: &State, u: &Ui, window: (f32, f32)) -> Option<El> {
     if !s.settings.open {
         return extra::overlay(s, u);
     }
+    SELECT_OPEN.with(|o| *o.borrow_mut() = s.settings.select_open.clone());
+    HIT.with(|h| h.set(s.settings.hit));
+    SELECT_MENU.with(|m| *m.borrow_mut() = None);
     let width = (window.0 - 2.0 * MARGIN).clamp(320.0, WIDEST);
     let height = (window.1 - 2.0 * MARGIN).clamp(320.0, TALLEST);
     let searching = !s.settings.search.text.trim().is_empty();
@@ -457,7 +468,7 @@ pub fn modal(s: &State, u: &Ui, window: (f32, f32)) -> Option<El> {
                 .w_full()
                 .gap(LIST_GAP)
                 .child(mods(s, u))
-                .child(section(u, "Mature content", nsfw::rows(s, u)))
+                .child(section(u, "", nsfw::rows(s, u)))
                 .child(downloads::section_el(s, u))
                 .child(sources::section_el(s, u))
                 .child(pages::section_el(s, u)),
@@ -518,11 +529,11 @@ pub fn modal(s: &State, u: &Ui, window: (f32, f32)) -> Option<El> {
         }
     };
     let heading = if searching {
-        tr("Search results")
+        tr("Search")
     } else {
         tr(s.settings.tab.label())
     };
-    let mut pane = col()
+    let pane = col()
         .key(if searching {
             "settings-search".to_string()
         } else {
@@ -530,32 +541,46 @@ pub fn modal(s: &State, u: &Ui, window: (f32, f32)) -> Option<El> {
         })
         .w_full()
         .max_w(CONTENT_MAX)
-        .px(32.0)
-        .pt(4.0)
+        .px(24.0)
+        .pt(16.0)
         .pb(32.0)
-        .gap(28.0)
+        .gap(LIST_GAP)
         .child(content);
+    // The foot message has its own fixed 24 point slot under the scroll, empty when idle, so
+    // a result never moves the rows.
+    let mut foot = row()
+        .key("settings-foot")
+        .w_full()
+        .h(24.0)
+        .px(24.0)
+        .center_y()
+        .border_sides([1.0, 0.0, 0.0, 0.0], u.hair);
     if let Some((message, error)) = &s.settings.message {
-        pane = pane.child(
+        foot = foot.child(
             text(message.clone())
                 .key("settings-message")
                 .font(SMALL)
                 .color(if *error { u.rose } else { u.muted })
-                .wrap()
-                .w_full(),
+                .truncate()
+                .help_when_truncated(message.clone())
+                .grow(1.0)
+                .min_w(0.0),
         );
     }
     let head = row()
         .key("settings-head")
         .w_full()
-        .h(64.0)
-        .pl(32.0)
-        .pr(16.0)
+        .h(32.0)
+        .mt(12.0)
+        .pl(24.0)
+        .pr(12.0)
         .center_y()
         .child(
             text(heading)
-                .font(DISPLAY)
+                .font(PAGE_TITLE)
                 .color(u.ink)
+                .role("heading")
+                .level(1)
                 .grow(1.0),
         )
         .child(
@@ -580,7 +605,8 @@ pub fn modal(s: &State, u: &Ui, window: (f32, f32)) -> Option<El> {
                     stick_bottom: false,
                 })
                 .child(pane),
-        );
+        )
+        .child(foot);
     let panel = row()
         .key("settings")
         .role("dialog")
@@ -630,6 +656,18 @@ pub fn modal(s: &State, u: &Ui, window: (f32, f32)) -> Option<El> {
                 .on_press(close),
         )
         .child(el().w_full().h_full().center().child(panel));
+    if let Some(menu) = SELECT_MENU.with(|m| m.borrow_mut().take()) {
+        // A press outside the menu closes it.
+        layer = layer
+            .child(
+                el().key("settings-select-scrim")
+                    .absolute(0.0, 0.0)
+                    .w_full()
+                    .h_full()
+                    .on_press(|st: &mut State| st.settings.select_open = None),
+            )
+            .child(menu);
+    }
     if let Some(ask) = &s.settings.confirm {
         layer = layer.child(u.modal_layer("settings-confirm", confirm_dialog(s, u, ask)));
     } else if let Some(d) = extra::dialog(s, u) {
@@ -653,11 +691,11 @@ fn list(s: &State, u: &Ui) -> El {
         items = items.child(
             row()
                 .w_full()
-                .h(if index == 0 { 28.0 } else { 40.0 })
+                .h(24.0)
+                .mt(if index == 0 { 0.0 } else { 16.0 })
                 .px(10.0)
-                .pb(6.0)
-                .items_end()
-                .child(text(tr(group)).font(SMALL).color(u.faint)),
+                .center_y()
+                .child(text(tr(group)).font(SECTION).color(u.muted)),
         );
         for &tab in *tabs {
             items = items.child(list_item(s, u, tab));
@@ -674,10 +712,11 @@ fn list(s: &State, u: &Ui) -> El {
         .child(
             row()
                 .w_full()
-                .h(40.0)
+                .h(32.0)
                 .px(10.0)
+                .mb(8.0)
                 .center_y()
-                .child(text(tr("Settings")).font(BODY_MED).color(u.ink)),
+                .child(text(tr("Settings")).font(BODY_MED).color(u.muted)),
         )
         .child(search_field(s, u))
         .child(items)
@@ -728,6 +767,10 @@ fn search_field(s: &State, u: &Ui) -> El {
 
 fn list_item(s: &State, u: &Ui, tab: Tab) -> El {
     let on = s.settings.tab == tab && s.settings.search.text.trim().is_empty();
+    let hits = search::matches(&s.settings.search.text)
+        .iter()
+        .filter(|e| e.tab == tab)
+        .count();
     let item = row()
         .key(format!("settings-tab-{}", tab.key()))
         .w_full()
@@ -754,11 +797,23 @@ fn list_item(s: &State, u: &Ui, tab: Tab) -> El {
         )
         .child(
             text(tr(tab.label()))
-                .font(BODY_MED)
+                .font(NAV)
                 .color(if on { u.ink } else { u.prose })
                 .truncate()
+                .grow(1.0)
+                .min_w(0.0)
                 .a11y_hidden(),
-        );
+        )
+        .child(if hits > 0 {
+            // The match count while searching, in a slot only rows with matches draw, so the
+            // labels keep their full width otherwise.
+            row()
+                .w(20.0)
+                .justify_end()
+                .child(text(hits.to_string()).font(crate::ui::SMALL_NUM).color(u.muted))
+        } else {
+            el().size(0.0, 0.0)
+        });
     // The sheet opens focused on its current tab, not the search field: a modal otherwise
     // focuses its first Tab stop, which drew the search caret on every open (issue #2).
     if on { item.autofocus() } else { item }
@@ -768,7 +823,7 @@ fn list_item(s: &State, u: &Ui, tab: Tab) -> El {
 
 /// A section: a title, then rows that each draw their own bottom hairline.
 fn section(u: &Ui, title: &str, rows: Vec<El>) -> El {
-    let mut list = col().w_full().border_sides([1.0, 0.0, 0.0, 0.0], u.hair);
+    let mut list = col().w_full();
     for r in rows {
         list = list.child(r);
     }
@@ -781,11 +836,11 @@ fn section(u: &Ui, title: &str, rows: Vec<El>) -> El {
 
 /// A settings row: title, one line under it, and a trailing control. 56 points, one hairline.
 fn setting_row(u: &Ui, key: &str, title: &str, detail: El, trailing: El) -> El {
-    row()
+    let line = row()
         .key(key.to_string())
         .w_full()
         .min_h(ROW_H)
-        .py(10.0)
+        .py(8.0)
         .gap(16.0)
         .center_y()
         .border_sides([0.0, 0.0, 1.0, 0.0], u.hair)
@@ -797,7 +852,8 @@ fn setting_row(u: &Ui, key: &str, title: &str, detail: El, trailing: El) -> El {
                 .child(text(tr(title).to_string()).font(BODY_MED).color(u.ink))
                 .child(detail),
         )
-        .child(trailing)
+        .child(trailing);
+    mark_hit(line, u, title)
 }
 
 /// A row whose control sits under the title, full width.
@@ -813,11 +869,15 @@ fn stacked_row(u: &Ui, key: &str, title: &str, line: &str, control: El) -> El {
     if !line.is_empty() {
         c = c.child(detail(u, line).wrap());
     }
-    c.child(row().w_full().child(control))
+    mark_hit(c.child(row().w_full().child(control)), u, title)
 }
 
+/// A row's description: at most two lines, 400 wide, so nothing is cut at one line.
 fn detail(u: &Ui, s: &str) -> El {
-    text(tr(s).to_string()).font(SMALL).color(u.muted).truncate()
+    if s.is_empty() {
+        return el().size(0.0, 0.0);
+    }
+    text(tr(s).to_string()).font(SMALL).color(u.muted).max_w(400.0).max_lines(2)
 }
 
 fn path_detail(u: &Ui, s: &str) -> El {
@@ -857,7 +917,9 @@ fn toggle_row(u: &Ui, key: &str, title: &str, line: &str, on: bool, press: fn(&m
     )
 }
 
-/// A segmented control: one pill per choice, the current one filled.
+/// A segmented control: one segment per choice, the current one filled. 28 high, 24 point
+/// segments. With five or more choices, or labels too wide for a 280 point box, it becomes a
+/// select (200 wide) whose menu lists the choices with a check.
 fn segmented<T: Copy + PartialEq + 'static>(
     u: &Ui,
     key: &str,
@@ -865,12 +927,20 @@ fn segmented<T: Copy + PartialEq + 'static>(
     current: T,
     pick: fn(&mut State, T),
 ) -> El {
+    let est: f32 = choices
+        .iter()
+        .map(|(_, l)| tr(l).chars().count() as f32 * 7.0 + 22.0)
+        .sum::<f32>()
+        + 4.0;
+    if choices.len() >= 5 || est > 300.0 {
+        return select_choice(u, key, choices, current, pick);
+    }
     let mut r = row()
         .key(key.to_string())
-        .h(32.0)
+        .h(28.0)
         .padding(2.0)
         .gap(2.0)
-        .radius(crate::ui::r(8.0))
+        .radius(crate::ui::r(4.0))
         .fill(u.well)
         .border(1.0, u.hair)
         .role("radiogroup");
@@ -881,9 +951,9 @@ fn segmented<T: Copy + PartialEq + 'static>(
             row()
                 .key(format!("{key}-{index}"))
                 .h_full()
-                .px(12.0)
+                .px(10.0)
                 .center()
-                .radius(crate::ui::r(6.0))
+                .radius(crate::ui::r(4.0))
                 .fill(if on { u.raised } else { Color::TRANSPARENT })
                 .border(1.0, if on { u.hair_strong } else { Color::TRANSPARENT })
                 .hover(if on { u.raised } else { u.hover })
@@ -902,6 +972,108 @@ fn segmented<T: Copy + PartialEq + 'static>(
         );
     }
     r
+}
+
+thread_local! {
+    /// The open select's menu, built with the pane and attached at the sheet's root so the
+    /// pane's scroll does not clip it.
+    static SELECT_MENU: std::cell::RefCell<Option<El>> = const { std::cell::RefCell::new(None) };
+}
+
+/// A select: the closed box and, while open, its menu (rows 32 with a check on the current).
+fn select_choice<T: Copy + PartialEq + 'static>(
+    u: &Ui,
+    key: &str,
+    choices: &[(T, &str)],
+    current: T,
+    pick: fn(&mut State, T),
+) -> El {
+    let now = choices
+        .iter()
+        .find(|(v, _)| *v == current)
+        .map(|(_, l)| tr(l).to_string())
+        .unwrap_or_default();
+    let owned = key.to_string();
+    let open = SELECT_OPEN.with(|o| o.borrow().as_deref() == Some(key));
+    if open {
+        let mut menu = col()
+            .key(format!("{key}-menu"))
+            .role("listbox")
+            .w(200.0)
+            .padding(4.0)
+            .radius(crate::ui::r(8.0))
+            .fill(u.raised.mix(u.over, 0.04).alpha(1.0))
+            .border(1.0, u.hair_strong)
+            .shadow(4.0, 12.0, Color::BLACK.alpha(if u.light { 0.12 } else { 0.35 }))
+            .anchored_fit(owned.clone(), rune::Side::Bottom, rune::Align::End, 4.0);
+        for (index, (value, label)) in choices.iter().enumerate() {
+            let on = *value == current;
+            let value = *value;
+            menu = menu.child(
+                row()
+                    .key(format!("{key}-opt-{index}"))
+                    .w_full()
+                    .h(32.0)
+                    .px(8.0)
+                    .gap(8.0)
+                    .center_y()
+                    .radius(crate::ui::r(4.0))
+                    .hover(u.hover)
+                    .focusable(true)
+                    .role("option")
+                    .checked(on)
+                    .label(tr(label).to_string())
+                    .cursor(rune::Cursor::Pointer)
+                    .on_press(move |st: &mut State| {
+                        st.settings.select_open = None;
+                        pick(st, value)
+                    })
+                    .child(
+                        text(tr(label).to_string())
+                            .font(BODY)
+                            .color(if on { u.ink } else { u.prose })
+                            .truncate()
+                            .grow(1.0)
+                            .min_w(0.0)
+                            .a11y_hidden(),
+                    )
+                    .child(el().size(12.0, 12.0).child(if on {
+                        icon(&icons::CHECK, 12.0).color(u.ink).a11y_hidden()
+                    } else {
+                        el()
+                    })),
+            );
+        }
+        SELECT_MENU.with(|m| *m.borrow_mut() = Some(menu));
+    }
+    u.select_box(&now, 200.0)
+        .key(owned.clone())
+        .on_press(move |st: &mut State| {
+            st.settings.select_open = if st.settings.select_open.as_deref() == Some(owned.as_str()) {
+                None
+            } else {
+                Some(owned.clone())
+            };
+        })
+}
+
+thread_local! {
+    /// The row a search result opened, copied from the state when the sheet is built.
+    static HIT: std::cell::Cell<Option<&'static str>> = const { std::cell::Cell::new(None) };
+}
+
+/// The selected fill and a scroll anchor for the row a search result opened.
+fn mark_hit(row: El, u: &Ui, title: &str) -> El {
+    if HIT.with(|h| h.get()) == Some(title) {
+        row.fill(u.selected).child(el().key("settings-hit").size(0.0, 0.0).a11y_hidden())
+    } else {
+        row
+    }
+}
+
+thread_local! {
+    /// Which select is open, copied from the state when the sheet is built.
+    static SELECT_OPEN: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
 }
 
 fn button(u: &Ui, key: &str, label: &str, kind: ActionKind) -> El {
@@ -1116,7 +1288,7 @@ fn game(s: &State, u: &Ui) -> El {
 
     col()
         .w_full()
-        .gap(28.0)
+        .gap(LIST_GAP)
         .child(section(
             u,
             "",
@@ -1498,7 +1670,7 @@ fn demo_backups() -> Vec<BackupEntry> {
 // --- appearance ------------------------------------------------------------------
 
 fn appearance(s: &State, u: &Ui) -> El {
-    let mut tiles = el().key("settings-themes").w_full().equal_columns(3).gap(16.0);
+    let mut tiles = row().key("settings-themes").w_full().flex_wrap().gap(12.0).pt(8.0).pb(16.0);
     for theme in Theme::ALL {
         tiles = tiles.child(theme_tile(s, u, theme));
     }
@@ -1533,7 +1705,7 @@ fn appearance(s: &State, u: &Ui) -> El {
         .child(spacer())
         .child(
             el().size(20.0, 20.0)
-                .radius(crate::ui::r(10.0))
+                .radius(crate::ui::r(2.0))
                 .fill(typed.unwrap_or(Color::TRANSPARENT))
                 .border(1.0, u.hair_strong)
                 .a11y_hidden(),
@@ -1618,47 +1790,45 @@ fn appearance(s: &State, u: &Ui) -> El {
     let zooms: Vec<(u32, &str)> = vec![(90, "90%"), (100, "100%"), (110, "110%"), (125, "125%")];
     let zoom_now = (s.prefs.zoom * 100.0).round() as u32;
 
+    let mut theme_rows = vec![tiles.border_sides([0.0, 0.0, 1.0, 0.0], u.hair)];
+    theme_rows.extend(personalize::theme_rows(s, u));
+    let mut interface = vec![setting_row(
+        u,
+        "settings-zoom",
+        "Interface size",
+        detail(u, "Scales text, icons and spacing together."),
+        segmented(u, "settings-zoom-pick", &zooms, zoom_now, |st, pct| {
+            prefs::edit(st, |p| p.zoom = pct as f32 / 100.0)
+        }),
+    )];
+    interface.extend(personalize::interface_rows(s, u));
     col()
         .w_full()
-        .gap(28.0)
+        .gap(LIST_GAP)
+        .child(section(u, "Theme", theme_rows))
+        .child(section(u, "Accent", accent_rows))
+        .child(section(u, "Interface", interface))
         .child(section(
             u,
-            "Theme",
+            "Bars",
             vec![
-                col().w_full().pt(16.0).pb(4.0).child(tiles),
+                toggle_row(
+                    u,
+                    "settings-transparent-sidebar",
+                    "Transparent sidebar",
+                    "The sidebar sits on the page background, without its own panel.",
+                    s.prefs.transparent_sidebar,
+                    |st| prefs::edit(st, |p| p.transparent_sidebar = !p.transparent_sidebar),
+                ),
+                toggle_row(
+                    u,
+                    "settings-status-bar",
+                    "Status bar",
+                    "A quiet line under every page: the game, the catalog, downloads, your profile, the preview volume and updates.",
+                    s.prefs.status_bar,
+                    |st| prefs::edit(st, |p| p.status_bar = !p.status_bar),
+                ),
             ],
-        ))
-        .child(section(
-            u,
-            "",
-            accent_rows
-                .into_iter()
-                .chain([setting_row(
-                u,
-                "settings-zoom",
-                "Interface size",
-                detail(u, "Scales text, icons and spacing together."),
-                segmented(u, "settings-zoom-pick", &zooms, zoom_now, |st, pct| {
-                    prefs::edit(st, |p| p.zoom = pct as f32 / 100.0)
-                }),
-            ),
-            toggle_row(
-                u,
-                "settings-transparent-sidebar",
-                "Transparent sidebar",
-                "The sidebar sits on the page background, without its own panel.",
-                s.prefs.transparent_sidebar,
-                |st| prefs::edit(st, |p| p.transparent_sidebar = !p.transparent_sidebar),
-            ),
-            toggle_row(
-                u,
-                "settings-status-bar",
-                "Status bar",
-                "A quiet line under every page: the game, the catalog, downloads, your profile, the preview volume and updates.",
-                s.prefs.status_bar,
-                |st| prefs::edit(st, |p| p.status_bar = !p.status_bar),
-            )])
-            .collect(),
         ))
         .child(personalize::view(s, u))
 }
@@ -1669,7 +1839,7 @@ fn theme_tile(s: &State, u: &Ui, theme: Theme) -> El {
     let on = s.prefs.theme == theme && s.prefs.personal.theme.is_none();
     let picture = row()
         .w_full()
-        .h(84.0)
+        .h(64.0)
         .padding(1.0)
         .radius(crate::ui::r(8.0))
         .fill(t.bg)
@@ -1680,7 +1850,7 @@ fn theme_tile(s: &State, u: &Ui, theme: Theme) -> El {
                 .corners([7.0, 0.0, 0.0, 7.0])
                 .fill(t.sidebar)
                 .border_sides([0.0, 1.0, 0.0, 0.0], t.hair)
-                .pt(12.0)
+                .pt(10.0)
                 .px(7.0)
                 .gap(5.0)
                 .child(el().w(22.0).h(4.0).radius(crate::ui::r(2.0)).fill(t.ink.alpha(0.6)))
@@ -1691,24 +1861,25 @@ fn theme_tile(s: &State, u: &Ui, theme: Theme) -> El {
             col()
                 .grow(1.0)
                 .h_full()
-                .pt(12.0)
-                .px(10.0)
+                .pt(10.0)
+                .px(8.0)
                 .gap(6.0)
-                .child(el().w(52.0).h(6.0).radius(crate::ui::r(3.0)).fill(t.ink.alpha(0.85)))
+                .child(el().w(40.0).h(6.0).radius(crate::ui::r(3.0)).fill(t.ink.alpha(0.85)))
                 .child(el().w_full().h(4.0).radius(crate::ui::r(2.0)).fill(t.muted.alpha(0.45)))
-                .child(el().w(46.0).h(4.0).radius(crate::ui::r(2.0)).fill(t.muted.alpha(0.45)))
+                .child(el().w(32.0).h(4.0).radius(crate::ui::r(2.0)).fill(t.muted.alpha(0.45)))
                 .child(spacer())
                 .child(
                     row()
                         .w_full()
-                        .pb(10.0)
+                        .pb(8.0)
                         .child(spacer())
-                        .child(el().w(30.0).h(12.0).radius(crate::ui::r(4.0)).fill(t.accent)),
+                        .child(el().w(24.0).h(10.0).radius(crate::ui::r(4.0)).fill(t.accent)),
                 ),
         );
     col()
         .key(format!("settings-theme-{}", theme.id()))
-        .gap(8.0)
+        .w(92.0)
+        .gap(6.0)
         .focusable(true)
         .role("radio")
         .checked(on)
@@ -1724,14 +1895,14 @@ fn theme_tile(s: &State, u: &Ui, theme: Theme) -> El {
         .child(
             col()
                 .w_full()
-                .padding(3.0)
-                .radius(crate::ui::r(11.0))
-                .border(2.0, if on { u.accent } else { Color::TRANSPARENT })
+                .padding(2.0)
+                .radius(crate::ui::r(8.0))
+                .border(1.0, if on { u.ink } else { Color::TRANSPARENT })
                 .child(picture.border(1.0, t.hair_strong)),
         )
         .child(
             text(tr(theme.label()))
-                .font(LABEL)
+                .font(SMALL)
                 .color(if on { u.ink } else { u.muted })
                 .a11y_hidden(),
         )
@@ -1740,8 +1911,8 @@ fn theme_tile(s: &State, u: &Ui, theme: Theme) -> El {
 fn swatch(u: &Ui, id: &str, label: &str, color: Color, on: bool, accent: Accent) -> El {
     el().key(format!("settings-accent-{id}"))
         .size(28.0, 28.0)
-        .radius(crate::ui::r(14.0))
-        .border(2.0, if on { u.ink } else { Color::TRANSPARENT })
+        .radius(crate::ui::r(4.0))
+        .border(1.0, if on { u.ink } else { Color::TRANSPARENT })
         .center()
         .focusable(true)
         .role("radio")
@@ -1752,13 +1923,12 @@ fn swatch(u: &Ui, id: &str, label: &str, color: Color, on: bool, accent: Accent)
             let accent = accent.clone();
             prefs::edit(st, |p| p.accent = accent)
         })
-        .child(el().size(20.0, 20.0).radius(crate::ui::r(10.0)).fill(color).a11y_hidden())
+        .child(el().size(20.0, 20.0).radius(crate::ui::r(2.0)).fill(color).a11y_hidden())
 }
 
 // --- mods ------------------------------------------------------------------------
 
 fn mods(s: &State, u: &Ui) -> El {
-    let mature: Vec<(Mature, &str)> = Mature::ALL.iter().map(|m| (*m, m.label())).collect();
     let sorts: Vec<(BrowseSort, &str)> = prefs::SORTS
         .iter()
         .map(|sort| (*sort, prefs::sort_label(*sort)))
@@ -1777,7 +1947,7 @@ fn mods(s: &State, u: &Ui) -> El {
     let hidden_rows = crate::screens::browse::hidden::rows(s, u, "settings-hidden");
     col()
         .w_full()
-        .gap(28.0)
+        .gap(LIST_GAP)
         .child(section(
             u,
             "Installing",
@@ -1810,21 +1980,12 @@ fn mods(s: &State, u: &Ui) -> El {
                     u,
                     "settings-sort",
                     "Order",
-                    detail(u, "How the GameBanana catalog is sorted."),
+                    detail(u, ""),
                     segmented(u, "settings-sort-pick", &sorts, s.prefs.browse_sort, |st, sort| {
                         prefs::edit(st, |p| p.browse_sort = sort);
                         if st.browse.page.is_some() || st.screen == Screen::Browse {
                             crate::data::start_browse_fetch(st, 1);
                         }
-                    }),
-                ),
-                setting_row(
-                    u,
-                    "settings-mature",
-                    "Mature content",
-                    detail(u, "Mods GameBanana marks as mature."),
-                    segmented(u, "settings-mature-pick", &mature, s.prefs.mature, |st, m| {
-                        prefs::edit(st, |p| p.mature = m)
                     }),
                 ),
                 setting_row(
@@ -1912,13 +2073,13 @@ fn privacy(s: &State, u: &Ui) -> El {
     }
     col()
         .w_full()
-        .gap(28.0)
+        .gap(LIST_GAP)
         .child(
             text(tr("Sigil goes online only for the features below. Usage events, crash reports and lookups go to Sigil's own server only when you turn them on."))
-                .font(BODY)
-                .color(u.prose)
+                .font(SMALL)
+                .color(u.muted)
                 .wrap()
-                .w_full(),
+                .max_w(560.0),
         )
         .child(telemetry::privacy_section(s, u))
         .child(tabs::match_sharing(s, u))
@@ -2029,7 +2190,7 @@ fn models(s: &State, u: &Ui) -> El {
         ],
     );
 
-    col().w_full().gap(28.0).child(accounts).child(model)
+    col().w_full().gap(LIST_GAP).child(accounts).child(model)
 }
 
 fn account_row(
@@ -2332,7 +2493,7 @@ fn storage(s: &State, u: &Ui) -> El {
 
     col()
         .w_full()
-        .gap(28.0)
+        .gap(LIST_GAP)
         .child(folders)
         .child(caches)
         .child(section(u, "Mod data", tools::storage_rows(s, u)))
@@ -2730,7 +2891,7 @@ fn about(s: &State, u: &Ui) -> El {
     }
     col()
         .w_full()
-        .gap(28.0)
+        .gap(LIST_GAP)
         .child(
             col()
                 .w_full()

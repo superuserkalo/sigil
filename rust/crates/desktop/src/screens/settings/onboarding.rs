@@ -442,7 +442,7 @@ pub fn rows(_s: &State, u: &Ui) -> El {
                 u,
                 "settings-tips-reset",
                 "Reset tips",
-                super::detail(u, "Shows every page tip again."),
+                super::detail(u, ""),
                 super::disabled(
                     button(u, "settings-tips-reset-run", "Reset", ActionKind::Secondary).on_press(|st: &mut State| {
                         options::edit(st, |o| {

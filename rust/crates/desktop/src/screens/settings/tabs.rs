@@ -68,7 +68,7 @@ pub fn general(s: &State, u: &Ui) -> El {
                     u,
                     "settings-date-format",
                     "Dates",
-                    detail(u, "How Sigil writes a date, in backups and logs."),
+                    detail(u, ""),
                     segmented(u, "settings-date-pick", &dates, s.prefs.date_format, |st, f| {
                         prefs::edit(st, |p| p.date_format = f)
                     }),
@@ -92,7 +92,7 @@ pub fn general(s: &State, u: &Ui) -> El {
                     u,
                     "settings-autostart",
                     "Start with your computer",
-                    "Opens Sigil when you sign in.",
+                    "",
                     autostart_on,
                     toggle_autostart,
                 ),
@@ -826,14 +826,6 @@ pub fn network(s: &State, u: &Ui) -> El {
                 u,
                 "In the background",
                 vec![
-                    toggle_row(
-                        u,
-                        "settings-net-updates",
-                        "Check for Sigil updates",
-                        "Asks GitHub for the newest release. Nothing downloads on its own.",
-                        s.prefs.check_updates,
-                        |st| prefs::edit(st, |p| p.check_updates = !p.check_updates),
-                    ),
                     disabled(
                         setting_row(
                             u,
@@ -1319,13 +1311,6 @@ pub fn pages(s: &State, u: &Ui) -> El {
     col()
         .w_full()
         .gap(LIST_GAP)
-        .child(
-            text(tr("Turn off the pages you do not use. Mod management is always on. A page you turn off leaves the sidebar, and anything it already changed in your game stays."))
-                .font(BODY)
-                .color(u.muted)
-                .wrap()
-                .w_full(),
-        )
         .child(section(u, "Pages", rows))
 }
 

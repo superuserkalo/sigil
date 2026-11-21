@@ -365,7 +365,7 @@ pub fn game_rows(s: &State, u: &Ui) -> El {
                     u,
                     "settings-reapply-now",
                     "Reapply now",
-                    detail(u, "The same steps, once."),
+                    detail(u, ""),
                     disabled(
                         super::button(u, "settings-reapply-run", "Reapply", ActionKind::Secondary)
                             .on_press(|st: &mut State| {

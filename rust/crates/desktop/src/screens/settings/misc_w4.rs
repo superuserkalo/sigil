@@ -411,7 +411,7 @@ pub fn tip_rows(u: &Ui) -> Vec<El> {
             u,
             "settings-feature-tips-reset",
             "Reset feature tips",
-            super::detail(u, "Shows feature tips again, including ones you dismissed."),
+            super::detail(u, ""),
             super::disabled(
                 super::button(u, "settings-feature-tips-reset-run", "Reset", crate::ui::ActionKind::Secondary).on_press(
                     |st: &mut State| {

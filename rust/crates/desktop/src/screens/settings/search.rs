@@ -3,7 +3,7 @@
 //! lists the row; pressing it opens the category. The test below checks that every title here
 //! is a title some category really shows, so the index cannot drift from the pages.
 
-use rune::{El, col, row, text};
+use rune::{El, col, icon, row, text};
 
 use super::Tab;
 use super::i18n::tr;
@@ -202,9 +202,10 @@ pub fn matches(query: &str) -> Vec<&'static Entry> {
 /// Enter in the search field opens the first match's category, as DMM does.
 pub fn open_first(st: &mut State) {
     if let Some(entry) = matches(&st.settings.search.text).first() {
-        let tab = entry.tab;
+        let (tab, title) = (entry.tab, entry.title);
         st.settings.search = rune::TextEdit::new("");
         super::select(st, tab);
+        st.settings.hit = Some(title);
     }
 }
 
@@ -213,43 +214,56 @@ pub fn results(s: &State, u: &Ui) -> El {
     let found = matches(&s.settings.search.text);
     if found.is_empty() {
         return u
-            .empty_state("", tr("No settings match"), tr("Try another word, like proxy, Discord or language."), None)
-            .py(48.0);
+            .empty_state("", tr("No settings match"), tr("Try another word, like proxy, Discord or language."), None);
     }
-    let mut list = col()
-        .key("settings-search-results")
-        .w_full()
-        .border_sides([1.0, 0.0, 0.0, 0.0], u.hair);
-    for (index, entry) in found.into_iter().enumerate() {
-        let tab = entry.tab;
-        list = list.child(
-            row()
-                .key(format!("settings-search-hit-{index}"))
-                .w_full()
-                .min_h(56.0)
-                .py(10.0)
-                .gap(16.0)
-                .center_y()
-                .border_sides([0.0, 0.0, 1.0, 0.0], u.hair)
-                .hover(u.hover)
-                .focusable(true)
-                .role("button")
-                .label(tr(entry.title))
-                .cursor(rune::Cursor::Pointer)
-                .on_press(move |st: &mut State| {
-                    st.settings.search = rune::TextEdit::new("");
-                    super::select(st, tab);
-                })
-                .child(
-                    col()
-                        .grow(1.0)
-                        .min_w(0.0)
-                        .gap(2.0)
-                        .child(text(tr(entry.title)).font(BODY_MED).color(u.ink))
-                        .child(text(tr(entry.line)).font(SMALL).color(u.muted).truncate()),
-                )
-                .child(text(tr(tab.label())).font(SMALL).color(u.faint)),
-        );
+    // Grouped by tab, in the nav's order; each group under its own header with a count.
+    let mut list = col().key("settings-search-results").w_full().gap(24.0);
+    let mut index = 0usize;
+    for (_, tabs) in super::GROUPS.iter() {
+        for &tab in *tabs {
+            let hits: Vec<&&Entry> = found.iter().filter(|e| e.tab == tab).collect();
+            if hits.is_empty() {
+                continue;
+            }
+            let mut group = col().w_full().gap(8.0).child(u.section_head(tr(tab.label()), Some(hits.len()), None));
+            let mut rows = col().w_full();
+            for entry in hits {
+                let title = entry.title;
+                let mut words = col()
+                    .grow(1.0)
+                    .min_w(0.0)
+                    .gap(2.0)
+                    .child(text(tr(entry.title)).font(BODY_MED).color(u.ink).truncate());
+                if !entry.line.is_empty() {
+                    words = words.child(text(tr(entry.line)).font(SMALL).color(u.muted).max_w(400.0).max_lines(2));
+                }
+                rows = rows.child(
+                    row()
+                        .key(format!("settings-search-hit-{index}"))
+                        .w_full()
+                        .min_h(56.0)
+                        .py(8.0)
+                        .gap(16.0)
+                        .center_y()
+                        .border_sides([0.0, 0.0, 1.0, 0.0], u.hair)
+                        .hover(u.hover)
+                        .focusable(true)
+                        .role("button")
+                        .label(tr(entry.title))
+                        .cursor(rune::Cursor::Pointer)
+                        .on_press_tx(move |st: &mut State, tx: &mut rune::Tx| {
+                            st.settings.search = rune::TextEdit::new("");
+                            super::select(st, tab);
+                            st.settings.hit = Some(title);
+                            tx.scroll_into_view("settings-hit");
+                        })
+                        .child(words)
+                        .child(icon(&crate::icons::CHEVRON_RIGHT, 12.0).color(u.muted).a11y_hidden()),
+                );
+                index += 1;
+            }
+            list = list.child(group.child(rows));
+        }
     }
     list
 }
