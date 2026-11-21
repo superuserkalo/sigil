@@ -651,16 +651,11 @@ fn drop_veil(u: &Ui) -> El {
                 .h_full()
                 .center()
                 .gap(8.0)
-                .radius(crate::ui::r(12.0))
+                .radius(crate::ui::r(8.0))
                 .fill(u.bg.alpha(0.85))
-                .border(1.0, u.accent.alpha(0.6))
+                .border(1.0, u.accent)
                 .child(icon(&icons::DOWNLOAD, 24.0).color(u.ink).a11y_hidden())
-                .child(text("Drop to import").font(H1).color(u.ink))
-                .child(
-                    text("You review the mods before anything is copied.")
-                        .font(BODY)
-                        .color(u.muted),
-                ),
+                .child(text(tr("Drop to import")).font(H1).color(u.ink)),
         )
 }
 
@@ -1146,55 +1141,27 @@ pub(super) fn open_menu(st: &mut State, menu: Menu) {
 // --- empty state ---------------------------------------------------------------
 
 fn empty(u: &Ui) -> El {
-    col()
-        .key("installed-empty")
-        .w_full()
-        .pt(96.0)
-        .pb(64.0)
-        .gap(8.0)
-        .items_center()
-        .child(
-            el().size(48.0, 48.0)
-                .radius(crate::ui::r(12.0))
-                .border(1.0, u.hair_strong)
-                .center()
-                .mb(8.0)
-                .child(icon(&icons::PACKAGE, 22.0).color(u.muted).a11y_hidden()),
-        )
-        .child(
-            text("No mods installed")
-                .font(H1)
-                .color(u.ink)
-                .align(rune::Align::Center),
-        )
-        .child(
-            text("Find mods in Browse, or bring in the ones you already have.")
-                .font(BODY)
-                .color(u.muted)
-                .align(rune::Align::Center),
-        )
-        .child(
+    u.empty_state(
+        "",
+        tr("No mods installed"),
+        tr("Find mods in Browse, or import the ones you have."),
+        Some(
             row()
-                .mt(16.0)
+                .key("installed-empty")
                 .gap(8.0)
                 .center_y()
                 .child(
-                    u.icon_action(&icons::COMPASS, "Browse mods", ActionKind::Primary)
+                    u.icon_action(&icons::COMPASS, tr("Browse mods"), ActionKind::Secondary)
                         .key("installed-browse")
                         .cursor(rune::Cursor::Pointer)
                         .on_press(|st: &mut State| st.go(Screen::Browse)),
                 )
                 .child(
-                    u.icon_action(&icons::FILE, "Import local mods", ActionKind::Secondary)
-                        .key("installed-import-local")
-                        .cursor(rune::Cursor::Pointer)
-                        .on_press_tx(|st: &mut State, tx: &mut Tx| importer::pick_local(st, tx)),
-                )
-                .child(
-                    dropdown_button(u, "installed-import-managers", "Import from another manager", None)
-                        .on_press(|st: &mut State| open_menu(st, Menu::Managers)),
+                    dropdown_button(u, "installed-import-managers", tr("Import"), Some(&icons::DOWNLOAD))
+                        .on_press(|st: &mut State| open_menu(st, Menu::Import)),
                 ),
-        )
+        ),
+    )
 }
 
 // --- groups and cards ----------------------------------------------------------
@@ -1868,6 +1835,8 @@ pub fn overlay(s: &State, u: &Ui) -> Option<El> {
         Menu::Card(slot) | Menu::Tools(slot) | Menu::CardMore(slot) => {
             (format!("installed-more-{slot:02}"), Align::End, 232.0)
         }
+        // From the empty state the menu opens under its own Import button.
+        Menu::Import if s.addons.addons.is_empty() => ("installed-import-managers".to_string(), Align::Start, 288.0),
         Menu::Import => ("installed-import".to_string(), Align::End, 288.0),
         Menu::Managers => ("installed-import-managers".to_string(), Align::Start, 288.0),
         Menu::Source => ("installed-filters-button".to_string(), Align::Start, 320.0),

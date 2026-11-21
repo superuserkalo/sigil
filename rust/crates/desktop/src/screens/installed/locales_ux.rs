@@ -136,4 +136,7 @@ pub const DE: &[(&str, &str)] = &[
     ("Other managers", "Andere Manager"),
     ("Not recognised", "Nicht erkannt"),
 
+    ("No mods installed", "Keine Mods installiert"),
+    ("Find mods in Browse, or import the ones you have.", "Finde Mods unter Entdecken oder importiere die, die du schon hast."),
+    ("Browse mods", "Mods entdecken"),
 ];
