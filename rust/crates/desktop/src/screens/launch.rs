@@ -964,10 +964,12 @@ fn note_line(u: &Ui, message: &str, bad: bool) -> El {
 
 /// One of the two launch buttons: 64 points tall, an icon, a label and one short line.
 fn big_action(u: &Ui, label: &str, detail: &str, primary: bool, enabled: bool) -> El {
-    let (fill, ink, sub, border) = if primary {
-        (u.accent, u.accent_ink, u.accent_ink.alpha(0.72), Color::TRANSPARENT)
+    // The sidebar's Launch modded is the one solid accent in the shell: here the primary
+    // choice is marked by an accent line and icon.
+    let (fill, ink, sub, border, mark) = if primary {
+        (u.accent.alpha(0.08), u.ink, u.muted, u.accent.alpha(0.55), u.accent)
     } else {
-        (Color::WHITE.alpha(0.035), u.ink, u.muted, u.hair_strong)
+        (Color::WHITE.alpha(0.035), u.ink, u.muted, u.hair_strong, u.muted)
     };
     row()
         .grow(1.0)
@@ -979,18 +981,14 @@ fn big_action(u: &Ui, label: &str, detail: &str, primary: bool, enabled: bool) -
         .radius(crate::ui::r(8.0))
         .fill(fill)
         .border(1.0, border)
-        .hover(if primary {
-            Color::WHITE.alpha(0.10)
-        } else {
-            u.hover
-        })
+        .hover(u.hover)
         .press(Color::WHITE.alpha(0.08))
         .focusable(enabled)
         .disabled(!enabled)
         .opacity(if enabled { 1.0 } else { 0.45 })
         .role("button")
         .label(label)
-        .child(icon(&icons::PLAY, 18.0).color(ink).a11y_hidden())
+        .child(icon(&icons::PLAY, 18.0).color(mark).a11y_hidden())
         .child(
             col()
                 .grow(1.0)

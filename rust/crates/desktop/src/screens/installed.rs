@@ -797,8 +797,8 @@ fn dropdown_button(u: &Ui, key: &str, label: &str, glyph: Option<&'static rune::
     if let Some(glyph) = glyph {
         b = b.child(icon(glyph, 16.0).color(u.ink).a11y_hidden());
     }
-    b.child(text(label.to_string()).font(BODY_MED).color(u.ink).a11y_hidden())
-        .child(icon(&icons::CHEVRON_DOWN, 14.0).color(u.muted).a11y_hidden())
+    b.child(text(label.to_string()).font(BODY).color(u.prose).a11y_hidden())
+        .child(icon(&icons::CHEVRON_DOWN, 14.0).color(u.faint).a11y_hidden())
 }
 
 /// The mods a bulk switch changes: the selection when there is one, else every shown mod,

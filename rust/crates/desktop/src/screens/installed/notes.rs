@@ -665,15 +665,16 @@ fn dropdown(u: &Ui, key: &str, label: &str, glyph: &'static rune::Icon) -> El {
         .pr(6.0)
         .gap(6.0)
         .center_y()
-        .radius(crate::ui::r(6.0))
+        .radius(crate::ui::r(8.0))
         .border(1.0, u.hair_strong)
         .hover(u.hover)
+        .press(u.over.alpha(0.08))
         .focusable(true)
         .role("button")
         .label(label)
         .cursor(rune::Cursor::Pointer)
         .child(icon(glyph, 14.0).color(u.muted).a11y_hidden())
-        .child(text(label.to_string()).font(SMALL).color(u.prose).a11y_hidden())
+        .child(text(label.to_string()).font(BODY).color(u.prose).a11y_hidden())
         .child(icon(&icons::CHEVRON_DOWN, 12.0).color(u.faint).a11y_hidden())
 }
 

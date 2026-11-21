@@ -137,8 +137,8 @@ pub fn new_pill(u: &Ui) -> El {
         .px(5.0)
         .center()
         .radius(crate::ui::r(4.0))
-        .fill(u.accent.alpha(0.16))
-        .child(text(tr("New")).font(MICRO).color(u.accent))
+        .fill(u.over.alpha(0.07))
+        .child(text(tr("New")).font(MICRO).color(u.muted))
 }
 
 // --- update banner --------------------------------------------------------------------------
