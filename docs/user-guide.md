@@ -77,8 +77,7 @@ your on or off choice. The old files go to Sigil's trash or backups.
 
 You can paste a GameBanana link or id into the search to open that mod. You can also paste many
 links at once to queue several mods, skip mature or duplicate ones, and save the result as a
-profile. Custom mod sources can be added in Settings > Mods > Sources and then appear beside
-GameBanana in Browse.
+profile. Custom mod sources can be added in Settings > Mods > Sources.
 
 ## Installed
 
@@ -117,7 +116,7 @@ off at startup without asking; an enabled mod nobody allowed is listed with Keep
 More > Analyze the addons folder lists what each addon folder holds, leftovers, slots with no
 library entry, doubled slots and missing or read-only files. It can search GameBanana for an
 unknown file, remove leftovers to the trash, and reinstall a mod whose files are missing. More >
-Find broken mods starts a halving search across launches so you can find the mod that breaks the
+Find a broken mod starts a halving search across launches so you can find the mod that breaks the
 game.
 
 ## Load order and overlaps
@@ -278,7 +277,7 @@ health. Tick locations to block them, or use Block all and Allow all. Apply writ
 rules for Deadlock only; Reset removes them. Presets can be saved, loaded and deleted. Where I play
 loads the locations where you had no recent matches, using your match history if player stats are
 on. Search by city, country or id. While a region is blocked, the status bar says so on every page.
-MacOS and Linux can list and ping locations but cannot block them. This has not been run on a
+macOS and Linux can list and ping locations but cannot block them. This has not been run on a
 Windows PC yet.
 
 ## Launch and fixing a game that won't start
@@ -300,7 +299,7 @@ If the game will not start:
    clear read-only files.
 3. Run Installed > More > Mod safety > Check installed mods, and turn off anything you do not
    trust.
-4. Use Installed > More > Find broken mods. Start the game each time Sigil asks, and say whether it
+4. Use Installed > More > Find a broken mod. Start the game each time Sigil asks, and say whether it
    worked. Sigil halves the enabled set until it finds the culprit.
 5. Turn off mods with outdated data from the compatibility review, or run Repair, Fix all and
    Revert there.
