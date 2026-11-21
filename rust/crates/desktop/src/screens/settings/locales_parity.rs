@@ -460,6 +460,7 @@ pub const DE: &[(&str, &str)] = &[
     ("Drop a .vpk, .zip, .7z or .rar file to import it.", "Ziehe eine .vpk-, .zip-, .7z- oder .rar-Datei hierher, um sie zu importieren."),
     ("Drop to import", "Zum Importieren loslassen"),
     ("Got it", "Verstanden"),
+    ("Graphics", "Grafik"),
     ("Headless run: the mods folder was not opened ({}).", "Headless-Lauf: Der Mods-Ordner wurde nicht geöffnet ({})."),
     ("Keyboard shortcuts", "Tastenkürzel"),
     ("Lists", "Listen"),
@@ -483,6 +484,7 @@ pub const DE: &[(&str, &str)] = &[
     ("The mods folder could not be opened: {}", "Der Mods-Ordner konnte nicht geöffnet werden: {}"),
     ("The mods folder is not there yet: {}", "Der Mods-Ordner ist noch nicht da: {}"),
     ("This build cannot pin the window yet.", "Diese Version kann das Fenster noch nicht anheften."),
+    ("Toggle fullscreen", "Vollbild umschalten"),
     ("You review the mods before anything is copied.", "Du prüfst die Mods, bevor etwas kopiert wird."),
     ("Zoom {}%", "Zoom {} %"),
     ("Zoom in", "Vergrößern"),
@@ -708,6 +710,8 @@ pub const NOT_TEXT: &[&str] = &[
     // HTTP reason phrases
     "Accepted", "Bad Request", "Forbidden", "Length Required", "No Content", "Not Found",
     "Payload Too Large", "Too Many Requests", "Unsupported Media Type",
+    // Key names in the shortcuts sheet
+    "Alt+Enter / F11",
     // Log and report lines
     "Added citadel/addons to gameinfo.gi before launch", "Cleared all mods: {} moved, {} failed",
     "Deadlock crashed (dumps: {}, exit: {exit:?})", "Reapplied mods: {}",

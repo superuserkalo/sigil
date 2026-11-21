@@ -60,6 +60,67 @@ pub struct Shell {
     pub w4: crate::shell_w4::W4,
     /// Wave 4: feature tips, the experimental tour, easter eggs and seasons.
     pub tips: crate::shell_tips::Tips,
+    /// Pages visited before the current one, newest last: the mouse Back button walks them.
+    pub back: Vec<Screen>,
+    /// Pages Back left behind, newest last: the mouse Forward button returns to them.
+    pub forward: Vec<Screen>,
+    /// The mouse buttons are moving through history, so `State::go` must not record the change.
+    pub(crate) navigating: bool,
+}
+
+/// Most pages remembered by the mouse buttons. Older ones drop off the front.
+const NAV_CAP: usize = 64;
+
+/// Mouse Back: close the nearest thing that was opened over the page (Settings, a mod's
+/// details, a creator's page), else return to the page shown before this one.
+pub fn back(st: &mut State) {
+    if st.settings.open {
+        st.settings.open = false;
+        return;
+    }
+    if st.screen == Screen::Browse && st.browse_view.details.is_some() {
+        crate::screens::browse::close_details(st);
+        return;
+    }
+    if st.screen == Screen::Browse && st.browse_view.filters.creator.is_some() {
+        st.browse_view.filters.creator = None;
+        return;
+    }
+    let Some(previous) = st.shell.back.pop() else {
+        if st.screen != Screen::Browse {
+            go_without_history(st, Screen::Browse);
+        }
+        return;
+    };
+    if previous == st.screen {
+        back(st);
+        return;
+    }
+    st.shell.forward.push(st.screen);
+    cap(&mut st.shell.forward);
+    go_without_history(st, previous);
+}
+
+/// Mouse Forward: the page Back left, when nothing newer replaced it.
+pub fn forward(st: &mut State) {
+    let Some(next) = st.shell.forward.pop() else {
+        return;
+    };
+    st.shell.back.push(st.screen);
+    cap(&mut st.shell.back);
+    go_without_history(st, next);
+}
+
+fn go_without_history(st: &mut State, screen: Screen) {
+    st.shell.navigating = true;
+    st.go(screen);
+    st.shell.navigating = false;
+}
+
+fn cap(history: &mut Vec<Screen>) {
+    if history.len() > NAV_CAP {
+        history.remove(0);
+    }
 }
 
 pub struct Notes {
@@ -129,15 +190,29 @@ fn is_help_key(ev: &KeyEvent) -> bool {
     }
 }
 
+/// Alt+Enter and F11 take the window full screen and bring it back (DMM issue #1414). The
+/// window is borderless over its display, and leaving full screen restores the frame it had.
+fn is_fullscreen_key(ev: &KeyEvent) -> bool {
+    match &ev.key {
+        Key::Function(11) => !ev.mods.cmd && !ev.mods.ctrl && !ev.mods.shift,
+        Key::Enter => ev.mods.alt && !ev.mods.cmd && !ev.mods.ctrl,
+        _ => false,
+    }
+}
+
 /// Chords the shell owns. Runs before the screen shortcuts so zoom and the sheet work
 /// everywhere; false lets the rest of `on_key` run.
-pub fn on_key(st: &mut State, ev: &KeyEvent, _tx: &mut Tx) -> bool {
-    if st.shell.shortcuts || st.shell.whats_new.is_some() {
-        if ev.key == Key::Escape || is_help_key(ev) {
-            st.shell.shortcuts = false;
-            st.shell.whats_new = None;
-            return true;
-        }
+pub fn on_key(st: &mut State, ev: &KeyEvent, tx: &mut Tx) -> bool {
+    if is_fullscreen_key(ev) {
+        tx.toggle_full_screen();
+        return true;
+    }
+    if (st.shell.shortcuts || st.shell.whats_new.is_some())
+        && (ev.key == Key::Escape || is_help_key(ev))
+    {
+        st.shell.shortcuts = false;
+        st.shell.whats_new = None;
+        return true;
     }
     if is_help_key(ev) {
         st.shell.shortcuts = !st.shell.shortcuts;
@@ -507,6 +582,7 @@ pub fn shortcuts_dialog(s: &State, u: &Ui) -> Option<El> {
                 ("Zoom out", "⌘-"),
                 ("Reset zoom", "⌘0"),
                 ("Open mods folder", "⇧⌘M"),
+                ("Toggle fullscreen", "Alt+Enter / F11"),
                 ("Shortcuts", "?"),
                 ("Close window", "⌘W"),
                 ("Quit Sigil", "⌘Q"),
@@ -853,6 +929,45 @@ mod tests {
         assert!(notes.len() <= NOTES_CAP);
         assert!(!notes.contains('\0'));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn mouse_back_and_forward_walk_pages() {
+        let mut st = State::default();
+        st.screen = Screen::Browse;
+        // Record history the way `State::go` does, without starting a page's reads.
+        st.shell.back.push(Screen::Browse);
+        st.screen = Screen::Crosshair;
+        st.shell.back.push(Screen::Crosshair);
+        st.screen = Screen::Autoexec;
+        assert!(st.shell.forward.is_empty());
+
+        back(&mut st);
+        assert!(st.screen == Screen::Crosshair);
+        back(&mut st);
+        assert!(st.screen == Screen::Browse);
+        forward(&mut st);
+        assert!(st.screen == Screen::Crosshair);
+
+        // A new page clears what Forward could have returned to.
+        st.go(Screen::Profiles);
+        assert!(st.shell.forward.is_empty());
+    }
+
+    #[test]
+    fn mouse_back_closes_a_creator_page_before_the_page_behind_it() {
+        let mut st = State::default();
+        st.screen = Screen::Browse;
+        st.browse_view.filters.creator = Some(crate::screens::browse::Pick {
+            id: 7,
+            name: "Ana".to_string(),
+        });
+        st.shell.back.push(Screen::Installed);
+        back(&mut st);
+        assert!(st.browse_view.filters.creator.is_none());
+        assert!(st.screen == Screen::Browse);
+        back(&mut st);
+        assert!(st.screen == Screen::Installed);
     }
 
     #[test]
