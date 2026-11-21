@@ -83,7 +83,7 @@ impl Convar {
         if value.is_empty() {
             return Some(Problem::Empty);
         }
-        if value.contains(['"', ';', '\n', '\r']) {
+        if !safe_value(value) {
             return Some(Problem::Forbidden);
         }
         let number = match self.kind {
@@ -193,6 +193,34 @@ fn group_of(name: &str) -> &'static str {
         .unwrap_or("Other")
 }
 
+/// A console variable's name: one word of letters, digits, `_` and `.`. Anything else could
+/// carry a second command into autoexec.cfg.
+pub fn is_convar_name(name: &str) -> bool {
+    name.len() <= 128
+        && name.chars().next().is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+        && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.')
+}
+
+/// A value that stays one argument of one command: no quote, semicolon or control character.
+fn safe_value(value: &str) -> bool {
+    !value.contains(['"', ';']) && !value.chars().any(char::is_control)
+}
+
+/// The `name value` line for autoexec.cfg, or `None` when either part could break out of it.
+/// Every line this module writes goes through here.
+pub fn safe_command(name: &str, value: &str) -> Option<String> {
+    let value = value.trim();
+    (is_convar_name(name) && !value.is_empty() && safe_value(value)).then(|| format!("{name} {value}"))
+}
+
+/// The dump's default without its quotes. One that still is not a plain value counts as none,
+/// so "Use the default" can never fill in something unsafe.
+fn clean_default(raw: &str) -> String {
+    let raw = raw.trim();
+    let bare = raw.strip_prefix('"').and_then(|rest| rest.strip_suffix('"')).unwrap_or(raw);
+    if safe_value(bare) { bare.to_string() } else { String::new() }
+}
+
 /// Parse a DumpSource2 convar list. Entries flagged `developmentonly` or `hidden` are dropped:
 /// a retail game ignores them.
 pub fn parse_dump(text: &str) -> Vec<Convar> {
@@ -220,7 +248,8 @@ pub fn parse_dump(text: &str) -> Vec<Convar> {
         let Some((name, default)) = head.split_once(char::is_whitespace).or(Some((head, ""))) else {
             continue;
         };
-        if name.is_empty() || !name.chars().next().is_some_and(|c| c.is_ascii_alphabetic() || c == '_') {
+        // The list is downloaded: a name is written into autoexec.cfg, so it must be one word.
+        if !is_convar_name(name) {
             continue;
         }
         let mut flags = Vec::new();
@@ -242,7 +271,7 @@ pub fn parse_dump(text: &str) -> Vec<Convar> {
         if flags.iter().any(|flag| flag == "developmentonly" || flag == "hidden") {
             continue;
         }
-        let default = default.trim().to_string();
+        let default = clean_default(default);
         out.push(Convar {
             kind: kind_of(&default),
             name: name.to_string(),
@@ -433,7 +462,7 @@ pub fn preview(preset: &GamePreset, autoexec: &BTreeMap<String, String>) -> Vec<
 
 /// The lines a preset writes, `name value` each.
 pub fn preset_commands(preset: &GamePreset) -> Vec<String> {
-    preset.values.iter().map(|(name, value)| format!("{name} {value}")).collect()
+    preset.values.iter().filter_map(|(name, value)| safe_command(name, value)).collect()
 }
 
 /// Built-in presets: bundles of Grimoire's premade commands (MIT).
@@ -622,6 +651,26 @@ mod tests {
         for preset in &presets {
             assert!(!preset.values.is_empty(), "{}", preset.name);
         }
+    }
+
+    /// Security review: the list is downloaded, and its names reach autoexec.cfg.
+    #[test]
+    fn a_tampered_list_cannot_add_a_command() {
+        let dump = "fps_max 400 (archive)\n\tcap\nevil;quit 1 (archive)\n\tx\nbad\tname 1 (archive)\nmat\"x 1 (archive)\nfake \"1;quit\" (archive)\nquoted \"false\" (archive)\n";
+        let catalog = Catalog { convars: parse_dump(dump) };
+        assert!(catalog.get("evil;quit").is_none() && catalog.get("mat\"x").is_none());
+        assert_eq!(catalog.get("fake").unwrap().default, "", "an unsafe default counts as none");
+        assert_eq!(catalog.get("quoted").unwrap().default, "false");
+        assert_eq!(safe_command("fps_max", "120").as_deref(), Some("fps_max 120"));
+        for (name, value) in [("a;quit", "1"), ("a b", "1"), ("a", "1;quit"), ("a", "1\nquit"), ("a", "\"1"), ("a", "1\u{7}"), ("a", " ")] {
+            assert!(safe_command(name, value).is_none(), "{name:?} {value:?}");
+        }
+        let preset = GamePreset {
+            name: "Bad".into(),
+            description: String::new(),
+            values: vec![("fps_max".into(), "120".into()), ("x;quit".into(), "1".into()), ("y".into(), "1;quit".into())],
+        };
+        assert_eq!(preset_commands(&preset), vec!["fps_max 120".to_string()]);
     }
 
     #[test]
