@@ -1457,6 +1457,7 @@ pub fn toggle_favorite(st: &mut State, slot: u16) {
     let on = !extra(st, addon).favorite;
     let name = crate::screens::installed::display_name(st, addon);
     edit_slot(st, slot, |entry| entry.favorite = on);
+    crate::screens::profile_favorites::sync_active(st);
     st.status = if on {
         crate::screens::settings::i18n::fill(crate::screens::settings::i18n::tr("Saved {}."), &[&name])
     } else {

@@ -18,6 +18,7 @@ pub mod locker;
 pub mod maps;
 pub mod patches;
 pub mod performance;
+pub mod profile_favorites;
 pub mod profiles;
 pub mod projects;
 pub mod servers;

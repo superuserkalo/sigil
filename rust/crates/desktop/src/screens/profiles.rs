@@ -561,6 +561,8 @@ fn finish_apply(st: &mut State, name: String, applied: core::ProfileApplyResult)
     {
         set_locker_shuffle(st, &shuffle);
     }
+    // Each profile keeps its own favourites (DMM); Undo puts the earlier set back.
+    let favorites_before = crate::screens::profile_favorites::bring_back(st);
     let switched = applied.changed.len().max(applied.copied);
     let mut detail = Vec::new();
     if applied.copied > 0 {
@@ -598,6 +600,7 @@ fn finish_apply(st: &mut State, name: String, applied: core::ProfileApplyResult)
             return;
         };
         set_locker_shuffle(st, &locker_before);
+        crate::screens::profile_favorites::set(st, &favorites_before);
         let workspace = crate::data::workspace_dir();
         let result = for_undo.clone();
         let undo_name = undo_name.clone();
@@ -1318,6 +1321,7 @@ fn create(st: &mut State) {
                 let _ = core::set_profile_isolated(&workspace, &profile.slug, true);
             }
             let _ = core::store_locker_shuffle(&workspace, &profile.slug, &locker_shuffle_of(&st.locker.prefs));
+            crate::screens::profile_favorites::remember(st, &profile.slug);
             report(
                 st,
                 format!("Saved {} with {}.", profile.name, plural(profile.slots.len(), "mod")),
@@ -1347,6 +1351,7 @@ fn update(st: &mut State, slug: &str) {
                 &profile.slug,
                 &locker_shuffle_of(&st.locker.prefs),
             );
+            crate::screens::profile_favorites::remember(st, &profile.slug);
             report(
             st,
             format!("Updated {} with {}.", profile.name, plural(profile.slots.len(), "mod")),

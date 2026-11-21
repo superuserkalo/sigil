@@ -47,6 +47,7 @@ pub mod overflow;
 pub mod patch_notes;
 pub mod performance;
 pub mod payload;
+pub mod profile_favorites;
 pub mod profiles;
 pub mod project;
 pub mod project_build;
