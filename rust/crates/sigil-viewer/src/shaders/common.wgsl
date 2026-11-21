@@ -50,6 +50,7 @@ struct Material {
     illum: vec4<f32>,         // has emissive, self-illum on, scale, albedo factor
     illum_tint: vec4<f32>,    // rgb, outline thickness in game units
     extra: vec4<f32>,         // has outline mask, vertex color, transmission, unused
+    alt: vec4<f32>,           // alt albedo on, amount, reveal softness, unused
 };
 
 struct Draw {

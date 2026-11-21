@@ -541,7 +541,11 @@ let png = v.capture_png(width, height)?;
   green, AO red, `pbr.vfx` NPR normals decoded hemi-octahedrally, `g_vColorTint1` decoded from
   sRGB once and applied through the tint mask, color correction about `texture_reflectivity`,
   self-illumination gated on its scale, authored shells hidden unless Grimoire's rule reveals
-  them, glass and additive drawn blended.
+  them, glass and additive drawn blended. `pbr.vfx`'s alt albedo (`g_tAltColor_Reveal`: RGB a
+  second albedo, alpha a reveal mask) wipes over the color by `g_flAltTextureAmount` with
+  `g_flAltTextureRevealSoftness` edges; a decompiled amount expression is evaluated for a hero
+  at rest (`$AmmoPercent` 1, `$ReloadProgress` 0, `time()` 0), so Violet's brush shows inked.
+  An expression outside the small evaluator keeps the authored amount (`material/alt_reveal.rs`).
 - Lighting is Grimoire's Citadel NPR port: stepped wrapped diffuse, ambient bands at fixed
   luminance targets, the upward silhouette rim with its hero depth test, NPR-scaled reflections,
   the lit inverted-hull outline (0.1 game units times the outline mask). The studio rig, its

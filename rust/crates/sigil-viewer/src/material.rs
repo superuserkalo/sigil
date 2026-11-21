@@ -13,8 +13,12 @@
 //! - Rim mask: the tint mask's green. Outline growth: `g_tNprOutlineMask` red times 0.1 game
 //!   units. `F_SOLID_COLOR_OUTLINE` (enemy team color) and see-through materials get no hull.
 //! - Self-illumination: `F_SELF_ILLUM` with the emissive texture as mask, gated on its scale.
+//! - Alt albedo: `pbr.vfx`'s `g_tAltColor_Reveal` wiped over the color by
+//!   `g_flAltTextureAmount` at rest (`alt_reveal.rs`).
 
 use std::collections::{HashMap, HashSet};
+
+pub mod alt_reveal;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum AlphaMode {
@@ -43,6 +47,8 @@ pub struct Morphic {
     pub textures: HashMap<String, usize>,
     pub dynamic: HashSet<String>,
     pub dynamic_textures: HashSet<String>,
+    /// Decompiled dynamic expression sources by parameter (only those that decompiled).
+    pub expressions: HashMap<String, String>,
     pub reflectivity: Option<[f32; 3]>,
 }
 
@@ -105,6 +111,14 @@ impl Morphic {
         for (key, set) in [("dynamic_params", &mut m.dynamic), ("dynamic_texture_params", &mut m.dynamic_textures)] {
             if let Some(map) = v.get(key).and_then(|x| x.as_object()) {
                 set.extend(map.keys().cloned());
+            }
+        }
+        if let Some(map) = v.get("dynamic_params").and_then(|x| x.as_object()) {
+            for (k, e) in map {
+                let decompiled = e.get("decompiled").and_then(|d| d.as_bool()).unwrap_or(false);
+                if let (true, Some(src)) = (decompiled, e.get("source").and_then(|s| s.as_str())) {
+                    m.expressions.insert(k.clone(), src.to_string());
+                }
             }
         }
         m.reflectivity = v
@@ -183,6 +197,17 @@ pub struct Resolved {
     pub outline_thickness: f32,
     pub self_illum: Option<SelfIllum>,
     pub hidden_shell_ok: bool,
+    pub alt_reveal: Option<AltReveal>,
+}
+
+/// `pbr.vfx`'s alt albedo as the preview shows it at rest.
+#[derive(Clone, Debug, PartialEq)]
+pub struct AltReveal {
+    /// RGB is the alt albedo (sRGB), alpha the reveal mask (linear). Read with the color UV.
+    pub texture: Slot,
+    /// 0 keeps the color texture, 1 replaces it everywhere.
+    pub amount: f32,
+    pub softness: f32,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -261,6 +286,7 @@ impl Material {
             outline_thickness: 0.0,
             self_illum: None,
             hidden_shell_ok: false,
+            alt_reveal: None,
         };
         let Some(m) = &self.morphic else { return r };
         let pbr = m.is_pbr();
@@ -325,7 +351,26 @@ impl Material {
                 r.self_illum = Some(SelfIllum { scale, tint, albedo_factor, mask });
             }
         }
+        r.alt_reveal = self.alt_reveal(m);
         r
+    }
+
+    /// The reveal a material shows at rest, or None when its color texture is all that renders.
+    fn alt_reveal(&self, m: &Morphic) -> Option<AltReveal> {
+        let &texture = m.textures.get("g_tAltColor_Reveal")?;
+        if !m.is_pbr() {
+            return None;
+        }
+        let authored = m.float(&["g_flAltTextureAmount"], 0.0);
+        let amount = m.expressions.get("g_flAltTextureAmount").and_then(|src| alt_reveal::eval_at_rest(src)).map_or(authored, |v| v as f32);
+        let amount = if amount.is_finite() { amount.clamp(0.0, 1.0) } else { 0.0 };
+        if amount <= 0.0 {
+            return None;
+        }
+        let softness = m.float(&["g_flAltTextureRevealSoftness"], alt_reveal::DEFAULT_SOFTNESS);
+        let softness = if softness.is_finite() { softness.clamp(0.0, 0.5) } else { alt_reveal::DEFAULT_SOFTNESS };
+        let uv = self.base_tex.map_or(0, |s| s.uv);
+        Some(AltReveal { texture: Slot { texture, uv }, amount, softness })
     }
 
     /// Whether a primitive marked `morphic_shell` shows: only a plain opaque NPR shell.
@@ -428,6 +473,27 @@ mod tests {
         assert!((same[0] - 0.3).abs() < 1e-6, "the pivot is a fixed point of contrast");
         let gray = color_correct([0.6, 0.2, 0.1], [1.0, 0.0, 1.0], p);
         assert!((gray[0] - gray[1]).abs() < 1e-6 && (gray[1] - gray[2]).abs() < 1e-6);
+    }
+
+    #[test]
+    fn violets_brush_reveals_its_alt_albedo_at_rest() {
+        let brush = morphic(
+            r#"{"schema_version":4,"shader":"pbr.vfx","textures":{"g_tColor":0,"g_tAltColor_Reveal":5},"floats":{"g_flAltTextureAmount":0},
+            "dynamic_params":{"g_flAltTextureAmount":{"source":"max($AmmoPercent,smoothstep(0.5,1,$ReloadProgress))","decompiled":true}}}"#,
+        );
+        let alt = brush.resolve().alt_reveal.expect("the ammo expression inks the brush");
+        assert_eq!((alt.texture.texture, alt.amount, alt.softness), (5, 1.0, alt_reveal::DEFAULT_SOFTNESS));
+        // A failed decompile keeps the authored static amount (Nurse Harrow's cloak: 0).
+        let cloak = morphic(
+            r#"{"schema_version":4,"shader":"pbr.vfx","textures":{"g_tAltColor_Reveal":5},"floats":{"g_flAltTextureAmount":0},
+            "dynamic_params":{"g_flAltTextureAmount":{"source":"","decompiled":false}}}"#,
+        );
+        assert!(cloak.resolve().alt_reveal.is_none());
+        let half = morphic(r#"{"schema_version":4,"shader":"pbr.vfx","textures":{"g_tAltColor_Reveal":5},"floats":{"g_flAltTextureAmount":0.52,"g_flAltTextureRevealSoftness":0.9}}"#);
+        let alt = half.resolve().alt_reveal.unwrap();
+        assert_eq!((alt.amount, alt.softness), (0.52, 0.5));
+        let other_shader = morphic(r#"{"schema_version":4,"shader":"generic.vfx","textures":{"g_tAltColor_Reveal":5},"floats":{"g_flAltTextureAmount":1}}"#);
+        assert!(other_shader.resolve().alt_reveal.is_none());
     }
 
     #[test]
