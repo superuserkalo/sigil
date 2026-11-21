@@ -315,6 +315,13 @@ pub fn view(s: &State, u: &Ui) -> El {
     measured(body)
 }
 
+/// The page's size. Inside a view build it is the laid-out size, which Rune settles in the same
+/// commit, so the first frame is already right; `View::page_size` (stored by the layout
+/// handler, a frame late) is for code outside a build.
+fn page_size(v: &View) -> (f32, f32) {
+    rune::memo::layout_size("locker-root").map_or(v.page_size, |[w, h]| (w, h))
+}
+
 /// Wraps a page so its laid-out size lands in `View::page_size`.
 fn measured(page: El) -> El {
     el().key("locker-root")
@@ -364,7 +371,7 @@ fn hero_name_matches(name: &str, codename: &str, query: &str) -> bool {
 }
 
 fn grid_columns(v: &View) -> (usize, f32) {
-    let avail = (v.page_size.0 - 2.0 * crate::ui::PAGE_X).max(CARD_MIN_W);
+    let avail = (page_size(v).0 - 2.0 * crate::ui::PAGE_X).max(CARD_MIN_W);
     let cols = (((avail + GRID_GAP) / (CARD_MIN_W + GRID_GAP)).floor() as usize).clamp(2, 8);
     let card_w = (avail - GRID_GAP * (cols as f32 - 1.0)) / cols as f32;
     (cols, card_w.floor())
@@ -1298,7 +1305,7 @@ fn favorite_button(s: &State, u: &Ui, m: &ModRow) -> El {
 // --- hero page -------------------------------------------------------------------
 
 fn hero_page(s: &State, u: &Ui, v: &View, hero: &HeroCard) -> El {
-    let (page_w, page_h) = v.page_size;
+    let (page_w, page_h) = page_size(v);
     // The full render once it has decoded, the card copy until then. The 3D view takes the
     // art's place.
     let backdrop = ready_pixels(s, hero.render.as_deref())
@@ -1734,7 +1741,7 @@ fn tab_mods<'a>(v: &'a View, tab: &GeneralTab) -> Vec<&'a ModRow> {
 }
 
 fn general_page(s: &State, u: &Ui, v: &View) -> El {
-    let (page_w, page_h) = v.page_size;
+    let (page_w, page_h) = page_size(v);
     let backdrop = match ready_pixels(s, v.general_bg.as_deref()) {
         Some(pixels) => Some(cover_at(&pixels, v.general_bg_size, page_w, page_h, 50.0, 50.0)),
         None => pixels_for(s, v.general_card.as_deref())

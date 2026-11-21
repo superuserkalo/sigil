@@ -213,7 +213,7 @@ pub fn page(s: &State, u: &Ui, url: &str) -> El {
             if found.is_empty() {
                 u.empty_state("", tr("No mods match."), tr("Try another word."), None)
             } else {
-                let width = if s.browse_view.width > 0.0 { s.browse_view.width } else { DEFAULT_GRID_W };
+                let width = super::toolbar::page_width(s);
                 let (cols, _) = grid_columns(width, s.browse_view.card_size);
                 let mut grid = el().key("browse-source-grid").w_full().equal_columns(cols.max(1)).gap(GRID_GAP);
                 for (index, listing) in found.iter().take(120).enumerate() {

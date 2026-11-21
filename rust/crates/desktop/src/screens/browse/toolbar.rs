@@ -53,6 +53,13 @@ pub(crate) fn tier_for(width: f32) -> Tier {
 
 /// The page's inner width, as the grid uses it.
 pub(crate) fn page_width(s: &State) -> f32 {
+    // Inside a view build, read the scroll area's laid-out width: Rune settles a layout read
+    // in the same commit, so the first frame already lays the grid out at the real width. The
+    // width the layout handler stores lands a frame late, and the grid jumped from the
+    // launch width to the real one on every open and resize. Polls read the stored one.
+    if let Some([w, _]) = rune::memo::layout_size("browse-scroll") {
+        return (w - 2.0 * crate::ui::PAGE_X).max(0.0);
+    }
     if s.browse_view.width > 0.0 {
         s.browse_view.width
     } else if s.browse_view.docked && s.browse_view.details.is_some() {

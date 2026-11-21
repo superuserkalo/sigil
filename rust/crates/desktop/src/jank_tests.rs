@@ -67,7 +67,8 @@ fn rects(rt: &Runtime<State>) -> Vec<(String, [i32; 4])> {
 }
 
 /// Centres of the elements whose key starts with `prefix`.
-fn centres(rt: &Runtime<State>, prefix: &str, skip: &[&str]) -> Vec<(f32, f32)> {
+/// Only those inside the window, where the pointer can reach them.
+fn centres(rt: &Runtime<State>, size: (f32, f32), prefix: &str, skip: &[&str]) -> Vec<(f32, f32)> {
     rt.elements()
         .into_iter()
         .filter(|e| {
@@ -76,7 +77,7 @@ fn centres(rt: &Runtime<State>, prefix: &str, skip: &[&str]) -> Vec<(f32, f32)> 
             })
         })
         .map(|e| (e.rect[0] + e.rect[2] / 2.0, e.rect[1] + e.rect[3] / 2.0))
-        .filter(|(x, y)| *x > 0.0 && *y > 0.0)
+        .filter(|(x, y)| *x > 0.0 && *y > 0.0 && *x < size.0 && *y < size.1)
         .collect()
 }
 
@@ -95,9 +96,9 @@ fn sweep(rt: &mut Runtime<State>, points: &[(f32, f32)]) -> u64 {
     rt.stats.commits - before
 }
 
-fn hover_check(name: &str, prefix: &str, skip: &[&str]) {
-    let mut rt = runtime(name, (1280.0, 800.0));
-    let points = centres(&rt, prefix, skip);
+fn hover_check(name: &str, size: (f32, f32), prefix: &str, skip: &[&str]) {
+    let mut rt = runtime(name, size);
+    let points = centres(&rt, size, prefix, skip);
     assert!(points.len() >= 3, "{name}: expected cards under {prefix}, found {}", points.len());
     let before = rects(&rt);
     // Rest on each card (under the 0.5 s tooltip delay: a tooltip may commit), then check
@@ -130,7 +131,7 @@ fn hover_check(name: &str, prefix: &str, skip: &[&str]) {
     );
     // A hover handler that skips the commit (`Tx::live_only`) must leave nothing stale: debug
     // builds re-run the view to compare, and list what differed.
-    let mut checked = runtime(name, (1280.0, 800.0));
+    let mut checked = runtime(name, size);
     checked.check_live_only(true);
     sweep(&mut checked, &points);
     let stale = checked.live_only_warnings();
@@ -139,9 +140,15 @@ fn hover_check(name: &str, prefix: &str, skip: &[&str]) {
 
 #[test]
 fn hovering_installed_cards_neither_commits_nor_moves() {
-    hover_check("demo-installed", "addon-", &[]);
+    hover_check("demo-installed", (1280.0, 800.0), "addon-", &[]);
 }
 
+
+#[test]
+fn hovering_browse_cards_neither_commits_nor_moves() {
+    // Tall enough that the grid under the shelves is in the window.
+    hover_check("browse-card-stress", (1280.0, 2000.0), "browse-card-", &["browse-card-actions", "browse-card-stat"]);
+}
 
 /// Pages at rest draw nothing: no spinner, pulse or timer keeps them awake.
 #[test]
@@ -205,4 +212,70 @@ fn update_banner_keeps_one_height_through_its_states() {
         heights.windows(2).all(|w| (w[0].1 - w[1].1).abs() < 0.5),
         "the update banner changes height: {heights:?}"
     );
+}
+
+/// Targets of every keyed element, by key.
+fn targets(rt: &Runtime<State>) -> Vec<(String, [i32; 4])> {
+    let mut out: Vec<(String, [i32; 4])> = rt
+        .elements()
+        .into_iter()
+        .filter(|e| !e.exiting)
+        .filter_map(|e| e.key.map(|k| (k, e.target.map(|v| (v * 2.0).round() as i32))))
+        .collect();
+    out.sort();
+    out
+}
+
+/// The first frame is laid out at the window's real size. A page that learns its width from a
+/// layout handler gets it a frame late, so its grid is built for the launch width first and
+/// jumps on frame two, on every open and every resize.
+#[test]
+fn first_frame_is_laid_out_at_the_real_width() {
+    let mut wrong = Vec::new();
+    for name in ["browse-card-stress", "locker", "demo-installed", "stats"] {
+        for size in [(1040.0, 680.0), (1600.0, 900.0)] {
+            let mut s = crate::data::init_state();
+            if name.starts_with("browse") {
+                crate::data::browse_from_body(&mut s, BROWSE_FIXTURE);
+                if let Some(page) = s.browse.page.as_mut() {
+                    page.complete = true;
+                }
+            }
+            scene(name)(&mut s);
+            let mut rt = Runtime::new(s, app::view, size, Env::new(true, 1.0));
+            rt.check_live_only(false);
+            rt.frame(0.0);
+            let first = targets(&rt);
+            settle(&mut rt);
+            let last = targets(&rt);
+            let moved: Vec<String> = last
+                .iter()
+                .filter(|item| first.iter().any(|f| f.0 == item.0) && !first.contains(item))
+                .take(3)
+                .map(|(k, r)| format!("{k} -> {r:?}"))
+                .collect();
+            if !moved.is_empty() {
+                wrong.push(format!("{name} at {size:?}: {}", moved.join(", ")));
+            }
+        }
+    }
+    assert!(wrong.is_empty(), "laid out again after the first frame:\n{}", wrong.join("\n"));
+}
+
+/// Dragging the window narrower than a column break must not scroll the page. The grid's
+/// virtual rows were keyed by their column count too, so every key changed at the break, and
+/// the page at its top jumped about 400 pt down.
+#[test]
+fn resizing_across_a_column_break_keeps_the_page_where_it_is() {
+    let mut rt = runtime("browse-card-stress", (1360.0, 680.0));
+    let scrolled = |rt: &Runtime<State>| {
+        rt.elements().into_iter().find(|e| e.key.as_deref() == Some("browse-page")).map(|e| e.scrolled[1])
+    };
+    assert_eq!(scrolled(&rt), Some(0.0));
+    for width in (1040..=1360).rev().step_by(16) {
+        rt.set_viewport((width as f32, 680.0), 1.0);
+        rt.frame(1.0 / 60.0);
+        let at = scrolled(&rt).unwrap_or(0.0);
+        assert!(at.abs() < 0.5, "at {width} pt wide the page scrolled {at} pt by itself");
+    }
 }
