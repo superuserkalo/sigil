@@ -21,7 +21,7 @@ use crate::screens::settings::i18n::{fill, tr};
 use crate::ui::{MICRO, SMALL, Ui};
 
 /// The bar's height, in points.
-pub const BAR_H: f32 = 26.0;
+pub const BAR_H: f32 = 24.0;
 /// How often the cached counts are taken again.
 const REFRESH: Duration = Duration::from_secs(1);
 /// The level a muted preview comes back to when nothing was remembered.

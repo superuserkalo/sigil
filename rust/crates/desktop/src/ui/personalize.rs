@@ -264,7 +264,7 @@ impl Art {
 /// Corner radius for the shared controls.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum Radius {
-    /// The house look: at most 2 points on any corner.
+    /// The house look: 4 points on controls and cards, 2 on what sits inside them.
     #[default]
     Block,
     Square,

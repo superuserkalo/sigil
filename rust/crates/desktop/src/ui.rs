@@ -17,17 +17,21 @@ pub const STATUS_H: f32 = 0.0;
 pub const PAGE_X: f32 = 32.0;
 pub const PAGE_TOP: f32 = 24.0;
 
-pub const HERO: TextStyle = TextStyle::new(28.0, 600.0).lh(34.0).tracking(-0.4);
-pub const DISPLAY: TextStyle = TextStyle::new(22.0, 600.0).lh(28.0).tracking(-0.25);
-pub const H1: TextStyle = TextStyle::new(17.0, 600.0).lh(24.0);
-pub const H2: TextStyle = TextStyle::new(14.0, 590.0).lh(20.0);
+// The type scale: 13 for controls and body, 11 to 12 for metadata, 14 to 16 for section titles,
+// 20 for a page title. Regular is 420, medium about 510, titles about 580.
+pub const HERO: TextStyle = TextStyle::new(20.0, 580.0).lh(26.0).tracking(-0.2);
+pub const DISPLAY: TextStyle = TextStyle::new(20.0, 580.0).lh(26.0).tracking(-0.2);
+pub const H1: TextStyle = TextStyle::new(16.0, 580.0).lh(22.0).tracking(-0.1);
+pub const H2: TextStyle = TextStyle::new(14.0, 560.0).lh(20.0);
 pub const LEAD: TextStyle = TextStyle::new(14.0, 420.0).lh(22.0);
 pub const BODY: TextStyle = TextStyle::new(13.0, 420.0).lh(20.0);
 pub const CHAT: TextStyle = TextStyle::new(14.0, 420.0).lh(23.0);
-pub const BODY_MED: TextStyle = TextStyle::new(13.0, 540.0).lh(20.0);
-pub const SMALL: TextStyle = TextStyle::new(12.0, 430.0).lh(16.0);
+pub const BODY_MED: TextStyle = TextStyle::new(13.0, 510.0).lh(20.0);
+pub const SMALL: TextStyle = TextStyle::new(12.0, 420.0).lh(16.0);
+/// Small text whose digits line up: counts, sizes, versions.
+pub const SMALL_NUM: TextStyle = TextStyle::new(12.0, 420.0).lh(16.0).features("'tnum' 1");
 pub const LABEL: TextStyle = TextStyle::new(12.0, 500.0).lh(16.0);
-pub const NAV: TextStyle = TextStyle::new(13.0, 500.0).lh(20.0);
+pub const NAV: TextStyle = TextStyle::new(13.0, 480.0).lh(20.0);
 pub const WORDMARK: TextStyle = TextStyle::new(15.0, 640.0).lh(20.0).tracking(-0.2);
 pub const MICRO: TextStyle = TextStyle::new(11.0, 500.0).lh(14.0).features("'tnum' 1");
 pub const MONO: TextStyle = TextStyle::new(12.0, 430.0)
@@ -36,7 +40,16 @@ pub const MONO: TextStyle = TextStyle::new(12.0, 430.0)
 pub const MONO_MED: TextStyle = TextStyle::new(12.0, 540.0)
     .lh(18.0)
     .family(Family::SystemMono);
-pub const NUM: TextStyle = TextStyle::new(17.0, 600.0).lh(22.0).features("'tnum' 1");
+pub const NUM: TextStyle = TextStyle::new(16.0, 570.0).lh(22.0).features("'tnum' 1");
+
+/// The control heights. Every button, field, tab and menu row sits on one of these.
+pub const CONTROL_S: f32 = 24.0;
+pub const CONTROL_M: f32 = 28.0;
+pub const CONTROL_L: f32 = 32.0;
+
+/// The keyboard focus outline: 2 points, 1 point clear of the control.
+pub const FOCUS_W: f32 = 2.0;
+pub const FOCUS_GAP: f32 = 1.0;
 
 #[derive(Clone, Copy)]
 pub struct Ui {
@@ -137,9 +150,13 @@ pub struct Look {
     pub density: f32,
 }
 
-/// The house corner: the Block choice in Personalize. Radii scale down to at most 2 points.
+/// The house corner: the Block choice in Personalize. Controls, cards and dialogs get 4 points;
+/// what sits inside them (knobs, chips, menu rows, segments) gets 2.
 pub const BLOCK_RADIUS: f32 = 0.2;
-const BLOCK_MAX: f32 = 2.0;
+const BLOCK_OUTER: f32 = 4.0;
+const BLOCK_INNER: f32 = 2.0;
+/// Radii asked for at or under this are inner parts.
+const BLOCK_INNER_UP_TO: f32 = 6.0;
 
 impl Look {
     pub const DEFAULT: Look = Look {
@@ -185,13 +202,19 @@ pub fn density() -> f32 {
 }
 
 /// A corner radius on the house grid, scaled by the Personalize radius choice. Block, the
-/// default, keeps every corner at 2 points or less; Soft (1.0) is exact.
+/// default, maps every corner to 4 points (outer) or 2 (inner); Soft (1.0) is exact.
 pub fn r(points: f32) -> f32 {
     let k = look().radius;
     if k == 1.0 {
         points
     } else if k == BLOCK_RADIUS {
-        (points * k).round().min(BLOCK_MAX)
+        if points <= 0.0 {
+            0.0
+        } else if points <= BLOCK_INNER_UP_TO {
+            points.min(BLOCK_INNER)
+        } else {
+            BLOCK_OUTER
+        }
     } else {
         (points * k).round()
     }
@@ -207,11 +230,9 @@ pub fn switch_knob() -> Color {
     oklch(0.93, 0.0, 0.0)
 }
 
-/// A floating layer's shadow colour. Graphite separates layers with hard borders, so its
-/// shadow is off; every other look keeps the colour it asked for.
+/// A floating layer's shadow colour. Only menus, dialogs, popovers and tooltips cast one.
 pub fn soft(color: Color) -> Color {
-    let look = look();
-    if look.custom.is_none() && look.theme == Theme::Graphite { Color::TRANSPARENT } else { color }
+    color
 }
 
 // --- palettes ---------------------------------------------------------------------
@@ -569,19 +590,20 @@ impl Ui {
         u
     }
 
-    /// The house look: neutral graphite in clear tonal steps (well, sidebar, page, raised),
-    /// hard lines instead of shadows, and text that clears AA on every layer.
+    /// The house look: neutral graphite in small tonal steps (well, sidebar, page, raised),
+    /// 1 point low-contrast lines, shadows only on floating layers, and four text tiers that
+    /// all clear AA on every layer.
     fn graphite() -> Ui {
-        let mut u = Ui::dark_variant(0.235, 0.205, 0.285, 0.19, 0.0, 0.0);
-        u.hair = Color::WHITE.alpha(0.11);
-        u.hair_strong = Color::WHITE.alpha(0.19);
-        u.ink = oklch(0.97, 0.0, 0.0);
-        u.prose = oklch(0.88, 0.0, 0.0);
-        u.muted = oklch(0.77, 0.0, 0.0);
-        u.faint = oklch(0.70, 0.0, 0.0);
-        u.hover = Color::WHITE.alpha(0.06);
-        u.selected = Color::WHITE.alpha(0.11);
-        u.shadow = Color::TRANSPARENT;
+        let mut u = Ui::dark_variant(0.225, 0.2, 0.268, 0.185, 0.0, 0.0);
+        u.hair = Color::WHITE.alpha(0.085);
+        u.hair_strong = Color::WHITE.alpha(0.15);
+        u.ink = oklch(0.95, 0.0, 0.0);
+        u.prose = oklch(0.86, 0.0, 0.0);
+        u.muted = oklch(0.75, 0.0, 0.0);
+        u.faint = oklch(0.68, 0.0, 0.0);
+        u.hover = Color::WHITE.alpha(0.05);
+        u.selected = Color::WHITE.alpha(0.09);
+        u.shadow = Color::BLACK.alpha(0.40);
         u
     }
 
@@ -1155,11 +1177,15 @@ mod look_tests {
     }
 
     #[test]
-    fn block_corners_stay_at_two_points() {
+    fn block_corners_sit_on_two_steps() {
         set_personal(None, BLOCK_RADIUS);
-        for points in [2.0, 4.0, 8.0, 10.0, 14.0, 22.0] {
-            assert!(r(points) <= 2.0, "{points}");
+        for points in [2.0, 4.0, 6.0] {
+            assert_eq!(r(points), 2.0, "{points}");
         }
+        for points in [8.0, 10.0, 14.0, 22.0] {
+            assert_eq!(r(points), 4.0, "{points}");
+        }
+        assert_eq!(r(0.0), 0.0);
         set_personal(None, 1.0);
     }
 

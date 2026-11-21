@@ -1162,6 +1162,7 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
     let u = Ui::new();
     cx.foreground(u.ink);
     cx.caption_color(u.muted);
+    cx.focus_ring(crate::ui::FOCUS_W, crate::ui::FOCUS_GAP, u.accent);
     let insets = cx.chrome_insets();
     // A status line a handler wrote since the last poll becomes a toast on the next one.
     crate::notify::needs_poll(s);
@@ -1489,7 +1490,7 @@ fn nav_row(u: &Ui, key: String, on: bool) -> El {
     row()
         .key(key)
         .w_full()
-        .h(34.0)
+        .h(crate::ui::CONTROL_L)
         .px(10.0)
         .gap(10.0)
         .center_y()
@@ -1587,7 +1588,7 @@ fn launch_modded(s: &State, u: &Ui) -> El {
     row()
         .key("launch-modded")
         .w_full()
-        .h(36.0)
+        .h(crate::ui::CONTROL_L)
         .px(12.0)
         .gap(10.0)
         .center_y()
@@ -1672,7 +1673,7 @@ fn compact_launch(s: &State, u: &Ui, vanilla: bool) -> El {
     row()
         .key(if vanilla { "launch-vanilla" } else { "launch-modded" })
         .w_full()
-        .h(if vanilla { 32.0 } else { 36.0 })
+        .h(crate::ui::CONTROL_L)
         .center()
         .radius(crate::ui::r(8.0))
         .fill(if vanilla { Color::TRANSPARENT } else { u.accent })
@@ -2959,10 +2960,10 @@ pub fn scenes() -> &'static [(&'static str, fn(&mut State))] {
 /// Shared by screens: a small uppercase filter chip.
 pub fn filter_chip(u: &Ui, label: &str, on: bool) -> El {
     row()
-        .h(27.0)
+        .h(crate::ui::CONTROL_M)
         .px(10.0)
         .center()
-        .radius(crate::ui::r(13.0))
+        .radius(crate::ui::r(4.0))
         .fill(if on {
             u.accent.alpha(0.16)
         } else {
