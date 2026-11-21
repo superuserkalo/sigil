@@ -4,7 +4,7 @@
 //! entry metadata. Entry bytes live either in the directory file itself or in
 //! numbered chunk files next to it.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
@@ -259,30 +259,47 @@ fn parse_tree(tree: &[u8], keep_preload: bool) -> Result<ParsedTree> {
     let mut skipped = 0_u64;
     let mut duplicates = 0_u64;
 
+    // Where each entry's extension, folder and name strings start, for the second reading of a
+    // tree whose root folder is written as an empty string (`classic_walk_stays_within`).
+    let mut starts: HashSet<(usize, usize, usize)> = HashSet::new();
+    let mut empty_root = false;
+
     loop {
+        let type_start = cursor.position;
         let type_name = cursor.read_cstring()?;
         if type_name.is_empty() {
             break;
         }
 
+        // An extension always holds at least one folder, so an empty first folder is the root
+        // written without its space (some packers do), not the end of the list. Ported from
+        // Grimoire's mod safety scanner (MIT, #578).
+        let mut first = true;
         loop {
+            let directory_start = cursor.position;
             let directory_name = cursor.read_cstring()?;
-            if directory_name.is_empty() {
+            if directory_name.is_empty() && !first {
                 break;
             }
+            if directory_name.is_empty() {
+                empty_root = true;
+            }
+            first = false;
 
-            let directory = if directory_name == " " {
+            let directory = if directory_name == " " || directory_name.is_empty() {
                 ""
             } else {
                 directory_name.as_str()
             };
 
             loop {
+                let name_start = cursor.position;
                 let file_name = cursor.read_cstring()?;
                 if file_name.is_empty() {
                     break;
                 }
 
+                starts.insert((type_start, directory_start, name_start));
                 if cursor.position + ENTRY_METADATA_SIZE > tree.len() {
                     return Err(Error::msg(
                         "VPK directory tree ends in the middle of an entry.",
@@ -346,12 +363,68 @@ fn parse_tree(tree: &[u8], keep_preload: bool) -> Result<ParsedTree> {
         }
     }
 
+    // Read the classic way, an empty folder ends the extension and what follows reads as more
+    // extensions and folders. Nothing says which reading the game takes, so an archive whose
+    // classic reading reaches an entry this one did not (spelled out of a record's spare bytes)
+    // is refused instead of trusted.
+    if empty_root && !classic_walk_stays_within(tree, &starts) {
+        return Err(Error::msg(
+            "VPK directory reads two ways: its root folder is an empty name and the bytes after it spell other files. Sigil refuses it rather than guess which files the game sees.",
+        ));
+    }
+
     Ok(ParsedTree {
         entries,
         by_path,
         skipped,
         duplicates,
     })
+}
+
+/// Walk `tree` the classic way (an empty folder name ends the extension) and check every entry
+/// it reaches was also read by [`parse_tree`]. A tree that runs out early reads as within.
+fn classic_walk_stays_within(tree: &[u8], known: &HashSet<(usize, usize, usize)>) -> bool {
+    let mut position = 0usize;
+    // The length of the string at the cursor, or None once the tree runs out.
+    let next = |position: &mut usize| -> Option<usize> {
+        let start = (*position).min(tree.len());
+        let length = tree[start..].iter().position(|b| *b == 0)?;
+        *position = start + length + 1;
+        Some(length)
+    };
+    loop {
+        let type_start = position;
+        match next(&mut position) {
+            None | Some(0) => return true,
+            Some(_) => {}
+        }
+        loop {
+            let directory_start = position;
+            match next(&mut position) {
+                None => return true,
+                Some(0) => break,
+                Some(_) => {}
+            }
+            loop {
+                let name_start = position;
+                match next(&mut position) {
+                    None => return true,
+                    Some(0) => break,
+                    Some(_) => {}
+                }
+                if !known.contains(&(type_start, directory_start, name_start)) {
+                    return false;
+                }
+                if position + ENTRY_METADATA_SIZE > tree.len() {
+                    return true;
+                }
+                position += ENTRY_METADATA_SIZE + usize::from(read_u16(tree, position + 4));
+                if position > tree.len() {
+                    return true;
+                }
+            }
+        }
+    }
 }
 
 fn join_vpk_path(directory: &str, file_name: &str, type_name: &str) -> Option<String> {
@@ -497,6 +570,45 @@ mod tests {
     fn cstring(value: &str, output: &mut Vec<u8>) {
         output.extend_from_slice(value.as_bytes());
         output.push(0);
+    }
+
+    /// One `readme.txt` at the root, its folder written as `root`, its CRC bytes as given.
+    fn root_tree(root: &str, crc: [u8; 4]) -> Vec<u8> {
+        let mut tree = Vec::new();
+        cstring("txt", &mut tree);
+        cstring(root, &mut tree);
+        cstring("readme", &mut tree);
+        let start = tree.len();
+        tree.extend_from_slice(&[0u8; ENTRY_METADATA_SIZE]);
+        tree[start..start + 4].copy_from_slice(&crc);
+        tree[start + 6..start + 8].copy_from_slice(&VPK_DIRECTORY_ARCHIVE.to_le_bytes());
+        tree[start + 16..start + 18].copy_from_slice(&ENTRY_TERMINATOR.to_le_bytes());
+        cstring("", &mut tree);
+        cstring("", &mut tree);
+        tree.push(0);
+        tree
+    }
+
+    #[test]
+    fn an_empty_root_folder_reads_as_the_root() {
+        // Some packers write the root folder as an empty name instead of a space.
+        let parsed = parse_tree(&root_tree("", [0; 4]), false).unwrap();
+        let paths: Vec<&str> = parsed.entries.iter().map(|e| e.path.as_str()).collect();
+        assert_eq!(paths, vec!["readme.txt"]);
+        let spaced = parse_tree(&root_tree(" ", [0; 4]), false).unwrap();
+        assert_eq!(spaced.entries.len(), 1);
+        assert_eq!(spaced.entries[0].path, "readme.txt");
+    }
+
+    #[test]
+    fn an_empty_root_that_hides_a_second_reading_is_refused() {
+        // Read the classic way, the empty folder ends `txt`, `readme` becomes an extension and
+        // the record's CRC bytes ("a\0x\0") a folder `a` holding a file `x`.
+        let hidden = *b"a\0x\0";
+        let error = parse_tree(&root_tree("", hidden), false).err().expect("refused");
+        assert!(error.to_string().contains("reads two ways"), "{error}");
+        // Under a root spelled with its space there is one reading only.
+        assert_eq!(parse_tree(&root_tree(" ", hidden), false).unwrap().entries.len(), 1);
     }
 
     #[test]
