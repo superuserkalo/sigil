@@ -65,7 +65,7 @@ pub fn data_dir() -> PathBuf {
     } else {
         std::env::var_os("XDG_DATA_HOME")
             .map(|h| PathBuf::from(h).join("DeadlockAgentHarness"))
-            .or_else(|| home.map(|h| h.join(".local/share/deadlock-harness")))
+            .or_else(|| home.map(|h| h.join(".local/share/DeadlockAgentHarness")))
             .unwrap_or_else(|| PathBuf::from(".dah"))
     }
 }
