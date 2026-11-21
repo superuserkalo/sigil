@@ -4939,6 +4939,48 @@ mod tests {
     }
 
     #[test]
+    fn a_gamebanana_file_is_held_to_its_size_and_md5() {
+        let dir = std::env::temp_dir().join(format!("sigil-integrity-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("drifter.zip");
+        std::fs::write(&path, b"hello").unwrap();
+        let report = DownloadReport {
+            requested_url: "https://gamebanana.com/dl/1".into(),
+            final_url: "https://files.gamebanana.com/mods/drifter.zip".into(),
+            path: path.clone(),
+            file_name: "drifter.zip".into(),
+            bytes: 5,
+            sha256: String::new(),
+        };
+        let mut file = GameBananaFile {
+            file_id: 1,
+            file_name: "drifter.zip".into(),
+            download_url: "https://gamebanana.com/dl/1".into(),
+            size_bytes: Some(5),
+            version: None,
+            md5: Some("5D41402ABC4B2A76B9719D911017C592".into()),
+            file_count: 1,
+        };
+        assert_eq!(integrity_problem(&file, &report), None);
+        assert!(md5_file_matches(&path, "5d41402abc4b2a76b9719d911017c592"));
+        assert!(md5_file_matches(&path, " 5D41402ABC4B2A76B9719D911017C592 "));
+
+        file.size_bytes = Some(6);
+        assert!(integrity_problem(&file, &report).unwrap().contains("is 5 bytes"));
+        file.size_bytes = Some(5);
+        file.md5 = Some("00000000000000000000000000000000".into());
+        assert!(integrity_problem(&file, &report).unwrap().contains("checksum"));
+        // A record without a full MD5 checks its size only instead of failing.
+        file.md5 = Some("abc".into());
+        assert_eq!(integrity_problem(&file, &report), None);
+        file.size_bytes = None;
+        assert_eq!(integrity_problem(&file, &report), None);
+        assert!(!md5_file_matches(&dir.join("missing.zip"), "5d41402abc4b2a76b9719d911017c592"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn discovery_failure_is_reported_before_anything_is_written() {
         let discovery = InstallDiscovery {
             install: None,
