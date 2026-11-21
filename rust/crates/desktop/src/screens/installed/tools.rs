@@ -1004,6 +1004,9 @@ fn health_footer(ui: &HealthUi, u: &Ui) -> El {
                 }),
         );
     }
+    if !ui.running && ui.error.is_none() {
+        footer = footer.child(super::repair::copy_all(u));
+    }
     footer.child(spacer()).child(
         u.action(tr("Done"), ActionKind::Primary)
             .key("health-done")

@@ -4235,6 +4235,7 @@ fn poll_changes(st: &mut State) -> bool {
                     format!("Updated {}. The old file is backed up.", done.name)
                 };
                 st.installed.updates.journal = done.journal;
+                repair::after_update(st, done.slot);
                 st.installed.last_undo = Some(Undo::Update {
                     slot: done.slot,
                     backups: done.backups,
@@ -4351,18 +4352,30 @@ fn trash_dialog(s: &State, u: &Ui) -> El {
     }
     for entry in entries.iter().take(8) {
         let manifest = &entry.manifest;
-        let name = manifest
-            .meta
-            .as_ref()
-            .map(|meta| meta.name.clone())
-            .filter(|name| !name.trim().is_empty())
-            .unwrap_or_else(|| format!("pak{:02}_dir.vpk", manifest.slot));
-        let detail = format!(
-            "Slot {:02}  ·  {}  ·  {}",
-            manifest.slot,
-            crate::model::format_size(manifest.bytes),
-            manifest.trashed_at.get(..10).unwrap_or("")
-        );
+        let name = if manifest.loose {
+            tr("Leftover files").to_string()
+        } else {
+            manifest
+                .meta
+                .as_ref()
+                .map(|meta| meta.name.clone())
+                .filter(|name| !name.trim().is_empty())
+                .unwrap_or_else(|| format!("pak{:02}_dir.vpk", manifest.slot))
+        };
+        let detail = if manifest.loose {
+            format!(
+                "{}  ·  {}",
+                crate::model::format_size(manifest.bytes),
+                manifest.trashed_at.get(..10).unwrap_or("")
+            )
+        } else {
+            format!(
+                "Slot {:02}  ·  {}  ·  {}",
+                manifest.slot,
+                crate::model::format_size(manifest.bytes),
+                manifest.trashed_at.get(..10).unwrap_or("")
+            )
+        };
         let dir = entry.dir.clone();
         list = list.child(
             row()
@@ -4718,6 +4731,7 @@ pub fn scene_trash(s: &mut State) {
                     name: name.to_string(),
                     ..Default::default()
                 }),
+                loose: false,
             },
         })
         .collect();
