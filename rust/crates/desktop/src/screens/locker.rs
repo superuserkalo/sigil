@@ -26,6 +26,7 @@ pub mod assets;
 pub mod card_art;
 mod catalog;
 pub mod game_sounds;
+pub mod cursor_create;
 pub mod cursors;
 pub mod parts;
 pub mod sync;
