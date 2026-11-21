@@ -1163,6 +1163,7 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
     cx.focus_ring(crate::ui::FOCUS_W, crate::ui::FOCUS_GAP, u.accent);
     cx.help_look(u.help_look());
     let insets = cx.chrome_insets();
+    crate::ui::set_window(window);
     // The page toolbars fold by width alone: the window less the sidebar and the page margins.
     crate::ui::set_fit(crate::ui::Fit::from_width(
         window.0 - crate::shell_w4::sidebar_width(s, insets.leading) - 2.0 * PAGE_X,

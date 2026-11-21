@@ -6,6 +6,10 @@ use std::collections::HashMap;
 use std::sync::OnceLock;
 
 pub const DE: &[(&str, &str)] = &[
+    ("Console commands", "Konsolenbefehle"),
+    ("Rename preset", "Vorlage umbenennen"),
+    ("Delete preset", "Vorlage löschen"),
+    ("Scaled to fit,", "Eingepasst,"),
     ("Apply", "Anwenden"),
     ("Apply crosshair", "Fadenkreuz anwenden"),
     ("Blue", "Blau"),
@@ -132,7 +136,7 @@ mod tests {
 
     #[test]
     fn every_routed_string_has_german() {
-        let extra = [super::super::DESCRIPTION, "Copying", "Copied", "Copy code"];
+        let extra = ["Copying", "Copied", "Copy code", "Unpin the window", "Keep the window above other windows"];
         let mut missing: Vec<String> = routed(include_str!("crosshair.rs"))
             .into_iter()
             .chain(routed(include_str!("crosshair_game.rs")))

@@ -108,6 +108,21 @@ pub fn fit() -> Fit {
     FIT.lock().map(|f| *f).unwrap_or(Fit::Full)
 }
 
+static WINDOW: std::sync::Mutex<(f32, f32)> = std::sync::Mutex::new((1280.0, 800.0));
+
+/// Set by the view each frame: the window's size in points.
+pub fn set_window(size: (f32, f32)) {
+    if let Ok(mut w) = WINDOW.lock() {
+        *w = size;
+    }
+}
+
+/// The window's size for this frame, for pages that size a part to the window's height
+/// (Crosshair's stage) instead of their content.
+pub fn window() -> (f32, f32) {
+    WINDOW.lock().map(|w| *w).unwrap_or((1280.0, 800.0))
+}
+
 /// The control heights. Every button, field, tab and menu row sits on one of these.
 pub const CONTROL_S: f32 = 24.0;
 pub const CONTROL_M: f32 = 28.0;

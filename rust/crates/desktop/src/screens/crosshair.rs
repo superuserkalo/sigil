@@ -15,7 +15,7 @@ use std::time::{Duration, Instant};
 
 use deadlock_core::crosshair::{Crosshair, Import, Preset};
 use rune::{
-    Color, Drag, El, Key, KeyEvent, MotionIntent, Phase, Pixels, ScrollSpec, Spring, TextEdit, Tx,
+    Color, Drag, El, Key, KeyEvent, Phase, Pixels, ScrollSpec, TextEdit, Tx,
     col, el, icon, row, spacer, text,
 };
 
@@ -40,7 +40,7 @@ fn tr(text: &str) -> &str {
     i18n::tr(text)
 }
 use crate::jobs::Job;
-use crate::ui::{ActionKind, BODY, BODY_MED, H1, H2, LABEL, MONO, PAGE_TOP, PAGE_X, SMALL, Tone, Ui};
+use crate::ui::{ActionKind, BODY, BODY_MED, H1, LABEL, MONO, PAGE_TOP, PAGE_X, SMALL, Tone, Ui};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Field {
@@ -176,6 +176,8 @@ pub struct View {
     pub blank: TextEdit,
     /// The "Remove from autoexec" confirm is open.
     pub confirm_remove: bool,
+    /// The console commands popover above the column's foot is open.
+    pub console_open: bool,
 }
 
 impl Default for View {
@@ -202,6 +204,7 @@ impl Default for View {
             decode: Job::default(),
             blank: TextEdit::new(""),
             confirm_remove: false,
+            console_open: false,
         }
     }
 }
@@ -217,7 +220,10 @@ const SANDBOX_THUMB: &[u8] = include_bytes!("../../assets/crosshair/sandbox-thum
 
 /// Tall enough that the largest reticle the game accepts (a 171 point reach) fits at 1x
 /// with `FIT_MARGIN` to spare, so 1x is always true scale.
-const STAGE_H: f32 = 400.0;
+const STAGE_MIN: f32 = 220.0;
+const COLUMN_W: f32 = 320.0;
+/// The presets block under the stage: header 24, gap 8, strip 88.
+const PRESETS_H: f32 = 120.0;
 const ZOOM_STEPS: [f32; 6] = [0.5, 0.75, 1.0, 1.5, 2.0, 3.0];
 const ZOOM_ONE: usize = 2;
 /// The reticle is scaled to fit the stage up to this zoom and clipped beyond it.
@@ -225,12 +231,10 @@ const FIT_UP_TO: f32 = 1.5;
 /// Clear space kept between the fitted reticle and the stage edge.
 const FIT_MARGIN: f32 = 24.0;
 const RESOLUTIONS: [(u32, &str); 3] = [(1080, "1080p"), (1440, "1440p"), (2160, "4K")];
-const SLIDER_W: f32 = 280.0;
+const LABEL_W: f32 = 104.0;
 const VALUE_W: f32 = 40.0;
 const COPIED_FOR: Duration = Duration::from_secs(2);
 /// The picker's selected card: a quick spring with a small settle past the target.
-const SLIDE: Spring = Spring::new(0.3, 0.12);
-const DESCRIPTION: &str = "Tune your crosshair and read it against a real scene.";
 
 thread_local! {
     /// The main window, handed over by the shell when Rune creates it. UI thread only.
@@ -387,66 +391,47 @@ pub fn view(s: &State, u: &Ui) -> El {
         &icons::COPY
     };
 
-    let actions = row()
-        .gap(8.0)
-        .center_y()
-        .child(
-            u.icon_action(
-                if pinned { &icons::PIN_OFF } else { &icons::PIN },
-                tr(if pinned { "Pinned" } else { "Pin window" }),
-                ActionKind::Secondary,
-            )
-            .key("crosshair-pin")
-            .w(124.0)
-            .fill(if pinned { u.selected } else { Color::TRANSPARENT })
-            .label(tr(if pinned { "Unpin the window" } else { "Keep the window above other windows" }))
-            .checked(pinned)
+    let compact = crate::ui::fit() != crate::ui::Fit::Full;
+    let labelled = |glyph: &'static rune::Icon, label: &str, key: &str| {
+        if compact {
+            u.icon_button(glyph, label).key(key.to_string())
+        } else {
+            u.icon_action(glyph, label, ActionKind::Secondary).key(key.to_string())
+        }
+    };
+    let actions = vec![
+        u.icon_button(
+            if pinned { &icons::PIN_OFF } else { &icons::PIN },
+            tr(if pinned { "Unpin the window" } else { "Keep the window above other windows" }),
+        )
+        .key("crosshair-pin")
+        .fill(if pinned { u.selected } else { Color::TRANSPARENT })
+        .checked(pinned)
+        .cursor(rune::Cursor::Pointer)
+        .on_press(toggle_pin),
+        u.icon_button(&icons::ROTATE_CCW, tr("Reset"))
+            .key("crosshair-reset")
             .cursor(rune::Cursor::Pointer)
-            .on_press(toggle_pin),
-        )
-        .child(
-            u.icon_action(&icons::ROTATE_CCW, tr("Reset"), ActionKind::Secondary)
-                .key("crosshair-reset")
+            .on_press(|st: &mut State| {
+                st.crosshair.settings = deadlock_core::crosshair::Crosshair::default();
+                st.crosshair.source = "editor defaults".to_string();
+                st.crosshair.log = None;
+                st.crosshair.tone = Tone::Quiet;
+            }),
+        labelled(&icons::DOWNLOAD, tr("Import"), "crosshair-import")
+            .cursor(rune::Cursor::Pointer)
+            .on_press(open_import),
+        {
+            let b = labelled(code_icon, tr(code_label), "crosshair-copy-code");
+            if compact { b } else { b.w(116.0) }
                 .cursor(rune::Cursor::Pointer)
-                .on_press(|st: &mut State| {
-                    st.crosshair.settings = deadlock_core::crosshair::Crosshair::default();
-                    st.crosshair.source = "editor defaults".to_string();
-                    st.crosshair.log = None;
-                    st.crosshair.tone = Tone::Quiet;
-                }),
-        )
-        .child(
-            u.icon_action(&icons::DOWNLOAD, tr("Import"), ActionKind::Secondary)
-                .key("crosshair-import")
-                .cursor(rune::Cursor::Pointer)
-                .on_press(open_import),
-        )
-        .child(
-            u.icon_action(code_icon, tr(code_label), ActionKind::Secondary)
-                .key("crosshair-copy-code")
-                .w(116.0)
-                .cursor(rune::Cursor::Pointer)
-                .on_press(copy_share_code),
-        )
-        .child(
-            u.action(tr("Apply"), ActionKind::Primary)
-                .key("crosshair-apply")
-                .cursor(rune::Cursor::Pointer)
-                .on_press(|st: &mut State| st.crosshair.pending = true),
-        );
-
-    let mut page = col()
-        .key("crosshair-page")
-        .w_full()
-        .px(PAGE_X)
-        .pt(PAGE_TOP)
-        .pb(32.0)
-        .gap(16.0)
-        .child(u.page_head("", tr("Crosshair"), tr(DESCRIPTION), Some(actions)));
-
-    if let Some(log) = &v.log {
-        page = page.child(log_line(u, log, v.tone));
-    }
+                .on_press(copy_share_code)
+        },
+        u.action(tr("Apply"), ActionKind::Secondary)
+            .key("crosshair-apply")
+            .cursor(rune::Cursor::Pointer)
+            .on_press(|st: &mut State| st.crosshair.pending = true),
+    ];
 
     let controls = match v.group {
         Group::Lines => lines_section(s, u),
@@ -455,59 +440,71 @@ pub fn view(s: &State, u: &Ui) -> El {
         Group::Game => game_section(s, u),
     };
 
-    page = page
+    // Left: the stage fills the height above the presets. Right: a 320 point column with
+    // the group picker, the controls in their own scroll and the console row at its foot.
+    // The page itself does not scroll, so the stage and a slider are always both in view.
+    let left = col()
+        .key("crosshair-left")
+        .grow(1.0)
+        .min_w(0.0)
+        .h_full()
+        .gap(16.0)
         .child(stage(s, u))
-        .child(presets_section(s, u))
+        .child(presets_section(s, u));
+    let right = col()
+        .key("crosshair-column")
+        .w(COLUMN_W)
+        .h_full()
+        .gap(8.0)
+        .child(picker(u, v.group))
         .child(
             col()
+                .key("crosshair-controls-scroll")
                 .w_full()
-                .pt(8.0)
-                .child(picker(u, v.group))
+                .grow(1.0)
+                .min_h(0.0)
+                .scroll(ScrollSpec { stick_bottom: false })
                 .child(controls.key(format!("crosshair-group-{:?}", v.group))),
         )
-        .child(el().h(8.0))
         .child(commands(s, u));
 
     col()
-        .key("crosshair-scroll")
+        .key("crosshair-page")
         .w_full()
         .h_full()
         .min_h(0.0)
-        .scroll(ScrollSpec {
-            stick_bottom: false,
-        })
-        .child(page)
+        .px(PAGE_X)
+        .pt(PAGE_TOP)
+        .pb(16.0)
+        .gap(16.0)
+        .child(u.page_toolbar(u.page_title(tr("Crosshair")), Vec::new(), None, actions))
+        .child(
+            row()
+                .key("crosshair-body")
+                .w_full()
+                .grow(1.0)
+                .min_h(0.0)
+                .gap(16.0)
+                .child(left)
+                .child(right),
+        )
 }
 
-fn log_line(u: &Ui, message: &str, tone: Tone) -> El {
-    let bad = matches!(tone, Tone::Warn | Tone::Bad);
-    row()
-        .key("crosshair-log")
-        .w_full()
-        .gap(8.0)
-        .items_start()
-        .child(
-            el().pt(3.0).child(
-                icon(
-                    if bad {
-                        &icons::TRIANGLE_ALERT
-                    } else {
-                        &icons::CHECK
-                    },
-                    14.0,
-                )
-                .color(if bad { tone.fg(u) } else { u.muted })
-                .a11y_hidden(),
-            ),
-        )
-        .child(
-            text(friendly(message))
-                .font(BODY)
-                .color(u.muted)
-                .grow(1.0)
-                .min_w(0.0)
-                .wrap(),
-        )
+/// The scene bar's width: three 44 point chips, gaps 2, padding 2.
+const SCENE_BAR_W: f32 = 3.0 * 44.0 + 2.0 * 2.0 + 4.0 + 2.0;
+
+/// The stage's width: the window less the sidebar, the page margins, the gap and the column.
+fn stage_w() -> f32 {
+    let (w, _) = crate::ui::window();
+    (w - crate::ui::SIDEBAR_W - 2.0 * PAGE_X - 16.0 - COLUMN_W).max(240.0)
+}
+
+/// The stage's height: the window less the chrome, the toolbar and the presets strip.
+fn stage_h() -> f32 {
+    let (_, h) = crate::ui::window();
+    // Titlebar 32, status bar 24, page top 12, toolbar 32, gap 16, gap 16, presets 120,
+    // bottom 16.
+    (h - 32.0 - 24.0 - 12.0 - 32.0 - 16.0 - 16.0 - PRESETS_H - 16.0).max(STAGE_MIN)
 }
 
 /// The import reports a missing convars file with its full path; a player only needs to know
@@ -569,9 +566,9 @@ fn stage(s: &State, u: &Ui) -> El {
         .role("img")
         .label(format!("Crosshair preview: {}", v.settings))
         .w_full()
-        .h(STAGE_H)
-        .radius(crate::ui::r(12.0))
-        .clip_rounded(crate::ui::r(12.0))
+        .h(stage_h())
+        .radius(crate::ui::r(8.0))
+        .clip_rounded(crate::ui::r(8.0))
         .fill(oklab_dark());
     if scene.is_none() {
         surface = surface.radial_gradient(
@@ -592,28 +589,20 @@ fn stage(s: &State, u: &Ui) -> El {
         // The hairline sits above the scene so the image never covers the edge.
         .child(
             el().pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0))
-                .radius(crate::ui::r(12.0))
+                .radius(crate::ui::r(8.0))
                 .border(1.0, u.hair)
                 .a11y_hidden(),
         )
         .child(
+            // Scenes bottom right, resolution and zoom top right: the two bars never meet,
+            // also on a 440 point stage.
             scene_bar(s, u)
-                .pin(Some(12.0), Some(12.0), None, None),
+                .pin(None, None, Some(8.0), Some(8.0)),
         )
-        .child(view_bar(s, u).pin(None, Some(12.0), Some(12.0), None))
-        .children((fit < 1.0).then(|| {
-            bar()
-                .key("crosshair-fitted")
-                .h(28.0)
-                .px(10.0)
-                .radius(crate::ui::r(8.0))
-                .child(
-                    text(format!("Scaled to fit, {}", zoom_label(zoom)))
-                        .font(LABEL)
-                        .color(u.prose),
-                )
-                .pin(Some(12.0), None, None, Some(12.0))
-        }))
+        .child(view_bar(s, u).pin(None, Some(8.0), Some(8.0), None))
+        // One bottom left slot for the last result and "Scaled to fit": an overlay, so a
+        // message never pushes the stage.
+        .children(foot_note(s, u, fit, zoom).map(|note| note.pin(Some(8.0), None, None, Some(8.0))))
 }
 
 /// How much the view shrinks so the whole reticle stays on the stage. A large gap and
@@ -625,7 +614,7 @@ fn fit_factor(c: &deadlock_core::crosshair::Crosshair, zoom: f32) -> f32 {
     }
     // `reach` is in 1080p units; the stage shows a 1440 pixel tall screen at 1x.
     let reach = c.layout(1.0).reach * CAPTURE_H / 1080.0 * zoom;
-    let room = STAGE_H / 2.0 - FIT_MARGIN;
+    let room = stage_h() / 2.0 - FIT_MARGIN;
     if reach > room { room / reach } else { 1.0 }
 }
 
@@ -686,13 +675,52 @@ fn reticle(c: &deadlock_core::crosshair::Crosshair, resolution: u32, zoom: f32, 
 }
 
 /// A dark glass strip over the scene for the stage controls.
+/// The last result or "Scaled to fit", as one 28 point overlay bar.
+fn foot_note(s: &State, u: &Ui, fit: f32, zoom: f32) -> Option<El> {
+    let v = &s.crosshair;
+    let (line, warn) = if let Some(log) = &v.log {
+        (friendly(log), matches!(v.tone, Tone::Warn | Tone::Bad))
+    } else if fit < 1.0 {
+        (format!("{} {}", tr("Scaled to fit,"), zoom_label(zoom)), false)
+    } else {
+        return None;
+    };
+    Some(
+        row()
+            .key("crosshair-log")
+            .min_h(28.0)
+            .py(6.0)
+            .radius(crate::ui::r(8.0))
+            .fill(Color::BLACK.alpha(0.55))
+            .border(1.0, crate::ui::Ui::new().hair)
+            .center_y()
+            .px(8.0)
+            .gap(6.0)
+            .max_w((stage_w() - 8.0 - 8.0 - 8.0 - SCENE_BAR_W).max(120.0))
+            .child(
+                icon(if warn { &icons::TRIANGLE_ALERT } else { &icons::CHECK }, 12.0)
+                    .color(if warn { v.tone.fg(u) } else { u.prose })
+                    .a11y_hidden(),
+            )
+            .child(
+                text(line.clone())
+                    .font(LABEL)
+                    .color(u.prose)
+                    .max_lines(2)
+                    .help_when_truncated(line)
+                    .shrink()
+                    .min_w(0.0),
+            ),
+    )
+}
+
 fn bar() -> El {
     row()
-        .h(40.0)
-        .padding(4.0)
-        .gap(4.0)
+        .h(32.0)
+        .padding(2.0)
+        .gap(2.0)
         .center_y()
-        .radius(crate::ui::r(10.0))
+        .radius(crate::ui::r(8.0))
         .fill(Color::BLACK.alpha(0.55))
         .border(1.0, crate::ui::Ui::new().hair)
 }
@@ -712,9 +740,9 @@ fn scene_bar(s: &State, u: &Ui) -> El {
         };
         let mut chip = el()
             .key(format!("crosshair-scene-pick-{scene:?}"))
-            .size(52.0, 32.0)
-            .radius(crate::ui::r(6.0))
-            .clip_rounded(crate::ui::r(6.0))
+            .size(44.0, 28.0)
+            .radius(crate::ui::r(4.0))
+            .clip_rounded(crate::ui::r(4.0))
             .fill(Color::WHITE.alpha(0.06))
             .focusable(true)
             .role("radio")
@@ -738,9 +766,9 @@ fn scene_bar(s: &State, u: &Ui) -> El {
         // The ring sits on top of the image so the selection reads on any scene.
         chip = chip.child(
             el().pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0))
-                .radius(crate::ui::r(6.0))
+                .radius(crate::ui::r(4.0))
                 .border(
-                    if on { 1.5 } else { 1.0 },
+                    1.0,
                     if on { u.ink } else { Color::WHITE.alpha(0.10) },
                 )
                 .hover(Color::WHITE.alpha(0.08))
@@ -765,9 +793,9 @@ fn view_bar(s: &State, u: &Ui) -> El {
     let step = |glyph: &'static rune::Icon, label: &str, off: bool, delta: i32| {
         let mut b = el()
             .key(format!("crosshair-zoom-{label}"))
-            .size(32.0, 32.0)
+            .size(28.0, 28.0)
             .center()
-            .radius(crate::ui::r(6.0))
+            .radius(crate::ui::r(4.0))
             .role("button")
             .label(label.to_string())
             .child(
@@ -804,9 +832,9 @@ fn view_bar(s: &State, u: &Ui) -> El {
         .child(
             el().key("crosshair-zoom-reset")
                 .w(44.0)
-                .h(32.0)
+                .h(28.0)
                 .center()
-                .radius(crate::ui::r(6.0))
+                .radius(crate::ui::r(4.0))
                 .focusable(true)
                 .role("button")
                 .label("Reset zoom")
@@ -864,17 +892,17 @@ fn segmented(
     compact: bool,
     pick: fn(&mut State, usize),
 ) -> El {
-    let (h, pad, radius) = if compact { (32.0, 0.0, 6.0) } else { (36.0, 4.0, 8.0) };
+    let (h, pad, radius) = if compact { (28.0, 0.0, 4.0) } else { (28.0, 2.0, 4.0) };
     let mut grid = row()
         .key(key.to_string())
         .equal_columns(labels.len().max(1))
-        .gap(4.0)
+        .gap(2.0)
         .role("radiogroup")
         .label(name.to_string());
     if !compact {
         grid = grid
             .padding(pad)
-            .radius(radius + pad)
+            .radius(crate::ui::r(4.0))
             .fill(u.well)
             .border(1.0, u.hair);
     }
@@ -889,8 +917,6 @@ fn segmented(
                 Color::WHITE.alpha(0.075)
             })
             .border(1.0, if compact { Color::TRANSPARENT } else { u.hair_strong })
-            .motion(SLIDE)
-            .motion_intent(MotionIntent::OVERSHOOT)
             .a11y_hidden(),
     );
     for (index, label) in labels.iter().enumerate() {
@@ -908,15 +934,11 @@ fn segmented(
             .label(label.to_string())
             .child(
                 text(label.to_string())
-                    .font(if compact { LABEL } else { BODY_MED })
+                    .font(LABEL)
                     .color(if on { u.ink } else { u.muted })
                     .truncate()
                     .a11y_hidden(),
             );
-        if !compact {
-            // Every option is a card of its own; the sliding highlight is the selected one.
-            cell = cell.border(1.0, u.hair);
-        }
         if !on {
             cell = cell
                 .hover(Color::WHITE.alpha(0.04))
@@ -958,12 +980,12 @@ fn colour_section(s: &State, u: &Ui) -> El {
         text(format!("#{r:02X}{g:02X}{b:02X}"))
             .font(MONO)
             .color(u.muted)
-            .w(64.0)
+            .w(56.0)
             .align(rune::Align::End)
     };
     rows()
         .child(
-            setting_row(u, tr("Lines and dot"))
+            line_row(u, tr("Lines and dot"))
                 .child(swatches(u, c))
                 .child(hex(c.color_r, c.color_g, c.color_b)),
         )
@@ -971,7 +993,7 @@ fn colour_section(s: &State, u: &Ui) -> El {
         .child(slider_row(u, tr("Green"), c, Field::Green))
         .child(slider_row(u, tr("Blue"), c, Field::Blue))
         .child(
-            setting_row(u, tr("Outline color"))
+            line_row(u, tr("Outline color"))
                 .key("crosshair-outline-colour")
                 .child(
                     el().size(20.0, 20.0)
@@ -1013,18 +1035,14 @@ fn game_section(s: &State, u: &Ui) -> El {
     };
     rows()
         .child(
-            col()
+            line_row(u, tr("Write to the game's hero settings"))
                 .key("crosshair-hero-settings")
-                .w_full()
-                .border_sides([0.0, 0.0, 1.0, 0.0], u.hair)
-                .pb(8.0)
-                .child(setting_row(u, tr("Write to the game's hero settings")).border_sides([0.0; 4], u.hair).child(
+                .child(
                     u.toggle(on)
                         .label(tr("Write to the game's hero settings").to_string())
                         .cursor(rune::Cursor::Pointer)
                         .on_press(toggle_hero_settings),
-                ))
-                .child(text(hero_line).font(SMALL).color(u.muted).wrap()),
+                ),
         )
         .child(switch_row(
             u,
@@ -1045,6 +1063,16 @@ fn game_section(s: &State, u: &Ui) -> El {
                 st.crosshair.source = "edited".to_string();
             },
         ))
+        // The state sentence in a reserved two-line slot under the switches.
+        .child(
+            el().w_full().h(48.0).mt(8.0).child(
+                text(hero_line.clone())
+                    .font(SMALL)
+                    .color(u.muted)
+                    .max_lines(3)
+                    .help_when_truncated(hero_line),
+            ),
+        )
 }
 
 /// Turn the hero settings write on or off (DMM): on writes the current crosshair into the
@@ -1139,23 +1167,43 @@ fn hero_settings_plan(st: &State) -> Result<(usize, usize), String> {
 
 /// The rows of one group, straight under the picker.
 fn rows() -> El {
-    col().w_full().pt(8.0)
+    col().w_full()
 }
 
 /// A 44 point row: label on the left, the control on the right, a hairline under it.
+/// A 32 point control row, no hairline: label `BODY` `prose` in a fixed 104 slot, then the
+/// control and its value.
 fn setting_row(u: &Ui, label: &str) -> El {
     row()
         .w_full()
-        .h(44.0)
-        .gap(16.0)
+        .h(32.0)
+        .gap(8.0)
         .center_y()
-        .border_sides([0.0, 0.0, 1.0, 0.0], u.hair)
+        .child(
+            text(label.to_string())
+                .font(BODY)
+                .color(u.prose)
+                .w(LABEL_W)
+                .truncate()
+                .help_when_truncated(label.to_string()),
+        )
+}
+
+/// A 32 point row whose label takes the room its control leaves (switches, swatches).
+fn line_row(u: &Ui, label: &str) -> El {
+    row()
+        .w_full()
+        .h(32.0)
+        .gap(8.0)
+        .center_y()
         .child(
             text(label.to_string())
                 .font(BODY)
                 .color(u.prose)
                 .grow(1.0)
-                .min_w(0.0),
+                .min_w(0.0)
+                .truncate()
+                .help_when_truncated(label.to_string()),
         )
 }
 
@@ -1169,9 +1217,9 @@ fn slider_row(u: &Ui, label: &str, c: &deadlock_core::crosshair::Crosshair, fiel
         format!("{}", value as i32)
     };
     // The Color group's values line up with its hex readouts.
-    let value_w = if range(field).1 > 64.0 { 64.0 } else { VALUE_W };
+    let value_w = if range(field).1 > 64.0 { 56.0 } else { VALUE_W };
     setting_row(u, label)
-        .child(slider(u, label, field, frac))
+        .child(slider(u, label, field, frac, COLUMN_W - LABEL_W - 16.0 - value_w))
         .child(
             text(shown)
                 .font(MONO)
@@ -1183,11 +1231,11 @@ fn slider_row(u: &Ui, label: &str, c: &deadlock_core::crosshair::Crosshair, fiel
 
 /// A flat slider: a 4 point track, a neutral fill and a white knob. Drag anywhere on it, or
 /// use the arrow keys when it has focus.
-fn slider(u: &Ui, label: &str, field: Field, frac: f32) -> El {
-    let knob = 14.0;
+fn slider(u: &Ui, label: &str, field: Field, frac: f32, width: f32) -> El {
+    let knob = 12.0;
     let track_y = 10.0;
     el().key(format!("slider-{field:?}"))
-        .w(SLIDER_W)
+        .w(width)
         .h(24.0)
         .focusable(true)
         .role("slider")
@@ -1195,7 +1243,7 @@ fn slider(u: &Ui, label: &str, field: Field, frac: f32) -> El {
         .cursor(rune::Cursor::Grab)
         .child(
             el().absolute(0.0, track_y)
-                .w(SLIDER_W)
+                .w(width)
                 .h(4.0)
                 .radius(2.0)
                 .fill(Color::WHITE.alpha(0.10))
@@ -1203,14 +1251,14 @@ fn slider(u: &Ui, label: &str, field: Field, frac: f32) -> El {
         )
         .child(
             el().absolute(0.0, track_y)
-                .w((SLIDER_W * frac).max(0.0))
+                .w((width * frac).max(0.0))
                 .h(4.0)
                 .radius(2.0)
                 .fill(u.muted)
                 .a11y_hidden(),
         )
         .child(
-            el().absolute((SLIDER_W - knob) * frac, (24.0 - knob) / 2.0)
+            el().absolute((width - knob) * frac, (24.0 - knob) / 2.0)
                 .size(knob, knob)
                 .radius(knob / 2.0)
                 .fill(Color::WHITE)
@@ -1221,7 +1269,7 @@ fn slider(u: &Ui, label: &str, field: Field, frac: f32) -> El {
             if d.phase == Phase::Up && d.cancelled() {
                 return;
             }
-            let width = if d.w > 0.0 { d.w } else { SLIDER_W };
+            let width = if d.w > 0.0 { d.w } else { width };
             set_fraction(st, field, (d.x / width).clamp(0.0, 1.0) as f64);
         })
         .on_key(move |st: &mut State, ev: &KeyEvent, _| match ev.key {
@@ -1367,15 +1415,15 @@ fn swatches(u: &Ui, crosshair: &deadlock_core::crosshair::Crosshair) -> El {
         ("amber", 255, 190, 0),
         ("magenta", 255, 60, 220),
     ];
-    let mut row_el = row().gap(8.0).center_y();
+    let mut row_el = row().gap(2.0).center_y();
     for (name, r, g, b) in colours {
         let selected = crosshair.color_r == r && crosshair.color_g == g && crosshair.color_b == b;
         // The ring sits outside the swatch so a selected colour keeps its full size.
         row_el = row_el.child(
             el().key(format!("swatch-{name}"))
-                .size(28.0, 28.0)
-                .radius(crate::ui::r(8.0))
-                .border(1.5, if selected { u.ink } else { Color::TRANSPARENT })
+                .size(24.0, 24.0)
+                .radius(crate::ui::r(4.0))
+                .border(1.0, if selected { u.ink } else { Color::TRANSPARENT })
                 .center()
                 .focusable(true)
                 .role("button")
@@ -1389,8 +1437,8 @@ fn swatches(u: &Ui, crosshair: &deadlock_core::crosshair::Crosshair) -> El {
                     st.crosshair.source = "edited".to_string();
                 })
                 .child(
-                    el().size(20.0, 20.0)
-                        .radius(5.0)
+                    el().size(18.0, 18.0)
+                        .radius(2.0)
                         .fill(Color {
                             r: r as f32 / 255.0,
                             g: g as f32 / 255.0,
@@ -1405,7 +1453,7 @@ fn swatches(u: &Ui, crosshair: &deadlock_core::crosshair::Crosshair) -> El {
 }
 
 fn switch_row(u: &Ui, label: &str, on: bool, press: fn(&mut State)) -> El {
-    setting_row(u, label).child(
+    line_row(u, label).child(
         u.toggle(on)
             .key(format!("crosshair-switch-{label}"))
             .label(label.to_string())
@@ -1417,45 +1465,98 @@ fn switch_row(u: &Ui, label: &str, on: bool, press: fn(&mut State)) -> El {
 /// The console commands the Apply step writes, selectable, with a one line copy for the
 /// in-game console.
 fn commands(s: &State, u: &Ui) -> El {
+    let open = s.crosshair.console_open;
+    row()
+        .key("crosshair-console")
+        .w_full()
+        .h(32.0)
+        .px(8.0)
+        .gap(8.0)
+        .center_y()
+        .radius(crate::ui::r(4.0))
+        .border(1.0, u.hair)
+        .fill(if open { u.selected } else { Color::TRANSPARENT })
+        .hover(if open { u.selected } else { u.hover })
+        .focusable(true)
+        .role("button")
+        .checked(open)
+        .label(tr("Console commands"))
+        .cursor(rune::Cursor::Pointer)
+        .on_press(|st: &mut State| st.crosshair.console_open = !st.crosshair.console_open)
+        .child(icon(&icons::TERMINAL, 14.0).color(u.muted).a11y_hidden())
+        .child(
+            text(tr("Console commands"))
+                .font(BODY_MED)
+                .color(u.prose)
+                .grow(1.0)
+                .min_w(0.0)
+                .a11y_hidden(),
+        )
+        .child(
+            icon(if open { &icons::CHEVRON_DOWN } else { &icons::CHEVRON_RIGHT }, 12.0)
+                .color(u.muted)
+                .a11y_hidden(),
+        )
+}
+
+/// The console commands the Apply step writes, selectable, with a copy for the in-game
+/// console. A popover above the column's foot row, so a group switch never moves it.
+fn console_popover(s: &State, u: &Ui) -> El {
     let v = &s.crosshair;
     let done = copied(v, Copied::Console);
+    let mut actions = row().w_full().gap(8.0).center_y().child(spacer());
+    if s.game_detected && s.game_root.is_some() {
+        actions = actions.child(
+            u.action(tr("Remove from autoexec"), ActionKind::Ghost)
+                .h(24.0)
+                .px(8.0)
+                .key("crosshair-remove")
+                .cursor(rune::Cursor::Pointer)
+                .on_press(|st: &mut State| {
+                    st.crosshair.console_open = false;
+                    st.crosshair.confirm_remove = true
+                }),
+        );
+    }
+    actions = actions.child(
+        u.action(tr(if done { "Copied" } else { "Copy commands" }), ActionKind::Ghost)
+            .h(24.0)
+            .px(8.0)
+            .w(120.0)
+            .key("crosshair-copy-console")
+            .cursor(rune::Cursor::Pointer)
+            .on_press_tx(|st: &mut State, tx: &mut Tx| copy_console(st, tx)),
+    );
     col()
-        .key("crosshair-commands")
-        .w_full()
+        .key("crosshair-console-popover")
+        .role("dialog")
+        .label(tr("Console commands"))
+        .w(COLUMN_W)
+        .h(200.0)
+        .padding(8.0)
         .gap(8.0)
-        .child(
-            row()
-                .w_full()
-                .h(32.0)
-                .center_y()
-                .child(text(tr("Console")).font(H2).color(u.ink))
-                .child(spacer())
-                .child(if s.game_detected && s.game_root.is_some() {
-                    u.icon_action(&icons::TRASH_2, tr("Remove from autoexec"), ActionKind::Ghost)
-                        .key("crosshair-remove")
-                        .cursor(rune::Cursor::Pointer)
-                        .on_press(|st: &mut State| st.crosshair.confirm_remove = true)
-                } else {
-                    el()
-                })
-                .child(
-                    u.icon_action(
-                        if done { &icons::CHECK } else { &icons::TERMINAL },
-                        tr(if done { "Copied" } else { "Copy commands" }),
-                        ActionKind::Secondary,
-                    )
-                    .key("crosshair-copy-console")
-                    .cursor(rune::Cursor::Pointer)
-                    .on_press_tx(|st: &mut State, tx: &mut Tx| copy_console(st, tx)),
-                ),
-        )
+        .radius(crate::ui::r(8.0))
+        .fill(u.raised.mix(u.over, 0.04).alpha(1.0))
+        .border(1.0, u.hair_strong)
+        .shadow(4.0, 12.0, Color::BLACK.alpha(if u.light { 0.12 } else { 0.35 }))
+        .anchored("crosshair-console", rune::Side::Top, rune::Align::End, 4.0)
+        .on_key(|st: &mut State, ev: &KeyEvent, _| {
+            if ev.key == Key::Escape {
+                st.crosshair.console_open = false;
+                true
+            } else {
+                false
+            }
+        })
         .child(
             col()
                 .w_full()
-                .padding(12.0)
-                .radius(crate::ui::r(8.0))
+                .grow(1.0)
+                .min_h(0.0)
+                .padding(8.0)
+                .radius(crate::ui::r(4.0))
                 .fill(u.well)
-                .border(1.0, u.hair)
+                .scroll(ScrollSpec { stick_bottom: false })
                 .child(
                     text(v.settings.command_text())
                         .font(MONO)
@@ -1464,6 +1565,7 @@ fn commands(s: &State, u: &Ui) -> El {
                         .selectable(true),
                 ),
         )
+        .child(actions)
 }
 
 /// Mounted at the root so the apply approval overlays the shell.
@@ -1472,7 +1574,26 @@ pub fn dialog(s: &State, u: &Ui) -> Option<El> {
         return Some(remove_dialog(u));
     }
     if !s.crosshair.pending {
-        return preset_dialog(s, u);
+        if let Some(d) = preset_dialog(s, u) {
+            return Some(d);
+        }
+        if s.crosshair.console_open && s.screen == Screen::Crosshair {
+            // A press outside the popover closes it.
+            return Some(
+                el().key("crosshair-console-layer")
+                    .absolute(0.0, 0.0)
+                    .w_full()
+                    .h_full()
+                    .child(
+                        el().absolute(0.0, 0.0)
+                            .w_full()
+                            .h_full()
+                            .on_press(|st: &mut State| st.crosshair.console_open = false),
+                    )
+                    .child(console_popover(s, u)),
+            );
+        }
+        return None;
     }
     let crosshair = &s.crosshair.settings;
     let close = |st: &mut State| st.crosshair.pending = false;
@@ -1557,9 +1678,9 @@ fn dot_summary(c: &deadlock_core::crosshair::Crosshair) -> String {
 // --- presets ----------------------------------------------------------------------------
 
 /// The side of a preset tile's art.
-const TILE: f32 = 80.0;
+const TILE: f32 = 64.0;
 /// Clear space kept between a mini reticle and its tile edge.
-const TILE_MARGIN: f32 = 10.0;
+const TILE_MARGIN: f32 = 8.0;
 
 fn presets_path() -> std::path::PathBuf {
     crate::data::data_dir().join(deadlock_core::crosshair::PRESETS_FILE)
@@ -1633,53 +1754,51 @@ fn chosen_saved(v: &View) -> Option<&Preset> {
 /// and Delete act on the saved preset last loaded.
 fn presets_section(s: &State, u: &Ui) -> El {
     let v = &s.crosshair;
-    let mut head = row()
-        .w_full()
-        .h(32.0)
-        .gap(8.0)
-        .center_y()
-        .child(text(tr("Presets")).font(H2).color(u.ink));
-    head = head.child(spacer());
-    if let Some(preset) = chosen_saved(v) {
-        let rename_id = preset.id.clone();
-        let delete_id = preset.id.clone();
-        head = head
-            .child(
-                text(preset.name.clone())
-                    .font(SMALL)
-                    .color(u.muted)
-                    .max_w(240.0)
-                    .truncate(),
-            )
-            .child(
-                u.icon_button(&icons::SQUARE_PEN, "Rename preset")
-                    .key("crosshair-preset-rename")
-                    .cursor(rune::Cursor::Pointer)
-                    .on_press(move |st: &mut State| open_rename(st, &rename_id)),
-            )
-            .child(
-                u.icon_button(&icons::TRASH_2, "Delete preset")
-                    .key("crosshair-preset-delete")
-                    .cursor(rune::Cursor::Pointer)
-                    .on_press(move |st: &mut State| {
-                        st.crosshair.preset_dialog = Some(PresetDialog::Delete(delete_id.clone()))
-                    }),
-            )
-            .child(el().w(1.0).h(20.0).mx(4.0).fill(u.hair).a11y_hidden());
-    }
-    head = head.child(
-        u.icon_action(&icons::PLUS, tr("Save current"), ActionKind::Secondary)
-            .key("crosshair-preset-save")
-            .label("Save the current crosshair as a preset")
+    // Rename and delete are always drawn, disabled for a built-in, so the header never shifts.
+    let saved = chosen_saved(v).map(|p| p.id.clone());
+    let off = saved.is_none();
+    let rename_id = saved.clone().unwrap_or_default();
+    let delete_id = rename_id.clone();
+    let small = |glyph: &'static rune::Icon, label: &str, key: &str| {
+        u.icon_button(glyph, label)
+            .key(key.to_string())
+            .size(24.0, 24.0)
+            .disabled(off)
+            .opacity(if off { 0.45 } else { 1.0 })
             .cursor(rune::Cursor::Pointer)
-            .on_press(open_save),
-    );
+    };
+    let trailing = row()
+        .gap(4.0)
+        .center_y()
+        .child(small(&icons::SQUARE_PEN, tr("Rename preset"), "crosshair-preset-rename").on_press(
+            move |st: &mut State| {
+                if !rename_id.is_empty() {
+                    open_rename(st, &rename_id)
+                }
+            },
+        ))
+        .child(small(&icons::TRASH_2, tr("Delete preset"), "crosshair-preset-delete").on_press(
+            move |st: &mut State| {
+                if !delete_id.is_empty() {
+                    st.crosshair.preset_dialog = Some(PresetDialog::Delete(delete_id.clone()))
+                }
+            },
+        ))
+        .child(
+            u.icon_action(&icons::PLUS, tr("Save current"), ActionKind::Ghost)
+                .h(24.0)
+                .pl(6.0)
+                .pr(8.0)
+                .key("crosshair-preset-save")
+                .label("Save the current crosshair as a preset")
+                .cursor(rune::Cursor::Pointer)
+                .on_press(open_save),
+        );
 
+    // One strip that scrolls sideways and never wraps, a fixed 88 high.
     let mut grid = row()
         .key("crosshair-presets")
-        .w_full()
-        .flex_wrap()
-        .gap(12.0)
+        .gap(8.0)
         .role("list")
         .label("Crosshair presets");
     for preset in deadlock_core::crosshair::builtin_presets() {
@@ -1695,7 +1814,7 @@ fn presets_section(s: &State, u: &Ui) -> El {
         );
     }
     if !v.presets.is_empty() {
-        grid = grid.child(el().w(1.0).h(TILE).mx(4.0).fill(u.hair).a11y_hidden());
+        grid = grid.child(el().w(1.0).h(TILE).fill(u.hair).a11y_hidden());
     }
     for preset in &v.presets {
         let id = preset.id.clone();
@@ -1706,25 +1825,34 @@ fn presets_section(s: &State, u: &Ui) -> El {
         );
     }
 
-    col().w_full().gap(12.0).pt(8.0).child(head).child(grid)
+    col()
+        .key("crosshair-presets-block")
+        .w_full()
+        .h(PRESETS_H)
+        .gap(8.0)
+        .child(u.section_head(tr("Presets"), None, Some(trailing)))
+        .child(
+            el().key("crosshair-presets-strip")
+                .w_full()
+                .h(88.0)
+                .scroll_x()
+                .child(grid),
+        )
 }
 
 /// One preset: the reticle on the stage's dark ground, fitted to the tile, and its name.
 fn tile(u: &Ui, key: String, name: &str, c: &Crosshair, on: bool) -> El {
     let art = el()
         .size(TILE, TILE)
-        .radius(crate::ui::r(8.0))
-        .clip_rounded(crate::ui::r(8.0))
+        .radius(crate::ui::r(4.0))
+        .clip_rounded(crate::ui::r(4.0))
         .fill(oklab_dark())
         .center()
         .child(mini_reticle(c))
         .child(
             el().pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0))
-                .radius(crate::ui::r(8.0))
-                .border(
-                    if on { 1.5 } else { 1.0 },
-                    if on { u.ink } else { u.hair },
-                )
+                .radius(crate::ui::r(4.0))
+                .border(1.0, if on { u.ink } else { u.hair })
                 .hover(Color::WHITE.alpha(0.05))
                 .a11y_hidden(),
         );
@@ -1745,7 +1873,7 @@ fn tile(u: &Ui, key: String, name: &str, c: &Crosshair, on: bool) -> El {
                 .w(TILE)
                 .align(rune::Align::Center)
                 .truncate()
-                .a11y_hidden(),
+                .help_when_truncated(name.to_string()),
         )
 }
 
