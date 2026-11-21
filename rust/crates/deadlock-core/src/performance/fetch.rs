@@ -496,6 +496,21 @@ fn refresh_convars(remote: &dyn Remote, data_dir: &Path, index: &mut CacheIndex)
     Ok(())
 }
 
+/// Fetch Valve's convar list alone, for the player's Download the list button. A damaged cached
+/// copy is replaced even when upstream has not moved.
+pub fn refresh_convar_list(remote: &dyn Remote, data_dir: &Path) -> Result<()> {
+    let mut index = read_index(data_dir);
+    if crate::autoexec::convars::load_catalog(data_dir).convars.is_empty() {
+        index.convars_commit = None;
+    }
+    refresh_convars(remote, data_dir, &mut index)?;
+    // Read again: a Performance refresh may have finished during the download.
+    let commit = index.convars_commit;
+    let mut index = read_index(data_dir);
+    index.convars_commit = commit;
+    write_index(data_dir, &index)
+}
+
 /// The first of a config's candidate folders the release has.
 fn locate<'a>(def: &'a ConfigDef, release: &Release) -> Option<&'a str> {
     def.folders

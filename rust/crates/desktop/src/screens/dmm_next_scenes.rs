@@ -11,6 +11,8 @@ pub const SCENES: &[Scene] = &[
     ("next-stats-roll-entry", stats_roll_entry),
     ("next-convars", convars),
     ("next-convars-preset", convars_preset),
+    ("next-convars-empty", convars_empty),
+    ("next-convars-failed", convars_failed),
     ("next-launch-crash", launch_crash),
     ("next-browse-creator", browse_creator),
     ("next-perf-custom-add", perf_custom_add),
@@ -51,6 +53,18 @@ pub fn convars(s: &mut State) {
 pub fn convars_preset(s: &mut State) {
     crate::screens::autoexec::scene_file(s);
     crate::screens::autoexec_convars::stage_preview(s);
+}
+
+/// Autoexec with no cached convar list: the source and the Download the list button.
+pub fn convars_empty(s: &mut State) {
+    crate::screens::autoexec::scene_file(s);
+    crate::screens::autoexec_convars::stage_empty(s);
+}
+
+/// The same after a failed download.
+pub fn convars_failed(s: &mut State) {
+    crate::screens::autoexec::scene_file(s);
+    crate::screens::autoexec_convars::stage_failed(s);
 }
 
 /// The crash card naming the HUD layout the game was loading, its console lines and the HUD check.

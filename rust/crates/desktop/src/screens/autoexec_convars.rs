@@ -3,9 +3,10 @@
 //! command list above the Save button. Game presets set several at once after a preview.
 //!
 //! The data is `deadlock_core::autoexec::convars`: Valve's convar list from
-//! GameTracking-Deadlock (the Performance page's cached copy, else the snapshot Sigil ships),
-//! the autoexec and `machine_convars.vcfg` for current values. Nothing here writes a file: an
-//! edit changes the list, and the page's Save writes the autoexec with its backup and check.
+//! GameTracking-Deadlock (the cached copy, from a Performance refresh or the Download the list
+//! button here), the autoexec and `machine_convars.vcfg` for current values. Editing writes no
+//! file: an edit changes the list, and the page's Save writes the autoexec with its backup and
+//! check.
 //! Saved presets live in `game-presets.json` under the app data directory.
 //!
 //! Behaviour after Deadlock Mod Manager's convar editor and game presets branches (GPL-3.0,
@@ -13,15 +14,20 @@
 
 use std::collections::BTreeMap;
 
-use deadlock_core::autoexec::convars::{self as core, Catalog, CatalogSource, Change, Convar, Current, GamePreset, Problem};
+use deadlock_core::autoexec::convars::{self as core, Catalog, Change, Convar, Current, GamePreset, Problem};
 use rune::{El, Key, KeyEvent, TextEdit, col, row, spacer, text};
 
 use crate::app::State;
+use crate::jobs::Job;
+use crate::notify::feedback;
 use crate::screens::settings::i18n::fill;
 use crate::ui::{ActionKind, BODY, BODY_MED, H1, MONO, SMALL, Ui};
 
 /// Rows the list shows before Show more.
 const PAGE: usize = 30;
+
+/// What demo mode and headless scenes list instead of the player's cache.
+const SAMPLE_DUMP: &str = "citadel_hud_visible true (clientdll archive)\n\tShow the HUD.\nengine_low_latency_sleep_after_client_tick false (clientdll archive)\n\tSleep after the client tick to lower latency.\nfps_max 400 (min: 0, max: 1000 clientdll archive)\n\tFrame rate limit. 0 means no limit.\nfps_max_ui 120 (min: 0, max: 1000 clientdll archive)\n\tFrame rate limit while a menu is open.\nr_fullscreen_gamma 2.2 (min: 1, max: 3 clientdll archive)\n\tDisplay gamma.\nrate 1000000 (clientdll archive)\n\tNetwork rate in bytes per second.\nsv_cheats false (notify replicated)\n\tAllow cheat convars.\n";
 
 #[path = "autoexec_convars_de.rs"]
 mod de;
@@ -54,6 +60,9 @@ pub struct Convars {
     pub preview: Option<GamePreset>,
     pub preset_name: TextEdit,
     pub note: Option<String>,
+    /// The player's Download the list.
+    pub download: Job<Catalog>,
+    pub download_error: Option<String>,
 }
 
 impl Default for Convars {
@@ -72,6 +81,8 @@ impl Default for Convars {
             preview: None,
             preset_name: TextEdit::new(""),
             note: None,
+            download: Job::default(),
+            download_error: None,
         }
     }
 }
@@ -81,8 +92,9 @@ impl Default for Convars {
 /// Read the catalogue, the game's saved values and the saved presets. Local files only.
 pub fn open(st: &mut State) {
     let data = crate::data::data_dir();
+    let catalog = if simulated(st) { sample_catalog() } else { core::load_catalog(&data) };
     let c = &mut st.autoexec.convars;
-    c.catalog = Some(core::load_catalog(&data));
+    c.catalog = Some(catalog);
     c.saved = core::load_presets(&data);
     c.game = st
         .game_root
@@ -90,6 +102,56 @@ pub fn open(st: &mut State) {
         .and_then(|root| std::fs::read_to_string(core::machine_convars_path(root)).ok())
         .map(|text| core::parse_vcfg(&text))
         .unwrap_or_default();
+}
+
+fn simulated(st: &State) -> bool {
+    st.demo || rune::is_headless()
+}
+
+fn sample_catalog() -> Catalog {
+    Catalog { convars: core::parse_dump(SAMPLE_DUMP) }
+}
+
+/// Fetch Valve's list on a worker, from the player's press. Offline mode and the proxy apply as
+/// they do to every Performance fetch.
+fn start_download(st: &mut State) {
+    if simulated(st) || st.autoexec.convars.download.is_running() {
+        return;
+    }
+    st.autoexec.convars.download_error = None;
+    let wake = st.wake.clone();
+    st.autoexec.convars.download.start(wake, || {
+        let data = crate::data::data_dir();
+        deadlock_core::performance::refresh_convar_list(&data).map_err(|error| error.to_string())?;
+        let catalog = core::load_catalog(&data);
+        if catalog.convars.is_empty() {
+            return Err(tr("The download did not hold a usable list.").to_string());
+        }
+        Ok(catalog)
+    });
+}
+
+/// Take a finished download.
+pub fn poll(st: &mut State) -> bool {
+    let Some(result) = st.autoexec.convars.download.try_take() else { return false };
+    let c = &mut st.autoexec.convars;
+    match result {
+        Ok(catalog) => {
+            c.catalog = Some(catalog);
+            c.download_error = None;
+            c.shown = PAGE;
+        }
+        Err(error) => c.download_error = Some(error),
+    }
+    true
+}
+
+/// A Performance refresh may have just cached the list: pick it up if this section is waiting.
+pub fn reload_if_empty(st: &mut State) {
+    if simulated(st) || !st.autoexec.convars.catalog.as_ref().is_some_and(|catalog| catalog.convars.is_empty()) {
+        return;
+    }
+    st.autoexec.convars.catalog = Some(core::load_catalog(&crate::data::data_dir()));
 }
 
 fn autoexec_values(st: &State) -> BTreeMap<String, String> {
@@ -439,6 +501,41 @@ fn convar_row(s: &State, u: &Ui, convar: &Convar, values: &BTreeMap<String, Stri
     frame
 }
 
+/// No cached list yet: where it comes from and the button that fetches it.
+fn empty_state(s: &State, u: &Ui) -> El {
+    let c = &s.autoexec.convars;
+    let running = c.download.is_running();
+    let label = if running { tr("Downloading the list...") } else { tr("Download the list") };
+    let mut card = col()
+        .key("convars-empty")
+        .w_full()
+        .gap(10.0)
+        .padding(16.0)
+        .radius(crate::ui::r(8.0))
+        .fill(u.well)
+        .border(1.0, u.hair)
+        .child(text(tr("The convar list is not on this computer yet")).font(BODY_MED).color(u.ink))
+        .child(
+            text(tr("It comes from the public game tracking repository on GitHub. Sigil downloads it only when you press the button or refresh Performance."))
+                .font(BODY)
+                .color(u.muted)
+                .wrap(),
+        )
+        .child(
+            row().child(
+                u.action(label, ActionKind::Primary)
+                    .key("convars-download")
+                    .disabled(running)
+                    .cursor(rune::Cursor::Pointer)
+                    .on_press(start_download),
+            ),
+        );
+    if let Some(error) = &c.download_error {
+        card = card.child(feedback::error_line(u, "convars-download-error", error));
+    }
+    card
+}
+
 /// The section on the Autoexec page.
 pub fn section(s: &State, u: &Ui) -> El {
     let c = &s.autoexec.convars;
@@ -461,10 +558,25 @@ pub fn section(s: &State, u: &Ui) -> El {
                 ),
         );
     };
-    let source = match catalog.source {
-        CatalogSource::Cached => tr("Valve's list as of the last Performance refresh"),
-        CatalogSource::Bundled => tr("Valve's list as Sigil shipped it. Open Performance once for the newest."),
-    };
+    if catalog.convars.is_empty() {
+        section = section
+            .child(
+                row()
+                    .w_full()
+                    .h(32.0)
+                    .gap(16.0)
+                    .center_y()
+                    .child(u.section(tr("Console variables")))
+                    .child(text(tr("Every convar the game has, with Valve's descriptions")).font(SMALL).color(u.faint)),
+            )
+            .child(empty_state(s, u))
+            .child(presets(s, u));
+        if let Some(note) = &c.note {
+            section = section.child(text(note.clone()).font(SMALL).color(u.muted));
+        }
+        return section;
+    }
+    let source = tr("Valve's list from the game tracking repository");
     section = section.child(
         row()
             .w_full()
@@ -615,7 +727,7 @@ pub fn dialog(s: &State, u: &Ui) -> Option<El> {
 /// `autoexec-convars`: the catalogue open on a search with one convar in edit.
 pub fn stage_scene(s: &mut State) {
     let c = &mut s.autoexec.convars;
-    c.catalog = Some(Catalog { convars: core::bundled().to_vec(), source: CatalogSource::Bundled });
+    c.catalog = Some(sample_catalog());
     c.game = core::parse_vcfg("\"convars\"\n{\n\t\"fps_max\"\t\t\"240\"\n}\n");
     c.query = TextEdit::new("fps");
     c.saved = vec![GamePreset {
@@ -629,6 +741,17 @@ pub fn stage_scene(s: &mut State) {
 pub fn stage_preview(s: &mut State) {
     stage_scene(s);
     s.autoexec.convars.preview = core::builtin_presets().into_iter().next();
+}
+
+/// `next-convars-empty`: no cached list yet, with the button that fetches it.
+pub fn stage_empty(s: &mut State) {
+    s.autoexec.convars.catalog = Some(Catalog::default());
+}
+
+/// `next-convars-failed`: the download failed.
+pub fn stage_failed(s: &mut State) {
+    stage_empty(s);
+    s.autoexec.convars.download_error = Some(tr("The download did not hold a usable list.").to_string());
 }
 
 #[cfg(test)]
