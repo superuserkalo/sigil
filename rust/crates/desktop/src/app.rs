@@ -1814,7 +1814,12 @@ fn titlebar(s: &State, u: &Ui, insets: rune::ChromeInsets) -> El {
 /// The current page's search field for its own toolbar line (`Ui::page_toolbar`). There is no
 /// app-wide search: each page that searches carries its own field.
 pub fn page_search(s: &State, u: &Ui) -> El {
-    u.page_search(search_field(s, u))
+    u.page_search(search_field(s, u, None))
+}
+
+/// `page_search` with the page's own short placeholder, e.g. "Search mods".
+pub fn page_search_as(s: &State, u: &Ui, placeholder: &str) -> El {
+    u.page_search(search_field(s, u, Some(placeholder)))
 }
 
 /// The key of the current page's search field, for Cmd or Ctrl+F.
@@ -1828,42 +1833,29 @@ fn search_key(screen: Screen) -> Option<&'static str> {
     }
 }
 
-fn search_field(s: &State, u: &Ui) -> El {
-    let field = match s.screen {
-        Screen::Installed => rune::text_input(&s.installed_query, crate::ui::BODY)
-            .key("search-installed")
-            .label("Search installed addons")
-            .single_line()
-            .color(u.ink)
-            .placeholder("Search installed", u.faint)
-            .caret(u.accent, u.accent.alpha(0.20))
-            .on_edit(|st: &mut State| &mut st.installed_query),
-        Screen::Browse => rune::text_input(&s.browse_query, crate::ui::BODY)
-            .key("search-browse")
-            .label("Search GameBanana")
-            .single_line()
-            .color(u.ink)
-            .placeholder("Search GameBanana", u.faint)
-            .caret(u.accent, u.accent.alpha(0.20))
-            .on_edit(|st: &mut State| &mut st.browse_query),
-        Screen::Servers => rune::text_input(&s.servers.query, crate::ui::BODY)
-            .key("search-servers")
-            .label("Search servers")
-            .single_line()
-            .color(u.ink)
-            .placeholder("Search servers", u.faint)
-            .caret(u.accent, u.accent.alpha(0.20))
-            .on_edit(|st: &mut State| &mut st.servers.query),
-        _ => rune::text_input(&s.conflicts_query, crate::ui::BODY)
-            .key("search-conflicts")
-            .label("Search conflicting paths")
-            .single_line()
-            .color(u.ink)
-            .placeholder("Search paths", u.faint)
-            .caret(u.accent, u.accent.alpha(0.20))
-            .on_edit(|st: &mut State| &mut st.conflicts_query),
+/// The one map from a page to its query, field key, name and default placeholder.
+fn search_field(s: &State, u: &Ui, placeholder: Option<&str>) -> El {
+    let (edit, key, label, hint): (&rune::TextEdit, &str, &str, &str) = match s.screen {
+        Screen::Installed => {
+            (&s.installed_query, "search-installed", "Search installed addons", "Search installed")
+        }
+        Screen::Browse => (&s.browse_query, "search-browse", "Search mods", "Search mods"),
+        Screen::Servers => (&s.servers.query, "search-servers", "Search servers", "Search servers"),
+        _ => (&s.conflicts_query, "search-conflicts", "Search conflicting paths", "Search paths"),
     };
-    field
+    let field = rune::text_input(edit, crate::ui::BODY)
+        .key(key)
+        .label(tr(label))
+        .single_line()
+        .color(u.ink)
+        .placeholder(tr(placeholder.unwrap_or(hint)), u.faint)
+        .caret(u.accent, u.accent.alpha(0.20));
+    match s.screen {
+        Screen::Installed => field.on_edit(|st: &mut State| &mut st.installed_query),
+        Screen::Browse => field.on_edit(|st: &mut State| &mut st.browse_query),
+        Screen::Servers => field.on_edit(|st: &mut State| &mut st.servers.query),
+        _ => field.on_edit(|st: &mut State| &mut st.conflicts_query),
+    }
 }
 
 /// The launch confirm. Opening Steam is the only thing it does; the app never renames or copies

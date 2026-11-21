@@ -293,6 +293,12 @@ pub const DE: &[(&str, &str)] = &[
     ("Cmd", "Cmd"),
     ("Catalog {}", "Katalog {}"),
     ("Search the page", "Seite durchsuchen"),
+    ("Search mods", "Mods durchsuchen"),
+    ("Search installed", "Installierte durchsuchen"),
+    ("Search installed addons", "Installierte Addons durchsuchen"),
+    ("Search servers", "Server durchsuchen"),
+    ("Search paths", "Pfade durchsuchen"),
+    ("Search conflicting paths", "Überschneidende Pfade durchsuchen"),
     ("F11, Alt+Enter", "F11, Alt+Eingabe"),
 ];
 

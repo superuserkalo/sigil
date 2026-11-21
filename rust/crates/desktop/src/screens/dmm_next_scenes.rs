@@ -35,12 +35,16 @@ pub fn stats_season(s: &mut State) {
 pub fn stats_roll(s: &mut State) {
     crate::screens::stats::scene_profile(s);
     crate::screens::stats::roll::stage_scene(s);
+    // The Fun run lives on its own Stats tab.
+    s.stats.tab = crate::screens::stats::Tab::FunRun;
 }
 
 /// Stats before any player is loaded: the Fun run sits under the account entry.
 pub fn stats_roll_entry(s: &mut State) {
     crate::screens::stats::scene_entry(s);
     crate::screens::stats::roll::stage_scene(s);
+    // The Fun run lives on its own Stats tab.
+    s.stats.tab = crate::screens::stats::Tab::FunRun;
 }
 
 /// Autoexec with the convar catalogue open on a search, one value from the game's own file.

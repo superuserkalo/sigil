@@ -757,8 +757,8 @@ impl Ui {
     /// `section` with a count after the title (`SMALL_NUM` faint, no parentheses) and an
     /// optional trailing control (a 24 point ghost button) on the right.
     pub fn section_head(&self, title: &str, count: Option<usize>, trailing: Option<El>) -> El {
+        // Full width only with a trailing control: a bare header also sits inside other rows.
         let mut line = row()
-            .w_full()
             .h(CONTROL_S)
             .gap(6.0)
             .center_y()
@@ -773,7 +773,7 @@ impl Ui {
             line = line.child(text(count.to_string()).font(SMALL_NUM).color(self.faint));
         }
         if let Some(trailing) = trailing {
-            line = line.child(spacer()).child(trailing);
+            line = line.w_full().child(spacer()).child(trailing);
         }
         line
     }
