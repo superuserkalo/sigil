@@ -149,6 +149,11 @@ enum Command {
         #[command(subcommand)]
         command: LockerCommand,
     },
+    /// Browse, preview, search, compare and export the files of a VPK or a workspace folder.
+    Files {
+        #[command(subcommand)]
+        command: FilesCommand,
+    },
     /// Sign in with a ChatGPT or Grok subscription.
     Auth {
         #[command(subcommand)]
@@ -698,8 +703,135 @@ enum CharacterCommand {
     },
 }
 
+/// Where a files command reads: `game`, `core`, an installed addon file name or a workspace path.
+#[derive(clap::Args)]
+struct FilesSource {
+    /// game, core, an addon file such as pak03_dir.vpk, or a path inside the workspace.
+    #[arg(value_name = "SOURCE")]
+    source: String,
+    /// Workspace directory. Defaults to DAH_WORKSPACE_DIR or <data>/workspace.
+    #[arg(long, value_name = "DIR")]
+    workspace: Option<PathBuf>,
+}
+
+impl FilesSource {
+    fn args(&self) -> commands::files::SourceArgs {
+        commands::files::SourceArgs {
+            source: self.source.clone(),
+            workspace: self.workspace.clone(),
+        }
+    }
+}
+
+#[derive(Subcommand)]
+enum FilesCommand {
+    /// List the sources: the game VPKs and installed addons.
+    Sources {
+        #[arg(long, value_name = "DIR")]
+        workspace: Option<PathBuf>,
+        #[arg(long)]
+        json: bool,
+    },
+    /// List one folder level of a source.
+    List {
+        #[command(flatten)]
+        source: FilesSource,
+        /// Folder inside the source. Empty for the root.
+        #[arg(long, default_value = "")]
+        folder: String,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Preview one file: text, decoded data, a Panorama layout, a DMX summary or a hex dump.
+    Show {
+        #[command(flatten)]
+        source: FilesSource,
+        #[arg(value_name = "PATH")]
+        path: String,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Search file contents, compiled data included.
+    Search {
+        #[command(flatten)]
+        source: FilesSource,
+        #[arg(value_name = "TEXT", allow_hyphen_values = true)]
+        query: String,
+        /// Only paths containing this text.
+        #[arg(long, value_name = "TEXT")]
+        under: Option<String>,
+        #[arg(long)]
+        case_sensitive: bool,
+        #[arg(long, value_name = "N")]
+        max_hits: Option<usize>,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Compare two sources, or one file in both.
+    Compare {
+        #[arg(value_name = "LEFT")]
+        left: String,
+        #[arg(value_name = "RIGHT")]
+        right: String,
+        /// Compare this file's text instead of the trees.
+        #[arg(long, value_name = "PATH")]
+        path: Option<String>,
+        #[arg(long, value_name = "DIR")]
+        workspace: Option<PathBuf>,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Export files or folders into the mod project (never the game install).
+    Export {
+        #[command(flatten)]
+        source: FilesSource,
+        #[arg(value_name = "PATH", required = true)]
+        paths: Vec<String>,
+        /// Write a decoded text copy into sources/ instead of the original into staging/.
+        #[arg(long)]
+        editable: bool,
+        #[arg(long)]
+        overwrite: bool,
+        #[arg(long)]
+        json: bool,
+    },
+}
+
 #[derive(Subcommand)]
 enum LockerCommand {
+    /// List the game's textures, optionally for one hero. Read-only.
+    Textures {
+        /// Hero display name or codename.
+        #[arg(long, value_name = "HERO")]
+        hero: Option<String>,
+        /// card, ability, skin, effect or other.
+        #[arg(long, value_name = "KIND")]
+        kind: Option<String>,
+        /// Words that must all appear in the label or path.
+        #[arg(long, value_name = "TEXT")]
+        search: Option<String>,
+        #[arg(long, value_name = "N")]
+        limit: Option<usize>,
+        #[arg(long)]
+        json: bool,
+    },
+    /// List the game's sound events, for one hero or the heroes that have sounds. Read-only.
+    Sounds {
+        /// Hero display name or codename. Without it, lists the heroes.
+        #[arg(long, value_name = "HERO")]
+        hero: Option<String>,
+        /// Ability slot 1 to 4.
+        #[arg(long, value_name = "N")]
+        slot: Option<u8>,
+        #[arg(long, value_name = "TEXT")]
+        search: Option<String>,
+        #[arg(long, value_name = "N")]
+        limit: Option<usize>,
+        #[arg(long, value_name = "DIR")]
+        workspace: Option<PathBuf>,
+        #[arg(long)]
+        json: bool,
+    },
     /// List heroes, local art and recolorable catalog paths.
     List {
         /// Only heroes touched by an installed addon.
@@ -1147,7 +1279,18 @@ impl Cli {
                 | LaunchCommand::Status { json } => *json,
             },
             Command::Locker { command } => match command {
-                LockerCommand::List { json, .. } | LockerCommand::Recolor { json, .. } => *json,
+                LockerCommand::List { json, .. }
+                | LockerCommand::Recolor { json, .. }
+                | LockerCommand::Textures { json, .. }
+                | LockerCommand::Sounds { json, .. } => *json,
+            },
+            Command::Files { command } => match command {
+                FilesCommand::Sources { json, .. }
+                | FilesCommand::List { json, .. }
+                | FilesCommand::Show { json, .. }
+                | FilesCommand::Search { json, .. }
+                | FilesCommand::Compare { json, .. }
+                | FilesCommand::Export { json, .. } => *json,
             },
             Command::Auth { command } => match command {
                 AuthCommand::Login { json, .. }
@@ -1562,7 +1705,90 @@ fn run(cli: &Cli) -> error::Result<i32> {
                 Ok(0)
             }
         },
+        Command::Files { command } => match command {
+            FilesCommand::Sources { workspace, json } => {
+                commands::files::sources(workspace.clone(), *json)?;
+                Ok(0)
+            }
+            FilesCommand::List { source, folder, json } => {
+                commands::files::list(&source.args(), folder, *json)?;
+                Ok(0)
+            }
+            FilesCommand::Show { source, path, json } => {
+                commands::files::show(&source.args(), path, *json)?;
+                Ok(0)
+            }
+            FilesCommand::Search {
+                source,
+                query,
+                under,
+                case_sensitive,
+                max_hits,
+                json,
+            } => {
+                commands::files::find_text(&commands::files::SearchArgs {
+                    source: source.args(),
+                    query: query.clone(),
+                    under: under.clone(),
+                    case_sensitive: *case_sensitive,
+                    max_hits: *max_hits,
+                    json: *json,
+                })?;
+                Ok(0)
+            }
+            FilesCommand::Compare {
+                left,
+                right,
+                path,
+                workspace,
+                json,
+            } => {
+                let side = |source: &String| commands::files::SourceArgs {
+                    source: source.clone(),
+                    workspace: workspace.clone(),
+                };
+                commands::files::diff(&side(left), &side(right), path.as_deref(), *json)?;
+                Ok(0)
+            }
+            FilesCommand::Export {
+                source,
+                paths,
+                editable,
+                overwrite,
+                json,
+            } => {
+                commands::files::export_files(&commands::files::ExportArgs {
+                    source: source.args(),
+                    paths: paths.clone(),
+                    editable: *editable,
+                    overwrite: *overwrite,
+                    json: *json,
+                })?;
+                Ok(0)
+            }
+        },
         Command::Locker { command } => match command {
+            LockerCommand::Textures {
+                hero,
+                kind,
+                search,
+                limit,
+                json,
+            } => {
+                commands::locker::textures(hero.as_deref(), kind.as_deref(), search.as_deref(), *limit, *json)?;
+                Ok(0)
+            }
+            LockerCommand::Sounds {
+                hero,
+                slot,
+                search,
+                limit,
+                workspace,
+                json,
+            } => {
+                commands::locker::sounds(hero.as_deref(), *slot, search.as_deref(), *limit, workspace.clone(), *json)?;
+                Ok(0)
+            }
             LockerCommand::List {
                 modded,
                 workspace,

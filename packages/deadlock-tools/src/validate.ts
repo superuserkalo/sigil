@@ -164,6 +164,21 @@ export function validatePayload(
       }
     }
 
+    const lowerPath = entry.toLowerCase();
+    if (
+      lowerPath.startsWith("panorama/") &&
+      lowerPath.endsWith(".vtex_c") &&
+      !lowerPath.startsWith("panorama/images/")
+    ) {
+      issues.push({
+        severity: "warning",
+        code: "misplaced_panorama_image",
+        entry,
+        message:
+          "Panorama loads images from panorama/images only. This texture sits elsewhere under panorama and the UI will not find it.",
+      });
+    }
+
     const key = entry.toLowerCase();
     const previous = seen.get(key);
 

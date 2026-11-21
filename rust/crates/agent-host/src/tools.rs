@@ -39,6 +39,13 @@ pub fn deadlock_tools(cli: Arc<DahRsCli>) -> Result<Vec<Tool>> {
         profiles_list(cli.clone())?,
         locker_heroes(cli.clone())?,
         recolor_brief(cli.clone())?,
+        game_textures(cli.clone())?,
+        game_sounds(cli.clone())?,
+        files_list(cli.clone())?,
+        files_show(cli.clone())?,
+        files_search(cli.clone())?,
+        files_compare(cli.clone())?,
+        files_export(cli.clone())?,
         validate_payload()?,
     ])
 }
@@ -1022,4 +1029,299 @@ fn recolor_brief(cli: Arc<DahRsCli>) -> Result<Tool> {
             Ok(ToolReturn::Output(text))
         }
     })
+}
+
+// ----- game art, sounds and the file explorer ------------------------------------------------
+
+const SOURCE_DESCRIPTION: &str = "game (citadel pak01), core, an installed addon file such as pak03_dir.vpk, or a path inside the workspace such as mods/<slug>/staging.";
+
+fn required_string(arguments: &Value, name: &str) -> Result<String> {
+    arguments
+        .get(name)
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .ok_or_else(|| Error::Tool(format!("{name} is required.")))
+}
+
+fn push_option(args: &mut Vec<String>, arguments: &Value, name: &str, flag: &str) {
+    match arguments.get(name) {
+        Some(Value::String(text)) if !text.trim().is_empty() => {
+            args.push(flag.to_string());
+            args.push(text.trim().to_string());
+        }
+        Some(Value::Number(number)) => {
+            args.push(flag.to_string());
+            args.push(number.to_string());
+        }
+        _ => {}
+    }
+}
+
+fn game_textures_args(arguments: &Value) -> Result<Vec<String>> {
+    let mut args = vec!["locker".to_string(), "textures".to_string(), "--json".to_string()];
+    push_option(&mut args, arguments, "hero", "--hero");
+    push_option(&mut args, arguments, "kind", "--kind");
+    push_option(&mut args, arguments, "search", "--search");
+    push_option(&mut args, arguments, "limit", "--limit");
+    Ok(args)
+}
+
+fn game_textures(cli: Arc<DahRsCli>) -> Result<Tool> {
+    cli_tool(
+        cli,
+        "game_textures",
+        "List the game's textures (.vtex_c) with exact paths, kind and hero: hero cards, portraits, ability and item icons, skin textures and ability effects. Read-only; reads the pak directory, no pixels.",
+        object_schema(
+            json!({
+                "hero": {"type": ["string", "null"], "description": "Hero display name or codename. Pass null for every hero."},
+                "kind": {"type": ["string", "null"], "enum": ["card", "portrait", "ability", "item", "skin", "effect", "other", null], "description": "Texture kind. Pass null for every kind."},
+                "search": {"type": ["string", "null"], "description": "Words that must all appear in the label or path. Pass null to skip."},
+                "limit": {"type": ["integer", "null"], "minimum": 1, "maximum": 2000, "description": "Pass null for 200."},
+            }),
+            &["hero", "kind", "search", "limit"],
+        ),
+        true,
+        game_textures_args,
+    )
+}
+
+fn game_sounds_args(arguments: &Value) -> Result<Vec<String>> {
+    let mut args = vec!["locker".to_string(), "sounds".to_string(), "--json".to_string()];
+    push_option(&mut args, arguments, "hero", "--hero");
+    push_option(&mut args, arguments, "slot", "--slot");
+    push_option(&mut args, arguments, "search", "--search");
+    push_option(&mut args, arguments, "limit", "--limit");
+    Ok(args)
+}
+
+fn game_sounds(cli: Arc<DahRsCli>) -> Result<Tool> {
+    cli_tool(
+        cli,
+        "game_sounds",
+        "List the game's sound events for one hero (event name, ability, slot, clip paths, soundevents file), or with hero null the heroes that have sounds. Read-only toward the game; the first call indexes the soundevents into the workspace cache.",
+        object_schema(
+            json!({
+                "hero": {"type": ["string", "null"], "description": "Hero display name or codename. Pass null to list the heroes."},
+                "slot": {"type": ["integer", "null"], "minimum": 1, "maximum": 4, "description": "Ability slot. Pass null for every sound."},
+                "search": {"type": ["string", "null"], "description": "Words that must all appear in the label, event or ability. Pass null to skip."},
+                "limit": {"type": ["integer", "null"], "minimum": 1, "maximum": 2000, "description": "Pass null for 150."},
+            }),
+            &["hero", "slot", "search", "limit"],
+        ),
+        true,
+        game_sounds_args,
+    )
+}
+
+fn files_list_args(arguments: &Value) -> Result<Vec<String>> {
+    let mut args = vec!["files".to_string(), "list".to_string(), required_string(arguments, "source")?];
+    push_option(&mut args, arguments, "folder", "--folder");
+    args.push("--json".to_string());
+    Ok(args)
+}
+
+fn files_list(cli: Arc<DahRsCli>) -> Result<Tool> {
+    cli_tool(
+        cli,
+        "files_list",
+        "List one folder level of a VPK or workspace folder: subfolders with file counts and sizes, then files. Read-only.",
+        object_schema(
+            json!({
+                "source": {"type": "string", "description": SOURCE_DESCRIPTION},
+                "folder": {"type": ["string", "null"], "description": "Folder inside the source, for example scripts. Pass null for the root."},
+            }),
+            &["source", "folder"],
+        ),
+        true,
+        files_list_args,
+    )
+}
+
+fn files_show_args(arguments: &Value) -> Result<Vec<String>> {
+    Ok(vec![
+        "files".to_string(),
+        "show".to_string(),
+        required_string(arguments, "source")?,
+        required_string(arguments, "path")?,
+        "--json".to_string(),
+    ])
+}
+
+fn files_show(cli: Arc<DahRsCli>) -> Result<Tool> {
+    cli_tool(
+        cli,
+        "files_show",
+        "Preview one file as text: source text, compiled KV3 data (vdata, vsndevts, vpcf) as KV3 text, compiled Panorama layouts and styles, a text DMX summary, or a hex dump. Lists the resource's references. Read-only; capped at 24 KB.",
+        object_schema(
+            json!({
+                "source": {"type": "string", "description": SOURCE_DESCRIPTION},
+                "path": {"type": "string", "description": "Exact file path inside the source."},
+            }),
+            &["source", "path"],
+        ),
+        true,
+        files_show_args,
+    )
+}
+
+fn files_search_args(arguments: &Value) -> Result<Vec<String>> {
+    let mut args = vec![
+        "files".to_string(),
+        "search".to_string(),
+        required_string(arguments, "source")?,
+        required_string(arguments, "query")?,
+    ];
+    push_option(&mut args, arguments, "under", "--under");
+    push_option(&mut args, arguments, "max_hits", "--max-hits");
+    if arguments.get("case_sensitive").and_then(Value::as_bool) == Some(true) {
+        args.push("--case-sensitive".to_string());
+    }
+    args.push("--json".to_string());
+    Ok(args)
+}
+
+fn files_search(cli: Arc<DahRsCli>) -> Result<Tool> {
+    cli_tool(
+        cli,
+        "files_search",
+        "Search the contents of every text and compiled data file in a source, decoded first, and return matching lines. Read-only. Narrow a game-wide search with under.",
+        object_schema(
+            json!({
+                "source": {"type": "string", "description": SOURCE_DESCRIPTION},
+                "query": {"type": "string", "description": "Text to find."},
+                "under": {"type": ["string", "null"], "description": "Only paths containing this text, for example scripts/abilities. Pass null for every file."},
+                "case_sensitive": {"type": ["boolean", "null"], "description": "Pass null for a case-insensitive search."},
+                "max_hits": {"type": ["integer", "null"], "minimum": 1, "maximum": 200, "description": "Pass null for 60."},
+            }),
+            &["source", "query", "under", "case_sensitive", "max_hits"],
+        ),
+        true,
+        files_search_args,
+    )
+}
+
+fn files_compare_args(arguments: &Value) -> Result<Vec<String>> {
+    let mut args = vec![
+        "files".to_string(),
+        "compare".to_string(),
+        required_string(arguments, "left")?,
+        required_string(arguments, "right")?,
+    ];
+    push_option(&mut args, arguments, "path", "--path");
+    args.push("--json".to_string());
+    Ok(args)
+}
+
+fn files_compare(cli: Arc<DahRsCli>) -> Result<Tool> {
+    cli_tool(
+        cli,
+        "files_compare",
+        "Compare two sources: files only one side has and files that differ. With path, the changed lines of that file's decoded text. Read-only.",
+        object_schema(
+            json!({
+                "left": {"type": "string", "description": SOURCE_DESCRIPTION},
+                "right": {"type": "string", "description": SOURCE_DESCRIPTION},
+                "path": {"type": ["string", "null"], "description": "One file to diff line by line. Pass null to compare the trees."},
+            }),
+            &["left", "right", "path"],
+        ),
+        true,
+        files_compare_args,
+    )
+}
+
+fn files_export_args(arguments: &Value) -> Result<Vec<String>> {
+    let mut args = vec!["files".to_string(), "export".to_string(), required_string(arguments, "source")?];
+    let paths = string_list(arguments.get("paths"), "paths")?;
+    if paths.is_empty() {
+        return Err(Error::Tool("paths needs at least one file or folder.".into()));
+    }
+    args.extend(paths);
+    if arguments.get("editable").and_then(Value::as_bool) == Some(true) {
+        args.push("--editable".to_string());
+    }
+    if arguments.get("overwrite").and_then(Value::as_bool) == Some(true) {
+        args.push("--overwrite".to_string());
+    }
+    args.push("--json".to_string());
+    Ok(args)
+}
+
+fn files_export(cli: Arc<DahRsCli>) -> Result<Tool> {
+    cli_tool(
+        cli,
+        "files_export",
+        "Copy files or folders from a source into the current mod project: originals into staging/ (they replace that exact game path) or, with editable, decoded text into sources/. Writes only inside the mod project, never the game install.",
+        object_schema(
+            json!({
+                "source": {"type": "string", "description": SOURCE_DESCRIPTION},
+                "paths": {"type": "array", "items": {"type": "string"}, "minItems": 1, "maxItems": 200, "description": "Files or folders inside the source."},
+                "editable": {"type": ["boolean", "null"], "description": "Export a decoded text copy into sources/. Pass null for the original bytes."},
+                "overwrite": {"type": ["boolean", "null"], "description": "Replace files the project already has. Pass null to keep them."},
+            }),
+            &["source", "paths", "editable", "overwrite"],
+        ),
+        false,
+        files_export_args,
+    )
+}
+
+#[cfg(test)]
+mod contract_tests {
+    use super::*;
+
+    fn tools() -> Vec<Tool> {
+        let cli = Arc::new(DahRsCli::new(
+            Some("/opt/dah".to_string()),
+            crate::CliLaunch::SelfCli,
+            std::path::PathBuf::from("."),
+            std::path::PathBuf::from("."),
+        ));
+        deadlock_tools(cli).expect("tools build")
+    }
+
+    #[test]
+    fn asset_and_file_tools_are_reads_except_export() {
+        let tools = tools();
+        let idempotent = |name: &str| {
+            tools
+                .iter()
+                .find(|tool| tool.name() == name)
+                .unwrap_or_else(|| panic!("{name} is registered"))
+                .idempotent()
+        };
+        for name in ["game_textures", "game_sounds", "files_list", "files_show", "files_search", "files_compare"] {
+            assert!(idempotent(name), "{name} reads only");
+        }
+        assert!(!idempotent("files_export"), "export writes into the project");
+        for tool in &tools {
+            let schema = tool.definition().parameters;
+            assert_eq!(schema["type"], "object", "{} has an object schema", tool.name());
+            assert_eq!(schema["additionalProperties"], false, "{} rejects extra fields", tool.name());
+        }
+    }
+
+    #[test]
+    fn file_tools_build_argument_arrays_not_shell_strings() {
+        let args = files_search_args(&json!({
+            "source": "game", "query": "MaxHealth; rm -rf /", "under": "scripts", "case_sensitive": true, "max_hits": 5,
+        }))
+        .unwrap();
+        assert_eq!(
+            args,
+            ["files", "search", "game", "MaxHealth; rm -rf /", "--under", "scripts", "--max-hits", "5", "--case-sensitive", "--json"]
+        );
+        assert!(files_show_args(&json!({"source": "game", "path": ""})).is_err());
+        assert!(files_export_args(&json!({"source": "game", "paths": []})).is_err());
+        let export = files_export_args(&json!({"source": "pak03_dir.vpk", "paths": ["sounds/x.vsnd_c"], "editable": null, "overwrite": true})).unwrap();
+        assert_eq!(export, ["files", "export", "pak03_dir.vpk", "sounds/x.vsnd_c", "--overwrite", "--json"]);
+        // The export never names a destination: dah-rs resolves the mod project itself.
+        assert!(!export.iter().any(|word| word.contains("addons") || word == "--project"));
+        let sounds = game_sounds_args(&json!({"hero": "Haze", "slot": 2, "search": null, "limit": null})).unwrap();
+        assert_eq!(sounds, ["locker", "sounds", "--json", "--hero", "Haze", "--slot", "2"]);
+        let textures = game_textures_args(&json!({"hero": null, "kind": "skin", "search": null, "limit": 20})).unwrap();
+        assert_eq!(textures, ["locker", "textures", "--json", "--kind", "skin", "--limit", "20"]);
+    }
 }

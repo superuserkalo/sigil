@@ -227,3 +227,170 @@ fn discover(
     );
     Ok((heroes, assets, label))
 }
+
+fn game_assets() -> Result<deadlock_core::game_assets::GameAssets> {
+    let status = deadlock_core::discovery::read_game_status(None)
+        .map_err(|error| CliError::new("locker_game", error.to_string()))?;
+    let install = status.install.ok_or_else(|| {
+        CliError::new(
+            "locker_game",
+            "No Deadlock install was found. Set DAH_GAME_DIR to the Deadlock folder.",
+        )
+    })?;
+    deadlock_core::game_assets::GameAssets::open(&install.game_root)
+        .map_err(|error| CliError::new("locker_assets", error.to_string()))
+}
+
+/// `card`, `portrait`, `ability`, `item`, `skin`, `effect` or `other` (the core's ids work too).
+pub fn texture_kind(name: &str) -> Option<deadlock_core::game_assets::TextureKind> {
+    use deadlock_core::game_assets::TextureKind;
+    let name = name.trim().to_ascii_lowercase();
+    [
+        TextureKind::HeroCard,
+        TextureKind::HeroPortrait,
+        TextureKind::AbilityIcon,
+        TextureKind::ItemIcon,
+        TextureKind::SkinTexture,
+        TextureKind::AbilityVfx,
+        TextureKind::Other,
+    ]
+    .into_iter()
+    .find(|kind| {
+        let short = match kind {
+            TextureKind::HeroCard => "card",
+            TextureKind::HeroPortrait => "portrait",
+            TextureKind::AbilityIcon => "ability",
+            TextureKind::ItemIcon => "item",
+            TextureKind::SkinTexture => "skin",
+            TextureKind::AbilityVfx => "effect",
+            TextureKind::Other => "other",
+        };
+        name == short || name == kind.id().to_ascii_lowercase()
+    })
+}
+
+/// The game's textures. Reads the pak's directory only; no pixels.
+pub fn textures(
+    hero: Option<&str>,
+    kind: Option<&str>,
+    search: Option<&str>,
+    limit: Option<usize>,
+    json: bool,
+) -> Result<()> {
+    use deadlock_core::game_assets::TextureQuery;
+    let kinds = match kind {
+        Some(name) => vec![texture_kind(name).ok_or_else(|| {
+            CliError::new(
+                "locker_kind",
+                format!("{name} is not a texture kind. Use card, portrait, ability, item, skin, effect or other."),
+            )
+        })?],
+        None => Vec::new(),
+    };
+    let limit = limit.unwrap_or(200).clamp(1, 2000);
+    let pak = game_assets()?;
+    let list = pak.texture_catalog(&TextureQuery {
+        hero: hero.map(str::to_string),
+        kinds,
+        search: search.map(str::to_string),
+        limit: Some(limit),
+    });
+    if json {
+        print_json(&json!({
+            "ok": true,
+            "count": list.len(),
+            "textures": list.iter().map(|texture| json!({
+                "path": texture.path,
+                "kind": texture.kind.id(),
+                "hero": texture.hero,
+                "label": texture.label,
+                "variant": texture.variant,
+            })).collect::<Vec<_>>(),
+        }));
+    } else {
+        for texture in &list {
+            println!("{}  {}", texture.kind.id(), texture.path);
+        }
+    }
+    Ok(())
+}
+
+/// The game's sound events for one hero, or the heroes in the sound index. The first call for a
+/// game build indexes the soundevents into the workspace cache.
+pub fn sounds(
+    hero: Option<&str>,
+    slot: Option<u8>,
+    search: Option<&str>,
+    limit: Option<usize>,
+    workspace: Option<PathBuf>,
+    json: bool,
+) -> Result<()> {
+    use deadlock_core::game_assets::SoundQuery;
+    let workspace = paths::workspace_root(workspace.as_deref())?;
+    let cache = workspace.join(".dah").join("assets");
+    let pak = game_assets()?;
+    let Some(hero) = hero.filter(|hero| !hero.trim().is_empty()) else {
+        let heroes = pak
+            .sound_heroes(&cache)
+            .map_err(|error| CliError::new("locker_sounds", error.to_string()))?;
+        if json {
+            print_json(&json!({
+                "ok": true,
+                "heroes": heroes.iter().map(|hero| json!({
+                    "key": hero.key, "name": hero.name, "sounds": hero.sounds, "voiceLines": hero.voice_lines,
+                })).collect::<Vec<_>>(),
+            }));
+        } else {
+            for hero in &heroes {
+                println!("{}  {} sounds", hero.name, hero.sounds);
+            }
+        }
+        return Ok(());
+    };
+    if slot.is_some_and(|slot| !(1..=4).contains(&slot)) {
+        return Err(CliError::new("locker_slot", "An ability slot is 1 to 4."));
+    }
+    let list = pak
+        .sound_catalog(
+            &cache,
+            &SoundQuery {
+                hero: hero.to_string(),
+                kinds: Vec::new(),
+                slot,
+                search: search.map(str::to_string),
+                limit: Some(limit.unwrap_or(150).clamp(1, 2000)),
+            },
+        )
+        .map_err(|error| CliError::new("locker_sounds", error.to_string()))?;
+    if json {
+        print_json(&json!({
+            "ok": true,
+            "count": list.len(),
+            "sounds": list.iter().map(|sound| json!({
+                "event": sound.event,
+                "kind": sound.kind.id(),
+                "ability": sound.ability,
+                "slot": sound.slot,
+                "label": sound.label,
+                "clips": sound.clips,
+                "soundevents": sound.soundevents,
+            })).collect::<Vec<_>>(),
+        }));
+    } else {
+        for sound in &list {
+            println!("{}  {}", sound.event, sound.label);
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn texture_kinds_parse_short_and_core_ids() {
+        use deadlock_core::game_assets::TextureKind;
+        assert_eq!(super::texture_kind("skin"), Some(TextureKind::SkinTexture));
+        assert_eq!(super::texture_kind("abilityIcon"), Some(TextureKind::AbilityIcon));
+        assert_eq!(super::texture_kind("nope"), None);
+    }
+}
