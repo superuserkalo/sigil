@@ -37,11 +37,21 @@ pub fn factor(amount: f32, softness: f32, mask: f32) -> f32 {
 /// outside Grimoire's tier 1: literals, `time()`, sin, cos, abs, floor, frac, saturate, min,
 /// max, clamp, smoothstep, `+ - * /`, unary minus, parentheses and the rest attributes.
 pub fn eval_at_rest(source: &str) -> Option<f64> {
+    // Material strings come from mod files: a long or deeply nested one is refused, never
+    // recursed into (a stack overflow aborts the app; no unwind catches it).
+    if source.len() > MAX_SOURCE {
+        return None;
+    }
     let tokens = tokenize(source)?;
-    let mut p = Parser { tokens, at: 0 };
+    let mut p = Parser { tokens, at: 0, depth: 0 };
     let v = p.expr()?;
     (p.at == p.tokens.len() && v.is_finite()).then_some(v)
 }
+
+/// The longest expression read, in bytes.
+const MAX_SOURCE: usize = 4096;
+/// The deepest nesting of expressions, unary minus and parentheses.
+const MAX_DEPTH: u32 = 64;
 
 #[derive(Clone, Debug, PartialEq)]
 enum Tok {
@@ -89,6 +99,7 @@ fn tokenize(src: &str) -> Option<Vec<Tok>> {
 struct Parser {
     tokens: Vec<Tok>,
     at: usize,
+    depth: u32,
 }
 
 impl Parser {
@@ -103,7 +114,20 @@ impl Parser {
             false
         }
     }
+    /// Runs `f` one level deeper, or None past `MAX_DEPTH`.
+    fn nested(&mut self, f: impl FnOnce(&mut Self) -> Option<f64>) -> Option<f64> {
+        if self.depth >= MAX_DEPTH {
+            return None;
+        }
+        self.depth += 1;
+        let v = f(self);
+        self.depth -= 1;
+        v
+    }
     fn expr(&mut self) -> Option<f64> {
+        self.nested(Self::sum)
+    }
+    fn sum(&mut self) -> Option<f64> {
         let mut v = self.term()?;
         loop {
             if self.eat('+') {
@@ -129,7 +153,7 @@ impl Parser {
     }
     fn unary(&mut self) -> Option<f64> {
         if self.eat('-') {
-            return self.unary().map(|v| -v);
+            return self.nested(Self::unary).map(|v| -v);
         }
         self.atom()
     }
@@ -209,6 +233,22 @@ mod tests {
         assert_eq!(eval_at_rest("float2(1, 2)"), None);
         assert_eq!(eval_at_rest("1 > 0"), None);
         assert_eq!(eval_at_rest("max(1"), None);
+    }
+
+    #[test]
+    fn deep_or_long_expressions_are_refused_not_recursed() {
+        let deep = format!("{}1{}", "(".repeat(10_000), ")".repeat(10_000));
+        assert_eq!(eval_at_rest(&deep), None);
+        assert_eq!(eval_at_rest(&format!("{}1", "-".repeat(10_000))), None);
+        // Under the length cap, the depth cap refuses them.
+        assert_eq!(eval_at_rest(&format!("{}1{}", "(".repeat(1000), ")".repeat(1000))), None);
+        assert_eq!(eval_at_rest(&format!("{}1", "-".repeat(2000))), None);
+        assert_eq!(eval_at_rest(&format!("{}1{}", "max(0,".repeat(500), ")".repeat(500))), None);
+        // Past the length cap even a flat sum is refused.
+        assert_eq!(eval_at_rest(&"1+".repeat(3000).trim_end_matches('+').to_string()), None);
+        // Ordinary nesting still reads.
+        assert_eq!(eval_at_rest(&format!("{}1{}", "(".repeat(20), ")".repeat(20))), Some(1.0));
+        assert_eq!(eval_at_rest("--1"), Some(1.0));
     }
 
     #[test]
