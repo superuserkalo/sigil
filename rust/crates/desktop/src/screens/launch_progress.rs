@@ -7,7 +7,8 @@
 //! process, which the launch monitor reports. Cancel before Steam has the game stops the launch
 //! with nothing started; Cancel while waiting closes the game once it appears. Hide keeps the
 //! launch going without the overlay. The wait gives up after three minutes with a note, since
-//! Steam may be updating the game.
+//! Steam may be updating the game. When closing the game for a Cancel fails, the overlay comes
+//! back with the error and Try again, instead of a launch that silently kept going (DMM 2.4.0).
 
 use std::time::{Duration, Instant};
 
@@ -16,8 +17,40 @@ use rune::{El, Key, KeyEvent, Tx, col, el, icon, row, spacer, text};
 use crate::app::State;
 use crate::icons;
 use crate::screens::launch::Dialog;
-use crate::screens::settings::i18n::tr;
+use crate::screens::settings::i18n::fill;
 use crate::ui::{ActionKind, BODY, H1, Ui};
+
+#[path = "launch_de.rs"]
+mod de;
+
+/// The overlay's own German rows, also read by the translation test so they cannot drift.
+pub(crate) use de::DE as LAUNCH_DE;
+
+/// The UI text in the player's language: this overlay's German table first, then Sigil's.
+pub(crate) fn tr(text: &str) -> &str {
+    use crate::screens::settings::i18n::{self, Lang};
+    if i18n::current() == Lang::German
+        && let Some(de) = de::get(text)
+    {
+        return de;
+    }
+    i18n::tr(text)
+}
+
+/// What a finished Stop game says when the game is still there: `None` when it closed.
+pub fn stop_failure(result: &Result<deadlock_core::launch::StopReport, String>) -> Option<String> {
+    match result {
+        Ok(report) if report.stopped() => None,
+        Ok(report) => {
+            let ids: Vec<String> = report.remaining.iter().map(u32::to_string).collect();
+            Some(fill(
+                tr("Deadlock is still running (process {}). Close it from Steam or the Task Manager."),
+                &[&ids.join(", ")],
+            ))
+        }
+        Err(error) => Some(fill(tr("Stopping Deadlock failed: {}"), &[error])),
+    }
+}
 
 /// How long the overlay waits for the game process.
 pub const WAIT_FOR_GAME: Duration = Duration::from_secs(180);
@@ -77,6 +110,10 @@ pub struct Progress {
     pub closing: bool,
     /// When the wait for the game began.
     pub waiting_since: Option<Instant>,
+    /// Cancel is closing the game now; the stop worker has not reported yet.
+    pub stopping: bool,
+    /// Closing the game for a Cancel failed: why, shown on the overlay with Try again.
+    pub cancel_error: Option<String>,
 }
 
 /// The steps of a launch: from the sidebar (`page` false) or the Launch page.
@@ -136,14 +173,20 @@ pub fn begin_checked(st: &mut State, vanilla: bool, page: bool) {
         hidden: false,
         closing: false,
         waiting_since: None,
+        stopping: false,
+        cancel_error: None,
     });
 }
 
 /// Run the next step, or follow the wait. One step a frame, so the overlay shows each one.
 pub fn poll(st: &mut State, tx: &mut Tx) -> bool {
+    let stopped = take_stop(st);
     let Some(progress) = st.launch.progress.clone() else {
-        return false;
+        return stopped;
     };
+    if progress.stopping || progress.cancel_error.is_some() {
+        return stopped;
+    }
     let Some(step) = progress.steps.get(progress.at).copied() else {
         st.launch.progress = None;
         return true;
@@ -207,12 +250,70 @@ fn run(st: &mut State, step: Step) {
     }
 }
 
+/// Take a finished Stop game. For a Cancel, success ends the launch and a failure brings the
+/// overlay back with the error; any other Stop game failure is a toast. True when the view changed.
+fn take_stop(st: &mut State) -> bool {
+    let Some(result) = st.launch.stop.try_take() else {
+        return false;
+    };
+    match stop_failure(&result) {
+        None => crate::screens::settings::log::info("Stopped Deadlock"),
+        Some(why) => crate::screens::settings::log::error(format!("Deadlock did not close: {why}")),
+    }
+    apply_stop(st, &result);
+    // The running row follows the process again.
+    crate::data::start_launch_read(st);
+    true
+}
+
+fn apply_stop(st: &mut State, result: &Result<deadlock_core::launch::StopReport, String>) {
+    let failure = stop_failure(result);
+    let cancelling = st.launch.progress.as_ref().is_some_and(|p| p.stopping);
+    match (cancelling, failure) {
+        (true, None) => {
+            st.launch.progress = None;
+            crate::notify::push(
+                st,
+                crate::notify::Notice::info(tr("Launch cancelled")).detail(tr("Deadlock was closed.")),
+            );
+        }
+        (true, Some(why)) => {
+            if let Some(p) = st.launch.progress.as_mut() {
+                p.stopping = false;
+                p.hidden = false;
+                p.cancel_error = Some(why);
+            }
+        }
+        (false, Some(why)) => crate::notify::push(
+            st,
+            crate::notify::Notice::error(tr("Deadlock did not close"))
+                .detail(why)
+                // One more press asks Windows to end it outright; stop_game already forced
+                // after its grace period, so a retry is the offer to end a stuck game.
+                .action(tr("Try again"), |st: &mut State| crate::screens::launch::stop_game(st)),
+        ),
+        (false, None) => {}
+    }
+}
+
+/// Close the game for a Cancel, keeping the launch on screen until the stop worker reports.
+fn close_for_cancel(st: &mut State) {
+    if let Some(p) = st.launch.progress.as_mut() {
+        p.stopping = true;
+        p.cancel_error = None;
+    }
+    if !crate::screens::launch::stop_game_for_cancel(st) {
+        st.launch.progress = None;
+    }
+}
+
 fn wait(st: &mut State, tx: &mut Tx, progress: &Progress) -> bool {
     let running = st.launch.monitor.running();
     if running {
-        st.launch.progress = None;
         if progress.closing {
-            crate::screens::launch::stop_game_quietly(st);
+            close_for_cancel(st);
+        } else {
+            st.launch.progress = None;
         }
         return true;
     }
@@ -244,17 +345,23 @@ pub fn cancel(st: &mut State) {
         return;
     }
     progress.closing = true;
-    progress.hidden = true;
     if st.launch.monitor.running() {
-        st.launch.progress = None;
-        crate::screens::launch::stop_game(st);
+        // The overlay stays up, reading "Closing Deadlock", until the game is gone or the stop
+        // failed.
+        close_for_cancel(st);
     } else {
+        progress.hidden = true;
         crate::notify::push(
             st,
             crate::notify::Notice::info(tr("Launch cancelled"))
                 .detail(tr("Steam already has it. Sigil closes the game as soon as it starts.")),
         );
     }
+}
+
+/// Close the error and leave the game as it is.
+fn dismiss(st: &mut State) {
+    st.launch.progress = None;
 }
 
 fn hide(st: &mut State) {
@@ -292,6 +399,29 @@ pub fn overlay(s: &State, u: &Ui) -> Option<El> {
                         .min_w(0.0)
                         .truncate(),
                 ),
+        );
+    }
+    if progress.stopping {
+        list = list.child(
+            row()
+                .key("launch-progress-closing")
+                .w_full()
+                .gap(10.0)
+                .center_y()
+                .child(el().size(16.0, 16.0).center().child(icon(&icons::LOADER, 14.0).color(u.muted).a11y_hidden()))
+                .child(text(tr("Closing Deadlock")).font(BODY).color(u.ink).grow(1.0).min_w(0.0).truncate()),
+        );
+    }
+    if let Some(why) = &progress.cancel_error {
+        list = list.child(
+            col()
+                .key("launch-progress-error")
+                .role("alert")
+                .w_full()
+                .gap(4.0)
+                .pt(4.0)
+                .child(text(tr("The launch could not be cancelled")).font(BODY).color(u.rose).wrap())
+                .child(text(why.clone()).font(BODY).color(u.muted).wrap()),
         );
     }
     let share = progress.at as f32 / progress.steps.len().max(1) as f32;
@@ -338,14 +468,33 @@ pub fn overlay(s: &State, u: &Ui) -> Option<El> {
             )
             .child(list)
             .child(bar)
-            .child(
+            .child(if progress.cancel_error.is_some() {
+                row()
+                    .w_full()
+                    .gap(8.0)
+                    .child(spacer())
+                    .child(
+                        u.action(tr("Close"), ActionKind::Ghost)
+                            .key("launch-progress-dismiss")
+                            .cursor(rune::Cursor::Pointer)
+                            .on_press(dismiss),
+                    )
+                    .child(
+                        u.action(tr("Try again"), ActionKind::Secondary)
+                            .key("launch-progress-retry")
+                            .cursor(rune::Cursor::Pointer)
+                            .on_press(close_for_cancel),
+                    )
+            } else if progress.stopping {
+                row().w_full()
+            } else {
                 row().w_full().child(spacer()).child(
                     u.action(tr("Cancel launch"), ActionKind::Secondary)
                         .key("launch-progress-cancel")
                         .cursor(rune::Cursor::Pointer)
                         .on_press(cancel),
-                ),
-            ),
+                )
+            }),
     )
 }
 
@@ -359,6 +508,8 @@ pub fn stage(st: &mut State, vanilla: bool, at: usize) {
         hidden: false,
         closing: false,
         waiting_since: Some(Instant::now()),
+        stopping: false,
+        cancel_error: None,
     });
 }
 
@@ -391,6 +542,33 @@ mod tests {
         stage(&mut st, false, 1);
         cancel(&mut st);
         assert!(st.launch.progress.is_none());
+    }
+
+    #[test]
+    fn a_failed_cancel_keeps_the_launch_on_screen_with_the_error() {
+        use deadlock_core::launch::StopReport;
+        let mut st = State::default();
+        st.demo = true;
+        stage(&mut st, false, 3);
+        if let Some(p) = st.launch.progress.as_mut() {
+            p.closing = true;
+            p.stopping = true;
+            p.hidden = true;
+        }
+        apply_stop(&mut st, &Ok(StopReport { pids: vec![7], forced: true, remaining: vec![7] }));
+        let progress = st.launch.progress.as_ref().expect("the launch stays on screen");
+        assert!(!progress.hidden && !progress.stopping);
+        assert!(progress.cancel_error.as_deref().is_some_and(|why| why.contains('7')));
+
+        close_for_cancel(&mut st);
+        // Headless: no worker starts, so the launch is let go instead of spinning forever.
+        assert!(st.launch.progress.is_none() || st.launch.progress.as_ref().is_some_and(|p| p.stopping));
+
+        stage(&mut st, false, 3);
+        st.launch.progress.as_mut().unwrap().stopping = true;
+        apply_stop(&mut st, &Ok(StopReport { pids: vec![7], forced: false, remaining: Vec::new() }));
+        assert!(st.launch.progress.is_none(), "a closed game ends the launch");
+        assert!(stop_failure(&Err("denied".into())).unwrap().contains("denied"));
     }
 
     #[test]
