@@ -7,6 +7,7 @@
 //! folder. Both run only from an explicit press inside a dialog that shows what will change.
 
 use std::path::{Path, PathBuf};
+use std::sync::mpsc::{Receiver, TryRecvError};
 
 use deadlock_core::crosshair::Crosshair;
 use deadlock_core::profiles::{
@@ -156,6 +157,8 @@ pub enum Stage {
 
 #[derive(Clone, PartialEq, Eq)]
 pub enum RowStatus {
+    /// Its GameBanana lookup has not returned yet.
+    LookingUp,
     Idle,
     Queued,
     Downloading,
@@ -177,7 +180,10 @@ pub struct ImportView {
     pub include_autoexec: bool,
     /// A recovery point was taken before the first download of this import.
     pub snapshot_taken: bool,
-    pub resolve_job: Job<(PortableProfile, Vec<ImportEntry>)>,
+    pub resolve_job: Job<(PortableProfile, Receiver<ImportEntry>)>,
+    /// Entries arriving one by one as their lookups return, so a download can start while
+    /// the next mod is still looked up (DMM 2.4.0).
+    pub lookups: Option<Receiver<ImportEntry>>,
     pub install_job: Job<(usize, Result<AddonIdentity, String>)>,
 }
 
@@ -196,6 +202,7 @@ impl Default for ImportView {
             include_autoexec: true,
             snapshot_taken: false,
             resolve_job: Job::default(),
+            lookups: None,
             install_job: Job::default(),
         }
     }
@@ -392,15 +399,16 @@ pub fn poll(st: &mut State) -> bool {
     if let Some(result) = st.profiles.import.resolve_job.try_take() {
         let import = &mut st.profiles.import;
         match result {
-            Ok((portable, entries)) => {
+            Ok((portable, lookups)) => {
                 import.name = TextEdit::new(&portable.profile.name);
                 import.include_autoexec = true;
-                import.keep = entries
-                    .iter()
-                    .map(|entry| entry.status != ImportStatus::Unavailable)
+                let count = portable.mods.len();
+                import.entries = (0..count)
+                    .filter_map(|index| core::pending_import_entry(&portable, index))
                     .collect();
-                import.status = vec![RowStatus::Idle; entries.len()];
-                import.entries = entries;
+                import.keep = vec![true; count];
+                import.status = vec![RowStatus::LookingUp; count];
+                import.lookups = Some(lookups);
                 import.portable = Some(portable);
                 import.stage = Stage::Review;
             }
@@ -411,6 +419,7 @@ pub fn poll(st: &mut State) -> bool {
         }
         changed = true;
     }
+    changed |= take_lookups(st);
     if let Some(result) = st.profiles.import.install_job.try_take() {
         let import = &mut st.profiles.import;
         match result {
@@ -1786,14 +1795,89 @@ fn start_resolve(st: &mut State, input: String) {
     let workspace = crate::data::workspace_dir();
     let game_root = st.game_root.clone();
     let wake = st.wake.clone();
+    let lookup_wake = wake.clone();
     st.profiles.import.resolve_job.start(wake, move || {
         let portable = core::read_portable_input(&input).map_err(|error| error.to_string())?;
         let installed = game_root
             .and_then(|root| core::installed_identities(&root, &workspace).ok())
             .unwrap_or_default();
-        let entries = core::resolve_import(&portable, &installed, &mut core::fetch_mod_files);
-        Ok((portable, entries))
+        // Lookups run on their own thread and hand each entry over as it returns. A closed
+        // dialog drops the receiver, which stops the remaining lookups.
+        let (tx, rx) = std::sync::mpsc::channel();
+        let shared = portable.clone();
+        std::thread::Builder::new()
+            .name("dah-profile-lookups".to_string())
+            .spawn(move || {
+                let closed = std::cell::Cell::new(false);
+                let mut lookup = |id: u64| {
+                    if closed.get() {
+                        return Err(deadlock_core::Error::Network("The import was closed.".into()));
+                    }
+                    core::fetch_mod_files(id)
+                };
+                core::resolve_import_each(&shared, &installed, &mut lookup, &mut |entry| {
+                    if tx.send(entry).is_err() {
+                        closed.set(true);
+                    } else if let Some(wake) = &lookup_wake {
+                        wake();
+                    }
+                });
+            })
+            .map_err(|error| error.to_string())?;
+        Ok((portable, rx))
     });
+}
+
+/// Take the entries whose lookups returned since the last frame. Once Import was pressed, a
+/// kept entry that needs a download is queued right away. Returns true when anything changed.
+fn take_lookups(st: &mut State) -> bool {
+    let Some(rx) = st.profiles.import.lookups.as_ref() else {
+        return false;
+    };
+    let mut arrived = Vec::new();
+    let mut stopped = false;
+    loop {
+        match rx.try_recv() {
+            Ok(entry) => arrived.push(entry),
+            Err(TryRecvError::Empty) => break,
+            Err(TryRecvError::Disconnected) => {
+                stopped = true;
+                break;
+            }
+        }
+    }
+    if arrived.is_empty() && !stopped {
+        return false;
+    }
+    let import = &mut st.profiles.import;
+    let installing = import.stage == Stage::Installing;
+    for entry in arrived {
+        let index = entry.index;
+        if index >= import.entries.len() {
+            continue;
+        }
+        import.keep[index] = entry.status != ImportStatus::Unavailable;
+        import.status[index] = if installing && import.keep[index] && entry.needs_download() {
+            RowStatus::Queued
+        } else {
+            RowStatus::Idle
+        };
+        import.entries[index] = entry;
+    }
+    if stopped {
+        import.lookups = None;
+        for (index, status) in import.status.iter_mut().enumerate() {
+            if *status == RowStatus::LookingUp {
+                *status = RowStatus::Idle;
+                import.keep[index] = false;
+                import.entries[index].reason = Some(tr("The lookup stopped before this mod was found.").to_string());
+            }
+        }
+    }
+    if installing && !import.install_job.is_running() {
+        next_install(st);
+    }
+    true
 }
 
 /// Pick a profile file with the system dialog, then import it.
@@ -1840,7 +1924,10 @@ fn confirm_import(st: &mut State) {
     }
     let mut queued = false;
     for (index, entry) in import.entries.iter().enumerate() {
-        if import.keep[index] && entry.needs_download() {
+        if import.status[index] == RowStatus::LookingUp {
+            // Queued as soon as its lookup returns.
+            queued = true;
+        } else if import.keep[index] && entry.needs_download() {
             import.status[index] = RowStatus::Queued;
             queued = true;
         }
@@ -1858,7 +1945,8 @@ fn confirm_import(st: &mut State) {
 fn next_install(st: &mut State) {
     let import = &mut st.profiles.import;
     let Some(index) = import.status.iter().position(|status| *status == RowStatus::Queued) else {
-        if import.stage == Stage::Installing {
+        let looking_up = import.status.contains(&RowStatus::LookingUp);
+        if import.stage == Stage::Installing && !looking_up {
             finish_import(st);
         }
         return;
@@ -2530,10 +2618,12 @@ fn import_review(s: &State, u: &Ui) -> El {
         .collect();
     let on_disk = kept.iter().filter(|entry| entry.installed_slot.is_some()).count();
     let downloads = kept.iter().filter(|entry| entry.needs_download()).count();
+    let looking_up = import.status.iter().filter(|status| **status == RowStatus::LookingUp).count();
     let unavailable = import
         .entries
         .iter()
-        .filter(|entry| entry.status == ImportStatus::Unavailable)
+        .zip(&import.status)
+        .filter(|(entry, status)| entry.status == ImportStatus::Unavailable && **status != RowStatus::LookingUp)
         .count();
 
     let line = if installing {
@@ -2545,11 +2635,19 @@ fn import_review(s: &State, u: &Ui) -> El {
         let total = import
             .status
             .iter()
-            .filter(|status| !matches!(status, RowStatus::Idle))
+            .filter(|status| !matches!(status, RowStatus::Idle | RowStatus::LookingUp))
             .count();
-        format!("Downloading {} of {total}.", (done + 1).min(total))
+        let mut line = format!("Downloading {} of {total}.", (done + 1).min(total));
+        if looking_up > 0 {
+            line.push(' ');
+            line.push_str(&fill(tr("Looking up {} more."), &[&looking_up.to_string()]));
+        }
+        line
     } else {
         let mut parts = Vec::new();
+        if looking_up > 0 {
+            parts.push(fill(tr("looking up {}"), &[&looking_up.to_string()]));
+        }
         if on_disk > 0 {
             parts.push(format!("{on_disk} already installed"));
         }
@@ -2624,7 +2722,9 @@ fn import_review(s: &State, u: &Ui) -> El {
         );
     }
 
-    let label = if downloads > 0 {
+    let label = if looking_up > 0 {
+        tr("Download and import").to_string()
+    } else if downloads > 0 {
         format!("Download {downloads} and import")
     } else {
         tr("Import").to_string()
@@ -2646,7 +2746,8 @@ fn import_row(
     index: usize,
     installing: bool,
 ) -> El {
-    let unavailable = entry.status == ImportStatus::Unavailable;
+    let looking_up = *status == RowStatus::LookingUp;
+    let unavailable = entry.status == ImportStatus::Unavailable && !looking_up;
     let sub = if let Some(reason) = &entry.reason {
         Some((reason.clone(), u.faint))
     } else if entry.status == ImportStatus::Upgraded {
@@ -2657,6 +2758,7 @@ fn import_row(
         None
     };
     let (state, state_color) = match status {
+        RowStatus::LookingUp => (tr("Looking up").to_string(), u.faint),
         RowStatus::Queued => ("Queued".to_string(), u.faint),
         RowStatus::Downloading => ("Downloading".to_string(), u.muted),
         RowStatus::Installed => ("Installed".to_string(), u.muted),
@@ -2690,7 +2792,7 @@ fn import_row(
         .border_sides([0.0, 0.0, 1.0, 0.0], u.hair);
     line = if unavailable {
         line.child(el().size(16.0, 16.0).radius(4.0).border(1.0, rune::Color::WHITE.alpha(0.10)))
-    } else if installing {
+    } else if installing || looking_up {
         line.child(checkbox(u, keep).opacity(0.5))
     } else {
         line.role("checkbox")
@@ -2706,7 +2808,7 @@ fn import_row(
             .child(checkbox(u, keep))
     };
     let mut right = row().gap(6.0).center_y();
-    if *status == RowStatus::Downloading {
+    if matches!(status, RowStatus::Downloading | RowStatus::LookingUp) {
         right = right.child(icon(&icons::LOADER, 14.0).color(u.muted).a11y_hidden());
     }
     right = right.child(text(state).font(SMALL).color(state_color));
@@ -3235,6 +3337,31 @@ pub fn scene_import(st: &mut State) {
     import.portable = Some(portable);
     import.stage = Stage::Review;
     st.profiles.dialog = Dialog::Import;
+}
+
+/// Import pressed while lookups still run: one mod installed, one downloading, one queued
+/// and two still being looked up (they queue as their lookups return).
+pub fn scene_import_early(st: &mut State) {
+    scene_import(st);
+    let import = &mut st.profiles.import;
+    import.stage = Stage::Installing;
+    import.status = vec![
+        RowStatus::Idle,
+        RowStatus::Installed,
+        RowStatus::Downloading,
+        RowStatus::Idle,
+        RowStatus::LookingUp,
+        RowStatus::LookingUp,
+    ];
+    for index in [4, 5] {
+        if let Some(portable) = import.portable.as_ref()
+            && let Some(mut pending) = core::pending_import_entry(portable, index)
+        {
+            pending.label = import.entries[index].label.clone();
+            import.entries[index] = pending;
+        }
+        import.keep[index] = true;
+    }
 }
 
 /// The first import step with a profile file to pick.
