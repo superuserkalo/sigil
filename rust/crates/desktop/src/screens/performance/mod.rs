@@ -664,18 +664,6 @@ fn list_page(s: &State, u: &Ui) -> El {
         );
     }
     actions = actions.child(custom::add_button(u)).child(refresh);
-    // How fresh the configs are, beside the button that checks again.
-    let fresh = s
-        .performance
-        .catalog
-        .as_ref()
-        .map(|c| freshness_line(s, c).0)
-        .unwrap_or_default();
-    let actions = row()
-        .gap(16.0)
-        .center_y()
-        .child(text(fresh).font(SMALL).color(u.muted).truncate().min_w(0.0).shrink())
-        .child(actions);
     let mut page = page("perf-page").child(u.page_head(
         "",
         tr("Performance"),
@@ -798,12 +786,12 @@ fn current(s: &State, u: &Ui) -> El {
                     parts.retain(|part| !part.is_empty());
                     let options =
                         applied_options(s, config).unwrap_or_else(|| config.default_options());
-                    parts.push(format!("{} settings", config.setting_count(&options)));
+                    parts.push(fill(tr("{} settings"), &[&config.setting_count(&options).to_string()]));
                     let on = switches.as_ref().map(|(on, _)| on.len()).unwrap_or(0);
                     if on > 0 {
-                        parts.push(format!(
-                            "{on} author switch{} on",
-                            if on == 1 { "" } else { "es" }
+                        parts.push(fill(
+                            if on == 1 { tr("{} author switch on") } else { tr("{} author switches on") },
+                            &[&on.to_string()],
                         ));
                     }
                 }
@@ -960,7 +948,9 @@ fn toolbar(s: &State, u: &Ui, catalog: &Catalog) -> El {
     let on = applied_id(s)
         .and_then(|id| catalog.configs.iter().find(|c| c.id() == id))
         .map(|c| c.def.tier);
-    scale::view(s, u, catalog, on)
+    // How fresh the configs are, under the slider's readout.
+    let fresh = freshness_line(s, catalog).0;
+    scale::view(s, u, catalog, on, fresh)
 }
 
 fn freshness_line(s: &State, catalog: &Catalog) -> (String, bool) {
@@ -980,11 +970,11 @@ fn freshness_line(s: &State, catalog: &Catalog) -> (String, bool) {
 
 fn ago(minutes: i64) -> String {
     match minutes {
-        m if m < 2 => "just now".into(),
-        m if m < 60 => format!("{m} minutes ago"),
-        m if m < 120 => "an hour ago".into(),
-        m if m < 60 * 48 => format!("{} hours ago", m / 60),
-        m => format!("{} days ago", m / (60 * 24)),
+        m if m < 2 => tr("just now").into(),
+        m if m < 60 => fill(tr("{} minutes ago"), &[&m.to_string()]),
+        m if m < 120 => tr("an hour ago").into(),
+        m if m < 60 * 48 => fill(tr("{} hours ago"), &[&(m / 60).to_string()]),
+        m => fill(tr("{} days ago"), &[&(m / (60 * 24)).to_string()]),
     }
 }
 
@@ -1107,7 +1097,7 @@ fn config_row(s: &State, u: &Ui, config: &Config, is_on: bool) -> El {
             .truncate(),
         )
         .child(
-            text(format!("{} settings", config.setting_count(&options)))
+            text(fill(tr("{} settings"), &[&config.setting_count(&options).to_string()]))
                 .font(SMALL_NUM)
                 .color(u.muted)
                 .w(96.0)

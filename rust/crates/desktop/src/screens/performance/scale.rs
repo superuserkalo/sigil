@@ -78,7 +78,7 @@ fn stop_cell(u: &Ui, i: usize, n: usize, lit_left: bool, lit_right: bool, on: bo
 }
 
 /// `on` is the tier of the applied config, its stop green like the toggles.
-pub fn view(s: &State, u: &Ui, catalog: &Catalog, on: Option<Tier>) -> El {
+pub fn view(s: &State, u: &Ui, catalog: &Catalog, on: Option<Tier>, note: String) -> El {
     let tiers = tiers(catalog);
     let n = tiers.len();
     let order: Vec<Tier> = tiers.iter().map(|(t, _)| *t).collect();
@@ -239,9 +239,10 @@ pub fn view(s: &State, u: &Ui, catalog: &Catalog, on: Option<Tier>) -> El {
         );
 
     // The readout: what the thumb points at, in a box the text never sizes.
-    let (name, count, blurb) = match picked {
-        Some(i) => (tr(tiers[i].0.label()).to_string(), tiers[i].1, tr(tiers[i].0.blurb()).to_string()),
-        None => (tr("All tiers").to_string(), total, String::new()),
+    // Line 2 says how fresh the configs are; the tier's blurb already heads its group below.
+    let (name, count) = match picked {
+        Some(i) => (tr(tiers[i].0.label()).to_string(), tiers[i].1),
+        None => (tr("All tiers").to_string(), total),
     };
     let readout = col()
         .w(0.0)
@@ -259,11 +260,14 @@ pub fn view(s: &State, u: &Ui, catalog: &Catalog, on: Option<Tier>) -> El {
                 .child(
                     text(fill(tr("{} configs"), &[&count.to_string()]))
                         .font(SMALL_NUM)
-                        .color(u.muted),
+                        .color(u.muted)
+                        .truncate()
+                        .min_w(0.0)
+                        .shrink(),
                 ),
         )
         .child(
-            row().w_full().h(16.0).child(text(blurb).font(SMALL).color(u.muted).truncate()),
+            row().w_full().h(16.0).child(text(note).font(SMALL).color(u.muted).truncate()),
         );
 
     row()

@@ -6,6 +6,8 @@ use std::collections::HashMap;
 use std::sync::OnceLock;
 
 pub const DE: &[(&str, &str)] = &[
+    ("{} before", "{} davor"),
+    ("{} average {}", "{} Schnitt {}"),
     ("ended {}", "Ende {}"),
     ("{} heroes", "{} Helden"),
     ("All time", "Gesamt"),

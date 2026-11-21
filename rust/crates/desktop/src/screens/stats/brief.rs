@@ -33,7 +33,7 @@ fn metrics(snap: &StatsSnapshot, d: &Derived) -> Vec<Metric> {
     let peer = |value: Option<f64>, digits: usize| -> Option<String> {
         match (&tier, value) {
             (Some(tier), Some(value)) if value > 0.0 => {
-                Some(format!("{tier} average {value:.digits$}"))
+                Some(crate::screens::settings::i18n::fill(tr("{} average {}"), &[&tier, &format!("{value:.digits$}")]))
             }
             _ => None,
         }
@@ -54,7 +54,7 @@ fn metrics(snap: &StatsSnapshot, d: &Derived) -> Vec<Metric> {
             before: before
                 .win_rate()
                 .filter(|_| has_before)
-                .map(|rate| format!("{rate:.0}% before")),
+                .map(|rate| crate::screens::settings::i18n::fill(tr("{} before"), &[&format!("{rate:.0}%")])),
             delta: before
                 .win_rate()
                 .filter(|_| has_before)
@@ -73,7 +73,7 @@ fn metrics(snap: &StatsSnapshot, d: &Derived) -> Vec<Metric> {
             key: "kda",
             label: "KDA",
             value: format!("{:.2}", recent.kda()),
-            before: has_before.then(|| format!("{:.2} before", before.kda())),
+            before: has_before.then(|| crate::screens::settings::i18n::fill(tr("{} before"), &[&format!("{:.2}", before.kda())])),
             delta: has_before.then(|| {
                 let diff = recent.kda() - before.kda();
                 (diff / before.kda().max(0.01) * 100.0, format!("{diff:+.2}"))
@@ -85,7 +85,7 @@ fn metrics(snap: &StatsSnapshot, d: &Derived) -> Vec<Metric> {
             key: "deaths",
             label: "Deaths a match",
             value: format!("{:.1}", recent.deaths_per_match()),
-            before: has_before.then(|| format!("{:.1} before", before.deaths_per_match())),
+            before: has_before.then(|| crate::screens::settings::i18n::fill(tr("{} before"), &[&format!("{:.1}", before.deaths_per_match())])),
             delta: has_before.then(|| {
                 let diff = recent.deaths_per_match() - before.deaths_per_match();
                 (
@@ -101,7 +101,7 @@ fn metrics(snap: &StatsSnapshot, d: &Derived) -> Vec<Metric> {
             label: "Souls a minute",
             value: thousands(recent.souls_per_minute().round() as u64),
             before: has_before
-                .then(|| format!("{} before", thousands(before.souls_per_minute().round() as u64))),
+                .then(|| crate::screens::settings::i18n::fill(tr("{} before"), &[&thousands(before.souls_per_minute().round() as u64)])),
             delta: has_before.then(|| {
                 let diff = recent.souls_per_minute() - before.souls_per_minute();
                 (
