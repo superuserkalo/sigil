@@ -507,7 +507,9 @@ pub fn read_dmm(app_dirs: &[PathBuf], game_root: Option<&Path>) -> DetectedSourc
                 .filter(|text| !text.is_empty())
                 .map(str::to_string)
         };
-        let name = field("name").unwrap_or_else(|| format!("Mod {id}"));
+        let name = field("name")
+            .and_then(|name| clean_imprint_text(&name))
+            .unwrap_or_else(|| format!("Mod {id}"));
 
         let Some(file) = files.into_iter().next() else {
             warnings.push(format!("{name}: no VPK file was found on disk."));
@@ -529,7 +531,7 @@ pub fn read_dmm(app_dirs: &[PathBuf], game_root: Option<&Path>) -> DetectedSourc
         used.insert(file.clone());
         mods.push(ForeignMod {
             name,
-            author: field("author"),
+            author: field("author").and_then(|author| clean_imprint_text(&author)),
             thumbnail_url,
             gamebanana_id: id.parse::<u64>().ok(),
             chunks: chunks_for(&file),
@@ -673,9 +675,11 @@ fn local_vpk(path: &Path, chunks: Vec<PathBuf>) -> ForeignMod {
             name = pretty;
         }
     }
+    let title = embedded.title.as_deref().and_then(clean_imprint_text);
+    let author = embedded.author.as_deref().and_then(clean_imprint_text);
     ForeignMod {
-        name: embedded.title.clone().unwrap_or(name),
-        author: embedded.author.clone(),
+        name: title.unwrap_or(name),
+        author,
         thumbnail_url: None,
         gamebanana_id: embedded.gamebanana_id,
         file: path.to_path_buf(),
@@ -1039,9 +1043,11 @@ fn dmm_id(value: Option<&Value>) -> Option<String> {
 }
 
 /// `glamorous_geist_dir.vpk` becomes `Glamorous geist`; `pak03_dir.vpk` stays `pak03_dir.vpk`.
+/// Copy markers and version noise are dropped: `Neon Haze (1)_dir.vpk` is `Neon Haze`.
 fn pretty_name(file_name: &str) -> String {
     let lower = file_name.to_ascii_lowercase();
     if lower.starts_with("pak") && lower.len() >= 13 && lower[3..5].chars().all(|c| c.is_ascii_digit()) {
+        // A bare slot says nothing; `local_vpk` uses its folder or its stamp instead.
         return file_name.to_string();
     }
     let mut stem = file_name.to_string();
@@ -1054,12 +1060,84 @@ fn pretty_name(file_name: &str) -> String {
         .chars()
         .map(|c| if c == '_' || c == '-' { ' ' } else { c })
         .collect();
-    let trimmed = spaced.split_whitespace().collect::<Vec<_>>().join(" ");
+    let trimmed = tidy_name(&spaced);
+    if trimmed.is_empty() {
+        return file_name.to_string();
+    }
     let mut chars = trimmed.chars();
     match chars.next() {
         Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
         None => file_name.to_string(),
     }
+}
+
+/// Imprint text is whatever the VPK's author wrote, and it names mods the player never typed.
+/// Control, bidi and zero-width characters go (a bidi override can disguise a name), whitespace
+/// collapses, the length is capped, and nothing left means absent. Grimoire's
+/// `cleanImprintText`, on the same ranges.
+fn clean_imprint_text(value: &str) -> Option<String> {
+    const MAX: usize = 120;
+    let mut cleaned = String::with_capacity(value.len());
+    for c in value.chars() {
+        let ignored = matches!(c, '\u{200b}'..='\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}' | '\u{feff}');
+        if ignored {
+            continue;
+        }
+        cleaned.push(if c.is_control() { ' ' } else { c });
+    }
+    let collapsed = cleaned.split_whitespace().collect::<Vec<_>>().join(" ");
+    let capped: String = collapsed.chars().take(MAX).collect();
+    let capped = capped.trim_end().to_string();
+    (!capped.is_empty()).then_some(capped)
+}
+
+/// The last whitespace-separated token, without surrounding brackets.
+fn last_token(name: &str) -> (&str, &str) {
+    let trimmed = name.trim_end();
+    let start = trimmed.rfind(char::is_whitespace).map_or(0, |index| index + 1);
+    (&trimmed[..start], &trimmed[start..])
+}
+
+/// `true` for a version token such as `v1.2`, `1.2.3` or `[v2.0]`.
+fn is_version_token(token: &str) -> bool {
+    let token = token.trim_matches(|c| "()[]{}".contains(c));
+    let token = token.strip_prefix(['v', 'V']).unwrap_or(token);
+    let parts: Vec<&str> = token.split('.').collect();
+    (2..=4).contains(&parts.len())
+        && parts.iter().all(|part| !part.is_empty() && part.chars().all(|c| c.is_ascii_digit()))
+}
+
+/// Drop copy markers (`(1)`, `- Copy`) and version noise from a name read off a file, folder or
+/// stamp. A name that is nothing but noise keeps its original text.
+fn tidy_name(name: &str) -> String {
+    let mut out = name.split_whitespace().collect::<Vec<_>>().join(" ");
+    loop {
+        let lower = out.to_ascii_lowercase();
+        let mut cut = [" (copy)", " [copy]", " - copy", " copy", "-copy", "_copy"]
+            .iter()
+            .find_map(|marker| {
+                if lower.ends_with(marker) {
+                    Some(out.len() - marker.len())
+                } else {
+                    None
+                }
+            });
+        if cut.is_none() {
+            let (rest, token) = last_token(&out);
+            let bare = token.trim_matches(|c| "()[]{}".contains(c));
+            let copy_number = !bare.is_empty() && bare.chars().all(|c| c.is_ascii_digit());
+            if copy_number || is_version_token(token) {
+                cut = Some(rest.len());
+            }
+        }
+        let Some(cut) = cut else { break };
+        let trimmed = out[..cut].trim_end_matches([' ', '-', '_', '(', '[', '.']).trim_end().to_string();
+        if trimmed.chars().count() < 3 {
+            break;
+        }
+        out = trimmed;
+    }
+    if out.is_empty() { name.trim().to_string() } else { out }
 }
 
 /// `<stem>_dir.vpk` files in one folder (not recursive), each with its `<stem>_NNN.vpk` chunks.
@@ -1556,6 +1634,35 @@ mod tests {
         assert_eq!(pretty_name("glamorous_geist_dir.vpk"), "Glamorous geist");
         assert_eq!(pretty_name("pak03_dir.vpk"), "pak03_dir.vpk");
         assert_eq!(pretty_name("cool-mod.zip"), "Cool mod");
+    }
+
+    #[test]
+    fn copy_markers_and_versions_are_trimmed_from_names() {
+        assert_eq!(pretty_name("Neon Haze (1)_dir.vpk"), "Neon Haze");
+        assert_eq!(pretty_name("Neon Haze - Copy_dir.vpk"), "Neon Haze");
+        assert_eq!(pretty_name("Neon Haze [2]_dir.vpk"), "Neon Haze");
+        assert_eq!(pretty_name("Neon Haze v1.2.3_dir.vpk"), "Neon Haze");
+        assert_eq!(pretty_name("Neon Haze [v1.2]_dir.vpk"), "Neon Haze");
+        assert_eq!(pretty_name("Neon Haze (Red)_dir.vpk"), "Neon Haze (Red)");
+        // A bare slot keeps its file name so `local_vpk` can fall back to its folder.
+        assert_eq!(pretty_name("Pak03_dir (1).vpk"), "Pak03_dir (1).vpk");
+        // A name that is only noise keeps its text rather than becoming empty.
+        assert_eq!(pretty_name("(1)_dir.vpk"), "(1)");
+    }
+
+    #[test]
+    fn imprint_text_is_cleaned_before_it_names_a_mod() {
+        assert_eq!(
+            clean_imprint_text("  Minimal\u{0}\r\n\tHUD\u{7f} \u{85}v2  ").as_deref(),
+            Some("Minimal HUD v2")
+        );
+        assert_eq!(
+            clean_imprint_text("\u{202e}DUH\u{202c} Minimal\u{200b}").as_deref(),
+            Some("DUH Minimal")
+        );
+        assert_eq!(clean_imprint_text("\u{200b}\u{200d}\u{feff}"), None);
+        assert_eq!(clean_imprint_text(&"x".repeat(1_000)).unwrap().chars().count(), 120);
+        assert_eq!(clean_imprint_text("Neon Vindicta (Red) [v1.2]").as_deref(), Some("Neon Vindicta (Red) [v1.2]"));
     }
 }
 
