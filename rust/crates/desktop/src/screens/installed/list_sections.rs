@@ -18,7 +18,7 @@ use crate::app::State;
 use crate::icons;
 use crate::model::AddonRow;
 use crate::screens::settings::i18n::{fill, tr};
-use crate::ui::{ActionKind, BODY_MED, SMALL, Ui};
+use crate::ui::{ActionKind, Ui};
 
 /// The icons a list can wear, in the order a press steps through them.
 pub const CHOICES: [(&str, &Icon); 10] = [
@@ -131,7 +131,7 @@ pub fn row_controls(u: &Ui, id: &str, name: &str, first: bool, last: bool) -> (E
 /// The page body as sections by list. `cards` draws a set of addons as the page's cards or rows.
 pub fn body<'a>(s: &State, u: &Ui, shown: &[&'a AddonRow], cards: impl Fn(&[&'a AddonRow]) -> El) -> El {
     let extras = &s.installed.notes.extras;
-    let mut out = col().w_full().gap(24.0).pb(32.0);
+    let mut out = col().w_full().gap(24.0);
     let mut listed: std::collections::BTreeSet<u16> = Default::default();
     for list in &extras.lists {
         let members: Vec<&AddonRow> = shown
@@ -148,15 +148,16 @@ pub fn body<'a>(s: &State, u: &Ui, shown: &[&'a AddonRow], cards: impl Fn(&[&'a 
         let head = row()
             .key(format!("section-list-{}", list.id))
             .w_full()
-            .h(32.0)
+            .h(24.0)
             .gap(8.0)
             .center_y()
             .child(rune::icon(icon_of(&list.id), 16.0).color(u.muted).a11y_hidden())
-            .child(text(fill(tr("{} ({})"), &[&list.name, &members.len().to_string()])).font(BODY_MED).color(u.muted))
-            .child(text(fill(tr("{} on"), &[&on.to_string()])).font(SMALL).color(u.faint))
+            .child(text(list.name.clone()).font(crate::ui::SECTION).color(u.prose).role("heading").level(2))
             .child(spacer())
             .child(
                 u.action(tr("Turn on"), ActionKind::Ghost)
+                    .h(24.0)
+                    .px(8.0)
                     .key(format!("section-list-on-{}", list.id))
                     .disabled(on == members.len())
                     .cursor(rune::Cursor::Pointer)
@@ -164,23 +165,25 @@ pub fn body<'a>(s: &State, u: &Ui, shown: &[&'a AddonRow], cards: impl Fn(&[&'a 
             )
             .child(
                 u.action(tr("Turn off"), ActionKind::Ghost)
+                    .h(24.0)
+                    .px(8.0)
                     .key(format!("section-list-off-{}", list.id))
                     .disabled(on == 0)
                     .cursor(rune::Cursor::Pointer)
                     .on_press(move |st: &mut State| super::notes::lists_switch(st, &id_off, false)),
             );
-        out = out.child(col().w_full().gap(12.0).child(head).child(cards(&members)));
+        out = out.child(col().w_full().gap(8.0).child(head).child(cards(&members)));
     }
     let rest: Vec<&AddonRow> = shown.iter().copied().filter(|a| !listed.contains(&a.slot)).collect();
     if !rest.is_empty() {
         let head = row()
             .key("section-list-none")
             .w_full()
-            .h(32.0)
+            .h(24.0)
             .gap(8.0)
             .center_y()
-            .child(text(fill(tr("Not in a list ({})"), &[&rest.len().to_string()])).font(BODY_MED).color(u.muted));
-        out = out.child(col().w_full().gap(12.0).child(head).child(cards(&rest)));
+            .child(text(tr("Not in a list")).font(crate::ui::SECTION).color(u.prose).role("heading").level(2));
+        out = out.child(col().w_full().gap(8.0).child(head).child(cards(&rest)));
     }
     out
 }

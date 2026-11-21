@@ -1485,39 +1485,9 @@ pub fn preview_key(st: &State, addon: &AddonRow) -> Option<String> {
     meta_for(st, addon).and_then(|meta| meta.thumbnail_url.clone())
 }
 
-/// A card's small chips: pinned, load first, mature.
-pub fn card_chips(s: &State, u: &Ui, addon: &AddonRow) -> Vec<El> {
-    let entry = extra(s, addon);
-    let mut chips = Vec::new();
-    if addon.enabled && entry.always_first {
-        chips.push(chip(u, &icons::ARROW_UP, "Loads first"));
-    } else if entry.pinned {
-        chips.push(chip(u, &icons::PIN, "Pinned"));
-    }
-    if entry.favorite {
-        chips.push(chip(u, &icons::HEART, crate::screens::settings::i18n::tr("Saved")));
-    }
-    if entry.is_nsfw() {
-        chips.push(chip(u, &icons::EYE, "Mature"));
-    }
-    // The tag the player ranked highest (Grimoire's display priorities): their own or a
-    // category, since the hero shows on the card already.
-    if let Some((_, label)) = tags_of(s, addon).into_iter().find(|(kind, _)| *kind != TagKind::Hero) {
-        chips.push(chip(u, &icons::BOOKMARK, &label));
-    }
-    chips
+
+/// The tag the player ranked highest that is not a hero (the hero is in the detail line).
+pub fn top_tag(s: &State, addon: &AddonRow) -> Option<String> {
+    tags_of(s, addon).into_iter().find(|(kind, _)| *kind != TagKind::Hero).map(|(_, label)| label)
 }
 
-fn chip(u: &Ui, glyph: &'static rune::Icon, label: &str) -> El {
-    row()
-        .h(20.0)
-        .pl(5.0)
-        .pr(7.0)
-        .gap(4.0)
-        .center_y()
-        .radius(crate::ui::r(6.0))
-        .fill(u.raised.alpha(0.92))
-        .border(1.0, u.hair)
-        .child(icon(glyph, 12.0).color(u.muted).a11y_hidden())
-        .child(text(label.to_string()).font(crate::ui::MICRO).color(u.prose).a11y_hidden())
-}

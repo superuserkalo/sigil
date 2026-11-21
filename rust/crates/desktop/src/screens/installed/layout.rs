@@ -433,19 +433,31 @@ pub fn list_row(s: &State, u: &Ui, idx: &super::index::Index, card: &Group) -> E
     // Two fixed columns on the right, so every row's chips and marks share their edges: the
     // word chips (right aligned, cut at the column's edge) and the marks.
     let wide = crate::ui::fit() == crate::ui::Fit::Full;
-    let mut chips = row().w(CHIPS_W).gap(6.0).center_y().justify_end().clip_rounded(0.0);
-    if wide {
-        for chip in notes::card_chips(s, u, addon) {
-            chips = chips.child(chip);
-        }
-    }
+    // Marks: the same as the card's, warnings first, at most three.
+    let mut all: Vec<El> = super::warning_buttons(s, u, addon);
+    all.extend(super::req_order::badge(s, u, slot, false));
+    all.extend(super::overlap::badge(s, u, slot, false));
+    all.extend(super::card_marks(s, u, addon));
     let mut marks = row().w(MARKS_W).gap(4.0).center_y().justify_end();
-    if let Some(badge) = super::req_order::badge(s, u, slot, false) {
-        marks = marks.child(badge);
+    for mark in all.into_iter().take(3) {
+        marks = marks.child(mark);
     }
-    if let Some(badge) = super::overlap::badge(s, u, slot, false) {
-        marks = marks.child(badge);
-    }
+    // The top tag and the size, at Full width only.
+    let tag = row().w(TAG_W).center_y().children(notes::top_tag(s, addon).map(|label| {
+        row()
+            .h(24.0)
+            .px(8.0)
+            .max_w(TAG_W)
+            .center_y()
+            .radius(crate::ui::r(4.0))
+            .fill(u.over.alpha(0.06))
+            .child(text(label.clone()).font(crate::ui::LABEL).color(u.prose).truncate().help_when_truncated(label))
+    }));
+    let size = text(crate::model::format_size(addon.size_bytes))
+        .font(crate::ui::SMALL_NUM)
+        .color(u.muted)
+        .w(SIZE_W)
+        .align(rune::Align::End);
     let dragging = s.installed.drag.is_some_and(|d| d.slot == slot);
     let drop = super::drag::drop_mark(s, slot, addon.enabled);
     let mut line = row()
@@ -457,15 +469,8 @@ pub fn list_row(s: &State, u: &Ui, idx: &super::index::Index, card: &Group) -> E
         .px(8.0)
         .radius(crate::ui::r(8.0))
         .opacity(if dragging { 0.55 } else { 1.0 })
-        .fill(if selected || dragging { u.selected } else { Color::TRANSPARENT })
-        .border_sides(
-            match drop {
-                Some(false) => [2.0, 0.0, 1.0, 0.0],
-                Some(true) => [0.0, 0.0, 2.0, 0.0],
-                None => [0.0, 0.0, 1.0, 0.0],
-            },
-            if drop.is_some() { u.accent } else { u.hair },
-        )
+        .fill(if selected { u.selected } else { Color::TRANSPARENT })
+        .border_sides([0.0, 0.0, 1.0, 0.0], u.hair)
         .hover(u.hover)
         // The grip and the box fade in on hover without a commit (`super::hover_reveal`).
         .hover_group();
@@ -513,8 +518,9 @@ pub fn list_row(s: &State, u: &Ui, idx: &super::index::Index, card: &Group) -> E
                 )
                 .child(text(detail).font(SMALL).color(u.muted).truncate()),
         )
-        .children(wide.then_some(chips))
         .child(marks)
+        .children(wide.then_some(tag))
+        .children(wide.then_some(size))
         .child(
             text(deadlock_core::addons::slot_label(slot))
                 .font(crate::ui::SMALL_NUM)
@@ -562,14 +568,25 @@ pub fn list_row(s: &State, u: &Ui, idx: &super::index::Index, card: &Group) -> E
                     }
                 })
         });
+    // A drop target gets a 2 pt insertion line on its top or bottom hairline, over the row,
+    // so nothing moves.
+    if let Some(after) = drop {
+        let mark = el().key(format!("installed-drop-line-{slot:02}")).h(2.0).fill(u.accent).a11y_hidden();
+        line = line.child(if after {
+            mark.pin(Some(0.0), None, Some(0.0), Some(-1.0))
+        } else {
+            mark.pin(Some(0.0), Some(-1.0), Some(0.0), None)
+        });
+    }
     line
 }
 
 /// One row of the list look: fixed, so the virtual list steps by it.
 pub const ROW_H: f32 = 48.0;
-/// The word chip column of a list row (Full width only) and its marks column.
-const CHIPS_W: f32 = 240.0;
-const MARKS_W: f32 = 60.0;
+/// A list row's marks column (three 28 marks), and its tag and size columns (Full only).
+const MARKS_W: f32 = 92.0;
+const TAG_W: f32 = 96.0;
+const SIZE_W: f32 = 64.0;
 
 /// Lucide arrow-down (ISC), drawn like `icons.rs`.
 static ARROW_DOWN: rune::Icon = rune::Icon {

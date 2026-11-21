@@ -423,6 +423,10 @@ pub enum Menu {
     Selection,
     /// The toolbar's Filters: source, hero, category, tag and mod list, each opening its menu.
     Filters,
+    /// More's "Troubleshoot" sub panel: the find, review and repair tools.
+    Troubleshoot,
+    /// All, Enabled, Disabled as a menu when the toolbar is too narrow for the segments.
+    Scope,
 }
 
 /// The mods the page shows: search, source and group applied, in the chosen order.
@@ -515,7 +519,7 @@ pub fn view(s: &State, u: &Ui) -> El {
             Some(crate::notify::feedback::button(u, "installed-error-feedback", "The addon folder could not be read", error)),
         )
     } else if !s.addons.scanned {
-        loading(u)
+        loading(s, u)
     } else if s.addons.addons.is_empty() {
         empty(u)
     } else if shown.is_empty() {
@@ -672,6 +676,35 @@ fn scope(s: &State, u: &Ui) -> El {
     let v = &s.installed;
     let on = s.addons.addons.iter().filter(|a| a.enabled).count();
     let off = s.addons.addons.len() - on;
+    if crate::ui::fit() == crate::ui::Fit::Tight {
+        // Too narrow for three segments: one fixed 120 dropdown with the current scope.
+        let (word, count) = match v.show {
+            Show::All => (tr("All"), s.addons.addons.len()),
+            Show::Enabled => (tr("Enabled"), on),
+            Show::Disabled => (tr("Disabled"), off),
+        };
+        return row()
+            .key("installed-show")
+            .w(120.0)
+            .h(32.0)
+            .pl(10.0)
+            .pr(8.0)
+            .gap(6.0)
+            .center_y()
+            .radius(crate::ui::r(8.0))
+            .fill(u.over.alpha(0.035))
+            .border(1.0, u.hair_strong)
+            .hover(u.hover)
+            .focusable(true)
+            .role("button")
+            .label(format!("{word} {count}"))
+            .cursor(rune::Cursor::Pointer)
+            .on_press(|st: &mut State| open_menu(st, Menu::Scope))
+            .child(text(word).font(BODY_MED).color(u.ink).truncate().min_w(0.0).a11y_hidden())
+            .child(text(count.to_string()).font(SMALL_NUM).color(u.faint).a11y_hidden())
+            .child(spacer())
+            .child(icon(&icons::CHEVRON_DOWN, 12.0).color(u.muted).a11y_hidden());
+    }
     let mut seg = row()
         .key("installed-show")
         .w(scope_w())
@@ -1476,16 +1509,39 @@ fn card_view(s: &State, u: &Ui, idx: &index::Index, card: &layout::Group, pitch:
     }
     let mut top = row().w_full().items_start().gap(4.0).child(pick_box);
     let dragging = s.installed.drag.is_some_and(|d| d.slot == slot);
-    if drag::allowed(s) {
-        top = top.child(drag::grip(u, slot, addon.enabled, pitch, cols, dragging, hovered));
-    }
-    // Marks wrap under each other on a narrow card, so "more" stays on the image.
-    let mut marks = row().grow(1.0).shrink().min_w(0.0).gap(4.0).justify_end().flex_wrap();
-    for mark in card_marks(s, u, addon) {
+    // The grip keeps its box when the sort cannot drag, so the marks never shift.
+    top = top.child(if drag::allowed(s) {
+        drag::grip(u, slot, addon.enabled, pitch, cols, dragging, hovered)
+    } else {
+        el().size(28.0, 28.0).a11y_hidden()
+    });
+    // One row of marks, warnings first, at most three (two on small cards): the rest fold
+    // into "+N", which opens the card menu. It never wraps, so every card keeps one height.
+    let cap = if compact { 2 } else { 3 };
+    let all: Vec<El> = warning_buttons(s, u, addon).into_iter().chain(card_marks(s, u, addon)).collect();
+    let total = all.len();
+    let shown_marks = if total > cap { cap - 1 } else { total };
+    let mut marks = row().grow(1.0).shrink().min_w(0.0).gap(4.0).justify_end();
+    for mark in all.into_iter().take(shown_marks) {
         marks = marks.child(mark);
     }
-    for warning in warning_buttons(s, u, addon) {
-        marks = marks.child(warning);
+    if total > cap {
+        let rest = total - shown_marks;
+        marks = marks.child(
+            el().key(format!("installed-marks-more-{slot:02}"))
+                .size(28.0, 28.0)
+                .center()
+                .radius(crate::ui::r(4.0))
+                .fill(Color::BLACK.alpha(0.6))
+                .hover(Color::BLACK.alpha(0.78))
+                .focusable(true)
+                .role("button")
+                .label(fill(tr("{} more"), &[&rest.to_string()]))
+                .help(fill(tr("{} more"), &[&rest.to_string()]))
+                .cursor(rune::Cursor::Pointer)
+                .on_press(move |st: &mut State| open_menu(st, Menu::Card(slot)))
+                .child(text(format!("+{rest}")).font(MICRO).color(Color::WHITE.alpha(0.9)).a11y_hidden()),
+        );
     }
     top = top.child(marks);
     let media = media.child(
@@ -1550,35 +1606,51 @@ fn card_view(s: &State, u: &Ui, idx: &index::Index, card: &layout::Group, pitch:
     }
     footer = footer.child(el().w(2.0)).child(switch);
 
-    let drop = drag::drop_mark(s, slot, addon.enabled).is_some();
-    col()
+    // A drop target gets a 2 pt insertion line in the gutter beside it (after it when moving
+    // later, before it when earlier). Its own border does not change.
+    let drop = drag::drop_mark(s, slot, addon.enabled);
+    let mut card_el = col()
         .key(format!("addon-{slot:02}"))
         .min_w(0.0)
         .padding(1.0)
         .radius(crate::ui::r(CARD_RADIUS))
         .opacity(if dragging { 0.55 } else { 1.0 })
         .fill(if selected { u.selected } else { u.well })
-        .border(
-            if drop { 2.0 } else { 1.0 },
-            if drop || selected { u.accent.alpha(0.85) } else { Color::WHITE.alpha(0.07) },
-        )
+        .border(1.0, if selected { u.accent.alpha(0.85) } else { Color::WHITE.alpha(0.07) })
         // Hover paints the reveals below (`hover_reveal`) without running the view: a commit per
         // card crossed rebuilt the whole library and lagged a large one.
         .hover_group()
         .child(media)
-        .child(footer)
+        .child(footer);
+    if let Some(after) = drop {
+        let gutter = GRID_GAP / 2.0 + 1.0;
+        let line = el()
+            .key(format!("installed-drop-line-{slot:02}"))
+            .w(2.0)
+            .fill(u.accent)
+            .a11y_hidden();
+        // pin: left, top, right, bottom.
+        card_el = card_el.child(if after {
+            line.pin(None, Some(0.0), Some(-gutter), Some(0.0))
+        } else {
+            line.pin(Some(-gutter), Some(0.0), None, Some(0.0))
+        });
+    }
+    card_el
 }
 
 /// The quiet marks on a preview corner: pinned, loads first, mature. Not buttons.
-fn card_marks(s: &State, u: &Ui, addon: &AddonRow) -> Vec<El> {
+pub(super) fn card_marks(s: &State, _u: &Ui, addon: &AddonRow) -> Vec<El> {
     let extra = notes::extra(s, addon);
     let mut marks = Vec::new();
+    // Fixed priority; the caller caps how many show and folds the rest into "+N".
     for (glyph, label, on) in [
+        (&icons::ARROW_UP, "Loads first", addon.enabled && extra.always_first),
         (&icons::PIN, "Pinned", extra.pinned),
-        (&icons::ARROW_UP, "Loads first", extra.always_first),
         (&icons::EYE, "Mature", extra.is_nsfw()),
+        (&icons::HEART, "Saved", extra.favorite),
     ] {
-        if !on || marks.len() >= 2 {
+        if !on {
             continue;
         }
         marks.push(
@@ -1586,10 +1658,11 @@ fn card_marks(s: &State, u: &Ui, addon: &AddonRow) -> Vec<El> {
                 .key(format!("installed-mark-{label}-{:02}", addon.slot))
                 .size(28.0, 28.0)
                 .center()
-                .radius(crate::ui::r(8.0))
+                .radius(crate::ui::r(4.0))
                 .fill(Color::BLACK.alpha(0.6))
-                .a11y_hidden()
-                .child(icon(glyph, 14.0).color(u.ink.alpha(0.9)).a11y_hidden()),
+                .help(tr(label))
+                .label(tr(label))
+                .child(icon(glyph, 14.0).color(Color::WHITE.alpha(0.9)).a11y_hidden()),
         );
     }
     marks
@@ -1597,7 +1670,7 @@ fn card_marks(s: &State, u: &Ui, addon: &AddonRow) -> Vec<El> {
 
 /// The small warning buttons on a preview corner: the safety scan and the compatibility
 /// review, when either has something to say about this mod.
-fn warning_buttons(s: &State, u: &Ui, addon: &AddonRow) -> Vec<El> {
+pub(super) fn warning_buttons(s: &State, u: &Ui, addon: &AddonRow) -> Vec<El> {
     let mut buttons = Vec::new();
     if let Some(badge) = enable::hidden_badge(s, u, addon.slot) {
         buttons.push(badge);
@@ -1718,11 +1791,13 @@ fn update_chip(s: &State, u: &Ui, idx: &index::Index, addon: &AddonRow) -> Optio
     let mut chip = row()
         .key(format!("installed-update-{slot:02}"))
         .h(20.0)
+        // One width for Update, Queued, Updating and Failed, so the chip never resizes.
+        .min_w(72.0)
         .pl(5.0)
         .pr(7.0)
         .gap(4.0)
         .center_y()
-        .radius(crate::ui::r(6.0))
+        .radius(crate::ui::r(4.0))
         .fill(Color::BLACK.alpha(0.6))
         .label(format!("{label} {}", display_name(s, addon)))
         .child(icon(glyph, 12.0).color(Color::WHITE.alpha(0.9)).a11y_hidden())
@@ -1792,9 +1867,31 @@ fn matches_query(s: &State, idx: &index::Index, addon: &AddonRow, query: &str) -
         })
 }
 
-fn loading(u: &Ui) -> El {
-    let mut grid = el().w_full().equal_columns(4).gap(GRID_GAP).pt(40.0);
-    for _ in 0..8 {
+fn loading(s: &State, u: &Ui) -> El {
+    // The first section's place: a header bar, then two rows of cards at the real card
+    // size (or eight list rows), so the page does not move when the mods arrive. No pulse.
+    let head = el().h(24.0).child(el().mt(6.0).h(12.0).w(72.0).radius(crate::ui::r(4.0)).fill(u.hover));
+    if !s.installed.layout.is_cards() {
+        let mut rows = col().w_full();
+        for _ in 0..8 {
+            rows = rows.child(
+                row()
+                    .w_full()
+                    .h(layout::ROW_H)
+                    .px(8.0)
+                    .gap(12.0)
+                    .center_y()
+                    .border_sides([0.0, 0.0, 1.0, 0.0], u.hair)
+                    .child(el().w(64.0))
+                    .child(el().size(56.0, 32.0).radius(crate::ui::r(4.0)).fill(u.hover))
+                    .child(el().h(10.0).w(160.0).radius(crate::ui::r(4.0)).fill(u.hover)),
+            );
+        }
+        return col().w_full().gap(8.0).child(head).child(rows);
+    }
+    let cols = s.installed.layout.columns();
+    let mut grid = el().w_full().equal_columns(cols).gap(GRID_GAP);
+    for _ in 0..cols * 2 {
         grid = grid.child(
             col()
                 .min_w(0.0)
@@ -1810,16 +1907,16 @@ fn loading(u: &Ui) -> El {
                 )
                 .child(
                     col()
+                        .h(card_text_h(s))
                         .px(12.0)
-                        .pt(14.0)
-                        .pb(18.0)
-                        .gap(10.0)
-                        .child(el().h(10.0).w(120.0).radius(crate::ui::r(3.0)).fill(u.hover))
-                        .child(el().h(8.0).w(72.0).radius(crate::ui::r(3.0)).fill(u.hover)),
+                        .gap(8.0)
+                        .justify_center()
+                        .child(el().h(10.0).w(120.0).radius(crate::ui::r(4.0)).fill(u.hover))
+                        .child(el().h(8.0).w(72.0).radius(crate::ui::r(4.0)).fill(u.hover)),
                 ),
         );
     }
-    grid
+    col().w_full().gap(8.0).child(head).child(grid)
 }
 
 // --- menus -----------------------------------------------------------------------
@@ -1846,11 +1943,13 @@ pub fn overlay(s: &State, u: &Ui) -> Option<El> {
         Menu::Category => ("installed-filters-button".to_string(), Align::Start, 320.0),
         Menu::Tag => ("installed-filters-button".to_string(), Align::Start, 320.0),
         Menu::List => ("installed-filters-button".to_string(), Align::Start, 320.0),
-        Menu::More => ("installed-bulk".to_string(), Align::End, 260.0),
+        Menu::More => ("installed-bulk".to_string(), Align::End, 264.0),
         Menu::Overlap(slot) => (format!("installed-overlap-{slot:02}"), Align::End, 340.0),
         Menu::Order(slot) => (format!("installed-order-{slot:02}"), Align::End, 340.0),
         Menu::Selection => ("installed-selection-more".to_string(), Align::End, 280.0),
         Menu::Filters => ("installed-filters-button".to_string(), Align::Start, 320.0),
+        Menu::Troubleshoot => ("installed-bulk".to_string(), Align::End, 264.0),
+        Menu::Scope => ("installed-show".to_string(), Align::Start, 200.0),
     };
     // A filter's own menu opens inside the Filters popover, with a way back.
     let back = matches!(menu, Menu::Source | Menu::Hero | Menu::Category | Menu::Tag | Menu::List);
@@ -1865,6 +1964,46 @@ pub fn overlay(s: &State, u: &Ui) -> Option<El> {
 
     match menu {
         Menu::Filters => items = filters_menu(s, u),
+        Menu::Scope => {
+            for (show, word) in [(Show::All, tr("All")), (Show::Enabled, tr("Enabled")), (Show::Disabled, tr("Disabled"))] {
+                let on = s.installed.show == show;
+                items.push(
+                    menu_item(u, &format!("menu-show-{show:?}"), Some(if on { &icons::CHECK } else { &NO_ICON }), word, "", true)
+                        .on_press(move |st: &mut State| {
+                            st.installed.menu = None;
+                            st.installed.show = show;
+                        }),
+                );
+            }
+        }
+        Menu::Troubleshoot => {
+            items.push(
+                menu_item(u, "menu-troubleshoot-back", Some(&icons::CHEVRON_LEFT), tr("Troubleshoot"), "", true)
+                    .on_press(|st: &mut State| st.installed.menu = Some(Menu::More)),
+            );
+            items.push(menu_rule(u));
+            items.push(
+                menu_item(u, "menu-search", Some(&icons::SEARCH), tr("Find a broken mod"), tr("halve the set"), true).on_press(|st: &mut State| {
+                    st.installed.menu = None;
+                    search::search_open(st);
+                }),
+            );
+            items.push(
+                menu_item(u, "menu-health", Some(&icons::TRIANGLE_ALERT), tr("Compatibility review"), tr("paths the game moved"), true).on_press(|st: &mut State| {
+                    st.installed.menu = None;
+                    tools::open_health(st);
+                }),
+            );
+            items.push(menu_item(u, "menu-safety", Some(&icons::SHIELD), tr("Mod safety"), "", true).on_press(safety_review::open));
+            items.push(
+                menu_item(u, "menu-analyze", Some(&icons::WRENCH), tr("Analyze the addons folder"), tr("and check HUD mods"), true)
+                    .on_press(|st: &mut State| checks::open(st)),
+            );
+            items.push(
+                menu_item(u, "menu-folder-fix", Some(&icons::WRENCH), tr("Repair the mods folder"), &folder_fix::menu_detail(s), true)
+                    .on_press(folder_fix::open),
+            );
+        }
         Menu::Card(slot) => {
             let addon = s.addons.addons.iter().find(|addon| addon.slot == slot)?;
             let extra = notes::extra(s, addon);
@@ -2043,11 +2182,34 @@ pub fn overlay(s: &State, u: &Ui) -> Option<El> {
                     notes::toggle_pin(st, slot);
                 }),
             );
+            let selected = s.installed.selected.contains(&slot);
+            items.push(
+                menu_item(
+                    u,
+                    "menu-select",
+                    Some(&icons::CIRCLE_CHECK),
+                    if selected { "Deselect" } else { "Select" },
+                    "",
+                    true,
+                )
+                .on_press(move |st: &mut State| {
+                    st.installed.menu = None;
+                    pick(st, slot, false);
+                }),
+            );
             items.push(menu_rule(u));
             items.push(
                 menu_item(u, "menu-more-actions", Some(&icons::ELLIPSIS), "More actions", "", true)
                     .on_press(move |st: &mut State| {
                         st.installed.menu = Some(Menu::CardMore(slot));
+                    }),
+            );
+            items.push(menu_rule(u));
+            items.push(
+                danger_item(u, "menu-delete", "Delete")
+                    .on_press(move |st: &mut State| {
+                        st.installed.menu = None;
+                        ask(st, Confirm::Delete(vec![slot]));
                     }),
             );
         }
@@ -2102,31 +2264,9 @@ pub fn overlay(s: &State, u: &Ui) -> Option<El> {
                 );
             }
             items.push(menu_rule(u));
-            let selected = s.installed.selected.contains(&slot);
-            items.push(
-                menu_item(
-                    u,
-                    "menu-select",
-                    Some(&icons::CIRCLE_CHECK),
-                    if selected { "Deselect" } else { "Select" },
-                    "",
-                    true,
-                )
-                .on_press(move |st: &mut State| {
-                    st.installed.menu = None;
-                    pick(st, slot, false);
-                }),
-            );
             if let Some(copy) = folder_fix::menu_item(s, u, slot) {
                 items.push(copy);
             }
-            items.push(
-                danger_item(u, "menu-delete", "Delete")
-                    .on_press(move |st: &mut State| {
-                        st.installed.menu = None;
-                        ask(st, Confirm::Delete(vec![slot]));
-                    }),
-            );
             items.push(menu_rule(u));
             items.push(
                 menu_item(u, "cardmore-back", Some(&icons::CHEVRON_LEFT), "Back", "", true)
@@ -2238,6 +2378,7 @@ pub fn overlay(s: &State, u: &Ui) -> Option<El> {
             }
         }
         Menu::View => {
+            items.push(menu_label(u, tr("Layout")));
             for look in layout::Layout::ALL {
                 let on = s.installed.layout == look;
                 items.push(
@@ -2263,14 +2404,36 @@ pub fn overlay(s: &State, u: &Ui) -> Option<El> {
                 ("menu-view-slot", tr("Show the slot number"), !v.hide_slot, 1),
                 ("menu-view-by-list", tr("Sections by list"), v.by_list, 2),
             ] {
-                items.push(
-                    menu_item(u, key, Some(if on { &icons::CHECK } else { &NO_ICON }), label, "", flip != 2 || !s.installed.notes.extras.lists.is_empty())
+                let enabled = flip != 2 || !s.installed.notes.extras.lists.is_empty();
+                // A squared switch, pressed anywhere on the row; the row is the switch.
+                let mut r = row()
+                    .key(key)
+                    .w_full()
+                    .h(crate::ui::CONTROL_L)
+                    .pl(10.0)
+                    .pr(4.0)
+                    .gap(10.0)
+                    .center_y()
+                    .radius(crate::ui::r(6.0))
+                    .role("switch")
+                    .checked(on)
+                    .label(label)
+                    .child(text(label.to_string()).font(BODY).color(if enabled { u.ink } else { u.faint }).a11y_hidden())
+                    .child(spacer())
+                    .child(u.toggle_mark(on));
+                r = if enabled {
+                    r.focusable(true)
+                        .hover(u.hover)
+                        .cursor(rune::Cursor::Pointer)
                         .on_press(move |st: &mut State| match flip {
                             0 => st.installed.hide_details = !st.installed.hide_details,
                             1 => st.installed.hide_slot = !st.installed.hide_slot,
                             _ => st.installed.by_list = !st.installed.by_list,
-                        }),
-                );
+                        })
+                } else {
+                    r.disabled(true).opacity(0.45)
+                };
+                items.push(r);
             }
         }
         Menu::Hero | Menu::Category | Menu::Tag | Menu::List => {
@@ -2348,58 +2511,13 @@ pub fn overlay(s: &State, u: &Ui) -> Option<El> {
                 )
                 .on_press(|st: &mut State| ask_bulk(st, false)),
             );
-            items.push(menu_rule(u));
-            items.push(
-                menu_item(u, "menu-copy-list", Some(&icons::COPY), "Copy the mod list", "to the clipboard", true)
-                    .on_press_tx(|st: &mut State, tx: &mut Tx| {
-                        st.installed.menu = None;
-                        let text = copy_lines(st);
-                        tx.copy(text);
-                        st.status = "Mod list copied.".to_string();
-                    }),
-            );
-            items.push(
-                menu_item(u, "menu-lists", Some(&icons::LIST), "Mod lists", "", true)
-                    .on_press(|st: &mut State| {
-                        st.installed.menu = None;
-                        st.installed.notes.dialog = Some(notes::Dialog::Lists);
-                    }),
-            );
-            items.push(
-                menu_item(u, "menu-merge-open", Some(&icons::LAYERS), "Merge mods", "one VPK from several", true)
-                    .on_press(|st: &mut State| tools::open_merge(st)),
-            );
-            items.push(
-                menu_item(u, "menu-pack-all", Some(&icons::LAYERS), tr("Pack all enabled"), tr("into 2 to 8 VPKs"), true)
-                    .on_press(pack_all::open),
-            );
-            items.push(
-                menu_item(u, "menu-analyze", Some(&icons::WRENCH), "Analyze the addons folder", "and check HUD mods", true)
-                    .on_press(|st: &mut State| checks::open(st)),
-            );
-            items.push(
-                menu_item(u, "menu-safety", Some(&icons::SHIELD), "Mod safety", "review and allowed mods", true)
-                    .on_press(safety_review::open),
-            );
-            items.push(
-                menu_item(u, "menu-folder-fix", Some(&icons::WRENCH), "Repair the mods folder", &folder_fix::menu_detail(s), true)
-                    .on_press(folder_fix::open),
-            );
-            items.push(
-                menu_item(u, "menu-search", Some(&icons::SEARCH), "Find a broken mod", "halve the set", true)
-                    .on_press(|st: &mut State| {
-                        st.installed.menu = None;
-                        search::search_open(st);
-                    }),
-            );
-            items.push(menu_rule(u));
             let checking = s.installed.updates.check.is_running();
             items.push(
                 menu_item(
                     u,
                     "menu-check-updates",
                     Some(&icons::REFRESH_CW),
-                    if checking { "Checking for updates" } else { "Check for updates" },
+                    if checking { tr("Checking for updates") } else { tr("Check for updates") },
                     "",
                     !checking,
                 )
@@ -2408,20 +2526,40 @@ pub fn overlay(s: &State, u: &Ui) -> Option<El> {
                     check_updates(st, true);
                 }),
             );
+            items.push(menu_rule(u));
+            items.push(menu_label(u, tr("Lists and packs")));
             items.push(
-                menu_item(
-                    u,
-                    "menu-health",
-                    Some(&icons::TRIANGLE_ALERT),
-                    "Compatibility review",
-                    "paths the game moved",
-                    true,
-                )
-                .on_press(|st: &mut State| {
-                    st.installed.menu = None;
-                    tools::open_health(st);
-                }),
+                menu_item(u, "menu-lists", Some(&icons::LIST), tr("Mod lists"), "", true)
+                    .on_press(|st: &mut State| {
+                        st.installed.menu = None;
+                        st.installed.notes.dialog = Some(notes::Dialog::Lists);
+                    }),
             );
+            items.push(
+                menu_item(u, "menu-copy-list", Some(&icons::COPY), tr("Copy the mod list"), "", true)
+                    .on_press_tx(|st: &mut State, tx: &mut Tx| {
+                        st.installed.menu = None;
+                        let text = copy_lines(st);
+                        tx.copy(text);
+                        st.status = "Mod list copied.".to_string();
+                    }),
+            );
+            items.push(
+                menu_item(u, "menu-merge-open", Some(&icons::LAYERS), tr("Merge mods"), tr("one VPK from several"), true)
+                    .on_press(|st: &mut State| tools::open_merge(st)),
+            );
+            items.push(
+                menu_item(u, "menu-pack-all", Some(&icons::LAYERS), tr("Pack all enabled"), tr("into 2 to 8 VPKs"), true)
+                    .on_press(pack_all::open),
+            );
+            items.push(menu_rule(u));
+            items.push(menu_label(u, tr("Fix")));
+            items.push(
+                menu_item(u, "menu-troubleshoot", Some(&icons::WRENCH), tr("Troubleshoot"), "", true)
+                    .child(icon(&icons::CHEVRON_RIGHT, 12.0).color(u.muted).a11y_hidden())
+                    .on_press(|st: &mut State| st.installed.menu = Some(Menu::Troubleshoot)),
+            );
+            items.push(menu_rule(u));
             items.push({
                 let n = s.installed.trash.entries.len();
                 menu_item(
@@ -2593,10 +2731,10 @@ fn copy_lines_of(s: &State, only: Option<&BTreeSet<u16>>) -> String {
 fn menu_label(u: &Ui, label: &str) -> El {
     row()
         .w_full()
-        .h(28.0)
+        .h(24.0)
         .px(10.0)
         .center_y()
-        .child(text(label.to_string()).font(SMALL).color(u.faint))
+        .child(text(label.to_string()).font(crate::ui::SECTION).color(u.muted))
 }
 
 fn manager_item(s: &State, u: &Ui, kind: SourceKind) -> El {
