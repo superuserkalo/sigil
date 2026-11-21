@@ -711,6 +711,7 @@ mod tests {
                 applied: vec!["hkg".into(), "tyo".into()],
                 presets: vec![deadlock_core::relays::Preset { name: "EU only".into(), blocked: vec!["iad".into()] }],
                 pending: true,
+                health_bar: true,
             },
         };
         o.presence_lines.insert(

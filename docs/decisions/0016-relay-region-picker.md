@@ -38,6 +38,10 @@ does outside hosting (ADR 0015). The owner decided to build it, off by default.
   hidden), and every launch shows a notice, so a forgotten block is not taken for broken
   matchmaking. The saved record of applied locations survives Settings' reset, because the rules
   outlive it.
+- Round 2 (2026-11-21): search, sort and shift-click range ticking in the list; the "Where I
+  play" preset and match counts from deadlock-api's region history, read only with Player and
+  match stats on; a relay health chip in the status bar after a sweep, and an opt-in (off by
+  default) that keeps it there and measures at startup and every 30 minutes.
 - Blocking is Windows only. macOS and Linux show the list and pings and say why blocking needs
   Windows. Deadlock Mod Manager's Linux nftables mode is not built.
 

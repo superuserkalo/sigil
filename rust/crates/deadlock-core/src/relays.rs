@@ -17,6 +17,7 @@
 //! (GPL-3.0, behaviour only); the code and words here are Sigil's.
 
 pub mod firewall;
+pub mod history;
 pub mod probe;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -472,6 +473,9 @@ pub struct Choices {
     pub presets: Vec<Preset>,
     /// An Apply or Reset began and its result was never read back.
     pub pending: bool,
+    /// Keep relay health in the status bar, measured at startup and every half hour (off by
+    /// default; without it the bar shows health only after a sweep the player started).
+    pub health_bar: bool,
 }
 
 /// 1 to 60 characters, no control characters, counted as characters.
@@ -505,6 +509,7 @@ impl Choices {
             applied: normalize_selection(&self.applied),
             presets,
             pending: self.pending,
+            health_bar: self.health_bar,
         }
     }
 

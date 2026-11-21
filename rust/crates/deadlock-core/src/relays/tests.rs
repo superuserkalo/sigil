@@ -392,6 +392,31 @@ fn sweep_reports_each_location_and_stops_when_cancelled() {
 }
 
 #[test]
+fn health_summary_counts_answers_by_region() {
+    let c = catalog();
+    let mut pings = BTreeMap::new();
+    assert_eq!(probe::summary(&c.locations, &pings).overall(), Health::NoAnswer, "nothing measured");
+    let first = &c.locations[0];
+    let second = c.locations.iter().find(|l| l.region != first.region).unwrap();
+    let third = c.locations.iter().find(|l| l.region == first.region && l.id != first.id);
+    pings.insert(first.id.clone(), Some(40));
+    pings.insert(second.id.clone(), Some(25));
+    let all = probe::summary(&c.locations, &pings);
+    assert_eq!((all.answering, all.measured), (2, 2));
+    assert_eq!(all.overall(), Health::Good);
+    assert_eq!(all.best, Some((second.id.clone(), 25)));
+    assert_eq!(all.regions.len(), 2);
+    if let Some(third) = third {
+        pings.insert(third.id.clone(), None);
+        let some = probe::summary(&c.locations, &pings);
+        assert_eq!((some.answering, some.measured), (2, 3));
+        assert_eq!(some.overall(), Health::Fair);
+        let line = some.regions.iter().find(|r| r.region == first.region).unwrap();
+        assert_eq!((line.answering, line.measured, line.best), (1, 2, Some(40)));
+    }
+}
+
+#[test]
 fn apply_and_reset_need_approval() {
     let c = catalog();
     let dir = std::env::temp_dir();

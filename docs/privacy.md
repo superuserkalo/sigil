@@ -166,8 +166,11 @@ The relay region picker (Servers > Regions) reads Valve's relay list for Deadloc
 `api.steampowered.com/ISteamApps/GetSDRConfig/v1/?appid=1422450` when the tab opens and the saved
 copy is older than a day, or when you press Refresh. Anonymous GET, no account, nothing about you
 in it; the answer is kept in Sigil's data folder. Measure ping, on your press only, sends ICMP
-echo (the system `ping`) to the relay addresses in that list. Blocking regions adds Windows
-Firewall rules on your PC behind Windows' admin prompt; nothing about them is sent anywhere.
+echo (the system `ping`) to the relay addresses in that list. With "Relay health in the status bar"
+turned on (Regions tab, off by default) the same sweep also runs at startup and every 30 minutes,
+and the list is read from the saved copy first; without it nothing is pinged unless you press.
+Blocking regions adds Windows Firewall rules on your PC behind Windows' admin prompt; nothing
+about them is sent anywhere.
 
 Match data sharing is opt-in, off by default. While it is on, Sigil reads the first 512 bytes of
 each file in Steam's local HTTP cache (`<Steam>/appcache/httpcache`), keeps URLs shaped
@@ -220,6 +223,10 @@ Nothing about you is sent beyond what answering those requests requires.
   per match, the account ids the game's versus screen showed are sent to `/v1/players/steam` and
   `/v1/players/{id}/rank` for match counts and ranks. The live match view itself reads only the
   game's `console.log` on this computer; the live bridge HUD mod draws and sends nothing.
+- Regions "Where I play" (only with Player and match stats on and a Stats account set): when
+  Servers > Regions opens, the primary Stats account id is sent to `/v1/players/{id}/region` for
+  its matches by month and datacenter, cached six hours. The counts stay on this computer and
+  build the preset and the match count beside each location.
 
 ## GitHub
 

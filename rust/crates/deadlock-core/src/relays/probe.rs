@@ -141,3 +141,61 @@ pub fn sweep(
         }
     });
 }
+
+/// One region's line in the status bar's relay health popover.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RegionHealth {
+    pub region: super::Region,
+    /// Locations that answered.
+    pub answering: usize,
+    /// Locations measured.
+    pub measured: usize,
+    /// The lowest ping in the region.
+    pub best: Option<u32>,
+}
+
+/// What a finished sweep says about the relay network, for the status bar.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Summary {
+    pub answering: usize,
+    pub measured: usize,
+    /// The fastest location and its ping.
+    pub best: Option<(String, u32)>,
+    pub regions: Vec<RegionHealth>,
+}
+
+impl Summary {
+    /// The bar's tone: every measured location answered, some did, or none.
+    pub fn overall(&self) -> Health {
+        match (self.answering, self.measured) {
+            (_, 0) | (0, _) => Health::NoAnswer,
+            (a, m) if a == m => Health::Good,
+            _ => Health::Fair,
+        }
+    }
+}
+
+/// Count the pings of a sweep by region, in [`super::Region::ALL`] order.
+pub fn summary(locations: &[Location], pings: &std::collections::BTreeMap<String, Option<u32>>) -> Summary {
+    let mut out = Summary::default();
+    for region in super::Region::ALL {
+        let mut line = RegionHealth { region, answering: 0, measured: 0, best: None };
+        for location in locations.iter().filter(|l| l.region == region) {
+            let Some(ping) = pings.get(&location.id) else { continue };
+            line.measured += 1;
+            if let Some(ms) = ping {
+                line.answering += 1;
+                line.best = Some(line.best.map_or(*ms, |b| b.min(*ms)));
+                if out.best.as_ref().is_none_or(|(_, best)| ms < best) {
+                    out.best = Some((location.id.clone(), *ms));
+                }
+            }
+        }
+        if line.measured > 0 {
+            out.answering += line.answering;
+            out.measured += line.measured;
+            out.regions.push(line);
+        }
+    }
+    out
+}
