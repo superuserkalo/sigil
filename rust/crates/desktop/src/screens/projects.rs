@@ -191,6 +191,7 @@ fn detail_pane(s: &State, u: &Ui) -> El {
         .min_w(0.0)
         .gap(24.0)
         .child(col().w_full().gap(16.0).child(head).child(facts))
+        .child(crate::screens::project_tools::section(s, u))
         .child(targets(u, p))
         .child(references(u, p))
         .child(history(u, p))

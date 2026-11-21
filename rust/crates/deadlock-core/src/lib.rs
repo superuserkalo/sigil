@@ -53,6 +53,7 @@ pub mod profile_favorites;
 pub mod profiles;
 pub mod project;
 pub mod project_build;
+pub mod project_test;
 pub mod recolor;
 pub mod relays;
 pub mod release;

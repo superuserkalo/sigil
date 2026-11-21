@@ -116,6 +116,9 @@ pub fn plan_build(project: &Path, rebuild: bool) -> Result<BuildPlan> {
     let sources = project.join("sources");
     let mut plan = BuildPlan::default();
     for path in walk(&sources) {
+        if path.eq_ignore_ascii_case(IMAGE_LIST) {
+            continue; // A helper for the author's tools; it must never ship in the payload.
+        }
         let Some(output) = compiled_path(&path) else { continue };
         let fresh = !rebuild
             && project.join("staging").join(&output).is_file()
@@ -167,6 +170,51 @@ pub fn sync_image_list(project: &Path) -> Result<usize> {
         fs::write(&file, text)?;
     }
     Ok(images.len())
+}
+
+/// What one batch compile did.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BuildReport {
+    pub built: Vec<String>,
+    pub unchanged: usize,
+    /// Source and the compiler's message.
+    pub failed: Vec<(String, String)>,
+}
+
+/// Compile what changed (or everything with `rebuild`) and copy each result to its exact game
+/// path in `staging/`. `compile` runs the compiler on one source and returns the files it wrote.
+/// One failed file does not stop the rest, and only built files are recorded.
+pub fn run_build(
+    project: &Path,
+    rebuild: bool,
+    compile: &mut dyn FnMut(&Path) -> Result<Vec<PathBuf>>,
+) -> Result<BuildReport> {
+    sync_image_list(project)?;
+    let plan = plan_build(project, rebuild)?;
+    let mut report = BuildReport { unchanged: plan.unchanged.len(), ..BuildReport::default() };
+    for path in plan.compile {
+        let Some(game_path) = compiled_path(&path) else { continue };
+        let wanted = game_path.rsplit('/').next().unwrap_or(&game_path).to_ascii_lowercase();
+        let result = compile(&project.join("sources").join(&path)).and_then(|outputs| {
+            let output = outputs
+                .iter()
+                .find(|file| file.file_name().is_some_and(|name| name.to_string_lossy().eq_ignore_ascii_case(&wanted)))
+                .ok_or_else(|| Error::msg(format!("The compiler did not write {wanted}.")))?;
+            let target = inside(project, &format!("staging/{game_path}"))?;
+            fs::create_dir_all(target.parent().expect("target has a parent"))?;
+            if output != &target {
+                fs::copy(output, &target)?;
+            }
+            Ok(())
+        });
+        match result {
+            Ok(()) => report.built.push(path),
+            Err(error) => report.failed.push((path, error.to_string())),
+        }
+    }
+    record_built(project, &report.built)?;
+    Ok(report)
 }
 
 // --- Scan and Repair -----------------------------------------------------------------------
@@ -371,6 +419,34 @@ mod tests {
         put(&dir, "sources/materials/b.vmat", "changed");
         assert_eq!(plan_build(&dir, false).unwrap().compile, vec!["materials/b.vmat".to_string()]);
         assert_eq!(plan_build(&dir, true).unwrap().compile.len(), 2);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_build_lands_at_the_game_path_and_keeps_going_past_a_failure() {
+        let dir = project("run");
+        let out = dir.join("compiler-output");
+        fs::create_dir_all(&out).unwrap();
+        put(&dir, "sources/materials/good.vmat", "a");
+        put(&dir, "sources/materials/bad.vmat", "b");
+        put(&dir, "sources/panorama/images/hud/i.png", "c");
+        let mut compile = |source: &Path| -> Result<Vec<PathBuf>> {
+            let name = source.file_name().unwrap().to_string_lossy().into_owned();
+            if name == "bad.vmat" {
+                return Err(Error::msg("bad material"));
+            }
+            let file = out.join(if name == "i.png" { "i_png.vtex_c".to_string() } else { format!("{name}_c") });
+            fs::write(&file, "compiled").unwrap();
+            Ok(vec![file])
+        };
+        let report = run_build(&dir, false, &mut compile).unwrap();
+        assert_eq!(report.built.len(), 2, "{report:?}");
+        assert_eq!(report.failed.len(), 1);
+        assert!(dir.join("staging/materials/good.vmat_c").is_file());
+        assert!(dir.join("staging/panorama/images/hud/i_png.vtex_c").is_file());
+        assert!(!dir.join("staging").join(format!("{IMAGE_LIST}_c")).exists(), "the helper list never ships");
+        let again = run_build(&dir, false, &mut compile).unwrap();
+        assert_eq!((again.built.len(), again.unchanged, again.failed.len()), (0, 2, 1));
         let _ = fs::remove_dir_all(&dir);
     }
 

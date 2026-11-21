@@ -141,6 +141,8 @@ pub struct State {
     pub viewers: crate::viewer::Viewers,
     /// The Game index's Files tab (`screens::explorer`).
     pub explorer: screens::explorer::Explorer,
+    /// The Projects page's build tools (`screens::project_tools`).
+    pub project_tools: screens::project_tools::Tools,
 }
 
 impl Default for State {
@@ -241,6 +243,7 @@ impl Default for State {
             maps: Default::default(),
             viewers: Default::default(),
             explorer: Default::default(),
+            project_tools: Default::default(),
         }
     }
 }
@@ -1264,6 +1267,7 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
         ("servers-modal", screens::servers::dialog(s, &u)),
         ("launch-modal", screens::launch::dialog(s, &u)),
         ("toolchain-modal", screens::toolchain::dialog(s, &u)),
+        ("project-tools-modal", screens::project_tools::dialog(s, &u)),
         ("addon-modal", screens::installed::dialog(s, &u)),
         ("review-modal", screens::stats::dialog(s, &u)),
         ("crosshair-modal", screens::crosshair::dialog(s, &u)),
@@ -1995,6 +1999,7 @@ pub fn poll(s: &mut State, t: f64, _tx: &mut Tx) -> bool {
     changed |= screens::locker::cursors::poll(s);
     changed |= screens::locker::assets::poll(s);
     changed |= screens::explorer::poll(s);
+    changed |= screens::project_tools::poll(s);
     while let Some(event) = s.agent.try_event() {
         s.apply_agent_event(event);
         changed = true;

@@ -23,6 +23,7 @@ pub mod one_skin;
 pub mod profile_favorites;
 pub mod profile_tools_de;
 pub mod profiles;
+pub mod project_tools;
 pub mod projects;
 pub mod servers;
 /// Host a server (`servers::host`), by its own name for other screens.
