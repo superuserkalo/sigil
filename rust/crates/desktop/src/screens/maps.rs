@@ -412,11 +412,11 @@ fn command_box(s: &State, u: &Ui, key: &str, command: String) -> El {
     row()
         .key(key.to_string())
         .w_full()
-        .h(36.0)
+        .h(32.0)
         .px(10.0)
         .gap(8.0)
         .center_y()
-        .radius(crate::ui::r(8.0))
+        .radius(crate::ui::r(4.0))
         .fill(u.well)
         .border(1.0, u.hair)
         .child(
@@ -518,8 +518,56 @@ pub fn how_to_play(s: &State, u: &Ui, key: &str, play: &Play) -> El {
     c.child(invite(s, u, key, play))
 }
 
+/// Invite friends: a header and one reserved 32 point line whose content follows the state
+/// (the connect box, waiting, missed, or the hint), so the drawer never grows or shrinks.
 fn invite(s: &State, u: &Ui, key: &str, play: &Play) -> El {
-    let mut c = col()
+    let this_map = |name: &str| play.map.as_deref() == Some(name);
+    let note = |words: &str, color: Color| {
+        let words = tr(words).to_string();
+        text(words.clone())
+            .font(SMALL)
+            .color(color)
+            .truncate()
+            .help_when_truncated(words)
+            .grow(1.0)
+            .min_w(0.0)
+    };
+    let small = |label: &str, k: String| u.action(tr(label), ActionKind::Ghost).h(24.0).px(8.0).key(k).cursor(rune::Cursor::Pointer);
+    let state = match &s.maps.invite {
+        Invite::Ready { map, code } if this_map(map) => {
+            command_box(s, u, &format!("{key}-connect"), core_maps::connect_command(code))
+                .help(tr("Friends open the console in Deadlock (F7), paste this and press Enter. They need the same map installed."))
+        }
+        Invite::Watching(map) if this_map(map) => row()
+            .w_full()
+            .gap(8.0)
+            .center_y()
+            .child(note("Waiting for the map server. The connect command shows here when it is up.", u.muted))
+            .child(small("Stop waiting", format!("{key}-invite-stop")).on_press(|st: &mut State| {
+                stop_watch(st);
+                if let Invite::Watching(map) = st.maps.invite.clone() {
+                    st.maps.invite = Invite::Missed(map);
+                }
+            })),
+        Invite::Missed(map) if this_map(map) => {
+            let map = map.clone();
+            row()
+                .w_full()
+                .gap(8.0)
+                .center_y()
+                .child(icon(&icons::TRIANGLE_ALERT, 14.0).color(u.amber).a11y_hidden())
+                .child(note("No connect code showed up. Sigil reads it from console.log, which the game writes with -condebug.", u.prose))
+                .child(small("Watch again", format!("{key}-invite-again")).on_press(move |st: &mut State| start_watch(st, map.clone())))
+        }
+        _ => {
+            let mut hint = note("Launch the map and Sigil shows the command friends paste in their console (F7) to join you.", u.muted);
+            if !crate::screens::settings::options::get().condebug {
+                hint = hint.help(tr("Sigil reads the command from the game's console log. Turn on the console log (-condebug) in Settings first."));
+            }
+            row().w_full().center_y().child(hint)
+        }
+    };
+    col()
         .key(format!("{key}-invite"))
         .w_full()
         .gap(8.0)
@@ -530,56 +578,8 @@ fn invite(s: &State, u: &Ui, key: &str, play: &Play) -> El {
                 .center_y()
                 .child(icon(&icons::USER, 14.0).color(u.muted).a11y_hidden())
                 .child(text(tr("Invite friends")).font(BODY_MED).color(u.ink)),
-        );
-    let this_map = |name: &str| play.map.as_deref() == Some(name);
-    match &s.maps.invite {
-        Invite::Ready { map, code } if this_map(map) => {
-            c = c
-                .child(line("Your map server is up. Friends open the console in Deadlock (F7), paste this and press Enter:", u.muted))
-                .child(command_box(s, u, &format!("{key}-connect"), core_maps::connect_command(code)))
-                .child(line("They need the same map installed.", u.faint));
-        }
-        Invite::Watching(map) if this_map(map) => {
-            c = c
-                .child(line("Waiting for the map server. The connect command shows here when it is up.", u.muted))
-                .child(
-                    row().child(
-                        u.action(tr("Stop waiting"), ActionKind::Ghost)
-                            .key(format!("{key}-invite-stop"))
-                            .cursor(rune::Cursor::Pointer)
-                            .on_press(|st: &mut State| {
-                                stop_watch(st);
-                                if let Invite::Watching(map) = st.maps.invite.clone() {
-                                    st.maps.invite = Invite::Missed(map);
-                                }
-                            }),
-                    ),
-                );
-        }
-        Invite::Missed(map) if this_map(map) => {
-            let map = map.clone();
-            c = c
-                .child(line("No connect code showed up. Sigil reads it from console.log, which the game writes with -condebug.", u.amber))
-                .child(
-                    row().child(
-                        u.action(tr("Watch again"), ActionKind::Secondary)
-                            .key(format!("{key}-invite-again"))
-                            .cursor(rune::Cursor::Pointer)
-                            .on_press(move |st: &mut State| start_watch(st, map.clone())),
-                    ),
-                );
-        }
-        _ => {
-            c = c.child(line("Launch the map and Sigil shows the command friends paste in their console (F7) to join you.", u.muted));
-            if !crate::screens::settings::options::get().condebug {
-                c = c.child(line(
-                    "Sigil reads the command from the game's console log. Turn on the console log (-condebug) in Settings first.",
-                    u.faint,
-                ));
-            }
-        }
-    }
-    c
+        )
+        .child(el().key(format!("{key}-invite-line")).w_full().h(32.0).child(state.h(32.0)))
 }
 
 /// Browse's details: "How to play" for a mod GameBanana files under Maps. None when Custom

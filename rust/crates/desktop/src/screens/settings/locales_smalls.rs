@@ -54,6 +54,7 @@ pub const DE: &[(&str, &str)] = &[
     ("Launch map writes the map command into autoexec.cfg (the old file is backed up) and starts Deadlock.", "Karte starten schreibt den Kartenbefehl in die autoexec.cfg (die alte Datei wird gesichert) und startet Deadlock."),
     ("Your map server is up. Friends open the console in Deadlock (F7), paste this and press Enter:", "Dein Kartenserver läuft. Freunde öffnen in Deadlock die Konsole (F7), fügen das ein und drücken Enter:"),
     ("They need the same map installed.", "Sie brauchen dieselbe Karte installiert."),
+    ("Friends open the console in Deadlock (F7), paste this and press Enter. They need the same map installed.", "Freunde öffnen die Konsole in Deadlock (F7), fügen dies ein und drücken Enter. Sie brauchen dieselbe Karte installiert."),
     ("Waiting for the map server. The connect command shows here when it is up.", "Warte auf den Kartenserver. Der Verbindungsbefehl erscheint hier, sobald er läuft."),
     ("No connect code showed up. Sigil reads it from console.log, which the game writes with -condebug.", "Es kam kein Verbindungscode. Sigil liest ihn aus der console.log, die das Spiel mit -condebug schreibt."),
     ("Launch the map and Sigil shows the command friends paste in their console (F7) to join you.", "Starte die Karte, und Sigil zeigt den Befehl, den Freunde in ihre Konsole (F7) einfügen, um dir beizutreten."),
