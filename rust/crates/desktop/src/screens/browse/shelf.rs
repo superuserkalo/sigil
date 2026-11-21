@@ -106,13 +106,25 @@ pub fn poll(st: &mut State) -> bool {
     };
     let feeds = result.unwrap_or_default();
     let n = per_page(super::toolbar::page_width(st));
-    let urls: Vec<String> = [&feeds.week, &feeds.month, &feeds.all]
-        .into_iter()
-        .flat_map(|list| list.iter().take(n * 2).filter_map(|c| c.thumbnail_url.clone()))
-        .collect();
+    let urls = cover_urls(st, &feeds, n * 2);
     crate::data::queue_images(st, urls, false);
     st.browse_view.shelves.feeds = Some(feeds);
     true
+}
+
+/// The cards a shelf may show, in order: hidden mods, hidden creators and (while Settings hide
+/// mature content) mature mods never reach a shelf.
+pub fn allowed<'a>(s: &State, list: &'a [BrowseCard]) -> Vec<&'a BrowseCard> {
+    list.iter().filter(|c| content_allowed(s, c.id, c.nsfw, &c.author)).collect()
+}
+
+/// The covers worth fetching: the first `count` allowed cards of each shelf. Hidden art is
+/// never downloaded.
+pub fn cover_urls(s: &State, feeds: &Feeds, count: usize) -> Vec<String> {
+    [&feeds.week, &feeds.month, &feeds.all]
+        .into_iter()
+        .flat_map(|list| allowed(s, list).into_iter().take(count).filter_map(|c| c.thumbnail_url.clone()))
+        .collect()
 }
 
 /// A flat placeholder bar for text that has not arrived.
@@ -157,9 +169,8 @@ pub fn card(s: &State, u: &Ui, scope: &str, card: &BrowseCard, w: f32) -> El {
     let id = card.id;
     let h = (w * 9.0 / 16.0).round();
     let veil = veiled(s, id, card.nsfw);
-    let name = card.name.clone();
-    let image = card.thumbnail_url.clone();
-    let section = if card.model.eq_ignore_ascii_case("sound") { BrowseSection::Sounds } else { BrowseSection::Mods };
+    // Details open with the card's own state, so its mature gate, author and dates hold.
+    let opened = card.clone();
     let byline = if card.author.is_empty() { "-".to_string() } else { format!("by {}", card.author) };
     let category = if card.category.is_empty() { "-".to_string() } else { card.category.clone() };
     let mut frame = cover(s, u, format!("shelf-{scope}-{id}"), card.thumbnail_url.as_ref(), w, h, veil);
@@ -191,7 +202,7 @@ pub fn card(s: &State, u: &Ui, scope: &str, card: &BrowseCard, w: f32) -> El {
         .role("button")
         .label(format!("{}, {byline}", card.name))
         .cursor(rune::Cursor::Pointer)
-        .on_press(move |st: &mut State| show_details(st, Details::from_id(section, id, &name, image.clone())))
+        .on_press(move |st: &mut State| show_details(st, Details::from_card(&opened)))
         .child(frame)
         .child(
             row()
@@ -317,6 +328,56 @@ pub fn shelf(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn row(id: u64, author: &str, nsfw: bool) -> BrowseCard {
+        let mut card = super::super::spotlight::card_of(&TopSub {
+            id,
+            name: format!("Mod {id}"),
+            author: author.to_string(),
+            image_url: Some(format!("https://images.example/{id}.jpg")),
+            nsfw,
+            ..TopSub::default()
+        });
+        card.model = "Mod".into();
+        card
+    }
+
+    /// A mature mod (Settings hide mature), a hidden mod and a hidden creator never reach a
+    /// shelf, the spotlight or the image queue.
+    #[test]
+    fn hidden_and_mature_mods_stay_off_every_landing_surface() {
+        let mut st = State::default();
+        st.prefs.mature = crate::prefs::Mature::Hide;
+        st.browse_view.hidden_mods.insert(2);
+        st.browse_view.hidden_authors.insert("Hidden Maker".to_string());
+        let list = vec![row(1, "Fine", false), row(2, "Fine", false), row(3, "hidden maker", false), row(4, "Fine", true)];
+        let ids: Vec<u64> = allowed(&st, &list).iter().map(|c| c.id).collect();
+        assert_eq!(ids, vec![1], "shelves");
+        let feeds = Feeds { week: list.clone(), month: list.clone(), all: list.clone() };
+        let urls = cover_urls(&st, &feeds, 15);
+        assert_eq!(urls, vec!["https://images.example/1.jpg".to_string(); 3], "shelf image queue");
+        st.browse_view.top = Some(
+            list.iter()
+                .map(|c| TopSub {
+                    id: c.id,
+                    name: c.name.clone(),
+                    model: "Mod".into(),
+                    period: "today".into(),
+                    author: c.author.clone(),
+                    image_url: c.thumbnail_url.clone(),
+                    nsfw: c.nsfw,
+                    ..TopSub::default()
+                })
+                .collect(),
+        );
+        let picks: Vec<u64> = super::super::spotlight::picks(&st).iter().map(|t| t.id).collect();
+        assert_eq!(picks, vec![1], "spotlight");
+        assert_eq!(super::super::spotlight::cover_urls(&st), vec!["https://images.example/1.jpg".to_string()], "spotlight image queue");
+        // The grid's gate is the same function.
+        assert!(!content_allowed(&st, 2, false, "Fine"));
+        assert!(!content_allowed(&st, 3, false, "HIDDEN MAKER"));
+        assert!(!content_allowed(&st, 4, true, "Fine"));
+    }
 
     #[test]
     fn cards_per_page_follow_the_spec() {

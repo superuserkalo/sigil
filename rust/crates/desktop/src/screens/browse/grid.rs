@@ -47,19 +47,24 @@ pub(crate) fn dashboard(s: &State, u: &Ui) -> Option<El> {
     let width = super::toolbar::page_width(s);
     let n = shelf::per_page(width);
     let w = shelf::card_width(width, n);
-    let hide = s.prefs.mature == crate::prefs::Mature::Hide;
     let feeds = s.browse_view.shelves.feeds.as_ref();
     // A mod shows on one shelf only: the month shelf skips this week's, all time skips both.
     let mut seen: HashSet<u64> = HashSet::new();
     let mut tiles = |scope: &str, list: Option<&Vec<BrowseCard>>| -> Vec<El> {
         match list {
-            Some(list) => list
-                .iter()
-                .filter(|c| !(hide && c.nsfw))
-                .filter(|c| seen.insert(c.id))
-                .take(shelf::PER_SHELF)
-                .map(|c| shelf::card(s, u, scope, c, w))
-                .collect(),
+            Some(list) => {
+                let usable = shelf::allowed(s, list);
+                let fresh: Vec<&BrowseCard> = usable.iter().copied().filter(|c| !seen.contains(&c.id)).collect();
+                // Repeats are skipped only while the shelf still fills a page without them.
+                let pick = if fresh.len() >= n { fresh } else { usable };
+                pick.into_iter()
+                    .take(shelf::PER_SHELF)
+                    .map(|c| {
+                        seen.insert(c.id);
+                        shelf::card(s, u, scope, c, w)
+                    })
+                    .collect()
+            }
             None => (0..n).map(|_| shelf::placeholder(u, w)).collect(),
         }
     };
@@ -71,8 +76,8 @@ pub(crate) fn dashboard(s: &State, u: &Ui) -> Option<El> {
             })
         })
     };
-    // DMM's quick stats strip: always on the plain landing, each number a shortcut.
-    let mut rails = col().key("browse-dashboard").w_full().gap(24.0).child(super::strip::view(s, u));
+    // The spotlight, with DMM's quick numbers beside it: always on the plain landing.
+    let mut rails = col().key("browse-dashboard").w_full().gap(24.0).child(super::spotlight::view(s, u));
     rails = rails
         .child(shelf::shelf(
             s,

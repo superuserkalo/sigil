@@ -444,20 +444,11 @@ pub fn poll(st: &mut State, tx: &mut Tx) -> bool {
     changed |= super::shelf::poll(st);
     if let Some(result) = st.browse_view.top_job.try_take() {
         let top = result.unwrap_or_default();
-        // Only the tiles the two rails draw (three mods per period); each decoded image holds
-        // about 1 MB, and the feed lists more than the rails show.
-        let mut urls: Vec<String> = Vec::new();
-        for period in ["week", "month"] {
-            urls.extend(
-                top.iter()
-                    .filter(|t| t.period == period && t.model.eq_ignore_ascii_case("mod"))
-                    .filter(|t| !(t.nsfw && st.prefs.mature == crate::prefs::Mature::Hide))
-                    .take(3)
-                    .filter_map(|t| t.image_url.clone()),
-            );
-        }
-        crate::data::queue_images(st, urls, false);
         st.browse_view.top = Some(top);
+        // Only the spotlight's covers, through the shared gate: each decoded image holds about
+        // 1 MB, and hidden or mature art is never fetched.
+        let urls = super::spotlight::cover_urls(st);
+        crate::data::queue_images(st, urls, false);
         changed = true;
     }
     if let Some(result) = st.browse_view.details_job.try_take() {

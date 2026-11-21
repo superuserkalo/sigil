@@ -60,6 +60,7 @@ pub mod scenes;
 pub mod store;
 pub mod strip;
 pub mod shelf;
+pub mod spotlight;
 pub mod toolbar;
 pub mod tree;
 
@@ -1266,7 +1267,7 @@ fn shown_indices(s: &State) -> Vec<usize> {
                 .iter()
                 .enumerate()
                 .filter(|(_, card)| {
-                    if mod_hidden(s, card.id) || author_hidden(s, &card.author) {
+                    if !content_allowed(s, card.id, false, &card.author) {
                         return false;
                     }
                     if card.nsfw && hide_mature && f.mature != MatureView::Only {
@@ -1328,6 +1329,13 @@ fn shown_indices(s: &State) -> Vec<usize> {
 }
 
 /// Columns and card width for a grid `width` points wide.
+/// The one gate every Browse surface (grid, shelves, spotlight, image queue) shares: a hidden
+/// mod or creator never shows, and a mature one never shows while Settings hide mature content.
+/// `nsfw` is false where the caller applies its own mature rule (the grid's Mature filter).
+pub(crate) fn content_allowed(s: &State, id: u64, nsfw: bool, author: &str) -> bool {
+    !(nsfw && s.prefs.mature == crate::prefs::Mature::Hide) && !mod_hidden(s, id) && !author_hidden(s, author)
+}
+
 fn grid_columns(width: f32, size: CardSize) -> (usize, f32) {
     let (min, max) = size.bounds();
     let width = if width > 0.0 { width } else { DEFAULT_GRID_W };
