@@ -71,6 +71,22 @@ pub fn recheck(st: &mut State) {
     });
 }
 
+/// At startup, before the first frame: read gameinfo.gi on this thread (one small file, next
+/// to the discovery reads init already does) so a banner that is due shows on the first frame.
+/// Found by the worker a few frames later, it pushed every page down 48 pt right after launch.
+pub fn check_now(st: &mut State) {
+    if st.demo || rune::is_headless() {
+        return;
+    }
+    // No game: `recheck` says so from `setup` without reading anything.
+    let Some(root) = st.game_root.clone() else { return };
+    let path = deadlock_core::deploy::gameinfo_path(&root);
+    st.gameinfo.state = match deadlock_core::discovery::read_game_info_status(&path) {
+        Ok(status) => state_for(path, &status),
+        Err(_) => Gameinfo::Unknown,
+    };
+}
+
 /// From the shell's poll. True when the banner changed.
 pub fn poll(st: &mut State) -> bool {
     let Some(result) = st.gameinfo.job.try_take() else {

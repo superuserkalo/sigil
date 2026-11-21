@@ -37,6 +37,7 @@ pub fn init_state() -> State {
     };
     state.paths.data = data_dir().display().to_string();
     let game_root = apply_game_status(&mut state);
+    crate::banner::check_now(&mut state);
     load_cached_patches(&mut state);
     load_workspace_project(&mut state);
     state.watch = read_watch_state();
