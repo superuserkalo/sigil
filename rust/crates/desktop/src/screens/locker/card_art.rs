@@ -172,6 +172,35 @@ fn choose(slot: CardSlot) -> impl Fn(&mut State, &mut Tx) + 'static {
     }
 }
 
+/// Takes the Locker's 3D view frame as the image for `slot_path`.
+fn from_3d_view(st: &mut State, slot_path: String) {
+    let folder = crate::data::data_dir().join("card-snapshots");
+    // Frames no variant holds any more go, so retakes do not pile up.
+    let held: Vec<PathBuf> = st.locker.assets.card.iter().flat_map(|c| c.picks.iter().map(|p| p.file.clone())).collect();
+    for entry in std::fs::read_dir(&folder).into_iter().flatten().flatten() {
+        if !held.contains(&entry.path()) {
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
+    let file = folder.join(format!("{}.png", deadlock_core::mod_extras::new_uid()));
+    let taken = crate::viewer::snapshot(
+        st,
+        crate::viewer::prepare::LOCKER_KEY,
+        file,
+        Box::new(move |st: &mut State, file: PathBuf| {
+            let size = image_size(&file);
+            let Some(card) = st.locker.assets.card.as_mut() else { return };
+            card.error = None;
+            card.picks.retain(|p| p.slot != slot_path);
+            card.picks.push(Pick { slot: slot_path, file: file.clone(), size });
+            crate::data::request_locker_art(st, &file.display().to_string());
+        }),
+    );
+    if !taken && let Some(card) = st.locker.assets.card.as_mut() {
+        card.error = Some(tr("Open the hero's 3D view first, then try again.").to_string());
+    }
+}
+
 /// The largest centred box of the target's shape inside a `w` by `h` image.
 pub fn center_crop(w: u32, h: u32, target: (u32, u32)) -> (u32, u32, u32, u32) {
     let (tw, th) = (target.0.max(1) as u64, target.1.max(1) as u64);
@@ -272,6 +301,18 @@ fn tile(s: &State, u: &Ui, card: &CardArt, slot: &CardSlot) -> El {
             .cursor(rune::Cursor::Pointer)
             .on_press_tx(choose(slot.clone())),
     );
+    // Grimoire's 3D card snapshots: the hero page's 3D view, posed and framed by the player,
+    // becomes the card art (centre-cropped to the variant like any chosen image).
+    if crate::viewer::can_snapshot(s, crate::viewer::prepare::LOCKER_KEY) {
+        let slot_path = slot.path.clone();
+        actions = actions.child(
+            u.action(tr("Use the 3D view"), ActionKind::Ghost)
+                .key(format!("locker-ingame-3d-{}", slot.variant))
+                .label(fill(tr("Use the 3D view for {}"), &[&slot.variant]))
+                .cursor(rune::Cursor::Pointer)
+                .on_press(move |st: &mut State| from_3d_view(st, slot_path.clone())),
+        );
+    }
     if pick.is_some() {
         let path = slot.path.clone();
         actions = actions.child(
