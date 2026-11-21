@@ -354,7 +354,7 @@ fn field(u: &Ui, edit: &TextEdit, key: &str, placeholder: &str, pick: fn(&mut St
         .h(32.0)
         .px(10.0)
         .center_y()
-        .radius(crate::ui::r(8.0))
+        .radius(crate::ui::r(4.0))
         .fill(u.well)
         .border(1.0, u.hair)
         .child(
@@ -401,7 +401,7 @@ fn picks(u: &Ui, key: &str, paths: &[String], current: &Option<String>, none: &s
                 .px(8.0)
                 .gap(8.0)
                 .center_y()
-                .radius(crate::ui::r(6.0))
+                .radius(crate::ui::r(4.0))
                 .fill(if on { u.selected } else { Color::TRANSPARENT })
                 .hover(u.hover)
                 .role("radio")

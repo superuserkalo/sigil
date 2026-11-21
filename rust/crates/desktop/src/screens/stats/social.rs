@@ -93,14 +93,10 @@ fn body(s: &State, u: &Ui, social: &Social) -> El {
         .child(column(u, tr("Frequent opponents"), &enemies, true));
 
     let hidden = social.mates.len() > ROWS || social.enemies.len() > ROWS;
-    let mut out = col().w_full().gap(12.0).child(grid);
+    // One foot row: show more, then refresh, on the same line.
+    let mut foot = row().w_full().h(32.0).gap(8.0).center_y().child(spacer());
     if hidden {
-        out = out.child(
-            row()
-                .w_full()
-                .h(32.0)
-                .child(spacer())
-                .child(
+        foot = foot.child(
                     u.action(
                         if all {
                             tr("Show fewer")
@@ -110,13 +106,11 @@ fn body(s: &State, u: &Ui, social: &Social) -> El {
                         ActionKind::Ghost,
                     )
                     .key("stats-social-toggle")
-                    .mr(-12.0)
                     .cursor(rune::Cursor::Pointer)
                     .on_press(|st: &mut State| st.stats.social_all = !st.stats.social_all),
-                ),
         );
     }
-    out.child(refresh(u))
+    col().w_full().gap(12.0).child(grid).child(foot.child(refresh(u)))
 }
 
 /// Teammates by win rate, needing more than a couple of games together.
@@ -182,7 +176,7 @@ fn person_row(u: &Ui, record: &PlayerRecord, against: bool) -> El {
     let mut r = row()
         .key(format!("stats-person-{account_id}"))
         .w_full()
-        .h(48.0)
+        .h(44.0)
         .gap(12.0)
         .center_y()
         .border_sides([0.0, 0.0, 1.0, 0.0], u.hair)
@@ -195,7 +189,7 @@ fn person_row(u: &Ui, record: &PlayerRecord, against: bool) -> El {
         ))
         .cursor(rune::Cursor::Pointer)
         .on_press(move |st: &mut State| crate::data::load_stats_account(st, account_id))
-        .child(avatar(u, &name, 28.0))
+        .child(avatar(u, &name, 24.0))
         .child(
             col()
                 .grow(1.0)
@@ -215,13 +209,12 @@ fn person_row(u: &Ui, record: &PlayerRecord, against: bool) -> El {
                 ),
         )
         .child(rate_text(u, rate, record.win_rate_percent));
-    if record.premade {
-        r = r.child(
-            icon(&icons::PIN, 12.0)
-                .color(u.muted)
-                .label(tr("Queued together")),
-        );
-    }
+    // The "queued together" mark keeps its slot, so the Statlocker buttons line up.
+    r = r.child(if record.premade {
+        row().w(16.0).center().child(icon(&icons::PIN, 12.0).color(u.muted).label(tr("Queued together")))
+    } else {
+        row().w(16.0)
+    });
     r.child(statlocker_link(
         u,
         format!("stats-person-statlocker-{account_id}"),
@@ -244,10 +237,8 @@ fn rate_text(u: &Ui, rate: String, percent: f64) -> El {
 }
 
 fn refresh(u: &Ui) -> El {
-    row().w_full().h(32.0).child(spacer()).child(
-        u.icon_button(&icons::REFRESH_CW, tr("Refresh teammates and opponents"))
-            .key("stats-social-refresh")
-            .cursor(rune::Cursor::Pointer)
-            .on_press(|st: &mut State| crate::data::start_social_load(st)),
-    )
+    u.icon_button(&icons::REFRESH_CW, tr("Refresh teammates and opponents"))
+        .key("stats-social-refresh")
+        .cursor(rune::Cursor::Pointer)
+        .on_press(|st: &mut State| crate::data::start_social_load(st))
 }

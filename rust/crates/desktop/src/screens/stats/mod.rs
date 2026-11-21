@@ -754,12 +754,16 @@ fn tab_body(s: &State, u: &Ui, tab: Tab, snap: &StatsSnapshot, derived: &Derived
     match tab {
         Tab::Overview => brief::overview(s, u, osnap, oderived),
         Tab::Live => section("stats-tab-live").child(live::panel(s, u).unwrap_or_else(|| {
-            u.empty_state(
-                "",
-                tr("No match running"),
-                tr("Start Deadlock and this tab follows the match you are in."),
-                None,
-            )
+            // Starts at the same y as every other tab's first section.
+            col()
+                .w_full()
+                .gap(4.0)
+                .child(shared::section_head(u, tr("No match running"), ""))
+                .child(
+                    text(tr("Start Deadlock and this tab follows the match you are in."))
+                        .font(BODY)
+                        .color(u.prose),
+                )
         })),
         Tab::Matches => section("stats-tab-matches")
             .children(w4::scope_note(s, u))

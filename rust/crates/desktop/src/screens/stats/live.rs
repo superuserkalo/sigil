@@ -621,7 +621,7 @@ fn frame(u: &Ui, body: El) -> El {
         .w_full()
         .padding(20.0)
         .gap(12.0)
-        .radius(crate::ui::r(12.0))
+        .radius(crate::ui::r(4.0))
         .border(1.0, u.hair_strong)
         .fill(Color::WHITE.alpha(0.02))
         .child(
@@ -696,13 +696,13 @@ fn chip(s: &State, u: &Ui, hero: &str, size: f32) -> El {
     match s.thumbnails.get(&icon_key(hero)) {
         Some(pixels) => el()
             .size(size, size)
-            .radius(crate::ui::r(6.0))
+            .radius(crate::ui::r(4.0))
             .fill(Color::WHITE.alpha(0.04))
             .pixels_fit(pixels, SurfaceFit::Fit)
             .a11y_hidden(),
         None => el()
             .size(size, size)
-            .radius(crate::ui::r(6.0))
+            .radius(crate::ui::r(4.0))
             .fill(Color::WHITE.alpha(0.06))
             .center()
             .a11y_hidden()

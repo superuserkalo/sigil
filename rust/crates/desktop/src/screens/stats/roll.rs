@@ -235,7 +235,7 @@ fn pill(u: &Ui, key: &str, label: &str, on: bool) -> El {
         .h(28.0)
         .px(10.0)
         .center_y()
-        .radius(crate::ui::r(6.0))
+        .radius(crate::ui::r(4.0))
         .fill(if on { u.selected } else { Color::TRANSPARENT })
         .hover(u.hover)
         .focusable(true)
@@ -250,13 +250,13 @@ fn hero_chip(s: &State, u: &Ui, hero_id: u32, name: &str, size: f32) -> El {
     match s.thumbnails.get(&icon_key(hero_id)) {
         Some(pixels) => el()
             .size(size, size)
-            .radius(crate::ui::r(8.0))
+            .radius(crate::ui::r(4.0))
             .fill(Color::WHITE.alpha(0.04))
             .pixels_fit(pixels, SurfaceFit::Fit)
             .a11y_hidden(),
         None => el()
             .size(size, size)
-            .radius(crate::ui::r(8.0))
+            .radius(crate::ui::r(4.0))
             .fill(Color::WHITE.alpha(0.06))
             .center()
             .a11y_hidden()
@@ -291,13 +291,14 @@ fn controls(s: &State, u: &Ui) -> El {
                 .child(text(tr("Keep the hero")).font(SMALL).color(u.muted).a11y_hidden()),
         );
     }
-    bar = bar.child(spacer()).child(
+    // The code field sits right after the roll actions, so the controls read as one group.
+    bar = bar.child(el().w(16.0)).child(
         row()
             .w(220.0)
             .h(32.0)
             .px(10.0)
             .center_y()
-            .radius(crate::ui::r(8.0))
+            .radius(crate::ui::r(4.0))
             .fill(u.well)
             .border(1.0, u.hair)
             .child(
@@ -436,7 +437,7 @@ fn item_tile(u: &Ui, data: &RollData, roll: &Roll, index: usize, item: &core::Ro
         .w(176.0)
         .gap(2.0)
         .padding(10.0)
-        .radius(crate::ui::r(8.0))
+        .radius(crate::ui::r(4.0))
         .fill(u.raised)
         .border_sides([0.0, 0.0, 0.0, 3.0], color)
         .child(
@@ -516,7 +517,7 @@ fn abilities(u: &Ui, data: &RollData, roll: &Roll) -> El {
         if lead {
             label = label.child(text(tr("max first")).font(SMALL).color(u.accent));
         }
-        list = list.child(row().key(format!("stats-roll-ability-{slot}")).w_full().h(30.0).gap(12.0).center_y().child(label).child(marks));
+        list = list.child(row().key(format!("stats-roll-ability-{slot}")).w_full().h(28.0).gap(12.0).center_y().child(label).child(marks));
     }
     list
 }
@@ -541,7 +542,7 @@ fn section_pills(s: &State, u: &Ui) -> El {
     row()
         .gap(2.0)
         .padding(2.0)
-        .radius(crate::ui::r(8.0))
+        .radius(crate::ui::r(4.0))
         .border(1.0, u.hair)
         .child(pill(u, "stats-roll-show-build", tr("Build"), r.show_build).on_press(|st: &mut State| st.stats.roll.show_build = !st.stats.roll.show_build))
         .child(
@@ -575,7 +576,7 @@ pub(super) fn section(s: &State, u: &Ui) -> El {
                 .w_full()
                 .gap(16.0)
                 .padding(16.0)
-                .radius(crate::ui::r(12.0))
+                .radius(crate::ui::r(4.0))
                 .border(1.0, u.hair)
                 .child(header(s, u, roll, data))
                 .child(focus_strip(u, roll));

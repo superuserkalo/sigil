@@ -51,7 +51,7 @@ fn line(words: impl Into<String>, color: Color) -> El {
 }
 
 fn card(key: &str, u: &Ui) -> El {
-    col().key(key.to_string()).w_full().padding(20.0).gap(14.0).radius(crate::ui::r(12.0)).border(1.0, u.hair)
+    col().key(key.to_string()).w_full().padding(20.0).gap(14.0).radius(crate::ui::r(4.0)).border(1.0, u.hair)
 }
 
 fn variant_label(s: &State, run: &RunRecord, v: &Variant) -> String {
@@ -111,7 +111,7 @@ fn back(u: &Ui) -> El {
             .ml(-6.0)
             .gap(6.0)
             .center_y()
-            .radius(crate::ui::r(6.0))
+            .radius(crate::ui::r(4.0))
             .hover(u.hover)
             .focusable(true)
             .role("button")
@@ -149,7 +149,8 @@ fn tabs(s: &State, u: &Ui) -> El {
 fn radio(u: &Ui, on: bool) -> El {
     el().size(16.0, 16.0)
         .radius(8.0)
-        .border(if on { 5.0 } else { 1.5 }, if on { u.accent } else { u.hair_strong })
+        // Orange stays for the one launch action; a picked option is ink.
+        .border(if on { 5.0 } else { 1.5 }, if on { u.ink } else { u.hair_strong })
         .a11y_hidden()
 }
 
@@ -157,10 +158,10 @@ fn option_row(u: &Ui, key: String, on: bool, label: String) -> El {
     row()
         .key(key)
         .w_full()
-        .min_h(52.0)
-        .px(16.0)
-        .py(10.0)
-        .gap(14.0)
+        .min_h(44.0)
+        .px(12.0)
+        .py(4.0)
+        .gap(12.0)
         .center_y()
         .fill(if on { u.selected } else { Color::TRANSPARENT })
         .hover(u.hover)
@@ -173,7 +174,7 @@ fn option_row(u: &Ui, key: String, on: bool, label: String) -> El {
 }
 
 fn list_box(key: &str, u: &Ui) -> El {
-    col().key(key.to_string()).w_full().radius(crate::ui::r(12.0)).clip_rounded(crate::ui::r(12.0)).border(1.0, u.hair)
+    col().key(key.to_string()).w_full().radius(crate::ui::r(4.0)).clip_rounded(crate::ui::r(4.0)).border(1.0, u.hair)
 }
 
 fn setup(s: &State, u: &Ui) -> El {
@@ -219,7 +220,7 @@ fn replays(s: &State, u: &Ui) -> El {
                 .w_full()
                 .padding(20.0)
                 .gap(6.0)
-                .radius(crate::ui::r(12.0))
+                .radius(crate::ui::r(4.0))
                 .border(1.0, u.hair)
                 .child(text(tr("No replays yet")).font(BODY_MED).color(u.ink))
                 .child(line(tr("Watch any match in Deadlock once and its replay lands in the game's replays folder, where Sigil finds it. Or choose a .dem file."), u.muted)),
@@ -312,12 +313,12 @@ fn one_mod(s: &State, u: &Ui) -> El {
         chips = chips.child(
             row()
                 .key(format!("bench-mod-{slot}"))
-                .h(30.0)
+                .h(28.0)
                 .px(12.0)
                 .gap(6.0)
                 .center_y()
-                .radius(crate::ui::r(8.0))
-                .border(1.0, if on { u.accent } else { u.hair_strong })
+                .radius(crate::ui::r(4.0))
+                .border(1.0, if on { u.ink } else { u.hair_strong })
                 .fill(if on { u.selected } else { Color::TRANSPARENT })
                 .hover(u.hover)
                 .focusable(true)
@@ -504,7 +505,7 @@ fn running_view(s: &State, u: &Ui, shared: &Shared) -> El {
                 .h(32.0)
                 .px(10.0)
                 .center_y()
-                .radius(crate::ui::r(8.0))
+                .radius(crate::ui::r(4.0))
                 .fill(u.well)
                 .child(text(last.clone()).font(MONO).color(u.muted).truncate().grow(1.0).min_w(0.0)),
         );
@@ -538,7 +539,7 @@ fn running_view(s: &State, u: &Ui, shared: &Shared) -> El {
                 .px(10.0)
                 .py(8.0)
                 .gap(2.0)
-                .radius(crate::ui::r(8.0))
+                .radius(crate::ui::r(4.0))
                 .border(1.0, if is_now { u.accent } else { u.hair })
                 .fill(if done.is_some() { u.well } else { Color::TRANSPARENT })
                 .opacity(if done.is_none() && !is_now { 0.55 } else { 1.0 })
@@ -676,7 +677,7 @@ fn notes(s: &State, u: &Ui, run: &RunRecord) -> El {
             .w_full()
             .gap(8.0)
             .center_y()
-            .child(row().h(32.0).px(10.0).grow(1.0).min_w(0.0).center_y().radius(crate::ui::r(8.0)).fill(u.well).border(1.0, u.hair).child(field))
+            .child(row().h(32.0).px(10.0).grow(1.0).min_w(0.0).center_y().radius(crate::ui::r(4.0)).fill(u.well).border(1.0, u.hair).child(field))
             .child(u.action(tr("Add note"), ActionKind::Secondary).key("bench-note-add").cursor(rune::Cursor::Pointer).on_press(move |st: &mut State| super::add_note(st, id.clone()))),
     )
 }
@@ -689,7 +690,7 @@ fn delete_confirm(u: &Ui, id: &str) -> El {
         .gap(12.0)
         .center_y()
         .padding(12.0)
-        .radius(crate::ui::r(10.0))
+        .radius(crate::ui::r(4.0))
         .border(1.0, u.rose.alpha(0.3))
         .child(text(tr("Delete this run and its frames?")).font(BODY).color(u.ink).grow(1.0))
         .child(u.action(tr("Keep"), ActionKind::Ghost).key("bench-delete-no").cursor(rune::Cursor::Pointer).on_press(|st: &mut State| st.performance.benchmark.deleting = None))
@@ -1132,7 +1133,7 @@ fn series_group(s: &State, u: &Ui, key: &str, runs: &[&RunRecord]) -> El {
         let mut r = row()
             .key(format!("bench-run-{id}"))
             .w_full()
-            .h(48.0)
+            .h(44.0)
             .px(12.0)
             .gap(12.0)
             .center_y()
@@ -1141,7 +1142,7 @@ fn series_group(s: &State, u: &Ui, key: &str, runs: &[&RunRecord]) -> El {
             .child(
                 el().size(28.0, 28.0)
                     .center()
-                    .radius(crate::ui::r(6.0))
+                    .radius(crate::ui::r(4.0))
                     .hover(u.hover)
                     .focusable(true)
                     .role("checkbox")
@@ -1149,7 +1150,7 @@ fn series_group(s: &State, u: &Ui, key: &str, runs: &[&RunRecord]) -> El {
                     .label(tr("Compare this run"))
                     .cursor(rune::Cursor::Pointer)
                     .on_press(move |st: &mut State| super::toggle_pick(st, pick_id.clone()))
-                    .child(icon(if picked { &icons::SQUARE_CHECK } else { &icons::SQUARE }, 16.0).color(if picked { u.accent } else { u.muted }).a11y_hidden()),
+                    .child(icon(if picked { &icons::SQUARE_CHECK } else { &icons::SQUARE }, 16.0).color(if picked { u.ink } else { u.muted }).a11y_hidden()),
             )
             .child(
                 row()

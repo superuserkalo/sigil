@@ -139,6 +139,7 @@ fn body(s: &State, u: &Ui, board: &Leaderboard, account_id: u64) -> El {
         .w_full()
         .h(32.0)
         .gap(12.0)
+        .center_y()
         .child(spacer())
         .child(match my_place {
             Some(place) => text(crate::screens::settings::i18n::fill(
@@ -187,7 +188,7 @@ fn entry_row(u: &Ui, entry: &LeaderboardEntry, mine: bool) -> El {
             entry.possible_account_ids.first().copied().unwrap_or(0)
         ))
         .w_full()
-        .h(44.0)
+        .h(40.0)
         .gap(16.0)
         .center_y()
         .border_sides([0.0, 0.0, 1.0, 0.0], u.hair)

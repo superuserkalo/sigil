@@ -658,7 +658,7 @@ pub(super) fn timeline(s: &State, u: &Ui, match_id: u64) -> El {
                         .px(8.0)
                         .gap(6.0)
                         .center_y()
-                        .radius(crate::ui::r(6.0))
+                        .radius(crate::ui::r(4.0))
                         .border(1.0, u.hair)
                         .child(text(minutes(purchase.bought_at_s as f64)).font(TNUM_SMALL).color(u.muted))
                         .child(text(format!("{name}{sold}")).font(SMALL).color(u.prose)),

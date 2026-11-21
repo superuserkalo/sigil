@@ -240,7 +240,7 @@ pub fn view(s: &State, u: &Ui) -> El {
             .ml(-6.0)
             .gap(6.0)
             .center_y()
-            .radius(crate::ui::r(6.0))
+            .radius(crate::ui::r(4.0))
             .hover(u.hover)
             .focusable(true)
             .role("button")
@@ -380,7 +380,7 @@ fn files(_s: &State, u: &Ui, hosted: &Hosted, cached: bool) -> El {
             return row()
                 .key("perf-hosted-loading")
                 .w_full()
-                .h(52.0)
+                .h(44.0)
                 .gap(8.0)
                 .center_y()
                 .child(icon(&icons::LOADER, 14.0).color(u.muted).a11y_hidden())
@@ -414,7 +414,7 @@ fn files(_s: &State, u: &Ui, hosted: &Hosted, cached: bool) -> El {
         rows = rows.child(
             row()
                 .w_full()
-                .h(52.0)
+                .h(44.0)
                 .center_y()
                 .child(
                     text(tr("The mod page lists no files to download."))
@@ -434,7 +434,7 @@ fn files(_s: &State, u: &Ui, hosted: &Hosted, cached: bool) -> El {
             row()
                 .key(format!("perf-hosted-file-{}", file.id))
                 .w_full()
-                .h(52.0)
+                .h(44.0)
                 .gap(12.0)
                 .center_y()
                 .border_sides([0.0, 0.0, 1.0, 0.0], u.hair)
@@ -452,9 +452,7 @@ fn files(_s: &State, u: &Ui, hosted: &Hosted, cached: bool) -> El {
                 })
                 .child(
                     el().size(16.0, 16.0).center().child(
-                        icon(if on { &icons::CIRCLE_CHECK } else { &icons::CIRCLE_X }, 16.0)
-                            .color(if on { u.accent } else { u.muted })
-                            .a11y_hidden(),
+                        radio(u, on),
                     ),
                 )
                 .child(
@@ -614,7 +612,7 @@ fn variant_row(u: &Ui, variant: &Variant, on: bool, index: usize) -> El {
     row()
         .key(format!("perf-hosted-variant-{index}"))
         .w_full()
-        .h(56.0)
+        .h(44.0)
         .gap(12.0)
         .center_y()
         .border_sides([0.0, 0.0, 1.0, 0.0], u.hair)
@@ -631,9 +629,7 @@ fn variant_row(u: &Ui, variant: &Variant, on: bool, index: usize) -> El {
         })
         .child(
             el().size(16.0, 16.0).center().child(
-                icon(if on { &icons::CIRCLE_CHECK } else { &icons::CIRCLE_X }, 16.0)
-                    .color(if on { u.accent } else { u.muted })
-                    .a11y_hidden(),
+                radio(u, on),
             ),
         )
         .child(
@@ -738,4 +734,12 @@ pub(super) fn demo_review(id: &str) -> Hosted {
     hosted.prepared = Some(core::sample());
     hosted.variant = 0;
     hosted
+}
+
+/// A radio mark: an empty ring, or a thick ink ring when picked. Orange is kept for the action.
+fn radio(u: &Ui, on: bool) -> El {
+    el().size(16.0, 16.0)
+        .radius(8.0)
+        .border(if on { 5.0 } else { 1.5 }, if on { u.ink } else { u.hair_strong })
+        .a11y_hidden()
 }

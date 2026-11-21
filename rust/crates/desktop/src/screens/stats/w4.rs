@@ -269,7 +269,7 @@ pub fn party_mode(s: &State, u: &Ui) -> El {
             .h(28.0)
             .px(10.0)
             .center_y()
-            .radius(crate::ui::r(6.0))
+            .radius(crate::ui::r(4.0))
             .fill(if on { u.selected } else { Color::TRANSPARENT })
             .hover(u.hover)
             .focusable(true)
@@ -290,7 +290,7 @@ pub fn party_mode(s: &State, u: &Ui) -> El {
         .self_start()
         .gap(2.0)
         .padding(2.0)
-        .radius(crate::ui::r(8.0))
+        .radius(crate::ui::r(4.0))
         .border(1.0, u.hair)
         .child(pill("stats-party-mode-auto", "Most played heroes", !hand, false))
         .child(pill("stats-party-mode-hand", "Pick heroes by hand", hand, true))
@@ -320,7 +320,7 @@ pub fn hand_party(s: &State, u: &Ui) -> El {
             .px(10.0)
             .gap(8.0)
             .center_y()
-            .radius(crate::ui::r(8.0))
+            .radius(crate::ui::r(4.0))
             .border(1.0, if on { u.accent } else { u.hair })
             .fill(if on { u.accent.alpha(0.06) } else { Color::TRANSPARENT })
             .focusable(true)
@@ -404,7 +404,7 @@ pub fn hand_party(s: &State, u: &Ui) -> El {
             grid = grid.child(
                 row()
                     .key(format!("stats-party-hero-{hero}"))
-                    .h(30.0)
+                    .h(28.0)
                     .pl(3.0)
                     .pr(10.0)
                     .gap(6.0)
@@ -499,7 +499,7 @@ pub fn meta_section(s: &State, u: &Ui) -> El {
             .h(28.0)
             .px(10.0)
             .center_y()
-            .radius(crate::ui::r(6.0))
+            .radius(crate::ui::r(4.0))
             .fill(if on { u.selected } else { Color::TRANSPARENT })
             .hover(u.hover)
             .focusable(true)
@@ -522,17 +522,19 @@ pub fn meta_section(s: &State, u: &Ui) -> El {
             .self_start()
             .gap(2.0)
             .padding(2.0)
-            .radius(crate::ui::r(8.0))
+            .radius(crate::ui::r(4.0))
             .border(1.0, u.hair)
             .child(pick("stats-item-meta-patch", "This patch", patch, true))
             .child(pick("stats-item-meta-filter", "The filter's window", !patch, false)),
     );
     section = match m {
         Fetched::Idle => section.child(
-            u.action(tr("Show item meta"), ActionKind::Secondary)
-                .key("stats-item-meta-load")
-                .cursor(rune::Cursor::Pointer)
-                .on_press(start_meta),
+            row().child(
+                u.action(tr("Show item meta"), ActionKind::Secondary)
+                    .key("stats-item-meta-load")
+                    .cursor(rune::Cursor::Pointer)
+                    .on_press(start_meta),
+            ),
         ),
         Fetched::Loading => section.child(text(tr("Loading items")).font(BODY).color(u.muted)),
         Fetched::Failed(error) => section.child(problem_retry(u, error, "stats-item-meta-retry", start_meta)),

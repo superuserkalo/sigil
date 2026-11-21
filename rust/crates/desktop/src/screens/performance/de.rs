@@ -57,6 +57,7 @@ pub const DE: &[(&str, &str)] = &[
     (" · ", " · "),
     ("All", "Alle"),
     ("All tiers", "Alle Stufen"),
+    ("Every tier", "Jede Stufe"),
     ("{} settings", "{} Einstellungen"),
     ("{} author switch on", "{} Autorenschalter an"),
     ("{} author switches on", "{} Autorenschalter an"),

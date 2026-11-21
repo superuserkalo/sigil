@@ -64,8 +64,9 @@ pub struct View {
     pub fetch: Fetch,
     /// The tier filter. `None` shows every tier.
     pub tier: Option<Tier>,
-    /// The tier the slider's thumb is being dragged to; the list filters on release.
-    pub drag_tier: Option<Tier>,
+    /// The stop the slider's thumb is being dragged to (`Some(None)` is "All"); the list
+    /// filters on release.
+    pub drag_tier: Option<Option<Tier>>,
     /// The config whose page is open.
     pub open: Option<String>,
     /// Switches the player changed on a config's page, not yet applied.

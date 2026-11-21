@@ -184,7 +184,7 @@ fn match_row(s: &State, u: &Ui, item: &MatchSummary, open: bool) -> El {
                         .h(20.0)
                         .px(6.0)
                         .center()
-                        .radius(crate::ui::r(5.0))
+                        .radius(crate::ui::r(4.0))
                         .border(1.0, u.amber.alpha(0.5))
                         .child(text(tr("Street Brawl")).font(SMALL).color(u.amber))
                 }))

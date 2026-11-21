@@ -406,7 +406,7 @@ fn map_canvas(
     let mut field = el()
         .key("stats-map-canvas")
         .size(MAP_SIZE, MAP_SIZE)
-        .radius(crate::ui::r(12.0))
+        .radius(crate::ui::r(4.0))
         .fill(Color::BLACK.alpha(0.22))
         .border(1.0, u.hair)
         .role("img")

@@ -1,16 +1,16 @@
 //! The looks to frames scale: a stepped slider over the config tiers, lighter on the left.
 //!
-//! The thumb only ever sits on a stop. Dragging moves it live (from `drag_tier`) and filters
-//! the list once, on release; a click jumps to the nearest stop. Arrow keys step, Home and End
-//! jump to the ends, Escape shows every tier again. With every tier shown the thumb rests on
-//! the applied config's tier as an outline, so the control always reads as a slider. Every
-//! part has a fixed size: nothing moves while dragging but the thumb and the readout text.
+//! The first stop is "All", then one stop per tier that has configs. The thumb always sits on
+//! a real stop, so it never suggests a filter that is not on. Dragging moves it live (from
+//! `drag_tier`) and filters the list once, on release; a click jumps to the nearest stop.
+//! Arrow keys step, Home and End jump to the ends, Escape goes back to "All". Every part has a
+//! fixed size: nothing moves while dragging but the thumb and the readout text.
 
-use deadlock_core::performance::{Catalog, Tier, catalog};
+use deadlock_core::performance::{Catalog, Tier};
 use rune::{Drag, El, Key, KeyEvent, Phase, Tx, col, el, row, text};
 
 use crate::app::State;
-use crate::ui::{BODY, BODY_MED, LABEL, SMALL, SMALL_NUM, Ui, switch_green};
+use crate::ui::{BODY_MED, LABEL, SMALL, SMALL_NUM, Ui, switch_green};
 
 use super::{fill, tr};
 
@@ -21,12 +21,10 @@ const TRACK_H: f32 = 4.0;
 const STOP: f32 = 8.0;
 const THUMB_W: f32 = 12.0;
 const THUMB_H: f32 = 20.0;
-/// Room for a stop's label; the track box is padded half of it each side so end labels fit.
-const LABEL_W: f32 = 80.0;
 const LABEL_Y: f32 = 28.0;
 /// The track's width bounds; it takes what the row leaves between them.
-const TRACK_MIN: f32 = 240.0;
-const TRACK_MAX: f32 = 360.0;
+const TRACK_MIN: f32 = 300.0;
+const TRACK_MAX: f32 = 440.0;
 
 /// The stop nearest to a point `x` on a track `width` wide with `n` evenly spaced stops.
 fn nearest(x: f32, width: f32, n: usize) -> usize {
@@ -77,79 +75,82 @@ fn stop_cell(u: &Ui, i: usize, n: usize, lit_left: bool, lit_right: bool, on: bo
         .child(half(i + 1 < n, lit_right))
 }
 
-/// `on` is the tier of the applied config, its stop green like the toggles.
+/// `on` is the tier of the applied config, its stop green like the toggles. `note` is the
+/// readout's second line.
 pub fn view(s: &State, u: &Ui, catalog: &Catalog, on: Option<Tier>, note: String) -> El {
     let tiers = tiers(catalog);
-    let n = tiers.len();
-    let order: Vec<Tier> = tiers.iter().map(|(t, _)| *t).collect();
-    let index = |t: Option<Tier>| t.and_then(|t| order.iter().position(|x| *x == t));
-    // What the thumb shows: the tier being dragged to, else the filter.
-    let shown = s.performance.drag_tier.or(s.performance.tier);
+    let total = catalog.configs.len();
+    // Stop 0 is "All", then the tiers lighter first.
+    let stops: Vec<(Option<Tier>, usize)> =
+        std::iter::once((None, total)).chain(tiers.iter().map(|(t, n)| (Some(*t), *n))).collect();
+    let n = stops.len();
+    let index = |t: Option<Tier>| stops.iter().position(|(x, _)| *x == t).unwrap_or(0);
+    // What the thumb shows: the stop being dragged to, else the filter.
+    let shown = s.performance.drag_tier.unwrap_or(s.performance.tier);
     let picked = index(shown);
-    // With every tier shown the thumb rests, as an outline, on the applied or recommended tier.
-    let rest = index(on).or_else(|| {
-        let tier = catalog.configs.iter().find(|c| c.id() == catalog::DEFAULT_ID)?.def.tier;
-        index(Some(tier))
-    });
-    let thumb_at = picked.or(rest);
 
-    // The track: one cell per stop across the whole width, the thumb laid over the cells.
     let mut cells = row().w_full().h(THUMB_H).a11y_hidden();
     let mut labels = row().w_full().h(16.0).a11y_hidden();
-    for (i, (tier, _)) in tiers.iter().enumerate() {
-        let lit_left = picked.is_some_and(|p| i <= p && i > 0);
-        let lit_right = picked.is_some_and(|p| i < p);
-        let filled = picked.is_some_and(|p| i < p);
-        cells = cells.child(stop_cell(u, i, n, lit_left, lit_right, on == Some(*tier), filled));
+    for (i, (tier, _)) in stops.iter().enumerate() {
+        let lit_left = i > 0 && i <= picked;
+        let lit_right = i < picked;
+        cells = cells.child(stop_cell(u, i, n, lit_left, lit_right, false, i < picked));
+        let applied = tier.is_some() && on == *tier;
+        let label = match tier {
+            Some(tier) => tr(tier.label()),
+            None => tr("All"),
+        };
         labels = labels.child(
-            row().w(0.0).grow(1.0).h(16.0).center().child(
-                text(tr(tier.label()).to_string())
-                    .font(if picked == Some(i) { LABEL } else { SMALL })
-                    .color(if picked == Some(i) { u.ink } else { u.muted })
-                    .truncate(),
-            ),
+            // The applied config's tier carries a small green mark beside its name, like "On" in
+            // the list, so it never reads as a second thumb on the track.
+            row()
+                .w(0.0)
+                .grow(1.0)
+                .h(16.0)
+                .gap(4.0)
+                .center()
+                .children(applied.then(|| el().size(6.0, 6.0).radius(1.0).fill(switch_green())))
+                .child(
+                    text(label.to_string())
+                        .font(if picked == i { LABEL } else { SMALL })
+                        .color(if picked == i { u.ink } else { u.muted })
+                        .truncate(),
+                ),
         );
     }
-    let mut cell_col = col()
+    // The thumb, drawn as an overlay row of the same cells so it lands on its stop without
+    // knowing the track's width.
+    let mut overlay = row().absolute(0.0, LINE_Y - THUMB_H / 2.0).w_full().h(THUMB_H).a11y_hidden();
+    for i in 0..n {
+        let mut c = row().w(0.0).grow(1.0).h(THUMB_H).center();
+        if i == picked {
+            c = c.child(el().size(THUMB_W, THUMB_H).radius(2.0).fill(u.prose).border(1.0, u.bg));
+        }
+        overlay = overlay.child(c);
+    }
+    let cell_col = col()
         .w_full()
         .child(el().h(LINE_Y - THUMB_H / 2.0))
         .child(cells)
         .child(el().h(LABEL_Y - LINE_Y - THUMB_H / 2.0))
-        .child(labels);
-    // The thumb: a stop's cell is `1/n` of the width, its centre at `(i + 0.5)/n`. Drawn as an
-    // overlay row of the same cells so it lands on the stop without knowing the width.
-    if let Some(at) = thumb_at {
-        let solid = picked.is_some();
-        let mut overlay = row().absolute(0.0, LINE_Y - THUMB_H / 2.0).w_full().h(THUMB_H).a11y_hidden();
-        for i in 0..n {
-            let mut c = row().w(0.0).grow(1.0).h(THUMB_H).center();
-            if i == at {
-                c = c.child(
-                    el().size(THUMB_W, THUMB_H)
-                        .radius(2.0)
-                        .fill(if solid { u.ink } else { u.bg })
-                        .border(1.0, if solid { u.bg } else { u.muted }),
-                );
-            }
-            overlay = overlay.child(c);
-        }
-        cell_col = cell_col.child(overlay);
-    }
+        .child(labels)
+        .child(overlay);
 
+    let order: Vec<Option<Tier>> = stops.iter().map(|(t, _)| *t).collect();
     let drag_order = order.clone();
-    let key_order = order.clone();
+    let key_order = order;
     let track = row()
         .key("perf-scale")
         .w(0.0)
         .grow(1.0)
-        .min_w(TRACK_MIN + LABEL_W - STOP)
-        .max_w(TRACK_MAX + LABEL_W)
+        .min_w(TRACK_MIN)
+        .max_w(TRACK_MAX)
         .h(H)
         .focusable(true)
         .role("slider")
         .label(tr("Looks to frames").to_string())
-        .a11y_value(match picked {
-            Some(i) => tr(tiers[i].0.label()).to_string(),
+        .a11y_value(match stops[picked].0 {
+            Some(tier) => tr(tier.label()).to_string(),
             None => tr("All tiers").to_string(),
         })
         .cursor(rune::Cursor::Pointer)
@@ -160,15 +161,15 @@ pub fn view(s: &State, u: &Ui, catalog: &Catalog, on: Option<Tier>, note: String
             if n == 0 {
                 return;
             }
-            let cell = d.w.max(1.0) / n as f32;
-            let i = nearest(d.x - cell / 2.0, d.w - cell, n);
             if d.cancelled() {
                 st.performance.drag_tier = None;
                 return;
             }
+            let cell = d.w.max(1.0) / n as f32;
+            let i = nearest(d.x - cell / 2.0, d.w - cell, n);
             match d.phase {
                 Phase::Up => {
-                    st.performance.tier = Some(drag_order[i]);
+                    st.performance.tier = drag_order[i];
                     st.performance.drag_tier = None;
                 }
                 _ => st.performance.drag_tier = Some(drag_order[i]),
@@ -176,22 +177,16 @@ pub fn view(s: &State, u: &Ui, catalog: &Catalog, on: Option<Tier>, note: String
         })
         .on_key(move |st: &mut State, ev: &KeyEvent, _| {
             let len = key_order.len();
-            if len == 0 {
-                return false;
-            }
-            let now = st.performance.tier.and_then(|t| key_order.iter().position(|x| *x == t));
+            let now = key_order.iter().position(|x| *x == st.performance.tier).unwrap_or(0);
             let next = match ev.key {
-                Key::Left | Key::Down => now.map_or(0, |i| i.saturating_sub(1)),
-                Key::Right | Key::Up => now.map_or(0, |i| (i + 1).min(len - 1)),
+                Key::Left | Key::Down => now.saturating_sub(1),
+                Key::Right | Key::Up => (now + 1).min(len - 1),
                 Key::Home => 0,
                 Key::End => len - 1,
-                Key::Escape if now.is_some() => {
-                    st.performance.tier = None;
-                    return true;
-                }
+                Key::Escape if now > 0 => 0,
                 _ => return false,
             };
-            st.performance.tier = Some(key_order[next]);
+            st.performance.tier = key_order[next];
             true
         });
 
@@ -212,37 +207,11 @@ pub fn view(s: &State, u: &Ui, catalog: &Catalog, on: Option<Tier>, note: String
             )
     };
 
-    let total = catalog.configs.len();
-    let all_on = shown.is_none();
-    let all = row()
-        .key("perf-tier-all")
-        .w(64.0)
-        .h(28.0)
-        .mt(LINE_Y - 14.0)
-        .gap(6.0)
-        .center()
-        .radius(crate::ui::r(4.0))
-        .border(1.0, if all_on { u.hair_strong } else { u.hair })
-        .fill(if all_on { u.selected } else { rune::Color::TRANSPARENT })
-        .hover(u.hover)
-        .focusable(true)
-        .role("button")
-        .checked(all_on)
-        .label(tr("All tiers").to_string())
-        .cursor(rune::Cursor::Pointer)
-        .on_press(|st: &mut State| st.performance.tier = None)
-        .child(
-            text(tr("All").to_string())
-                .font(BODY)
-                .color(if all_on { u.ink } else { u.muted })
-                .a11y_hidden(),
-        );
-
-    // The readout: what the thumb points at, in a box the text never sizes.
-    // Line 2 says how fresh the configs are; the tier's blurb already heads its group below.
-    let (name, count) = match picked {
-        Some(i) => (tr(tiers[i].0.label()).to_string(), tiers[i].1),
-        None => (tr("All tiers").to_string(), total),
+    // The readout: what the thumb points at, in a box the text never sizes. Line 2 is the note
+    // (how fresh the configs are); the tier's blurb already heads its group below.
+    let (name, count) = match stops[picked] {
+        (Some(tier), count) => (tr(tier.label()).to_string(), count),
+        (None, count) => (tr("Every tier").to_string(), count),
     };
     let readout = col()
         .w(0.0)
@@ -266,21 +235,17 @@ pub fn view(s: &State, u: &Ui, catalog: &Catalog, on: Option<Tier>, note: String
                         .shrink(),
                 ),
         )
-        .child(
-            row().w_full().h(16.0).child(text(note).font(SMALL).color(u.muted).truncate()),
-        );
+        .child(row().w_full().h(16.0).child(text(note).font(SMALL).color(u.muted).truncate()));
 
     row()
         .w_full()
         .min_w(0.0)
         .h(H)
-        .child(all)
-        .child(el().w(12.0))
-        .child(end("Looks", 44.0, true))
+        .child(end("Looks", 44.0, false))
         .child(el().w(8.0))
         .child(track)
         .child(el().w(8.0))
-        .child(end("Frames", 48.0, false))
+        .child(end("Frames", 56.0, false))
         .child(el().w(16.0))
         .child(readout)
 }
