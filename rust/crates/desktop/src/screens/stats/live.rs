@@ -399,7 +399,7 @@ fn finish_action(st: &mut State, result: Result<(Action, String), String>) {
 fn follow_updates(st: &mut State) -> bool {
     let mut changed = false;
     if let Some(Ok(build)) = st.stats.live.build_job.try_take() {
-        let known = options::get().live_bridge_build;
+        let known = options::get().live_bridge_build.clone();
         if let Some(build) = build
             && build != known
             && st.stats.live.update.as_ref().is_none_or(|u| u.build != build)

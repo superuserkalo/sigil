@@ -382,7 +382,7 @@ pub fn editor_row(_s: &State, u: &Ui) -> El {
 }
 
 fn editor_dialog(s: &State, u: &Ui) -> El {
-    let current = options::get().editor;
+    let current = options::get().editor.clone();
     let mut list = col().w_full();
     let mut entries: Vec<(String, Option<PathBuf>)> = vec![(tr("System default").to_string(), None)];
     for f in s.settings.extra.editors.iter().flatten() {
@@ -641,7 +641,7 @@ pub fn scene_parity(s: &mut State, tab: Tab) {
             deadlock_core::file_servers::Probe { name: "filecache4".into(), bytes_per_second: Some(3_400_000.0) },
             deadlock_core::file_servers::Probe { name: "filecache12".into(), bytes_per_second: None },
         ]));
-        let mut o = options::get();
+        let mut o = options::get_owned();
         o.sources = vec![options::Source {
             url: "https://mods.example.org/dmm-source.json".into(),
             name: "Community Skins".into(),

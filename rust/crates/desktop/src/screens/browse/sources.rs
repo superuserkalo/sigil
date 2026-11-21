@@ -672,7 +672,7 @@ pub fn stage_scene(st: &mut State, open: bool) {
         listing("abrams-sounds", "Abrams Voice Pack", "voiceguy", "0.9"),
     ];
     // In memory only: a scene never writes the player's options.
-    let mut o = options::get();
+    let mut o = options::get_owned();
     o.sources = vec![Source { url: url.clone(), name: "Community Mods".into(), enabled: true }];
     options::set(o);
     st.settings.extra.sources.synced.insert(

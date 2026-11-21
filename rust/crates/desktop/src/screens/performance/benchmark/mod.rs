@@ -416,7 +416,7 @@ pub fn start(st: &mut State) {
     let profile = deadlock_core::profiles::active_profile(&crate::data::workspace_dir());
     let wake = st.wake.clone();
     let mut roots = deadlock_core::discovery::default_steam_roots();
-    if let Some(custom) = crate::screens::settings::options::get().steam_root {
+    if let Some(custom) = crate::screens::settings::options::get().steam_root.clone() {
         roots.insert(0, PathBuf::from(custom));
     }
     let ctx = Ctx { root, data: data_dir(), roots, mods, profile };

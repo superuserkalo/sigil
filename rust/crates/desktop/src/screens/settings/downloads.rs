@@ -322,7 +322,7 @@ fn start_move(st: &mut State, to: Option<PathBuf>) {
             });
         }
         None => {
-            let Some(from) = options::get().cache_dir.map(PathBuf::from) else { return };
+            let Some(from) = options::get().cache_dir.clone().map(PathBuf::from) else { return };
             st.settings.extra.cache_job.start(wake, move || {
                 let bytes = deadlock_core::mod_data::relocate_back(&cache, &from).map_err(|e| e.to_string())?;
                 let _ = std::fs::remove_dir(&from);

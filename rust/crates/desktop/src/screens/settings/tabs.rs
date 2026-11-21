@@ -522,7 +522,7 @@ pub fn read_steam_users(st: &mut State) {
         return;
     }
     let mut roots = deadlock_core::discovery::default_steam_roots();
-    if let Some(custom) = super::options::get().steam_root {
+    if let Some(custom) = super::options::get().steam_root.clone() {
         roots.insert(0, PathBuf::from(custom));
     }
     if let Some(root) = st.game_root.as_ref().and_then(|g| g.ancestors().nth(3)) {

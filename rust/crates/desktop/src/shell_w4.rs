@@ -49,7 +49,7 @@ impl Default for W4 {
         let o = options::get();
         W4 {
             collapsed: o.sidebar_collapsed,
-            seen_pages: o.seen_pages,
+            seen_pages: o.seen_pages.clone(),
             update_hidden: false,
             gameinfo_hidden: None,
             update_badges: o.update_badges,

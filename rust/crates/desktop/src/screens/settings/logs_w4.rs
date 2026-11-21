@@ -52,7 +52,7 @@ impl Source {
 /// The newest crash dumps, newest first.
 fn newest_dumps(st: &State, take: usize) -> Vec<PathBuf> {
     let mut roots = deadlock_core::discovery::default_steam_roots();
-    if let Some(custom) = options::get().steam_root {
+    if let Some(custom) = options::get().steam_root.clone() {
         roots.insert(0, PathBuf::from(custom));
     }
     let mut dumps = game_session::list_dumps(&game_session::dump_folders(st.game_root.as_deref(), &roots));

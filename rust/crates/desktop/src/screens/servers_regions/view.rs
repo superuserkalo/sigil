@@ -210,7 +210,7 @@ fn not_windows(u: &Ui) -> El {
 /// What Windows Firewall holds now, with Reset.
 fn status(s: &State, u: &Ui) -> El {
     let regions = &s.servers.regions;
-    let saved = options::get().relay_regions;
+    let saved = options::get().relay_regions.clone();
     let cover = regions.coverage();
     let names = |ids: &[String]| -> String {
         ids.iter()
@@ -389,7 +389,7 @@ fn fastest_open(regions: &RegionsState) -> Option<(String, u32)> {
 
 fn presets(s: &State, u: &Ui) -> El {
     let regions = &s.servers.regions;
-    let saved = options::get().relay_regions.presets;
+    let saved = options::get().relay_regions.presets.clone();
     let mut chips = row().gap(6.0).center_y().flex_wrap();
     for preset in &saved {
         let name = preset.name.clone();

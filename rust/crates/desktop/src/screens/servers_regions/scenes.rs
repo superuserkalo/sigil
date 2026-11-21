@@ -103,7 +103,7 @@ fn base(s: &mut State) {
         checked_at_start: true,
         ..RegionsState::default()
     };
-    let mut o = options::get();
+    let mut o = options::get_owned();
     o.relay_regions = relays::Choices::default();
     options::set(o);
 }
@@ -119,7 +119,7 @@ fn with_catalog(s: &mut State, blocked: &[&str]) {
     regions.draft = blocked.iter().map(|s| s.to_string()).collect();
     regions.pings = pings();
     regions.probed_at = Some(super::now() - 120);
-    let mut o = options::get();
+    let mut o = options::get_owned();
     o.relay_regions.applied = ids(blocked);
     options::set(o);
 }
@@ -179,7 +179,7 @@ fn waiting(s: &mut State) {
 
 fn blocked(s: &mut State) {
     with_catalog(s, &["hkg", "tyo", "maa2", "syd", "gum"]);
-    let mut o = options::get();
+    let mut o = options::get_owned();
     o.relay_regions.save_preset("Europe and NA", &ids(&["hkg", "tyo", "maa2", "syd", "gum"])).ok();
     o.relay_regions.save_preset("Europe only", &ids(&["hkg", "tyo", "maa2", "syd", "gum", "iad", "sea", "eze", "jnb", "dxb"])).ok();
     options::set(o);

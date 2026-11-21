@@ -160,7 +160,7 @@ impl RegionsState {
     pub fn blocked_now(&self) -> BTreeSet<String> {
         match self.coverage() {
             Some(cover) => cover.blocked.into_iter().chain(cover.partial).collect(),
-            None => options::get().relay_regions.applied.into_iter().collect(),
+            None => options::get().relay_regions.applied.clone().into_iter().collect(),
         }
     }
 
@@ -269,7 +269,7 @@ fn now() -> i64 {
 /// The first visit: the catalog (cache first) and the firewall read back.
 pub fn load(st: &mut State) {
     st.servers.regions.loaded = true;
-    st.servers.regions.draft = options::get().relay_regions.applied.into_iter().collect();
+    st.servers.regions.draft = options::get().relay_regions.applied.clone().into_iter().collect();
     start_catalog(st, false);
     start_read(st);
     start_history(st);
@@ -407,7 +407,7 @@ pub fn discard(st: &mut State) {
 
 /// Load a preset into the selection. Apply makes it real.
 pub fn load_preset(st: &mut State, name: &str) {
-    let Some(preset) = options::get().relay_regions.presets.into_iter().find(|p| p.name == name) else {
+    let Some(preset) = options::get().relay_regions.presets.clone().into_iter().find(|p| p.name == name) else {
         return;
     };
     let regions = &mut st.servers.regions;
@@ -588,7 +588,7 @@ pub fn poll(st: &mut State, _now: f64, _tx: &mut Tx) -> bool {
     // status bar is right from the first minutes even if the tab is never opened.
     if !st.servers.regions.checked_at_start && !idle(st) {
         st.servers.regions.checked_at_start = true;
-        let saved = options::get().relay_regions;
+        let saved = options::get().relay_regions.clone();
         if !saved.applied.is_empty() || saved.pending {
             start_read(st);
         }

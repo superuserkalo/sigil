@@ -8,7 +8,7 @@
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::PathBuf;
-use std::sync::RwLock;
+use std::sync::{Arc, RwLock};
 
 use serde_json::{Map, Value, json};
 
@@ -511,7 +511,7 @@ pub fn path() -> PathBuf {
     crate::data::data_dir().join(FILE_NAME)
 }
 
-static STORE: RwLock<Option<Options>> = RwLock::new(None);
+static STORE: RwLock<Option<Arc<Options>>> = RwLock::new(None);
 
 fn load() -> Options {
     if rune::is_headless() || cfg!(test) {
@@ -522,25 +522,32 @@ fn load() -> Options {
         .unwrap_or_default()
 }
 
-/// The current options. Loaded from disk on first use.
-pub fn get() -> Options {
+/// The current options. Loaded from disk on first use. A shared snapshot: callers read
+/// fields through it, and `set` swaps in a new one. It was a full copy of every option (maps
+/// and lists included) on each of the 10 to 15 calls a poll makes.
+pub fn get() -> Arc<Options> {
     if let Ok(slot) = STORE.read()
         && let Some(o) = slot.as_ref()
     {
         return o.clone();
     }
-    let loaded = load();
+    let loaded = Arc::new(load());
     if let Ok(mut slot) = STORE.write() {
         slot.get_or_insert(loaded).clone()
     } else {
-        Options::default()
+        Arc::new(Options::default())
     }
+}
+
+/// A copy to change and save.
+pub fn get_owned() -> Options {
+    (*get()).clone()
 }
 
 /// Replace the in-memory options without saving. Scenes and tests use it.
 pub fn set(options: Options) {
     if let Ok(mut slot) = STORE.write() {
-        *slot = Some(options);
+        *slot = Some(Arc::new(options));
     }
 }
 
@@ -562,7 +569,7 @@ fn save(options: &Options) -> Result<(), String> {
 
 /// Change options, save, and report a failed write in the settings status line.
 pub fn edit(st: &mut State, change: impl FnOnce(&mut Options)) {
-    let mut options = get();
+    let mut options = get_owned();
     change(&mut options);
     set(options.clone());
     if let Err(error) = save(&options) {
@@ -575,7 +582,7 @@ pub fn edit(st: &mut State, change: impl FnOnce(&mut Options)) {
 
 /// Change options outside a handler (a worker result). Errors only reach the log.
 pub fn edit_quiet(change: impl FnOnce(&mut Options)) {
-    let mut options = get();
+    let mut options = get_owned();
     change(&mut options);
     set(options.clone());
     if let Err(error) = save(&options) {
@@ -588,7 +595,7 @@ pub fn edit_quiet(change: impl FnOnce(&mut Options)) {
 pub fn reset() {
     // The relay rules stay in Windows Firewall after a reset, so the record of them stays too:
     // the status bar keeps saying regions are blocked until Servers > Regions resets them.
-    let kept = get().relay_regions;
+    let kept = get().relay_regions.clone();
     let mut options = Options::default();
     options.relay_regions.applied = kept.applied;
     options.relay_regions.pending = kept.pending;

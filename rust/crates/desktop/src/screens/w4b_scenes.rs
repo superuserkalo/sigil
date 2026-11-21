@@ -205,7 +205,7 @@ pub fn stats(s: &mut State) {
 pub fn crosshair_hero(s: &mut State) {
     s.screen = crate::model::Screen::Crosshair;
     s.crosshair.group = crate::screens::crosshair::Group::Game;
-    let mut o = crate::screens::settings::options::get();
+    let mut o = crate::screens::settings::options::get_owned();
     o.crosshair_hero_settings = true;
     crate::screens::settings::options::set(o);
     s.crosshair.w4_plan = Some(Ok((2, 2)));
@@ -249,7 +249,7 @@ pub fn easter_eggs(s: &mut State) {
 /// Settings > Appearance: Seasons and extras with both switches on.
 pub fn seasons_settings(s: &mut State) {
     crate::screens::settings::scene_tab(s, crate::screens::settings::Tab::Appearance);
-    let mut o = crate::screens::settings::options::get();
+    let mut o = crate::screens::settings::options::get_owned();
     o.seasonal = true;
     o.easter_eggs = true;
     crate::screens::settings::options::set(o);

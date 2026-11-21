@@ -171,7 +171,7 @@ pub fn open(st: &mut State, file: &Path) {
     if st.demo || rune::is_headless() {
         return;
     }
-    let editor = options::get().editor.map(PathBuf::from);
+    let editor = options::get().editor.clone().map(PathBuf::from);
     if let Some(e) = &editor
         && !e.exists()
     {
@@ -217,7 +217,7 @@ pub fn browse(_st: &mut State, tx: &mut Tx) {
 
 /// The label for the current choice.
 pub fn current_label() -> String {
-    match options::get().editor {
+    match options::get().editor.clone() {
         Some(path) => name_of(Path::new(&path)),
         None => tr("System default").to_string(),
     }
@@ -229,6 +229,7 @@ pub fn current_label() -> String {
 pub fn dialog_dir() -> Option<PathBuf> {
     options::get()
         .last_dialog_dir
+        .clone()
         .map(PathBuf::from)
         .filter(|p| p.is_dir())
 }

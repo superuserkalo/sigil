@@ -147,7 +147,7 @@ pub fn on_launch(st: &mut State) {
 
 fn steam_roots(st: &State) -> Vec<PathBuf> {
     let mut roots = deadlock_core::discovery::default_steam_roots();
-    if let Some(custom) = options::get().steam_root {
+    if let Some(custom) = options::get().steam_root.clone() {
         roots.insert(0, PathBuf::from(custom));
     }
     if let Some(root) = st.game_root.as_ref().and_then(|g| g.ancestors().nth(3)) {

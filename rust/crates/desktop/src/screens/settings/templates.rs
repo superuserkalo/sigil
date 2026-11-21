@@ -447,7 +447,7 @@ pub fn dialog(s: &State, u: &Ui) -> El {
         );
     }
     // Preview with sample values.
-    let mut preview_o = options::get();
+    let mut preview_o = options::get_owned();
     let mut c = d.clone();
     c.commit();
     preview_o.presence_lines = c.lines;
