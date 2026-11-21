@@ -995,7 +995,7 @@ fn add_row(u: &Ui) -> El {
         .hover_group()
         .focusable(true)
         .role("button")
-        .label("Add a command")
+        .label(tr("Add a command"))
         .cursor(rune::Cursor::Pointer)
         .on_press(|st: &mut State| {
             st.autoexec.insert_after(None);
@@ -1007,7 +1007,7 @@ fn add_row(u: &Ui) -> El {
                 .a11y_hidden(),
         )
         .child(
-            text("Add a command")
+            text(tr("Add a command"))
                 .font(BODY)
                 .color(u.faint)
                 .group_color(u.muted)
@@ -1041,7 +1041,7 @@ fn block_row(u: &Ui, block: &Block, index: usize, count: usize, drag: Option<(us
                 .items_end()
                 .child(text("Crosshair").font(H2).color(u.muted))
                 .child(
-                    text("Set on the Crosshair page")
+                    text(tr("Set on the Crosshair page"))
                         .font(SMALL)
                         .color(u.faint)
                         .pb(1.0),

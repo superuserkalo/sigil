@@ -1,7 +1,7 @@
 //! Skins and ability sounds: the rows on a hero page and under an expanded list row.
 //!
 //! A hero's skins load in slot order and the lowest enabled slot wins a shared path, so
-//! "Equip" turns one on and the rest of that hero's mods off. The arrows move a skin up or
+//! crate::screens::settings::i18n::tr("Equip") turns one on and the rest of that hero's mods off. The arrows move a skin up or
 //! down that hero's own order and leave every other mod's slot alone. Both are game writes
 //! through `deadlock_core::locker`, never here.
 
@@ -57,8 +57,8 @@ pub(super) fn skins_list(s: &State, u: &Ui, v: &View, hero: &HeroCard, full: boo
         trailing = trailing.child(state_slot(
             u,
             Some(slot) == equipped,
-            "Equipped",
-            u.action_m("Equip", ActionKind::Ghost)
+            crate::screens::settings::i18n::tr("Equipped"),
+            u.action_m(crate::screens::settings::i18n::tr("Equip"), ActionKind::Ghost)
                 .key(format!("locker-equip-{}", m.slot))
                 .label(format!("Equip {} for {}", m.label, hero.display_name))
                 .cursor(rune::Cursor::Pointer)
@@ -73,10 +73,10 @@ pub(super) fn skins_list(s: &State, u: &Ui, v: &View, hero: &HeroCard, full: boo
     rows
 }
 
-/// The fixed 72 point state slot: "Equip", or the state word with a teal mark, so the
+/// The fixed 96 point state slot (room for "Ausgerüstet"): crate::screens::settings::i18n::tr("Equip"), or the state word with a teal mark, so the
 /// switch and the buttons beside it never move between rows.
 fn state_slot(u: &Ui, on: bool, word: &str, equip: El) -> El {
-    row().w(72.0).h(28.0).center_y().justify_end().child(if on {
+    row().w(96.0).h(28.0).center_y().justify_end().child(if on {
         row()
             .gap(6.0)
             .center_y()
@@ -91,11 +91,11 @@ fn state_slot(u: &Ui, on: bool, word: &str, equip: El) -> El {
 /// The ability slot a sound label names: 1 to 3, 4 for the ultimate, 0 for anything else.
 fn ability_label(ability: u8) -> String {
     match ability {
-        1 => "Ability 1".to_string(),
-        2 => "Ability 2".to_string(),
-        3 => "Ability 3".to_string(),
-        4 => "Ultimate".to_string(),
-        _ => "Other sounds".to_string(),
+        1 => crate::screens::settings::i18n::tr("Ability 1").to_string(),
+        2 => crate::screens::settings::i18n::tr("Ability 2").to_string(),
+        3 => crate::screens::settings::i18n::tr("Ability 3").to_string(),
+        4 => crate::screens::settings::i18n::tr("Ultimate").to_string(),
+        _ => crate::screens::settings::i18n::tr("Other sounds").to_string(),
     }
 }
 
@@ -133,8 +133,8 @@ pub(super) fn sounds_list(s: &State, u: &Ui, v: &View, hero: &HeroCard) -> El {
             let trailing = row().gap(2.0).child(state_slot(
                 u,
                 Some(slot) == equipped,
-                "Playing",
-                u.action_m("Equip", ActionKind::Ghost)
+                crate::screens::settings::i18n::tr("Playing"),
+                u.action_m(crate::screens::settings::i18n::tr("Equip"), ActionKind::Ghost)
                     .key(format!("locker-sound-equip-{}", m.slot))
                     .label(format!("Equip {} for {}", m.label, ability_label(ability)))
                     .cursor(rune::Cursor::Pointer)

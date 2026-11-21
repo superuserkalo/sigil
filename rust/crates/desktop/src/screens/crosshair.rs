@@ -767,7 +767,7 @@ fn scene_bar(s: &State, u: &Ui) -> El {
                     .a11y_hidden(),
             ),
             None => chip.center().child(
-                text("Plain")
+                text(tr("Plain"))
                     .font(LABEL)
                     .color(if on { u.ink } else { u.muted })
                     .a11y_hidden(),

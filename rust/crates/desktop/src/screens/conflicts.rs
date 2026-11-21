@@ -265,7 +265,7 @@ pub fn view(s: &State, u: &Ui) -> El {
     let lead = row()
         .gap(8.0)
         .center_y()
-        .child(u.page_title(Screen::Conflicts.title()))
+        .child(u.page_title(tr(Screen::Conflicts.title())))
         .child(
             text(if visible_count > 0 { visible_count.to_string() } else { String::new() })
                 .font(SMALL_NUM)

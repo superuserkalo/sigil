@@ -6,6 +6,8 @@ use std::collections::HashMap;
 use std::sync::OnceLock;
 
 pub const DE: &[(&str, &str)] = &[
+    ("Add a command", "Befehl hinzufügen"),
+    ("Set on the Crosshair page", "Auf der Fadenkreuz-Seite festgelegt"),
     ("More", "Mehr"),
     ("Search premade commands", "Vorgefertigte Befehle suchen"),
     ("Search", "Suchen"),

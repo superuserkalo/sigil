@@ -735,17 +735,17 @@ pub fn view(s: &State, u: &Ui) -> El {
         frame = frame.child(u.selection_bar(
             "snapshots-selection",
             vec![
-                u.close_button("Clear the selection")
+                u.close_button(tr("Clear the selection"))
                     .key("snapshots-clear-selection")
                     .cursor(rune::Cursor::Pointer)
                     .on_press(|st: &mut State| st.profiles.snapshot_selected.clear()),
-                text(format!("{} picked", plural(ids.len(), "snapshot")))
+                text(crate::screens::settings::i18n::fill(tr("{} picked"), &[&ids.len().to_string()]))
                     .font(BODY_MED)
                     .color(u.ink)
                     .min_w(96.0),
             ],
             vec![
-                u.action_m("Delete", ActionKind::Danger)
+                u.action_m(tr("Delete"), ActionKind::Danger)
                     .key("snapshots-delete-selected")
                     .cursor(rune::Cursor::Pointer)
                     .on_press(move |st: &mut State| {
@@ -841,7 +841,7 @@ fn snapshot_row(u: &Ui, snapshot: &SnapshotRow, selected: bool) -> El {
         "{} · {} · {}",
         snapshot.reason,
         snapshot.created,
-        plural(snapshot.mods, "mod")
+        crate::screens::settings::i18n::fill(tr(if snapshot.mods == 1 { "{} mod" } else { "{} mods" }), &[&snapshot.mods.to_string()])
     );
     let restore = {
         let id = snapshot.id.clone();
@@ -928,23 +928,23 @@ fn profile_row(u: &Ui, profile: &Row, active: bool, open: bool) -> El {
         );
     }
 
-    let mut meta = vec![plural(profile.mods.len(), "mod")];
+    let mut meta = vec![crate::screens::settings::i18n::fill(tr(if profile.mods.len() == 1 { "{} mod" } else { "{} mods" }), &[&profile.mods.len().to_string()])];
     if profile.crosshair.is_some() {
         meta.push(tr("Crosshair").to_string());
     }
     if let Some(lines) = profile.autoexec.as_ref().filter(|lines| !lines.is_empty()) {
-        meta.push(plural(lines.len(), "autoexec line"));
+        meta.push(crate::screens::settings::i18n::fill(tr(if lines.len() == 1 { "{} autoexec line" } else { "{} autoexec lines" }), &[&lines.len().to_string()]));
     }
     if profile.isolated {
         meta.push(tr("Own folder").to_string());
     }
     if let Some(author) = &profile.author {
-        meta.push(format!("By {author}"));
+        meta.push(crate::screens::settings::i18n::fill(tr("By {}"), &[author.as_str()]));
     }
-    meta.push(format!("Saved {}", profile.updated));
+    meta.push(crate::screens::settings::i18n::fill(tr("Saved {}"), &[&profile.updated]));
     let changed = active && profile.in_sync == Some(false);
     if changed {
-        meta.push("Changed since applied".to_string());
+        meta.push(tr("Changed since applied").to_string());
     }
     let mut meta_line = row()
         .gap(6.0)
@@ -960,10 +960,10 @@ fn profile_row(u: &Ui, profile: &Row, active: bool, open: bool) -> El {
     if profile.missing > 0 {
         meta_line = meta_line
             .child(icon(&icons::TRIANGLE_ALERT, 12.0).color(u.amber).a11y_hidden())
-            .child(text(format!("{} not installed", profile.missing)).font(SMALL).color(u.amber));
+            .child(text(crate::screens::settings::i18n::fill(tr("{} not installed"), &[&profile.missing.to_string()])).font(SMALL).color(u.amber));
     }
 
-    let apply_label = if active { "Re-apply" } else { tr("Apply") };
+    let apply_label = if active { tr("Re-apply") } else { tr("Apply") };
     let head = row()
         .key(format!("profile-{slug}"))
         .w_full()
@@ -999,8 +999,9 @@ fn profile_row(u: &Ui, profile: &Row, active: bool, open: bool) -> El {
         })
         .child({
             let slug = slug.clone();
+            // Wide enough for "Re-apply" in every language, the same on every row.
             u.action_m(apply_label, ActionKind::Secondary)
-                .w(88.0)
+                .w(120.0)
                 .key(format!("profile-apply-{slug}"))
                 .cursor(rune::Cursor::Pointer)
                 .on_press(move |st: &mut State| open_apply(st, &slug))

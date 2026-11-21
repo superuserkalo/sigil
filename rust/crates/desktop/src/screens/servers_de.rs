@@ -5,6 +5,8 @@ use std::collections::HashMap;
 use std::sync::OnceLock;
 
 pub const DE: &[(&str, &str)] = &[
+    ("Custom content", "Eigene Inhalte"),
+    ("{} bots", "{} Bots"),
     ("List", "Liste"),
     ("Filters", "Filter"),
     ("Address", "Adresse"),

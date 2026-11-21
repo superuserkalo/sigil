@@ -40,6 +40,7 @@ pub const DE: &[(&str, &str)] = &[
     ("Nobody has posted a map for Deadlock.", "Noch niemand hat eine Karte für Deadlock veröffentlicht."),
     ("{}, by {}", "{}, von {}"),
     ("by {}  ·  {} likes", "von {}  ·  {} Likes"),
+    ("by {} · {} likes", "von {} · {} Likes"),
     ("The next launch starts {}.", "Der nächste Start lädt {}."),
     ("Every launch starts {} until you remove it.", "Jeder Start lädt {}, bis du es entfernst."),
     ("The map launch is removed.", "Der Kartenstart ist entfernt."),

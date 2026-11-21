@@ -388,7 +388,7 @@ fn grid_page(s: &State, u: &Ui, v: &View) -> El {
         .label("Search heroes")
         .single_line()
         .color(u.ink)
-        .placeholder("Search heroes", u.faint)
+        .placeholder(crate::screens::settings::i18n::tr("Search heroes"), u.faint)
         .caret(u.accent, u.accent.alpha(0.20))
         .on_edit(|st: &mut State| {
             let text = st.locker.query.text.clone();
@@ -411,7 +411,7 @@ fn grid_page(s: &State, u: &Ui, v: &View) -> El {
     let off = |e: El, off: bool| e.disabled(off).opacity(if off { 0.45 } else { 1.0 });
     let art_missing = ready && !v.heroes.iter().any(|hero| hero.render.is_some());
     let mut rescan = u
-        .icon_button(&icons::REFRESH_CW, "Rescan")
+        .icon_button(&icons::REFRESH_CW, crate::screens::settings::i18n::tr("Rescan"))
         .key("locker-rescan")
         .cursor(rune::Cursor::Pointer)
         .on_press(|st: &mut State| crate::data::start_locker_load(st));
@@ -428,14 +428,14 @@ fn grid_page(s: &State, u: &Ui, v: &View) -> El {
     let actions = vec![
         off(view_toggle(u, v.list_view), !v.loaded),
         off(
-            u.icon_button(&icons::ROTATE_CCW, "Shuffle on launch")
+            u.icon_button(&icons::ROTATE_CCW, crate::screens::settings::i18n::tr("Shuffle on launch"))
                 .key("locker-shuffle")
                 .cursor(rune::Cursor::Pointer)
                 .on_press(|st: &mut State| st.locker.dialog = Some(Dialog::Shuffle)),
             !v.loaded,
         ),
         off(
-            u.icon_button(&icons::SLIDERS_HORIZONTAL, "Locker changes")
+            u.icon_button(&icons::SLIDERS_HORIZONTAL, crate::screens::settings::i18n::tr("Locker changes"))
                 .key("locker-applied")
                 .cursor(rune::Cursor::Pointer)
                 .on_press(|st: &mut State| st.locker.dialog = Some(Dialog::Applied)),
@@ -444,7 +444,7 @@ fn grid_page(s: &State, u: &Ui, v: &View) -> El {
         rescan,
     ];
     let toolbar = u.page_toolbar(
-        u.page_title("Locker"),
+        u.page_title(crate::screens::settings::i18n::tr("Locker")),
         vec![off(filter(u, v.modded_only, v.starred_only), !ready).ml(8.0)],
         Some(u.page_search(search)),
         actions,
@@ -614,9 +614,9 @@ fn filter(u: &Ui, modded_only: bool, starred_only: bool) -> El {
         .border(1.0, u.hair)
         .role("radiogroup")
         .label("Show heroes")
-        .child(segment("All", !modded_only && !starred_only, false, false))
-        .child(segment("Modded", modded_only, true, false))
-        .child(segment("Starred", starred_only, false, true))
+        .child(segment(crate::screens::settings::i18n::tr("All"), !modded_only && !starred_only, false, false))
+        .child(segment(crate::screens::settings::i18n::tr("Modded"), modded_only, true, false))
+        .child(segment(crate::screens::settings::i18n::tr("Starred"), starred_only, false, true))
 }
 
 pub(super) fn pixels_for(s: &State, path: Option<&str>) -> Option<Pixels> {
@@ -837,7 +837,7 @@ fn general_card(s: &State, _u: &Ui, v: &View, card_w: f32) -> El {
     }
     let [scrim, wash] = card_chrome();
     let detail = if count == 0 {
-        "HUD, icons, sounds and more".to_string()
+        crate::screens::settings::i18n::tr("HUD, icons, sounds and more").to_string()
     } else if v.categories.is_empty() {
         format!("{}, {}", plural(count, "mod", "mods"), plural(types, "type", "types"))
     } else {
@@ -855,7 +855,7 @@ fn general_card(s: &State, _u: &Ui, v: &View, card_w: f32) -> El {
                 .pin(Some(8.0), None, Some(8.0), Some(8.0))
                 .gap(2.0)
                 .items_start()
-                .child(text("General").font(BODY_MED).color(Color::WHITE))
+                .child(text(crate::screens::settings::i18n::tr("General")).font(BODY_MED).color(Color::WHITE))
                 .child(
                     text(detail)
                         .font(SMALL)
@@ -1141,7 +1141,7 @@ fn back_row(u: &Ui, extra: Option<El>) -> El {
             .cursor(rune::Cursor::Pointer)
             .on_press(back)
             .child(rune::icon(&icons::ARROW_LEFT, 16.0).color(u.muted).a11y_hidden())
-            .child(text("Locker").font(BODY_MED).color(u.muted).a11y_hidden()),
+            .child(text(crate::screens::settings::i18n::tr("Locker")).font(BODY_MED).color(u.muted).a11y_hidden()),
     );
     if let Some(extra) = extra {
         r = r.child(spacer()).child(extra);
@@ -1371,11 +1371,11 @@ fn hero_page(s: &State, u: &Ui, v: &View, hero: &HeroCard) -> El {
         .gap(4.0)
         .role("tablist")
         .child(
-            rail_row(u, "locker-section-mods".into(), "Skins", mods.len(), section == HeroSection::Mods, mods.is_empty())
+            rail_row(u, "locker-section-mods".into(), crate::screens::settings::i18n::tr("Skins"), mods.len(), section == HeroSection::Mods, mods.is_empty())
                 .on_press(|st: &mut State| st.locker.hero_section = HeroSection::Mods),
         )
         .child(
-            rail_row(u, "locker-section-sounds".into(), "Sounds", sounds.len(), section == HeroSection::Sounds, sounds.is_empty())
+            rail_row(u, "locker-section-sounds".into(), crate::screens::settings::i18n::tr("Sounds"), sounds.len(), section == HeroSection::Sounds, sounds.is_empty())
                 .on_press(|st: &mut State| st.locker.hero_section = HeroSection::Sounds),
         )
         .child({
@@ -1387,7 +1387,7 @@ fn hero_page(s: &State, u: &Ui, v: &View, hero: &HeroCard) -> El {
             rail_row(
                 u,
                 "locker-section-recolor".into(),
-                "Recolor",
+                crate::screens::settings::i18n::tr("Recolor"),
                 hero.recolor_paths.len(),
                 section == HeroSection::Recolor,
                 hero.recolor_paths.is_empty(),
@@ -1438,7 +1438,7 @@ fn hero_page(s: &State, u: &Ui, v: &View, hero: &HeroCard) -> El {
     let controls = col()
         .w_full()
         .gap(0.0)
-        .child(el().pl(10.0).pb(8.0).child(u.section("Hero")))
+        .child(el().pl(10.0).pb(8.0).child(u.section(crate::screens::settings::i18n::tr("Hero"))))
         .child(
             rail_action(
                 u,
@@ -1471,7 +1471,7 @@ fn hero_page(s: &State, u: &Ui, v: &View, hero: &HeroCard) -> El {
                 .on_press(move |st: &mut State| crate::data::toggle_locker_shuffle(st, &shuffle_name))
                 .child(rune::icon(&icons::ROTATE_CCW, 16.0).color(u.muted).a11y_hidden())
                 .child(
-                    text("Shuffle at launch".to_string())
+                    text(crate::screens::settings::i18n::tr("Shuffle at launch").to_string())
                         .font(BODY)
                         .color(u.prose)
                         .grow(1.0)
@@ -1496,7 +1496,7 @@ fn hero_page(s: &State, u: &Ui, v: &View, hero: &HeroCard) -> El {
                 u,
                 format!("locker-hero-star-{}", hero.codename),
                 &icons::HEART,
-                if favorite { "Starred" } else { "Star this hero" },
+                if favorite { "Starred" } else { crate::screens::settings::i18n::tr("Star this hero") },
                 favorite,
             )
             .cursor(rune::Cursor::Pointer)
@@ -1509,7 +1509,7 @@ fn hero_page(s: &State, u: &Ui, v: &View, hero: &HeroCard) -> El {
                 u,
                 format!("locker-hero-card-{}", hero.codename),
                 &icons::SQUARE_PEN,
-                "Custom card",
+                crate::screens::settings::i18n::tr("Custom card"),
                 hero.custom.is_some(),
             )
             .cursor(rune::Cursor::Pointer)
@@ -1547,7 +1547,7 @@ fn hero_page(s: &State, u: &Ui, v: &View, hero: &HeroCard) -> El {
             let browse = move |kind: ActionKind| {
                 let name = browse_name.clone();
                 let _ = kind;
-                u.icon_action(&icons::COMPASS, "Browse skins", ActionKind::Ghost)
+                u.icon_action(&icons::COMPASS, crate::screens::settings::i18n::tr("Browse skins"), ActionKind::Ghost)
                     .h(24.0)
                     .pl(6.0)
                     .pr(8.0)
@@ -1561,13 +1561,13 @@ fn hero_page(s: &State, u: &Ui, v: &View, hero: &HeroCard) -> El {
             let empty = mods.is_empty();
             let mut c = col().w_full().gap(8.0).child(pane_head(
                 u,
-                "Skins",
+                crate::screens::settings::i18n::tr("Skins"),
                 plural(mods.len(), "mod", "mods"),
                 Some(browse(ActionKind::Ghost)),
             ));
             if empty {
                 c = c.child(
-                    text(format!("No installed mod changes {} yet.", hero.display_name))
+                    text(crate::screens::settings::i18n::fill(crate::screens::settings::i18n::tr("No installed mod changes {} yet."), &[&hero.display_name]))
                         .font(SMALL)
                         .color(u.muted)
                         .wrap(),
@@ -1581,7 +1581,7 @@ fn hero_page(s: &State, u: &Ui, v: &View, hero: &HeroCard) -> El {
             let empty = sounds.is_empty();
             let mut c = col().w_full().gap(8.0).child(pane_head(
                 u,
-                "Sounds",
+                crate::screens::settings::i18n::tr("Sounds"),
                 plural(sounds.len(), "mod", "mods"),
                 None,
             ));
@@ -1616,7 +1616,7 @@ fn hero_page(s: &State, u: &Ui, v: &View, hero: &HeroCard) -> El {
             let recolor_hero = hero.clone();
             let can = !hero.recolor_paths.is_empty();
             let action = u
-                .icon_action(&icons::SPARKLES, "Recolor", ActionKind::Ghost)
+                .icon_action(&icons::SPARKLES, crate::screens::settings::i18n::tr("Recolor"), ActionKind::Ghost)
                 .h(24.0)
                 .pl(6.0)
                 .pr(8.0)
@@ -1627,7 +1627,7 @@ fn hero_page(s: &State, u: &Ui, v: &View, hero: &HeroCard) -> El {
                 .on_press(move |st: &mut State| open_recolor(st, &recolor_hero));
             let mut c = col().w_full().gap(8.0).child(pane_head(
                 u,
-                "Recolor",
+                crate::screens::settings::i18n::tr("Recolor"),
                 plural(hero.recolor_paths.len(), "file", "files"),
                 Some(action),
             ));
@@ -1726,6 +1726,10 @@ fn open_recolor(st: &mut State, hero: &HeroCard) {
 }
 
 pub(super) fn plural(n: usize, one: &str, many: &str) -> String {
+    if one == "mod" {
+        let template = crate::screens::settings::i18n::tr(if n == 1 { "{} mod" } else { "{} mods" });
+        return crate::screens::settings::i18n::fill(template, &[&n.to_string()]);
+    }
     format!("{n} {}", if n == 1 { one } else { many })
 }
 

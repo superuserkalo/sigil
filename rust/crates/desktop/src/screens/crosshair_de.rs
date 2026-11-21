@@ -6,6 +6,7 @@ use std::collections::HashMap;
 use std::sync::OnceLock;
 
 pub const DE: &[(&str, &str)] = &[
+    ("Plain", "Schlicht"),
     ("The game already has this crosshair", "Das Spiel hat dieses Fadenkreuz schon"),
     ("Console commands", "Konsolenbefehle"),
     ("Rename preset", "Vorlage umbenennen"),

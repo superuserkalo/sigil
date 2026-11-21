@@ -6,6 +6,14 @@ use std::collections::HashMap;
 use std::sync::OnceLock;
 
 pub const DE: &[(&str, &str)] = &[
+    ("Snapshots", "Sicherungspunkte"),
+    ("Active", "Aktiv"),
+    ("Clear the selection", "Auswahl aufheben"),
+    ("{} mod", "{} Mod"),
+    ("{} mods", "{} Mods"),
+    ("{} autoexec line", "{} Autoexec-Zeile"),
+    ("{} autoexec lines", "{} Autoexec-Zeilen"),
+    ("By {}", "Von {}"),
     ("Share", "Teilen"),
     ("Applied {}", "{} angewendet"),
     ("Apply", "Anwenden"),

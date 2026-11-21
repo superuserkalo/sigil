@@ -109,11 +109,24 @@ fn index(lang: Lang) -> u8 {
 }
 
 /// Switch the language every `t` call reads. Called at startup and from Settings.
+/// `SIGIL_SNAP_LANG=de` (or `en`) pins the language, for headless snaps in German.
+fn forced() -> Option<Lang> {
+    static FORCED: OnceLock<Option<Lang>> = OnceLock::new();
+    *FORCED.get_or_init(|| match std::env::var("SIGIL_SNAP_LANG").as_deref() {
+        Ok("de") => Some(Lang::German),
+        Ok("en") => Some(Lang::English),
+        _ => None,
+    })
+}
+
 pub fn set(lang: Lang) {
-    CURRENT.store(index(lang.resolve()), Ordering::Relaxed);
+    CURRENT.store(index(forced().unwrap_or(lang).resolve()), Ordering::Relaxed);
 }
 
 pub fn current() -> Lang {
+    if let Some(lang) = forced() {
+        return lang;
+    }
     Lang::ALL[CURRENT.load(Ordering::Relaxed) as usize % Lang::ALL.len()]
 }
 
@@ -133,7 +146,7 @@ fn lookup(lang: Lang, english: &'static str) -> &'static str {
 /// `t` for any string: the translation, or the text itself. Settings' row helpers pass every
 /// title and line through this, so a literal handed to a helper is routed without a wrapper.
 pub fn tr(text: &str) -> &str {
-    maps()[CURRENT.load(Ordering::Relaxed) as usize % 3]
+    maps()[index(current()) as usize % 3]
         .get(text)
         .copied()
         .unwrap_or(text)

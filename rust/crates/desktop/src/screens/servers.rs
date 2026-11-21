@@ -1028,7 +1028,7 @@ fn password_segment(u: &Ui, current: PasswordFilter) -> El {
 
 
 fn head(u: &Ui, key: ServerSortKey, width: f32, end: bool, sort: Option<ServerSort>) -> El {
-    let label = key.label();
+    let label = tr(key.label()).to_string();
     let direction = sort.filter(|sort| sort.key == key).map(|sort| sort.direction);
     let mut cell = row()
         .key(format!("servers-head-{}", key.id()))
@@ -1121,10 +1121,10 @@ fn server_meta(server: &Server) -> String {
         parts.push(format!("Deadworks {}", server.version));
     }
     if server.has_addons || !server.content_hint.is_empty() {
-        parts.push("Custom content".to_string());
+        parts.push(tr("Custom content").to_string());
     }
     if server.bots > 0 {
-        parts.push(format!("{} bots", server.bots));
+        parts.push(crate::screens::settings::i18n::fill(tr("{} bots"), &[&server.bots.to_string()]));
     }
     let mode = server.mode_label();
     if mode != "Standard" && mode != "Unknown" {
@@ -1352,7 +1352,7 @@ fn detail_panel(s: &State, u: &Ui, server: &Server) -> El {
             tr("Players"),
             fact_text(
                 u,
-                &format!("{} of {}", server.players, server.max_players.max(server.players)),
+                &crate::screens::settings::i18n::fill(tr("{} of {}"), &[&server.players.to_string(), &server.max_players.max(server.players).to_string()]),
                 if server.is_full() { u.amber } else { u.ink },
             ),
         ))
