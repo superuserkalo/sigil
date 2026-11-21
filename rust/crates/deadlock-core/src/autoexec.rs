@@ -98,6 +98,13 @@ pub fn write_autoexec(
         )));
     }
 
+    if let Some(reason) = autoexec_syntax_error(text) {
+        return Err(Error::msg(format!(
+            "Refusing to write {}: {reason}. Nothing was written; fix the line or reload the file.",
+            path.display()
+        )));
+    }
+
     let normalized = normalize_trailing_newline(text);
 
     if let Some(parent) = path.parent() {
@@ -141,6 +148,39 @@ pub fn save_autoexec_if_unchanged(
         return Ok(AutoexecSave::ChangedOnDisk { current });
     }
     write_autoexec(game_root, text, true).map(AutoexecSave::Written)
+}
+
+/// The first reason `text` would not load as a cfg file, or `None` when it is well formed.
+/// A command line may quote its arguments; an unclosed quote or a control character means the
+/// game would read it wrong, so [`write_autoexec`] refuses instead of writing it.
+pub fn autoexec_syntax_error(text: &str) -> Option<String> {
+    let text = text.strip_prefix(BOM).unwrap_or(text);
+    for (index, line) in text.lines().enumerate() {
+        let number = index + 1;
+        if let Some(bad) = line.chars().find(|c| c.is_control() && *c != '\t') {
+            return Some(format!(
+                "line {number} contains the control character U+{:04X}",
+                bad as u32
+            ));
+        }
+        let mut quoted = false;
+        let mut chars = line.chars().peekable();
+        while let Some(c) = chars.next() {
+            if !quoted && c == '/' && chars.peek() == Some(&'/') {
+                break;
+            }
+            if c == '"' && chars.peek() != Some(&'"') {
+                quoted = !quoted;
+            } else if c == '"' {
+                // A doubled quote inside a quoted command is a literal quote.
+                chars.next();
+            }
+        }
+        if quoted {
+            return Some(format!("line {number}: a quoted string is never closed"));
+        }
+    }
+    None
 }
 
 /// The file's lines without one trailing newline artifact: `lines` already
