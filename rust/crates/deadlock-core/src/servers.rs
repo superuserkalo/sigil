@@ -2893,48 +2893,9 @@ pub fn valid_map_name(name: &str) -> bool {
             .all(|character| character.is_ascii_alphanumeric() || character == '_')
 }
 
-/// Find the console name in a map description: `maps/<name>.vpk` first, then a `map <name>`
-/// command. Anything that does not look like a map name is ignored.
-pub fn console_map_name(text: &str) -> Option<String> {
-    let lower = text.to_ascii_lowercase();
-    let mut from = 0;
-    while let Some(at) = lower[from..].find("maps/") {
-        let start = from + at + "maps/".len();
-        let rest = &text[start..];
-        let name: String = rest
-            .chars()
-            .take_while(|character| character.is_ascii_alphanumeric() || *character == '_')
-            .collect();
-        let after = rest[name.len()..].to_ascii_lowercase();
-        if valid_map_name(&name) && after.starts_with(".vpk") {
-            return Some(name);
-        }
-        from = start;
-    }
-    let mut from = 0;
-    while let Some(at) = lower[from..].find("map ") {
-        let boundary = at == 0
-            || lower[..from + at]
-                .chars()
-                .last()
-                .is_none_or(|character| !character.is_ascii_alphanumeric());
-        let start = from + at + "map ".len();
-        let name: String = text[start..]
-            .chars()
-            .take_while(|character| character.is_ascii_alphanumeric() || *character == '_')
-            .collect();
-        let after = text[start + name.len()..].chars().next();
-        if boundary
-            && valid_map_name(&name)
-            && name.len() > 1
-            && after.is_none_or(|character| character.is_whitespace() || character == '`' || character == ';')
-        {
-            return Some(name);
-        }
-        from = start;
-    }
-    None
-}
+/// The console name a map description gives; see [`map_name`].
+mod map_name;
+pub use map_name::{console_map_name, description_text};
 
 /// The maps installed under `citadel/maps`, by console name.
 pub fn installed_maps(game_root: &Path) -> Vec<String> {
