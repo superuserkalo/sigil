@@ -538,7 +538,12 @@ pub fn view(s: &State, u: &Ui) -> El {
         .px(PAGE_X)
         .pt(PAGE_TOP)
         .gap(16.0)
-        .child(u.page_head("", "Installed", "", trailing));
+        .child(u.page_toolbar(
+            u.page_title(crate::screens::settings::i18n::tr("Installed")),
+            Vec::new(),
+            Some(crate::app::page_search(s, u)),
+            trailing.into_iter().collect(),
+        ));
     if has_mods {
         page = page.child(if s.installed.selected.is_empty() {
             filter_bar(s, u)

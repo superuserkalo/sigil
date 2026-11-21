@@ -28,7 +28,7 @@ use crate::model::{
 use crate::publish::PublishJob;
 use crate::screens;
 use crate::ui::{
-    ActionKind, BODY, BODY_MED, LABEL, MICRO, NAV, PAGE_X, SMALL, SMALL_NUM, TITLEBAR_H, Tone,
+    ActionKind, BODY, BODY_MED, LABEL, MICRO, NAV, PAGE_X, SMALL_NUM, TITLEBAR_H, Tone,
     Ui,
 };
 
@@ -1760,7 +1760,8 @@ fn titlebar(s: &State, u: &Ui, insets: rune::ChromeInsets) -> El {
         .w_full()
         .h(TITLEBAR_H)
         .pl(PAGE_X)
-        .pr(insets.trailing + 12.0)
+        // On the page's right edge, or 12 clear of the Windows caption buttons.
+        .pr(if insets.trailing > 0.0 { insets.trailing + 12.0 } else { PAGE_X })
         .gap(8.0)
         .center_y()
         .window_drag();
@@ -1768,8 +1769,8 @@ fn titlebar(s: &State, u: &Ui, insets: rune::ChromeInsets) -> El {
         // Development only: a quiet chip, never the accent.
         bar = bar.child(
             row()
-                .h(20.0)
-                .px(6.0)
+                .h(crate::ui::CONTROL_S)
+                .px(8.0)
                 .center_y()
                 .radius(crate::ui::r(4.0))
                 .fill(u.over.alpha(0.07))
@@ -1790,7 +1791,7 @@ fn titlebar(s: &State, u: &Ui, insets: rune::ChromeInsets) -> El {
         .unwrap_or(0);
     if review > 0 && s.screen != Screen::Updates {
         bar = bar.child(
-            u.icon_action(
+            u.icon_action_m(
                 &icons::REFRESH_CW,
                 &format!("{review} to check after the update"),
                 ActionKind::Ghost,
@@ -1802,7 +1803,7 @@ fn titlebar(s: &State, u: &Ui, insets: rune::ChromeInsets) -> El {
     }
     if s.agent.pause.is_some() && !under_agent(s.screen) {
         bar = bar.child(
-            u.action("Approval waiting", ActionKind::Secondary)
+            u.action_m("Approval waiting", ActionKind::Secondary)
                 .key("titlebar-approval")
                 .cursor(rune::Cursor::Pointer)
                 .on_press(|st: &mut State| st.go(Screen::Agent)),

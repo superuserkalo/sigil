@@ -600,7 +600,7 @@ pub fn view(s: &State, u: &Ui) -> El {
         );
     }
 
-    let detail = match &s.servers.list {
+    let _detail = match &s.servers.list {
         _ if s.servers.tab == Tab::Host || s.servers.tab == Tab::Regions => String::new(),
         Some(Ok(list)) => {
             let playing: u32 = list.servers.iter().map(|sv| sv.players).sum();
@@ -620,7 +620,12 @@ pub fn view(s: &State, u: &Ui) -> El {
         .pt(PAGE_TOP)
         .pb(40.0)
         .gap(16.0)
-        .child(u.page_head("", tr("Servers"), &detail, Some(actions)))
+        .child(u.page_toolbar(
+            u.page_title(tr("Servers")),
+            Vec::new(),
+            Some(crate::app::page_search(s, u)),
+            vec![actions],
+        ))
         .child(tabs(s, u));
 
     if s.servers.tab == Tab::Maps || s.servers.tab == Tab::Host || s.servers.tab == Tab::Regions {

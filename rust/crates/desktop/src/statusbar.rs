@@ -143,9 +143,9 @@ pub fn ago(seconds: i64) -> String {
 }
 
 fn game(s: &State, u: &Ui) -> El {
-    // Normal is quiet: the folder and the game's name. Not found keeps its full words.
+    // Normal is quiet (muted icon); not found is amber. Both say what they mean.
     let (words, tint) = if s.game_detected {
-        ("Deadlock", u.muted)
+        (tr("Deadlock found"), u.muted)
     } else {
         (tr("Game not found"), u.amber)
     };

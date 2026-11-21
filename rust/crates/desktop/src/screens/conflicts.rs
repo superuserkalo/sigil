@@ -221,7 +221,7 @@ pub fn view(s: &State, u: &Ui) -> El {
     );
 
     let count = s.addons.conflicts.len();
-    let detail = if !s.game_detected || !s.addons.scanned || visible_count == 0 {
+    let _detail = if !s.game_detected || !s.addons.scanned || visible_count == 0 {
         String::new()
     } else if !query.is_empty() {
         fill(
@@ -247,7 +247,12 @@ pub fn view(s: &State, u: &Ui) -> El {
         .pt(PAGE_TOP)
         .pb(32.0)
         .gap(16.0)
-        .child(u.page_head("", Screen::Conflicts.title(), &detail, Some(actions)));
+        .child(u.page_toolbar(
+            u.page_title(Screen::Conflicts.title()),
+            Vec::new(),
+            Some(crate::app::page_search(s, u)),
+            vec![actions],
+        ));
 
     if s.addons.scanned && !s.addons.warnings.is_empty() {
         page = page.child(warnings(s, u));

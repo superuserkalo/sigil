@@ -894,7 +894,7 @@ impl Ui {
     pub fn action(&self, label: &str, kind: ActionKind) -> El {
         let (fill, ink, border) = self.action_colors(kind);
         row()
-            .h(32.0)
+            .h(CONTROL_L)
             .px(12.0)
             .gap(6.0)
             .center()
@@ -918,14 +918,25 @@ impl Ui {
             )
     }
 
+    /// A 28 point button for controls inside content and on the titlebar: card actions, row
+    /// actions, pickers inside panels. Same look as `action`.
+    pub fn action_m(&self, label: &str, kind: ActionKind) -> El {
+        self.action(label, kind).h(CONTROL_M).px(10.0)
+    }
+
+    /// `icon_action` at 28 points.
+    pub fn icon_action_m(&self, glyph: &'static Icon, label: &str, kind: ActionKind) -> El {
+        self.icon_action(glyph, label, kind).h(CONTROL_M).pl(8.0).pr(10.0)
+    }
+
     /// A button with a leading icon.
     pub fn icon_action(&self, glyph: &'static Icon, label: &str, kind: ActionKind) -> El {
         let (fill, ink, border) = self.action_colors(kind);
         row()
-            .h(32.0)
+            .h(CONTROL_L)
             .pl(10.0)
             .pr(12.0)
-            .gap(6.0)
+            .gap(8.0)
             .center()
             .radius(r(8.0))
             .fill(fill)
@@ -950,7 +961,7 @@ impl Ui {
 
     /// A square 32 point icon button, labelled for assistive tech.
     pub fn icon_button(&self, glyph: &'static Icon, label: &str) -> El {
-        el().size(32.0, 32.0)
+        el().size(CONTROL_L, CONTROL_L)
             .center()
             .radius(r(8.0))
             .hover(self.hover)
