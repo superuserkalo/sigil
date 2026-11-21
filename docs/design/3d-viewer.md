@@ -494,7 +494,11 @@ let png = v.capture_png(width, height)?;
 - Errors: the device's uncaptured-error and lost-device handlers record the first error instead
   of panicking; the pipelines are built inside error scopes, and when the driver rejects them
   (FXC on D3D12 is the risk) the software adapter (WARP) is tried before the view fails with the
-  reason. A frame waits at most 20 seconds on the GPU. The render thread runs under
+  reason, which says whether WARP was tried. WARP compiles with the same FXC, so the shaders
+  themselves must suit it: no write through a dynamic index into a local vector, matrix or
+  struct array (FXC's X3500 and X3511, which broke 0.1.20 on Windows) and no implicit-LOD
+  sampling in loops. `src/shaders/fxc.rs` checks naga's HLSL for both on every platform, and
+  `.github/workflows/windows-shaders.yml` builds every pipeline on D3D12 WARP. A frame waits at most 20 seconds on the GPU. The render thread runs under
   `catch_unwind`, so a panic is a "could not open" state with its message, never a view left on
   Loading. Adapter, counts, sizes, timings and what was left out go to Sigil's log.
 
