@@ -306,7 +306,10 @@ fn select(st: &mut State, tab: Tab) {
     st.settings.select_open = None;
     st.settings.message = None;
     match tab {
-        Tab::Game => read_launch_options(st),
+        Tab::Game => {
+            read_launch_options(st);
+            tabs::read_steam_users(st);
+        }
         Tab::Backups => read_backups(st),
         Tab::Storage => {
             diag_w4::read_catalog(st);
@@ -748,7 +751,10 @@ fn search_field(s: &State, u: &Ui) -> El {
                 .placeholder(tr("Search settings"), u.faint)
                 .caret(u.accent, u.accent.alpha(0.22))
                 .on_edit(|st: &mut State| &mut st.settings.search)
-                .on_submit(|st: &mut State, _| search::open_first(st)),
+                .on_submit(|st: &mut State, tx: &mut rune::Tx| {
+                    search::open_first(st);
+                    tx.scroll_into_view("settings-hit");
+                }),
         );
     if typed {
         field = field.child(
@@ -1969,7 +1975,10 @@ fn mods(s: &State, u: &Ui) -> El {
                     s.prefs.flag("cycle_tag_filters"),
                     |st| prefs::edit(st, |p| p.toggle_flag("cycle_tag_filters")),
                 ),
-            ],
+            ]
+            .into_iter()
+            .chain(pages::installing_rows(s, u))
+            .collect(),
         ))
         .child(section(
             u,
@@ -2050,15 +2059,14 @@ fn privacy(s: &State, u: &Ui) -> El {
             row()
                 .key(format!("settings-host-{index}"))
                 .w_full()
-                .min_h(44.0)
-                .py(8.0)
+                .h(32.0)
                 .gap(16.0)
                 .center_y()
-                .border_sides([0.0, 0.0, 1.0, 0.0], u.hair)
                 .child(
                     text(tr(host).to_string())
-                        .font(if host.contains('.') { MONO } else { BODY_MED })
-                        .color(u.ink)
+                        .font(if host.contains('.') { MONO } else { BODY })
+                        .color(u.prose)
+                        .truncate()
                         .w(200.0),
                 )
                 .child(
@@ -2067,7 +2075,8 @@ fn privacy(s: &State, u: &Ui) -> El {
                         .color(u.muted)
                         .grow(1.0)
                         .min_w(0.0)
-                        .wrap(),
+                        .truncate()
+                        .help_when_truncated(tr(purpose).to_string()),
                 ),
         );
     }
@@ -2862,14 +2871,13 @@ fn about(s: &State, u: &Ui) -> El {
         let mut r = row()
             .key(format!("settings-credit-{index}"))
             .w_full()
-            .h(44.0)
+            .h(32.0)
             .gap(16.0)
             .center_y()
-            .border_sides([0.0, 0.0, 1.0, 0.0], u.hair)
             .child(
                 text(name)
-                    .font(BODY_MED)
-                    .color(u.ink)
+                    .font(BODY)
+                    .color(u.prose)
                     .grow(1.0)
                     .min_w(0.0)
                     .truncate(),
@@ -2877,6 +2885,7 @@ fn about(s: &State, u: &Ui) -> El {
             .child(text(capitalize(&license)).font(SMALL).color(u.muted).w(160.0).truncate());
         r = r.child(if source.starts_with("https://") {
             u.icon_button(&icons::EXTERNAL_LINK, tr("Open source page"))
+                .size(24.0, 24.0)
                 .key(format!("settings-credit-open-{index}"))
                 .cursor(rune::Cursor::Pointer)
                 .on_press_tx(move |st: &mut State, tx: &mut Tx| {
@@ -2885,7 +2894,7 @@ fn about(s: &State, u: &Ui) -> El {
                     }
                 })
         } else {
-            el().size(32.0, 32.0)
+            el().size(24.0, 24.0)
         });
         rows.push(r);
     }

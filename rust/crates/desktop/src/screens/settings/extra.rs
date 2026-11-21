@@ -301,16 +301,14 @@ pub fn overlay(s: &State, u: &Ui) -> Option<El> {
 
 // --- Game: custom Steam folder ---------------------------------------------------------
 
-pub fn steam_rows(_s: &State, u: &Ui) -> El {
+pub fn steam_rows(s: &State, u: &Ui) -> El {
     let o = options::get();
     let line = match &o.steam_root {
         Some(dir) => dir.clone(),
         None => tr("Found on its own. Choose one if Steam lives somewhere unusual.").to_string(),
     };
-    section(
-        u,
-        "Steam",
-        vec![setting_row(
+    // The one Steam section: the folder, then the accounts on this computer.
+    let mut rows = vec![setting_row(
             u,
             "settings-steam-folder",
             "Steam folder",
@@ -325,8 +323,9 @@ pub fn steam_rows(_s: &State, u: &Ui) -> El {
                     o.steam_root.is_none(),
                 ),
             ]),
-        )],
-    )
+        )];
+    rows.extend(super::tabs::steam_account_rows(s, u));
+    section(u, "Steam", rows)
 }
 
 fn choose_steam(_st: &mut State, tx: &mut Tx) {

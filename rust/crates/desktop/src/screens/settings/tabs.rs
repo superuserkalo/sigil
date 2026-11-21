@@ -423,7 +423,24 @@ pub fn presence_activity(s: &State) -> Activity {
     }
 }
 
-fn steam_section(s: &State, u: &Ui) -> El {
+/// Integrations' pointer to the one Steam section, which lives in Game.
+fn steam_section(_s: &State, u: &Ui) -> El {
+    section(
+        u,
+        "Steam",
+        vec![setting_row(
+            u,
+            "settings-steam-elsewhere",
+            "Steam account",
+            detail(u, "The linked account and the Steam folder are in Game."),
+            button(u, "settings-steam-open-game", "Open Game", ActionKind::Secondary)
+                .on_press(|st: &mut State| super::select(st, super::Tab::Game)),
+        )],
+    )
+}
+
+/// The Steam accounts on this computer, for Game's Steam section.
+pub fn steam_account_rows(s: &State, u: &Ui) -> Vec<El> {
     let users = s.settings.steam_users.as_deref().unwrap_or(&[]);
     let linked = s.prefs.steam_account;
     let mut rows = Vec::new();
@@ -500,7 +517,7 @@ fn steam_section(s: &State, u: &Ui) -> El {
             trailing(actions),
         ));
     }
-    section(u, "Steam", rows)
+    rows
 }
 
 pub fn read_steam_users(st: &mut State) {
@@ -1261,7 +1278,7 @@ pub fn pages(s: &State, u: &Ui) -> El {
             .key(format!("settings-page-{}", screen.key()))
             .w_full()
             .min_h(ROW_H)
-            .py(10.0)
+            .py(8.0)
             .gap(12.0)
             .center_y()
             .border_sides([0.0, 0.0, 1.0, 0.0], u.hair)
@@ -1271,19 +1288,21 @@ pub fn pages(s: &State, u: &Ui) -> El {
                     .grow(1.0)
                     .min_w(0.0)
                     .gap(2.0)
-                    .child(
-                        row()
-                            .gap(8.0)
-                            .center_y()
-                            .child(text(tr(flag.title).to_string()).font(BODY_MED).color(u.ink))
-                            .child(if mods_only && shown {
-                                text(tr("Paused")).font(SMALL).color(u.faint)
-                            } else {
-                                el()
-                            }),
-                    )
+                    .child(text(tr(flag.title).to_string()).font(BODY_MED).color(u.ink))
                     .child(detail(u, flag.line)),
             )
+            // "Paused" in a fixed 64 slot before the switch, so the title never moves.
+            .child(row().w(64.0).justify_end().child(if mods_only && shown {
+                row()
+                    .h(24.0)
+                    .px(8.0)
+                    .center_y()
+                    .radius(crate::ui::r(4.0))
+                    .fill(u.over.alpha(0.06))
+                    .child(text(tr("Paused")).font(crate::ui::LABEL).color(u.muted))
+            } else {
+                el()
+            }))
             .child(disabled(
                 u.toggle(shown && !mods_only)
                     .key(format!("settings-page-{}-switch", screen.key()))

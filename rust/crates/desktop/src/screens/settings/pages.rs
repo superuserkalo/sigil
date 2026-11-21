@@ -15,12 +15,10 @@ pub fn apply() {
     deadlock_core::payload::set_allow_scripts(options::get().allow_scripts);
 }
 
-pub fn section_el(_s: &State, u: &Ui) -> El {
+/// Every switch, in a fixed order the groups below pick from.
+fn all_rows(u: &Ui) -> Vec<Option<El>> {
     let o = options::get();
-    section(
-        u,
-        "Preferences",
-        vec![
+    let rows: Vec<El> = vec![
             toggle_row(
                 u,
                 "settings-pref-locker",
@@ -132,8 +130,27 @@ pub fn section_el(_s: &State, u: &Ui) -> El {
                     }
                 },
             ),
-        ],
-    )
+        ];
+    rows.into_iter().map(Some).collect()
+}
+
+fn pick(u: &Ui, picks: &[usize]) -> Vec<El> {
+    let mut rows = all_rows(u);
+    picks.iter().filter_map(|i| rows[*i].take()).collect()
+}
+
+/// What an install does; Mods' Installing section shows these after its own two.
+pub fn installing_rows(_s: &State, u: &Ui) -> Vec<El> {
+    pick(u, &[5, 3, 12, 1, 0])
+}
+
+/// How updates go, then what Sigil warns about.
+pub fn section_el(_s: &State, u: &Ui) -> El {
+    rune::col()
+        .w_full()
+        .gap(super::LIST_GAP_PUB)
+        .child(section(u, "Updates", pick(u, &[9, 10, 11, 2])))
+        .child(section(u, "Warnings", pick(u, &[6, 7, 4, 8])))
 }
 
 pub fn scripts_dialog(u: &Ui) -> El {

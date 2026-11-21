@@ -66,7 +66,7 @@ pub const INDEX: &[Entry] = &[
     e(Tab::Integrations, "Show what you are doing", "Off shows only that you use Sigil.", "discord details privacy"),
     e(Tab::Integrations, "Hide party size", "Leave the party size out of Discord.", "discord party group size privacy"),
     e(Tab::Integrations, "Show your mod count", "How many mods are on, modded or vanilla.", "discord mods"),
-    e(Tab::Integrations, "Steam account", "Link the Steam account Stats opens on.", "steam account profile link stats statlocker"),
+    e(Tab::Game, "Steam account", "Link the Steam account Stats opens on.", "steam account profile link stats statlocker"),
     e(Tab::Integrations, "GameBanana account", "Open your GameBanana page from Sigil.", "gamebanana profile member link"),
     e(Tab::Integrations, "Open Install with Sigil links", "GameBanana's Sigil button opens the mod here.", "1-click one click deep link gamebanana install protocol"),
     e(Tab::Integrations, "Profile share codes", "Send a mod setup as a code.", "share profile code friend"),
@@ -225,7 +225,7 @@ pub fn results(s: &State, u: &Ui) -> El {
             if hits.is_empty() {
                 continue;
             }
-            let mut group = col().w_full().gap(8.0).child(u.section_head(tr(tab.label()), Some(hits.len()), None));
+            let group = col().w_full().gap(8.0).child(u.section_head(tr(tab.label()), Some(hits.len()), None));
             let mut rows = col().w_full();
             for entry in hits {
                 let title = entry.title;

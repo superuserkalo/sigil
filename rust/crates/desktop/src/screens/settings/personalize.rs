@@ -26,7 +26,7 @@ use crate::ui::personalize::{
     ThemePick, ZOOM_MAX,
 };
 use crate::ui::{
-    ActionKind, BODY, BODY_MED, LABEL, MONO, PRESETS, Palette, SIDEBAR_W, SMALL, TITLEBAR_H,
+    ActionKind, BODY, BODY_MED, MONO, PRESETS, Palette, SIDEBAR_W, SMALL, TITLEBAR_H,
     TOKENS, Ui, hex6,
 };
 
