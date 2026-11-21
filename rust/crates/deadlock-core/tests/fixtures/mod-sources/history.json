@@ -1,0 +1,17 @@
+{
+  "items": [
+    {
+      "id": "clean-hud-r2",
+      "version": "2.1.0",
+      "publishedAt": "2026-11-18T10:00:00Z",
+      "changelog": "Red variant."
+    },
+    {
+      "id": "clean-hud-r1",
+      "version": "2.0.0",
+      "publishedAt": "2026-10-02T09:00:00Z",
+      "changelog": "First release."
+    }
+  ],
+  "nextCursor": null
+}

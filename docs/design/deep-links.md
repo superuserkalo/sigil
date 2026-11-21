@@ -1,7 +1,7 @@
 # Install with Sigil links
 
-Status: current. Link formats, registration, single instance and the GameBanana 1-Click listing.
-Updated: 2026-11-17
+Status: current. Link formats, registration, single instance, the GameBanana 1-Click listing and
+Deadlock Mod Manager source links. Updated: 2026-11-21.
 
 An "Install with Sigil" link opens a GameBanana mod in Sigil with one of its files chosen and the
 normal Install dialog open. Sigil never installs from a link alone: the player presses Install in
@@ -70,6 +70,41 @@ Rules, all enforced in `deeplink::parse` and covered by its tests:
 - A launch that carries a `sigil:` argument and anything else exits before Rune reads its
   arguments. The registered command passes exactly one argument, so extra arguments mean a link
   broke out of the command's quotes to pass flags such as `--snap`.
+
+## Deadlock Mod Manager source links
+
+Sigil also reads Deadlock Mod Manager's three schemes (`deadlock-mod-manager:`,
+`deadlock-modmanager:` and `dlmm:`) for the two source links its docs publish. The handler
+command's `sigil://open/` wrapper may carry one of these too.
+
+| Form | Example | Opens |
+| --- | --- | --- |
+| Add a source | `deadlock-mod-manager://sources/add?url=<descriptor URL>` | A confirm naming the address and origin; Add source runs the normal add flow |
+| Install from a source | `deadlock-mod-manager://sources/install?url=<descriptor URL>&source=<sourceId>&listing=<listing id>[&release=<release id>][&artifact=<artifact id>]` | A confirm with the mod and file; Install starts the normal install |
+
+Rules, all enforced in `mod_sources::parse_source_link` and `deeplink::parse_any`:
+
+- At most 16,384 characters, printable ASCII only, no backslash. The path is exactly
+  `//sources/add` or `//sources/install`.
+- Every query value is percent-decoded once. `+` stays a plus, as Deadlock Mod Manager reads it.
+  A broken escape, invalid UTF-8, a duplicate known field or an empty field is refused. Unknown
+  fields are ignored.
+- `url` is required: https only, public host, no credentials, no spaces or control characters,
+  no fragment and no backslash, at most 8,192 characters. It must be the full descriptor address,
+  not an origin.
+- `source` and `listing` are required by an install link, and `release` and `artifact` are
+  optional. Each is at most 256 bytes with no control characters. An add link ignores the
+  install-only fields instead of trusting them.
+- A link adds no network host. Add fetches only the descriptor at the address the player is
+  confirming. Install reads only a source the player already added, through the origins that
+  source declared. Nothing carries a download URL, enables a source or installs without the
+  confirm's own Install press.
+- For install, the shown source must still have that `sourceId`, the listing must still be in its
+  catalog and a `release` pin must equal the listing's current release. An older release is
+  refused rather than upgraded. An `artifact` must be in that release. A release with several
+  files and no `artifact` opens the mod page instead of choosing one.
+- The same launch argument rule applies: a launch that carries a source link and anything else
+  exits before Rune reads its arguments.
 
 Sigil never fetches the URL inside a link. It takes the two ids, opens the mod through the normal
 Browse reads (`gamebanana.com/apiv11/<Model>/<id>/ProfilePage`, already on the network

@@ -73,6 +73,7 @@ pub mod mod_health;
 pub mod mod_heroes;
 pub mod mod_kinds;
 pub mod mod_lookup;
+pub mod mod_markdown;
 pub mod mod_merge;
 pub mod mod_safety;
 pub mod mod_settings;

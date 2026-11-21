@@ -23,6 +23,7 @@ use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 
 use deadlock_core::gamebanana::BrowseSection;
 use deadlock_core::install::GAMEBANANA_DOWNLOAD_HOSTS;
+use deadlock_core::mod_sources::{self, SourceLink};
 use rune::Tx;
 
 use crate::app::State;
@@ -35,6 +36,11 @@ pub const SCHEME: &str = "sigil";
 pub const WRAPPER: &str = "sigil://open/";
 /// The longest link Sigil reads. Real ones are under 80 characters.
 pub const MAX_LINK: usize = 512;
+/// The longest `deadlock-mod-manager://sources/...` link: it carries a whole descriptor URL.
+pub const MAX_SOURCE_LINK: usize = 16_384;
+/// Deadlock Mod Manager's three schemes. Its source links are read here and never installed
+/// without a confirm.
+const DMM_SCHEMES: [&str; 3] = ["deadlock-mod-manager", "deadlock-modmanager", "dlmm"];
 /// GameBanana ids fit in 32 bits; ten digits covers that and no more.
 const MAX_ID_DIGITS: usize = 10;
 /// Marker file in the data folder: present when the player turned links off.
@@ -61,6 +67,7 @@ pub enum LinkError {
     NoModId,
     UnsupportedType,
     BadId,
+    BadSourceLink,
 }
 
 impl std::fmt::Display for LinkError {
@@ -74,8 +81,56 @@ impl std::fmt::Display for LinkError {
             LinkError::NoModId => "it has no mod id, use the Sigil button on the mod's page",
             LinkError::UnsupportedType => "Sigil installs mods and sounds only",
             LinkError::BadId => "the mod or file id is not valid",
+            LinkError::BadSourceLink => "the mod source link is not in a form Sigil reads",
         })
     }
+}
+
+/// What a link asks for: a GameBanana install, or a custom source action.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Link {
+    Install(InstallLink),
+    Source(SourceLink),
+}
+
+/// Read any link Sigil accepts: its own `sigil:` forms and Deadlock Mod Manager's
+/// `deadlock-mod-manager://sources/...` forms. Nothing is added or installed here.
+pub fn parse_any(raw: &str) -> Result<Link, LinkError> {
+    if let Some(rest) = strip_dmm_scheme(raw) {
+        check_source_link(raw, rest)?;
+        return mod_sources::parse_source_link(rest)
+            .map(Link::Source)
+            .map_err(|_| LinkError::BadSourceLink);
+    }
+    // The handler command's wrapper can carry either scheme.
+    if let Some(rest) = strip_scheme(raw)
+        && let Some(inner) = strip_prefix_ci(rest, "//open/")
+        && let Some(dmm) = strip_dmm_scheme(inner)
+    {
+        check_source_link(raw, dmm)?;
+        return mod_sources::parse_source_link(dmm)
+            .map(Link::Source)
+            .map_err(|_| LinkError::BadSourceLink);
+    }
+    parse(raw).map(Link::Install)
+}
+
+fn check_source_link(raw: &str, rest: &str) -> Result<(), LinkError> {
+    if raw.len() > MAX_SOURCE_LINK {
+        return Err(LinkError::TooLong);
+    }
+    if rest.is_empty() || !raw.bytes().all(|b| b.is_ascii_graphic() && b != b'\\') {
+        return Err(LinkError::Malformed);
+    }
+    Ok(())
+}
+
+fn strip_dmm_scheme(link: &str) -> Option<&str> {
+    let (scheme, rest) = link.split_once(':')?;
+    DMM_SCHEMES
+        .iter()
+        .any(|known| scheme.eq_ignore_ascii_case(known))
+        .then_some(rest)
 }
 
 /// Parses an incoming link. Strict on purpose: the text comes from a web page.
@@ -208,9 +263,10 @@ fn strip_prefix_ci<'a>(text: &'a str, prefix: &str) -> Option<&'a str> {
         .then(|| &text[prefix.len()..])
 }
 
-/// Whether a launch argument is meant for Sigil's link handler (`sigil:` in any case).
+/// Whether a launch argument is meant for Sigil's link handler (`sigil:` in any case), or a
+/// Deadlock Mod Manager source link Sigil reads in the same handler.
 pub fn is_sigil_link(arg: &str) -> bool {
-    strip_scheme(arg).is_some()
+    strip_scheme(arg).is_some() || strip_dmm_scheme(arg).is_some()
 }
 
 /// A launch that carries a link must carry only that link. The handler command passes exactly
@@ -233,16 +289,23 @@ pub fn on_open_url(s: &mut State, url: &str, _tx: &mut Tx) {
     handle(s, url);
 }
 
-/// Opens a link's mod, or says why not.
+/// Opens a link's mod, or says why not. A source link only opens a confirm.
 pub fn handle(s: &mut State, url: &str) {
     if !links_on() {
         s.status = "Could not open the link: Install with Sigil links are off in Settings.".into();
         return;
     }
-    match parse(url) {
-        Ok(link) => open(s, link),
+    match parse_any(url) {
+        Ok(Link::Install(link)) => open(s, link),
+        Ok(Link::Source(link)) => source(s, link),
         Err(error) => s.status = format!("Could not open the link: {error}."),
     }
+}
+
+/// A source link never adds, enables or installs by itself: it opens the confirm that names
+/// the address and what the link asks for. The player's next press is the approval.
+fn source(s: &mut State, link: SourceLink) {
+    s.settings.extra.dialog = Some(crate::screens::settings::extra::Dialog::SourceLink(Box::new(link)));
 }
 
 /// Browse, with the mod's details open; its file is preselected once the details arrive.
@@ -604,8 +667,11 @@ mod os {
 
 // --- scenes ----------------------------------------------------------------------------
 
+/// A headless scene: its name and the function that stages it.
+pub type Scene = (&'static str, fn(&mut State));
+
 /// Headless scenes for the link-opened states.
-pub const SCENES: [(&str, fn(&mut State)); 2] = [
+pub const SCENES: [Scene; 2] = [
     ("link-install", scene_link_install),
     ("link-rejected", scene_link_rejected),
 ];
@@ -821,6 +887,64 @@ mod tests {
         );
         let long = format!("sigil://install/mod/7/{}", "1".repeat(MAX_LINK));
         assert_eq!(parse(&long), Err(LinkError::TooLong));
+    }
+
+    #[test]
+    fn reads_dmm_source_links() {
+        use deadlock_core::mod_sources::SourceAction;
+        let add = "deadlock-mod-manager://sources/add?url=https%3A%2F%2Fmods.example.org%2Fdmm-source.json";
+        assert_eq!(
+            parse_any(add),
+            Ok(Link::Source(SourceLink {
+                action: SourceAction::Add,
+                url: "https://mods.example.org/dmm-source.json".into(),
+                source: String::new(),
+                listing: None,
+                release: None,
+                artifact: None,
+            }))
+        );
+        let install = "DLMM://sources/install?url=https%3A%2F%2Fmods.example.org%2Fdmm-source.json&source=community&listing=blue%20haze&release=clean-hud-r2&artifact=blue";
+        let Ok(Link::Source(link)) = parse_any(install) else { panic!("{install}") };
+        assert_eq!(link.action, SourceAction::Install);
+        assert_eq!(link.listing.as_deref(), Some("blue haze"));
+        assert_eq!(link.release.as_deref(), Some("clean-hud-r2"));
+        assert_eq!(link.artifact.as_deref(), Some("blue"));
+        // The handler command's wrapper carries either scheme.
+        let wrapped = "sigil://open/deadlock-mod-manager://sources/add?url=https%3A%2F%2Fmods.example.org%2Fdmm-source.json";
+        assert!(matches!(parse_any(wrapped), Ok(Link::Source(_))));
+        assert!(is_sigil_link(
+            "deadlock-mod-manager://sources/add?url=https%3A%2F%2Fmods.example.org%2Fdmm-source.json"
+        ));
+        assert!(is_sigil_link(
+            "deadlock-modmanager://sources/add?url=https%3A%2F%2Fmods.example.org%2Fdmm-source.json"
+        ));
+    }
+
+    #[test]
+    fn refuses_hostile_dmm_source_links() {
+        let url = "url=https%3A%2F%2Fmods.example.org%2Fdmm-source.json";
+        for bad in [
+            "deadlock-mod-manager://sources/add?url=http%3A%2F%2Fmods.example.org%2Fx.json".to_string(),
+            "deadlock-mod-manager://sources/add?url=javascript%3Aalert(1)".to_string(),
+            "deadlock-mod-manager://sources/add?url=https%3A%2F%2Flocalhost%2Fx.json".to_string(),
+            format!("deadlock-mod-manager://sources/add?{url}&{url}"),
+            format!("deadlock-mod-manager://sources/add?{url}&"),
+            "deadlock-mod-manager://sources/add?url=%ZZ".to_string(),
+            format!("deadlock-mod-manager://sources/install?{url}&source=community&listing=%0A"),
+            format!("deadlock-mod-manager://sources/install?{url}&source=community"),
+            "deadlock-mod-manager://sources/remove?url=https%3A%2F%2Fmods.example.org%2Fdmm-source.json".to_string(),
+            "deadlock-mod-manager://registerKey,4765184,DF385693F33BABD5".to_string(),
+            "sigil://open/deadlock-mod-manager://sources/add?url=%ZZ".to_string(),
+        ] {
+            assert!(parse_any(&bad).is_err(), "{bad}");
+        }
+        let args = |list: &[&str]| list.iter().map(|a| a.to_string()).collect::<Vec<_>>();
+        assert!(!launch_args_safe(&args(&[
+            "deadlock-mod-manager://sources/add?url=https%3A%2F%2Fmods.example.org%2Fdmm-source.json",
+            "--snap",
+            "C:\\evil.png"
+        ])));
     }
 
     #[test]

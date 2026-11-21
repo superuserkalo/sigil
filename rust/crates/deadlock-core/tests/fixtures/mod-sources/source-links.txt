@@ -1,0 +1,3 @@
+//sources/add?url=https%3A%2F%2Fmods.example.org%2Fdmm-source.json
+//sources/install?url=https%3A%2F%2Fmods.example.org%2Fdmm-source.json&source=community&listing=blue%20haze
+//sources/install?url=https%3A%2F%2Fmods.example.org%2Fdmm-source.json&source=community&listing=a+b&release=clean-hud-r2&artifact=blue
