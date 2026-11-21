@@ -291,6 +291,7 @@ pub const DE: &[(&str, &str)] = &[
     // Keycaps in tooltips.
     ("Ctrl", "Strg"),
     ("Cmd", "Cmd"),
+    ("Catalog {}", "Katalog {}"),
 ];
 
 /// Literals in the routed files that read as words but are not UI text.

@@ -1761,11 +1761,20 @@ fn titlebar(s: &State, u: &Ui, insets: rune::ChromeInsets) -> El {
         .h(TITLEBAR_H)
         .pl(PAGE_X)
         .pr(insets.trailing + 12.0)
-        .gap(12.0)
+        .gap(8.0)
         .center_y()
         .window_drag();
     if s.demo {
-        bar = bar.child(text("Demo data").font(SMALL).color(u.accent));
+        // Development only: a quiet chip, never the accent.
+        bar = bar.child(
+            row()
+                .h(20.0)
+                .px(6.0)
+                .center_y()
+                .radius(crate::ui::r(4.0))
+                .fill(u.over.alpha(0.07))
+                .child(text("Demo data").font(MICRO).color(u.muted)),
+        );
     }
     bar = bar.child(spacer());
     bar = bar.child(screens::profiles::titlebar_switcher(s, u));
@@ -1802,12 +1811,6 @@ fn titlebar(s: &State, u: &Ui, insets: rune::ChromeInsets) -> El {
     if s.screen.searches() && !PAGE_SEARCH.with(|on| on.get()) {
         bar = bar.child(search(s, u));
     }
-    bar = bar.child(
-        u.icon_button(&icons::KEYBOARD, &tr("Keyboard shortcuts"))
-            .key("titlebar-shortcuts")
-            .cursor(rune::Cursor::Pointer)
-            .on_press(|st: &mut State| st.shell.shortcuts = true),
-    );
     bar
 }
 
@@ -1825,7 +1828,8 @@ pub fn page_search(s: &State, u: &Ui) -> El {
 }
 
 fn search(s: &State, u: &Ui) -> El {
-    u.search_shell(search_field(s, u))
+    // 28 high inside the 32 point band, so it never touches the window's top edge.
+    u.search_shell(search_field(s, u)).h(crate::ui::CONTROL_M)
 }
 
 fn search_field(s: &State, u: &Ui) -> El {

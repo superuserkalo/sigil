@@ -18,7 +18,7 @@ use crate::app::State;
 use crate::icons;
 use crate::model::Screen;
 use crate::screens::settings::i18n::{fill, tr};
-use crate::ui::{MICRO, SMALL, Ui};
+use crate::ui::{SMALL, SMALL_NUM, Ui};
 
 /// The bar's height, in points.
 pub const BAR_H: f32 = 24.0;
@@ -113,19 +113,19 @@ fn speaker(volume: f32) -> &'static rune::Icon {
 pub(crate) fn part(u: &Ui, key: &str, glyph: &'static rune::Icon, words: String, tint: rune::Color, label: String) -> El {
     row()
         .key(key.to_string())
-        .h(20.0)
-        .px(6.0)
-        .gap(5.0)
+        .h(BAR_H)
+        .px(8.0)
+        .gap(6.0)
         .center_y()
-        .radius(crate::ui::r(5.0))
         .hover(u.hover)
         .press(u.over.alpha(0.08))
         .focusable(true)
         .role("button")
         .label(label)
         .cursor(rune::Cursor::Pointer)
-        .child(icon(glyph, 12.0).color(tint).a11y_hidden())
-        .child(text(words).font(MICRO).color(u.muted).a11y_hidden())
+        .help_above()
+        .child(icon(glyph, 14.0).color(tint).a11y_hidden())
+        .child(text(words).font(SMALL).color(u.muted).a11y_hidden())
 }
 
 fn divider(u: &Ui) -> El {
@@ -143,8 +143,9 @@ pub fn ago(seconds: i64) -> String {
 }
 
 fn game(s: &State, u: &Ui) -> El {
+    // Normal is quiet: the folder and the game's name. Not found keeps its full words.
     let (words, tint) = if s.game_detected {
-        (tr("Deadlock found"), u.teal)
+        ("Deadlock", u.muted)
     } else {
         (tr("Game not found"), u.amber)
     };
@@ -156,20 +157,24 @@ fn game(s: &State, u: &Ui) -> El {
     )
 }
 
-fn catalog(s: &State, u: &Ui) -> El {
+/// The saved catalog: only while it syncs, when Sigil is offline, or on Browse, where it is the
+/// page's data. When it is fine elsewhere it is noise.
+fn catalog(s: &State, u: &Ui) -> Option<El> {
     let v = &s.browse_view;
     let (words, tint) = if s.prefs.offline {
         (tr("Offline").to_string(), u.amber)
     } else if v.mirror_sync_job.is_running() {
         (tr("Catalog syncing").to_string(), u.accent)
+    } else if s.screen != Screen::Browse {
+        return None;
     } else {
         match v.mirror.as_ref().filter(|m| !m.entries.is_empty()) {
             Some(mirror) if mirror.meta.synced_at > 0 => {
                 let age = deadlock_core::gamebanana::now_unix() - mirror.meta.synced_at;
-                (fill(tr("Catalog synced {}"), &[&ago(age)]), u.faint)
+                (fill(tr("Catalog {}"), &[&ago(age)]), u.muted)
             }
-            Some(_) => (tr("Catalog saved").to_string(), u.faint),
-            None => (tr("Catalog not saved yet").to_string(), u.faint),
+            Some(_) => (tr("Catalog saved").to_string(), u.muted),
+            None => (tr("Catalog not saved yet").to_string(), u.muted),
         }
     };
     let label = if v.mirror_summary.is_empty() {
@@ -177,10 +182,10 @@ fn catalog(s: &State, u: &Ui) -> El {
     } else {
         format!("{words}. {}", v.mirror_summary)
     };
-    part(u, "statusbar-catalog", &icons::DATABASE, words, tint, label).on_press(|st: &mut State| {
+    Some(part(u, "statusbar-catalog", &icons::DATABASE, words, tint, label).on_press(|st: &mut State| {
         st.settings.tab = crate::screens::settings::Tab::Network;
         st.go(Screen::Settings);
-    })
+    }))
 }
 
 fn downloads(s: &State, u: &Ui) -> Option<El> {
@@ -204,19 +209,6 @@ fn downloads(s: &State, u: &Ui) -> Option<El> {
         part(u, "statusbar-downloads", &icons::DOWNLOAD, words.clone(), tint, words)
             .on_press(|st: &mut State| st.launch.downloads.panel = !st.launch.downloads.panel),
     )
-}
-
-fn profile(s: &State, u: &Ui) -> El {
-    let name = s
-        .profiles
-        .active
-        .as_ref()
-        .and_then(|slug| s.profiles.rows.iter().find(|row| &row.slug == slug))
-        .map(|row| row.name.clone())
-        .unwrap_or_else(|| tr("No profile").to_string());
-    let label = fill(tr("Profile: {}. Open Profiles"), &[&name]);
-    part(u, "statusbar-profile", &icons::LAYERS, name, u.faint, label)
-        .on_press(|st: &mut State| st.go(Screen::Profiles))
 }
 
 fn volume(s: &State, u: &Ui) -> El {
@@ -261,7 +253,7 @@ fn volume_popover(s: &State, u: &Ui, level: f32) -> El {
                 .center_y()
                 .child(text(tr("Preview volume")).font(SMALL).color(u.muted))
                 .child(spacer())
-                .child(text(format!("{}%", (level * 100.0).round() as u32)).font(MICRO).color(u.faint)),
+                .child(text(format!("{}%", (level * 100.0).round() as u32)).font(SMALL_NUM).color(u.muted)),
         )
         .child(
             row()
@@ -279,7 +271,7 @@ fn volume_popover(s: &State, u: &Ui, level: f32) -> El {
         )
         .child(
             text(tr("Every sound preview in Sigil plays at this level."))
-                .font(MICRO)
+                .font(SMALL)
                 .color(u.faint)
                 .wrap()
                 .w_full(),
@@ -314,7 +306,10 @@ pub fn view(s: &State, u: &Ui) -> Option<El> {
     if !s.prefs.status_bar {
         return regions.map(|chip| bar(u).child(chip).child(spacer()));
     }
-    let mut left = row().gap(2.0).center_y().child(game(s, u)).child(divider(u)).child(catalog(s, u));
+    let mut left = row().gap(2.0).center_y().child(game(s, u));
+    if let Some(catalog) = catalog(s, u) {
+        left = left.child(divider(u)).child(catalog);
+    }
     if let Some(chip) = regions {
         left = left.child(divider(u)).child(chip);
     }
@@ -328,19 +323,40 @@ pub fn view(s: &State, u: &Ui) -> Option<El> {
     if let Some(update) = update(s, u) {
         right = right.child(update).child(divider(u));
     }
-    right = right.child(profile(s, u)).child(divider(u)).child(volume(s, u));
+    // The profile lives in the titlebar switcher, the one that acts.
+    right = right.child(volume(s, u)).child(divider(u)).child(shortcuts(u));
     Some(bar(u).child(left).child(spacer()).child(right))
 }
 
+/// Keyboard shortcuts, at the bar's trailing end (`?` opens the same sheet).
+fn shortcuts(u: &Ui) -> El {
+    row()
+        .key("statusbar-shortcuts")
+        .size(BAR_H, BAR_H)
+        .center()
+        .hover(u.hover)
+        .press(u.over.alpha(0.08))
+        .focusable(true)
+        .role("button")
+        .label(tr("Keyboard shortcuts"))
+        .help(tr("Keyboard shortcuts"))
+        .help_keys(["?"])
+        .help_above()
+        .cursor(rune::Cursor::Pointer)
+        .on_press(|st: &mut State| st.shell.shortcuts = true)
+        .child(icon(&icons::KEYBOARD, 14.0).color(u.muted).a11y_hidden())
+}
+
 fn bar(u: &Ui) -> El {
+    // Parts carry 8 points of padding, so their icons start on the page's 24 point edge.
     row()
         .key("statusbar")
         .role("status")
         .label(tr("Status bar"))
         .w_full()
         .h(BAR_H)
-        .pl(12.0)
-        .pr(8.0)
+        .pl(crate::ui::PAGE_X - 8.0)
+        .pr(crate::ui::PAGE_X - 8.0)
         .gap(8.0)
         .center_y()
         .border_sides([1.0, 0.0, 0.0, 0.0], u.hair)
