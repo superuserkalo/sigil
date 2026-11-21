@@ -141,12 +141,14 @@ fn hover_check(name: &str, size: (f32, f32), prefix: &str, skip: &[&str]) {
 
 #[test]
 fn hovering_installed_cards_neither_commits_nor_moves() {
+    let _globals = crate::ui::test_globals();
     hover_check("demo-installed", (1280.0, 800.0), "addon-", &[]);
 }
 
 
 #[test]
 fn hovering_browse_cards_neither_commits_nor_moves() {
+    let _globals = crate::ui::test_globals();
     // Tall enough that the grid under the shelves is in the window.
     hover_check("browse-card-stress", (1280.0, 2000.0), "browse-card-", &["browse-card-actions", "browse-card-stat"]);
 }
@@ -154,6 +156,7 @@ fn hovering_browse_cards_neither_commits_nor_moves() {
 /// Pages at rest draw nothing: no spinner, pulse or timer keeps them awake.
 #[test]
 fn core_scenes_come_to_rest() {
+    let _globals = crate::ui::test_globals();
     for name in ["demo-installed", "installed-list", "browse-card-stress", "locker", "stats", "launch-page", "performance"] {
         let mut rt = runtime(name, (1280.0, 800.0));
         let mut awake = 0;
@@ -169,6 +172,7 @@ fn core_scenes_come_to_rest() {
 /// Layout nodes per scene at 1280x800. A budget, not a target: raise one only with a reason.
 #[test]
 fn core_scenes_stay_inside_their_node_budget() {
+    let _globals = crate::ui::test_globals();
     let budgets: &[(&str, usize)] = &[
         ("demo-installed", 480),
         // 96 mods. Before rows were virtual it built every card: 2685 and 2106 nodes.
@@ -196,6 +200,7 @@ fn core_scenes_stay_inside_their_node_budget() {
 /// within a minute of launch. It must keep one height through those, or the page jumps twice.
 #[test]
 fn update_banner_keeps_one_height_through_its_states() {
+    let _globals = crate::ui::test_globals();
     let mut heights = Vec::new();
     for state in ["available", "downloading", "ready"] {
         let mut s = crate::data::init_state();
@@ -235,6 +240,7 @@ fn targets(rt: &Runtime<State>) -> Vec<(String, [i32; 4])> {
 /// jumps on frame two, on every open and every resize.
 #[test]
 fn first_frame_is_laid_out_at_the_real_width() {
+    let _globals = crate::ui::test_globals();
     let wrong = same_language(first_frame_moves);
     assert!(wrong.is_empty(), "laid out again after the first frame:\n{}", wrong.join("\n"));
 }
@@ -291,6 +297,7 @@ fn first_frame_moves() -> Vec<String> {
 /// the page at its top jumped about 400 pt down.
 #[test]
 fn resizing_across_a_column_break_keeps_the_page_where_it_is() {
+    let _globals = crate::ui::test_globals();
     let mut rt = runtime("browse-card-stress", (1360.0, 680.0));
     let scrolled = |rt: &Runtime<State>| {
         rt.elements().into_iter().find(|e| e.key.as_deref() == Some("browse-page")).map(|e| e.scrolled[1])
@@ -310,6 +317,7 @@ fn resizing_across_a_column_break_keeps_the_page_where_it_is() {
 /// built: 2685 layout nodes at 96 mods, about 8000 at 300.
 #[test]
 fn installed_cost_does_not_grow_with_the_library() {
+    let _globals = crate::ui::test_globals();
     let nodes = |mods: u16| {
         let mut s = crate::data::init_state();
         crate::bench_scenes::installed_stress_of(&mut s, mods);
