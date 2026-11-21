@@ -23,8 +23,8 @@ const WORD_DARK_KEY: &str = "sigil:brand/word-dark";
 
 /// The wordmark's width over its height (248 by 112).
 const WORD_ASPECT: f32 = 248.0 / 112.0;
-const MARK_PT: f32 = 24.0;
-const WORD_PT: f32 = 19.0;
+const MARK_PT: f32 = 20.0;
+const WORD_PT: f32 = 14.0;
 
 /// The app icon for windows and the Dock. Call before `run`.
 pub fn install_app_icon() {
@@ -59,7 +59,9 @@ pub fn mark<'a>(s: &'a State, u: &Ui) -> Option<&'a rune::Pixels> {
     s.thumbnails.get(if dark_theme { MARK_LIGHT_KEY } else { MARK_DARK_KEY })
 }
 
-/// The mark and the wordmark in the theme's ink; the plain name until they decode.
+/// The mark and the wordmark in the theme's ink; the plain name until they decode, in the
+/// lockup's exact box so nothing moves when the images arrive. The mark spans the nav icon
+/// column and the wordmark starts on the nav label edge.
 pub fn header(s: &State, u: &Ui) -> El {
     let dark_theme = (u.ink.r + u.ink.g + u.ink.b) / 3.0 > 0.5;
     let (mark, word) = if dark_theme {
@@ -80,6 +82,12 @@ pub fn header(s: &State, u: &Ui) -> El {
                     .pixels_fit(word, SurfaceFit::Fit)
                     .a11y_hidden(),
             ),
-        _ => text("Sigil").font(WORDMARK).color(u.ink),
+        _ => row()
+            .key("brand-lockup")
+            .size(MARK_PT + 8.0 + WORD_PT * WORD_ASPECT, MARK_PT)
+            .center_y()
+            .label("Sigil")
+            .child(el().w(MARK_PT + 8.0))
+            .child(text("Sigil").font(WORDMARK).color(u.ink).a11y_hidden()),
     }
 }

@@ -28,7 +28,7 @@ use crate::model::{
 use crate::publish::PublishJob;
 use crate::screens;
 use crate::ui::{
-    ActionKind, BODY, BODY_MED, LABEL, MICRO, NAV, PAGE_X, SMALL, TITLEBAR_H, Tone,
+    ActionKind, BODY, BODY_MED, LABEL, MICRO, NAV, PAGE_X, SMALL, SMALL_NUM, TITLEBAR_H, Tone,
     Ui,
 };
 
@@ -1387,12 +1387,8 @@ fn sidebar(s: &State, u: &Ui, insets: rune::ChromeInsets) -> El {
     }
     let collapsed = s.shell.w4.collapsed;
 
-    // The wordmark clears the traffic lights on macOS and sits on the 16 point edge elsewhere.
-    let brand_left = if insets.leading > 0.0 {
-        insets.leading + 12.0
-    } else {
-        18.0
-    };
+    // macOS: the traffic lights take the first row, so the lockup gets its own row under them.
+    let lights_row = insets.leading > 0.0;
     let foot = if collapsed {
         // Icons only (wave 4): the launch buttons and Settings keep their tooltips.
         col()
@@ -1434,7 +1430,7 @@ fn sidebar(s: &State, u: &Ui, insets: rune::ChromeInsets) -> El {
                     s.settings.launch_vanilla_pick,
                 )
             } else {
-                screens::settings::personalize::launch_art(s, u, launch_modded(s, u), false)
+                screens::settings::personalize::launch_art(s, u, launch_modded(u), false)
             })
             .child(if s.prefs.single_launch {
                 el()
@@ -1451,32 +1447,48 @@ fn sidebar(s: &State, u: &Ui, insets: rune::ChromeInsets) -> El {
         .h_full()
         .fill(screens::settings::personalize::sidebar_fill(s, u))
         .border_sides([0.0, 1.0, 0.0, 0.0], u.hair)
-        .child(
+        .children((lights_row && !collapsed).then(|| {
+            // The traffic lights and the collapse button, on the titlebar's band.
+            row()
+                .key("sidebar-lights")
+                .w_full()
+                .h(TITLEBAR_H)
+                .pr(12.0)
+                .center_y()
+                .window_drag()
+                .child(spacer())
+                .child(crate::shell_w4::collapse_button(s, u))
+        }))
+        .child(if collapsed {
+            // Icons only: the rail's top row, with Expand centred where the row is free (on
+            // macOS the traffic lights fill it and Expand sits in the foot).
             row()
                 .key("brand")
                 .w_full()
                 .h(TITLEBAR_H)
-                .pl(brand_left)
-                // Collapsed with a free row: 18 on both sides centres the 28 point button.
-                .pr(if collapsed { 18.0 } else { 12.0 })
+                .center()
+                .window_drag()
+                .child(if lights_row { el() } else { crate::shell_w4::collapse_button(s, u) })
+        } else {
+            row()
+                .key("brand")
+                .w_full()
+                .h(TITLEBAR_H)
+                // The mark spans the nav icon column (16 to 36) and the wordmark starts on the
+                // label edge (44); the collapse button mirrors the icon axis on the right.
+                .pl(16.0)
+                .pr(12.0)
                 .center_y()
                 .window_drag()
-                .child(if collapsed {
-                    el()
-                } else if s.shell.w4.eggs {
+                .child(if s.shell.w4.eggs {
                     // Easter eggs: five knocks on the wordmark open the news computer.
                     el().on_press(crate::shell_tips::knock).child(crate::brand::header(s, u))
                 } else {
                     crate::brand::header(s, u)
                 })
-                // Collapse sits on the wordmark's row (Expand too, when the row is free).
                 .child(spacer())
-                .child(if !collapsed || insets.leading <= 0.0 {
-                    crate::shell_w4::collapse_button(s, u)
-                } else {
-                    el()
-                }),
-        )
+                .children((!lights_row).then(|| crate::shell_w4::collapse_button(s, u)))
+        })
         .child(
             col()
                 .key("nav-scroll")
@@ -1538,6 +1550,7 @@ fn nav_item(s: &State, u: &Ui, screen: Screen) -> El {
             .role("tab")
             .label(tr(screen.title()))
             .help(tr(screen.title()))
+            .help_side(rune::Side::Right)
             .checked(on)
             .cursor(rune::Cursor::Pointer)
             .on_press(move |st: &mut State| st.go(screen))
@@ -1554,18 +1567,22 @@ fn nav_item(s: &State, u: &Ui, screen: Screen) -> El {
                     .map(|_| crate::shell_w4::dot(u.amber).pin(None, Some(6.0), Some(10.0), None)),
             );
     }
+    // The trailing slot is always there, so a count or "New" arriving never re-truncates the
+    // label.
+    let mut slot = row().key("nav-slot").min_w(28.0).h(20.0).center_y().justify_end();
     if crate::shell_w4::is_new(s, screen) {
-        r = r.child(crate::shell_w4::new_pill(u));
-    }
-    if let Some(joke) = crate::shell_tips::meme(s, screen) {
-        r = r.help(joke);
+        slot = slot.child(crate::shell_w4::new_pill(u));
     }
     if let Some((label, warn)) = nav_count(s, screen) {
-        r = r.child(
+        slot = slot.child(
             text(label)
-                .font(MICRO)
-                .color(if warn { u.amber } else { u.faint }),
+                .font(SMALL_NUM)
+                .color(if warn { u.amber } else { u.muted }),
         );
+    }
+    r = r.child(slot);
+    if let Some(joke) = crate::shell_tips::meme(s, screen) {
+        r = r.help(joke);
     }
     // Personalize: art behind the active tab, off by default.
     screens::settings::personalize::tab_art(s, u, r, on)
@@ -1589,13 +1606,12 @@ fn nav_count(s: &State, screen: Screen) -> Option<(String, bool)> {
     }
 }
 
-fn launch_modded(s: &State, u: &Ui) -> El {
-    let enabled = s.addons.enabled_count();
+fn launch_modded(u: &Ui) -> El {
     row()
         .key("launch-modded")
         .w_full()
         .h(crate::ui::CONTROL_L)
-        .px(12.0)
+        .px(10.0)
         .gap(10.0)
         .center_y()
         .radius(crate::ui::r(8.0))
@@ -1608,7 +1624,7 @@ fn launch_modded(s: &State, u: &Ui) -> El {
         .cursor(rune::Cursor::Pointer)
         .on_press_tx(|st: &mut State, tx: &mut Tx| ask_or_launch(st, tx, false))
         .child(
-            rune::icon(&icons::PLAY, 14.0)
+            rune::icon(&icons::PLAY, 16.0)
                 .color(u.accent_ink)
                 .a11y_hidden(),
         )
@@ -1618,13 +1634,6 @@ fn launch_modded(s: &State, u: &Ui) -> El {
                 .color(u.accent_ink)
                 .grow(1.0),
         )
-        .child(if s.addons.scanned && enabled > 0 {
-            text(enabled.to_string())
-                .font(MICRO)
-                .color(u.accent_ink.alpha(0.7))
-        } else {
-            el()
-        })
 }
 
 /// The single launch button in the sidebar (Settings, General).
@@ -1655,8 +1664,8 @@ fn launch_vanilla(u: &Ui) -> El {
     row()
         .key("launch-vanilla")
         .w_full()
-        .h(32.0)
-        .px(12.0)
+        .h(crate::ui::CONTROL_L)
+        .px(10.0)
         .gap(10.0)
         .center_y()
         .radius(crate::ui::r(8.0))
@@ -1667,8 +1676,8 @@ fn launch_vanilla(u: &Ui) -> El {
         .label(tr("Launch vanilla"))
         .cursor(rune::Cursor::Pointer)
         .on_press_tx(|st: &mut State, tx: &mut Tx| ask_or_launch(st, tx, true))
-        .child(rune::icon(&icons::PLAY, 14.0).color(u.faint).a11y_hidden())
-        .child(text(tr("Launch vanilla")).font(BODY).color(u.muted).grow(1.0))
+        .child(rune::icon(&icons::PLAY, 16.0).color(u.muted).a11y_hidden())
+        .child(text(tr("Launch vanilla")).font(NAV).color(u.prose).grow(1.0))
 }
 
 /// A launch button with its icon only, for the collapsed sidebar. With one launch button the
@@ -1688,11 +1697,12 @@ fn compact_launch(s: &State, u: &Ui, vanilla: bool) -> El {
         .role("button")
         .label(label)
         .help(label)
+        .help_side(rune::Side::Right)
         .cursor(rune::Cursor::Pointer)
         .on_press_tx(move |st: &mut State, tx: &mut Tx| ask_or_launch(st, tx, vanilla))
         .child(
-            rune::icon(&icons::PLAY, 14.0)
-                .color(if vanilla { u.faint } else { u.accent_ink })
+            rune::icon(&icons::PLAY, 16.0)
+                .color(if vanilla { u.muted } else { u.accent_ink })
                 .a11y_hidden(),
         )
 }
@@ -1704,6 +1714,7 @@ fn settings_item(s: &State, u: &Ui) -> El {
             .role("tab")
             .label(tr("Settings"))
             .help(tr("Settings"))
+            .help_side(rune::Side::Right)
             .checked(on)
             .cursor(rune::Cursor::Pointer)
             .on_press(|st: &mut State| st.go(Screen::Settings))
@@ -1735,13 +1746,9 @@ fn settings_item(s: &State, u: &Ui) -> El {
                 .color(if on { u.ink } else { u.prose })
                 .grow(1.0),
         )
-        // An update is downloaded and ready: a dot before the version (crate::updater).
+        // An update is downloaded and ready: a dot (crate::updater). The version lives in
+        // Settings, About.
         .children(crate::updater::sidebar_badge(s, u))
-        .child(
-            text(concat!("v", env!("CARGO_PKG_VERSION")))
-                .font(MICRO)
-                .color(u.faint),
-        )
 }
 
 /// The band across the top of the content. It moves the window, holds the search for the

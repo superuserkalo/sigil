@@ -14,7 +14,7 @@ use crate::screens::settings::options;
 use crate::ui::{ActionKind, BODY_MED, MICRO, Ui};
 
 /// The sidebar's width with icons only.
-pub const COLLAPSED_W: f32 = 64.0;
+pub const COLLAPSED_W: f32 = 48.0;
 
 /// Pages marked "New" in the sidebar until they are opened once. DMM marks the pages it added
 /// last; these are Sigil's newest places.
@@ -87,26 +87,19 @@ pub fn collapse_button(s: &State, u: &Ui) -> El {
     let label = tr(if collapsed { "Expand sidebar" } else { "Collapse sidebar" });
     row()
         .key("sidebar-collapse")
-        .size(28.0, 28.0)
+        .size(crate::ui::CONTROL_M, crate::ui::CONTROL_M)
         .center()
         .radius(crate::ui::r(6.0))
         .hover(u.hover)
-        .press(Color::WHITE.alpha(0.06))
+        .press(u.over.alpha(0.08))
         .focusable(true)
         .role("button")
         .label(label)
-        .help(fill(tr("{} ({})"), &[label, shortcut_label()]))
+        .help(label)
+        .help_keys([tr(if cfg!(target_os = "macos") { "Cmd" } else { "Ctrl" }), "B"])
         .cursor(rune::Cursor::Pointer)
         .on_press(toggle_sidebar)
-        .child(
-            rune::icon(if collapsed { &icons::CHEVRON_RIGHT } else { &icons::PANEL_LEFT }, 15.0)
-                .color(u.faint)
-                .a11y_hidden(),
-        )
-}
-
-fn shortcut_label() -> &'static str {
-    if cfg!(target_os = "macos") { "Cmd+B" } else { "Ctrl+B" }
+        .child(rune::icon(&icons::PANEL_LEFT, 16.0).color(u.muted).a11y_hidden())
 }
 
 // --- New marks ------------------------------------------------------------------------------

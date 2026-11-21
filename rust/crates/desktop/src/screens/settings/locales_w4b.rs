@@ -288,6 +288,9 @@ pub const DE: &[(&str, &str)] = &[
     ("Blueprint draws a fine grid like graph paper, Crest the Sigil mark behind the pages, Terminal the grid and monospace type.", "Blaupause zeichnet ein feines Raster wie Millimeterpapier, Wappen das Sigil-Zeichen hinter den Seiten, Terminal das Raster und Festbreitenschrift."),
     ("Seasonal effects", "Saisonale Effekte"),
     ("Snow, sparks, lanterns or petals drifting over the window while the season shows. Light: 15 frames a second, nothing when it is off.", "Schnee, Funken, Laternen oder Blüten treiben über das Fenster, solange die Saison läuft. Sparsam: 15 Bilder pro Sekunde, nichts, wenn es aus ist."),
+    // Keycaps in tooltips.
+    ("Ctrl", "Strg"),
+    ("Cmd", "Cmd"),
 ];
 
 /// Literals in the routed files that read as words but are not UI text.

@@ -9,13 +9,13 @@ use crate::model::{Compat, ToneKey};
 
 pub mod personalize;
 
-pub const SIDEBAR_W: f32 = 232.0;
+pub const SIDEBAR_W: f32 = 216.0;
 pub const RAIL_W: f32 = 304.0;
-pub const TITLEBAR_H: f32 = 40.0;
+pub const TITLEBAR_H: f32 = 32.0;
 pub const HEADER_H: f32 = 40.0;
 pub const STATUS_H: f32 = 0.0;
-pub const PAGE_X: f32 = 32.0;
-pub const PAGE_TOP: f32 = 24.0;
+pub const PAGE_X: f32 = 24.0;
+pub const PAGE_TOP: f32 = 12.0;
 
 // The type scale. Rune bundles three Inter faces (Regular 400, Medium 500, SemiBold 600) and
 // matches weights the CSS way, so a weight between faces draws in the next heavier one: write
@@ -1025,33 +1025,12 @@ impl Ui {
         c
     }
 
-    /// The page header: title, an optional one line description, actions on the right, and a
-    /// hairline under it. The kicker argument is ignored.
-    pub fn page_head(&self, _kicker: &str, title: &str, detail: &str, trailing: Option<El>) -> El {
-        // Keeps a short summary readable when the trailing controls are wide.
-        let mut left = col()
-            .grow(1.0)
-            .min_w(120.0)
-            .gap(4.0)
-            .child(text(title.to_string()).font(DISPLAY).color(self.ink));
-        if !detail.is_empty() {
-            left = left.child(
-                text(detail.to_string())
-                    .font(BODY)
-                    .color(self.muted)
-                    .truncate(),
-            );
-        }
-        let mut r = row().w_full().gap(16.0).child(left);
-        r = if detail.is_empty() {
-            r.items_center()
-        } else {
-            r.items_end()
-        };
-        if let Some(t) = trailing {
-            r = r.child(t);
-        }
-        col().w_full().gap(16.0).child(r).child(self.divider())
+    /// The page header, now the page's one toolbar line: the title, then the trailing
+    /// controls, 32 points high, no subtitle, no rule. The kicker and detail arguments are
+    /// ignored (a page that needs a sentence puts it in its empty state or a `note`). New code
+    /// calls `page_toolbar` directly.
+    pub fn page_head(&self, _kicker: &str, title: &str, _detail: &str, trailing: Option<El>) -> El {
+        self.page_toolbar(self.page_title(title), Vec::new(), None, trailing.into_iter().collect())
     }
 
     pub fn panel_header(&self, title: &str, meta: &str) -> El {
