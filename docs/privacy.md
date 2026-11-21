@@ -213,6 +213,9 @@ Nothing about you is sent beyond what answering those requests requires.
 `api.deadlock-api.com` is a community project with game data and statistics.
 
 - Hero, item and rank data for Stats, Locker and hero pickers. Nothing about you is sent.
+- Stats > Fun run reads the hero, item and ability lists (`/v1/assets/heroes?only_active=true`,
+  `/v1/assets/items/by-type/upgrade` and `/by-type/ability`) on the first Roll, cached for a week.
+  Rolling, codes and Copy build stay on this computer. Nothing about you is sent.
 - Stats views send the Steam account ids you enter or pick, with the filters you chose, and read
   hero stats, item stats, hero combination stats and one match's item timeline. Responses are
   cached locally (`cache/stats`).
@@ -352,7 +355,9 @@ host fails.
 
 - Your mods, projects, profiles, crosshair settings, filters and view options.
 - Logs and crash dumps, which are analysed locally and only leave inside a diagnostics bundle you
-  send or, as a scrubbed tail, a crash report. A panic writes a scrubbed crash file locally whether
+  send or, as a scrubbed tail, a crash report. Deadlock's own crash dumps and the end of its
+  `console.log` are read on this computer to name the mod file a crash was loading; saved game
+  presets (`game-presets.json`) stay in the app data directory. A panic writes a scrubbed crash file locally whether
   or not crash reports are on; Don't send deletes it.
 - The session marker (`telemetry/session.json`) and the crash ledger (`telemetry/crash-ledger.json`:
   fingerprints and times of sent and declined crashes, for the limits), in the app data directory.

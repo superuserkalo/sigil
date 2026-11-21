@@ -152,6 +152,8 @@ pub struct View {
     pub scratch: TextEdit,
     /// Steam launch options, written into Steam when Sigil launches the game.
     pub launch: Launch,
+    /// The console variable catalogue and game presets (`autoexec_convars.rs`).
+    pub convars: crate::screens::autoexec_convars::Convars,
 }
 
 /// The launch options section: the saved value, the field, and what Steam holds.
@@ -201,6 +203,7 @@ impl Default for View {
             copied: None,
             scratch: TextEdit::new(""),
             launch: Launch::default(),
+            convars: Default::default(),
         }
     }
 }
@@ -498,6 +501,8 @@ pub fn view(s: &State, u: &Ui) -> El {
             .child(el().h(8.0))
             .child(editor(s, u))
             .child(el().h(8.0))
+            .child(crate::screens::autoexec_convars::section(s, u))
+            .child(el().h(8.0))
             .child(launch_section(s, u));
     }
 
@@ -519,7 +524,7 @@ pub fn dialog(s: &State, u: &Ui) -> Option<El> {
     } else if s.autoexec.confirm_clear {
         Some(clear_layer(s, u))
     } else {
-        None
+        crate::screens::autoexec_convars::dialog(s, u)
     }
 }
 
