@@ -72,6 +72,13 @@ pub const DE: &[(&str, &str)] = &[
     ("Your previous crosshair settings are back.", "Deine vorherigen Fadenkreuz-Einstellungen sind zurück."),
     ("The hero settings were not changed", "Die Helden-Einstellungen wurden nicht geändert"),
     ("Find the game folder first.", "Finde zuerst den Spielordner."),
+    // Import from game and the page-off cleanup (`crosshair_game.rs`, Grimoire #504).
+    ("No Deadlock install found, so there is no in-game crosshair to import.", "Keine Deadlock-Installation gefunden, daher gibt es kein Fadenkreuz aus dem Spiel zu importieren."),
+    ("Read the in-game crosshair from {}.", "Das Fadenkreuz aus dem Spiel wurde aus {} gelesen."),
+    ("The game has not saved a crosshair yet, so the defaults are shown.", "Das Spiel hat noch kein Fadenkreuz gespeichert, daher werden die Standardwerte gezeigt."),
+    ("The Crosshair page is off, so the game keeps the crosshair you set in game.", "Die Fadenkreuz-Seite ist aus, daher behält das Spiel das Fadenkreuz, das du im Spiel eingestellt hast."),
+    ("Could not take the crosshair out of autoexec", "Das Fadenkreuz konnte nicht aus autoexec entfernt werden"),
+    ("autoexec.cfg still sets the crosshair Sigil wrote, so the game resets your in-game crosshair at every start.", "autoexec.cfg setzt noch das Fadenkreuz, das Sigil geschrieben hat, daher setzt das Spiel dein im Spiel eingestelltes Fadenkreuz bei jedem Start zurück."),
 ];
 
 pub fn get(text: &str) -> Option<&'static str> {
@@ -128,6 +135,7 @@ mod tests {
         let extra = [super::super::DESCRIPTION, "Copying", "Copied", "Copy code"];
         let mut missing: Vec<String> = routed(include_str!("crosshair.rs"))
             .into_iter()
+            .chain(routed(include_str!("crosshair_game.rs")))
             .chain(extra.iter().map(|text| text.to_string()))
             .filter(|text| get(text).is_none())
             .collect();

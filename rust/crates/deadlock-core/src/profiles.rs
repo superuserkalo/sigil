@@ -974,6 +974,29 @@ pub fn apply_profile(
     apply_profile_with(game_root, workspace, slug, approve, game_running())
 }
 
+/// What the app leaves out of a profile apply.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ApplyChoices {
+    /// Leave the profile's crosshair out of autoexec.cfg: the Crosshair page is off, so
+    /// nothing in Sigil would show or clear it while the game runs it at every start (Grimoire
+    /// #504). The current crosshair block, if any, stays as it is.
+    pub skip_crosshair: bool,
+}
+
+/// The warning a skipped crosshair adds to the apply result.
+pub const CROSSHAIR_SKIPPED: &str = "The profile's crosshair was left out because the Crosshair page is off.";
+
+/// [`apply_profile`] with the app's choices. Game install write.
+pub fn apply_profile_choosing(
+    game_root: &Path,
+    workspace: &Path,
+    slug: &str,
+    approve: bool,
+    choices: ApplyChoices,
+) -> Result<ProfileApplyResult> {
+    apply_profile_inner(game_root, workspace, slug, approve, game_running(), choices)
+}
+
 /// [`apply_profile`] with the process check supplied, so tests and the app's poll can say.
 pub fn apply_profile_with(
     game_root: &Path,
@@ -982,7 +1005,19 @@ pub fn apply_profile_with(
     approve: bool,
     running: bool,
 ) -> Result<ProfileApplyResult> {
-    let profile = read_profile(workspace, slug)?;
+    apply_profile_inner(game_root, workspace, slug, approve, running, ApplyChoices::default())
+}
+
+fn apply_profile_inner(
+    game_root: &Path,
+    workspace: &Path,
+    slug: &str,
+    approve: bool,
+    running: bool,
+    choices: ApplyChoices,
+) -> Result<ProfileApplyResult> {
+    let mut profile = read_profile(workspace, slug)?;
+    let skipped_crosshair = choices.skip_crosshair && profile.crosshair.take().is_some();
     let addons = addons_dir(game_root);
 
     if !approve {
@@ -1022,6 +1057,9 @@ pub fn apply_profile_with(
     result.previous_active = previous_active;
     result.previous_folder = previous_folder;
     result.snapshot = snapshot;
+    if skipped_crosshair {
+        result.warnings.push(CROSSHAIR_SKIPPED.to_string());
+    }
     set_active_profile(workspace, Some(&profile.slug))?;
     Ok(result)
 }
@@ -2814,6 +2852,26 @@ mod tests {
         // In sync now: a second apply does not rewrite autoexec.
         let again = apply_profile_with(&s.game(), &s.workspace(), "comp", true, false).unwrap();
         assert!(!again.autoexec_written);
+    }
+
+    /// Grimoire #504: while the Crosshair page is off a profile's crosshair is not written;
+    /// its autoexec lines still are, and the result says why the crosshair was left out.
+    #[test]
+    fn apply_skips_the_crosshair_while_its_page_is_off() {
+        let s = Scratch::new("skip-crosshair");
+        s.put("pak01_dir.vpk", "a");
+        let text = crate::crosshair::apply_to_autoexec("fps_max 240\n", &Crosshair::default()).unwrap();
+        s.autoexec(&text);
+        create_profile(&s.game(), &s.workspace(), "Comp", true).unwrap();
+
+        s.autoexec("fps_max 60\n");
+        let choices = ApplyChoices { skip_crosshair: true };
+        let result =
+            apply_profile_inner(&s.game(), &s.workspace(), "comp", true, false, choices).unwrap();
+        let written = s.read_autoexec();
+        assert!(written.contains("fps_max 240"), "the autoexec lines still apply");
+        assert!(!written.contains(AUTOEXEC_BEGIN), "no crosshair block was written");
+        assert!(result.warnings.iter().any(|w| w == CROSSHAIR_SKIPPED));
     }
 
     #[test]

@@ -576,11 +576,16 @@ fn finish_apply(st: &mut State, name: String, applied: core::ProfileApplyResult)
     if applied.folder.is_some() {
         detail.push("its own folder is mounted".to_string());
     }
-    if !applied.warnings.is_empty() {
+    // The crosshair note is not a missing mod (Grimoire #504).
+    let missing = applied.warnings.iter().filter(|w| w.as_str() != core::CROSSHAIR_SKIPPED).count();
+    if missing > 0 {
         detail.push(format!(
             "{} not installed",
             plural(applied.warnings.len(), "mod")
         ));
+    }
+    if missing < applied.warnings.len() {
+        detail.push(tr("crosshair left out while the Crosshair page is off").to_string());
     }
     let detail = sentence_case(&detail.join(", "));
     let mut notice = if applied.warnings.is_empty() {
@@ -1488,10 +1493,12 @@ fn apply(st: &mut State, slug: &str) {
     let workspace = crate::data::workspace_dir();
     let slug = slug.to_string();
     let wake = st.wake.clone();
+    // Grimoire #504: while the Crosshair page is off its crosshair is not written.
+    let choices = core::ApplyChoices { skip_crosshair: !st.prefs.page_on(crate::model::Screen::Crosshair) };
     st.profiles.apply_job.start(wake, move || {
         Ok((
             name,
-            core::apply_profile(&game_root, &workspace, &slug, true)
+            core::apply_profile_choosing(&game_root, &workspace, &slug, true, choices)
                 .map_err(|error| error.to_string()),
         ))
     });

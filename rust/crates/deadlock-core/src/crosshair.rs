@@ -863,7 +863,8 @@ pub fn parse_share_code(body: &str) -> Result<String> {
     }
 }
 
-/// Read the crosshair the player set in game from `machine_convars.vcfg`.
+/// Read the crosshair the player set in game from `machine_convars.vcfg` (where older game
+/// builds kept it).
 ///
 /// Returns `None` when the text has no crosshair convar at all, which is
 /// different from "the file uses the game defaults".
@@ -884,53 +885,78 @@ pub fn parse_machine_convars(text: &str) -> Option<Crosshair> {
         let Some(field) = key.strip_prefix("citadel_crosshair_") else {
             continue;
         };
+        set_field(&mut crosshair, field, value);
         found = true;
-        match field {
-            "pip_gap" => crosshair.pip_gap = parse_int(value, crosshair.pip_gap),
-            "pip_gap_static" => crosshair.pip_gap_static = parse_bool(value),
-            "pip_height" => crosshair.pip_height = parse_int(value, crosshair.pip_height),
-            "pip_width" => crosshair.pip_width = parse_int(value, crosshair.pip_width),
-            "pip_opacity" => crosshair.pip_opacity = parse_float(value, crosshair.pip_opacity),
-            "pip_outline_border" => {
-                crosshair.pip_outline_border = parse_int(value, crosshair.pip_outline_border)
-            }
-            "pip_outline_gap" => {
-                crosshair.pip_outline_gap = parse_int(value, crosshair.pip_outline_gap)
-            }
-            "pip_outline_opacity" => {
-                crosshair.pip_outline_opacity = parse_float(value, crosshair.pip_outline_opacity)
-            }
-            "dot_size" => crosshair.dot_size = parse_int(value, crosshair.dot_size),
-            "dot_opacity" => crosshair.dot_opacity = parse_float(value, crosshair.dot_opacity),
-            "dot_outline_border" => {
-                crosshair.dot_outline_border = parse_int(value, crosshair.dot_outline_border)
-            }
-            "dot_outline_gap" => {
-                crosshair.dot_outline_gap = parse_int(value, crosshair.dot_outline_gap)
-            }
-            "dot_outline_opacity" => {
-                crosshair.dot_outline_opacity = parse_float(value, crosshair.dot_outline_opacity)
-            }
-            "color_r" => crosshair.color_r = parse_int(value, crosshair.color_r),
-            "color_g" => crosshair.color_g = parse_int(value, crosshair.color_g),
-            "color_b" => crosshair.color_b = parse_int(value, crosshair.color_b),
-            "outline_color_r" => {
-                crosshair.outline_color_r = parse_int(value, crosshair.outline_color_r)
-            }
-            "outline_color_g" => {
-                crosshair.outline_color_g = parse_int(value, crosshair.outline_color_g)
-            }
-            "outline_color_b" => {
-                crosshair.outline_color_b = parse_int(value, crosshair.outline_color_b)
-            }
-            "disable_hero_specific_crosshairs" => {
-                crosshair.disable_hero_specific_crosshairs = parse_bool(value)
-            }
-            _ => {}
-        }
     }
 
     if found { Some(crosshair) } else { None }
+}
+
+/// Read the crosshair from `citadel_hero_settings.lst`, where the game keeps it since crosshairs
+/// became per hero (Grimoire #504 `parseHeroSettingsCrosshair`). Only the `base` object is read;
+/// hero overrides under `heroes` are not. Keys are the convar names without `citadel_`.
+/// `crosshair_themed` has no convar twin and is skipped. `None` when `base` has no crosshair
+/// setting or the file does not parse.
+pub fn parse_hero_settings(text: &str) -> Option<Crosshair> {
+    let fields = crate::game_plans::hero_settings_base(text).ok()?;
+    let mut crosshair = Crosshair::default();
+    let mut found = false;
+    for (name, value) in &fields {
+        let Some(field) = name.strip_prefix("crosshair_") else {
+            continue;
+        };
+        found |= set_field(&mut crosshair, field, value.trim());
+    }
+    if found { Some(crosshair) } else { None }
+}
+
+/// Set one field by its convar name after `citadel_crosshair_`. False for a name the designer
+/// does not have.
+fn set_field(crosshair: &mut Crosshair, field: &str, value: &str) -> bool {
+    match field {
+        "pip_gap" => crosshair.pip_gap = parse_int(value, crosshair.pip_gap),
+        "pip_gap_static" => crosshair.pip_gap_static = parse_bool(value),
+        "pip_height" => crosshair.pip_height = parse_int(value, crosshair.pip_height),
+        "pip_width" => crosshair.pip_width = parse_int(value, crosshair.pip_width),
+        "pip_opacity" => crosshair.pip_opacity = parse_float(value, crosshair.pip_opacity),
+        "pip_outline_border" => {
+            crosshair.pip_outline_border = parse_int(value, crosshair.pip_outline_border)
+        }
+        "pip_outline_gap" => {
+            crosshair.pip_outline_gap = parse_int(value, crosshair.pip_outline_gap)
+        }
+        "pip_outline_opacity" => {
+            crosshair.pip_outline_opacity = parse_float(value, crosshair.pip_outline_opacity)
+        }
+        "dot_size" => crosshair.dot_size = parse_int(value, crosshair.dot_size),
+        "dot_opacity" => crosshair.dot_opacity = parse_float(value, crosshair.dot_opacity),
+        "dot_outline_border" => {
+            crosshair.dot_outline_border = parse_int(value, crosshair.dot_outline_border)
+        }
+        "dot_outline_gap" => {
+            crosshair.dot_outline_gap = parse_int(value, crosshair.dot_outline_gap)
+        }
+        "dot_outline_opacity" => {
+            crosshair.dot_outline_opacity = parse_float(value, crosshair.dot_outline_opacity)
+        }
+        "color_r" => crosshair.color_r = parse_int(value, crosshair.color_r),
+        "color_g" => crosshair.color_g = parse_int(value, crosshair.color_g),
+        "color_b" => crosshair.color_b = parse_int(value, crosshair.color_b),
+        "outline_color_r" => {
+            crosshair.outline_color_r = parse_int(value, crosshair.outline_color_r)
+        }
+        "outline_color_g" => {
+            crosshair.outline_color_g = parse_int(value, crosshair.outline_color_g)
+        }
+        "outline_color_b" => {
+            crosshair.outline_color_b = parse_int(value, crosshair.outline_color_b)
+        }
+        "disable_hero_specific_crosshairs" => {
+            crosshair.disable_hero_specific_crosshairs = parse_bool(value)
+        }
+        _ => return false,
+    }
+    true
 }
 
 fn parse_int(value: &str, fallback: i32) -> i32 {
@@ -1086,6 +1112,38 @@ mod tests {
     #[test]
     fn a_file_without_crosshair_data_is_none() {
         assert!(parse_machine_convars("\"setting\" \"1\"\n").is_none());
+    }
+
+    /// Grimoire #504: the game keeps the crosshair in `citadel_hero_settings.lst`; only the
+    /// `base` object counts, hero overrides and `crosshair_themed` do not.
+    #[test]
+    fn hero_settings_import_reads_the_base_object_only() {
+        let text = "<!-- kv3 encoding:text:version{e21c7f3c-8a33-41c5-9977-a76d3a32aa0d} format:generic:version{7412167c-06e9-4698-aff2-e63eb59037e7} -->\n{\n\theroes =\n\t{\n\t\thero_inferno =\n\t\t{\n\t\t\tcrosshair_color_r = \"200\"\n\t\t}\n\t}\n\tbase =\n\t{\n\t\tcrosshair_color_r = \"12\"\n\t\tcrosshair_pip_gap = \"7\"\n\t\tcrosshair_dot_opacity = \"0.5\"\n\t\tcrosshair_pip_gap_static = \"true\"\n\t\tcrosshair_themed = \"false\"\n\t\tfov = \"90\"\n\t}\n}\n";
+        let crosshair = parse_hero_settings(text).expect("a crosshair");
+        assert_eq!(crosshair.color_r, 12);
+        assert_eq!(crosshair.pip_gap, 7);
+        assert!((crosshair.dot_opacity - 0.5).abs() < 1e-9);
+        assert!(crosshair.pip_gap_static);
+        assert_eq!(crosshair.color_g, Crosshair::default().color_g);
+        assert!(parse_hero_settings(crate::game_plans::EMPTY_HERO_SETTINGS).is_none());
+        assert!(parse_hero_settings("{\n\tbase = { crosshair_themed = \"false\" }\n}\n").is_none());
+        assert!(parse_hero_settings("not kv3").is_none());
+    }
+
+    /// What Sigil writes into the hero settings reads back as the same crosshair.
+    #[test]
+    fn hero_settings_round_trip() {
+        let mut crosshair = Crosshair::default();
+        crosshair.color_b = 99;
+        crosshair.pip_width = 4;
+        let changes = crate::game_plans::crosshair_hero_settings(&crosshair)
+            .into_iter()
+            .map(|(k, v)| (k, Some(v)))
+            .collect();
+        let text = crate::game_plans::update_hero_settings(crate::game_plans::EMPTY_HERO_SETTINGS, &changes).expect("update");
+        let back = parse_hero_settings(&text).expect("read back");
+        assert_eq!(back.color_b, 99);
+        assert_eq!(back.pip_width, 4);
     }
 
     #[test]
