@@ -29,6 +29,8 @@ pub struct Checks {
     pub analysis: Option<Result<AddonsAnalysis, String>>,
     pub hud_job: Job<Vec<HudCheck>>,
     pub hud: Option<Result<Vec<HudCheck>, String>>,
+    /// "Remove N leftover files" was pressed once and asks before moving them.
+    pub confirm_remove: bool,
 }
 
 fn library() -> Vec<(u16, String)> {
@@ -50,6 +52,7 @@ fn start(st: &mut State) {
     }
     let dir = super::addons_folder(st);
     st.installed.checks.analysis = None;
+    st.installed.checks.confirm_remove = false;
     st.installed.checks.job.start(st.wake.clone(), move || {
         addon_checks::analyze_addons(&dir, &library()).map_err(|e| e.to_string())
     });
@@ -159,6 +162,63 @@ fn close(st: &mut State) {
     st.installed.checks.open = false;
 }
 
+/// Move every leftover Analyze listed to Sigil's trash, as one undoable change. Each addon
+/// folder gets its own entry, so a failure in one never stops another.
+fn remove_leftovers(st: &mut State) {
+    st.installed.checks.confirm_remove = false;
+    if st.demo {
+        st.status = tr("Demo library: nothing was changed.").to_string();
+        return;
+    }
+    if crate::screens::settings::watch::refuse_while_running(st) {
+        return;
+    }
+    let groups: std::collections::BTreeMap<PathBuf, Vec<String>> = match &st.installed.checks.analysis {
+        Some(Ok(analysis)) => {
+            let mut groups: std::collections::BTreeMap<PathBuf, Vec<String>> = std::collections::BTreeMap::new();
+            for leftover in &analysis.leftovers {
+                groups.entry(leftover.folder.clone()).or_default().push(leftover.file.clone());
+            }
+            groups
+        }
+        _ => return,
+    };
+    let trash_root = super::trash_dir();
+    let mut entries = Vec::new();
+    let mut errors = Vec::new();
+    for (folder, names) in groups {
+        match deadlock_core::trash::trash_loose(&folder, &trash_root, &names, true) {
+            Ok(entry) => entries.push(entry),
+            Err(error) => errors.push(error.to_string()),
+        }
+    }
+    if entries.is_empty() {
+        if !errors.is_empty() {
+            crate::notify::push(
+                st,
+                crate::notify::Notice::error(tr("The leftover files could not be removed")).detail(errors.join(" ")),
+            );
+        }
+        return;
+    }
+    let files: usize = entries.iter().map(|entry| entry.manifest.files.len()).sum();
+    st.installed.last_undo = Some(super::Undo::Delete(entries.iter().map(|entry| entry.dir.clone()).collect()));
+    st.installed.undo_fresh = true;
+    st.status = fill(tr("Removed {} leftover files."), &[&files.to_string()]);
+    if !errors.is_empty() {
+        crate::notify::push(
+            st,
+            crate::notify::Notice::warning(fill(
+                tr("{} leftover files could not be removed"),
+                &[&errors.len().to_string()],
+            ))
+            .detail(errors.join(" ")),
+        );
+    }
+    crate::data::start_addon_scan(st);
+    start(st);
+}
+
 fn heading(u: &Ui, words: &str) -> El {
     text(words.to_string()).font(H2).color(u.ink).pt(6.0)
 }
@@ -207,6 +267,72 @@ pub fn dialog(s: &State, u: &Ui) -> Option<El> {
                     words.push_str(&fill(tr("Left by a stopped reorder: {}."), &[&f.temp_files.join(", ")]));
                 }
                 body = body.child(line(u, words));
+            }
+            if !a.leftovers.is_empty() {
+                let count = a.leftovers.len();
+                let remove_label = if count == 1 {
+                    tr("Remove 1 leftover file").to_string()
+                } else {
+                    fill(tr("Remove {} leftover files"), &[&count.to_string()])
+                };
+                body = body.child(
+                    row()
+                        .w_full()
+                        .gap(8.0)
+                        .center_y()
+                        .child(heading(u, tr("Leftover files")))
+                        .child(spacer())
+                        .child(
+                            u.action(&remove_label, ActionKind::Secondary)
+                                .key("checks-remove-leftovers")
+                                .cursor(rune::Cursor::Pointer)
+                                .on_press(|st: &mut State| st.installed.checks.confirm_remove = true),
+                        ),
+                );
+                body = body.child(line(u, tr("No mod uses these. They go to the trash, and you can undo this.").to_string()));
+                for leftover in a.leftovers.iter().take(8) {
+                    let folder = leftover
+                        .folder
+                        .file_name()
+                        .map(|name| name.to_string_lossy().into_owned())
+                        .unwrap_or_default();
+                    body = body.child(line(u, format!("{}  ·  {}  ·  {}", leftover.file, leftover.kind.label(), folder)));
+                }
+                if count > 8 {
+                    body = body.child(line(u, fill(tr("and {} more"), &[&(count - 8).to_string()])));
+                }
+                if c.confirm_remove {
+                    body = body.child(
+                        row()
+                            .key("checks-remove-ask")
+                            .w_full()
+                            .padding(10.0)
+                            .gap(8.0)
+                            .center_y()
+                            .radius(crate::ui::r(8.0))
+                            .border(1.0, u.amber.alpha(0.45))
+                            .child(
+                                text(tr("Remove these files? They go to the trash, and you can put them back."))
+                                    .font(SMALL)
+                                    .color(u.prose)
+                                    .wrap()
+                                    .grow(1.0)
+                                    .min_w(0.0),
+                            )
+                            .child(
+                                u.action(tr("Cancel"), ActionKind::Ghost)
+                                    .key("checks-remove-cancel")
+                                    .cursor(rune::Cursor::Pointer)
+                                    .on_press(|st: &mut State| st.installed.checks.confirm_remove = false),
+                            )
+                            .child(
+                                u.action(tr("Remove"), ActionKind::Primary)
+                                    .key("checks-remove-yes")
+                                    .cursor(rune::Cursor::Pointer)
+                                    .on_press(remove_leftovers),
+                            ),
+                    );
+                }
             }
             if !a.unknown_slots.is_empty() {
                 body = body.child(heading(u, tr("Not in your library")));
@@ -366,7 +492,7 @@ pub fn dialog(s: &State, u: &Ui) -> Option<El> {
 /// The scene: two folders, an unknown slot, a read-only file, a missing chunk and an outdated
 /// HUD mod.
 pub fn stage_scene(st: &mut State) {
-    use deadlock_core::addon_checks::{FolderSummary, HudStatus};
+    use deadlock_core::addon_checks::{FolderSummary, HudStatus, Leftover, LeftoverKind};
     let folder = |index: usize, name: &str, enabled, disabled, bytes| FolderSummary {
         index,
         folder: PathBuf::from(name),
@@ -388,6 +514,11 @@ pub fn stage_scene(st: &mut State) {
         doubled_slots: Vec::new(),
         read_only: vec![PathBuf::from("pak04_dir.vpk")],
         missing: vec![MissingFile::ChunksGone { slot: 3, file: "pak03_dir.vpk".to_string(), chunks: vec!["pak03_001.vpk".to_string()] }],
+        leftovers: vec![
+            Leftover { folder: PathBuf::from("addons"), file: "pak12_000.vpk".to_string(), kind: LeftoverKind::OrphanChunk },
+            Leftover { folder: PathBuf::from("addons"), file: "readme.txt".to_string(), kind: LeftoverKind::Ignored },
+            Leftover { folder: PathBuf::from("addons"), file: "pak08_dir.vpk.tmp".to_string(), kind: LeftoverKind::TempFile },
+        ],
     }));
     st.installed.checks.hud = Some(Ok(vec![HudCheck {
         slot: 2,

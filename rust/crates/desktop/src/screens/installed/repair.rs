@@ -21,7 +21,7 @@ use std::path::{Path, PathBuf};
 
 use deadlock_core::compat_repair::{self, AppliedRepair, RepairFinding, RepairKind};
 use deadlock_core::{import, mod_extras};
-use rune::{El, col, row, text};
+use rune::{El, Tx, col, row, text};
 use serde_json::{Value, json};
 
 use crate::app::State;
@@ -45,6 +45,18 @@ pub struct Record {
     pub old_size: u64,
     pub new_size: u64,
     pub changes: usize,
+    /// The repair rules' revision that made this file. An older one is rebuilt from its backup
+    /// when the app updates, as Deadlock Mod Manager does with its repair revision.
+    pub rule: u32,
+}
+
+/// An archive as the dry run read it. The review for a slot is kept against this stamp: a
+/// different size or hash means the archive changed, so its findings and its approval are
+/// reset (DMM's saved review is keyed the same way).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Stamp {
+    pub sha256: String,
+    pub size: u64,
 }
 
 /// What the review's dry run found.
@@ -56,6 +68,8 @@ pub struct Checked {
     pub animations: BTreeSet<u16>,
     /// Slots the dry run could not read (a split archive, a broken file), and why.
     pub errors: BTreeMap<u16, String>,
+    /// The archive each slot had when the dry run read it, by SHA-256 and size.
+    pub stamps: BTreeMap<u16, Stamp>,
 }
 
 /// One result of a repair batch.
@@ -75,6 +89,8 @@ pub struct Repairs {
     pub work: Job<Vec<Done>>,
     /// Slots waiting for the animation question.
     pub ask: Option<Vec<u16>>,
+    /// A health review is open and should be read again when the running rebuild finishes.
+    pub refresh_health: bool,
 }
 
 impl Record {
@@ -87,6 +103,7 @@ impl Record {
             "oldSize": self.old_size,
             "newSize": self.new_size,
             "changes": self.changes,
+            "rule": self.rule,
         })
     }
 
@@ -99,6 +116,12 @@ impl Record {
             old_size: v.get("oldSize")?.as_u64()?,
             new_size: v.get("newSize")?.as_u64()?,
             changes: v.get("changes").and_then(Value::as_u64).unwrap_or(0) as usize,
+            // Records written before the revision existed were made by revision 1.
+            rule: v
+                .get("rule")
+                .and_then(Value::as_u64)
+                .and_then(|n| u32::try_from(n).ok())
+                .unwrap_or(1),
         })
     }
 }
@@ -167,7 +190,7 @@ pub fn start_check(st: &mut State) {
         st.installed.repairs.records = load_records();
         st.installed.repairs.loaded = true;
     }
-    if st.demo || rune::is_headless() || st.installed.repairs.check.is_running() {
+    if st.demo || rune::is_headless() || st.installed.repairs.check.is_running() || st.installed.repairs.work.is_running() {
         return;
     }
     let Some(game_root) = st.game_root.clone() else { return };
@@ -175,6 +198,10 @@ pub fn start_check(st: &mut State) {
     let wake = st.wake.clone();
     st.installed.repairs.check.start(wake, move || Ok(dry_run(&game_root, &files)));
 }
+
+/// Read-only analysis workers for the full recheck (DMM PR #1386): every mod's animations are
+/// learned first, then two workers check the mods side by side.
+pub const CHECK_WORKERS: usize = 2;
 
 fn dry_run(game_root: &Path, files: &[(u16, String, PathBuf)]) -> Checked {
     let base = deadlock_core::game_index::game_vpk_path(game_root);
@@ -184,23 +211,78 @@ fn dry_run(game_root: &Path, files: &[(u16, String, PathBuf)]) -> Checked {
             out.animations.insert(*slot);
         }
     }
-    for (slot, _, path) in files {
-        let overrides = meets_animations(&out.animations, *slot);
-        let mut found = Vec::new();
-        for kind in KINDS {
-            match compat_repair::check(&base, path, kind, overrides) {
-                Ok(findings) => found.extend(findings.into_iter().filter(|f| f.repairable)),
-                Err(error) => {
-                    out.errors.insert(*slot, error.to_string());
-                    break;
+    let animations = out.animations.clone();
+    let results = analyse_parallel(files, CHECK_WORKERS, |slot, path| check_one(&base, slot, path, &animations));
+    for (slot, result) in results {
+        match result {
+            Ok((found, stamp)) => {
+                out.stamps.insert(slot, stamp);
+                if !found.is_empty() {
+                    out.findings.insert(slot, found);
                 }
             }
-        }
-        if !found.is_empty() {
-            out.findings.insert(*slot, found);
+            Err((error, stamp)) => {
+                if let Some(stamp) = stamp {
+                    out.stamps.insert(slot, stamp);
+                }
+                out.errors.insert(slot, error);
+            }
         }
     }
     out
+}
+
+/// Both repair families' repairable findings for one mod, with the archive's stamp, or the
+/// first error and the stamp when the file was readable.
+fn check_one(
+    base: &Path,
+    slot: u16,
+    path: &Path,
+    animations: &BTreeSet<u16>,
+) -> std::result::Result<(Vec<RepairFinding>, Stamp), (String, Option<Stamp>)> {
+    let stamp = std::fs::metadata(path)
+        .map_err(|error| (error.to_string(), None))
+        .and_then(|meta| {
+            deadlock_core::identify::sha256_file(path)
+                .map(|sha256| Stamp { sha256, size: meta.len() })
+                .map_err(|error| (error.to_string(), None))
+        })?;
+    let overrides = meets_animations(animations, slot);
+    let mut found = Vec::new();
+    for kind in KINDS {
+        let findings = compat_repair::check(base, path, kind, overrides)
+            .map_err(|error| (error.to_string(), Some(stamp.clone())))?;
+        found.extend(findings.into_iter().filter(|f| f.repairable));
+    }
+    Ok((found, stamp))
+}
+
+/// Run `check` over the files on `workers` threads, each taking the next file from a shared
+/// cursor, and return the results in slot order.
+pub fn analyse_parallel<T, F>(files: &[(u16, String, PathBuf)], workers: usize, check: F) -> Vec<(u16, T)>
+where
+    T: Send,
+    F: Fn(u16, &Path) -> T + Sync,
+{
+    let next = std::sync::atomic::AtomicUsize::new(0);
+    let results = std::sync::Mutex::new(Vec::with_capacity(files.len()));
+    std::thread::scope(|scope| {
+        for _ in 0..workers.clamp(1, files.len().max(1)) {
+            scope.spawn(|| {
+                loop {
+                    let index = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    let Some((slot, _, path)) = files.get(index) else { break };
+                    let result = check(*slot, path);
+                    if let Ok(mut results) = results.lock() {
+                        results.push((*slot, result));
+                    }
+                }
+            });
+        }
+    });
+    let mut results = results.into_inner().unwrap_or_default();
+    results.sort_by_key(|(slot, _)| *slot);
+    results
 }
 
 /// Repair these slots, asking first when another enabled mod ships animations.
@@ -240,22 +322,61 @@ fn repair_all(game_root: &Path, files: &[(u16, String, PathBuf)], animations: &B
     let base = deadlock_core::game_index::game_vpk_path(game_root);
     files
         .iter()
-        .map(|(slot, file, path)| {
-            match compat_repair::apply_repair(
-                &base,
-                path,
-                &KINDS,
-                meets_animations(animations, *slot),
-                &backup_root(),
-                &staging(),
-                true,
-            ) {
-                Ok(Some(applied)) => Done::Repaired { slot: *slot, file: file.clone(), applied },
-                Ok(None) => Done::Nothing(*slot),
-                Err(error) => Done::Failed(*slot, error.to_string()),
-            }
-        })
+        .map(|(slot, file, path)| repair_slot(&base, *slot, file, path, meets_animations(animations, *slot)))
         .collect()
+}
+
+/// Repair one slot's file. `overrides` asks the data heal to keep another mod's animations.
+fn repair_slot(base: &Path, slot: u16, file: &str, path: &Path, overrides: bool) -> Done {
+    match compat_repair::apply_repair(base, path, &KINDS, overrides, &backup_root(), &staging(), true) {
+        Ok(Some(applied)) => Done::Repaired { slot, file: file.to_string(), applied },
+        Ok(None) => Done::Nothing(slot),
+        Err(error) => Done::Failed(slot, error.to_string()),
+    }
+}
+
+/// Rebuild repairs whose archive changed or whose rules are older than this build's.
+///
+/// `tasks` is `(slot, revert_first)`. A changed archive (an update, a reinstall, the player
+/// replacing the file while Deadlock ran) is repaired in place: the standing repair is the
+/// approval. A stale rule revision goes back to its backup first, so the new rule sees the
+/// original mod rather than the old repair's output.
+fn start_rebuild(st: &mut State, tasks: Vec<(u16, bool)>, records: BTreeMap<u16, Record>) {
+    let Some(game_root) = st.game_root.clone() else { return };
+    let dir = super::addons_folder(st);
+    let files: Vec<(u16, String, PathBuf)> = st
+        .addons
+        .addons
+        .iter()
+        .map(|addon| (addon.slot, addon.file.clone(), addon.path(&dir)))
+        .collect();
+    let active: BTreeSet<u16> = st.addons.addons.iter().filter(|addon| addon.enabled).map(|addon| addon.slot).collect();
+    let animations: BTreeSet<u16> = files
+        .iter()
+        .filter(|(slot, _, path)| active.contains(slot) && compat_repair::has_animation_overrides(std::slice::from_ref(path)))
+        .map(|(slot, _, _)| *slot)
+        .collect();
+    let wake = st.wake.clone();
+    st.installed.repairs.work.start(wake, move || {
+        let base = deadlock_core::game_index::game_vpk_path(&game_root);
+        Ok(tasks
+            .into_iter()
+            .map(|(slot, revert_first)| {
+                let Some((_, file, path)) = files.iter().find(|(own, _, _)| *own == slot).cloned() else {
+                    return Done::Failed(slot, "The mod's file is gone.".to_string());
+                };
+                if revert_first {
+                    let Some(record) = records.get(&slot) else {
+                        return Done::Failed(slot, "The repair's backup is not on record.".to_string());
+                    };
+                    if let Err(error) = compat_repair::revert_repair(&record.backup, &path, &record.new_sha256, true) {
+                        return Done::Failed(slot, error.to_string());
+                    }
+                }
+                repair_slot(&base, slot, &file, &path, meets_animations(&animations, slot))
+            })
+            .collect())
+    });
 }
 
 /// Revert one repair from its backup.
@@ -308,6 +429,7 @@ pub fn finish(st: &mut State, done: Vec<Done>) {
                     old_size: applied.old_size,
                     new_size: applied.new_size,
                     changes,
+                    rule: compat_repair::REPAIR_RULE,
                 });
                 if let Some(c) = st.installed.repairs.checked.as_mut() {
                     c.findings.remove(&slot);
@@ -352,9 +474,20 @@ pub fn finish(st: &mut State, done: Vec<Done>) {
     super::rescan(st);
 }
 
-/// Take finished work. Called from Installed's poll.
+/// Take finished work, and reconcile repairs with the files on disk. Called from Installed's
+/// poll.
+///
+/// Two things bring a repair back after its file changed: the app's rule revision is newer
+/// than the one a record was made under (an app update; the record goes back to its backup and
+/// is repaired again), or the slot's archive is no longer the file the record's SHA-256 names
+/// (a mod update, a reinstall, Steam verifying, or a file the player changed while Deadlock
+/// ran). The second waits until the game is closed, so a repair never writes while it reads.
 pub fn poll(st: &mut State) -> bool {
     let mut changed = false;
+    if !st.installed.repairs.loaded && !st.demo {
+        st.installed.repairs.records = load_records();
+        st.installed.repairs.loaded = true;
+    }
     if let Some(result) = st.installed.repairs.check.try_take() {
         st.installed.repairs.checked = result.ok();
         changed = true;
@@ -364,9 +497,105 @@ pub fn poll(st: &mut State) -> bool {
             Ok(done) => finish(st, done),
             Err(error) => st.status = error,
         }
+        if std::mem::take(&mut st.installed.repairs.refresh_health) && st.installed.tools.health.is_some() {
+            super::tools::open_health(st);
+        }
         changed = true;
     }
+    changed |= reconcile(st);
     changed
+}
+
+/// Reset review findings for archives that changed, and rebuild repairs whose archive changed
+/// or whose rule revision is old. Returns whether anything was started.
+fn reconcile(st: &mut State) -> bool {
+    let enabled: BTreeSet<u16> = st.addons.addons.iter().filter(|addon| addon.enabled).map(|addon| addon.slot).collect();
+    let sizes: BTreeMap<u16, u64> = st.addons.addons.iter().map(|addon| (addon.slot, addon.size_bytes)).collect();
+    let mut recheck = false;
+    if let Some(checked) = st.installed.repairs.checked.as_mut() {
+        let stale: Vec<u16> = checked
+            .stamps
+            .iter()
+            .filter(|(slot, stamp)| !enabled.contains(*slot) || sizes.get(*slot) != Some(&stamp.size))
+            .map(|(slot, _)| *slot)
+            .collect();
+        if !stale.is_empty() {
+            for slot in stale {
+                checked.stamps.remove(&slot);
+                checked.findings.remove(&slot);
+                checked.errors.remove(&slot);
+            }
+            recheck = true;
+        }
+    }
+
+    let running = st.settings.game_running || st.launch.monitor.running();
+    let can_rebuild = !st.demo
+        && !rune::is_headless()
+        && !running
+        && !st.installed.repairs.work.is_running()
+        && st.game_root.is_some();
+    let mut tasks: Vec<(u16, bool)> = Vec::new();
+    if can_rebuild {
+        for record in &st.installed.repairs.records {
+            match sizes.get(&record.slot) {
+                None => {}
+                Some(size) if *size != record.new_size => tasks.push((record.slot, false)),
+                Some(_) if record.rule < compat_repair::REPAIR_RULE => tasks.push((record.slot, true)),
+                Some(_) => {}
+            }
+        }
+    }
+    if !tasks.is_empty() {
+        let records: BTreeMap<u16, Record> = st.installed.repairs.records.iter().map(|record| (record.slot, record.clone())).collect();
+        st.installed.repairs.records.retain(|record| {
+            let current = sizes.get(&record.slot).copied();
+            current == Some(record.new_size) && record.rule >= compat_repair::REPAIR_RULE
+        });
+        save_records(&st.installed.repairs.records);
+        if st.installed.tools.health.is_some() {
+            st.installed.repairs.refresh_health = true;
+        }
+        start_rebuild(st, tasks, records);
+        return true;
+    }
+    if recheck && !running && !st.demo && !rune::is_headless() {
+        start_check(st);
+        return true;
+    }
+    false
+}
+
+/// A mod was updated or reinstalled: its repair record names the file that was there before, so
+/// drop it, recheck the new file, and rebuild the repair when the mod had one. The health review
+/// is refreshed right away when it is open and nothing is being rebuilt (DMM rechecks after an
+/// installed file changes).
+pub fn after_update(st: &mut State, slot: u16) {
+    if st.demo || rune::is_headless() {
+        return;
+    }
+    let records: BTreeMap<u16, Record> = st.installed.repairs.records.iter().map(|record| (record.slot, record.clone())).collect();
+    let repaired = records.contains_key(&slot);
+    st.installed.repairs.records.retain(|record| record.slot != slot);
+    save_records(&st.installed.repairs.records);
+    if let Some(checked) = st.installed.repairs.checked.as_mut() {
+        checked.stamps.remove(&slot);
+        checked.findings.remove(&slot);
+        checked.errors.remove(&slot);
+    }
+    let running = st.settings.game_running || st.launch.monitor.running();
+    let rebuild = repaired && !running && !st.installed.repairs.work.is_running() && st.game_root.is_some();
+    if rebuild {
+        if st.installed.tools.health.is_some() {
+            st.installed.repairs.refresh_health = true;
+        }
+        start_rebuild(st, vec![(slot, false)], records);
+    } else {
+        start_check(st);
+        if st.installed.tools.health.is_some() {
+            super::tools::open_health(st);
+        }
+    }
 }
 
 /// The launch step for "Fix mods automatically before launch": repair every enabled mod that
@@ -390,6 +619,138 @@ pub fn start_before_launch(st: &mut State) -> bool {
         Ok(repair_all(&game_root, &files, &animations))
     });
     true
+}
+
+// --- copyable diagnostics ----------------------------------------------------------------
+
+/// One mod's part of the diagnostics: its path findings, what a repair would change, why it
+/// could not be read, and whether it was repaired. English on purpose: the text goes to mod
+/// authors and bug reports, like Send diagnostics.
+pub fn mod_text(
+    name: &str,
+    slot: u16,
+    review: Option<&deadlock_core::mod_health::SlotReview>,
+    checked: Option<&Checked>,
+    record: Option<&Record>,
+) -> String {
+    let mut out = format!("[{}] {name}\n", deadlock_core::addons::slot_label(slot));
+    if let Some(review) = review {
+        if let Some(error) = &review.error {
+            out.push_str(&format!("  unreadable: {error}\n"));
+        }
+        if !review.issues.is_empty() {
+            out.push_str(&format!("  {} of {} paths not in the game\n", review.missing, review.entries));
+        }
+        for issue in &review.issues {
+            match &issue.now_at {
+                Some(now) => out.push_str(&format!("  {}: {} (now {now})\n", issue.kind.label(), issue.path)),
+                None => out.push_str(&format!("  {}: {}\n", issue.kind.label(), issue.path)),
+            }
+        }
+        if review.more > 0 {
+            out.push_str(&format!("  and {} more\n", review.more));
+        }
+    }
+    if let Some(checked) = checked {
+        for finding in checked.findings.get(&slot).into_iter().flatten() {
+            out.push_str(&format!("  repair {}: {} ({} changes)", finding.kind, finding.entry, finding.changes.max(1)));
+            if !finding.detail.is_empty() {
+                out.push_str(&format!(": {}", finding.detail));
+            }
+            out.push('\n');
+        }
+        if let Some(error) = checked.errors.get(&slot) {
+            out.push_str(&format!("  repair check failed: {error}\n"));
+        }
+        if checked.animations.contains(&slot) {
+            out.push_str("  ships animation files\n");
+        }
+    }
+    if let Some(record) = record {
+        out.push_str(&format!(
+            "  repaired: {} changes, {} -> {} bytes, sha256 {}\n",
+            record.changes, record.old_size, record.new_size, record.new_sha256
+        ));
+    }
+    out
+}
+
+/// `ClientVersion` from the game's `steam.inf`, read when the player presses Copy.
+fn client_version(game_root: Option<&Path>) -> Option<String> {
+    let text = std::fs::read_to_string(game_root?.join("game").join("citadel").join("steam.inf")).ok()?;
+    text.lines()
+        .find_map(|line| line.trim().strip_prefix("ClientVersion=").map(|v| v.trim().to_string()))
+}
+
+/// The whole review as text (DMM 2.4.0's copyable compatibility diagnostics): app and game
+/// build, then every mod with a finding, a repair or an error.
+pub fn review_text(s: &State) -> String {
+    let reviews: &[deadlock_core::mod_health::SlotReview] =
+        s.installed.tools.health.as_ref().map(|h| h.reviews.as_slice()).unwrap_or(&[]);
+    let checked = s.installed.repairs.checked.as_ref();
+    let mut slots: BTreeSet<u16> = reviews.iter().filter(|r| !r.is_clear()).map(|r| r.slot).collect();
+    if let Some(c) = checked {
+        slots.extend(c.findings.keys().copied());
+        slots.extend(c.errors.keys().copied());
+    }
+    slots.extend(s.installed.repairs.records.iter().map(|r| r.slot));
+    let version = env!("CARGO_PKG_VERSION");
+    let build = client_version(s.game_root.as_deref()).unwrap_or_else(|| "unknown".to_string());
+    let count = s.installed.tools.health.as_ref().map(|h| h.checked).unwrap_or(0);
+    let mut out = format!("Sigil {version} compatibility review\nGame build: {build}\nMods checked: {count}\n");
+    if slots.is_empty() {
+        out.push_str("(nothing to report)\n");
+    }
+    for slot in slots {
+        out.push('\n');
+        out.push_str(&slot_text(s, slot));
+    }
+    out
+}
+
+/// [`mod_text`] for one slot of the live state.
+pub fn slot_text(s: &State, slot: u16) -> String {
+    let name = s
+        .addons
+        .addons
+        .iter()
+        .find(|a| a.slot == slot)
+        .map(|a| display_name(s, a))
+        .unwrap_or_else(|| {
+            let label = deadlock_core::addons::slot_label(slot);
+            format!("Slot {label}")
+        });
+    let review = s.installed.tools.health.as_ref().and_then(|h| h.reviews.iter().find(|r| r.slot == slot));
+    let record = s.installed.repairs.records.iter().find(|r| r.slot == slot);
+    mod_text(&name, slot, review, s.installed.repairs.checked.as_ref(), record)
+}
+
+/// Put `text` on the clipboard and say so.
+pub fn copy(st: &mut State, tx: &mut Tx, text: String) {
+    tx.copy(text);
+    crate::notify::push(st, crate::notify::Notice::info(tr("Copied the details to the clipboard")));
+}
+
+/// The Copy details button for the whole review, in the review's footer.
+pub fn copy_all(u: &Ui) -> El {
+    u.icon_action(&icons::COPY, tr("Copy details"), ActionKind::Ghost)
+        .key("health-copy")
+        .cursor(rune::Cursor::Pointer)
+        .on_press_tx(|st: &mut State, tx: &mut Tx| {
+            let text = review_text(st);
+            copy(st, tx, text);
+        })
+}
+
+/// A small copy button for one mod's row.
+fn copy_one(u: &Ui, slot: u16, key: &str) -> El {
+    u.icon_button(&icons::COPY, tr("Copy details"))
+        .key(format!("{key}-{slot:02}"))
+        .cursor(rune::Cursor::Pointer)
+        .on_press_tx(move |st: &mut State, tx: &mut Tx| {
+            let text = slot_text(st, slot);
+            copy(st, tx, text);
+        })
 }
 
 // --- view --------------------------------------------------------------------------------
@@ -430,6 +791,7 @@ pub fn block(s: &State, u: &Ui) -> Option<El> {
                             .font(SMALL)
                             .color(u.amber),
                     )
+                    .child(copy_one(u, slot, "repair-copy"))
                     .child(
                         u.action(tr("Repair"), ActionKind::Secondary)
                             .key(format!("repair-one-{slot:02}"))
@@ -446,7 +808,8 @@ pub fn block(s: &State, u: &Ui) -> Option<El> {
                     .py(4.0)
                     .gap(8.0)
                     .child(text(deadlock_core::addons::slot_label(*slot)).font(MICRO).color(u.faint).w(28.0))
-                    .child(text(error.clone()).font(SMALL).color(u.faint).wrap().grow(1.0).min_w(0.0)),
+                    .child(text(error.clone()).font(SMALL).color(u.faint).wrap().grow(1.0).min_w(0.0))
+                    .child(copy_one(u, *slot, "repair-error-copy")),
             );
         }
     }
@@ -464,6 +827,7 @@ pub fn block(s: &State, u: &Ui) -> Option<El> {
                 .child(text(deadlock_core::addons::slot_label(record.slot)).font(MICRO).color(u.faint).w(28.0))
                 .child(text(display_name(s, addon)).font(BODY_MED).color(u.ink).truncate().grow(1.0).min_w(0.0))
                 .child(text(tr("Repaired")).font(SMALL).color(u.teal))
+                .child(copy_one(u, record.slot, "repair-done-copy"))
                 .child(
                     u.action(tr("Revert"), ActionKind::Ghost)
                         .key(format!("repair-revert-{:02}", record.slot))
@@ -577,6 +941,7 @@ pub fn stage_scene(st: &mut State, asking: bool) {
             old_size: addon.size_bytes + 512,
             new_size: addon.size_bytes,
             changes: 3,
+            rule: compat_repair::REPAIR_RULE,
         });
     }
     if asking {
@@ -597,6 +962,61 @@ mod tests {
     }
 
     #[test]
+    fn the_recheck_runs_on_two_workers_and_keeps_slot_order() {
+        let files: Vec<(u16, String, PathBuf)> =
+            [7u16, 2, 9, 4, 1].iter().map(|slot| (*slot, format!("pak{slot:02}_dir.vpk"), PathBuf::from(format!("pak{slot:02}_dir.vpk")))).collect();
+        let threads = std::sync::Mutex::new(std::collections::HashSet::new());
+        let at_once = std::sync::atomic::AtomicUsize::new(0);
+        let peak = std::sync::atomic::AtomicUsize::new(0);
+        let results = analyse_parallel(&files, CHECK_WORKERS, |slot, path| {
+            use std::sync::atomic::Ordering;
+            let now = at_once.fetch_add(1, Ordering::SeqCst) + 1;
+            peak.fetch_max(now, Ordering::SeqCst);
+            threads.lock().unwrap().insert(std::thread::current().id());
+            std::thread::sleep(std::time::Duration::from_millis(20));
+            at_once.fetch_sub(1, Ordering::SeqCst);
+            (slot, path.to_path_buf())
+        });
+        let slots: Vec<u16> = results.iter().map(|(slot, _)| *slot).collect();
+        assert_eq!(slots, vec![1, 2, 4, 7, 9]);
+        assert!(results.iter().all(|(slot, (same, path))| slot == same && path.to_string_lossy().contains(&format!("{slot:02}"))));
+        assert!(peak.load(std::sync::atomic::Ordering::SeqCst) <= CHECK_WORKERS);
+        assert_eq!(threads.lock().unwrap().len(), CHECK_WORKERS);
+    }
+
+    #[test]
+    fn one_mods_text_names_every_finding_and_the_repair() {
+        let mut checked = Checked::default();
+        checked.findings.insert(
+            4,
+            vec![RepairFinding {
+                entry: "models/heroes_wip/drifter/drifter.vmdl_c".into(),
+                kind: "cameras".into(),
+                repairable: true,
+                changes: 2,
+                detail: "Stale camera inputs: standing_pivot".into(),
+            }],
+        );
+        checked.errors.insert(4, "the file ends early".into());
+        let review = deadlock_core::mod_health::SlotReview {
+            slot: 4,
+            issues: vec![deadlock_core::mod_health::Issue {
+                kind: deadlock_core::mod_health::IssueKind::Moved,
+                path: "sounds/a.vsnd_c".into(),
+                now_at: Some("sounds/b.vsnd_c".into()),
+            }],
+            missing: 1,
+            entries: 10,
+            ..Default::default()
+        };
+        let text = mod_text("Drifter skin", 4, Some(&review), Some(&checked), None);
+        assert!(text.starts_with("[04] Drifter skin"), "{text}");
+        assert!(text.contains("Moved: sounds/a.vsnd_c (now sounds/b.vsnd_c)"), "{text}");
+        assert!(text.contains("repair cameras: models/heroes_wip/drifter/drifter.vmdl_c (2 changes): Stale camera inputs"), "{text}");
+        assert!(text.contains("repair check failed: the file ends early"), "{text}");
+    }
+
+    #[test]
     fn records_round_trip_as_json() {
         let record = Record {
             slot: 4,
@@ -606,8 +1026,14 @@ mod tests {
             old_size: 10,
             new_size: 12,
             changes: 3,
+            rule: 2,
         };
         assert_eq!(Record::from_json(&record.to_json()), Some(record));
+        let older = json!({
+            "slot": 4, "file": "pak04_dir.vpk", "backup": "/data/compat-backups/abc.vpk",
+            "newSha256": "abc", "oldSize": 10, "newSize": 12, "changes": 3,
+        });
+        assert_eq!(Record::from_json(&older).map(|record| record.rule), Some(1), "records before the revision were rule 1");
         assert_eq!(Record::from_json(&json!({"slot": 400})), None);
     }
 }
