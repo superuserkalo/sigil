@@ -4229,6 +4229,8 @@ fn undo_crosshair(state: &mut State, backup: PathBuf) {
     use crate::notify::{self, Notice};
     match deadlock_core::backups::restore(&backup, true) {
         Ok(_) => {
+            // The game has the older crosshair again, which Sigil does not hold.
+            state.crosshair.applied = None;
             state.crosshair.log = Some("Put the previous autoexec.cfg back.".to_string());
             state.crosshair.tone = crate::ui::Tone::Ok;
             state.autoexec.loaded = false;

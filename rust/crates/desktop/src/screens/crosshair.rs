@@ -178,6 +178,9 @@ pub struct View {
     pub confirm_remove: bool,
     /// The console commands popover above the column's foot is open.
     pub console_open: bool,
+    /// What the game has now: the crosshair last applied or read from the game. Apply is
+    /// disabled while the editor matches it. None when Sigil does not know.
+    pub applied: Option<Crosshair>,
 }
 
 impl Default for View {
@@ -205,6 +208,7 @@ impl Default for View {
             blank: TextEdit::new(""),
             confirm_remove: false,
             console_open: false,
+            applied: None,
         }
     }
 }
@@ -234,7 +238,6 @@ const RESOLUTIONS: [(u32, &str); 3] = [(1080, "1080p"), (1440, "1440p"), (2160, 
 const LABEL_W: f32 = 104.0;
 const VALUE_W: f32 = 40.0;
 const COPIED_FOR: Duration = Duration::from_secs(2);
-/// The picker's selected card: a quick spring with a small settle past the target.
 
 thread_local! {
     /// The main window, handed over by the shell when Rune creates it. UI thread only.
@@ -427,10 +430,17 @@ pub fn view(s: &State, u: &Ui) -> El {
                 .cursor(rune::Cursor::Pointer)
                 .on_press(copy_share_code)
         },
-        u.action(tr("Apply"), ActionKind::Secondary)
-            .key("crosshair-apply")
-            .cursor(rune::Cursor::Pointer)
-            .on_press(|st: &mut State| st.crosshair.pending = true),
+        {
+            // Nothing to apply while the editor matches what the game has.
+            let same = v.applied.as_ref() == Some(&v.settings);
+            u.action(tr("Apply"), ActionKind::Secondary)
+                .key("crosshair-apply")
+                .disabled(same)
+                .opacity(if same { 0.45 } else { 1.0 })
+                .help(if same { tr("The game already has this crosshair") } else { tr("Apply") })
+                .cursor(rune::Cursor::Pointer)
+                .on_press(|st: &mut State| st.crosshair.pending = true)
+        },
     ];
 
     let controls = match v.group {
@@ -1090,6 +1100,7 @@ fn toggle_hero_settings(st: &mut State) {
 
 /// After a crosshair is applied with the switch on, the hero settings get it too.
 pub fn after_apply(st: &mut State) {
+    st.crosshair.applied = Some(st.crosshair.settings.clone());
     if crate::screens::settings::options::get().crosshair_hero_settings {
         start_hero_write(st, true);
     }

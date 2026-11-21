@@ -70,6 +70,7 @@ pub fn import(st: &mut State) {
         };
         if let Some(crosshair) = parse(&text) {
             let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+            st.crosshair.applied = Some(crosshair.clone());
             st.crosshair.settings = crosshair;
             st.crosshair.source = format!("in-game {name}");
             st.crosshair.log = Some(crate::screens::settings::i18n::fill(
