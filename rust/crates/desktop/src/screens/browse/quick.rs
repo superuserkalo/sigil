@@ -943,8 +943,8 @@ pub fn installs_busy(s: &State) -> bool {
 /// How much room a button has.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Size {
-    /// A card's footer: "40%" on the button, the words under the title.
-    Card,
+    /// A card's action row: fills its slot, "40%" on the button, the words under the title.
+    Fill,
     /// A card too narrow for words: the icon, or the percentage.
     Icon,
     /// A list row or a file row: the full words.
@@ -1002,7 +1002,7 @@ pub fn button_el(u: &Ui, b: &Button, key: String, id: u64, name: &str, size: Siz
         Button::Enable => (u.ink, u.teal, Color::WHITE.alpha(0.035), u.hair_strong),
     };
     let (h, words) = match size {
-        Size::Card => (28.0, Some(b.short())),
+        Size::Fill => (32.0, Some(b.short())),
         Size::Icon => (
             28.0,
             matches!(b, Button::Downloading(Some(_)) | Button::Paused(Some(_))).then(|| b.short()),
@@ -1026,6 +1026,7 @@ pub fn button_el(u: &Ui, b: &Button, key: String, id: u64, name: &str, size: Siz
         (None, _) => button.w(h),
         (Some(_), Size::Wide) => button.px(16.0).min_w(148.0),
         (Some(_), Size::Row) => button.pl(10.0).pr(12.0).min_w(112.0),
+        (Some(_), Size::Fill) => button.grow(1.0).shrink().min_w(0.0).px(8.0),
         (Some(_), _) => button.pl(8.0).pr(10.0),
     };
     if let Some(fraction) = b.fraction() {
@@ -1041,12 +1042,12 @@ pub fn button_el(u: &Ui, b: &Button, key: String, id: u64, name: &str, size: Siz
         button = button.child(icon(glyph(b), size_px).color(glyph_ink).a11y_hidden());
     }
     if let Some(words) = words {
-        button = button.child(
-            text(words)
-                .font(if size == Size::Wide { BODY_MED } else { LABEL })
-                .color(ink)
-                .a11y_hidden(),
-        );
+        let label = text(words)
+            .font(if size == Size::Wide { BODY_MED } else { LABEL })
+            .color(ink)
+            .a11y_hidden();
+        // A long German state truncates inside the slot; the line above the button has it whole.
+        button = button.child(if size == Size::Fill { label.truncate().min_w(0.0).shrink() } else { label });
     }
     if b.busy() {
         // A press on a busy button cancels it: the queue row while it downloads, the plan

@@ -81,10 +81,9 @@ const CARD_RADIUS: f32 = 12.0;
 /// for the Install button.
 const CARD_MIN: f32 = 220.0;
 const CARD_MAX: f32 = 320.0;
-/// Below this card width the Install button drops its label and keeps the icon.
-const CARD_LABEL_MIN: f32 = 232.0;
-/// Card text block under the image: padding, title, author line and the footer.
-const CARD_TEXT_H: f32 = 104.0;
+/// Card text block under the image, fixed so every card and the virtual row estimate agree:
+/// 10 padding, 22 title, 2 + 18 byline, 8 + 20 counts, 6 + 32 action row, 10 padding.
+const CARD_TEXT_H: f32 = 128.0;
 /// Grid width before the first layout reports one: the default window minus the sidebar.
 const DEFAULT_GRID_W: f32 = 1064.0;
 /// Rows one browsed page holds, matching `data::BROWSE_PER_PAGE` and GameBanana's cap.
@@ -268,7 +267,8 @@ impl CardSize {
     /// The narrowest and widest a card of this size may be.
     fn bounds(self) -> (f32, f32) {
         match self {
-            CardSize::Small => (184.0, 244.0),
+            // 192 is the narrowest card whose three count columns hold "888m".
+            CardSize::Small => (192.0, 244.0),
             CardSize::Medium => (CARD_MIN, CARD_MAX),
             CardSize::Large => (264.0, 396.0),
         }

@@ -849,7 +849,10 @@ pub fn scene_card_stress(s: &mut State) {
             card.audio_url = Some("https://example.invalid/sample.mp3".into());
             card.thumbnail_url = base.thumbnail_url.clone();
         }
-        s.browse_view.download_counts.insert(id, 45_678_901);
+        // One card the catalog has no download count for: its column must still be there.
+        if index != 1 {
+            s.browse_view.download_counts.insert(id, 45_678_901);
+        }
         if let Some(step) = step {
             let entry = quick::Entry::new(&card.name, id.to_string(), None, Vec::new(), step);
             s.browse_view.installs.items.insert(id, entry);
@@ -864,6 +867,18 @@ pub fn scene_card_stress(s: &mut State) {
 pub fn scene_card_stress_de(s: &mut State) {
     s.prefs.language = crate::screens::settings::i18n::Lang::German;
     crate::screens::settings::i18n::set(crate::screens::settings::i18n::Lang::German);
+    scene_card_stress(s);
+}
+
+/// The stress cards at the Small card size, the narrowest a card gets.
+pub fn scene_card_stress_small(s: &mut State) {
+    s.browse_view.card_size = CardSize::Small;
+    scene_card_stress(s);
+}
+
+/// The stress cards at the Large card size.
+pub fn scene_card_stress_large(s: &mut State) {
+    s.browse_view.card_size = CardSize::Large;
     scene_card_stress(s);
 }
 

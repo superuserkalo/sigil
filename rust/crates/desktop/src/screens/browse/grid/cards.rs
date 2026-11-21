@@ -87,46 +87,41 @@ pub(crate) fn veiled(s: &State, id: u64, nsfw: bool) -> bool {
         && !(nsfw::reveal_on_hover() && s.browse_view.hovered == Some(id))
 }
 
-/// A card's width less its border and text padding: what the footer row gets.
-const FOOTER_INSET: f32 = 24.0;
-const FOOTER_GAP: f32 = 12.0;
-/// A generous width for one character of the footer's small text and label fonts.
-const FOOTER_CHAR: f32 = 7.4;
-
-/// The card button with words: padding, icon, gap, label, and Cancel's X while busy.
-fn worded_button_w(b: &super::super::quick::Button) -> f32 {
-    let cancel = if b.busy() { 18.0 } else { 0.0 };
-    18.0 + 14.0 + 6.0 + b.short().chars().count() as f32 * FOOTER_CHAR + cancel
+/// A card's count in at most four characters, so three columns fit the narrowest card:
+/// 987, 1.2k, 46k, 988m.
+pub(crate) fn card_count(n: u64) -> String {
+    if n < 1000 {
+        return n.to_string();
+    }
+    for (base, unit) in [(1e3, 'k'), (1e6, 'm'), (1e9, 'b'), (1e12, 't')] {
+        let v = n as f64 / base;
+        if v < 9.95 {
+            return format!("{v:.1}{unit}");
+        }
+        if v.round() < 1000.0 {
+            return format!("{:.0}{unit}", v.round());
+        }
+    }
+    "999t".to_string()
 }
 
-/// The card button without words: a square, or the percentage while it downloads.
-fn icon_button_w(b: &super::super::quick::Button) -> f32 {
-    use super::super::quick::Button;
-    let cancel = if b.busy() { 18.0 } else { 0.0 };
-    match b {
-        Button::Downloading(Some(_)) | Button::Paused(Some(_)) => {
-            18.0 + b.short().chars().count() as f32 * FOOTER_CHAR + cancel
-        }
-        _ => 28.0,
-    }
-}
-
-/// How many leading counts fit beside the actions in a footer `room` points wide.
-fn stats_that_fit(room: f32, actions: f32, labels: &[String]) -> usize {
-    let mut used = actions;
-    let mut keep = 0;
-    for label in labels {
-        used += FOOTER_GAP + 18.0 + label.chars().count() as f32 * FOOTER_CHAR;
-        if used > room {
-            break;
-        }
-        keep += 1;
-    }
-    keep
+/// One column of the counts row. A count nobody has yet reads as a dash, so the column stays.
+fn count_cell(u: &Ui, key: String, glyph: &'static Icon, name: &str, value: Option<u64>) -> El {
+    let words = value.map_or_else(|| "-".to_string(), card_count);
+    let label = format!("{}: {words}", super::super::tree::tr(name));
+    row()
+        .key(key)
+        .min_w(0.0)
+        .h_full()
+        .gap(4.0)
+        .center_y()
+        .label(label)
+        .child(icon(glyph, 14.0).color(u.faint).a11y_hidden())
+        .child(text(words).font(SMALL).color(u.faint).a11y_hidden())
 }
 
 /// One mod: a 16:9 image flush with the top, the title, the author and when it changed, and
-/// a footer with likes, views and Install.
+/// the same three counts in equal columns, and a full-width action row.
 pub(crate) fn card_el(s: &State, u: &Ui, card: &BrowseCard, card_w: f32) -> El {
     let inner = (crate::ui::r(CARD_RADIUS) - 1.0).max(0.0);
     let id = card.id;
@@ -182,14 +177,7 @@ pub(crate) fn card_el(s: &State, u: &Ui, card: &BrowseCard, card_w: f32) -> El {
     } else {
         super::super::quick::Button::Install
     };
-    let room = card_w - FOOTER_INSET;
-    let size = if card_w >= CARD_LABEL_MIN && worded_button_w(&state) <= room {
-        super::super::quick::Size::Card
-    } else {
-        super::super::quick::Size::Icon
-    };
-    let button_w = if size == super::super::quick::Size::Card { worded_button_w(&state) } else { icon_button_w(&state) };
-    let install = super::super::quick::button_el(u, &state, format!("install-{id}"), id, &card.name, size);
+    let install = super::super::quick::button_el(u, &state, format!("install-{id}"), id, &card.name, super::super::quick::Size::Fill);
     let install = if is_mod {
         install
     } else {
@@ -235,7 +223,6 @@ pub(crate) fn card_el(s: &State, u: &Ui, card: &BrowseCard, card_w: f32) -> El {
         frame = frame.child(star);
     }
 
-    let mut footer = row().w_full().h(28.0).mt(8.0).gap(FOOTER_GAP).center_y();
     let playing = s.browse_view.audio.playing == Some(id);
     let sample = |size: f32, big: bool| {
         let url = card.audio_url.clone().unwrap_or_default();
@@ -251,6 +238,7 @@ pub(crate) fn card_el(s: &State, u: &Ui, card: &BrowseCard, card_w: f32) -> El {
                 .size(size, size)
                 .center()
                 .radius(crate::ui::r(8.0))
+                .border(1.0, u.hair_strong)
         };
         button = button
             .hover(u.hover)
@@ -282,26 +270,28 @@ pub(crate) fn card_el(s: &State, u: &Ui, card: &BrowseCard, card_w: f32) -> El {
                 .child(text(card.category.clone()).font(SMALL).color(u.faint).truncate()),
         );
     }
-    // The action row never outgrows the card: the button and sample keep their size, and the
-    // counts give way from the least important one. The clip covers a font wider than the
-    // estimate.
-    let small_sample = card.audio_url.is_some() && !bare_sound;
-    let mut counts: Vec<(&'static Icon, u64)> = vec![(&icons::THUMBS_UP, card.likes), (&icons::EYE, card.views)];
-    if let Some(downloads) = s.browse_view.download_counts.get(&id) {
-        counts.push((&icons::DOWNLOAD, *downloads));
+    // Every card shows the same three counts in the same columns, whatever its state.
+    let counts = el()
+        .key(format!("card-counts-{id}"))
+        .w_full()
+        .h(20.0)
+        .mt(8.0)
+        .equal_columns(3)
+        .gap(4.0)
+        .child(count_cell(u, format!("card-stat-likes-{id}"), &icons::THUMBS_UP, "Likes", Some(card.likes)))
+        .child(count_cell(u, format!("card-stat-views-{id}"), &icons::EYE, "Views", Some(card.views)))
+        .child(count_cell(
+            u,
+            format!("card-stat-downloads-{id}"),
+            &icons::DOWNLOAD,
+            "Downloads",
+            s.browse_view.download_counts.get(&id).copied(),
+        ));
+    let mut actions = row().key(format!("card-actions-{id}")).w_full().h(32.0).mt(6.0).gap(6.0).center_y();
+    if card.audio_url.is_some() && !bare_sound {
+        actions = actions.child(sample(32.0, false));
     }
-    let labels: Vec<String> = counts.iter().map(|(_, value)| format_count(*value)).collect();
-    let actions = button_w + if small_sample { 28.0 + FOOTER_GAP } else { 0.0 };
-    let keep = stats_that_fit(room, actions, &labels);
-    let mut stats = row().grow(1.0).shrink().min_w(0.0).h_full().gap(FOOTER_GAP).center_y().clip_rounded(0.0);
-    for (glyph, value) in counts.into_iter().take(keep) {
-        stats = stats.child(stat(u, glyph, value));
-    }
-    footer = footer.child(stats);
-    if small_sample {
-        footer = footer.child(sample(28.0, false));
-    }
-    footer = footer.child(install);
+    let actions = actions.child(install);
 
     let mut card_el = col()
         .key(format!("browse-card-{id}"))
@@ -333,13 +323,14 @@ pub(crate) fn card_el(s: &State, u: &Ui, card: &BrowseCard, card_w: f32) -> El {
         .child(
             col()
                 .w_full()
+                .h(CARD_TEXT_H)
                 .px(11.0)
                 .pt(10.0)
-                .pb(9.0)
-                .gap(2.0)
-                .child(text(card.name.clone()).font(H2).color(u.ink).truncate())
-                .child(byline)
-                .child(footer),
+                .pb(10.0)
+                .child(row().w_full().h(22.0).center_y().child(text(card.name.clone()).font(H2).color(u.ink).truncate().min_w(0.0).shrink()))
+                .child(row().w_full().h(18.0).mt(2.0).center_y().child(byline))
+                .child(counts)
+                .child(actions),
         );
     if playing && s.browse_view.audio.error.is_none() {
         card_el = card_el.border(1.0, u.accent.alpha(0.35));
@@ -369,6 +360,7 @@ pub(crate) fn loading_grid(u: &Ui, cols: usize) -> El {
                 )
                 .child(
                     col()
+                        .h(CARD_TEXT_H)
                         .px(11.0)
                         .pt(14.0)
                         .pb(16.0)
@@ -386,30 +378,15 @@ pub(crate) fn loading_grid(u: &Ui, cols: usize) -> El {
 mod tests {
     use super::*;
 
-    fn labels(list: &[&str]) -> Vec<String> {
-        list.iter().map(|l| l.to_string()).collect()
-    }
-
     #[test]
-    fn the_counts_give_way_before_the_action_row_leaves_the_card() {
-        let big = labels(&["1.2m", "987.7m", "45.7m"]);
-        for width in (120..=420).step_by(4) {
-            let room = width as f32 - FOOTER_INSET;
-            let actions = 90.0;
-            let keep = stats_that_fit(room, actions, &big);
-            let used: f32 = actions
-                + big[..keep]
-                    .iter()
-                    .map(|l| FOOTER_GAP + 18.0 + l.chars().count() as f32 * FOOTER_CHAR)
-                    .sum::<f32>();
-            assert!(keep == 0 || used <= room, "{width}: {used} > {room}");
+    fn card_counts_never_pass_four_characters() {
+        for (n, want) in [
+            (0, "0"), (999, "999"), (1_000, "1.0k"), (1_234, "1.2k"), (9_949, "9.9k"), (9_950, "10k"),
+            (45_678, "46k"), (999_499, "999k"), (999_500, "1.0m"), (987_654_321, "988m"),
+            (1_500_000_000, "1.5b"), (u64::MAX, "999t"),
+        ] {
+            assert_eq!(card_count(n), want);
+            assert!(card_count(n).chars().count() <= 4, "{n}");
         }
-        assert_eq!(stats_that_fit(400.0, 90.0, &big), 3);
-        assert_eq!(stats_that_fit(60.0, 90.0, &big), 0);
-    }
-
-    #[test]
-    fn small_counts_all_stay() {
-        assert_eq!(stats_that_fit(196.0, 80.0, &labels(&["12", "340"])), 2);
     }
 }

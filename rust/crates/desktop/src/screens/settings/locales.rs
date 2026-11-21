@@ -370,6 +370,8 @@ pub const DE: &[(&str, &str)] = &[
     ("Caches", "Zwischenspeicher"),
     ("Preview images", "Vorschaubilder"),
     ("Downloads", "Downloads"),
+    ("Likes", "Likes"),
+    ("Views", "Aufrufe"),
     ("Not measured", "Nicht gemessen"),
     ("Maintenance", "Wartung"),
     ("Rescan", "Neu einlesen"),

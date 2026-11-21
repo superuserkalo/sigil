@@ -1020,9 +1020,15 @@ pub(crate) fn list_row(s: &State, u: &Ui, card: &BrowseCard) -> El {
 
     let mut stats = row().gap(12.0).center_y().child(stat(u, &icons::THUMBS_UP, card.likes));
     stats = stats.child(stat(u, &icons::EYE, card.views));
-    if let Some(downloads) = s.browse_view.download_counts.get(&id) {
-        stats = stats.child(stat(u, &icons::DOWNLOAD, *downloads));
-    }
+    // The same three counts as a card: a dash until the catalog knows the downloads.
+    stats = stats.child(match s.browse_view.download_counts.get(&id) {
+        Some(downloads) => stat(u, &icons::DOWNLOAD, *downloads),
+        None => row()
+            .gap(4.0)
+            .center_y()
+            .child(icon(&icons::DOWNLOAD, 14.0).color(u.faint).a11y_hidden())
+            .child(text("-").font(SMALL).color(u.faint)),
+    });
 
     let audio = card.audio_url.clone().map(|url| {
         el().key(format!("list-sample-{id}"))
