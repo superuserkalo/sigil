@@ -84,6 +84,9 @@ pub struct View {
     pub progress: Option<crate::screens::launch_progress::Progress>,
     /// A launch stopped by the gate until the player answers (`screens::launch_gate`).
     pub gate: Option<crate::screens::launch_gate::Pending>,
+    /// Stop game on its worker; `launch_progress::poll` takes the report and says when the game
+    /// did not close.
+    pub stop: crate::jobs::Job<deadlock_core::launch::StopReport>,
 }
 
 impl Default for View {
@@ -100,6 +103,7 @@ impl Default for View {
             overlap: conflicts::View::default(),
             progress: None,
             gate: None,
+            stop: crate::jobs::Job::default(),
         }
     }
 }
@@ -834,36 +838,17 @@ pub fn stop_game(st: &mut State) {
     stop_game_now(st, true);
 }
 
-/// The launch overlay's Cancel already said "Launch cancelled"; closing the game it asked for
-/// is the same action, so no second toast (issue #4).
-pub fn stop_game_quietly(st: &mut State) {
-    stop_game_now(st, false);
-}
-
-/// Ask the game to close. The wait for a graceful exit runs on a thread; the monitor picks up
-/// the result, and a presence check is asked for right away.
-fn stop_game_now(st: &mut State, tell: bool) {
+/// Ask the game to close. The wait for a graceful exit runs on a worker; `launch_progress::poll`
+/// takes its report, and a game that did not close is said out loud (DMM 2.4.0). A presence check
+/// is asked for right away. Returns false when no worker started (headless renders).
+fn stop_game_now(st: &mut State, tell: bool) -> bool {
     st.launch.dialog = Dialog::None;
     if rune::is_headless() {
         st.launch.last = Some(tr("Headless run: the game was not stopped.").to_string());
-        return;
+        return false;
     }
-    let _ = std::thread::Builder::new()
-        .name("sigil-stop-game".to_string())
-        .spawn(|| {
-            match deadlock_core::launch::stop_game(true) {
-                Ok(report) if report.stopped() => {
-                    crate::screens::settings::log::info("Stopped Deadlock from the Launch page");
-                }
-                Ok(report) => crate::screens::settings::log::info(format!(
-                    "Deadlock did not close: {:?}",
-                    report.remaining
-                )),
-                Err(error) => crate::screens::settings::log::error(format!(
-                    "Stopping Deadlock failed: {error}"
-                )),
-            }
-        });
+    let wake = st.wake.clone();
+    st.launch.stop.start(wake, || deadlock_core::launch::stop_game(true).map_err(|error| error.to_string()));
     // Discord presence and the running row switch at once; the checks correct any surprise.
     st.settings.game_running = false;
     st.settings.last_game_check = None;
@@ -874,6 +859,13 @@ fn stop_game_now(st: &mut State, tell: bool) {
         );
     }
     crate::data::start_launch_read(st);
+    true
+}
+
+/// Close the game for the launch overlay's Cancel, which shows its own progress and error.
+/// Returns false when no worker started.
+pub fn stop_game_for_cancel(st: &mut State) -> bool {
+    stop_game_now(st, false)
 }
 
 /// GAME WRITE, from a Fix press on the Launch page or its checklist: repair `gameinfo.gi` with

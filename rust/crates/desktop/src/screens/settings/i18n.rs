@@ -196,6 +196,7 @@ mod tests {
             .chain(super::super::locales_wave::DE)
             .chain(super::super::locales_w4b::DE)
             .chain(super::locales_w4a::DE)
+            .chain(crate::screens::launch_progress::LAUNCH_DE)
         {
             assert!(seen.insert(*en), "duplicate key {en:?}");
             assert_eq!(en.matches("{}").count(), de.matches("{}").count(), "holes in {en:?}");
@@ -279,6 +280,7 @@ mod tests {
             .chain(super::locales_w4a::DE)
             .chain(super::super::locales_upstream::DE)
             .chain(crate::screens::profile_tools_de::DE)
+            .chain(crate::screens::launch_progress::LAUNCH_DE)
             .map(|(en, _)| *en)
             .collect();
         let mut missing = Vec::new();
@@ -338,7 +340,7 @@ mod tests {
         // Log and report lines
         "Game: {}", "Language: {}", "Log level: {}", "Mods: {} installed, {} on",
         "Offline mode: {}", "Recent log:", "System: {} {}", "Sigil {} started on {} {}",
-        "Match sharing log forgotten", "Removed {} leftover archives",
+        "Match sharing log forgotten", "Removed {} leftover archives", "Stopped Deadlock",
         // Key names in the shortcuts sheet
         "Click", "Enter", "Esc",
     ];

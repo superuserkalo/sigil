@@ -995,7 +995,10 @@ pub fn read_game_process() -> GameProcess {
             .output();
         return match output {
             Ok(output) => {
-                let pids = parse_tasklist_pids(&String::from_utf8_lossy(&output.stdout));
+                let pids: Vec<u32> = parse_tasklist_pids(&String::from_utf8_lossy(&output.stdout))
+                    .into_iter()
+                    .filter(|pid| !exiting(*pid))
+                    .collect();
                 GameProcess {
                     running: !pids.is_empty(),
                     pids,
@@ -1033,6 +1036,42 @@ pub fn read_game_process() -> GameProcess {
             },
         }
     }
+}
+
+/// True when Windows says the process has begun exiting: its exit code is set although it is
+/// still listed. A `deadlock.exe` stuck in teardown (a driver holding it across sleep, say) stays
+/// in the task list with almost no memory and cannot be ended even from an elevated prompt. It is
+/// not the game any more, so it must not count as running (DMM 2.4.0's rule). A process Sigil
+/// cannot open is kept: "running" is the safe answer before a game write.
+#[cfg(windows)]
+fn exiting(pid: u32) -> bool {
+    use std::ffi::c_void;
+    const PROCESS_QUERY_LIMITED_INFORMATION: u32 = 0x1000;
+    const STILL_ACTIVE: u32 = 259;
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn OpenProcess(access: u32, inherit: i32, pid: u32) -> *mut c_void;
+        fn GetExitCodeProcess(process: *mut c_void, code: *mut u32) -> i32;
+        fn CloseHandle(handle: *mut c_void) -> i32;
+    }
+    // SAFETY: OpenProcess has no preconditions and returns null on failure. The handle is only
+    // used for one query with a live local out pointer, then closed once.
+    unsafe {
+        let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+        if handle.is_null() {
+            return false;
+        }
+        let mut code = 0u32;
+        let read = GetExitCodeProcess(handle, &mut code) != 0;
+        CloseHandle(handle);
+        read && code != STILL_ACTIVE
+    }
+}
+
+/// Is Deadlock running? The same process check as [`read_game_process`], so a process stuck
+/// while closing never blocks a write here either.
+pub fn game_running() -> bool {
+    read_game_process().running
 }
 
 /// What an approved stop did.
@@ -1206,6 +1245,16 @@ mod tests {
         acknowledge_crash(&dir, 1_700_000_000).unwrap();
         assert_eq!(read_marker(&dir).unwrap().acknowledged_secs, Some(1_700_000_000));
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_finished_process_still_held_open_is_exiting() {
+        let mut child = crate::util::hidden_command("cmd").args(["/C", "exit 0"]).spawn().unwrap();
+        child.wait().unwrap();
+        // `child` keeps the process object alive after it exits, like a stuck teardown.
+        assert!(exiting(child.id()));
+        assert!(!exiting(std::process::id()));
     }
 
     #[test]
