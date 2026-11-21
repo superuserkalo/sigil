@@ -130,6 +130,13 @@ Implemented today:
 | `project_migrate` | Proposes moved target paths | yes | none |
 | `watch_projects` | Reviews every project after a patch | yes | none |
 | `publish_prepare` | Builds a release folder and metadata | no | none |
+| `game_textures` | Lists game textures by hero and kind (pak directory only) | yes | none |
+| `game_sounds` | Lists a hero's sound events and clips, or the heroes with sounds | yes | none |
+| `files_list` | One folder level of a game VPK, addon or workspace folder | yes | none |
+| `files_show` | Decoded text preview of one file (KV3 data, Panorama, text DMX, hex) | yes | none |
+| `files_search` | Content search over text and decoded data, capped | yes | none |
+| `files_compare` | Tree diff of two sources, or a line diff of one file | yes | none |
+| `files_export` | Copies files into the mod project (`staging/` or editable `sources/`) | no | none (project only) |
 
 Planned, in rough dependency order:
 

@@ -6,6 +6,7 @@ pub mod crosshair;
 pub mod demo;
 pub mod doctor;
 pub mod extract;
+pub mod files;
 pub mod find;
 pub mod index;
 pub mod install;

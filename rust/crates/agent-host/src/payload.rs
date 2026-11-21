@@ -198,6 +198,15 @@ pub fn validate(entries: &[String], staging_folder: Option<&str>) -> Vec<Issue> 
             }
         }
 
+        if is_misplaced_panorama_image(entry) {
+            issues.push(Issue {
+                severity: "warning",
+                code: "misplaced_panorama_image",
+                entry: Some(entry.to_string()),
+                message: "Panorama loads images from panorama/images only. This texture sits elsewhere under panorama and the UI will not find it.".into(),
+            });
+        }
+
         let key = entry.to_lowercase();
         match seen.get(&key) {
             Some(previous) => issues.push(Issue::error(
@@ -216,6 +225,27 @@ pub fn validate(entries: &[String], staging_folder: Option<&str>) -> Vec<Issue> 
 
 pub fn has_errors(issues: &[Issue]) -> bool {
     issues.iter().any(|issue| issue.severity == "error")
+}
+
+/// Same rule as `deadlock_core::payload::is_misplaced_panorama_image`.
+fn is_misplaced_panorama_image(entry: &str) -> bool {
+    let lowered = entry.to_ascii_lowercase();
+    lowered.starts_with("panorama/")
+        && lowered.ends_with(".vtex_c")
+        && !lowered.starts_with("panorama/images/")
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn panorama_images_outside_the_images_folder_warn() {
+        let issues = super::validate(
+            &["panorama/layout/x_png.vtex_c".to_string(), "panorama/images/hud/y_png.vtex_c".to_string()],
+            None,
+        );
+        assert_eq!(issues.len(), 1);
+        assert_eq!((issues[0].severity, issues[0].code), ("warning", "misplaced_panorama_image"));
+    }
 }
 
 fn is_drive_absolute(entry: &str) -> bool {

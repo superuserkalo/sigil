@@ -294,8 +294,43 @@ fn from_csdk_root(kind: ToolKind, root: PathBuf, probe_version: bool) -> ToolSta
     )
 }
 
+/// Which CSDK a `resourcecompiler.exe` belongs to: 13 or 12, from the install's folder names
+/// (`CSDK 13`, `csdk13`, `csdk-12`) or a `csdk_version.txt` beside `game/`. `None` when nothing
+/// says. Sigil never downloads or patches either; it only points at the player's install.
+pub fn csdk_generation(resourcecompiler: &Path) -> Option<u8> {
+    for dir in resourcecompiler.ancestors().skip(1).take(6) {
+        if let Ok(text) = fs::read_to_string(dir.join("csdk_version.txt"))
+            && let Some(found) = generation_in(&text)
+        {
+            return Some(found);
+        }
+        if let Some(name) = dir.file_name().and_then(|n| n.to_str())
+            && let Some(found) = generation_in(name)
+        {
+            return Some(found);
+        }
+    }
+    None
+}
+
+fn generation_in(text: &str) -> Option<u8> {
+    let lowered = text.to_ascii_lowercase();
+    let at = lowered.find("csdk")?;
+    let digits: String = lowered[at + 4..]
+        .chars()
+        .skip_while(|c| matches!(c, ' ' | '-' | '_' | 'v'))
+        .take_while(char::is_ascii_digit)
+        .collect();
+    match digits.parse::<u8>().ok()? {
+        found @ (12 | 13) => Some(found),
+        _ => None,
+    }
+}
+
 fn available(kind: ToolKind, path: PathBuf, probe_version: bool) -> ToolStatus {
-    let version = if probe_version && kind != ToolKind::ResourceCompiler {
+    let version = if kind == ToolKind::ResourceCompiler {
+        csdk_generation(&path).map(|generation| format!("CSDK {generation}"))
+    } else if probe_version {
         probe_version_line(&path)
     } else {
         None
@@ -1045,4 +1080,26 @@ fn capability_line(label: &str, available: bool, reason: Option<&str>) -> String
 
 fn inline_reason(reason: &str) -> String {
     reason.trim_end_matches('.').to_string()
+}
+
+#[cfg(test)]
+mod csdk_tests {
+    use super::*;
+
+    #[test]
+    fn csdk_generation_reads_folder_names_and_a_version_file() {
+        let exe = Path::new("C:/Tools/CSDK 13/game/bin_tools/win64/resourcecompiler.exe");
+        assert_eq!(csdk_generation(exe), Some(13));
+        let exe = Path::new("/opt/csdk-12/game/bin_tools/win64/resourcecompiler.exe");
+        assert_eq!(csdk_generation(exe), Some(12));
+        assert_eq!(csdk_generation(Path::new("/opt/sdk/game/bin_tools/win64/resourcecompiler.exe")), None);
+        assert_eq!(generation_in("csdk99"), None);
+
+        let root = std::env::temp_dir().join(format!("dah-csdk-gen-{}", std::process::id()));
+        let bin = root.join("game/bin_tools/win64");
+        fs::create_dir_all(&bin).unwrap();
+        fs::write(root.join("csdk_version.txt"), "CSDK 13 hotfix 2\n").unwrap();
+        assert_eq!(csdk_generation(&bin.join("resourcecompiler.exe")), Some(13));
+        let _ = fs::remove_dir_all(&root);
+    }
 }

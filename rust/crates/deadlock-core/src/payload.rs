@@ -311,6 +311,16 @@ pub fn validate_payload(entries: &[String], options: &PayloadOptions) -> Vec<Pay
             }
         }
 
+        if is_misplaced_panorama_image(entry) {
+            issues.push(PayloadIssue {
+                severity: Severity::Warning,
+                code: "misplaced_panorama_image",
+                entry: Some(entry.to_string()),
+                message: "Panorama loads images from panorama/images only. This texture sits elsewhere under panorama and the UI will not find it."
+                    .to_string(),
+            });
+        }
+
         let key = entry.to_lowercase();
         match seen.get(&key) {
             Some(previous) => issues.push(PayloadIssue::error(
@@ -325,6 +335,14 @@ pub fn validate_payload(entries: &[String], options: &PayloadOptions) -> Vec<Pay
     }
 
     issues
+}
+
+/// A compiled image under `panorama/` but outside `panorama/images/`: the UI never finds it.
+pub fn is_misplaced_panorama_image(entry: &str) -> bool {
+    let lowered = entry.trim().replace('\\', "/").to_ascii_lowercase();
+    lowered.starts_with("panorama/")
+        && lowered.ends_with(".vtex_c")
+        && !lowered.starts_with("panorama/images/")
 }
 
 pub fn has_errors(issues: &[PayloadIssue]) -> bool {
@@ -434,6 +452,18 @@ mod tests {
         assert!(text.contains(
             "WARNING not_compiled: tools/readme.txt: Entry does not end in _c. The game reads compiled files only."
         ));
+
+        let misplaced = validate_payload(
+            &[
+                "panorama/layout/icons/haze_png.vtex_c".to_string(),
+                "panorama/images/heroes/haze_card_psd.vtex_c".to_string(),
+            ],
+            &PayloadOptions::default(),
+        );
+        assert_eq!(
+            misplaced.iter().map(|issue| (issue.severity.as_str(), issue.code)).collect::<Vec<_>>(),
+            vec![("warning", "misplaced_panorama_image")]
+        );
 
         let empty = validate_payload(&[], &PayloadOptions::default());
         assert_eq!(empty.len(), 1);
