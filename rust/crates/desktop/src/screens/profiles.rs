@@ -581,14 +581,14 @@ fn finish_apply(st: &mut State, name: String, applied: core::ProfileApplyResult)
     if missing > 0 {
         detail.push(format!(
             "{} not installed",
-            plural(applied.warnings.len(), "mod")
+            plural(missing, "mod")
         ));
     }
     if missing < applied.warnings.len() {
         detail.push(tr("crosshair left out while the Crosshair page is off").to_string());
     }
     let detail = sentence_case(&detail.join(", "));
-    let mut notice = if applied.warnings.is_empty() {
+    let mut notice = if missing == 0 {
         Notice::success(format!("Applied {name}"))
     } else {
         Notice::warning(format!("Applied {name}"))

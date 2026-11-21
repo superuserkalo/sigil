@@ -989,12 +989,21 @@ pub(crate) fn fetch_thumb_bytes(url: &str) -> Option<Vec<u8>> {
     {
         return Some(bytes);
     }
-    let mut response = thumb_agent()
+    let request = thumb_agent()
         .get(url)
         .header("User-Agent", gamebanana::GAMEBANANA_USER_AGENT)
-        .header("Accept", "image/*")
-        .call()
-        .ok()?;
+        .header("Accept", "image/*");
+    // A checked GameBanana address stays on GameBanana: its images are served directly, so a
+    // redirect is never followed to another host.
+    let mut response = if gamebanana::is_gamebanana_url(url) {
+        request.config().max_redirects(0).build().call()
+    } else {
+        request.call()
+    }
+    .ok()?;
+    if !response.status().is_success() {
+        return None;
+    }
     let bytes = response.body_mut().read_to_vec().ok()?;
     if !bytes.is_empty()
         && let Some(dir) = cached.parent()
@@ -4207,6 +4216,7 @@ pub fn build_capabilities() -> Vec<(String, String)> {
 
 // --- crosshair -------------------------------------------------------------
 
+/// Import from game: `citadel_hero_settings.lst`, then `machine_convars.vcfg` (Grimoire #504).
 pub fn import_crosshair(state: &mut State) {
     crate::screens::crosshair::game::import(state);
 }

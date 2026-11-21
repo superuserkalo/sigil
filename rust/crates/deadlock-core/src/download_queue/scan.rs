@@ -1,5 +1,6 @@
 //! The look inside an archive before it is installed: entry names from a ZIP's central
-//! directory, or from an unpack with the install's own limits. Pure apart from the two readers.
+//! directory or a 7z header, or from an unpack with the install's own limits. Pure apart from
+//! the readers.
 
 use std::fs::{self, File};
 use std::path::Path;
@@ -87,14 +88,34 @@ pub fn list_zip(archive: &Path) -> Result<(Vec<String>, u64)> {
     Ok((files, bytes))
 }
 
+/// List a 7z's entries from its header without unpacking it (DMM 2.4.0 reads the file list the
+/// same way). Fails on a header encrypted with a password or a damaged header; the caller then
+/// falls back to the unpack, which reports the reason in the player's words.
+pub fn list_7z(archive: &Path) -> Result<(Vec<String>, u64)> {
+    let header = sevenz_rust2::Archive::open(archive)
+        .map_err(|error| Error::msg(format!("The 7z header could not be read: {error}")))?;
+    let mut files = Vec::with_capacity(header.files.len());
+    let mut bytes = 0;
+    for entry in &header.files {
+        if entry.is_directory() {
+            continue;
+        }
+        bytes += entry.size();
+        files.push(entry.name().replace('\\', "/"));
+    }
+    Ok((files, bytes))
+}
+
 /// Look inside a downloaded archive. Never writes to the game install.
 ///
-/// A ZIP is listed from its central directory. A `.7z` or `.rar` is unpacked into
+/// A ZIP is listed from its central directory and a `.7z` from its header, at any size. A
+/// `.rar`, or a 7z whose header is encrypted or unreadable, is unpacked into
 /// `scratch_root` with the install's own limits, read, and removed. A format that cannot be
 /// read says so.
 pub fn scan_archive(archive: &Path, scratch_root: &Path) -> ScanReport {
     let size_bytes = fs::metadata(archive).map(|meta| meta.len()).unwrap_or(0);
-    match install::detect_archive_format(archive) {
+    let format = install::detect_archive_format(archive);
+    match format {
         ArchiveFormat::Zip => match list_zip(archive) {
             Ok((files, bytes)) => scan_entries(&files, bytes),
             Err(error) => ScanReport {
@@ -104,6 +125,11 @@ pub fn scan_archive(archive: &Path, scratch_root: &Path) -> ScanReport {
             },
         },
         ArchiveFormat::SevenZip | ArchiveFormat::Rar => {
+            if format == ArchiveFormat::SevenZip {
+                if let Ok((files, bytes)) = list_7z(archive) {
+                    return scan_entries(&files, bytes);
+                }
+            }
             if size_bytes > SCAN_MAX_BYTES {
                 return ScanReport {
                     checked: false,
@@ -145,3 +171,33 @@ pub fn scan_archive(archive: &Path, scratch_root: &Path) -> ScanReport {
     }
 }
 
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use super::*;
+
+    fn fixture(name: &str) -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/archives").join(name)
+    }
+
+    #[test]
+    fn a_7z_is_listed_from_its_header_without_a_scratch_folder() {
+        let archive = fixture("solid.7z");
+        let (files, bytes) = list_7z(&archive).expect("header lists");
+        assert!(!files.is_empty());
+        assert!(bytes > 0);
+        let scratch = std::env::temp_dir().join(format!("sigil-scan-7z-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&scratch);
+        let report = scan_archive(&archive, &scratch);
+        assert!(report.checked, "{:?}", report.error);
+        assert_eq!(report.files, files.len());
+        assert!(!scratch.exists(), "the header path never unpacks");
+    }
+
+    #[test]
+    fn a_damaged_7z_header_is_an_error_not_an_empty_list() {
+        assert!(list_7z(&fixture("solid.rar")).is_err());
+    }
+}

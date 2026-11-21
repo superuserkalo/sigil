@@ -278,7 +278,7 @@ pub const PAGES: [(Screen, Flag); 6] = [
         Flag {
             id: "page_crosshair",
             title: "Crosshair",
-            line: "Design a crosshair and write it into the game's config.",
+            line: "Design a crosshair and write it into the game's config. Turning it off takes Sigil's crosshair out of autoexec.cfg, so the game keeps the one you set in game.",
             default: true,
         },
     ),

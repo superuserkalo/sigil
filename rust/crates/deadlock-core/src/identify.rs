@@ -277,6 +277,18 @@ pub fn identify(
             source: "embedded".to_string(),
         };
     }
+    // A file Deadlock Mod Manager stamped keeps its mod id inside, wherever it was moved.
+    if let Some(stamp) = crate::dmm_stamp::read(path)
+        && let Some(gamebanana_id) = stamp.gamebanana_id()
+    {
+        return Match {
+            gamebanana_id: Some(gamebanana_id),
+            file_id: None,
+            name: None,
+            author: None,
+            source: "dmm-stamp".to_string(),
+        };
+    }
     let size = fs::metadata(path).map(|meta| meta.len()).unwrap_or(0);
     if let Ok(sha256) = sha256_file(path) {
         if let Some(known) = store.find(&sha256, size) {

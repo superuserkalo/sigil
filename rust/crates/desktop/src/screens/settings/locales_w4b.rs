@@ -3,6 +3,8 @@
 //! same file; `i18n` reads it next to the others.
 
 pub const DE: &[(&str, &str)] = &[
+    // Installed health (DMM round 1)
+    ("Copied the details to the clipboard", "Details in die Zwischenablage kopiert"),
     // Full size image (issue #3)
     ("Close full size view", "Vollbild schließen"),
     ("Previous image", "Vorheriges Bild"),

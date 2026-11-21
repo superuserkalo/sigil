@@ -15,6 +15,7 @@ pub const DE: &[(&str, &str)] = &[
     ("Updates are managed by your package manager", "Updates kommen von deiner Paketverwaltung"),
     ("Updates for this copy come from {}. Update Sigil there.", "Updates für diese Kopie kommen von {}. Aktualisiere Sigil dort."),
     ("Updates for this copy come from your system's package manager. Update Sigil there.", "Updates für diese Kopie kommen von der Paketverwaltung deines Systems. Aktualisiere Sigil dort."),
+    ("This copy came from Sigil's .deb package. Install the new .deb from the release page, or switch to the AppImage, which updates itself.", "Diese Kopie stammt aus Sigils .deb-Paket. Installiere das neue .deb von der Release-Seite oder wechsle zum AppImage, das sich selbst aktualisiert."),
     // Custom maps
     ("Maps", "Karten"),
     ("Custom maps", "Eigene Karten"),
