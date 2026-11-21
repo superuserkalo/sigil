@@ -42,6 +42,9 @@ pub struct Shelves {
     pub job: Job<Feeds>,
     /// The spotlight's current pick.
     pub spot: usize,
+    /// Whether this run shows the Featured shelf, decided once when Browse first polls, so a
+    /// saved catalog that loads late never inserts a shelf above the grid (next run shows it).
+    pub featured: Option<bool>,
 }
 
 /// Cards per page for a page `width` points wide.
@@ -74,6 +77,9 @@ pub fn page_count(len: usize, n: usize) -> usize {
 
 /// Start the three reads once per run, off the UI thread.
 pub fn start(st: &mut State) {
+    if st.browse_view.shelves.featured.is_none() {
+        st.browse_view.shelves.featured = Some(!st.browse_view.w4.featured.is_empty());
+    }
     let v = &st.browse_view.shelves;
     if st.demo || rune::is_headless() || v.feeds.is_some() || v.job.is_running() {
         return;
@@ -240,9 +246,9 @@ pub fn placeholder(u: &Ui, w: f32) -> El {
 
 fn arrow(u: &Ui, slot: usize, key: &'static str, forward: bool, enabled: bool, pages: usize) -> El {
     let (glyph, label) = if forward {
-        (&icons::CHEVRON_RIGHT, "Next page")
+        (&icons::CHEVRON_RIGHT, super::tree::tr("Next page"))
     } else {
-        (&icons::CHEVRON_LEFT, "Previous page")
+        (&icons::CHEVRON_LEFT, super::tree::tr("Previous page"))
     };
     let b = el()
         .key(format!("{key}-{}", if forward { "next" } else { "prev" }))
@@ -278,9 +284,9 @@ pub fn see_all(u: &Ui, key: &'static str) -> El {
         .press(u.over.alpha(0.08))
         .focusable(true)
         .role("button")
-        .label("See all")
+        .label(super::tree::tr("See all"))
         .cursor(rune::Cursor::Pointer)
-        .child(text("See all").font(LABEL).color(u.muted).a11y_hidden())
+        .child(text(super::tree::tr("See all")).font(LABEL).color(u.muted).a11y_hidden())
 }
 
 /// A shelf: the title row over one page of `tiles` laid out `n` to a page, each `tile_w` wide.

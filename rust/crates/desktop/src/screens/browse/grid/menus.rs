@@ -240,7 +240,7 @@ pub fn overlay(s: &State, u: &Ui) -> Option<El> {
                 .h(28.0)
                 .px(10.0)
                 .center_y()
-                .child(text("Filters").font(LABEL).color(u.muted))
+                .child(text(super::super::tree::tr("Filters")).font(LABEL).color(u.muted))
                 .child(spacer());
             if count > 0 {
                 head = head.child(
@@ -261,7 +261,7 @@ pub fn overlay(s: &State, u: &Ui) -> Option<El> {
             }
             let saved = favorites(s).len();
             items = items.child(head).child(
-                toggle_row(u, "menu-favorites", "Favorites only", &format_count(saved as u64), f.favorites)
+                toggle_row(u, "menu-favorites", super::super::tree::tr("Favorites only"), &format_count(saved as u64), f.favorites)
                     .on_press_tx(|st: &mut State, tx: &mut Tx| {
                         ensure_favorites(st);
                         set_filters(st, Some(tx), |f| f.favorites = !f.favorites)
@@ -274,8 +274,8 @@ pub fn overlay(s: &State, u: &Ui) -> Option<El> {
                 picker_row(
                     u,
                     "menu-pick-category",
-                    "Category",
-                    f.category.as_ref().map(|p| p.name.as_str()).unwrap_or("All categories"),
+                    super::super::tree::tr("Category"),
+                    f.category.as_ref().map(|p| p.name.as_str()).unwrap_or(super::super::tree::tr("All categories")),
                 )
                 .on_press(|st: &mut State| open_panel(st, FilterMenu::Category)),
                 pickers && s.browse_view.tab != Tab::Maps,
@@ -306,7 +306,7 @@ pub fn overlay(s: &State, u: &Ui) -> Option<El> {
                 .is_some_and(|pick| pick.name.eq_ignore_ascii_case("Skins"));
             items = items
                 .child(usable_row(
-                    picker_row(u, "menu-pick-hero", "Hero", f.hero.as_deref().unwrap_or("Any"))
+                    picker_row(u, "menu-pick-hero", super::super::tree::tr("Hero"), f.hero.as_deref().unwrap_or(super::super::tree::tr("Any")))
                         .on_press(|st: &mut State| {
                             st.browse_view.menu = None;
                             st.browse_view.from_filters = false;
@@ -316,7 +316,7 @@ pub fn overlay(s: &State, u: &Ui) -> Option<El> {
                     pickers && !(s.browse_view.tab == Tab::Mods && skins),
                 ))
                 .child(usable_row(
-                    picker_row(u, "menu-pick-date", "Date", &date_label(f))
+                    picker_row(u, "menu-pick-date", super::super::tree::tr("Date"), &date_label(f))
                         .on_press(|st: &mut State| open_panel(st, FilterMenu::Date)),
                     !collecting,
                 ))
@@ -324,14 +324,14 @@ pub fn overlay(s: &State, u: &Ui) -> Option<El> {
             let mut owned = Vec::new();
             for o in Owned::ALL {
                 owned.push(
-                    segment(u, &format!("menu-owned-{o:?}"), o.short(), f.owned == o)
+                    segment(u, &format!("menu-owned-{o:?}"), super::super::tree::tr(o.short()), f.owned == o)
                         .on_press_tx(move |st: &mut State, tx: &mut Tx| set_filters(st, Some(tx), move |f| f.owned = o)),
                 );
             }
             let mut mature = Vec::new();
             for m in MatureView::ALL {
                 mature.push(
-                    segment(u, &format!("menu-mature-{m:?}"), m.short(), f.mature == m)
+                    segment(u, &format!("menu-mature-{m:?}"), super::super::tree::tr(m.short()), f.mature == m)
                         .on_press_tx(move |st: &mut State, tx: &mut Tx| set_filters(st, Some(tx), move |f| f.mature = m)),
                 );
             }
@@ -341,23 +341,23 @@ pub fn overlay(s: &State, u: &Ui) -> Option<El> {
                     segment(
                         u,
                         if exclude { "menu-exclude" } else { "menu-include" },
-                        if exclude { "Exclude" } else { "Include" },
+                        super::super::tree::tr(if exclude { "Exclude" } else { "Include" }),
                         f.exclude == exclude,
                     )
                     .on_press_tx(move |st: &mut State, tx: &mut Tx| set_filters(st, Some(tx), move |f| f.exclude = exclude)),
                 );
             }
             items = items
-                .child(segmented(u, "Installed", owned))
-                .child(segmented(u, "Mature", mature))
-                .child(segmented(u, "Match", matching))
+                .child(segmented(u, super::super::tree::tr("Installed"), owned))
+                .child(segmented(u, super::super::tree::tr("Mature"), mature))
+                .child(segmented(u, super::super::tree::tr("Match"), matching))
                 .child(menu_rule(u))
                 .child(
-                    toggle_row(u, "menu-featured", "Featured only", "", f.featured)
+                    toggle_row(u, "menu-featured", super::super::tree::tr("Featured only"), "", f.featured)
                         .on_press_tx(|st: &mut State, tx: &mut Tx| set_filters(st, Some(tx), |f| f.featured = !f.featured)),
                 )
                 .child(
-                    toggle_row(u, "menu-outdated", "Hide outdated", "Before Jan 22", f.hide_outdated).on_press_tx(
+                    toggle_row(u, "menu-outdated", super::super::tree::tr("Hide outdated"), super::super::tree::tr("Before Jan 22"), f.hide_outdated).on_press_tx(
                         |st: &mut State, tx: &mut Tx| set_filters(st, Some(tx), |f| f.hide_outdated = !f.hide_outdated),
                     ),
                 );
@@ -494,7 +494,7 @@ pub fn overlay(s: &State, u: &Ui) -> Option<El> {
             let mut layouts = Vec::new();
             for layout in Layout::ALL {
                 layouts.push(
-                    segment(u, &format!("menu-layout-{}", layout.id()), layout.label(), s.browse_view.layout == layout)
+                    segment(u, &format!("menu-layout-{}", layout.id()), super::super::tree::tr(layout.label()), s.browse_view.layout == layout)
                         .on_press(move |st: &mut State| {
                             st.browse_view.layout = layout;
                             save_browse_state(st);
@@ -504,7 +504,7 @@ pub fn overlay(s: &State, u: &Ui) -> Option<El> {
             let mut sizes = Vec::new();
             for size in CardSize::ALL {
                 sizes.push(
-                    segment(u, &format!("menu-size-{}", size.id()), size.label(), s.browse_view.card_size == size)
+                    segment(u, &format!("menu-size-{}", size.id()), super::super::tree::tr(size.label()), s.browse_view.card_size == size)
                         .on_press(move |st: &mut State| {
                             st.browse_view.card_size = size;
                             save_browse_state(st);
@@ -512,11 +512,11 @@ pub fn overlay(s: &State, u: &Ui) -> Option<El> {
                 );
             }
             items = items
-                .child(segmented(u, "Layout", layouts))
-                .child(segmented(u, "Cards", sizes))
+                .child(segmented(u, super::super::tree::tr("Layout"), layouts))
+                .child(segmented(u, super::super::tree::tr("Cards"), sizes))
                 .child(menu_rule(u))
                 .child(
-                    toggle_row(u, "menu-paged", "Numbered pages", "", s.browse_view.paged).on_press(|st: &mut State| {
+                    toggle_row(u, "menu-paged", super::super::tree::tr("Numbered pages"), "", s.browse_view.paged).on_press(|st: &mut State| {
                         st.browse_view.paged = !st.browse_view.paged;
                         st.browse_view.auto_streak = 0;
                         save_browse_state(st);
@@ -543,14 +543,14 @@ pub fn overlay(s: &State, u: &Ui) -> Option<El> {
         FilterMenu::Tools => {
             items = items
                 .child(
-                    menu_item(u, "menu-refresh", Some(icon(&icons::REFRESH_CW, 14.0).color(u.muted).a11y_hidden()), "Refresh", "", false)
+                    menu_item(u, "menu-refresh", Some(icon(&icons::REFRESH_CW, 14.0).color(u.muted).a11y_hidden()), super::super::tree::tr("Refresh"), "", false)
                         .on_press_tx(|st: &mut State, tx: &mut Tx| {
                             st.browse_view.menu = None;
                             refresh(st, tx);
                         }),
                 )
                 .child(
-                    menu_item(u, "menu-paste", Some(icon(&icons::PAPERCLIP, 14.0).color(u.muted).a11y_hidden()), "Paste mod links", "", false)
+                    menu_item(u, "menu-paste", Some(icon(&icons::PAPERCLIP, 14.0).color(u.muted).a11y_hidden()), super::super::tree::tr("Paste mod links"), "", false)
                         .on_press(|st: &mut State| {
                             st.browse_view.menu = None;
                             crate::screens::browse::paste::open(st);
@@ -558,7 +558,7 @@ pub fn overlay(s: &State, u: &Ui) -> Option<El> {
                 );
             if crate::screens::browse::toolbar::tier(s) == crate::screens::browse::toolbar::Tier::D {
                 items = items.child(
-                    menu_item(u, "menu-view", Some(icon(&icons::LAYOUT_GRID, 14.0).color(u.muted).a11y_hidden()), "View options", "", false)
+                    menu_item(u, "menu-view", Some(icon(&icons::LAYOUT_GRID, 14.0).color(u.muted).a11y_hidden()), super::super::tree::tr("View options"), "", false)
                         .on_press(|st: &mut State| st.browse_view.menu = Some(FilterMenu::View)),
                 );
             }
@@ -585,7 +585,7 @@ pub fn overlay(s: &State, u: &Ui) -> Option<El> {
                         u,
                         "menu-hidden",
                         Some(icon(&EYE_OFF, 14.0).color(u.muted).a11y_hidden()),
-                        "Hidden items",
+                        super::super::tree::tr("Hidden items"),
                         &format_count((s.browse_view.hidden_mods.len() + s.browse_view.hidden_authors.len()) as u64),
                         false,
                     )
@@ -599,7 +599,7 @@ pub fn overlay(s: &State, u: &Ui) -> Option<El> {
                         u,
                         "menu-ignored",
                         Some(icon(&icons::REFRESH_CW, 14.0).color(u.muted).a11y_hidden()),
-                        "Ignored updates",
+                        super::super::tree::tr("Ignored updates"),
                         &format_count(s.browse_view.ignored_updates.len() as u64),
                         false,
                     )

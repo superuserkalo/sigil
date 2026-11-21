@@ -200,7 +200,7 @@ fn filters_button(s: &State, u: &Ui, t: Tier) -> El {
         .on_press(|st: &mut State| toggle_menu(st, FilterMenu::More))
         .child(icon(&icons::SLIDERS_HORIZONTAL, 14.0).color(ink).a11y_hidden());
     if t == Tier::A {
-        b = b.child(text("Filters").font(LABEL).color(ink).a11y_hidden());
+        b = b.child(text(super::tree::tr("Filters")).font(LABEL).color(ink).a11y_hidden());
     }
     b.child(
         text(if count > 0 { count.to_string() } else { String::new() })
@@ -249,7 +249,7 @@ pub(crate) fn line(s: &State, u: &Ui) -> El {
             .center_y()
             .child(search_field(s, u, (page_width(s) - 40.0).max(0.0)))
             .child(
-                square(u, "browse-search-close", &icons::X, "Close search", false)
+                square(u, "browse-search-close", &icons::X, super::tree::tr("Close search"), false)
                     .on_press(|st: &mut State| st.browse_view.search_open = false),
             );
     }
@@ -277,7 +277,7 @@ pub(crate) fn line(s: &State, u: &Ui) -> El {
                 "browse-filter-category",
                 CATEGORY_W,
                 None,
-                f.category.as_ref().map(|p| p.name.as_str()).unwrap_or("Category"),
+                f.category.as_ref().map(|p| p.name.as_str()).unwrap_or(super::tree::tr("Category")),
                 f.category.is_some(),
                 open == Some(FilterMenu::Category) && !s.browse_view.from_filters,
             )
@@ -290,7 +290,7 @@ pub(crate) fn line(s: &State, u: &Ui) -> El {
     let sort = if t == Tier::A {
         dropdown(u, "browse-filter-sort", SORT_W, Some(&SORT), order.label(), false, open == Some(FilterMenu::Sort))
     } else {
-        square(u, "browse-filter-sort", &SORT, &format!("Sort: {}", order.label()), open == Some(FilterMenu::Sort))
+        square(u, "browse-filter-sort", &SORT, &crate::screens::settings::i18n::fill(super::tree::tr("Sort: {}"), &[order.label()]), open == Some(FilterMenu::Sort))
     };
     r = r.child(usable(
         sort.on_press(|st: &mut State| toggle_menu(st, FilterMenu::Sort)),
@@ -312,7 +312,7 @@ pub(crate) fn line(s: &State, u: &Ui) -> El {
                 u,
                 "browse-filter-view",
                 if s.browse_view.layout == Layout::List { &icons::LIST } else { &icons::LAYOUT_GRID },
-                "View options",
+                super::tree::tr("View options"),
                 open == Some(FilterMenu::View),
             )
             .on_press(|st: &mut State| toggle_menu(st, FilterMenu::View)),
@@ -321,7 +321,7 @@ pub(crate) fn line(s: &State, u: &Ui) -> El {
     };
     r.child(
         trailing.child(
-            square(u, "browse-filter-tools", &icons::ELLIPSIS, "More", open == Some(FilterMenu::Tools))
+            square(u, "browse-filter-tools", &icons::ELLIPSIS, super::tree::tr("More"), open == Some(FilterMenu::Tools))
                 .on_press(|st: &mut State| toggle_menu(st, FilterMenu::Tools)),
         ),
     )
@@ -433,7 +433,7 @@ pub(crate) fn status_row(s: &State, u: &Ui, detail: &str) -> El {
                 .center()
                 .radius(crate::ui::r(4.0))
                 .border(1.0, u.hair_strong)
-                .child(text("Saved copy").font(crate::ui::MICRO).color(u.muted)),
+                .child(text(super::tree::tr("Saved copy")).font(crate::ui::MICRO).color(u.muted)),
         );
     }
     let all = chips(s, u);
@@ -483,7 +483,7 @@ pub(crate) fn status_row(s: &State, u: &Ui, detail: &str) -> El {
                 .label("Clear all filters")
                 .cursor(rune::Cursor::Pointer)
                 .on_press_tx(clear_filters)
-                .child(text("Clear all").font(LABEL).color(u.muted).a11y_hidden()),
+                .child(text(super::tree::tr("Clear all")).font(LABEL).color(u.muted).a11y_hidden()),
         );
     }
     r = r.child(chip_row).child(spacer());

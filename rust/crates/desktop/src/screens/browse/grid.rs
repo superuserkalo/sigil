@@ -84,7 +84,7 @@ pub(crate) fn dashboard(s: &State, u: &Ui) -> Option<El> {
             u,
             shelf::TRENDING,
             "browse-shelf-week",
-            "Trending this week",
+            super::tree::tr("Trending this week"),
             Some(see("browse-shelf-week-all", BrowsePeriod::Week)),
             tiles("week", feeds.map(|f| &f.week)),
             n,
@@ -96,7 +96,7 @@ pub(crate) fn dashboard(s: &State, u: &Ui) -> Option<El> {
             u,
             shelf::MONTH,
             "browse-shelf-month",
-            "Popular this month",
+            super::tree::tr("Popular this month"),
             Some(see("browse-shelf-month-all", BrowsePeriod::Month)),
             tiles("month", feeds.map(|f| &f.month)),
             n,
@@ -112,7 +112,7 @@ pub(crate) fn dashboard(s: &State, u: &Ui) -> Option<El> {
         .iter()
         .map(|(_, card)| card.clone())
         .collect();
-    if !featured.is_empty() {
+    if !featured.is_empty() && s.browse_view.shelves.featured.unwrap_or(true) {
         rails = rails.child(shelf::shelf(
             s,
             u,
@@ -136,7 +136,7 @@ pub(crate) fn dashboard(s: &State, u: &Ui) -> Option<El> {
         u,
         shelf::ALL_TIME,
         "browse-shelf-all",
-        "All-time favorites",
+        super::tree::tr("All-time favorites"),
         Some(see("browse-shelf-all-all", BrowsePeriod::Any)),
         tiles("all", feeds.map(|f| &f.all)),
         n,
@@ -150,7 +150,7 @@ pub(crate) fn dashboard(s: &State, u: &Ui) -> Option<El> {
                 .w_full()
                 .h(24.0)
                 .center_y()
-                .child(text("All mods").font(H2).color(u.ink)),
+                .child(text(super::tree::tr("All mods")).font(H2).color(u.ink)),
         ),
     )
 }
@@ -159,13 +159,30 @@ pub(crate) fn dashboard(s: &State, u: &Ui) -> Option<El> {
 /// skins. Paged like every shelf; "Random" stands where "See all" is.
 pub(crate) fn hero_shelf(s: &State, u: &Ui, width: f32) -> Option<El> {
     use super::shelf;
-    let heroes = hero_list(s);
-    if heroes.is_empty() {
-        return None;
-    }
     const TILE: f32 = 72.0;
     let n = shelf::heroes_per_page(width);
     let gap = if n > 1 { ((width - TILE * n as f32) / (n as f32 - 1.0)).floor() } else { 0.0 };
+    let heroes = hero_list(s);
+    if heroes.is_empty() {
+        // The Skins tree is still on its way: hold the shelf's place at its final size.
+        if categories_of(s, BrowseSection::Mods).is_some()
+            || s.browse_view.categories_failed.contains(&BrowseSection::Mods)
+        {
+            return None;
+        }
+        let tiles = (0..n)
+            .map(|_| {
+                col()
+                    .w(TILE)
+                    .min_w(TILE)
+                    .gap(8.0)
+                    .items_center()
+                    .child(el().size(56.0, 56.0).radius(crate::ui::r(8.0)).fill(u.hover))
+                    .child(el().w(48.0).h(16.0).py(4.0).child(el().w_full().h_full().radius(crate::ui::r(4.0)).fill(u.hover)))
+            })
+            .collect();
+        return Some(shelf::shelf(s, u, shelf::HEROES, "browse-heroes", super::tree::tr("Browse by hero"), None, tiles, n, TILE, gap));
+    }
     let tiles: Vec<El> = heroes
         .into_iter()
         .map(|hero| {
@@ -223,7 +240,7 @@ pub(crate) fn hero_shelf(s: &State, u: &Ui, width: f32) -> Option<El> {
         u,
         shelf::HEROES,
         "browse-heroes",
-        "Browse by hero",
+        super::tree::tr("Browse by hero"),
         // Wave 4: DMM's random hero.
         Some(super::w4::random_button(u)),
         tiles,

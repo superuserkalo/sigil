@@ -141,7 +141,7 @@ pub fn view(s: &State, u: &Ui) -> El {
     let mut info = col().key("browse-spot-info").grow(1.0).min_w(0.0).h_full().padding(16.0).gap(4.0);
     match pick {
         Some(p) => {
-            let eyebrow = if p.period == "today" { "Trending today" } else { "Trending this week" };
+            let eyebrow = super::tree::tr(if p.period == "today" { "Trending today" } else { "Trending this week" });
             info = info
                 .child(text(eyebrow).font(LABEL).color(u.muted))
                 .child(
