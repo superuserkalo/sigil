@@ -257,6 +257,7 @@ fn search(s: &mut State) {
 /// Match history in: the "Where I play" preset and the counts beside each location.
 fn where_i_play(s: &mut State) {
     with_catalog(s, &[]);
+    s.prefs.allow_stats = true;
     let regions = &mut s.servers.regions;
     regions.history = Some([("fra".to_string(), 41u64), ("ams".to_string(), 12), ("sto".to_string(), 3)].into_iter().collect());
     regions.sort = super::Sort::Matches;

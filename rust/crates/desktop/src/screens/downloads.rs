@@ -153,6 +153,13 @@ impl Downloads {
         if let Some(item) = stage.get_mut("d4") {
             item.error = Some("The server closed the connection.".to_string());
         }
+        // The resume marks: a row cut off by a restart and a one-press install still owed.
+        if let Some(item) = stage.get_mut("d2") {
+            item.interrupted = true;
+        }
+        if let Some(item) = stage.get_mut("d1") {
+            item.install = true;
+        }
         self.demo = Some(stage);
         self.demo_rates.insert("d1".to_string(), (2_300_000, false));
     }
@@ -683,6 +690,18 @@ fn queue_target(st: &mut State) {
     crate::data::queue_install(st, &target);
 }
 
+/// The resume marks on a row: cut off by a restart, or a one-press install still owed.
+fn resume_note(item: &Item) -> Option<&'static str> {
+    let open = matches!(item.state, ItemState::Queued | ItemState::Running | ItemState::Paused);
+    if item.state == ItemState::Paused && item.interrupted {
+        Some(tr("Stopped when Sigil closed"))
+    } else if open && item.install {
+        Some(tr("Installs when done"))
+    } else {
+        None
+    }
+}
+
 /// One archive: state, name, the line under it, a progress line while it runs, and its
 /// controls on the right.
 #[allow(clippy::too_many_arguments)]
@@ -730,6 +749,10 @@ fn item_row(
         fill(tr("#{} in line. Waiting its turn."), &[&place.to_string()])
     } else {
         item.detail()
+    };
+    let detail = match resume_note(item) {
+        Some(note) => fill(tr("{} · {}"), &[note, &detail]),
+        None => detail,
     };
 
     let mut middle = col()

@@ -647,6 +647,8 @@ pub const DE: &[(&str, &str)] = &[
     ("A download did not finish", "Ein Download wurde nicht fertig"),
     ("{} did not finish downloading", "{} wurde nicht fertig heruntergeladen"),
     ("{} downloads did not finish", "{} Downloads wurden nicht fertig"),
+    ("Stopped when Sigil closed", "Angehalten, als Sigil geschlossen wurde"),
+    ("Installs when done", "Wird danach installiert"),
     (
         "Sigil closed while they were downloading. Resume continues from the bytes already on disk.",
         "Sigil wurde während des Downloads geschlossen. Fortsetzen macht mit den Bytes weiter, die schon auf der Festplatte liegen.",
