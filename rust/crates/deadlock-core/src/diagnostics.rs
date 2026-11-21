@@ -412,18 +412,23 @@ pub fn graphics_line(gpu: Option<&str>, driver: Option<&str>, driver_date: Optio
 }
 
 /// [`graphics_line`] for this machine. Reads the same machine the benchmark uses, so the two
-/// never disagree about a driver update.
+/// never disagree about a driver update. Read once: the troubleshooting section asks every
+/// frame, and the GPU and driver do not change during a run.
 pub fn machine_line() -> String {
-    let machine = crate::benchmark::system::read_machine();
-    if machine.gpu.is_none() && !cfg!(any(windows, target_os = "linux")) {
-        // The machine reader covers Windows and Linux; do not call a Mac's Metal GPU "software".
-        return "Graphics: not reported on this platform".to_string();
-    }
-    graphics_line(
-        machine.gpu.as_deref(),
-        machine.driver.as_deref(),
-        machine.driver_date.as_deref(),
-    )
+    static LINE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    LINE.get_or_init(|| {
+        let machine = crate::benchmark::system::read_machine();
+        if machine.gpu.is_none() && !cfg!(any(windows, target_os = "linux")) {
+            // The machine reader covers Windows and Linux; do not call a Mac's Metal GPU "software".
+            return "Graphics: not reported on this platform".to_string();
+        }
+        graphics_line(
+            machine.gpu.as_deref(),
+            machine.driver.as_deref(),
+            machine.driver_date.as_deref(),
+        )
+    })
+    .clone()
 }
 
 #[cfg(test)]
