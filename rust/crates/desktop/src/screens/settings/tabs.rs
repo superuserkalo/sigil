@@ -1178,6 +1178,7 @@ pub fn diagnostic_report(st: &State) -> String {
     let mut out = vec![
         format!("Sigil {}", env!("CARGO_PKG_VERSION")),
         format!("System: {} {}", std::env::consts::OS, std::env::consts::ARCH),
+        deadlock_core::diagnostics::machine_line(),
         format!(
             "Game: {}",
             if st.game_detected { mask(st.paths.game.clone()) } else { "not found".into() }

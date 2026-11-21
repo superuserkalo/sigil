@@ -391,6 +391,41 @@ pub fn report(checks: &[Check]) -> String {
     checks.iter().map(Check::line).collect::<Vec<_>>().join("\n")
 }
 
+/// The graphics stack as one report line. A black screen report needs the GPU, its driver and
+/// whether Sigil found an adapter at all; without those the rest of the report cannot tell a
+/// driver problem from a game problem (Grimoire's diagnostic header, behaviour only).
+pub fn graphics_line(gpu: Option<&str>, driver: Option<&str>, driver_date: Option<&str>) -> String {
+    let gpu = gpu.map(str::trim).filter(|gpu| !gpu.is_empty());
+    let driver = driver.map(str::trim).filter(|driver| !driver.is_empty());
+    match (gpu, driver) {
+        (None, _) => "Graphics: no GPU adapter found (software rendering)".to_string(),
+        (Some(gpu), Some(driver)) => {
+            let date = driver_date
+                .map(str::trim)
+                .filter(|date| !date.is_empty())
+                .map(|date| format!(", {date}"))
+                .unwrap_or_default();
+            format!("Graphics: {gpu} · driver {driver}{date} (hardware acceleration)")
+        }
+        (Some(gpu), None) => format!("Graphics: {gpu} (hardware acceleration, driver not reported)"),
+    }
+}
+
+/// [`graphics_line`] for this machine. Reads the same machine the benchmark uses, so the two
+/// never disagree about a driver update.
+pub fn machine_line() -> String {
+    let machine = crate::benchmark::system::read_machine();
+    if machine.gpu.is_none() && !cfg!(any(windows, target_os = "linux")) {
+        // The machine reader covers Windows and Linux; do not call a Mac's Metal GPU "software".
+        return "Graphics: not reported on this platform".to_string();
+    }
+    graphics_line(
+        machine.gpu.as_deref(),
+        machine.driver.as_deref(),
+        machine.driver_date.as_deref(),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -433,6 +468,21 @@ mod tests {
         let old = CatalogStatus { synced_at: now - CATALOG_STALE_SECONDS - 1, ..fresh };
         assert_eq!(evaluate_catalog(old, now, false).fixes, vec!["fixInternetFirst".to_string()]);
         assert!(report(&[evaluate_network(false)]).starts_with("network: ok"));
+    }
+
+    #[test]
+    fn graphics_line_names_the_gpu_driver_and_acceleration() {
+        let line = graphics_line(Some("NVIDIA GeForce RTX 4070"), Some("31.0.15.5222"), Some("2026-10-01"));
+        assert_eq!(
+            line,
+            "Graphics: NVIDIA GeForce RTX 4070 · driver 31.0.15.5222, 2026-10-01 (hardware acceleration)"
+        );
+        assert_eq!(
+            graphics_line(Some("AMD Radeon"), None, None),
+            "Graphics: AMD Radeon (hardware acceleration, driver not reported)"
+        );
+        assert!(graphics_line(None, Some("1"), None).contains("no GPU adapter"));
+        assert!(graphics_line(Some("  "), None, None).contains("no GPU adapter"));
     }
 
     #[test]
