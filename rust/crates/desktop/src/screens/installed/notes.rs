@@ -14,7 +14,7 @@ use std::collections::BTreeSet;
 use std::path::PathBuf;
 
 use deadlock_core::gamebanana;
-use deadlock_core::mod_extras::{self, Extras, ModExtra, SlotKey};
+use deadlock_core::mod_extras::{self, Extras, ModExtra, SlotKey, TagKind};
 use rune::{El, FileDialogOptions, Tx, col, icon, row, spacer, text};
 use rune::TextEdit;
 
@@ -25,6 +25,15 @@ use crate::model::AddonRow;
 use crate::ui::{ActionKind, BODY, BODY_MED, H1, SMALL, Ui};
 
 use super::{meta_for, NO_ICON};
+
+#[path = "hero_guess.rs"]
+pub mod hero_guess;
+
+/// One tag in the Installed tag menu: a tag the player typed, a GameBanana category or a hero.
+pub type TagRef = (TagKind, String);
+
+/// The `Prefs::flags` id of Settings > Mods > Cycle tag filters (off by default).
+pub const CYCLE_TAG_FILTERS: &str = "cycle_tag_filters";
 
 /// The state of the extras store on this screen.
 #[derive(Default)]
@@ -39,8 +48,13 @@ pub struct Notes {
     pub backfill_ids: Option<Vec<u64>>,
     pub hero: Option<String>,
     pub category: Option<String>,
-    pub tag: Option<String>,
+    /// Tags a mod must have one of (green plus).
+    pub tags_in: Vec<TagRef>,
+    /// Tags a mod must not have (red minus).
+    pub tags_out: Vec<TagRef>,
     pub list: Option<String>,
+    /// Heroes read from the files of mods GameBanana filed under no hero.
+    pub guess: hero_guess::Guess,
     pub dialog: Option<Dialog>,
     /// The tag line, mod name and list name typed in a dialog.
     pub text: TextEdit,
@@ -156,6 +170,7 @@ pub fn poll(st: &mut State) -> bool {
     }
     changed |= poll_backfill(st);
     changed |= load_local_images(st);
+    changed |= hero_guess::poll(st);
     changed
 }
 
@@ -281,16 +296,23 @@ fn load_local_images(st: &mut State) -> bool {
 
 // --- filters -----------------------------------------------------------------
 
-/// Hero names in the library, sorted.
+/// Hero names in the library, sorted: GameBanana's hero categories and the heroes guessed
+/// for the rest (`hero_guess`).
 pub fn heroes(st: &State) -> Vec<String> {
     let mut names: BTreeSet<String> = st
-        .installed
-        .notes
-        .extras
-        .mods
+        .addons
+        .addons
         .iter()
-        .filter_map(|entry| entry.hero.clone())
+        .flat_map(|addon| hero_guess::heroes_of(st, addon))
         .collect();
+    names.extend(
+        st.installed
+            .notes
+            .extras
+            .mods
+            .iter()
+            .filter_map(|entry| entry.hero.clone()),
+    );
     names.retain(|name| !name.trim().is_empty());
     names.into_iter().collect()
 }
@@ -309,16 +331,77 @@ pub fn categories(st: &State) -> Vec<String> {
     names.into_iter().collect()
 }
 
-/// Does a mod pass the hero, category, tag and list filters?
+/// Every tag of one mod: the player's own, its GameBanana categories (root and leaf, with
+/// the label fixes of `normalize_category_label`) and its heroes. The order is the tag menu's.
+pub fn tags_of(st: &State, addon: &AddonRow) -> Vec<TagRef> {
+    let entry = extra(st, addon);
+    let mut tags: Vec<TagRef> = Vec::new();
+    let push = |tags: &mut Vec<TagRef>, kind: TagKind, label: String| {
+        let label = label.trim().to_string();
+        if !label.is_empty() && !tags.iter().any(|tag| same_tag(tag, &(kind, label.clone()))) {
+            tags.push((kind, label));
+        }
+    };
+    for tag in &entry.tags {
+        push(&mut tags, TagKind::Custom, tag.clone());
+    }
+    let heroes = hero_guess::heroes_of(st, addon);
+    for label in [entry.root_category.clone(), entry.category.clone()].into_iter().flatten() {
+        let label = mod_extras::normalize_category_label(&label);
+        // A hero leaf is the hero tag, not a category.
+        if !heroes.iter().any(|hero| hero.eq_ignore_ascii_case(&label))
+            && mod_extras::category_hero(&label).is_none()
+        {
+            push(&mut tags, TagKind::Base, label);
+        }
+    }
+    for hero in heroes {
+        push(&mut tags, TagKind::Hero, hero);
+    }
+    mod_extras::sort_tags(&st.installed.notes.extras.tag_order, &mut tags);
+    tags
+}
+
+fn same_tag(a: &TagRef, b: &TagRef) -> bool {
+    a.0 == b.0 && a.1.eq_ignore_ascii_case(&b.1)
+}
+
+/// Every tag in the library, in the player's display priority.
+pub fn tag_options(st: &State) -> Vec<TagRef> {
+    let mut all: Vec<TagRef> = Vec::new();
+    for addon in &st.addons.addons {
+        for tag in tags_of(st, addon) {
+            if !all.iter().any(|known| same_tag(known, &tag)) {
+                all.push(tag);
+            }
+        }
+    }
+    // Tags typed on mods that are not on disk now still show, so they can be filtered later.
+    for tag in st.installed.notes.extras.all_tags() {
+        let tag = (TagKind::Custom, tag);
+        if !all.iter().any(|known| same_tag(known, &tag)) {
+            all.push(tag);
+        }
+    }
+    mod_extras::sort_tags(&st.installed.notes.extras.tag_order, &mut all);
+    all
+}
+
+/// Does a mod pass the hero, category, tag and list filters? With included tags it must have
+/// one of them; it must have none of the excluded ones (Grimoire's tag filter).
 pub fn matches(st: &State, addon: &AddonRow) -> bool {
     let notes = &st.installed.notes;
-    if notes.hero.is_none() && notes.category.is_none() && notes.tag.is_none() && notes.list.is_none()
+    if notes.hero.is_none()
+        && notes.category.is_none()
+        && notes.tags_in.is_empty()
+        && notes.tags_out.is_empty()
+        && notes.list.is_none()
     {
         return true;
     }
     let entry = extra(st, addon);
     if let Some(hero) = &notes.hero
-        && entry.hero.as_deref() != Some(hero.as_str())
+        && !hero_guess::heroes_of(st, addon).iter().any(|known| known == hero)
     {
         return false;
     }
@@ -327,10 +410,15 @@ pub fn matches(st: &State, addon: &AddonRow) -> bool {
     {
         return false;
     }
-    if let Some(tag) = &notes.tag
-        && !entry.tags.iter().any(|known| known.eq_ignore_ascii_case(tag))
-    {
-        return false;
+    if !notes.tags_in.is_empty() || !notes.tags_out.is_empty() {
+        let tags = tags_of(st, addon);
+        let has = |want: &TagRef| tags.iter().any(|tag| same_tag(tag, want));
+        if !notes.tags_in.is_empty() && !notes.tags_in.iter().any(has) {
+            return false;
+        }
+        if notes.tags_out.iter().any(has) {
+            return false;
+        }
     }
     if let Some(list) = &notes.list {
         let member = st
@@ -346,12 +434,88 @@ pub fn matches(st: &State, addon: &AddonRow) -> bool {
     true
 }
 
+/// Left click on a tag in the menu. Without cycling it includes the tag, or clears it when it
+/// is on; with Cycle tag filters it walks off, included, excluded, off.
+pub fn tag_left_click(st: &mut State, tag: &TagRef) {
+    let cycle = st.prefs.flag(CYCLE_TAG_FILTERS);
+    let notes = &mut st.installed.notes;
+    let included = notes.tags_in.iter().position(|known| same_tag(known, tag));
+    let excluded = notes.tags_out.iter().position(|known| same_tag(known, tag));
+    match (included, excluded, cycle) {
+        (Some(at), _, true) => {
+            notes.tags_in.remove(at);
+            notes.tags_out.push(tag.clone());
+        }
+        (Some(at), _, false) => {
+            notes.tags_in.remove(at);
+        }
+        (None, Some(at), _) => {
+            notes.tags_out.remove(at);
+        }
+        (None, None, _) => notes.tags_in.push(tag.clone()),
+    }
+}
+
+/// Right click on a tag in the menu. Without cycling it excludes the tag (an included one
+/// switches to excluded, an excluded one clears); with Cycle tag filters it clears either.
+pub fn tag_right_click(st: &mut State, tag: &TagRef) {
+    let cycle = st.prefs.flag(CYCLE_TAG_FILTERS);
+    let notes = &mut st.installed.notes;
+    let included = notes.tags_in.iter().position(|known| same_tag(known, tag));
+    let excluded = notes.tags_out.iter().position(|known| same_tag(known, tag));
+    match (included, excluded) {
+        (Some(at), _) => {
+            notes.tags_in.remove(at);
+            if !cycle {
+                notes.tags_out.push(tag.clone());
+            }
+        }
+        (None, Some(at)) => {
+            notes.tags_out.remove(at);
+        }
+        (None, None) => {
+            if !cycle {
+                notes.tags_out.push(tag.clone());
+            }
+        }
+    }
+}
+
+/// Move a tag up or down in the display priority and save it.
+fn move_tag(st: &mut State, tag: &TagRef, step: isize) {
+    let shown = tag_options(st);
+    let Some(order) = mod_extras::move_tag(&shown, (tag.0, &tag.1), step) else {
+        return;
+    };
+    let path = extras_file();
+    if let Err(error) = mod_extras::edit_extras(&path, |extras| extras.tag_order = order) {
+        st.installed.notes.error = Some(error.to_string());
+    }
+    st.installed.notes.extras = mod_extras::read_extras(&path).unwrap_or_default();
+}
+
+/// Back to the default order: custom tags, then categories, then heroes, by name.
+fn reset_tag_order(st: &mut State) {
+    let path = extras_file();
+    let _ = mod_extras::edit_extras(&path, |extras| extras.tag_order.clear());
+    st.installed.notes.extras = mod_extras::read_extras(&path).unwrap_or_default();
+}
+
+fn tag_kind_label(kind: TagKind) -> &'static str {
+    match kind {
+        TagKind::Custom => "Tag",
+        TagKind::Base => "Category",
+        TagKind::Hero => "Hero",
+    }
+}
+
 /// Clear every filter this module owns.
 pub fn clear(st: &mut State) {
     let notes = &mut st.installed.notes;
     notes.hero = None;
     notes.category = None;
-    notes.tag = None;
+    notes.tags_in.clear();
+    notes.tags_out.clear();
     notes.list = None;
 }
 
@@ -359,7 +523,7 @@ pub fn clear(st: &mut State) {
 pub fn filter_row(s: &State, u: &Ui) -> Option<El> {
     let heroes = heroes(s);
     let categories = categories(s);
-    let tags = s.installed.notes.extras.all_tags();
+    let tags = tag_options(s);
     let lists = &s.installed.notes.extras.lists;
     if heroes.is_empty() && categories.is_empty() && tags.is_empty() && lists.is_empty() {
         return None;
@@ -380,7 +544,7 @@ pub fn filter_row(s: &State, u: &Ui) -> Option<El> {
             notes.category.clone(),
             super::Menu::Category,
         ),
-        ("installed-tag", "Tag", notes.tag.clone(), super::Menu::Tag),
+        ("installed-tag", "Tag", tag_summary(notes), super::Menu::Tag),
         (
             "installed-list",
             "List",
@@ -401,7 +565,10 @@ pub fn filter_row(s: &State, u: &Ui) -> Option<El> {
         let close: fn(&mut State) = match menu {
             super::Menu::Hero => |st: &mut State| st.installed.notes.hero = None,
             super::Menu::Category => |st: &mut State| st.installed.notes.category = None,
-            super::Menu::Tag => |st: &mut State| st.installed.notes.tag = None,
+            super::Menu::Tag => |st: &mut State| {
+                st.installed.notes.tags_in.clear();
+                st.installed.notes.tags_out.clear();
+            },
             _ => |st: &mut State| st.installed.notes.list = None,
         };
         line = line.child(
@@ -469,6 +636,26 @@ pub fn filter_row(s: &State, u: &Ui) -> Option<El> {
     Some(line)
 }
 
+/// The tag filter chip's value: the one tag with its sign, or the counts.
+fn tag_summary(notes: &Notes) -> Option<String> {
+    let (inc, exc) = (notes.tags_in.len(), notes.tags_out.len());
+    match (inc, exc) {
+        (0, 0) => None,
+        (1, 0) => Some(format!("+{}", notes.tags_in[0].1)),
+        (0, 1) => Some(format!("\u{2212}{}", notes.tags_out[0].1)),
+        _ => {
+            let mut parts = Vec::new();
+            if inc > 0 {
+                parts.push(format!("+{inc}"));
+            }
+            if exc > 0 {
+                parts.push(format!("\u{2212}{exc}"));
+            }
+            Some(parts.join(" "))
+        }
+    }
+}
+
 /// A 28 point filter chip with a glyph and a chevron.
 fn dropdown(u: &Ui, key: &str, label: &str, glyph: &'static rune::Icon) -> El {
     row()
@@ -500,7 +687,6 @@ pub fn menu_rows(s: &State, u: &Ui, menu: super::Menu) -> Vec<El> {
         let on = match menu {
             super::Menu::Hero => notes.hero == value,
             super::Menu::Category => notes.category == value,
-            super::Menu::Tag => notes.tag == value,
             _ => notes.list == value,
         };
         rows.push(
@@ -517,12 +703,14 @@ pub fn menu_rows(s: &State, u: &Ui, menu: super::Menu) -> Vec<El> {
                 match menu {
                     super::Menu::Hero => st.installed.notes.hero = value.clone(),
                     super::Menu::Category => st.installed.notes.category = value.clone(),
-                    super::Menu::Tag => st.installed.notes.tag = value.clone(),
                     _ => st.installed.notes.list = value.clone(),
                 }
             }),
         );
     };
+    if menu == super::Menu::Tag {
+        return tag_menu_rows(s, u);
+    }
     any_row(&mut rows, None, "Any", format!("menu-{menu:?}-any"));
     match menu {
         super::Menu::Hero => {
@@ -538,11 +726,6 @@ pub fn menu_rows(s: &State, u: &Ui, menu: super::Menu) -> Vec<El> {
                     &category,
                     format!("menu-category-{category}"),
                 );
-            }
-        }
-        super::Menu::Tag => {
-            for tag in s.installed.notes.extras.all_tags() {
-                any_row(&mut rows, Some(tag.clone()), &tag, format!("menu-tag-{tag}"));
             }
         }
         super::Menu::List => {
@@ -561,6 +744,114 @@ pub fn menu_rows(s: &State, u: &Ui, menu: super::Menu) -> Vec<El> {
         }
         _ => {}
     }
+    rows
+}
+
+/// The one tag menu: the player's tags, GameBanana categories and heroes in the display
+/// priority. Left click includes (or cycles, with Cycle tag filters on), right click excludes
+/// (or clears). The arrows move a tag up or down; the order also sorts the tags on the cards.
+fn tag_menu_rows(s: &State, u: &Ui) -> Vec<El> {
+    use crate::screens::settings::i18n::tr;
+    let notes = &s.installed.notes;
+    let options = tag_options(s);
+    let mut rows = Vec::new();
+    let count = options.len();
+    for (at, tag) in options.into_iter().enumerate() {
+        let included = notes.tags_in.iter().any(|known| same_tag(known, &tag));
+        let excluded = notes.tags_out.iter().any(|known| same_tag(known, &tag));
+        let key = mod_extras::tag_order_key(tag.0, &tag.1);
+        let (glyph, tone) = if included {
+            (&icons::PLUS, u.teal)
+        } else if excluded {
+            (&icons::MINUS, u.rose)
+        } else {
+            (&NO_ICON, u.muted)
+        };
+        let hint = if excluded {
+            tr("Excluded. Click to clear.")
+        } else if included {
+            tr("Included. Right click to exclude.")
+        } else {
+            tr("Click to include, right click to exclude.")
+        };
+        let left = tag.clone();
+        let right = tag.clone();
+        let up = tag.clone();
+        let down = tag.clone();
+        let arrow = |glyph_key: String, label: &str, flip: bool, enabled: bool| {
+            let mut glyph = icon(&icons::ARROW_UP, 14.0).color(if enabled { u.muted } else { u.faint });
+            if flip {
+                glyph = glyph.rotate(std::f32::consts::PI);
+            }
+            let mut b = row()
+                .key(glyph_key)
+                .w(24.0)
+                .h(24.0)
+                .center()
+                .radius(crate::ui::r(5.0))
+                .role("button")
+                .label(label.to_string())
+                .child(glyph.a11y_hidden());
+            if enabled {
+                b = b.hover(u.hover).focusable(true).cursor(rune::Cursor::Pointer);
+            } else {
+                b = b.disabled(true);
+            }
+            b
+        };
+        rows.push(
+            row()
+                .key(format!("menu-tag-{key}"))
+                .w_full()
+                .h(36.0)
+                .pl(10.0)
+                .pr(4.0)
+                .gap(10.0)
+                .center_y()
+                .radius(crate::ui::r(6.0))
+                .role("menuitemcheckbox")
+                .label(format!("{} ({}): {hint}", tag.1, tr(tag_kind_label(tag.0))))
+                .focusable(true)
+                .hover(u.hover)
+                .cursor(rune::Cursor::Pointer)
+                .on_press(move |st: &mut State| tag_left_click(st, &left))
+                .on_secondary_press(move |st: &mut State, _press, _tx: &mut Tx| tag_right_click(st, &right))
+                .child(icon(glyph, 16.0).color(tone).a11y_hidden())
+                .child(text(tag.1.clone()).font(BODY).color(u.prose).grow(1.0).min_w(0.0).truncate().a11y_hidden())
+                .child(text(tr(tag_kind_label(tag.0)).to_string()).font(SMALL).color(u.faint).a11y_hidden())
+                .child(
+                    arrow(format!("menu-tag-up-{key}"), tr("Move up"), false, at > 0)
+                        .on_press(move |st: &mut State| move_tag(st, &up, -1)),
+                )
+                .child(
+                    arrow(format!("menu-tag-down-{key}"), tr("Move down"), true, at + 1 < count)
+                        .on_press(move |st: &mut State| move_tag(st, &down, 1)),
+                ),
+        );
+    }
+    if rows.is_empty() {
+        rows.push(super::menu_item(u, "menu-tag-none", None, tr("No tags yet"), "", false));
+    }
+    rows.push(super::menu_rule(u));
+    let filtered = !notes.tags_in.is_empty() || !notes.tags_out.is_empty();
+    rows.push(
+        super::menu_item(u, "menu-tag-clear", Some(&icons::X), tr("Clear tag filters"), "", filtered)
+            .on_press(|st: &mut State| {
+                st.installed.notes.tags_in.clear();
+                st.installed.notes.tags_out.clear();
+            }),
+    );
+    rows.push(
+        super::menu_item(
+            u,
+            "menu-tag-reset-order",
+            Some(&icons::ROTATE_CCW),
+            tr("Reset to default order"),
+            "",
+            !notes.extras.tag_order.is_empty(),
+        )
+        .on_press(reset_tag_order),
+    );
     rows
 }
 
@@ -1077,9 +1368,12 @@ fn remove_tag(st: &mut State, slot: u16, tag: &str) {
     edit_slot(st, slot, |entry| {
         entry.tags.retain(|known| !known.eq_ignore_ascii_case(tag));
     });
-    if st.installed.notes.tag.as_deref() == Some(tag) {
-        st.installed.notes.tag = None;
-    }
+    st.installed.notes
+        .tags_in
+        .retain(|known| !(known.0 == TagKind::Custom && known.1.eq_ignore_ascii_case(tag)));
+    st.installed.notes
+        .tags_out
+        .retain(|known| !(known.0 == TagKind::Custom && known.1.eq_ignore_ascii_case(tag)));
 }
 
 /// Turn every mod of a list on or off. One write per mod, one Undo for the lot.
@@ -1151,6 +1445,25 @@ fn delete_list(st: &mut State, id: &str) {
 }
 
 /// Turn a mod's pin on or off. Pinned mods sit at the top of the disabled list.
+/// Is the mod in this slot saved? Installed and the Locker share the flag (Grimoire #593).
+pub fn is_favorite(st: &State, slot: u16) -> bool {
+    addon_at(st, slot).is_some_and(|addon| extra(st, addon).favorite)
+}
+
+/// Save a mod or take it out of the saved ones. Saved mods sort first on Installed and in the
+/// Locker's General lists.
+pub fn toggle_favorite(st: &mut State, slot: u16) {
+    let Some(addon) = addon_at(st, slot) else { return };
+    let on = !extra(st, addon).favorite;
+    let name = crate::screens::installed::display_name(st, addon);
+    edit_slot(st, slot, |entry| entry.favorite = on);
+    st.status = if on {
+        crate::screens::settings::i18n::fill(crate::screens::settings::i18n::tr("Saved {}."), &[&name])
+    } else {
+        crate::screens::settings::i18n::fill(crate::screens::settings::i18n::tr("{} is no longer saved."), &[&name])
+    };
+}
+
 pub fn toggle_pin(st: &mut State, slot: u16) {
     let Some(addon) = addon_at(st, slot) else { return };
     let entry = extra(st, addon);
@@ -1278,8 +1591,16 @@ pub fn card_chips(s: &State, u: &Ui, addon: &AddonRow) -> Vec<El> {
     } else if entry.pinned {
         chips.push(chip(u, &icons::PIN, "Pinned"));
     }
+    if entry.favorite {
+        chips.push(chip(u, &icons::HEART, crate::screens::settings::i18n::tr("Saved")));
+    }
     if entry.is_nsfw() {
         chips.push(chip(u, &icons::EYE, "Mature"));
+    }
+    // The tag the player ranked highest (Grimoire's display priorities): their own or a
+    // category, since the hero shows on the card already.
+    if let Some((_, label)) = tags_of(s, addon).into_iter().find(|(kind, _)| *kind != TagKind::Hero) {
+        chips.push(chip(u, &icons::BOOKMARK, &label));
     }
     chips
 }

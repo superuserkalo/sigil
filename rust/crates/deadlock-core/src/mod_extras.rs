@@ -75,6 +75,14 @@ pub struct ModExtra {
     /// The archive file name it was installed from, when known.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub file_name: Option<String>,
+    /// The player saved this mod. Installed and the Locker read the same flag, and saved mods
+    /// sort first in both (Grimoire's shared mod favorites).
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub favorite: bool,
+    /// More pictures the player added to a local mod, copied into Sigil's data folder. `image`
+    /// stays the card thumbnail; "Make mod thumbnail" swaps one of these into it.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub gallery: Vec<PathBuf>,
 }
 
 impl ModExtra {
@@ -109,6 +117,11 @@ pub struct Extras {
     pub schema: u32,
     pub mods: Vec<ModExtra>,
     pub lists: Vec<ModList>,
+    /// The player's display priority for tags of every kind, highest first, by
+    /// [`tag_order_key`]: `custom:<tag>`, `base:<category>`, `hero:<name>`. Tags not listed
+    /// follow in the default order. Empty is the default order.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub tag_order: Vec<String>,
 }
 
 impl Default for Extras {
@@ -117,8 +130,66 @@ impl Default for Extras {
             schema: EXTRAS_SCHEMA,
             mods: Vec::new(),
             lists: Vec::new(),
+            tag_order: Vec::new(),
         }
     }
+}
+
+/// The three kinds of tag the Installed tag menu shows in one list.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum TagKind {
+    /// A tag the player typed.
+    Custom,
+    /// A GameBanana category (Skins, HUD, Faithful/Vanilla+).
+    Base,
+    /// A hero.
+    Hero,
+}
+
+impl TagKind {
+    fn prefix(self) -> &'static str {
+        match self {
+            TagKind::Custom => "custom",
+            TagKind::Base => "base",
+            TagKind::Hero => "hero",
+        }
+    }
+}
+
+/// The key a tag has in [`Extras::tag_order`]: kind and lowercase label.
+pub fn tag_order_key(kind: TagKind, label: &str) -> String {
+    format!("{}:{}", kind.prefix(), label.trim().to_lowercase())
+}
+
+/// Sort tags by the player's display priority: listed keys first in their saved order, then
+/// the rest in the default order (custom tags, then categories, then heroes, each by name).
+pub fn sort_tags(order: &[String], tags: &mut [(TagKind, String)]) {
+    let rank = |kind: TagKind, label: &str| {
+        let key = tag_order_key(kind, label);
+        order.iter().position(|known| *known == key).unwrap_or(usize::MAX)
+    };
+    tags.sort_by(|(ka, la), (kb, lb)| {
+        rank(*ka, la)
+            .cmp(&rank(*kb, lb))
+            .then(ka.cmp(kb))
+            .then(la.to_lowercase().cmp(&lb.to_lowercase()))
+    });
+}
+
+/// Move one tag up (`-1`) or down (`1`) in the shown order and save that whole order as the
+/// priority. `shown` is the tags in the order the menu shows them now. Returns the new order
+/// keys, or `None` when the tag cannot move that way.
+pub fn move_tag(shown: &[(TagKind, String)], tag: (TagKind, &str), step: isize) -> Option<Vec<String>> {
+    let at = shown
+        .iter()
+        .position(|(kind, label)| *kind == tag.0 && label.eq_ignore_ascii_case(tag.1))?;
+    let to = at.checked_add_signed(step)?;
+    if to >= shown.len() {
+        return None;
+    }
+    let mut keys: Vec<String> = shown.iter().map(|(kind, label)| tag_order_key(*kind, label)).collect();
+    keys.swap(at, to);
+    Some(keys)
 }
 
 /// One slot on disk, as [`Extras::sync`] needs it.
@@ -267,6 +338,39 @@ impl Extras {
         }
         tags.sort_by_key(|t| t.to_lowercase());
         tags
+    }
+
+    /// `ModExtra::uid` of every saved mod, sorted.
+    pub fn favorites(&self) -> Vec<String> {
+        let mut uids: Vec<String> = self
+            .mods
+            .iter()
+            .filter(|entry| entry.favorite && !entry.uid.is_empty())
+            .map(|entry| entry.uid.clone())
+            .collect();
+        uids.sort();
+        uids.dedup();
+        uids
+    }
+
+    /// Save exactly these mods, by `ModExtra::uid`, and no others. Returns whether anything
+    /// changed. A profile switch uses this to bring back its own favorites.
+    pub fn set_favorites(&mut self, uids: &[String]) -> bool {
+        let wanted: BTreeSet<&str> = uids.iter().map(String::as_str).collect();
+        let mut changed = false;
+        for entry in &mut self.mods {
+            let on = wanted.contains(entry.uid.as_str());
+            if entry.favorite != on {
+                entry.favorite = on;
+                changed = true;
+            }
+        }
+        changed
+    }
+
+    /// Is the mod with this uid saved?
+    pub fn is_favorite(&self, uid: &str) -> bool {
+        !uid.is_empty() && self.find_uid(uid).is_some_and(|entry| entry.favorite)
     }
 
     pub fn list(&self, id: &str) -> Option<&ModList> {
@@ -521,29 +625,76 @@ pub fn new_uid() -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
+/// GameBanana's category label with its two known misspellings fixed, as Grimoire's
+/// `normalizeCategoryLabel`: `Faithul/Vanilla+` is `Faithful/Vanilla+` and `RatKing Flag` is
+/// `Rat King Flag`. Runs of spaces collapse. The category's identity does not change.
+pub fn normalize_category_label(label: &str) -> String {
+    let cleaned = label.split_whitespace().collect::<Vec<_>>().join(" ");
+    if cleaned.eq_ignore_ascii_case("faithul/vanilla+") {
+        return "Faithful/Vanilla+".to_string();
+    }
+    if cleaned.eq_ignore_ascii_case("ratking flag") {
+        return "Rat King Flag".to_string();
+    }
+    cleaned
+}
+
+/// The roster name a GameBanana category names, whatever its spelling: `RatKing` is Rat King,
+/// `The Doorman` is Doorman, `Mo and Krill` is Mo & Krill. `None` for a category that is not
+/// a hero.
+pub fn category_hero(label: &str) -> Option<&'static str> {
+    let key = crate::locker::hero_asset_key(label);
+    if key.is_empty() {
+        return None;
+    }
+    let joined = key.replace('_', "");
+    crate::locker::ROSTER
+        .iter()
+        .find(|hero| {
+            let name = crate::locker::hero_asset_key(hero.name);
+            name == key || name.replace('_', "") == joined
+        })
+        .map(|hero| hero.name)
+}
+
 /// What GameBanana's categories mean for the filters. `category` is the leaf (`_aCategory`),
-/// `super_category` its parent (`_aSuperCategory`). Under Skins the leaf is a hero; a sound or
-/// model under a hero name keeps the hero when `heroes` (names seen under Skins) has it.
-/// Returns `(hero, category, root)`.
+/// `super_category` its parent (`_aSuperCategory`). Returns `(hero, category, root)`.
+///
+/// GameBanana's current schema files hero skins at any depth (Grimoire's
+/// `fix/gb-category-drift`): `Skins > Rat King` gives a leaf hero under Skins, and
+/// `Skins > Rat King > Faithful/Vanilla+` gives a leaf that is not a hero under a parent that
+/// is. Both are a Skins mod for that hero. Hero names follow the roster's spelling, and the
+/// misspelled `Faithul/Vanilla+` reads as `Faithful/Vanilla+`. A sound or model under a hero
+/// name keeps the hero when the roster or `heroes` (names seen under Skins) has it.
 pub fn classify(
     category: &str,
     super_category: &str,
     heroes: &BTreeSet<String>,
 ) -> (Option<String>, Option<String>, Option<String>) {
-    let leaf = category.trim();
-    let parent = super_category.trim();
+    let leaf = normalize_category_label(category);
+    let parent = normalize_category_label(super_category);
     let some = |s: &str| (!s.is_empty()).then(|| s.to_string());
+    let hero_named = |label: &str| {
+        category_hero(label).map(str::to_string).or_else(|| {
+            heroes
+                .iter()
+                .find(|known| known.eq_ignore_ascii_case(label))
+                .cloned()
+        })
+    };
     if parent.eq_ignore_ascii_case("skins") || parent.eq_ignore_ascii_case("hero skins") {
-        return (some(leaf), some(leaf), some(parent));
+        let hero = hero_named(&leaf).or_else(|| some(&leaf));
+        return (hero.clone(), hero.or_else(|| some(&leaf)), some(&parent));
     }
-    let hero = heroes
-        .iter()
-        .find(|h| h.eq_ignore_ascii_case(leaf))
-        .cloned();
+    if let Some(hero) = category_hero(&parent) {
+        // A child of a hero category: Faithful/Vanilla+, Rat King Flag, a costume set.
+        return (Some(hero.to_string()), some(&leaf), Some("Skins".to_string()));
+    }
+    let hero = hero_named(&leaf);
     if parent.is_empty() {
-        (hero, some(leaf), some(leaf))
+        (hero, some(&leaf), some(&leaf))
     } else {
-        (hero, some(leaf), some(parent))
+        (hero, some(&leaf), some(&parent))
     }
 }
 
@@ -801,6 +952,73 @@ mod tests {
         let heroes: BTreeSet<String> = ["Paradox".to_string()].into();
         assert_eq!(classify("paradox", "Sounds", &heroes).0, Some("Paradox".into()));
         assert_eq!(classify("Music", "Sounds", &heroes).0, None);
+    }
+
+    #[test]
+    fn classify_follows_gamebananas_current_schema() {
+        let none = BTreeSet::new();
+        // A child of a hero category is that hero's skin.
+        assert_eq!(
+            classify("Faithul/Vanilla+", "Rat King", &none),
+            (Some("Rat King".into()), Some("Faithful/Vanilla+".into()), Some("Skins".into()))
+        );
+        assert_eq!(
+            classify("RatKing Flag", "RatKing", &none),
+            (Some("Rat King".into()), Some("Rat King Flag".into()), Some("Skins".into()))
+        );
+        // A hero leaf under Skins takes the roster spelling.
+        assert_eq!(classify("RatKing", "Skins", &none).0, Some("Rat King".into()));
+        assert_eq!(classify("The Doorman", "Skins", &none).0, Some("Doorman".into()));
+        // A roster hero under a non-skin parent keeps the hero without a known list.
+        assert_eq!(classify("Haze", "Sounds", &none).0, Some("Haze".into()));
+        // A root-filed skin has no hero from its category.
+        assert_eq!(classify("Skins", "", &none), (None, Some("Skins".into()), Some("Skins".into())));
+        assert_eq!(category_hero("Mo and Krill"), Some("Mo & Krill"));
+        assert_eq!(category_hero("Gameplay Modifications"), None);
+    }
+
+    #[test]
+    fn favorites_are_one_flag_set_in_bulk() {
+        let mut x = Extras::default();
+        let a = x.entry(key(1, 10, None)).uid.clone();
+        let b = x.entry(key(2, 20, None)).uid.clone();
+        x.entry(key(1, 10, None)).favorite = true;
+        assert_eq!(x.favorites(), vec![a.clone()]);
+        assert!(x.is_favorite(&a));
+        assert!(x.set_favorites(std::slice::from_ref(&b)));
+        assert_eq!(x.favorites(), vec![b.clone()]);
+        assert!(!x.set_favorites(std::slice::from_ref(&b)));
+        // A store written before the flag existed reads as not saved, and false is not written.
+        let text = serde_json::to_string(&x.mods[0]).unwrap();
+        assert!(!text.contains("favorite"));
+        let old: ModExtra = serde_json::from_str(r#"{"uid":"u","slot":1}"#).unwrap();
+        assert!(!old.favorite && old.gallery.is_empty());
+    }
+
+    #[test]
+    fn tags_sort_by_the_players_priority_then_kind_and_name() {
+        let mut tags = vec![
+            (TagKind::Hero, "Haze".to_string()),
+            (TagKind::Base, "Skins".to_string()),
+            (TagKind::Custom, "ranked".to_string()),
+            (TagKind::Custom, "comp".to_string()),
+        ];
+        sort_tags(&[], &mut tags);
+        let labels: Vec<&str> = tags.iter().map(|(_, l)| l.as_str()).collect();
+        assert_eq!(labels, ["comp", "ranked", "Skins", "Haze"]);
+        // Move Haze up twice: it is saved above Skins and ranked.
+        let order = move_tag(&tags, (TagKind::Hero, "haze"), -1).unwrap();
+        sort_tags(&order, &mut tags);
+        let order = move_tag(&tags, (TagKind::Hero, "Haze"), -1).unwrap();
+        sort_tags(&order, &mut tags);
+        let labels: Vec<&str> = tags.iter().map(|(_, l)| l.as_str()).collect();
+        assert_eq!(labels, ["comp", "Haze", "ranked", "Skins"]);
+        assert!(move_tag(&tags, (TagKind::Custom, "comp"), -1).is_none());
+        assert!(move_tag(&tags, (TagKind::Base, "Skins"), 1).is_none());
+        // A tag the order does not know yet follows the listed ones.
+        tags.push((TagKind::Custom, "aaa".to_string()));
+        sort_tags(&order, &mut tags);
+        assert_eq!(tags.last().unwrap().1, "aaa");
     }
 
     #[test]

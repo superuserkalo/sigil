@@ -146,7 +146,7 @@ pub const ROSTER: [RosterHero; 44] = [
     hero("McGinnis", &["forge", "engineer"], 22.0),
     hero("Mina", &["vampirebat"], 54.0),
     hero("Mirage", &["mirage"], 65.0),
-    hero("Mo & Krill", &["krill", "digger"], 100.0),
+    hero("Mo & Krill", &["krill", "digger", "mokrill"], 100.0),
     hero("Nurse Harrow", &["nurse"], DEFAULT_FACE_X),
     hero("Paige", &["bookworm"], 42.0),
     hero("Paradox", &["chrono"], 59.0),
@@ -285,6 +285,12 @@ fn default_true() -> bool {
 pub enum GeneralType {
     SoulContainer,
     SpiritUrn,
+    /// The Hidden King and the Archmother (`models/npc/patron_amber`, `patron_sapphire`).
+    Patrons,
+    /// The Sinner's Sacrifice vault.
+    Sinners,
+    /// Breakable crates and boxes.
+    Boxes,
     Hideout,
     Icons,
     Hud,
@@ -297,9 +303,12 @@ pub enum GeneralType {
 
 impl GeneralType {
     /// Rail order, as Grimoire's `GLOBAL_MOD_TYPE_ORDER`.
-    pub const ALL: [GeneralType; 10] = [
+    pub const ALL: [GeneralType; 13] = [
         GeneralType::SoulContainer,
         GeneralType::SpiritUrn,
+        GeneralType::Patrons,
+        GeneralType::Sinners,
+        GeneralType::Boxes,
         GeneralType::Hideout,
         GeneralType::Icons,
         GeneralType::Hud,
@@ -314,6 +323,9 @@ impl GeneralType {
         match self {
             GeneralType::SoulContainer => "Soul Containers",
             GeneralType::SpiritUrn => "Spirit Urns",
+            GeneralType::Patrons => "Patrons",
+            GeneralType::Sinners => "Sinners",
+            GeneralType::Boxes => "Boxes",
             GeneralType::Hideout => "Hideout",
             GeneralType::Icons => "Icon Packs",
             GeneralType::Hud => "HUD",
@@ -329,6 +341,9 @@ impl GeneralType {
         match self {
             GeneralType::SoulContainer => "soul-container",
             GeneralType::SpiritUrn => "spirit-urn",
+            GeneralType::Patrons => "patron",
+            GeneralType::Sinners => "sinner",
+            GeneralType::Boxes => "boxes",
             GeneralType::Hideout => "hideout",
             GeneralType::Icons => "icons",
             GeneralType::Hud => "hud",
@@ -361,19 +376,43 @@ pub fn classify_general(paths: &[String]) -> Option<GeneralType> {
 }
 
 fn general_signal(path: &str) -> Option<GeneralType> {
+    // Sounds first: a Spirit Urn voice line, a vault or patron sound is a sound, not the
+    // model. Grimoire's `fix/gb-category-drift` sorts these world, combat and UI sounds onto
+    // Announcer / SFX; music keeps its own type.
+    if path.starts_with("sounds/") || path.starts_with("soundevents/") {
+        if path.starts_with("sounds/music") || path.contains("killstreak") {
+            return Some(GeneralType::KillstreakMusic);
+        }
+        return Some(GeneralType::Announcer);
+    }
     if path.contains("soul_container") || path.contains("soulcontainer") {
         return Some(GeneralType::SoulContainer);
     }
-    if path.contains("spirit_urn") || path.contains("/urn/") || path.contains("/urn_") {
+    if path.contains("spirit_urn")
+        || path.contains("/idol_urn/")
+        || path.contains("/urn/")
+        || path.contains("/urn_")
+    {
         return Some(GeneralType::SpiritUrn);
+    }
+    // Grimoire's `detectGeneralPropTypes`: the two patron models and the vault, models,
+    // materials and texture-only overrides alike.
+    if path.contains("/patron_amber") || path.contains("/patron_sapphire") {
+        return Some(GeneralType::Patrons);
+    }
+    if path.contains("/sinners_sacrifice") {
+        return Some(GeneralType::Sinners);
+    }
+    if is_box_path(path) {
+        return Some(GeneralType::Boxes);
     }
     if path.contains("hideout") {
         return Some(GeneralType::Hideout);
     }
-    if path.starts_with("sounds/music") || path.contains("killstreak") {
+    if path.contains("killstreak") {
         return Some(GeneralType::KillstreakMusic);
     }
-    if path.starts_with("sounds/") || path.contains("announcer") {
+    if path.contains("announcer") {
         return Some(GeneralType::Announcer);
     }
     if path.starts_with("panorama/images/heroes/")
@@ -396,6 +435,36 @@ fn general_signal(path: &str) -> Option<GeneralType> {
         return Some(GeneralType::Maps);
     }
     None
+}
+
+/// A breakable crate or box: a gameplay prop model or material whose name says so. Decor
+/// crates in the street and market prop folders are map art, not the breakables.
+fn is_box_path(path: &str) -> bool {
+    let model = path.strip_prefix("materials/").unwrap_or(path);
+    model.starts_with("models/props_gameplay/")
+        && (model.contains("crate") || model.contains("breakable"))
+}
+
+/// The General type a GameBanana category name points at, as Grimoire's
+/// `categoryGeneralType`: `Patrons`, `Hidden King`, `Sinner's Sacrifice`, `Crates`. Used for
+/// a mod whose files name no hero and no General type, such as a box retexture filed under
+/// Boxes.
+pub fn general_for_category(name: &str) -> Option<GeneralType> {
+    let lowered = name.trim().to_lowercase().replace('\u{2019}', "'");
+    let general = match lowered.as_str() {
+        "soul container" | "soul containers" => GeneralType::SoulContainer,
+        "spirit urn" | "spirit urns" => GeneralType::SpiritUrn,
+        "patron" | "patrons" | "hidden king" | "archmother" => GeneralType::Patrons,
+        "sinners" | "sinner" | "sinner's sacrifice" => GeneralType::Sinners,
+        "boxes" | "crates" => GeneralType::Boxes,
+        "hideout" => GeneralType::Hideout,
+        "hud" => GeneralType::Hud,
+        "killstreak music" => GeneralType::KillstreakMusic,
+        "animations" => GeneralType::Animations,
+        "maps" => GeneralType::Maps,
+        _ => return None,
+    };
+    Some(general)
 }
 
 /// One ability sound a mod replaces, from `sounds/abilities/<hero>/...`.
@@ -703,13 +772,19 @@ pub fn locker_mod(addon: &InstalledAddon, paths: &[String], crcs: &[(String, u32
             heroes.insert(hero.name.to_string());
         }
 
-        if let Some(sound) = locker_sound(&lowered) {
+        if let Some(sound) = locker_sound(&lowered).or_else(|| hero_sound(&lowered)) {
             sounds.insert(sound);
         }
     }
 
+    // Hero-less sounds (patron and newscaster lines, urn and vault sounds, shared parry and
+    // hit feedback, UI) are Announcer / SFX, and so is a pack that revoices three or more
+    // heroes. A sound pack for one or two heroes belongs on those heroes' sound lists.
+    let sound_heroes: BTreeSet<&str> = sounds.iter().map(|sound| sound.hero.as_str()).collect();
     let general = if heroes.is_empty() {
-        classify_general(paths)
+        classify_general(paths).filter(|general| {
+            *general != GeneralType::Announcer || sound_heroes.is_empty() || sound_heroes.len() >= 3
+        })
     } else {
         None
     };
@@ -741,6 +816,46 @@ pub fn locker_sound(path_lower: &str) -> Option<LockerSound> {
         hero: hero.name.to_string(),
         ability: ability_slot(tail),
     })
+}
+
+/// A hero sound that is not filed under one ability: voice lines (`sounds/vo/<codename>/`),
+/// footsteps (`sounds/player/footsteps/<codename>/`), `sounds/heroes*/<codename>/`, a
+/// `hero_<codename>` folder anywhere under `sounds/`, and the hero's sound event file
+/// (`soundevents/hero/hero_<codename>.vsndevts`). The ability is 0. Ported from Grimoire's
+/// `INSTALLED_HERO_PATH_PATTERNS` (`fix/gb-category-drift`), so a VO pack whose title skips
+/// the hero still lands on it. NPC folders (`patron`, `shopkeeper`) name no hero.
+pub fn hero_sound(path_lower: &str) -> Option<LockerSound> {
+    let hero = sound_hero_folder(path_lower).and_then(hero_for_codename)?;
+    Some(LockerSound {
+        hero: hero.name.to_string(),
+        ability: 0,
+    })
+}
+
+fn sound_hero_folder(path: &str) -> Option<&str> {
+    if let Some(rest) = path.strip_prefix("soundevents/") {
+        let (folder, file) = rest.split_once('/')?;
+        if folder != "hero" && folder != "citadel" {
+            return None;
+        }
+        let stem = file
+            .strip_suffix(".vsndevts_c")
+            .or_else(|| file.strip_suffix(".vsndevts"))?;
+        return Some(stem.strip_prefix("hero_").unwrap_or(stem));
+    }
+    let rest = path.strip_prefix("sounds/")?;
+    let segments: Vec<&str> = rest.split('/').collect();
+    // The folder must have something inside it: a bare file names no hero.
+    let folder_at = |at: usize| (segments.len() > at + 1).then(|| segments[at]);
+    match segments.first().copied() {
+        Some("vo") => folder_at(1),
+        Some("player") if segments.get(1) == Some(&"footsteps") => folder_at(2),
+        Some(first) if first.starts_with("heroes") => folder_at(1),
+        _ => segments
+            .iter()
+            .take(segments.len().saturating_sub(1))
+            .find_map(|segment| segment.strip_prefix("hero_")),
+    }
 }
 
 /// The ability slot an `aN` token names: 1 to 4, else 0.
@@ -2350,6 +2465,86 @@ mod tests {
         let b = locker_mod(&addon(9, false), &paths(&hud), &crcs(&hud));
         assert_eq!(a.key, b.key);
         assert_ne!(a.key, hero_mod.key);
+    }
+
+    #[test]
+    fn patrons_sinners_and_boxes_are_general_types() {
+        let paths = |list: &[&str]| list.iter().map(|p| p.to_string()).collect::<Vec<_>>();
+        assert_eq!(
+            classify_general(&paths(&["models/npc/patron_amber/patron_amber.vmdl_c"])),
+            Some(GeneralType::Patrons)
+        );
+        assert_eq!(
+            classify_general(&paths(&["materials/models/npc/patron_sapphire/body_color.vtex_c"])),
+            Some(GeneralType::Patrons)
+        );
+        assert_eq!(
+            classify_general(&paths(&[
+                "models/props_gameplay/sinners_sacrifice_vault/sinners_sacrifice.vmdl_c"
+            ])),
+            Some(GeneralType::Sinners)
+        );
+        assert_eq!(
+            classify_general(&paths(&["models/props_gameplay/wooden_crate_03/wooden_crate_03.vmdl_c"])),
+            Some(GeneralType::Boxes)
+        );
+        // A decor crate in a map prop folder is not a breakable.
+        assert_eq!(classify_general(&paths(&["models/props_street/citi_crate_01.vmdl_c"])), None);
+        assert_eq!(general_for_category("Crates"), Some(GeneralType::Boxes));
+        assert_eq!(general_for_category("Sinner\u{2019}s Sacrifice"), Some(GeneralType::Sinners));
+        assert_eq!(general_for_category("Hidden King"), Some(GeneralType::Patrons));
+        assert_eq!(general_for_category("Skins"), None);
+        assert_eq!(GeneralType::ALL.len(), 13);
+    }
+
+    #[test]
+    fn hero_less_sounds_are_announcer_and_hero_sounds_land_on_the_hero() {
+        let paths = |list: &[&str]| list.iter().map(|p| p.to_string()).collect::<Vec<_>>();
+        let crcs = |list: &[&str]| list.iter().map(|p| (p.to_string(), 7)).collect::<Vec<_>>();
+        let sorted = |list: &[&str]| locker_mod(&addon(5, true), &paths(list), &crcs(list));
+
+        // Patron VO, urn lines and vault sounds: no hero owns them.
+        let world = [
+            "sounds/vo/patron/patron_taunt_01.vsnd_c",
+            "sounds/vo/newscaster/intro.vsnd_c",
+            "sounds/gameplay/urn/urn_pickup.vsnd_c",
+            "sounds/gameplay/sinners_sacrifice/vault_open.vsnd_c",
+        ];
+        let world = sorted(&world);
+        assert_eq!(world.general, Some(GeneralType::Announcer));
+        assert!(world.sounds.is_empty());
+        assert!(world.heroes.is_empty());
+
+        // A VO pack for one hero lands on that hero's sounds, not on Announcer.
+        let vo = ["sounds/vo/haze/haze_kill_01.vsnd_c", "sounds/player/footsteps/haze/step.vsnd_c"];
+        let vo = sorted(&vo);
+        assert_eq!(vo.general, None);
+        assert_eq!(vo.sounds, vec![LockerSound { hero: "Haze".into(), ability: 0 }]);
+
+        // The sound path codename for Mo & Krill differs from the model one.
+        assert_eq!(
+            hero_sound("sounds/vo/mokrill/line.vsnd_c").map(|s| s.hero),
+            Some("Mo & Krill".to_string())
+        );
+        assert_eq!(
+            hero_sound("soundevents/hero/hero_inferno.vsndevts_c").map(|s| s.hero),
+            Some("Infernus".to_string())
+        );
+        assert_eq!(hero_sound("sounds/vo/haze.vsnd_c"), None);
+
+        // Three or more heroes revoiced is an announcer style pack.
+        let many = [
+            "sounds/vo/haze/a.vsnd_c",
+            "sounds/vo/inferno/a.vsnd_c",
+            "sounds/vo/lash/a.vsnd_c",
+        ];
+        assert_eq!(sorted(&many).general, Some(GeneralType::Announcer));
+
+        // Music keeps its own type.
+        assert_eq!(
+            sorted(&["sounds/music/killstreak/loop.vsnd_c"]).general,
+            Some(GeneralType::KillstreakMusic)
+        );
     }
 
     #[test]
