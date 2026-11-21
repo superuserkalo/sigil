@@ -54,6 +54,8 @@ pub struct W4 {
     author_asked: Option<u64>,
     /// The image menu: the element it hangs from and the picture's address.
     pub image_menu: Option<(String, String)>,
+    /// Creator pages read this run (`creator_page.rs`).
+    pub creator: super::creator_page::CreatorState,
     pub copy_job: Job<Vec<u8>>,
     /// The rate-limit toast was last shown.
     rate_toast: Option<Instant>,
@@ -501,6 +503,7 @@ pub fn poll_author(st: &mut State) -> bool {
             library_facts::fetch_author_profile(id).map(|p| (id, p)).map_err(|e| e.to_string())
         });
     }
+    changed |= super::creator_page::poll(st);
     changed
 }
 

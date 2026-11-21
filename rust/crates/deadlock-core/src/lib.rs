@@ -9,6 +9,7 @@ pub mod autoexec;
 pub mod benchmark;
 pub mod bisect;
 pub mod backups;
+pub mod creators;
 pub mod crosshair;
 pub mod cursors;
 pub mod cursors_create;

@@ -123,6 +123,10 @@ pub(crate) fn grid_page(s: &State, u: &Ui) -> El {
         if let Some(rail) = creator_rail(s, u) {
             c = c.child(rail);
         }
+        // DMM's author page: the creator's profile and totals over their grid.
+        if let Some(page) = super::creator_page::header(s, u) {
+            c = c.child(page);
+        }
         if s.browse_view.paged
             && let Some(bar) = pagination(s, u)
         {
