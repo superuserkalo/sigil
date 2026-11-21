@@ -21,7 +21,7 @@ use rune::{
 use crate::app::State;
 use crate::icons;
 use crate::screens::settings::i18n::fill;
-use crate::ui::{ActionKind, BODY, BODY_MED, H1, MONO, SMALL, Ui};
+use crate::ui::{ActionKind, BODY, BODY_MED, DISPLAY, H1, MONO, SMALL, Ui};
 
 use super::{
     applied_id, author_value, config, edits_for, options_for, page, pending, tr,
@@ -197,31 +197,34 @@ pub fn view(s: &State, u: &Ui) -> El {
                 .cursor(rune::Cursor::Pointer)
                 .on_press(paste),
         );
-    if !edits.is_empty() {
-        actions = actions.child(
-            u.icon_action(&icons::ROTATE_CCW, tr("Reset all"), ActionKind::Ghost)
-                .key("perf-editor-reset-all")
-                .cursor(rune::Cursor::Pointer)
-                .on_press(|st: &mut State| {
-                    if let Some(editor) = st.performance.editor.as_mut() {
-                        editor.dialog = Some(Dialog::Clear);
-                    }
-                }),
-        );
-    }
-    if dirty {
-        let id = config.id().to_string();
-        actions = actions.child(
-            u.action(tr("Apply changes"), ActionKind::Primary)
-                .key("perf-editor-apply")
-                .cursor(rune::Cursor::Pointer)
-                .on_press(move |st: &mut State| {
-                    if !st.performance.write_job.is_running() {
-                        st.performance.dialog = Some(super::Dialog::Apply(id.clone()));
-                    }
-                }),
-        );
-    }
+    // "Reset all" and "Apply changes" keep their room when they do not apply, so the other
+    // actions never move.
+    let reset_all = u
+        .icon_action(&icons::ROTATE_CCW, tr("Reset all"), ActionKind::Ghost)
+        .key("perf-editor-reset-all");
+    actions = actions.child(if edits.is_empty() {
+        reset_all.opacity(0.0).focusable(false).a11y_hidden()
+    } else {
+        reset_all.cursor(rune::Cursor::Pointer).on_press(|st: &mut State| {
+            if let Some(editor) = st.performance.editor.as_mut() {
+                editor.dialog = Some(Dialog::Clear);
+            }
+        })
+    });
+    let id = config.id().to_string();
+    let apply = u
+        .action(tr("Apply changes"), ActionKind::Primary)
+        .key("perf-editor-apply")
+        .w(132.0);
+    actions = actions.child(if dirty {
+        apply.cursor(rune::Cursor::Pointer).on_press(move |st: &mut State| {
+            if !st.performance.write_job.is_running() {
+                st.performance.dialog = Some(super::Dialog::Apply(id.clone()));
+            }
+        })
+    } else {
+        apply.opacity(0.0).focusable(false).a11y_hidden()
+    });
 
     let head = col()
         .w_full()
@@ -250,13 +253,22 @@ pub fn view(s: &State, u: &Ui) -> El {
                         .child(icon(&icons::ARROW_LEFT, 14.0).color(u.muted).a11y_hidden())
                         .child(text(tr("Performance")).font(BODY).color(u.muted).a11y_hidden()),
                 )
-                .child(spacer())
-                .child(actions),
+                .child(spacer()),
         )
         .child(
-            text(fill(tr("Settings for {}"), &[config.name()]))
-                .font(H1)
-                .color(u.ink),
+            row()
+                .w_full()
+                .gap(16.0)
+                .center_y()
+                .child(
+                    text(fill(tr("Settings for {}"), &[config.name()]))
+                        .font(DISPLAY)
+                        .color(u.ink)
+                        .truncate()
+                        .grow(1.0)
+                        .min_w(0.0),
+                )
+                .child(actions),
         )
         .child(
             text({
@@ -281,21 +293,23 @@ pub fn view(s: &State, u: &Ui) -> El {
             .color(u.muted),
         );
 
-    let mut out = page("perf-editor-page").child(head);
-    out = out.child(
-        text(tr("These are the values the config writes. Change one and apply; turning the config off puts the game's own values back."))
-            .font(BODY)
-            .color(u.prose)
-            .wrap(),
-    );
-    if let Some((line, error)) = editor.message.as_ref().or(s.performance.message.as_ref()) {
-        out = out.child(
+    // The message slot is always there, so a note never pushes the list.
+    let message = match editor.message.as_ref().or(s.performance.message.as_ref()) {
+        Some((line, error)) => row().w_full().h(20.0).center_y().child(
             text(line.clone())
                 .font(SMALL)
                 .color(if *error { u.rose } else { u.muted })
-                .wrap(),
-        );
-    }
+                .truncate(),
+        ),
+        // With nothing to report, the line says what the page is for.
+        None => row().w_full().h(20.0).center_y().child(
+            text(tr("These are the values the config writes. Change one and apply; turning the config off puts the game's own values back."))
+                .font(SMALL)
+                .color(u.muted)
+                .truncate(),
+        ),
+    };
+    let mut out = page("perf-editor-page").gap(16.0).child(head.child(message));
 
     let field = rune::text_input(&editor.search, BODY)
         .key("perf-editor-search")
@@ -505,57 +519,49 @@ fn entry_row(u: &Ui, config: &Config, entry: Entry) -> El {
                 String::new()
             }
         });
-    let mut value_col = col().gap(2.0).items_end();
-    value_col = value_col.child(
-        text(if entry.value.is_empty() {
-            "-".to_string()
-        } else {
-            entry.value.clone()
-        })
-        .font(MONO)
-        .color(u.ink)
-        .truncate(),
-    );
-    if entry.changed
-        && let Some(author) = &entry.author
-        && author != &entry.value
-    {
-        value_col = value_col.child(
-            text(fill(tr("was {}"), &[author]))
-                .font(SMALL)
-                .color(u.muted)
-                .truncate(),
-        );
-    }
-    let mut actions = row().gap(2.0).center_y();
-    if entry.changed {
-        actions = actions.child(
-            small_button(u, &icons::ROTATE_CCW, tr("Use the config's value"))
-                .key(format!("perf-editor-reset-{key}"))
-                .cursor(rune::Cursor::Pointer)
-                .on_press(move |st: &mut State| {
-                    if let Some(editor) = st.performance.editor.as_mut() {
-                        editor.dialog = Some(Dialog::Reset {
-                            key: reset_key.clone(),
-                        });
-                    }
-                }),
-        );
-    }
-    let open_key = entry.key.clone();
-    actions = actions.child(
-        small_button(u, &icons::SQUARE_PEN, tr("Change this setting"))
-            .key(format!("perf-editor-edit-{key}"))
+    // Fixed cells: value 140, "was" 104 and two button slots of 28, reserved when empty, so
+    // every row's columns line up whatever it holds.
+    let value = text(if entry.value.is_empty() {
+        "-".to_string()
+    } else {
+        entry.value.clone()
+    })
+    .font(crate::ui::MONO_MED)
+    .color(u.ink)
+    .w(140.0)
+    .align(rune::Align::End)
+    .truncate();
+    let was = match &entry.author {
+        Some(author) if entry.changed && author != &entry.value => fill(tr("was {}"), &[author]),
+        _ => String::new(),
+    };
+    let was = text(was).font(SMALL).color(u.muted).w(104.0).truncate();
+    let reset: El = if entry.changed {
+        small_button(u, &icons::ROTATE_CCW, tr("Use the config's value"))
+            .key(format!("perf-editor-reset-{key}"))
             .cursor(rune::Cursor::Pointer)
             .on_press(move |st: &mut State| {
-                open_value(st, &id, &open_key);
-            }),
-    );
+                if let Some(editor) = st.performance.editor.as_mut() {
+                    editor.dialog = Some(Dialog::Reset {
+                        key: reset_key.clone(),
+                    });
+                }
+            })
+    } else {
+        el().size(28.0, 28.0)
+    };
+    let open_key = entry.key.clone();
+    let change = small_button(u, &icons::SQUARE_PEN, tr("Change this setting"))
+        .key(format!("perf-editor-edit-{key}"))
+        .cursor(rune::Cursor::Pointer)
+        .on_press(move |st: &mut State| {
+            open_value(st, &id, &open_key);
+        });
     row()
         .key(format!("perf-editor-row-{key}"))
         .w_full()
-        .h(52.0)
-        .gap(16.0)
+        .h(44.0)
+        .gap(12.0)
         .center_y()
         .border_sides([0.0, 0.0, 1.0, 0.0], u.hair)
         .hover(u.hover)
@@ -567,19 +573,26 @@ fn entry_row(u: &Ui, config: &Config, entry: Entry) -> El {
             let key = entry.key.clone();
             move |st: &mut State| open_value(st, &press_id, &key)
         })
+        // An edited row is marked by an amber edge, not a tint.
+        // In the gutter, so names keep the page's left edge.
+        .child(
+            el().absolute(-8.0, 0.0)
+                .w(3.0)
+                .h(43.0)
+                .fill(if entry.changed { u.amber } else { rune::Color::TRANSPARENT })
+                .a11y_hidden(),
+        )
         .child(
             col()
-                .w(420.0)
-                .gap(2.0)
+                .grow(1.0)
+                .min_w(0.0)
+                .gap(0.0)
                 .child(text(entry.key).font(MONO).color(u.ink).truncate())
-                .child(if label.is_empty() {
-                    el()
-                } else {
-                    text(label).font(SMALL).color(u.muted).truncate()
-                }),
+                .child(text(label).font(SMALL).color(u.muted).truncate()),
         )
-        .child(value_col.grow(1.0).min_w(0.0))
-        .child(actions)
+        .child(value)
+        .child(was)
+        .child(row().gap(0.0).center_y().child(reset).child(change))
 }
 
 fn small_button(u: &Ui, glyph: &'static rune::Icon, label: &str) -> El {
