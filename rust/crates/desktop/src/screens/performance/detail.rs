@@ -153,6 +153,9 @@ pub(super) fn page(s: &State, u: &Ui, config: &Config) -> El {
     if !config.videos.is_empty() {
         page = page.child(video_section(s, u, config, &options));
     }
+    if let Some(custom) = super::custom::detail_section(s, u, config) {
+        page = page.child(custom);
+    }
     page.child(left_out(s, u, config)).child(source(u, config))
 }
 

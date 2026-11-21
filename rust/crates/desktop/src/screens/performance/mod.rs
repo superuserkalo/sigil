@@ -34,6 +34,7 @@ use crate::ui::{
 mod de;
 
 pub mod benchmark;
+pub mod custom;
 pub mod detail;
 pub mod editor;
 pub mod hosted;
@@ -94,6 +95,8 @@ pub struct View {
     pub hosted: Option<hosted::Hosted>,
     /// Performance > Benchmark.
     pub benchmark: benchmark::Page,
+    /// Custom presets from GitHub and Apply as written (`custom.rs`).
+    pub custom: custom::Custom,
 }
 
 /// What the game files say, read together so the page never shows half a state.
@@ -584,6 +587,7 @@ pub fn poll(st: &mut State) -> bool {
     changed |= editor::poll(st);
     changed |= hosted::poll(st);
     changed |= benchmark::poll(st);
+    changed |= custom::poll(st);
     changed
 }
 
@@ -655,7 +659,7 @@ fn list_page(s: &State, u: &Ui) -> El {
                 .on_press(open_gameinfo_in_editor),
         );
     }
-    actions = actions.child(refresh);
+    actions = actions.child(custom::add_button(u)).child(refresh);
     let mut page = page("perf-page").child(u.page_head(
         "",
         tr("Performance"),
@@ -680,6 +684,9 @@ fn list_page(s: &State, u: &Ui) -> El {
     let Some(catalog) = s.performance.catalog.as_ref().filter(|c| !c.is_empty()) else {
         return page.child(first_run(s, u));
     };
+    if let Some(hide) = custom::hide_choice(s, u) {
+        page = page.child(hide);
+    }
     page.child(toolbar(s, u, catalog))
         .child(groups(s, u, catalog))
         .child(hosted_section(s, u))
@@ -1006,6 +1013,7 @@ fn groups(s: &State, u: &Ui, catalog: &Catalog) -> El {
             .configs
             .iter()
             .filter(|c| c.def.tier == tier)
+            .filter(|c| !custom::hides_builtins(s) || custom::is_custom(c.id()))
             .collect();
         if configs.is_empty() {
             continue;
@@ -1259,6 +1267,9 @@ fn open_url(url: &str) {
 
 pub fn dialog(s: &State, u: &Ui) -> Option<El> {
     if let Some(shell) = editor::dialog(s, u) {
+        return Some(shell);
+    }
+    if let Some(shell) = custom::dialog(s, u) {
         return Some(shell);
     }
     let dialog = s.performance.dialog.clone()?;
