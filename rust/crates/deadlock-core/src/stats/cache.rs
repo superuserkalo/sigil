@@ -31,6 +31,8 @@ pub const TTL_RANK_DISTRIBUTION: i64 = 12 * 3_600;
 pub const TTL_STEAM_PROFILE: i64 = 24 * 3_600;
 /// Teammates and opponents: 1 hour.
 pub const TTL_SOCIAL: i64 = 3_600;
+/// Matches by month and datacenter, for the Regions tab: 6 hours.
+pub const TTL_REGION_HISTORY: i64 = 6 * 3_600;
 /// Leaderboards: 1 hour (Valve refreshes its own board hourly).
 pub const TTL_LEADERBOARD: i64 = 3_600;
 /// Hero, rank, season and item assets: 7 days.

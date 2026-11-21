@@ -318,6 +318,9 @@ pub fn view(s: &State, u: &Ui) -> Option<El> {
     if let Some(chip) = regions {
         left = left.child(divider(u)).child(chip);
     }
+    if let Some(chip) = crate::screens::servers::regions::health_chip(s, u) {
+        left = left.child(divider(u)).child(chip);
+    }
     if let Some(downloads) = downloads(s, u) {
         left = left.child(divider(u)).child(downloads);
     }

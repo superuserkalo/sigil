@@ -3,6 +3,37 @@
 //! chained into `i18n`'s maps. The duplicate and routed-file checks for these strings live here.
 
 pub const DE: &[(&str, &str)] = &[
+    // Search, sort, Where I play and relay health (round 2)
+    ("Fastest: {} ({} ms)", "Am schnellsten: {} ({} ms)"),
+    ("Loaded Where I play. Press Apply to block the locations you did not play on.", "Wo ich spiele geladen. Drücke Übernehmen, um die Standorte zu sperren, auf denen du nicht gespielt hast."),
+    ("Measure again", "Erneut messen"),
+    ("Measuring relay health", "Relay-Zustand wird gemessen"),
+    ("Measuring...", "Wird gemessen..."),
+    ("My matches", "Meine Matches"),
+    ("Name", "Name"),
+    ("No location matches {}", "Kein Standort passt zu {}"),
+    ("Ping", "Ping"),
+    (
+        "Ping from this computer to Valve's relays. It says how far each region is, not whether Deadlock's servers are up.",
+        "Ping von diesem Computer zu Valves Relays. Er zeigt, wie weit jede Region entfernt ist, nicht ob Deadlocks Server laufen.",
+    ),
+    ("Relay health", "Relay-Zustand"),
+    ("Relay health in the status bar", "Relay-Zustand in der Statusleiste"),
+    ("Relays {}/{}", "Relays {}/{}"),
+    ("Relays: measuring", "Relays: wird gemessen"),
+    ("Search by city, country or the location's short id.", "Suche nach Stadt, Land oder dem Kürzel des Standorts."),
+    ("Search locations", "Standorte suchen"),
+    ("Shift-click ticks a range", "Umschalt-Klick markiert einen Bereich"),
+    ("Sort", "Sortieren"),
+    ("Where I play", "Wo ich spiele"),
+    (
+        "Where I play: block every location you had no match on in the last {} months",
+        "Wo ich spiele: jeden Standort sperren, auf dem du in den letzten {} Monaten kein Match hattest",
+    ),
+    ("{} of {} relay locations answer. Show relay health", "{} von {} Relay-Standorten antworten. Relay-Zustand zeigen"),
+    ("{} open", "{} offen"),
+    ("1 match", "1 Match"),
+    ("{} matches", "{} Matches"),
     ("Regions", "Regionen"),
     ("North America", "Nordamerika"),
     ("South America", "Südamerika"),

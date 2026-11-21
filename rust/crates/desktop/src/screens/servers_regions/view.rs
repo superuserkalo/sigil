@@ -6,7 +6,7 @@ use rune::{Color, El, Key, KeyEvent, col, el, icon, row, spacer, text};
 use deadlock_core::relays::probe::{self, Health};
 use deadlock_core::relays::{CatalogSource, Location, Region};
 
-use super::{Change, Confirm, RegionsState};
+use super::{Change, Confirm, RegionsState, Sort};
 use crate::app::State;
 use crate::icons;
 use crate::screens::settings::i18n::{fill, tr};
@@ -54,10 +54,87 @@ pub fn view(s: &State, u: &Ui) -> El {
     if regions.windows {
         page = page.child(presets(s, u));
     }
-    for (region, locations) in catalog.by_region() {
+    page = page.child(list_bar(s, u));
+    let shown = regions.visible();
+    if shown.is_empty() && !catalog.locations.is_empty() {
+        return page.child(u.empty_state(
+            "",
+            &fill(tr("No location matches {}"), &[regions.search.text.trim()]),
+            tr("Search by city, country or the location's short id."),
+            Some(
+                u.action(tr("Clear search"), ActionKind::Secondary)
+                    .key("regions-search-clear")
+                    .cursor(rune::Cursor::Pointer)
+                    .on_press(|st: &mut State| st.servers.regions.search = rune::TextEdit::new("")),
+            ),
+        ));
+    }
+    for (region, locations) in shown {
         page = page.child(group(s, u, region, &locations));
     }
     page
+}
+
+/// Search, sort, the shift-press hint and the status bar switch above the list.
+fn list_bar(s: &State, u: &Ui) -> El {
+    let regions = &s.servers.regions;
+    let search = rune::text_input(&regions.search, SMALL)
+        .key("regions-search")
+        .label(tr("Search locations"))
+        .single_line()
+        .color(u.ink)
+        .placeholder(tr("Search locations").to_string(), u.faint)
+        .caret(u.accent, u.accent.alpha(0.20))
+        .on_edit(|st: &mut State| &mut st.servers.regions.search)
+        .on_input_key(|st: &mut State, ev: &KeyEvent, _| {
+            if ev.key == Key::Escape {
+                st.servers.regions.search = rune::TextEdit::new("");
+                true
+            } else {
+                false
+            }
+        });
+    let mut sorts = vec![(Sort::Name, tr("Name")), (Sort::Ping, tr("Ping"))];
+    if regions.history.as_ref().is_some_and(|h| !h.is_empty()) {
+        sorts.push((Sort::Matches, tr("My matches")));
+    }
+    let items = sorts
+        .into_iter()
+        .map(|(sort, label)| {
+            crate::screens::subpage::segment(u, label, regions.sort == sort)
+                .key(format!("regions-sort-{sort:?}"))
+                .cursor(rune::Cursor::Pointer)
+                .on_press(move |st: &mut State| super::set_sort(st, sort))
+        })
+        .collect();
+    let on = options::get().relay_regions.health_bar;
+    let mut bar = row()
+        .key("regions-list-bar")
+        .w_full()
+        .gap(10.0)
+        .center_y()
+        .flex_wrap()
+        .child(u.search_shell(search))
+        .child(text(tr("Sort")).font(SMALL).color(u.faint))
+        .child(crate::screens::subpage::segmented(u, items))
+        .child(spacer());
+    if regions.windows {
+        bar = bar.child(text(tr("Shift-click ticks a range")).font(MICRO).color(u.faint));
+    }
+    bar.child(
+        row()
+            .key("regions-health-bar")
+            .gap(8.0)
+            .center_y()
+            .focusable(true)
+            .role("switch")
+            .checked(on)
+            .label(tr("Relay health in the status bar"))
+            .cursor(rune::Cursor::Pointer)
+            .on_press(super::toggle_health_bar)
+            .child(u.toggle(on).a11y_hidden())
+            .child(text(tr("Relay health in the status bar")).font(SMALL).color(u.muted).a11y_hidden()),
+    )
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -407,8 +484,35 @@ fn presets(s: &State, u: &Ui) -> El {
                 .on_press(|st: &mut State| st.servers.regions.naming = true),
         )
     };
+    if let Some(played) = regions.where_i_play() {
+        let current = played.iter().cloned().collect::<std::collections::BTreeSet<_>>() == regions.draft;
+        let open = regions.catalog.as_ref().map_or(0, |c| c.locations.len()).saturating_sub(played.len());
+        chips = row().gap(6.0).center_y().flex_wrap().child(
+            row()
+                .key("regions-preset-played")
+                .h(28.0)
+                .px(10.0)
+                .gap(6.0)
+                .center_y()
+                .radius(crate::ui::r(14.0))
+                .fill(if current { u.accent.alpha(0.12) } else { u.over.alpha(0.035) })
+                .border(1.0, if current { u.accent.alpha(0.45) } else { u.hair_strong })
+                .focusable(true)
+                .role("button")
+                .label(fill(
+                    tr("Where I play: block every location you had no match on in the last {} months"),
+                    &[&deadlock_core::relays::history::RECENT_MONTHS.to_string()],
+                ))
+                .cursor(rune::Cursor::Pointer)
+                .on_press(super::load_where_i_play)
+                .child(icon(&icons::PIN, 12.0).color(u.accent).a11y_hidden())
+                .child(text(tr("Where I play")).font(SMALL).color(u.ink).a11y_hidden())
+                .child(text(fill(tr("{} open"), &[&open.to_string()])).font(MICRO).color(u.faint).a11y_hidden()),
+        )
+        .child(chips);
+    }
     let mut body = row().key("regions-presets").w_full().gap(10.0).center_y().child(text(tr("Presets")).font(BODY_MED).color(u.ink));
-    if saved.is_empty() && !regions.naming {
+    if saved.is_empty() && !regions.naming && regions.where_i_play().is_none() {
         body = body.child(
             text(tr("Save a selection to switch to it in one press."))
                 .font(SMALL)
@@ -424,8 +528,14 @@ fn presets(s: &State, u: &Ui) -> El {
 
 fn group(s: &State, u: &Ui, region: Region, locations: &[&Location]) -> El {
     let regions = &s.servers.regions;
-    let total = locations.len();
-    let blocked = locations.iter().filter(|l| regions.draft.contains(&l.id)).count();
+    // Counted over the whole region, as Block all and Allow all act on it, not the search.
+    let all: Vec<&Location> = regions
+        .catalog
+        .as_ref()
+        .map(|c| c.locations.iter().filter(|l| l.region == region).collect())
+        .unwrap_or_default();
+    let total = all.len();
+    let blocked = all.iter().filter(|l| regions.draft.contains(&l.id)).count();
     let count = match blocked {
         0 => fill(tr("All {} open"), &[&total.to_string()]),
         n if n == total => fill(tr("All {} blocked"), &[&total.to_string()]),
@@ -527,6 +637,18 @@ fn location_row(s: &State, u: &Ui, location: &Location) -> El {
                 .truncate()
                 .a11y_hidden(),
         )
+        .child(match regions.history.as_ref().and_then(|h| h.get(&location.id)) {
+            Some(n) if *n > 0 => text(if *n == 1 {
+                tr("1 match").to_string()
+            } else {
+                fill(tr("{} matches"), &[&n.to_string()])
+            })
+            .key(format!("regions-played-{}", location.id))
+            .font(MICRO)
+            .color(u.accent)
+            .a11y_hidden(),
+            _ => el(),
+        })
         .child(text(location.id.clone()).font(MONO).color(u.faint).a11y_hidden())
         .child(
             row()
@@ -546,10 +668,13 @@ fn location_row(s: &State, u: &Ui, location: &Location) -> El {
                     el().size(6.0, 6.0).radius(3.0).fill(ping_tone).a11y_hidden()
                 }),
         );
-    let label = match regions.pings.get(&location.id) {
+    let mut label = match regions.pings.get(&location.id) {
         Some(Some(ms)) => format!("{}, {} ({} ms)", location.city, location.country.clone().unwrap_or_default(), ms),
         _ => format!("{}, {}", location.city, location.country.clone().unwrap_or_default()),
     };
+    if let Some(n) = regions.history.as_ref().and_then(|h| h.get(&location.id)).filter(|n| **n > 0) {
+        label = format!("{label}, {}", fill(tr("{} matches"), &[&n.to_string()]));
+    }
     if regions.windows {
         r = r
             .focusable(true)
@@ -558,7 +683,7 @@ fn location_row(s: &State, u: &Ui, location: &Location) -> El {
             .label(fill(tr("Block {}"), &[&label]))
             .hover(u.hover)
             .cursor(rune::Cursor::Pointer)
-            .on_press(move |st: &mut State| super::toggle(st, &id));
+            .on_press_tx(move |st: &mut State, tx: &mut rune::Tx| super::pick(st, &id, tx.mods().shift));
     } else {
         r = r.label(label);
     }
@@ -755,4 +880,105 @@ fn reset_dialog(s: &State, u: &Ui) -> El {
                 .on_press(super::reset),
         ));
     shell(u, "regions-reset-dialog", tr("Unblock every region"), body)
+}
+
+/// Each region's relays as the last sweep found them, under the status bar's relay chip.
+pub fn health_popover(s: &State, u: &Ui, sum: &probe::Summary) -> El {
+    let regions = &s.servers.regions;
+    let mut lines = col().w_full().gap(4.0);
+    for line in &sum.regions {
+        let tone = match (line.answering, line.measured) {
+            (0, _) => u.rose,
+            (a, m) if a == m => ping_color(u, probe::health(line.best)),
+            _ => u.amber,
+        };
+        let best = line.best.map(|ms| fill(tr("{} ms"), &[&ms.to_string()])).unwrap_or_else(|| tr("No answer").to_string());
+        lines = lines.child(
+            row()
+                .key(format!("statusbar-relays-{:?}", line.region))
+                .w_full()
+                .gap(8.0)
+                .center_y()
+                .child(el().size(6.0, 6.0).radius(3.0).fill(tone).a11y_hidden())
+                .child(text(tr(line.region.label())).font(SMALL).color(u.ink).grow(1.0).min_w(0.0).truncate())
+                .child(
+                    text(fill(tr("{} of {}"), &[&line.answering.to_string(), &line.measured.to_string()]))
+                        .font(MICRO)
+                        .color(u.faint),
+                )
+                .child(row().w(56.0).child(spacer()).child(text(best).font(MICRO).color(tone))),
+        );
+    }
+    let when = match regions.probed_at {
+        Some(at) => fill(tr("Pings measured {}"), &[&crate::statusbar::ago(super::now() - at)]),
+        None => tr("Measuring...").to_string(),
+    };
+    let fastest = sum
+        .best
+        .as_ref()
+        .map(|(id, ms)| {
+            let city = regions.catalog.as_ref().and_then(|c| c.location(id)).map_or(id.as_str(), |l| l.city.as_str());
+            fill(tr("Fastest: {} ({} ms)"), &[city, &ms.to_string()])
+        })
+        .unwrap_or_default();
+    col()
+        .key("statusbar-relays-popover")
+        .role("dialog")
+        .label(tr("Relay health"))
+        .w(280.0)
+        .padding(12.0)
+        .gap(8.0)
+        .fill(u.raised)
+        .radius(crate::ui::r(10.0))
+        .border(1.0, u.hair_strong)
+        .shadow(12.0, 32.0, Color::BLACK.alpha(0.5))
+        .anchored("statusbar-relays", rune::Side::Top, rune::Align::Start, 8.0)
+        .modal(true, |st: &mut State| st.servers.regions.health_open = false)
+        .on_key(|st: &mut State, ev: &KeyEvent, _| {
+            if ev.key == Key::Escape {
+                st.servers.regions.health_open = false;
+                true
+            } else {
+                false
+            }
+        })
+        .child(
+            row()
+                .w_full()
+                .center_y()
+                .child(text(tr("Relay health")).font(SMALL).color(u.muted))
+                .child(spacer())
+                .child(text(when).font(MICRO).color(u.faint)),
+        )
+        .child(lines)
+        .child(text(fastest).font(MICRO).color(u.faint).wrap().w_full())
+        .child(
+            text(tr("Ping from this computer to Valve's relays. It says how far each region is, not whether Deadlock's servers are up."))
+                .font(MICRO)
+                .color(u.faint)
+                .wrap()
+                .w_full(),
+        )
+        .child(
+            row()
+                .w_full()
+                .gap(6.0)
+                .child(
+                    u.action(tr("Measure again"), ActionKind::Ghost)
+                        .key("statusbar-relays-measure")
+                        .opacity(if regions.probe_job.is_running() { 0.5 } else { 1.0 })
+                        .cursor(rune::Cursor::Pointer)
+                        .on_press(super::measure_again),
+                )
+                .child(spacer())
+                .child(
+                    u.action(tr("Open Regions"), ActionKind::Secondary)
+                        .key("statusbar-relays-open")
+                        .cursor(rune::Cursor::Pointer)
+                        .on_press(|st: &mut State| {
+                            st.servers.regions.health_open = false;
+                            super::open(st);
+                        }),
+                ),
+        )
 }

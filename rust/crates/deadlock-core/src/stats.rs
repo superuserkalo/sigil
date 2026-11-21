@@ -685,6 +685,14 @@ impl StatsClient {
         Ok(rank)
     }
 
+    /// Matches by month and datacenter (`/v1/players/{id}/region`), for the Regions tab's
+    /// "Where I play" preset. Rows that do not read are skipped, not fatal.
+    pub fn fetch_region_history(&self, account_id: u64) -> Result<Vec<crate::relays::history::RegionMonth>> {
+        ensure_account(account_id)?;
+        let body = self.get_text(&format!("/v1/players/{account_id}/region"), &[], cache::TTL_REGION_HISTORY)?;
+        Ok(crate::relays::history::parse(&body))
+    }
+
     /// Rank distribution across ranked players, from
     /// `/v1/players/rank/distribution`.
     ///

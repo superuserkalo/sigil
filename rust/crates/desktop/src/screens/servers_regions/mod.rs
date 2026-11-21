@@ -23,7 +23,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
-use deadlock_core::relays::{self, Catalog, CatalogSource, Coverage, Installed, firewall};
+use deadlock_core::relays::history::{self, RegionMonth};
+use deadlock_core::relays::{self, Catalog, CatalogSource, Coverage, Installed, Location, Region, firewall};
 use rune::{TextEdit, Tx};
 
 use crate::app::State;
@@ -47,6 +48,20 @@ pub enum Confirm {
     Apply,
     Reset,
 }
+
+/// How locations sort inside a region.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Sort {
+    #[default]
+    Name,
+    /// Fastest first; locations not measured last.
+    Ping,
+    /// Most recent matches first (only offered with match history).
+    Matches,
+}
+
+/// How often the status bar's relay health is measured again when the player keeps it there.
+pub const HEALTH_EVERY_SECONDS: i64 = 30 * 60;
 
 pub struct RegionsState {
     /// Blocking works here (Windows). A field so headless scenes can show either page.
@@ -79,6 +94,20 @@ pub struct RegionsState {
     pub loaded: bool,
     /// The one startup read back (when the options say rules were applied) was started.
     pub checked_at_start: bool,
+    /// The list's search field: city, country or id.
+    pub search: TextEdit,
+    pub sort: Sort,
+    /// The last row pressed, where a shift-press range starts.
+    pub anchor: Option<String>,
+    /// Matches per location in the last months, from deadlock-api. None until read, or when
+    /// Player and match stats is off or no Stats account is set.
+    pub history: Option<BTreeMap<String, u64>>,
+    pub history_rows: Vec<RegionMonth>,
+    pub history_job: Job<Vec<RegionMonth>>,
+    /// The account the history was read for.
+    pub history_for: Option<u64>,
+    /// The status bar's relay health popover is open.
+    pub health_open: bool,
 }
 
 impl Default for RegionsState {
@@ -106,6 +135,14 @@ impl Default for RegionsState {
             error: None,
             loaded: false,
             checked_at_start: false,
+            search: TextEdit::new(""),
+            sort: Sort::default(),
+            anchor: None,
+            history: None,
+            history_rows: Vec::new(),
+            history_job: Job::default(),
+            history_for: None,
+            health_open: false,
         }
     }
 }
@@ -147,6 +184,57 @@ impl RegionsState {
             .is_some_and(|c| c.any() && !c.matches(&self.draft.iter().cloned().collect::<Vec<_>>()))
     }
 
+    /// The "Where I play" preset: every location without a recent match. None without history.
+    pub fn where_i_play(&self) -> Option<Vec<String>> {
+        history::where_i_play(self.catalog.as_ref()?, self.history.as_ref()?)
+    }
+
+    /// The list as shown: by region, filtered by the search field, sorted by the chosen order.
+    pub fn visible(&self) -> Vec<(Region, Vec<&Location>)> {
+        let Some(catalog) = &self.catalog else { return Vec::new() };
+        let query = self.search.text.trim().to_lowercase();
+        let ping = |l: &Location| self.pings.get(&l.id).copied().flatten().unwrap_or(u32::MAX);
+        let played = |l: &Location| self.history.as_ref().and_then(|h| h.get(&l.id)).copied().unwrap_or(0);
+        catalog
+            .by_region()
+            .into_iter()
+            .filter_map(|(region, mut list)| {
+                if !query.is_empty() {
+                    list.retain(|l| {
+                        let hay = format!(
+                            "{} {} {} {}",
+                            l.city,
+                            l.country.as_deref().unwrap_or(""),
+                            l.id,
+                            crate::screens::settings::i18n::tr(region.label())
+                        );
+                        hay.to_lowercase().contains(&query)
+                    });
+                }
+                match self.sort {
+                    Sort::Name => {}
+                    Sort::Ping => list.sort_by_key(|l| ping(l)),
+                    Sort::Matches => list.sort_by_key(|l| std::cmp::Reverse(played(l))),
+                }
+                (!list.is_empty()).then_some((region, list))
+            })
+            .collect()
+    }
+
+    /// Location ids in the order the list shows them, for a shift-press range.
+    pub fn order(&self) -> Vec<String> {
+        self.visible().into_iter().flat_map(|(_, list)| list.into_iter().map(|l| l.id.clone())).collect()
+    }
+
+    /// What the last sweep says, for the status bar.
+    pub fn health(&self) -> Option<relays::probe::Summary> {
+        let catalog = self.catalog.as_ref()?;
+        if self.pings.is_empty() {
+            return None;
+        }
+        Some(relays::probe::summary(&catalog.locations, &self.pings))
+    }
+
     /// Every location ticked: Deadlock would have nowhere to connect.
     pub fn all_blocked(&self) -> bool {
         self.catalog
@@ -184,6 +272,33 @@ pub fn load(st: &mut State) {
     st.servers.regions.draft = options::get().relay_regions.applied.into_iter().collect();
     start_catalog(st, false);
     start_read(st);
+    start_history(st);
+}
+
+/// Where the Stats account played lately, from deadlock-api: only with Player and match stats
+/// allowed and a Stats account set, never in offline mode. Cached for six hours.
+fn start_history(st: &mut State) {
+    if idle(st) || st.prefs.offline || !st.prefs.allow_stats || st.servers.regions.history_job.is_running() {
+        return;
+    }
+    let Some(account) = st.stats.primary().map(|r| r.account_id) else { return };
+    if st.servers.regions.history_for == Some(account) {
+        return;
+    }
+    st.servers.regions.history_for = Some(account);
+    let wake = st.wake.clone();
+    st.servers.regions.history_job.start(wake, move || {
+        crate::data::stats_client().fetch_region_history(account).map_err(|e| e.to_string())
+    });
+}
+
+/// Count the history against the catalog, once both are in.
+fn count_history(st: &mut State) {
+    let regions = &mut st.servers.regions;
+    regions.history = match (&regions.catalog, regions.history_rows.is_empty()) {
+        (Some(catalog), false) => Some(history::matches_by_location(&regions.history_rows, catalog, now())),
+        _ => None,
+    };
 }
 
 fn start_catalog(st: &mut State, force: bool) {
@@ -221,12 +336,51 @@ pub fn refresh(st: &mut State) {
 // Selection and presets
 // ---------------------------------------------------------------------------------------------
 
-pub fn toggle(st: &mut State, id: &str) {
+/// A press on a row: tick or untick it. With Shift, every row shown between the last press and
+/// this one takes the same new state.
+pub fn pick(st: &mut State, id: &str, shift: bool) {
     let regions = &mut st.servers.regions;
-    if !regions.draft.remove(id) {
-        regions.draft.insert(id.to_string());
+    let block = !regions.draft.contains(id);
+    let ids = match (shift, regions.anchor.as_deref()) {
+        (true, Some(anchor)) => range(&regions.order(), anchor, id),
+        _ => vec![id.to_string()],
+    };
+    for id in ids {
+        if block {
+            regions.draft.insert(id);
+        } else {
+            regions.draft.remove(&id);
+        }
     }
+    regions.anchor = Some(id.to_string());
     regions.edited = true;
+}
+
+/// The ids from `anchor` to `target` in `order`, both included. Just the target when either is
+/// not shown.
+pub fn range(order: &[String], anchor: &str, target: &str) -> Vec<String> {
+    match (order.iter().position(|i| i == anchor), order.iter().position(|i| i == target)) {
+        (Some(a), Some(b)) => order[a.min(b)..=a.max(b)].to_vec(),
+        _ => vec![target.to_string()],
+    }
+}
+
+/// Load the "Where I play" preset into the selection. Apply makes it real.
+pub fn load_where_i_play(st: &mut State) {
+    let Some(blocked) = st.servers.regions.where_i_play() else { return };
+    let regions = &mut st.servers.regions;
+    regions.draft = blocked.into_iter().collect();
+    regions.edited = true;
+    st.status = tr("Loaded Where I play. Press Apply to block the locations you did not play on.").to_string();
+}
+
+pub fn set_sort(st: &mut State, sort: Sort) {
+    st.servers.regions.sort = sort;
+}
+
+/// The status bar keeps relay health (and measures it at startup and every half hour), or not.
+pub fn toggle_health_bar(st: &mut State) {
+    options::edit(st, |o| o.relay_regions.health_bar = !o.relay_regions.health_bar);
 }
 
 /// Tick or untick every location in a region.
@@ -292,12 +446,17 @@ pub fn toggle_probe(st: &mut State) {
         st.servers.regions.cancel.store(true, Ordering::SeqCst);
         return;
     }
-    let Some(catalog) = st.servers.regions.catalog.clone() else { return };
-    if idle(st) {
-        return;
-    }
     if st.prefs.offline {
         st.servers.regions.error = Some(tr("Offline mode is on. Turn it off in Settings to measure pings.").to_string());
+        return;
+    }
+    start_probe(st);
+}
+
+/// Start a sweep over every location of the catalog in hand.
+fn start_probe(st: &mut State) {
+    let Some(catalog) = st.servers.regions.catalog.clone() else { return };
+    if idle(st) || st.prefs.offline || st.servers.regions.probe_job.is_running() {
         return;
     }
     let cancel = Arc::new(AtomicBool::new(false));
@@ -421,6 +580,9 @@ pub fn poll(st: &mut State, _now: f64, _tx: &mut Tx) -> bool {
     if on_page && !st.servers.regions.loaded {
         load(st);
         changed = true;
+    } else if on_page {
+        // A Stats account picked since the tab opened: read its history once.
+        start_history(st);
     }
     // Once per run: read the rules back when the saved record says some were applied, so the
     // status bar is right from the first minutes even if the tab is never opened.
@@ -431,12 +593,21 @@ pub fn poll(st: &mut State, _now: f64, _tx: &mut Tx) -> bool {
             start_read(st);
         }
     }
+    if let Some(result) = st.servers.regions.history_job.try_take() {
+        // A failed read leaves the preset out; the page works without it.
+        st.servers.regions.history_rows = result.unwrap_or_default();
+        count_history(st);
+        changed = true;
+    }
+    changed |= poll_health(st);
     if let Some(result) = st.servers.regions.catalog_job.try_take() {
         match result {
             Ok((catalog, source)) => {
                 let regions = &mut st.servers.regions;
                 regions.catalog = Some(catalog);
                 regions.source = Some(source);
+                count_history(st);
+                let regions = &mut st.servers.regions;
                 // The read back is measured against the catalog: take it again for the record.
                 if let Some(Ok(installed)) = regions.installed.clone() {
                     take_installed(st, installed);
@@ -488,6 +659,27 @@ pub fn poll(st: &mut State, _now: f64, _tx: &mut Tx) -> bool {
         changed = true;
     }
     changed
+}
+
+/// With relay health kept in the status bar: the catalog (cache first) and a sweep at startup,
+/// then again every half hour. Nothing runs while the option is off.
+fn poll_health(st: &mut State) -> bool {
+    if !options::get().relay_regions.health_bar || idle(st) || st.prefs.offline {
+        return false;
+    }
+    let regions = &st.servers.regions;
+    if regions.catalog.is_none() {
+        if regions.catalog_error.is_none() {
+            start_catalog(st, false);
+        }
+        return false;
+    }
+    let due = regions.probed_at.is_none_or(|at| now() - at >= HEALTH_EVERY_SECONDS);
+    if due && !regions.probe_job.is_running() {
+        start_probe(st);
+        return true;
+    }
+    false
 }
 
 /// Say what the change did, from the read back.
@@ -552,4 +744,50 @@ pub fn status_chip(s: &State, u: &crate::ui::Ui) -> Option<rune::El> {
     let words = fill(tr("{} relay locations blocked"), &[&count.to_string()]);
     let label = fill(tr("{} relay locations blocked. Open Servers, Regions"), &[&count.to_string()]);
     Some(crate::statusbar::part(u, "statusbar-regions", &crate::icons::SHIELD, words, u.amber, label).on_press(open))
+}
+
+/// The status bar's relay health: shown after a sweep this session, or always when the player
+/// keeps it there (Regions > Relay health in the status bar). A press opens each region's line.
+pub fn health_chip(s: &State, u: &crate::ui::Ui) -> Option<rune::El> {
+    use relays::probe::Health;
+    let regions = &s.servers.regions;
+    let kept = options::get().relay_regions.health_bar;
+    let summary = regions.health();
+    if summary.is_none() && !(kept && regions.probe_job.is_running()) {
+        return None;
+    }
+    let (words, tint, label) = match &summary {
+        _ if regions.probe_job.is_running() && regions.pings.is_empty() => {
+            (tr("Relays: measuring").to_string(), u.faint, tr("Measuring relay health").to_string())
+        }
+        Some(sum) => {
+            let tone = match sum.overall() {
+                Health::Good => u.teal,
+                Health::Fair | Health::Poor => u.amber,
+                Health::NoAnswer => u.rose,
+            };
+            let words = fill(tr("Relays {}/{}"), &[&sum.answering.to_string(), &sum.measured.to_string()]);
+            let label = fill(
+                tr("{} of {} relay locations answer. Show relay health"),
+                &[&sum.answering.to_string(), &sum.measured.to_string()],
+            );
+            (words, tone, label)
+        }
+        None => return None,
+    };
+    let mut chip = crate::statusbar::part(u, "statusbar-relays", &crate::icons::GLOBE, words, tint, label)
+        .on_press(|st: &mut State| st.servers.regions.health_open = !st.servers.regions.health_open);
+    if regions.health_open
+        && let Some(sum) = summary
+    {
+        chip = chip.child(view::health_popover(s, u, &sum));
+    }
+    Some(chip)
+}
+
+/// The popover's Measure again.
+pub fn measure_again(st: &mut State) {
+    if !st.servers.regions.probe_job.is_running() {
+        toggle_probe(st);
+    }
 }
