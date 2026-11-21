@@ -47,4 +47,4 @@ gltf = { version = "1.4", default-features = false, features = ["utils", "names"
 # Windows: Steam's and Deadlock's install paths from the registry, and the fixed drives to look
 # for Steam libraries on (discovery.rs). The same windows-sys the desktop app links.
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_System_Registry", "Win32_Storage_FileSystem"] }
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_System_Registry", "Win32_Storage_FileSystem", "Win32_System_SystemInformation"] }

@@ -6,6 +6,7 @@ pub mod util;
 pub mod addon_checks;
 pub mod addons;
 pub mod autoexec;
+pub mod benchmark;
 pub mod bisect;
 pub mod backups;
 pub mod crosshair;

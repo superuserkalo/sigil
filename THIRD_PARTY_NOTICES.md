@@ -59,6 +59,12 @@ for redistribution.
   `performance/classify.rs` ports the exclusion, opt-in and video tables from
   `scripts/performance-presets.json` (reasons reworded). The in-place patcher and its `was`/`added`
   markers follow `performanceConfig.ts`.
+- Benchmark (2026-11-21), approach only, no code or assets: Sigil's benchmark
+  (`rust/crates/deadlock-core/src/benchmark/`, `docs/design/benchmark.md`) takes from the unmerged
+  `feat/deadlock-benchmarks-wip` branch (`resources/benchmark/benchmark_metrics.py`, `docs/benchmark.md`)
+  the low as the average of the slowest 1%, nearest-rank percentiles, the binned frame graph with
+  the worst frame per bin, pinning a run to a client build, a hash check of the workload, a fixed
+  window size per run, an overall time limit, a per-run log folder and appended run notes.
 - Browse mod details: the details view in `rust/crates/desktop/src/screens/browse.rs` (header,
   gallery stack and lightbox, files, artist, about, changelog, comments, docked sidebar) is ported
   from `src/components/ModDetailsModal.tsx`, and the NSFW veil on browse cards follows its Browse
