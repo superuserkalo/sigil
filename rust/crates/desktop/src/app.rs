@@ -1160,7 +1160,6 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
         .layout_size("root")
         .map_or((1360.0, 860.0), |size| (size[0], size[1]));
     let u = Ui::new();
-    PAGE_SEARCH.with(|on| on.set(false));
     cx.foreground(u.ink);
     cx.caption_color(u.muted);
     cx.focus_ring(crate::ui::FOCUS_W, crate::ui::FOCUS_GAP, u.accent);
@@ -1751,9 +1750,9 @@ fn settings_item(s: &State, u: &Ui) -> El {
         .children(crate::updater::sidebar_badge(s, u))
 }
 
-/// The band across the top of the content. It moves the window, holds the search for the
-/// screens that search, and reports a problem only when there is one. Windows caption buttons
-/// sit over its trailing edge.
+/// The band across the top of the content. It moves the window, holds the profile switcher
+/// and transient chips, and reports a problem only when there is one. Search lives in each
+/// page's toolbar. Windows caption buttons sit over its trailing edge.
 fn titlebar(s: &State, u: &Ui, insets: rune::ChromeInsets) -> El {
     let mut bar = row()
         .key("titlebar")
@@ -1809,28 +1808,13 @@ fn titlebar(s: &State, u: &Ui, insets: rune::ChromeInsets) -> El {
                 .on_press(|st: &mut State| st.go(Screen::Agent)),
         );
     }
-    if s.screen.searches() && !PAGE_SEARCH.with(|on| on.get()) {
-        bar = bar.child(search(s, u));
-    }
     bar
 }
 
-thread_local! {
-    /// Set when the page drew its own search this frame (`page_search`), so the top bar
-    /// leaves its own out. The page is built before the top bar.
-    static PAGE_SEARCH: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-}
-
-/// The current page's search field for its own toolbar line (`Ui::page_toolbar`). A page that
-/// shows it takes the search out of the top bar on the same frame.
+/// The current page's search field for its own toolbar line (`Ui::page_toolbar`). There is no
+/// app-wide search: each page that searches carries its own field.
 pub fn page_search(s: &State, u: &Ui) -> El {
-    PAGE_SEARCH.with(|on| on.set(true));
     u.page_search(search_field(s, u))
-}
-
-fn search(s: &State, u: &Ui) -> El {
-    // 28 high inside the 32 point band, so it never touches the window's top edge.
-    u.search_shell(search_field(s, u)).h(crate::ui::CONTROL_M)
 }
 
 /// The key of the current page's search field, for Cmd or Ctrl+F.
@@ -1867,7 +1851,7 @@ fn search_field(s: &State, u: &Ui) -> El {
             .label("Search servers")
             .single_line()
             .color(u.ink)
-            .placeholder("Search servers or maps", u.faint)
+            .placeholder("Search servers", u.faint)
             .caret(u.accent, u.accent.alpha(0.20))
             .on_edit(|st: &mut State| &mut st.servers.query),
         _ => rune::text_input(&s.conflicts_query, crate::ui::BODY)
