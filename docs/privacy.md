@@ -243,8 +243,9 @@ Nothing about you is sent beyond what answering those requests requires.
   Performance > Add from GitHub reads a public repository you type, only when you press Look up
   (`api.github.com`: its newest commit and file tree), and downloads the files you pick when you
   press Add (`raw.githubusercontent.com`). Anonymous GETs; a copy is kept under `performance/`.
-  Autoexec > Console variables reads that cached convar list, or the snapshot Sigil ships, and
-  sends no request of its own.
+  Autoexec > Console variables reads that cached convar list. Sigil does not ship a copy. With no
+  cached list, its Download the list button fetches the same file from the same hosts (an
+  anonymous GET, only when you press it).
 - The update check reads `api.github.com/repos/superuserkalo/sigil/releases`. With Stable it asks
   for the latest release, with Preview for the last ten. It runs at startup only if you turned
   Check for Sigil updates on (off by default), from Settings > About, or on the interval you chose.

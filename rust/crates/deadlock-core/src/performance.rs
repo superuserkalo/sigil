@@ -422,6 +422,11 @@ pub fn refresh(data_dir: &Path) -> Result<fetch::RefreshReport> {
     fetch::refresh(&fetch::Http::default(), data_dir, &crate::util::now_iso())
 }
 
+/// Fetch only Valve's convar list into the cache. Network; run off the UI thread.
+pub fn refresh_convar_list(data_dir: &Path) -> Result<()> {
+    fetch::refresh_convar_list(&fetch::Http::default(), data_dir)
+}
+
 /// The cache is empty or more than `hours` old.
 pub fn needs_refresh(data_dir: &Path, hours: i64) -> bool {
     fetch::stale(&fetch::read_index(data_dir), chrono::Utc::now(), hours)

@@ -569,6 +569,7 @@ pub fn poll(st: &mut State) -> bool {
             }
             Err(error) => st.performance.fetch = Fetch::Failed(error),
         }
+        crate::screens::autoexec_convars::reload_if_empty(st);
         changed = true;
     }
     if let Some(result) = st.performance.read_job.try_take() {

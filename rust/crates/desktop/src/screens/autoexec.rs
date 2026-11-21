@@ -1478,7 +1478,7 @@ fn start_launch_read(st: &mut State) {
 /// Take finished launch option jobs and start the first read on the Autoexec page. The app
 /// shell calls it every poll (through `crosshair::poll` until app.rs calls it directly).
 pub fn poll(st: &mut State) -> bool {
-    let mut changed = false;
+    let mut changed = crate::screens::autoexec_convars::poll(st);
     if st.screen == Screen::Autoexec && !st.autoexec.launch.loaded && !st.autoexec.launch.read.is_running() {
         start_launch_read(st);
         changed = true;

@@ -651,6 +651,23 @@ impl Remote for FakeGitHub {
 }
 
 #[test]
+fn the_convar_list_downloads_alone_and_replaces_a_damaged_copy() {
+    let data = temp_dir("convar-list");
+    let remote = FakeGitHub::new();
+    fetch::refresh_convar_list(&remote, &data).unwrap();
+    assert!(!crate::autoexec::convars::load_catalog(&data).convars.is_empty());
+    let commit = fetch::read_index(&data).convars_commit;
+    assert!(commit.is_some());
+
+    let path = fetch::file_path(&data, fetch::CONVARS_ID, fetch::CONVARS_FILE);
+    std::fs::write(&path, b"damaged").unwrap();
+    assert!(crate::autoexec::convars::load_catalog(&data).convars.is_empty());
+    fetch::refresh_convar_list(&remote, &data).unwrap();
+    assert!(!crate::autoexec::convars::load_catalog(&data).convars.is_empty());
+    assert_eq!(fetch::read_index(&data).convars_commit, commit);
+}
+
+#[test]
 fn refresh_caches_configs_and_loads_offline() {
     let data = temp_dir("fetch");
     let remote = FakeGitHub::new();

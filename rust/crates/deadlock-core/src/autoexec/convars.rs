@@ -3,9 +3,11 @@
 //!
 //! The list is Valve's own, as `SteamTracking/GameTracking-Deadlock` dumps it
 //! (`DumpSource2/convars.txt`: `name default (flags)` lines, each followed by an indented
-//! description). Sigil ships a snapshot of it (`data/convars.txt`, the entries a retail game can
-//! set: `developmentonly` and `hidden` dropped) and prefers the newer copy the Performance page
-//! caches from the same file (`performance/game/convars.txt`), so no new host is contacted.
+//! description). Sigil never ships that file. The catalogue reads the copy cached under the app
+//! data directory (`performance/files/game/convars.txt`), which the Performance refresh or the
+//! player's Download the list button fetches from the same hosts. Parsing keeps the entries a
+//! retail game can set (`developmentonly` and `hidden` dropped). No usable cache is an empty
+//! catalogue, never an error.
 //!
 //! Current values come from two places on this computer: the autoexec (what Sigil writes) and
 //! `game/citadel/cfg/machine_convars.vcfg` (where the game keeps archived settings). Edits go
@@ -19,14 +21,14 @@
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
 
 use serde::{Deserialize, Serialize};
 
 use crate::error::{Error, Result};
 use crate::util::write_atomic;
 
-const BUNDLED: &str = include_str!("../../data/convars.txt");
+/// Fewer entries than this is a damaged file, not Valve's list.
+const MIN_ENTRIES: usize = 500;
 
 /// What a value looks like, from its default.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -265,20 +267,10 @@ fn kind_of(default: &str) -> Kind {
     }
 }
 
-/// Where the catalogue came from.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CatalogSource {
-    /// The copy the Performance page cached from GameTracking-Deadlock.
-    Cached,
-    /// The snapshot Sigil ships.
-    Bundled,
-}
-
-/// The convar list, newest copy first.
-#[derive(Debug, Clone)]
+/// The convar list. Empty until a copy has been downloaded.
+#[derive(Debug, Clone, Default)]
 pub struct Catalog {
     pub convars: Vec<Convar>,
-    pub source: CatalogSource,
 }
 
 impl Catalog {
@@ -322,30 +314,19 @@ impl Catalog {
     }
 }
 
-/// The snapshot Sigil ships, parsed once.
-pub fn bundled() -> &'static [Convar] {
-    static LIST: OnceLock<Vec<Convar>> = OnceLock::new();
-    LIST.get_or_init(|| parse_dump(BUNDLED))
-}
-
-/// The catalogue: the Performance cache under `data_dir` when it holds a full list, else the
-/// bundled snapshot.
+/// The catalogue from the cached list under `data_dir`. A missing, unreadable or damaged file
+/// gives an empty catalogue.
 pub fn load_catalog(data_dir: &Path) -> Catalog {
     let cached = crate::performance::fetch::file_path(
         data_dir,
         crate::performance::fetch::CONVARS_ID,
         crate::performance::fetch::CONVARS_FILE,
     );
-    if let Ok(text) = std::fs::read_to_string(&cached) {
-        let convars = parse_dump(&text);
-        if convars.len() >= 500 {
-            return Catalog { convars, source: CatalogSource::Cached };
-        }
+    let convars = std::fs::read_to_string(&cached).map(|text| parse_dump(&text)).unwrap_or_default();
+    if convars.len() < MIN_ENTRIES {
+        return Catalog::default();
     }
-    Catalog {
-        convars: bundled().to_vec(),
-        source: CatalogSource::Bundled,
-    }
+    Catalog { convars }
 }
 
 // --- current values ------------------------------------------------------------------------
@@ -551,12 +532,33 @@ mod tests {
     }
 
     #[test]
-    fn the_bundled_snapshot_has_the_retail_list() {
-        let list = bundled();
-        assert!(list.len() > 1000, "{}", list.len());
-        assert!(list.iter().all(|convar| !convar.has("developmentonly")));
-        assert!(list.iter().any(|convar| convar.name == "fps_max"));
-        assert!(list.windows(2).all(|pair| pair[0].name < pair[1].name), "sorted for get()");
+    fn the_catalogue_reads_the_raw_cache_and_drops_what_retail_ignores() {
+        let dir = std::env::temp_dir().join(format!("sigil-convars-cache-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(load_catalog(&dir).convars.is_empty(), "no cache");
+
+        let path = crate::performance::fetch::file_path(
+            &dir,
+            crate::performance::fetch::CONVARS_ID,
+            crate::performance::fetch::CONVARS_FILE,
+        );
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, [0xff, 0xfe, 0x00]).unwrap();
+        assert!(load_catalog(&dir).convars.is_empty(), "unreadable cache");
+        std::fs::write(&path, DUMP).unwrap();
+        assert!(load_catalog(&dir).convars.is_empty(), "damaged cache");
+
+        let mut raw = String::from(DUMP);
+        raw.push_str("secret_dev 1 (developmentonly)\n\t<no description>\nsecret_hidden 1 (hidden)\n\t<no description>\n");
+        for index in 0..MIN_ENTRIES {
+            raw.push_str(&format!("test_convar_{index} 1 (release)\n\t<no description>\n"));
+        }
+        std::fs::write(&path, raw).unwrap();
+        let catalog = load_catalog(&dir);
+        assert!(catalog.get("fps_max").is_some());
+        assert!(catalog.get("secret_dev").is_none() && catalog.get("secret_hidden").is_none());
+        assert!(catalog.convars.windows(2).all(|pair| pair[0].name < pair[1].name), "sorted for get()");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -573,7 +575,7 @@ mod tests {
 
     #[test]
     fn search_ranks_name_prefixes_first_and_hides_cheats() {
-        let catalog = Catalog { convars: parse_dump(DUMP), source: CatalogSource::Bundled };
+        let catalog = Catalog { convars: parse_dump(DUMP) };
         let hits: Vec<&str> = catalog.search("fps", None, false).iter().map(|c| c.name.as_str()).collect();
         assert_eq!(hits, vec!["fps_max"]);
         let hits: Vec<&str> = catalog.search("limiter", None, false).iter().map(|c| c.name.as_str()).collect();
@@ -625,7 +627,7 @@ mod tests {
     #[test]
     fn presets_round_trip_through_the_data_folder() {
         let dir = std::env::temp_dir().join(format!("sigil-game-presets-{}", std::process::id()));
-        let catalog = Catalog { convars: parse_dump(DUMP), source: CatalogSource::Bundled };
+        let catalog = Catalog { convars: parse_dump(DUMP) };
         let preset = preset_from_autoexec("Mine", &autoexec_values("fps_max 120\nunknown_cmd 1\n"), &catalog).unwrap();
         assert_eq!(preset.values, vec![("fps_max".to_string(), "120".to_string())]);
         store_presets(&dir, std::slice::from_ref(&preset)).unwrap();
