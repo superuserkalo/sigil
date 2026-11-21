@@ -5,147 +5,11 @@ use deadlock_core::stats::{MatchSummary, StatsSnapshot};
 use rune::{Color, El, Shape, canvas, col, el, row, spacer, text};
 
 use crate::app::State;
-use crate::ui::{BODY, BODY_MED, DISPLAY, H1, H2, NUM, SMALL, Ui};
+use crate::ui::{BODY, BODY_MED, H1, H2, LABEL, SMALL, Ui};
 
 use super::german::tr;
 use super::shared::*;
 use super::{Chart, Derived, FORM_BEADS, SPARK_MATCHES};
-
-/// Who, then what changed, then what to work on next.
-pub(super) fn brief_block(s: &State, u: &Ui, snap: &StatsSnapshot, d: &Derived) -> El {
-    // A rank request that failed leaves `--`, not "Unranked": the page still loads.
-    let rank = if snap.rank.reported {
-        insight::badge_label(snap.rank.badge, &snap.tier_names)
-    } else {
-        "--".to_string()
-    };
-    let mut meta = vec![rank];
-    // The share is only comparable with the players of the season the badge was earned in.
-    if let Some(bench) = snap
-        .rank
-        .benchmark
-        .as_ref()
-        .filter(|bench| bench.current_season)
-    {
-        let players = thousands(bench.ranked_players);
-        meta.push(match bench.top_percent_text() {
-            Some(share) => crate::screens::settings::i18n::fill(
-                tr("top {}% of {} ranked players"),
-                &[&share, &players],
-            ),
-            None => crate::screens::settings::i18n::fill(
-                tr("top <0.1% of {} ranked players"),
-                &[&players],
-            ),
-        });
-    }
-    meta.push(format!(
-        "{} matches in 30 days",
-        snap.profile.matches_played_last_30d
-    ));
-
-    let who = row()
-        .key("stats-identity")
-        .w_full()
-        .gap(12.0)
-        .center_y()
-        .child(avatar(u, &snap.profile.persona_name, 40.0))
-        .child(
-            col()
-                .grow(1.0)
-                .min_w(0.0)
-                .gap(0.0)
-                .child(
-                    text(snap.profile.persona_name.clone())
-                        .font(H1)
-                        .color(u.ink)
-                        .truncate(),
-                )
-                .child(text(meta.join("  ·  ")).font(TNUM).color(u.muted).truncate()),
-        );
-
-    let mut block = col().key("stats-brief").w_full().gap(20.0).child(who);
-
-    let mut said = col().w_full().gap(4.0);
-    if let Some(changed) = &d.brief.changed {
-        said = said
-            .child(
-                text(changed.title.clone())
-                    .font(DISPLAY)
-                    .color(u.ink)
-                    .wrap(),
-            )
-            .child(
-                text(changed.detail.clone())
-                    .font(BODY)
-                    .color(u.muted)
-                    .wrap(),
-            );
-    }
-    block = block.child(said);
-
-    let mut list = col().w_full().border_sides([1.0, 0.0, 0.0, 0.0], u.hair);
-    if let Some(next) = &d.brief.next {
-        list = list.child(callout(s, u, "Next", next, true).key("stats-next"));
-    }
-    for (index, note) in d.brief.also.iter().take(2).enumerate() {
-        let label = match note.tone {
-            Tone::Good => "Going well",
-            Tone::Focus => "Watch",
-            Tone::Neutral => "Note",
-        };
-        list = list.child(callout(s, u, label, note, false).key(format!("stats-note-{index}")));
-    }
-    block.child(list)
-}
-
-/// One insight as a row: a label column, the hero or a tone mark, then the
-/// sentence and the numbers it rests on.
-fn callout(s: &State, u: &Ui, label: &str, item: &insight::Insight, lead: bool) -> El {
-    let mark = match item.tone {
-        Tone::Good => u.teal,
-        Tone::Focus => u.amber,
-        Tone::Neutral => u.muted,
-    };
-    let lead_icon = match item.hero_id {
-        Some(hero_id) => hero_chip(s, u, hero_id, &item.title, 24.0),
-        None => el()
-            .size(24.0, 24.0)
-            .center()
-            .child(el().size(6.0, 6.0).radius(3.0).fill(mark).a11y_hidden())
-            .a11y_hidden(),
-    };
-    row()
-        .w_full()
-        .py(12.0)
-        .gap(12.0)
-        .items_start()
-        .border_sides([0.0, 0.0, 1.0, 0.0], u.hair)
-        .child(
-            text(tr(label))
-                .font(BODY_MED)
-                .color(mark)
-                .w(BRIEF_LABEL_W)
-                .pt(2.0),
-        )
-        .child(lead_icon)
-        .child(
-            col()
-                .grow(1.0)
-                .min_w(0.0)
-                .gap(2.0)
-                .pt(2.0)
-                .child(
-                    text(item.title.clone())
-                        .font(BODY_MED)
-                        .color(if lead { u.ink } else { u.prose })
-                        .wrap(),
-                )
-                .child(text(item.detail.clone()).font(BODY).color(u.muted).wrap()),
-        )
-}
-
-const BRIEF_LABEL_W: f32 = 84.0;
 
 // --- numbers ---------------------------------------------------------------
 
@@ -160,11 +24,10 @@ struct Metric {
     series: Vec<f64>,
 }
 
-pub(super) fn numbers(u: &Ui, snap: &StatsSnapshot, d: &Derived) -> El {
+fn metrics(snap: &StatsSnapshot, d: &Derived) -> Vec<Metric> {
     let recent = &d.form.recent;
     let before = &d.form.before;
     let has_before = before.matches >= insight::MIN_SAMPLE;
-    let n = recent.matches;
     let tier = tier_label(snap);
     let overall = snap.peers.as_ref().map(|peers| &peers.overall);
     let peer = |value: Option<f64>, digits: usize| -> Option<String> {
@@ -257,71 +120,7 @@ pub(super) fn numbers(u: &Ui, snap: &StatsSnapshot, d: &Derived) -> El {
         },
     ];
 
-    let mut figures = row().w_full().gap(0.0).items_start();
-    for (index, metric) in metrics.into_iter().enumerate() {
-        figures = figures.child(figure(u, metric, index > 0));
-    }
-    col()
-        .key("stats-numbers")
-        .w_full()
-        .gap(12.0)
-        .child(section_head(
-            u,
-            &crate::screens::settings::i18n::fill(tr("Your last {}"), &[&n.to_string()]),
-            if has_before {
-                "Compared with the matches before"
-            } else {
-                ""
-            },
-        ))
-        .child(figures)
-}
-
-fn figure(u: &Ui, m: Metric, divided: bool) -> El {
-    let mut delta_row = row().gap(6.0).center_y().h(16.0);
-    if let Some((better, label)) = &m.delta {
-        // Within 3 percent (or 3 points of win rate) reads as level.
-        let level = better.abs() < 3.0;
-        let color = if level {
-            u.faint
-        } else if *better > 0.0 {
-            u.teal
-        } else {
-            u.rose
-        };
-        let up = label.starts_with('+');
-        if !level {
-            delta_row = delta_row.child(arrow(color, up));
-        }
-        delta_row = delta_row.child(text(label.clone()).font(TNUM_SMALL).color(color));
-    }
-    if let Some(before) = &m.before {
-        delta_row = delta_row.child(text(before.clone()).font(TNUM_SMALL).color(u.faint));
-    }
-    let mut c = col()
-        .key(format!("stats-figure-{}", m.key))
-        .w(0.0)
-        .grow(1.0)
-        .min_w(0.0)
-        .gap(4.0)
-        .child(text(tr(m.label)).font(SMALL).color(u.muted))
-        .child(
-            row()
-                .w_full()
-                .gap(4.0)
-                .items_end()
-                .child(text(m.value).font(NUM).color(u.ink).truncate().min_w(0.0).shrink())
-                .child(spacer())
-                .child(sparkline(u, &m.series, 88.0, 24.0)),
-        )
-        .child(delta_row);
-    if let Some(peer) = m.peer {
-        c = c.child(text(peer).font(TNUM_SMALL).color(u.faint));
-    }
-    if divided {
-        c = c.pl(20.0).border_sides([0.0, 0.0, 0.0, 1.0], u.hair);
-    }
-    c.pr(20.0)
+    metrics
 }
 
 fn rolling_mean(values: &[f64], window: usize) -> Vec<f64> {
@@ -655,3 +454,345 @@ fn form_strip(u: &Ui, snap: &StatsSnapshot, d: &Derived) -> El {
         .child(text(words.join("  ·  ")).font(TNUM_SMALL).color(u.faint))
 }
 
+
+// --- overview --------------------------------------------------------------
+
+/// The Overview tab: who, the four numbers, what stands out, progress, then the newest
+/// matches beside the hero pool.
+pub(super) fn overview(s: &State, u: &Ui, snap: &StatsSnapshot, d: &Derived) -> El {
+    let mut c = col()
+        .key("stats-overview")
+        .w_full()
+        .gap(8.0)
+        .child(band(u, snap))
+        .child(tiles(u, snap, d));
+    if snap.matches.is_empty() {
+        return c.child(
+            row().h(32.0).center_y().child(
+                text(tr("The API only knows matches that finished. New ones show up a little while after they end."))
+                    .font(BODY)
+                    .color(u.prose),
+            ),
+        );
+    }
+    c = c
+        .child(insights(s, u, snap, d).mt(16.0))
+        .child(progress(s, u, snap, d).mt(16.0))
+        .child(
+            row()
+                .w_full()
+                .mt(16.0)
+                .gap(24.0)
+                .flex_wrap()
+                .items_start()
+                .child(recent_matches(s, u, snap))
+                .child(top_heroes(s, u, snap)),
+        );
+    c
+}
+
+/// The profile band: avatar, name and account, then four key numbers in fixed cells.
+fn band(u: &Ui, snap: &StatsSnapshot) -> El {
+    let rank = if snap.rank.reported {
+        insight::badge_label(snap.rank.badge, &snap.tier_names)
+    } else {
+        "--".to_string()
+    };
+    let top = snap
+        .rank
+        .benchmark
+        .as_ref()
+        .filter(|bench| bench.current_season)
+        .map(|bench| match bench.top_percent_text() {
+            Some(share) => format!("{share}%"),
+            None => "<0.1%".to_string(),
+        })
+        .unwrap_or_else(|| "--".to_string());
+    let (wins, played) = snap
+        .heroes
+        .iter()
+        .fold((0u64, 0u64), |(w, m), hero| (w + hero.wins, m + hero.matches_played));
+    let win_rate = if played > 0 {
+        format!("{:.1}%", wins as f64 * 100.0 / played as f64)
+    } else {
+        "--".to_string()
+    };
+    let cell = |label: &str, value: String, first: bool| {
+        let mut c = col()
+            .w(132.0)
+            .h(40.0)
+            .pl(12.0)
+            .gap(4.0)
+            .child(text(tr(label).to_string()).font(SMALL).color(u.muted))
+            .child(text(value).font(TNUM_MED).color(u.ink).truncate());
+        if !first {
+            c = c.border_sides([0.0, 0.0, 0.0, 1.0], u.hair);
+        }
+        c
+    };
+    row()
+        .key("stats-identity")
+        .w_full()
+        .h(72.0)
+        .padding(12.0)
+        .gap(12.0)
+        .center_y()
+        .radius(crate::ui::r(4.0))
+        .fill(u.raised)
+        .border(1.0, u.hair)
+        .child(avatar(u, &snap.profile.persona_name, 48.0))
+        .child(
+            col()
+                .grow(1.0)
+                .min_w(0.0)
+                .gap(2.0)
+                .child(text(snap.profile.persona_name.clone()).font(H1).color(u.ink).truncate())
+                .child(
+                    text(crate::screens::settings::i18n::fill(
+                        tr("Account {}"),
+                        &[&snap.account_id.to_string()],
+                    ))
+                    .font(TNUM_SMALL)
+                    .color(u.muted),
+                ),
+        )
+        .child(cell("Rank", rank, true))
+        .child(cell("Top", top, false))
+        .child(cell("Win rate", win_rate, false))
+        .child(cell("Matches 30 d", snap.profile.matches_played_last_30d.to_string(), false))
+}
+
+/// The four numbers for the newest matches, each a tile of the same size.
+fn tiles(u: &Ui, snap: &StatsSnapshot, d: &Derived) -> El {
+    let empty = snap.matches.is_empty();
+    let mut r = row().key("stats-numbers").w_full().gap(8.0);
+    for (index, m) in metrics(snap, d).into_iter().enumerate() {
+        let label = if index == 0 { "Win rate, last 20" } else { m.label };
+        let mut line3 = row().gap(6.0).center_y();
+        if let (false, Some((better, delta))) = (empty, &m.delta) {
+            let level = better.abs() < 3.0;
+            let color = if level {
+                u.muted
+            } else if *better > 0.0 {
+                u.teal
+            } else {
+                u.rose
+            };
+            if !level {
+                line3 = line3.child(arrow(color, delta.starts_with('+')));
+            }
+            line3 = line3.child(text(delta.clone()).font(TNUM_SMALL).color(color));
+        }
+        if let (false, Some(before)) = (empty, &m.before) {
+            line3 = line3.child(text(before.clone()).font(TNUM_SMALL).color(u.muted));
+        }
+        let line4 = text(if empty { String::new() } else { m.peer.clone().unwrap_or_default() })
+            .font(TNUM_SMALL)
+            .color(u.muted)
+            .truncate();
+        let value = if empty { "--".to_string() } else { m.value.clone() };
+        let spark = (!empty).then(|| sparkline(u, &m.series, 72.0, 24.0));
+        r = r.child(tile(u, &format!("stats-figure-{}", m.key), label, &value, spark, line3, line4));
+    }
+    r
+}
+
+/// What stands out: what changed, then what to work on, as rows of one fixed grid.
+fn insights(s: &State, u: &Ui, snap: &StatsSnapshot, d: &Derived) -> El {
+    let _ = snap;
+    let mut list = col().key("stats-brief").w_full().child(section_head(
+        u,
+        &crate::screens::settings::i18n::fill(
+            tr("Last {} matches: what stands out"),
+            &[&d.form.recent.matches.to_string()],
+        ),
+        "",
+    ));
+    let row_of = |key: String, label: &str, tone: Color, lead: El, title: String, detail: String| {
+        row()
+            .key(key)
+            .w_full()
+            .h(44.0)
+            .gap(12.0)
+            .center_y()
+            .border_sides([0.0, 0.0, 1.0, 0.0], u.hair)
+            .child(el().size(8.0, 8.0).radius(1.0).fill(tone).a11y_hidden())
+            .child(text(tr(label).to_string()).font(LABEL).color(u.muted).w(88.0))
+            .child(row().w(24.0).h(24.0).center().child(lead))
+            .child(
+                col()
+                    .grow(1.0)
+                    .min_w(0.0)
+                    .gap(0.0)
+                    .child(text(title).font(BODY_MED).color(u.ink).truncate())
+                    .child(text(detail).font(SMALL).color(u.muted).truncate()),
+            )
+    };
+    let tone_of = |tone: Tone| match tone {
+        Tone::Good => u.teal,
+        Tone::Focus => u.amber,
+        Tone::Neutral => u.muted,
+    };
+    let lead_of = |item: &insight::Insight| match item.hero_id {
+        Some(hero_id) => hero_chip(s, u, hero_id, &item.title, 24.0),
+        None => el(),
+    };
+    if let Some(changed) = &d.brief.changed {
+        list = list.child(row_of(
+            "stats-changed".into(),
+            "Changed",
+            u.muted,
+            el(),
+            changed.title.clone(),
+            changed.detail.clone(),
+        ));
+    }
+    if let Some(next) = &d.brief.next {
+        list = list.child(row_of(
+            "stats-next".into(),
+            "Next",
+            tone_of(next.tone),
+            lead_of(next),
+            next.title.clone(),
+            next.detail.clone(),
+        ));
+    }
+    for (index, note) in d.brief.also.iter().take(2).enumerate() {
+        let label = match note.tone {
+            Tone::Good => "Going well",
+            Tone::Focus => "Watch",
+            Tone::Neutral => "Note",
+        };
+        list = list.child(row_of(
+            format!("stats-note-{index}"),
+            label,
+            tone_of(note.tone),
+            lead_of(note),
+            note.title.clone(),
+            note.detail.clone(),
+        ));
+    }
+    list
+}
+
+const SHORT_ROWS: usize = 5;
+
+/// A column of the two side by side lists: head with its "All" button, then rows.
+fn short_list(u: &Ui, key: &str, title: &str, all: &str, to: super::Tab, rows: Vec<El>) -> El {
+    let mut c = col()
+        .key(key.to_string())
+        .w(0.0)
+        .grow(1.0)
+        .min_w(440.0)
+        .child(
+            row()
+                .w_full()
+                .h(32.0)
+                .center_y()
+                .border_sides([0.0, 0.0, 1.0, 0.0], u.hair)
+                .child(text(tr(title).to_string()).font(H2).color(u.ink))
+                .child(spacer())
+                .child(
+                    u.action(tr(all), crate::ui::ActionKind::Ghost)
+                        .key(format!("{key}-all"))
+                        .h(28.0)
+                        .cursor(rune::Cursor::Pointer)
+                        .on_press(move |st: &mut State| st.stats.tab = to),
+                ),
+        );
+    for r in rows {
+        c = c.child(r);
+    }
+    c
+}
+
+fn recent_matches(s: &State, u: &Ui, snap: &StatsSnapshot) -> El {
+    let rows = snap
+        .matches
+        .iter()
+        .take(SHORT_ROWS)
+        .map(|item| {
+            let (result, color) = match item.win {
+                Some(true) => (tr("Win"), u.teal),
+                Some(false) => (tr("Loss"), u.rose),
+                None => ("--", u.muted),
+            };
+            let name = item
+                .hero_name
+                .clone()
+                .unwrap_or_else(|| format!("Hero {}", item.hero_id));
+            let id = item.match_id;
+            row()
+                .key(format!("stats-recent-{id}"))
+                .w_full()
+                .h(40.0)
+                .gap(12.0)
+                .center_y()
+                .border_sides([0.0, 0.0, 1.0, 0.0], u.hair)
+                .hover(u.hover)
+                .focusable(true)
+                .role("button")
+                .label(format!("{result} on {name}, open match"))
+                .cursor(rune::Cursor::Pointer)
+                .on_press(move |st: &mut State| {
+                    st.stats.tab = super::Tab::Matches;
+                    st.stats.expanded = Some(id);
+                })
+                .child(el().w(3.0).h(40.0).fill(color).a11y_hidden())
+                .child(text(result.to_string()).font(BODY_MED).color(color).w(40.0))
+                .child(hero_chip(s, u, item.hero_id, &name, 24.0))
+                .child(text(name).font(BODY).color(u.ink).truncate().grow(1.0).min_w(0.0))
+                .child(kda_text(u, item.kills, item.deaths, item.assists).w(88.0))
+                .child(num(thousands(item.net_worth), 64.0, u.muted))
+                .child(num(insight::clock_label(item.start_time), 48.0, u.muted).mr(8.0))
+        })
+        .collect();
+    short_list(u, "stats-recent", "Recent matches", "All matches", super::Tab::Matches, rows)
+}
+
+fn top_heroes(s: &State, u: &Ui, snap: &StatsSnapshot) -> El {
+    let mut heroes: Vec<&deadlock_core::stats::HeroPerformance> = snap.heroes.iter().collect();
+    heroes.sort_by(|a, b| b.matches_played.cmp(&a.matches_played));
+    let rows = heroes
+        .into_iter()
+        .take(SHORT_ROWS)
+        .map(|hero| {
+            let name = hero_name(hero);
+            row()
+                .key(format!("stats-top-{}", hero.hero_id))
+                .w_full()
+                .h(40.0)
+                .gap(12.0)
+                .center_y()
+                .border_sides([0.0, 0.0, 1.0, 0.0], u.hair)
+                .child(hero_chip(s, u, hero.hero_id, &name, 24.0))
+                .child(text(name).font(BODY_MED).color(u.ink).truncate().grow(1.0).min_w(0.0))
+                .child(num(format!("{:.0}%", hero.win_rate_percent), 64.0, u.prose))
+                .child(
+                    num(
+                        crate::screens::settings::i18n::fill(
+                            tr("{} matches"),
+                            &[&hero.matches_played.to_string()],
+                        ),
+                        96.0,
+                        u.muted,
+                    )
+                    .mr(8.0),
+                )
+        })
+        .collect();
+    short_list(u, "stats-top", "Top heroes", "All heroes", super::Tab::Heroes, rows)
+}
+
+/// K / D / A with quiet slashes and deaths in rose, right aligned.
+pub(super) fn kda_text(u: &Ui, k: u32, d: u32, a: u32) -> El {
+    row()
+        .gap(0.0)
+        .center_y()
+        .justify_end()
+        .child(text(k.to_string()).font(TNUM).color(u.prose))
+        .child(text(" / ").font(TNUM).color(u.muted))
+        .child(text(d.to_string()).font(TNUM).color(u.rose))
+        .child(text(" / ").font(TNUM).color(u.muted))
+        .child(text(a.to_string()).font(TNUM).color(u.prose))
+}

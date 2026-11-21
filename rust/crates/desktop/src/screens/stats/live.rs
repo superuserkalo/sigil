@@ -97,7 +97,7 @@ pub enum Action {
     Remove,
 }
 
-fn running(s: &State) -> bool {
+pub(super) fn running(s: &State) -> bool {
     s.stats.live.scene_running.unwrap_or_else(crate::screens::settings::watch::game_is_running)
 }
 

@@ -28,7 +28,7 @@ use crate::model::Screen;
 use crate::screens::settings::i18n::fill;
 use crate::screens::subpage;
 use crate::ui::{
-    ActionKind, BODY, BODY_MED, DISPLAY, H1, H2, MONO, NUM, PAGE_TOP, PAGE_X, SMALL, Ui,
+    ActionKind, BODY, BODY_MED, DISPLAY, H1, H2, LABEL, MONO, NUM, PAGE_TOP, PAGE_X, SMALL, SMALL_NUM, Ui,
 };
 
 mod de;
@@ -38,6 +38,7 @@ pub mod custom;
 pub mod detail;
 pub mod editor;
 pub mod hosted;
+mod scale;
 
 /// This page's German table first, then Sigil's shared one.
 pub fn tr(text: &str) -> &str {
@@ -63,6 +64,8 @@ pub struct View {
     pub fetch: Fetch,
     /// The tier filter. `None` shows every tier.
     pub tier: Option<Tier>,
+    /// The tier the slider's thumb is being dragged to; the list filters on release.
+    pub drag_tier: Option<Tier>,
     /// The config whose page is open.
     pub open: Option<String>,
     /// Switches the player changed on a config's page, not yet applied.
@@ -661,10 +664,22 @@ fn list_page(s: &State, u: &Ui) -> El {
         );
     }
     actions = actions.child(custom::add_button(u)).child(refresh);
+    // How fresh the configs are, beside the button that checks again.
+    let fresh = s
+        .performance
+        .catalog
+        .as_ref()
+        .map(|c| freshness_line(s, c).0)
+        .unwrap_or_default();
+    let actions = row()
+        .gap(16.0)
+        .center_y()
+        .child(text(fresh).font(SMALL).color(u.muted).truncate().min_w(0.0).shrink())
+        .child(actions);
     let mut page = page("perf-page").child(u.page_head(
         "",
         tr("Performance"),
-        tr("Community configs that trade graphics detail for frame rate."),
+        "",
         Some(actions),
     ));
 
@@ -775,7 +790,7 @@ fn current(s: &State, u: &Ui) -> El {
                     .unwrap_or_else(|| id.clone());
                 let mut parts = Vec::new();
                 if let Some(def) = def {
-                    parts.push(def.tier.label().to_string());
+                    parts.push(tr(def.tier.label()).to_string());
                 }
                 parts.retain(|part| !part.is_empty());
                 if let Some(config) = found {
@@ -834,43 +849,62 @@ fn current(s: &State, u: &Ui) -> El {
                 );
                 (
                     fill(tr("{} is on"), &[&name]),
-                    fill(
-                        tr("{}. Takes effect the next time you start the game."),
-                        &[&parts.join(" · ")],
-                    ),
-                    u.accent,
+                    {
+                        parts.push(tr("starts with the next launch").to_string());
+                        parts.join(" · ")
+                    },
+                    crate::ui::switch_green(),
                 )
             }
         },
     };
-    let mut text_col = col().grow(1.0).min_w(0.0).gap(2.0).child(
-        row()
-            .gap(10.0)
-            .center_y()
-            .child(el().size(8.0, 8.0).radius(4.0).fill(dot).a11y_hidden())
-            .child(text(title).font(H2).color(u.ink).truncate()),
-    );
-    if !detail.is_empty() {
-        text_col = text_col.child(text(detail).font(SMALL).color(u.muted).pl(18.0).wrap());
-    }
-    let mut bar = row()
-        .key("perf-current")
-        .w_full()
-        .min_h(64.0)
-        .px(16.0)
-        .py(12.0)
-        .gap(8.0)
-        .center_y()
-        .radius(crate::ui::r(12.0))
-        .border(1.0, u.hair)
-        .child(text_col);
+    // Stock reads as an empty square; on, foreign and errors fill it with their colour.
+    let stock = dot == Color::WHITE.alpha(0.22);
+    let mark = el()
+        .size(8.0, 8.0)
+        .radius(1.0)
+        .fill(if stock { Color::TRANSPARENT } else { dot })
+        .border(1.0, if stock { u.muted } else { dot })
+        .a11y_hidden();
+    let text_col = col()
+        .grow(1.0)
+        .min_w(0.0)
+        .gap(0.0)
+        .child(
+            row()
+                .h(20.0)
+                .gap(10.0)
+                .center_y()
+                .child(mark)
+                .child(text(title).font(BODY_MED).color(u.ink).truncate()),
+        )
+        .child(
+            row()
+                .h(16.0)
+                .pl(18.0)
+                .child(text(detail).font(SMALL).color(u.muted).truncate()),
+        );
+    // The action slot keeps its width when empty or busy, so the text never reflows.
+    let mut slot = row().min_w(216.0).h(32.0).gap(8.0).center_y().justify_end();
     if busy {
-        bar = bar.child(text(tr("Writing")).font(SMALL).color(u.faint));
+        slot = slot.child(text(tr("Writing")).font(SMALL).color(u.muted));
     } else {
         for action in actions {
-            bar = bar.child(action);
+            slot = slot.child(action);
         }
     }
+    let bar = row()
+        .key("perf-current")
+        .w_full()
+        .h(56.0)
+        .px(12.0)
+        .gap(12.0)
+        .center_y()
+        .radius(crate::ui::r(4.0))
+        .fill(u.raised)
+        .border(1.0, u.hair)
+        .child(text_col)
+        .child(slot);
     let mut out = col().w_full().gap(8.0).child(bar);
     if let Some((line, error)) = &s.performance.message {
         out = out.child(
@@ -921,75 +955,27 @@ fn dots(parts: &[String]) -> String {
         .join(" · ")
 }
 
-/// The tier filter on the left, the freshness line on the right.
+/// The looks to frames scale, in place of the old tier filter.
 fn toolbar(s: &State, u: &Ui, catalog: &Catalog) -> El {
-    let count = |tier: Option<Tier>| {
-        catalog
-            .configs
-            .iter()
-            .filter(|config| tier.is_none_or(|tier| config.def.tier == tier))
-            .count()
-    };
-    let mut items = vec![(None, tr("All").to_string(), count(None))];
-    for tier in Tier::ALL {
-        let n = count(Some(tier));
-        if n > 0 {
-            items.push((Some(tier), tier.label().to_string(), n));
-        }
-    }
-    let segments = items
-        .into_iter()
-        .map(|(tier, label, n)| {
-            let on = s.performance.tier == tier;
-            subpage::segment(u, &label, on)
-                .key(format!(
-                    "perf-tier-{}",
-                    label.to_lowercase().replace(' ', "-")
-                ))
-                .label(format!("{label}, {n} configs"))
-                .cursor(rune::Cursor::Pointer)
-                .on_press(move |st: &mut State| st.performance.tier = tier)
-                .child(
-                    text(n.to_string())
-                        .font(SMALL)
-                        .color(u.faint)
-                        .pl(6.0)
-                        .a11y_hidden(),
-                )
-        })
-        .collect();
-    row()
-        .w_full()
-        .h(32.0)
-        .gap(16.0)
-        .center_y()
-        .child(
-            subpage::segmented(u, segments)
-                .role("radiogroup")
-                .label(tr("Filter by tier")),
-        )
-        .child(spacer())
-        .child(freshness(s, u, catalog))
+    let on = applied_id(s)
+        .and_then(|id| catalog.configs.iter().find(|c| c.id() == id))
+        .map(|c| c.def.tier);
+    scale::view(s, u, catalog, on)
 }
 
-fn freshness(s: &State, u: &Ui, catalog: &Catalog) -> El {
+fn freshness_line(s: &State, catalog: &Catalog) -> (String, bool) {
     let checked = catalog
         .checked_at
         .as_deref()
         .and_then(performance::minutes_since)
         .map(ago);
-    let (line, color) = match (&s.performance.fetch, checked) {
-        (Fetch::Running, _) => (tr("Checking GitHub for new versions").to_string(), u.faint),
-        (Fetch::Failed(_), Some(ago)) => (fill(tr("Offline. Showing configs saved {}"), &[&ago]), u.muted),
-        (Fetch::Failed(_), None) => (tr("Offline. Showing saved configs").to_string(), u.muted),
-        (Fetch::Idle, Some(ago)) => (fill(tr("Checked GitHub {}"), &[&ago]), u.faint),
-        (Fetch::Idle, None) => (String::new(), u.faint),
-    };
-    let mut r = row().gap(6.0).center_y();
-    if s.performance.fetch == Fetch::Running {
-        r = r.child(icon(&icons::LOADER, 14.0).color(u.faint).a11y_hidden());
+    match (&s.performance.fetch, checked) {
+        (Fetch::Running, _) => (tr("Checking GitHub for new versions").to_string(), false),
+        (Fetch::Failed(_), Some(ago)) => (fill(tr("Offline. Showing configs saved {}"), &[&ago]), true),
+        (Fetch::Failed(_), None) => (tr("Offline. Showing saved configs").to_string(), true),
+        (Fetch::Idle, Some(ago)) => (fill(tr("Checked GitHub {}"), &[&ago]), false),
+        (Fetch::Idle, None) => (String::new(), false),
     }
-    r.child(text(line).font(SMALL).color(color).truncate())
 }
 
 fn ago(minutes: i64) -> String {
@@ -1005,7 +991,7 @@ fn ago(minutes: i64) -> String {
 /// One group per tier, lighter first: the list is the scale.
 fn groups(s: &State, u: &Ui, catalog: &Catalog) -> El {
     let on = applied_id(s);
-    let mut out = col().w_full().gap(24.0);
+    let mut out = col().w_full().gap(16.0);
     for tier in Tier::ALL {
         if s.performance.tier.is_some_and(|wanted| wanted != tier) {
             continue;
@@ -1019,6 +1005,7 @@ fn groups(s: &State, u: &Ui, catalog: &Catalog) -> El {
         if configs.is_empty() {
             continue;
         }
+        let count = configs.len();
         let mut rows = col().w_full();
         for config in configs {
             rows = rows.child(config_row(s, u, config, on.as_deref() == Some(config.id())));
@@ -1033,8 +1020,14 @@ fn groups(s: &State, u: &Ui, catalog: &Catalog) -> El {
                         .gap(12.0)
                         .center_y()
                         .border_sides([0.0, 0.0, 1.0, 0.0], u.hair)
-                        .child(text(tier.label()).font(BODY_MED).color(u.ink))
-                        .child(text(tier.blurb()).font(SMALL).color(u.muted).truncate()),
+                        .child(
+                            row()
+                                .gap(6.0)
+                                .center_y()
+                                .child(text(tr(tier.label())).font(BODY_MED).color(u.ink))
+                                .child(text(count.to_string()).font(SMALL_NUM).color(u.muted)),
+                        )
+                        .child(text(tr(tier.blurb())).font(SMALL).color(u.muted).truncate()),
                 )
                 .child(rows),
         );
@@ -1049,31 +1042,29 @@ fn config_row(s: &State, u: &Ui, config: &Config, is_on: bool) -> El {
         .center_y()
         .child(text(config.name()).font(BODY_MED).color(u.ink).truncate());
     if config.id() == catalog::DEFAULT_ID {
-        name = name.child(text(tr("Recommended")).font(SMALL).color(u.muted));
+        name = name.child(chip(u, tr("Recommended")));
     }
     if config.def.testing {
-        name = name.child(text(tr("Testing")).font(SMALL).color(u.muted));
+        name = name.child(chip(u, tr("Testing")));
     }
     let meta = dots(&[
-        format!("by {}", config.def.author),
+        config.def.author.to_string(),
         display_version(config),
         short_date(&config.date),
     ]);
     let options = options_for(s, config);
-    let state: El = if is_on {
-        row()
-            .w(56.0)
-            .gap(6.0)
-            .center_y()
-            .child(icon(&icons::CHECK, 14.0).color(u.accent).a11y_hidden())
-            .child(text(tr("On")).font(BODY_MED).color(u.ink))
-    } else {
-        row().w(56.0).child(spacer()).child(
-            icon(&icons::CHEVRON_RIGHT, 16.0)
-                .color(u.faint)
-                .a11y_hidden(),
-        )
-    };
+    // The state slot is reserved on every row, so "On" never pushes the columns.
+    let mut state = row().w(40.0).gap(6.0).center_y();
+    if is_on {
+        state = state
+            .child(el().size(8.0, 8.0).radius(1.0).fill(crate::ui::switch_green()).a11y_hidden())
+            .child(text(tr("On")).font(LABEL).color(u.ink));
+    }
+    let chevron = row().w(24.0).center().child(
+        icon(&icons::CHEVRON_RIGHT, 14.0)
+            .color(u.muted)
+            .a11y_hidden(),
+    );
     let error = s
         .performance
         .catalog
@@ -1083,8 +1074,8 @@ fn config_row(s: &State, u: &Ui, config: &Config, is_on: bool) -> El {
     row()
         .key(format!("perf-row-{id}"))
         .w_full()
-        .h(56.0)
-        .gap(20.0)
+        .h(48.0)
+        .gap(16.0)
         .center_y()
         .border_sides([0.0, 0.0, 1.0, 0.0], u.hair)
         .hover(u.hover)
@@ -1098,10 +1089,10 @@ fn config_row(s: &State, u: &Ui, config: &Config, is_on: bool) -> El {
         })
         .child(
             col()
-                .w(260.0)
-                .gap(2.0)
-                .child(name)
-                .child(text(meta).font(SMALL).color(u.faint).truncate()),
+                .w(240.0)
+                .gap(0.0)
+                .child(name.h(20.0))
+                .child(text(meta).font(SMALL).color(u.muted).truncate()),
         )
         .child(
             text(if error {
@@ -1109,20 +1100,32 @@ fn config_row(s: &State, u: &Ui, config: &Config, is_on: bool) -> El {
             } else {
                 config.def.note
             })
-            .font(SMALL)
-            .color(if error { u.amber } else { u.muted })
+            .font(BODY)
+            .color(if error { u.amber } else { u.prose })
             .grow(1.0)
             .min_w(0.0)
             .truncate(),
         )
         .child(
             text(format!("{} settings", config.setting_count(&options)))
-                .font(SMALL)
-                .color(u.faint)
-                .w(88.0)
+                .font(SMALL_NUM)
+                .color(u.muted)
+                .w(96.0)
                 .align(rune::Align::End),
         )
         .child(state)
+        .child(chevron)
+}
+
+/// A small squared tag beside a name: "Recommended", "Testing".
+fn chip(u: &Ui, label: &str) -> El {
+    row()
+        .h(20.0)
+        .px(6.0)
+        .center()
+        .radius(2.0)
+        .fill(u.over.alpha(0.08))
+        .child(text(label.to_string()).font(crate::ui::MICRO).color(u.muted))
 }
 
 fn short_date(date: &str) -> String {

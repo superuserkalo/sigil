@@ -15,6 +15,106 @@ use super::icon_key;
 pub(super) const TNUM: TextStyle = TextStyle::new(13.0, 420.0).lh(20.0).features("'tnum' 1");
 pub(super) const TNUM_MED: TextStyle = TextStyle::new(13.0, 540.0).lh(20.0).features("'tnum' 1");
 pub(super) const TNUM_SMALL: TextStyle = TextStyle::new(12.0, 430.0).lh(16.0).features("'tnum' 1");
+/// The big number in a stat tile.
+pub(super) const TNUM_BIG: TextStyle =
+    TextStyle::new(22.0, 600.0).lh(28.0).tracking(-0.2).features("'tnum' 1");
+
+/// The Stats tab row: 32 high over a hairline, the open tab underlined in ink. Live keeps
+/// room for its "running" mark so the tabs after it never move.
+pub(super) fn tabs(s: &State, u: &Ui, open: super::Tab, enabled: bool) -> El {
+    use super::Tab;
+    let running = super::live::running(s);
+    let mut r = row()
+        .key("stats-tabs")
+        .w_full()
+        .h(32.0)
+        .role("tablist")
+        .label(tr("Stats sections"))
+        .border_sides([0.0, 0.0, 1.0, 0.0], u.hair);
+    for tab in Tab::ALL {
+        let on = tab == open;
+        let usable = enabled || tab == Tab::FunRun;
+        let mut t = row()
+            .key(format!("stats-tab-{tab:?}").to_lowercase())
+            .h(32.0)
+            .px(12.0)
+            .gap(6.0)
+            .center_y()
+            .role("tab")
+            .checked(on)
+            .label(tr(tab.label()).to_string())
+            .opacity(if usable { 1.0 } else { 0.5 })
+            .child(
+                text(tr(tab.label()).to_string())
+                    .font(crate::ui::BODY_MED)
+                    .color(if on { u.ink } else { u.muted })
+                    .a11y_hidden(),
+            );
+        if tab == Tab::Live {
+            t = t.child(
+                el().size(8.0, 8.0)
+                    .radius(1.0)
+                    .fill(if running { crate::ui::switch_green() } else { Color::TRANSPARENT })
+                    .a11y_hidden(),
+            );
+        }
+        t = t.child(
+            el().absolute(0.0, 30.0)
+                .w_full()
+                .h(2.0)
+                .fill(if on { u.ink } else { Color::TRANSPARENT })
+                .a11y_hidden(),
+        );
+        if usable {
+            t = t
+                .focusable(true)
+                .hover(u.hover)
+                .cursor(rune::Cursor::Pointer)
+                .on_press(move |st: &mut State| st.stats.tab = tab)
+                .on_key(move |st: &mut State, ev: &rune::KeyEvent, _| {
+                    let i = Tab::ALL.iter().position(|x| *x == st.stats.tab).unwrap_or(0);
+                    let next = match ev.key {
+                        rune::Key::Left => i.saturating_sub(1),
+                        rune::Key::Right => (i + 1).min(Tab::ALL.len() - 1),
+                        _ => return false,
+                    };
+                    st.stats.tab = Tab::ALL[next];
+                    true
+                });
+        }
+        r = r.child(t);
+    }
+    r
+}
+
+/// A stat tile: label, big number with an optional sparkline, then two reserved sub lines.
+pub(super) fn tile(u: &Ui, key: &str, label: &str, value: &str, spark: Option<El>, line3: El, line4: El) -> El {
+    let mut value_row = row()
+        .w_full()
+        .h(28.0)
+        .gap(8.0)
+        .items_end()
+        .child(text(value.to_string()).font(TNUM_BIG).color(u.ink).truncate().min_w(0.0).shrink())
+        .child(el().w(0.0).grow(1.0));
+    if let Some(spark) = spark {
+        value_row = value_row.child(spark);
+    }
+    col()
+        .key(key.to_string())
+        .w(0.0)
+        .grow(1.0)
+        .min_w(0.0)
+        .h(96.0)
+        .padding(12.0)
+        .gap(0.0)
+        .radius(crate::ui::r(4.0))
+        .fill(u.raised)
+        .border(1.0, u.hair)
+        .child(row().h(16.0).child(text(tr(label).to_string()).font(SMALL).color(u.muted).truncate()))
+        .child(value_row)
+        .child(row().w_full().h(16.0).gap(6.0).center_y().child(line3))
+        .child(row().w_full().h(16.0).center_y().child(line4))
+}
 
 pub(super) fn avatar(u: &Ui, name: &str, size: f32) -> El {
     let initial = name
@@ -23,7 +123,7 @@ pub(super) fn avatar(u: &Ui, name: &str, size: f32) -> El {
         .map(|c| c.to_uppercase().collect::<String>())
         .unwrap_or_else(|| "?".to_string());
     el().size(size, size)
-        .radius(size / 2.0)
+        .radius(crate::ui::r(4.0))
         .fill(Color::WHITE.alpha(0.08))
         .center()
         .a11y_hidden()
@@ -214,7 +314,7 @@ pub(super) fn section_head(u: &Ui, title: &str, meta: &str) -> El {
         .gap(12.0)
         .center_y()
         .child(text(tr(title)).font(H2).color(u.ink))
-        .child(text(tr(meta)).font(SMALL).color(u.faint))
+        .child(text(tr(meta)).font(SMALL).color(u.muted))
 }
 
 /// A table column: a fixed width, or 0 to take the rest.

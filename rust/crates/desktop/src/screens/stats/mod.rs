@@ -162,7 +162,57 @@ pub struct Derived {
     pub streak: Option<Streak>,
 }
 
+/// The Stats tabs. Every section of the page has one home.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum Tab {
+    #[default]
+    Overview,
+    Live,
+    Matches,
+    Heroes,
+    Items,
+    People,
+    Leaderboard,
+    Map,
+    FunRun,
+}
+
+impl Tab {
+    pub const ALL: [Tab; 9] = [
+        Tab::Overview,
+        Tab::Live,
+        Tab::Matches,
+        Tab::Heroes,
+        Tab::Items,
+        Tab::People,
+        Tab::Leaderboard,
+        Tab::Map,
+        Tab::FunRun,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Tab::Overview => "Overview",
+            Tab::Live => "Live",
+            Tab::Matches => "Matches",
+            Tab::Heroes => "Heroes",
+            Tab::Items => "Items",
+            Tab::People => "People",
+            Tab::Leaderboard => "Leaderboard",
+            Tab::Map => "Map",
+            Tab::FunRun => "Fun run",
+        }
+    }
+
+    /// Whether the match filter scopes what this tab shows.
+    pub fn filtered(self) -> bool {
+        matches!(self, Tab::Overview | Tab::Matches | Tab::Heroes | Tab::Items | Tab::People)
+    }
+}
+
 pub struct View {
+    /// The open tab, kept for the session.
+    pub tab: Tab,
     pub loaded: bool,
     pub account: TextEdit,
     pub error: Option<String>,
@@ -226,6 +276,7 @@ pub struct ReviewPanel {
 impl Default for View {
     fn default() -> Self {
         View {
+            tab: Tab::Overview,
             loaded: false,
             account: TextEdit::new(""),
             error: None,
@@ -538,6 +589,7 @@ pub fn scene_drill(s: &mut State) {
         .snapshot
         .as_ref()
         .and_then(|snap| snap.matches.first().map(|item| item.match_id));
+    s.stats.tab = Tab::Matches;
     s.stats.chart = Chart::WinRate;
     s.stats.layer = Layer::Kills;
     s.stats.account_open = true;
@@ -558,6 +610,7 @@ pub fn scene_board(s: &mut State) {
 /// Teammates, opponents and the leaderboard, from the fixture.
 pub fn scene_people(s: &mut State) {
     load_fixture(s);
+    s.stats.tab = Tab::People;
     if let Ok(social) = deadlock_core::stats::social::social_from_bundle(EXTRA) {
         s.stats.social = Fetched::Ready(social);
     }
@@ -602,8 +655,26 @@ pub fn view(s: &State, u: &Ui) -> El {
     let v = &s.stats;
     let loading = s.stats_job.is_running();
     let ready = v.can_refresh();
+    let has_player = v.snapshot.is_some();
+    // With no player only Fun run works, so the page opens on it.
+    let tab = if has_player || loading { v.tab } else { Tab::FunRun };
 
-    let mut actions = row().gap(8.0).center_y();
+    // The status slot keeps its width whatever it says, so the buttons beside it never move.
+    let (status, warn) = match (&v.snapshot, &v.error) {
+        (Some(_), Some(error)) => (error.clone(), true),
+        (Some(_), None) if loading => (tr("Refreshing").to_string(), false),
+        (Some(_), None) if v.age.stale => (tr("Older copy").to_string(), false),
+        _ => (String::new(), false),
+    };
+    let mut slot = row().w(200.0).h(28.0).gap(6.0).center_y().justify_end();
+    if warn {
+        slot = slot
+            .label(status.clone())
+            .child(icon(&icons::TRIANGLE_ALERT, 14.0).color(u.amber).a11y_hidden());
+    }
+    slot = slot.child(text(status).font(SMALL).color(u.muted).truncate().min_w(0.0).shrink());
+
+    let mut actions = row().gap(8.0).center_y().child(slot);
     if let Some(snap) = &v.snapshot {
         actions = actions.child(account_button(u, &snap.profile, v.account_open));
         actions = actions.child(shared::statlocker_link(
@@ -620,79 +691,94 @@ pub fn view(s: &State, u: &Ui) -> El {
                 .on_press(|st: &mut State| crate::data::start_stats_load(st)),
         );
     }
+    // The shared page head, so Stats picks up the app's one title style.
+    let head = u.page_head("", tr("Stats"), "", Some(actions));
 
-    let mut page = col()
+    let filter = {
+        let bar = more::filter_bar(s, u);
+        if has_player && tab.filtered() {
+            bar
+        } else {
+            // The row keeps its place on every tab, so the body starts at the same y.
+            bar.opacity(0.5).disabled(true)
+        }
+    };
+
+    let body = match (&v.snapshot, &v.derived) {
+        (Some(snap), Some(derived)) => tab_body(s, u, tab, snap, derived),
+        _ if tab == Tab::FunRun => roll::section(s, u),
+        _ if loading => skeleton(u),
+        _ => entry(s, u),
+    };
+
+    let page = col()
         .key("stats-page")
         .w_full()
         .px(PAGE_X)
         .pt(PAGE_TOP)
         .pb(48.0)
-        .gap(24.0)
-        .child(u.page_head(
-            "",
-            tr("Stats"),
-            match (&v.snapshot, loading) {
-                (Some(_), true) => tr("Refreshing"),
-                (Some(_), false) if v.age.stale => tr("Showing an older copy"),
-                (Some(_), false) => "",
-                _ => "",
-            },
-            Some(actions),
-        ));
+        .child(head)
+        .child(shared::tabs(s, u, tab, has_player || loading).mt(12.0))
+        .child(filter.mt(12.0))
+        .child(body.mt(16.0));
 
-    if let Some(live) = live::panel(s, u) {
-        page = page.child(live);
-    }
-    if v.account_open && v.snapshot.is_some() {
-        page = page.child(account_panel(s, u));
-    }
-    if let (Some(error), Some(_)) = (&v.error, &v.snapshot) {
-        page = page.child(problem(u, error));
-    }
-
-    page = match (&v.snapshot, &v.derived) {
-        (Some(snap), Some(_)) if snap.matches.is_empty() => page.child(u.empty_state(
-            "",
-            &crate::screens::settings::i18n::fill(
-                tr("No matches for {} yet"),
-                &[&snap.profile.persona_name],
-            ),
-            tr("The API only knows matches that finished. New ones show up a little while after they end."),
-            None,
-        ))
-        .child(roll::section(s, u)),
-        (Some(snap), Some(derived)) => {
-            // Wave 4: the filter sits on top and scopes the overview and Heroes as well.
-            let (osnap, oderived) = w4::overview(s).unwrap_or((snap, derived));
-            page.child(more::filter_bar(s, u))
-                .children(w4::scope_note(s, u))
-                .child(brief::brief_block(s, u, osnap, oderived))
-                .child(brief::numbers(u, osnap, oderived))
-                .child(brief::progress(s, u, osnap, oderived))
-                .child(leaderboard::leaderboard_section(s, u, snap))
-                .child(heroes::heroes(s, u, osnap))
-                .child(matches::matches(s, u, snap, derived))
-                .child(more::items_section(s, u))
-                .child(w4::meta_section(s, u))
-                .child(social::social_section(s, u))
-                .child(more::party_section(s, u))
-                .child(map::map_section(s, u))
-                .child(demos::demo_section(s, u))
-                .child(roll::section(s, u))
-        }
-        _ if loading => page.child(skeleton(u)),
-        _ => page.child(entry(s, u)).child(roll::section(s, u)),
-    };
-
-    col()
-        .key("stats-scroll")
+    let mut out = col()
+        .key("stats-root")
         .w_full()
         .h_full()
         .min_h(0.0)
-        .scroll(ScrollSpec {
-            stick_bottom: false,
-        })
-        .child(page)
+        .child(
+            col()
+                .key("stats-scroll")
+                .w_full()
+                .h_full()
+                .min_h(0.0)
+                .scroll(ScrollSpec {
+                    stick_bottom: false,
+                })
+                .child(page),
+        );
+    // Tracked players and the season list open over the page instead of pushing it down.
+    if v.account_open && v.snapshot.is_some() {
+        out = out.child(account_popover(s, u));
+    }
+    if let Some(menu) = more::season_menu(s, u) {
+        out = out.child(menu);
+    }
+    out
+}
+
+/// One tab's sections. Every section of the old single page lives in exactly one tab.
+fn tab_body(s: &State, u: &Ui, tab: Tab, snap: &StatsSnapshot, derived: &Derived) -> El {
+    let (osnap, oderived) = w4::overview(s).unwrap_or((snap, derived));
+    let section = |key: &str| col().key(key.to_string()).w_full().gap(24.0);
+    match tab {
+        Tab::Overview => brief::overview(s, u, osnap, oderived),
+        Tab::Live => section("stats-tab-live").child(live::panel(s, u).unwrap_or_else(|| {
+            u.empty_state(
+                "",
+                tr("No match running"),
+                tr("Start Deadlock and this tab follows the match you are in."),
+                None,
+            )
+        })),
+        Tab::Matches => section("stats-tab-matches")
+            .children(w4::scope_note(s, u))
+            .child(matches::matches(s, u, snap, derived))
+            .child(demos::demo_section(s, u)),
+        Tab::Heroes => section("stats-tab-heroes")
+            .children(w4::scope_note(s, u))
+            .child(heroes::heroes(s, u, osnap)),
+        Tab::Items => section("stats-tab-items")
+            .child(more::items_section(s, u))
+            .child(w4::meta_section(s, u)),
+        Tab::People => section("stats-tab-people")
+            .child(social::social_section(s, u))
+            .child(more::party_section(s, u)),
+        Tab::Leaderboard => section("stats-tab-board").child(leaderboard::leaderboard_section(s, u, snap)),
+        Tab::Map => section("stats-tab-map").child(map::map_section(s, u)),
+        Tab::FunRun => roll::section(s, u),
+    }
 }
 
 fn account_button(u: &Ui, profile: &PlayerProfile, open: bool) -> El {
@@ -933,19 +1019,42 @@ fn steam_list(s: &State, u: &Ui) -> Option<El> {
 }
 
 /// The inline switcher under the page head.
-fn account_panel(s: &State, u: &Ui) -> El {
-    let mut panel = col()
-        .key("stats-account-panel")
+/// Tracked players, in a popover under the account button: opening it never moves the page.
+fn account_popover(s: &State, u: &Ui) -> El {
+    let mut list = col()
         .w_full()
         .gap(8.0)
-        .pb(16.0)
-        .border_sides([0.0, 0.0, 1.0, 0.0], u.hair)
+        .child(account_list(s, u));
+    if let Some(steam) = steam_list(s, u) {
+        list = list.child(steam);
+    }
+    col()
+        .key("stats-account-panel")
+        .anchored("stats-account-button", rune::Side::Bottom, rune::Align::End, 4.0)
+        .w(420.0)
+        .max_h(480.0)
+        .padding(12.0)
+        .gap(12.0)
+        .radius(crate::ui::r(4.0))
+        .fill(u.raised)
+        .border(1.0, u.hair_strong)
+        .shadow(4.0, 16.0, Color::BLACK.alpha(0.35))
+        .role("dialog")
+        .label(tr("Tracked players"))
+        .on_key(|st: &mut State, ev: &KeyEvent, _| {
+            if ev.key == Key::Escape {
+                st.stats.account_open = false;
+                true
+            } else {
+                false
+            }
+        })
         .child(
             row()
                 .w_full()
                 .gap(8.0)
                 .center_y()
-                .child(account_field(s, u, 360.0))
+                .child(account_field(s, u, 0.0).grow(1.0).min_w(0.0))
                 .child(
                     u.action(tr("Track and show"), ActionKind::Secondary)
                         .key("stats-load")
@@ -956,13 +1065,11 @@ fn account_panel(s: &State, u: &Ui) -> El {
         .child(
             col()
                 .w_full()
-                .max_w(620.0)
-                .child(account_list(s, u)),
-        );
-    if let Some(steam) = steam_list(s, u) {
-        panel = panel.child(col().w_full().max_w(620.0).child(steam));
-    }
-    panel
+                .min_h(0.0)
+                .shrink()
+                .scroll(ScrollSpec { stick_bottom: false })
+                .child(list),
+        )
 }
 
 /// First run and no account: one field, one action, the tracked list.

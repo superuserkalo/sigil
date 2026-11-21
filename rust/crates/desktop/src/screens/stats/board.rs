@@ -21,6 +21,9 @@ const CHART_VB: f32 = 1000.0;
 /// Width of the board dialog: two teams of six, with five number columns.
 const BOARD_W: f32 = 860.0;
 const KDA_W: f32 = 96.0;
+/// Fixed rank and MVP columns, so every row's numbers start at the same x.
+const BADGE_W: f32 = 104.0;
+const MVP_W: f32 = 32.0;
 /// The team list scrolls inside the dialog; the header and Close stay put.
 const BOARD_SCROLL_H: f32 = 460.0;
 
@@ -35,7 +38,7 @@ pub(super) fn board_dialog(s: &State, u: &Ui, match_id: u64) -> El {
     match &s.stats.board {
         Fetched::Ready(board) if board.match_id == match_id => {
             head = head.child(header(u, board));
-            body = body.child(souls(u, board)).child(columns_head(u));
+            body = body.child(souls(u, board));
             for team in team_order(board) {
                 body = body.child(team_block(u, board, team, tier_names));
             }
@@ -111,42 +114,22 @@ fn team_order(board: &MatchScoreboard) -> [usize; 2] {
     }
 }
 
-/// The number columns, so a reader knows what the rows hold.
-fn columns_head(u: &Ui) -> El {
+/// The number column labels, on each team's head row so they sit over their numbers.
+fn column_labels(u: &Ui) -> El {
+    let label = |t: &str, w: f32| {
+        text(tr(t).to_string())
+            .font(SMALL)
+            .color(u.faint)
+            .w(w)
+            .align(rune::Align::End)
+    };
     row()
-        .w_full()
-        .h(24.0)
         .gap(12.0)
-        .items_end()
-        .child(spacer())
-        .child(
-            text(tr("K / D / A"))
-                .font(SMALL)
-                .color(u.faint)
-                .w(KDA_W)
-                .align(rune::Align::End),
-        )
-        .child(
-            text(tr("Souls"))
-                .font(SMALL)
-                .color(u.faint)
-                .w(56.0)
-                .align(rune::Align::End),
-        )
-        .child(
-            text(tr("Damage"))
-                .font(SMALL)
-                .color(u.faint)
-                .w(64.0)
-                .align(rune::Align::End),
-        )
-        .child(
-            text(tr("Healing"))
-                .font(SMALL)
-                .color(u.faint)
-                .w(56.0)
-                .align(rune::Align::End),
-        )
+        .center_y()
+        .child(label("K / D / A", KDA_W))
+        .child(label("Souls", 56.0))
+        .child(label("Damage", 64.0))
+        .child(label("Healing", 56.0))
 }
 
 fn title(u: &Ui, match_id: u64) -> El {
@@ -354,7 +337,6 @@ fn team_block(
                     .font(SMALL)
                     .color(if wins { u.teal } else { u.faint }),
             )
-            .child(spacer())
             .child(
                 text(crate::screens::settings::i18n::fill(
                     tr("{} souls"),
@@ -362,7 +344,9 @@ fn team_block(
                 ))
                 .font(TNUM_SMALL)
                 .color(u.faint),
-            ),
+            )
+            .child(spacer())
+            .child(column_labels(u)),
     );
     for player in team {
         block = block.child(player_row(u, player, board.account_id, tier_names));
@@ -388,15 +372,26 @@ fn player_row(
             &[&player.hero_id.to_string()],
         ));
     let mine = player.account_id == me;
+    // Items the catalog does not know would print as raw ids; count them instead.
+    let known: Vec<String> = player
+        .build
+        .iter()
+        .filter(|item| item.slot != "other")
+        .map(|item| item.name.clone())
+        .collect();
+    let unknown = player.build.len() - known.len();
     let build = if player.build.is_empty() {
         tr("No items recorded").to_string()
+    } else if unknown == 0 {
+        known.join(", ")
+    } else if known.is_empty() {
+        crate::screens::settings::i18n::fill(tr("{} items not in the catalog"), &[&unknown.to_string()])
     } else {
-        player
-            .build
-            .iter()
-            .map(|item| item.name.clone())
-            .collect::<Vec<_>>()
-            .join(", ")
+        format!(
+            "{}, {}",
+            known.join(", "),
+            crate::screens::settings::i18n::fill(tr("{} more"), &[&unknown.to_string()])
+        )
     };
     let badge = match (player.badge, tier_names) {
         (Some(badge), Some(names)) => Some(insight::badge_label(badge, names)),
@@ -427,15 +422,20 @@ fn player_row(
                         .truncate(),
                 ),
         )
-        .child(match badge {
-            Some(badge) => text(badge).font(TNUM_SMALL).color(u.faint),
-            None => el(),
-        })
-        .child(if player.mvp_rank == Some(1) {
-            text(tr("MVP")).font(SMALL).color(u.amber)
-        } else {
-            el()
-        })
+        .child(
+            text(badge.unwrap_or_default())
+                .font(TNUM_SMALL)
+                .color(u.faint)
+                .w(BADGE_W)
+                .align(rune::Align::End)
+                .truncate(),
+        )
+        .child(
+            text(if player.mvp_rank == Some(1) { tr("MVP") } else { "" })
+                .font(SMALL)
+                .color(u.amber)
+                .w(MVP_W),
+        )
         .child(num(
             format!("{} / {} / {}", player.kills, player.deaths, player.assists),
             KDA_W,

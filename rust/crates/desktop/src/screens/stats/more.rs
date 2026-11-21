@@ -21,7 +21,7 @@ use deadlock_core::stats::filters::StatsFilter;
 use deadlock_core::stats::items::{ItemPurchase, ItemStat};
 use deadlock_core::stats::party::LineupRating;
 use deadlock_core::stats::MatchSummary;
-use rune::{El, col, row, spacer, text};
+use rune::{El, KeyEvent, col, icon, row, text};
 
 use crate::app::State;
 use crate::jobs::Job;
@@ -68,6 +68,8 @@ pub struct More {
     /// The ranked season list, read once on a press (`/v1/assets/ranked-seasons`).
     pub seasons_job: Job<Vec<deadlock_core::stats::leaderboard::RankedSeason>>,
     pub seasons_note: Option<String>,
+    /// The Season menu under the filter row is open.
+    pub season_menu: bool,
 }
 
 /// A season window: matches from `start` up to, not including, `end` (Unix seconds).
@@ -104,6 +106,7 @@ impl Default for More {
             season: None,
             seasons_job: Job::default(),
             seasons_note: None,
+            season_menu: false,
         }
     }
 }
@@ -354,91 +357,198 @@ fn refilter(st: &mut State) {
 
 // --- views -------------------------------------------------------------------------------
 
-fn pill(u: &Ui, key: String, label: &str, on: bool) -> El {
+/// One choice inside a filter group: a short word on screen, the full name for assistive tech.
+fn pill(u: &Ui, key: String, label: &str, full: &str, on: bool) -> El {
     row()
         .key(key)
-        .h(28.0)
+        .h(24.0)
         .px(10.0)
         .center_y()
-        .radius(crate::ui::r(6.0))
+        .radius(crate::ui::r(2.0))
         .fill(if on { u.selected } else { rune::Color::TRANSPARENT })
         .hover(u.hover)
         .focusable(true)
         .role("radio")
         .checked(on)
-        .label(tr(label).to_string())
+        .label(tr(full).to_string())
         .cursor(rune::Cursor::Pointer)
         .child(text(tr(label).to_string()).font(SMALL).color(if on { u.ink } else { u.muted }).a11y_hidden())
 }
 
-/// The filter bar over the page's sections.
+fn group(u: &Ui) -> El {
+    row().h(28.0).gap(2.0).padding(2.0).center_y().radius(crate::ui::r(4.0)).border(1.0, u.hair)
+}
+
+/// The filter row over the tabs it scopes: one line of three groups.
 pub(super) fn filter_bar(s: &State, u: &Ui) -> El {
     let m = &s.stats.more;
-    let mut modes = row().gap(2.0).padding(2.0).radius(crate::ui::r(8.0)).border(1.0, u.hair);
-    for (label, value) in [("Ranked and unranked", None), ("Ranked", Some(true)), ("Unranked", Some(false))] {
+    let mut modes = group(u);
+    for (label, full, value) in [
+        ("All", "Ranked and unranked", None),
+        ("Ranked", "Ranked", Some(true)),
+        ("Unranked", "Unranked", Some(false)),
+    ] {
         modes = modes.child(
-            pill(u, format!("stats-filter-mode-{label}"), label, m.ranked == value).on_press(move |st: &mut State| {
+            pill(u, format!("stats-filter-mode-{full}"), label, full, m.ranked == value).on_press(move |st: &mut State| {
                 st.stats.more.ranked = value;
                 refilter(st);
             }),
         );
     }
-    let mut since = row().gap(2.0).padding(2.0).radius(crate::ui::r(8.0)).border(1.0, u.hair);
-    for (label, days) in SINCE {
+    let mut since = group(u);
+    for ((full, days), label) in SINCE.into_iter().zip(["All time", "7 d", "30 d", "90 d"]) {
         since = since.child(
-            pill(u, format!("stats-filter-days-{days}"), label, m.season.is_none() && m.days == days).on_press(move |st: &mut State| {
+            pill(u, format!("stats-filter-days-{days}"), label, full, m.season.is_none() && m.days == days).on_press(move |st: &mut State| {
                 st.stats.more.days = days;
                 st.stats.more.season = None;
                 refilter(st);
             }),
         );
     }
-    let mut brawl = row().gap(2.0).padding(2.0).radius(crate::ui::r(8.0)).border(1.0, u.hair);
-    for (label, value) in [("With Street Brawl", Brawl::Show), ("Without Street Brawl", Brawl::Hide), ("Street Brawl only", Brawl::Only)] {
+    // One Season segment opens the list of ranked seasons (`season_menu`).
+    let season_name = m.season.and_then(|picked| {
+        s.stats
+            .seasons
+            .iter()
+            .find(|known| known.leaderboard_id == picked.id)
+            .map(|known| known.name.clone())
+    });
+    let season_on = m.season.is_some();
+    since = since.child(
+        row()
+            .key("stats-filter-season")
+            .w(96.0)
+            .h(24.0)
+            .px(8.0)
+            .gap(4.0)
+            .center_y()
+            .radius(crate::ui::r(2.0))
+            .fill(if season_on { u.selected } else { rune::Color::TRANSPARENT })
+            .hover(u.hover)
+            .focusable(true)
+            .role("button")
+            .expanded(m.season_menu)
+            .label(tr("Ranked seasons").to_string())
+            .cursor(rune::Cursor::Pointer)
+            .on_press(|st: &mut State| {
+                st.stats.more.season_menu = !st.stats.more.season_menu;
+                if st.stats.more.season_menu && st.stats.seasons.is_empty() && !st.stats.more.seasons_job.is_running() {
+                    start_seasons(st);
+                }
+            })
+            .child(
+                text(season_name.unwrap_or_else(|| tr("Season").to_string()))
+                    .font(SMALL)
+                    .color(if season_on { u.ink } else { u.muted })
+                    .truncate()
+                    .grow(1.0)
+                    .min_w(0.0)
+                    .a11y_hidden(),
+            )
+            .child(icon(&crate::icons::CHEVRON_DOWN, 12.0).color(u.muted).a11y_hidden()),
+    );
+    let mut brawl = group(u);
+    for (label, full, value) in [
+        ("With", "With Street Brawl", Brawl::Show),
+        ("Without", "Without Street Brawl", Brawl::Hide),
+        ("Only", "Street Brawl only", Brawl::Only),
+    ] {
         brawl = brawl.child(
-            pill(u, format!("stats-filter-brawl-{label}"), label, m.brawl == value)
+            pill(u, format!("stats-filter-brawl-{full}"), label, full, m.brawl == value)
                 .on_press(move |st: &mut State| st.stats.more.brawl = value),
         );
     }
-    let mut season = row().gap(2.0).padding(2.0).radius(crate::ui::r(8.0)).border(1.0, u.hair);
-    let choices = season_choices(&s.stats.seasons, now() as i64);
-    if choices.is_empty() {
-        let label = if m.seasons_job.is_running() { "Loading seasons" } else { "Ranked seasons" };
-        season = season.child(
-            pill(u, "stats-filter-season-load".to_string(), label, false).on_press(start_seasons),
-        );
-    } else {
-        for choice in choices {
-            let name = s
-                .stats
-                .seasons
-                .iter()
-                .find(|known| known.leaderboard_id == choice.id)
-                .map(|known| known.name.clone())
-                .unwrap_or_default();
-            let on = m.season.map(|picked| picked.id) == Some(choice.id);
-            season = season.child(
-                pill(u, format!("stats-filter-season-{}", choice.id), &name, on).on_press(move |st: &mut State| {
-                    pick_season(st, if on { None } else { Some(choice) })
-                }),
-            );
-        }
-    }
-    let mut bar = row()
+    row()
         .key("stats-filter")
         .w_full()
+        .h(28.0)
         .gap(12.0)
         .center_y()
-        .flex_wrap()
-        .child(text(tr("Show")).font(SMALL).color(u.faint))
         .child(modes)
         .child(since)
-        .child(season)
-        .child(brawl);
-    if let Some(note) = &m.seasons_note {
-        bar = bar.child(text(note.clone()).font(SMALL).color(u.rose));
+        .child(
+            row()
+                .gap(8.0)
+                .center_y()
+                .child(text(tr("Street Brawl")).font(SMALL).color(u.muted))
+                .child(brawl),
+        )
+}
+
+/// The ranked seasons, under the Season segment. Mounted beside the page so it is not clipped.
+pub(super) fn season_menu(s: &State, u: &Ui) -> Option<El> {
+    let m = &s.stats.more;
+    if !m.season_menu {
+        return None;
     }
-    bar.child(spacer()).child(text(tr("Filters every section below")).font(SMALL).color(u.faint))
+    let mut list = col()
+        .key("stats-season-menu")
+        .anchored("stats-filter-season", rune::Side::Bottom, rune::Align::Start, 4.0)
+        .w(200.0)
+        .padding(4.0)
+        .gap(0.0)
+        .radius(crate::ui::r(4.0))
+        .fill(u.raised)
+        .border(1.0, u.hair_strong)
+        .shadow(4.0, 16.0, rune::Color::BLACK.alpha(0.35))
+        .role("menu")
+        .label(tr("Ranked seasons").to_string())
+        .on_key(|st: &mut State, ev: &KeyEvent, _| {
+            if ev.key == rune::Key::Escape {
+                st.stats.more.season_menu = false;
+                true
+            } else {
+                false
+            }
+        });
+    let item = |key: String, label: String, on: bool| {
+        row()
+            .key(key)
+            .w_full()
+            .h(28.0)
+            .px(8.0)
+            .center_y()
+            .radius(crate::ui::r(2.0))
+            .fill(if on { u.selected } else { rune::Color::TRANSPARENT })
+            .hover(u.hover)
+            .focusable(true)
+            .role("menuitemradio")
+            .checked(on)
+            .label(label.clone())
+            .cursor(rune::Cursor::Pointer)
+            .child(text(label).font(SMALL).color(if on { u.ink } else { u.prose }).truncate().a11y_hidden())
+    };
+    let choices = season_choices(&s.stats.seasons, now() as i64);
+    if choices.is_empty() {
+        let line = if m.seasons_job.is_running() {
+            tr("Loading seasons").to_string()
+        } else {
+            m.seasons_note.clone().unwrap_or_else(|| tr("No seasons yet").to_string())
+        };
+        list = list.child(row().h(28.0).px(8.0).center_y().child(text(line).font(SMALL).color(u.muted).truncate()));
+        return Some(list);
+    }
+    list = list.child(
+        item("stats-filter-season-none".into(), tr("Any season").to_string(), m.season.is_none()).on_press(|st: &mut State| {
+            st.stats.more.season_menu = false;
+            pick_season(st, None);
+        }),
+    );
+    for choice in choices {
+        let name = s
+            .stats
+            .seasons
+            .iter()
+            .find(|known| known.leaderboard_id == choice.id)
+            .map(|known| known.name.clone())
+            .unwrap_or_default();
+        let on = m.season.map(|picked| picked.id) == Some(choice.id);
+        list = list.child(item(format!("stats-filter-season-{}", choice.id), name, on).on_press(move |st: &mut State| {
+            st.stats.more.season_menu = false;
+            pick_season(st, Some(choice));
+        }));
+    }
+    Some(list)
 }
 
 fn minutes(seconds: f64) -> String {
