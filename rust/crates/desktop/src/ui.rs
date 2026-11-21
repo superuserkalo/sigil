@@ -1319,7 +1319,7 @@ impl Ui {
             .gap(8.0)
             .center_y()
             .radius(r(8.0))
-            .fill(self.raised.mix(self.over, 0.06).alpha(1.0))
+            .fill(self.raised)
             .border(1.0, self.hair_strong)
             .shadow(4.0, 12.0, Color::BLACK.alpha(if self.light { 0.12 } else { 0.35 }))
             .children(lead)
@@ -1568,12 +1568,17 @@ impl ToneKey {
     }
 }
 
+/// The look, density and language are process-wide, and tests run in parallel: every test
+/// that sets them, or lays a page out and measures it, holds this lock so none interleave.
+#[cfg(test)]
+pub(crate) fn test_globals() -> std::sync::MutexGuard<'static, ()> {
+    static GLOBALS: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    GLOBALS.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 #[cfg(test)]
 mod look_tests {
     use super::*;
-
-    /// The look is process-wide: tests that set it take this lock so they never interleave.
-    static LOOK_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     fn same(a: &Ui, b: &Ui) -> bool {
         let fields = |u: &Ui| {
@@ -1641,7 +1646,7 @@ mod look_tests {
 
     #[test]
     fn block_corners_sit_on_two_steps() {
-        let _look = LOOK_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _look = test_globals();
         set_personal(None, BLOCK_RADIUS);
         for points in [2.0, 4.0, 6.0] {
             assert_eq!(r(points), 2.0, "{points}");
@@ -1657,7 +1662,7 @@ mod look_tests {
     /// radius keeps its number.
     #[test]
     fn default_look_is_unchanged() {
-        let _look = LOOK_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _look = test_globals();
         set_personal(None, 1.0);
         for theme in Theme::ALL {
             set_look(theme, None);

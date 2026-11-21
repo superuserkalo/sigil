@@ -24,7 +24,7 @@ use crate::jobs::Job;
 use crate::model::Screen;
 use crate::notify::Notice;
 use crate::screens::settings::i18n::fill;
-use crate::ui::{ActionKind, BODY, BODY_MED, H1, MONO, PAGE_TOP, PAGE_X, SMALL, Ui};
+use crate::ui::{ActionKind, BODY, BODY_MED, H1, MONO, PAGE_TOP, PAGE_X, SMALL, SMALL_NUM, Ui};
 
 
 #[path = "profiles_de.rs"]
@@ -632,44 +632,54 @@ fn finish_apply(st: &mut State, name: String, applied: core::ProfileApplyResult)
 
 pub fn view(s: &State, u: &Ui) -> El {
     let v = &s.profiles;
-    let actions = row()
-        .gap(8.0)
-        .center_y()
-        .child(
-            u.icon_button(&icons::REFRESH_CW, "Reload profiles")
-                .key("profiles-reload")
-                .cursor(rune::Cursor::Pointer)
-                .on_press(|st: &mut State| {
-                    if !st.profiles.fixture {
-                        crate::data::start_profile_list(st);
-                    }
-                }),
-        )
-        .child(
-            u.icon_action(&icons::DOWNLOAD, tr("Import"), ActionKind::Secondary)
-                .key("profiles-import")
-                .cursor(rune::Cursor::Pointer)
-                .on_press(open_import),
-        )
-        .child(
-            u.icon_action(&icons::PLUS, "New profile", ActionKind::Primary)
-                .key("profiles-create")
-                .cursor(rune::Cursor::Pointer)
-                .on_press(open_create),
-        );
+    let compact = crate::ui::fit() != crate::ui::Fit::Full;
+    let labelled = |glyph: &'static rune::Icon, label: &str, key: &str| {
+        if compact {
+            u.icon_button(glyph, label).key(key.to_string())
+        } else {
+            u.icon_action(glyph, label, ActionKind::Secondary).key(key.to_string())
+        }
+    };
+    let actions = vec![
+        u.icon_button(&icons::REFRESH_CW, "Reload profiles")
+            .key("profiles-reload")
+            .cursor(rune::Cursor::Pointer)
+            .on_press(|st: &mut State| {
+                if !st.profiles.fixture {
+                    crate::data::start_profile_list(st);
+                }
+            }),
+        labelled(&icons::DOWNLOAD, tr("Import"), "profiles-import")
+            .cursor(rune::Cursor::Pointer)
+            .on_press(open_import),
+        labelled(&icons::PLUS, "New profile", "profiles-create")
+            .cursor(rune::Cursor::Pointer)
+            .on_press(open_create),
+    ];
 
-    let mut page = col()
-        .key("profiles-page")
+    // The last result lives in a fixed status row, so it never pushes the list.
+    let status = match &v.last {
+        Some((message, bad)) => vec![u.status_line(
+            if *bad { &icons::TRIANGLE_ALERT } else { &icons::CHECK },
+            message,
+            if *bad { crate::ui::Tone::Warn } else { crate::ui::Tone::Quiet },
+        )
+        .key("profiles-result")],
+        None => Vec::new(),
+    };
+    let top = col()
         .w_full()
         .px(PAGE_X)
         .pt(PAGE_TOP)
-        .pb(32.0)
-        .gap(16.0)
-        .child(u.page_head("", tr("Profiles"), "", Some(actions)));
-
-    if let Some((message, bad)) = &v.last {
-        page = page.child(result_line(u, message, *bad));
-    }
+        .pb(16.0)
+        .gap(8.0)
+        // The last result sits on the toolbar line after the title: fixed height, no extra band.
+        .child(u.page_toolbar(
+            u.page_title(tr("Profiles")),
+            vec![row().key("profiles-status").gap(8.0).center_y().min_w(0.0).ml(8.0).children(status)],
+            None,
+            actions,
+        ));
 
     let body = if let Some(error) = &v.error {
         u.empty_state("", tr("Profiles could not be read"), error, None)
@@ -680,8 +690,14 @@ pub fn view(s: &State, u: &Ui) -> El {
             "",
             tr("No profiles yet"),
             "Save the mods you have on, then switch setups in one step.",
-            None,
+            Some(
+                u.icon_action(&icons::PLUS, "New profile", ActionKind::Secondary)
+                    .key("profiles-create-empty")
+                    .cursor(rune::Cursor::Pointer)
+                    .on_press(open_create),
+            ),
         )
+        .pt(0.0)
     } else {
         let mut list = col().w_full();
         for profile in &v.rows {
@@ -693,20 +709,55 @@ pub fn view(s: &State, u: &Ui) -> El {
     };
 
     let content = col()
+        .key("profiles-page")
         .w_full()
         .gap(24.0)
         .child(body)
         .child(snapshots_section(s, u));
 
+    let mut frame = el().key("profiles-stage").w_full().grow(1.0).min_h(0.0).child(
+        col()
+            .key("profiles-scroll")
+            .w_full()
+            .h_full()
+            .min_h(0.0)
+            .scroll(ScrollSpec {
+                stick_bottom: false,
+            })
+            // 72 at the foot so the last row never hides under the selection bar.
+            .child(col().w_full().px(PAGE_X).pb(72.0).child(content)),
+    );
+    if !v.snapshot_selected.is_empty() {
+        let ids = v.snapshot_selected.clone();
+        frame = frame.child(u.selection_bar(
+            "snapshots-selection",
+            vec![
+                u.close_button("Clear the selection")
+                    .key("snapshots-clear-selection")
+                    .cursor(rune::Cursor::Pointer)
+                    .on_press(|st: &mut State| st.profiles.snapshot_selected.clear()),
+                text(format!("{} picked", plural(ids.len(), "snapshot")))
+                    .font(BODY_MED)
+                    .color(u.ink)
+                    .min_w(96.0),
+            ],
+            vec![
+                u.action_m("Delete", ActionKind::Danger)
+                    .key("snapshots-delete-selected")
+                    .cursor(rune::Cursor::Pointer)
+                    .on_press(move |st: &mut State| {
+                        st.profiles.dialog = Dialog::SnapshotDelete(ids.clone())
+                    }),
+            ],
+        ));
+    }
     col()
-        .key("profiles-scroll")
+        .key("profiles-frame")
         .w_full()
         .h_full()
         .min_h(0.0)
-        .scroll(ScrollSpec {
-            stick_bottom: false,
-        })
-        .child(page.child(content))
+        .child(top)
+        .child(frame)
 }
 
 /// The collapsible recovery points under the profile list.
@@ -715,6 +766,9 @@ fn snapshots_section(s: &State, u: &Ui) -> El {
     let count = v.snapshots.len();
     let now = u
         .icon_action(&icons::HISTORY, tr("Snapshot now"), ActionKind::Ghost)
+        .h(24.0)
+        .pl(6.0)
+        .pr(8.0)
         .key("snapshots-now")
         .cursor(rune::Cursor::Pointer)
         .on_press(snapshot_now);
@@ -722,10 +776,9 @@ fn snapshots_section(s: &State, u: &Ui) -> El {
         .key("snapshots-toggle")
         .grow(1.0)
         .min_w(0.0)
-        .h(44.0)
-        .gap(8.0)
+        .h(24.0)
+        .gap(6.0)
         .center_y()
-        .hover(u.hover)
         .focusable(true)
         .role("button")
         .label(fill(tr("Snapshots ({})"), &[&count.to_string()]))
@@ -738,24 +791,19 @@ fn snapshots_section(s: &State, u: &Ui) -> El {
                 } else {
                     &icons::CHEVRON_RIGHT
                 },
-                16.0,
+                12.0,
             )
             .color(u.muted)
             .a11y_hidden(),
         )
-        .child(
-            text(fill(tr("Snapshots ({})"), &[&count.to_string()]))
-                .font(BODY_MED)
-                .color(u.ink)
-                .a11y_hidden(),
-        );
+        .child(u.section_head(tr("Snapshots"), Some(count), None));
     let head = row()
         .key("snapshots-head")
         .w_full()
-        .h(44.0)
+        .h(24.0)
+        .mb(8.0)
         .gap(8.0)
         .center_y()
-        .border_sides([0.0, 0.0, 1.0, 0.0], u.hair)
         .child(toggle)
         .child(now);
 
@@ -767,11 +815,11 @@ fn snapshots_section(s: &State, u: &Ui) -> El {
         return section.child(
             row()
                 .w_full()
-                .h(44.0)
+                .h(32.0)
                 .center_y()
                 .child(
                     text(tr("None yet. One is saved before every switch."))
-                        .font(BODY)
+                        .font(SMALL)
                         .color(u.muted),
                 ),
         );
@@ -781,51 +829,20 @@ fn snapshots_section(s: &State, u: &Ui) -> El {
         list = list.child(snapshot_row(u, snapshot, v.snapshot_selected.contains(&snapshot.id)));
     }
     section = section.child(list);
-    if !v.snapshot_selected.is_empty() {
-        let ids = v.snapshot_selected.clone();
-        let delete = u
-            .action(
-                &format!("Delete ({})", ids.len()),
-                ActionKind::Danger,
-            )
-            .key("snapshots-delete-selected")
-            .cursor(rune::Cursor::Pointer)
-            .on_press(move |st: &mut State| st.profiles.dialog = Dialog::SnapshotDelete(ids.clone()));
-        section = section.child(
-            row()
-                .w_full()
-                .h(44.0)
-                .gap(8.0)
-                .center_y()
-                .child(
-                    text(format!("{} picked", plural(v.snapshot_selected.len(), "snapshot")))
-                        .font(SMALL)
-                        .color(u.muted)
-                        .grow(1.0),
-                )
-                .child(
-                    u.action("Clear", ActionKind::Ghost)
-                        .key("snapshots-clear-selection")
-                        .cursor(rune::Cursor::Pointer)
-                        .on_press(|st: &mut State| st.profiles.snapshot_selected.clear()),
-                )
-                .child(delete),
-        );
-    }
     section
 }
 
 fn snapshot_row(u: &Ui, snapshot: &SnapshotRow, selected: bool) -> El {
     let pick = snapshot.id.clone();
     let meta = format!(
-        "{}  ·  {}  ·  {}",
+        "{} · {} · {}",
         snapshot.reason,
         snapshot.created,
         plural(snapshot.mods, "mod")
     );
     let restore = {
         let id = snapshot.id.clone();
-        u.action(tr("Restore"), ActionKind::Secondary)
+        u.action_m(tr("Restore"), ActionKind::Secondary)
             .key(format!("snapshot-restore-{}", snapshot.id))
             .cursor(rune::Cursor::Pointer)
             .on_press(move |st: &mut State| open_snapshot_restore(st, &id))
@@ -833,6 +850,7 @@ fn snapshot_row(u: &Ui, snapshot: &SnapshotRow, selected: bool) -> El {
     let delete = {
         let id = snapshot.id.clone();
         u.icon_button(&icons::TRASH_2, "Delete snapshot")
+            .size(28.0, 28.0)
             .key(format!("snapshot-delete-{}", snapshot.id))
             .cursor(rune::Cursor::Pointer)
             .on_press(move |st: &mut State| st.profiles.dialog = Dialog::SnapshotDelete(vec![id.clone()]))
@@ -840,7 +858,7 @@ fn snapshot_row(u: &Ui, snapshot: &SnapshotRow, selected: bool) -> El {
     row()
         .key(format!("snapshot-{}", snapshot.id))
         .w_full()
-        .h(52.0)
+        .h(48.0)
         .gap(10.0)
         .center_y()
         .border_sides([0.0, 0.0, 1.0, 0.0], u.hair)
@@ -873,41 +891,10 @@ fn snapshot_row(u: &Ui, snapshot: &SnapshotRow, selected: bool) -> El {
                         .color(u.ink)
                         .truncate(),
                 )
-                .child(text(meta).font(SMALL).color(u.faint).truncate()),
+                .child(text(meta).font(SMALL_NUM).color(u.muted).truncate()),
         )
         .child(restore)
         .child(delete)
-}
-
-/// One quiet line for the outcome of the last action.
-fn result_line(u: &Ui, message: &str, bad: bool) -> El {
-    row()
-        .key("profiles-result")
-        .w_full()
-        .gap(8.0)
-        .items_start()
-        .child(
-            el().pt(3.0).child(
-                icon(
-                    if bad {
-                        &icons::TRIANGLE_ALERT
-                    } else {
-                        &icons::CHECK
-                    },
-                    14.0,
-                )
-                .color(if bad { u.amber } else { u.muted })
-                .a11y_hidden(),
-            ),
-        )
-        .child(
-            text(message.to_string())
-                .font(BODY)
-                .color(u.muted)
-                .grow(1.0)
-                .min_w(0.0)
-                .wrap(),
-        )
 }
 
 fn profile_row(u: &Ui, profile: &Row, active: bool, open: bool) -> El {
@@ -927,10 +914,14 @@ fn profile_row(u: &Ui, profile: &Row, active: bool, open: bool) -> El {
         title = title.child(
             row()
                 .key(format!("profile-active-{slug}"))
-                .gap(4.0)
+                .h(20.0)
+                .px(8.0)
+                .gap(6.0)
                 .center_y()
-                .child(icon(&icons::CHECK, 12.0).color(u.muted).a11y_hidden())
-                .child(text(tr("Active")).font(SMALL).color(u.muted)),
+                .radius(crate::ui::r(4.0))
+                .fill(u.over.alpha(0.06))
+                .child(u.mark(u.teal))
+                .child(text(tr("Active")).font(crate::ui::LABEL).color(u.muted)),
         );
     }
 
@@ -948,24 +939,25 @@ fn profile_row(u: &Ui, profile: &Row, active: bool, open: bool) -> El {
         meta.push(format!("By {author}"));
     }
     meta.push(format!("Saved {}", profile.updated));
-    if active && profile.in_sync == Some(false) {
+    let changed = active && profile.in_sync == Some(false);
+    if changed {
         meta.push("Changed since applied".to_string());
     }
     let mut meta_line = row()
-        .gap(0.0)
+        .gap(6.0)
         .min_w(0.0)
+        .center_y()
         .child(
-            text(meta.join("  ·  "))
-                .font(SMALL)
-                .color(u.faint)
-                .truncate(),
+            text(meta.join(" · "))
+                .font(SMALL_NUM)
+                .color(u.muted)
+                .truncate()
+                .shrink(),
         );
     if profile.missing > 0 {
-        meta_line = meta_line.child(
-            text(format!("  ·  {} not installed", profile.missing))
-                .font(SMALL)
-                .color(u.amber),
-        );
+        meta_line = meta_line
+            .child(icon(&icons::TRIANGLE_ALERT, 12.0).color(u.amber).a11y_hidden())
+            .child(text(format!("{} not installed", profile.missing)).font(SMALL).color(u.amber));
     }
 
     let apply_label = if active { "Re-apply" } else { tr("Apply") };
@@ -984,22 +976,27 @@ fn profile_row(u: &Ui, profile: &Row, active: bool, open: bool) -> El {
                 .child(meta_line),
         )
         .child({
+            // A fixed 72 slot: Update is drawn only when this active profile changed.
             let slug = slug.clone();
-            u.action(tr("Update"), ActionKind::Ghost)
-                .key(format!("profile-update-{slug}"))
-                .cursor(rune::Cursor::Pointer)
-                .on_press(move |st: &mut State| {
-                    // Settings > Mods > Confirm before updating a profile.
-                    if crate::screens::settings::options::get().confirm_profile_update {
-                        st.profiles.dialog = Dialog::Update(slug.clone());
-                    } else {
-                        update(st, &slug);
-                    }
-                })
+            row().w(72.0).justify_end().child(if changed {
+                u.action_m(tr("Update"), ActionKind::Ghost)
+                    .key(format!("profile-update-{slug}"))
+                    .cursor(rune::Cursor::Pointer)
+                    .on_press(move |st: &mut State| {
+                        // Settings > Mods > Confirm before updating a profile.
+                        if crate::screens::settings::options::get().confirm_profile_update {
+                            st.profiles.dialog = Dialog::Update(slug.clone());
+                        } else {
+                            update(st, &slug);
+                        }
+                    })
+            } else {
+                el()
+            })
         })
         .child({
             let slug = slug.clone();
-            u.action(apply_label, ActionKind::Secondary)
+            u.action_m(apply_label, ActionKind::Secondary)
                 .w(88.0)
                 .key(format!("profile-apply-{slug}"))
                 .cursor(rune::Cursor::Pointer)
@@ -1008,6 +1005,7 @@ fn profile_row(u: &Ui, profile: &Row, active: bool, open: bool) -> El {
         .child({
             let slug = slug.clone();
             u.icon_button(&icons::EXTERNAL_LINK, &format!("Share {}", profile.name))
+                .size(28.0, 28.0)
                 .key(format!("profile-share-{slug}"))
                 .cursor(rune::Cursor::Pointer)
                 .on_press(move |st: &mut State| open_export(st, &slug))
@@ -1022,6 +1020,7 @@ fn profile_row(u: &Ui, profile: &Row, active: bool, open: bool) -> El {
                 },
                 if open { tr("Hide details") } else { tr("Show details") },
             )
+            .size(28.0, 28.0)
             .key(format!("profile-expand-{slug}"))
             .cursor(rune::Cursor::Pointer)
             .on_press(move |st: &mut State| {
