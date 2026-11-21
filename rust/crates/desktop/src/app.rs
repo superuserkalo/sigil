@@ -1833,6 +1833,17 @@ fn search(s: &State, u: &Ui) -> El {
     u.search_shell(search_field(s, u)).h(crate::ui::CONTROL_M)
 }
 
+/// The key of the current page's search field, for Cmd or Ctrl+F.
+fn search_key(screen: Screen) -> Option<&'static str> {
+    match screen {
+        Screen::Installed => Some("search-installed"),
+        Screen::Browse => Some("search-browse"),
+        Screen::Servers => Some("search-servers"),
+        Screen::Conflicts => Some("search-conflicts"),
+        _ => None,
+    }
+}
+
 fn search_field(s: &State, u: &Ui) -> El {
     let field = match s.screen {
         Screen::Installed => rune::text_input(&s.installed_query, crate::ui::BODY)
@@ -2162,6 +2173,13 @@ pub fn on_key(s: &mut State, ev: &KeyEvent, tx: &mut Tx) -> bool {
     }
     // Escape leaves the 3D viewer's full screen wherever focus is (it covers the whole window).
     if ev.key == Key::Escape && crate::viewer::escape(s) {
+        return true;
+    }
+    // Cmd or Ctrl+F, or a bare "/", puts the caret in the page's own search field.
+    let find = ev.key == Key::Command('f')
+        || matches!(&ev.key, Key::Text(t) if t.as_str() == "/" && !ev.mods.shift);
+    if find && let Some(key) = search_key(s.screen) {
+        tx.focus(key, true);
         return true;
     }
     // Installed: Ctrl or Cmd+A selects every shown mod, with nothing focused (A3).
