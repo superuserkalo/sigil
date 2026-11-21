@@ -63,6 +63,23 @@ pub fn fill_line(template: &str, v: &Values) -> String {
     trimmed.chars().take(MAX).collect()
 }
 
+/// Built-in lines for the party phases with the size left out (Settings > Discord > Hide
+/// party size, Deadlock Mod Manager's switch). A line the player wrote is used as written.
+const PARTY_HIDDEN: [(&str, &str, &str); 2] = [
+    ("party_hideout", "In the hideout", "In a party"),
+    ("party_match", "Playing {hero}", "{mode}"),
+];
+
+fn builtin_for(phase: &str, hide_party: bool) -> Lines {
+    if hide_party && let Some(p) = PARTY_HIDDEN.iter().find(|p| p.0 == phase) {
+        return Lines {
+            top: p.1.into(),
+            bottom: p.2.into(),
+        };
+    }
+    builtin(phase)
+}
+
 fn builtin(phase: &str) -> Lines {
     PHASES
         .iter()
@@ -77,7 +94,7 @@ fn builtin(phase: &str) -> Lines {
 /// The lines for a phase: the hero's override, then the user's line, then the built-in, field
 /// by field. An empty result falls back to the built-in.
 pub fn render(phase: &str, hero: Option<&str>, o: &options::Options, v: &Values) -> (String, String) {
-    let base = builtin(phase);
+    let base = builtin_for(phase, o.presence_hide_party);
     let user = o.presence_lines.get(phase);
     let over = hero.and_then(|h| o.hero_lines.get(&format!("{h}/{phase}")));
     let pick = |f: fn(&Lines) -> &String| -> String {
@@ -172,6 +189,20 @@ pub fn rows(s: &State, u: &Ui, presence_on: bool) -> Vec<El> {
                 },
             ),
             !presence_on,
+        ),
+        super::disabled(
+            super::toggle_row(
+                u,
+                "settings-discord-hide-party",
+                "Hide party size",
+                "Leave out how many players are in your party, such as \"Party of 3\". Lines you wrote yourself show what you wrote.",
+                options::get().presence_hide_party,
+                |st| {
+                    let on = !options::get().presence_hide_party;
+                    options::edit(st, |o| o.presence_hide_party = on);
+                },
+            ),
+            !presence_on || !game_on,
         ),
         super::setting_row(
             u,
@@ -511,6 +542,20 @@ mod tests {
         let empty = Values::default();
         assert_eq!(render("menu", None, &o, &empty).0, "In the main menu", "an empty result uses the built-in");
         assert_eq!(fill_line(&"x".repeat(300), &v).len(), MAX);
+    }
+
+    #[test]
+    fn hide_party_size_drops_the_count_from_built_in_lines_only() {
+        let v = Values { hero: "Haze".into(), mode: "Standard (6v6)".into(), party: 3, party_max: 6, ..Values::default() };
+        let mut o = options::Options::default();
+        assert_eq!(render("party_hideout", None, &o, &v).1, "Party of 3");
+        assert_eq!(render("party_match", Some("Haze"), &o, &v).1, "Standard (6v6), party of 3");
+        o.presence_hide_party = true;
+        assert_eq!(render("party_hideout", None, &o, &v), ("In the hideout".into(), "In a party".into()));
+        assert_eq!(render("party_match", Some("Haze"), &o, &v), ("Playing Haze".into(), "Standard (6v6)".into()));
+        // A line the player wrote renders as written (DMM's rule).
+        o.presence_lines.insert("party_match".into(), Lines { top: String::new(), bottom: "Squad of {party}".into() });
+        assert_eq!(render("party_match", Some("Haze"), &o, &v).1, "Squad of 3");
     }
 
     #[test]

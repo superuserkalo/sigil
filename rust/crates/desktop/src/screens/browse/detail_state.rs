@@ -294,6 +294,8 @@ pub fn poll(st: &mut State, tx: &mut Tx) -> bool {
         }
         start_mirror_save(st);
     }
+    super::hidden::poll(st);
+    changed |= super::sources::poll(st);
     if st.browse_view.audio.poll() {
         if let Some(error) = st.browse_view.audio.error.clone() {
             st.status = error;
@@ -566,6 +568,19 @@ pub(crate) fn apply_details(st: &mut State, load: DetailsLoad) {
     // A mod page carries the download count list rows lack; keep it in the local copy.
     if let Some(profile) = details.profile.clone() {
         let model = details.section.model().to_string();
+        // DMM `208df742`, `6bdb2970`: a mod GameBanana no longer shows publicly leaves the
+        // saved catalog and Featured; a lifted withhold lets it back in.
+        if let Some(mirror) = st.browse_view.mirror.as_mut() {
+            let moved = if profile.is_hidden() {
+                mirror.remove(&model, load.id)
+            } else {
+                mirror.restore(&model, load.id)
+            };
+            if moved {
+                st.browse_view.mirror_dirty = true;
+                super::w4::forget_featured(st);
+            }
+        }
         if let Some(mirror) = st.browse_view.mirror.as_mut()
             && mirror.upsert_downloads(&model, load.id, profile.downloads)
         {
@@ -843,21 +858,32 @@ pub(crate) fn author_hidden(s: &State, author: &str) -> bool {
 }
 
 pub(crate) fn hide_mod(st: &mut State, id: u64) {
-    let (name, model) = st
+    let (name, model, thumb, author) = st
         .browse_view
         .details
         .as_ref()
         .filter(|details| details.id == id)
-        .map(|details| (details.name.clone(), details.section.model().to_string()))
-        .or_else(|| {
-            card_by_id(st, id).map(|card| (card.name.clone(), card.model.clone()))
+        .map(|details| {
+            (details.name.clone(), details.section.model().to_string(), details.thumbnail_url.clone(), details.author.clone())
         })
-        .unwrap_or((String::new(), "Mod".to_string()));
+        .or_else(|| {
+            card_by_id(st, id).map(|card| (card.name.clone(), card.model.clone(), card.thumbnail_url.clone(), card.author.clone()))
+        })
+        .unwrap_or((String::new(), "Mod".to_string(), None, String::new()));
     if !mod_hidden(st, id) {
         st.browse_view.hidden_mods.insert(id);
         st.browse_view
             .hidden_names
             .insert(id, if name.is_empty() { format!("{model} {id}") } else { name.clone() });
+        st.browse_view.hidden_meta.insert(
+            hidden::mod_key(id),
+            hidden::HiddenMeta {
+                hidden_at: gamebanana::now_unix(),
+                thumb,
+                author: (!author.is_empty()).then_some(author),
+                ..hidden::HiddenMeta::default()
+            },
+        );
     }
     close_details(st);
     st.browse_view.context = None;
@@ -868,6 +894,7 @@ pub(crate) fn hide_mod(st: &mut State, id: u64) {
 pub(crate) fn unhide_mod(st: &mut State, id: u64) {
     st.browse_view.hidden_mods.remove(&id);
     st.browse_view.hidden_names.remove(&id);
+    st.browse_view.hidden_meta.remove(&hidden::mod_key(id));
     save_browse_state(st);
 }
 
@@ -877,6 +904,21 @@ pub(crate) fn hide_author(st: &mut State, author: String) {
     }
     if !author_hidden(st, &author) {
         st.browse_view.hidden_authors.insert(author.clone());
+        // Grimoire: remember the mod of theirs whose details it was hidden from.
+        let from = st
+            .browse_view
+            .details
+            .as_ref()
+            .filter(|details| details.author.eq_ignore_ascii_case(&author))
+            .map(|details| (details.id, details.name.clone()));
+        st.browse_view.hidden_meta.insert(
+            hidden::author_key(&author),
+            hidden::HiddenMeta {
+                hidden_at: gamebanana::now_unix(),
+                from,
+                ..hidden::HiddenMeta::default()
+            },
+        );
     }
     close_details(st);
     st.browse_view.context = None;
@@ -888,6 +930,7 @@ pub(crate) fn unhide_author(st: &mut State, author: &str) {
     st.browse_view
         .hidden_authors
         .retain(|hidden| !hidden.eq_ignore_ascii_case(author));
+    st.browse_view.hidden_meta.remove(&hidden::author_key(author));
     save_browse_state(st);
 }
 

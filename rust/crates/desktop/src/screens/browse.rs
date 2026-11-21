@@ -43,6 +43,8 @@ pub mod collections;
 mod detail_state;
 pub mod details;
 pub mod grid;
+pub mod hidden;
+pub mod sources;
 mod hero;
 mod install;
 pub mod page;
@@ -53,7 +55,7 @@ pub mod quick;
 pub mod w4;
 pub mod paste;
 pub mod replace;
-mod scenes;
+pub mod scenes;
 pub mod store;
 pub mod strip;
 
@@ -320,6 +322,15 @@ pub struct View {
     pub hidden_mods: HashSet<u64>,
     pub hidden_authors: HashSet<String>,
     pub hidden_names: std::collections::HashMap<u64, String>,
+    /// When each hidden entry was hidden, the mod a creator was hidden from, a note and a
+    /// picture (Grimoire #580). Keyed by `hidden::mod_key` and `hidden::author_key`.
+    pub hidden_meta: std::collections::HashMap<String, hidden::HiddenMeta>,
+    /// The hidden entry whose note is being written, and the text.
+    pub hidden_note: Option<(String, TextEdit)>,
+    /// The hidden row under the pointer: its pictures show unblurred.
+    pub hidden_hover: Option<String>,
+    /// The custom mod source Browse shows instead of GameBanana (`sources.rs`).
+    pub sources: sources::SourceView,
     pub details: Option<Details>,
     /// The details view sits beside the grid instead of over it.
     pub docked: bool,

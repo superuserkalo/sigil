@@ -166,7 +166,17 @@ fn match_row(s: &State, u: &Ui, item: &MatchSummary, open: bool) -> El {
                 .gap(10.0)
                 .center_y()
                 .child(hero_chip(s, u, item.hero_id, &name, 24.0))
-                .child(text(name).font(BODY).color(u.ink).truncate()),
+                .child(text(name).font(BODY).color(u.ink).truncate())
+                // Grimoire's tag: Street Brawl souls and K/D do not compare with normal games.
+                .children(item.is_street_brawl().then(|| {
+                    row()
+                        .h(20.0)
+                        .px(6.0)
+                        .center()
+                        .radius(crate::ui::r(5.0))
+                        .border(1.0, u.amber.alpha(0.5))
+                        .child(text(tr("Street Brawl")).font(SMALL).color(u.amber))
+                })),
         )
         .child(num(
             format!("{} / {} / {}", item.kills, item.deaths, item.assists),

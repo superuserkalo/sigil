@@ -1412,6 +1412,69 @@ pub struct ModProfile {
     /// Only the submitter can see it (`_bIsPrivate`).
     #[serde(default)]
     pub private: bool,
+    /// The author's note on an obsolete submission (`_sObsolescenceNotice`), as plain text.
+    /// `None` when the mod is not obsolete or the author wrote nothing.
+    #[serde(default)]
+    pub obsolete_note: Option<String>,
+    /// Why GameBanana staff withheld the submission (`_aWithholdNotice`). `None` when it is not
+    /// withheld, or GameBanana gave no notice it could read.
+    #[serde(default)]
+    pub withhold: Option<WithholdNotice>,
+}
+
+/// GameBanana's notice on a withheld submission: the rules it broke, the staff's note and who
+/// withheld it when.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct WithholdNotice {
+    /// `(code, name)` per rule, the code without its trailing title: `("R.17", "Nonsense")`.
+    pub rules: Vec<(String, String)>,
+    /// The staff's note (`_sNotes`, HTML on GameBanana) as plain text.
+    pub notes: String,
+    /// The staff member's name (`_aWithholder._sName`).
+    pub by: Option<String>,
+    /// When it was withheld, unix seconds (`_tsDateWithheld`).
+    pub at: Option<i64>,
+}
+
+impl ModProfile {
+    /// GameBanana does not show this submission publicly: withheld or private. DMM drops these
+    /// from Featured and the saved catalog.
+    pub fn is_hidden(&self) -> bool {
+        self.withheld || self.private
+    }
+}
+
+/// Read `_aWithholdNotice`. GameBanana sends an empty array when there is none.
+fn withhold_of(value: Option<&Value>) -> Option<WithholdNotice> {
+    let value = value.filter(|v| v.is_object())?;
+    let rules = value
+        .get("_aRulesViolated")
+        .and_then(Value::as_array)
+        .map(|list| {
+            list.iter()
+                .filter_map(|rule| {
+                    let code = str_of(rule, "_sCode");
+                    let code = code.split_once(':').map_or(code.as_str(), |(code, _)| code).trim().to_string();
+                    let name = str_of(rule, "_sName").trim().to_string();
+                    (!code.is_empty() || !name.is_empty()).then_some((code, name))
+                })
+                .take(12)
+                .collect()
+        })
+        .unwrap_or_default();
+    let notes = html_to_text(&str_of(value, "_sNotes")).chars().take(4000).collect::<String>();
+    let by = value
+        .get("_aWithholder")
+        .map(|member| str_of(member, "_sName"))
+        .filter(|name| !name.trim().is_empty());
+    let at = value.get("_tsDateWithheld").and_then(Value::as_i64).filter(|at| *at > 0);
+    Some(WithholdNotice {
+        rules,
+        notes: notes.trim().to_string(),
+        by,
+        at,
+    })
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -1797,6 +1860,17 @@ pub fn parse_mod_profile_page(body: &str) -> Result<ModProfile> {
             .get("_bIsPrivate")
             .and_then(Value::as_bool)
             .unwrap_or(false),
+        obsolete_note: value
+            .get("_bIsObsolete")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+            .then(|| html_to_text(&str_of(&value, "_sObsolescenceNotice")).trim().chars().take(4000).collect::<String>())
+            .filter(|note| !note.is_empty()),
+        withhold: value
+            .get("_bIsWithheld")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+            .then(|| withhold_of(value.get("_aWithholdNotice")).unwrap_or_default()),
     })
 }
 
@@ -2284,6 +2358,34 @@ mod tests {
         assert_eq!(member.bio, "Hi");
         assert_eq!(video_site(&profile.videos[0]), "YouTube");
         assert_eq!(video_site(&profile.videos[1]), "Vimeo");
+    }
+
+    /// DMM `7ede98c1` and `cba597f2`: the author's note on an obsolete mod and the staff's
+    /// notice on a withheld one, in their own words.
+    #[test]
+    fn profile_reads_the_obsolete_note_and_the_withhold_notice() {
+        let body = r#"{"_idRow": 9, "_sName": "Old HUD", "_bIsObsolete": true,
+            "_sObsolescenceNotice": "<p>Use <b>New HUD</b> instead.</p>",
+            "_bIsWithheld": true,
+            "_aWithholdNotice": {"_tsDateWithheld": 1762600000,
+                "_aRulesViolated": [{"_sCode": "R.17: Nonsense", "_sName": "Nonsense"}],
+                "_sNotes": "<p>Broken download.<br>Fix the archive.</p>",
+                "_aWithholder": {"_idRow": 3, "_sName": "Staffer"}},
+            "_aFiles": [], "_aPreviewMedia": {"_aImages": []}}"#;
+        let profile = parse_mod_profile_page(body).unwrap();
+        assert_eq!(profile.obsolete_note.as_deref(), Some("Use New HUD instead."));
+        let notice = profile.withhold.unwrap();
+        assert_eq!(notice.rules, [("R.17".to_string(), "Nonsense".to_string())]);
+        assert_eq!(notice.notes, "Broken download.\nFix the archive.");
+        assert_eq!(notice.by.as_deref(), Some("Staffer"));
+        assert_eq!(notice.at, Some(1_762_600_000));
+        // Withheld without a readable notice still says so; no note when not obsolete.
+        let bare = parse_mod_profile_page(r#"{"_idRow": 9, "_bIsWithheld": true, "_aWithholdNotice": [],
+            "_sObsolescenceNotice": "stale", "_aFiles": []}"#)
+        .unwrap();
+        assert_eq!(bare.withhold, Some(WithholdNotice::default()));
+        assert_eq!(bare.obsolete_note, None);
+        assert!(bare.is_hidden());
     }
 
     #[test]

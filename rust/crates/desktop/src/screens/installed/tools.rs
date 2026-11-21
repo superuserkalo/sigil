@@ -29,6 +29,8 @@ pub struct Tools {
     pub scan_job: Job<(u16, ScanReport)>,
     /// Scan results by `(slot, size)`, so a chip does not scan twice.
     pub scans: BTreeMap<(u16, u64), ScanReport>,
+    /// The mod safety review list (`safety_review.rs`).
+    pub review: super::safety_review::Review,
     pub identify: Option<IdentifyUi>,
     pub health: Option<HealthUi>,
     pub merge: Option<MergeUi>,
@@ -105,7 +107,7 @@ pub struct FontUi {
 
 /// Take finished work, and read the merge record the first time the page opens.
 pub fn poll(st: &mut State) -> bool {
-    let mut changed = false;
+    let mut changed = super::safety_review::poll(st);
     if !st.demo && !st.installed.tools.merged_loaded && st.addons.scanned {
         st.installed.tools.merged = mod_merge::read_merged(&mod_merge::merged_path(
             &crate::data::data_dir(),
@@ -406,6 +408,17 @@ pub fn scan_dialog(s: &State, u: &Ui) -> Option<El> {
                     .gap(8.0)
                     .center_y()
                     .child(spacer())
+                    .children(
+                        ui.report
+                            .as_ref()
+                            .filter(|report| !report.is_clear())
+                            .map(|_| {
+                                u.action(tr("Mod safety"), ActionKind::Secondary)
+                                    .key("safety-open-review")
+                                    .cursor(rune::Cursor::Pointer)
+                                    .on_press(super::safety_review::open)
+                            }),
+                    )
                     .child(
                         u.action("Done", ActionKind::Primary)
                             .key("safety-done")

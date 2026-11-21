@@ -43,6 +43,11 @@ pub struct W4 {
     /// This week's featured mods, per category, from the saved catalog.
     pub featured: Vec<(String, BrowseCard)>,
     featured_key: Option<(usize, (i32, u32))>,
+    /// Featured picks checked against their mod page this run (DMM `6bdb2970`): the saved
+    /// catalog keeps mods GameBanana has since withheld, so a pick is confirmed before it
+    /// stays. `true` when the page said the mod is hidden.
+    featured_checked: HashMap<u64, bool>,
+    featured_job: Job<Vec<(u64, bool)>>,
     /// Creator links by member id; a failed read is kept so it is not retried every frame.
     pub authors: HashMap<u64, Result<AuthorProfile, String>>,
     pub author_job: Job<(u64, AuthorProfile)>,
@@ -273,10 +278,87 @@ fn browse_row(entry: &deadlock_core::catalog_mirror::MirrorEntry) -> BrowseMod {
     }
 }
 
-/// Recompute this week's picks when the saved catalog or the week changed. Pure over rows the
-/// mirror already holds; nothing is requested.
+/// Recompute this week's picks when the saved catalog or the week changed, then confirm each
+/// new pick against its GameBanana page (DMM: withheld mods leave Featured).
 pub fn refresh_featured(st: &mut State) -> bool {
     load(st);
+    let mut changed = take_featured_checks(st);
+    changed |= recompute_featured(st);
+    confirm_featured(st);
+    changed
+}
+
+/// Picks checked per run at most, so a catalog full of withheld mods cannot keep Sigil asking.
+const FEATURED_CHECKS: usize = 24;
+
+/// Recompute the picks on the next frame: a mod left the saved catalog.
+pub fn forget_featured(st: &mut State) {
+    st.browse_view.w4.featured_key = None;
+}
+
+/// Drop the picks GameBanana no longer shows from the saved catalog; the category's next
+/// candidate takes the place on the next recompute. A failed check keeps the pick: offline
+/// says nothing about the mod.
+fn take_featured_checks(st: &mut State) -> bool {
+    let Some(result) = st.browse_view.w4.featured_job.try_take() else {
+        return false;
+    };
+    let Ok(checked) = result else { return false };
+    let mut dropped = false;
+    for (id, hidden) in checked {
+        st.browse_view.w4.featured_checked.insert(id, hidden);
+        if hidden && let Some(mirror) = st.browse_view.mirror.as_mut() && mirror.remove("Mod", id) {
+            dropped = true;
+        }
+    }
+    if dropped {
+        st.browse_view.mirror_dirty = true;
+        forget_featured(st);
+        super::store::start_mirror_save(st);
+    }
+    dropped
+}
+
+/// Read the mod page of each pick not checked yet, on a worker. GameBanana only.
+fn confirm_featured(st: &mut State) {
+    if st.demo || rune::is_headless() || st.prefs.offline || st.browse_view.w4.featured_job.is_running() {
+        return;
+    }
+    let checked = &st.browse_view.w4.featured_checked;
+    if checked.len() >= FEATURED_CHECKS {
+        return;
+    }
+    let ids: Vec<u64> = st
+        .browse_view
+        .w4
+        .featured
+        .iter()
+        .map(|(_, card)| card.id)
+        .filter(|id| !checked.contains_key(id))
+        .take(FEATURED_CHECKS - checked.len())
+        .collect();
+    if ids.is_empty() {
+        return;
+    }
+    // Mark them now so a failed read is not asked again every frame.
+    for id in &ids {
+        st.browse_view.w4.featured_checked.insert(*id, false);
+    }
+    let wake = st.wake.clone();
+    st.browse_view.w4.featured_job.start(wake, move || {
+        Ok(ids
+            .into_iter()
+            .filter_map(|id| {
+                gamebanana::fetch_profile(BrowseSection::Mods, id)
+                    .ok()
+                    .map(|profile| (id, profile.is_hidden()))
+            })
+            .collect())
+    });
+}
+
+/// This week's picks from the saved catalog, when it or the week changed.
+fn recompute_featured(st: &mut State) -> bool {
     let Some(mirror) = st.browse_view.mirror.as_ref() else {
         return false;
     };

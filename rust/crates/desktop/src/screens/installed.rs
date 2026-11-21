@@ -15,14 +15,18 @@ pub mod backups;
 pub mod checks;
 pub mod imprint;
 pub mod safety_gate;
+pub mod safety_review;
 mod selection;
 pub mod list_sections;
+pub mod locales_ux;
 pub mod sound;
 mod drag;
 pub mod enable;
+pub mod folder_fix;
 mod layout;
-mod notes;
+pub mod notes;
 pub mod order;
+pub mod pack_all;
 mod overlap;
 pub mod repair;
 mod req_order;
@@ -541,6 +545,9 @@ pub fn view(s: &State, u: &Ui) -> El {
         }
         if let Some(banner) = search::solo_banner(s, u) {
             page = page.child(banner);
+        }
+        if let Some(notice) = safety_review::notice(s, u) {
+            page = page.child(notice);
         }
     }
     let scroll = col()
@@ -2022,6 +2029,10 @@ pub fn overlay(s: &State, u: &Ui) -> Option<El> {
                     .on_press(|st: &mut State| checks::open(st)),
             );
             items.push(
+                menu_item(u, "menu-safety", Some(&icons::SHIELD), "Mod safety", "review and allowed mods", true)
+                    .on_press(safety_review::open),
+            );
+            items.push(
                 menu_item(u, "menu-search", Some(&icons::SEARCH), "Find a broken mod", "halve the set", true)
                     .on_press(|st: &mut State| {
                         st.installed.menu = None;
@@ -2616,6 +2627,9 @@ pub fn dialog(s: &State, u: &Ui) -> Option<El> {
         return Some(dialog);
     }
     if let Some(dialog) = tools::scan_dialog(s, u) {
+        return Some(dialog);
+    }
+    if let Some(dialog) = safety_review::dialog(s, u) {
         return Some(dialog);
     }
     if let Some(dialog) = tools::identify_dialog(s, u) {
@@ -3505,6 +3519,10 @@ pub fn offer_undo(st: &mut State) -> bool {
 }
 
 pub fn apply_undo(st: &mut State, undo: Undo) {
+    // An Undo renames or restores files in the addon folder like the change it reverses.
+    if crate::screens::settings::watch::refuse_while_running(st) {
+        return;
+    }
     let Some(game_root) = writable_game(st) else {
         return;
     };

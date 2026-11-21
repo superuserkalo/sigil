@@ -19,6 +19,10 @@ pub fn view(s: &State, u: &Ui) -> El {
 }
 
 pub(crate) fn grid_page(s: &State, u: &Ui) -> El {
+    // A custom mod source picked in the header replaces the GameBanana grid.
+    if let Some(url) = s.browse_view.sources.url.as_deref() {
+        return super::sources::page(s, u, url);
+    }
     let shown = Rc::new(shown_indices(s));
     let f = &s.browse_view.filters;
     let current = query_key(s, &current_query(s));
@@ -408,6 +412,10 @@ pub(crate) fn toolbar(s: &State, u: &Ui, detail: &str) -> El {
                         };
                     }),
             );
+    }
+    // DMM: the source picker sits in the store header.
+    if let Some(picker) = super::sources::picker(s, u) {
+        r = r.child(picker);
     }
     // Wave 4: paste many mod links at once (Grimoire).
     r.child(super::paste::button(u)).child(

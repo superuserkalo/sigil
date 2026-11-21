@@ -149,6 +149,58 @@ pub struct Profile {
     pub isolated: bool,
 }
 
+/// The Locker's shuffle state a profile carries (Grimoire's profiles keep it, G #587): the
+/// heroes whose skins shuffle, the skins in the pool and whether Equip adds a skin. Kept under
+/// this app's extension namespace, so the profile file needs no new schema and an export,
+/// which rebuilds that namespace, leaves it out.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct LockerShuffle {
+    /// Hero asset keys whose skins shuffle on launch.
+    pub shuffle: Vec<String>,
+    /// Skins opted into the shuffle pool, by the Locker's content key.
+    pub shuffle_pool: Vec<String>,
+    /// Equip adds a skin instead of replacing the hero's others.
+    pub multi_skin: bool,
+}
+
+const LOCKER_KEY: &str = "locker";
+
+impl Profile {
+    /// The Locker shuffle saved with this profile. `None` for a profile saved before profiles
+    /// carried it: applying one of those leaves the Locker as it is.
+    pub fn locker_shuffle(&self) -> Option<LockerShuffle> {
+        let value = self.extensions.get(EXTENSION_KEY)?.get(LOCKER_KEY)?;
+        serde_json::from_value(value.clone()).ok()
+    }
+
+    /// Store the Locker shuffle in this profile, keeping anything else in the namespace.
+    pub fn set_locker_shuffle(&mut self, shuffle: &LockerShuffle) {
+        let entry = self
+            .extensions
+            .entry(EXTENSION_KEY.to_string())
+            .or_insert_with(|| Value::Object(Map::new()));
+        if !entry.is_object() {
+            *entry = Value::Object(Map::new());
+        }
+        if let (Some(map), Ok(value)) = (entry.as_object_mut(), serde_json::to_value(shuffle)) {
+            map.insert(LOCKER_KEY.to_string(), value);
+        }
+    }
+}
+
+/// Save the Locker shuffle into the profile `slug`. Writes the workspace only; returns false
+/// when the profile already held exactly this state, so nothing was written.
+pub fn store_locker_shuffle(workspace: &Path, slug: &str, shuffle: &LockerShuffle) -> Result<bool> {
+    let mut profile = read_profile(workspace, slug)?;
+    if profile.locker_shuffle().as_ref() == Some(shuffle) {
+        return Ok(false);
+    }
+    profile.set_locker_shuffle(shuffle);
+    write_profile(workspace, &profile)?;
+    Ok(true)
+}
+
 /// What an approved profile apply changed and what it could not do.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -2492,6 +2544,45 @@ fn slugify(name: &str) -> String {
     slug.trim_matches('-').to_string()
 }
 
+
+#[cfg(test)]
+mod locker_shuffle_tests {
+    use super::*;
+
+    #[test]
+    fn a_profile_keeps_the_locker_shuffle_and_an_old_one_has_none() {
+        let workspace = std::env::temp_dir().join(format!("sigil-locker-shuffle-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&workspace);
+        let profile = Profile {
+            schema: PROFILE_SCHEMA,
+            name: "Ranked".into(),
+            slug: "ranked".into(),
+            created_at: String::new(),
+            updated_at: String::new(),
+            slots: Vec::new(),
+            crosshair: None,
+            autoexec: None,
+            author: None,
+            extensions: Map::new(),
+            isolated: false,
+        };
+        write_profile(&workspace, &profile).unwrap();
+        assert_eq!(read_profile(&workspace, "ranked").unwrap().locker_shuffle(), None);
+        let state = LockerShuffle {
+            shuffle: vec!["haze".into()],
+            shuffle_pool: vec!["gb:1".into()],
+            multi_skin: true,
+        };
+        assert!(store_locker_shuffle(&workspace, "ranked", &state).unwrap());
+        assert!(!store_locker_shuffle(&workspace, "ranked", &state).unwrap(), "the same state writes nothing");
+        let read = read_profile(&workspace, "ranked").unwrap();
+        assert_eq!(read.locker_shuffle(), Some(state));
+        // An empty shuffle is a state too: it turns the shuffle off when applied.
+        assert!(store_locker_shuffle(&workspace, "ranked", &LockerShuffle::default()).unwrap());
+        assert_eq!(read_profile(&workspace, "ranked").unwrap().locker_shuffle(), Some(LockerShuffle::default()));
+        let _ = fs::remove_dir_all(&workspace);
+    }
+}
 
 #[cfg(test)]
 mod tests {

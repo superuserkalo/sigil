@@ -43,6 +43,8 @@ pub struct Persisted {
     pub audio_unmuted: Option<f32>,
     pub hidden_mods: Vec<HiddenMod>,
     pub hidden_authors: Vec<String>,
+    /// Date hidden, note, picture and the mod a creator was hidden from (Grimoire #580).
+    pub hidden_meta: std::collections::BTreeMap<String, super::hidden::HiddenMeta>,
     pub ignored_updates: Vec<u64>,
 }
 
@@ -76,6 +78,7 @@ impl Default for Persisted {
             audio_unmuted: None,
             hidden_mods: Vec::new(),
             hidden_authors: Vec::new(),
+            hidden_meta: Default::default(),
             ignored_updates: Vec::new(),
         }
     }
@@ -194,6 +197,16 @@ pub(crate) fn from_value(value: &Value) -> Persisted {
             .filter(|volume| *volume > 0.0),
         hidden_mods,
         hidden_authors,
+        hidden_meta: value
+            .get("hiddenMeta")
+            .and_then(Value::as_object)
+            .map(|map| {
+                map.iter()
+                    .take(2000)
+                    .map(|(key, meta)| (key.clone(), super::hidden::HiddenMeta::from_json(meta)))
+                    .collect()
+            })
+            .unwrap_or_default(),
         ignored_updates,
     }
 }
@@ -247,6 +260,7 @@ pub(crate) fn to_value(state: &Persisted) -> Value {
             "name": hidden.name,
         })).collect::<Vec<_>>(),
         "hiddenAuthors": state.hidden_authors,
+        "hiddenMeta": state.hidden_meta.iter().map(|(key, meta)| (key.clone(), meta.to_json())).collect::<serde_json::Map<String, Value>>(),
         "ignoredUpdates": state.ignored_updates,
     })
 }
@@ -284,6 +298,18 @@ mod tests {
                 name: "Name".into(),
             }],
             hidden_authors: vec!["a".into()],
+            hidden_meta: [(
+                "author:a".to_string(),
+                super::super::hidden::HiddenMeta {
+                    hidden_at: 1_763_700_000,
+                    note: "spoilers".into(),
+                    from: Some((5, "Name".into())),
+                    thumb: Some("https://images.gamebanana.com/x.jpg".into()),
+                    author: Some("a".into()),
+                },
+            )]
+            .into_iter()
+            .collect(),
             ignored_updates: vec![9],
         };
         let value = to_value(&state);

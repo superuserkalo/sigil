@@ -30,6 +30,7 @@ pub mod subpage;
 pub mod toolchain;
 pub mod updates;
 pub mod w4a_scenes;
+pub mod upstream_scenes;
 pub mod wave3_scenes;
 pub mod w4b_scenes;
 pub mod w4c_scenes;

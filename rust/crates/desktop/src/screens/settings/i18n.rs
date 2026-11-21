@@ -119,7 +119,7 @@ pub fn current() -> Lang {
 
 fn maps() -> &'static [HashMap<&'static str, &'static str>; 3] {
     static MAPS: OnceLock<[HashMap<&'static str, &'static str>; 3]> = OnceLock::new();
-    MAPS.get_or_init(|| Lang::ALL.map(|lang| lang.table().iter().chain(lang.more()).chain(lang.wave()).chain(if lang == Lang::German { super::locales_w4b::DE } else { &[] }).chain(if lang == Lang::German { locales_w4a::DE } else { &[] }).chain(if lang == Lang::German { locales_w4c::DE } else { &[] }).chain(if lang == Lang::German { crate::screens::servers::host::locales::DE } else { &[] }).chain(if lang == Lang::German { crate::screens::servers::regions::locales::DE } else { &[] }).chain(if lang == Lang::German { super::locales_smalls::DE } else { &[] }).chain(if lang == Lang::German { crate::viewer::locales::DE } else { &[] }).chain(if lang == Lang::German { crate::screens::import::locales::DE } else { &[] }).copied().collect()))
+    MAPS.get_or_init(|| Lang::ALL.map(|lang| lang.table().iter().chain(lang.more()).chain(lang.wave()).chain(if lang == Lang::German { super::locales_w4b::DE } else { &[] }).chain(if lang == Lang::German { locales_w4a::DE } else { &[] }).chain(if lang == Lang::German { locales_w4c::DE } else { &[] }).chain(if lang == Lang::German { crate::screens::servers::host::locales::DE } else { &[] }).chain(if lang == Lang::German { crate::screens::servers::regions::locales::DE } else { &[] }).chain(if lang == Lang::German { super::locales_smalls::DE } else { &[] }).chain(if lang == Lang::German { super::locales_upstream::DE } else { &[] }).chain(if lang == Lang::German { crate::viewer::locales::DE } else { &[] }).chain(if lang == Lang::German { crate::screens::installed::locales_ux::DE } else { &[] }).chain(if lang == Lang::German { crate::screens::profile_tools_de::DE } else { &[] }).copied().collect()))
 }
 
 #[cfg(test)]
@@ -277,6 +277,8 @@ mod tests {
             .chain(super::super::locales_wave::DE)
             .chain(super::super::locales_w4b::DE)
             .chain(super::locales_w4a::DE)
+            .chain(super::super::locales_upstream::DE)
+            .chain(crate::screens::profile_tools_de::DE)
             .map(|(en, _)| *en)
             .collect();
         let mut missing = Vec::new();
@@ -331,6 +333,8 @@ mod tests {
         "Browsing mods", "Managing mods", "In the Locker", "Designing a crosshair",
         "Editing the autoexec", "Tuning performance", "Checking stats", "Sorting out mod overlap",
         "Managing profiles", "Browsing servers", "Getting ready to play", "Building a mod",
+        // Discord presence with the party size hidden
+        "In a party",
         // Log and report lines
         "Game: {}", "Language: {}", "Log level: {}", "Mods: {} installed, {} on",
         "Offline mode: {}", "Recent log:", "System: {} {}", "Sigil {} started on {} {}",

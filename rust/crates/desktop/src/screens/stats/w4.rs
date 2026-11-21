@@ -139,15 +139,7 @@ pub fn refilter(st: &mut State) {
 }
 
 fn set_scoped(st: &mut State, filter: StatsFilter, snap: StatsSnapshot) {
-    let matches = &snap.matches;
-    st.stats.w4.scoped_derived = Some(super::Derived {
-        brief: deadlock_core::stats::insight::brief(&snap),
-        trajectory: deadlock_core::stats::insight::rank_trajectory(matches),
-        rolling: deadlock_core::stats::insight::rolling_win_rate(matches, deadlock_core::stats::insight::RECENT_MATCHES),
-        sessions: deadlock_core::stats::insight::sessions(matches, deadlock_core::stats::insight::SESSION_GAP_SECONDS),
-        form: deadlock_core::stats::insight::form(matches),
-        streak: deadlock_core::stats::insight::current_streak(matches),
-    });
+    st.stats.w4.scoped_derived = Some(super::derive(&snap));
     st.stats.w4.scoped_for = Some(filter);
     st.stats.w4.scoped = Fetched::Ready(snap);
 }

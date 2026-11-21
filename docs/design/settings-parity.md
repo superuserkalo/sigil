@@ -1,6 +1,6 @@
 # Settings parity: Grimoire and Deadlock Mod Manager
 
-Status: audit done 2026-11-17; bookkeeping 2026-11-20 (3D preview, Hideout, signed updates and the tray hooks covered); smalls round 2026-11-19 (rows G47, G99, G100, D129, D194 built); parity round built 2026-11-17; wave 3 rows updated 2026-11-18 (pages, preview volume, map mods, fix before launch, Remote Install backlogged); wave 4 UI B rows updated 2026-11-18 (SOCKS5, checklist, catalog, logs, AI help, launch options, vanilla, update marks, channel notes, seasons). Every settings item in both apps, from their source, with what Sigil does about it.
+Status: audit done 2026-11-17; upstream round 2026-11-21 (rows G77, G80, G83, G86, D32, D152); bookkeeping 2026-11-20 (3D preview, Hideout, signed updates and the tray hooks covered); smalls round 2026-11-19 (rows G47, G99, G100, D129, D194 built); parity round built 2026-11-17; wave 3 rows updated 2026-11-18 (pages, preview volume, map mods, fix before launch, Remote Install backlogged); wave 4 UI B rows updated 2026-11-18 (SOCKS5, checklist, catalog, logs, AI help, launch options, vanilla, update marks, channel notes, seasons). Every settings item in both apps, from their source, with what Sigil does about it.
 
 Sources: Grimoire (`vendor/grimoire`, MIT) `src/pages/Settings.tsx`, `src/components/settings/**`, `electron/main/services/settings.ts`; Deadlock Mod Manager (`vendor/dmm`, GPL-3.0, behaviour only) `apps/desktop/src/pages/settings.tsx`, `apps/desktop/src/components/settings/*.tsx`, `plugins/themes`.
 
@@ -12,14 +12,14 @@ Status words: **Had it** (Sigil had it before this round), **Built now**, **Buil
 | --- | --- | --- |
 | Items | 159 | 232 |
 | Had it | 27 | 42 |
-| Built now | 84 | 119 |
-| Built, hook pending | 0 | 1 |
+| Built now | 84 | 120 |
+| Built, hook pending | 0 | 0 |
 | Elsewhere in Sigil | 36 | 28 |
 | Needs a backend | 8 | 6 |
 | Declined (rule) | 5 | 38 |
 | Not built yet | 0 | 1 |
-| **Covered** (had, built, elsewhere) | **142** | **189** |
-| Covered or deliberately declined | 147 | 227 |
+| **Covered** (had, built, elsewhere) | **142** | **190** |
+| Covered or deliberately declined | 147 | 228 |
 
 The parity round (2026-11-17) built every row that was **Not built yet** except the two 3D model previews and the two update rows the updater owns. Since then the signed updater shipped and the 3D viewer shipped in 0.1.16 to 0.1.18 (Locker 3D view, Preview in 3D, Hideout), so those rows are covered; the only open row is D145, backlogged by the owner. **Built, hook pending** means the setting, its storage and its getter work, and one line in a page another agent owns still has to read it; `.scratch/sigil-redesign/` lists the lines.
 
@@ -111,16 +111,16 @@ Grouped by task, thirteen categories in three groups, a search field over all of
 | 74 | Privacy | Contribute match data | Salts to deadlock-api | Built now | Privacy > Match data sharing |
 | 75 | Privacy | Contribution status | Count, failure | Built now | Privacy > Status and log |
 | 76 | Privacy | Hidden creators count | Count | Had it | Mods > Hidden mods and creators |
-| 77 | Privacy | Manage hidden creators | Manager | Built now | Mods > one row per hidden creator |
+| 77 | Privacy | Manage hidden creators | Manager | Built now | Mods > one row per hidden creator, with three of their uploads (blurred until hover), the date hidden, the mod hidden from and a note (G #580, 2026-11-21) |
 | 78 | Privacy | Show creator | Unhide | Built now | Mods > Show |
 | 79 | Privacy | Hidden mods count | Count | Had it | Mods > Hidden mods and creators |
-| 80 | Privacy | Manage hidden mods | Manager | Built now | Mods > one row per hidden mod |
+| 80 | Privacy | Manage hidden mods | Manager | Built now | Mods > one row per hidden mod, with its picture (blurred until hover), the date hidden and a note (G #580, 2026-11-21) |
 | 81 | Privacy | Show mod | Unhide | Built now | Mods > Show, Open on GameBanana |
 | 82 | Mod safety | Why review mods | Explainer | Elsewhere in Sigil | Sigil validates every payload before install (validate rules) |
-| 83 | Mod safety | Check installed mods | Rescan | Elsewhere in Sigil | Installed and the payload validator |
+| 83 | Mod safety | Check installed mods | Rescan | Elsewhere in Sigil | Installed > More > Mod safety > Check installed mods; the list also checks once when Installed first opens (2026-11-21) |
 | 84 | Mod safety | Allow script mods | Trust all | Built now | Mods > Preferences > Allow script mods: off by default, warning dialog; gameplay data and skeletons become review warnings, programs and archives stay refused |
 | 85 | Mod safety | Review card | Per-mod trust | Built now | Browse install panel lists each script file as a warning before Install |
-| 86 | Mod safety | Scan status | Status | Elsewhere in Sigil | Installed |
+| 86 | Mod safety | Scan status | Status | Elsewhere in Sigil | Installed: "N mods need attention" and the Mod safety list with Review, Allowed and Disallow (2026-11-21) |
 | 87 | Social | Sign in with Steam | Grimoire Social login | Needs a backend | Needs a Sigil community service; settings-social.md |
 | 88 | Social | Cancel login | Cancel | Needs a backend | With 87 |
 | 89 | Social | Account status | Avatar, name | Needs a backend | With 87; Integrations shows the local Steam account |
@@ -230,7 +230,7 @@ Grouped by task, thirteen categories in three groups, a search field over all of
 | 29 | Game | Validate configuration | Check | Had it | Game > Check |
 | 30 | Game | Open gameinfo.gi in editor | Editor | Built now | Game > pen button |
 | 31 | Game | Remove paths when game closes | Cleanup on exit | Built now | Game > While the game runs: takes citadel/addons out of gameinfo.gi (backup first) when the game closes; a modded launch puts it back |
-| 32 | Game | Block changes while game runs | Protection | Built, hook pending | Game > While the game runs: Browse, source and DeadlockForge installs, backup restores, Clear all mods and imprint wait; Installed toggles and deletes call `watch::refuse_while_running` once their owner adds the hook |
+| 32 | Game | Block changes while game runs | Protection | Built now | Game > While the game runs: Browse, source and DeadlockForge installs, backup restores, Clear all mods and imprint wait; Installed refuses every switch (before a question opens), bulk switch, delete, reorder, Undo and the mod safety Disallow (2026-11-21) |
 | 33 | Game | Check for crashes after launch | Crash diff | Built now | Game > Check for crashes after a launch: new dump or crash exit code raises a notification |
 | 34 | Game | Hero parser status | VPK hero index | Elsewhere in Sigil | Game Index (Agent tools) |
 | 35 | Game | Start or stop background scan | Index | Elsewhere in Sigil | Game Index |
@@ -350,7 +350,7 @@ Grouped by task, thirteen categories in three groups, a search field over all of
 | 149 | Integrations | Unlink | Unpair | Built now | Integrations > GameBanana Unlink |
 | 150 | Integrations | Full guide | Link | Needs a backend | With 145 |
 | 151 | Discord | Game presence | Activity | Built now | Integrations > Discord Rich Presence (needs the app id) |
-| 152 | Discord | Hide party size | Detail | Built now | Integrations > Show what you are doing, Show your mod count |
+| 152 | Discord | Hide party size | Detail | Built now | Integrations > Discord > Hide party size: Sigil's own party lines drop the count, lines the player wrote show as written (2026-11-21; the row said built before the switch existed) |
 | 153 | Discord | Discard | Templates | Built now | Integrations > Discord lines > Discard |
 | 154 | Discord | Reset all | Templates | Built now | Integrations > Discord lines > Reset all |
 | 155 | Discord | Save changes | Templates | Built now | Integrations > Discord lines > Save changes |
