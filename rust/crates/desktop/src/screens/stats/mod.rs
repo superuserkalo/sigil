@@ -866,6 +866,7 @@ fn account_list(s: &State, u: &Ui) -> El {
         );
     }
     let current = v.snapshot.as_ref().map(|snap| snap.account_id);
+    // (id, name, tag, primary, id shown)
     let rows: Vec<(u64, String, String, bool)> = if !v.search.is_empty() {
         v.search
             .iter()
@@ -885,14 +886,14 @@ fn account_list(s: &State, u: &Ui) -> El {
         v.remembered
             .iter()
             .map(|row| {
-                let mut meta = vec![row.account_id.to_string()];
+                let mut meta = Vec::new();
                 if row.primary {
                     meta.push(tr("Primary").to_string());
                 }
                 if Some(row.account_id) == current {
                     meta.push(tr("Showing").to_string());
                 }
-                (row.account_id, row.name.clone(), meta.join("  ·  "), row.primary)
+                (row.account_id, row.name.clone(), meta.join(" · "), row.primary)
             })
             .collect()
     };
@@ -901,11 +902,11 @@ fn account_list(s: &State, u: &Ui) -> El {
         let mut r = row()
             .key(format!("stats-account-{account_id}"))
             .w_full()
-            .h(44.0)
+            .h(40.0)
             .px(8.0)
-            .gap(12.0)
+            .gap(8.0)
             .center_y()
-            .radius(crate::ui::r(8.0))
+            .radius(crate::ui::r(4.0))
             .hover(u.hover)
             .focusable(true)
             .role("button")
@@ -918,10 +919,18 @@ fn account_list(s: &State, u: &Ui) -> El {
                     .font(BODY_MED)
                     .color(u.ink)
                     .truncate()
+                    .grow(1.0)
                     .min_w(0.0),
-            )
-            .child(spacer())
-            .child(text(meta).font(TNUM_SMALL).color(u.muted));
+            );
+        // Fixed cells: the id, the tags, then three button slots reserved when empty, so the
+        // icons line up down the list.
+        if searching {
+            r = r.child(text(meta).font(TNUM_SMALL).color(u.muted).truncate());
+        } else {
+            r = r
+                .child(text(account_id.to_string()).font(TNUM_SMALL).color(u.muted).w(72.0).align(rune::Align::End))
+                .child(row().w(104.0).child(text(meta).font(SMALL).color(u.muted).truncate().min_w(0.0).shrink()));
+        }
         r = r.child(shared::statlocker_link(
             u,
             format!("stats-statlocker-{account_id}"),
@@ -929,16 +938,15 @@ fn account_list(s: &State, u: &Ui) -> El {
             tr("Open on Statlocker"),
         ));
         if !searching {
-            if !primary {
-                r = r.child(
-                    u.icon_button(&icons::PIN, tr("Make this the primary account"))
-                        .key(format!("stats-primary-{account_id}"))
-                        .cursor(rune::Cursor::Pointer)
-                        .on_press(move |st: &mut State| {
-                            crate::data::set_primary_account(st, account_id)
-                        }),
-                );
-            }
+            // The primary row keeps the pin's room with an invisible copy of the button.
+            r = r.child(if primary {
+                u.icon_button(&icons::PIN, "").opacity(0.0).focusable(false).a11y_hidden()
+            } else {
+                u.icon_button(&icons::PIN, tr("Make this the primary account"))
+                    .key(format!("stats-primary-{account_id}"))
+                    .cursor(rune::Cursor::Pointer)
+                    .on_press(move |st: &mut State| crate::data::set_primary_account(st, account_id))
+            });
             r = r.child(
                 u.icon_button(&icons::X, tr("Stop tracking this player"))
                     .key(format!("stats-forget-{account_id}"))
@@ -968,11 +976,8 @@ fn steam_list(s: &State, u: &Ui) -> Option<El> {
     if found.is_empty() {
         return None;
     }
-    let mut list = col().w_full().pt(8.0).gap(2.0).child(
-        text(tr("Found on this computer"))
-            .font(LABEL)
-            .color(u.muted)
-            .pb(4.0),
+    let mut list = col().w_full().pt(8.0).child(
+        row().h(32.0).px(8.0).center_y().child(text(tr("Found on this computer")).font(LABEL).color(u.muted)),
     );
     for user in found {
         let account_id = user.account_id as u64;
@@ -981,11 +986,11 @@ fn steam_list(s: &State, u: &Ui) -> Option<El> {
             row()
                 .key(format!("stats-steam-{account_id}"))
                 .w_full()
-                .h(44.0)
+                .h(40.0)
                 .px(8.0)
-                .gap(12.0)
+                .gap(8.0)
                 .center_y()
-                .radius(crate::ui::r(8.0))
+                .radius(crate::ui::r(4.0))
                 .child(avatar(u, &name, 24.0))
                 .child(
                     text(name.clone())
@@ -1006,6 +1011,7 @@ fn steam_list(s: &State, u: &Ui) -> Option<El> {
                 .child(spacer())
                 .child(
                     u.action(tr("Track"), ActionKind::Secondary)
+                        .w(72.0)
                         .key(format!("stats-steam-add-{account_id}"))
                         .cursor(rune::Cursor::Pointer)
                         .on_press(move |st: &mut State| {
@@ -1030,7 +1036,7 @@ fn account_popover(s: &State, u: &Ui) -> El {
     col()
         .key("stats-account-panel")
         .anchored("stats-account-button", rune::Side::Bottom, rune::Align::End, 4.0)
-        .w(420.0)
+        .w(460.0)
         .max_h(480.0)
         .padding(12.0)
         .gap(12.0)
