@@ -41,7 +41,6 @@ pub fn init_state() -> State {
     load_cached_patches(&mut state);
     load_workspace_project(&mut state);
     state.watch = read_watch_state();
-    state.capabilities = build_capabilities();
     refresh_subscriptions(&mut state);
     if let Ok(Some(host)) = deadlock_core::subscription::load_host_config() {
         state.host_model = TextEdit::new(host.model);
@@ -3062,7 +3061,7 @@ fn crash_advisory(
     use deadlock_core::game_session;
     use deadlock_core::impact;
     let mut roots = deadlock_core::discovery::default_steam_roots();
-    if let Some(custom) = crate::screens::settings::options::get().steam_root {
+    if let Some(custom) = crate::screens::settings::options::get().steam_root.clone() {
         roots.insert(0, PathBuf::from(custom));
     }
     // `<root>/game/citadel/addons` up three is the install root; `dump_folders` and the console
@@ -4158,88 +4157,6 @@ pub fn read_watch_state() -> Option<model::WatchState> {
             .and_then(|value| value.as_u64())
             .unwrap_or(0) as usize,
     })
-}
-
-/// What this build can actually do on this machine, measured at startup.
-pub fn build_capabilities() -> Vec<(String, String)> {
-    let mut lines = Vec::new();
-    lines.push((
-        "Stats API".to_string(),
-        "api.deadlock-api.com, keyless".to_string(),
-    ));
-
-    let demos = deadlock_core::demo::backend_status();
-    lines.push((
-        "Demo backend".to_string(),
-        if demos.position_extraction_available {
-            "positions and heatmaps available".to_string()
-        } else {
-            "container only, positions and heatmaps absent".to_string()
-        },
-    ));
-
-    let tools = deadlock_core::install::ToolPaths::from_environment();
-    lines.push((
-        "Install archives".to_string(),
-        format!(
-            "zip in process, 7z {}, rar {}",
-            if tools.seven_zip.is_some() {
-                "available"
-            } else {
-                "missing"
-            },
-            if tools.unrar.is_some() {
-                "available"
-            } else {
-                "missing"
-            }
-        ),
-    ));
-
-    let chain = deadlock_core::toolchain::toolchain_status();
-    lines.push((
-        "Decompile".to_string(),
-        if chain.decompile_available {
-            "ready".to_string()
-        } else {
-            "Source2Viewer-CLI not found".to_string()
-        },
-    ));
-    lines.push((
-        "Compile".to_string(),
-        if chain.compile_available {
-            "ready".to_string()
-        } else if cfg!(target_os = "windows") {
-            "resourcecompiler.exe not found".to_string()
-        } else {
-            "Windows and CSDK 12 only".to_string()
-        },
-    ));
-
-    let assets = deadlock_core::locker::LockerAssetPaths::discover();
-    lines.push((
-        "Locker art".to_string(),
-        assets
-            .heroes_dir
-            .as_ref()
-            .map(|path| path.display().to_string())
-            .unwrap_or_else(|| "no art root".to_string()),
-    ));
-
-    lines.push((
-        "Character".to_string(),
-        if std::env::var_os("DAH_MESHGEN_COMMAND").is_some() {
-            "local command configured".to_string()
-        } else if std::env::var_os("DAH_MESHGEN_URL").is_some() {
-            "local HTTP model server configured".to_string()
-        } else if std::env::var_os("MESHY_API_KEY").is_some() {
-            "Meshy adapter configured".to_string()
-        } else {
-            "no generative backend".to_string()
-        },
-    ));
-
-    lines
 }
 
 // --- crosshair -------------------------------------------------------------
