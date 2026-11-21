@@ -9,7 +9,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::mpsc::{self, Receiver};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use deadlock_core::{
     addons, autoexec, deploy, discovery, game_catalog, gamebanana, locker, migrate, patch_notes,
@@ -810,9 +810,18 @@ pub struct ThumbCrew {
     tx: Option<mpsc::Sender<(String, Option<ThumbBytes>)>>,
     queue: std::sync::Arc<std::sync::Mutex<CrewQueue>>,
     inflight: std::collections::HashSet<String>,
+    /// URLs that came back empty (offline, a 404, a host off the allowlist) and when. Pages
+    /// queue what they still miss on every poll, so without this a dead image was fetched
+    /// again and again, each answer waking the window for another round.
+    failed: std::collections::HashMap<String, Instant>,
     /// Scale Browse card thumbnails to the card on the worker (`shrink_card_thumb`).
     shrink: bool,
 }
+
+/// How long a failed image waits before it is asked for again.
+const THUMB_RETRY: Duration = Duration::from_secs(120);
+/// Failures remembered at most; past this the oldest half is forgotten.
+const THUMB_FAILED_CAP: usize = 2048;
 
 #[derive(Default)]
 struct CrewQueue {
@@ -835,9 +844,12 @@ impl ThumbCrew {
     /// Queue more images. `urgent` puts them ahead of what is waiting, for the
     /// image the player is looking at right now.
     pub fn add(&mut self, urls: Vec<String>, wake: Option<rune::Waker>, urgent: bool) {
+        let failed = &self.failed;
+        let resting = |url: &String| failed.get(url).is_some_and(|at| at.elapsed() < THUMB_RETRY);
         let fresh: Vec<String> = urls
             .into_iter()
-            .filter(|url| !url.is_empty() && self.inflight.insert(url.clone()))
+            .filter(|url| !url.is_empty() && !resting(url))
+            .filter(|url| self.inflight.insert(url.clone()))
             .collect();
         if fresh.is_empty() {
             return;
@@ -911,6 +923,11 @@ impl ThumbCrew {
         match rx.try_recv() {
             Ok(item) => {
                 self.inflight.remove(&item.0);
+                if item.1.is_none() {
+                    self.remember_failure(&item.0);
+                } else {
+                    self.failed.remove(&item.0);
+                }
                 Some(item)
             }
             Err(mpsc::TryRecvError::Empty) => None,
@@ -919,6 +936,16 @@ impl ThumbCrew {
                 None
             }
         }
+    }
+
+    fn remember_failure(&mut self, url: &str) {
+        if self.failed.len() >= THUMB_FAILED_CAP {
+            let mut times: Vec<Instant> = self.failed.values().copied().collect();
+            times.sort();
+            let cut = times[times.len() / 2];
+            self.failed.retain(|_, at| *at > cut);
+        }
+        self.failed.insert(url.to_string(), Instant::now());
     }
 
     pub fn is_loading(&self) -> bool {
@@ -4520,5 +4547,29 @@ pub fn use_subscription_for_agent(state: &mut State, provider: &str) {
         Err(error) => {
             state.subscription_log = Some(error.to_string());
         }
+    }
+}
+
+#[cfg(test)]
+mod thumb_tests {
+    use super::*;
+
+    #[test]
+    fn a_failed_image_is_not_asked_for_again_until_it_rests() {
+        let mut crew = ThumbCrew::default();
+        crew.remember_failure("https://images.gamebanana.com/gone.webp");
+        // Pages queue what they miss on every poll: a dead image must not go back out.
+        crew.add(vec!["https://images.gamebanana.com/gone.webp".into()], None, false);
+        assert!(!crew.is_queued("https://images.gamebanana.com/gone.webp"));
+        assert!(!crew.is_loading());
+    }
+
+    #[test]
+    fn remembered_failures_stay_bounded() {
+        let mut crew = ThumbCrew::default();
+        for n in 0..(THUMB_FAILED_CAP + 10) {
+            crew.remember_failure(&format!("https://images.gamebanana.com/{n}.webp"));
+        }
+        assert!(crew.failed.len() <= THUMB_FAILED_CAP);
     }
 }
