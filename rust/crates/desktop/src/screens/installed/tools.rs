@@ -38,6 +38,8 @@ pub struct Tools {
     pub merge_run: Job<MergedMod>,
     /// Pack all enabled into N (`pack_all.rs`).
     pub pack_all: super::pack_all::PackAll,
+    /// The second-skin check after an install (`one_skin.rs`).
+    pub one_skin: crate::screens::one_skin::Check,
     pub fonts: Option<FontUi>,
     pub fonts_job: Job<Vec<Font>>,
     pub font_install: Job<fonts::FontReport>,
