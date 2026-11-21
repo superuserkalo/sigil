@@ -91,14 +91,14 @@ days, L a week or more); a build note for missing and partial rows.
 | Local mods get a rendered 3D preview as their cover in the library and details | 2.4.0 `e5d22b1` | merged-unreleased | missing: covers are GameBanana's picture or one the player picks (`installed` picture editor) | M | Capture one viewer frame per local mod on a worker and store it through `mod_extras` as the picture |
 | Unticking every variant in Manage files turns the mod off | 2.4.0 `08ccbaa` | merged-unreleased | has: one switch per file in the variant picker | - | - |
 | HUD mods checked against the game's current layouts, with related `console.log` errors | 2.4.0 `f173624` | merged-unreleased | has: `deadlock-core/src/addon_checks.rs` HUD check and `console_layout_lines` | - | - |
-| Compatibility reports with copyable diagnostics | 2.4.0 `f173624` | merged-unreleased | partial: the Compatibility review lists findings (`installed/repair.rs`); no copy button found | S | A Copy details action on each finding and on the whole review |
-| Fixes stay fixed: outdated repairs rebuilt automatically, rebuilt after Deadlock closes if a mod changed while it ran, health rechecked right after a mod updates | 2.4.0 `cae8f28`, `0c411a0`, `6ab16d4`, `89b9669` | merged-unreleased | partial: "Fix mods automatically before launch" and Revert (`installed/repair.rs`); no rebuild on game exit or after an update | S | Hook the launch monitor's exit and the update finish to rerun `compat_repair::check` for touched mods |
-| Repairs merge game text only from a complete base table; damaged base text stops with a Steam verify hint | PR #1397, #1400 (`kv-parser` localization documents), #1398 | PR open | partial: `compat_repair` runs vpkmerge's `localization` family (`deadlock-core/src/compat_repair.rs` line 66) | M | Check vpkmerge's behaviour on a damaged `lang` file; refuse and name the file instead of salvaging |
-| Camera repair keeps attachments that already match the current model | PR #1399 | PR open | partial: `RepairKind::Cameras` rewrites `root_motion` attachments (`compat_repair.rs`) | S | Compare each attachment frame with the current game model before moving it; bump the repair revision |
-| A full compatibility recheck analyses two mods at once | PR #1386, issue #1385 | PR open | partial: the review runs on one worker (`installed/repair.rs`) | S | Learn every mod first, then analyse on two read-only workers |
-| A saved compatibility review is reset when the mod's archive changes; every archive is stamped | changeset `quiet-owls-review`, 2.4.0 `fdd81c8` | merged-unreleased | partial: repairs keep the repaired hash in `compat-repairs.json` (`installed/repair.rs`); review choices are not tied to the file hash | S | Key review approvals on the sha256 Sigil already computes |
-| Analyze asks before re-adding leftover files, offers to remove ones it cannot place, shows files already added, never records files the game ignores as enabled | 2.4.0 `014a0bb`, `42b7203`, `fe2152d`, `ad912c0` | merged-unreleased | partial: Analyze lists leftovers, unknown slots and doubled slots with Find which mod (`installed/checks.rs`); no remove-leftovers step | S | A "Remove N leftover files" action through the trash, with Undo |
-| A removal names the files that blocked it, and scans never undo the mod order | 2.4.0 `de7727d` | merged-unreleased | partial: `deadlock-core/src/trash.rs` names a slot in use, not the locked file | S | Report the path and the OS error of each file that failed to move |
+| Compatibility reports with copyable diagnostics | 2.4.0 `f173624` | merged-unreleased | has: the Compatibility review's Copy details on each finding and on the whole review (`installed/repair.rs`) | S | - |
+| Fixes stay fixed: outdated repairs rebuilt automatically, rebuilt after Deadlock closes if a mod changed while it ran, health rechecked right after a mod updates | 2.4.0 `cae8f28`, `0c411a0`, `6ab16d4`, `89b9669` | merged-unreleased | has: a changed archive or an older repair rule is rebuilt from its file or backup, waits for the game to close, and the open health review is rechecked after an update (`installed/repair.rs`, `compat_repair::REPAIR_RULE`) | S | - |
+| Repairs merge game text only from a complete base table; damaged base text stops with a Steam verify hint | PR #1397, #1400 (`kv-parser` localization documents), #1398 | PR open | has: `game_text_problem` reads the game's copy strictly and refuses a damaged table with the file name and the Steam verify hint (`deadlock-core/src/compat_repair.rs`) | M | - |
+| Camera repair keeps attachments that already match the current model | PR #1399 | PR open | has: `compat_cameras::keep_current` puts back the author's values on attachments already in the current frame, repair rule 2 (`deadlock-core/src/compat_cameras.rs`) | S | - |
+| A full compatibility recheck analyses two mods at once | PR #1386, issue #1385 | PR open | has: the animation pass, then two read-only workers (`installed/repair.rs` `CHECK_WORKERS`) | S | - |
+| A saved compatibility review is reset when the mod's archive changes; every archive is stamped | changeset `quiet-owls-review`, 2.4.0 `fdd81c8` | merged-unreleased | has: every review finding and repair record carries the archive's SHA-256 and size, and a changed archive drops both (`installed/repair.rs`) | S | - |
+| Analyze asks before re-adding leftover files, offers to remove ones it cannot place, shows files already added, never records files the game ignores as enabled | 2.4.0 `014a0bb`, `42b7203`, `fe2152d`, `ad912c0` | merged-unreleased | has: Analyze's Remove N leftover files asks first and moves them to the trash with Undo (`installed/checks.rs`, `trash::trash_loose`) | S | - |
+| A removal names the files that blocked it, and scans never undo the mod order | 2.4.0 `de7727d` | merged-unreleased | has: `trash::blocked` names each file's path and OS error, with the close-the-game hint (`deadlock-core/src/trash.rs`) | S | - |
 | Reinstall stops when old files cannot be removed | changeset `stern-gates-hold`, 2.4.0 `fdd81c8` | merged-unreleased | has: Delete and reinstall puts the old files back on any failure (`feature-parity.md`, Reinstall) | - | - |
 | An install stops when copying its selected files fails | changeset `tidy-crates-wait` | merged-unreleased | has: `deadlock-core/src/install.rs` stops at the first failure | - | - |
 | Unsafe file paths skipped when building compatibility fixes | changeset `quiet-foxes-guard` | merged-unreleased | has: `vpk::is_safe_vpk_path` (`deadlock-core/src/vpk.rs` line 227) | - | - |
@@ -188,7 +188,7 @@ days, L a week or more); a build note for missing and partial rows.
 | Pause and resume downloads | `stormix/dmm-37-ability-to-pause-and-resume-downloads` | branch WIP | in progress (resumable downloads; pause and resume exist in `download_queue.rs`) | S | - |
 | Download routing used for updates, profile imports and file changes; Default routing falls back to other servers and starts without waiting for server checks | 2.4.0 `7c5922a`, `fdd81c8`, `dc570da` | merged-unreleased | has: every queue user goes through `download_queue.rs` failover (`feature-parity.md`, Downloads) | - | - |
 | Remember the chosen file for a 1-click install; restore variant choice from the 3D tab | 2.4.0 `b692e28`, `9c762f0` | merged-unreleased | in progress (one-click file choice) | S | - |
-| Zip and 7z imports read the file list instead of unpacking | 2.4.0 `abe0090` | merged-unreleased | partial: ZIP entry names are scanned without unpacking; 7z and RAR are unpacked within limits (`download_queue.rs`) | S | List 7z entries from its header first |
+| Zip and 7z imports read the file list instead of unpacking | 2.4.0 `abe0090` | merged-unreleased | has: `list_7z` reads the header with sevenz-rust2, with an unpack fallback for a damaged or encrypted header (`download_queue/scan.rs`) | S | - |
 | GameBanana catalog and mod data downloaded compressed | 2.4.0 `4061643` | merged-unreleased | has: `ureq` 3 sends gzip by default (`rust/Cargo.toml`) | - | - |
 | Updates found for single-file mods whose file name changes | 2.4.0 `7a7b75b` | merged-unreleased | has: "Match remaining update files" pairs a leftover slot with a leftover upload (`installed/update_match.rs`) | - | - |
 
@@ -246,8 +246,8 @@ Rows in the area tables above (the last "Other" row is a bundle and is counted o
 
 | Sigil status | Rows |
 | --- | ---: |
-| has | 39 |
-| partial | 29 |
+| has | 48 |
+| partial | 20 |
 | missing | 12 |
 | in progress | 14 |
 | excluded | 11 |
@@ -263,7 +263,7 @@ Rows in the area tables above (the last "Other" row is a bundle and is counted o
 | mixed (one row, several sources of different maturity) | 6 |
 | **Total** | **108** |
 
-Partial and missing rows, by effort: 26 S, 14 M, 1 L.
+Partial and missing rows, by effort: 18 S, 13 M, 1 L.
 
 ## Build list
 
