@@ -534,6 +534,21 @@ pub fn hero_setting(text: &str, key: &str) -> Result<Option<String>> {
     Ok(base.fields.iter().find(|f| f.name == key).map(|f| text[f.value.clone()].to_string()))
 }
 
+/// Every `name = value` field of the `base` object, in file order, values with their quotes
+/// taken off. Hero overrides under `heroes` are not read.
+pub fn hero_settings_base(text: &str) -> Result<Vec<(String, String)>> {
+    let base = parse_base(text)?;
+    Ok(base
+        .fields
+        .iter()
+        .map(|f| {
+            let raw = text[f.value.clone()].trim();
+            let value = raw.strip_prefix('"').and_then(|v| v.strip_suffix('"')).unwrap_or(raw);
+            (f.name.clone(), value.to_string())
+        })
+        .collect())
+}
+
 /// `text` with each key in `changes` set (Some) or removed (None) in `base`. Every other byte,
 /// hero overrides and comments included, stays as it was.
 pub fn update_hero_settings(text: &str, changes: &BTreeMap<String, Option<String>>) -> Result<String> {

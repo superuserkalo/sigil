@@ -26,6 +26,8 @@ use crate::screens::settings::i18n::fill;
 
 #[path = "crosshair_de.rs"]
 mod de;
+#[path = "crosshair_game.rs"]
+pub mod game;
 
 /// The UI text in the player's language: this page's German table first, then Sigil's.
 fn tr(text: &str) -> &str {
@@ -1888,7 +1890,7 @@ fn submit_import(st: &mut State) {
 fn import_from_game(st: &mut State) {
     st.crosshair.preset_dialog = None;
     st.crosshair.chosen = None;
-    crate::data::import_crosshair(st);
+    game::import(st);
 }
 
 fn preset_dialog(s: &State, u: &Ui) -> Option<El> {

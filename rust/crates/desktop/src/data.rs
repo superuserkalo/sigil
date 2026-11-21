@@ -4208,44 +4208,7 @@ pub fn build_capabilities() -> Vec<(String, String)> {
 // --- crosshair -------------------------------------------------------------
 
 pub fn import_crosshair(state: &mut State) {
-    let Some(game_root) = state.game_root.clone() else {
-        state.crosshair.log = Some(
-            "No Deadlock install was found, so there is no machine_convars.vcfg to read."
-                .to_string(),
-        );
-        state.crosshair.tone = crate::ui::Tone::Warn;
-        return;
-    };
-    let vcfg = game_root
-        .join("game")
-        .join("citadel")
-        .join("cfg")
-        .join("machine_convars.vcfg");
-    match fs::read_to_string(&vcfg) {
-        Ok(text) => match deadlock_core::crosshair::parse_machine_convars(&text) {
-            Some(crosshair) => {
-                state.crosshair.settings = crosshair;
-                state.crosshair.source = "in-game machine_convars.vcfg".to_string();
-                state.crosshair.log =
-                    Some(format!("Read the live crosshair from {}.", vcfg.display()));
-                state.crosshair.tone = crate::ui::Tone::Ok;
-            }
-            None => {
-                state.crosshair.log = Some(format!(
-                    "{} has no citadel_crosshair_ convars yet. The game writes them after the first crosshair change.",
-                    vcfg.display()
-                ));
-                state.crosshair.tone = crate::ui::Tone::Warn;
-            }
-        },
-        Err(error) => {
-            state.crosshair.log = Some(format!(
-                "Could not read {}: {error}. The game may never have written it.",
-                vcfg.display()
-            ));
-            state.crosshair.tone = crate::ui::Tone::Warn;
-        }
-    }
+    crate::screens::crosshair::game::import(state);
 }
 
 pub fn apply_crosshair(state: &mut State) {

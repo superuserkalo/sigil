@@ -95,6 +95,7 @@ pub const DE: &[(&str, &str)] = &[
     ("Looking up {} more.", "{} weitere werden noch gesucht."),
     ("looking up {}", "{} werden gesucht"),
     ("The lookup stopped before this mod was found.", "Die Suche brach ab, bevor dieser Mod gefunden wurde."),
+    ("crosshair left out while the Crosshair page is off", "Fadenkreuz ausgelassen, solange die Fadenkreuz-Seite aus ist"),
 ];
 
 fn map() -> &'static HashMap<&'static str, &'static str> {

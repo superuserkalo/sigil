@@ -1258,10 +1258,12 @@ pub fn pages(s: &State, u: &Ui) -> El {
             .on_press(|st: &mut State| {
                 prefs::edit(st, |p| p.toggle_flag(prefs::MODS_ONLY));
                 super::apply_flags(st);
+                crate::screens::crosshair::game::after_page_switch(st);
             }),
     )];
     for (screen, flag) in prefs::PAGES.iter() {
         let id = flag.id;
+        let page = *screen;
         let shown = s.prefs.flag(id);
         let row_el = row()
             .key(format!("settings-page-{}", screen.key()))
@@ -1301,10 +1303,18 @@ pub fn pages(s: &State, u: &Ui) -> El {
                         }
                         prefs::edit(st, |p| p.toggle_flag(id));
                         super::apply_flags(st);
+                        if page == Screen::Crosshair {
+                            crate::screens::crosshair::game::after_page_switch(st);
+                        }
                     }),
                 mods_only,
             ));
         rows.push(row_el);
+        if page == Screen::Crosshair
+            && let Some(note) = crate::screens::crosshair::game::pages_note(s, u)
+        {
+            rows.push(note);
+        }
     }
     col()
         .w_full()
