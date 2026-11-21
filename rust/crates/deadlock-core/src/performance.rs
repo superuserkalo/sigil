@@ -738,7 +738,16 @@ pub fn read_status(game_root: &Path) -> Result<Applied> {
 /// structurally sound file first and writes atomically.
 pub fn apply_to_install(game_root: &Path, config: &Config, options: &Options) -> Result<Patched> {
     let path = gameinfo_path(game_root);
-    let original = std::fs::read_to_string(&path)?;
+    let on_disk = std::fs::read_to_string(&path)?;
+    // A file applied as written goes back to its stock copy, never through a marker undo.
+    let as_written = as_written::is_applied(&on_disk);
+    let original = if as_written {
+        std::fs::read_to_string(as_written::stock_path(game_root)).map_err(|_| {
+            Error::msg("The stock copy of gameinfo.gi is missing. Verify the game files in Steam, then try again.")
+        })?
+    } else {
+        on_disk
+    };
     let patched = apply_text(&original, config, options)?;
     let backup = backup_path(game_root);
     if !backup.exists()
@@ -747,6 +756,9 @@ pub fn apply_to_install(game_root: &Path, config: &Config, options: &Options) ->
         write_atomic(&backup, original.as_bytes())?;
     }
     write_atomic(&path, patched.text.as_bytes())?;
+    if as_written {
+        let _ = std::fs::remove_file(as_written::stock_path(game_root));
+    }
     Ok(patched)
 }
 
