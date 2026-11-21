@@ -89,6 +89,7 @@ impl Details {
             comments: 0,
             author_id: 0,
             obsolete: false,
+            sub_category_id: 0,
         };
         Details::from_card(&card)
     }
@@ -413,6 +414,7 @@ pub fn poll(st: &mut State, tx: &mut Tx) -> bool {
         changed = true;
     }
     changed |= poll_hover_prefetch(st, tx);
+    changed |= super::tree::poll(st);
     if let Some(result) = st.browse_view.categories_job.try_take() {
         match result {
             Ok((section, list)) => {
@@ -425,6 +427,7 @@ pub fn poll(st: &mut State, tx: &mut Tx) -> bool {
                     .collect();
                 crate::data::queue_images(st, icons, false);
                 st.browse_view.categories.push((section, list));
+                super::tree::start_deepen(st, section);
             }
             Err(_) => {
                 let section = st.browse_view.filters.section;

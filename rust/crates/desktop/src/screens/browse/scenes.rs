@@ -526,6 +526,7 @@ pub fn scene_sounds(s: &mut State) {
             comments: 3,
             author_id: 77,
             obsolete: false,
+            sub_category_id: 0,
         })
         .collect();
     let key = query_key(s, &current_query(s));

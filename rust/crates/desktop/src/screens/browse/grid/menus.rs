@@ -121,12 +121,16 @@ pub fn overlay(s: &State, u: &Ui) -> Option<El> {
                     }),
                 );
             }
+            let named = |node: &BrowseCategory| node.name.to_lowercase().contains(&filter);
             let mut children: Vec<&BrowseCategory> = root
                 .children
                 .iter()
-                .filter(|child| filter.is_empty() || child.name.to_lowercase().contains(&filter))
+                .filter(|child| filter.is_empty() || named(child) || child.children.iter().any(named))
                 .collect();
-            children.sort_by_key(|child| child.name.to_lowercase());
+            // The picked branch leads, so its third level is on screen when the menu opens.
+            children.sort_by_key(|child| {
+                (!f.sub.as_ref().is_some_and(|p| child.find(p.id).is_some()), child.name.to_lowercase())
+            });
             for child in children {
                 let pick = Pick {
                     id: child.id,
@@ -160,6 +164,25 @@ pub fn overlay(s: &State, u: &Ui) -> Option<El> {
                     let pick = pick.clone();
                     set_filters(st, Some(tx), move |f| f.sub = Some(pick))
                 }));
+                // DMM 2.4.0: the third level (a hero's styles) under the picked branch, or
+                // every one the type-ahead finds.
+                let open = f.sub.as_ref().is_some_and(|p| child.find(p.id).is_some());
+                let mut grand: Vec<&BrowseCategory> = child
+                    .children
+                    .iter()
+                    .filter(|g| if filter.is_empty() { open } else { named(g) })
+                    .collect();
+                grand.sort_by_key(|g| g.name.to_lowercase());
+                for g in grand {
+                    let pick = Pick { id: g.id, name: g.name.clone() };
+                    let on = f.sub.as_ref().is_some_and(|p| p.id == g.id);
+                    let item = menu_item(u, &format!("menu-sub-{}", g.id), None, &g.name, &format_count(g.count), on)
+                        .pl(if portraits { 38.0 } else { 26.0 });
+                    list = list.child(item.on_press_tx(move |st: &mut State, tx: &mut Tx| {
+                        let pick = pick.clone();
+                        set_filters(st, Some(tx), move |f| f.sub = Some(pick))
+                    }));
+                }
             }
             items = items.child(
                 col()

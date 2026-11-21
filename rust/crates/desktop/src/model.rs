@@ -582,6 +582,9 @@ pub struct BrowseCard {
     pub author_id: u64,
     /// The creator marked it obsolete.
     pub obsolete: bool,
+    /// The id of the row's deepest category, zero when unknown. Matched against a picked
+    /// category's subtree.
+    pub sub_category_id: u64,
 }
 
 impl BrowseCard {

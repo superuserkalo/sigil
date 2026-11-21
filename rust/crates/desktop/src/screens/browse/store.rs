@@ -267,11 +267,17 @@ pub(crate) fn mirror_filter(s: &State) -> MirrorFilter {
         all_models: s.browse_view.tab == Tab::All,
         query: s.browse_view.applied_search.trim().to_string(),
         category: f.category.as_ref().map(|pick| pick.name.clone()),
-        subcategory: f
+        subcategory: f.sub.as_ref().map(|pick| pick.name.clone()),
+        subtree: f
             .sub
             .as_ref()
-            .map(|pick| pick.name.clone())
-            .or_else(|| f.hero.clone()),
+            .map(|pick| super::tree::subtree(s, f.section, pick.id))
+            .unwrap_or_default(),
+        // The hero's branches anywhere in the section's tree, or a title that names them.
+        hero: f.hero.as_ref().map(|hero| catalog_mirror::HeroMatch {
+            name: hero.clone(),
+            ids: super::tree::hero_ids(s, f.section, hero),
+        }),
         exclude_category: f.exclude,
         author_id: f.creator.as_ref().map(|pick| pick.id),
         hide_mature: s.prefs.mature == crate::prefs::Mature::Hide || f.mature == MatureView::Hide,
@@ -319,6 +325,7 @@ pub fn card_from_browse(row: &BrowseMod) -> BrowseCard {
         comments: row.comments,
         author_id: row.author_id,
         obsolete: row.obsolete,
+        sub_category_id: row.sub_category_id,
     }
 }
 
@@ -344,6 +351,7 @@ pub fn clone_card(card: &BrowseCard) -> BrowseCard {
         comments: card.comments,
         author_id: card.author_id,
         obsolete: card.obsolete,
+        sub_category_id: card.sub_category_id,
     }
 }
 
@@ -367,6 +375,7 @@ pub fn mirror_card(entry: &catalog_mirror::MirrorEntry) -> BrowseCard {    Brows
         comments: entry.comments,
         author_id: entry.author_id,
         obsolete: entry.obsolete,
+        sub_category_id: entry.sub_category_id,
     }
 }
 

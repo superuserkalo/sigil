@@ -261,6 +261,7 @@ fn browse_row(entry: &deadlock_core::catalog_mirror::MirrorEntry) -> BrowseMod {
         author: entry.author.clone(),
         category: entry.category.clone(),
         subcategory: entry.subcategory.clone(),
+        sub_category_id: entry.sub_category_id,
         version: None,
         updated_at: String::new(),
         likes: entry.likes,

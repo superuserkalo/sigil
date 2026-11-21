@@ -1128,6 +1128,7 @@ fn map_browse_page(page: &gamebanana::BrowsePage, key: u64) -> BrowsePageView {
                 comments: item.comments,
                 author_id: item.author_id,
                 obsolete: item.obsolete,
+                sub_category_id: item.sub_category_id,
             })
             .collect(),
     }

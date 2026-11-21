@@ -40,6 +40,10 @@ pub struct MirrorEntry {
     pub author_id: u64,
     pub category: String,
     pub subcategory: String,
+    /// The id of `subcategory`, the row's deepest category. Zero on rows saved before it was
+    /// kept; those match a pick by name.
+    #[serde(default)]
+    pub sub_category_id: u64,
     pub profile_url: String,
     #[serde(default)]
     pub thumbnail_url: Option<String>,
@@ -68,6 +72,7 @@ impl MirrorEntry {
             author_id: row.author_id,
             category: row.category.clone(),
             subcategory: row.subcategory.clone(),
+            sub_category_id: row.sub_category_id,
             profile_url: row.profile_url.clone(),
             thumbnail_url: row.thumbnail_url.clone(),
             audio_url: row.audio_url.clone(),
@@ -152,8 +157,15 @@ pub struct MirrorFilter {
     /// Folded root category name, kept or excluded.
     pub category: Option<String>,
     pub subcategory: Option<String>,
+    /// The picked sub category and every category under it (Model Replacement > NPCs holds
+    /// Troopers). A row that carries its leaf id matches by it; `subcategory`'s name is the
+    /// fallback for rows saved without one.
+    pub subtree: Vec<u64>,
     /// Children of `category` when only the root is known: keep the root's own name too.
     pub exclude_category: bool,
+    /// Extended hero matching: a row whose leaf category is one of `hero_ids` (the hero's
+    /// branches anywhere in the section's tree) or whose title names the hero.
+    pub hero: Option<HeroMatch>,
     pub author_id: Option<u64>,
     /// Unix seconds, zero for open.
     pub added_from: i64,
@@ -200,11 +212,22 @@ impl MirrorFilter {
             }
         }
         if let Some(sub) = self.subcategory.as_deref() {
-            let wanted = fold(sub);
-            let hit = fold(&entry.subcategory) == wanted || fold(&entry.name).contains(&wanted);
+            let hit = if !self.subtree.is_empty() && entry.sub_category_id > 0 {
+                self.subtree.contains(&entry.sub_category_id)
+            } else {
+                let wanted = fold(sub);
+                fold(&entry.subcategory) == wanted || fold(&entry.name).contains(&wanted)
+            };
             if hit == self.exclude_category {
                 return false;
             }
+        }
+        if let Some(hero) = &self.hero
+            && (hero.matches(entry.sub_category_id, &entry.name)
+                || fold(&entry.subcategory) == fold(&hero.name))
+                == self.exclude_category
+        {
+            return false;
         }
         if self.added_from > 0 && entry.added_ts < self.added_from {
             return false;
@@ -227,6 +250,59 @@ impl MirrorFilter {
             || fold(&entry.subcategory).contains(&query)
             || fold(&entry.author).contains(&query)
     }
+}
+
+/// A hero picked with extended matching on.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct HeroMatch {
+    pub name: String,
+    /// Every category of the section named for the hero, with its subtree.
+    pub ids: Vec<u64>,
+}
+
+impl HeroMatch {
+    pub fn matches(&self, leaf: u64, title: &str) -> bool {
+        (leaf > 0 && self.ids.contains(&leaf)) || title_names_hero(title, &self.name)
+    }
+}
+
+/// Other names players write for a hero in titles. Whole words only, so "harrowing" is not
+/// Nurse Harrow.
+fn hero_aliases(hero: &str) -> Vec<String> {
+    let name = words(hero);
+    let mut aliases = vec![name.clone(), name.replace(' ', "")];
+    match name.as_str() {
+        "deadman danny" => aliases.extend(["deadman".into(), "danny".into()]),
+        "nurse harrow" => aliases.push("harrow".into()),
+        "mo and krill" => aliases.extend(["mo krill".into(), "mokrill".into()]),
+        "lady geist" => aliases.push("geist".into()),
+        "grey talon" => aliases.extend(["gray talon".into(), "talon".into()]),
+        _ => {}
+    }
+    aliases.sort();
+    aliases.dedup();
+    aliases
+}
+
+/// Lower case words split on anything that is not a letter or digit, `&` read as "and", and a
+/// possessive `'s` dropped, joined by single spaces.
+fn words(text: &str) -> String {
+    let text = text.to_lowercase().replace('&', " and ").replace("'s ", " ").replace("\u{2019}s ", " ");
+    let text = text.strip_suffix("'s").unwrap_or(&text).to_string();
+    text.split(|c: char| !c.is_alphanumeric())
+        .filter(|word| !word.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// True when `title` names `hero` as whole words: "Haze_Bikini", "Abrams' Coat" and
+/// "mo&krill skin" count; "Hazel" and "harrowing" do not.
+pub fn title_names_hero(title: &str, hero: &str) -> bool {
+    let title = format!(" {} ", words(title));
+    hero_aliases(hero)
+        .iter()
+        .filter(|alias| !alias.is_empty())
+        .any(|alias| title.contains(&format!(" {alias} ")))
 }
 
 #[derive(Debug, Clone, Default)]
@@ -759,6 +835,74 @@ mod tests {
         let mut updated = MirrorFilter::section(BrowseSection::Mods);
         updated.updated_from = 500;
         assert_eq!(mirror.page(&updated, BrowseOrder::Updated, 1, 10).total, 1);
+    }
+
+    /// Grimoire #520: Model Replacement > Hideout keeps Hideout rows, not the whole root, and a
+    /// pick holds the categories under it (NPCs holds Troopers).
+    #[test]
+    fn a_sub_category_pick_keeps_its_subtree_only() {
+        let row = |id: u64, root: &str, sub: &str, leaf: u64| MirrorEntry {
+            id,
+            model: "Mod".into(),
+            name: format!("Mod {id}"),
+            category: root.into(),
+            subcategory: sub.into(),
+            sub_category_id: leaf,
+            ..MirrorEntry::default()
+        };
+        let mut mirror = Mirror::default();
+        mirror.upsert(row(1, "Model Replacement", "Hideout", 44206));
+        mirror.upsert(row(2, "Model Replacement", "Troopers", 44687));
+        mirror.upsert(row(3, "Model Replacement", "Soul Container", 41868));
+        mirror.upsert(row(4, "HUD", "Character HUD", 44745));
+        mirror.upsert(row(5, "Model Replacement", "Hideout", 0));
+        let ids = |filter: &MirrorFilter| -> Vec<u64> {
+            let mut ids: Vec<u64> = mirror.entries.iter().filter(|e| filter.matches(e)).map(|e| e.id).collect();
+            ids.sort();
+            ids
+        };
+        let mut filter = MirrorFilter::section(BrowseSection::Mods);
+        filter.category = Some("Model Replacement".into());
+        assert_eq!(ids(&filter), vec![1, 2, 3, 5]);
+        filter.subcategory = Some("Hideout".into());
+        filter.subtree = vec![44206];
+        assert_eq!(ids(&filter), vec![1, 5], "an old row without an id matches by name");
+        filter.subcategory = Some("NPCs".into());
+        filter.subtree = vec![44691, 44687, 44688];
+        assert_eq!(ids(&filter), vec![2]);
+        filter.exclude_category = true;
+        filter.category = None;
+        assert_eq!(ids(&filter), vec![1, 3, 4, 5]);
+    }
+
+    /// Grimoire #593: extended hero matching takes the hero's branches and whole-word titles.
+    #[test]
+    fn extended_hero_matching_reads_branches_and_titles() {
+        let hero = HeroMatch { name: "Haze".into(), ids: vec![33311, 50617] };
+        assert!(hero.matches(50617, "Anything"));
+        assert!(hero.matches(0, "Haze_Bikini"));
+        assert!(hero.matches(0, "Haze's coat"));
+        assert!(!hero.matches(0, "Hazel eyes"));
+        assert!(title_names_hero("Nurse harrow mask", "Nurse Harrow"));
+        assert!(title_names_hero("Harrow hat", "Nurse Harrow"));
+        assert!(!title_names_hero("A harrowing tale", "Nurse Harrow"));
+        assert!(title_names_hero("RatKing Flag", "Rat King"));
+        assert!(title_names_hero("mo&krill drill", "Mo & Krill"));
+        assert!(title_names_hero("Danny's revolver", "Deadman Danny"));
+        let mut mirror = Mirror::default();
+        mirror.upsert(entry(1, "Haze HUD", "x", 1, 1));
+        mirror.entries[0].category = "HUD".into();
+        mirror.entries[0].subcategory = "Character HUD".into();
+        mirror.upsert(entry(2, "Bikini", "x", 1, 1));
+        mirror.entries[1].sub_category_id = 33311;
+        mirror.upsert(entry(3, "Abrams coat", "x", 1, 1));
+        mirror.entries[2].sub_category_id = 33306;
+        mirror.entries[2].subcategory = "Abrams".into();
+        let mut filter = MirrorFilter::section(BrowseSection::Mods);
+        filter.hero = Some(hero);
+        let mut ids: Vec<u64> = mirror.entries.iter().filter(|e| filter.matches(e)).map(|e| e.id).collect();
+        ids.sort();
+        assert_eq!(ids, vec![1, 2]);
     }
 
     #[test]
