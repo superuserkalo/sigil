@@ -38,7 +38,15 @@ pub struct StatsFilter {
     pub ranked: Option<bool>,
     /// Matches that started at or after this Unix time in seconds.
     pub since: Option<u64>,
+    /// Matches that started before this Unix time in seconds: an exclusive end (DMM #1391, a
+    /// ranked season or a "matches until" date). `None` is open ended.
+    pub until: Option<u64>,
 }
+
+/// How far back an analytics read reaches when only an end is set. The analytics endpoints
+/// default to the last 30 days when no start is given, which would cover nothing for an older
+/// end, so the 30 days move back to end at it (DMM's `analyticsScopeQuery`).
+pub const END_ONLY_LOOKBACK: u64 = 30 * 86_400;
 
 /// The query parameters a filtered statistics request carries.
 ///
@@ -49,8 +57,17 @@ pub fn filter_query(filter: &StatsFilter) -> Vec<(&'static str, String)> {
         ("game_mode", "normal".to_string()),
         ("match_mode", filter.match_modes().to_string()),
     ];
-    if let Some(since) = filter.since.filter(|since| *since > 0) {
+    let until = filter.until.filter(|until| *until > 0);
+    let since = filter
+        .since
+        .filter(|since| *since > 0)
+        .or_else(|| until.map(|until| until.saturating_sub(END_ONLY_LOOKBACK)));
+    if let Some(since) = since {
         query.push(("min_unix_timestamp", since.to_string()));
+    }
+    // The API's end is inclusive; the filter's is exclusive.
+    if let Some(until) = until {
+        query.push(("max_unix_timestamp", until.saturating_sub(1).to_string()));
     }
     query
 }
@@ -106,7 +123,11 @@ impl StatsFilter {
             .since
             .filter(|since| *since > 0)
             .is_none_or(|since| row.start_time >= since as i64);
-        mode_ok && since_ok
+        let until_ok = self
+            .until
+            .filter(|until| *until > 0)
+            .is_none_or(|until| row.start_time < until as i64);
+        mode_ok && since_ok && until_ok
     }
 
     /// A filter whose window starts at the newest game patch in `notes` ("this patch"), keeping
@@ -121,6 +142,7 @@ impl StatsFilter {
         StatsFilter {
             ranked: self.ranked,
             since: newest.map(|t| t.max(0) as u64).or(self.since),
+            until: self.until,
         }
     }
 }
@@ -284,12 +306,14 @@ mod tests {
         let ranked = filter_query(&StatsFilter {
             ranked: Some(true),
             since: None,
+            until: None,
         });
         assert_eq!(ranked[1], ("match_mode", "ranked".to_string()));
 
         let unranked = filter_query(&StatsFilter {
             ranked: Some(false),
             since: None,
+            until: None,
         });
         assert_eq!(unranked[1], ("match_mode", "unranked".to_string()));
     }
@@ -299,8 +323,23 @@ mod tests {
         let query = filter_query(&StatsFilter {
             ranked: Some(true),
             since: Some(1_700_000_000),
+            until: None,
         });
         assert_eq!(query[2], ("min_unix_timestamp", "1700000000".to_string()));
+    }
+
+    /// DMM #1391: the end is exclusive here and inclusive on the API, and an end alone reaches
+    /// 30 days back so the analytics endpoints answer for that window.
+    #[test]
+    fn an_end_time_becomes_max_unix_timestamp() {
+        let both = filter_query(&StatsFilter { ranked: None, since: Some(1_000), until: Some(5_000) });
+        assert_eq!(both[2], ("min_unix_timestamp", "1000".to_string()));
+        assert_eq!(both[3], ("max_unix_timestamp", "4999".to_string()));
+        let end_only = filter_query(&StatsFilter { ranked: None, since: None, until: Some(END_ONLY_LOOKBACK + 10) });
+        assert_eq!(end_only[2], ("min_unix_timestamp", "10".to_string()));
+        let rows = vec![row(100, 4), row(200, 4), row(300, 4)];
+        let window = StatsFilter { ranked: None, since: Some(100), until: Some(300) };
+        assert_eq!(filter_matches(&rows, &window).len(), 2, "the end is exclusive");
     }
 
     #[test]
@@ -308,6 +347,7 @@ mod tests {
         let query = filter_query(&StatsFilter {
             ranked: None,
             since: Some(0),
+            until: None,
         });
         assert_eq!(query.len(), 2);
         assert!(!query.iter().any(|(name, _)| *name == "min_unix_timestamp"));
@@ -388,7 +428,7 @@ mod tests {
             note("2026-11-10T00:00:00Z", true),
             note("2026-11-12T00:00:00Z", false),
         ];
-        let scoped = StatsFilter { ranked: Some(true), since: None }.since_last_patch(&notes);
+        let scoped = StatsFilter { ranked: Some(true), since: None, until: None }.since_last_patch(&notes);
         assert_eq!(scoped.ranked, Some(true));
         assert_eq!(scoped.since, Some(1_794_268_800));
         assert_eq!(StatsFilter::default().since_last_patch(&[]).since, None);

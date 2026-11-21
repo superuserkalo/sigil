@@ -87,7 +87,7 @@ fn now() -> u64 {
 
 /// A filter that narrows anything at all.
 pub fn narrows(filter: &StatsFilter) -> bool {
-    filter.ranked.is_some() || filter.since.is_some()
+    filter.ranked.is_some() || filter.since.is_some() || filter.until.is_some()
 }
 
 /// The snapshot and derived values the overview and Heroes draw: the filtered copy when it is
@@ -535,7 +535,7 @@ pub fn meta_section(s: &State, u: &Ui) -> El {
                 .on_press(start_meta),
         ),
         Fetched::Loading => section.child(text(tr("Loading items")).font(BODY).color(u.muted)),
-        Fetched::Failed(error) => section.child(problem(u, error)),
+        Fetched::Failed(error) => section.child(problem_retry(u, error, "stats-item-meta-retry", start_meta)),
         Fetched::Ready(load) if load.rows.is_empty() => {
             section.child(text(tr("No item has enough matches in this window.")).font(BODY).color(u.muted))
         }
@@ -643,7 +643,8 @@ mod tests {
     #[test]
     fn only_a_real_filter_narrows() {
         assert!(!narrows(&StatsFilter::default()));
-        assert!(narrows(&StatsFilter { ranked: Some(true), since: None }));
-        assert!(narrows(&StatsFilter { ranked: None, since: Some(5) }));
+        assert!(narrows(&StatsFilter { ranked: Some(true), ..Default::default() }));
+        assert!(narrows(&StatsFilter { since: Some(5), ..Default::default() }));
+        assert!(narrows(&StatsFilter { until: Some(5), ..Default::default() }));
     }
 }

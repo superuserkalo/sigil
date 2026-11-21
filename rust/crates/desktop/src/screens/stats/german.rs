@@ -204,6 +204,10 @@ pub const DE: &[(&str, &str)] = &[
     ("Show", "Zeigen"),
     ("Ranked and unranked", "Ranked und Unranked"),
     ("Any time", "Jederzeit"),
+    ("Ranked seasons", "Ranked-Saisons"),
+    ("Loading seasons", "Saisons werden geladen"),
+    ("The API lists no ranked season yet.", "Die API listet noch keine Ranked-Saison."),
+    ("Try again", "Erneut versuchen"),
     ("Last 7 days", "Letzte 7 Tage"),
     ("Last 30 days", "Letzte 30 Tage"),
     ("Last 90 days", "Letzte 90 Tage"),
@@ -263,7 +267,7 @@ pub const DE: &[(&str, &str)] = &[
 
 pub fn get(text: &str) -> Option<&'static str> {
     static MAP: OnceLock<HashMap<&'static str, &'static str>> = OnceLock::new();
-    MAP.get_or_init(|| DE.iter().chain(super::live_de::DE).copied().collect())
+    MAP.get_or_init(|| DE.iter().chain(super::live_de::DE).chain(super::roll_de::DE).copied().collect())
         .get(text)
         .copied()
 }
@@ -325,7 +329,9 @@ pub fn routed(source: &str) -> Vec<String> {
 mod tests {
     use super::*;
 
-    const SOURCES: [&str; 12] = [
+    const SOURCES: [&str; 14] = [
+        include_str!("roll.rs"),
+        include_str!("notes.rs"),
         include_str!("more.rs"),
         include_str!("mod.rs"),
         include_str!("brief.rs"),
@@ -355,7 +361,7 @@ mod tests {
     #[test]
     fn table_is_clean() {
         let mut seen = std::collections::HashSet::new();
-        for (en, de) in DE.iter().chain(super::super::live_de::DE) {
+        for (en, de) in DE.iter().chain(super::super::live_de::DE).chain(super::super::roll_de::DE) {
             assert!(seen.insert(*en), "duplicate {en:?}");
             assert_eq!(en.matches("{}").count(), de.matches("{}").count(), "holes in {en:?}");
             assert!(!en.contains('\u{2014}') && !de.contains('\u{2014}'), "em dash in {en:?}");

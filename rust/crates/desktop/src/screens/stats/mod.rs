@@ -44,7 +44,10 @@ pub mod live;
 mod live_de;
 mod map;
 mod matches;
-mod more;
+pub mod more;
+mod notes;
+pub mod roll;
+mod roll_de;
 pub mod w4;
 mod shared;
 mod social;
@@ -208,6 +211,8 @@ pub struct View {
     pub w4: w4::W4,
     /// The match being played right now (`live.rs`).
     pub live: live::Live,
+    /// Fun run: a random hero and build from a share code (`roll.rs`).
+    pub roll: roll::RollView,
 }
 
 pub struct ReviewPanel {
@@ -265,6 +270,7 @@ impl Default for View {
             more: more::More::default(),
             w4: w4::W4::default(),
             live: live::Live::default(),
+            roll: roll::RollView::default(),
         }
     }
 }
@@ -415,6 +421,7 @@ pub fn poll(state: &mut State) -> bool {
     changed |= more::poll(state);
     changed |= w4::poll(state);
     changed |= live::poll(state);
+    changed |= roll::poll(state);
     changed
 }
 
@@ -652,7 +659,8 @@ pub fn view(s: &State, u: &Ui) -> El {
             ),
             tr("The API only knows matches that finished. New ones show up a little while after they end."),
             None,
-        )),
+        ))
+        .child(roll::section(s, u)),
         (Some(snap), Some(derived)) => {
             // Wave 4: the filter sits on top and scopes the overview and Heroes as well.
             let (osnap, oderived) = w4::overview(s).unwrap_or((snap, derived));
@@ -670,9 +678,10 @@ pub fn view(s: &State, u: &Ui) -> El {
                 .child(more::party_section(s, u))
                 .child(map::map_section(s, u))
                 .child(demos::demo_section(s, u))
+                .child(roll::section(s, u))
         }
         _ if loading => page.child(skeleton(u)),
-        _ => page.child(entry(s, u)),
+        _ => page.child(entry(s, u)).child(roll::section(s, u)),
     };
 
     col()

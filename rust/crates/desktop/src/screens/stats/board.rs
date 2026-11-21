@@ -197,11 +197,18 @@ fn header(u: &Ui, board: &MatchScoreboard) -> El {
     if let Some(result) = result_line(u, board) {
         head = head.child(result);
     }
+    // DMM's match note: who abandoned, and why a match was not scored.
+    if let Some(note) = super::notes::board_note(u, board) {
+        head = head.child(note);
+    }
     head
 }
 
 /// "Your team won", "Your team lost", or the score with no player on the board.
 fn result_line(u: &Ui, board: &MatchScoreboard) -> Option<El> {
+    if super::notes::not_scored(board) {
+        return Some(text(tr("Not scored for you")).font(BODY_MED).color(u.faint));
+    }
     let winner = board.winning_team?;
     let ours = board
         .teams

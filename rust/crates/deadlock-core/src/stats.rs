@@ -32,6 +32,7 @@ pub mod insight;
 pub mod items;
 pub mod leaderboard;
 pub mod party;
+pub mod roll;
 pub mod social;
 
 use std::collections::{BTreeMap, HashMap};
@@ -1865,7 +1866,11 @@ struct RawMatch {
     net_worth: u64,
     last_hits: u32,
     denies: u32,
-    player_match_outcome: i32,
+    /// Missing on some rows; [`RawMatch::outcome`] then compares `match_result` with the team.
+    #[serde(default)]
+    player_match_outcome: Option<i32>,
+    #[serde(default)]
+    match_result: Option<i32>,
     #[serde(default)]
     abandoned_time_s: Option<u32>,
     #[serde(default)]
@@ -1875,8 +1880,19 @@ struct RawMatch {
 }
 
 impl RawMatch {
+    /// The scored outcome. A row without `player_match_outcome` falls back to the winning
+    /// team (`match_result`) against the player's team, and stays unknown without either.
+    fn outcome(&self) -> MatchOutcome {
+        match (self.player_match_outcome, self.match_result) {
+            (Some(value), _) => MatchOutcome::from_api(value),
+            (None, Some(winner)) if winner == self.player_team => MatchOutcome::Win,
+            (None, Some(_)) => MatchOutcome::Loss,
+            (None, None) => MatchOutcome::Unknown,
+        }
+    }
+
     fn into_summary(self) -> MatchSummary {
-        let outcome = MatchOutcome::from_api(self.player_match_outcome);
+        let outcome = self.outcome();
         MatchSummary {
             match_id: self.match_id,
             hero_id: self.hero_id,
@@ -1900,7 +1916,7 @@ impl RawMatch {
             denies: self.denies,
             outcome,
             win: outcome.win(),
-            abandoned_seconds: self.abandoned_time_s,
+            abandoned_seconds: self.abandoned_time_s.filter(|seconds| *seconds > 0),
             ranked_badge: self.ranked_display_badge,
             ranked_delta: self.ranked_delta,
         }
