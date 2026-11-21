@@ -90,6 +90,11 @@ pub const DE: &[(&str, &str)] = &[
     ("{} not installed", "{} nicht installiert"),
     ("{} switched", "{} umgeschaltet"),
     ("{} left over", "{} übrig"),
+    ("Download and import", "Laden und importieren"),
+    ("Looking up", "Wird gesucht"),
+    ("Looking up {} more.", "{} weitere werden noch gesucht."),
+    ("looking up {}", "{} werden gesucht"),
+    ("The lookup stopped before this mod was found.", "Die Suche brach ab, bevor dieser Mod gefunden wurde."),
 ];
 
 fn map() -> &'static HashMap<&'static str, &'static str> {

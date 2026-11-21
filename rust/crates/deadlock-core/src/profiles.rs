@@ -2145,8 +2145,42 @@ pub fn resolve_import(
     installed: &[AddonIdentity],
     lookup: &mut dyn FnMut(u64) -> Result<ModFiles>,
 ) -> Vec<ImportEntry> {
-    let mut cache: BTreeMap<u64, std::result::Result<ModFiles, String>> = BTreeMap::new();
     let mut entries = Vec::with_capacity(portable.mods.len());
+    resolve_import_each(portable, installed, lookup, &mut |entry| entries.push(entry));
+    entries
+}
+
+/// A placeholder row for entry `index` while its lookup runs: the shared label, unavailable
+/// until [`resolve_import_each`] hands over the real one.
+pub fn pending_import_entry(portable: &PortableProfile, index: usize) -> Option<ImportEntry> {
+    let entry = portable.mods.get(index)?;
+    Some(ImportEntry {
+        index,
+        label: entry.label(),
+        enabled: entry.enabled,
+        nsfw: entry.hint.as_ref().and_then(|hint| hint.nsfw).unwrap_or(false),
+        mod_id: entry.gamebanana_ref().map(|(mod_id, _)| mod_id),
+        pinned_file_id: entry.gamebanana_ref().map(|(_, file_id)| file_id),
+        resolved_file_id: None,
+        download_url: None,
+        file_name: None,
+        status: ImportStatus::Unavailable,
+        reason: None,
+        installed_slot: None,
+    })
+}
+
+/// [`resolve_import`] one entry at a time, in order: `done` gets each entry as soon as its
+/// lookup returns, so the app can start that mod's download while the next one is looked up
+/// (DMM 2.4.0 starts a profile import's downloads before every mod is looked up).
+pub fn resolve_import_each(
+    portable: &PortableProfile,
+    installed: &[AddonIdentity],
+    lookup: &mut dyn FnMut(u64) -> Result<ModFiles>,
+    done: &mut dyn FnMut(ImportEntry),
+) {
+    let mut cache: BTreeMap<u64, std::result::Result<ModFiles, String>> = BTreeMap::new();
+    let mut entries = DoneSink(done);
 
     for (index, entry) in portable.mods.iter().enumerate() {
         let mut out = ImportEntry {
@@ -2244,7 +2278,15 @@ pub fn resolve_import(
         }
         entries.push(out);
     }
-    entries
+}
+
+/// Hands each resolved entry on as `resolve_import_each` pushes it.
+struct DoneSink<'a>(&'a mut dyn FnMut(ImportEntry));
+
+impl DoneSink<'_> {
+    fn push(&mut self, entry: ImportEntry) {
+        (self.0)(entry)
+    }
 }
 
 /// Download and install one missing import entry, landing it switched off, and remember where
@@ -3035,6 +3077,23 @@ mod tests {
         assert!(entries[3].reason.as_deref().unwrap().contains("removed"));
         assert_eq!(entries[4].status, ImportStatus::Unavailable);
         assert_eq!(lookups, vec![1, 2, 4], "installed and foreign entries need no lookup");
+
+        // One at a time: each entry is handed over before the next lookup starts.
+        let events = std::cell::RefCell::new(Vec::new());
+        let mut lookup = |id: u64| -> Result<ModFiles> {
+            events.borrow_mut().push(format!("lookup {id}"));
+            Ok(files(id, "Mod", &[(id * 10, false, 1)]))
+        };
+        let mut streamed = Vec::new();
+        resolve_import_each(&portable, &installed, &mut lookup, &mut |entry| {
+            events.borrow_mut().push(format!("done {}", entry.index));
+            streamed.push(entry);
+        });
+        assert_eq!(events.borrow()[..4], ["lookup 1", "done 0", "lookup 2", "done 1"]);
+        assert_eq!(streamed.iter().map(|e| e.index).collect::<Vec<_>>(), vec![0, 1, 2, 3, 4]);
+        let pending = pending_import_entry(&portable, 3).unwrap();
+        assert_eq!((pending.label.as_str(), pending.mod_id, pending.installed_slot), ("Gone", Some(4), None));
+        assert!(pending_import_entry(&portable, 9).is_none());
     }
 
     #[test]
