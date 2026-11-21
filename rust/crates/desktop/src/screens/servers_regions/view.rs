@@ -484,7 +484,7 @@ fn presets(s: &State, u: &Ui) -> El {
                 .on_press(|st: &mut State| st.servers.regions.naming = true),
         )
     };
-    if let Some(played) = regions.where_i_play() {
+    if let Some(played) = regions.where_i_play().filter(|_| s.prefs.allow_stats) {
         let current = played.iter().cloned().collect::<std::collections::BTreeSet<_>>() == regions.draft;
         let open = regions.catalog.as_ref().map_or(0, |c| c.locations.len()).saturating_sub(played.len());
         chips = row().gap(6.0).center_y().flex_wrap().child(
@@ -512,7 +512,7 @@ fn presets(s: &State, u: &Ui) -> El {
         .child(chips);
     }
     let mut body = row().key("regions-presets").w_full().gap(10.0).center_y().child(text(tr("Presets")).font(BODY_MED).color(u.ink));
-    if saved.is_empty() && !regions.naming && regions.where_i_play().is_none() {
+    if saved.is_empty() && !regions.naming && (regions.where_i_play().is_none() || !s.prefs.allow_stats) {
         body = body.child(
             text(tr("Save a selection to switch to it in one press."))
                 .font(SMALL)
