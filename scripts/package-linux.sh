@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build the Linux x86_64 AppImage and .deb on a Linux host (or in CI: .github/workflows/build-linux.yml).
+# Build the Linux x86_64 AppImage and .deb on a Linux host (or in CI: .github/workflows/linux-build.yml).
 #
 #   scripts/package-linux.sh            # build, stage, AppImage, .deb, unsigned manifest entry
 #   scripts/package-linux.sh --deps     # first install the Ubuntu or Debian build packages (sudo)
@@ -23,8 +23,8 @@ root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$root"
 
 if [ "$(uname -s)" != "Linux" ] || [ "$(uname -m)" != "x86_64" ]; then
-  echo "package-linux.sh runs on Linux x86_64. From macOS, run the build-linux workflow" >&2
-  echo "(gh workflow run build-linux.yml) or build on a Linux machine." >&2
+  echo "package-linux.sh runs on Linux x86_64. From macOS, run the linux-build workflow" >&2
+  echo "(gh workflow run linux-build.yml) or build on a Linux machine." >&2
   exit 1
 fi
 
