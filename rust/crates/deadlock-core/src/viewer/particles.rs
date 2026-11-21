@@ -28,6 +28,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value as Json};
 
 use super::kv::{self, array, flag, num, text, vec3};
+use super::snapshot::Snapshot;
 use super::space::{self, Mat4};
 use super::stack::{Stack, compiled, normalize};
 use super::{SCHEMA, check};
@@ -78,6 +79,20 @@ pub(crate) struct Bundle {
     pub attachments: Vec<Attachment>,
     pub effects: Vec<Effect>,
     pub issues: Vec<String>,
+    /// Hero bundles: the model's bones and bind poses, which skinned snapshots deform by.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub bones: Vec<BundleBone>,
+    /// Every snapshot a system names (`m_hSnapshot`), keyed `particles/x/y.vsnap`.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub snapshots: BTreeMap<String, Snapshot>,
+}
+
+/// A model bone: its name and model-space bind pose (Source space, column major).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct BundleBone {
+    pub name: String,
+    pub bind: [f32; 16],
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -187,7 +202,47 @@ pub(crate) struct Effect {
     pub control_points: Vec<ControlPoint>,
     pub start_active: bool,
     pub seed: u32,
+    /// Animation-event effects (`source: "anim-event"`) only: the clip whose events start and
+    /// stop the effect. Left out of the JSON for every other source.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub clip: Option<EffectClip>,
 }
+
+/// When an animation-event effect plays (Grimoire's `BundleEffect.clip`): the clip as the glb
+/// names it and the event times, normalized to the clip (0 to 1).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct EffectClip {
+    pub name: String,
+    /// The `AE_CL_CREATE_PARTICLE_EFFECT(_CFG)` event's time.
+    pub start: f64,
+    /// The same clip's `AE_CL_STOP_PARTICLE_EFFECT` events for this system, at or after `start`.
+    pub stops: Vec<ClipStop>,
+    /// `stop_on_seq_change`: a clip change stops the effect.
+    pub stop_on_clip_change: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ClipStop {
+    pub time: f64,
+    /// `stop_instantly` or `stop_immediately`: the particles go at once.
+    pub immediately: bool,
+    /// `play_endcap`.
+    pub end_cap: bool,
+}
+
+/// A clip whose animation events may start effects: the name the glb plays it under, and
+/// where its events live (a compiled `.vnmclip_c`, or with no file the model's legacy `ANIM`
+/// block entry of that name).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct EventClip {
+    pub name: String,
+    pub file: Option<String>,
+}
+
+/// At most this many clip files are read for events (Grimoire's `MAX_EVENT_CLIPS`).
+const MAX_EVENT_CLIPS: usize = 48;
 
 // Hero effects.
 
@@ -196,17 +251,21 @@ pub(crate) struct Effect {
 /// its `scripts/heroes.vdata` `m_hAmbientParticle` (a match ambient: kept with `startActive`
 /// false, as Grimoire leaves it out of the showcase), and its primary weapon's
 /// `m_PassiveWeaponParticle` and code-spawned particles. `model_entry` and `model_bytes` are the
-/// body model the glb was built from; its attachments go into the bundle.
+/// body model the glb was built from; its attachments go into the bundle. `clips` are the
+/// clips whose animation events may start effects (`anim-event`, started by the renderer as
+/// the clip passes them): those the glb plays, then the rest of the `ui` graph.
 ///
 /// Writes `out_dir/particles/bundle.json` and `out_dir/particles/tex/*.png` and returns
 /// `Some("particles/bundle.json")`, or `None` (writing nothing) when the hero carries no effect
 /// whose system is in the stack. Missing files are bundle issues, not errors; only a write
 /// failure or `cancel` is an error.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn export_hero_particles(
     stack: &Stack,
     hero_codename: &str,
     model_entry: &str,
     model_bytes: &[u8],
+    clips: &[EventClip],
     out_dir: &Path,
     cancel: &AtomicBool,
 ) -> Result<Option<String>> {
@@ -264,6 +323,18 @@ pub(crate) fn export_hero_particles(
             }
         }
     }
+    check(cancel)?;
+    animation_event_effects(
+        clips,
+        &|path| {
+            stack
+                .read(path)
+                .and_then(|bytes| kv::resource_json(&bytes, path).ok())
+        },
+        &legacy_animations(model_bytes),
+        &mut found,
+        &mut issues,
+    );
     issues.append(&mut found.issues);
     if found.effects.is_empty() {
         return Ok(None);
@@ -279,6 +350,7 @@ pub(crate) fn export_hero_particles(
         hero_codename.to_ascii_lowercase(),
         found.effects,
         attachments,
+        model_bones(model_bytes),
         issues,
         out_dir,
         cancel,
@@ -301,28 +373,47 @@ impl Effects {
         configuration: Option<String>,
         start_active: bool,
     ) {
+        self.push(system, source, attachment, None, configuration, start_active, None);
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn push(
+        &mut self,
+        system: &str,
+        source: &str,
+        attachment: Option<EffectAttachment>,
+        attachment_cp1: Option<EffectAttachment>,
+        configuration: Option<String>,
+        start_active: bool,
+        clip: Option<EffectClip>,
+    ) {
         let key = system_key(system);
         if !valid_system(&key) {
             self.issues.push(format!("invalidSystem:{system}"));
             return;
         }
-        if self
-            .effects
-            .iter()
-            .any(|effect| effect.system == key && effect.source == source)
-        {
+        // Grimoire's key: the system, the source and, for an event, its clip and start.
+        let when = |clip: &Option<EffectClip>| {
+            clip.as_ref()
+                .map(|clip| (clip.name.clone(), clip.start.to_bits()))
+        };
+        if self.effects.iter().any(|effect| {
+            effect.system == key && effect.source == source && when(&effect.clip) == when(&clip)
+        }) {
             return;
         }
+        let prefix = if clip.is_some() { "anim" } else { "ambient" };
         self.effects.push(Effect {
-            id: format!("ambient_{}", self.effects.len()),
+            id: format!("{prefix}_{}", self.effects.len()),
             seed: seed(&key, [0.0; 3]),
             system: key,
             source: source.to_string(),
             attachment,
-            attachment_cp1: None,
+            attachment_cp1,
             configuration,
             transform: None,
             control_points: Vec::new(),
+            clip,
             start_active,
         });
     }
@@ -414,6 +505,190 @@ fn attachment_of(
         point: point.and_then(Json::as_str).unwrap_or_default().to_string(),
         offset: vec3(offset).unwrap_or([0.0; 3]),
     })
+}
+
+/// One animation event of a clip: its class, normalized time and keyvalues.
+struct ClipEvent<'a> {
+    class: &'a str,
+    time: f64,
+    data: Option<&'a Json>,
+}
+
+impl ClipEvent<'_> {
+    fn get(&self, key: &str) -> Option<&Json> {
+        self.data.and_then(|data| data.get(key))
+    }
+
+    /// A keyvalue that is exactly `true` (Grimoire compares with `=== true`).
+    fn yes(&self, key: &str) -> bool {
+        self.get(key) == Some(&Json::Bool(true))
+    }
+}
+
+/// The events of a decoded AnimGraph2 clip (`m_events[]`: `m_animEventClassName`,
+/// `m_flStartTime.m_flValue`, `m_KV`).
+fn nm_clip_events(clip: &Json) -> Vec<ClipEvent<'_>> {
+    array(clip.get("m_events"))
+        .iter()
+        .filter(|event| event.is_object())
+        .map(|event| ClipEvent {
+            class: event
+                .get("m_animEventClassName")
+                .and_then(Json::as_str)
+                .unwrap_or_default(),
+            time: num(event.get("m_flStartTime").and_then(|t| t.get("m_flValue"))).unwrap_or(0.0),
+            data: event.get("m_KV").filter(|kv| kv.is_object()),
+        })
+        .collect()
+}
+
+/// The events of one legacy `ANIM` entry (`m_eventArray[]`: `m_sEventName`, `m_flCycle`,
+/// `m_EventData`).
+fn legacy_clip_events(anim: &Json) -> Vec<ClipEvent<'_>> {
+    array(anim.get("m_eventArray"))
+        .iter()
+        .filter(|event| event.is_object())
+        .map(|event| ClipEvent {
+            class: event
+                .get("m_sEventName")
+                .and_then(Json::as_str)
+                .unwrap_or_default(),
+            time: num(event.get("m_flCycle")).unwrap_or(0.0),
+            data: event.get("m_EventData").filter(|kv| kv.is_object()),
+        })
+        .collect()
+}
+
+/// The model's legacy embedded animations: every `m_animArray` entry of its `ANIM` blocks.
+fn legacy_animations(model_bytes: &[u8]) -> Vec<Json> {
+    let Ok(resource) = morphic::resource::Resource::parse(model_bytes) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for block in resource.blocks().iter().filter(|block| block.kind == *b"ANIM") {
+        let start = block.offset as usize;
+        let Some(bytes) = start
+            .checked_add(block.size as usize)
+            .and_then(|end| model_bytes.get(start..end))
+        else {
+            continue;
+        };
+        let Ok(decoded) = morphic::kv3::decode(bytes) else {
+            continue;
+        };
+        let decoded = kv::to_json(&decoded);
+        out.extend(
+            array(decoded.get("m_animArray"))
+                .iter()
+                .filter(|anim| anim.is_object())
+                .cloned(),
+        );
+    }
+    out
+}
+
+/// The particle events of one clip as effects that start and stop with it (Grimoire's
+/// `addClipEffects`): only `AE_CL_CREATE_PARTICLE_EFFECT(_CFG)` create; the stops are the same
+/// clip's `AE_CL_STOP_PARTICLE_EFFECT` events naming the same system at or after the start.
+fn add_clip_effects(clip: &str, events: &[ClipEvent<'_>], found: &mut Effects) {
+    for event in events {
+        let cfg = event.class == "AE_CL_CREATE_PARTICLE_EFFECT_CFG";
+        if event.class != "AE_CL_CREATE_PARTICLE_EFFECT" && !cfg {
+            continue;
+        }
+        let Some(name) = text(event.get("name")) else {
+            continue;
+        };
+        let stops = events
+            .iter()
+            .filter(|stop| {
+                stop.class == "AE_CL_STOP_PARTICLE_EFFECT"
+                    && text(stop.get("name")) == Some(name)
+                    && stop.time >= event.time
+            })
+            .map(|stop| ClipStop {
+                time: stop.time,
+                immediately: stop.yes("stop_instantly") || stop.yes("stop_immediately"),
+                end_cap: stop.yes("play_endcap"),
+            })
+            .collect();
+        let config = if cfg {
+            text(event.get("config")).map(str::to_string)
+        } else {
+            None
+        };
+        let (attachment, attachment_cp1) = if config.is_some() {
+            (None, None)
+        } else {
+            let absorigin = Json::String("absorigin_follow".into());
+            let kind = event.get("attachment_type").unwrap_or(&absorigin);
+            let cp1 = text(event.get("attachment_point_cp1")).and_then(|_| {
+                attachment_of(
+                    event.get("attachment_type_cp1"),
+                    event.get("attachment_point_cp1"),
+                    None,
+                )
+            });
+            (
+                attachment_of(Some(kind), event.get("attachment_point"), None),
+                cp1,
+            )
+        };
+        found.push(
+            name,
+            "anim-event",
+            attachment,
+            attachment_cp1,
+            config,
+            false,
+            Some(EffectClip {
+                name: clip.to_string(),
+                start: event.time,
+                stops,
+                stop_on_clip_change: event.yes("stop_on_seq_change"),
+            }),
+        );
+    }
+}
+
+/// The animation-event effects of `clips` (Grimoire's `discoverAnimationEvents`): the events
+/// of each clip file (at most `MAX_EVENT_CLIPS` files) and, for a clip without a file, of the
+/// legacy `ANIM` entry with its name. `decode` returns a compiled clip's DATA as JSON.
+fn animation_event_effects(
+    clips: &[EventClip],
+    decode: &dyn Fn(&str) -> Option<Json>,
+    legacy: &[Json],
+    found: &mut Effects,
+    issues: &mut Vec<String>,
+) {
+    let files = clips.iter().filter(|clip| clip.file.is_some()).count();
+    let mut read = 0;
+    for clip in clips {
+        match &clip.file {
+            Some(file) => {
+                if read >= MAX_EVENT_CLIPS {
+                    continue;
+                }
+                read += 1;
+                if let Some(data) = decode(file) {
+                    add_clip_effects(&clip.name, &nm_clip_events(&data), found);
+                }
+            }
+            None => {
+                let anim = legacy.iter().find(|anim| {
+                    anim.get("m_name")
+                        .and_then(Json::as_str)
+                        .is_some_and(|name| name.eq_ignore_ascii_case(&clip.name))
+                });
+                if let Some(anim) = anim {
+                    add_clip_effects(&clip.name, &legacy_clip_events(anim), found);
+                }
+            }
+        }
+    }
+    if files > MAX_EVENT_CLIPS {
+        issues.push(format!("limit:eventClips:{MAX_EVENT_CLIPS}/{files}"));
+    }
 }
 
 /// The model's attachments: those of its first mesh block, else of the first referenced mesh
@@ -542,6 +817,7 @@ pub(crate) fn export_map_particles(
         "dl_hideout".into(),
         effects,
         Vec::new(),
+        Vec::new(),
         issues,
         out_dir,
         cancel,
@@ -635,6 +911,7 @@ fn read_map_particles(entities: &[Map<String, Json>]) -> (Vec<Effect>, Vec<Strin
                 control_points,
                 start_active: flag(entity.get("start_active")) == Some(true)
                     && flag(entity.get("StartDisabled")) != Some(true),
+                clip: None,
             });
         }
     }
@@ -678,11 +955,13 @@ fn seed_position(transform: &Mat4, control_points: &[ControlPoint]) -> [f64; 3] 
 
 /// Walk the effects' system trees, export their textures and write the bundle. Effects whose
 /// root system is not in the stack are dropped (with an issue); None when none is left.
+#[allow(clippy::too_many_arguments)]
 fn write_bundle(
     stack: &Stack,
     owner: String,
     effects: Vec<Effect>,
     attachments: Vec<Attachment>,
+    bones: Vec<BundleBone>,
     issues: Vec<String>,
     out_dir: &Path,
     cancel: &AtomicBool,
@@ -758,6 +1037,8 @@ fn write_bundle(
         );
     }
     check(cancel)?;
+    let snapshots = system_snapshots(&walk.systems, &mut issues, |path| stack.read(path));
+    check(cancel)?;
 
     let bundle = Bundle {
         schema: SCHEMA,
@@ -767,12 +1048,90 @@ fn write_bundle(
         attachments,
         effects,
         issues: issues.list,
+        bones,
+        snapshots,
     };
     std::fs::write(
         particles_dir.join("bundle.json"),
         serde_json::to_vec(&bundle)?,
     )?;
     Ok(Some(BUNDLE_PATH.to_string()))
+}
+
+/// A compiled snapshot larger than this is not read (Grimoire's `LIMITS.snapshotBytes`).
+const MAX_SNAPSHOT_BYTES: usize = 4 * 1024 * 1024;
+
+/// A snapshot path a definition may name: `particles/...vsnap` (Grimoire's `SNAPSHOT_PATH`).
+fn valid_snapshot(path: &str) -> bool {
+    path.starts_with("particles/")
+        && path.ends_with(".vsnap")
+        && !path.contains("..")
+        && path
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '/' | '-'))
+}
+
+/// The snapshots the systems name (`m_hSnapshot`), decoded from the stack (Grimoire's
+/// `exportParticleBundle` snapshot pass). `read` returns a compiled file's bytes.
+fn system_snapshots(
+    systems: &BTreeMap<String, BundleSystem>,
+    issues: &mut Issues,
+    read: impl Fn(&str) -> Option<Vec<u8>>,
+) -> BTreeMap<String, Snapshot> {
+    let mut out = BTreeMap::new();
+    let mut seen = BTreeSet::new();
+    // What every snapshot of the bundle may decode to together.
+    let mut budget = super::snapshot::BUNDLE_SNAPSHOT_BUDGET;
+    for (system, def) in systems {
+        let Some(path) = text(def.data.get("m_hSnapshot")).map(|p| p.replace('\\', "/")) else {
+            continue;
+        };
+        if !seen.insert(path.clone()) {
+            continue;
+        }
+        if !valid_snapshot(&path) {
+            issues.push(format!("invalidSnapshot:{system}"));
+            continue;
+        }
+        let Some(bytes) = read(&compiled(&path)) else {
+            issues.push(format!("missing:{path}"));
+            continue;
+        };
+        if bytes.len() > MAX_SNAPSHOT_BYTES {
+            issues.push(format!("snapshotTooLarge:{path}"));
+            continue;
+        }
+        let decoded = kv::resource_json(&bytes, &path)
+            .map_err(|error| error.to_string())
+            .and_then(|data| super::snapshot::read_snapshot(&bytes, &data, &mut budget));
+        match decoded {
+            Ok(snapshot) => {
+                out.insert(path, snapshot);
+            }
+            Err(_) => issues.push(format!("unreadable:{path}")),
+        }
+    }
+    out
+}
+
+/// The model's bones with their model-space bind poses (morphic's `Skeleton`, VRF's
+/// `Skeleton.FromModelData`), for skinned snapshots. Empty when the model has none.
+fn model_bones(model_bytes: &[u8]) -> Vec<BundleBone> {
+    let Ok(data) = morphic::decode_kv3_resource(model_bytes) else {
+        return Vec::new();
+    };
+    let Ok(skeleton) = morphic::model::Skeleton::from_model_data(&data) else {
+        return Vec::new();
+    };
+    skeleton
+        .bones
+        .iter()
+        .map(|bone| BundleBone {
+            name: bone.name.clone(),
+            // morphic's row-major row-vector matrix is the column-major column-vector one.
+            bind: bone.global_bind.m,
+        })
+        .collect()
 }
 
 /// Why a system did not load.
@@ -2055,6 +2414,145 @@ line
     }
 
     #[test]
+    fn particles_animation_events_become_clip_effects() {
+        let ui_clip = json!({
+            "m_events": [
+                { "m_animEventClassName": "AE_CL_CREATE_PARTICLE_EFFECT", "m_flStartTime": { "m_flValue": 0.25 },
+                  "m_KV": { "name": "particles/x/event.vpcf", "attachment_type": "PATTACH_POINT_FOLLOW", "attachment_point": "head",
+                            "attachment_type_cp1": "point_follow", "attachment_point_cp1": "hand_R", "stop_on_seq_change": true } },
+                { "m_animEventClassName": "AE_CL_STOP_PARTICLE_EFFECT", "m_flStartTime": { "m_flValue": 0.75 },
+                  "m_KV": { "name": "particles/x/event.vpcf", "stop_instantly": true } },
+                { "m_animEventClassName": "AE_CL_STOP_PARTICLE_EFFECT", "m_flStartTime": { "m_flValue": 0.1 },
+                  "m_KV": { "name": "particles/x/event.vpcf", "play_endcap": true } },
+                { "m_animEventClassName": "AE_CL_CREATE_PARTICLE_EFFECT_CFG", "m_flStartTime": { "m_flValue": 0.5 },
+                  "m_KV": { "name": "particles/x/cfg.vpcf", "config": "preview", "attachment_point": "ignored" } },
+                { "m_animEventClassName": "AE_CL_CREATE_PARTICLE_EFFECT", "m_flStartTime": { "m_flValue": 0.0 },
+                  "m_KV": { "name": "particles/x/origin.vpcf" } },
+                { "m_animEventClassName": "AE_CL_PLAYSOUND", "m_flStartTime": { "m_flValue": 0.2 }, "m_KV": { "name": "x" } },
+                { "m_animEventClassName": "AE_CL_CREATE_PARTICLE_EFFECT", "m_flStartTime": { "m_flValue": 0.3 },
+                  "m_KV": { "name": "../escape.vpcf" } }
+            ]
+        });
+        let legacy = vec![json!({
+            "m_name": "Idle_Legacy",
+            "m_eventArray": [
+                { "m_sEventName": "AE_CL_CREATE_PARTICLE_EFFECT", "m_flCycle": 0.4,
+                  "m_EventData": { "name": "particles/x/legacy.vpcf", "attachment_type": "absorigin" } },
+                { "m_sEventName": "AE_CL_STOP_PARTICLE_EFFECT", "m_flCycle": 0.9,
+                  "m_EventData": { "name": "particles/x/legacy.vpcf", "stop_immediately": true, "play_endcap": true } }
+            ]
+        })];
+        let clips = vec![
+            EventClip { name: "hero_shop".into(), file: Some("models/x/clips/ui_shop.vnmclip_c".into()) },
+            EventClip { name: "idle_legacy".into(), file: None },
+            EventClip { name: "missing".into(), file: Some("models/x/clips/gone.vnmclip_c".into()) },
+        ];
+        let decode = |path: &str| (path == "models/x/clips/ui_shop.vnmclip_c").then(|| ui_clip.clone());
+        let mut found = Effects::default();
+        let mut issues = Vec::new();
+        animation_event_effects(&clips, &decode, &legacy, &mut found, &mut issues);
+        let systems: Vec<&str> = found.effects.iter().map(|e| e.system.as_str()).collect();
+        assert_eq!(systems, ["particles/x/event.vpcf", "particles/x/cfg.vpcf", "particles/x/origin.vpcf", "particles/x/legacy.vpcf"]);
+        assert!(found.issues.iter().any(|i| i.starts_with("invalidSystem:")));
+        assert!(found.effects.iter().all(|e| e.source == "anim-event" && !e.start_active && e.id.starts_with("anim_")));
+
+        let event = &found.effects[0];
+        let clip = event.clip.as_ref().unwrap();
+        assert_eq!(clip.name, "hero_shop");
+        assert_eq!(clip.start, 0.25);
+        // The stop at 0.1 comes before the start: not this effect's.
+        assert_eq!(clip.stops, vec![ClipStop { time: 0.75, immediately: true, end_cap: false }]);
+        assert!(clip.stop_on_clip_change);
+        assert_eq!(event.attachment, Some(EffectAttachment { kind: "point_follow".into(), point: "head".into(), offset: [0.0; 3] }));
+        assert_eq!(event.attachment_cp1.as_ref().map(|a| a.point.as_str()), Some("hand_R"));
+        assert_eq!(event.configuration, None);
+
+        // A _CFG event places by its configuration, never an attachment.
+        let cfg = &found.effects[1];
+        assert_eq!(cfg.configuration.as_deref(), Some("preview"));
+        assert!(cfg.attachment.is_none() && cfg.attachment_cp1.is_none());
+        assert!(!cfg.clip.as_ref().unwrap().stop_on_clip_change);
+
+        // No attachment type means the model origin, following.
+        assert_eq!(found.effects[2].attachment.as_ref().map(|a| a.kind.as_str()), Some("absorigin_follow"));
+
+        let legacy = &found.effects[3];
+        assert_eq!(legacy.attachment.as_ref().map(|a| a.kind.as_str()), Some("absorigin"));
+        let clip = legacy.clip.as_ref().unwrap();
+        assert_eq!((clip.name.as_str(), clip.start), ("idle_legacy", 0.4));
+        assert_eq!(clip.stops, vec![ClipStop { time: 0.9, immediately: true, end_cap: true }]);
+
+        // The bundle JSON carries `clip` for events and leaves it out otherwise.
+        let value = serde_json::to_value(event).unwrap();
+        assert_eq!(
+            value["clip"],
+            json!({ "name": "hero_shop", "start": 0.25, "stops": [{ "time": 0.75, "immediately": true, "endCap": false }], "stopOnClipChange": true })
+        );
+        let mut plain = found.effects[0].clone();
+        plain.clip = None;
+        assert!(serde_json::to_value(&plain).unwrap().get("clip").is_none());
+
+        // Dedupe: the same system, clip and start once; another start is its own effect.
+        let first = event.clip.clone();
+        found.push("particles/x/event.vpcf", "anim-event", None, None, None, false, first.clone());
+        assert_eq!(found.effects.len(), 4);
+        let mut later = first.unwrap();
+        later.start = 0.6;
+        found.push("particles/x/event.vpcf", "anim-event", None, None, None, false, Some(later));
+        assert_eq!(found.effects.len(), 5);
+    }
+
+    #[test]
+    fn particles_snapshots_named_by_systems_are_checked() {
+        let system = |snapshot: &str| BundleSystem { data: json!({ "m_hSnapshot": snapshot }), format: None };
+        let systems = BTreeMap::from([
+            ("particles/a.vpcf".to_string(), system("particles/x/ok.vsnap")),
+            ("particles/b.vpcf".to_string(), system("particles/x/ok.vsnap")),
+            ("particles/c.vpcf".to_string(), system("../escape.vsnap")),
+            ("particles/d.vpcf".to_string(), system("particles/x/big.vsnap")),
+            ("particles/e.vpcf".to_string(), system("particles/x/gone.vsnap")),
+        ]);
+        let reads = std::cell::RefCell::new(Vec::new());
+        let mut issues = Issues::default();
+        let found = system_snapshots(&systems, &mut issues, |path| {
+            reads.borrow_mut().push(path.to_string());
+            match path {
+                "particles/x/ok.vsnap_c" => Some(vec![0; 16]),
+                "particles/x/big.vsnap_c" => Some(vec![0; MAX_SNAPSHOT_BYTES + 1]),
+                _ => None,
+            }
+        });
+        assert!(found.is_empty());
+        // Each path is read once; a bad path never.
+        assert_eq!(reads.borrow().len(), 3);
+        assert_eq!(
+            issues.list,
+            [
+                "unreadable:particles/x/ok.vsnap",
+                "invalidSnapshot:particles/c.vpcf",
+                "snapshotTooLarge:particles/x/big.vsnap",
+                "missing:particles/x/gone.vsnap"
+            ]
+        );
+    }
+
+    #[test]
+    fn particles_animation_event_clip_cap() {
+        let clips: Vec<EventClip> = (0..MAX_EVENT_CLIPS + 3)
+            .map(|k| EventClip { name: format!("c{k}"), file: Some(format!("models/x/clips/c{k}.vnmclip_c")) })
+            .collect();
+        let read = std::cell::Cell::new(0);
+        let decode = |_: &str| {
+            read.set(read.get() + 1);
+            None
+        };
+        let mut issues = Vec::new();
+        animation_event_effects(&clips, &decode, &[], &mut Effects::default(), &mut issues);
+        assert_eq!(read.get(), MAX_EVENT_CLIPS);
+        assert_eq!(issues, [format!("limit:eventClips:{MAX_EVENT_CLIPS}/{}", MAX_EVENT_CLIPS + 3)]);
+    }
+
+    #[test]
     fn particles_bundle_json_matches_the_contract() {
         let bundle = Bundle {
             schema: SCHEMA,
@@ -2118,8 +2616,11 @@ line
                 }],
                 start_active: true,
                 seed: 12345,
+                clip: None,
             }],
             issues: vec!["limit:systems".into()],
+            bones: Vec::new(),
+            snapshots: BTreeMap::new(),
         };
         let value = serde_json::to_value(&bundle).unwrap();
         let keys = |value: &Json| {

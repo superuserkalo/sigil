@@ -908,6 +908,7 @@ fn build_hero(
     let mut animations = Vec::new();
     let mut metas = Vec::new();
     let mut kept_choices = Vec::new();
+    let mut event_clips = Vec::new();
     for (done, choice) in choices.iter().enumerate() {
         progress.step(STAGE_CLIP_FILES, STAGE_CLIPS, done, choices.len());
         check(cancel)?;
@@ -956,6 +957,11 @@ fn build_hero(
         } else {
             0.0
         };
+        // Its animation events, under the name the glb plays it by.
+        event_clips.push(super::particles::EventClip {
+            name: clip.name.clone(),
+            file: resource.clone(),
+        });
         metas.push(ClipMeta {
             name: clip.name.clone(),
             duration_seconds: duration,
@@ -1019,8 +1025,26 @@ fn build_hero(
     progress.at(STAGE_CLOTH);
 
     // The effects the hero carries, read through the same stack so a particle mod counts as
-    // used (and is not reported as changing nothing).
-    let particles = match super::particles::export_hero_particles(stack, &hero.codename, &entry, &bytes, out, cancel) {
+    // used (and is not reported as changing nothing). Animation events come from the clips
+    // the glb plays, then from the rest of the ui graph's (named by file stem, as Grimoire
+    // names them). The played ones go first so the clip cap never drops one.
+    for path in &graphs.ui {
+        if event_clips.iter().any(|clip| clip.file.as_deref() == Some(path.as_str())) {
+            continue;
+        }
+        let stem = path
+            .rsplit('/')
+            .next()
+            .and_then(|name| name.strip_suffix(".vnmclip_c"))
+            .unwrap_or_default();
+        if !stem.is_empty() {
+            event_clips.push(super::particles::EventClip {
+                name: stem.to_string(),
+                file: Some(path.clone()),
+            });
+        }
+    }
+    let particles = match super::particles::export_hero_particles(stack, &hero.codename, &entry, &bytes, &event_clips, out, cancel) {
         Ok(found) => found,
         Err(error) if super::is_cancelled(&error) => return Err(error),
         Err(error) => {

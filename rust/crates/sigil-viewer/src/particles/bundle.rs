@@ -161,6 +161,28 @@ pub struct Effect {
     pub control_points: Vec<EffectCp>,
     pub start_active: bool,
     pub seed: Option<u32>,
+    /// Animation-event effects only: when the playing clip starts and stops this one.
+    pub clip: Option<EffectClip>,
+}
+
+/// An `AE_CL_STOP_PARTICLE_EFFECT` of an animation-event effect's clip.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ClipStop {
+    /// Normalized clip time, 0 to 1.
+    pub time: f32,
+    /// The particles go at once.
+    pub immediately: bool,
+    pub end_cap: bool,
+}
+
+/// The clip (as the glb names it) and normalized event times of an animation-event effect.
+#[derive(Clone, Debug, PartialEq)]
+pub struct EffectClip {
+    pub name: String,
+    pub start: f32,
+    pub stops: Vec<ClipStop>,
+    /// A clip change stops the effect.
+    pub stop_on_clip_change: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -177,6 +199,10 @@ pub struct Bundle {
     pub attachments: Vec<Attachment>,
     pub effects: Vec<Effect>,
     pub issues: Vec<String>,
+    /// The hero model's bones: name and Source model-space bind pose.
+    pub bones: Vec<(String, Mat4)>,
+    /// Decoded snapshots by `particles/x/y.vsnap` path (lowercase).
+    pub snapshots: HashMap<String, std::sync::Arc<super::snapshot::Snapshot>>,
 }
 
 fn mat_of(v: &Value) -> Option<Mat4> {
@@ -284,9 +310,31 @@ impl Bundle {
                     .collect(),
                 start_active: kv::b(e, "startActive", true),
                 seed: kv::get(e, "seed").and_then(kv::number).map(|n| n as i64 as u32),
+                clip: kv::get(e, "clip").filter(|c| c.is_object()).and_then(|c| {
+                    Some(EffectClip {
+                        name: kv::s(c, "name")?.to_string(),
+                        start: kv::f(c, "start", 0.0),
+                        stops: kv::array(c, "stops")
+                            .iter()
+                            .map(|s| ClipStop { time: kv::f(s, "time", 0.0), immediately: kv::b(s, "immediately", false), end_cap: kv::b(s, "endCap", false) })
+                            .collect(),
+                        stop_on_clip_change: kv::b(c, "stopOnClipChange", false),
+                    })
+                }),
             });
         }
         b.issues.extend(kv::array(json, "issues").iter().filter_map(|i| i.as_str().map(str::to_string)));
+        for bone in kv::array(json, "bones") {
+            if let (Some(name), Some(bind)) = (kv::s(bone, "name"), kv::get(bone, "bind").and_then(mat_of)) {
+                b.bones.push((name.to_string(), bind));
+            }
+        }
+        let names: Vec<String> = b.bones.iter().map(|(n, _)| n.clone()).collect();
+        if let Some(snapshots) = kv::get(json, "snapshots").and_then(Value::as_object) {
+            for (path, s) in snapshots {
+                b.snapshots.insert(path.to_ascii_lowercase(), std::sync::Arc::new(super::snapshot::Snapshot::parse(s, &names)));
+            }
+        }
         Ok(b)
     }
 

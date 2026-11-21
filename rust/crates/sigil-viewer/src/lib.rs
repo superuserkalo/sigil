@@ -1082,6 +1082,10 @@ impl Viewer {
             let back = skeleton.inverse();
             let bone = |name: &str| hero.model.nodes.iter().position(|n| n.name == name).and_then(|i| hero.globals.get(i)).map(|g| back.mul(g));
             let attach = |name: &str| bundle.attachment_frame(name, &bone);
+            // The playing clip drives the animation-event effects.
+            let clip = hero.clip.and_then(|c| hero.model.clips.get(c)).map(|c| (c.name.as_str(), if c.duration > 0.0 { self.playback.time / c.duration } else { 0.0 }));
+            pg.set_clip(clip);
+            pg.set_fov(self.camera.fov_y);
             for _ in 0..steps {
                 pg.step(step, &to_world, &attach, camera);
             }

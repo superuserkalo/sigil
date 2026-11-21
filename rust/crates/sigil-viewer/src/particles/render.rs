@@ -15,14 +15,19 @@ use super::smath::{euler_axes, rotate_about, safe_normalize, sat, smoothstep, sr
 use super::state::State;
 use crate::math::{Mat4, Vec3, add, cross, dot, length, normalize, scale, sub};
 
-/// One card on the GPU (seven `vec4`s, world space).
+mod ropes;
+
+/// One card on the GPU (seven `vec4`s, world space). Mode 3 is a rope's strip quad instead:
+/// `pos_radius` the start point and half-width, `axis_u.xyz` its width axis, `axis_v` the end
+/// point and half-width, `misc.xyz` the end's width axis, `color` the start's colour and
+/// `uv_b` the end's, `uv_a` (u at the -width side, start v, u at the +width side, end v).
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct Instance {
     /// Centre, half-width along `axis_u`.
     pub pos_radius: [f32; 4],
     /// Unit axis; `w` is the basis mode: 0 camera facing, 1 camera facing about Source up,
-    /// 2 the axes given.
+    /// 2 the axes given, 3 a rope strip quad.
     pub axis_u: [f32; 4],
     /// Unit axis; `w` is the roll in radians for the camera modes.
     pub axis_v: [f32; 4],
@@ -94,6 +99,7 @@ pub struct Renderer {
     pub depth_test: bool,
     pub depth_reverse: bool,
     trail: Option<Trail>,
+    rope: Option<ropes::Rope>,
     radius_scale: NumIn,
     alpha_scale: NumIn,
     roll_scale: NumIn,
@@ -133,12 +139,16 @@ pub struct View {
     pub to_world: Mat4,
     /// World units per Source unit.
     pub world_scale: f32,
+    /// The projection's vertical scale, `1 / tan(fov_y / 2)` (VRF's `ProjectionM22`), for a
+    /// rope's screen coverage.
+    pub projection: f32,
 }
 
 impl Renderer {
     pub fn parse(class: &str, v: &Value, behavior: i32, cx: &mut ParseCx) -> Option<Renderer> {
+        let rope = (class == "C_OP_RenderRopes").then(|| ropes::Rope::parse(v, cx));
         let trail = match class {
-            "C_OP_RenderSprites" => None,
+            "C_OP_RenderSprites" | "C_OP_RenderRopes" => None,
             "C_OP_RenderTrails" => Some(Trail {
                 length_scale: kv::f(v, "m_flLengthScale", 1.0),
                 fade_in: kv::f(v, "m_flLengthFadeInTime", 0.0),
@@ -152,7 +162,7 @@ impl Renderer {
             _ => return None,
         };
         let num = |k: &str, d: f32, cx: &mut ParseCx| NumIn::parse_or(v, k, d, cx);
-        let default_texture = if trail.is_some() { DEFAULT_TRAIL } else { DEFAULT_SPRITE };
+        let default_texture = if trail.is_some() || rope.is_some() { DEFAULT_TRAIL } else { DEFAULT_SPRITE };
         let mut texture = None;
         let mut layers = 0;
         for layer in kv::array(v, "m_vecTexturesInput") {
@@ -222,6 +232,7 @@ impl Renderer {
             gamma: kv::b(v, "m_bGammaCorrectVertexColors", true),
             center: [kv::f(v, "m_flCenterXOffset", 0.0), kv::f(v, "m_flCenterYOffset", 0.0)],
             trail,
+            rope,
         })
     }
 
@@ -239,7 +250,11 @@ impl Renderer {
 
     /// Appends this renderer's cards for `p` to `out`. `order` and `dist` are reused buffers.
     #[allow(clippy::too_many_arguments)]
-    pub fn build(&self, st: &mut State, p: &Particles, view: &View, sheet: Option<&Sheet>, out: &mut Vec<Instance>, order: &mut Vec<u32>, dist: &mut Vec<f32>) {
+    pub fn build(&mut self, st: &mut State, p: &Particles, view: &View, sheet: Option<&Sheet>, out: &mut Vec<Instance>, order: &mut Vec<u32>, dist: &mut Vec<f32>) {
+        if self.rope.is_some() {
+            self.build_rope(st, p, view, sheet, out, order);
+            return;
+        }
         let n = p.len;
         if n == 0 {
             return;

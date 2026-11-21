@@ -34,6 +34,7 @@ mod hero;
 mod hideout;
 mod kv;
 mod particles;
+mod snapshot;
 pub mod space;
 mod stack;
 mod staged;
@@ -67,7 +68,7 @@ pub use stack::{Source, SourceKind, SourceUsage, name_sources, sources};
 
 /// Bumped whenever the files this module writes change shape or content, so old cache entries
 /// are never served to a newer renderer.
-pub const PIPELINE_VERSION: &str = "sigil-viewer-3";
+pub const PIPELINE_VERSION: &str = "sigil-viewer-4";
 
 /// The vpkmerge revision `Cargo.toml` pins. Part of every cache key: a new exporter re-exports.
 pub const VPKMERGE_REV: &str = "df4158673f4e700b9dda4db76ed9f193440b24ba";

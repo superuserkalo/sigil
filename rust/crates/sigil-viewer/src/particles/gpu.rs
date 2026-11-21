@@ -58,6 +58,7 @@ pub struct ParticleGpu {
     device: wgpu::Device,
     sun: [f32; 3],
     up_world: Vec3,
+    projection: f32,
     _textures: Vec<wgpu::Texture>,
 }
 
@@ -290,6 +291,7 @@ impl ParticleGpu {
             device: device.clone(),
             sun: VIEWER_SUN,
             up_world: [0.0, 1.0, 0.0],
+            projection: 1.0 / (20f32.to_radians()).tan(),
             _textures: textures,
         }
     }
@@ -310,6 +312,27 @@ impl ParticleGpu {
         self.sun = rgb;
     }
 
+    /// The clip the viewer plays, as the glb names it, and how far through it (time over
+    /// duration, 0 to 1), or none: starts and stops the animation-event effects as it passes
+    /// their events. Call once a frame before [`ParticleGpu::step`].
+    pub fn set_clip(&mut self, clip: Option<(&str, f32)>) {
+        self.effects.set_clip(clip);
+    }
+
+    /// The camera's vertical field of view in radians (a rope's tessellation follows how
+    /// much of the view it fills).
+    pub fn set_fov(&mut self, fov_y: f32) {
+        let t = (fov_y * 0.5).tan();
+        if t.is_finite() && t > 1e-6 {
+            self.projection = 1.0 / t;
+        }
+    }
+
+    /// Effect instances playing now (an animation-event effect counts only while fired).
+    pub fn active_effects(&self) -> usize {
+        self.effects.active_count()
+    }
+
     /// Simulates by `dt`. `to_world` maps Source space to the glTF world (the hero's placement
     /// times `source_to_gltf`, or the scene's); `attachment` gives an attachment's (or bone's)
     /// Source-space frame this frame; `camera` is the camera position in world space.
@@ -320,7 +343,7 @@ impl ParticleGpu {
         let up = to_world.vector([0.0, 0.0, 1.0]);
         let l = length(up).max(1e-12);
         self.up_world = [up[0] / l, up[1] / l, up[2] / l];
-        let view = View { camera: cam_src, to_world: *to_world, world_scale: to_world.scale_factor() };
+        let view = View { camera: cam_src, to_world: *to_world, world_scale: to_world.scale_factor(), projection: self.projection };
         self.effects.build(&view, &self.sheets, &mut self.instances, &mut self.ranges, &mut self.shading);
         self.params.clear();
         for (k, d) in self.draws.iter_mut().enumerate() {

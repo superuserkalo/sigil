@@ -68,6 +68,12 @@ pub struct State {
     pub count: usize,
     pub emission_stopped: bool,
     pub camera: Vec3,
+    /// The snapshot bound to each control point (a system's `m_hSnapshot`, shared down).
+    pub snapshots: Vec<Option<std::sync::Arc<super::snapshot::Snapshot>>>,
+    /// Control point 0's model bones as `posed * inverse bind` (Source model space), with the
+    /// system age they were set at; and the palette before it, for bone velocity.
+    pub skin: Option<(std::sync::Arc<Vec<crate::math::Mat4>>, f32)>,
+    pub skin_prev: Option<(std::sync::Arc<Vec<crate::math::Mat4>>, f32)>,
 }
 
 impl State {
@@ -88,6 +94,9 @@ impl State {
             count: 0,
             emission_stopped: false,
             camera: [0.0; 3],
+            snapshots: vec![None; CONTROL_POINTS],
+            skin: None,
+            skin_prev: None,
         }
     }
 
