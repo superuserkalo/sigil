@@ -105,7 +105,10 @@ for redistribution.
   - Hideout: the SH2 lightmap, probe volumes, light units and cookies, the volumetric fog, the
     map post (tone curve, bloom, colour correction) from `source2Lightmap.ts`,
     `source2ProbeVolume.ts`, `source2DynamicLights.ts`, `source2LightCookies.ts`,
-    `source2Atmosphere.ts`, `sourcePostProcess.ts` and `hideoutScene.ts` / `hideoutAtmosphere.ts`.
+    `source2Atmosphere.ts`, `sourcePostProcess.ts` and `hideoutScene.ts` / `hideoutAtmosphere.ts`;
+    the fog lights' shadow atlas lookup and the half resolution fog march and depth-aware
+    composite from `source2Atmosphere.ts` (2026-11-21); the distant-instance culling
+    (`rust/crates/sigil-viewer/src/clearance.rs`) from `hideoutClearance.ts` and `HideoutScene.tsx`.
   - Animation: the UI AnimGraph2 showcase reader, metadata rules, clip labels and groups from
     `heroRiggedClips.ts`, `heroAnimationMetadata.ts`, `heroAnimationCatalog.ts` and
     `heroViewerPlayback.ts`.

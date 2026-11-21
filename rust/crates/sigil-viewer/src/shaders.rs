@@ -8,7 +8,7 @@ use std::borrow::Cow;
 const COMMON: &str = include_str!("shaders/common.wgsl");
 
 /// The hero and Hideout scene module (`viewer main`, `viewer outline`, `viewer rim depth`,
-/// `viewer shadow`).
+/// `viewer shadow`, `viewer fog`).
 pub fn scene() -> Cow<'static, str> {
     Cow::Owned(format!("{COMMON}\n{}", include_str!("shaders/scene.wgsl")))
 }
@@ -35,7 +35,7 @@ pub type Module<'a> = (&'a str, Cow<'a, str>, Vec<(&'a str, Option<&'a str>)>);
 /// Every module the viewer compiles.
 pub fn modules() -> Vec<Module<'static>> {
     vec![
-        ("viewer scene", scene(), vec![("vs_main", Some("fs_main")), ("vs_outline", Some("fs_outline")), ("vs_depth", None)]),
+        ("viewer scene", scene(), vec![("vs_main", Some("fs_main")), ("vs_outline", Some("fs_outline")), ("vs_depth", None), ("vs_fog", Some("fs_fog"))]),
         ("viewer floor", floor(), vec![("vs_floor", Some("fs_floor"))]),
         ("viewer post", post(), vec![("vs_full", Some("fs_post")), ("vs_full", Some("fs_threshold")), ("vs_full", Some("fs_down")), ("vs_full", Some("fs_up"))]),
         ("particles", particles(), vec![("vs_sprite", Some("fs_sprite"))]),

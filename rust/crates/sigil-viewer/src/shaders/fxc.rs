@@ -194,7 +194,7 @@ fn problems(stages: &[Stage]) -> Vec<String> {
 #[test]
 fn every_viewer_shader_avoids_what_fxc_rejects() {
     let stages = translate(super::modules());
-    assert_eq!(stages.len(), 14, "a module or entry point went missing");
+    assert_eq!(stages.len(), 16, "a module or entry point went missing");
     let found = problems(&stages);
     assert!(found.is_empty(), "the HLSL wgpu hands FXC on Windows would not compile:\n{}", found.join("\n"));
 }

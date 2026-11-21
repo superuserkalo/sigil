@@ -30,6 +30,9 @@ struct Frame {
     // The shadow-casting light's view projection (world to its clip space).
     shadow_matrix: mat4x4<f32>,
     shadow: vec4<f32>,       // on, light index, texel size (uv), normal offset (world units)
+    // Clip to world, for the half resolution fog pass.
+    inv_view_proj: mat4x4<f32>,
+    fog_half: vec4<f32>,     // half resolution fog on
 };
 
 struct Material {
@@ -106,6 +109,8 @@ struct FogVolume {
 struct LightEx {
     a: vec4<f32>,        // Source units, skirt, cookie layer (< 0 none), fog strength
     b: vec4<f32>,        // fog only, baked shadow channel (< 0 none)
+    c: vec4<f32>,        // fog shadow tiles (0, 1 barn, 6 omni), first rect, shear xy
+    d: vec4<f32>,        // size_params xyz (Source units)
     x: vec4<f32>,        // the light's Source forward, left, up in glTF space
     y: vec4<f32>,
     z: vec4<f32>,
@@ -122,6 +127,8 @@ struct HideoutUniform {
     fog_fade: vec4<f32>,        // fade in start, end, volume count, steps
     fog_volumes: array<FogVolume, 16>,
     lights: array<LightEx, 8>,
+    fog_shadow_atlas: vec4<f32>, // width, height, on
+    fog_shadow_rects: array<vec4<f32>, 48>, // w, h, x, y in atlas uv, six per light slot
 };
 
 @group(0) @binding(6) var<uniform> hideout: HideoutUniform;
@@ -132,6 +139,8 @@ struct HideoutUniform {
 @group(0) @binding(11) var t_probe_shadows: texture_3d<f32>;
 @group(0) @binding(12) var t_fog: texture_3d<f32>;
 @group(0) @binding(13) var t_cookies: texture_2d<f32>;
+// The fog lights' precomputed shadows: R16 depths, 1 - ndc.z of each light's own frustum.
+@group(0) @binding(14) var t_fog_shadows: texture_2d<u32>;
 
 // glTF world directions to Source's: Source x is glTF z, y is x, z is y.
 fn to_source(d: vec3<f32>) -> vec3<f32> {

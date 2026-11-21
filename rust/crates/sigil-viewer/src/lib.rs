@@ -13,6 +13,7 @@
 
 pub mod camera;
 pub mod capture;
+pub mod clearance;
 pub mod cloth;
 pub mod fixture;
 pub mod fixture_room;
@@ -96,11 +97,14 @@ pub struct Look {
     pub cloth: bool,
     /// Play the hero's and the map's particle effects (Grimoire's Particles switch).
     pub particles: bool,
+    /// March the Hideout's volumetric fog at half resolution and upsample it by depth
+    /// (Grimoire's default); off marches it per surface fragment.
+    pub half_res_fog: bool,
 }
 
 impl Default for Look {
     fn default() -> Self {
-        Look { transparent: false, bloom: true, floor: true, shadows: true, backdrop: Backdrop::Studio, lighting: Lighting::Studio, cloth: true, particles: true }
+        Look { transparent: false, bloom: true, floor: true, shadows: true, backdrop: Backdrop::Studio, lighting: Lighting::Studio, cloth: true, particles: true, half_res_fog: true }
     }
 }
 
@@ -686,6 +690,8 @@ pub struct SceneReport {
     pub placements: usize,
     pub triangles: u64,
     pub cancelled: bool,
+    /// Placements past 65 m from the spawn the room hides (`clearance`), left out.
+    pub culled: usize,
 }
 
 struct GpuCube {
@@ -923,6 +929,8 @@ impl Viewer {
         }
         progress(LoadProgress { stage: LoadStage::Uploading, done: of, of });
         report.files = meshes.len();
+        let anchor = desc.hero.as_ref().map(|h| h.transform).or(desc.hero_anchor).map(|m| m.point([0.0; 3]));
+        report.culled = anchor.map_or(0, |a| self.cull_distant(a));
         report.placements = self.env.len();
         self.env_extent = self
             .env
@@ -941,6 +949,30 @@ impl Viewer {
         }
         self.home = None;
         report
+    }
+
+    /// Grimoire's distant-instance culling (`clearance`): props more than 65 m from the spawn
+    /// stay only when the room around the hero opens toward them. Returns how many went.
+    fn cull_distant(&mut self, anchor: Vec3) -> usize {
+        let near = |s: &Slot| clearance::box_distance(&s.bounds(), anchor) <= clearance::NEAR;
+        if self.env.iter().all(near) {
+            return 0;
+        }
+        // From the hero's chest, so the floor under its feet does not close every view down.
+        let origin = math::add(anchor, [0.0, 1.0, 0.0]);
+        // The palettes are first written when a frame poses the props; the views need them now.
+        for s in self.env.iter().filter(|s| near(s)) {
+            s.gpu.write_palette(&self.gpu, &s.palette);
+        }
+        let room: Vec<&gpu::GpuModel> = self.env.iter().filter(|s| near(s)).map(|s| &s.gpu).collect();
+        let depths = gpu::clearance_depths(&self.gpu, &self.pipes, &bytemuck::Zeroable::zeroed(), origin, &room);
+        if depths.len() != (clearance::EDGE * clearance::EDGE * 6) as usize {
+            return 0;
+        }
+        let seen = clearance::Clearance::from_depths(origin, &depths);
+        let before = self.env.len();
+        self.env.retain(|s| near(s) || seen.sees(&s.bounds()));
+        before - self.env.len()
     }
 
     pub fn clear_scene(&mut self) {
@@ -1263,6 +1295,9 @@ impl Viewer {
                 Some((i, _)) => [1.0, i as f32, 1.0 / gpu::SHADOW_SIZE as f32, (hero_radius * 2.0 / gpu::SHADOW_SIZE as f32 * 1.5).max(0.002)],
                 None => [0.0; 4],
             },
+            inv_view_proj: proj.mul(&view).inverse().to_cols_array(),
+            // `render_frame` turns it on when it marches the fog at half resolution.
+            fog_half: [0.0; 4],
         };
         let (mut post, bloom_weights) = match scene {
             Some(s) => map_post(exposure, &s.post),
@@ -1389,7 +1424,7 @@ impl Viewer {
             (Compare::Split(_), true) => [Some(&after), Some(&before_list)],
             _ => [Some(&after), None],
         };
-        let inputs = FrameInputs { frame, post, floor, layers, read: !self.skip_read, env_cube: self.reflection.as_ref().map(|c| &c.view), sky_cube: self.sky.as_ref().map(|c| &c.view), backdrop: self.backdrop_image.as_ref().map(|b| &b.0), shadow: shadow.map(|m| m.to_cols_array()), hideout: self.hideout.as_ref().zip(baked), bloom_weights, shadow_hero_only, particles: &particle_list };
+        let inputs = FrameInputs { frame, post, floor, layers, read: !self.skip_read, env_cube: self.reflection.as_ref().map(|c| &c.view), sky_cube: self.sky.as_ref().map(|c| &c.view), backdrop: self.backdrop_image.as_ref().map(|b| &b.0), shadow: shadow.map(|m| m.to_cols_array()), hideout: self.hideout.as_ref().zip(baked), half_res_fog: self.look.half_res_fog, bloom_weights, shadow_hero_only, particles: &particle_list };
         let targets = self.targets.as_ref().expect("targets");
         let mut out = std::mem::take(&mut self.frame);
         self.last = gpu::render_frame(&self.gpu, &self.pipes, &self.res, targets, &inputs, &mut out);

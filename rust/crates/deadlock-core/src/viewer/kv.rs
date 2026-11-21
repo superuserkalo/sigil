@@ -61,7 +61,27 @@ pub(crate) fn flag(value: Option<&Json>) -> Option<bool> {
 
 /// Three numbers from an array or a space separated string.
 pub(crate) fn vec3(value: Option<&Json>) -> Option<[f64; 3]> {
-    let parts: Vec<f64> = match value? {
+    let parts = numbers(value)?;
+    (parts.len() >= 3 && parts.iter().take(3).all(|part| part.is_finite()))
+        .then(|| [parts[0], parts[1], parts[2]])
+}
+
+/// Two numbers (`shear`), as an array or a space separated string.
+pub(crate) fn vec2(value: Option<&Json>) -> Option<[f64; 2]> {
+    let parts = numbers(value)?;
+    (parts.len() >= 2 && parts.iter().take(2).all(|part| part.is_finite()))
+        .then(|| [parts[0], parts[1]])
+}
+
+/// Four numbers, as an array or a space separated string (`precomputed_shadowmap_atlas_rect_0`).
+pub(crate) fn vec4(value: Option<&Json>) -> Option<[f64; 4]> {
+    let parts = numbers(value)?;
+    (parts.len() >= 4 && parts.iter().take(4).all(|part| part.is_finite()))
+        .then(|| [parts[0], parts[1], parts[2], parts[3]])
+}
+
+fn numbers(value: Option<&Json>) -> Option<Vec<f64>> {
+    Some(match value? {
         Json::Array(items) => items
             .iter()
             .map(|item| num(Some(item)))
@@ -71,9 +91,7 @@ pub(crate) fn vec3(value: Option<&Json>) -> Option<[f64; 3]> {
             .map(|part| part.parse::<f64>().ok())
             .collect::<Option<Vec<_>>>()?,
         _ => return None,
-    };
-    (parts.len() >= 3 && parts.iter().take(3).all(|part| part.is_finite()))
-        .then(|| [parts[0], parts[1], parts[2]])
+    })
 }
 
 pub(crate) fn text(value: Option<&Json>) -> Option<&str> {

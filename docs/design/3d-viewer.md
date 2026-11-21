@@ -220,13 +220,15 @@ embedded clips no file vouches for.
       "range": 12.7, "cone": [20, 45], "classname": "light_barn", "realtime": true,
       "temperature": null, "shadowChannel": 1, "fogStrength": null,
       "brightness": 1.0, "skirt": 0.1, "skirtNear": 0.0, "fogOnly": false,
-      "cookie": "cookies/fan_cookie_1a2b3c4d.png", "basis": [[x, y, z], [x, y, z], [x, y, z]] }
+      "cookie": "cookies/fan_cookie_1a2b3c4d.png", "basis": [[x, y, z], [x, y, z], [x, y, z]],
+      "fogShadow": { "tiles": [[w, h, x, y]], "size": [x, y, z], "shear": [x, y] } }
   ],
   "fog": { "color": [r, g, b], "strength": 1.0, "indirectStrength": 1.0, "drawDistance": 60.0,
            "fadeIn": [0, 2], "transform": [16 floats], "min": [x, y, z], "max": [x, y, z],
            "irradiance": { "file": "fog/irradiance.vtv", "worldToLocal": [16 floats] },
            "volumes": [ { "shape": "box", "worldToLocal": [16 floats], "strength": 1.0, "falloff": 1.0,
-                          "indirectStrength": null, "tint": null } ] },
+                          "indirectStrength": null, "tint": null } ],
+           "shadows": "fog/shadows.vtv" },
   "sky": { "cubemap": ["sky/px.hdr", "sky/nx.hdr", "sky/py.hdr", "sky/ny.hdr", "sky/pz.hdr", "sky/nz.hdr"],
            "exposureBias": 0.0, "tint": [1, 1, 1], "position": null },
   "reflection": { "cubemap": ["reflection/px.hdr", "..."], "exposureBias": 0.0, "tint": [1, 1, 1], "position": [x, y, z] },
@@ -242,7 +244,7 @@ embedded clips no file vouches for.
   "spawn": { "position": [x, y, z], "yawDegrees": 90.0 },
   "sources": [ { "slot": null, "file": "maps/dl_hideout.vpk", "name": "Hideout", "kind": "map", "enabled": true, "used": 412 } ],
   "failures": [],
-  "omissions": ["fogShadows", "particles", "staticBundle"],
+  "omissions": ["particles", "staticBundle"],
   "pipeline": "sigil-viewer-1"
 }
 ```
@@ -263,6 +265,8 @@ embedded clips no file vouches for.
 | `exposure` | The master `post_processing_volume`'s fixed exposure (Grimoire's `fixedMapExposure`: exposure off gives `2^exposurecompensation`; equal min and max (linear, else log2) give `min * 2^exposurecompensation`). 1 when the map has no master volume. Left out when the exposure adapts, and `autoExposure` stays in `omissions`. |
 | `post` | The master volume's `.vpost`, or null when it has none or it fails to decode. `tonemap` is `m_toneMapParams` (`whitePoint` in stops, as stored), null unless `m_bHasTonemapParams`. `bloom` is `m_bloomParams` (`blendMode` `add`, `screen` or `blur`), null unless `m_bHasBloomParams`. `colorCorrection` is `m_colorCorrectionVolumeData` written raw: RGBA8, `dimension^3 * 4` bytes, x fastest, then y, then z; null when the dimension is 0 or 1. |
 | `fog` | The master `env_volumetric_fog_controller`: tint, strengths, distances in meters, and its box (placement plus local min and max in meters, glTF axes). Null when absent or disabled. |
+| `lights[].fogShadow` | A fog light's tiles in `fog.shadows` (Grimoire's `lightFogShadowTiles`): `precomputed_shadowmap_atlas_rect_0..5` as `[w, h, x, y]` in atlas uv, in order until the first missing one, kept only as one tile (barn) or six (omni faces forward, -up, up, left, -left, -forward); `size` is `size_params` and `shear` the entity's `shear`, Source units. Null without tiles, or when the atlas did not export. |
+| `fog.shadows` | The world's `m_lightMaps` entry `.../precomputed_shadowmap_atlas.vtex` as a VTV (R16, depth 1): per texel `1 - ndc.z` of the nearest surface in the light's own frustum. Null when no fog light has tiles or the atlas fails (it is then a failure and `fogShadows` stays in `omissions`). |
 | `fog.irradiance` | The controller's `fogirradiancevolume` as a VTV file, with `worldToLocal` over the controller's box. Null when the controller names none or it fails. |
 | `fog.volumes[]` | Enabled `env_volumetric_fog_volume` entities, at most 16 (`fogVolumeLimit` past that): `shape` `box` (0) or `sphere` (1), `strength` (`FogStrength`), `falloff` (`FalloffExponent`), `indirectStrength` and `tint` (0 to 1) only when their override flag is set. Shape 2 (height fog) is skipped and adds `heightFogVolumes`. |
 | `worldToLocal` | On probes, fog irradiance and fog volumes: column major, takes a glTF world point (meters) to the box's normalized `[0, 1]^3` (Grimoire's `(inverse(matrix) * p - min) / (max - min)` with the glTF to Source conversion folded in). The local axes are the entity's Source axes (x forward, y left, z up), not glTF axes, matching the atlas layout. |
@@ -276,7 +280,7 @@ embedded clips no file vouches for.
 | `hero` | Present in `scene-<hero key>.json`: the hero export's files, relative to the scene folder, and the same transform as `heroAnchor`. |
 | `variant` | The look of the room. A mod changes the room only when it ships a file the unmodded room read (`deps.json`) or anything under `maps/dl_hideout`, so with only hero skins installed the room is `original` while the hero is modded. |
 | `failures` | Resources that failed to export; their instances are left out. |
-| `omissions` | Parts of the game's scene not in this file, so the renderer does not guess. Always `particles` (map particles), `staticBundle` (Grimoire's merged meshopt bundle) and `fogShadows` (the precomputed R16 shadow atlas fog lights sample: decodable, but the file has no field for it yet). Others appear when something is missing or failed: `autoExposure`, `tonemap`, `colorCorrection`, `directionalLightmap`, `lightCookies`, `lightProbes`, `fogVolumes`, `fogIrradiance`, `multipleProbeAtlases`, `heightFogVolumes`, `fogVolumeLimit`, `entityAttachments`, `instanceStreams`, `animatedProps`, `playerSpawn`. |
+| `omissions` | Parts of the game's scene not in this file, so the renderer does not guess. Always `particles` (map particles) and `staticBundle` (Grimoire's merged meshopt bundle). Others appear when something is missing or failed: `autoExposure`, `tonemap`, `colorCorrection`, `directionalLightmap`, `lightCookies`, `lightProbes`, `fogVolumes`, `fogIrradiance`, `fogShadows`, `multipleProbeAtlases`, `heightFogVolumes`, `fogVolumeLimit`, `entityAttachments`, `instanceStreams`, `animatedProps`, `playerSpawn`. |
 
 Static props and world objects are baked into their starting pose (`ref` for world objects; the
 entity's `StartingAnim`, `IdleAnim` or `defaultanim` for props). Props that loop their starting
@@ -386,9 +390,7 @@ sequences of 1024 frames of 16 images (65,536 in all), textures at most 4096 x 4
 - Compiled `hidden`, `delta`, `requiresBase`, `transition` and `standalone` flags for embedded
   clips: the pinned vpkmerge does not report them, so only clip file metadata (additive, root
   motion) feeds the filter, and step 5 of the clip choice finds nothing yet.
-- Hideout fog shadow atlas (the R16 decode exists; the scene needs a field for the atlas and
-  each fog light's tiles), the meshopt static bundle, height fog volumes and Grimoire's
-  distant-instance culling (its room clearance cube). Each is listed in `omissions` or below.
+- The Hideout's meshopt static bundle and height fog volumes. Each is listed in `omissions`.
 - Particle animation-event effects (`AE_CL_CREATE_PARTICLE_EFFECT` in the played clips),
   snapshots, particle models and ropes; material groups and skins per hero form; WIP heroes
   whose pose lives only in a loose NM pose clip.
@@ -516,8 +518,19 @@ let png = v.capture_png(width, height)?;
   baked shadow mask squared for point and spot lights; the map's fixed exposure, tone curve,
   bloom (VRF threshold window, per-level weights and tints by blend constant, add, screen, blur)
   and colour correction volume (indexed by the display-encoded colour); the volumetric fog
-  marched per surface fragment through the fog volumes (16 steps, 0.01 per inch, the irradiance
-  volume and the fog lights). The sky is left clear of fog, as in Grimoire.
+  marched through the fog volumes (32 midpoint steps, 0.01 per inch, the irradiance volume and
+  the fog lights, each shadowed by its tiles in the precomputed shadow atlas: a 2x2 compare of
+  the stored `1 - ndc.z` in the barn's frustum or the omni's cube face). As Grimoire, the march
+  runs at half resolution (`Look::half_res_fog`, on): the opaque depth drawn at half size, one
+  march per block to it, and each opaque surface blends the four nearest blocks bilinearly,
+  dropping blocks whose depth is more than 5 % off its own (the closest block when none is near).
+  Blended surfaces march per fragment. The sky is left clear of fog, as in Grimoire.
+- Distant props (Grimoire's room clearance, `sigil_viewer::clearance`): placements whose bounds
+  lie over 65 m from the spawn are kept only when the room opens toward them. Once per scene the
+  near room's opaque surfaces are drawn depth only into six 32 x 32 views from a metre above the
+  spawn; a far prop stays when a point of a 5 x 5 x 5 grid over its box is nearer than the free
+  distance in its direction (99 %) or looks out through an opening (the 1000 m reach).
+  `SceneReport::culled` counts what went.
 - Cloth (`sigil_viewer::cloth`, Grimoire's solver): the hero's `<codename>.cloth.json` stepped at
   1/120 s on the clip's own clock (at most 12 substeps, 8 ms), reset on a clip change or seek.
 - Particles (`sigil_viewer::particles`, a subset of Grimoire's port of VRF's): the hero's bundle
@@ -529,8 +542,7 @@ let png = v.capture_png(width, height)?;
   Deadlock Mod Manager's studio gradient, Midtown dusk lighting, bloom, shadows, cloth and
   particles switches; `auto_rotate` turns the hero at 0.25 rad/s (Grimoire's turntable).
 
-Not consumed yet: light `temperature`, the fog shadow atlas, Grimoire's distant-instance
-clearance culling. Point and spot lights without `brightness` (older exports) use `intensity` as
+Not consumed yet: light `temperature`. Point and spot lights without `brightness` (older exports) use `intensity` as
 candela over distance squared. The cube face orientation (each face's up) follows glTF/OpenGL
 convention and is unverified against a real vpkmerge cube; none of the Hideout data has been
 seen from a real export yet.
@@ -592,12 +604,14 @@ With everything on (release, `cargo test --release -p sigil-viewer --test parity
 | --- | --- |
 | Stand-in hero: cloth, ember plume (45 particles), shadow map, bloom | 2.7 ms |
 | The same without particles and shadows | 2.5 ms |
-| Stand-in Hideout: lightmap, probes, fog volume march, cookies, map post, 108 particles | 11.5 ms |
+| Stand-in Hideout: lightmap, probes, fog volume march with shadows (half resolution, 32 steps), cookies, map post, 108 particles | 6.6 ms |
+| The same with the fog marched per surface fragment (32 steps) | 19.1 ms |
 
 Cloth alone: 0.005 ms a frame for the stand-in (21 nodes), 0.12 ms for a synthetic 401-node
 rig. Particles alone: 0.2 ms a frame to step 2,000 particles and build their cards. The
-Hideout's cost is mostly the volumetric fog, marched per surface fragment; a half-resolution
-pass as Grimoire's would cut it.
+Hideout used to cost 11.5 ms with a 16 step march per surface fragment; the half resolution
+march (twice the steps, with fog shadows) brought it to 6.6 ms. Grimoire measured 16.5 to 12.0 ms
+for the same change.
 
 The UI side then copies each frame into Rune's image atlas and uploads it (one more 4 to 16 MB
 copy a frame on the UI's render pass). That copy, not the GPU, is the ceiling at full-screen

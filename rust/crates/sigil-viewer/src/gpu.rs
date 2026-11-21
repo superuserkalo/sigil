@@ -261,6 +261,9 @@ pub struct FrameGpu {
     /// The shadow-casting light's view projection, and on, light index, texel, normal offset.
     pub shadow_matrix: [f32; 16],
     pub shadow: [f32; 4],
+    pub inv_view_proj: [f32; 16],
+    /// Half resolution fog on.
+    pub fog_half: [f32; 4],
 }
 
 #[repr(C)]
@@ -328,6 +331,11 @@ pub struct Pipelines {
     draw_layout: wgpu::BindGroupLayout,
     floor_layout: wgpu::BindGroupLayout,
     post_layout: wgpu::BindGroupLayout,
+    /// Group 3: the half resolution fog and its depth (`t_fog_half`, `t_fog_depth`).
+    fog_layout: wgpu::BindGroupLayout,
+    /// The half resolution fog march and its depth.
+    fog: wgpu::RenderPipeline,
+    fog_depth: wgpu::RenderPipeline,
     main: HashMap<(Blend, bool), wgpu::RenderPipeline>,
     outline: wgpu::RenderPipeline,
     depth: wgpu::RenderPipeline,
@@ -467,6 +475,24 @@ impl Pipelines {
                 texture3d_entry(11, wgpu::ShaderStages::FRAGMENT),
                 texture3d_entry(12, wgpu::ShaderStages::FRAGMENT),
                 texture_entry(13, wgpu::ShaderStages::FRAGMENT),
+                wgpu::BindGroupLayoutEntry {
+                    binding: 14,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture { sample_type: wgpu::TextureSampleType::Uint, view_dimension: wgpu::TextureViewDimension::D2, multisampled: false },
+                    count: None,
+                },
+            ],
+        });
+        let fog_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("viewer fog"),
+            entries: &[
+                texture_entry(0, wgpu::ShaderStages::FRAGMENT),
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture { sample_type: wgpu::TextureSampleType::Depth, view_dimension: wgpu::TextureViewDimension::D2, multisampled: false },
+                    count: None,
+                },
             ],
         });
         let frame_only_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor { label: Some("viewer frame only"), entries: &[uniform_entry(0, vf)] });
@@ -509,7 +535,12 @@ impl Pipelines {
 
         let main_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("viewer main"),
-            bind_group_layouts: &[Some(&frame_layout), Some(&material_layout), Some(&draw_layout)],
+            bind_group_layouts: &[Some(&frame_layout), Some(&material_layout), Some(&draw_layout), Some(&fog_layout)],
+            immediate_size: 0,
+        });
+        let fog_pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("viewer fog"),
+            bind_group_layouts: &[Some(&frame_layout), None, None, Some(&fog_layout)],
             immediate_size: 0,
         });
         let depth_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -589,6 +620,18 @@ impl Pipelines {
             multiview_mask: None,
             cache: None,
         });
+        // The half resolution fog's opaque depth: both faces (double-sided room parts), no bias.
+        let fog_depth = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("viewer fog depth"),
+            layout: Some(&depth_layout),
+            vertex: wgpu::VertexState { module: &scene, entry_point: Some("vs_depth"), compilation_options: Default::default(), buffers: &[Some(vertex_layout())] },
+            primitive: wgpu::PrimitiveState { cull_mode: None, ..Default::default() },
+            depth_stencil: Some(wgpu::DepthStencilState { format: DEPTH, depth_write_enabled: Some(true), depth_compare: Some(wgpu::CompareFunction::LessEqual), stencil: Default::default(), bias: Default::default() }),
+            multisample: Default::default(),
+            fragment: None,
+            multiview_mask: None,
+            cache: None,
+        });
         let floor = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("viewer floor"),
             layout: Some(&floor_pl),
@@ -601,6 +644,22 @@ impl Pipelines {
                 entry_point: Some("fs_floor"),
                 compilation_options: Default::default(),
                 targets: &[Some(wgpu::ColorTargetState { format: HDR, blend: Some(premultiplied), write_mask: wgpu::ColorWrites::ALL })],
+            }),
+            multiview_mask: None,
+            cache: None,
+        });
+        let fog = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("viewer fog"),
+            layout: Some(&fog_pl),
+            vertex: wgpu::VertexState { module: &scene, entry_point: Some("vs_fog"), compilation_options: Default::default(), buffers: &[] },
+            primitive: Default::default(),
+            depth_stencil: None,
+            multisample: Default::default(),
+            fragment: Some(wgpu::FragmentState {
+                module: &scene,
+                entry_point: Some("fs_fog"),
+                compilation_options: Default::default(),
+                targets: &[Some(wgpu::ColorTargetState { format: HDR, blend: None, write_mask: wgpu::ColorWrites::ALL })],
             }),
             multiview_mask: None,
             cache: None,
@@ -660,6 +719,9 @@ impl Pipelines {
             draw_layout,
             floor_layout,
             post_layout,
+            fog_layout,
+            fog,
+            fog_depth,
             main,
             outline,
             depth,
@@ -997,6 +1059,9 @@ pub struct Targets {
     msaa_depth: wgpu::TextureView,
     resolved: [wgpu::TextureView; 2],
     rim_depth: wgpu::TextureView,
+    /// The half resolution fog: the opaque depth it marches to and its result.
+    fog_depth: wgpu::TextureView,
+    fog: wgpu::TextureView,
     bloom: Vec<(u32, u32, wgpu::TextureView)>,
     output: wgpu::Texture,
     output_view: wgpu::TextureView,
@@ -1026,6 +1091,9 @@ impl Targets {
         let msaa_depth = target(device, width, height, DEPTH, gpu.msaa, rt).create_view(&Default::default());
         let resolved = [target(device, width, height, HDR, 1, rt | sampled).create_view(&Default::default()), target(device, width, height, HDR, 1, rt | sampled).create_view(&Default::default())];
         let rim_depth = target(device, width, height, DEPTH, 1, rt | sampled).create_view(&Default::default());
+        let (hw, hh) = (width.div_ceil(2).max(1), height.div_ceil(2).max(1));
+        let fog_depth = target(device, hw, hh, DEPTH, 1, rt | sampled).create_view(&Default::default());
+        let fog = target(device, hw, hh, HDR, 1, rt | sampled).create_view(&Default::default());
         let mut bloom = Vec::new();
         let (mut bw, mut bh) = (width, height);
         for _ in 0..BLOOM_LEVELS {
@@ -1042,7 +1110,7 @@ impl Targets {
             usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
             mapped_at_creation: false,
         });
-        Targets { width, height, msaa_color, msaa_depth, resolved, rim_depth, bloom, output, output_view, readback, padded_row }
+        Targets { width, height, msaa_color, msaa_depth, resolved, rim_depth, fog_depth, fog, bloom, output, output_view, readback, padded_row }
     }
 }
 
@@ -1084,6 +1152,8 @@ pub struct FrameInputs<'a> {
     pub shadow_hero_only: bool,
     /// The Hideout's baked data and this frame's uniform for it (lights in the frame's order).
     pub hideout: Option<(&'a crate::hideout::HideoutGpu, crate::hideout::HideoutUniform)>,
+    /// March the volumetric fog at half resolution (when the scene has it).
+    pub half_res_fog: bool,
     /// Per bloom level, the weight times tint the map's post gives it (level 0 first).
     pub bloom_weights: [[f32; 3]; 5],
     /// Particle effects, drawn in the "after" layer once its surfaces are down.
@@ -1167,7 +1237,11 @@ fn color_attachment<'a>(t: &'a Targets, layer: usize) -> wgpu::RenderPassColorAt
 pub fn render_frame(gpu: &Gpu, p: &Pipelines, r: &FrameResources, t: &Targets, inputs: &FrameInputs, out: &mut Vec<u8>) -> Timings {
     let started = Instant::now();
     let device = &gpu.device;
-    gpu.queue.write_buffer(&r.frame_buf, 0, bytemuck::bytes_of(&inputs.frame));
+    // Grimoire's half resolution fog: only a scene's volumetric fog is marched.
+    let half_fog = inputs.half_res_fog && inputs.hideout.as_ref().is_some_and(|(_, u)| u.fog_fade[2] > 0.5);
+    let mut frame = inputs.frame;
+    frame.fog_half[0] = if half_fog { 1.0 } else { 0.0 };
+    gpu.queue.write_buffer(&r.frame_buf, 0, bytemuck::bytes_of(&frame));
     gpu.queue.write_buffer(&r.post_buf, 0, bytemuck::bytes_of(&inputs.post));
     if let Some(floor) = &inputs.floor {
         gpu.queue.write_buffer(&r.floor_buf, 0, bytemuck::bytes_of(floor));
@@ -1193,8 +1267,19 @@ pub fn render_frame(gpu: &Gpu, p: &Pipelines, r: &FrameResources, t: &Targets, i
             wgpu::BindGroupEntry { binding: 11, resource: wgpu::BindingResource::TextureView(inputs.hideout.as_ref().map_or(&p.hideout_none.d3, |h| &h.0.probe_shadows)) },
             wgpu::BindGroupEntry { binding: 12, resource: wgpu::BindingResource::TextureView(inputs.hideout.as_ref().map_or(&p.hideout_none.d3, |h| &h.0.fog)) },
             wgpu::BindGroupEntry { binding: 13, resource: wgpu::BindingResource::TextureView(inputs.hideout.as_ref().map_or(&p.hideout_none.d2, |h| &h.0.cookies)) },
+            wgpu::BindGroupEntry { binding: 14, resource: wgpu::BindingResource::TextureView(inputs.hideout.as_ref().map_or(&p.hideout_none.d2_uint, |h| &h.0.fog_shadows)) },
         ],
     });
+    // The scene pass reads the marched fog; the march itself writes it, so it binds a stand-in.
+    let fog_group = |result: &wgpu::TextureView| {
+        device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("viewer fog"),
+            layout: &p.fog_layout,
+            entries: &[wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(result) }, wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(&t.fog_depth) }],
+        })
+    };
+    let fog_read = fog_group(if half_fog { &t.fog } else { &p.black_hdr });
+    let fog_march = fog_group(&p.black_hdr);
     if let Some((h, u)) = &inputs.hideout {
         gpu.queue.write_buffer(&h.buffer, 0, bytemuck::bytes_of(u));
     }
@@ -1248,6 +1333,41 @@ pub fn render_frame(gpu: &Gpu, p: &Pipelines, r: &FrameResources, t: &Targets, i
                 }
             }
         }
+        if half_fog {
+            // The opaque depth at half resolution, then one fog march per block to it.
+            {
+                let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("viewer fog depth"),
+                    color_attachments: &[],
+                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment { view: &t.fog_depth, depth_ops: Some(wgpu::Operations { load: wgpu::LoadOp::Clear(1.0), store: wgpu::StoreOp::Store }), stencil_ops: None }),
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                    multiview_mask: None,
+                });
+                pass.set_pipeline(&p.fog_depth);
+                pass.set_bind_group(0, &r.frame_only, &[]);
+                for s in shown.iter() {
+                    for prim in s.model.prims.iter().filter(|q| q.visible && q.blend == Blend::Opaque) {
+                        pass.set_bind_group(2, &s.model.draws[prim.mesh], &[]);
+                        pass.set_vertex_buffer(0, prim.vertices.slice(..));
+                        pass.set_index_buffer(prim.indices.slice(..), wgpu::IndexFormat::Uint32);
+                        pass.draw_indexed(0..prim.count, 0, 0..1);
+                    }
+                }
+            }
+            let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("viewer fog"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment { view: &t.fog, depth_slice: None, resolve_target: None, ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color { r: 0.0, g: 0.0, b: 0.0, a: 1.0 }), store: wgpu::StoreOp::Store } })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            pass.set_pipeline(&p.fog);
+            pass.set_bind_group(0, &frame_group, &[]);
+            pass.set_bind_group(3, &fog_march, &[]);
+            pass.draw(0..3, 0..1);
+        }
         let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("viewer scene"),
             color_attachments: &[Some(color_attachment(t, layer))],
@@ -1257,6 +1377,7 @@ pub fn render_frame(gpu: &Gpu, p: &Pipelines, r: &FrameResources, t: &Targets, i
             multiview_mask: None,
         });
         pass.set_bind_group(0, &frame_group, &[]);
+        pass.set_bind_group(3, &fog_read, &[]);
         // Opaque, then the outline hulls, the floor, then blended back to front.
         for s in shown.iter() {
             for prim in s.model.prims.iter().filter(|q| q.visible && q.blend == Blend::Opaque) {
@@ -1463,4 +1584,79 @@ pub fn upload_cube(gpu: &Gpu, levels: &[(u32, Vec<[f32; 4]>)]) -> wgpu::TextureV
         );
     }
     texture.create_view(&wgpu::TextureViewDescriptor { dimension: Some(wgpu::TextureViewDimension::Cube), ..Default::default() })
+}
+
+/// The six views of `crate::clearance` from `origin`: the opaque surfaces of `models` drawn depth
+/// only (the shadow pipeline, both faces), read back as one depth per texel, face after face.
+pub fn clearance_depths(gpu: &Gpu, p: &Pipelines, frame: &FrameGpu, origin: Vec3, models: &[&GpuModel]) -> Vec<f32> {
+    use crate::clearance::{EDGE, faces};
+    let device = &gpu.device;
+    let size = wgpu::Extent3d { width: EDGE, height: EDGE, depth_or_array_layers: 1 };
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("viewer clearance"),
+        size,
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: DEPTH,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+        view_formats: &[],
+    });
+    let view = texture.create_view(&Default::default());
+    let row = (EDGE * 4).div_ceil(256) * 256;
+    let readback = device.create_buffer(&wgpu::BufferDescriptor { label: Some("viewer clearance readback"), size: (row * EDGE * 6) as u64, usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ, mapped_at_creation: false });
+    let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("viewer clearance") });
+    let mut keep = Vec::new();
+    for (face, m) in faces(origin).iter().enumerate() {
+        let mut camera = *frame;
+        camera.view_proj = m.to_cols_array();
+        let buffer = device.create_buffer(&wgpu::BufferDescriptor { label: Some("viewer clearance camera"), size: std::mem::size_of::<FrameGpu>() as u64, usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST, mapped_at_creation: false });
+        gpu.queue.write_buffer(&buffer, 0, bytemuck::bytes_of(&camera));
+        let group = device.create_bind_group(&wgpu::BindGroupDescriptor { label: Some("viewer clearance camera"), layout: &p.frame_only_layout, entries: &[wgpu::BindGroupEntry { binding: 0, resource: buffer.as_entire_binding() }] });
+        {
+            let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("viewer clearance"),
+                color_attachments: &[],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment { view: &view, depth_ops: Some(wgpu::Operations { load: wgpu::LoadOp::Clear(1.0), store: wgpu::StoreOp::Store }), stencil_ops: None }),
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            pass.set_pipeline(&p.shadow);
+            pass.set_bind_group(0, &group, &[]);
+            for model in models {
+                for prim in model.prims.iter().filter(|q| q.visible && q.blend == Blend::Opaque && !q.masked) {
+                    pass.set_bind_group(2, &model.draws[prim.mesh], &[]);
+                    pass.set_vertex_buffer(0, prim.vertices.slice(..));
+                    pass.set_index_buffer(prim.indices.slice(..), wgpu::IndexFormat::Uint32);
+                    pass.draw_indexed(0..prim.count, 0, 0..1);
+                }
+            }
+        }
+        enc.copy_texture_to_buffer(
+            wgpu::TexelCopyTextureInfo { texture: &texture, mip_level: 0, origin: wgpu::Origin3d::ZERO, aspect: wgpu::TextureAspect::DepthOnly },
+            wgpu::TexelCopyBufferInfo { buffer: &readback, layout: wgpu::TexelCopyBufferLayout { offset: (row * EDGE * face as u32) as u64, bytes_per_row: Some(row), rows_per_image: Some(EDGE) } },
+            size,
+        );
+        keep.push(buffer);
+    }
+    gpu.queue.submit([enc.finish()]);
+    let slice = readback.slice(..);
+    slice.map_async(wgpu::MapMode::Read, |_| {});
+    if let Err(error) = device.poll(wgpu::PollType::Wait { submission_index: None, timeout: Some(FRAME_TIMEOUT) }) {
+        gpu.report(format!("the room's clearance did not finish on the GPU: {error}"));
+        return Vec::new();
+    }
+    let mut out = Vec::with_capacity((EDGE * EDGE * 6) as usize);
+    if let Ok(data) = slice.get_mapped_range() {
+        for face in 0..6 {
+            for y in 0..EDGE {
+                let start = (row * (EDGE * face + y)) as usize;
+                out.extend(data[start..start + (EDGE * 4) as usize].as_chunks::<4>().0.iter().map(|b| f32::from_le_bytes(*b)));
+            }
+        }
+    }
+    readback.unmap();
+    drop(keep);
+    out
 }

@@ -28,7 +28,7 @@ use serde_json::Value as Json;
 
 use super::cache::{self, Staging};
 use super::hero::{HeroExportRequest, export_hero_with, export_slot};
-use super::kv::{array, flag, num, resource_json, text, vec3};
+use super::kv::{array, flag, num, resource_json, text, vec2, vec3, vec4};
 use super::space::{self, Mat4};
 use super::stack::{
     self, Source, SourceKind, SourceUsage, Stack, compiled, normalize, source_fingerprint,
@@ -42,7 +42,7 @@ const ROOM_FILE: &str = "room.json";
 const DEPS_FILE: &str = "deps.json";
 /// Part of the room's cache key: bumped when the room export changes shape, so an older
 /// room folder is never served.
-const ROOM_REVISION: &str = "hideout-2";
+const ROOM_REVISION: &str = "hideout-3";
 /// Longest edge of the directional and shadow lightmap PNGs.
 const LIGHTMAP_EDGE: u32 = 2048;
 /// Longest edge of a light cookie PNG.
@@ -115,6 +115,23 @@ pub struct HideoutLight {
     /// +Y (left), +Z (up).
     #[serde(default)]
     pub basis: [[f32; 3]; 3],
+    /// Where a fog light's precomputed shadow lives in `fog.shadows`, or null.
+    #[serde(default)]
+    pub fog_shadow: Option<HideoutFogShadow>,
+}
+
+/// A fog light's tiles in the precomputed shadow atlas and its frustum (Grimoire's
+/// `lightFogShadowTiles` and `source2LightSize` / `ShearSoft`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HideoutFogShadow {
+    /// `precomputed_shadowmap_atlas_rect_0..5` as `[w, h, x, y]` in atlas uv: one tile for a
+    /// barn light, six cube faces for an omni (forward, -up, up, left, -left, -forward).
+    pub tiles: Vec<[f32; 4]>,
+    /// `size_params` (Source units; `z` is one over the barn's near plane, 0 orthographic).
+    pub size: [f32; 3],
+    /// `shear` x and y.
+    pub shear: [f32; 2],
 }
 
 /// A volume texture with the box it fills.
@@ -239,6 +256,10 @@ pub struct HideoutFog {
     /// Density volumes, at most 16.
     #[serde(default)]
     pub volumes: Vec<HideoutFogVolume>,
+    /// The world's `precomputed_shadowmap_atlas` (VTV, R16, depth 1) that fog lights with a
+    /// `fogShadow` sample, or null.
+    #[serde(default)]
+    pub shadows: Option<String>,
 }
 
 /// A cube map exported as six Radiance `.hdr` faces.
@@ -715,8 +736,7 @@ const OMISSIONS: &[&str] = &[
     "directionalLightmap",
     "lightCookies",
     "staticBundle",
-    // The precomputed shadow atlas tiles fog lights sample (R16, decodable, but the scene
-    // file has no field for the atlas or the per-light tiles yet).
+    // The precomputed shadow atlas fog lights sample (`fog.shadows`), until it is exported.
     "fogShadows",
 ];
 
@@ -1073,6 +1093,27 @@ fn build_room(
                     })
                 }
                 Err(_) => scene.failures.push(compiled(texture)),
+            }
+        }
+        // The fog lights' precomputed shadow atlas (Grimoire's `fog-shadows.bin`). Without it
+        // the tiles are dropped and the fog stays unshadowed.
+        let atlas = lighting.and_then(|lighting| {
+            array(lighting.get("m_lightMaps"))
+                .iter()
+                .filter_map(Json::as_str)
+                .find(|entry| entry.ends_with("/precomputed_shadowmap_atlas.vtex"))
+        });
+        let shadowed = scene.lights.iter().any(|light| light.fog_shadow.is_some());
+        let file = "fog/shadows.vtv";
+        if let Some(texture) = atlas.filter(|_| shadowed) {
+            match write_vtv(stack, texture, &out.join(file)) {
+                Ok([_, _, 1]) => fog.shadows = Some(file.into()),
+                Ok(_) | Err(_) => scene.failures.push(compiled(texture)),
+            }
+        }
+        if fog.shadows.is_none() {
+            for light in &mut scene.lights {
+                light.fog_shadow = None;
             }
         }
     }
@@ -1461,7 +1502,30 @@ pub(crate) fn map_light(entity: &serde_json::Map<String, Json>) -> Option<Hideou
         fog_only: !realtime,
         cookie: None,
         basis,
+        fog_shadow: fog_shadow(entity, classname),
     })
+}
+
+/// A fog light's shadow tiles: the atlas rects in order until the first missing one, kept
+/// only as one (barn) or six (omni) tiles, as Grimoire uses them.
+fn fog_shadow(entity: &serde_json::Map<String, Json>, classname: &str) -> Option<HideoutFogShadow> {
+    if classname == "light_environment" {
+        return None;
+    }
+    let tiles: Vec<[f32; 4]> = (0..6)
+        .map_while(|index| vec4(entity.get(&format!("precomputed_shadowmap_atlas_rect_{index}"))))
+        .map(|rect| rect.map(|value| value as f32))
+        .collect();
+    if tiles.len() != 1 && tiles.len() != 6 {
+        return None;
+    }
+    let size = vec3(entity.get("size_params"))
+        .unwrap_or([0.0; 3])
+        .map(|value| value as f32);
+    let shear = vec2(entity.get("shear"))
+        .unwrap_or([0.0; 2])
+        .map(|value| value as f32);
+    Some(HideoutFogShadow { tiles, size, shear })
 }
 
 /// What was asked for but failed, for [`settle_omissions`].
@@ -1488,6 +1552,7 @@ fn settle_omissions(scene: &mut HideoutScene, pending: &Pending) {
             .as_ref()
             .is_some_and(|fog| fog.irradiance.is_some()),
         "particles" => scene.particles.is_some(),
+        "fogShadows" => scene.fog.as_ref().is_some_and(|fog| fog.shadows.is_some()),
         _ => false,
     };
     let kept: Vec<String> = scene
@@ -1574,6 +1639,7 @@ fn map_fog(entity: &serde_json::Map<String, Json>) -> Option<HideoutFog> {
         max: space::point(max).map(|value| value as f32),
         irradiance: None,
         volumes: Vec::new(),
+        shadows: None,
     })
 }
 
@@ -1812,6 +1878,43 @@ mod contract_tests {
         })))
         .unwrap();
         assert!(fog.fog_only && !fog.realtime);
+        assert_eq!(fog.fog_shadow, None);
+    }
+
+    #[test]
+    fn viewer_hideout_fog_light_shadow_tiles() {
+        let barn = map_light(&entity(serde_json::json!({
+            "classname": "light_barn", "origin": [0, 0, 0], "angles": [0, 0, 0], "color": [255, 255, 255],
+            "range": 200, "directlight": 1, "fog": 1, "fogstrength": 1,
+            "size_params": "8 4 0.5", "shear": "0.25 -0.5",
+            "precomputed_shadowmap_atlas_rect_0": "0.25 0.25 0.5 0",
+        })))
+        .unwrap();
+        let shadow = barn.fog_shadow.expect("tiles");
+        assert_eq!(shadow.tiles, vec![[0.25, 0.25, 0.5, 0.0]]);
+        assert_eq!(shadow.size, [8.0, 4.0, 0.5]);
+        assert_eq!(shadow.shear, [0.25, -0.5]);
+
+        let mut omni = serde_json::json!({
+            "classname": "light_omni2", "origin": [0, 0, 0], "color": [255, 255, 255], "range": 100,
+            "directlight": 2,
+        });
+        for face in 0..6 {
+            omni[format!("precomputed_shadowmap_atlas_rect_{face}")] =
+                serde_json::json!([0.125, 0.125, face as f64 * 0.125, 0.5]);
+        }
+        let tiles = map_light(&entity(omni.clone()))
+            .unwrap()
+            .fog_shadow
+            .unwrap()
+            .tiles;
+        assert_eq!(tiles.len(), 6);
+        assert_eq!(tiles[5], [0.125, 0.125, 0.625, 0.5]);
+        // A partial set (not one, not six) is not a shadow Grimoire can sample.
+        omni.as_object_mut()
+            .unwrap()
+            .remove("precomputed_shadowmap_atlas_rect_3");
+        assert_eq!(map_light(&entity(omni)).unwrap().fog_shadow, None);
     }
 
     fn scene() -> HideoutScene {
@@ -1909,12 +2012,10 @@ mod contract_tests {
                 world_to_local: [0.0; 16],
             }),
             volumes: Vec::new(),
+            shadows: Some("fog/shadows.vtv".into()),
         });
         settle_omissions(&mut full, &Pending::default());
-        assert_eq!(
-            full.omissions,
-            vec!["particles", "staticBundle", "fogShadows"]
-        );
+        assert_eq!(full.omissions, vec!["particles", "staticBundle"]);
 
         let mut failed = scene();
         settle_omissions(
