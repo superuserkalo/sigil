@@ -1604,6 +1604,16 @@ pub fn overlay(s: &State, u: &Ui) -> Option<El> {
                             }
                         }),
                 );
+                // DMM's library author link: the creator's page in Browse. The creator id is
+                // looked up from the mod's page, so rows saved before Sigil kept it work too.
+                let author = meta_for(s, addon).and_then(|meta| meta.author.clone()).unwrap_or_default();
+                let label = crate::screens::browse::creator_page::more_label(&author);
+                items.push(
+                    menu_item(u, "menu-creator", Some(&icons::USER), &label, "", true).on_press(move |st: &mut State| {
+                        st.installed.menu = None;
+                        crate::screens::browse::creator_page::open_for_mod(st, id);
+                    }),
+                );
             }
             if let Some(files) = archived_choices(s, addon) {
                 // DMM: the installed file was archived; pick what replaces it.
