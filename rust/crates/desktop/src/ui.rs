@@ -1201,6 +1201,267 @@ impl Ui {
             )
             .child(field.grow(1.0).min_w(0.0))
     }
+
+    // --- shared rows and overlays (polish lane "rest"; also used by Installed and Launch) ---
+
+    /// A page's status row: fixed 24 points, always drawn (empty when idle), never wraps.
+    /// `left` holds state chips and result lines; `right` an optional quiet note or count.
+    /// It sits outside the page scroll, 8 under the toolbar and 16 above the body.
+    pub fn status_row(&self, key: &str, left: Vec<El>, right: Option<El>) -> El {
+        let mut line = row()
+            .key(key.to_string())
+            .w_full()
+            .h(CONTROL_S)
+            .gap(8.0)
+            .center_y()
+            .child(
+                row()
+                    .key(format!("{key}-left"))
+                    .gap(8.0)
+                    .center_y()
+                    .grow(1.0)
+                    .min_w(0.0)
+                    .children(left),
+            );
+        if let Some(right) = right {
+            line = line.child(right);
+        }
+        line
+    }
+
+    /// A state chip for a status row: 24 high, 4 point corners, a quiet fill, `LABEL` text in
+    /// `prose`. The tone lives in the 12 point icon only. Add `.on_press` to make it a button.
+    pub fn state_chip(&self, glyph: &'static Icon, label: &str, tone: Tone) -> El {
+        row()
+            .h(CONTROL_S)
+            .px(8.0)
+            .gap(6.0)
+            .center_y()
+            .radius(r(4.0))
+            .fill(self.over.alpha(0.06))
+            .label(label)
+            .child(icon(glyph, 12.0).color(match tone {
+                Tone::Quiet => self.muted,
+                other => other.fg(self),
+            }).a11y_hidden())
+            .child(
+                text(label.to_string())
+                    .font(LABEL)
+                    .color(self.prose)
+                    .truncate()
+                    .a11y_hidden(),
+            )
+    }
+
+    /// A one line result for a status row: a 14 point icon and `SMALL` `prose` text, cut with
+    /// the whole line in a tooltip.
+    pub fn status_line(&self, glyph: &'static Icon, line: &str, tone: Tone) -> El {
+        row()
+            .h(CONTROL_S)
+            .gap(6.0)
+            .center_y()
+            .min_w(0.0)
+            .shrink()
+            .child(icon(glyph, 14.0).color(match tone {
+                Tone::Quiet => self.muted,
+                other => other.fg(self),
+            }).a11y_hidden())
+            .child(
+                text(line.to_string())
+                    .font(SMALL)
+                    .color(self.prose)
+                    .truncate()
+                    .help_when_truncated(line.to_string()),
+            )
+    }
+
+    /// The bottom selection bar: an overlay centred on the content, 16 above its bottom edge,
+    /// 48 high, at most 720 wide. `lead` is the close button, the count and "Select all";
+    /// `actions` sit on the right. It floats, so the list under it never moves. The page keeps
+    /// 72 points of bottom padding so its last row never hides under it.
+    pub fn selection_bar(&self, key: &str, lead: Vec<El>, actions: Vec<El>) -> El {
+        let bar = row()
+            .key(format!("{key}-bar"))
+            .role("toolbar")
+            .w_full()
+            .max_w(720.0)
+            .h(48.0)
+            .px(12.0)
+            .gap(8.0)
+            .center_y()
+            .radius(r(8.0))
+            .fill(self.raised.mix(self.over, 0.06).alpha(1.0))
+            .border(1.0, self.hair_strong)
+            .shadow(4.0, 12.0, Color::BLACK.alpha(if self.light { 0.12 } else { 0.35 }))
+            .children(lead)
+            .child(spacer())
+            .children(actions);
+        row()
+            .key(key.to_string())
+            .pin(Some(24.0), None, Some(24.0), Some(16.0))
+            .justify_center()
+            .child(bar)
+    }
+
+    /// A detail drawer over the right of the content: 360 wide, full height, raised, a 1 point
+    /// line on its left, its own scroll. The list under it keeps its width. `close` is the
+    /// page's close button (28, it owns the press); Esc is the page's to handle.
+    pub fn drawer(&self, key: &str, close: El, body: El) -> El {
+        col()
+            .key(key.to_string())
+            .role("dialog")
+            .pin(None, Some(0.0), Some(0.0), Some(0.0))
+            .w(360.0)
+            .fill(self.raised)
+            .border_sides([0.0, 0.0, 0.0, 1.0], self.hair)
+            .shadow(4.0, 12.0, Color::BLACK.alpha(if self.light { 0.12 } else { 0.35 }))
+            .child(
+                el().pin(None, Some(12.0), Some(12.0), None)
+                    .key(format!("{key}-close"))
+                    .child(close),
+            )
+            .child(
+                col()
+                    .key(format!("{key}-scroll"))
+                    .w_full()
+                    .grow(1.0)
+                    .min_h(0.0)
+                    .scroll(rune::ScrollSpec { stick_bottom: false })
+                    .child(col().w_full().padding(16.0).pr(48.0).gap(8.0).child(body)),
+            )
+    }
+
+    /// A 28 point close button for drawers and popovers.
+    pub fn close_button(&self, label: &str) -> El {
+        self.icon_button(&crate::icons::X, label).size(CONTROL_M, CONTROL_M)
+    }
+
+    /// One action in a choice dialog, as a row: 48 high, title over one line, chevron. Put
+    /// several in a `panel`. Long names truncate, so they never overflow the dialog.
+    pub fn option_row(&self, key: &str, title: &str, line: &str) -> El {
+        row()
+            .key(key.to_string())
+            .w_full()
+            .h(48.0)
+            .px(12.0)
+            .gap(12.0)
+            .center_y()
+            .hover(self.hover)
+            .press(self.over.alpha(0.08))
+            .focusable(true)
+            .role("button")
+            .label(title)
+            .cursor(rune::Cursor::Pointer)
+            .child(
+                col()
+                    .grow(1.0)
+                    .min_w(0.0)
+                    .child(text(title.to_string()).font(BODY_MED).color(self.ink).truncate())
+                    .child(text(line.to_string()).font(SMALL).color(self.muted).truncate()),
+            )
+            .child(icon(&crate::icons::CHEVRON_RIGHT, 12.0).color(self.muted).a11y_hidden())
+    }
+
+    /// The settings row: title (`BODY_MED` ink) and a description (`SMALL` muted, at most two
+    /// lines, 400 wide) on the left, the control on the right. 56 high with one line, 72 with
+    /// two: the copy sets the height, never the state. One bottom hairline.
+    pub fn setting_row(&self, key: &str, title: &str, description: &str, control: El) -> El {
+        let mut words = col()
+            .grow(1.0)
+            .min_w(0.0)
+            .gap(2.0)
+            .child(text(title.to_string()).font(BODY_MED).color(self.ink).truncate());
+        if !description.is_empty() {
+            words = words.child(
+                text(description.to_string())
+                    .font(SMALL)
+                    .color(self.muted)
+                    .max_w(400.0)
+                    .max_lines(2),
+            );
+        }
+        row()
+            .key(key.to_string())
+            .w_full()
+            .min_h(56.0)
+            .py(8.0)
+            .gap(16.0)
+            .center_y()
+            .border_sides([0.0, 0.0, 1.0, 0.0], self.hair)
+            .child(words)
+            .child(control)
+    }
+
+    /// A dense 32 point row: label (`BODY` `prose`) on the left, value or control on the
+    /// right. `label_w` fixes the label column when a slider follows (0 lets it flex).
+    pub fn compact_row(&self, key: &str, label: &str, label_w: f32, control: El) -> El {
+        let label = text(label.to_string()).font(BODY).color(self.prose).truncate();
+        let mut line = row().key(key.to_string()).w_full().h(CONTROL_L).gap(12.0).center_y();
+        line = if label_w > 0.0 {
+            line.child(label.w(label_w)).child(control.grow(1.0).min_w(0.0))
+        } else {
+            line.child(label.grow(1.0).min_w(0.0)).child(control)
+        };
+        line
+    }
+
+    /// A row whose control sits full width under the title and description (swatches, tiles,
+    /// multi-line fields, a path with its actions).
+    pub fn stacked_row(&self, key: &str, title: &str, description: &str, control: El) -> El {
+        let mut c = col()
+            .key(key.to_string())
+            .w_full()
+            .gap(2.0)
+            .pt(12.0)
+            .pb(16.0)
+            .border_sides([0.0, 0.0, 1.0, 0.0], self.hair)
+            .child(text(title.to_string()).font(BODY_MED).color(self.ink));
+        if !description.is_empty() {
+            c = c.child(
+                text(description.to_string())
+                    .font(SMALL)
+                    .color(self.muted)
+                    .max_w(400.0)
+                    .max_lines(2),
+            );
+        }
+        c.child(row().w_full().mt(6.0).child(control))
+    }
+
+    /// A select's closed box: 28 high, `well` fill, 1 point line, the value truncating and a
+    /// 12 point chevron. The page adds the press that opens its menu. Default width 200.
+    pub fn select_box(&self, value: &str, width: f32) -> El {
+        row()
+            .w(width)
+            .h(CONTROL_M)
+            .pl(10.0)
+            .pr(8.0)
+            .gap(8.0)
+            .center_y()
+            .radius(r(4.0))
+            .fill(self.well)
+            .border(1.0, self.hair)
+            .hover(self.over.alpha(0.07))
+            .focusable(true)
+            .role("button")
+            .label(value)
+            .cursor(rune::Cursor::Pointer)
+            .child(
+                text(value.to_string())
+                    .font(BODY_MED)
+                    .color(self.ink)
+                    .truncate()
+                    .grow(1.0)
+                    .min_w(0.0)
+                    .a11y_hidden(),
+            )
+            .child(icon(&crate::icons::CHEVRON_DOWN, 12.0).color(self.muted).a11y_hidden())
+    }
+
+    /// A small colour mark (8 by 8, square) before a state word: "Equipped", "Active".
+    pub fn mark(&self, color: Color) -> El {
+        el().size(8.0, 8.0).radius(2.0).fill(color).a11y_hidden()
+    }
 }
 
 /// `ENABLED` becomes `Enabled`, `catalog error` stays as written. Uppercase micro labels are
