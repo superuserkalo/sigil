@@ -74,12 +74,12 @@ days, L a week or more); a build note for missing and partial rows.
 | Custom mod sources browsed in the store next to GameBanana: cards, release history, Markdown descriptions, a file picker | 2.4.0 `ef8af43` | merged-unreleased | in progress (`desktop/src/screens/browse/sources.rs`, `settings/sources.rs`) | M | - |
 | Website links that add a mod source or install one of its mods | 2.4.0 `c203203` | merged-unreleased | in progress (with custom sources; `docs/design/deep-links.md`) | S | - |
 | DMM's own built-in mod source | 2.4.0 `8774679` | merged-unreleased | excluded: needs DMM's backend (owner left it out in `upstream-gaps-2026-11-21.md`) | - | - |
-| Category trees across Mods, Sounds, Maps and WiPs, third level, breadcrumbs, a hero pick that follows the section | 2.4.0 `cd622cb` | merged-unreleased | partial: root and sub category, hero picker, name match on sounds (`feature-parity.md`, Browse) | M | Walk `ModCategory/<id>/SubCategories` one level deeper, show a breadcrumb chip row, keep the hero choice when the section changes |
-| Drag to scroll the landing rails, draggable scrollbars | 2.4.0 `2d8ba44` | merged-unreleased | missing (no rail drag in `screens/browse/`) | S | Pointer drag on the rail's scroll offset if Rune's scroll view exposes it |
+| Category trees across Mods, Sounds, Maps and WiPs, third level, breadcrumbs, a hero pick that follows the section | 2.4.0 `cd622cb` | merged-unreleased | has: third level read after the first two (`gamebanana::deepen_categories`), styles listed under the picked hero, a breadcrumb in the chip row, a pick matches its subtree by leaf id, the hero pick follows Mods, Sounds, WiPs and All (`desktop/src/screens/browse/tree.rs`) | - | - |
+| Drag to scroll the landing rails, draggable scrollbars | 2.4.0 `2d8ba44` | merged-unreleased | has: the Browse by hero rail drags and has a grabbable bar (`desktop/src/screens/browse/rail.rs`); the other landing rails are fixed grids | - | - |
 | Obsolete mods: a status row and the author's note | 2.4.0 `304c1dd` | merged-unreleased | in progress (`browse/details.rs` reads `obsolete_note`) | S | - |
 | Withheld mods: staff's reason on the page, left out of the store and Featured, no error toasts | 2.4.0 `cba597f`, `208df74`, `6bdb297` | merged-unreleased | in progress (obsolete and withheld notes) | S | - |
 | YouTube and Vimeo videos on mod pages | 2.4.0 `9fab2e1` | merged-unreleased | has: a Videos list that opens the browser (`feature-parity.md`, Mod details); an embedded player is a web view, ruled out by ADR 0006 | - | - |
-| Map console names read inside inline code in descriptions | branch `bugfix/map-command-inline-code-context` | branch WIP | partial: `deadlock-core/src/maps.rs` reads the name from the VPK; `screens/servers_maps.rs` falls back to the description | S | Strip `<code>` and `<pre>` tags before the description match |
+| Map console names read inside inline code in descriptions | branch `bugfix/map-command-inline-code-context` | branch WIP | has: `<code>` and `<pre>` mark a command, prose does not (`deadlock-core/src/servers/map_name.rs`) | - | - |
 | Custom Maps tab shows the right map names | changeset `steady-maps-resolve` | merged-unreleased | has: name from the addon VPK's `maps/<name>.vpk` (`deadlock-core/src/maps.rs`) | - | - |
 
 ## Installed
@@ -104,10 +104,10 @@ days, L a week or more); a build note for missing and partial rows.
 | Unsafe file paths skipped when building compatibility fixes | changeset `quiet-foxes-guard` | merged-unreleased | has: `vpk::is_safe_vpk_path` (`deadlock-core/src/vpk.rs` line 227) | - | - |
 | A fix choice and the load-order place survive a reinstall | 2.4.0 `40873f9` | merged-unreleased | has: Reinstall writes the same slot (`feature-parity.md`, Reinstall); repairs rekey with the file (`mod_extras::Extras::rekey`) | - | - |
 | Reordering renames only the slots that move | 2.4.0 `29db4ca` | merged-unreleased | has: `deadlock-core/src/load_order.rs` plans renames for moving slots only | - | - |
-| Mod compression: pack every enabled mod into 2 to 8 shared VPKs | PR #406 (closed), `feature/mod-compression` | branch WIP (PR closed) | partial: Merge mods for a selection (`deadlock-core/src/mod_merge.rs`) | M | A "Pack all enabled into N" option over the same merge, with unmerge |
-| Mod identity stamped inside each VPK, a ledger reconciled against disk | `feat/vpk-fingerprinting`, `feature/reliable-filemanagement` | branch WIP | partial: sha256 identity store, the install journal and View imprint (`installed/imprint.rs`), no stamp written into the file | S | Read DMM's stamp when importing from DMM; keep Sigil's sidecar model |
-| One skin per hero: a question when an install adds a second skin for the same hero | PR #524 (closed), `feature/duplicate-mod-flag` | branch WIP (PR closed) | partial: the Locker's Equip turns the others off (`deadlock-core/src/locker.rs`); no install-time question | S | Ask in the install review when the hero already has an enabled skin |
-| Favourites per profile, and a random favourite turned on before a modded launch | PR #296 (closed), `feature/293/favourite-mods` | branch WIP (PR closed) | partial: favourites are app-wide (Browse); a list's Random switch covers the random pick | S | Store the favourite set in the profile |
+| Mod compression: pack every enabled mod into 2 to 8 shared VPKs | PR #406 (closed), `feature/mod-compression` | branch WIP (PR closed) | has: Installed > Pack all enabled, 2 to 8 packs of neighbouring slots, each switched on, sources kept off, Unmerge per pack (`mod_merge::pack_all`, `installed/pack_all.rs`, scene `profiles-pack-all`) | - | A "Pack all enabled into N" option over the same merge, with unmerge |
+| Mod identity stamped inside each VPK, a ledger reconciled against disk | `feat/vpk-fingerprinting`, `feature/reliable-filemanagement` | branch WIP | has: DMM's `.dmm/fingerprint.dmm` stamp is read on a DMM import (renamed and unclaimed files keep their mod) and on a picked file (`dmm_stamp.rs`, `import::read_dmm`); Sigil writes no stamp, its sidecar model stays | - | Read DMM's stamp when importing from DMM; keep Sigil's sidecar model |
+| One skin per hero: a question when an install adds a second skin for the same hero | PR #524 (closed), `feature/duplicate-mod-flag` | branch WIP (PR closed) | has: after an install lands a second skin for a hero, a notice asks and Keep only the new one turns the others off; not asked with several skins per hero on (`desktop/src/screens/one_skin.rs`, scene `profiles-one-skin`) | - | Ask in the install review when the hero already has an enabled skin |
+| Favourites per profile, and a random favourite turned on before a modded launch | PR #296 (closed), `feature/293/favourite-mods` | branch WIP (PR closed) | has: each profile keeps its saved mods; applying it brings them back, Undo restores the earlier set (`profile_favorites.rs`); a list's Random switch covers the random pick | - | Store the favourite set in the profile |
 | Read-only `gameinfo.gi` and addons explained with a fix | `feat/read-only-error-enhancement` | branch WIP | has: Make writable (`installed/checks.rs`, `game_apply::make_writable`) | - | - |
 
 ## Profiles
@@ -117,7 +117,7 @@ days, L a week or more); a build note for missing and partial rows.
 | Profiles, profile sharing and conflict detection become permanent (no experimental switch) | changeset `brisk-ravens-settle` | merged-unreleased | has: always on (`feature-parity.md`, Profiles and Overlap) | - | - |
 | Profile folders that point outside the addons folder are refused | changeset `keen-ledgers-guard` | merged-unreleased | has: isolated folders are built as `citadel/addons/sigil-<slug>` (`deadlock-core/src/profiles/isolation.rs`) | - | - |
 | The Default profile's mods never load under another profile | changeset `stray-lanterns-fold` | merged-unreleased | has: an isolated profile moves the plain addons line into its own block (`profiles/isolation.rs` line 328) | - | - |
-| An imported or restored profile starts downloading before every mod is looked up | 2.4.0 `aa6878e` | merged-unreleased | partial: rows run one by one with their own status (`desktop/src/screens/profiles.rs`) | S | Queue each row's download as soon as its lookup returns |
+| An imported or restored profile starts downloading before every mod is looked up | 2.4.0 `aa6878e` | merged-unreleased | has: lookups stream in one by one (`profiles::resolve_import_each`); Import can be pressed while they run and each kept row queues as its lookup returns (`desktop/src/screens/profiles.rs`, scene `profiles-import-early`) | - | - |
 | An imported profile keeps its file picks when shared again; restored profiles keep variants | 2.4.0 `fdd81c8`, `6b0dfba` | merged-unreleased | has: import with variant resolution (`feature-parity.md`, Profiles) | - | - |
 | Mods an import or backup restore could not install are listed | 2.4.0 `fdd81c8` | merged-unreleased | has: `RowStatus::Failed` and the skipped list (`desktop/src/screens/profiles.rs`) | - | - |
 | A backup restore that replaces a profile removes the profile's other mods | 2.4.0 `5180b3f` | merged-unreleased | has: Backups Restore with replace or merge (`settings-parity.md` D row 178) | - | - |
@@ -246,9 +246,9 @@ Rows in the area tables above (the last "Other" row is a bundle and is counted o
 
 | Sigil status | Rows |
 | --- | ---: |
-| has | 48 |
-| partial | 20 |
-| missing | 12 |
+| has | 60 |
+| partial | 10 |
+| missing | 10 |
 | in progress | 14 |
 | excluded | 11 |
 | n/a | 3 |
@@ -263,7 +263,7 @@ Rows in the area tables above (the last "Other" row is a bundle and is counted o
 | mixed (one row, several sources of different maturity) | 6 |
 | **Total** | **108** |
 
-Partial and missing rows, by effort: 18 S, 13 M, 1 L.
+Partial and missing rows, by effort: 8 S, 11 M, 1 L.
 
 ## Build list
 
