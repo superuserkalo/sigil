@@ -111,6 +111,7 @@ pub const DE: &[(&str, &str)] = &[
     ("Ask where to save", "Beim Speichern nach dem Ort fragen"),
     ("Save as", "Speichern unter"),
     ("Wireframe", "Drahtgitter"),
+    ("Axis gizmo", "Achsen-Gizmo"),
     ("The 3D view is not on screen.", "Die 3D-Ansicht ist nicht sichtbar."),
     ("Use this view as the mod's cover", "Diese Ansicht als Titelbild der Mod verwenden"),
     ("Saved the view as this mod's cover.", "Die Ansicht wurde als Titelbild dieser Mod gespeichert."),

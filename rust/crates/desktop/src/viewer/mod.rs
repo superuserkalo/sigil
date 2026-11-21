@@ -27,6 +27,7 @@
 
 pub mod controls;
 pub mod dialog;
+mod gizmo;
 pub mod icons;
 pub mod prepare;
 mod parity_scenes;
@@ -329,7 +330,10 @@ fn render_still(view: &mut View, out: &Outputs, source: &Source, before: Option<
                 CompareMode::Before => sigil_viewer::Compare::Before,
                 CompareMode::Split => sigil_viewer::Compare::Split(view.split),
             };
-            let rgba = viewer.render(w, h, 0.0).to_vec();
+            let mut rgba = viewer.render(w, h, 0.0).to_vec();
+            if l.gizmo {
+                gizmo::draw(&mut rgba, w, h, viewer.camera.yaw, viewer.camera.pitch, scale);
+            }
             out.pixels.set(w, h, rgba);
             worker::ready(out, &viewer);
             worker::publish_live(out, &viewer);
