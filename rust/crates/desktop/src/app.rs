@@ -2618,6 +2618,7 @@ pub fn scenes() -> &'static [(&'static str, fn(&mut State))] {
         ("browse-fixture", screens::browse::scene_fixture),
         ("browse-card-stress", screens::browse::scene_card_stress),
         ("browse-card-stress-de", screens::browse::scene_card_stress_de),
+        ("browse-long-filters", screens::browse::scene_long_filters),
         ("browse-details", screens::browse::scene_details),
         ("browse-docked", screens::browse::scene_docked),
         ("browse-filters", screens::browse::scene_filters),

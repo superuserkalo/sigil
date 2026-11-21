@@ -308,9 +308,9 @@ fn figure(u: &Ui, m: Metric, divided: bool) -> El {
         .child(
             row()
                 .w_full()
-                .gap(12.0)
+                .gap(4.0)
                 .items_end()
-                .child(text(m.value).font(NUM).color(u.ink))
+                .child(text(m.value).font(NUM).color(u.ink).truncate().min_w(0.0).shrink())
                 .child(spacer())
                 .child(sparkline(u, &m.series, 88.0, 24.0)),
         )

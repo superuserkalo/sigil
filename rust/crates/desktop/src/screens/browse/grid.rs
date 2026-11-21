@@ -50,6 +50,11 @@ pub(crate) fn tab_switch(s: &State, u: &Ui) -> El {
     r
 }
 
+/// A long category or hero name truncates here instead of pushing the filter row around.
+const FILTER_MAX_W: f32 = 220.0;
+/// A filter chip holding a long search or a long category name.
+const CHIP_MAX_W: f32 = 280.0;
+
 /// A 32 point dropdown trigger. Active ones read in ink and name their value.
 pub(crate) fn filter_button(
     u: &Ui,
@@ -63,6 +68,7 @@ pub(crate) fn filter_button(
     let mut b = row()
         .key(menu.anchor())
         .h(32.0)
+        .max_w(FILTER_MAX_W)
         .pl(if glyph.is_some() { 10.0 } else { 12.0 })
         .pr(8.0)
         .gap(6.0)
@@ -84,7 +90,7 @@ pub(crate) fn filter_button(
     if let Some(glyph) = glyph {
         b = b.child(icon(glyph, 14.0).color(ink).a11y_hidden());
     }
-    b.child(text(label.to_string()).font(LABEL).color(ink).a11y_hidden())
+    b.child(text(label.to_string()).font(LABEL).color(ink).truncate().min_w(0.0).shrink().a11y_hidden())
         .child(icon(&icons::CHEVRON_DOWN, 14.0).color(u.faint).a11y_hidden())
 }
 
@@ -151,6 +157,7 @@ pub(crate) fn filter_bar(s: &State, u: &Ui) -> El {
                 row()
                     .key("browse-filter-hero")
                     .h(32.0)
+                    .max_w(FILTER_MAX_W)
                     .px(12.0)
                     .gap(6.0)
                     .center_y()
@@ -176,6 +183,9 @@ pub(crate) fn filter_bar(s: &State, u: &Ui) -> El {
                         text(f.hero.clone().unwrap_or_else(|| "Hero".into()))
                             .font(LABEL)
                             .color(if f.hero.is_some() { u.ink } else { u.muted })
+                            .truncate()
+                            .min_w(0.0)
+                            .shrink()
                             .a11y_hidden(),
                     )
                     .child(icon(&icons::CHEVRON_DOWN, 14.0).color(u.faint).a11y_hidden()),
@@ -231,7 +241,8 @@ pub(crate) fn filter_bar(s: &State, u: &Ui) -> El {
                 };
             });
         if more > 0 {
-            filters = filters.child(
+            // The count needs its own room beside the icon.
+            filters = filters.w(48.0).gap(4.0).child(
                 text(more.to_string())
                     .font(SMALL)
                     .color(u.ink)
@@ -271,6 +282,7 @@ pub(crate) fn active_chips(s: &State, u: &Ui) -> Option<El> {
         row()
             .key(format!("browse-chip-{key}"))
             .h(28.0)
+            .max_w(CHIP_MAX_W)
             .pl(10.0)
             .pr(6.0)
             .gap(4.0)
@@ -282,7 +294,7 @@ pub(crate) fn active_chips(s: &State, u: &Ui) -> Option<El> {
             .role("button")
             .label(format!("Remove {label}"))
             .cursor(rune::Cursor::Pointer)
-            .child(text(label).font(LABEL).color(u.prose).a11y_hidden())
+            .child(text(label).font(LABEL).color(u.prose).truncate().min_w(0.0).shrink().a11y_hidden())
             .child(icon(&icons::X, 12.0).color(u.faint).a11y_hidden())
     };
     let clearing = |key: &str, label: String, clear: fn(&mut Filters)| {

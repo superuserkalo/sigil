@@ -1208,13 +1208,15 @@ fn card_view(s: &State, u: &Ui, card: &layout::Group, pitch: [f32; 2], cols: usi
     if drag::allowed(s) {
         top = top.child(drag::grip(u, slot, addon.enabled, pitch, cols, dragging, hovered));
     }
-    top = top.child(spacer());
+    // Marks wrap under each other on a narrow card, so "more" stays on the image.
+    let mut marks = row().grow(1.0).shrink().min_w(0.0).gap(4.0).justify_end().flex_wrap();
     for mark in card_marks(s, u, addon) {
-        top = top.child(mark);
+        marks = marks.child(mark);
     }
     for warning in warning_buttons(s, u, addon) {
-        top = top.child(warning);
+        marks = marks.child(warning);
     }
+    top = top.child(marks);
     let media = media.child(
         col()
             .absolute(0.0, 0.0)

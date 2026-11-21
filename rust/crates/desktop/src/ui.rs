@@ -916,9 +916,10 @@ impl Ui {
     /// The page header: title, an optional one line description, actions on the right, and a
     /// hairline under it. The kicker argument is ignored.
     pub fn page_head(&self, _kicker: &str, title: &str, detail: &str, trailing: Option<El>) -> El {
+        // Keeps a short summary readable when the trailing controls are wide.
         let mut left = col()
             .grow(1.0)
-            .min_w(0.0)
+            .min_w(120.0)
             .gap(4.0)
             .child(text(title.to_string()).font(DISPLAY).color(self.ink));
         if !detail.is_empty() {

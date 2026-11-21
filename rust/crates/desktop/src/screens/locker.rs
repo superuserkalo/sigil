@@ -401,7 +401,7 @@ fn grid_page(s: &State, u: &Ui, v: &View) -> El {
             }
         });
 
-    let mut actions = row().gap(8.0).center_y().child(u.search_shell(search));
+    let mut actions = row().shrink().min_w(0.0).gap(8.0).center_y().child(u.search_shell(search).shrink().min_w(120.0));
     if v.loaded && !v.heroes.is_empty() {
         actions = actions.child(filter(u, v.modded_only, v.starred_only));
     }

@@ -866,3 +866,19 @@ pub fn scene_card_stress_de(s: &mut State) {
     crate::screens::settings::i18n::set(crate::screens::settings::i18n::Lang::German);
     scene_card_stress(s);
 }
+
+/// Filter chips and dropdowns holding names far longer than the row expects.
+pub fn scene_long_filters(s: &mut State) {
+    let long = "A Category Name That Goes On For Much Longer Than Anyone Planned";
+    scene_with(s, |f| {
+        f.category = Some(Pick { id: 33295, name: long.into() });
+        f.hero = Some("A Hero Name That Also Refuses To End".into());
+        f.period = BrowsePeriod::Week;
+    });
+    s.browse_view.applied_search = long.into();
+    s.browse_query = TextEdit::new(long);
+    let key = query_key(s, &current_query(s));
+    if let Some(page) = s.browse.page.as_mut() {
+        page.key = key;
+    }
+}
