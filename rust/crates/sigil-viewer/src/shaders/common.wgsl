@@ -160,15 +160,20 @@ fn lightmap_irradiance(n_world: vec3<f32>, uv: vec2<f32>) -> vec3<f32> {
     return max(vec3<f32>(0.0), linear + zonal * (3.0 * a * a - 1.0));
 }
 
+// The one-hot RGBA mask of a baked shadow channel. Built by comparison: a write through a
+// dynamic index (`mask[channel] = 1.0`) is not addressable in FXC's shader model 5.1, and D3D12
+// on Windows compiles with FXC.
+fn channel_mask(channel: f32) -> vec4<f32> {
+    return select(vec4<f32>(0.0), vec4<f32>(1.0), vec4<u32>(0u, 1u, 2u, 3u) == vec4<u32>(u32(channel) & 3u));
+}
+
 // The stationary light's visibility from the baked shadow mask: 1 lit.
 fn lightmap_visibility(uv: vec2<f32>, channel: f32) -> f32 {
     if (hideout.lightmap.z < 0.5 || channel < 0.0) {
         return 1.0;
     }
     let s = textureSampleLevel(t_lm_shadows, s_env, uv * hideout.lightmap_scale.xy, 0.0);
-    var mask = vec4<f32>(0.0);
-    mask[u32(channel) & 3u] = 1.0;
-    return clamp(1.0 - dot(s, mask), 0.0, 1.0);
+    return clamp(1.0 - dot(s, channel_mask(channel)), 0.0, 1.0);
 }
 
 struct ProbeSample {
@@ -182,9 +187,14 @@ fn decode_probe(c: vec4<f32>, rgbm: bool) -> vec3<f32> {
     if (!rgbm) {
         return c.rgb;
     }
-    let enc = select(1.055 * pow(c.rgb, vec3<f32>(1.0 / 2.4)) - 0.055, c.rgb * 12.92, c.rgb <= vec3<f32>(0.0031308));
+    let enc = select(1.055 * pow(max(c.rgb, vec3<f32>(0.0)), vec3<f32>(1.0 / 2.4)) - 0.055, c.rgb * 12.92, c.rgb <= vec3<f32>(0.0031308));
     let v = enc * c.a * 6.0;
     return v * v;
+}
+
+// One Source face (0..5 as +X, +Y, +Z, -X, -Y, -Z) of a probe's atlas cell.
+fn probe_face(coord: vec3<f32>, face: f32, rgbm: bool) -> vec3<f32> {
+    return decode_probe(textureSampleLevel(t_probes, s_env, coord + vec3<f32>(0.0, 0.0, face / 6.0), 0.0), rgbm);
 }
 
 // The light probe volumes at `world` (source2ProbeVolume.ts): priority order, each fading at
@@ -193,8 +203,6 @@ fn probe_at(world: vec3<f32>) -> ProbeSample {
     var out: ProbeSample;
     let count = u32(hideout.counts.x);
     let atlas = hideout.atlas.xyz;
-    // Source faces +X, +Y, +Z, -X, -Y, -Z land on glTF +Z, +X, +Y, -Z, -X, -Y.
-    var to_gltf = array<u32, 6>(4u, 0u, 2u, 5u, 1u, 3u);
     for (var i = 0u; i < 8u; i = i + 1u) {
         if (i >= count || out.coverage > 0.99) {
             break;
@@ -213,11 +221,15 @@ fn probe_at(world: vec3<f32>) -> ProbeSample {
         let voxel = clamp(local * size, vec3<f32>(0.5), size - vec3<f32>(0.5)) + p.offset.xyz;
         var coord = voxel / atlas;
         coord.z = coord.z / 6.0;
-        for (var f = 0u; f < 6u; f = f + 1u) {
-            let c = textureSampleLevel(t_probes, s_env, coord + vec3<f32>(0.0, 0.0, f32(f) / 6.0), 0.0);
-            let g = to_gltf[f];
-            out.faces[g] = out.faces[g] + decode_probe(c, p.size.w > 0.5) * w;
-        }
+        // Source faces +X, +Y, +Z, -X, -Y, -Z land on glTF +Z, +X, +Y, -Z, -X, -Y. Constant
+        // indices only: FXC cannot write an array inside a struct through a dynamic index.
+        let rgbm = p.size.w > 0.5;
+        out.faces[4] = out.faces[4] + probe_face(coord, 0.0, rgbm) * w;
+        out.faces[0] = out.faces[0] + probe_face(coord, 1.0, rgbm) * w;
+        out.faces[2] = out.faces[2] + probe_face(coord, 2.0, rgbm) * w;
+        out.faces[5] = out.faces[5] + probe_face(coord, 3.0, rgbm) * w;
+        out.faces[1] = out.faces[1] + probe_face(coord, 4.0, rgbm) * w;
+        out.faces[3] = out.faces[3] + probe_face(coord, 5.0, rgbm) * w;
         if (hideout.counts.y > 0.5) {
             let sc = (clamp(local, vec3<f32>(0.0), vec3<f32>(1.0)) * size + p.offset.xyz) / vec3<f32>(atlas.xy, atlas.z * 6.0);
             out.shadow = out.shadow + textureSampleLevel(t_probe_shadows, s_env, sc, 0.0) * w;

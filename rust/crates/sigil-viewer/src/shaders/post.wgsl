@@ -74,8 +74,9 @@ fn tonemap(x: vec3<f32>) -> vec3<f32> {
     let mapped = max(curve(exposed) * post.exposure.z, vec3<f32>(0.0));
     // The game's brightness setting acts on the encoded value; 2.2 is identity.
     if (abs(post.exposure.w - 1.0) > 1e-4) {
-        let enc = pow(mapped, vec3<f32>(1.0 / 2.2));
-        return pow(pow(enc, vec3<f32>(post.exposure.w)), vec3<f32>(2.2));
+        // max() tells FXC the bases are not negative (they are not; it warns otherwise).
+        let enc = pow(max(mapped, vec3<f32>(0.0)), vec3<f32>(1.0 / 2.2));
+        return pow(max(pow(enc, vec3<f32>(post.exposure.w)), vec3<f32>(0.0)), vec3<f32>(2.2));
     }
     return mapped;
 }
@@ -86,7 +87,7 @@ fn srgb_encode(c: vec3<f32>) -> vec3<f32> {
 }
 
 fn srgb_decode(c: vec3<f32>) -> vec3<f32> {
-    return select(pow((c + 0.055) / 1.055, vec3<f32>(2.4)), c / 12.92, c <= vec3<f32>(0.04045));
+    return select(pow(max((c + 0.055) / 1.055, vec3<f32>(0.0)), vec3<f32>(2.4)), c / 12.92, c <= vec3<f32>(0.04045));
 }
 
 // The map's colour correction volume, indexed by the display-encoded colour.

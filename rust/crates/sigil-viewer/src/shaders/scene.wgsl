@@ -196,17 +196,18 @@ fn npr_ambient(n: vec3<f32>, to_camera: vec3<f32>, key: vec3<f32>, ao: f32, face
 fn faces_at(world: vec3<f32>) -> ProbeSample {
     var p = probe_at(world);
     let rest = clamp(1.0 - p.coverage, 0.0, 1.0);
-    for (var f = 0u; f < 6u; f = f + 1u) {
-        p.faces[f] = p.faces[f] + frame.ambient[f].rgb * rest;
-    }
+    // Unrolled: FXC cannot write `p.faces` through a dynamic index.
+    p.faces[0] = p.faces[0] + frame.ambient[0].rgb * rest;
+    p.faces[1] = p.faces[1] + frame.ambient[1].rgb * rest;
+    p.faces[2] = p.faces[2] + frame.ambient[2].rgb * rest;
+    p.faces[3] = p.faces[3] + frame.ambient[3].rgb * rest;
+    p.faces[4] = p.faces[4] + frame.ambient[4].rgb * rest;
+    p.faces[5] = p.faces[5] + frame.ambient[5].rgb * rest;
     return p;
 }
 
 fn faces_fit(faces: array<vec3<f32>, 6>) -> vec4<f32> {
-    var l: array<f32, 6>;
-    for (var f = 0u; f < 6u; f = f + 1u) {
-        l[f] = dot(faces[f], LUMA);
-    }
+    let l = array<f32, 6>(dot(faces[0], LUMA), dot(faces[1], LUMA), dot(faces[2], LUMA), dot(faces[3], LUMA), dot(faces[4], LUMA), dot(faces[5], LUMA));
     return vec4<f32>((l[0] - l[1]) * 0.5, (l[2] - l[3]) * 0.5, (l[4] - l[5]) * 0.5, (l[0] + l[1] + l[2] + l[3] + l[4] + l[5]) / 6.0);
 }
 
@@ -221,9 +222,7 @@ fn baked_visibility(i: u32, s: Surface, probe: ProbeSample) -> f32 {
     if (lightmapped(s)) {
         v = lightmap_visibility(s.uv3, channel);
     } else if (hideout.counts.y > 0.5 && probe.coverage > 0.0) {
-        var mask = vec4<f32>(0.0);
-        mask[u32(channel) & 3u] = 1.0;
-        v = clamp(1.0 - dot(probe.shadow, mask), 0.0, 1.0);
+        v = clamp(1.0 - dot(probe.shadow, channel_mask(channel)), 0.0, 1.0);
     }
     if (frame.lights[i].pos_dir.w > 0.5) {
         v = v * v;
@@ -324,7 +323,7 @@ fn light_at(i: u32, world: vec3<f32>) -> vec4<f32> {
     } else {
         att = 1.0 / dist2;
         if (l.color.w > 0.0) {
-            let r = clamp(1.0 - pow(dist / l.color.w, 4.0), 0.0, 1.0);
+            let r = clamp(1.0 - pow(max(dist / l.color.w, 0.0), 4.0), 0.0, 1.0);
             att = att * r * r;
         }
     }
@@ -608,7 +607,7 @@ fn shade_npr(s: Surface, world: vec3<f32>, frag: vec2<f32>) -> vec3<f32> {
     let fit = select(frame.ambient_fit, faces_fit(probe.faces), probe.coverage > 0.0);
     let probe_l = dot(vec4<f32>(n, 1.0), fit);
     let ratio = select(1.0, min(dot(amb.rgb, LUMA) / probe_l, 32.0), probe_l > 0.0);
-    let spec_occ = clamp(pow(n_dot_v + s.ao, a) - 1.0 + s.ao, 0.0, 1.0);
+    let spec_occ = clamp(pow(max(n_dot_v + s.ao, 0.0), a) - 1.0 + s.ao, 0.0, 1.0);
     let ibl = mix(vec3<f32>(fab.y), vec3<f32>(fab.x + fab.y), f0) * env * ratio * spec_occ;
     return diffuse + rim + emission + spec + ibl;
 }
