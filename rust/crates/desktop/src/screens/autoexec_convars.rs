@@ -178,18 +178,20 @@ fn start_edit(st: &mut State, name: String) {
 fn set_value(st: &mut State) {
     let Some(name) = st.autoexec.convars.editing.clone() else { return };
     let value = st.autoexec.convars.value.text.trim().to_string();
-    let check = st
-        .autoexec
-        .convars
-        .catalog
-        .as_ref()
-        .and_then(|catalog| catalog.get(&name))
-        .and_then(|convar| convar.check(&value));
-    if let Some(problem) = check {
+    // Only a name the game's list holds is written, and only as one checked command.
+    let Some(convar) = st.autoexec.convars.catalog.as_ref().and_then(|catalog| catalog.get(&name)) else {
+        st.autoexec.convars.error = Some(tr("This setting is not in the game's list.").to_string());
+        return;
+    };
+    if let Some(problem) = convar.check(&value) {
         st.autoexec.convars.error = Some(problem_text(&problem));
         return;
     }
-    st.autoexec.add_preset(&format!("{name} {value}"));
+    let Some(command) = core::safe_command(&name, &value) else {
+        st.autoexec.convars.error = Some(problem_text(&Problem::Forbidden));
+        return;
+    };
+    st.autoexec.add_preset(&command);
     st.autoexec.convars.editing = None;
     st.autoexec.convars.note = Some(fill(tr("{} is in the list. Save to write it."), &[&name]));
 }

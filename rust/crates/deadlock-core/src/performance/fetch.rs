@@ -462,7 +462,8 @@ pub fn refresh(remote: &dyn Remote, data_dir: &Path, now: &str) -> Result<Refres
 }
 
 /// Valve's convar list says which convars the game refuses from gameinfo.gi.
-/// Only read for labels and to skip lines that would do nothing, so a sanity
+/// Read for labels, to skip lines that would do nothing, and as the convar editor's catalogue
+/// (`autoexec::convars` validates every name and default before use), so a sanity
 /// check stands in for the blob check (the repository tree is too large to list).
 fn refresh_convars(remote: &dyn Remote, data_dir: &Path, index: &mut CacheIndex) -> Result<()> {
     let list = remote.get_json(&format!(

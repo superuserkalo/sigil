@@ -1,6 +1,7 @@
 //! German for the console variables section (`autoexec_convars.rs`).
 
 pub const DE: &[(&str, &str)] = &[
+    ("This setting is not in the game's list.", "Diese Einstellung steht nicht in der Liste des Spiels."),
     ("{} convars. {}", "{} Konsolenvariablen. {}"),
     ("{} convars", "{} Konsolenvariablen"),
     ("{} is in the list. Save to write it.", "{} steht in der Liste. Speichere, um es zu schreiben."),
