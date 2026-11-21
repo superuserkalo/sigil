@@ -4,18 +4,21 @@
 //! A release on GitHub carries the zip for each platform plus `sigil-update.json` (version, and
 //! per platform the asset name, size and SHA-256) and `sigil-update.json.sig`, an Ed25519
 //! signature by the key in [`UPDATE_PUBLIC_KEY`]. `scripts/release-sign.mjs` writes both; the
-//! private key never leaves the maintainer's machine (`docs/runbooks/releasing.md`).
+//! private key never leaves the maintainer's machine (`docs/runbooks/releasing.md`). Linux sits
+//! under `extra_platforms` (the AppImage itself, not a zip), which 0.1.x builds never read, so
+//! adding it does not break their updates.
 //!
 //! The flow:
 //!
 //! 1. [`check`] reads the newest release (Stable or Preview), downloads the manifest and its
 //!    signature, verifies them and refuses anything that is not newer than this build.
-//! 2. [`download`] streams the zip into the app data directory on a worker thread, checks the
+//! 2. [`download`] streams the asset into the app data directory on a worker thread, checks the
 //!    size and the hash against the signed manifest, unpacks it into `updates/staged/<version>`
-//!    and records `updates/pending.json`.
+//!    (or moves the AppImage there as is) and records `updates/pending.json`.
 //! 3. "Restart to update" ([`restart_now`]) or the next launch ([`on_start`]) copies the staged
-//!    files next to the install, renames the current `Sigil.exe` (or `Sigil.app`) aside as
-//!    `.old`, moves the new one in, records `updates/applied.json` and starts the new version.
+//!    files next to the install, renames the current `Sigil.exe` (or `Sigil.app`, or the AppImage)
+//!    aside as `.old`, moves the new one in, records `updates/applied.json` and starts the new
+//!    version.
 //! 4. The new version writes "started" into `applied.json` once it has drawn a frame. If a launch
 //!    of the new version finds `applied.json` unconfirmed from an earlier launch, it restores the
 //!    `.old` files and starts the previous version. A confirmed update deletes `.old` on the next
@@ -68,6 +71,10 @@ const NEW_ROOT: &str = ".sigil-update-new";
 const WINDOWS_EXE: &str = "Sigil.exe";
 /// The macOS bundle name a release zip carries.
 const MAC_BUNDLE: &str = "Sigil.app";
+/// The name a Linux AppImage takes in the staged tree. The release asset itself is
+/// `Sigil-<version>-x86_64.AppImage`, downloaded as is (no zip around it); the swap renames it
+/// over whatever file name the player gave the running AppImage.
+const LINUX_APPIMAGE: &str = "Sigil.AppImage";
 /// The variable Rune's single-instance step reads: the new process waits for this pid to exit
 /// (`vendor/rune/crates/rune/src/quit/relaunch.rs`), as `Tx::relaunch` does.
 const RELAUNCH_AFTER: &str = "RUNE_RELAUNCH_AFTER";
@@ -184,7 +191,14 @@ impl Manifest {
     }
 }
 
+/// The keys `platforms` may hold. Sigil 0.1.x refuses a manifest with any other key there, so
+/// this list never grows: a platform added later goes under [`EXTRA_PLATFORMS`] instead.
 const PLATFORMS: [&str; 3] = ["windows-x86_64", "macos-aarch64", "macos-x86_64"];
+
+/// The keys `extra_platforms` may hold. Older builds never read `extra_platforms`, so a release
+/// that adds Linux still updates every Windows and macOS copy. An unknown key there is skipped,
+/// not refused, so the next platform needs no format change either.
+const EXTRA_PLATFORMS: [&str; 1] = ["linux-x86_64"];
 
 /// The manifest key for this build, or "" where Sigil ships no update.
 pub fn platform_key() -> &'static str {
@@ -192,6 +206,7 @@ pub fn platform_key() -> &'static str {
         ("windows", "x86_64") => "windows-x86_64",
         ("macos", "aarch64") => "macos-aarch64",
         ("macos", "x86_64") => "macos-x86_64",
+        ("linux", "x86_64") => "linux-x86_64",
         _ => "",
     }
 }
@@ -217,16 +232,33 @@ pub fn parse_manifest(bytes: &[u8]) -> Result<Manifest, String> {
         .get("platforms")
         .and_then(|v| v.as_object())
         .ok_or_else(|| bad("no platforms"))?;
+    let extra = match value.get("extra_platforms") {
+        None => None,
+        Some(v) => Some(v.as_object().ok_or_else(|| bad("unreadable extra platforms"))?),
+    };
     let mut platforms = Vec::new();
-    for (key, entry) in map {
-        if !PLATFORMS.contains(&key.as_str()) {
+    let entries = map
+        .iter()
+        .map(|(k, e)| (k, e, false))
+        .chain(extra.into_iter().flatten().map(|(k, e)| (k, e, true)));
+    for (key, entry, is_extra) in entries {
+        if is_extra {
+            if !EXTRA_PLATFORMS.contains(&key.as_str()) {
+                continue;
+            }
+        } else if !PLATFORMS.contains(&key.as_str()) {
             return Err(bad(&format!("an unknown platform ({key})")));
         }
+        if platforms.iter().any(|(k, _)| k == key) {
+            return Err(bad(&format!("{key} twice")));
+        }
+        // Linux ships the AppImage itself; every other platform a zip.
+        let suffix = if key.starts_with("linux") { ".AppImage" } else { ".zip" };
         let asset = entry
             .get("asset")
             .and_then(|v| v.as_str())
             .filter(|name| {
-                name.ends_with(".zip")
+                name.ends_with(suffix)
                     && !name.starts_with('.')
                     && name.bytes().all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b))
             })
@@ -600,7 +632,19 @@ pub fn download(
     fs::write(stage.join(MANIFEST_ASSET), &offer.manifest).map_err(io)?;
     fs::write(stage.join(SIGNATURE_ASSET), &offer.signature).map_err(io)?;
     let tree = stage.join("tree");
-    unpack(&zip_path, &tree)?;
+    if entry.asset.ends_with(".AppImage") {
+        // Nothing to unpack: the verified file is the whole program.
+        fs::create_dir_all(&tree).map_err(io)?;
+        let program = tree.join(LINUX_APPIMAGE);
+        fs::rename(&zip_path, &program).map_err(io)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&program, fs::Permissions::from_mode(0o755)).map_err(io)?;
+        }
+    } else {
+        unpack(&zip_path, &tree)?;
+    }
     check_tree(&tree, platform, &manifest.version)?;
     let staged = Staged {
         version: manifest.version.clone(),
@@ -688,6 +732,20 @@ fn common_top(names: &[PathBuf]) -> Option<PathBuf> {
 
 /// The unpacked tree must hold what this platform swaps in.
 fn check_tree(tree: &Path, platform: &str, version: &str) -> Result<(), String> {
+    if platform.starts_with("linux") {
+        // An x86-64 ELF with the AppImage type 2 mark ("AI" 2 at byte 8).
+        let mut head = [0u8; 20];
+        let ok = File::open(tree.join(LINUX_APPIMAGE))
+            .and_then(|mut f| f.read_exact(&mut head))
+            .is_ok();
+        if !ok || &head[..4] != b"\x7fELF" || &head[8..11] != b"AI\x02" {
+            return Err(format!("The update is not an AppImage ({LINUX_APPIMAGE})."));
+        }
+        if u16::from_le_bytes([head[18], head[19]]) != 0x3e {
+            return Err("The update is not an x86-64 AppImage.".to_string());
+        }
+        return Ok(());
+    }
     if platform.starts_with("windows") {
         if !tree.join(WINDOWS_EXE).is_file() {
             return Err(format!("The update has no {WINDOWS_EXE}."));
@@ -720,6 +778,8 @@ pub enum Kind {
     Windows,
     /// `Sigil.app` on macOS.
     MacBundle,
+    /// The `.AppImage` file on Linux (`$APPIMAGE`, whatever the player named it).
+    AppImage,
 }
 
 /// Where the running copy lives.
@@ -741,7 +801,7 @@ impl Layout {
         let parent = path.parent().unwrap_or(&self.dir);
         match self.kind {
             Kind::Windows => parent.join(format!("{name}.{suffix}")),
-            Kind::MacBundle => parent.join(format!(".{name}.{suffix}")),
+            Kind::MacBundle | Kind::AppImage => parent.join(format!(".{name}.{suffix}")),
         }
     }
 
@@ -754,6 +814,7 @@ impl Layout {
         new_root.join(match self.kind {
             Kind::Windows => WINDOWS_EXE,
             Kind::MacBundle => MAC_BUNDLE,
+            Kind::AppImage => LINUX_APPIMAGE,
         })
     }
 }
@@ -794,12 +855,31 @@ pub fn detect(os: &str, exe: &Path) -> Result<Layout, String> {
                 dir,
             })
         }
+        "linux" => {
+            // `exe` is the AppImage file (`$APPIMAGE`), never the program inside its mount.
+            let name = exe.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+            if !exe.is_absolute() || !name.to_ascii_lowercase().ends_with(".appimage") {
+                return Err("Only the AppImage updates itself. Update this copy the way it was installed, or switch to the AppImage from the release page.".to_string());
+            }
+            let dir = exe.parent().ok_or(not_release)?.to_path_buf();
+            Ok(Layout {
+                kind: Kind::AppImage,
+                target: exe.to_path_buf(),
+                assets: None,
+                dir,
+            })
+        }
         _ => Err("Sigil does not update itself on this system.".to_string()),
     }
 }
 
-/// The running copy's layout.
+/// The running copy's layout. On Linux that is the AppImage the runtime names in `$APPIMAGE`:
+/// the executable itself lives in a read-only mount that goes away when Sigil exits.
 pub fn current_layout() -> Result<Layout, String> {
+    if std::env::consts::OS == "linux" {
+        let image = std::env::var_os("APPIMAGE").map(PathBuf::from).unwrap_or_default();
+        return detect("linux", &image);
+    }
     let exe = std::env::current_exe().map_err(|e| format!("Sigil could not find itself: {e}"))?;
     detect(std::env::consts::OS, &exe)
 }
@@ -980,7 +1060,7 @@ pub fn install(layout: &Layout, staged: &Staged, from: &str) -> Result<Applied, 
                     .collect()
             })
             .unwrap_or_default(),
-        Kind::MacBundle => Vec::new(),
+        Kind::MacBundle | Kind::AppImage => Vec::new(),
     };
     let plan = apply_plan(layout, &new_root, replace_assets, has_assets, &extras);
     if let Err(error) = run(&plan) {
@@ -1124,6 +1204,16 @@ fn launch(layout: &Layout) -> Result<(), String> {
             }
             Ok(())
         }
+        Kind::AppImage => Command::new(&layout.target)
+            .args(&args)
+            .env(RELAUNCH_AFTER, &pid)
+            .current_dir(&layout.dir)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .map(drop)
+            .map_err(error),
         Kind::Windows => {
             let mut command = Command::new(&layout.target);
             command
@@ -1859,6 +1949,98 @@ mod tests {
         let _ = fs::remove_dir_all(dir);
     }
 
+    /// A fake x86-64 AppImage: the ELF magic, the type 2 mark at byte 8, machine 0x3e.
+    fn appimage_bytes(tail: &[u8]) -> Vec<u8> {
+        let mut bytes = vec![0u8; 64];
+        bytes[..4].copy_from_slice(b"\x7fELF");
+        bytes[8..11].copy_from_slice(b"AI\x02");
+        bytes[18] = 0x3e;
+        bytes.extend_from_slice(tail);
+        bytes
+    }
+
+    #[test]
+    fn linux_rides_in_extra_platforms_so_older_builds_still_update() {
+        let sha = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
+        let manifest = serde_json::json!({
+            "format": 1, "product": "sigil", "version": "9.9.9",
+            "platforms": { "windows-x86_64": { "asset": "Sigil-9.9.9-windows-x64.zip", "size": 3, "sha256": sha, "assets": true } },
+            "extra_platforms": {
+                "linux-x86_64": { "asset": "Sigil-9.9.9-x86_64.AppImage", "size": 3, "sha256": sha },
+                "linux-riscv64": { "asset": "whatever", "size": 1, "sha256": sha }
+            }
+        });
+        let m = parse_manifest(&serde_json::to_vec(&manifest).unwrap()).unwrap();
+        assert_eq!(m.platform("linux-x86_64").unwrap().asset, "Sigil-9.9.9-x86_64.AppImage");
+        assert!(m.platform("windows-x86_64").unwrap().assets);
+        assert!(m.platform("linux-riscv64").is_none(), "an unknown extra platform is skipped");
+        // What a 0.1.x build reads: `platforms` only, every key one it knows.
+        assert!(manifest["platforms"].as_object().unwrap().keys().all(|k| PLATFORMS.contains(&k.as_str())));
+
+        let with = |extra: serde_json::Value| {
+            let mut v = manifest.clone();
+            v["extra_platforms"] = extra;
+            parse_manifest(&serde_json::to_vec(&v).unwrap())
+        };
+        // Linux ships the AppImage itself, never a zip; Windows never an AppImage.
+        assert!(with(serde_json::json!({ "linux-x86_64": { "asset": "Sigil.zip", "size": 3, "sha256": sha } })).is_err());
+        assert!(with(serde_json::json!({ "linux-x86_64": { "asset": "../x.AppImage", "size": 3, "sha256": sha } })).is_err());
+        assert!(with(serde_json::json!({ "windows-x86_64": { "asset": "Sigil.zip", "size": 3, "sha256": sha } })).is_ok(), "skipped: not an extra platform");
+        assert!(with(serde_json::json!("linux")).is_err());
+        // Linux in `platforms` would break every 0.1.x client, so it is refused there.
+        let mut legacy = manifest.clone();
+        legacy["platforms"]["linux-x86_64"] = manifest["extra_platforms"]["linux-x86_64"].clone();
+        assert!(parse_manifest(&serde_json::to_vec(&legacy).unwrap()).is_err());
+    }
+
+    #[test]
+    fn the_appimage_layout_and_tree() {
+        let l = detect("linux", Path::new("/home/ana/Apps/Sigil-0.2.0-x86_64.AppImage")).unwrap();
+        assert_eq!(l.kind, Kind::AppImage);
+        assert_eq!(l.dir, Path::new("/home/ana/Apps"));
+        assert_eq!(l.sidecar(&l.target, "old"), Path::new("/home/ana/Apps/.Sigil-0.2.0-x86_64.AppImage.old"));
+        assert_eq!(l.incoming(Path::new("/n")), Path::new("/n/Sigil.AppImage"));
+        assert!(detect("linux", Path::new("")).is_err(), "no $APPIMAGE: a package or a dev build");
+        assert!(detect("linux", Path::new("relative/Sigil.AppImage")).is_err());
+        assert!(detect("linux", Path::new("/tmp/.mount_SigilX/usr/bin/sigil")).is_err());
+
+        let root = temp("appimage-tree");
+        fs::create_dir_all(&root).unwrap();
+        fs::write(root.join(LINUX_APPIMAGE), appimage_bytes(b"")).unwrap();
+        assert!(check_tree(&root, "linux-x86_64", "0.2.0").is_ok());
+        let mut arm = appimage_bytes(b"");
+        arm[18] = 0xb7;
+        fs::write(root.join(LINUX_APPIMAGE), arm).unwrap();
+        assert!(check_tree(&root, "linux-x86_64", "0.2.0").is_err());
+        let mut plain_elf = appimage_bytes(b"");
+        plain_elf[8..11].copy_from_slice(&[0, 0, 0]);
+        fs::write(root.join(LINUX_APPIMAGE), plain_elf).unwrap();
+        assert!(check_tree(&root, "linux-x86_64", "0.2.0").is_err());
+        fs::write(root.join(LINUX_APPIMAGE), b"#!/bin/sh").unwrap();
+        assert!(check_tree(&root, "linux-x86_64", "0.2.0").is_err());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn appimage_swap_and_rollback() {
+        let dir = temp("appimage-swap");
+        fs::create_dir_all(&dir).unwrap();
+        let target = dir.join("Sigil-0.1.0-x86_64.AppImage");
+        fs::write(&target, "old").unwrap();
+        let layout = detect("linux", &target).unwrap();
+        let tree = dir.join("staged-tree");
+        fs::create_dir_all(&tree).unwrap();
+        fs::write(tree.join(LINUX_APPIMAGE), "new").unwrap();
+        let staged = Staged { version: "0.2.0".into(), tree, assets: false };
+        let applied = install(&layout, &staged, "0.1.0").unwrap();
+        assert_eq!(read(&target), "new", "the player's file name is kept");
+        assert_eq!(read(dir.join(".Sigil-0.1.0-x86_64.AppImage.old")), "old");
+        assert!(!layout.new_root().exists());
+        run(&rollback_plan(&layout, &applied)).unwrap();
+        assert_eq!(read(&target), "old");
+        let _ = fs::remove_dir_all(dir);
+    }
+
     #[test]
     fn start_up_decisions() {
         let a = |launches, confirmed| Applied { from: "0.1.0".into(), to: "0.2.0".into(), assets_new: false, assets_backup: false, launches, confirmed };
@@ -2043,6 +2225,51 @@ mod tests {
         assert_eq!(read(install_dir.join("assets/locker/a.png")), "new art");
         assert_eq!(read(install_dir.join("README.txt")), "new readme");
         assert_eq!(read(install_dir.join("Sigil.exe.old")), "old exe");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    /// Linux: the release carries the AppImage itself, listed under `extra_platforms`.
+    #[test]
+    fn end_to_end_appimage() {
+        let (pair, public) = key(11);
+        let platform = "linux-x86_64";
+        let asset = "Sigil-0.2.0-x86_64.AppImage";
+        let image = appimage_bytes(b"new appimage");
+        let manifest = serde_json::to_vec_pretty(&serde_json::json!({
+            "format": 1, "product": "sigil", "version": "0.2.0",
+            "platforms": { "windows-x86_64": { "asset": "Sigil-0.2.0-windows-x64.zip", "size": 1, "sha256": hex(&Sha256::digest(b"x")) } },
+            "extra_platforms": { platform: { "asset": asset, "size": image.len(), "sha256": hex(&Sha256::digest(&image)) } },
+        }))
+        .unwrap();
+        let signature = sign(&pair, &manifest);
+        let server = serve_with(|base| {
+            vec![
+                ("/repos/o/r/releases/latest".to_string(), release(base, "v0.2.0", &[asset, MANIFEST_ASSET, SIGNATURE_ASSET])),
+                (format!("/dl/{MANIFEST_ASSET}"), manifest.clone()),
+                (format!("/dl/{SIGNATURE_ASSET}"), signature.clone().into_bytes()),
+                (format!("/dl/{asset}"), image.clone()),
+            ]
+        });
+        let offer = check(&server, "o/r", "0.1.0", false, &[&public], platform).unwrap().unwrap();
+        let download_offer = offer.install.unwrap();
+        let root = temp("e2e-appimage");
+        let data = root.join("updates");
+        let staged = download(&download_offer, &data, "0.1.0", &[&public], platform, &Progress::default(), None).unwrap();
+        let program = staged.tree.join(LINUX_APPIMAGE);
+        assert_eq!(fs::read(&program).unwrap(), image);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(fs::metadata(&program).unwrap().permissions().mode() & 0o777, 0o755);
+        }
+        let apps = root.join("Apps");
+        fs::create_dir_all(&apps).unwrap();
+        let target = apps.join("Sigil.AppImage");
+        fs::write(&target, "old").unwrap();
+        let layout = detect("linux", &target).unwrap();
+        assert!(start_with(&layout, &data, "0.1.0", platform, false).is_none());
+        assert_eq!(fs::read(&target).unwrap(), image);
+        assert_eq!(read(apps.join(".Sigil.AppImage.old")), "old");
         let _ = fs::remove_dir_all(root);
     }
 

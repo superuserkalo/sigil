@@ -23,6 +23,9 @@ pub enum Manager {
     Flatpak,
     /// A system package (`/usr`, `/opt`): apt, dnf, pacman and the like.
     System,
+    /// Sigil's own `.deb` from the release page (`/usr/lib/sigil/`, `scripts/package-linux.sh`).
+    /// No apt repository carries it, so the note points at the release page, not at apt.
+    SigilDeb,
 }
 
 impl Manager {
@@ -36,7 +39,7 @@ impl Manager {
             Manager::Nix => Some("Nix"),
             Manager::Snap => Some("Snap"),
             Manager::Flatpak => Some("Flatpak"),
-            Manager::System => None,
+            Manager::System | Manager::SigilDeb => None,
         }
     }
 }
@@ -75,6 +78,8 @@ pub fn detect(os: &str, exe: &Path) -> Option<Manager> {
                 Some(Manager::Flatpak)
             } else if path.starts_with("/home/linuxbrew/") {
                 Some(Manager::Homebrew)
+            } else if path.starts_with("/usr/lib/sigil/") {
+                Some(Manager::SigilDeb)
             } else if path.starts_with("/usr/") || path.starts_with("/opt/") {
                 Some(Manager::System)
             } else {
@@ -110,6 +115,7 @@ fn from_name(name: &str) -> Option<Manager> {
     .into_iter()
     .find(|m| m.name().is_some_and(|n| n.eq_ignore_ascii_case(name)))
     .or_else(|| (name == "system").then_some(Manager::System))
+    .or_else(|| (name == "deb").then_some(Manager::SigilDeb))
 }
 
 #[cfg(test)]
@@ -139,6 +145,11 @@ mod tests {
         assert_eq!(win(r"D:\Games\scoopy\Sigil.exe"), None);
         assert_eq!(detect("macos", Path::new("/Applications/Sigil.app/Contents/MacOS/Sigil")), None);
         assert_eq!(detect("linux", Path::new("/home/ana/Apps/Sigil/sigil")), None);
+        // The AppImage runs from its own mount; it updates itself (updater.rs, `$APPIMAGE`).
+        assert_eq!(detect("linux", Path::new("/tmp/.mount_SigilAbc123/usr/bin/sigil")), None);
+        // The .deb from scripts/package-linux.sh: /usr/bin/sigil links to /usr/lib/sigil/sigil,
+        // and the kernel reports the link's target as the executable.
+        assert_eq!(detect("linux", Path::new("/usr/lib/sigil/sigil")), Some(Manager::SigilDeb));
     }
 
     #[test]
@@ -149,6 +160,7 @@ mod tests {
         );
         assert_eq!(detect("linux", Path::new("/usr/bin/sigil")), Some(Manager::System));
         assert_eq!(detect("linux", Path::new("/opt/Sigil/sigil")), Some(Manager::System));
+        assert_eq!(detect("linux", Path::new("/usr/lib/sigil/sigil")), Some(Manager::SigilDeb));
         assert_eq!(detect("linux", Path::new("/nix/store/abc-sigil/bin/sigil")), Some(Manager::Nix));
         assert_eq!(detect("linux", Path::new("/snap/sigil/12/sigil")), Some(Manager::Snap));
         assert_eq!(detect("linux", Path::new("/var/lib/flatpak/app/x/sigil")), Some(Manager::Flatpak));

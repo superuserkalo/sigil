@@ -17,6 +17,10 @@
 //   node scripts/release-sign.mjs sign <manifest> [--key path] [--dir folder-with-zips]
 //   node scripts/release-sign.mjs verify <manifest> [--pubkey base64]
 //
+// Windows and macOS entries go under `platforms`. Linux (`linux-x86_64`, `--zip` is the
+// AppImage itself) goes under `extra_platforms`: Sigil 0.1.x refuses a manifest with an unknown
+// key in `platforms` and never reads `extra_platforms`, so a release with Linux still updates it.
+//
 // The private key never leaves its file and is never printed.
 
 import crypto from 'node:crypto';
@@ -28,6 +32,7 @@ const CONTEXT = 'sigil-update-manifest v1\n';
 const HEADER = 'sigil-update-signature v1';
 const DEFAULT_KEY = path.join(os.homedir(), '.config', 'sigil', 'update-signing.key');
 const PLATFORMS = ['windows-x86_64', 'macos-aarch64', 'macos-x86_64'];
+const EXTRA_PLATFORMS = ['linux-x86_64'];
 // The prefix of an Ed25519 SubjectPublicKeyInfo in DER; the raw key is the 32 bytes after it.
 const SPKI_PREFIX = Buffer.from('302a300506032b6570032100', 'hex');
 
@@ -122,10 +127,19 @@ function checkManifest(manifest) {
     fail(`manifest version "${manifest.version}" is not x.y.z or x.y.z-pre`);
   }
   const platforms = Object.entries(manifest.platforms ?? {});
-  if (platforms.length === 0) fail('manifest lists no platform');
-  for (const [platform, entry] of platforms) {
-    if (!PLATFORMS.includes(platform)) fail(`unknown platform ${platform}`);
-    if (!/^[A-Za-z0-9._-]+\.zip$/.test(entry.asset ?? '')) fail(`${platform}: bad asset name`);
+  // Older builds refuse a manifest without `platforms`: a Linux-only release cannot be signed.
+  if (platforms.length === 0) fail('manifest lists no Windows or macOS platform');
+  const extra = Object.entries(manifest.extra_platforms ?? {});
+  const tagged = [
+    ...platforms.map(([platform, entry]) => [platform, entry, PLATFORMS]),
+    ...extra.map(([platform, entry]) => [platform, entry, EXTRA_PLATFORMS]),
+  ];
+  for (const [platform, entry, allowed] of tagged) {
+    if (!allowed.includes(platform)) fail(`unknown platform ${platform}`);
+    const suffix = platform.startsWith('linux') ? 'AppImage' : 'zip';
+    if (!new RegExp(`^[A-Za-z0-9_-][A-Za-z0-9._-]*\\.${suffix}$`).test(entry.asset ?? '')) {
+      fail(`${platform}: bad asset name`);
+    }
     if (!Number.isSafeInteger(entry.size) || entry.size <= 0) fail(`${platform}: bad size`);
     if (!/^[0-9a-f]{64}$/.test(entry.sha256 ?? '')) fail(`${platform}: bad sha256`);
   }
@@ -141,25 +155,31 @@ function manifest(args) {
   if (!file || !version || !platform || !zip) {
     fail('usage: manifest <manifest> --version V --platform P --zip Z [--assets]');
   }
-  if (!PLATFORMS.includes(platform)) fail(`platform must be one of ${PLATFORMS.join(', ')}`);
+  const extra = EXTRA_PLATFORMS.includes(platform);
+  if (!PLATFORMS.includes(platform) && !extra) {
+    fail(`platform must be one of ${[...PLATFORMS, ...EXTRA_PLATFORMS].join(', ')}`);
+  }
   const current = fs.existsSync(file)
     ? JSON.parse(fs.readFileSync(file, 'utf8'))
     : { format: 1, product: 'sigil', version, platforms: {} };
   if (current.version !== version) fail(`${file} is for ${current.version}, not ${version}`);
   current.published = new Date().toISOString().replace(/\.\d{3}Z$/, 'Z');
-  current.platforms[platform] = {
+  const section = extra ? (current.extra_platforms ??= {}) : current.platforms;
+  section[platform] = {
     asset: path.basename(zip),
     size: fs.statSync(zip).size,
     sha256: sha256File(zip),
     ...(assets ? { assets: true } : {}),
   };
-  checkManifest(current);
+  // A Linux build made before the Windows one: the manifest is written, but it cannot be signed
+  // until a Windows or macOS entry joins it (checkManifest in sign).
+  if (Object.keys(current.platforms).length > 0) checkManifest(current);
   fs.writeFileSync(file, `${JSON.stringify(current, null, 2)}\n`);
   if (fs.existsSync(`${file}.sig`)) {
     fs.rmSync(`${file}.sig`);
     console.log(`removed the old ${file}.sig: sign again`);
   }
-  console.log(`${file}: ${platform} -> ${current.platforms[platform].asset}`);
+  console.log(`${file}: ${platform} -> ${section[platform].asset}`);
 }
 
 function sign(args) {
@@ -171,7 +191,10 @@ function sign(args) {
   const parsed = JSON.parse(bytes.toString('utf8'));
   checkManifest(parsed);
   if (dir) {
-    for (const [platform, entry] of Object.entries(parsed.platforms)) {
+    for (const [platform, entry] of [
+      ...Object.entries(parsed.platforms),
+      ...Object.entries(parsed.extra_platforms ?? {}),
+    ]) {
       const zip = path.join(dir, entry.asset);
       if (!fs.existsSync(zip)) fail(`${platform}: ${zip} is missing`);
       if (fs.statSync(zip).size !== entry.size) fail(`${platform}: size does not match ${zip}`);
