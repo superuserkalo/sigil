@@ -55,16 +55,16 @@ use crate::jobs::Job;
 use crate::model::{AddonRow, Screen};
 use crate::screens::import as importer;
 use crate::screens::settings::i18n::{fill, tr};
-use crate::ui::{ActionKind, BODY, BODY_MED, H1, H2, LABEL, MICRO, PAGE_TOP, PAGE_X, SMALL, SMALL_NUM, Ui};
+use crate::ui::{ActionKind, BODY, BODY_MED, H1, LABEL, MICRO, PAGE_TOP, PAGE_X, SMALL, SMALL_NUM, Ui};
 
-const GRID_GAP: f32 = 16.0;
+const GRID_GAP: f32 = 12.0;
 /// An empty 24 point glyph, so unchecked menu rows keep the checked rows' text edge.
 pub(super) static NO_ICON: rune::Icon = rune::Icon {
     name: "sigil-none",
     view: 24.0,
     body: "",
 };
-pub(super) const CARD_RADIUS: f32 = 12.0;
+pub(super) const CARD_RADIUS: f32 = 8.0;
 
 #[derive(Default)]
 pub struct View {
@@ -1280,8 +1280,8 @@ fn cards_block(s: &State, u: &Ui, idx: &std::rc::Rc<index::Index>, cards: &[&lay
             .or_else(|| rune::memo::layout_with("installed-page", |r| (r[2] - 2.0 * PAGE_X).round()))
             .unwrap_or(1016.0);
         let card_w = ((width - GRID_GAP * (cols as f32 - 1.0)) / cols as f32).max(1.0);
-        // A card: its 16:9 image inside a 1 pt frame, then the footer.
-        let card_h = (card_w - 2.0) * 9.0 / 16.0 + CARD_FOOTER_H;
+        // A card: its 16:9 image inside a 1 pt frame, then the fixed footer.
+        let card_h = (card_w - 2.0) * 9.0 / 16.0 + card_text_h(s) + 2.0;
         // One card and its gap, from the last layout when the first card is built, so a drag
         // steps card by card.
         let pitch = rune::memo::layout_size(&format!("addon-{first:02}"))
@@ -1329,8 +1329,15 @@ fn cards_block(s: &State, u: &Ui, idx: &std::rc::Rc<index::Index>, cards: &[&lay
     }
 }
 
-/// The footer under a card's image: name, detail line and switch, with their padding.
-const CARD_FOOTER_H: f32 = 58.0;
+/// Whether cards carry their detail line ("by author · hero").
+fn card_details(s: &State) -> bool {
+    s.installed.layout != layout::Layout::Compact && !s.installed.hide_details
+}
+
+/// The fixed footer under a card's image: 56 with the detail line, 40 without.
+fn card_text_h(s: &State) -> f32 {
+    if card_details(s) { 56.0 } else { 40.0 }
+}
 /// One row of the list look.
 const LIST_ROW_H: f32 = layout::ROW_H;
 
@@ -1389,10 +1396,6 @@ fn card_view(s: &State, u: &Ui, idx: &index::Index, card: &layout::Group, pitch:
         };
     } else if let Some(hero) = notes::extra(s, addon).hero {
         detail = format!("{detail}  ·  {hero}");
-    }
-    // A3: when it was installed, from the install journal (or the library entry).
-    if !compact && let Some(date) = install_date(s, addon) {
-        detail = format!("{detail}  ·  {date}");
     }
     let menu_open = s.installed.menu == Some(Menu::Card(slot));
     let hovered = s.installed.hovered == Some(slot);
@@ -1549,19 +1552,20 @@ fn card_view(s: &State, u: &Ui, idx: &index::Index, card: &layout::Group, pitch:
 
     let mut text_col = col().grow(1.0).min_w(0.0).gap(2.0).child(
         text(name.clone())
-            .font(if compact { BODY_MED } else { H2 })
+            .font(BODY_MED)
             .color(if addon.enabled { u.ink } else { u.prose })
-            .truncate(),
+            .truncate()
+            .help_when_truncated(name.clone()),
     );
-    if !compact && !s.installed.hide_details {
-        text_col = text_col.child(text(detail).font(SMALL).color(u.faint).truncate());
+    if card_details(s) {
+        text_col = text_col.child(text(detail).font(SMALL).color(u.muted).truncate());
     }
+    // A fixed footer: the same height on every card of a layout, whatever buttons it holds.
     let mut footer = row()
         .w_full()
+        .h(card_text_h(s))
         .pl(12.0)
         .pr(10.0)
-        .pt(if compact { 8.0 } else { 10.0 })
-        .pb(if compact { 8.0 } else { 12.0 })
         .gap(6.0)
         .center_y()
         .child(text_col);

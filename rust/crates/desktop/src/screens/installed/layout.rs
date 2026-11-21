@@ -408,6 +408,10 @@ pub fn list_row(s: &State, u: &Ui, idx: &super::index::Index, card: &Group) -> E
     if card.is_variants() {
         detail = format!("{} files  ·  {detail}", card.addons.len());
     }
+    // When it was installed: the cards leave it out, the list keeps it.
+    if let Some(date) = super::install_date(s, addon) {
+        detail = format!("{detail}  ·  {date}");
+    }
     let key = notes::preview_key(s, addon);
     let pixels = key.as_ref().and_then(|key| s.thumbnails.get(key));
     let thumb = match pixels {
@@ -429,13 +433,13 @@ pub fn list_row(s: &State, u: &Ui, idx: &super::index::Index, card: &Group) -> E
     // Two fixed columns on the right, so every row's chips and marks share their edges: the
     // word chips (right aligned, cut at the column's edge) and the marks.
     let wide = crate::ui::fit() == crate::ui::Fit::Full;
-    let mut chips = row().w(if wide { CHIPS_W } else { 0.0 }).gap(6.0).center_y().clip_rounded(0.0).child(spacer());
+    let mut chips = row().w(CHIPS_W).gap(6.0).center_y().justify_end().clip_rounded(0.0);
     if wide {
         for chip in notes::card_chips(s, u, addon) {
             chips = chips.child(chip);
         }
     }
-    let mut marks = row().w(MARKS_W).gap(4.0).center_y().child(spacer());
+    let mut marks = row().w(MARKS_W).gap(4.0).center_y().justify_end();
     if let Some(badge) = super::req_order::badge(s, u, slot, false) {
         marks = marks.child(badge);
     }
@@ -509,7 +513,7 @@ pub fn list_row(s: &State, u: &Ui, idx: &super::index::Index, card: &Group) -> E
                 )
                 .child(text(detail).font(SMALL).color(u.muted).truncate()),
         )
-        .child(chips)
+        .children(wide.then_some(chips))
         .child(marks)
         .child(
             text(deadlock_core::addons::slot_label(slot))
