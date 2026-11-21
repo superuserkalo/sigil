@@ -67,9 +67,25 @@ pub fn author_file(data_dir: &Path, config: &Config) -> Option<String> {
     is_whole_file(&text).then_some(text)
 }
 
-/// Whether the install's `gameinfo.gi` text was applied as written.
+/// The header line only an as-written apply writes. It holds no catalog text.
+const OFF_LINE: &str = "// turn it off in Sigil > Performance to put your stock file back [sigil-perf as-written]";
+
+/// Whether the install's `gameinfo.gi` text was applied as written: the exact line Sigil writes,
+/// in the comment header above the file. The tag elsewhere (a preset's name, a value) is not it.
 pub fn is_applied(text: &str) -> bool {
-    text.contains(TAG)
+    text.lines()
+        .take_while(|line| line.starts_with("//"))
+        .any(|line| line.trim_end() == OFF_LINE)
+}
+
+/// The kept stock file, when it still is one: a whole gameinfo with no performance markers.
+pub(super) fn read_stock(game_root: &Path) -> Result<String> {
+    const MISSING: &str = "The stock copy of gameinfo.gi is missing or damaged. Verify the game files in Steam, then try again.";
+    let text = std::fs::read_to_string(stock_path(game_root)).map_err(|_| Error::msg(MISSING))?;
+    if !is_whole_file(&text) || text.contains(MARKER) || text.contains(FOREIGN_MARKER) {
+        return Err(Error::msg(MISSING));
+    }
+    Ok(text)
 }
 
 fn entry_re() -> &'static Regex {
@@ -129,7 +145,7 @@ fn allowed_lines(author_body: &str) -> (Vec<String>, Vec<String>) {
 }
 
 /// Catalog text for a comment line: one line, no control characters.
-fn plain(text: &str) -> String {
+pub(super) fn plain(text: &str) -> String {
     text.chars().map(|c| if c.is_control() { ' ' } else { c }).collect()
 }
 
@@ -191,7 +207,7 @@ pub fn apply_text(base: &str, author: &str, config: &Config) -> Result<Patched> 
     let mut text = format!(
         "// ==== Sigil Performance Config BEGIN (preset={} v{} @{commit}) ====\n\
          // {}: the author's ConVars lines, as written, from {} ({}). Only plain values are used; the rest of the file is yours. [{TAG}]\n\
-         // turn it off in Sigil > Performance to put your stock file back [{TAG}]\n\
+         {OFF_LINE}\n\
          // ==== Sigil Performance Config END ====\n",
         plain(config.id()),
         plain(&config.version),
@@ -220,9 +236,7 @@ pub fn apply_to_install(game_root: &Path, data_dir: &Path, config: &Config) -> R
     let current = std::fs::read_to_string(&path)?;
     let stock = stock_path(game_root);
     let base = if is_applied(&current) {
-        std::fs::read_to_string(&stock).map_err(|_| {
-            Error::msg("The stock copy of gameinfo.gi is missing. Verify the game files in Steam, then try again.")
-        })?
+        read_stock(game_root)?
     } else {
         super::remove_text(&current)
     };
@@ -240,7 +254,7 @@ pub(super) fn remove_from_install(game_root: &Path) -> Result<bool> {
     let path = gameinfo_path(game_root);
     let stock = stock_path(game_root);
     let backup = gameinfo_path(game_root).with_extension(format!("gi.{BACKUP_SUFFIX}"));
-    let text = match std::fs::read_to_string(&stock) {
+    let text = match read_stock(game_root) {
         Ok(text) => text,
         Err(_) => std::fs::read_to_string(&backup).map_err(|_| {
             Error::msg("The stock copy of gameinfo.gi is missing. Verify the game files in Steam to get it back.")
@@ -324,6 +338,29 @@ mod tests {
             assert!(!text.contains(bad), "{bad:?} must not be written");
         }
         assert!(!crate::performance::remove_text(&text).contains("evil"));
+    }
+
+    /// Only Sigil's exact header line marks the mode, not the tag text somewhere in the file.
+    #[test]
+    fn the_tag_elsewhere_does_not_mean_as_written() {
+        let applied = apply_text(CURRENT, AUTHOR, &config()).unwrap().text;
+        assert!(is_applied(&applied));
+        assert!(!is_applied(&format!("// preset named {TAG}\n{CURRENT}")));
+        assert!(!is_applied(&format!("\"GameInfo\"\n{{\n{OFF_LINE}\n}}\n")), "only in the header");
+    }
+
+    #[test]
+    fn a_damaged_stock_copy_is_refused() {
+        let root = std::env::temp_dir().join(format!("sigil-as-written-stock-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(gameinfo_path(&root).parent().unwrap()).unwrap();
+        std::fs::write(stock_path(&root), "not a gameinfo").unwrap();
+        assert!(read_stock(&root).is_err());
+        std::fs::write(stock_path(&root), format!("// {MARKER}\n{CURRENT}")).unwrap();
+        assert!(read_stock(&root).is_err());
+        std::fs::write(stock_path(&root), CURRENT).unwrap();
+        assert!(read_stock(&root).is_ok());
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     /// A normal apply over an as-written file starts from the stock copy, not a marker undo.

@@ -630,16 +630,16 @@ pub fn apply_text(original: &str, config: &Config, options: &Options) -> Result<
     let mut block = vec![
         format!(
             "{indent}// ==== Sigil Performance Config BEGIN (preset={} v{} @{commit}) ====",
-            config.id(),
-            config.version
+            as_written::plain(config.id()),
+            as_written::plain(&config.version)
         ),
         format!(
             "{indent}// {}: values from {} ({}) [{MARKER}]",
-            config.name(),
-            config.credit(),
-            config.source.license
+            as_written::plain(config.name()),
+            as_written::plain(&config.credit()),
+            as_written::plain(config.source.license)
         ),
-        format!("{indent}// {} @ {commit} [{MARKER}]", config.source.url()),
+        format!("{indent}// {} @ {commit} [{MARKER}]", as_written::plain(&config.source.url())),
         format!(
             "{indent}// switches: engine={} opt-ins={} [{MARKER}]",
             if options.engine { "on" } else { "off" },
@@ -742,9 +742,7 @@ pub fn apply_to_install(game_root: &Path, config: &Config, options: &Options) ->
     // A file applied as written goes back to its stock copy, never through a marker undo.
     let as_written = as_written::is_applied(&on_disk);
     let original = if as_written {
-        std::fs::read_to_string(as_written::stock_path(game_root)).map_err(|_| {
-            Error::msg("The stock copy of gameinfo.gi is missing. Verify the game files in Steam, then try again.")
-        })?
+        as_written::read_stock(game_root)?
     } else {
         on_disk
     };
