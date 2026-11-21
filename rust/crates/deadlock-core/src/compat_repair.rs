@@ -438,6 +438,8 @@ pub fn repair_to(
             let healed = keep_current_attachments(base_pak01, mod_vpk, out_vpk, healed)?;
             let applied: Vec<RepairFinding> = healed
                 .into_iter()
+                // A model whose every healed attachment was already current needs no fix.
+                .filter(|model| !model.attachments.is_empty())
                 .map(|model| RepairFinding {
                     entry: model.entry,
                     kind: "cameras".to_string(),
