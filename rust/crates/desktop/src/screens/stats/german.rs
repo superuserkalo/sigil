@@ -155,7 +155,7 @@ pub const DE: &[(&str, &str)] = &[
     ("Time", "Zeit"),
     ("Track", "Verfolgen"),
     ("Track and show", "Verfolgen und anzeigen"),
-    ("Two ranked matches draw the ladder. Play ranked to see it move.", "Zwei Ranked-Matches zeichnen die Leiter. Spiele Ranked, um sie zu sehen."),
+    ("Not enough ranked matches to chart yet.", "Noch zu wenige Ranked-Matches für ein Diagramm."),
     ("Unknown map", "Unbekannte Karte"),
     ("Unranked", "Unranked"),
     ("Walker", "Walker"),
@@ -263,6 +263,8 @@ pub const DE: &[(&str, &str)] = &[
     ("The filter's window", "Zeitraum des Filters"),
     ("Everyone's games since the patch on {}. Items need 500 matches to show.", "Die Spiele aller seit dem Patch vom {}. Gegenstände brauchen 500 Matches, um zu erscheinen."),
     ("No patch date was found, so this is the last 30 days. Items need 500 matches to show.", "Kein Patchdatum gefunden, daher die letzten 30 Tage. Gegenstände brauchen 500 Matches, um zu erscheinen."),
+    ("top {}% of {} ranked players", "top {} % von {} gewerteten Spielern"),
+    ("top <0.1% of {} ranked players", "top <0,1 % von {} gewerteten Spielern"),
 ];
 
 pub fn get(text: &str) -> Option<&'static str> {

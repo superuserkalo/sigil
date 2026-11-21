@@ -13,23 +13,31 @@ use super::{Chart, Derived, FORM_BEADS, SPARK_MATCHES};
 
 /// Who, then what changed, then what to work on next.
 pub(super) fn brief_block(s: &State, u: &Ui, snap: &StatsSnapshot, d: &Derived) -> El {
-    let rank = insight::badge_label(snap.rank.badge, &snap.tier_names);
+    // A rank request that failed leaves `--`, not "Unranked": the page still loads.
+    let rank = if snap.rank.reported {
+        insight::badge_label(snap.rank.badge, &snap.tier_names)
+    } else {
+        "--".to_string()
+    };
     let mut meta = vec![rank];
-    if let Some(bench) = &snap.rank.benchmark {
-        let top = if bench.top_percent > 0.0 {
-            bench.top_percent
-        } else {
-            (100.0 - bench.percentile).max(0.0)
-        };
-        let top = if top < 1.0 {
-            format!("{top:.2}")
-        } else {
-            format!("{top:.0}")
-        };
-        meta.push(format!(
-            "top {top}% of {} ranked players",
-            thousands(bench.ranked_players)
-        ));
+    // The share is only comparable with the players of the season the badge was earned in.
+    if let Some(bench) = snap
+        .rank
+        .benchmark
+        .as_ref()
+        .filter(|bench| bench.current_season)
+    {
+        let players = thousands(bench.ranked_players);
+        meta.push(match bench.top_percent_text() {
+            Some(share) => crate::screens::settings::i18n::fill(
+                tr("top {}% of {} ranked players"),
+                &[&share, &players],
+            ),
+            None => crate::screens::settings::i18n::fill(
+                tr("top <0.1% of {} ranked players"),
+                &[&players],
+            ),
+        });
     }
     meta.push(format!(
         "{} matches in 30 days",
@@ -396,7 +404,7 @@ pub(super) fn progress(s: &State, u: &Ui, snap: &StatsSnapshot, d: &Derived) -> 
 
 fn rank_chart(u: &Ui, snap: &StatsSnapshot, points: &[RankPoint]) -> El {
     if points.len() < 2 {
-        return chart_empty(u, "Two ranked matches draw the ladder. Play ranked to see it move.");
+        return chart_empty(u, "Not enough ranked matches to chart yet.");
     }
     let lo_step = points.iter().map(|p| p.step).min().unwrap_or(1);
     let hi_step = points.iter().map(|p| p.step).max().unwrap_or(1);
