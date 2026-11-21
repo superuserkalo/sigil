@@ -24,6 +24,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
+use morphic::kv3;
+use morphic::resource::Resource;
 use serde::{Deserialize, Serialize};
 use vpkmerge_core::{
     AttachmentHealer, AttachmentReport, AttachmentStatus, CompatibilityRepairer, RepairStatus,
@@ -126,7 +128,7 @@ fn check_single(
                     base_pak01.display()
                 ))
             })?;
-            let reports = repairer
+            let mut reports = repairer
                 .check(mod_vpk, animation_overrides)
                 .map_err(|error| {
                     Error::msg(format!(
@@ -134,6 +136,7 @@ fn check_single(
                         mod_vpk.display()
                     ))
                 })?;
+            drop_sound_findings_without_game_data(base_pak01, &mut reports);
             Ok(reports.into_iter().map(finding_from_report).collect())
         }
         RepairKind::Cameras => {
@@ -589,6 +592,58 @@ fn finding_from_attachment(report: AttachmentReport) -> Option<RepairFinding> {
         changes: report.stale.len(),
         detail,
     })
+}
+
+/// Sound findings on compiled models are dropped when the game's own copy of the model has no
+/// `m_modelInfo.m_keyValueText` (vpkmerge PR #95).
+///
+/// Props and effect meshes (the soul container, the urn, ability effect meshes) ship no game data
+/// on their model. The game binds no sound events on such a model, so vpkmerge's sound heal has
+/// nothing to restore and reports the metadata as unreadable. That finding is not something a
+/// player or an author can act on, so it stays out of the review. A model whose metadata exists
+/// but does not parse keeps its finding.
+fn drop_sound_findings_without_game_data(
+    base_pak01: &Path,
+    reports: &mut Vec<vpkmerge_core::CompatibilityReport>,
+) {
+    let entries: Vec<String> = reports
+        .iter()
+        .filter(|report| report.kind == "sounds")
+        .map(|report| report.entry.clone())
+        .collect();
+    if entries.is_empty() {
+        return;
+    }
+    let Ok(stock) = entry_bytes(base_pak01, &entries) else {
+        // The game archive could not be read a second time: keep the findings rather than
+        // hiding a repair the player may need.
+        return;
+    };
+    reports.retain(|report| {
+        report.kind != "sounds"
+            || !stock
+                .get(&report.entry.to_ascii_lowercase())
+                .is_some_and(|bytes| model_metadata_empty(bytes))
+    });
+}
+
+/// True when the game's compiled model carries no `m_modelInfo.m_keyValueText`, the case where
+/// the game binds no sound events and the sound heal has nothing to do.
+fn model_metadata_empty(bytes: &[u8]) -> bool {
+    let Ok(resource) = Resource::parse(bytes) else {
+        return false;
+    };
+    let Ok(data) = resource.data_block() else {
+        return false;
+    };
+    let Ok(value) = kv3::decode(data) else {
+        return false;
+    };
+    value
+        .get("m_modelInfo")
+        .and_then(|info| info.get("m_keyValueText"))
+        .and_then(|text| text.as_str())
+        .is_some_and(|text| text.trim().is_empty())
 }
 
 fn entries_of(findings: &[RepairFinding]) -> BTreeSet<String> {
