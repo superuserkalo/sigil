@@ -5,47 +5,80 @@
 //! Equip uses. With "several skins per hero" on in the Locker the question is not asked.
 
 use std::collections::BTreeMap;
+use std::path::PathBuf;
 
 use deadlock_core::import::parts::read_part;
 use deadlock_core::locker::hero_asset_key;
-use deadlock_core::locker_parts::HeroPart;
 
 use crate::app::State;
+use crate::jobs::Job;
 use crate::notify::{self, Notice};
 use crate::screens::settings::i18n::{fill, tr};
 
-/// The other enabled skins of `hero`: (slot, name), by load order. Read from the Locker.
-fn other_skins(st: &State, hero: &str, new_slot: u16) -> Vec<(u16, String)> {
-    let key = hero_asset_key(hero);
-    let mut found: Vec<(u16, String)> = st
-        .locker
-        .mods
-        .iter()
-        .filter(|m| m.enabled && m.slot != new_slot)
-        .filter(|m| {
-            m.parts
-                .iter()
-                .any(|(name, parts)| hero_asset_key(name) == key && parts.contains(&HeroPart::Skin))
-        })
-        .map(|m| (m.slot, m.label.clone()))
-        .collect();
-    found.sort_by_key(|(slot, _)| *slot);
-    found
+/// A finished check: hero, new slot, new name, and the hero's other enabled skins.
+type Found = Option<(String, u16, String, Vec<(u16, String)>)>;
+
+/// One check at a time; installs that land meanwhile wait their turn.
+#[derive(Default)]
+pub struct Check {
+    job: Job<Found>,
+    waiting: Vec<(u16, String)>,
 }
 
-/// After an install landed in `slot`: ask when it is a second skin for a hero.
-pub fn after_install(st: &mut State, slot: u16, name: &str) {
-    if st.locker.prefs.multi_skin {
-        return;
-    }
+/// Read the new VPK and every other enabled one (file lists only). A file that landed switched
+/// off has no enabled path, reads as nothing and asks nothing.
+fn find(addons: PathBuf, slot: u16, name: String, others: Vec<(u16, String)>) -> Found {
+    let path = |slot| deadlock_core::addons::slot_path(&addons, slot, "_dir.vpk");
+    let part = read_part(&path(slot));
+    // One hero only: a pack for several heroes is not a second look for one of them.
+    let [hero] = part.skin_heroes.as_slice() else { return None };
+    let key = hero_asset_key(hero);
+    let found: Vec<(u16, String)> = others
+        .into_iter()
+        .filter(|(other, _)| read_part(&path(*other)).skin_heroes.iter().any(|h| hero_asset_key(h) == key))
+        .collect();
+    (!found.is_empty()).then(|| (hero.clone(), slot, name, found))
+}
+
+fn start(st: &mut State, slot: u16, name: String) {
     let Some(game_root) = st.game_root.clone() else { return };
     let addons = deadlock_core::deploy::addons_dir(&game_root);
-    let file = deadlock_core::addons::slot_path(&addons, slot, "_dir.vpk");
-    let part = read_part(&file);
-    // One hero only: a pack for several heroes is not a second look for one of them.
-    let [hero] = part.skin_heroes.as_slice() else { return };
-    let others = other_skins(st, hero, slot);
-    ask(st, hero, slot, name, &others);
+    let mut others: Vec<(u16, String)> = st
+        .addons
+        .addons
+        .iter()
+        .filter(|addon| addon.enabled && addon.slot != slot)
+        .map(|addon| (addon.slot, crate::screens::installed::display_name(st, addon)))
+        .collect();
+    others.sort_by_key(|(slot, _)| *slot);
+    let wake = st.wake.clone();
+    st.installed.tools.one_skin.job.start(wake, move || Ok(find(addons, slot, name, others)));
+}
+
+/// After an install landed in `slot`: check on a worker whether it is a second skin.
+pub fn after_install(st: &mut State, slot: u16, name: &str) {
+    if st.locker.prefs.multi_skin || st.demo {
+        return;
+    }
+    if st.installed.tools.one_skin.job.is_running() {
+        st.installed.tools.one_skin.waiting.push((slot, name.to_string()));
+    } else {
+        start(st, slot, name.to_string());
+    }
+}
+
+pub fn poll(st: &mut State) -> bool {
+    let Some(result) = st.installed.tools.one_skin.job.try_take() else {
+        return false;
+    };
+    if let Ok(Some((hero, slot, name, others))) = result {
+        ask(st, &hero, slot, &name, &others);
+    }
+    if !st.installed.tools.one_skin.waiting.is_empty() {
+        let (slot, name) = st.installed.tools.one_skin.waiting.remove(0);
+        start(st, slot, name);
+    }
+    true
 }
 
 fn ask(st: &mut State, hero: &str, slot: u16, name: &str, others: &[(u16, String)]) {
@@ -97,6 +130,32 @@ pub fn scene(st: &mut State) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_second_skin_is_found_and_a_file_that_landed_off_asks_nothing() {
+        use deadlock_core::vpk_write::{PackOptions, pack_vpk};
+        let root = std::env::temp_dir().join(format!("sigil-one-skin-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let addons = root.join("addons");
+        std::fs::create_dir_all(&addons).unwrap();
+        for (name, path) in [
+            ("pak01", "models/heroes_staging/haze/haze.vmdl_c"),
+            ("pak02", "models/heroes_staging/inferno/inferno.vmdl_c"),
+            ("pak03", "models/heroes_staging/haze/haze_alt.vmdl_c"),
+        ] {
+            let stage = root.join(format!("stage-{name}"));
+            let file = stage.join(path);
+            std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+            std::fs::write(file, b"x").unwrap();
+            let packed = pack_vpk(&PackOptions::new(stage, root.join(format!("out-{name}")), name)).unwrap();
+            std::fs::rename(&packed.dir_path, addons.join(format!("{name}_dir.vpk"))).unwrap();
+        }
+        let others = vec![(1, "Old Haze".to_string()), (2, "Infernus".to_string())];
+        let (_, slot, _, found) = find(addons.clone(), 3, "New Haze".into(), others.clone()).expect("a second skin");
+        assert_eq!((slot, found), (3, vec![(1, "Old Haze".to_string())]));
+        assert!(find(addons, 9, "Off".into(), others).is_none(), "no enabled file, no question");
+        let _ = std::fs::remove_dir_all(&root);
+    }
 
     #[test]
     fn the_question_names_the_other_skin() {

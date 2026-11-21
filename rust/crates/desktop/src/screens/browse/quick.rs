@@ -862,6 +862,7 @@ fn take_result(st: &mut State) -> bool {
             st.browse_view.installs.owned.insert(id, done.slot);
             st.browse_view.installs.owned_sig = None;
             refresh_owned(st);
+            crate::screens::one_skin::after_install(st, done.slot, &name);
             // The queue row did its job; Installed shows the mod from here.
             if let (Some(row), Some(handle)) = (row, &st.launch.downloads.handle) {
                 handle.send(Command::Remove(row));

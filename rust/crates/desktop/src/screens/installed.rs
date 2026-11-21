@@ -2369,6 +2369,7 @@ pub fn poll(st: &mut State) -> bool {
     changed |= notes::poll(st);
     changed |= tools::poll(st);
     changed |= pack_all::poll(st);
+    changed |= crate::screens::one_skin::poll(st);
     changed |= poll_changes(st);
     changed |= enable::poll(st);
     changed |= enable::refresh_hidden(st);
