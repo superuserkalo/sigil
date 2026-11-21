@@ -42,6 +42,8 @@ const DE: &[(&str, &str)] = &[
     ("Looking up the creator", "Ersteller wird gesucht"),
     ("GameBanana does not name a creator for this mod.", "GameBanana nennt für diesen Mod keinen Ersteller."),
     ("Sigil is offline.", "Sigil ist offline."),
+    ("More from this creator", "Mehr von diesem Ersteller"),
+    ("More from {}", "Mehr von {}"),
 ];
 
 fn tr(text: &str) -> &str {
@@ -61,6 +63,15 @@ pub struct CreatorState {
     pub job: Job<(u64, Result<CreatorPage, String>)>,
     /// A library row asked GameBanana for its creator.
     pub lookup: Job<Result<(u64, String), String>>,
+}
+
+/// The Installed card's menu entry for a mod's creator.
+pub fn more_label(author: &str) -> String {
+    if author.trim().is_empty() {
+        tr("More from this creator").to_string()
+    } else {
+        fill(tr("More from {}"), &[author.trim()])
+    }
 }
 
 /// Scope Browse to one creator.
