@@ -15,15 +15,15 @@ use rune::{El, ScrollSpec, col, el, icon, row, spacer, text};
 use crate::app::State;
 use crate::icons;
 use crate::model::{ConflictRow, Screen};
-use crate::ui::{ActionKind, BODY, BODY_MED, MONO, PAGE_TOP, PAGE_X, SMALL, Ui};
+use crate::ui::{ActionKind, BODY, MONO, PAGE_TOP, PAGE_X, SMALL, SMALL_NUM, Ui};
 use crate::screens::settings::i18n::{fill, tr};
 
 const SHOWN_LIMIT: usize = 80;
 /// Mono 12 runs about 7.2 points a character; this keeps a path inside the column at the
 /// default window width, and the element still truncates at the end if the window is narrower.
-const PATH_CHARS: usize = 96;
-const SLOTS_W: f32 = 150.0;
-const WINNER_W: f32 = 64.0;
+const WINS_W: f32 = 180.0;
+const LOSES_W: f32 = 120.0;
+const IGNORE_W: f32 = 72.0;
 
 /// What the page has open. Kept in `launch::View` with the rest of the area's state.
 #[derive(Default)]
@@ -220,34 +220,16 @@ pub fn view(s: &State, u: &Ui) -> El {
         .collect();
     let visible_count = badge_count(s);
 
-    let asking_all = ASK_ALL.load(std::sync::atomic::Ordering::Relaxed);
-    let mut actions = row().gap(8.0).center_y();
-    if visible_count > 1 {
-        actions = if asking_all {
-            actions
-                .child(text(fill(tr("Ignore all {} overlaps?"), &[&visible_count.to_string()])).font(SMALL).color(u.muted))
-                .child(
-                    u.action(tr("Cancel"), ActionKind::Ghost)
-                        .key("conflicts-ignore-all-no")
-                        .cursor(rune::Cursor::Pointer)
-                        .on_press(|_st: &mut State| ASK_ALL.store(false, std::sync::atomic::Ordering::Relaxed)),
-                )
-                .child(
-                    u.action(tr("Ignore all"), ActionKind::Primary)
-                        .key("conflicts-ignore-all-yes")
-                        .cursor(rune::Cursor::Pointer)
-                        .on_press(ignore_all),
-                )
-        } else {
-            actions.child(
-                u.action(tr("Ignore all"), ActionKind::Ghost)
-                    .key("conflicts-ignore-all")
-                    .cursor(rune::Cursor::Pointer)
-                    .on_press(|_st: &mut State| ASK_ALL.store(true, std::sync::atomic::Ordering::Relaxed)),
-            )
-        };
-    }
-    let actions = actions.child(
+    // "Ignore all" stays in place, disabled with one or none; its confirm is a popover under
+    // the button (`dialog`), so the toolbar never swaps.
+    let few = visible_count <= 1;
+    let actions = vec![
+        u.action(tr("Ignore all"), ActionKind::Ghost)
+            .key("conflicts-ignore-all")
+            .disabled(few)
+            .opacity(if few { 0.45 } else { 1.0 })
+            .cursor(rune::Cursor::Pointer)
+            .on_press(|_st: &mut State| ASK_ALL.store(true, std::sync::atomic::Ordering::Relaxed)),
         u.icon_button(&icons::REFRESH_CW, tr("Rescan"))
             .key("conflicts-rescan")
             .cursor(rune::Cursor::Pointer)
@@ -256,7 +238,7 @@ pub fn view(s: &State, u: &Ui) -> El {
                     crate::data::start_addon_scan(st);
                 }
             }),
-    );
+    ];
 
     let count = s.addons.conflicts.len();
     let _detail = if !s.game_detected || !s.addons.scanned || visible_count == 0 {
@@ -278,27 +260,34 @@ pub fn view(s: &State, u: &Ui) -> El {
         )
     };
 
-    let mut page = col()
-        .key("conflicts-page")
+    // Title with the count after it, then a fixed status row: scan warnings left, the one
+    // rule right. Both stay out of the scroll.
+    let lead = row()
+        .gap(8.0)
+        .center_y()
+        .child(u.page_title(Screen::Conflicts.title()))
+        .child(
+            text(if visible_count > 0 { visible_count.to_string() } else { String::new() })
+                .font(SMALL_NUM)
+                .color(u.muted),
+        );
+    let rule = (s.addons.scanned && count > 0)
+        .then(|| text(tr("The lower slot wins")).font(SMALL).color(u.muted));
+    let top = col()
         .w_full()
         .px(PAGE_X)
         .pt(PAGE_TOP)
+        .pb(16.0)
+        .gap(8.0)
+        .child(u.page_toolbar(lead, Vec::new(), Some(crate::app::page_search(s, u)), actions))
+        .child(u.status_row("conflicts-status", warnings(s, u), rule));
+    let page = col()
+        .key("conflicts-page")
+        .w_full()
+        .px(PAGE_X)
         .pb(32.0)
-        .gap(16.0)
-        .child(u.page_toolbar(
-            u.page_title(Screen::Conflicts.title()),
-            Vec::new(),
-            Some(crate::app::page_search(s, u)),
-            vec![actions],
-        ));
-
-    if s.addons.scanned && !s.addons.warnings.is_empty() {
-        page = page.child(warnings(s, u));
-    }
-
-    if s.addons.scanned && count > 0 {
-        page = page.child(explainer(u));
-    }
+        .gap(24.0);
+    let names = names(s);
 
     let ignored = crate::screens::settings::options::get().ignore_overlap_default;
     let body = if ignored {
@@ -385,7 +374,7 @@ pub fn view(s: &State, u: &Ui) -> El {
                         .iter()
                         .take(SHOWN_LIMIT)
                         .enumerate()
-                        .map(|(index, c)| conflict_row(u, index, c)),
+                        .map(|(index, c)| conflict_row(u, index, c, &names)),
                 ),
         );
         if visible.len() > SHOWN_LIMIT {
@@ -405,18 +394,26 @@ pub fn view(s: &State, u: &Ui) -> El {
     let mut page = page.child(body);
     let ignored_list = ignores();
     if !ignored_list.is_empty() {
-        page = page.child(restore_list(u, &ignored_list, names(s)));
+        page = page.child(restore_list(u, &ignored_list, names));
     }
 
     col()
-        .key("conflicts-scroll")
+        .key("conflicts-frame")
         .w_full()
         .h_full()
         .min_h(0.0)
-        .scroll(ScrollSpec {
-            stick_bottom: false,
-        })
-        .child(page)
+        .child(top)
+        .child(
+            col()
+                .key("conflicts-scroll")
+                .w_full()
+                .grow(1.0)
+                .min_h(0.0)
+                .scroll(ScrollSpec {
+                    stick_bottom: false,
+                })
+                .child(page),
+        )
 }
 
 fn matches_query(row: &ConflictRow, query: &str) -> bool {
@@ -430,79 +427,68 @@ fn matches_query(row: &ConflictRow, query: &str) -> bool {
             .any(|slot| format!("{slot:02}").contains(query) || deadlock_core::addons::slot_label(*slot).contains(query))
 }
 
-/// Two quiet lines: what an overlap is and what the two fixes do.
-fn explainer(u: &Ui) -> El {
-    col()
-        .w_full()
-        .gap(2.0)
-        .child(
-            text(tr(
-                "A mod replaces files by exact path. When two mods ship the same file, the game loads the lower slot and the other mod's copy never appears.",
-            ))
-            .font(SMALL)
-            .color(u.muted)
-            .wrap(),
-        )
-        .child(
-            text(tr(
-                "Making a mod win swaps the two slot numbers, so it wins every file they share. Turning one off keeps it installed.",
-            ))
-            .font(SMALL)
-            .color(u.faint)
-            .wrap(),
-        )
-}
-
 fn head(u: &Ui) -> El {
     row()
         .w_full()
-        .h(32.0)
+        .h(28.0)
+        .px(8.0)
         .gap(16.0)
         .center_y()
-        .child(text(tr("File")).font(SMALL).color(u.faint).grow(1.0).min_w(0.0))
-        .child(
-            text(tr("Shipped by"))
-                .font(SMALL)
-                .color(u.faint)
-                .w(SLOTS_W),
-        )
-        .child(
-            text(tr("Loads"))
-                .font(SMALL)
-                .color(u.faint)
-                .w(WINNER_W)
-                .align(rune::Align::End),
-        )
-        .child(el().w(96.0))
+        .border_sides([0.0, 0.0, 1.0, 0.0], u.hair)
+        .child(text(tr("File")).font(SMALL).color(u.muted).grow(1.0).min_w(0.0))
+        .child(text(tr("Wins")).font(SMALL).color(u.muted).w(WINS_W))
+        .child(text(tr("Loses")).font(SMALL).color(u.muted).w(LOSES_W))
+        .child(el().w(IGNORE_W))
 }
 
 /// One overlapping path: the file, the slots that ship it, the slot that loads, and the two
 /// ways to settle it.
-fn conflict_row(u: &Ui, index: usize, conflict: &ConflictRow) -> El {
+fn conflict_row(
+    u: &Ui,
+    index: usize,
+    conflict: &ConflictRow,
+    names: &std::collections::BTreeMap<u16, String>,
+) -> El {
     let path = conflict.path.clone();
     let slots = conflict.slots.clone();
     let winner = conflict.winner;
-    let mut slot_chips = row().gap(6.0).w(SLOTS_W);
-    for slot in &conflict.slots {
+    let name_of = |slot: u16| names.get(&slot).cloned().unwrap_or_default();
+    // Wins: the slot and the mod's name, so "05" means something.
+    let wins = row()
+        .w(WINS_W)
+        .gap(8.0)
+        .center_y()
+        .child(text(deadlock_core::addons::slot_label(winner)).font(MONO).color(u.muted))
+        .child(
+            text(name_of(winner))
+                .font(BODY)
+                .color(u.prose)
+                .truncate()
+                .help_when_truncated(name_of(winner))
+                .grow(1.0)
+                .min_w(0.0),
+        );
+    // Loses: one pressable chip per losing slot, its mod name as the tooltip.
+    let mut loses = row().w(LOSES_W).gap(4.0).center_y();
+    for slot in conflict.slots.iter().filter(|slot| **slot != winner) {
         let loser = *slot;
         let target = path.clone();
         let all = slots.clone();
-        let label = deadlock_core::addons::slot_label(*slot);
-        let chip = if loser == winner {
-            text(label)
-                .font(MONO)
-                .color(u.prose)
-                .w(22.0)
-        } else {
+        let label = deadlock_core::addons::slot_label(loser);
+        let name = name_of(loser);
+        loses = loses.child(
             row()
-                .h(20.0)
-                .px(4.0)
+                .key(format!("conflict-{index}-slot-{loser}"))
+                .h(24.0)
+                .px(6.0)
                 .center()
                 .radius(crate::ui::r(4.0))
-                .hover(u.hover)
+                .fill(u.over.alpha(0.06))
+                .hover(u.over.alpha(0.10))
                 .focusable(true)
                 .role("button")
                 .label(fill(tr("Settle slot {}"), &[&label]))
+                .help(if name.is_empty() { fill(tr("Settle slot {}"), &[&label]) } else { name })
                 .cursor(rune::Cursor::Pointer)
                 .on_press(move |st: &mut State| {
                     st.launch.overlap.dialog = Dialog::Resolve {
@@ -512,41 +498,39 @@ fn conflict_row(u: &Ui, index: usize, conflict: &ConflictRow) -> El {
                         loser,
                     };
                 })
-                .child(text(label).font(MONO).color(u.muted).a11y_hidden())
-        };
-        slot_chips = slot_chips.child(chip);
+                .child(text(label).font(MONO).color(u.prose).a11y_hidden()),
+        );
     }
     let ignore_path = conflict.path.clone();
     let ignore_slots = conflict.slots.clone();
     row()
         .key(format!("conflict-{index}"))
         .w_full()
-        .h(44.0)
+        .h(32.0)
+        .px(8.0)
         .gap(16.0)
         .center_y()
         .border_sides([0.0, 0.0, 1.0, 0.0], u.hair)
+        .hover(u.hover)
         .child(
-            text(middle(&conflict.path, PATH_CHARS))
+            text(conflict.path.clone())
                 .font(MONO)
-                .color(u.ink)
+                .color(u.prose)
                 .grow(1.0)
                 .min_w(0.0)
-                .truncate()
+                .truncate_middle()
+                .help(conflict.path.clone())
                 .selectable(true)
                 .label(conflict.path.clone()),
         )
-        .child(slot_chips)
-        .child(
-            text(deadlock_core::addons::slot_label(conflict.winner))
-                .font(MONO)
-                .color(u.prose)
-                .w(WINNER_W)
-                .align(rune::Align::End),
-        )
+        .child(wins)
+        .child(loses)
         .child(
             u.action(tr("Ignore"), ActionKind::Ghost)
                 .key(format!("conflict-ignore-{index}"))
-                .w(96.0)
+                .h(24.0)
+                .px(8.0)
+                .w(IGNORE_W)
                 .cursor(rune::Cursor::Pointer)
                 .on_press(move |st: &mut State| {
                     // Every losing pair, so the whole row goes rather than half of it.
@@ -582,33 +566,22 @@ fn conflict_row(u: &Ui, index: usize, conflict: &ConflictRow) -> El {
         )
 }
 
-/// Overlap could not read every slot: say which, one line each, in the warn colour.
-fn warnings(s: &State, u: &Ui) -> El {
-    let mut list = col().w_full().gap(4.0);
-    for warning in &s.addons.warnings {
-        list = list.child(
-            row()
-                .w_full()
-                .gap(8.0)
-                .items_start()
-                .child(
-                    el().pt(2.0).child(
-                        icon(&icons::TRIANGLE_ALERT, 14.0)
-                            .color(u.amber)
-                            .a11y_hidden(),
-                    ),
-                )
-                .child(
-                    text(warning.clone())
-                        .font(BODY)
-                        .color(u.muted)
-                        .grow(1.0)
-                        .min_w(0.0)
-                        .wrap(),
-                ),
+/// Scan warnings for the status row: the first one as a line, "+n" for the rest with every
+/// warning in its tooltip.
+fn warnings(s: &State, u: &Ui) -> Vec<El> {
+    if !s.addons.scanned || s.addons.warnings.is_empty() {
+        return Vec::new();
+    }
+    let mut out = vec![u.status_line(&icons::TRIANGLE_ALERT, &s.addons.warnings[0], crate::ui::Tone::Warn)];
+    let more = s.addons.warnings.len() - 1;
+    if more > 0 {
+        out.push(
+            u.state_chip(&icons::TRIANGLE_ALERT, &format!("+{more}"), crate::ui::Tone::Warn)
+                .key("conflicts-warnings-more")
+                .help(s.addons.warnings[1..].join("\n")),
         );
     }
-    list
+    out
 }
 
 /// Slot names for the restore list, from the library and the addon rows.
@@ -631,22 +604,13 @@ fn names(s: &State) -> std::collections::BTreeMap<u16, String> {
 /// The restore list: every ignore, one row each, with the action that takes it back.
 fn restore_list(u: &Ui, list: &Ignores, names: std::collections::BTreeMap<u16, String>) -> El {
     let entries = impact::restore_entries(list, &names);
-    let mut head = row()
-        .w_full()
-        .h(32.0)
-        .gap(8.0)
-        .center_y()
-        .child(text(tr("Ignored")).font(BODY_MED).color(u.muted))
-        .child(
-            text(fill(
-                tr("{} hidden"),
-                &[&entries.len().to_string()],
-            ))
-            .font(SMALL)
-            .color(u.faint),
-        );
-    head = head.child(spacer()).child(
+    let head = u.section_head(
+        tr("Ignored"),
+        Some(entries.len()),
+        Some(
         u.action(tr("Restore all"), ActionKind::Ghost)
+            .h(24.0)
+            .px(8.0)
             .key("conflicts-restore-all")
             .cursor(rune::Cursor::Pointer)
             .on_press(|st: &mut State| {
@@ -660,17 +624,18 @@ fn restore_list(u: &Ui, list: &Ignores, names: std::collections::BTreeMap<u16, S
                     crate::notify::Notice::success(tr("Every overlap is back")),
                 );
             }),
+        ),
     );
-    let mut body = col().w_full().gap(0.0).child(head);
+    let mut body = col().w_full().gap(0.0).child(el().pb(8.0).w_full().child(head));
     for entry in entries {
         let kind = entry.kind.clone();
         body = body.child(
             row()
                 .key(format!("conflict-restore-{kind:?}"))
                 .w_full()
-                .min_h(44.0)
-                .py(8.0)
-                .gap(16.0)
+                .h(32.0)
+                .px(8.0)
+                .gap(12.0)
                 .center_y()
                 .border_sides([0.0, 0.0, 1.0, 0.0], u.hair)
                 .child(
@@ -689,6 +654,8 @@ fn restore_list(u: &Ui, list: &Ignores, names: std::collections::BTreeMap<u16, S
                 )
                 .child(
                     u.action(tr("Restore"), ActionKind::Ghost)
+                        .h(24.0)
+                        .px(8.0)
                         .key(format!("conflict-restore-run-{kind:?}"))
                         .cursor(rune::Cursor::Pointer)
                         .on_press(move |st: &mut State| {
@@ -711,9 +678,69 @@ fn restore_list(u: &Ui, list: &Ignores, names: std::collections::BTreeMap<u16, S
     body
 }
 
+/// "Ignore all" asks under its button: one sentence, Cancel and the confirm.
+fn ignore_all_popover(s: &State, u: &Ui) -> El {
+    let cancel = |_st: &mut State| ASK_ALL.store(false, std::sync::atomic::Ordering::Relaxed);
+    el().key("conflicts-ignore-all-layer")
+        .absolute(0.0, 0.0)
+        .w_full()
+        .h_full()
+        .child(el().absolute(0.0, 0.0).w_full().h_full().on_press(cancel))
+        .child(
+            col()
+                .key("conflicts-ignore-all-ask")
+                .role("dialog")
+                .w(280.0)
+                .padding(12.0)
+                .gap(12.0)
+                .radius(crate::ui::r(8.0))
+                .fill(u.raised.mix(u.over, 0.04).alpha(1.0))
+                .border(1.0, u.hair_strong)
+                .shadow(4.0, 12.0, rune::Color::BLACK.alpha(if u.light { 0.12 } else { 0.35 }))
+                .anchored("conflicts-ignore-all", rune::Side::Bottom, rune::Align::End, 4.0)
+                .on_key(move |st: &mut State, ev: &rune::KeyEvent, _| {
+                    if ev.key == rune::Key::Escape {
+                        cancel(st);
+                        true
+                    } else {
+                        false
+                    }
+                })
+                .child(
+                    text(fill(tr("Ignore all {} overlaps?"), &[&badge_count(s).to_string()]))
+                        .font(BODY)
+                        .color(u.ink)
+                        .wrap(),
+                )
+                .child(
+                    row()
+                        .w_full()
+                        .gap(8.0)
+                        .child(spacer())
+                        .child(
+                            u.action_m(tr("Cancel"), ActionKind::Ghost)
+                                .key("conflicts-ignore-all-no")
+                                .cursor(rune::Cursor::Pointer)
+                                .on_press(cancel),
+                        )
+                        .child(
+                            u.action_m(tr("Ignore all"), ActionKind::Primary)
+                                .key("conflicts-ignore-all-yes")
+                                .cursor(rune::Cursor::Pointer)
+                                .on_press(ignore_all),
+                        ),
+                ),
+        )
+}
+
 /// The dialog the page opens: one losing slot, two ways to settle it, one way to ignore it.
 pub fn dialog(s: &State, u: &Ui) -> Option<El> {
     match &s.launch.overlap.dialog {
+        Dialog::None if s.screen == Screen::Conflicts
+            && ASK_ALL.load(std::sync::atomic::Ordering::Relaxed) =>
+        {
+            Some(ignore_all_popover(s, u))
+        }
         Dialog::None => None,
         Dialog::Resolve {
             path,
@@ -740,17 +767,49 @@ fn resolve(s: &State, u: &Ui, path: &str, slots: &[u16], winner: u16, loser: u16
     let swap_winner = winner;
     let off = loser;
     let ignore_path = path.to_string();
-    let mut buttons = row().w_full().gap(8.0).child(spacer());
-    buttons = buttons.child(
-        u.action(tr("Cancel"), ActionKind::Ghost)
-            .key("conflicts-resolve-cancel")
-            .cursor(rune::Cursor::Pointer)
-            .on_press(close),
-    );
-    buttons = buttons.child(
-        u.action(tr("Ignore this file"), ActionKind::Ghost)
-            .key("conflicts-resolve-ignore")
-            .cursor(rune::Cursor::Pointer)
+    let reason = tr("Close Deadlock first: slot numbers cannot change while it runs.");
+    let dim = |e: El| if blocked { e.disabled(true).opacity(0.45) } else { e };
+    let options = u
+        .panel()
+        .w_full()
+        .clip_rounded(crate::ui::r(8.0))
+        .child(dim(
+            u.option_row(
+                "conflicts-resolve-win",
+                &fill(tr("Make {} win"), &[&loser_name]),
+                &if blocked {
+                    reason.to_string()
+                } else {
+                    fill(tr("Swaps slots {} and {}"), &[
+                        &deadlock_core::addons::slot_label(loser),
+                        &deadlock_core::addons::slot_label(winner),
+                    ])
+                },
+            )
+            .border_sides([0.0, 0.0, 1.0, 0.0], u.hair)
+            .on_press(move |st: &mut State| {
+                st.launch.overlap.dialog = Dialog::None;
+                make_win(st, swap_winner, make);
+            }),
+        ))
+        .child(dim(
+            u.option_row(
+                "conflicts-resolve-off",
+                &fill(tr("Turn {} off"), &[&loser_name]),
+                if blocked { reason } else { tr("It stays installed") },
+            )
+            .border_sides([0.0, 0.0, 1.0, 0.0], u.hair)
+            .on_press(move |st: &mut State| {
+                st.launch.overlap.dialog = Dialog::None;
+                crate::data::set_addon_enabled(st, off, false);
+            }),
+        ))
+        .child(
+            u.option_row(
+                "conflicts-resolve-ignore",
+                tr("Ignore this file"),
+                tr("Restore it at the bottom of Overlap."),
+            )
             .on_press(move |st: &mut State| {
                 let path = ignore_path.clone();
                 let slot = make;
@@ -762,77 +821,39 @@ fn resolve(s: &State, u: &Ui, path: &str, slots: &[u16], winner: u16, loser: u16
                         .detail(tr("Restore it at the bottom of Overlap.")),
                 );
             }),
-    );
-    buttons = buttons.child(
-        u.action(&fill(tr("Turn {} off"), &[&loser_name]), ActionKind::Secondary)
-            .key("conflicts-resolve-off")
-            .cursor(rune::Cursor::Pointer)
-            .disabled(blocked)
-            .on_press(move |st: &mut State| {
-                st.launch.overlap.dialog = Dialog::None;
-                crate::data::set_addon_enabled(st, off, false);
-            }),
-    );
-    buttons = buttons.child(
-        u.action(&fill(tr("Make {} win"), &[&loser_name]), ActionKind::Primary)
-        .key("conflicts-resolve-win")
-        .cursor(rune::Cursor::Pointer)
-        .disabled(blocked)
-        .on_press(move |st: &mut State| {
-            st.launch.overlap.dialog = Dialog::None;
-            make_win(st, swap_winner, make);
-        }),
-    );
-
-    let mut body = col()
+        );
+    let _ = slots;
+    let body = col()
         .w_full()
         .gap(16.0)
+        .child(text(tr("Settle this file")).font(crate::ui::PAGE_TITLE).color(u.ink))
         .child(
-            text(fill(tr("Settle {} against {}"), &[&loser_name, &winner_name]))
-                .font(crate::ui::H1)
-                .color(u.ink)
-                .truncate(),
-        )
-        .child(
-            text(tr(
-                "The game loads the lower slot for every file two mods share. Both fixes keep the file on disk.",
-            ))
-            .font(BODY)
-            .color(u.muted)
-            .wrap(),
-        )
-        .child(
-            text(middle(path, 110))
+            text(path.to_string())
                 .font(MONO)
                 .color(u.prose)
                 .w_full()
-                .truncate()
-                .label(path.to_string()),
+                .wrap_anywhere()
+                .selectable(true),
         )
-        .child(u.kv(
-            tr("Shipped by"),
-            &slots
-                .iter()
-                .map(|slot| deadlock_core::addons::slot_label(*slot))
-                .collect::<Vec<_>>()
-                .join(", "),
-            u.ink,
-        ))
-        .child(u.kv(
-            tr("Loads now"),
-            &fill(tr("Slot {}"), &[&format!("{winner:02}")]),
-            u.ink,
-        ));
-    if blocked {
-        body = body.child(
-            text(tr("Close Deadlock first: slot numbers cannot change while it runs."))
-                .font(BODY)
-                .color(u.amber)
-                .wrap(),
+        .child(
+            row()
+                .w_full()
+                .gap(8.0)
+                .center_y()
+                .child(text(tr("Wins now")).font(SMALL).color(u.muted).w(96.0))
+                .child(text(deadlock_core::addons::slot_label(winner)).font(MONO).color(u.muted))
+                .child(text(winner_name.clone()).font(BODY).color(u.ink).truncate().grow(1.0).min_w(0.0)),
+        )
+        .child(options)
+        .child(
+            row().w_full().child(spacer()).child(
+                u.action(tr("Cancel"), ActionKind::Ghost)
+                    .key("conflicts-resolve-cancel")
+                    .cursor(rune::Cursor::Pointer)
+                    .on_press(close),
+            ),
         );
-    }
-    body.child(buttons)
-        .pipe(|inner| {
+    body.pipe(|inner| {
             u.dialog_shell()
                 .key("conflicts-resolve")
                 .role("dialog")
@@ -904,6 +925,7 @@ fn make_win(st: &mut State, winner: u16, loser: u16) {
 
 /// `materials/models/heroes/.../body.vmat_c`: keep the start and the file name, drop the
 /// middle, so the part that tells two paths apart stays visible.
+#[cfg(test)]
 fn middle(path: &str, max: usize) -> String {
     let chars: Vec<char> = path.chars().collect();
     if chars.len() <= max {
