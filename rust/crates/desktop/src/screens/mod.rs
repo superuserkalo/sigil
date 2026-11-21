@@ -8,6 +8,7 @@ pub mod downloads;
 pub mod impact;
 pub mod import;
 pub mod index;
+pub mod explorer;
 pub mod installed;
 pub mod launch;
 pub mod launch_extras;

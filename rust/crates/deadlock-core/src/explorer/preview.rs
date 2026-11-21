@@ -222,7 +222,7 @@ pub fn source_text(bytes: &[u8]) -> Option<String> {
 }
 
 fn utf16(bytes: &[u8], read: fn([u8; 2]) -> u16) -> Option<String> {
-    let units: Vec<u16> = bytes.chunks_exact(2).map(|pair| read([pair[0], pair[1]])).collect();
+    let units: Vec<u16> = bytes.as_chunks::<2>().0.iter().map(|pair| read(*pair)).collect();
     String::from_utf16(&units).ok()
 }
 
@@ -273,10 +273,8 @@ fn legacy_panorama(data: &[u8]) -> Option<String> {
         }
     }
     let body = &data[at..];
-    let body = match body.iter().rposition(|b| *b != 0) {
-        Some(last) => &body[..=last],
-        None => return None,
-    };
+    let last = body.iter().rposition(|b| *b != 0)?;
+    let body = &body[..=last];
     let text = std::str::from_utf8(body).ok()?;
     let crc_ok = crate::vpk::crc32(body) == crc || crate::vpk::crc32(&data[at..]) == crc;
     (crc_ok || mostly_printable(text)).then(|| text.to_string())

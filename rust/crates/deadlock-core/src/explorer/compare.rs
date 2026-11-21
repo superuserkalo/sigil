@@ -76,8 +76,7 @@ pub fn compare_trees(left: &Listing, right: &Listing) -> TreeDiff {
             });
         }
     }
-    diff.rows
-        .sort_by(|a, b| a.path.to_ascii_lowercase().cmp(&b.path.to_ascii_lowercase()));
+    diff.rows.sort_by_key(|row| row.path.to_ascii_lowercase());
     diff
 }
 

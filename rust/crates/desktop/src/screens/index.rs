@@ -37,8 +37,11 @@ pub fn view(s: &State, u: &Ui) -> El {
         None => String::new(),
     };
 
-    let body = if s.catalog.is_none() {
-        u.empty_state(
+    let tabs = crate::screens::explorer::tabs(s, u);
+    let body = if s.explorer.tab == crate::screens::explorer::Tab::Files {
+        col().w_full().gap(16.0).child(tabs).child(crate::screens::explorer::view(s, u))
+    } else if s.catalog.is_none() {
+        col().w_full().gap(16.0).child(tabs).child(u.empty_state(
             "",
             "No game index yet",
             "Set the game folder in Settings, then build the index.",
@@ -47,11 +50,12 @@ pub fn view(s: &State, u: &Ui) -> El {
                     .cursor(rune::Cursor::Pointer)
                     .on_press(|st: &mut State| st.go(Screen::Settings)),
             ),
-        )
+        ))
     } else {
         col()
             .w_full()
             .gap(16.0)
+            .child(tabs)
             .child(toolbar(s, u))
             .child(table(s, u))
             .child(source(s, u))

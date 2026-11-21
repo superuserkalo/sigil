@@ -139,6 +139,8 @@ pub struct State {
     pub maps: screens::maps::Page,
     /// The 3D viewer's open viewports (`crate::viewer`).
     pub viewers: crate::viewer::Viewers,
+    /// The Game index's Files tab (`screens::explorer`).
+    pub explorer: screens::explorer::Explorer,
 }
 
 impl Default for State {
@@ -238,6 +240,7 @@ impl Default for State {
             launch_extras: Default::default(),
             maps: Default::default(),
             viewers: Default::default(),
+            explorer: Default::default(),
         }
     }
 }
@@ -1991,6 +1994,7 @@ pub fn poll(s: &mut State, t: f64, _tx: &mut Tx) -> bool {
     changed |= screens::maps::poll(s);
     changed |= screens::locker::cursors::poll(s);
     changed |= screens::locker::assets::poll(s);
+    changed |= screens::explorer::poll(s);
     while let Some(event) = s.agent.try_event() {
         s.apply_agent_event(event);
         changed = true;
