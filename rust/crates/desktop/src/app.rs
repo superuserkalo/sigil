@@ -2731,6 +2731,8 @@ pub fn scenes() -> &'static [(&'static str, fn(&mut State))] {
         ("installed-list", screens::installed::scene_list),
         ("installed-variants", screens::installed::scene_variants),
         ("installed-tags", screens::installed::scene_tags),
+        ("installed-tag-menu", screens::installed::scene_tag_menu),
+        ("installed-folder-fix", screens::installed::scene_folder_fix),
         ("installed-lists", screens::installed::scene_lists),
         ("installed-edit", screens::installed::scene_edit),
         ("installed-card-more", screens::installed::scene_card_more),

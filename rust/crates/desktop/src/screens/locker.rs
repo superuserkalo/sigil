@@ -1252,6 +1252,7 @@ pub(super) fn mod_row(s: &State, u: &Ui, m: &ModRow, trailing: Option<El>) -> El
                 )
                 .child(text(detail).font(SMALL).color(u.faint).truncate()),
         )
+        .child(favorite_button(s, u, m))
         .child(art::edit_button(u, m.slot, &m.label));
     if let Some(t) = trailing {
         r = r.child(t);
@@ -1267,6 +1268,30 @@ pub(super) fn mod_row(s: &State, u: &Ui, m: &ModRow, trailing: Option<El>) -> El
             .cursor(rune::Cursor::Pointer)
             .on_press(move |st: &mut State| st.addon_dialog = Some((slot, !enabled))),
     )
+}
+
+/// Save or unsave a mod. The flag is Installed's (`mod_extras`), so a mod saved on either
+/// page is saved on both.
+fn favorite_button(s: &State, u: &Ui, m: &ModRow) -> El {
+    use crate::screens::settings::i18n::{fill, tr};
+    let slot = m.slot;
+    let saved = crate::screens::installed::notes::is_favorite(s, slot);
+    let label = if saved {
+        fill(tr("Remove {} from saved"), &[&m.label])
+    } else {
+        fill(tr("Save {}"), &[&m.label])
+    };
+    el().size(32.0, 32.0)
+        .center()
+        .radius(crate::ui::r(8.0))
+        .hover(u.hover)
+        .focusable(true)
+        .role("button")
+        .label(label)
+        .key(format!("locker-favorite-{slot}"))
+        .cursor(rune::Cursor::Pointer)
+        .on_press(move |st: &mut State| crate::screens::installed::notes::toggle_favorite(st, slot))
+        .child(rune::icon(&icons::HEART, 16.0).color(if saved { u.accent } else { u.faint }).a11y_hidden())
 }
 
 // --- hero page -------------------------------------------------------------------
@@ -1865,7 +1890,9 @@ fn general_page(s: &State, u: &Ui, v: &View) -> El {
                 .child(tabs),
         );
 
-    let mods = tab_mods(v, &active);
+    let mut mods = tab_mods(v, &active);
+    // Saved mods first (Grimoire #593: favorites shared with Installed), stable otherwise.
+    mods.sort_by_key(|m| !crate::screens::installed::notes::is_favorite(s, m.slot));
     let (title, custom_id) = match &active {
         GeneralTab::Cursors => (String::new(), None),
         GeneralTab::Type(kind) => (kind.label().to_string(), None),

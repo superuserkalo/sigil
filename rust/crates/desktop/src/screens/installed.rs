@@ -143,6 +143,8 @@ pub struct View {
     pub hide_slot: bool,
     /// View imprint (Grimoire's card menu item).
     pub imprint: imprint::Imprint,
+    /// Repair the mods folder, and the copies of mods installed twice.
+    pub folder_fix: folder_fix::FolderFix,
     /// Analyze addons and the HUD check (C11).
     pub checks: checks::Checks,
     /// The open Backups dialog of one slot (C10).
@@ -443,15 +445,18 @@ fn shown_addons(s: &State) -> Vec<&AddonRow> {
             (hero.is_none(), hero.unwrap_or_default(), display_name(s, addon).to_lowercase())
         }),
     }
-    // Pinned mods sit at the top of the disabled group, in the chosen order within it.
+    // Pinned mods sit at the top of the disabled group, in the chosen order within it. Saved
+    // mods (Grimoire #593) sort first within each group.
     shown.sort_by_key(|addon| {
-        if addon.enabled {
+        let extra = notes::extra(s, addon);
+        let group = if addon.enabled {
             0
-        } else if notes::extra(s, addon).pinned {
+        } else if extra.pinned {
             1
         } else {
             2
-        }
+        };
+        (group, !extra.favorite)
     });
     shown
 }
@@ -1195,6 +1200,9 @@ fn card_view(s: &State, u: &Ui, card: &layout::Group, pitch: [f32; 2], cols: usi
     if let Some(merged) = tools::merged_chip(s, u, slot) {
         bottom = bottom.child(merged);
     }
+    if let Some(twice) = folder_fix::chip(s, u, slot) {
+        bottom = bottom.child(twice);
+    }
     let mut top = row().w_full().items_start().gap(4.0).child(pick_box);
     let dragging = s.installed.drag.is_some_and(|d| d.slot == slot);
     if drag::allowed(s) {
@@ -1564,7 +1572,7 @@ pub fn overlay(s: &State, u: &Ui) -> Option<El> {
         Menu::View => ("installed-view".to_string(), Align::End, 200.0),
         Menu::Hero => ("installed-hero".to_string(), Align::Start, 220.0),
         Menu::Category => ("installed-category".to_string(), Align::Start, 220.0),
-        Menu::Tag => ("installed-tag".to_string(), Align::Start, 200.0),
+        Menu::Tag => ("installed-tag".to_string(), Align::Start, 320.0),
         Menu::List => ("installed-list".to_string(), Align::Start, 240.0),
         Menu::More => ("installed-bulk".to_string(), Align::End, 260.0),
         Menu::Overlap(slot) => (format!("installed-overlap-{slot:02}"), Align::End, 340.0),
@@ -1711,6 +1719,22 @@ pub fn overlay(s: &State, u: &Ui) -> Option<El> {
                         }),
                 );
             }
+            // Grimoire #593: one saved flag shared with the Locker.
+            let saved = extra.favorite;
+            items.push(
+                menu_item(
+                    u,
+                    "menu-favorite",
+                    Some(&icons::HEART),
+                    if saved { tr("Remove from saved") } else { tr("Save") },
+                    "",
+                    true,
+                )
+                .on_press(move |st: &mut State| {
+                    st.installed.menu = None;
+                    notes::toggle_favorite(st, slot);
+                }),
+            );
             let pinned = extra.pinned;
             items.push(
                 menu_item(
@@ -1800,6 +1824,9 @@ pub fn overlay(s: &State, u: &Ui) -> Option<El> {
                     pick(st, slot, false);
                 }),
             );
+            if let Some(copy) = folder_fix::menu_item(s, u, slot) {
+                items.push(copy);
+            }
             items.push(
                 danger_item(u, "menu-delete", "Delete")
                     .on_press(move |st: &mut State| {
@@ -2031,6 +2058,10 @@ pub fn overlay(s: &State, u: &Ui) -> Option<El> {
             items.push(
                 menu_item(u, "menu-safety", Some(&icons::SHIELD), "Mod safety", "review and allowed mods", true)
                     .on_press(safety_review::open),
+            );
+            items.push(
+                menu_item(u, "menu-folder-fix", Some(&icons::WRENCH), "Repair the mods folder", &folder_fix::menu_detail(s), true)
+                    .on_press(folder_fix::open),
             );
             items.push(
                 menu_item(u, "menu-search", Some(&icons::SEARCH), "Find a broken mod", "halve the set", true)
@@ -2341,6 +2372,7 @@ pub fn poll(st: &mut State) -> bool {
     changed |= repair::poll(st);
     changed |= checks::poll(st);
     changed |= imprint::poll(st);
+    changed |= folder_fix::poll(st);
     changed |= sound::poll(st);
     crate::screens::conflicts::sync_scope(st);
     changed |= crate::screens::locker::art::poll(st);
@@ -2632,6 +2664,9 @@ pub fn dialog(s: &State, u: &Ui) -> Option<El> {
     if let Some(dialog) = safety_review::dialog(s, u) {
         return Some(dialog);
     }
+    if let Some(dialog) = folder_fix::dialog(s, u) {
+        return Some(dialog);
+    }
     if let Some(dialog) = tools::identify_dialog(s, u) {
         return Some(dialog);
     }
@@ -2815,7 +2850,7 @@ pub fn scene_drop(s: &mut State) {
 pub fn scene_filters(s: &mut State) {
     crate::app::scene_demo_installed(s);
     s.installed.notes.hero = Some("Paradox".to_string());
-    s.installed.notes.tag = Some("comp".to_string());
+    s.installed.notes.tags_in = vec![(deadlock_core::mod_extras::TagKind::Custom, "comp".to_string())];
 }
 
 /// The list look.
@@ -2878,6 +2913,21 @@ pub fn scene_tags(s: &mut State) {
     crate::app::scene_demo_installed(s);
     s.installed.notes.text = TextEdit::new("comp, ranked");
     s.installed.notes.dialog = Some(notes::Dialog::Tags(3));
+}
+
+/// The one tag menu open, one tag included and one excluded.
+pub fn scene_tag_menu(s: &mut State) {
+    use deadlock_core::mod_extras::TagKind;
+    crate::app::scene_demo_installed(s);
+    s.installed.notes.tags_in = vec![(TagKind::Custom, "comp".to_string())];
+    s.installed.notes.tags_out = vec![(TagKind::Base, "Skins".to_string())];
+    s.installed.menu = Some(Menu::Tag);
+}
+
+/// Repair the mods folder, with a finding in every section.
+pub fn scene_folder_fix(s: &mut State) {
+    crate::app::scene_demo_installed(s);
+    folder_fix::stage_scene(s);
 }
 
 /// The mod lists dialog with the selection behind it.

@@ -1,0 +1,105 @@
+//! German for the Installed tag menu, saved mods and Repair the mods folder
+//! (`installed/notes.rs`, `installed/folder_fix.rs`). Kept apart from the other tables so no two
+//! agents edit one file; chained into `i18n`'s maps. Strings another table already translates
+//! are left out.
+
+pub const DE: &[(&str, &str)] = &[
+    // Tag menu and saved mods.
+    ("{} is no longer saved.", "{} ist nicht mehr gespeichert."),
+    ("{} mods, random each launch", "{} Mods, bei jedem Start zufällig"),
+    ("Clear tag filters", "Tag-Filter zurücksetzen"),
+    ("Cycle tag filters", "Tag-Filter durchschalten"),
+    (
+        "A left click on a tag in Installed's tag menu goes included, excluded, then off. A right click clears it.",
+        "Ein Linksklick auf einen Tag im Tag-Menü von Installiert schaltet zwischen eingeschlossen, ausgeschlossen und aus. Ein Rechtsklick setzt ihn zurück.",
+    ),
+    ("Click to include, right click to exclude.", "Klicken zum Einschließen, Rechtsklick zum Ausschließen."),
+    ("Excluded. Click to clear.", "Ausgeschlossen. Klicken zum Zurücksetzen."),
+    ("Included. Right click to exclude.", "Eingeschlossen. Rechtsklick zum Ausschließen."),
+    ("No tags yet", "Noch keine Tags"),
+    ("One at random each launch", "Bei jedem Start einer zufällig"),
+    ("Reset to default order", "Standardreihenfolge wiederherstellen"),
+    ("Saved {}.", "{} gespeichert."),
+    ("Remove from saved", "Aus Gespeicherten entfernen"),
+    ("Remove {} from saved", "{} aus Gespeicherten entfernen"),
+    ("Save {}", "{} speichern"),
+    ("Patrons", "Patrone"),
+    ("Sinners", "Sünder"),
+    ("Boxes", "Kisten"),
+    // Repair the mods folder and mods installed twice.
+    ("A mod is installed twice", "Ein Mod ist doppelt installiert"),
+    ("{} mods are installed twice", "{} Mods sind doppelt installiert"),
+    ("A reorder stopped halfway", "Ein Umsortieren wurde mittendrin gestoppt"),
+    (
+        "A switched off copy sits beside the one that is on. Fix moves the off copy to the trash.",
+        "Neben der eingeschalteten Kopie liegt eine ausgeschaltete. Reparieren verschiebt die ausgeschaltete in den Papierkorb.",
+    ),
+    ("Broken mods", "Defekte Mods"),
+    ("Close Deadlock first", "Schließe zuerst Deadlock"),
+    ("Could not repair the mods folder", "Der Mod-Ordner konnte nicht repariert werden"),
+    ("Could not undo the repair", "Die Reparatur konnte nicht rückgängig gemacht werden"),
+    ("Fix 1 problem", "1 Problem beheben"),
+    ("Fix {} problems", "{} Probleme beheben"),
+    ("Fixed 1 problem", "1 Problem behoben"),
+    ("Fixed {} problems", "{} Probleme behoben"),
+    ("Fixing", "Wird repariert"),
+    ("Installed twice", "Doppelt installiert"),
+    ("Left as they are: {}", "Unverändert gelassen: {}"),
+    ("Leftovers", "Überreste"),
+    (
+        "No mod uses them, so the game never opens them. Fix moves them to the trash.",
+        "Kein Mod nutzt sie, daher öffnet das Spiel sie nie. Reparieren verschiebt sie in den Papierkorb.",
+    ),
+    ("Not loaded", "Nicht geladen"),
+    (
+        "Nothing to fix: every slot is whole, nothing is installed twice, and the game sees every mod.",
+        "Nichts zu reparieren: Jeder Platz ist vollständig, nichts ist doppelt installiert und das Spiel sieht jeden Mod.",
+    ),
+    (
+        "Often a download that stopped halfway ({}). Fix moves it to the trash.",
+        "Oft ein mittendrin abgebrochener Download ({}). Reparieren verschiebt ihn in den Papierkorb.",
+    ),
+    ("Part of the repair was undone", "Ein Teil der Reparatur wurde rückgängig gemacht"),
+    ("Remove this copy", "Diese Kopie entfernen"),
+    ("Repair the mods folder", "Mod-Ordner reparieren"),
+    ("{}: 1 part is missing", "{}: 1 Teil fehlt"),
+    (
+        "Same files as {} in slot {}. Fix moves this copy to the trash; the other stays.",
+        "Dieselben Dateien wie {} auf Platz {}. Reparieren verschiebt diese Kopie in den Papierkorb; die andere bleibt.",
+    ),
+    ("Slot {}: the same mod on and off", "Platz {}: derselbe Mod ein- und ausgeschaltet"),
+    ("Slot {}: two mods share the slot", "Platz {}: zwei Mods teilen sich den Platz"),
+    (
+        "Some of its parts are missing, so Sigil cannot move it.",
+        "Einige seiner Teile fehlen, daher kann Sigil ihn nicht verschieben.",
+    ),
+    (
+        "The game does not read subfolders. Fix moves it into a free slot, switched off. Leave it if another tool put it there.",
+        "Das Spiel liest keine Unterordner. Reparieren verschiebt ihn ausgeschaltet auf einen freien Platz. Lass ihn, wenn ein anderes Tool ihn dort abgelegt hat.",
+    ),
+    (
+        "The game ignores its name or folder. Fix moves it into a free slot, switched off.",
+        "Das Spiel ignoriert seinen Namen oder Ordner. Reparieren verschiebt ihn ausgeschaltet auf einen freien Platz.",
+    ),
+    (
+        "The game loads it partly or not at all. Fix moves it to the trash; Reinstall gets a clean copy.",
+        "Das Spiel lädt ihn nur teilweise oder gar nicht. Reparieren verschiebt ihn in den Papierkorb; Neu installieren holt eine saubere Kopie.",
+    ),
+    (
+        "The game reads only the one that is on. Fix moves the other into a free slot, switched off.",
+        "Das Spiel liest nur den eingeschalteten. Reparieren verschiebt den anderen ausgeschaltet auf einen freien Platz.",
+    ),
+    ("The repair was undone", "Die Reparatur wurde rückgängig gemacht"),
+    (
+        "The switched off one shares parts with the other and cannot load. Fix moves it to the trash.",
+        "Der ausgeschaltete teilt Teile mit dem anderen und kann nicht laden. Reparieren verschiebt ihn in den Papierkorb.",
+    ),
+    (
+        "They were deleted outside Sigil. Fix removes the mod from your library.",
+        "Sie wurden außerhalb von Sigil gelöscht. Reparieren entfernt den Mod aus deiner Bibliothek.",
+    ),
+    (
+        "What is broken or out of place in the addon folders. Tick what to fix: removed files go to Sigil's trash, and Undo puts everything back.",
+        "Was in den Addon-Ordnern defekt oder fehl am Platz ist. Hake an, was repariert werden soll: Entfernte Dateien landen in Sigils Papierkorb, und Rückgängig stellt alles wieder her.",
+    ),
+];

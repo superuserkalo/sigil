@@ -1781,14 +1781,25 @@ fn mods(s: &State, u: &Ui) -> El {
         .child(section(
             u,
             "Installing",
-            vec![toggle_row(
-                u,
-                "settings-land-disabled",
-                "New mods start turned off",
-                "Installs land in a free slot, off, until you switch them on in Installed.",
-                s.prefs.land_disabled,
-                |st| prefs::edit(st, |p| p.land_disabled = !p.land_disabled),
-            )],
+            vec![
+                toggle_row(
+                    u,
+                    "settings-land-disabled",
+                    "New mods start turned off",
+                    "Installs land in a free slot, off, until you switch them on in Installed.",
+                    s.prefs.land_disabled,
+                    |st| prefs::edit(st, |p| p.land_disabled = !p.land_disabled),
+                ),
+                // Grimoire #593: the Installed tag menu's cycling switch.
+                toggle_row(
+                    u,
+                    "settings-cycle-tags",
+                    "Cycle tag filters",
+                    "A left click on a tag in Installed's tag menu goes included, excluded, then off. A right click clears it.",
+                    s.prefs.flag("cycle_tag_filters"),
+                    |st| prefs::edit(st, |p| p.toggle_flag("cycle_tag_filters")),
+                ),
+            ],
         ))
         .child(section(
             u,
