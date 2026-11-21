@@ -621,11 +621,20 @@ fn working(s: &State, u: &Ui) -> El {
         .run_started
         .map(|t| t.elapsed().as_secs())
         .unwrap_or_else(|| parse_elapsed(&s.elapsed));
-    let shade = u.muted.alpha(0.55 + 0.45 * s.pulse);
+    // The text breathes on Rune's loop engine, which wakes at 30 fps and never runs the view;
+    // a pulse kept in state rebuilt the whole window on every display frame.
+    const BREATHE: rune::Cycle = rune::Cycle {
+        period: 1.333,
+        phase: 0.0,
+        stops: &[(0.0, 0.55), (0.5, 1.0), (1.0, 0.55)],
+        still: 1.0,
+        fps: 30.0,
+    };
     row().key("agent-working").h(24.0).center_y().child(
         text(format!("Working for {}:{:02}", secs / 60, secs % 60))
             .font(CHAT)
-            .color(shade),
+            .color(u.muted)
+            .cycle(BREATHE),
     )
 }
 

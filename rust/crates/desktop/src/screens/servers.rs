@@ -130,6 +130,8 @@ pub struct View {
     pub check_job: Job<JoinCheck>,
     pub join_job: Job<JoinDone>,
     pub progress: Arc<Mutex<JoinProgress>>,
+    /// The join progress the window last drew, so a poll commits only when it moved.
+    shown_progress: JoinProgress,
     /// The check the user confirmed, kept for an "Install anyway" retry.
     pub last_check: Option<Box<JoinCheck>>,
     pub maps: crate::screens::servers_maps::MapsState,
@@ -164,6 +166,7 @@ impl Default for View {
             check_job: Job::default(),
             join_job: Job::default(),
             progress: Arc::new(Mutex::new(JoinProgress::default())),
+            shown_progress: JoinProgress::default(),
             last_check: None,
             maps: crate::screens::servers_maps::MapsState::default(),
             host: host::HostState::default(),
@@ -409,8 +412,14 @@ pub fn poll(st: &mut State, now: f64, tx: &mut Tx) -> bool {
         set_stage(st, stage);
         changed = true;
     }
+    // The worker wakes the window on each step of a join; returning true on every poll
+    // instead redrew the whole window at display rate until the join ended.
     if st.servers.join_job.is_running() {
-        changed = true;
+        let now = st.servers.progress.lock().map(|p| p.clone()).unwrap_or_default();
+        if now != st.servers.shown_progress {
+            st.servers.shown_progress = now;
+            changed = true;
+        }
     }
     changed |= invite::advance(st);
     changed |= crate::screens::servers_maps::poll(st);

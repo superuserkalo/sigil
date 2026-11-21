@@ -88,6 +88,8 @@ pub struct Explorer {
     pub case_sensitive: bool,
     pub control: Option<Arc<SearchControl>>,
     search_job: Job<SearchReport>,
+    /// Progress and hit count the window last drew during a search.
+    search_shown: (usize, usize, usize),
     pub report: Option<SearchReport>,
     pub right: Option<Arc<Listing>>,
     pub right_path: Option<PathBuf>,
@@ -119,6 +121,7 @@ impl Default for Explorer {
             case_sensitive: false,
             control: None,
             search_job: Job::default(),
+            search_shown: (0, 0, 0),
             report: None,
             right: None,
             right_path: None,
@@ -385,9 +388,15 @@ pub fn poll(st: &mut State) -> bool {
         ex.control = None;
         changed = true;
     }
-    if ex.control.is_some() && ex.search_job.is_running() {
-        // Live hits and progress: the worker pings the waker now and then.
-        changed = true;
+    if let Some(control) = ex.control.as_ref().filter(|_| ex.search_job.is_running()) {
+        // Live hits and progress: the worker pings the waker now and then. Commit when they
+        // moved; true on every poll redrew the whole window at display rate.
+        let (done, total) = control.progress();
+        let now = (done, total, control.hit_count());
+        if now != ex.search_shown {
+            ex.search_shown = now;
+            changed = true;
+        }
     }
     if let Some(result) = ex.line_job.try_take() {
         if let Ok(diff) = result {

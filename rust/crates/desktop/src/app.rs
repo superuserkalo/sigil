@@ -62,7 +62,6 @@ pub struct State {
     /// The saved settings (`settings.json`), see `crate::prefs`.
     pub prefs: crate::prefs::Prefs,
     pub status: String,
-    pub pulse: f32,
     pub game_detected: bool,
     pub game_label: String,
     pub game_root: Option<PathBuf>,
@@ -175,7 +174,6 @@ impl Default for State {
             paths: model::empty_paths(),
             prefs: crate::prefs::Prefs::default(),
             status: String::new(),
-            pulse: 0.0,
             game_detected: false,
             game_label: "Game not detected".to_string(),
             game_root: None,
@@ -2124,12 +2122,6 @@ pub fn poll(s: &mut State, t: f64, _tx: &mut Tx) -> bool {
             s.elapsed = label;
             changed = true;
         }
-    }
-    let running = s.agent.status == AgentStatus::Running
-        || s.tools.iter().any(|r| r.state == model::RunState::Running);
-    if s.screen == Screen::Agent && running {
-        s.pulse = ((t * std::f64::consts::TAU * 0.75).sin() * 0.5 + 0.5) as f32;
-        changed = true;
     }
     changed
 }
