@@ -18,7 +18,7 @@ use crate::app::State;
 use crate::icons;
 use crate::screens::maps::Invite as Watch;
 use crate::screens::settings::i18n::{fill, tr};
-use crate::ui::{ActionKind, BODY, H2, MONO, SMALL, Ui};
+use crate::ui::{ActionKind, MONO, SMALL, Ui};
 
 /// The stock maps the card offers, as on the Host server card.
 pub use super::bridge::STOCK_MAPS;
@@ -165,18 +165,21 @@ fn line(_: &Ui, words: String, color: rune::Color) -> El {
     text(words).font(SMALL).color(color).wrap().w_full()
 }
 
+/// One segment of the map choice: 28 high, `MONO`, the chosen one raised.
 fn map_chip(u: &Ui, key: String, name: String, on: bool) -> El {
     let label = name.clone();
     row()
         .key(key)
         .h(28.0)
-        .px(10.0)
+        .px(8.0)
         .center_y()
-        .radius(crate::ui::r(14.0))
-        .fill(if on { u.accent.alpha(0.14) } else { u.well })
-        .border(1.0, if on { u.accent.alpha(0.5) } else { u.hair })
+        .radius(crate::ui::r(4.0))
+        .fill(if on { u.raised } else { rune::Color::TRANSPARENT })
+        .border(1.0, if on { u.hair_strong } else { rune::Color::TRANSPARENT })
+        .hover(if on { u.raised } else { u.hover })
         .focusable(true)
         .role("radio")
+        .checked(on)
         .label(label.clone())
         .cursor(rune::Cursor::Pointer)
         .child(text(label).font(MONO).color(if on { u.ink } else { u.muted }).a11y_hidden())
@@ -186,63 +189,84 @@ fn map_chip(u: &Ui, key: String, name: String, on: bool) -> El {
         })
 }
 
-/// The card. `key` keeps the Host page and the Maps page copies apart.
+/// The card, now a plain section. `key` keeps the Host page and the Maps page copies apart.
 pub fn card(s: &State, u: &Ui, key: &str) -> El {
     let host = &s.servers.host;
     let map = host.listen_map.clone();
-    let mut chips = row().w_full().gap(6.0).flex_wrap();
+    let mut chips = row()
+        .h(32.0)
+        .padding(2.0)
+        .gap(2.0)
+        .center_y()
+        .radius(crate::ui::r(4.0))
+        .fill(u.well)
+        .border(1.0, u.hair)
+        .role("radiogroup")
+        .label(tr("Map"));
     for name in choices(s) {
         let on = name == map;
         chips = chips.child(map_chip(u, format!("{key}-map-{name}"), name, on));
     }
     // Launch map itself refuses while Deadlock runs and says why.
     let launch = u
-        .icon_action(&icons::PLAY, tr("Launch"), ActionKind::Primary)
+        .icon_action(&icons::PLAY, tr("Launch"), ActionKind::Secondary)
         .key(format!("{key}-launch"))
         .cursor(rune::Cursor::Pointer)
         .on_press(launch);
+    let help_open = host.listen_help;
+    let help = row()
+        .key(format!("{key}-how"))
+        .w_full()
+        .h(32.0)
+        .gap(6.0)
+        .center_y()
+        .focusable(true)
+        .role("button")
+        .checked(help_open)
+        .label(tr("How it works"))
+        .cursor(rune::Cursor::Pointer)
+        .on_press(|st: &mut State| st.servers.host.listen_help = !st.servers.host.listen_help)
+        .child(icon(if help_open { &icons::CHEVRON_DOWN } else { &icons::CHEVRON_RIGHT }, 12.0).color(u.muted).a11y_hidden())
+        .child(text(tr("How it works")).font(SMALL).color(u.prose).a11y_hidden());
     let mut c = col()
         .key(format!("{key}-listen"))
         .w_full()
-        .gap(12.0)
-        .padding(16.0)
-        .radius(crate::ui::r(10.0))
-        .fill(u.accent.alpha(0.05))
-        .border(1.0, u.accent.alpha(0.25))
+        .gap(8.0)
+        .child(u.section_head(tr("Play with friends"), None, None))
         .child(
             row()
                 .w_full()
-                .gap(10.0)
+                .gap(8.0)
                 .center_y()
-                .child(icon(&icons::USER, 18.0).color(u.accent).a11y_hidden())
-                .child(text(tr("Play with friends, no setup")).font(H2).color(u.ink)),
+                .flex_wrap()
+                .child(chips)
+                .child(launch)
+                .child(text(fill(tr("Starts {} in Deadlock."), &[&map])).font(SMALL).color(u.muted).truncate().shrink()),
         )
-        .child(
-            text(tr("Start a map in your own game. Friends join you through Steam: no server files and no ports to open."))
-                .font(BODY)
-                .color(u.prose)
-                .wrap()
-                .w_full(),
-        )
-        .child(chips)
-        .child(row().w_full().gap(10.0).center_y().child(launch).child(
-            text(fill(tr("Starts {} in Deadlock."), &[&map])).font(SMALL).color(u.muted).grow(1.0).min_w(0.0).wrap(),
-        ))
-        .child(line(
-            u,
-            tr("Sigil adds -condebug to Deadlock's launch options in Steam for this launch, so it can read the invite code from the game's console log. It stays on; turn it off in Settings > Game.").to_string(),
-            u.faint,
-        ))
-        .child(line(
-            u,
-            if key == "host" {
-                tr("Plugins do not run in the in-game host. For plugins, start the Deadworks server below.")
-            } else {
-                tr("Plugins do not run in the in-game host. For plugins, host a Deadworks server in Servers > Host.")
-            }
-            .to_string(),
-            u.faint,
-        ));
+        .child(help);
+    if help_open {
+        c = c
+            .child(line(
+                u,
+                tr("Start a map in your own game. Friends join you through Steam: no server files and no ports to open.").to_string(),
+                u.muted,
+            ))
+            .child(line(
+                u,
+                tr("Sigil adds -condebug to Deadlock's launch options in Steam for this launch, so it can read the invite code from the game's console log. It stays on; turn it off in Settings > Game.").to_string(),
+                u.muted,
+            ))
+            .child(line(
+                u,
+                if key == "host" {
+                    tr("Plugins do not run in the in-game host. For plugins, start the Deadworks server below.")
+                } else {
+                    tr("Plugins do not run in the in-game host. For plugins, host a Deadworks server in Servers > Host.")
+                }
+                .to_string(),
+                u.muted,
+            ));
+    }
     match &host.listen_condebug {
         Some(ConDebug::Added) => {
             c = c.child(line(u, tr("Sigil added -condebug to Deadlock's launch options.").to_string(), u.teal));

@@ -77,7 +77,6 @@ const COL_PLAYERS: f32 = 88.0;
 const COL_PING: f32 = 64.0;
 const COL_REGION: f32 = 56.0;
 const COL_JOIN: f32 = 72.0;
-const PANEL_W: f32 = 360.0;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Tab {
@@ -436,6 +435,7 @@ pub fn poll(st: &mut State, now: f64, tx: &mut Tx) -> bool {
 // Filtering and sorting
 // ---------------------------------------------------------------------------------------------
 
+#[allow(dead_code)] // the filter chips' labels, kept for the Filters menu's summary
 fn active_labels(filter: &ServerFilter) -> Vec<(String, FilterChipKind)> {
     let mut out = Vec::new();
     if !filter.query.trim().is_empty() {

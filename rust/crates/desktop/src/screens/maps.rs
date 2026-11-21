@@ -34,7 +34,7 @@ use crate::jobs::Job;
 use crate::model::Screen;
 use crate::screens::browse::quick;
 use crate::screens::settings::i18n::{fill, tr};
-use crate::ui::{ActionKind, BODY, BODY_MED, H1, MONO, PAGE_TOP, PAGE_X, SMALL, Ui};
+use crate::ui::{ActionKind, BODY_MED, MONO, PAGE_TITLE, PAGE_TOP, PAGE_X, SMALL, SMALL_NUM, Ui};
 
 /// Settings > Experimental > Custom maps.
 pub const FLAG: &str = "custom_maps";
@@ -42,7 +42,6 @@ pub const FLAG: &str = "custom_maps";
 pub const MAPS_CATEGORY: u64 = deadlock_core::servers::MAP_CATEGORY_ID;
 /// How long Invite friends waits for the map server.
 pub const WATCH_FOR: Duration = Duration::from_secs(180);
-const PANEL_W: f32 = 380.0;
 const PER_PAGE: usize = 50;
 
 /// The section title DMM gives the instructions, shared by every place that shows them.
@@ -483,7 +482,7 @@ pub fn how_to_play(s: &State, u: &Ui, key: &str, play: &Play) -> El {
     let mut actions = row().w_full().gap(8.0).center_y().flex_wrap();
     if let Some(map) = play.map.clone().filter(|_| ready) {
         actions = actions.child(
-            u.icon_action(&icons::PLAY, tr("Launch map"), ActionKind::Primary)
+            u.icon_action(&icons::PLAY, tr("Launch map"), ActionKind::Secondary)
                 .key(format!("{key}-launch"))
                 .cursor(rune::Cursor::Pointer)
                 .on_press(move |st: &mut State| launch(st, map.clone())),
@@ -491,7 +490,7 @@ pub fn how_to_play(s: &State, u: &Ui, key: &str, play: &Play) -> El {
     }
     if let (Some(map), Some(vpk)) = (play.map.clone(), play.vpk.clone()) {
         actions = actions.child(
-            u.icon_action(&crate::screens::servers::SERVER_ICON, tr("Host this map"), ActionKind::Secondary)
+            u.icon_action(&crate::screens::servers::SERVER_ICON, tr("Host this map"), ActionKind::Ghost)
                 .key(format!("{key}-host"))
                 .cursor(rune::Cursor::Pointer)
                 .on_press(move |st: &mut State| crate::screens::host::open_with_map(st, &map, &vpk)),
@@ -499,7 +498,7 @@ pub fn how_to_play(s: &State, u: &Ui, key: &str, play: &Play) -> El {
     }
     if let Some(url) = play.page_url.clone() {
         actions = actions.child(
-            u.icon_action(&icons::EXTERNAL_LINK, tr("Open page"), ActionKind::Ghost)
+            u.icon_button(&icons::EXTERNAL_LINK, tr("Open page"))
                 .key(format!("{key}-page"))
                 .cursor(rune::Cursor::Pointer)
                 .on_press_tx(move |st: &mut State, tx: &mut Tx| {
@@ -594,7 +593,7 @@ pub fn details_section(s: &State, u: &Ui, id: u64, root: &str, leaf: &str, page_
 }
 
 fn thumb(s: &State, u: &Ui, url: Option<&String>) -> El {
-    let frame = el().size(64.0, 36.0).radius(crate::ui::r(6.0)).clip_rounded(crate::ui::r(6.0)).fill(u.well).border(1.0, u.hair);
+    let frame = el().size(56.0, 32.0).radius(crate::ui::r(4.0)).clip_rounded(crate::ui::r(4.0)).fill(u.well).border(1.0, u.hair);
     match url.and_then(|url| s.thumbnails.get(url)) {
         Some(px) => frame.child(el().pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0)).pixels_fit(px, SurfaceFit::Fill)).a11y_hidden(),
         None => frame.center().child(icon(&icons::LAYOUT_GRID, 14.0).color(u.faint).a11y_hidden()).a11y_hidden(),
@@ -606,12 +605,10 @@ fn list_row(u: &Ui, key: String, chosen: bool, label: String, lead: El, title: S
     row()
         .key(key)
         .w_full()
-        .min_h(52.0)
-        .px(8.0)
-        .py(6.0)
+        .h(48.0)
         .gap(12.0)
         .center_y()
-        .radius(crate::ui::r(8.0))
+        .radius(crate::ui::r(4.0))
         .fill(if chosen { u.selected } else { Color::TRANSPARENT })
         .hover(u.hover)
         .focusable(true)
@@ -625,7 +622,7 @@ fn list_row(u: &Ui, key: String, chosen: bool, label: String, lead: El, title: S
                 .min_w(0.0)
                 .gap(2.0)
                 .child(text(title).font(BODY_MED).color(u.ink).truncate().a11y_hidden())
-                .child(text(sub).font(SMALL).color(u.faint).truncate().a11y_hidden()),
+                .child(text(sub).font(SMALL_NUM).color(u.muted).truncate().a11y_hidden()),
         )
         .child(trailing)
 }
@@ -634,7 +631,14 @@ fn installed_list(s: &State, u: &Ui) -> Option<El> {
     if s.maps.installed.is_empty() {
         return None;
     }
-    let mut list = col().key("maps-installed").w_full().gap(2.0).child(u.section(tr("Installed maps")));
+    let mut list = col()
+        .key("maps-installed")
+        .w_full()
+        .child(el().pb(8.0).w_full().child(u.section_head(
+            tr("Installed"),
+            Some(s.maps.installed.len()),
+            launch_line(s, u).map(|line| line.w(560.0).max_w(560.0)),
+        )));
     for m in &s.maps.installed {
         let slot = m.slot;
         let chosen = s.maps.open == Some(Open::Slot(slot));
@@ -645,15 +649,15 @@ fn installed_list(s: &State, u: &Ui) -> Option<El> {
                 format!("maps-slot-{slot}-{}", m.name),
                 chosen,
                 title.clone(),
-                el().size(64.0, 36.0)
-                    .radius(crate::ui::r(6.0))
+                el().size(56.0, 32.0)
+                    .radius(crate::ui::r(4.0))
                     .fill(u.well)
                     .border(1.0, u.hair)
                     .center()
                     .child(icon(&icons::PLAY, 14.0).color(u.teal).a11y_hidden())
                     .a11y_hidden(),
                 title,
-                format!("map {}  ·  pak{:02}", m.name, slot),
+                format!("map {} · pak{:02}", m.name, slot),
                 el(),
             )
             .on_press(move |st: &mut State| {
@@ -666,7 +670,14 @@ fn installed_list(s: &State, u: &Ui) -> Option<El> {
 }
 
 fn catalog_list(s: &State, u: &Ui) -> El {
-    let mut list = col().key("maps-catalog").w_full().gap(2.0).child(u.section(tr("On GameBanana")));
+    let count = match &s.maps.catalog {
+        Some(Ok(mods)) => Some(mods.len()),
+        _ => None,
+    };
+    let mut list = col()
+        .key("maps-catalog")
+        .w_full()
+        .child(el().pb(8.0).child(u.section_head(tr("On GameBanana"), count, None)));
     match &s.maps.catalog {
         None => list.child(u.empty_state("", tr("Getting maps"), tr("The list comes from GameBanana."), None)),
         Some(Err(error)) => list.child(u.empty_state(
@@ -696,7 +707,7 @@ fn catalog_list(s: &State, u: &Ui) -> El {
                         fill(tr("{}, by {}"), &[&m.name, &m.author]),
                         thumb(s, u, m.thumbnail_url.as_ref()),
                         m.name.clone(),
-                        fill(tr("by {}  ·  {} likes"), &[&m.author, &m.likes.to_string()]),
+                        fill(tr("by {} · {} likes"), &[&m.author, &m.likes.to_string()]),
                         quick::button_el(u, &b, format!("maps-install-{}", m.id), m.id, &m.name, quick::Size::Icon),
                     )
                     .on_press(move |st: &mut State| open_mod(st, &target)),
@@ -707,6 +718,7 @@ fn catalog_list(s: &State, u: &Ui) -> El {
     }
 }
 
+/// The map's drawer: title, author, then how to play.
 fn panel(s: &State, u: &Ui) -> Option<El> {
     let open = s.maps.open.as_ref()?;
     let (play, author) = match open {
@@ -717,31 +729,43 @@ fn panel(s: &State, u: &Ui) -> Option<El> {
     };
     let mut c = col()
         .key("maps-panel")
-        .w(PANEL_W)
-        .min_w(PANEL_W)
-        .gap(12.0)
+        .w_full()
+        .gap(8.0)
         .child(
-            row()
+            text(play.title.clone())
+                .font(PAGE_TITLE)
+                .color(u.ink)
+                .max_lines(2)
                 .w_full()
-                .gap(8.0)
-                .items_start()
-                .child(text(play.title.clone()).font(H1).color(u.ink).wrap().grow(1.0).min_w(0.0))
-                .child(
-                    u.icon_button(&icons::X, tr("Close"))
-                        .key("maps-panel-close")
-                        .cursor(rune::Cursor::Pointer)
-                        .on_press(|st: &mut State| st.maps.open = None),
-                ),
+                .pr(32.0),
         );
     if let Some(author) = author.filter(|a| !a.is_empty()) {
-        c = c.child(text(fill(tr("by {}"), &[&author])).font(BODY).color(u.muted));
+        c = c.child(text(fill(tr("by {}"), &[&author])).font(SMALL).color(u.muted));
     }
     if matches!(open, Open::Mod { id, .. } if s.maps.describe_job.is_running() && !s.maps.described.contains_key(id))
         && play.map.is_none()
     {
         c = c.child(line("Reading the map's page for its name.", u.faint));
     }
-    Some(c.child(how_to_play(s, u, "maps-panel", &play)))
+    let body = c.child(el().h(8.0)).child(how_to_play(s, u, "maps-panel", &play));
+    Some(
+        u.drawer(
+            "maps-drawer",
+            u.close_button(tr("Close"))
+                .key("maps-panel-close")
+                .cursor(rune::Cursor::Pointer)
+                .on_press(|st: &mut State| st.maps.open = None),
+            body,
+        )
+        .on_key(|st: &mut State, ev: &rune::KeyEvent, _| {
+            if ev.key == rune::Key::Escape {
+                st.maps.open = None;
+                true
+            } else {
+                false
+            }
+        }),
+    )
 }
 
 fn launch_line(s: &State, u: &Ui) -> Option<El> {
@@ -753,9 +777,11 @@ fn launch_line(s: &State, u: &Ui) -> Option<El> {
             .gap(8.0)
             .center_y()
             .child(icon(&icons::PIN, 14.0).color(u.muted).a11y_hidden())
-            .child(text(fill(tr("Every launch starts {} until you remove it."), &[&current])).font(BODY).color(u.prose).grow(1.0).min_w(0.0).wrap())
+            .child(text(fill(tr("Every launch starts {} until you remove it."), &[&current])).font(SMALL).color(u.prose).grow(1.0).min_w(0.0).truncate())
             .child(
                 u.action(tr("Remove"), ActionKind::Ghost)
+                    .h(24.0)
+                    .px(8.0)
                     .key("maps-clear-launch")
                     .cursor(rune::Cursor::Pointer)
                     .on_press(clear_launch),
@@ -772,37 +798,43 @@ pub fn view(s: &State, u: &Ui) -> El {
             st.maps.catalog = None;
             on_open(st);
         });
-    let head = u.page_head("", tr(Screen::Maps.title()), tr("Custom maps from GameBanana. Install one, then launch it and invite friends."), Some(refresh));
-    let mut lists = col().grow(1.0).min_w(0.0).gap(20.0);
-    if let Some(line) = launch_line(s, u) {
-        lists = lists.child(line);
-    }
+    let toolbar = u.page_toolbar(u.page_title(tr(Screen::Maps.title())), Vec::new(), None, vec![refresh]);
+    // "Every launch starts {x}" rides on the Installed header, so it takes no line of its own.
+    let mut lists = col().w_full().gap(24.0);
     if let Some(installed) = installed_list(s, u) {
         lists = lists.child(installed);
+    } else if let Some(line) = launch_line(s, u) {
+        lists = lists.child(line);
     }
     lists = lists.child(catalog_list(s, u));
-    let mut body = row().w_full().gap(24.0).items_start().child(lists);
+    let mut stage = el().key("maps-stage").w_full().grow(1.0).min_h(0.0).child(
+        col()
+            .key("maps-scroll")
+            .w_full()
+            .h_full()
+            .min_h(0.0)
+            .scroll(ScrollSpec { stick_bottom: false })
+            .child(
+                col()
+                    .key("maps-page")
+                    .w_full()
+                    .px(PAGE_X)
+                    .pb(32.0)
+                    .gap(24.0)
+                    .child(crate::screens::host::listen::card(s, u, "maps"))
+                    .child(lists),
+            ),
+    );
     if let Some(panel) = panel(s, u) {
-        body = body.child(panel);
+        stage = stage.child(panel);
     }
     col()
-        .key("maps-scroll")
+        .key("maps-frame")
         .w_full()
         .h_full()
         .min_h(0.0)
-        .scroll(ScrollSpec { stick_bottom: false })
-        .child(
-            col()
-                .key("maps-page")
-                .w_full()
-                .px(PAGE_X)
-                .pt(PAGE_TOP)
-                .pb(32.0)
-                .gap(16.0)
-                .child(head)
-                .child(crate::screens::host::listen::card(s, u, "maps"))
-                .child(body),
-        )
+        .child(col().w_full().px(PAGE_X).pt(PAGE_TOP).pb(16.0).child(toolbar))
+        .child(stage)
 }
 
 // --- scenes -------------------------------------------------------------------------------

@@ -212,6 +212,8 @@ pub struct HostState {
     pub copied: Option<String>,
     /// "Play with friends, no setup": the map the card launches.
     pub listen_map: String,
+    /// The card's "How it works" notes are open.
+    pub listen_help: bool,
     /// What the last Launch press did about `-condebug`.
     pub listen_condebug: Option<listen::ConDebug>,
     /// The in-game host's code and the Sigil invite built from it.
@@ -269,6 +271,7 @@ impl Default for HostState {
             origins_job: Job::default(),
             copied: None,
             listen_map: deadlock_core::host::DEFAULT_MAP.to_string(),
+            listen_help: false,
             listen_condebug: None,
             listen_invite: None,
             confirm: None,

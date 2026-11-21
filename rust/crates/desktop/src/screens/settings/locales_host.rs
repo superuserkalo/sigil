@@ -365,6 +365,8 @@ pub const DE: &[(&str, &str)] = &[
     ("Open ports on my router (UPnP)", "Ports an meinem Router öffnen (UPnP)"),
     ("Paste the invite a friend copied from Sigil. It starts with sigil-invite:.", "Füge die Einladung ein, die ein Freund aus Sigil kopiert hat. Sie beginnt mit sigil-invite:."),
     ("Play with friends, no setup", "Mit Freunden spielen, ohne Einrichtung"),
+    ("Play with friends", "Mit Freunden spielen"),
+    ("How it works", "So funktioniert es"),
     ("Plugins do not run in the in-game host. For plugins, host a Deadworks server in Servers > Host.", "Plugins laufen im Host im Spiel nicht. Für Plugins hoste einen Deadworks-Server unter Server > Hosten."),
     ("Plugins do not run in the in-game host. For plugins, start the Deadworks server below.", "Plugins laufen im Host im Spiel nicht. Für Plugins starte unten den Deadworks-Server."),
     ("Relay mode edits the server's own gameinfo.gi (never your game's) the way the Deadworks launcher does, and keeps the server off the server lists. Each Start applies it again, also after a server update.", "Der Relay-Modus ändert die eigene gameinfo.gi des Servers (nie die deines Spiels) so wie der Deadworks-Launcher und hält den Server aus den Serverlisten heraus. Jeder Start wendet das erneut an, auch nach einem Server-Update."),
