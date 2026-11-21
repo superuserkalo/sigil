@@ -295,7 +295,7 @@ pub fn prepare(st: &mut State) {
         let (category, part_hero) = if group {
             (picked, hero.clone())
         } else {
-            let one = own.as_ref().map(std::slice::from_ref).unwrap_or_default();
+            let one = own.as_slice();
             (parts::suggest_category(one), own.as_ref().and_then(|c| c.hero().map(str::to_string)))
         };
         let cover = if group { group_cover.clone() } else { covers.get(*index).cloned().flatten() };
