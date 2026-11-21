@@ -14,9 +14,8 @@
 //! - `src/lib/heroViewerPlayback.ts`: friendly labels (`heroClipLabel`) and groups
 //!   (`groupHeroClips`).
 //!
-//! Not ported: Grimoire's staged-pose test (`heroStagedPose.ts`), which decides between the
-//! graph pose and a standing idle by sampling the exported glb. Sigil keeps the standing idle
-//! beside the showcase as a selectable clip and starts on the showcase.
+//! The staged-pose test (`heroStagedPose.ts`), which starts on the standing idle instead of a
+//! staged showcase or else drops that idle, runs on the written glb in `staged.rs`.
 
 use std::collections::BTreeMap;
 
@@ -48,7 +47,7 @@ pub enum Action {
 }
 
 impl Action {
-    fn is_idle(self) -> bool {
+    pub(crate) fn is_idle(self) -> bool {
         matches!(self, Action::Idle | Action::RelaxedIdle)
     }
 }

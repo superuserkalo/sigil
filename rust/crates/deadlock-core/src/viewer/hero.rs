@@ -19,6 +19,7 @@ use super::clips::{
     self, Action, ClipCandidate, ClipFileMeta, ClipGroup, ClipShowcase, Playback, Showcase,
 };
 use super::stack::{self, Source, SourceUsage, Stack, Stamp, normalize, source_fingerprint, stamp};
+use super::staged;
 use super::{
     PIPELINE_VERSION, SCHEMA, VPKMERGE_REV, Variant, check, citadel_dir, exporter_error, kv,
 };
@@ -289,6 +290,11 @@ pub struct ClipMeta {
     /// Set when the game's UI graph plays this clip on the shop or hero-select screen.
     #[serde(default)]
     pub showcase: Option<ClipShowcase>,
+    /// How far the clip lowers the hero's floor contact below the rest pose's, in meters
+    /// (negative), so a viewer lowers its floor with it (Grimoire's `grimoireFloor`). Null for
+    /// a clip that keeps or lifts it.
+    #[serde(default)]
+    pub floor: Option<f32>,
 }
 
 fn unit_speed() -> f32 {
@@ -309,7 +315,8 @@ pub struct HeroSidecar {
     /// graph names one).
     pub clips: Vec<String>,
     /// The clip a preview starts on (Grimoire's default clip rule), despite the name not
-    /// always an idle: the showcase, else a recipe clip, else an idle or pose.
+    /// always an idle: the standing idle beside a staged showcase, else the showcase, else a
+    /// recipe clip, else an idle or pose.
     pub idle_clip: Option<String>,
     /// The VPK stack the export read, highest precedence first. `slot` is null for game files.
     pub sources: Vec<SourceUsage>,
@@ -962,6 +969,7 @@ fn build_hero(
             group: clips::clip_group(&choice.name, &hero.display_name),
             speed: choice.speed(),
             showcase: choice.showcase.as_ref().map(ClipShowcase::from),
+            floor: None,
         });
         kept_choices.push(choice.clone());
         animations.push(clip);
@@ -974,8 +982,30 @@ fn build_hero(
         max_texture_edge,
         include_outline_shells: false,
     };
-    let glb = morphic::model::to_glb_textured(&model, stack, options)
+    let mut glb = morphic::model::to_glb_textured(&model, stack, options)
         .map_err(|error| exporter_error(format!("writing the glb for {entry}"), error))?;
+    check(cancel)?;
+
+    // Grimoire's staged-pose test on the glb as written: a showcase staged for the menu's own
+    // set starts on the standing idle, an unstaged one drops it; a clip that lowers the floor
+    // contact says how far.
+    let policy = staged::policy(&glb, &kept_choices);
+    let mut start = policy.start;
+    if let Some(name) = &policy.drop
+        && let Some(trimmed) = staged::drop_animation(&glb, name)
+    {
+        glb = trimmed;
+        metas.retain(|meta| meta.name != *name);
+        kept_choices.retain(|choice| choice.name != *name);
+        start = start.filter(|start| start != name);
+    }
+    for meta in &mut metas {
+        meta.floor = policy
+            .floors
+            .iter()
+            .find(|(name, _)| *name == meta.name)
+            .map(|(_, floor)| *floor);
+    }
     std::fs::write(out.join(format!("{}.glb", hero.codename)), glb)?;
     progress.at(STAGE_GLB);
 
@@ -1000,7 +1030,7 @@ fn build_hero(
     };
 
     Ok(Built {
-        idle: clips::default_clip(&kept_choices, &hero.display_name),
+        idle: start.or_else(|| clips::default_clip(&kept_choices, &hero.display_name)),
         clips: metas,
         cloth: cloth.is_some(),
         particles,

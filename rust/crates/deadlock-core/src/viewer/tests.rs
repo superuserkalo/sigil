@@ -1162,8 +1162,10 @@ fn viewer_clip_meta_contract_field_names() {
             graph: "models/heroes_staging/haze/haze_ui.vnmgraph_c".into(),
             state: ShowcaseState::HeroSelect,
         }),
+        floor: Some(-0.03),
     };
     let json = serde_json::to_value(&meta).unwrap();
+    assert_eq!(json["floor"].as_f64().map(|f| (f * 1000.0).round()), Some(-30.0));
     assert_eq!(json["label"], "Haze shop pose");
     assert_eq!(json["group"], "other");
     assert_eq!(json["speed"], 1.25);
@@ -1183,4 +1185,5 @@ fn viewer_clip_meta_contract_field_names() {
     assert_eq!(old.speed, 1.0);
     assert_eq!(old.group, ClipGroup::Other);
     assert!(old.showcase.is_none());
+    assert!(old.floor.is_none());
 }

@@ -1150,6 +1150,7 @@ dependencies = [
  "crc32fast",
  "flate2",
  "getrandom 0.3.4",
+ "gltf",
  "md5",
  "morphic",
  "regex",

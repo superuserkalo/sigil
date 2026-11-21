@@ -80,7 +80,7 @@ key, same files, `variant: "original"` in the sidecar). The UI can compare the t
 <cache>/hideout/<key>/reflection/{px,nx,py,ny,pz,nz}.hdr
 ```
 
-A key is 24 hex characters of SHA-256 over: the pipeline version (`sigil-viewer-1`), the pinned
+A key is 24 hex characters of SHA-256 over: the pipeline version (`sigil-viewer-3`), the pinned
 vpkmerge revision, the hero codename and model entry (heroes), the texture cap, the effective
 variant, and for every VPK in the stack its kind, path, size and modification time (mods also
 their chunk files). A game update, a new exporter, a changed or reordered mod all make a new key;
@@ -115,7 +115,7 @@ Binary glTF 2.0 written by `morphic::model::to_glb_textured`:
   "hero": "inferno",
   "displayName": "Infernus",
   "variant": "modded",
-  "clips": ["ui_shop_idle", "shop_menu_base"],
+  "clips": ["ui_shop_idle"],
   "idleClip": "ui_shop_idle",
   "sources": [
     { "slot": 3, "file": "addons/pak03_dir.vpk", "name": "Ember Infernus", "kind": "addon", "enabled": true, "used": 14 },
@@ -128,10 +128,8 @@ Binary glTF 2.0 written by `morphic::model::to_glb_textured`:
       "playback": "loop", "action": "idle", "origin": "clipFile",
       "resource": "models/heroes_wip/inferno/clips/ui_shop_idle.vnmclip_c",
       "label": "Idle", "group": "idle", "speed": 1.0,
-      "showcase": { "graph": "models/heroes_wip/inferno/inferno_ui.vnmgraph_c", "state": "shop" } },
-    { "name": "shop_menu_base", "durationSeconds": 2.97, "fps": 30.0, "frameCount": 90,
-      "playback": "hold", "action": "idle", "origin": "model", "resource": null,
-      "label": "Idle", "group": "idle", "speed": 1.0, "showcase": null }
+      "showcase": { "graph": "models/heroes_wip/inferno/inferno_ui.vnmgraph_c", "state": "shop" },
+      "floor": null }
   ],
   "cloth": "inferno.cloth.json",
   "units": "meters",
@@ -139,7 +137,7 @@ Binary glTF 2.0 written by `morphic::model::to_glb_textured`:
   "forward": "+Z",
   "key": "3f0c...",
   "issues": [],
-  "pipeline": "sigil-viewer-2"
+  "pipeline": "sigil-viewer-3"
 }
 ```
 
@@ -149,11 +147,11 @@ Binary glTF 2.0 written by `morphic::model::to_glb_textured`:
 | `hero` | Class codename from `scripts/heroes.vdata_c`, without `hero_`. |
 | `displayName` | Roster display name. |
 | `variant` | The look the glb shows. `original` when no installed mod touches the hero. |
-| `clips` | glTF animation names in the glb, in selection order (the showcase first when there is one). Same names in the modded and original export, so a before/after view can play both in step. |
-| `idleClip` | The clip to start on (the default clip, not always an idle): the showcase, else the hero's first recipe clip present, else a standing or relaxed idle, else `hero_pose` or `ui_hero_pose`, else the first clip. Null when the model offers none (bind pose). |
+| `clips` | glTF animation names in the glb, in selection order (the showcase first when there is one). Same names in the modded and original export, so a before/after view can play both in step (unless a mod's clips change the staged-pose answer below, which can keep the standing idle on one side only). |
+| `idleClip` | The clip to start on (the default clip, not always an idle): the standing idle when the showcase is staged (below), else the showcase, else the hero's first recipe clip present, else a standing or relaxed idle, else `hero_pose` or `ui_hero_pose`, else the first clip. Null when the model offers none (bind pose). |
 | `sources` | The stack the export read, highest precedence first. `slot` null for game files. `used` counts files read from that VPK. |
 | `modelEntry` | The compiled body model inside the VPKs. |
-| `clipInfo` | Per clip: length, rate, frame count, `playback` (`loop` or `hold`: play once and hold the last frame), `action` (`idle`, `relaxedIdle`, `heroPose`, `running`, `reload`, `dash`, `heavyMelee`), `origin` (`model`: embedded in the shown model; `base`: the game's own model at the same path, bound by bone name, used when a skin has no clip files; `clipFile`: a `.vnmclip_c`), `resource` (the `.vnmclip_c` path for a clip file), `label` (English picker name: `Idle`, `Relaxed idle`, `Hero pose`, `Run`, `Reload`, `Dash`, `Heavy melee` from the recipe, else the clip's own words, `Ui shop idle`), `group` (`idle`, `movement`, `combat` or `other`, Grimoire's `groupHeroClips` token rules), `speed` (playback rate multiplier: the graph clip node's `m_flSpeedMultiplier` for a showcase, else 1), `showcase` (null, or `{ "graph", "state" }` with `state` `shop` or `heroSelect` when the game's UI graph plays this clip on that screen; its `playback` is already the clip's). |
+| `clipInfo` | Per clip: length, rate, frame count, `playback` (`loop` or `hold`: play once and hold the last frame), `action` (`idle`, `relaxedIdle`, `heroPose`, `running`, `reload`, `dash`, `heavyMelee`), `origin` (`model`: embedded in the shown model; `base`: the game's own model at the same path, bound by bone name, used when a skin has no clip files; `clipFile`: a `.vnmclip_c`), `resource` (the `.vnmclip_c` path for a clip file), `label` (English picker name: `Idle`, `Relaxed idle`, `Hero pose`, `Run`, `Reload`, `Dash`, `Heavy melee` from the recipe, else the clip's own words, `Ui shop idle`), `group` (`idle`, `movement`, `combat` or `other`, Grimoire's `groupHeroClips` token rules), `speed` (playback rate multiplier: the graph clip node's `m_flSpeedMultiplier` for a showcase, else 1), `showcase` (null, or `{ "graph", "state" }` with `state` `shop` or `heroSelect` when the game's UI graph plays this clip on that screen; its `playback` is already the clip's), `floor` (null, or how far the clip lowers the hero's floor contact below the rest pose's, in meters, negative: Grimoire's `grimoireFloor`; the studio floor goes down with it while the clip plays; absent in older files). |
 | `cloth` | File beside the glb with the model's `PHYS.m_pFeModel` as JSON (vpkmerge's `export_femodel_json` shape: nodes, rods, capsules, integrator), or null. Source space. |
 | `issues` | `changesNotShown:<file>`: a mod in the stack none of whose files were read (Deadlock Mod Manager's warning). `clipRig:<name>` / `clipSkeleton:<name>`: a clip file left out because it does not fit the rig. |
 
@@ -191,6 +189,32 @@ name, any other file is read only when a recipe could pick it (also named
 because the game's graph plays the files. A skin that ships no clip files takes its motions from
 the game's model. The `root_motion` bone's translation is still removed from every clip, for
 embedded clips no file vouches for.
+
+Staged poses (Grimoire's `heroStagedPose.ts` and `writeHeroAnimationPolicy`, in
+`viewer/staged.rs`). Some UI states are staged for the game's own menu set and look wrong alone:
+Graves' shop pose lays the spectral hand on the shop floor, Rem's sits him on a seat the preview
+does not have. When the export carries a showcase and a standing fallback (the first other clip
+whose action is `idle` or `relaxedIdle`), the written glb is sampled: nine poses per clip, from
+start to end, bone origins only. Lengths are fractions of the hero's height, the rest-pose height
+span of the bones some vertex weighs over 5%. The showcase is staged when
+
+- a weighted bone whose parent is a joint moves more than 25% of the height further from that
+  parent than at rest and comes to rest under 10% of the height above the floor (but not more
+  than one height below it, an authored hide), in any sample;
+- the weighted bones never span half the rest height (the hero lies flat; Viscous on Kelvin's
+  pelvis-less skeleton); or
+- the floor contacts (weighted bones resting within -2% to +5% of the height of the origin) stay
+  more than 8% of the height higher than the standing idle holds them (only a positive idle
+  offset counts, so a hero that hovers in every clip keeps its showcase).
+
+A staged showcase stays in `clips` but `idleClip` names the standing idle; an unstaged one keeps
+`idleClip` and the standing idle is dropped from the glb, `clips` and `clipInfo`. A glb the test
+cannot read counts as not staged. Every remaining clip also gets its floor offset: the lowest its
+floor contacts come relative to their rest heights over the samples (lifts below -25% of the
+height are a hide and ignored), snapped to 0 within 0.5% of the height. Only a lowering is
+written (`floor`); the studio floor sits at the hero's origin (or its lowest point when the pose
+lifts it all above) plus the playing clip's `floor`, so a shop idle that sinks the feet keeps
+them on the floor.
 
 ## Hideout scene: `scene.json` / `scene-<hero key>.json`
 
@@ -245,7 +269,7 @@ embedded clips no file vouches for.
   "sources": [ { "slot": null, "file": "maps/dl_hideout.vpk", "name": "Hideout", "kind": "map", "enabled": true, "used": 412 } ],
   "failures": [],
   "omissions": ["particles", "staticBundle"],
-  "pipeline": "sigil-viewer-1"
+  "pipeline": "sigil-viewer-3"
 }
 ```
 
@@ -338,8 +362,10 @@ the file paths. The game comes from discovery or `DAH_GAME_DIR`. The real-game t
 - Grimoire (MIT), ported: the content-addressed hero cache over resolved source VPKs and the
   reviewed model entries (`heroPoseModels.ts`); skins without clip files taking the game's
   motions (`recoverSkinAnimations`); the clip recipes, standalone filter and bounds
-  (`heroAnimationCatalog.ts`); the Hideout world-node, aggregate-fragment, entity-lump, light,
-  spawn, prop, animated-prop, sky and fog reading (`hideoutScene.ts`, `hideoutAtmosphere.ts`,
+  (`heroAnimationCatalog.ts`); the staged-pose test and per-clip floor offsets
+  (`heroStagedPose.ts`, `writeHeroAnimationPolicy` in `heroAnimationExport.ts`); the Hideout
+  world-node, aggregate-fragment, entity-lump, light, spawn, prop, animated-prop, sky and fog
+  reading (`hideoutScene.ts`, `hideoutAtmosphere.ts`,
   `source2Entity.ts`, `hideoutTransform.ts`); the room and hero texture caps; the camera.
 - Deadlock Mod Manager (GPL, behaviour only, no code): per-source dependency reporting and the
   `changesNotShown` warning when a mod's files are never read (Foundry `model_assets.rs`); one
@@ -382,11 +408,9 @@ sequences of 1024 frames of 16 images (65,536 in all), textures at most 4096 x 4
 
 ## Not done yet
 
-- Grimoire's staged-pose test (`heroStagedPose.ts`): Grimoire samples the exported glb to tell
-  whether a showcase pose is staged for the menu scene (a part laid on the floor, the hero held
-  off it) and then starts on the standing idle, or else drops that idle. Sigil always keeps the
-  standing idle beside a showcase as a selectable clip and starts on the showcase. The per-clip
-  floor offset (`grimoireFloor`) is not written either.
+- The per-clip `floor` moves only the studio floor. In the Hideout the hero stands at the
+  spawn on the room's own floor; Grimoire lowers its scaled room by the offset, and Sigil does
+  not move the hero or the room for it yet.
 - Compiled `hidden`, `delta`, `requiresBase`, `transition` and `standalone` flags for embedded
   clips: the pinned vpkmerge does not report them, so only clip file metadata (additive, root
   motion) feeds the filter, and step 5 of the clip choice finds nothing yet.

@@ -40,6 +40,9 @@ vpkmerge-core = { git = "https://github.com/Slush97/vpkmerge", rev = "df4158673f
 # Game asset previews and swaps (game_assets.rs) decode textures and sound clips with
 # morphic, the format crate vpkmerge-core already links. Same repository and revision.
 morphic = { git = "https://github.com/Slush97/vpkmerge", rev = "df4158673f4e700b9dda4db76ed9f193440b24ba" }
+# The 3D viewer's staged-pose test (viewer/staged.rs) samples the exported hero glb. Already in
+# the lock through sigil-viewer; no image or import features.
+gltf = { version = "1.4", default-features = false, features = ["utils", "names"] }
 
 # Windows: Steam's and Deadlock's install paths from the registry, and the fixed drives to look
 # for Steam libraries on (discovery.rs). The same windows-sys the desktop app links.
