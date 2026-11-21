@@ -48,6 +48,8 @@ pub struct Cursors {
     pub confirm_delete: Option<String>,
     /// The reconcile banner (C7): the active pack needs applying again.
     pub reapply: Option<cursors::Reapply>,
+    /// Create a pack from your own images (`cursor_create.rs`).
+    pub create: super::cursor_create::Create,
 }
 
 pub fn store() -> PathBuf {
@@ -397,6 +399,9 @@ fn card(s: &State, u: &Ui, c: Card) -> El {
 
 /// The pane beside the General rail when Cursors is picked.
 pub fn pane(s: &State, u: &Ui) -> El {
+    if let Some(panel) = super::cursor_create::panel(s, u) {
+        return panel;
+    }
     let c = &s.locker.cursors;
     let state = c.state.clone().unwrap_or_default();
     let busy = c.work.is_running();
@@ -407,6 +412,12 @@ pub fn pane(s: &State, u: &Ui) -> El {
         .child(text(tr("Cursors")).font(crate::ui::H1).color(u.ink))
         .child(text(fill(tr("{} packs"), &[&state.packs.len().to_string()])).font(SMALL).color(u.faint))
         .child(spacer())
+        .child(
+            u.icon_action(&icons::PLUS, tr("Create from images"), ActionKind::Secondary)
+                .key("locker-cursor-create")
+                .cursor(rune::Cursor::Pointer)
+                .on_press(super::cursor_create::open),
+        )
         .child(
             u.icon_action(&icons::FOLDER_OPEN, tr("Import folder"), ActionKind::Secondary)
                 .key("locker-cursor-import-folder")

@@ -332,6 +332,30 @@ pub fn import_files(store: &Path, name: &str, files: &[PathBuf]) -> Result<Curso
     Ok(pack)
 }
 
+/// Install cursor files built in memory (`cursors_create.rs`) as one pack. Unusable files are
+/// dropped; at least one BMP must remain. App data only.
+pub fn import_contents(store: &Path, name: &str, contents: BTreeMap<String, Vec<u8>>) -> Result<CursorPack> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Err(Error::msg("A cursor pack needs a name."));
+    }
+    let contents: BTreeMap<String, Vec<u8>> = contents
+        .into_iter()
+        .map(|(file, bytes)| (file.to_ascii_lowercase(), bytes))
+        .filter(|(file, bytes)| is_cursor_file_name(file) && is_usable_cursor_file(file, bytes))
+        .collect();
+    if !contents.keys().any(|name| name.ends_with(".bmp")) {
+        return Err(Error::msg("None of the cursor images could be used."));
+    }
+    let mut state = load_state(store)?;
+    let pack = install_pack(store, &mut state, name, None, contents)?;
+    if let Err(error) = save_state(store, &state) {
+        let _ = fs::remove_dir_all(pack_dir(store, &pack.id));
+        return Err(error);
+    }
+    Ok(pack)
+}
+
 /// Import every cursor set inside an archive. Reuses the install pipeline's extractor, so
 /// `.zip`, `.7z` and `.rar` all open. One archive holding sibling folders that each carry
 /// their own cursor image becomes one pack per folder, named after the folder.
