@@ -300,7 +300,7 @@ pub fn dialog(s: &State, u: &Ui) -> Option<El> {
                         .file_name()
                         .map(|name| name.to_string_lossy().into_owned())
                         .unwrap_or_default();
-                    body = body.child(line(u, format!("{}  ·  {}  ·  {}", leftover.file, leftover.kind.label(), folder)));
+                    body = body.child(line(u, format!("{}  ·  {}", leftover.file, folder)));
                 }
                 if count > 8 {
                     body = body.child(line(u, fill(tr("and {} more"), &[&(count - 8).to_string()])));
