@@ -6,6 +6,8 @@ use std::collections::HashMap;
 use std::sync::OnceLock;
 
 pub const DE: &[(&str, &str)] = &[
+    ("ended {}", "Ende {}"),
+    ("{} heroes", "{} Helden"),
     ("All time", "Gesamt"),
     ("7 d", "7 T"),
     ("30 d", "30 T"),
@@ -43,7 +45,6 @@ pub const DE: &[(&str, &str)] = &[
     ("Check and save", "Prüfen und speichern"),
     ("Close", "Schließen"),
     ("{} items not in the catalog", "{} Gegenstände nicht im Katalog"),
-    ("{} more", "{} weitere"),
     ("Compared with the matches before", "Im Vergleich zu den Matches davor"),
     ("Damage", "Schaden"),
     ("Deaths", "Tode"),

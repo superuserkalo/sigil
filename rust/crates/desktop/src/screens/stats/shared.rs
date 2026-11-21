@@ -51,8 +51,10 @@ pub(super) fn tabs(s: &State, u: &Ui, open: super::Tab, enabled: bool) -> El {
                     .a11y_hidden(),
             );
         if tab == Tab::Live {
+            // Drawn in the tab's own padding, so a running match never widens the tab.
             t = t.child(
-                el().size(8.0, 8.0)
+                el().absolute(2.0, 13.0)
+                    .size(6.0, 6.0)
                     .radius(1.0)
                     .fill(if running { crate::ui::switch_green() } else { Color::TRANSPARENT })
                     .a11y_hidden(),
@@ -261,7 +263,7 @@ pub(super) fn hero_name(hero: &HeroPerformance) -> String {
 pub(super) fn fact(u: &Ui, label: &str, value: String) -> El {
     col()
         .gap(2.0)
-        .child(text(tr(label)).font(SMALL).color(u.faint))
+        .child(text(tr(label)).font(SMALL).color(u.muted))
         .child(text(value).font(TNUM).color(u.prose))
 }
 
@@ -329,14 +331,18 @@ pub(super) fn cell(e: El, w: f32) -> El {
 pub(super) fn head_row(u: &Ui, cols: &[(&str, f32, bool)]) -> El {
     let mut r = row()
         .w_full()
-        .h(32.0)
+        .h(28.0)
         .gap(16.0)
         .center_y()
         .border_sides([0.0, 0.0, 1.0, 0.0], u.hair);
     for (label, w, end) in cols {
-        let mut t = text(tr(label)).font(SMALL).color(u.faint);
+        let mut t = text(tr(label)).font(SMALL).color(u.muted);
         if *end {
             t = t.align(rune::Align::End);
+        }
+        // Match rows start with a 3 point result edge; the head's first label clears it.
+        if *label == "Result" {
+            t = t.pl(11.0);
         }
         r = r.child(cell(t, *w));
     }

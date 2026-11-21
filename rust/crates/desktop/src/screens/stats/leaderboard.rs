@@ -51,7 +51,7 @@ pub(super) fn leaderboard_section(s: &State, u: &Ui, snap: &StatsSnapshot) -> El
             .child(
                 text(caption)
                     .font(SMALL)
-                    .color(u.faint)
+                    .color(u.muted)
                     .truncate()
                     .min_w(0.0),
             )
@@ -129,7 +129,7 @@ fn body(s: &State, u: &Ui, board: &Leaderboard, account_id: u64) -> El {
                     .w_full()
                     .h(24.0)
                     .center_y()
-                    .child(text(tr("· · ·")).font(SMALL).color(u.faint)),
+                    .child(text(tr("· · ·")).font(SMALL).color(u.muted)),
             )
             .child(entry_row(u, entry, true));
     }
@@ -149,7 +149,7 @@ fn body(s: &State, u: &Ui, board: &Leaderboard, account_id: u64) -> El {
             .color(u.muted),
             None => text(tr("You are not on this board yet."))
                 .font(SMALL)
-                .color(u.faint),
+                .color(u.muted),
         })
         .child(if hidden {
             u.action(

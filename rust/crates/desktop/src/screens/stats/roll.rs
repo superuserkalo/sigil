@@ -353,7 +353,7 @@ fn header(s: &State, u: &Ui, roll: &Roll, data: &RollData) -> El {
                 .grow(1.0)
                 .min_w(0.0)
                 .gap(2.0)
-                .child(text(tr("You are playing")).font(SMALL).color(u.faint))
+                .child(text(tr("You are playing")).font(SMALL).color(u.muted))
                 .child(text(roll.hero_name.clone()).font(H1).color(accent))
                 .children(
                     hero.filter(|hero| !hero.role.is_empty())
@@ -420,7 +420,7 @@ fn focus_strip(u: &Ui, roll: &Roll) -> El {
             &[focus_label(roll.focus()), &souls(roll.total()), &souls(core::BUDGET)],
         ))
         .font(SMALL)
-        .color(u.faint),
+        .color(u.muted),
     );
     col().w_full().gap(8.0).child(bar).child(legend)
 }
@@ -444,7 +444,7 @@ fn item_tile(u: &Ui, data: &RollData, roll: &Roll, index: usize, item: &core::Ro
                 .w_full()
                 .gap(6.0)
                 .center_y()
-                .child(text(format!("{}", index + 1)).font(TNUM_SMALL).color(u.faint))
+                .child(text(format!("{}", index + 1)).font(TNUM_SMALL).color(u.muted))
                 .child(text(item.name.clone()).font(BODY_MED).color(u.ink).truncate().grow(1.0).min_w(0.0)),
         )
         .child(text(detail).font(TNUM_SMALL).color(u.muted));
@@ -453,7 +453,7 @@ fn item_tile(u: &Ui, data: &RollData, roll: &Roll, index: usize, item: &core::Ro
         tile = tile.child(text(fill(tr("Imbue on {}"), &[&ability])).font(SMALL).color(color).truncate());
     }
     if item.recommended {
-        tile = tile.child(text(tr("A pick the hero's draft favours")).font(SMALL).color(u.faint).truncate());
+        tile = tile.child(text(tr("A pick the hero's draft favours")).font(SMALL).color(u.muted).truncate());
     }
     tile
 }
@@ -471,7 +471,7 @@ fn build(u: &Ui, data: &RollData, roll: &Roll) -> El {
         .children((roll.items.len() < core::PER_CATEGORY * 3).then(|| {
             text(tr("The hero's draft list ran short, so some slots stayed empty."))
                 .font(SMALL)
-                .color(u.faint)
+                .color(u.muted)
         }))
 }
 
@@ -500,7 +500,7 @@ fn abilities(u: &Ui, data: &RollData, roll: &Roll) -> El {
                     .child(
                         text(if on { step.to_string() } else { String::new() })
                             .font(TNUM_SMALL)
-                            .color(if on { u.accent_ink } else { u.faint })
+                            .color(if on { u.accent_ink } else { u.muted })
                             .a11y_hidden(),
                     ),
             );
@@ -511,7 +511,7 @@ fn abilities(u: &Ui, data: &RollData, roll: &Roll) -> El {
             .center_y()
             .child(text(name).font(BODY).color(if lead { u.ink } else { u.prose }).truncate());
         if slot == 4 {
-            label = label.child(text(tr("Ultimate")).font(SMALL).color(u.faint));
+            label = label.child(text(tr("Ultimate")).font(SMALL).color(u.muted));
         }
         if lead {
             label = label.child(text(tr("max first")).font(SMALL).color(u.accent));
@@ -529,7 +529,7 @@ fn rules(u: &Ui, roll: &Roll) -> El {
                 .w_full()
                 .gap(10.0)
                 .items_start()
-                .child(text(format!("{}", index + 1)).font(TNUM_SMALL).color(u.faint).w(12.0))
+                .child(text(format!("{}", index + 1)).font(TNUM_SMALL).color(u.muted).w(12.0))
                 .child(text(rule_text(*rule)).font(BODY).color(u.prose).grow(1.0).min_w(0.0).wrap()),
         );
     }
@@ -594,7 +594,7 @@ pub(super) fn section(s: &State, u: &Ui) -> El {
                     &[&roll.pool.to_string()],
                 ))
                 .font(SMALL)
-                .color(u.faint),
+                .color(u.muted),
             )
         }
         _ => section,

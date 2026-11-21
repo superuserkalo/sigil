@@ -484,7 +484,7 @@ fn settings_list(s: &State, u: &Ui, config: &Config, options: &Options, edits: &
                         &[&(total - shown).to_string()],
                     ))
                     .font(SMALL)
-                    .color(u.faint),
+                    .color(u.muted),
                 ),
         );
     }
@@ -523,7 +523,7 @@ fn entry_row(u: &Ui, config: &Config, entry: Entry) -> El {
         value_col = value_col.child(
             text(fill(tr("was {}"), &[author]))
                 .font(SMALL)
-                .color(u.faint)
+                .color(u.muted)
                 .truncate(),
         );
     }
@@ -575,7 +575,7 @@ fn entry_row(u: &Ui, config: &Config, entry: Entry) -> El {
                 .child(if label.is_empty() {
                     el()
                 } else {
-                    text(label).font(SMALL).color(u.faint).truncate()
+                    text(label).font(SMALL).color(u.muted).truncate()
                 }),
         )
         .child(value_col.grow(1.0).min_w(0.0))
@@ -676,11 +676,11 @@ fn history(s: &State, u: &Ui, config: &Config, edits: &ConfigEdits) -> El {
                         .map(|value| fill(tr("config: {}"), &[&value]))
                         .unwrap_or_default())
                     .font(SMALL)
-                    .color(u.faint)
+                    .color(u.muted)
                     .w(140.0)
                     .truncate(),
                 )
-                .child(text(when).font(SMALL).color(u.faint).w(120.0))
+                .child(text(when).font(SMALL).color(u.muted).w(120.0))
                 .child(actions),
         );
     }

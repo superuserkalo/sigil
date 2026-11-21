@@ -414,7 +414,7 @@ pub(super) fn filter_bar(s: &State, u: &Ui) -> El {
             .map(|known| known.name.clone())
     });
     let season_on = m.season.is_some();
-    since = since.child(
+    let season = group(u).child(
         row()
             .key("stats-filter-season")
             .w(96.0)
@@ -466,6 +466,7 @@ pub(super) fn filter_bar(s: &State, u: &Ui) -> El {
         .center_y()
         .child(modes)
         .child(since)
+        .child(season)
         .child(
             row()
                 .gap(8.0)
@@ -646,7 +647,7 @@ pub(super) fn timeline(s: &State, u: &Ui, match_id: u64) -> El {
     match &m.timeline {
         Fetched::Ready((id, rows)) if *id == match_id => {
             if rows.is_empty() {
-                return text(tr("No purchases were recorded for you in this match.")).font(SMALL).color(u.faint);
+                return text(tr("No purchases were recorded for you in this match.")).font(SMALL).color(u.muted);
             }
             let mut line = row().w_full().gap(6.0).flex_wrap();
             for (purchase, name) in rows {
@@ -659,21 +660,22 @@ pub(super) fn timeline(s: &State, u: &Ui, match_id: u64) -> El {
                         .center_y()
                         .radius(crate::ui::r(6.0))
                         .border(1.0, u.hair)
-                        .child(text(minutes(purchase.bought_at_s as f64)).font(TNUM_SMALL).color(u.faint))
+                        .child(text(minutes(purchase.bought_at_s as f64)).font(TNUM_SMALL).color(u.muted))
                         .child(text(format!("{name}{sold}")).font(SMALL).color(u.prose)),
                 );
             }
-            col().w_full().gap(6.0).child(text(tr("Items in the order you bought them")).font(SMALL).color(u.faint)).child(line)
+            col().w_full().gap(6.0).child(text(tr("Items in the order you bought them")).font(SMALL).color(u.muted)).child(line)
         }
         Fetched::Loading => text(tr("Loading the item timeline")).font(SMALL).color(u.muted),
         Fetched::Failed(error) => problem_retry(u, error, &format!("stats-timeline-retry-{match_id}"), move |st: &mut State| {
             start_timeline(st, match_id)
         }),
-        _ => u
-            .action(tr("Item timeline"), ActionKind::Secondary)
-            .key(format!("stats-timeline-{match_id}"))
-            .cursor(rune::Cursor::Pointer)
-            .on_press(move |st: &mut State| start_timeline(st, match_id)),
+        _ => row().child(
+            u.action(tr("Item timeline"), ActionKind::Secondary)
+                .key(format!("stats-timeline-{match_id}"))
+                .cursor(rune::Cursor::Pointer)
+                .on_press(move |st: &mut State| start_timeline(st, match_id)),
+        ),
     }
 }
 
@@ -800,8 +802,8 @@ pub(super) fn lineup_table(s: &State, u: &Ui, party: &Fetched<Vec<LineupRating>>
                 table = table.child(
                     data_row(format!("{prefix}-{index}"), u, 40.0)
                         .child(cell(heroes, 0.0))
-                        .child(num(matches, 96.0, if muted { u.faint } else { u.prose }))
-                        .child(num(rate, 96.0, if muted { u.faint } else { u.ink })),
+                        .child(num(matches, 96.0, if muted { u.muted } else { u.prose }))
+                        .child(num(rate, 96.0, if muted { u.muted } else { u.ink })),
                 );
             }
             let mut out = section.child(table);
@@ -812,7 +814,7 @@ pub(super) fn lineup_table(s: &State, u: &Ui, party: &Fetched<Vec<LineupRating>>
                         &[&format!("{rate:.1}")],
                     ))
                     .font(SMALL)
-                    .color(u.faint)
+                    .color(u.muted)
                     .wrap(),
                 );
             }

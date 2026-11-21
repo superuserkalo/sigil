@@ -210,7 +210,7 @@ fn person_row(u: &Ui, record: &PlayerRecord, against: bool) -> El {
                 .child(
                     text(shared)
                         .font(SMALL)
-                        .color(u.faint)
+                        .color(u.muted)
                         .truncate(),
                 ),
         )
@@ -218,7 +218,7 @@ fn person_row(u: &Ui, record: &PlayerRecord, against: bool) -> El {
     if record.premade {
         r = r.child(
             icon(&icons::PIN, 12.0)
-                .color(u.faint)
+                .color(u.muted)
                 .label(tr("Queued together")),
         );
     }

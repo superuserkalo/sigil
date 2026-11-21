@@ -193,7 +193,7 @@ pub(super) fn progress(s: &State, u: &Ui, snap: &StatsSnapshot, d: &Derived) -> 
                 .gap(12.0)
                 .center_y()
                 .child(text(tr("Progress")).font(H2).color(u.ink))
-                .child(text(caption).font(SMALL).color(u.faint).truncate().min_w(0.0))
+                .child(text(caption).font(SMALL).color(u.muted).truncate().min_w(0.0))
                 .child(spacer())
                 .child(switch),
         )
@@ -251,7 +251,7 @@ fn rank_chart(u: &Ui, snap: &StatsSnapshot, points: &[RankPoint]) -> El {
             labels = labels.child(
                 text(insight::badge_label(badge, &snap.tier_names))
                     .font(if current { TNUM_MED } else { TNUM_SMALL })
-                    .color(if current { u.ink } else { u.faint })
+                    .color(if current { u.ink } else { u.muted })
                     .absolute(0.0, yy - if current { 10.0 } else { 8.0 }),
             );
         }
@@ -323,7 +323,7 @@ fn win_rate_chart(u: &Ui, rolling: &[(i64, f64)]) -> El {
             labels = labels.child(
                 text(format!("{tick:.0}%"))
                     .font(TNUM_SMALL)
-                    .color(if even { u.muted } else { u.faint })
+                    .color(if even { u.muted } else { u.muted })
                     .absolute(0.0, yy - 8.0),
             );
         }
@@ -377,13 +377,13 @@ fn chart_frame(u: &Ui, labels: El, plot: El, first: i64, last: i64) -> El {
                 .child(
                     text(insight::date_label(first))
                         .font(TNUM_SMALL)
-                        .color(u.faint),
+                        .color(u.muted),
                 )
                 .child(spacer())
                 .child(
                     text(insight::date_label(last))
                         .font(TNUM_SMALL)
-                        .color(u.faint),
+                        .color(u.muted),
                 ),
         )
 }
@@ -451,7 +451,7 @@ fn form_strip(u: &Ui, snap: &StatsSnapshot, d: &Derived) -> El {
                 .role("img")
                 .label(words[0].clone()),
         )
-        .child(text(words.join("  ·  ")).font(TNUM_SMALL).color(u.faint))
+        .child(text(words.join("  ·  ")).font(TNUM_SMALL).color(u.muted))
 }
 
 
@@ -520,11 +520,11 @@ fn band(u: &Ui, snap: &StatsSnapshot) -> El {
     let cell = |label: &str, value: String, first: bool| {
         let mut c = col()
             .w(132.0)
-            .h(40.0)
+            .h(44.0)
             .pl(12.0)
-            .gap(4.0)
+            .gap(2.0)
             .child(text(tr(label).to_string()).font(SMALL).color(u.muted))
-            .child(text(value).font(TNUM_MED).color(u.ink).truncate());
+            .child(text(value).font(crate::ui::NUM).color(u.ink).truncate());
         if !first {
             c = c.border_sides([0.0, 0.0, 0.0, 1.0], u.hair);
         }
@@ -608,7 +608,7 @@ fn insights(s: &State, u: &Ui, snap: &StatsSnapshot, d: &Derived) -> El {
         ),
         "",
     ));
-    let row_of = |key: String, label: &str, tone: Color, lead: El, title: String, detail: String| {
+    let row_of = |key: String, label: &str, tone: Color, lead: Option<El>, title: String, detail: String| {
         row()
             .key(key)
             .w_full()
@@ -616,9 +616,11 @@ fn insights(s: &State, u: &Ui, snap: &StatsSnapshot, d: &Derived) -> El {
             .gap(12.0)
             .center_y()
             .border_sides([0.0, 0.0, 1.0, 0.0], u.hair)
-            .child(el().size(8.0, 8.0).radius(1.0).fill(tone).a11y_hidden())
+            // The first cell holds the hero, or the tone mark when the note has none.
+            .child(row().w(24.0).h(24.0).center().child(lead.unwrap_or_else(|| {
+                el().size(8.0, 8.0).radius(1.0).fill(tone).a11y_hidden()
+            })))
             .child(text(tr(label).to_string()).font(LABEL).color(u.muted).w(88.0))
-            .child(row().w(24.0).h(24.0).center().child(lead))
             .child(
                 col()
                     .grow(1.0)
@@ -633,16 +635,13 @@ fn insights(s: &State, u: &Ui, snap: &StatsSnapshot, d: &Derived) -> El {
         Tone::Focus => u.amber,
         Tone::Neutral => u.muted,
     };
-    let lead_of = |item: &insight::Insight| match item.hero_id {
-        Some(hero_id) => hero_chip(s, u, hero_id, &item.title, 24.0),
-        None => el(),
-    };
+    let lead_of = |item: &insight::Insight| item.hero_id.map(|hero_id| hero_chip(s, u, hero_id, &item.title, 24.0));
     if let Some(changed) = &d.brief.changed {
         list = list.child(row_of(
             "stats-changed".into(),
             "Changed",
-            u.muted,
-            el(),
+            u.prose,
+            None,
             changed.title.clone(),
             changed.detail.clone(),
         ));

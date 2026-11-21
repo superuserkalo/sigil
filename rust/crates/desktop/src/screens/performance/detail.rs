@@ -6,6 +6,10 @@
 
 use super::*;
 
+/// The big numbers in the summary, in tabular figures.
+const BIG_NUM: rune::TextStyle =
+    rune::TextStyle::new(22.0, 600.0).lh(28.0).tracking(-0.2).features("'tnum' 1");
+
 // --- detail -----------------------------------------------------------------
 
 fn back(u: &Ui) -> El {
@@ -37,29 +41,10 @@ pub(super) fn page(s: &State, u: &Ui, config: &Config) -> El {
     let busy = s.performance.write_job.is_running();
     let foreign = matches!(applied(s), Some(Applied::Foreign));
 
+    // Turn off (only when on), Edit settings, then Apply in a fixed slot at the right edge:
+    // its label changes in place, so the other buttons never move.
     let mut actions = row().gap(8.0).center_y();
     if is_on {
-        if pending(s, config) || update_for(s).is_some() {
-            let apply_id = id.clone();
-            actions = actions.child(
-                u.action(
-                    if pending(s, config) {
-                        tr("Apply changes")
-                    } else {
-                        tr("Update")
-                    },
-                    ActionKind::Primary,
-                )
-                .key("perf-detail-apply")
-                .cursor(rune::Cursor::Pointer)
-                .on_press(move |st: &mut State| {
-                    if !st.performance.write_job.is_running() {
-                        st.performance.dialog = Some(Dialog::Apply(apply_id.clone()));
-                    }
-                }),
-            );
-        }
-        actions = actions.child(edit_button(u, config));
         actions = actions.child(
             u.icon_action(&icons::POWER, tr("Turn off"), ActionKind::Secondary)
                 .key("perf-detail-off")
@@ -70,33 +55,64 @@ pub(super) fn page(s: &State, u: &Ui, config: &Config) -> El {
                     }
                 }),
         );
-    } else {
-        actions = actions.child(edit_button(u, config));
-        let apply_id = id.clone();
-        actions = actions.child(
-            u.action(tr("Apply"), ActionKind::Primary)
-                .key("perf-detail-apply")
-                .opacity(if busy || foreign { 0.4 } else { 1.0 })
-                .cursor(rune::Cursor::Pointer)
-                .on_press(move |st: &mut State| {
-                    let blocked = st.performance.write_job.is_running()
-                        || matches!(applied(st), Some(Applied::Foreign));
-                    if !blocked {
-                        st.performance.dialog = Some(Dialog::Apply(apply_id.clone()));
-                    }
-                }),
-        );
     }
+    actions = actions.child(edit_button(u, config));
+    let changed = pending(s, config);
+    let newer = is_on && update_for(s).is_some();
+    let applied_now = is_on && !changed && !newer;
+    let label = if applied_now {
+        tr("Applied")
+    } else if is_on && changed {
+        tr("Apply changes")
+    } else if newer {
+        tr("Update")
+    } else {
+        tr("Apply")
+    };
+    let blocked = busy || foreign || applied_now;
+    let apply_id = id.clone();
+    let mut apply = row()
+        .key("perf-detail-apply")
+        .w(132.0)
+        .h(32.0)
+        .gap(6.0)
+        .center()
+        .radius(crate::ui::r(4.0))
+        .fill(if applied_now { u.hover } else { u.accent })
+        .opacity(if busy || foreign { 0.4 } else { 1.0 })
+        .focusable(!blocked)
+        .role("button")
+        .disabled(blocked)
+        .label(label.to_string());
+    if applied_now {
+        apply = apply.child(el().size(8.0, 8.0).radius(1.0).fill(crate::ui::switch_green()).a11y_hidden());
+    }
+    apply = apply.child(
+        text(label.to_string())
+            .font(BODY_MED)
+            .color(if applied_now { u.prose } else { u.accent_ink })
+            .a11y_hidden(),
+    );
+    if !blocked {
+        apply = apply.cursor(rune::Cursor::Pointer).on_press(move |st: &mut State| {
+            let blocked = st.performance.write_job.is_running()
+                || matches!(applied(st), Some(Applied::Foreign));
+            if !blocked {
+                st.performance.dialog = Some(Dialog::Apply(apply_id.clone()));
+            }
+        });
+    }
+    actions = actions.child(apply);
 
     let meta = dots(&[
-        config.def.tier.label().to_string(),
-        format!("by {}", config.def.author),
+        tr(config.def.tier.label()).to_string(),
+        config.def.author.to_string(),
         display_version(config),
         short_date(&config.date),
     ]);
     let head = col()
         .w_full()
-        .gap(16.0)
+        .gap(4.0)
         .child(
             row()
                 .w_full()
@@ -107,40 +123,25 @@ pub(super) fn page(s: &State, u: &Ui, config: &Config) -> El {
                         .grow(1.0)
                         .min_w(0.0)
                         .gap(4.0)
-                        .child(
-                            row()
-                                .gap(10.0)
-                                .center_y()
-                                .child(text(config.name()).font(DISPLAY).color(u.ink))
-                                .child(if is_on {
-                                    row()
-                                        .gap(4.0)
-                                        .center_y()
-                                        .child(
-                                            icon(&icons::CHECK, 14.0).color(u.accent).a11y_hidden(),
-                                        )
-                                        .child(text(tr("On")).font(BODY_MED).color(u.ink))
-                                } else {
-                                    el()
-                                }),
-                        )
-                        .child(text(meta).font(BODY).color(u.muted).truncate()),
+                        .child(text(config.name()).font(DISPLAY).color(u.ink).truncate())
+                        .child(text(meta).font(SMALL).color(u.muted).truncate()),
                 )
                 .child(actions),
         )
-        .child(u.divider());
+        // The message slot is always there, so "Applied" or an error never pushes the page.
+        .child(match &s.performance.message {
+            Some((line, error)) => row().w_full().h(20.0).center_y().child(
+                text(line.clone())
+                    .font(SMALL)
+                    .color(if *error { u.rose } else { u.muted })
+                    .truncate(),
+            ),
+            None => row().w_full().h(20.0),
+        });
 
     let mut page = super::page("perf-detail-page")
-        .gap(32.0)
+        .gap(24.0)
         .child(col().w_full().gap(4.0).child(back(u)).child(head));
-    if let Some((line, error)) = &s.performance.message {
-        page = page.child(
-            text(line.clone())
-                .font(SMALL)
-                .color(if *error { u.rose } else { u.muted })
-                .wrap(),
-        );
-    }
     page = page.child(summary(u, config, &options));
     if !config.body.section_ops.is_empty() {
         page = page.child(engine(u, config, &options));
@@ -175,6 +176,66 @@ fn section_head(u: &Ui, title: &str, line: &str, trailing: Option<El>) -> El {
     r
 }
 
+/// A section head: a 32 row with the title, its count, and a fixed slot for the bulk action,
+/// then the description in prose at a readable width.
+fn group_head(u: &Ui, title: &str, count: &str, line: &str, trailing: Option<El>) -> El {
+    let mut slot = row().w(112.0).h(28.0).center_y().justify_end();
+    if let Some(t) = trailing {
+        slot = slot.child(t);
+    }
+    let mut c = col().w_full().gap(4.0).pb(8.0).child(
+        row()
+            .w_full()
+            .h(32.0)
+            .gap(8.0)
+            .center_y()
+            .child(text(title.to_string()).font(H2).color(u.ink))
+            .child(text(count.to_string()).font(crate::ui::SMALL_NUM).color(u.muted))
+            .child(spacer())
+            .child(slot),
+    );
+    if !line.is_empty() {
+        c = c.child(text(line.to_string()).font(BODY).color(u.prose).wrap().max_w(640.0));
+    }
+    c
+}
+
+/// One switch: the whole row toggles it. Label and convar, the author's value, the toggle.
+fn switch_row(u: &Ui, key: String, label: &str, convar: &str, value: String, on: bool, press: impl Fn(&mut State) + 'static) -> El {
+    row()
+        .key(key)
+        .w_full()
+        .h(44.0)
+        .gap(16.0)
+        .center_y()
+        .border_sides([0.0, 0.0, 1.0, 0.0], u.hair)
+        .hover(u.hover)
+        .focusable(true)
+        .role("switch")
+        .checked(on)
+        .label(label.to_string())
+        .cursor(rune::Cursor::Pointer)
+        .on_press(press)
+        .child(
+            col()
+                .grow(1.0)
+                .min_w(0.0)
+                .gap(0.0)
+                .child(text(label.to_string()).font(BODY).color(u.ink).truncate().a11y_hidden())
+                .child(text(convar.to_string()).font(MONO).color(u.muted).truncate().a11y_hidden()),
+        )
+        .child(
+            text(value)
+                .font(crate::ui::SMALL_NUM)
+                .color(u.muted)
+                .w(160.0)
+                .align(rune::Align::End)
+                .truncate()
+                .a11y_hidden(),
+        )
+        .child(u.toggle_mark(on).a11y_hidden())
+}
+
 /// The four numbers that say what an apply writes.
 fn summary(u: &Ui, config: &Config, options: &Options) -> El {
     let on_switches = config
@@ -182,20 +243,28 @@ fn summary(u: &Ui, config: &Config, options: &Options) -> El {
         .filter(|opt| options.opt_ins.contains(&opt.key))
         .count();
     let left_out = config.body.held.len() + config.ignored.len();
+    let first = std::cell::Cell::new(true);
     let stat = |value: String, label: &str| {
-        col()
+        let mut c = col()
+            .w(176.0)
+            .h(56.0)
             .gap(2.0)
-            .child(text(value).font(NUM).color(u.ink))
-            .child(text(label.to_string()).font(SMALL).color(u.muted))
+            .justify_center()
+            .child(text(value).font(BIG_NUM).color(u.ink))
+            .child(text(label.to_string()).font(SMALL).color(u.muted).truncate());
+        if !first.replace(false) {
+            c = c.pl(16.0).border_sides([0.0, 0.0, 0.0, 1.0], u.hair);
+        }
+        c
     };
     col()
         .w_full()
         .gap(12.0)
-        .child(text(config.def.note).font(BODY).color(u.prose).wrap())
+        .child(text(config.def.note).font(BODY).color(u.prose).wrap().max_w(640.0))
         .child(
             row()
                 .w_full()
-                .gap(40.0)
+                .gap(16.0)
                 .child(stat(
                     config.body_convars().count().to_string(),
                     tr("Performance settings"),
@@ -221,7 +290,7 @@ fn summary(u: &Ui, config: &Config, options: &Options) -> El {
                 &[&config.setting_count(options).to_string()],
             ))
             .font(SMALL)
-            .color(u.faint),
+            .color(u.muted),
         )
 }
 
@@ -240,21 +309,29 @@ fn engine(u: &Ui, config: &Config, options: &Options) -> El {
     };
     let id = config.id().to_string();
     let engine_on = options.engine;
-    let toggle = u
-        .toggle(engine_on)
-        .key("perf-engine")
-        .label(tr("Include engine section edits"))
-        .cursor(rune::Cursor::Pointer)
-        .on_press(move |st: &mut State| edit(st, &id, |options| options.engine = !engine_on));
-    col().w_full().child(section_head(
-        u,
-        tr("Engine section edits"),
-        &format!(
-            "{} edits outside ConVars, in {named}. If matchmaking warns about unverified game files, turn these off.",
-            config.body.section_ops.len()
-        ),
-        Some(toggle),
-    ))
+    let count = config.body.section_ops.len();
+    col()
+        .w_full()
+        .child(group_head(
+            u,
+            tr("Engine section edits"),
+            "",
+            tr("Edits outside ConVars. If matchmaking warns about unverified game files, turn these off."),
+            None,
+        ))
+        .child(
+            col().w_full().border_sides([1.0, 0.0, 0.0, 0.0], u.hair).child(
+                switch_row(
+                    u,
+                    "perf-engine".to_string(),
+                    tr("Include engine section edits"),
+                    &fill(tr("{} edits in {}"), &[&count.to_string(), &named]),
+                    String::new(),
+                    engine_on,
+                    move |st: &mut State| edit(st, &id, |options| options.engine = !engine_on),
+                ),
+            ),
+        )
 }
 
 /// Change the switches for a config, starting from what it shows now.
@@ -291,17 +368,19 @@ fn switches(u: &Ui, config: &Config, options: &Options, group: Group) -> El {
     let id = config.id().to_string();
     let keys: Vec<String> = items.iter().map(|opt| opt.key.clone()).collect();
     let all_on = on == items.len();
-    let bulk = text(if all_on {
-        tr("Turn all off")
-    } else {
-        tr("Turn all on")
-    })
-    .font(BODY_MED)
-    .color(u.muted)
-    .role("button")
-    .focusable(true)
-    .key(format!("perf-bulk-{}", group.id()))
-    .cursor(rune::Cursor::Pointer)
+    let bulk = u
+        .action(
+            if all_on {
+                tr("Turn all off")
+            } else {
+                tr("Turn all on")
+            },
+            ActionKind::Ghost,
+        )
+        .key(format!("perf-bulk-{}", group.id()))
+        // The label's right edge meets the switches' right edge.
+        .mr(-12.0)
+        .cursor(rune::Cursor::Pointer)
     .on_press(move |st: &mut State| {
         edit(st, &id, |options| {
             for key in &keys {
@@ -327,58 +406,32 @@ fn switches(u: &Ui, config: &Config, options: &Options, group: Group) -> El {
         };
         let label = performance::classify::opt_in_label(&opt.key).unwrap_or(&opt.key);
         let unknown = config.convar_state(&opt.key) == ConvarState::Unknown;
-        rows = rows.child(
-            row()
-                .key(format!("perf-opt-{}", opt.key))
-                .w_full()
-                .h(52.0)
-                .gap(16.0)
-                .center_y()
-                .border_sides([0.0, 0.0, 1.0, 0.0], u.hair)
-                .child(
-                    col()
-                        .grow(1.0)
-                        .min_w(0.0)
-                        .gap(2.0)
-                        .child(text(label.to_string()).font(BODY).color(u.ink).truncate())
-                        .child(text(opt.key.clone()).font(MONO).color(u.faint).truncate()),
-                )
-                .child(
-                    text(if unknown {
-                        format!("{values} · may do nothing")
-                    } else {
-                        values
-                    })
-                    .font(SMALL)
-                    .color(u.faint),
-                )
-                .child(
-                    u.toggle(is_on)
-                        .label(format!(
-                            "{} {}",
-                            if is_on { tr("Turn off") } else { tr("Turn on") },
-                            opt.key
-                        ))
-                        .cursor(rune::Cursor::Pointer)
-                        .on_press(move |st: &mut State| {
-                            edit(st, &id, |options| {
-                                if !options.opt_ins.remove(&key) {
-                                    options.opt_ins.insert(key.clone());
-                                }
-                            })
-                        }),
-                ),
-        );
+        rows = rows.child(switch_row(
+            u,
+            format!("perf-opt-{}", opt.key),
+            label,
+            &opt.key,
+            if unknown {
+                format!("{values} · may do nothing")
+            } else {
+                values
+            },
+            is_on,
+            move |st: &mut State| {
+                edit(st, &id, |options| {
+                    if !options.opt_ins.remove(&key) {
+                        options.opt_ins.insert(key.clone());
+                    }
+                })
+            },
+        ));
     }
     col()
         .w_full()
-        .child(section_head(
+        .child(group_head(
             u,
-            &format!(
-                "{} · {on} of {} on",
-                group.label(),
-                rows_count(config, group)
-            ),
+            tr(group.label()),
+            &fill(tr("{} of {} on"), &[&on.to_string(), &rows_count(config, group).to_string()]),
             group_line(group),
             Some(bulk),
         ))
@@ -693,7 +746,7 @@ fn source(u: &Ui, config: &Config) -> El {
             .child(text(label).font(BODY).color(u.ink).truncate())
             .child(
                 icon(&icons::EXTERNAL_LINK, 12.0)
-                    .color(u.faint)
+                    .color(u.muted)
                     .a11y_hidden(),
             )
     };

@@ -592,7 +592,6 @@ pub fn scene_drill(s: &mut State) {
     s.stats.tab = Tab::Matches;
     s.stats.chart = Chart::WinRate;
     s.stats.layer = Layer::Kills;
-    s.stats.account_open = true;
     s.stats.all_heroes = true;
 }
 
@@ -656,8 +655,8 @@ pub fn view(s: &State, u: &Ui) -> El {
     let loading = s.stats_job.is_running();
     let ready = v.can_refresh();
     let has_player = v.snapshot.is_some();
-    // With no player only Fun run works, so the page opens on it.
-    let tab = if has_player || loading { v.tab } else { Tab::FunRun };
+    // With no player only Fun run works; every other tab shows the entry form under Overview.
+    let tab = if has_player || loading || v.tab == Tab::FunRun { v.tab } else { Tab::Overview };
 
     // The status slot keeps its width whatever it says, so the buttons beside it never move.
     let (status, warn) = match (&v.snapshot, &v.error) {
@@ -810,7 +809,7 @@ fn account_button(u: &Ui, profile: &PlayerProfile, open: bool) -> El {
                 .max_w(160.0)
                 .truncate(),
         )
-        .child(icon(&icons::CHEVRON_DOWN, 14.0).color(u.faint).a11y_hidden())
+        .child(icon(&icons::CHEVRON_DOWN, 14.0).color(u.muted).a11y_hidden())
 }
 
 /// The account input; a width of 0 grows to fill the row.
@@ -830,7 +829,7 @@ fn account_field(s: &State, u: &Ui, width: f32) -> El {
         .radius(crate::ui::r(8.0))
         .fill(u.well)
         .border(1.0, u.hair)
-        .child(icon(&icons::USER, 14.0).color(u.faint).a11y_hidden())
+        .child(icon(&icons::USER, 14.0).color(u.muted).a11y_hidden())
         .child(
             rune::text_input(&s.stats.account, BODY)
                 .key("stats-account")
@@ -922,7 +921,7 @@ fn account_list(s: &State, u: &Ui) -> El {
                     .min_w(0.0),
             )
             .child(spacer())
-            .child(text(meta).font(TNUM_SMALL).color(u.faint));
+            .child(text(meta).font(TNUM_SMALL).color(u.muted));
         r = r.child(shared::statlocker_link(
             u,
             format!("stats-statlocker-{account_id}"),
@@ -1002,7 +1001,7 @@ fn steam_list(s: &State, u: &Ui) -> Option<El> {
                         tr("Signed in before")
                     })
                     .font(TNUM_SMALL)
-                    .color(u.faint),
+                    .color(u.muted),
                 )
                 .child(spacer())
                 .child(
@@ -1094,11 +1093,13 @@ fn entry(s: &State, u: &Ui) -> El {
         .child(
             text(tr("Profile links work in both forms: /profiles/ with the number, or /id/ with a name."))
                 .font(SMALL)
-                .color(u.faint),
+                .color(u.muted),
         );
-    if let Some(error) = &v.error {
-        form = form.child(problem(u, error).pt(8.0));
-    }
+    // The error line keeps its room, so the lists under it never jump.
+    form = form.child(match &v.error {
+        Some(error) => problem(u, error),
+        None => row().h(20.0),
+    });
     if let Some(steam) = steam_list(s, u) {
         form = form.child(
             col()
@@ -1129,74 +1130,67 @@ fn entry(s: &State, u: &Ui) -> El {
     col()
         .key("stats-entry")
         .w_full()
-        .pt(64.0)
-        .gap(24.0)
-        .items_center()
+        .pt(8.0)
+        .gap(16.0)
         .child(
             col()
-                .gap(6.0)
-                .items_center()
-                .child(
-                    text(tr("See how you are playing"))
-                        .font(H1)
-                        .color(u.ink)
-                        .align(rune::Align::Center),
-                )
+                .gap(4.0)
+                .child(text(tr("See how you are playing")).font(H1).color(u.ink))
                 .child(
                     text(tr("Paste your Steam profile link, SteamID or Deadlock account id."))
                         .font(BODY)
-                        .color(u.muted)
-                        .align(rune::Align::Center),
+                        .color(u.prose),
                 ),
         )
         .child(form)
 }
 
-/// Placeholder shapes in the page's own layout while the first load runs.
+/// The Overview's own boxes, empty, while the first load runs: band 72, tiles 96, the
+/// insight head and rows, the chart, then the two lists. Nothing here animates.
 fn skeleton(u: &Ui) -> El {
     let bar = |w: f32, h: f32| el().w(w).h(h).radius(crate::ui::r(4.0)).fill(u.hover);
-    let mut c = col()
+    let panel = |h: f32| {
+        row()
+            .h(h)
+            .padding(12.0)
+            .gap(12.0)
+            .center_y()
+            .radius(crate::ui::r(4.0))
+            .fill(u.raised)
+            .border(1.0, u.hair)
+    };
+    let rows = |n: usize, h: f32| {
+        let mut c = col().w_full();
+        for i in 0..n {
+            c = c.child(
+                row()
+                    .w_full()
+                    .h(h)
+                    .gap(12.0)
+                    .center_y()
+                    .border_sides([0.0, 0.0, 1.0, 0.0], u.hair)
+                    .child(bar(24.0, 24.0))
+                    .child(bar(120.0 + (i % 3) as f32 * 40.0, 12.0)),
+            );
+        }
+        c
+    };
+    let list = || col().w(0.0).grow(1.0).min_w(440.0).child(row().h(32.0).center_y().child(bar(120.0, 14.0))).child(rows(5, 40.0));
+    col()
         .key("stats-skeleton")
         .w_full()
-        .gap(24.0)
-        .child(
-            row()
-                .gap(12.0)
-                .center_y()
-                .child(el().size(40.0, 40.0).radius(20.0).fill(u.hover))
-                .child(col().gap(8.0).child(bar(140.0, 14.0)).child(bar(280.0, 10.0))),
-        )
-        .child(col().gap(8.0).child(bar(360.0, 20.0)).child(bar(260.0, 10.0)))
-        .child(row().w_full().gap(32.0).children((0..4).map(|_| {
-            col()
+        .gap(8.0)
+        .child(panel(72.0).w_full().child(bar(48.0, 48.0)).child(col().gap(6.0).child(bar(120.0, 16.0)).child(bar(160.0, 12.0))))
+        .child(row().w_full().gap(8.0).children((0..4).map(|_| {
+            panel(96.0)
+                .w(0.0)
                 .grow(1.0)
-                .gap(8.0)
-                .child(bar(64.0, 10.0))
-                .child(bar(88.0, 18.0))
-                .child(bar(120.0, 8.0))
+                .min_w(0.0)
+                .child(col().gap(8.0).child(bar(72.0, 12.0)).child(bar(64.0, 24.0)).child(bar(96.0, 12.0)))
         })))
-        .child(
-            el()
-                .w_full()
-                .h(brief::CHART_H)
-                .radius(crate::ui::r(10.0))
-                .fill(Color::WHITE.alpha(0.025)),
-        );
-    let mut rows = col().w_full().border_sides([1.0, 0.0, 0.0, 0.0], u.hair);
-    for n in 0..4 {
-        rows = rows.child(
-            row()
-                .w_full()
-                .h(48.0)
-                .gap(12.0)
-                .center_y()
-                .border_sides([0.0, 0.0, 1.0, 0.0], u.hair)
-                .child(el().size(28.0, 28.0).radius(crate::ui::r(6.0)).fill(u.hover))
-                .child(bar(120.0 + (n % 3) as f32 * 40.0, 10.0)),
-        );
-    }
-    c = c.child(rows);
-    c
+        .child(col().w_full().mt(16.0).child(row().h(32.0).center_y().child(bar(220.0, 14.0))).child(rows(4, 44.0)))
+        .child(el().w_full().mt(16.0).h(32.0 + 12.0 + brief::CHART_H).radius(crate::ui::r(4.0)).fill(u.hover.alpha(0.5)))
+        .child(row().w_full().mt(16.0).gap(24.0).flex_wrap().child(list()).child(list()))
 }
 
 /// Mounted at the root: the scoreboard, or the review panel, over the shell.

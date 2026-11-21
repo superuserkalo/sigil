@@ -17,11 +17,8 @@ use super::{Derived, SITTINGS_SHOWN};
 // --- matches ---------------------------------------------------------------
 
 pub(super) fn matches(s: &State, u: &Ui, snap: &StatsSnapshot, d: &Derived) -> El {
-    let mut table = col().key("stats-matches").w_full().child(section_head(
-        u,
-        "Matches",
-        "By sitting. Open a match for its detail",
-    ));
+    // The tab already names the list, so no section title repeats it.
+    let mut table = col().key("stats-matches").w_full();
     if snap.matches.is_empty() {
         return table.child(
             text(tr("No matches yet. New matches show up a little while after they end."))
@@ -32,15 +29,15 @@ pub(super) fn matches(s: &State, u: &Ui, snap: &StatsSnapshot, d: &Derived) -> E
     table = table.child(head_row(
         u,
         &[
-            ("Result", 48.0, false),
+            ("Result", 47.0, false),
             ("Hero", 0.0, false),
-            ("K / D / A", 96.0, true),
+            ("K / D / A", 88.0, true),
             ("KDA", 48.0, true),
-            ("Souls", 56.0, true),
-            ("Rank", 56.0, true),
+            ("Souls", 64.0, true),
+            ("Rank", 48.0, true),
             ("Length", 48.0, true),
-            ("Time", 48.0, true),
-            ("", 16.0, false),
+            ("Time", 56.0, true),
+            ("", 24.0, false),
         ],
     ));
     let averages: BTreeMap<u32, &HeroPerformance> =
@@ -97,8 +94,8 @@ fn sitting_head(u: &Ui, snap: &StatsSnapshot, sitting: &Session, index: usize) -
     let mut r = row()
         .key(format!("sitting-{index}"))
         .w_full()
-        .h(40.0)
-        .pt(12.0)
+        .h(32.0)
+        .mt(8.0)
         .gap(12.0)
         .center_y()
         .border_sides([0.0, 0.0, 1.0, 0.0], u.hair)
@@ -116,7 +113,7 @@ fn sitting_head(u: &Ui, snap: &StatsSnapshot, sitting: &Session, index: usize) -
                 sitting.losses
             ))
             .font(TNUM_SMALL)
-            .color(u.faint),
+            .color(u.muted),
         )
         .child(spacer());
     if sitting.ranked > 0 && sitting.rank_delta != 0 {
@@ -126,14 +123,15 @@ fn sitting_head(u: &Ui, snap: &StatsSnapshot, sitting: &Session, index: usize) -
                 .color(if sitting.rank_delta > 0 { u.teal } else { u.rose }),
         );
     }
-    r.child(el().w(32.0))
+    // Lines the rank points up with the Rank column.
+    r.child(el().w(164.0))
 }
 
 fn match_row(s: &State, u: &Ui, item: &MatchSummary, open: bool) -> El {
     let (result, color) = match item.win {
         Some(true) => (tr("Win").to_string(), u.teal),
         Some(false) => (tr("Loss").to_string(), u.rose),
-        None => (crate::ui::sentence(item.outcome.label()), u.faint),
+        None => (crate::ui::sentence(item.outcome.label()), u.muted),
     };
     let name = item
         .hero_name
@@ -142,10 +140,15 @@ fn match_row(s: &State, u: &Ui, item: &MatchSummary, open: bool) -> El {
     let id = item.match_id;
     let rank = match item.ranked_delta {
         Some(delta) if delta != 0 => (format!("{delta:+}"), if delta > 0 { u.teal } else { u.rose }),
-        _ => (String::new(), u.faint),
+        _ => (String::new(), u.muted),
     };
-    let mut r = data_row(format!("match-{id}"), u, 48.0)
-        .fill(if open { u.hover } else { Color::TRANSPARENT })
+    let edge = match item.win {
+        Some(true) => u.teal,
+        Some(false) => u.rose,
+        None => u.hair_strong,
+    };
+    let mut r = data_row(format!("match-{id}"), u, 40.0)
+        .fill(if open { u.selected } else { Color::TRANSPARENT })
         .hover(u.hover)
         .focusable(true)
         .role("button")
@@ -158,7 +161,15 @@ fn match_row(s: &State, u: &Ui, item: &MatchSummary, open: bool) -> El {
                 Some(id)
             }
         })
-        .child(cell(text(result).font(BODY_MED).color(color), 48.0))
+        .child(
+            row()
+                .w(47.0)
+                .h(40.0)
+                .gap(8.0)
+                .center_y()
+                .child(el().w(3.0).h(40.0).fill(edge).a11y_hidden())
+                .child(text(result).font(BODY_MED).color(color).truncate()),
+        )
         .child(
             row()
                 .grow(1.0)
@@ -180,18 +191,14 @@ fn match_row(s: &State, u: &Ui, item: &MatchSummary, open: bool) -> El {
                 // DMM's abandoned mark: the game recorded the player as leaving this match.
                 .children(super::notes::abandon_tag(u, item)),
         )
-        .child(num(
-            format!("{} / {} / {}", item.kills, item.deaths, item.assists),
-            96.0,
-            u.prose,
-        ))
+        .child(super::brief::kda_text(u, item.kills, item.deaths, item.assists).w(88.0))
         .child(num(format!("{:.2}", item.kda), 48.0, u.muted))
-        .child(num(souls(item.net_worth), 56.0, u.muted))
-        .child(num(rank.0, 56.0, rank.1))
+        .child(num(souls(item.net_worth), 64.0, u.muted))
+        .child(num(rank.0, 48.0, rank.1))
         .child(num(format!("{}m", item.duration_seconds / 60), 48.0, u.muted))
-        .child(num(insight::clock_label(item.start_time), 48.0, u.faint));
+        .child(num(insight::clock_label(item.start_time), 56.0, u.muted));
     r = r.child(
-        el().w(16.0).center().child(
+        el().w(24.0).center().child(
             icon(
                 if open {
                     &icons::CHEVRON_DOWN
@@ -200,7 +207,7 @@ fn match_row(s: &State, u: &Ui, item: &MatchSummary, open: bool) -> El {
                 },
                 14.0,
             )
-            .color(u.faint)
+            .color(u.muted)
             .a11y_hidden(),
         ),
     );
@@ -240,7 +247,7 @@ fn match_detail(
     facts = facts.child(
         col()
             .gap(2.0)
-            .child(text(tr("Match")).font(SMALL).color(u.faint))
+            .child(text(tr("Match")).font(SMALL).color(u.muted))
             .child(
                 text(item.match_id.to_string())
                     .font(MONO)
@@ -293,7 +300,7 @@ fn match_detail(
                         move |st: &mut State| crate::data::start_scoreboard_load(st, id)
                     }),
             )
-            .child(text(tr("Both teams, final builds and the souls curve")).font(SMALL).color(u.faint))
+            .child(text(tr("Both teams, final builds and the souls curve")).font(SMALL).color(u.muted))
             .child(spacer())
             .child(
                 u.icon_action(&icons::EXTERNAL_LINK, tr("Open on Statlocker"), ActionKind::Ghost)
@@ -319,7 +326,7 @@ fn match_detail(
         ),
         None => text(tr("Moment by moment review needs this match's demo. Import it under Match reviews below."))
             .font(SMALL)
-            .color(u.faint),
+            .color(u.muted),
     });
 
     col()

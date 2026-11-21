@@ -45,10 +45,11 @@ fn hero_name(hero: &HeroPerformance) -> String {
 pub(super) fn heroes(s: &State, u: &Ui, snap: &StatsSnapshot) -> El {
     let tier = tier_label(snap);
     let peers = snap.peers.as_ref();
+    // The tab names the table; the head only counts.
     let mut table = col().key("stats-heroes").w_full().child(section_head(
         u,
-        "Heroes",
-        &crate::screens::settings::i18n::fill(tr("{} played, by matches"), &[&snap.heroes.len().to_string()]),
+        &crate::screens::settings::i18n::fill(tr("{} heroes"), &[&snap.heroes.len().to_string()]),
+        "",
     ));
     if snap.heroes.is_empty() {
         return table.child(text(tr("No hero rows for this account yet.")).font(BODY).color(u.muted));
@@ -58,11 +59,11 @@ pub(super) fn heroes(s: &State, u: &Ui, snap: &StatsSnapshot) -> El {
         u,
         &[
             ("Hero", 0.0, false),
-            ("Win rate, with its likely range", 280.0, false),
+            ("", 200.0, false),
             ("Win rate", 64.0, true),
             (
                 if tier.is_some() { "vs rank" } else { "vs you" },
-                64.0,
+                56.0,
                 true,
             ),
             ("KDA", 48.0, true),
@@ -86,29 +87,29 @@ pub(super) fn heroes(s: &State, u: &Ui, snap: &StatsSnapshot) -> El {
         // Colour the gap only when the comparison sits outside the hero's likely range.
         let clear = compare < hero.win_rate_low_percent || compare > hero.win_rate_high_percent;
         let gap_color = if thin || !clear {
-            u.faint
+            u.muted
         } else if gap > 0.0 {
             u.teal
         } else {
             u.rose
         };
-        let ink = if thin { u.faint } else { u.ink };
+        let ink = if thin { u.muted } else { u.ink };
         table = table.child(
-            data_row(format!("hero-{}", hero.hero_id), u, 48.0)
+            data_row(format!("hero-{}", hero.hero_id), u, 40.0)
                 .child(
                     row()
                         .grow(1.0)
                         .min_w(0.0)
                         .gap(12.0)
                         .center_y()
-                        .child(hero_chip(s, u, hero.hero_id, &name, 28.0))
+                        .child(hero_chip(s, u, hero.hero_id, &name, 24.0))
                         .child(text(name).font(BODY_MED).color(ink).truncate()),
                 )
-                .child(win_bar(u, hero, peer, thin).w(280.0))
+                .child(win_bar(u, hero, peer, thin).w(200.0))
                 .child(num(
                     format!("{:.1}%", hero.win_rate_percent),
                     64.0,
-                    if thin { u.faint } else { u.prose },
+                    if thin { u.muted } else { u.prose },
                 ))
                 .child(num(
                     if thin {
@@ -116,7 +117,7 @@ pub(super) fn heroes(s: &State, u: &Ui, snap: &StatsSnapshot) -> El {
                     } else {
                         format!("{gap:+.0}")
                     },
-                    64.0,
+                    56.0,
                     gap_color,
                 ))
                 .child(num(format!("{:.2}", hero.kda), 48.0, u.muted))
@@ -185,7 +186,7 @@ fn legend_swatch(u: &Ui, color: Color, label: &str, thickness: f32) -> El {
         .gap(6.0)
         .center_y()
         .child(el().size(12.0, thickness).fill(color).a11y_hidden())
-        .child(text(tr(label)).font(SMALL).color(u.faint))
+        .child(text(tr(label)).font(SMALL).color(u.muted))
 }
 
 fn legend_tick(u: &Ui, label: &str) -> El {
@@ -197,6 +198,6 @@ fn legend_tick(u: &Ui, label: &str) -> El {
                 .size(8.0, 6.0)
                 .a11y_hidden(),
         )
-        .child(text(tr(label)).font(SMALL).color(u.faint))
+        .child(text(tr(label)).font(SMALL).color(u.muted))
 }
 

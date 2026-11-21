@@ -576,7 +576,7 @@ pub fn panel(s: &State, u: &Ui) -> Option<El> {
                         .on_press(crate::screens::settings::watch::turn_on_condebug),
                 ),
             )
-            .child(text(tr("Then restart Deadlock.")).font(SMALL).color(u.faint));
+            .child(text(tr("Then restart Deadlock.")).font(SMALL).color(u.muted));
         return Some(frame(u, body));
     }
     let state = tail.map(|t| t.state.clone()).unwrap_or_default();
@@ -685,7 +685,7 @@ fn match_head(s: &State, u: &Ui, state: &LiveState, board: Option<&Board>) -> El
                 .child(
                     text(if board.is_some() { tr("Match clock") } else { tr("Since the horn") })
                         .font(SMALL)
-                        .color(u.faint),
+                        .color(u.muted),
                 ),
         );
     }
@@ -782,8 +782,8 @@ fn board_view(s: &State, u: &Ui, board: &Board, finished: bool) -> El {
             Some(at) if board.stale(now_ms()) => {
                 (fill(tr("No signal from the bridge for {}."), &[&clock(since(Some(at)).unwrap_or(0))]), u.amber)
             }
-            Some(at) => (fill(tr("From the live bridge, {} s ago."), &[&since(Some(at)).unwrap_or(0).to_string()]), u.faint),
-            None => (tr("From the live bridge.").to_string(), u.faint),
+            Some(at) => (fill(tr("From the live bridge, {} s ago."), &[&since(Some(at)).unwrap_or(0).to_string()]), u.muted),
+            None => (tr("From the live bridge.").to_string(), u.muted),
         };
         out = out.child(text(line).font(SMALL).color(color));
     }
@@ -824,7 +824,7 @@ fn curve(u: &Ui, board: &Board) -> El {
                 .w_full()
                 .child(text(tr("Soul lead this match")).font(SMALL).color(u.muted))
                 .child(spacer())
-                .child(text(tr("Above the line: your team ahead")).font(SMALL).color(u.faint)),
+                .child(text(tr("Above the line: your team ahead")).font(SMALL).color(u.muted)),
         )
         .child(canvas(shape).w_full().h(CURVE_H).role("img").label(tr("Soul lead this match")))
 }
@@ -850,11 +850,11 @@ fn team_table(s: &State, u: &Ui, title: &str, players: &[LivePlayer], key: &str)
         .border_sides([0.0, 0.0, 1.0, 0.0], u.hair)
         .child(text(title.to_string()).font(SMALL).color(u.muted).grow(1.0).min_w(0.0));
     for (label, w) in COLS.iter().take(shown) {
-        head = head.child(text(tr(label)).font(SMALL).color(u.faint).w(*w).align(rune::Align::End));
+        head = head.child(text(tr(label)).font(SMALL).color(u.muted).w(*w).align(rune::Align::End));
     }
     let mut table = col().w_full().child(head);
     if players.is_empty() {
-        return table.child(text(tr("No report from this team yet.")).font(SMALL).color(u.faint).pt(8.0));
+        return table.child(text(tr("No report from this team yet.")).font(SMALL).color(u.muted).pt(8.0));
     }
     let mut sorted: Vec<&LivePlayer> = players.iter().collect();
     sorted.sort_by_key(|p| std::cmp::Reverse(p.souls.unwrap_or(0)));
@@ -884,10 +884,10 @@ fn team_table(s: &State, u: &Ui, title: &str, players: &[LivePlayer], key: &str)
                     .child(
                         text(player.name.clone())
                             .font(if player.local { BODY_MED } else { BODY })
-                            .color(if player.dead { u.faint } else { u.ink })
+                            .color(if player.dead { u.muted } else { u.ink })
                             .truncate(),
                     )
-                    .child(text(hero).font(SMALL).color(u.faint).truncate()),
+                    .child(text(hero).font(SMALL).color(u.muted).truncate()),
             );
         if player.local {
             name = name.child(text(tr("You")).font(SMALL).color(u.accent));
@@ -916,7 +916,7 @@ fn match_meta(u: &Ui, match_id: u64, extra: Option<El>) -> El {
         .w_full()
         .gap(8.0)
         .center_y()
-        .child(text(fill(tr("Match {}"), &[&match_id.to_string()])).font(TNUM_SMALL).color(u.faint))
+        .child(text(fill(tr("Match {}"), &[&match_id.to_string()])).font(TNUM_SMALL).color(u.muted))
         .child(spacer());
     if let Some(extra) = extra {
         r = r.child(extra);
@@ -954,7 +954,7 @@ fn finished(s: &State, u: &Ui, last: &FinishedMatch) -> El {
 
 fn recent(u: &Ui, ids: &[u64], current: Option<u64>) -> El {
     let earlier: Vec<String> = ids.iter().filter(|id| Some(**id) != current).rev().take(6).map(u64::to_string).collect();
-    text(fill(tr("Earlier this session: {}"), &[&earlier.join(", ")])).font(TNUM_SMALL).color(u.faint).wrap()
+    text(fill(tr("Earlier this session: {}"), &[&earlier.join(", ")])).font(TNUM_SMALL).color(u.muted).wrap()
 }
 
 /// One line about the bridge when it needs the player: off, outdated, shadowed, incompatible.

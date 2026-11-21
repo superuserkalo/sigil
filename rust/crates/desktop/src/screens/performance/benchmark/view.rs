@@ -139,7 +139,7 @@ fn tabs(s: &State, u: &Ui) -> El {
             .key("bench-tab-history")
             .cursor(rune::Cursor::Pointer)
             .on_press(|st: &mut State| st.performance.benchmark.tab = Tab::History)
-            .child(text(count.to_string()).font(SMALL).color(u.faint).pl(6.0).a11y_hidden()),
+            .child(text(count.to_string()).font(SMALL).color(u.muted).pl(6.0).a11y_hidden()),
     ];
     row().w_full().child(subpage::segmented(u, items).role("radiogroup").label(tr("Benchmark view")))
 }
@@ -210,7 +210,7 @@ fn replays(s: &State, u: &Ui) -> El {
     let head = row().w_full().center_y().gap(8.0).child(u.section(tr("Replay"))).child(spacer()).child(choose).child(refresh);
     let mut c = col().w_full().gap(10.0).child(head);
     let Some(demos) = page.demos.as_ref() else {
-        return c.child(line(tr("Looking for replays in the game folder and in Stats."), u.faint));
+        return c.child(line(tr("Looking for replays in the game folder and in Stats."), u.muted));
     };
     if demos.is_empty() {
         return c.child(
@@ -256,19 +256,19 @@ fn replays(s: &State, u: &Ui) -> El {
                     .min_w(0.0)
                     .gap(2.0)
                     .child(text(fill(tr("Match {}"), &[&d.label])).font(BODY_MED).color(u.ink).truncate())
-                    .child(text(meta.join("  ·  ")).font(SMALL).color(u.faint).truncate()),
+                    .child(text(meta.join("  ·  ")).font(SMALL).color(u.muted).truncate()),
             );
         if other {
             r = r.child(text(tr("Other build, may not play")).font(SMALL).color(u.amber));
         }
-        r = r.child(text(source).font(SMALL).color(u.faint).w(150.0).align(rune::Align::End));
+        r = r.child(text(source).font(SMALL).color(u.muted).w(150.0).align(rune::Align::End));
         if i > 0 {
             r = r.border_sides([1.0, 0.0, 0.0, 0.0], u.hair);
         }
         list = list.child(r);
     }
     c = c.child(list);
-    c.child(line(tr("Replays play only on the game build they were recorded on. After a patch, watch a new match and history starts a new line."), u.faint))
+    c.child(line(tr("Replays play only on the game build they were recorded on. After a patch, watch a new match and history starts a new line."), u.muted))
 }
 
 fn tests(s: &State, u: &Ui) -> El {
@@ -327,7 +327,7 @@ fn one_mod(s: &State, u: &Ui) -> El {
                 .cursor(rune::Cursor::Pointer)
                 .on_press(move |st: &mut State| st.performance.benchmark.one_mod = Some(slot))
                 .child(text(name).font(BODY).color(u.ink).a11y_hidden())
-                .child(text(format!("pak{slot:02}")).font(TNUM_SMALL).color(u.faint).a11y_hidden()),
+                .child(text(format!("pak{slot:02}")).font(TNUM_SMALL).color(u.muted).a11y_hidden()),
         );
     }
     col().w_full().gap(10.0).child(u.section(tr("Mod"))).child(chips)
@@ -392,7 +392,7 @@ fn options(s: &State, u: &Ui) -> El {
                         .cursor(rune::Cursor::Pointer)
                         .on_press(|st: &mut State| st.performance.benchmark.no_warmup = !st.performance.benchmark.no_warmup),
                 )
-                .child(text(tr(if warm { "First pass fills the shader cache" } else { "Off" })).font(SMALL).color(u.faint)),
+                .child(text(tr(if warm { "First pass fills the shader cache" } else { "Off" })).font(SMALL).color(u.muted)),
         ))
 }
 
@@ -449,7 +449,7 @@ fn summary(s: &State, u: &Ui) -> El {
             parts.join("  ·  ")
         })
         .unwrap_or_default();
-    let mut foot = row().w_full().gap(12.0).center_y().child(text(machine).font(SMALL).color(u.faint).grow(1.0).min_w(0.0).truncate());
+    let mut foot = row().w_full().gap(12.0).center_y().child(text(machine).font(SMALL).color(u.muted).grow(1.0).min_w(0.0).truncate());
     foot = foot.child(if ready { run.on_press(super::start) } else { run.opacity(0.4) });
     c.child(u.divider()).child(foot)
 }
@@ -478,7 +478,7 @@ fn running_view(s: &State, u: &Ui, shared: &Shared) -> El {
         .child(icon(&icons::LOADER, 14.0).color(u.accent).a11y_hidden())
         .child(text(tr(shared.step.label())).font(BODY_MED).color(u.ink));
     if let Some(secs) = pass_secs {
-        step = step.child(text(clock(secs)).font(TNUM).color(u.faint));
+        step = step.child(text(clock(secs)).font(TNUM).color(u.muted));
     }
     let mut head = card("bench-live", u)
         .child(
@@ -492,7 +492,7 @@ fn running_view(s: &State, u: &Ui, shared: &Shared) -> El {
                         .child(text(fill(tr("Pass {} of {}"), &[&shared.at.to_string(), &total.to_string()])).font(SMALL).color(u.muted))
                         .child(text(title).font(H1).color(u.ink)),
                 )
-                .child(col().gap(2.0).child(text(elapsed).font(VALUE).color(u.ink).align(rune::Align::End)).child(text(tr("so far")).font(SMALL).color(u.faint).align(rune::Align::End))),
+                .child(col().gap(2.0).child(text(elapsed).font(VALUE).color(u.ink).align(rune::Align::End)).child(text(tr("so far")).font(SMALL).color(u.muted).align(rune::Align::End))),
         )
         .child(step);
     if let super::Step::Following(live) = &shared.step
@@ -542,7 +542,7 @@ fn running_view(s: &State, u: &Ui, shared: &Shared) -> El {
                 .border(1.0, if is_now { u.accent } else { u.hair })
                 .fill(if done.is_some() { u.well } else { Color::TRANSPARENT })
                 .opacity(if done.is_none() && !is_now { 0.55 } else { 1.0 })
-                .child(text(label).font(SMALL).color(if warm { u.faint } else { u.muted }).truncate())
+                .child(text(label).font(SMALL).color(if warm { u.muted } else { u.muted }).truncate())
                 .child(text(value).font(TNUM_MED).color(if is_now { u.accent } else { u.ink })),
         );
     }
@@ -558,7 +558,7 @@ fn running_view(s: &State, u: &Ui, shared: &Shared) -> El {
             .w_full()
             .gap(12.0)
             .center_y()
-            .child(line(tr("Stop closes Deadlock and puts the cfg, your mods and autoexec.cfg back. Passes done so far are kept."), u.faint).grow(1.0).min_w(0.0))
+            .child(line(tr("Stop closes Deadlock and puts the cfg, your mods and autoexec.cfg back. Passes done so far are kept."), u.muted).grow(1.0).min_w(0.0))
             .child(
                 u.icon_action(&icons::SQUARE_STOP, tr("Stop"), ActionKind::Secondary)
                     .key("bench-stop")
@@ -624,7 +624,7 @@ fn result_view(s: &State, u: &Ui, run: &RunRecord) -> El {
                 card("bench-failed", u)
                     .child(row().gap(8.0).center_y().child(icon(&icons::CIRCLE_X, 16.0).color(u.rose).a11y_hidden()).child(text(tr("The run did not measure")).font(H2).color(u.ink)))
                     .child(line(why.clone(), u.muted))
-                    .child(line(tr("Nothing is left changed. The cfg, your mods and autoexec.cfg are as they were."), u.faint)),
+                    .child(line(tr("Nothing is left changed. The cfg, your mods and autoexec.cfg are as they were."), u.muted)),
             )
             .child(passes_table(s, u, run));
         }
@@ -654,7 +654,7 @@ fn notes(s: &State, u: &Ui, run: &RunRecord) -> El {
                 .w_full()
                 .gap(16.0)
                 .items_start()
-                .child(text(when(&note.at)).font(TNUM).color(u.faint).w(110.0))
+                .child(text(when(&note.at)).font(TNUM).color(u.muted).w(110.0))
                 .child(text(note.text.clone()).font(BODY).color(u.prose).grow(1.0).min_w(0.0).wrap()),
         );
     }
@@ -697,7 +697,7 @@ fn delete_confirm(u: &Ui, id: &str) -> El {
 }
 
 fn stat(u: &Ui, value: String, label: &str) -> El {
-    col().w(120.0).gap(2.0).child(text(value).font(VALUE).color(u.ink)).child(text(tr(label).to_string()).font(SMALL).color(u.faint))
+    col().w(120.0).gap(2.0).child(text(value).font(VALUE).color(u.ink)).child(text(tr(label).to_string()).font(SMALL).color(u.muted))
 }
 
 fn headline(u: &Ui, s: &Summary, spread: Option<(f64, f64)>, passes: usize) -> El {
@@ -715,7 +715,7 @@ fn headline(u: &Ui, s: &Summary, spread: Option<(f64, f64)>, passes: usize) -> E
             col()
                 .gap(0.0)
                 .child(row().gap(8.0).items_end().child(text(fps(s.avg_fps)).font(BIG).color(u.ink)).child(text("FPS").font(H2).color(u.muted).pb(8.0)))
-                .child(text(spread_line).font(SMALL).color(u.faint)),
+                .child(text(spread_line).font(SMALL).color(u.muted)),
         )
         .child(
             row()
@@ -760,10 +760,10 @@ fn comparison(u: &Ui, cmp: &Comparison, changed: Option<El>) -> El {
             .h(28.0)
             .center_y()
             .border_sides([0.0, 0.0, 1.0, 0.0], u.hair)
-            .child(text(tr("Metric")).font(SMALL).color(u.faint).grow(1.0))
-            .child(text(tr(&cmp.a.label).to_string()).font(SMALL).color(u.faint).w(120.0).align(rune::Align::End))
-            .child(text(tr(&cmp.b.label).to_string()).font(SMALL).color(u.faint).w(120.0).align(rune::Align::End))
-            .child(text(tr("Change")).font(SMALL).color(u.faint).w(100.0).align(rune::Align::End)),
+            .child(text(tr("Metric")).font(SMALL).color(u.muted).grow(1.0))
+            .child(text(tr(&cmp.a.label).to_string()).font(SMALL).color(u.muted).w(120.0).align(rune::Align::End))
+            .child(text(tr(&cmp.b.label).to_string()).font(SMALL).color(u.muted).w(120.0).align(rune::Align::End))
+            .child(text(tr("Change")).font(SMALL).color(u.muted).w(100.0).align(rune::Align::End)),
     );
     for m in &cmp.metrics {
         let (label, format): (&str, fn(f64) -> String) = match m.key.as_str() {
@@ -804,7 +804,7 @@ fn comparison(u: &Ui, cmp: &Comparison, changed: Option<El>) -> El {
                 .child(el().w(4.0).h(24.0).radius(crate::ui::r(2.0)).fill(tone).a11y_hidden())
                 .child(text(words).font(H1).color(u.ink).wrap().grow(1.0).min_w(0.0)),
         )
-        .child(line(noise, u.faint))
+        .child(line(noise, u.muted))
         .child(table);
     if let Some(changed) = changed {
         c = c.child(changed);
@@ -850,7 +850,7 @@ fn cost(s: &State, u: &Ui, run: &RunRecord) -> El {
                 .gap(12.0)
                 .center_y()
                 .border_sides([0.0, 0.0, 1.0, 0.0], u.hair)
-                .child(text(if slots.len() == 1 { tr("1 mod").to_string() } else { fill(tr("{} mods"), &[&slots.len().to_string()]) }).font(TNUM_SMALL).color(u.faint).w(56.0))
+                .child(text(if slots.len() == 1 { tr("1 mod").to_string() } else { fill(tr("{} mods"), &[&slots.len().to_string()]) }).font(TNUM_SMALL).color(u.muted).w(56.0))
                 .child(text(label).font(BODY).color(u.prose).grow(1.0).min_w(0.0).truncate())
                 .child(
                     row().w(120.0).h(6.0).radius(crate::ui::r(3.0)).fill(u.hair).child(el().w((share.min(20.0) / 20.0 * 120.0) as f32).h_full().radius(crate::ui::r(3.0)).fill(if gain > 0.0 { u.rose } else { u.faint })),
@@ -878,7 +878,7 @@ fn graph_card(s: &State, u: &Ui, run: &RunRecord) -> El {
             Some(deadlock_core::benchmark::session::FrameSource::SummaryOnly) => tr("The game wrote only its summary line for this run, so there is no frame graph. Average FPS and percentiles come from that line."),
             _ => tr("No frames were stored for this run."),
         };
-        return c.child(line(why, u.faint));
+        return c.child(line(why, u.muted));
     }
     let series: Vec<(Color, Vec<Bin>)> = frames
         .iter()
@@ -889,7 +889,7 @@ fn graph_card(s: &State, u: &Ui, run: &RunRecord) -> El {
         Some(src) => fill(tr("Each point is about {} seconds. Spikes are the slowest frame in that slice. Source: {}."), &[&format!("{:.1}", run.spec.length.seconds().unwrap_or(90) as f64 / 300.0), &super::lower(tr(src.label()))]),
         None => String::new(),
     };
-    c.child(line(note, u.faint))
+    c.child(line(note, u.muted))
 }
 
 fn graph(u: &Ui, series: &[(Color, Vec<Bin>)]) -> El {
@@ -906,7 +906,7 @@ fn graph(u: &Ui, series: &[(Color, Vec<Bin>)]) -> El {
     while tick < top {
         let yy = y(tick);
         shape = shape.line([0.0, yy], [GRAPH_VB, yy], 1.0, rune::LineCap::Butt, u.over.alpha(0.05));
-        labels = labels.child(text(format!("{tick:.0} ms")).font(TNUM_SMALL).color(u.faint).absolute(0.0, yy - 7.0));
+        labels = labels.child(text(format!("{tick:.0} ms")).font(TNUM_SMALL).color(u.muted).absolute(0.0, yy - 7.0));
         tick += step;
     }
     shape = shape.line([0.0, GRAPH_H - 0.5], [GRAPH_VB, GRAPH_H - 0.5], 1.0, rune::LineCap::Butt, u.hair_strong);
@@ -949,7 +949,7 @@ fn passes_table(s: &State, u: &Ui, run: &RunRecord) -> El {
             .center_y()
             .border_sides([0.0, 0.0, 1.0, 0.0], u.hair)
             .opacity(if p.warmup { 0.6 } else { 1.0 })
-            .child(text(p.index.to_string()).font(TNUM_SMALL).color(u.faint).w(20.0))
+            .child(text(p.index.to_string()).font(TNUM_SMALL).color(u.muted).w(20.0))
             .child(text(label).font(BODY).color(u.prose).w(170.0).truncate());
         if let Some(error) = &p.error {
             r = r.child(text(error.clone()).font(SMALL).color(u.rose).grow(1.0).min_w(0.0).wrap());
@@ -958,7 +958,7 @@ fn passes_table(s: &State, u: &Ui, run: &RunRecord) -> El {
                 .child(text(format!("{} FPS", fps(sm.avg_fps))).font(TNUM_MED).color(u.ink).w(90.0).align(rune::Align::End))
                 .child(text(opt(sm.low_1, fps)).font(TNUM).color(u.prose).w(70.0).align(rune::Align::End))
                 .child(text(opt(sm.p99_ms, ms)).font(TNUM).color(u.prose).w(80.0).align(rune::Align::End))
-                .child(text(fill(tr("{} frames"), &[&sm.frames.to_string()])).font(TNUM_SMALL).color(u.faint).grow(1.0).align(rune::Align::End))
+                .child(text(fill(tr("{} frames"), &[&sm.frames.to_string()])).font(TNUM_SMALL).color(u.muted).grow(1.0).align(rune::Align::End))
                 .child(text(p.fps_cap.filter(|c| *c > 0.0).map(|c| fill(tr("capped at {}"), &[&fps(c)])).unwrap_or_default()).font(SMALL).color(u.amber).w(100.0).align(rune::Align::End));
         }
         rows = rows.child(r);
@@ -970,14 +970,14 @@ fn passes_table(s: &State, u: &Ui, run: &RunRecord) -> El {
         .center_y()
         .border_sides([0.0, 0.0, 1.0, 0.0], u.hair)
         .child(el().w(20.0))
-        .child(text(tr("Pass")).font(SMALL).color(u.faint).w(170.0))
-        .child(text(tr("Average")).font(SMALL).color(u.faint).w(90.0).align(rune::Align::End))
-        .child(text(tr("1% low")).font(SMALL).color(u.faint).w(70.0).align(rune::Align::End))
-        .child(text(tr("p99")).font(SMALL).color(u.faint).w(80.0).align(rune::Align::End))
+        .child(text(tr("Pass")).font(SMALL).color(u.muted).w(170.0))
+        .child(text(tr("Average")).font(SMALL).color(u.muted).w(90.0).align(rune::Align::End))
+        .child(text(tr("1% low")).font(SMALL).color(u.muted).w(70.0).align(rune::Align::End))
+        .child(text(tr("p99")).font(SMALL).color(u.muted).w(80.0).align(rune::Align::End))
         .child(spacer())
         .child(el().w(100.0));
     t = t.child(col().w_full().child(head).child(rows));
-    t.child(line(tr("The warm-up pass fills the shader cache and is left out of the result."), u.faint))
+    t.child(line(tr("The warm-up pass fills the shader cache and is left out of the result."), u.muted))
 }
 
 fn ran_on(u: &Ui, run: &RunRecord) -> El {
@@ -1014,7 +1014,7 @@ fn ran_on(u: &Ui, run: &RunRecord) -> El {
 fn history(s: &State, u: &Ui) -> El {
     let page = &s.performance.benchmark;
     if !page.runs_loaded {
-        return line(tr("Reading stored runs."), u.faint);
+        return line(tr("Reading stored runs."), u.muted);
     }
     if page.runs.is_empty() {
         return u.empty_state("", tr("No runs yet"), tr("Every run is kept here, with the machine and settings it ran on."), None);
@@ -1023,7 +1023,7 @@ fn history(s: &State, u: &Ui) -> El {
     if let Some(compare) = compare_panel(u, page) {
         c = c.child(compare);
     } else {
-        c = c.child(line(tr("Tick two runs to compare them: before and after a driver, a config, a profile or a mod."), u.faint));
+        c = c.child(line(tr("Tick two runs to compare them: before and after a driver, a config, a profile or a mod."), u.muted));
     }
     let mut series: BTreeMap<String, Vec<&RunRecord>> = BTreeMap::new();
     for run in &page.runs {
@@ -1067,7 +1067,7 @@ fn compare_panel(u: &Ui, page: &Page) -> Option<El> {
     }
     let mut changed = col().w_full().gap(4.0).child(text(tr("What changed")).font(BODY_MED).color(u.ink));
     if diffs.is_empty() {
-        changed = changed.child(line(tr("Same build, driver, settings and mods. The gap is the game or the PC on the day."), u.faint));
+        changed = changed.child(line(tr("Same build, driver, settings and mods. The gap is the game or the PC on the day."), u.muted));
     }
     for (k, va, vb) in diffs {
         changed = changed.child(
@@ -1075,8 +1075,8 @@ fn compare_panel(u: &Ui, page: &Page) -> Option<El> {
                 .w_full()
                 .gap(12.0)
                 .child(text(k).font(MONO).color(u.muted).w(220.0).truncate())
-                .child(text(va).font(MONO).color(u.faint).grow(1.0).min_w(0.0).truncate())
-                .child(icon(&icons::CHEVRON_RIGHT, 12.0).color(u.faint).a11y_hidden())
+                .child(text(va).font(MONO).color(u.muted).grow(1.0).min_w(0.0).truncate())
+                .child(icon(&icons::CHEVRON_RIGHT, 12.0).color(u.muted).a11y_hidden())
                 .child(text(vb).font(MONO).color(u.ink).grow(1.0).min_w(0.0).truncate()),
         );
     }
@@ -1111,7 +1111,7 @@ fn series_group(s: &State, u: &Ui, key: &str, runs: &[&RunRecord]) -> El {
             .center_y()
             .child(text(title).font(H2).color(u.ink))
             .child(spacer())
-            .child(text(fill(tr("{} runs"), &[&runs.len().to_string()])).font(SMALL).color(u.faint)),
+            .child(text(fill(tr("{} runs"), &[&runs.len().to_string()])).font(SMALL).color(u.muted)),
     );
     let trend: Vec<&RunRecord> = runs.iter().rev().copied().filter(|r| r.cost.is_none() && r.headline().is_some()).collect();
     if trend.len() >= 2 {
@@ -1149,7 +1149,7 @@ fn series_group(s: &State, u: &Ui, key: &str, runs: &[&RunRecord]) -> El {
                     .label(tr("Compare this run"))
                     .cursor(rune::Cursor::Pointer)
                     .on_press(move |st: &mut State| super::toggle_pick(st, pick_id.clone()))
-                    .child(icon(if picked { &icons::SQUARE_CHECK } else { &icons::SQUARE }, 16.0).color(if picked { u.accent } else { u.faint }).a11y_hidden()),
+                    .child(icon(if picked { &icons::SQUARE_CHECK } else { &icons::SQUARE }, 16.0).color(if picked { u.accent } else { u.muted }).a11y_hidden()),
             )
             .child(
                 row()
@@ -1167,8 +1167,8 @@ fn series_group(s: &State, u: &Ui, key: &str, runs: &[&RunRecord]) -> El {
                     .child(text(run_label(run)).font(BODY_MED).color(u.ink).w(200.0).truncate())
                     .child(text(value).font(TNUM_MED).color(u.ink).w(80.0).align(rune::Align::End))
                     .child(text(low).font(TNUM).color(u.muted).w(90.0).align(rune::Align::End))
-                    .child(text(extra).font(SMALL).color(u.faint).grow(1.0).min_w(0.0).truncate())
-                    .child(icon(&icons::CHEVRON_RIGHT, 14.0).color(u.faint).a11y_hidden()),
+                    .child(text(extra).font(SMALL).color(u.muted).grow(1.0).min_w(0.0).truncate())
+                    .child(icon(&icons::CHEVRON_RIGHT, 14.0).color(u.muted).a11y_hidden()),
             );
         if i > 0 {
             r = r.border_sides([1.0, 0.0, 0.0, 0.0], u.hair);
@@ -1221,9 +1221,9 @@ fn trend_chart(u: &Ui, runs: &[&RunRecord]) -> El {
                 col()
                     .w(AXIS_W)
                     .h(H)
-                    .child(text(fps(hi - pad)).font(TNUM_SMALL).color(u.faint))
+                    .child(text(fps(hi - pad)).font(TNUM_SMALL).color(u.muted))
                     .child(spacer())
-                    .child(text(fps(lo + pad)).font(TNUM_SMALL).color(u.faint)),
+                    .child(text(fps(lo + pad)).font(TNUM_SMALL).color(u.muted)),
             )
             .child(canvas(shape).grow(1.0).min_w(0.0).h(H))
             .role("img")

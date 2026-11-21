@@ -168,7 +168,7 @@ pub(super) fn map_section(s: &State, u: &Ui) -> El {
                     &[&capitalise(&heat.window)],
                 ))
                 .font(SMALL)
-                .color(u.faint),
+                .color(u.muted),
             )
             .child(spacer())
             .child(switch),
@@ -253,7 +253,7 @@ pub(super) fn map_section(s: &State, u: &Ui) -> El {
                     ],
                 ))
                 .font(SMALL)
-                .color(u.faint),
+                .color(u.muted),
             ),
     );
 
@@ -271,7 +271,7 @@ fn big_number(u: &Ui, value: &str, label: &str) -> El {
     col()
         .gap(2.0)
         .child(text(value.to_string()).font(NUM).color(u.ink))
-        .child(text(tr(label)).font(SMALL).color(u.faint))
+        .child(text(tr(label)).font(SMALL).color(u.muted))
 }
 
 fn spot_badge(u: &Ui, n: usize, color: Color) -> El {

@@ -6,7 +6,7 @@
 
 use deadlock_core::stats::board::{BoardPlayer, MatchScoreboard, SoulPoint};
 use deadlock_core::stats::insight;
-use rune::{Color, El, Key, KeyEvent, ScrollSpec, Shape, canvas, col, el, row, spacer, text};
+use rune::{Color, El, Key, KeyEvent, ScrollSpec, Shape, canvas, col, row, spacer, text};
 
 use crate::app::State;
 use crate::icons;
@@ -16,31 +16,32 @@ use super::german::tr;
 use super::shared::*;
 use super::Fetched;
 
-const CHART_H: f32 = 112.0;
+const CHART_H: f32 = 96.0;
 const CHART_VB: f32 = 1000.0;
 /// Width of the board dialog: two teams of six, with five number columns.
-const BOARD_W: f32 = 860.0;
-const KDA_W: f32 = 96.0;
+const BOARD_W: f32 = 920.0;
+const PLAYER_W: f32 = 160.0;
+const KDA_W: f32 = 88.0;
 /// Fixed rank and MVP columns, so every row's numbers start at the same x.
 const BADGE_W: f32 = 104.0;
-const MVP_W: f32 = 32.0;
-/// The team list scrolls inside the dialog; the header and Close stay put.
-const BOARD_SCROLL_H: f32 = 460.0;
 
 /// The dialog over the page: the board for `match_id`, or its loading state.
 pub(super) fn board_dialog(s: &State, u: &Ui, match_id: u64) -> El {
     let close = |st: &mut State| st.stats.board_open = None;
     let tier_names = s.stats.snapshot.as_ref().map(|snap| &snap.tier_names);
     let mut head = col().w_full().gap(4.0);
-    let mut body = col().w_full().gap(20.0);
+    let mut body = col().w_full().gap(16.0);
     let mut footer = row().w_full().gap(8.0).pt(4.0);
 
     match &s.stats.board {
         Fetched::Ready(board) if board.match_id == match_id => {
-            head = head.child(header(u, board));
-            body = body.child(souls(u, board));
+            // Header, curve and column heads stay put; only the two teams scroll.
+            head = head
+                .child(header(u, board))
+                .child(souls(u, board).mt(8.0))
+                .child(column_labels(u).mt(4.0));
             for team in team_order(board) {
-                body = body.child(team_block(u, board, team, tier_names));
+                body = body.child(team_block(s, u, board, team, tier_names));
             }
         }
         Fetched::Failed(error) => {
@@ -81,6 +82,7 @@ pub(super) fn board_dialog(s: &State, u: &Ui, match_id: u64) -> El {
         .label(tr("Match scoreboard"))
         .w(BOARD_W)
         .max_w(BOARD_W)
+        .h_full()
         .padding(24.0)
         .gap(12.0)
         .modal(true, close)
@@ -94,7 +96,11 @@ pub(super) fn board_dialog(s: &State, u: &Ui, match_id: u64) -> El {
         })
         .child(head)
         .child(
-            body.h(BOARD_SCROLL_H)
+            // The teams take what the window leaves; header and footer never move.
+            body.h(0.0)
+                .grow(1.0)
+                .shrink()
+                .min_h(0.0)
                 .scroll(ScrollSpec {
                     stick_bottom: false,
                 }),
@@ -114,22 +120,27 @@ fn team_order(board: &MatchScoreboard) -> [usize; 2] {
     }
 }
 
-/// The number column labels, on each team's head row so they sit over their numbers.
+/// The column heads, once, pinned above the first team.
 fn column_labels(u: &Ui) -> El {
-    let label = |t: &str, w: f32| {
-        text(tr(t).to_string())
-            .font(SMALL)
-            .color(u.faint)
-            .w(w)
-            .align(rune::Align::End)
+    let label = |t: &str, w: f32, end: bool| {
+        let e = text(tr(t).to_string()).font(SMALL).color(u.muted);
+        let e = if end { e.align(rune::Align::End) } else { e };
+        if w > 0.0 { e.w(w) } else { e.grow(1.0).min_w(0.0) }
     };
     row()
+        .w_full()
+        .h(28.0)
+        .px(8.0)
         .gap(12.0)
         .center_y()
-        .child(label("K / D / A", KDA_W))
-        .child(label("Souls", 56.0))
-        .child(label("Damage", 64.0))
-        .child(label("Healing", 56.0))
+        .border_sides([0.0, 0.0, 1.0, 0.0], u.hair)
+        .child(label("Player", PLAYER_W, false))
+        .child(label("Hero", 0.0, false))
+        .child(label("Rank", BADGE_W, false))
+        .child(label("K / D / A", KDA_W, true))
+        .child(label("Souls", 72.0, true))
+        .child(label("Damage", 72.0, true))
+        .child(label("Healing", 64.0, true))
 }
 
 fn title(u: &Ui, match_id: u64) -> El {
@@ -172,38 +183,20 @@ fn header(u: &Ui, board: &MatchScoreboard) -> El {
             .child(
                 text(meta.join("  ·  "))
                     .font(TNUM_SMALL)
-                    .color(u.faint)
+                    .color(u.muted)
                     .pb(3.0),
             )
             .child(spacer()),
     );
-    if let Some(result) = result_line(u, board) {
-        head = head.child(result);
+    // The team heads already say who won; only an unscored match needs a line here.
+    if super::notes::not_scored(board) {
+        head = head.child(text(tr("Not scored for you")).font(BODY_MED).color(u.muted));
     }
     // DMM's match note: who abandoned, and why a match was not scored.
     if let Some(note) = super::notes::board_note(u, board) {
         head = head.child(note);
     }
     head
-}
-
-/// "Your team won", "Your team lost", or the score with no player on the board.
-fn result_line(u: &Ui, board: &MatchScoreboard) -> Option<El> {
-    if super::notes::not_scored(board) {
-        return Some(text(tr("Not scored for you")).font(BODY_MED).color(u.faint));
-    }
-    let winner = board.winning_team?;
-    let ours = board
-        .teams
-        .iter()
-        .position(|team| team.iter().any(|player| player.account_id == board.account_id));
-    let (word, tone) = match ours {
-        Some(team) if team as i32 == winner => (tr("Your team won"), u.teal),
-        Some(_) => (tr("Your team lost"), u.rose),
-        None if winner == 0 => (tr("Team 0 won"), u.prose),
-        None => (tr("Team 1 won"), u.prose),
-    };
-    Some(text(word).font(BODY_MED).color(tone))
 }
 
 /// Souls each side held: the player's team minus the other, above and below zero.
@@ -222,14 +215,14 @@ fn souls(u: &Ui, board: &MatchScoreboard) -> El {
     };
     let values: Vec<f64> = board.souls.iter().map(lead).collect();
     let final_lead = values.last().copied().unwrap_or(0.0);
-    let peak = values
-        .iter()
-        .fold(0.0_f64, |peak, value| peak.max(value.abs()))
-        .max(1000.0);
+    // The scale covers what happened: a match always ahead uses the whole height above zero.
+    let hi = values.iter().fold(0.0_f64, |m, v| m.max(*v)).max(1000.0);
+    let lo = values.iter().fold(0.0_f64, |m, v| m.min(*v)).min(-1000.0);
     let duration = board.duration_seconds.max(1) as f64;
-    let mid = CHART_H / 2.0;
-    let pad = 10.0;
-    let y = |value: f64| mid - (value / peak) as f32 * (mid - pad);
+    let pad = 8.0;
+    let span = (hi - lo).max(1.0);
+    let y = |value: f64| pad + ((hi - value) / span) as f32 * (CHART_H - 2.0 * pad);
+    let mid = y(0.0);
     let x = |time_s: u32| (time_s as f64 / duration).min(1.0) as f32 * CHART_VB;
 
     let mut shape = Shape::new().view_box(CHART_VB, CHART_H);
@@ -280,12 +273,15 @@ fn souls(u: &Ui, board: &MatchScoreboard) -> El {
             row()
                 .w_full()
                 .center_y()
+                .gap(8.0)
                 .child(text(tr("Soul lead")).font(SMALL).color(u.muted))
-                .child(spacer())
                 .child(
-                    text(caption)
-                        .font(SMALL)
-                        .color(u.faint),
+                    text(crate::screens::settings::i18n::fill(
+                        tr("ended {}"),
+                        &[&signed(final_lead.round() as i64)],
+                    ))
+                    .font(TNUM_SMALL)
+                    .color(if final_lead >= 0.0 { u.teal } else { u.rose }),
                 ),
         )
         .child(
@@ -293,11 +289,13 @@ fn souls(u: &Ui, board: &MatchScoreboard) -> El {
                 .w_full()
                 .h(CHART_H)
                 .role("img")
-                .label(tr("Soul lead through the match")),
+                .label(tr("Soul lead through the match"))
+                .description(caption),
         )
 }
 
 fn team_block(
+    s: &State,
     u: &Ui,
     board: &MatchScoreboard,
     index: usize,
@@ -324,6 +322,7 @@ fn team_block(
         row()
             .w_full()
             .h(32.0)
+            .px(8.0)
             .gap(12.0)
             .center_y()
             .border_sides([0.0, 0.0, 1.0, 0.0], u.hair)
@@ -335,26 +334,26 @@ fn team_block(
             .child(
                 text(if wins { tr("Won") } else { tr("Lost") })
                     .font(SMALL)
-                    .color(if wins { u.teal } else { u.faint }),
+                    .color(if wins { u.teal } else { u.rose }),
             )
+            .child(spacer())
             .child(
                 text(crate::screens::settings::i18n::fill(
                     tr("{} souls"),
                     &[&thousands(souls)],
                 ))
                 .font(TNUM_SMALL)
-                .color(u.faint),
-            )
-            .child(spacer())
-            .child(column_labels(u)),
+                .color(u.muted),
+            ),
     );
     for player in team {
-        block = block.child(player_row(u, player, board.account_id, tier_names));
+        block = block.child(player_row(s, u, player, board.account_id, tier_names));
     }
     block
 }
 
 fn player_row(
+    s: &State,
     u: &Ui,
     player: &BoardPlayer,
     me: u64,
@@ -387,11 +386,7 @@ fn player_row(
     } else if known.is_empty() {
         crate::screens::settings::i18n::fill(tr("{} items not in the catalog"), &[&unknown.to_string()])
     } else {
-        format!(
-            "{}, {}",
-            known.join(", "),
-            crate::screens::settings::i18n::fill(tr("{} more"), &[&unknown.to_string()])
-        )
+        format!("{}  +{unknown}", known.join(", "))
     };
     let badge = match (player.badge, tier_names) {
         (Some(badge), Some(names)) => Some(insight::badge_label(badge, names)),
@@ -399,65 +394,62 @@ fn player_row(
         (None, _) => None,
     };
 
-    let mut line = row()
+    // Items: known names on one line, the rest counted at the end.
+    let line = row()
         .w_full()
+        .h(40.0)
         .gap(12.0)
         .center_y()
         .child(
+            text(name)
+                .font(if mine { BODY_MED } else { BODY })
+                .color(u.ink)
+                .truncate()
+                .w(PLAYER_W),
+        )
+        .child(
             row()
-                .gap(8.0)
-                .center_y()
                 .grow(1.0)
                 .min_w(0.0)
-                .child(
-                    text(name)
-                        .font(if mine { BODY_MED } else { BODY })
-                        .color(u.ink)
-                        .truncate(),
-                )
-                .child(
-                    text(hero)
-                        .font(SMALL)
-                        .color(u.muted)
-                        .truncate(),
-                ),
+                .gap(8.0)
+                .center_y()
+                .child(hero_chip(s, u, player.hero_id, &hero, 20.0))
+                .child(text(hero).font(BODY).color(u.prose).truncate()),
         )
         .child(
-            text(badge.unwrap_or_default())
-                .font(TNUM_SMALL)
-                .color(u.faint)
+            row()
                 .w(BADGE_W)
-                .align(rune::Align::End)
-                .truncate(),
+                .gap(6.0)
+                .center_y()
+                .child(text(badge.unwrap_or_default()).font(TNUM_SMALL).color(u.muted).truncate().min_w(0.0).shrink())
+                .children((player.mvp_rank == Some(1)).then(|| {
+                    row()
+                        .h(20.0)
+                        .px(6.0)
+                        .center()
+                        .radius(2.0)
+                        .fill(u.amber.alpha(0.14))
+                        .child(text(tr("MVP")).font(crate::ui::MICRO).color(u.amber))
+                })),
         )
-        .child(
-            text(if player.mvp_rank == Some(1) { tr("MVP") } else { "" })
-                .font(SMALL)
-                .color(u.amber)
-                .w(MVP_W),
-        )
-        .child(num(
-            format!("{} / {} / {}", player.kills, player.deaths, player.assists),
-            KDA_W,
-            u.prose,
-        ))
-        .child(num(thousands(player.net_worth), 56.0, u.prose))
-        .child(num(thousands(player.player_damage), 64.0, u.muted))
-        .child(num(thousands(player.player_healing), 56.0, u.muted));
-
-    line = line.child(el().w(0.0));
+        .child(super::brief::kda_text(u, player.kills, player.deaths, player.assists).w(KDA_W))
+        .child(num(thousands(player.net_worth), 72.0, u.prose))
+        .child(num(thousands(player.player_damage), 72.0, u.muted))
+        .child(num(thousands(player.player_healing), 64.0, u.muted));
 
     col()
         .key(format!("board-player-{}", player.account_id))
         .w_full()
-        .py(4.0)
-        .gap(2.0)
+        .h(60.0)
+        .px(8.0)
+        .fill(if mine { u.selected } else { Color::TRANSPARENT })
         .border_sides([0.0, 0.0, 1.0, 0.0], u.hair)
         .child(line)
         .child(
             text(build)
                 .font(SMALL)
-                .color(u.faint)
-                .wrap(),
+                .color(u.muted)
+                .truncate()
+                .pl(PLAYER_W + 12.0),
         )
 }

@@ -250,7 +250,7 @@ pub fn hide_choice(s: &State, u: &Ui) -> Option<El> {
             .on_press(move |st: &mut State| set_hide(st, !on))
             .child(
                 icon(if on { &icons::SQUARE_CHECK } else { &icons::SQUARE }, 14.0)
-                    .color(if on { u.accent } else { u.faint })
+                    .color(if on { u.accent } else { u.muted })
                     .a11y_hidden(),
             )
             .child(text(tr("Hide built-in presets")).font(SMALL).color(u.muted).a11y_hidden()),
@@ -476,7 +476,7 @@ pub fn dialog(s: &State, u: &Ui) -> Option<El> {
         );
     if let Some(found) = &add.found {
         body = body
-            .child(text(fill(tr("{} at {}"), &[&found.repository, &found.date])).font(SMALL).color(u.faint))
+            .child(text(fill(tr("{} at {}"), &[&found.repository, &found.date])).font(SMALL).color(u.muted))
             .child(text(tr("gameinfo file")).font(BODY_MED).color(u.ink))
             .child(picks(u, "perf-custom-config", &found.config_paths, &add.config, "None, video only", |add, pick| add.config = pick))
             .child(text(tr("Video file")).font(BODY_MED).color(u.ink))
@@ -487,7 +487,7 @@ pub fn dialog(s: &State, u: &Ui) -> Option<El> {
             body = body.child(
                 text(fill(tr("Not used: {}"), &[&found.unsupported.join(", ")]))
                     .font(SMALL)
-                    .color(u.faint)
+                    .color(u.muted)
                     .wrap(),
             );
         }

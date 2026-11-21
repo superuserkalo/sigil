@@ -28,7 +28,7 @@ use crate::model::Screen;
 use crate::screens::settings::i18n::fill;
 use crate::screens::subpage;
 use crate::ui::{
-    ActionKind, BODY, BODY_MED, DISPLAY, H1, H2, LABEL, MONO, NUM, PAGE_TOP, PAGE_X, SMALL, SMALL_NUM, Ui,
+    ActionKind, BODY, BODY_MED, DISPLAY, H1, H2, LABEL, MONO, PAGE_TOP, PAGE_X, SMALL, SMALL_NUM, Ui,
 };
 
 mod de;
@@ -709,7 +709,7 @@ fn list_page(s: &State, u: &Ui) -> El {
         .child(
             text(tr("GitHub configs come from OptimizationLock and OptiLock, shared by their authors under GPL-3.0. GameBanana configs stay on their pages."))
                 .font(SMALL)
-                .color(u.faint)
+                .color(u.muted)
                 .wrap(),
         )
 }
@@ -1193,7 +1193,7 @@ fn hosted_section(s: &State, u: &Ui) -> El {
                 .child(
                     text(if cached { tr("Downloaded") } else { tr("GameBanana") })
                         .font(SMALL)
-                        .color(u.faint),
+                        .color(u.muted),
                 )
         };
         rows = rows.child(
@@ -1218,7 +1218,7 @@ fn hosted_section(s: &State, u: &Ui) -> El {
                         .child(
                             text(format!("by {} · {}", def.author, def.tier.label()))
                                 .font(SMALL)
-                                .color(u.faint)
+                                .color(u.muted)
                                 .truncate(),
                         ),
                 )

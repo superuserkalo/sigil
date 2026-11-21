@@ -350,7 +350,7 @@ fn license_row(u: &Ui, license: &str, url: &str) -> El {
         .child(
             el()
                 .pt(2.0)
-                .child(icon(&icons::INFO, 14.0).color(u.faint).a11y_hidden()),
+                .child(icon(&icons::INFO, 14.0).color(u.muted).a11y_hidden()),
         )
         .child(
             col()
@@ -383,7 +383,7 @@ fn files(_s: &State, u: &Ui, hosted: &Hosted, cached: bool) -> El {
                 .h(52.0)
                 .gap(8.0)
                 .center_y()
-                .child(icon(&icons::LOADER, 14.0).color(u.faint).a11y_hidden())
+                .child(icon(&icons::LOADER, 14.0).color(u.muted).a11y_hidden())
                 .child(
                     text(tr("Reading the mod page from GameBanana"))
                         .font(BODY)
@@ -453,7 +453,7 @@ fn files(_s: &State, u: &Ui, hosted: &Hosted, cached: bool) -> El {
                 .child(
                     el().size(16.0, 16.0).center().child(
                         icon(if on { &icons::CIRCLE_CHECK } else { &icons::CIRCLE_X }, 16.0)
-                            .color(if on { u.accent } else { u.faint })
+                            .color(if on { u.accent } else { u.muted })
                             .a11y_hidden(),
                     ),
                 )
@@ -463,7 +463,7 @@ fn files(_s: &State, u: &Ui, hosted: &Hosted, cached: bool) -> El {
                         .min_w(0.0)
                         .gap(2.0)
                         .child(text(file.name.clone()).font(BODY_MED).color(u.ink).truncate())
-                        .child(text(sub).font(SMALL).color(u.faint).truncate()),
+                        .child(text(sub).font(SMALL).color(u.muted).truncate()),
                 ),
         );
     }
@@ -632,7 +632,7 @@ fn variant_row(u: &Ui, variant: &Variant, on: bool, index: usize) -> El {
         .child(
             el().size(16.0, 16.0).center().child(
                 icon(if on { &icons::CIRCLE_CHECK } else { &icons::CIRCLE_X }, 16.0)
-                    .color(if on { u.accent } else { u.faint })
+                    .color(if on { u.accent } else { u.muted })
                     .a11y_hidden(),
             ),
         )
@@ -650,14 +650,14 @@ fn variant_row(u: &Ui, variant: &Variant, on: bool, index: usize) -> El {
                 .child(
                     text(format!("{label}{videos}"))
                         .font(SMALL)
-                        .color(u.faint)
+                        .color(u.muted)
                         .truncate(),
                 ),
         )
         .child(
             text(variant.path.clone())
                 .font(MONO)
-                .color(u.faint)
+                .color(u.muted)
                 .max_w(360.0)
                 .truncate(),
         )

@@ -191,7 +191,7 @@ pub fn scope_note(s: &State, u: &Ui) -> Option<El> {
     let (words, color) = match &s.stats.w4.scoped {
         Fetched::Loading => (tr("Reading your stats for this filter").to_string(), u.muted),
         Fetched::Failed(error) => (crate::screens::settings::i18n::fill(tr("The filtered stats did not load: {}"), &[error]), u.rose),
-        Fetched::Ready(_) => (tr("Overview and Heroes show this filter.").to_string(), u.faint),
+        Fetched::Ready(_) => (tr("Overview and Heroes show this filter.").to_string(), u.muted),
         Fetched::Idle => return None,
     };
     Some(text(words).key("stats-scope-note").font(SMALL).color(color))
@@ -303,7 +303,7 @@ pub fn hand_party(s: &State, u: &Ui) -> El {
     let mut c = col().key("stats-party-hand").w_full().gap(10.0).child(
         text(tr("Each player offers up to 3 heroes, as in queue. Press a player, then heroes below."))
             .font(SMALL)
-            .color(u.faint)
+            .color(u.muted)
             .wrap(),
     );
     for (member, picks) in w.picks.iter().enumerate() {
@@ -358,7 +358,7 @@ pub fn hand_party(s: &State, u: &Ui) -> El {
             );
         }
         if picks.is_empty() {
-            r = r.child(text(tr("No heroes yet")).font(SMALL).color(u.faint));
+            r = r.child(text(tr("No heroes yet")).font(SMALL).color(u.muted));
         }
         if member >= 2 {
             r = r.child(rune::spacer()).child(
@@ -563,7 +563,7 @@ pub fn meta_section(s: &State, u: &Ui) -> El {
                 (None, true) => tr("No patch date was found, so this is the last 30 days. Items need 500 matches to show.").to_string(),
                 _ => tr("Everyone's games in the filter's window, 30 days when none is set. Items need 500 matches to show.").to_string(),
             };
-            section.child(table).child(text(note).font(SMALL).color(u.faint).wrap())
+            section.child(table).child(text(note).font(SMALL).color(u.muted).wrap())
         }
     };
     section

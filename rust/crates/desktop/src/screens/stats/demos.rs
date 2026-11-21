@@ -73,7 +73,7 @@ pub(super) fn demo_section(s: &State, u: &Ui) -> El {
         return section.child(
             text(tr("Import a demo to go from a match to its moments, with your model's review."))
                 .font(SMALL)
-                .color(u.faint),
+                .color(u.muted),
         );
     }
 
@@ -117,7 +117,7 @@ pub(super) fn demo_section(s: &State, u: &Ui) -> El {
                         .child(
                             text(meta.join("  ·  "))
                                 .font(SMALL)
-                                .color(u.faint)
+                                .color(u.muted)
                                 .truncate(),
                         ),
                 )
@@ -158,7 +158,7 @@ pub(super) fn review_dialog(s: &State, u: &Ui, review: &ReviewPanel) -> El {
     }
     let more = review.facts.facts.len().saturating_sub(6);
     if more > 0 {
-        facts = facts.child(text(format!("{more} more")).font(SMALL).color(u.faint));
+        facts = facts.child(text(format!("{more} more")).font(SMALL).color(u.muted));
     }
 
     let label = |t: &str| text(tr(t)).font(SMALL).color(u.muted);
@@ -225,7 +225,7 @@ pub(super) fn review_dialog(s: &State, u: &Ui, review: &ReviewPanel) -> El {
                                 None => tr("No model selected").to_string(),
                             })
                             .font(SMALL)
-                            .color(u.faint)
+                            .color(u.muted)
                             .truncate(),
                         )
                         .child(
