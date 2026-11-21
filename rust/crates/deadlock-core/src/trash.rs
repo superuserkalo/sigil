@@ -3,7 +3,8 @@
 //! Deleting a mod never removes its files outright. [`trash_slot`] moves every file of one
 //! addon slot (`pakNN_dir.vpk`, `pakNN_dir.vpk.disabled`, `pakNN_MMM.vpk`) out of
 //! `game/citadel/addons` into a folder of its own under Sigil's app data, with a small
-//! manifest, so [`restore`] can put it back. [`empty_trash`] is the only call that deletes,
+//! manifest, so [`restore`] can put it back. [`trash_loose`] does the same for leftover files
+//! that belong to no slot, from Analyze. [`empty_trash`] is the only call that deletes,
 //! and it deletes only trash entries, never the game install.
 //!
 //! The only input that names game files is a slot number. File names come from reading the
@@ -46,6 +47,10 @@ pub struct TrashManifest {
     /// The library entry the slot had, so a restore can bring its name and preview back.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub meta: Option<ModMeta>,
+    /// Leftover files that belong to no slot (Analyze's Remove). `addons_dir` is the addon
+    /// folder they came from, and `slot` is 0.
+    #[serde(default)]
+    pub loose: bool,
 }
 
 /// One trashed slot on disk.
@@ -208,7 +213,7 @@ fn make_entry(
     enabled: bool,
     bytes: u64,
 ) -> Result<TrashEntry> {
-    let id = unique_id(trash_root, slot)?;
+    let id = unique_id(trash_root, &format!("pak{slot:02}"))?;
     let dir = trash_root.join(&id);
     fs::create_dir_all(&dir)?;
     let manifest = TrashManifest {
@@ -220,14 +225,83 @@ fn make_entry(
         trashed_at: now_iso(),
         enabled,
         meta,
+        loose: false,
     };
     // The manifest goes first, so an interrupted move still leaves an entry that names
     // where its files belong.
     write_manifest(&dir, &manifest)?;
 
     let folder = crate::addons::slot_folder(addons, slot);
-    let mut moved: Vec<&String> = Vec::new();
+    move_files(&files, &folder, &dir)?;
+
+    Ok(TrashEntry { id, dir, manifest })
+}
+
+/// Move leftover files that belong to no slot to the trash, so Analyze's Remove can be undone.
+/// Game install write; refuses without `approve`, for a folder that is not an addon folder, and
+/// for a name that is not a plain file in it.
+pub fn trash_loose(
+    folder: &Path,
+    trash_root: &Path,
+    names: &[String],
+    approve: bool,
+) -> Result<TrashEntry> {
+    if !approve {
+        return Err(Error::msg("Not approved: remove the leftover files. Nothing was deleted."));
+    }
+    if !is_addon_folder(folder) || !folder.is_dir() {
+        return Err(Error::msg(format!(
+            "{} is not an addon folder. Nothing was deleted.",
+            folder.display()
+        )));
+    }
+    if names.is_empty() {
+        return Err(Error::msg("No leftover files were named. Nothing was deleted."));
+    }
+    let mut files: Vec<String> = names.to_vec();
+    files.sort();
+    files.dedup();
     for name in &files {
+        check_plain_name(name)?;
+        let regular = fs::symlink_metadata(folder.join(name))
+            .map(|m| m.file_type().is_file())
+            .unwrap_or(false);
+        if !regular {
+            return Err(Error::msg(format!(
+                "{name} is not a file in {}. Nothing was deleted.",
+                folder.display()
+            )));
+        }
+    }
+    let bytes = files
+        .iter()
+        .map(|name| fs::metadata(folder.join(name)).map(|m| m.len()).unwrap_or(0))
+        .sum();
+
+    let id = unique_id(trash_root, "leftovers")?;
+    let dir = trash_root.join(&id);
+    fs::create_dir_all(&dir)?;
+    let manifest = TrashManifest {
+        schema: TRASH_SCHEMA,
+        slot: 0,
+        addons_dir: folder.to_path_buf(),
+        files: files.clone(),
+        bytes,
+        trashed_at: now_iso(),
+        enabled: false,
+        meta: None,
+        loose: true,
+    };
+    write_manifest(&dir, &manifest)?;
+    move_files(&files, folder, &dir)?;
+    Ok(TrashEntry { id, dir, manifest })
+}
+
+/// The moves and the rollback shared by every trash entry. The manifest is written before this
+/// runs, so an interrupted move still leaves a record of where its files belong.
+fn move_files(files: &[String], folder: &Path, dir: &Path) -> Result<()> {
+    let mut moved: Vec<&String> = Vec::new();
+    for name in files {
         if let Err(error) = move_file(&folder.join(name), &dir.join(name)) {
             let mut stuck = Vec::new();
             for done in moved.iter().rev() {
@@ -235,22 +309,34 @@ fn make_entry(
                     stuck.push(done.as_str());
                 }
             }
+            let why = blocked(&folder.join(name), &error);
             if stuck.is_empty() {
-                let _ = fs::remove_dir_all(&dir);
-                return Err(Error::msg(format!(
-                    "Moving {name} to the trash failed ({error}). Nothing was deleted."
-                )));
+                let _ = fs::remove_dir_all(dir);
+                return Err(Error::msg(format!("{why} Nothing was deleted.")));
             }
             return Err(Error::msg(format!(
-                "Moving {name} to the trash failed ({error}). {} stayed in the trash at {}.",
+                "{why} {} stayed in the trash at {}.",
                 stuck.join(", "),
                 dir.display()
             )));
         }
         moved.push(name);
     }
+    Ok(())
+}
 
-    Ok(TrashEntry { id, dir, manifest })
+/// True when `folder` is one of the places Sigil puts addon slots: `citadel/addons`, or one of
+/// the extra `citadel/sigil-addonsN` folders.
+fn is_addon_folder(folder: &Path) -> bool {
+    let name = folder
+        .file_name()
+        .map(|n| n.to_string_lossy().to_ascii_lowercase())
+        .unwrap_or_default();
+    let parent = folder
+        .parent()
+        .and_then(Path::file_name)
+        .map(|n| n.to_string_lossy().to_ascii_lowercase());
+    parent.as_deref() == Some("citadel") && (name == "addons" || name.starts_with("sigil-addons"))
 }
 
 /// [`trash_slot`] for several slots. Each slot is its own entry; a failure stops nothing
@@ -281,6 +367,9 @@ pub fn restore(entry_dir: &Path, approve: bool) -> Result<RestoreReport> {
         return Err(Error::msg("Not approved: restore from the trash. Nothing was moved."));
     }
     let manifest = read_manifest(entry_dir)?;
+    if manifest.loose {
+        return restore_loose(entry_dir, &manifest);
+    }
     let addons = &manifest.addons_dir;
     let looks_right = addons.ends_with(Path::new("citadel").join("addons"));
     if !looks_right || !addons.is_dir() {
@@ -321,7 +410,8 @@ pub fn restore(entry_dir: &Path, approve: bool) -> Result<RestoreReport> {
                 let _ = move_file(&folder.join(done), &entry_dir.join(done));
             }
             return Err(Error::msg(format!(
-                "Moving {name} back failed ({error}). The entry stays in the trash."
+                "{} The entry stays in the trash.",
+                blocked(&entry_dir.join(name), &error)
             )));
         }
         moved.push(name);
@@ -331,6 +421,51 @@ pub fn restore(entry_dir: &Path, approve: bool) -> Result<RestoreReport> {
         slot: manifest.slot,
         files: manifest.files.clone(),
         meta: manifest.meta.clone(),
+    })
+}
+
+/// Put a loose entry (Analyze's leftover files) back into the addon folder it came from.
+/// Nothing is overwritten: a name that is taken again stops the restore before any move.
+fn restore_loose(entry_dir: &Path, manifest: &TrashManifest) -> Result<RestoreReport> {
+    let folder = &manifest.addons_dir;
+    if !is_addon_folder(folder) || !folder.is_dir() {
+        return Err(Error::msg(format!(
+            "{} is not an addon folder any more. Nothing was moved.",
+            folder.display()
+        )));
+    }
+    for name in &manifest.files {
+        check_plain_name(name)?;
+        if !entry_dir.join(name).is_file() {
+            return Err(Error::msg(format!(
+                "{name} is missing from the trash entry. Nothing was moved."
+            )));
+        }
+        if fs::symlink_metadata(folder.join(name)).is_ok() {
+            return Err(Error::msg(format!(
+                "{name} is back in {}. Nothing was moved.",
+                folder.display()
+            )));
+        }
+    }
+    let mut moved: Vec<&String> = Vec::new();
+    for name in &manifest.files {
+        if let Err(error) = move_file(&entry_dir.join(name), &folder.join(name)) {
+            for done in moved.iter().rev() {
+                let _ = move_file(&folder.join(done), &entry_dir.join(done));
+            }
+            return Err(Error::msg(format!(
+                "{} The entry stays in the trash.",
+                blocked(&entry_dir.join(name), &error)
+            )));
+        }
+        moved.push(name);
+    }
+    let _ = fs::remove_dir_all(entry_dir);
+    Ok(RestoreReport {
+        slot: 0,
+        files: manifest.files.clone(),
+        meta: None,
     })
 }
 
@@ -457,18 +592,43 @@ pub fn undo_update(
 // Helpers
 // ---------------------------------------------------------------------------
 
+/// The sentence for a file that would not move (DMM 2.4.0 names the path that blocked a
+/// removal): its full path, the OS error, and a hint when the OS says the file is in use.
+fn blocked(path: &Path, error: &Error) -> String {
+    let hint = if in_use(error) {
+        " Deadlock or another program has it open: close it and try again."
+    } else {
+        ""
+    };
+    format!("{} could not be moved ({error}).{hint}", path.display())
+}
+
+/// Whether the OS refused because something holds the file: a sharing or lock violation on
+/// Windows (errors 32 and 33), a busy file, or a permission refusal.
+fn in_use(error: &Error) -> bool {
+    match error {
+        Error::Io(io) => {
+            matches!(
+                io.kind(),
+                std::io::ErrorKind::PermissionDenied | std::io::ErrorKind::ResourceBusy
+            ) || (cfg!(windows) && matches!(io.raw_os_error(), Some(32 | 33)))
+        }
+        _ => false,
+    }
+}
+
 fn slot_files_in(addons: &Path, slot: u16) -> Result<Vec<String>> {
     let mut files = read_slot_files(addons)?;
     Ok(files.remove(&slot).unwrap_or_default())
 }
 
-fn unique_id(trash_root: &Path, slot: u16) -> Result<String> {
+fn unique_id(trash_root: &Path, label: &str) -> Result<String> {
     let stamp = chrono::Utc::now().format("%Y%m%d-%H%M%S-%3f");
     for n in 0..1000 {
         let id = if n == 0 {
-            format!("{stamp}-pak{slot:02}")
+            format!("{stamp}-{label}")
         } else {
-            format!("{stamp}-pak{slot:02}-{n}")
+            format!("{stamp}-{label}-{n}")
         };
         if !trash_root.join(&id).exists() {
             return Ok(id);
@@ -612,6 +772,32 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    fn a_file_that_will_not_move_is_named_by_its_path_with_the_os_reason() {
+        use std::os::unix::fs::PermissionsExt;
+        let f = fixture("blocked");
+        fs::write(f.addons.join("pak05_dir.vpk"), "dir").unwrap();
+        // A folder the process may not change stands in for a file Deadlock holds open.
+        fs::set_permissions(&f.addons, fs::Permissions::from_mode(0o555)).unwrap();
+        let result = trash_slot(&f.game, &f.trash, 5, None, true);
+        fs::set_permissions(&f.addons, fs::Permissions::from_mode(0o755)).unwrap();
+        let error = result.unwrap_err().to_string();
+        let path = f.addons.join("pak05_dir.vpk").display().to_string();
+        assert!(error.contains(&path), "{error}");
+        assert!(error.contains("os error"), "{error}");
+        assert!(error.contains("Nothing was deleted"), "{error}");
+        assert_eq!(names(&f.addons), vec!["pak05_dir.vpk"]);
+    }
+
+    #[test]
+    fn the_in_use_hint_follows_the_os_error_kind() {
+        let held = Error::Io(std::io::Error::from(std::io::ErrorKind::PermissionDenied));
+        assert!(blocked(Path::new("pak01_dir.vpk"), &held).contains("has it open"));
+        let other = Error::Io(std::io::Error::from(std::io::ErrorKind::NotFound));
+        assert!(!blocked(Path::new("pak01_dir.vpk"), &other).contains("has it open"));
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn a_symlink_with_a_slot_name_is_never_followed() {
         let f = fixture("symlink");
         let outside = f.game.join("precious.txt");
@@ -643,6 +829,50 @@ mod tests {
         write_manifest(&entry.dir, &manifest).unwrap();
         assert!(restore(&entry.dir, true).is_err());
         assert!(names(&f.addons).is_empty());
+    }
+
+    #[test]
+    fn loose_leftovers_round_trip_through_the_trash() {
+        let f = fixture("loose");
+        fs::write(f.addons.join("pak07_000.vpk"), "chunk").unwrap();
+        fs::write(f.addons.join("readme.txt"), "hi").unwrap();
+        fs::write(f.addons.join("keep.txt"), "keep").unwrap();
+        let names_to_move = vec!["pak07_000.vpk".to_string(), "readme.txt".to_string()];
+        let entry = trash_loose(&f.addons, &f.trash, &names_to_move, true).unwrap();
+        assert!(entry.manifest.loose);
+        assert_eq!(entry.manifest.slot, 0);
+        assert_eq!(entry.manifest.addons_dir, f.addons);
+        assert_eq!(names(&f.addons), vec!["keep.txt"]);
+        assert_eq!(list_trash(&f.trash).len(), 1);
+
+        // A file put back by hand stops the restore before it moves anything.
+        fs::write(f.addons.join("readme.txt"), "new").unwrap();
+        assert!(restore(&entry.dir, true).is_err());
+        assert!(entry.dir.join("pak07_000.vpk").is_file());
+        fs::remove_file(f.addons.join("readme.txt")).unwrap();
+
+        let report = restore(&entry.dir, true).unwrap();
+        assert_eq!(report.slot, 0);
+        assert_eq!(report.meta, None);
+        assert_eq!(fs::read_to_string(f.addons.join("readme.txt")).unwrap(), "hi");
+        assert_eq!(names(&f.addons), vec!["keep.txt", "pak07_000.vpk", "readme.txt"]);
+        assert!(list_trash(&f.trash).is_empty());
+        let _ = fs::remove_dir_all(f.game.parent().unwrap());
+    }
+
+    #[test]
+    fn loose_trash_refuses_approval_foreign_folders_and_nested_names() {
+        let f = fixture("loose-refuse");
+        fs::write(f.addons.join("pak07_000.vpk"), "chunk").unwrap();
+        let one = vec!["pak07_000.vpk".to_string()];
+        assert!(trash_loose(&f.addons, &f.trash, &one, false).is_err());
+        assert!(trash_loose(&f.game, &f.trash, &one, true).is_err());
+        assert!(trash_loose(&f.addons, &f.trash, &["../evil.vpk".to_string()], true).is_err());
+        assert!(trash_loose(&f.addons, &f.trash, &["gone.vpk".to_string()], true).is_err());
+        assert!(trash_loose(&f.addons, &f.trash, &[], true).is_err());
+        assert_eq!(names(&f.addons), vec!["pak07_000.vpk"]);
+        assert!(list_trash(&f.trash).is_empty());
+        let _ = fs::remove_dir_all(f.game.parent().unwrap());
     }
 
     #[test]

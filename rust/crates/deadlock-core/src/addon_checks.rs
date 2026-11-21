@@ -164,6 +164,35 @@ pub struct FolderSummary {
     pub bytes: u64,
 }
 
+/// A file in an addon folder that no mod uses: an orphan chunk, a file the game never reads,
+/// or a temporary name a stopped reorder left. Analyze offers to move these to the trash.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Leftover {
+    pub folder: PathBuf,
+    pub file: String,
+    pub kind: LeftoverKind,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum LeftoverKind {
+    /// `pakNN_MMM.vpk` whose slot has no directory file.
+    OrphanChunk,
+    /// A file the game ignores: a wrong name, a subfolder's contents, an archive left behind.
+    Ignored,
+    /// A temporary name a stopped reorder left.
+    TempFile,
+}
+
+impl LeftoverKind {
+    pub fn label(self) -> &'static str {
+        match self {
+            LeftoverKind::OrphanChunk => "chunk",
+            LeftoverKind::Ignored => "ignored",
+            LeftoverKind::TempFile => "temporary",
+        }
+    }
+}
+
 /// The whole picture across folders.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct AddonsAnalysis {
@@ -174,6 +203,9 @@ pub struct AddonsAnalysis {
     pub doubled_slots: Vec<u16>,
     pub read_only: Vec<PathBuf>,
     pub missing: Vec<MissingFile>,
+    /// Files no mod uses, sorted by folder and name. Removing one goes through
+    /// [`crate::trash::trash_loose`], so it can be undone.
+    pub leftovers: Vec<Leftover>,
 }
 
 impl AddonsAnalysis {
@@ -191,7 +223,7 @@ impl AddonsAnalysis {
             && self.doubled_slots.is_empty()
             && self.read_only.is_empty()
             && self.missing.is_empty()
-            && self.folders.iter().all(|f| f.orphan_chunks.is_empty() && f.temp_files.is_empty())
+            && self.leftovers.is_empty()
     }
 }
 
@@ -216,6 +248,11 @@ pub fn analyze_addons(addons_dir: &Path, library: &[(u16, String)]) -> Result<Ad
             let meta = entry.metadata().ok();
             summary.bytes += meta.as_ref().filter(|m| m.is_file()).map(|m| m.len()).unwrap_or(0);
             if temp.contains(&name) {
+                analysis.leftovers.push(Leftover {
+                    folder: folder.clone(),
+                    file: name.clone(),
+                    kind: LeftoverKind::TempFile,
+                });
                 summary.temp_files.push(name);
                 continue;
             }
@@ -235,7 +272,18 @@ pub fn analyze_addons(addons_dir: &Path, library: &[(u16, String)]) -> Result<Ad
                         chunks.push((slot, name));
                     }
                 }
-                _ => summary.ignored.push(name),
+                _ => {
+                    // A folder is reported but never offered for removal: only plain files
+                    // the game skips become leftovers.
+                    if is_file {
+                        analysis.leftovers.push(Leftover {
+                            folder: folder.clone(),
+                            file: name.clone(),
+                            kind: LeftoverKind::Ignored,
+                        });
+                    }
+                    summary.ignored.push(name)
+                }
             }
         }
         summary.orphan_chunks = chunks
@@ -243,6 +291,13 @@ pub fn analyze_addons(addons_dir: &Path, library: &[(u16, String)]) -> Result<Ad
             .filter(|(slot, _)| !dirs.contains_key(slot))
             .map(|(_, name)| name)
             .collect();
+        for file in &summary.orphan_chunks {
+            analysis.leftovers.push(Leftover {
+                folder: folder.clone(),
+                file: file.clone(),
+                kind: LeftoverKind::OrphanChunk,
+            });
+        }
         for (slot, (on, off)) in &dirs {
             if *on && *off {
                 analysis.doubled_slots.push(*slot);
@@ -258,6 +313,9 @@ pub fn analyze_addons(addons_dir: &Path, library: &[(u16, String)]) -> Result<Ad
     }
     analysis.read_only = read_only_files(addons_dir)?;
     analysis.missing = missing_files(addons_dir, library)?;
+    analysis
+        .leftovers
+        .sort_by(|a, b| a.folder.cmp(&b.folder).then_with(|| a.file.cmp(&b.file)));
     Ok(analysis)
 }
 
@@ -571,6 +629,19 @@ mod tests {
         assert_eq!(analysis.unknown_slots, vec![2]);
         assert_eq!(analysis.doubled_slots, vec![2]);
         assert_eq!(analysis.read_only, vec![readonly.clone()]);
+        assert_eq!(
+            analysis
+                .leftovers
+                .iter()
+                .map(|leftover| (leftover.file.as_str(), leftover.kind))
+                .collect::<Vec<_>>(),
+            vec![
+                ("my_mod.vpk", LeftoverKind::Ignored),
+                ("pak07_000.vpk", LeftoverKind::OrphanChunk),
+            ],
+            "a folder is reported but is not a leftover"
+        );
+        assert!(analysis.leftovers.iter().all(|leftover| leftover.folder == addons));
         assert!(!analysis.is_clean());
         assert_eq!(analysis.total_mods(), 3);
 
