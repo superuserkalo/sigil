@@ -23,6 +23,8 @@ use crate::game_session::Dump;
 use crate::install::read_journal;
 use crate::util::write_atomic;
 
+pub mod crash_cause;
+
 // ---------------------------------------------------------------------------
 // Recent changes
 // ---------------------------------------------------------------------------
@@ -166,6 +168,8 @@ pub enum Reason {
     DumpNamesFile,
     /// The mod is the newest install from before the crash.
     NewestChange,
+    /// The game's console log, written around the crash, names a file the mod replaces.
+    ConsoleNamesFile,
 }
 
 impl Reason {
@@ -182,6 +186,12 @@ impl Reason {
                 format!("Installed {} and not changed since.", change.ago(now))
             }
             (Reason::NewestChange, _, None) => "Installed shortly before the crash.".to_string(),
+            (Reason::ConsoleNamesFile, Some(file), _) => {
+                format!("The game's console names {file}, which this mod replaces.")
+            }
+            (Reason::ConsoleNamesFile, None, _) => {
+                "The game's console names a file this mod replaces.".to_string()
+            }
         }
     }
 }
@@ -210,6 +220,35 @@ pub fn suspect(
     names: &BTreeMap<u16, String>,
     shipped: &BTreeMap<u16, Vec<String>>,
 ) -> Option<Suspect> {
+    suspect_with_console(facts, &[], changes, names, shipped)
+}
+
+/// [`suspect`] with the console lines written around the crash
+/// ([`crash_cause::console_evidence`]). The order of evidence: an exact resource the dump
+/// names ([`crash_cause::attribute`], one mod or none), a file name the dump mentions, an
+/// exact resource the console names, then the newest install.
+pub fn suspect_with_console(
+    facts: &DumpFacts,
+    console: &[String],
+    changes: &[Change],
+    names: &BTreeMap<u16, String>,
+    shipped: &BTreeMap<u16, Vec<String>>,
+) -> Option<Suspect> {
+    let named = crash_cause::named_resources(facts.comment.as_deref(), console);
+    let from_dump: Vec<(String, crash_cause::Source)> =
+        named.iter().filter(|(_, source)| *source == crash_cause::Source::Dump).cloned().collect();
+    let from_console: Vec<(String, crash_cause::Source)> =
+        named.iter().filter(|(_, source)| *source == crash_cause::Source::Console).cloned().collect();
+    let found = |hit: crash_cause::Attribution, reason: Reason| Suspect {
+        slot: hit.slot,
+        name: name_for(names, hit.slot),
+        reason,
+        file: Some(hit.file),
+        change: changes.iter().find(|change| change.slot == hit.slot).cloned(),
+    };
+    if let Some(hit) = crash_cause::attribute(&from_dump, shipped) {
+        return Some(found(hit, Reason::DumpNamesFile));
+    }
     if let Some(comment) = facts.comment.as_deref()
         && let Some((slot, file)) = match_comment(comment, shipped)
     {
@@ -220,6 +259,9 @@ pub fn suspect(
             file: Some(file),
             change: changes.iter().find(|change| change.slot == slot).cloned(),
         });
+    }
+    if let Some(hit) = crash_cause::attribute(&from_console, shipped) {
+        return Some(found(hit, Reason::ConsoleNamesFile));
     }
     let newest = changes.iter().filter(|change| names.contains_key(&change.slot)).max_by_key(|change| change.at_secs)?;
     Some(Suspect {

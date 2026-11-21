@@ -3027,7 +3027,9 @@ fn crash_advisory(
     if let Some(custom) = crate::screens::settings::options::get().steam_root {
         roots.insert(0, PathBuf::from(custom));
     }
-    let game_root = addons_dir.and_then(Path::parent).and_then(Path::parent);
+    // `<root>/game/citadel/addons` up three is the install root; `dump_folders` and the console
+    // path add `game/...` themselves.
+    let game_root = addons_dir.and_then(|addons| addons.ancestors().nth(3));
     let dumps = game_session::list_dumps(&game_session::dump_folders(game_root, &roots));
     let dump = impact::unacknowledged_dump(&dumps, marker.started_secs, marker.acknowledged_secs)?;
     let at_secs = impact::dump_seconds(dump).unwrap_or(0);
@@ -3062,8 +3064,10 @@ fn crash_advisory(
         names.entry(change.slot).or_insert_with(|| change.name.clone());
     }
     let mut shipped: std::collections::BTreeMap<u16, Vec<String>> = std::collections::BTreeMap::new();
+    // The file the game was loading: the dump's comment, then console.log written around it.
+    let mut evidence = crate::screens::launch_crash::read(info.comment.as_deref(), game_root, at_secs);
     if let Some(addons) = addons_dir
-        && info.comment.is_some()
+        && (info.comment.is_some() || evidence.resource.is_some())
     {
         for addon in &installed {
             let path = addon.path(addons);
@@ -3084,8 +3088,14 @@ fn crash_advisory(
         exception: info.exception,
         comment: info.comment.clone(),
     };
-    let suspect = impact::suspect(&facts, &changes, &names, &shipped);
+    let suspect = impact::suspect_with_console(&facts, &evidence.console, &changes, &names, &shipped);
     let suspect_off = suspect.as_ref().is_some_and(|suspect| !enabled.contains(&suspect.slot));
+    // A HUD mod named by the crash: is its layout behind this game build?
+    if let (Some(suspect), Some(addons), Some(root)) = (&suspect, addons_dir, game_root)
+        && let Some(addon) = installed.iter().find(|addon| addon.slot == suspect.slot)
+    {
+        evidence.hud = crate::screens::launch_crash::hud_for(suspect, &addon.path(addons), root, &data.join("hud-check"));
+    }
     Some(crate::screens::launch::Crash {
         path: dump.path.display().to_string(),
         file: dump
@@ -3099,6 +3109,7 @@ fn crash_advisory(
         comment: info.comment,
         suspect,
         suspect_off,
+        evidence,
     })
 }
 

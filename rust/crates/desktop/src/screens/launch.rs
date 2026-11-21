@@ -53,6 +53,9 @@ pub struct Crash {
     pub suspect: Option<Suspect>,
     /// The suspect is switched off now (the card says so instead of offering Turn off).
     pub suspect_off: bool,
+    /// The file the game was loading, the console around the crash and the HUD check
+    /// (`launch_crash.rs`).
+    pub evidence: crate::screens::launch_crash::Evidence,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -469,12 +472,11 @@ fn crash_block(s: &State, u: &Ui, crash: &Crash) -> El {
                 ),
         );
     }
+    block = block.children(crate::screens::launch_crash::rows(u, &crash.evidence, crash.suspect.as_ref()));
     if let Some(suspect) = &crash.suspect {
         let slot = suspect.slot;
         let name = suspect.name.clone();
-        let reason = suspect
-            .reason
-            .line(suspect.file.as_deref(), suspect.change.as_ref(), now_secs());
+        let reason = crate::screens::launch_crash::reason_line(suspect, now_secs());
         let blocked = s.settings.game_running || s.launch.monitor.running();
         block = block.child(
             row()
@@ -839,6 +841,7 @@ fn stop_confirm(u: &Ui, _s: &State) -> El {
 pub fn stop_game(st: &mut State) {
     stop_game_now(st, true);
 }
+
 
 /// Ask the game to close. The wait for a graceful exit runs on a worker; `launch_progress::poll`
 /// takes its report, and a game that did not close is said out loud (DMM 2.4.0). A presence check
@@ -1228,7 +1231,7 @@ fn demo_crash() -> Crash {
         at_secs: now_secs() - 2 * 86_400,
         exception: Some("Access violation".to_string()),
         comment: Some(
-            "FATAL ERROR: panorama/layout/hud/scoreboard.vxml_c failed to compile".to_string(),
+            "error\n\nAbortMessage({FATAL ERROR: Unable to load layout file 'file://{resources}/layout/hud/scoreboard.xml'})\nUptime( 41.2 )\nBuild: 6170 (revision 10811520)".to_string(),
         ),
         suspect: Some(Suspect {
             slot: 3,
@@ -1238,6 +1241,23 @@ fn demo_crash() -> Crash {
             change: Some(change),
         }),
         suspect_off: false,
+        evidence: crate::screens::launch_crash::Evidence {
+            resource: Some("panorama/layout/hud/scoreboard.vxml_c".to_string()),
+            console: vec![
+                "Unable to find child 'ScoreboardStreetBrawl' in layout panorama/layout/hud/scoreboard.vxml".to_string(),
+                "Unable to load layout file 'panorama/layout/hud/scoreboard.vxml'".to_string(),
+            ],
+            hud: Some(deadlock_core::addon_checks::HudCheck {
+                slot: 3,
+                layout: "panorama/layout/hud/scoreboard.vxml_c".to_string(),
+                status: deadlock_core::addon_checks::HudStatus::Compared,
+                missing_panels: vec!["ScoreboardStreetBrawl".to_string(), "ScoreboardMvp".to_string()],
+                detail: None,
+                console: Vec::new(),
+            }),
+            build: Some("6170 (revision 10811520)".to_string()),
+            uptime_seconds: Some(41.2),
+        },
     }
 }
 
