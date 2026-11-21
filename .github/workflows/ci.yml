@@ -16,5 +16,8 @@ jobs:
         with:
           node-version: 24
           cache: pnpm
+      # apps/agent-host depends on vendor/tinyagent/tinyagents/typescript by path, and vendor/
+      # is not checked in. Fetch and build it before pnpm resolves the workspace.
+      - run: ./scripts/vendor-tinyagent.sh
       - run: pnpm install --frozen-lockfile
       - run: pnpm test
