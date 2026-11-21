@@ -30,10 +30,13 @@ thread_local! {
     static LEFTOVER: Cell<Option<bool>> = const { Cell::new(None) };
 }
 
+/// A file that may hold the crosshair, and how to read it.
+type Source = (PathBuf, fn(&str) -> Option<Crosshair>);
+
 /// Where the game keeps the crosshair, newest first: every `citadel_hero_settings.lst` (the
 /// game folder's copy and each Steam account's cloud copy) by modified time, then
 /// `machine_convars.vcfg`.
-fn sources(st: &State) -> Vec<(PathBuf, fn(&str) -> Option<Crosshair>)> {
+fn sources(st: &State) -> Vec<Source> {
     let Some(root) = st.game_root.clone() else {
         return Vec::new();
     };
@@ -42,8 +45,8 @@ fn sources(st: &State) -> Vec<(PathBuf, fn(&str) -> Option<Crosshair>)> {
         .into_iter()
         .filter_map(|path| Some((std::fs::metadata(&path).ok()?.modified().ok()?, path)))
         .collect();
-    hero.sort_by(|a, b| b.0.cmp(&a.0));
-    let mut out: Vec<(PathBuf, fn(&str) -> Option<Crosshair>)> = hero
+    hero.sort_by_key(|entry| std::cmp::Reverse(entry.0));
+    let mut out: Vec<Source> = hero
         .into_iter()
         .map(|(_, path)| (path, deadlock_core::crosshair::parse_hero_settings as fn(&str) -> Option<Crosshair>))
         .collect();

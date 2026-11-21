@@ -198,6 +198,7 @@ pub fn is_video_path(path: &str) -> bool {
 /// The video file that goes with `config`: one in the same folder (or its `cfg/`), the
 /// conventional `video.txt` first. `Ok(None)` when there is none, `Err` when several fit and
 /// the player has to choose.
+#[allow(clippy::result_unit_err)]
 pub fn suggested_video_path(config: Option<&str>, videos: &[String]) -> std::result::Result<Option<String>, ()> {
     let candidates: Vec<&String> = match config {
         None => videos.iter().collect(),
