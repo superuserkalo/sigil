@@ -180,3 +180,29 @@ fn core_scenes_stay_inside_their_node_budget() {
     }
     assert!(over.is_empty(), "{}", over.join("\n"));
 }
+
+/// The update banner arrives over every page and goes from found, to downloading, to ready
+/// within a minute of launch. It must keep one height through those, or the page jumps twice.
+#[test]
+fn update_banner_keeps_one_height_through_its_states() {
+    let mut heights = Vec::new();
+    for state in ["available", "downloading", "ready"] {
+        let mut s = crate::data::init_state();
+        scene("demo-installed")(&mut s);
+        crate::updater::stage_fixture(&mut s, state);
+        s.shell.w4.update_hidden = false;
+        let mut rt = Runtime::new(s, app::view, (1280.0, 800.0), Env::new(true, 1.0));
+        rt.check_live_only(false);
+        settle(&mut rt);
+        let height = rects(&rt)
+            .into_iter()
+            .find(|(key, _)| key == "update-banner")
+            .map(|(_, r)| r[3] as f32 / 2.0);
+        assert!(height.is_some(), "no update banner in the {state} state");
+        heights.push((state, height.unwrap_or(0.0)));
+    }
+    assert!(
+        heights.windows(2).all(|w| (w[0].1 - w[1].1).abs() < 0.5),
+        "the update banner changes height: {heights:?}"
+    );
+}

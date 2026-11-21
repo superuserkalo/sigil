@@ -1354,6 +1354,8 @@ fn confirm_started(dir: &Path, current: &str) {
 pub struct Updater {
     pub job: Job<Staged>,
     pub progress: Option<Arc<Progress>>,
+    /// The `(done, total)` the window last drew, so a poll commits only when it moved.
+    shown_progress: Option<(u64, u64)>,
     /// The version being downloaded.
     pub downloading: Option<String>,
     /// Ready for "Restart to update".
@@ -1447,8 +1449,15 @@ pub fn poll(st: &mut State, tx: &mut Tx) -> bool {
         }
         changed = true;
     }
+    // The worker wakes about five times a second while it downloads. Commit only when the
+    // progress shown moved: returning true on every poll redrew the whole window at display
+    // rate for the length of the download.
     if up.downloading.is_some() {
-        changed = true;
+        let now = up.progress();
+        if now != up.shown_progress {
+            up.shown_progress = now;
+            changed = true;
+        }
     }
     // A check that found a signed update starts the download once.
     if let Some(offer) = offered(st) {
@@ -1470,6 +1479,13 @@ fn snapshot_fixture(st: &mut State) -> bool {
     let Ok(scene) = std::env::var("SIGIL_UPDATE_SCENE") else {
         return false;
     };
+    stage_fixture(st, &scene);
+    true
+}
+
+/// The fake 0.2.0 release in one of its states, for snapshots and tests.
+#[cfg(any(test, debug_assertions))]
+pub(crate) fn stage_fixture(st: &mut State, scene: &str) {
     let entry = PlatformAsset { asset: "Sigil-0.2.0-windows-x64.zip".into(), size: 41_200_000, sha256: [0; 32], assets: true };
     let offer = Offer {
         version: "0.2.0".into(),
@@ -1480,7 +1496,7 @@ fn snapshot_fixture(st: &mut State) -> bool {
     st.settings.update = Some(Ok(crate::screens::settings::UpdateCheck { latest: Some(offer), newer: true }));
     let up = &mut st.settings.updater;
     up.auto_for = Some("0.2.0".into());
-    match scene.as_str() {
+    match scene {
         "downloading" => {
             let progress = Arc::new(Progress::default());
             progress.done.store(18_400_000, Ordering::Relaxed);
@@ -1500,7 +1516,6 @@ fn snapshot_fixture(st: &mut State) -> bool {
         }
         _ => {}
     }
-    true
 }
 
 /// Start downloading the offered update on a worker thread.

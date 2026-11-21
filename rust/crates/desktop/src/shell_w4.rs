@@ -159,9 +159,18 @@ pub fn update_banner(s: &State, u: &Ui) -> Option<El> {
     });
     // While Sigil downloads the update, the banner shows how far it is.
     let progress = if ready { None } else { crate::screens::settings::smalls::banner_body(s, u) };
+    // The line keeps the progress bar's room when there is no download, so the banner stays
+    // one height as it goes from found, to downloading, to ready and the page under it holds.
     let (title, body) = match progress {
         Some((title, bar)) => (title, bar),
-        None => (title, text(body).font(crate::ui::SMALL).color(u.muted).truncate()),
+        None => (
+            title,
+            col()
+                .w_full()
+                .gap(4.0)
+                .child(text(body).font(crate::ui::SMALL).color(u.muted).truncate())
+                .child(el().h(4.0).a11y_hidden()),
+        ),
     };
     Some(
         row()
