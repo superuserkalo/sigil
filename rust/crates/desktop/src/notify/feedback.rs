@@ -85,6 +85,7 @@ impl Feedback {
         lines.push(format!("Page: {}", self.page));
         lines.push(format!("Sigil {VERSION}"));
         lines.push(format!("System: {} {}", std::env::consts::OS, std::env::consts::ARCH));
+        lines.push(deadlock_core::diagnostics::machine_line());
         lines.push(format!("Game found: {game_found}"));
         telemetry::scrub(&lines.join("\n"))
     }

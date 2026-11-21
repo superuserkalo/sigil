@@ -287,6 +287,7 @@ fn diagnostics_parts(st: &State) -> (String, String) {
     let summary = [
         format!("Sigil {VERSION}"),
         format!("System: {} {}", std::env::consts::OS, std::env::consts::ARCH),
+        deadlock_core::diagnostics::machine_line(),
         format!("Game found: {}", st.game_detected),
         format!("Mods: {} installed, {} on", st.addons.addons.len(), st.addons.enabled_count()),
         format!("Offline mode: {}", st.prefs.offline),

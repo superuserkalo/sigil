@@ -218,7 +218,7 @@ pub fn section_el(s: &State, u: &Ui) -> El {
                 button(u, "settings-troubleshoot-copy", "Copy results", ActionKind::Ghost).on_press_tx(
                     |st: &mut State, tx: &mut Tx| {
                         if let Some(checks) = &st.settings.w4.checks {
-                            tx.copy(diagnostics::report(checks));
+                            tx.copy(format!("{}\n{}", diagnostics::machine_line(), diagnostics::report(checks)));
                             super::say(st, tr("Results copied."), false);
                         }
                     },
@@ -237,6 +237,24 @@ pub fn section_el(s: &State, u: &Ui) -> El {
             ),
         ]),
     )];
+    // The graphics stack, for a black screen or a missing 3D view: the same line the reports
+    // carry, so a player can read it without sending anything.
+    rows.push(
+        row()
+            .key("settings-troubleshoot-graphics")
+            .w_full()
+            .py(10.0)
+            .gap(16.0)
+            .border_sides([0.0, 0.0, 1.0, 0.0], u.hair)
+            .child(
+                col()
+                    .grow(1.0)
+                    .min_w(0.0)
+                    .gap(2.0)
+                    .child(text(tr("Graphics")).font(BODY_MED).color(u.ink))
+                    .child(text(diagnostics::machine_line()).font(SMALL).color(u.muted).wrap()),
+            ),
+    );
     if let Some(checks) = &w.checks {
         for check in checks {
             rows.push(check_row(s, u, check));
