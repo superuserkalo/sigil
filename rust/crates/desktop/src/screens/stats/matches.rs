@@ -176,7 +176,9 @@ fn match_row(s: &State, u: &Ui, item: &MatchSummary, open: bool) -> El {
                         .radius(crate::ui::r(5.0))
                         .border(1.0, u.amber.alpha(0.5))
                         .child(text(tr("Street Brawl")).font(SMALL).color(u.amber))
-                })),
+                }))
+                // DMM's abandoned mark: the game recorded the player as leaving this match.
+                .children(super::notes::abandon_tag(u, item)),
         )
         .child(num(
             format!("{} / {} / {}", item.kills, item.deaths, item.assists),

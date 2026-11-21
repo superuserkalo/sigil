@@ -56,6 +56,23 @@ pub(super) fn problem(u: &Ui, message: &str) -> El {
         )
 }
 
+/// A failed read with a "Try again" button that runs `retry` (item stats, item meta, a
+/// purchase timeline): a network blip should not need a page reload.
+pub(super) fn problem_retry(
+    u: &Ui,
+    message: &str,
+    key: &str,
+    retry: impl Fn(&mut State) + 'static,
+) -> El {
+    col().w_full().gap(8.0).child(problem(u, message)).child(
+        row().child(
+            u.action(tr("Try again"), crate::ui::ActionKind::Secondary)
+                .key(key.to_string())
+                .cursor(rune::Cursor::Pointer)
+                .on_press(retry),
+        ),
+    )
+}
 
 pub(super) fn tier_label(snap: &StatsSnapshot) -> Option<String> {
     snap.peers.as_ref().and_then(|peers| peers.tier_name.clone())

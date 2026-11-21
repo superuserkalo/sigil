@@ -62,6 +62,20 @@ pub struct More {
     pub members: BTreeSet<u64>,
     /// Street Brawl games in the match list: shown (tagged), hidden or alone.
     pub brawl: Brawl,
+    /// A ranked season picked as the window (DMM #1391): its leaderboard id, start and end.
+    /// It replaces the days choice; picking days clears it.
+    pub season: Option<SeasonWindow>,
+    /// The ranked season list, read once on a press (`/v1/assets/ranked-seasons`).
+    pub seasons_job: Job<Vec<deadlock_core::stats::leaderboard::RankedSeason>>,
+    pub seasons_note: Option<String>,
+}
+
+/// A season window: matches from `start` up to, not including, `end` (Unix seconds).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SeasonWindow {
+    pub id: u32,
+    pub start: u64,
+    pub end: u64,
 }
 
 /// Street Brawl in the match list (owner, 2026-11-21: listed with a tag, as Grimoire does).
@@ -87,6 +101,9 @@ impl Default for More {
             party_job: Job::default(),
             members: BTreeSet::new(),
             brawl: Brawl::Show,
+            season: None,
+            seasons_job: Job::default(),
+            seasons_note: None,
         }
     }
 }
@@ -96,7 +113,12 @@ impl More {
     pub fn filter(&self, now: u64) -> StatsFilter {
         StatsFilter {
             ranked: self.ranked,
-            since: (self.days > 0).then(|| now.saturating_sub(self.days * 86_400)),
+            since: match self.season {
+                Some(season) => Some(season.start),
+                None => (self.days > 0).then(|| now.saturating_sub(self.days * 86_400)),
+            },
+            // A season still running has no end yet: the window stays open to now.
+            until: self.season.map(|season| season.end).filter(|end| *end > 0 && *end <= now),
         }
     }
 }
@@ -120,8 +142,11 @@ fn keeps_mode_at(more: &More, match_mode: i32, start_time: i64, now: i64) -> boo
         Some(true) => match_mode == 4,
         Some(false) => match_mode == 1,
     };
-    let since_ok = more.days == 0 || start_time >= now - (more.days as i64) * 86_400;
-    mode_ok && since_ok
+    let window_ok = match more.season {
+        Some(season) => start_time >= season.start as i64 && (season.end == 0 || start_time < season.end as i64),
+        None => more.days == 0 || start_time >= now - (more.days as i64) * 86_400,
+    };
+    mode_ok && window_ok
 }
 
 fn now() -> u64 {
@@ -253,7 +278,65 @@ pub fn poll(st: &mut State) -> bool {
         };
         changed = true;
     }
+    if let Some(result) = st.stats.more.seasons_job.try_take() {
+        match result {
+            Ok(seasons) if seasons.is_empty() => {
+                st.stats.more.seasons_note = Some(tr("The API lists no ranked season yet.").to_string())
+            }
+            Ok(seasons) => {
+                st.stats.more.seasons_note = None;
+                st.stats.seasons = seasons;
+            }
+            Err(error) => st.stats.more.seasons_note = Some(error),
+        }
+        changed = true;
+    }
     changed
+}
+
+/// Read the ranked season list for the season choice. Leaderboard reads fill the same list.
+pub fn start_seasons(st: &mut State) {
+    if st.stats.more.seasons_job.is_running() {
+        return;
+    }
+    if !st.prefs.allow_stats {
+        st.stats.more.seasons_note = Some(tr("Player stats are turned off in Settings, Privacy.").to_string());
+        return;
+    }
+    st.stats.more.seasons_note = None;
+    let wake = st.wake.clone();
+    st.stats.more.seasons_job.start(wake, move || {
+        crate::data::stats_client().fetch_seasons().map_err(|error| error.to_string())
+    });
+}
+
+/// The newest season picked, for snapshots.
+pub fn stage_season(st: &mut State) {
+    let first = season_choices(&st.stats.seasons, i64::MAX).into_iter().next();
+    st.stats.more.season = first;
+}
+
+/// Pick a season as the window, or `None` to go back to the days choice.
+fn pick_season(st: &mut State, season: Option<SeasonWindow>) {
+    st.stats.more.season = season;
+    if season.is_some() {
+        st.stats.more.days = 0;
+    }
+    refilter(st);
+}
+
+/// Seasons the choice lists: the ones that have started, newest first, at most four.
+fn season_choices(seasons: &[deadlock_core::stats::leaderboard::RankedSeason], now: i64) -> Vec<SeasonWindow> {
+    seasons
+        .iter()
+        .filter(|season| season.has_started(now))
+        .take(4)
+        .map(|season| SeasonWindow {
+            id: season.leaderboard_id,
+            start: season.starts_at.max(0) as u64,
+            end: season.ends_at.max(0) as u64,
+        })
+        .collect()
 }
 
 /// A new filter: the server reads are stale, so they go back to their Load button.
@@ -303,8 +386,9 @@ pub(super) fn filter_bar(s: &State, u: &Ui) -> El {
     let mut since = row().gap(2.0).padding(2.0).radius(crate::ui::r(8.0)).border(1.0, u.hair);
     for (label, days) in SINCE {
         since = since.child(
-            pill(u, format!("stats-filter-days-{days}"), label, m.days == days).on_press(move |st: &mut State| {
+            pill(u, format!("stats-filter-days-{days}"), label, m.season.is_none() && m.days == days).on_press(move |st: &mut State| {
                 st.stats.more.days = days;
+                st.stats.more.season = None;
                 refilter(st);
             }),
         );
@@ -316,17 +400,45 @@ pub(super) fn filter_bar(s: &State, u: &Ui) -> El {
                 .on_press(move |st: &mut State| st.stats.more.brawl = value),
         );
     }
-    row()
+    let mut season = row().gap(2.0).padding(2.0).radius(crate::ui::r(8.0)).border(1.0, u.hair);
+    let choices = season_choices(&s.stats.seasons, now() as i64);
+    if choices.is_empty() {
+        let label = if m.seasons_job.is_running() { "Loading seasons" } else { "Ranked seasons" };
+        season = season.child(
+            pill(u, "stats-filter-season-load".to_string(), label, false).on_press(start_seasons),
+        );
+    } else {
+        for choice in choices {
+            let name = s
+                .stats
+                .seasons
+                .iter()
+                .find(|known| known.leaderboard_id == choice.id)
+                .map(|known| known.name.clone())
+                .unwrap_or_default();
+            let on = m.season.map(|picked| picked.id) == Some(choice.id);
+            season = season.child(
+                pill(u, format!("stats-filter-season-{}", choice.id), &name, on).on_press(move |st: &mut State| {
+                    pick_season(st, if on { None } else { Some(choice) })
+                }),
+            );
+        }
+    }
+    let mut bar = row()
         .key("stats-filter")
         .w_full()
         .gap(12.0)
         .center_y()
+        .flex_wrap()
         .child(text(tr("Show")).font(SMALL).color(u.faint))
         .child(modes)
         .child(since)
-        .child(brawl)
-        .child(spacer())
-        .child(text(tr("Filters every section below")).font(SMALL).color(u.faint))
+        .child(season)
+        .child(brawl);
+    if let Some(note) = &m.seasons_note {
+        bar = bar.child(text(note.clone()).font(SMALL).color(u.rose));
+    }
+    bar.child(spacer()).child(text(tr("Filters every section below")).font(SMALL).color(u.faint))
 }
 
 fn minutes(seconds: f64) -> String {
@@ -362,7 +474,7 @@ pub(super) fn items_section(s: &State, u: &Ui) -> El {
             ),
         ),
         Fetched::Loading => section.child(text(tr("Loading items")).font(BODY).color(u.muted)),
-        Fetched::Failed(error) => section.child(problem(u, error)),
+        Fetched::Failed(error) => section.child(problem_retry(u, error, "stats-items-retry", start_items)),
         Fetched::Ready(load) if load.rows.is_empty() => {
             section.child(text(tr("No item has five matches in this filter yet.")).font(BODY).color(u.muted))
         }
@@ -444,7 +556,9 @@ pub(super) fn timeline(s: &State, u: &Ui, match_id: u64) -> El {
             col().w_full().gap(6.0).child(text(tr("Items in the order you bought them")).font(SMALL).color(u.faint)).child(line)
         }
         Fetched::Loading => text(tr("Loading the item timeline")).font(SMALL).color(u.muted),
-        Fetched::Failed(error) => problem(u, error),
+        Fetched::Failed(error) => problem_retry(u, error, &format!("stats-timeline-retry-{match_id}"), move |st: &mut State| {
+            start_timeline(st, match_id)
+        }),
         _ => u
             .action(tr("Item timeline"), ActionKind::Secondary)
             .key(format!("stats-timeline-{match_id}"))

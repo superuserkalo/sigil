@@ -44,6 +44,12 @@ pub struct BoardPlayer {
     pub mvp_rank: Option<u32>,
     /// Items still held when the match ended, in shop order.
     pub build: Vec<BuildItem>,
+    /// Seconds into the match when the game recorded this player as abandoning
+    /// (`abandon_match_time_s`). `None` for a player who stayed.
+    pub abandoned_seconds: Option<u32>,
+    /// How the match was scored for this player (`player_match_outcome`), when the
+    /// metadata says.
+    pub outcome: Option<super::MatchOutcome>,
 }
 
 impl BoardPlayer {
@@ -95,6 +101,26 @@ pub struct MatchScoreboard {
 }
 
 impl MatchScoreboard {
+    /// The player whose page opened the board, when they are on it.
+    pub fn me(&self) -> Option<&BoardPlayer> {
+        self.teams.iter().flatten().find(|player| player.account_id == self.account_id && self.account_id > 0)
+    }
+
+    /// Teammates of the page's player who the game recorded as abandoning, earliest first.
+    /// Empty when the player is not on the board.
+    pub fn teammates_who_left(&self) -> Vec<&BoardPlayer> {
+        let Some(me) = self.me() else {
+            return Vec::new();
+        };
+        let mut left: Vec<&BoardPlayer> = self
+            .team(me.team.clamp(0, 1) as usize)
+            .iter()
+            .filter(|player| player.account_id != me.account_id && player.abandoned_seconds.is_some())
+            .collect();
+        left.sort_by_key(|player| player.abandoned_seconds);
+        left
+    }
+
     /// The two teams, team 0 first.
     pub fn team(&self, index: usize) -> &[BoardPlayer] {
         self.teams.get(index).map(Vec::as_slice).unwrap_or(&[])
@@ -278,6 +304,8 @@ fn build_board(
                 .filter(|badge| *badge > 0),
             mvp_rank: player.mvp_rank.filter(|rank| *rank > 0),
             build: final_build(&player.items, catalog),
+            abandoned_seconds: player.abandon_match_time_s.filter(|seconds| *seconds > 0),
+            outcome: player.player_match_outcome.map(super::MatchOutcome::from_api),
         });
     }
 
@@ -414,6 +442,10 @@ struct RawBoardPlayer {
     stats: Vec<RawSample>,
     #[serde(default)]
     player_rank_data: Option<RawRankData>,
+    #[serde(default)]
+    abandon_match_time_s: Option<u32>,
+    #[serde(default)]
+    player_match_outcome: Option<i32>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -482,6 +514,41 @@ mod tests {
         {"id": 11, "name": "Rapid Recharge", "item_slot_type": "spirit", "item_tier": 2},
         {"id": 12, "name": "Bullet Armor", "item_slot_type": "weapon", "item_tier": 3}
     ]"#;
+
+    #[test]
+    fn leavers_are_teammates_with_an_abandon_time() {
+        let metadata = r#"{"match_info": {"match_id": 7, "winning_team": 0, "players": [
+            {"account_id": 1, "team": 0, "hero_id": 1, "player_match_outcome": 5},
+            {"account_id": 2, "team": 0, "hero_id": 2, "abandon_match_time_s": 610},
+            {"account_id": 3, "team": 0, "hero_id": 3, "abandon_match_time_s": 240},
+            {"account_id": 4, "team": 0, "hero_id": 4, "abandon_match_time_s": 0},
+            {"account_id": 5, "team": 1, "hero_id": 5, "abandon_match_time_s": 100}
+        ]}}"#;
+        let board = assemble_board(1, metadata, &ItemCatalog::default(), &HashMap::new(), &HashMap::new()).unwrap();
+        assert_eq!(board.me().and_then(|me| me.outcome), Some(crate::stats::MatchOutcome::NotScored));
+        let left: Vec<u64> = board.teammates_who_left().iter().map(|player| player.account_id).collect();
+        assert_eq!(left, vec![3, 2], "own team only, earliest first, a zero time is no abandon");
+        let other = assemble_board(9, metadata, &ItemCatalog::default(), &HashMap::new(), &HashMap::new()).unwrap();
+        assert!(other.teammates_who_left().is_empty(), "no player, no teammates");
+    }
+
+    #[test]
+    fn history_rows_without_an_outcome_fall_back_to_the_winning_team() {
+        let row = |extra: &str| {
+            let json = format!(
+                r#"{{"match_id": 1, "hero_id": 1, "start_time": 0, "game_mode": 1, "match_mode": 4,
+                    "player_team": 1, "player_kills": 0, "player_deaths": 0, "player_assists": 0,
+                    "net_worth": 0, "last_hits": 0, "denies": 0{extra}}}"#
+            );
+            serde_json::from_str::<crate::stats::RawMatch>(&json).unwrap().into_summary()
+        };
+        assert_eq!(row(r#", "player_match_outcome": 5, "match_result": 1"#).win, None, "not scored is no loss");
+        assert_eq!(row(r#", "match_result": 1"#).win, Some(true));
+        assert_eq!(row(r#", "match_result": 0"#).win, Some(false));
+        assert_eq!(row("").outcome, crate::stats::MatchOutcome::Unknown);
+        assert_eq!(row(r#", "abandoned_time_s": 0"#).abandoned_seconds, None);
+        assert_eq!(row(r#", "abandoned_time_s": 420"#).abandoned_seconds, Some(420));
+    }
 
     #[test]
     fn catalog_reads_names_and_slots() {

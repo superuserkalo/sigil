@@ -828,7 +828,9 @@ fn stop_confirm(u: &Ui, _s: &State) -> El {
                     u.icon_action(&icons::SQUARE_STOP, tr("Stop game"), ActionKind::Danger)
                         .key("launch-stop-run")
                         .cursor(rune::Cursor::Pointer)
-                        .on_press(|st: &mut State| stop_game_now(st, true)),
+                        .on_press(|st: &mut State| {
+                            stop_game_now(st, true);
+                        }),
                 ),
         )
 }
