@@ -19,6 +19,11 @@
 @group(2) @binding(0) var<uniform> draw: Draw;
 @group(2) @binding(1) var<storage, read> palette: array<mat4x4<f32>>;
 
+// The half resolution fog (Grimoire's source2Atmosphere.ts): in-scattered light and
+// transmittance per block, and the opaque depth it was marched to.
+@group(3) @binding(0) var t_fog_half: texture_2d<f32>;
+@group(3) @binding(1) var t_fog_depth: texture_depth_2d;
+
 const PI: f32 = 3.14159265;
 const STEP_SHARPNESS: f32 = 0.9;
 const WRAP: f32 = 0.8;
@@ -419,13 +424,95 @@ fn fog_density(p: vec3<f32>) -> vec4<f32> {
     return vec4<f32>(best, indirect, tint_from, 0.0);
 }
 
-fn volumetric_fog(c: vec3<f32>, world: vec3<f32>) -> vec3<f32> {
-    let eye = frame.camera_pos.xyz;
+// A fog light's precomputed shadow at `world` (Grimoire's source2FogShadow): the point in the
+// light's own frustum (a barn's tile, or the omni's cube face), compared against the atlas's
+// stored 1 - ndc.z with a 2x2 manual gather clamped to the tile. 1 lit.
+fn fog_shadow(i: u32, world: vec3<f32>) -> f32 {
+    let ex = hideout.lights[i];
+    let tiles = ex.c.x;
+    if (tiles < 0.5 || hideout.fog_shadow_atlas.z < 0.5) {
+        return 1.0;
+    }
+    let l = frame.lights[i];
+    // Source units (inches), the light's local axes: x forward, y left, z up.
+    let rel = (world - l.pos_dir.xyz) / 0.0254;
+    let local = vec3<f32>(dot(rel, ex.x.xyz), dot(rel, ex.y.xyz), dot(rel, ex.z.xyz));
+    let range = max(l.color.w / 0.0254, 1e-3);
+    var ndc: vec3<f32>;
+    var face = 0u;
+    if (tiles < 1.5) {
+        let size = select(ex.d.xy, vec2<f32>(1e-4), abs(ex.d.xy) < vec2<f32>(1e-4));
+        let near_plane = select(0.0, 1.0 / ex.d.z, ex.d.z > 0.0);
+        if (near_plane > 0.0) {
+            let center = ex.c.zw * near_plane / range;
+            let relative = local + vec3<f32>(near_plane, center);
+            let far_plane = near_plane + range;
+            let rx = select(-1e-6, 1e-6, relative.x >= 0.0) + relative.x;
+            ndc = vec3<f32>((relative.yz * near_plane / rx - center) / size, far_plane / range - far_plane * near_plane / (range * rx));
+        } else {
+            ndc = vec3<f32>((local.yz - ex.c.zw * local.x / range) / size, local.x / range);
+        }
+    } else {
+        // Omni faces: forward, -up, up, left, -left, -forward (VRF's order).
+        let a = abs(local);
+        var view: vec3<f32>;
+        if (a.x >= a.y && a.x >= a.z) {
+            if (local.x > 0.0) {
+                face = 0u;
+                view = local.yzx;
+            } else {
+                face = 5u;
+                view = vec3<f32>(-local.y, local.z, -local.x);
+            }
+        } else if (a.y >= a.z) {
+            if (local.y > 0.0) {
+                face = 3u;
+                view = vec3<f32>(-local.x, local.z, local.y);
+            } else {
+                face = 4u;
+                view = vec3<f32>(local.x, local.z, -local.y);
+            }
+        } else {
+            if (local.z > 0.0) {
+                face = 2u;
+                view = vec3<f32>(local.y, -local.x, local.z);
+            } else {
+                face = 1u;
+                view = vec3<f32>(local.y, local.x, -local.z);
+            }
+        }
+        let far_plane = 1.0 + range;
+        let vz = max(view.z, 1e-6);
+        ndc = vec3<f32>(view.xy / vz, far_plane / (far_plane - 1.0) - far_plane / ((far_plane - 1.0) * vz));
+    }
+    if (ndc.z <= 0.0 || ndc.z >= 1.0) {
+        return 1.0;
+    }
+    let rect = hideout.fog_shadow_rects[min(u32(ex.c.y) + face, 47u)];
+    let atlas = hideout.fog_shadow_atlas.xy;
+    let texel = (rect.zw + clamp(ndc.xy * -0.5 + 0.5, vec2<f32>(0.0), vec2<f32>(1.0)) * rect.xy) * atlas - 0.5;
+    let base = vec2<i32>(floor(texel));
+    let lo = vec2<i32>(ceil(rect.zw * atlas));
+    let hi = max(vec2<i32>(floor((rect.zw + rect.xy) * atlas)) - vec2<i32>(1), lo);
+    let reference = u32(clamp(1.0 - ndc.z, 0.0, 1.0) * 65535.0);
+    var lit = 0.0;
+    for (var k = 0; k < 4; k = k + 1) {
+        let at = clamp(base + vec2<i32>(k & 1, k >> 1u), lo, hi);
+        if (textureLoad(t_fog_shadows, at, 0).r < reference) {
+            lit = lit + 1.0;
+        }
+    }
+    return lit * 0.25;
+}
+
+// The fog between `eye` and `world`: in-scattered light (rgb) and transmittance (a), marched
+// at the midpoints of the uniform's step count (Grimoire's fogIntegrate).
+fn fog_integrate(eye: vec3<f32>, world: vec3<f32>) -> vec4<f32> {
     let ray = world - eye;
     let full = length(ray);
     let len = min(full, max(hideout.fog.w, 0.1));
     if (len <= 1e-3) {
-        return c;
+        return vec4<f32>(0.0, 0.0, 0.0, 1.0);
     }
     let dir = ray / full;
     let steps = max(hideout.fog_fade.w, 4.0);
@@ -454,7 +541,9 @@ fn volumetric_fog(c: vec3<f32>, world: vec3<f32>) -> vec3<f32> {
                 continue;
             }
             let l = light_at(i, p);
-            rgb = rgb + frame.lights[i].color.rgb * l.w / PI * strength;
+            if (l.w > 0.0) {
+                rgb = rgb + frame.lights[i].color.rgb * l.w / PI * strength * fog_shadow(i, p);
+            }
         }
         if (d.z >= 0.0) {
             rgb = rgb * hideout.fog_volumes[u32(d.z)].tint.rgb;
@@ -464,11 +553,59 @@ fn volumetric_fog(c: vec3<f32>, world: vec3<f32>) -> vec3<f32> {
         scatter = scatter + rgb * ext * exp(-optical);
         optical = optical + ext;
     }
-    return c * exp(-optical) + scatter;
+    return vec4<f32>(scatter, exp(-optical));
 }
 
-fn apply_fog(c: vec3<f32>, world: vec3<f32>) -> vec3<f32> {
+fn volumetric_fog(c: vec3<f32>, world: vec3<f32>) -> vec3<f32> {
+    let f = fog_integrate(frame.camera_pos.xyz, world);
+    return c * f.a + f.rgb;
+}
+
+// View distance along the camera axis from a depth buffer value.
+fn view_depth(d: f32) -> f32 {
+    let near = frame.camera_pos.w;
+    let far = frame.camera_back.w;
+    return (near * far) / (far - (far - near) * d);
+}
+
+// Grimoire's FOG_COMPOSITE: the four nearest half resolution blocks, bilinear, each dropped
+// when its depth is more than 5 % off this surface's; the closest block when none is near.
+fn fog_upsampled(c: vec3<f32>, world: vec3<f32>, frag: vec2<f32>) -> vec3<f32> {
+    let half = vec2<i32>(textureDimensions(t_fog_half));
+    let p = frag / frame.viewport.xy * vec2<f32>(half) - 0.5;
+    let base = vec2<i32>(floor(p));
+    let t = p - floor(p);
+    let surface = max(dot(frame.camera_pos.xyz - world, frame.camera_back.xyz), 1e-4);
+    var sum = vec4<f32>(0.0);
+    var weights = 0.0;
+    var closest = vec4<f32>(0.0, 0.0, 0.0, 1.0);
+    var best = 1e30;
+    for (var k = 0; k < 4; k = k + 1) {
+        let o = vec2<i32>(k & 1, k >> 1u);
+        let at = clamp(base + o, vec2<i32>(0), half - vec2<i32>(1));
+        let bd = textureLoad(t_fog_depth, at, 0);
+        let fog = textureLoad(t_fog_half, at, 0);
+        let diff = select(abs(view_depth(bd) - surface) / surface, 1e30, bd >= 1.0);
+        let wx = select(1.0 - t.x, t.x, o.x == 1);
+        let wy = select(1.0 - t.y, t.y, o.y == 1);
+        let w = wx * wy * max(0.0, 1.0 - diff * 20.0);
+        sum = sum + fog * w;
+        weights = weights + w;
+        if (diff < best) {
+            best = diff;
+            closest = fog;
+        }
+    }
+    let fog = select(closest, sum / max(weights, 1e-8), weights > 1e-4);
+    return c * fog.a + fog.rgb;
+}
+
+// `opaque`: the surface wrote the depth the half resolution fog was marched to.
+fn apply_fog(c: vec3<f32>, world: vec3<f32>, frag: vec2<f32>, opaque: bool) -> vec3<f32> {
     if (hideout.fog_fade.z > 0.5) {
+        if (opaque && frame.fog_half.x > 0.5) {
+            return fog_upsampled(c, world, frag);
+        }
         return volumetric_fog(c, world);
     }
     if (frame.fog_color.w < 0.5) {
@@ -480,6 +617,27 @@ fn apply_fog(c: vec3<f32>, world: vec3<f32>) -> vec3<f32> {
         f = max(f, 1.0 - exp(-frame.fog_params.z * dist));
     }
     return mix(c, frame.fog_color.rgb, f * frame.fog_params.w);
+}
+
+// The half resolution fog pass: a full-screen triangle over the fog target, one march per
+// block to the opaque depth there. The sky (nothing drawn) stays clear.
+@vertex
+fn vs_fog(@builtin(vertex_index) i: u32) -> @builtin(position) vec4<f32> {
+    let uv = vec2<f32>(f32((i << 1u) & 2u), f32(i & 2u));
+    return vec4<f32>(uv * 2.0 - 1.0, 0.0, 1.0);
+}
+
+@fragment
+fn fs_fog(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
+    let size = vec2<i32>(textureDimensions(t_fog_depth));
+    let px = clamp(vec2<i32>(pos.xy), vec2<i32>(0), size - vec2<i32>(1));
+    let d = textureLoad(t_fog_depth, px, 0);
+    if (d >= 1.0) {
+        return vec4<f32>(0.0, 0.0, 0.0, 1.0);
+    }
+    let uv = (vec2<f32>(px) + 0.5) / vec2<f32>(size);
+    let h = frame.inv_view_proj * vec4<f32>(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0, d, 1.0);
+    return fog_integrate(frame.camera_pos.xyz, h.xyz / h.w);
 }
 
 struct Surface {
@@ -680,7 +838,7 @@ fn fs_main(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f
     } else {
         color = shade_pbr(s, in.world);
     }
-    color = apply_fog(color, in.world);
+    color = apply_fog(color, in.world, in.clip.xy, mode < 1.5);
     var alpha = 1.0;
     if (mode > 1.5) {
         alpha = s.base.a * (1.0 - mat.extra.z * 0.5);
@@ -709,6 +867,6 @@ fn fs_outline(in: VsOut) -> @location(0) vec4<f32> {
     } else {
         c = s.base.rgb * 0.2;
     }
-    return vec4<f32>(apply_fog(c, in.world), 1.0);
+    return vec4<f32>(apply_fog(c, in.world, in.clip.xy, true), 1.0);
 }
 

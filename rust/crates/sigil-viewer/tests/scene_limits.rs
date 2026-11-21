@@ -92,3 +92,28 @@ fn a_frame_larger_than_the_device_takes_is_clamped() {
     assert_eq!(frame, (edge * 8 * 4) as usize);
     assert_eq!(viewer.gpu_error(), None);
 }
+
+/// Grimoire's distant-instance culling: a prop far behind the stand-in room's back wall goes,
+/// one as far out through its open side stays, and one near the spawn always stays.
+#[test]
+fn distant_props_hidden_by_the_room_are_left_out() {
+    let Ok(mut viewer) = Viewer::new() else { return };
+    let dir = temp("clearance");
+    let scene = fixture::write_hideout(&dir, fixture::Variant::Modded).expect("fixture");
+    let mut json: serde_json::Value = serde_json::from_slice(&std::fs::read(&scene).unwrap()).unwrap();
+    let one = json["models"][0].clone();
+    let placed = |t: [f32; 3]| {
+        let mut m = one.clone();
+        m["transform"] = serde_json::json!(sigil_viewer::math::Mat4::from_trs(t, [0.0, 0.0, 0.0, 1.0], [0.25; 3]).to_cols_array());
+        m
+    };
+    // Behind the back wall (-Z), out through the open +X side, and near the spawn.
+    let models = vec![one.clone(), placed([0.0, 0.0, -120.0]), placed([120.0, 0.5, -0.6]), placed([20.0, 0.0, 0.0])];
+    json["models"] = serde_json::Value::Array(models);
+    std::fs::write(&scene, serde_json::to_vec(&json).unwrap()).unwrap();
+    let report = viewer.set_scene(load_scene(&scene).expect("the room loads"));
+    assert_eq!(report.culled, 1, "{report:?}");
+    assert_eq!(report.placements, 3);
+    assert_eq!(viewer.gpu_error(), None);
+    let _ = std::fs::remove_dir_all(&dir);
+}

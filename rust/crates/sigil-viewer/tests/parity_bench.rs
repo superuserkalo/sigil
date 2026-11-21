@@ -79,6 +79,38 @@ fn frame_cost_with_cloth_particles_shadows() {
     let side = Sidecar::read(hero.sidecar.as_ref().unwrap());
     v.set_hero(model::load_path(&hero.glb).unwrap(), &side);
     v.set_hero_particles(sigil_viewer::particles::Bundle::read(&dir.join("hero/particles")).ok());
-    time(&mut v, "stand-in Hideout: lightmap, probes, fog volume, cookies, map post, particles");
+    time(&mut v, "stand-in Hideout: lightmap, probes, fog volume and shadows, cookies, map post, particles");
+    v.look.half_res_fog = false;
+    time(&mut v, "the same with the fog marched per surface fragment");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The stand-in Hideout's fog as PNGs for a look: half resolution (the default), per fragment,
+/// and without the fog lights' shadow atlas. `SIGIL_SHOTS=<dir>`.
+#[test]
+#[ignore]
+fn hideout_fog_shots() {
+    let Some(out) = std::env::var_os("SIGIL_SHOTS").map(std::path::PathBuf::from) else { return };
+    std::fs::create_dir_all(&out).unwrap();
+    let dir = std::env::temp_dir().join(format!("sigil-shots-hideout-{}", std::process::id()));
+    let scene = fixture::write_hideout(&dir, fixture::Variant::Modded).unwrap();
+    sigil_viewer::fixture_room::upgrade_hideout(&scene).unwrap();
+    let shoot = |name: &str, half: bool, shadows: bool| {
+        let Some(mut v) = viewer() else { return };
+        let mut assets = sigil_viewer::load_scene(&scene).unwrap();
+        if !shadows {
+            assets.hideout.fog_shadows = None;
+        }
+        let hero = assets.desc.hero.clone().unwrap();
+        v.set_scene(assets);
+        v.set_hero(model::load_path(&hero.glb).unwrap(), &Sidecar::read(hero.sidecar.as_ref().unwrap()));
+        v.look.half_res_fog = half;
+        v.look.particles = false;
+        v.playback.playing = false;
+        std::fs::write(out.join(name), v.capture_png(1280, 800).unwrap()).unwrap();
+    };
+    shoot("hideout-fog-half.png", true, true);
+    shoot("hideout-fog-full.png", false, true);
+    shoot("hideout-fog-unshadowed.png", true, false);
     let _ = std::fs::remove_dir_all(&dir);
 }

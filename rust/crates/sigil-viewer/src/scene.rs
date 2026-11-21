@@ -200,6 +200,17 @@ pub struct SceneLight {
     pub cookie: Option<PathBuf>,
     /// The light's own axes in glTF space: Source forward, left, up.
     pub basis: Option<[Vec3; 3]>,
+    /// Its tiles in the fog shadow atlas (`fog.shadows`), for the fog march.
+    pub fog_shadow: Option<FogShadow>,
+}
+
+/// A fog light's precomputed shadow: one barn tile or six omni faces in the atlas, `[w, h, x,
+/// y]` in atlas uv, and its frustum (`size_params`, `shear`).
+#[derive(Clone, Debug, PartialEq)]
+pub struct FogShadow {
+    pub tiles: Vec<[f32; 4]>,
+    pub size: Vec3,
+    pub shear: [f32; 2],
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -215,6 +226,8 @@ pub struct Fog {
     /// Density volumes. Without any, the controller alone draws no volumetric fog (Grimoire's
     /// march); the renderer then keeps plain distance fog.
     pub volumes: Vec<FogVolume>,
+    /// The fog lights' precomputed shadow atlas (VTV, R16), when exported.
+    pub shadows: Option<PathBuf>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -438,6 +451,14 @@ impl SceneDesc {
                 shadow_channel: l.get("shadowChannel").and_then(|c| c.as_u64()).map(|c| c as u32),
                 cookie: path(base, l.get("cookie")),
                 basis,
+                fog_shadow: l.get("fogShadow").filter(|f| f.is_object()).and_then(|f| {
+                    let tiles: Vec<[f32; 4]> = f.get("tiles")?.as_array()?.iter().filter_map(|t| {
+                        let t = t.as_array().filter(|t| t.len() == 4)?;
+                        Some([num(&t[0])?, num(&t[1])?, num(&t[2])?, num(&t[3])?])
+                    }).collect();
+                    let shear = f.get("shear").and_then(|v| v.as_array()).filter(|v| v.len() == 2).and_then(|v| Some([num(&v[0])?, num(&v[1])?])).unwrap_or([0.0; 2]);
+                    (tiles.len() == 1 || tiles.len() == 6).then(|| FogShadow { tiles, size: vec3(f.get("size")).unwrap_or([0.0; 3]), shear })
+                }),
             });
         }
         if let Some(f) = v.get("fog").filter(|f| f.is_object()) {
@@ -470,6 +491,7 @@ impl SceneDesc {
                 indirect_strength: f.get("indirectStrength").and_then(num).unwrap_or(1.0),
                 irradiance,
                 volumes,
+                shadows: path(base, f.get("shadows")),
             });
         }
         if let Some(p) = v.get("post").filter(|p| p.is_object()) {

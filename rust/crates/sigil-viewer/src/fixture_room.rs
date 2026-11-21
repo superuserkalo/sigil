@@ -1,8 +1,8 @@
 //! The stand-in Hideout's baked data, made in code so the headless scenes exercise every
 //! Hideout path without Deadlock: a room glb with lightmap UVs (`TEXCOORD_3`), a lightmap
 //! baked here from the room's lamp (DC irradiance, the SH2 direction and a stationary light's
-//! shadow mask), a light probe volume, a fog volume, a window cookie, a colour grade and the
-//! map's tone curve and bloom. `upgrade_hideout` rewrites a scene `fixture::write_hideout`
+//! shadow mask), a light probe volume, a fog volume with its lights' precomputed shadow atlas,
+//! a window cookie, a colour grade and the map's tone curve and bloom. `upgrade_hideout` rewrites a scene `fixture::write_hideout`
 //! made. Nothing here is a Valve asset.
 
 use std::path::Path;
@@ -280,6 +280,107 @@ fn cookie() -> Vec<u8> {
 }
 
 /// The map from a world point to a box's [0,1] coordinates, column major.
+/// The nearest box a ray from `o` along `d` hits, as the ray parameter.
+fn ray_hit(o: Vec3, d: Vec3) -> Option<f32> {
+    let mut best: Option<f32> = None;
+    for (min, max, _) in BOXES {
+        let (mut t0, mut t1) = (0.0f32, f32::MAX);
+        for a in 0..3 {
+            if d[a].abs() < 1e-9 {
+                if o[a] < min[a] || o[a] > max[a] {
+                    t1 = -1.0;
+                }
+                continue;
+            }
+            let (u, v) = ((min[a] - o[a]) / d[a], (max[a] - o[a]) / d[a]);
+            t0 = t0.max(u.min(v));
+            t1 = t1.min(u.max(v));
+        }
+        if t1 >= t0 && t1 > 0.0 && best.is_none_or(|b| t0 < b) {
+            best = Some(t0);
+        }
+    }
+    best
+}
+
+/// The barn tile edge and the omni face edge in the fog shadow atlas.
+const BARN_TILE: u32 = 128;
+const OMNI_TILE: u32 = 64;
+const ATLAS_W: u32 = BARN_TILE + 3 * OMNI_TILE;
+/// The spot's barn frustum: one inch near plane, its outer cone (`size_params`).
+const BARN_NEAR: f32 = 1.0;
+
+fn spot_basis() -> [Vec3; 3] {
+    let spot = normalize(SPOT_DIR);
+    let up = normalize(sub([0.0, 1.0, 0.0], scale(spot, spot[1])));
+    [spot, crate::math::cross(up, spot), up]
+}
+
+/// Source's axes in glTF, for the lamp: forward +Z, left +X, up +Y.
+const LAMP_BASIS: [Vec3; 3] = [[0.0, 0.0, 1.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]];
+
+/// The fog lights' precomputed shadow atlas the game bakes (`precomputed_shadowmap_atlas`):
+/// the spot's barn tile and the lamp's six omni faces, each texel `1 - ndc.z` of the nearest
+/// surface in the light's own frustum, ray traced here against the room's boxes. Returns the
+/// VTV (R16) and each light's tiles as `[w, h, x, y]` in atlas uv.
+pub fn fog_shadows() -> (Vec<u8>, Vec<[f32; 4]>, Vec<[f32; 4]>) {
+    let (w, h) = (ATLAS_W, BARN_TILE);
+    let mut texels = vec![0u16; (w * h) as usize];
+    let inch = 0.0254f32;
+    let size = (50f32).to_radians().tan() * BARN_NEAR;
+    let range = 9.0 / inch;
+    let basis = spot_basis();
+    let eye = sub(SPOT, scale(basis[0], BARN_NEAR * inch));
+    for y in 0..BARN_TILE {
+        for x in 0..BARN_TILE {
+            let ndc = [1.0 - 2.0 * (x as f32 + 0.5) / BARN_TILE as f32, 1.0 - 2.0 * (y as f32 + 0.5) / BARN_TILE as f32];
+            let local = [1.0, ndc[0] * size / BARN_NEAR, ndc[1] * size / BARN_NEAR];
+            let d = add(add(scale(basis[0], local[0]), scale(basis[1], local[1])), scale(basis[2], local[2]));
+            let Some(s) = ray_hit(eye, d) else { continue };
+            let rx = s / inch;
+            let far = BARN_NEAR + range;
+            let z = far / range - far * BARN_NEAR / (range * rx);
+            if z > 0.0 && z < 1.0 {
+                texels[(y * w + x) as usize] = ((1.0 - z) * 65535.0) as u16;
+            }
+        }
+    }
+    let lamp_range = 4.0 / inch;
+    let mut omni = Vec::new();
+    for face in 0..6u32 {
+        let (ox, oy) = (BARN_TILE + (face % 3) * OMNI_TILE, (face / 3) * OMNI_TILE);
+        omni.push([OMNI_TILE as f32 / w as f32, OMNI_TILE as f32 / h as f32, ox as f32 / w as f32, oy as f32 / h as f32]);
+        for y in 0..OMNI_TILE {
+            for x in 0..OMNI_TILE {
+                let v = [1.0 - 2.0 * (x as f32 + 0.5) / OMNI_TILE as f32, 1.0 - 2.0 * (y as f32 + 0.5) / OMNI_TILE as f32, 1.0];
+                // Each face's view axes back to the light's local ones (the shader's inverse).
+                let l = match face {
+                    0 => [v[2], v[0], v[1]],
+                    5 => [-v[2], -v[0], v[1]],
+                    3 => [-v[0], v[2], v[1]],
+                    4 => [v[0], -v[2], v[1]],
+                    2 => [-v[1], v[0], v[2]],
+                    _ => [v[1], v[0], -v[2]],
+                };
+                let d = add(add(scale(LAMP_BASIS[0], l[0]), scale(LAMP_BASIS[1], l[1])), scale(LAMP_BASIS[2], l[2]));
+                let Some(s) = ray_hit(LAMP, d) else { continue };
+                let vz = s / inch;
+                let far = 1.0 + lamp_range;
+                let z = far / (far - 1.0) - far / ((far - 1.0) * vz);
+                if z > 0.0 && z < 1.0 {
+                    texels[((oy + y) * w + ox + x) as usize] = ((1.0 - z) * 65535.0) as u16;
+                }
+            }
+        }
+    }
+    let mut out = Vec::with_capacity(20 + texels.len() * 2);
+    for word in [crate::hideout::VTV_MAGIC, w, h, 1, 3] {
+        out.extend_from_slice(&word.to_le_bytes());
+    }
+    out.extend(texels.iter().flat_map(|t| t.to_le_bytes()));
+    (out, vec![[BARN_TILE as f32 / w as f32, 1.0, 0.0, 0.0]], omni)
+}
+
 fn world_to_box(min: Vec3, max: Vec3) -> [f32; 16] {
     let s = [1.0 / (max[0] - min[0]), 1.0 / (max[1] - min[1]), 1.0 / (max[2] - min[2])];
     [s[0], 0.0, 0.0, 0.0, 0.0, s[1], 0.0, 0.0, 0.0, 0.0, s[2], 0.0, -min[0] * s[0], -min[1] * s[1], -min[2] * s[2], 1.0]
@@ -315,16 +416,19 @@ pub fn upgrade_hideout(scene: &Path) -> std::io::Result<()> {
     }
     let text = std::fs::read_to_string(scene)?;
     let mut v: serde_json::Value = serde_json::from_str(&text).map_err(std::io::Error::other)?;
-    let spot = normalize(SPOT_DIR);
-    let up = normalize(sub([0.0, 1.0, 0.0], scale(spot, spot[1])));
-    let left = crate::math::cross(up, spot);
+    let [spot, left, up] = spot_basis();
+    let (shadow_atlas, barn, omni) = fog_shadows();
+    std::fs::write(dir.join("fog/shadows.vtv"), shadow_atlas)?;
+    let barn_size = (50f32).to_radians().tan() * BARN_NEAR;
     v["exposure"] = 1.4.into();
     v["lights"] = serde_json::json!([
         { "kind": "spot", "color": [1.0, 0.86, 0.68], "intensity": 9.0, "brightness": 0.5, "skirt": 0.2, "position": SPOT, "direction": SPOT_DIR,
           "range": 9.0, "cone": [25, 50], "realtime": true, "shadowChannel": 0, "fogStrength": 0.4, "fogOnly": false,
-          "cookie": "cookies/blinds.png", "basis": [spot, left, up] },
+          "cookie": "cookies/blinds.png", "basis": [spot, left, up],
+          "fogShadow": { "tiles": barn, "size": [barn_size, barn_size, 1.0 / BARN_NEAR], "shear": [0.0, 0.0] } },
         { "kind": "point", "color": [1.0, 0.72, 0.42], "intensity": 1.2, "brightness": 0.35, "skirt": 0.2, "position": LAMP, "range": 4.0,
-          "realtime": false, "fogStrength": 2.0, "fogOnly": true, "cookie": null }
+          "realtime": false, "fogStrength": 2.0, "fogOnly": true, "cookie": null, "basis": LAMP_BASIS,
+          "fogShadow": { "tiles": omni, "size": [0.0, 0.0, 0.0], "shear": [0.0, 0.0] } }
     ]);
     v["lightmap"] = serde_json::json!({ "file": "lightmap/irradiance.hdr", "uvScale": [1.0, 1.0], "uvSet": 3, "direction": "lightmap/direction.png", "shadows": "lightmap/shadows.png" });
     v["probes"] = serde_json::json!([{ "file": "probes/0.vtv", "shadows": null, "worldToLocal": world_to_box([-4.0, 0.0, -4.0], [4.0, 3.2, 4.0]),
@@ -339,9 +443,10 @@ pub fn upgrade_hideout(scene: &Path) -> std::io::Result<()> {
         fog["volumes"] = serde_json::json!([{ "shape": "box", "worldToLocal": world_to_box([-4.0, 0.0, -4.0], [4.0, 1.6, 4.0]), "strength": 0.35, "falloff": 0.6, "indirectStrength": null, "tint": null }]);
         fog["irradiance"] = serde_json::Value::Null;
         fog["drawDistance"] = 14.0.into();
+        fog["shadows"] = "fog/shadows.vtv".into();
     }
     v["particles"] = "particles/bundle.json".into();
-    v["omissions"] = serde_json::json!(["autoExposure", "fogShadows", "staticBundle"]);
+    v["omissions"] = serde_json::json!(["autoExposure", "staticBundle"]);
     std::fs::write(scene, serde_json::to_vec_pretty(&v).map_err(std::io::Error::other)?)
 }
 
@@ -377,7 +482,10 @@ mod tests {
         assert_eq!(s.fog.as_ref().map(|f| f.volumes.len()), Some(1));
         assert!(s.lights[0].cookie.is_some() && s.lights[0].source_units && !s.lights[0].fog_only);
         assert!(s.lights[1].fog_only);
+        assert_eq!(s.lights[0].fog_shadow.as_ref().map(|f| f.tiles.len()), Some(1));
+        assert_eq!(s.lights[1].fog_shadow.as_ref().map(|f| f.tiles.len()), Some(6));
         let data = crate::hideout::HideoutData::load(&s);
+        assert!(data.fog_shadows.is_some(), "the fog shadow atlas loads");
         assert!(data.errors.is_empty(), "{:?}", data.errors);
         assert!(data.lightmap.is_some() && data.probes.is_some() && data.lut.is_some() && data.cookies.len() == 1);
         let _ = std::fs::remove_dir_all(&dir);
