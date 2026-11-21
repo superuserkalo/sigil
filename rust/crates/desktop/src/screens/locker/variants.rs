@@ -10,7 +10,6 @@ use std::collections::BTreeMap;
 use rune::{El, col, el, row, text};
 
 use crate::app::State;
-use crate::icons;
 use crate::ui::{ActionKind, SMALL, Ui};
 
 use super::{hero_sounds, mod_row, HeroCard, ModRow, View};
@@ -34,26 +33,6 @@ fn hero_mods<'a>(v: &'a View, hero: &HeroCard) -> Vec<&'a ModRow> {
     rows
 }
 
-fn step_button(
-    u: &Ui,
-    glyph: &'static rune::Icon,
-    label: String,
-    key: String,
-    active: bool,
-    press: impl Fn(&mut State) + 'static,
-) -> El {
-    let button = u
-        .icon_button(glyph, &label)
-        .key(key)
-        .cursor(rune::Cursor::Pointer)
-        .on_press(press);
-
-    if active {
-        button
-    } else {
-        button.disabled(true).opacity(0.30)
-    }
-}
 
 /// The skins of one hero, in load order. `full` adds the order arrows; the list view's
 /// expanded body only needs the switches. `preview` adds Preview in 3D (the hero page; with
@@ -68,48 +47,12 @@ pub(super) fn skins_list(s: &State, u: &Ui, v: &View, hero: &HeroCard, full: boo
     let last = mods.len().saturating_sub(1);
     let mut rows = col().w_full();
 
-    for (index, m) in mods.iter().enumerate() {
+    for m in mods.iter() {
         let slot = m.slot;
         let name = hero.display_name.clone();
         let mut trailing = row().gap(2.0).center_y();
 
-        if full {
-            let up_name = name.clone();
-            let up = step_button(
-                u,
-                &icons::ARROW_UP,
-                format!("Move {} earlier", m.label),
-                format!("locker-up-{}", m.slot),
-                index > 0,
-                move |st: &mut State| {
-                    crate::data::move_locker_skin(st, &up_name, slot, index.saturating_sub(1))
-                },
-            );
-            let down_name = name.clone();
-            let down = step_button(
-                u,
-                &icons::CHEVRON_DOWN,
-                format!("Move {} later", m.label),
-                format!("locker-down-{}", m.slot),
-                index < last,
-                move |st: &mut State| {
-                    crate::data::move_locker_skin(st, &down_name, slot, index + 1)
-                },
-            );
-            trailing = trailing.child(up).child(down);
-        }
-
-        if preview {
-            // Preview this skin on the hero in 3D, on or off, against the hero without it.
-            let (label, hero_name) = (m.label.clone(), hero.display_name.clone());
-            trailing = trailing.child(
-                u.icon_button(&icons::BOX, &crate::screens::settings::i18n::fill(crate::screens::settings::i18n::tr("Preview {} in 3D"), &[&m.label]))
-                    .key(format!("locker-3d-{}", m.slot))
-                    .cursor(rune::Cursor::Pointer)
-                    .on_press(move |st: &mut State| crate::viewer::dialog::open_on(st, slot, &label, &hero_name)),
-            );
-        }
-
+        let _ = (full, preview, last);
         let equip_name = name.clone();
         trailing = trailing.child(state_slot(
             u,

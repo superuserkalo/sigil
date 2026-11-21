@@ -194,6 +194,10 @@ pub struct Assets {
     /// Its last answer, with the swaps it ran for (`game_sounds::signature`).
     pub shared: Option<Shared>,
     pub swap_error: Option<String>,
+    /// The swaps dialog is open (it opens when a sound is staged).
+    pub swaps_open: bool,
+    /// The game art kind menu is open.
+    pub kind_open: bool,
 
     pub card: Option<super::card_art::CardArt>,
 

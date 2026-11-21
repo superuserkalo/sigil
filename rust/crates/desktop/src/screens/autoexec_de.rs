@@ -6,6 +6,10 @@ use std::collections::HashMap;
 use std::sync::OnceLock;
 
 pub const DE: &[(&str, &str)] = &[
+    ("More", "Mehr"),
+    ("Search premade commands", "Vorgefertigte Befehle suchen"),
+    ("Search", "Suchen"),
+    ("No premade command matches", "Kein vorgefertigter Befehl passt"),
     ("Premade", "Vorgefertigt"),
     ("Add", "Hinzufügen"),
     ("All convars", "Alle Konsolenvariablen"),

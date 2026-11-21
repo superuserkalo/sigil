@@ -6,6 +6,7 @@ use std::collections::HashMap;
 use std::sync::OnceLock;
 
 pub const DE: &[(&str, &str)] = &[
+    ("Share", "Teilen"),
     ("Applied {}", "{} angewendet"),
     ("Apply", "Anwenden"),
     ("Apply {}", "{} anwenden"),

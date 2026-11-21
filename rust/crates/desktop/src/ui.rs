@@ -1488,6 +1488,57 @@ impl Ui {
             .child(icon(&crate::icons::CHEVRON_DOWN, 12.0).color(self.muted).a11y_hidden())
     }
 
+    /// A "..." menu: a raised list of `menu_item` rows, anchored under (or beside) the keyed
+    /// button that opened it. Mount it at the root with `popover_layer`.
+    pub fn menu(&self, key: &str, anchor: &str, width: f32) -> El {
+        col()
+            .key(key.to_string())
+            .role("menu")
+            .w(width)
+            .padding(4.0)
+            .radius(r(8.0))
+            .fill(self.raised.mix(self.over, 0.04).alpha(1.0))
+            .border(1.0, self.hair_strong)
+            .shadow(4.0, 12.0, Color::BLACK.alpha(if self.light { 0.12 } else { 0.35 }))
+            .anchored_fit(anchor.to_string(), rune::Side::Bottom, rune::Align::End, 4.0)
+    }
+
+    /// One menu row: 32 high, a 14 point icon, the label. `danger` uses `rose` text.
+    pub fn menu_item(&self, key: &str, glyph: &'static Icon, label: &str, danger: bool) -> El {
+        let ink = if danger { self.rose } else { self.prose };
+        row()
+            .key(key.to_string())
+            .w_full()
+            .h(CONTROL_L)
+            .px(8.0)
+            .gap(8.0)
+            .center_y()
+            .radius(r(4.0))
+            .hover(self.hover)
+            .focusable(true)
+            .role("menuitem")
+            .label(label)
+            .cursor(rune::Cursor::Pointer)
+            .child(icon(glyph, 14.0).color(if danger { self.rose } else { self.muted }).a11y_hidden())
+            .child(text(label.to_string()).font(BODY).color(ink).truncate().a11y_hidden())
+    }
+
+    /// A full-window layer for a menu or popover: a transparent `scrim` (the page gives it the
+    /// press that closes) under the menu.
+    pub fn popover_layer(&self, key: &str, scrim: El, menu: El) -> El {
+        el().key(key.to_string())
+            .absolute(0.0, 0.0)
+            .w_full()
+            .h_full()
+            .child(scrim.absolute(0.0, 0.0).w_full().h_full())
+            .child(menu)
+    }
+
+    /// The 28 point "..." button that opens a row's menu.
+    pub fn more_button(&self, label: &str) -> El {
+        self.icon_button(&crate::icons::ELLIPSIS, label).size(CONTROL_M, CONTROL_M)
+    }
+
     /// A small colour mark (8 by 8, square) before a state word: "Equipped", "Active".
     pub fn mark(&self, color: Color) -> El {
         el().size(8.0, 8.0).radius(2.0).fill(color).a11y_hidden()

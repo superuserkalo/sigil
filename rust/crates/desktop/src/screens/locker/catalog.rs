@@ -11,14 +11,14 @@
 //!   search over name and path; thumbnails for every kind, a page at a time. The lightbox shows the
 //!   path, the native size, Copy path, Save PNG, and for a card "Use for an in-game card".
 
-use rune::{Color, El, FileDialogOptions, SurfaceFit, Tx, col, el, row, spacer, text};
+use rune::{El, FileDialogOptions, SurfaceFit, Tx, col, el, row, spacer, text};
 
 use super::assets::{self, Load, Tex, TexKind, thumb_key};
 use super::{HeroCard, View};
 use crate::app::State;
 use crate::icons;
 use crate::screens::settings::i18n::{fill, tr};
-use crate::ui::{ActionKind, BODY, BODY_MED, H1, MONO, SMALL, Ui};
+use crate::ui::{ActionKind, BODY, BODY_MED, H1, MONO, SMALL, SMALL_NUM, Ui};
 
 /// Tiles per page of the grid.
 pub const PAGE: usize = 48;
@@ -102,7 +102,7 @@ pub fn section(s: &State, u: &Ui, v: &View, hero: &HeroCard) -> El {
         );
     }
 
-    c = c.child(search(u, v)).child(kind_chips(u, v));
+    c = c.child(row().w_full().h(32.0).gap(8.0).center_y().child(search(u, v)).child(kind_chips(u, v)));
     let list = matches(v);
     if list.is_empty() {
         return c.child(
@@ -167,50 +167,68 @@ fn search(u: &Ui, v: &View) -> El {
                 false
             }
         });
-    u.search_shell(field).w_full()
+    u.search_shell(field).grow(1.0).min_w(0.0)
 }
 
+/// The kind choice as a 160 point select; its menu (`kind_menu`) lists each kind with a count.
 fn kind_chips(u: &Ui, v: &View) -> El {
     let a = &v.assets;
+    let now = match a.tex_kind {
+        None => tr("All").to_string(),
+        Some(kind) => kind.label().to_string(),
+    };
+    u.select_box(&now, 160.0)
+        .key("locker-art-kind")
+        .fill(if a.kind_open { u.selected } else { u.well })
+        .on_press(|st: &mut State| st.locker.assets.kind_open = !st.locker.assets.kind_open)
+}
+
+/// The kind menu, mounted at the root.
+pub fn kind_menu(s: &State, u: &Ui) -> Option<El> {
+    let a = &s.locker.assets;
+    if !a.kind_open {
+        return None;
+    }
     let list = a.textures.ready().map(Vec::as_slice).unwrap_or(&[]);
-    let chip = |key: String, label: String, n: usize, on: bool, kind: Option<TexKind>| {
+    let item = |key: String, label: String, n: usize, on: bool, kind: Option<TexKind>| {
         row()
             .key(key)
-            .h(28.0)
-            .px(10.0)
-            .gap(6.0)
+            .w_full()
+            .h(32.0)
+            .px(8.0)
+            .gap(8.0)
             .center_y()
-            .radius(crate::ui::r(6.0))
-            .fill(if on { u.selected } else { Color::TRANSPARENT })
-            .border(1.0, if on { Color::TRANSPARENT } else { u.hair })
+            .radius(crate::ui::r(4.0))
             .hover(u.hover)
             .focusable(true)
-            .role("radio")
+            .role("option")
             .checked(on)
             .label(format!("{label}, {n}"))
             .cursor(rune::Cursor::Pointer)
             .on_press(move |st: &mut State| {
                 st.locker.assets.tex_kind = kind;
                 st.locker.assets.tex_shown = PAGE;
+                st.locker.assets.kind_open = false;
             })
-            .child(text(label).font(BODY_MED).color(if on { u.ink } else { u.muted }).a11y_hidden())
-            .child(text(n.to_string()).font(SMALL).color(u.faint).a11y_hidden())
+            .child(text(label).font(BODY).color(if on { u.ink } else { u.prose }).grow(1.0).min_w(0.0).truncate().a11y_hidden())
+            .child(text(n.to_string()).font(SMALL_NUM).color(u.muted).a11y_hidden())
     };
-    let mut r = row()
-        .w_full()
-        .flex_wrap()
-        .gap(6.0)
-        .role("radiogroup")
-        .label(tr("Texture kind"))
-        .child(chip("locker-art-kind-all".into(), tr("All").to_string(), list.len(), a.tex_kind.is_none(), None));
+    let mut menu = u
+        .menu("locker-art-kind-menu", "locker-art-kind", 220.0)
+        .role("listbox")
+        .child(item("locker-art-kind-all".into(), tr("All").to_string(), list.len(), a.tex_kind.is_none(), None));
     for kind in TexKind::ALL {
         let n = list.iter().filter(|t| t.kind == kind).count();
         if n == 0 {
             continue;
         }
-        r = r.child(chip(format!("locker-art-kind-{kind:?}").to_lowercase(), kind.label().to_string(), n, a.tex_kind == Some(kind), Some(kind)));
+        menu = menu.child(item(format!("locker-art-kind-{kind:?}").to_lowercase(), kind.label().to_string(), n, a.tex_kind == Some(kind), Some(kind)));
     }
-    r
+    Some(u.popover_layer(
+        "locker-art-kind-layer",
+        rune::el().on_press(|st: &mut State| st.locker.assets.kind_open = false),
+        menu,
+    ))
 }
 
 /// A square picture of one texture, or a quiet box while it decodes.

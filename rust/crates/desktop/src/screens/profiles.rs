@@ -216,6 +216,8 @@ pub struct View {
     pub current_mods: Option<usize>,
     pub current_crosshair: bool,
     pub expanded: Option<String>,
+    /// The profile whose "..." menu is open.
+    pub more: Option<String>,
     pub dialog: Dialog,
     pub name: TextEdit,
     pub include_crosshair: bool,
@@ -251,6 +253,7 @@ impl Default for View {
             current_mods: None,
             current_crosshair: false,
             expanded: None,
+            more: None,
             dialog: Dialog::None,
             name: TextEdit::new(""),
             include_crosshair: false,
@@ -1004,11 +1007,17 @@ fn profile_row(u: &Ui, profile: &Row, active: bool, open: bool) -> El {
         })
         .child({
             let slug = slug.clone();
-            u.icon_button(&icons::EXTERNAL_LINK, &format!("Share {}", profile.name))
-                .size(28.0, 28.0)
-                .key(format!("profile-share-{slug}"))
+            // Share, Rename, Duplicate and Delete live in this menu.
+            u.more_button(&format!("More for {}", profile.name))
+                .key(format!("profile-more-{slug}"))
                 .cursor(rune::Cursor::Pointer)
-                .on_press(move |st: &mut State| open_export(st, &slug))
+                .on_press(move |st: &mut State| {
+                    st.profiles.more = if st.profiles.more.as_deref() == Some(slug.as_str()) {
+                        None
+                    } else {
+                        Some(slug.clone())
+                    }
+                })
         })
         .child({
             let slug = slug.clone();
@@ -1139,36 +1148,48 @@ fn details(u: &Ui, profile: &Row) -> El {
             .child(u.toggle_mark(isolated)),
     );
 
-    let rename = {
-        let slug = slug.clone();
-        u.icon_action(&icons::SQUARE_PEN, tr("Rename"), ActionKind::Ghost)
-            .key(format!("profile-rename-{slug}"))
-            .cursor(rune::Cursor::Pointer)
-            .on_press(move |st: &mut State| open_rename(st, &slug))
-    };
-    let duplicate = {
-        let slug = slug.clone();
-        u.icon_action(&icons::COPY, tr("Duplicate"), ActionKind::Ghost)
-            .key(format!("profile-duplicate-{slug}"))
-            .cursor(rune::Cursor::Pointer)
-            .on_press(move |st: &mut State| duplicate(st, &slug))
-    };
-    let delete = {
-        let slug = slug.clone();
-        u.icon_action(&icons::TRASH_2, tr("Delete"), ActionKind::Ghost)
-            .key(format!("profile-delete-{slug}"))
-            .cursor(rune::Cursor::Pointer)
-            .on_press(move |st: &mut State| st.profiles.dialog = Dialog::Delete(slug.clone()))
-    };
-    body.child(
-        row()
-            .w_full()
-            .gap(4.0)
-            .ml(-10.0)
-            .child(rename)
-            .child(duplicate)
-            .child(delete),
-    )
+    body
+}
+
+/// A profile's "..." menu: Share, Rename, Duplicate, Delete.
+fn more_menu(u: &Ui, slug: &str) -> El {
+    let close = |st: &mut State| st.profiles.more = None;
+    let (share, rename, dup, delete) = (slug.to_string(), slug.to_string(), slug.to_string(), slug.to_string());
+    let menu = u
+        .menu("profile-more-menu", &format!("profile-more-{slug}"), 200.0)
+        .child(u.menu_item(&format!("profile-share-{slug}"), &icons::EXTERNAL_LINK, tr("Share"), false).on_press(
+            move |st: &mut State| {
+                st.profiles.more = None;
+                open_export(st, &share)
+            },
+        ))
+        .child(u.menu_item(&format!("profile-rename-{slug}"), &icons::SQUARE_PEN, tr("Rename"), false).on_press(
+            move |st: &mut State| {
+                st.profiles.more = None;
+                open_rename(st, &rename)
+            },
+        ))
+        .child(u.menu_item(&format!("profile-duplicate-{slug}"), &icons::COPY, tr("Duplicate"), false).on_press(
+            move |st: &mut State| {
+                st.profiles.more = None;
+                duplicate(st, &dup)
+            },
+        ))
+        .child(u.menu_item(&format!("profile-delete-{slug}"), &icons::TRASH_2, tr("Delete"), true).on_press(
+            move |st: &mut State| {
+                st.profiles.more = None;
+                st.profiles.dialog = Dialog::Delete(delete.clone())
+            },
+        ))
+        .on_key(move |st: &mut State, ev: &KeyEvent, _| {
+            if ev.key == rune::Key::Escape {
+                close(st);
+                true
+            } else {
+                false
+            }
+        });
+    u.popover_layer("profile-more-layer", el().on_press(close), menu)
 }
 
 fn sub_head(u: &Ui, label: &str) -> El {
@@ -2063,6 +2084,14 @@ fn finish_import(st: &mut State) {
 // ---------------------------------------------------------------------------
 
 /// Mounted at the root so the dialogs overlay the shell.
+/// The row "..." menu, mounted at the root without a dimming layer.
+pub fn overlay(s: &State, u: &Ui) -> Option<El> {
+    if s.screen != Screen::Profiles || !matches!(s.profiles.dialog, Dialog::None) {
+        return None;
+    }
+    s.profiles.more.as_deref().map(|slug| more_menu(u, slug))
+}
+
 pub fn dialog(s: &State, u: &Ui) -> Option<El> {
     let v = &s.profiles;
     match &v.dialog {

@@ -23,7 +23,7 @@ use super::{HeroCard, View};
 use crate::app::State;
 use crate::icons;
 use crate::screens::settings::i18n::{fill, tr};
-use crate::ui::{ActionKind, BODY, BODY_MED, SMALL, Ui};
+use crate::ui::{ActionKind, BODY, BODY_MED, SMALL, SMALL_NUM, Ui};
 
 /// Rows a group shows before it asks for a search.
 pub const GROUP_CAP: usize = 200;
@@ -108,6 +108,7 @@ fn put(st: &mut State, row: &SoundRow, file: Option<PathBuf>) {
     let a = &mut st.locker.assets;
     a.swap_error = None;
     let old = a.swaps.iter().position(|s| s.event == row.event).map(|at| a.swaps.remove(at));
+    a.swaps_open = true;
     a.swaps.push(Swap {
         event: row.event.clone(),
         label: row.label.clone(),
@@ -252,11 +253,20 @@ pub fn poll(st: &mut State) -> bool {
 pub fn section(s: &State, u: &Ui, v: &View, hero: &HeroCard) -> El {
     let a = &v.assets;
     let total = a.sounds.ready().map_or(0, Vec::len);
+    // Staged swaps open in a dialog; the header keeps a way back to it.
+    let swaps_button = (!a.swaps.is_empty() || a.swap_error.is_some() || a.swap_job.is_running()).then(|| {
+        u.action(&fill(tr("Your swaps {}"), &[&a.swaps.len().to_string()]), ActionKind::Ghost)
+            .h(24.0)
+            .px(8.0)
+            .key("locker-swaps-open")
+            .cursor(rune::Cursor::Pointer)
+            .on_press(|st: &mut State| st.locker.assets.swaps_open = true)
+    });
     let mut c = col().w_full().gap(12.0).child(super::pane_head(
         u,
         tr("Game sounds"),
         if a.sounds.ready().is_some() { fill(tr("{} sounds"), &[&total.to_string()]) } else { String::new() },
-        None,
+        swaps_button,
     ));
     match &a.sounds {
         Load::Idle | Load::Loading => {
@@ -286,9 +296,6 @@ pub fn section(s: &State, u: &Ui, v: &View, hero: &HeroCard) -> El {
                 .wrap(),
         );
     }
-    if !a.swaps.is_empty() || a.swap_error.is_some() || a.swap_job.is_running() {
-        c = c.child(swap_panel(s, u, v, hero));
-    }
     let field = rune::text_input(&a.sound_query, BODY)
         .key("locker-sounds-search")
         .label(tr("Search sounds"))
@@ -305,11 +312,10 @@ pub fn section(s: &State, u: &Ui, v: &View, hero: &HeroCard) -> El {
                 false
             }
         });
-    c = c.child(u.search_shell(field).w_full()).child(
-        text(tr("Replace takes an MP3. A 16-bit WAV works only for sounds the game stores uncompressed."))
-            .font(SMALL)
-            .color(u.faint)
-            .wrap(),
+    c = c.child(
+        u.search_shell(field)
+            .w_full()
+            .help(tr("Replace takes an MP3. A 16-bit WAV works only for sounds the game stores uncompressed.")),
     );
     if let Some(error) = &s.browse_view.audio.error {
         c = c.child(crate::notify::feedback::error_line(u, "game-sounds-error", error));
@@ -416,9 +422,8 @@ fn sound_row(s: &State, u: &Ui, v: &View, row_data: &SoundRow) -> El {
     let mut r = row()
         .key(format!("locker-sound-{}", row_data.event))
         .w_full()
-        .min_h(52.0)
-        .py(6.0)
-        .gap(10.0)
+        .h(48.0)
+        .gap(8.0)
         .center_y()
         .border_sides([0.0, 0.0, 1.0, 0.0], u.hair)
         .child(play)
@@ -427,31 +432,43 @@ fn sound_row(s: &State, u: &Ui, v: &View, row_data: &SoundRow) -> El {
                 .grow(1.0)
                 .min_w(0.0)
                 .child(text(row_data.label.clone()).font(BODY_MED).color(u.ink).truncate())
-                .child(text(detail).font(SMALL).color(u.faint).truncate().selectable(true)),
+                .child(text(detail).font(SMALL_NUM).color(u.muted).truncate().selectable(true)),
         );
-    if let Some(swap) = staged {
-        r = r.child(text(if swap.file.is_some() { tr("Replaced") } else { tr("Volume") }).font(SMALL).color(u.accent));
-    }
+    // Fixed slots: tag 72, save 28, volume 28, Replace 72, so a staged row never shifts.
+    r = r.child(row().w(72.0).justify_end().child(match staged {
+        Some(swap) => row()
+            .h(24.0)
+            .px(8.0)
+            .center_y()
+            .radius(crate::ui::r(4.0))
+            .fill(u.over.alpha(0.06))
+            .child(text(if swap.file.is_some() { tr("Replaced") } else { tr("Volume") }).font(crate::ui::LABEL).color(u.prose)),
+        None => rune::el(),
+    }));
     if let Some(clip) = row_data.clips.first().cloned() {
         let label = row_data.label.clone();
         r = r.child(
             u.icon_button(&icons::DOWNLOAD, &fill(tr("Save {} as a file"), &[&row_data.label]))
+                .size(28.0, 28.0)
                 .key(format!("locker-sound-save-{}", row_data.event))
                 .cursor(rune::Cursor::Pointer)
                 .on_press_tx(move |st: &mut State, tx: &mut Tx| assets::save_clip(st, tx, clip.clone(), label.clone())),
         );
     }
-    if staged.is_none() {
+    {
+        // The volume button keeps its box when the sound is staged.
         let volume_row = row_data.clone();
-        r = r.child(
-            u.icon_button(&icons::VOLUME_2, &fill(tr("Change the volume of {}"), &[&row_data.label]))
-                .key(format!("locker-sound-volume-{}", row_data.event))
-                .cursor(rune::Cursor::Pointer)
-                .on_press(move |st: &mut State| stage_volume(st, &volume_row)),
-        );
+        let b = u
+            .icon_button(&icons::VOLUME_2, &fill(tr("Change the volume of {}"), &[&row_data.label]))
+            .size(28.0, 28.0)
+            .key(format!("locker-sound-volume-{}", row_data.event))
+            .cursor(rune::Cursor::Pointer)
+            .on_press(move |st: &mut State| stage_volume(st, &volume_row));
+        r = r.child(if staged.is_some() { b.disabled(true).opacity(0.0) } else { b });
     }
     r.child(
-        u.action(if staged.is_some() { tr("Change") } else { tr("Replace") }, ActionKind::Ghost)
+        u.action_m(if staged.is_some() { tr("Change") } else { tr("Replace") }, ActionKind::Ghost)
+            .w(72.0)
             .key(format!("locker-sound-replace-{}", row_data.event))
             .label(fill(tr("Replace {} with your MP3"), &[&row_data.label]))
             .cursor(rune::Cursor::Pointer)
@@ -467,17 +484,51 @@ fn loop_label(looped: Option<bool>) -> &'static str {
     }
 }
 
+/// The swaps as a dialog over the page, so staging a sound never pushes the list.
+pub fn swaps_dialog(s: &State, u: &Ui) -> Option<El> {
+    let v = &s.locker;
+    if !v.assets.swaps_open {
+        return None;
+    }
+    let super::Page::Hero(name) = &v.page else { return None };
+    let hero = v.heroes.iter().find(|h| &h.display_name == name)?;
+    let close = |st: &mut State| st.locker.assets.swaps_open = false;
+    Some(
+        u.dialog_shell()
+            .key("locker-swaps-dialog")
+            .role("dialog")
+            .label(tr("Your swaps"))
+            .w(480.0)
+            .max_w(480.0)
+            .padding(24.0)
+            .modal(true, close)
+            .on_key(move |st: &mut State, ev: &rune::KeyEvent, _| {
+                if ev.key == rune::Key::Escape {
+                    close(st);
+                    true
+                } else {
+                    false
+                }
+            })
+            .child(swap_panel(s, u, v, hero))
+            .child(
+                row().w_full().pt(16.0).child(rune::spacer()).child(
+                    u.action(tr("Close"), ActionKind::Ghost)
+                        .key("locker-swaps-close")
+                        .cursor(rune::Cursor::Pointer)
+                        .on_press(close),
+                ),
+            ),
+    )
+}
+
 fn swap_panel(s: &State, u: &Ui, v: &View, hero: &HeroCard) -> El {
     let a = &v.assets;
     let busy = a.swap_job.is_running();
     let mut panel = col()
         .key("locker-swaps")
         .w_full()
-        .padding(16.0)
         .gap(10.0)
-        .radius(crate::ui::r(10.0))
-        .border(1.0, u.hair_strong)
-        .fill(u.raised.alpha(0.94))
         .child(
             row()
                 .w_full()

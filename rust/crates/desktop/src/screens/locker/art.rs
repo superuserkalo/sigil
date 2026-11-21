@@ -10,7 +10,6 @@ use rune::{El, SurfaceFit, el};
 
 use crate::app::State;
 use crate::icons;
-use crate::screens::settings::i18n::{fill, tr};
 use crate::ui::Ui;
 
 /// Fetch the GameBanana previews of the mods the Locker shows, once each, while it is open.
@@ -46,10 +45,3 @@ pub fn thumb(s: &State, u: &Ui, slot: u16) -> El {
     }
 }
 
-/// The Picture button: Installed's editor for this slot's name and picture.
-pub fn edit_button(u: &Ui, slot: u16, label: &str) -> El {
-    u.icon_button(&icons::SQUARE_PEN, &fill(tr("Change the picture of {}"), &[label]))
-        .key(format!("locker-mod-picture-{slot}"))
-        .cursor(rune::Cursor::Pointer)
-        .on_press(move |st: &mut State| crate::screens::installed::open_editor(st, slot))
-}

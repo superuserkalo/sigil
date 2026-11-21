@@ -56,6 +56,7 @@ pub const DE: &[(&str, &str)] = &[
     ("Loop: on", "Schleife: an"),
     ("Loop: off", "Schleife: aus"),
     ("Your swaps", "Deine Tausche"),
+    ("Your swaps {}", "Deine Tausche {}"),
     ("Remove the swap of {}", "Tausch von {} entfernen"),
     ("Every clip of a swapped sound plays your audio ({} clips in all).", "Jeder Clip eines getauschten Sounds spielt dein Audio ({} Clips insgesamt)."),
     ("Mod name", "Mod-Name"),

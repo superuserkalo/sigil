@@ -50,9 +50,17 @@ const COMMAND_H: f32 = 32.0;
 const COMMENT_H: f32 = 32.0;
 const BLANK_H: f32 = 8.0;
 /// The right end of a block: the preset name at rest, the row's actions on hover.
-const TRAIL_W: f32 = 168.0;
+const TRAIL_W_FULL: f32 = 168.0;
+/// The trail slot: 168 at full width, the four row buttons' 120 when the window is narrow.
+fn trail_w() -> f32 {
+    if crate::ui::fit() == crate::ui::Fit::Full { TRAIL_W_FULL } else { 120.0 }
+}
 /// The right column: premade commands and the convar catalogue.
-const RIGHT_W: f32 = 360.0;
+const RIGHT_W_FULL: f32 = 360.0;
+/// The right column: 360 at full width, 320 when narrow so the commands keep their room.
+fn right_w() -> f32 {
+    if crate::ui::fit() == crate::ui::Fit::Full { RIGHT_W_FULL } else { 320.0 }
+}
 
 const DESCRIPTION: &str = "Console commands the game runs every time it starts.";
 
@@ -162,6 +170,10 @@ pub struct View {
     pub category_open: bool,
     /// The removed-commands popover from the status row is open.
     pub flags_open: bool,
+    /// The toolbar's "..." menu (Open the file, Clear all) is open.
+    pub more_open: bool,
+    /// The search over the premade commands, across every category.
+    pub premade_query: TextEdit,
 }
 
 /// The launch options section: the saved value, the field, and what Steam holds.
@@ -215,6 +227,8 @@ impl Default for View {
             all_convars: false,
             category_open: false,
             flags_open: false,
+            more_open: false,
+            premade_query: TextEdit::new(""),
         }
     }
 }
@@ -493,23 +507,14 @@ pub fn view(s: &State, u: &Ui) -> El {
                 .on_press(open_in_editor),
             !ready,
         ),
+        // Open the file and Clear all live in this menu.
         off(
-            u.icon_button(&icons::FOLDER_OPEN, tr("Open"))
-                .key("autoexec-open")
+            u.icon_button(&icons::ELLIPSIS, tr("More"))
+                .key("autoexec-more")
+                .fill(if v.more_open { u.selected } else { rune::Color::TRANSPARENT })
                 .cursor(rune::Cursor::Pointer)
-                .on_press(reveal_autoexec),
+                .on_press(|st: &mut State| st.autoexec.more_open = !st.autoexec.more_open),
             !ready,
-        ),
-        off(
-            u.icon_button(&icons::TRASH_2, tr("Clear all"))
-                .key("autoexec-clear")
-                .cursor(rune::Cursor::Pointer)
-                .on_press(|st: &mut State| {
-                    if !st.autoexec.blocks.is_empty() {
-                        st.autoexec.confirm_clear = true;
-                    }
-                }),
-            !ready || empty,
         ),
         off(
             u.action(tr("Save"), ActionKind::Secondary)
@@ -609,7 +614,7 @@ pub fn view(s: &State, u: &Ui) -> El {
             );
         let right = col()
             .key("autoexec-right")
-            .w(RIGHT_W)
+            .w(right_w())
             .h_full()
             .mr(PAGE_X)
             .gap(8.0)
@@ -690,10 +695,13 @@ fn right_tabs(s: &State, u: &Ui) -> El {
 }
 
 /// Mounted at the root so the save and clear confirms overlay the shell.
+/// Menus and popovers, mounted at the root without a dimming layer.
+pub fn overlay(s: &State, u: &Ui) -> Option<El> {
+    (s.screen == Screen::Autoexec && (s.autoexec.category_open || s.autoexec.flags_open || s.autoexec.more_open))
+        .then(|| popover_layer(s, u))
+}
+
 pub fn dialog(s: &State, u: &Ui) -> Option<El> {
-    if s.screen == Screen::Autoexec && (s.autoexec.category_open || s.autoexec.flags_open) {
-        return Some(popover_layer(s, u));
-    }
     if s.autoexec.confirm_save {
         Some(save_layer(s, u))
     } else if s.autoexec.confirm_clear {
@@ -716,17 +724,47 @@ fn premade(s: &State, u: &Ui) -> El {
         .fill(if open { u.selected } else { u.well })
         .on_press(|st: &mut State| st.autoexec.category_open = !st.autoexec.category_open);
 
+    let query = s.autoexec.premade_query.text.trim().to_lowercase();
+    let search = u.search_shell(
+        rune::text_input(&s.autoexec.premade_query, BODY)
+            .key("autoexec-premade-search")
+            .label(tr("Search premade commands"))
+            .single_line()
+            .color(u.ink)
+            .placeholder(tr("Search"), u.faint)
+            .caret(u.accent, u.accent.alpha(0.22))
+            .on_edit(|st: &mut State| &mut st.autoexec.premade_query),
+    )
+    .w(right_w() - 160.0 - 8.0);
     let mut list = col().key("autoexec-presets").w_full();
-    if let Some(category) = catalog.get(selected) {
-        for preset in &category.presets {
-            list = list.child(preset_row(s, u, preset));
+    let mut shown = 0usize;
+    if query.is_empty() {
+        if let Some(category) = catalog.get(selected) {
+            for preset in &category.presets {
+                list = list.child(preset_row(s, u, preset));
+            }
+        }
+    } else {
+        // A search looks through every category.
+        for category in catalog.iter() {
+            for preset in category.presets.iter().filter(|p| {
+                p.name.to_lowercase().contains(&query) || p.command.to_lowercase().contains(&query)
+            }) {
+                list = list.child(preset_row(s, u, preset));
+                shown += 1;
+            }
+        }
+        if shown == 0 {
+            list = list.child(
+                row().w_full().h(32.0).center_y().child(text(tr("No premade command matches")).font(SMALL).color(u.muted)),
+            );
         }
     }
     col()
         .key("autoexec-premade")
         .w_full()
         .gap(8.0)
-        .child(row().w_full().h(32.0).center_y().child(picker))
+        .child(row().w_full().h(32.0).gap(8.0).center_y().child(picker).child(search))
         .child(list)
 }
 
@@ -735,6 +773,7 @@ fn popover_layer(s: &State, u: &Ui) -> El {
     let close = |st: &mut State| {
         st.autoexec.category_open = false;
         st.autoexec.flags_open = false;
+        st.autoexec.more_open = false;
     };
     let shell = |key: &str, w: f32| {
         col()
@@ -760,7 +799,23 @@ fn popover_layer(s: &State, u: &Ui) -> El {
         .w_full()
         .h_full()
         .child(el().absolute(0.0, 0.0).w_full().h_full().on_press(close));
-    if s.autoexec.category_open {
+    if s.autoexec.more_open {
+        let empty = s.autoexec.blocks.is_empty();
+        let clear = u.menu_item("autoexec-clear", &icons::TRASH_2, tr("Clear all"), true).on_press(|st: &mut State| {
+            st.autoexec.more_open = false;
+            if !st.autoexec.blocks.is_empty() {
+                st.autoexec.confirm_clear = true;
+            }
+        });
+        layer = layer.child(
+            u.menu("autoexec-more-menu", "autoexec-more", 200.0)
+                .child(u.menu_item("autoexec-open", &icons::FOLDER_OPEN, tr("Open"), false).on_press(|st: &mut State| {
+                    st.autoexec.more_open = false;
+                    reveal_autoexec(st)
+                }))
+                .child(if empty { clear.disabled(true).opacity(0.45) } else { clear }),
+        );
+    } else if s.autoexec.category_open {
         let catalog = core::autoexec_presets();
         let mut menu = shell("autoexec-category-menu", 200.0)
             .role("listbox")
@@ -1062,7 +1117,7 @@ fn block_row(u: &Ui, block: &Block, index: usize, count: usize, drag: Option<(us
         r.center_y().border_sides([0.0, 0.0, 1.0, 0.0], u.hair)
     };
     // The preset name sits flush right at rest; on hover the row's actions take its place.
-    let mut trail = row().w(TRAIL_W).h(28.0).center_y().child(spacer());
+    let mut trail = row().w(trail_w()).h(28.0).center_y().child(spacer());
     if let Some(preset) = preset {
         trail = trail.child(
             text(preset.name.clone())
@@ -1076,7 +1131,7 @@ fn block_row(u: &Ui, block: &Block, index: usize, count: usize, drag: Option<(us
     }
     let actions_w = 4.0 * 28.0 + 3.0 * 2.0;
     trail = trail.child(
-        block_actions(u, id, index, count).absolute(TRAIL_W - actions_w, 0.0),
+        block_actions(u, id, index, count).absolute(trail_w() - actions_w, 0.0),
     );
     r = r.child(trail);
     if let Some((from, to)) = drag

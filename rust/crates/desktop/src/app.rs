@@ -1254,6 +1254,20 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
     if let Some(menu) = screens::servers::overlay(s, &u) {
         root = root.child(menu);
     }
+    // Row menus and popovers of Locker, Profiles, Autoexec, Crosshair and Overlap: anchored,
+    // no dimming layer.
+    for menu in [
+        screens::locker::overlay(s, &u),
+        screens::profiles::overlay(s, &u),
+        screens::autoexec::overlay(s, &u),
+        screens::crosshair::overlay(s, &u),
+        screens::conflicts::overlay(s, &u),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        root = root.child(menu);
+    }
     if let Some(panel) = screens::downloads::panel(s, &u) {
         root = root.child(panel);
     }

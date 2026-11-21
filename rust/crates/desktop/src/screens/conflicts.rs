@@ -678,6 +678,14 @@ fn restore_list(u: &Ui, list: &Ignores, names: std::collections::BTreeMap<u16, S
     body
 }
 
+/// The Ignore all popover, mounted at the root without a dimming layer.
+pub fn overlay(s: &State, u: &Ui) -> Option<El> {
+    (s.screen == Screen::Conflicts
+        && matches!(s.launch.overlap.dialog, Dialog::None)
+        && ASK_ALL.load(std::sync::atomic::Ordering::Relaxed))
+    .then(|| ignore_all_popover(s, u))
+}
+
 /// "Ignore all" asks under its button: one sentence, Cancel and the confirm.
 fn ignore_all_popover(s: &State, u: &Ui) -> El {
     let cancel = |_st: &mut State| ASK_ALL.store(false, std::sync::atomic::Ordering::Relaxed);
@@ -736,11 +744,6 @@ fn ignore_all_popover(s: &State, u: &Ui) -> El {
 /// The dialog the page opens: one losing slot, two ways to settle it, one way to ignore it.
 pub fn dialog(s: &State, u: &Ui) -> Option<El> {
     match &s.launch.overlap.dialog {
-        Dialog::None if s.screen == Screen::Conflicts
-            && ASK_ALL.load(std::sync::atomic::Ordering::Relaxed) =>
-        {
-            Some(ignore_all_popover(s, u))
-        }
         Dialog::None => None,
         Dialog::Resolve {
             path,

@@ -573,6 +573,7 @@ pub const DE: &[(&str, &str)] = &[
     ("Warnings", "Warnungen"),
     ("Move earlier", "Nach vorne"),
     ("Move later", "Nach hinten"),
+    ("Change the picture", "Bild ändern"),
     ("Bars", "Leisten"),
     ("Accent text", "Text auf Akzent"),
     ("Success", "Erfolg"),

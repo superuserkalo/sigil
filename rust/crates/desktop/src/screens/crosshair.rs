@@ -1579,6 +1579,17 @@ fn console_popover(s: &State, u: &Ui) -> El {
         .child(actions)
 }
 
+/// The console popover, mounted at the root without a dimming layer. A press outside closes it.
+pub fn overlay(s: &State, u: &Ui) -> Option<El> {
+    (s.crosshair.console_open && s.screen == Screen::Crosshair).then(|| {
+        u.popover_layer(
+            "crosshair-console-layer",
+            el().on_press(|st: &mut State| st.crosshair.console_open = false),
+            console_popover(s, u),
+        )
+    })
+}
+
 /// Mounted at the root so the apply approval overlays the shell.
 pub fn dialog(s: &State, u: &Ui) -> Option<El> {
     if s.crosshair.confirm_remove {
@@ -1587,22 +1598,6 @@ pub fn dialog(s: &State, u: &Ui) -> Option<El> {
     if !s.crosshair.pending {
         if let Some(d) = preset_dialog(s, u) {
             return Some(d);
-        }
-        if s.crosshair.console_open && s.screen == Screen::Crosshair {
-            // A press outside the popover closes it.
-            return Some(
-                el().key("crosshair-console-layer")
-                    .absolute(0.0, 0.0)
-                    .w_full()
-                    .h_full()
-                    .child(
-                        el().absolute(0.0, 0.0)
-                            .w_full()
-                            .h_full()
-                            .on_press(|st: &mut State| st.crosshair.console_open = false),
-                    )
-                    .child(console_popover(s, u)),
-            );
         }
         return None;
     }

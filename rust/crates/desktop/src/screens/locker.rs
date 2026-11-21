@@ -216,6 +216,8 @@ pub struct View {
     pub list_view: bool,
     /// Hero codenames whose list row is open.
     pub expanded: std::collections::BTreeSet<String>,
+    /// The slot whose "..." menu is open on the hero page.
+    pub more: Option<u16>,
     pub page: Page,
     pub hero_section: HeroSection,
     pub general_tab: Option<GeneralTab>,
@@ -263,6 +265,7 @@ impl Default for View {
             query_text: String::new(),
             list_view: false,
             expanded: std::collections::BTreeSet::new(),
+            more: None,
             page: Page::Grid,
             hero_section: HeroSection::Mods,
             general_tab: None,
@@ -1258,12 +1261,20 @@ pub(super) fn mod_row(s: &State, u: &Ui, m: &ModRow, trailing: Option<El>) -> El
                 )
                 .child(text(detail).font(SMALL).color(u.muted).truncate()),
         )
-        .child(favorite_button(s, u, m))
-        .child(art::edit_button(u, m.slot, &m.label));
+        .child(favorite_button(s, u, m));
     if let Some(t) = trailing {
         r = r.child(t);
     }
+    // Move earlier or later, Preview in 3D and Change the picture live in this menu.
     r.child(
+        u.more_button(&format!("More for {}", m.label))
+            .key(format!("locker-more-{slot}"))
+            .cursor(rune::Cursor::Pointer)
+            .on_press(move |st: &mut State| {
+                st.locker.more = if st.locker.more == Some(slot) { None } else { Some(slot) }
+            }),
+    )
+    .child(
         u.toggle(enabled)
             .key(format!("locker-mod-toggle-{}", m.slot))
             .label(if enabled {
@@ -2075,8 +2086,19 @@ fn submit_name(st: &mut State) {
 // --- dialogs ---------------------------------------------------------------------
 
 /// Mounted at the root so dialogs overlay the shell.
+/// The row "..." menu, mounted at the root without a dimming layer.
+pub fn overlay(s: &State, u: &Ui) -> Option<El> {
+    if s.screen != crate::model::Screen::Locker {
+        return None;
+    }
+    s.locker.more.map(|slot| more_menu(s, u, slot)).or_else(|| catalog::kind_menu(s, u))
+}
+
 pub fn dialog(s: &State, u: &Ui) -> Option<El> {
-    if let Some(dialog) = card_art::dialog(s, u).or_else(|| catalog::dialog(s, u)) {
+    if let Some(dialog) = card_art::dialog(s, u)
+        .or_else(|| catalog::dialog(s, u))
+        .or_else(|| game_sounds::swaps_dialog(s, u))
+    {
         return Some(dialog);
     }
     if let Some(panel) = s.locker.panel.as_ref() {
@@ -2090,6 +2112,72 @@ pub fn dialog(s: &State, u: &Ui) -> Option<El> {
         Dialog::Applied => Some(cards::applied_dialog(s, u)),
         Dialog::Card(dialog) => Some(cards::card_dialog(s, u, dialog)),
     }
+}
+
+/// A mod row's "..." menu: Move earlier, Move later and Preview in 3D for a hero's skins,
+/// and Change the picture for every mod.
+fn more_menu(s: &State, u: &Ui, slot: u16) -> El {
+    use crate::screens::settings::i18n::tr;
+    let close = |st: &mut State| st.locker.more = None;
+    let label = s.locker.mods.iter().find(|m| m.slot == slot).map(|m| m.label.clone()).unwrap_or_default();
+    let mut menu = u.menu("locker-more-menu", &format!("locker-more-{slot}"), 220.0);
+    if let Page::Hero(name) = &s.locker.page
+        && s.locker.hero_section == HeroSection::Mods
+        && let Some(hero) = s.locker.heroes.iter().find(|h| &h.display_name == name)
+    {
+        let mut skins: Vec<u16> = s
+            .locker
+            .mods
+            .iter()
+            .filter(|m| m.heroes.iter().any(|h| h == &hero.display_name))
+            .map(|m| m.slot)
+            .collect();
+        skins.sort_unstable();
+        if let Some(index) = skins.iter().position(|x| *x == slot) {
+            let last = skins.len().saturating_sub(1);
+            let (up, down, view) = (hero.display_name.clone(), hero.display_name.clone(), hero.display_name.clone());
+            let off = |e: El, off: bool| e.disabled(off).opacity(if off { 0.45 } else { 1.0 });
+            menu = menu
+                .child(off(
+                    u.menu_item("locker-more-up", &icons::ARROW_UP, tr("Move earlier"), false).on_press(move |st: &mut State| {
+                        st.locker.more = None;
+                        crate::data::move_locker_skin(st, &up, slot, index.saturating_sub(1))
+                    }),
+                    index == 0,
+                ))
+                .child(off(
+                    u.menu_item("locker-more-down", &icons::CHEVRON_DOWN, tr("Move later"), false).on_press(move |st: &mut State| {
+                        st.locker.more = None;
+                        crate::data::move_locker_skin(st, &down, slot, index + 1)
+                    }),
+                    index >= last,
+                ))
+                .child({
+                    let label = label.clone();
+                    u.menu_item("locker-more-3d", &icons::BOX, tr("Preview in 3D"), false).on_press(
+                        move |st: &mut State| {
+                            st.locker.more = None;
+                            crate::viewer::dialog::open_on(st, slot, &label, &view)
+                        },
+                    )
+                });
+        }
+    }
+    menu = menu.child(
+        u.menu_item("locker-more-picture", &icons::SQUARE_PEN, tr("Change the picture"), false)
+            .on_press(move |st: &mut State| {
+                st.locker.more = None;
+                crate::screens::installed::open_editor(st, slot)
+            }),
+    );
+    u.popover_layer("locker-more-layer", el().on_press(close), menu.on_key(move |st: &mut State, ev: &rune::KeyEvent, _| {
+        if ev.key == rune::Key::Escape {
+            close(st);
+            true
+        } else {
+            false
+        }
+    }))
 }
 
 pub(super) fn close_dialog(st: &mut State) {
