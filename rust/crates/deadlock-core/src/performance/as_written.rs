@@ -99,7 +99,7 @@ fn entry_re() -> &'static Regex {
 /// A validated entry: key and value. A trailing comment is accepted and dropped. A line with an
 /// odd number of quotes is never one.
 fn entry(line: &str) -> Option<(String, String)> {
-    if line.matches('"').count() % 2 != 0 {
+    if !line.matches('"').count().is_multiple_of(2) {
         return None;
     }
     let caps = entry_re().captures(line)?;

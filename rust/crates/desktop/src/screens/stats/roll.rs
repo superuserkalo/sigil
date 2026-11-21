@@ -21,9 +21,12 @@ use super::shared::*;
 use super::Fetched;
 
 /// The roll section's state, kept in Stats' view.
+/// The lists and the hero art a Roll reads on its worker.
+pub type RollLoad = (RollData, Vec<(String, Vec<u8>)>);
+
 pub struct RollView {
     pub data: Fetched<RollData>,
-    pub job: Job<(RollData, Vec<(String, Vec<u8>)>)>,
+    pub job: Job<RollLoad>,
     pub roll: Option<Roll>,
     /// What to roll once the lists arrive.
     pub pending: Option<Code>,
@@ -114,7 +117,7 @@ fn souls(value: u32) -> String {
     let text = value.to_string();
     let mut out = String::new();
     for (index, digit) in text.chars().enumerate() {
-        if index > 0 && (text.len() - index) % 3 == 0 {
+        if index > 0 && (text.len() - index).is_multiple_of(3) {
             out.push(',');
         }
         out.push(digit);
@@ -598,7 +601,7 @@ pub(super) fn section(s: &State, u: &Ui) -> El {
 pub fn stage_scene(s: &mut State) {
     let data = core::data_from_bundle(include_str!("../../../fixtures/stats-roll.json")).expect("roll fixture parses");
     s.stats.roll.data = Fetched::Ready(data);
-    roll_code(s, Code { seed: 0x5161_1A, hero: None });
+    roll_code(s, Code { seed: 0x0051_611A, hero: None });
 }
 
 #[cfg(test)]
