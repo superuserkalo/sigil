@@ -82,6 +82,12 @@ camp and rune timers. The top bar does not show them, so the script does not rea
   (Rebuild), incompatible (the top bar changed shape: Remove), or unknown (the game could not be
   read). It also lists other switched-on mods that replace the same layout; one in a lower slot wins
   and silences the bridge, and the panel says so.
+- After a game update (2026-11-21): while the bridge is on, Sigil reads the game build every
+  minute on a worker (`live_bridge::game_build`: `steam.inf` ClientVersion and `pak01_dir.vpk`'s
+  size and time) and checks the bridge again when it changed. An outdated bridge is rebuilt once
+  Deadlock is closed, never while it runs: by itself with Settings > Game > Live match > "Rebuild
+  the bridge after game updates" (off by default, a toast says it happened), else one question per
+  update with Rebuild. The build it was last found current for is kept in the options.
 - Rebuild replaces the installed file in place, and refuses a file that holds anything but the
   bridge. Remove moves the slot to Sigil's trash.
 
@@ -123,4 +129,5 @@ renderer or watch its traffic.
 2. Launch with `-condebug`, play a bot match: `console.log` gets `[SIGIL-LIVE]` lines, the panel
    fills both teams, the clock follows the top bar, the top bar itself looks unchanged.
 3. Check the roster line names accounts (the avatar property is a guess from DMM's script).
-4. After a game update: the panel offers Rebuild, and the rebuilt bridge reports again.
+4. After a game update: Sigil asks (or, with the switch on, rebuilds by itself once the game is
+   closed), and the rebuilt bridge reports again.

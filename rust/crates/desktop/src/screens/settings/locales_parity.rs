@@ -680,6 +680,11 @@ pub const DE: &[(&str, &str)] = &[
     ("Live bridge (HUD mod)", "Live-Brücke (HUD-Mod)"),
     ("Prints both teams' souls, K/D/A, levels and the clock into console.log. A HUD mod Sigil builds from your game. Off by default.", "Schreibt Seelen, K/T/A, Level beider Teams und die Uhr in die console.log. Eine HUD-Mod, die Sigil aus deinem Spiel baut. Standardmäßig aus."),
     ("Look up players in the live match", "Spieler im Live-Match nachschlagen"),
+    ("Rebuild the bridge after game updates", "Brücke nach Spielupdates neu bauen"),
+    (
+        "Sigil notices a new game version and builds the bridge again by itself, never while Deadlock runs. Off: it asks once per update.",
+        "Sigil bemerkt eine neue Spielversion und baut die Brücke selbst neu, nie während Deadlock läuft. Aus: Es fragt einmal pro Update.",
+    ),
     ("Stats shows the match you are playing.", "Statistiken zeigt das Match, das du spielst."),
     ("Both teams' souls and K/D/A in Stats.", "Seelen und K/T/A beider Teams in Statistiken."),
     ("Ranks for the lobby from deadlock-api.", "Ränge der Lobby von deadlock-api."),

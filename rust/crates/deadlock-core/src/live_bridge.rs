@@ -352,8 +352,38 @@ pub fn rebuild_installed(game_root: &Path, file: &Path, work: &Path, approve: bo
     Ok(())
 }
 
+/// The game build as Sigil tells updates apart: `ClientVersion` from `steam.inf` and the size
+/// and modified time of `pak01_dir.vpk` (a hotfix can keep the version). Two stats and one small
+/// read; None when the game is not there. The live bridge is checked again when this changes.
+pub fn game_build(game_root: &Path) -> Option<String> {
+    let pak = fs::metadata(pak01(game_root)).ok()?;
+    let modified = pak
+        .modified()
+        .ok()
+        .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+        .map_or(0, |since| since.as_secs());
+    let version = crate::host::read_build(game_root).unwrap_or_default();
+    Some(format!("{version}:{:x}-{modified:x}", pak.len()))
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_game_build_follows_steam_inf_and_pak01() {
+        let root = std::env::temp_dir().join(format!("sigil-bridge-build-{}", std::process::id()));
+        let citadel = root.join("game").join("citadel");
+        let _ = std::fs::remove_dir_all(&root);
+        assert_eq!(super::game_build(&root), None, "no game, no build");
+        std::fs::create_dir_all(&citadel).unwrap();
+        std::fs::write(citadel.join("pak01_dir.vpk"), b"1234").unwrap();
+        std::fs::write(citadel.join("steam.inf"), "ClientVersion=6123\n").unwrap();
+        let first = super::game_build(&root).unwrap();
+        assert!(first.starts_with("6123:4-"), "{first}");
+        std::fs::write(citadel.join("steam.inf"), "ClientVersion=6124\n").unwrap();
+        assert_ne!(super::game_build(&root).unwrap(), first, "a new version is a new build");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     use super::*;
     use morphic::kv3::Format;
 
