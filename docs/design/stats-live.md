@@ -88,6 +88,9 @@ camp and rune timers. The top bar does not show them, so the script does not rea
   Deadlock is closed, never while it runs: by itself with Settings > Game > Live match > "Rebuild
   the bridge after game updates" (off by default, a toast says it happened), else one question per
   update with Rebuild. The build it was last found current for is kept in the options.
+  `live_bridge::rebuild_plan` is that decision (unchanged, nothing to do, rebuild now, or wait for
+  the game to close), and `rebuild_when_closed` refuses the write while the game runs, so the
+  "never while it runs" rule is in the core and not only in the screen.
 - Rebuild replaces the installed file in place, and refuses a file that holds anything but the
   bridge. Remove moves the slot to Sigil's trash.
 

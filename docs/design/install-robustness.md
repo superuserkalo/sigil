@@ -86,7 +86,7 @@ does for each shape.
 | retry a dropped connection or a 5xx | mirror failover, resume | 3 retries with backoff, resume | 2 retries (1 s, 3 s); 4xx, caps and the allowlist are not retried |
 | short body against `Content-Length` | rejected | rejected | rejected (was accepted) |
 | GameBanana size check | yes | yes | yes |
-| GameBanana MD5 check | no | yes | yes, one fresh download, then a clear error |
+| GameBanana MD5 check | no | yes | yes, every queue or install download; a mismatch is fetched from zero once, then a clear error |
 | cached archive reused | no | partial resume | only when size and MD5 match the file record |
 | resume after a restart | partial file | partial file with its ETag | the queue keeps the part file, its `ETag` or `Last-Modified` and an install mark; Resume after restart sends `Range` with `If-Range`, a resumed GameBanana file is held to its MD5 |
 | a mod with several files | newest, picker in the mod view | file choice dialog | one-press Install asks GameBanana first; several files open the details' file menu |
@@ -121,6 +121,17 @@ archive (eight folders deep, 400 files, 512 KiB each) after an install, and afte
 an archive that holds only settings. The review dialog (`screens/browse/settings_review.rs`)
 shows what each would change; nothing is copied into the game as it ships. Not yet run against
 a real config mod on Windows.
+
+## Core decisions for the install screens (2026-11-21)
+
+Two decisions that a screen must not re-invent live in the core:
+
+- `mod_safety::landing(&ScanReport)` returns `Landing::On` for a clear scan and
+  `Landing::Off { findings, more, error }` otherwise; `landing_at(path)` scans the file as written
+  in the addon folder. An install that should land switched on is written off first and switched on
+  only after this says On, so a flagged file cannot land on by a screen forgetting the gate.
+- The queue holds every GameBanana download to the file record's size and MD5, not only a resumed
+  one, before the row says Downloaded.
 
 ## Not done
 
