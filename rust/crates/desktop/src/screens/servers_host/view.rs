@@ -13,7 +13,7 @@ use crate::screens::settings::i18n::{fill, tr};
 use crate::ui::{ActionKind, BODY, BODY_MED, H1, H2, MONO, SMALL, Ui};
 
 /// The page width the Host sections keep, so lines stay readable on a wide window.
-const MAX_W: f32 = 920.0;
+const MAX_W: f32 = 720.0;
 /// Console lines drawn at once; the rest stay in memory for Copy.
 const CONSOLE_DRAWN: usize = 200;
 
@@ -1627,7 +1627,7 @@ fn plugins_section(s: &State, u: &Ui) -> El {
                     row()
                         .key(format!("host-plugin-{}", plugin.name))
                         .w_full()
-                        .h(44.0)
+                        .min_h(56.0)
                         .px(16.0)
                         .gap(12.0)
                         .center_y()

@@ -11,10 +11,10 @@ use crate::app::State;
 use crate::icons;
 use crate::screens::settings::i18n::{fill, tr};
 use crate::screens::settings::options;
-use crate::ui::{ActionKind, BODY, BODY_MED, H1, H2, MICRO, MONO, SMALL, Ui};
+use crate::ui::{ActionKind, BODY, BODY_MED, H1, H2, MONO, SMALL, SMALL_NUM, Ui};
 
 /// The page width, so lines stay readable on a wide window.
-const MAX_W: f32 = 920.0;
+const MAX_W: f32 = 720.0;
 const PING_W: f32 = 72.0;
 const STATE_W: f32 = 110.0;
 
@@ -119,7 +119,7 @@ fn list_bar(s: &State, u: &Ui) -> El {
         .child(crate::screens::subpage::segmented(u, items))
         .child(spacer());
     if regions.windows {
-        bar = bar.child(text(tr("Shift-click ticks a range")).font(MICRO).color(u.faint));
+        bar = bar.child(text(tr("Shift-click ticks a range")).font(SMALL_NUM).color(u.faint));
     }
     bar.child(
         row()
@@ -367,7 +367,7 @@ fn toolbar(s: &State, u: &Ui) -> El {
             .on_press(super::toggle_probe),
         )
         .child(text(line).font(SMALL).color(u.muted).grow(1.0).min_w(0.0).truncate())
-        .child(text(source).font(MICRO).color(u.faint))
+        .child(text(source).font(SMALL_NUM).color(u.faint))
         .child(
             u.icon_button(&icons::REFRESH_CW, tr("Refresh the list"))
                 .key("regions-refresh")
@@ -418,7 +418,7 @@ fn presets(s: &State, u: &Ui) -> El {
                         .child(text(preset.name.clone()).font(SMALL).color(u.ink).a11y_hidden())
                         .child(
                             text(fill(tr("{} blocked"), &[&preset.blocked.len().to_string()]))
-                                .font(MICRO)
+                                .font(SMALL_NUM)
                                 .color(u.faint)
                                 .a11y_hidden(),
                         ),
@@ -507,7 +507,7 @@ fn presets(s: &State, u: &Ui) -> El {
                 .on_press(super::load_where_i_play)
                 .child(icon(&icons::PIN, 12.0).color(u.accent).a11y_hidden())
                 .child(text(tr("Where I play")).font(SMALL).color(u.ink).a11y_hidden())
-                .child(text(fill(tr("{} open"), &[&open.to_string()])).font(MICRO).color(u.faint).a11y_hidden()),
+                .child(text(fill(tr("{} open"), &[&open.to_string()])).font(SMALL_NUM).color(u.faint).a11y_hidden()),
         )
         .child(chips);
     }
@@ -616,7 +616,7 @@ fn location_row(s: &State, u: &Ui, location: &Location) -> El {
     let mut r = row()
         .key(format!("regions-row-{}", location.id))
         .w_full()
-        .h(36.0)
+        .h(32.0)
         .px(8.0)
         .gap(10.0)
         .center_y()
@@ -644,7 +644,7 @@ fn location_row(s: &State, u: &Ui, location: &Location) -> El {
                 fill(tr("{} matches"), &[&n.to_string()])
             })
             .key(format!("regions-played-{}", location.id))
-            .font(MICRO)
+            .font(SMALL_NUM)
             .color(u.accent)
             .a11y_hidden(),
             _ => el(),
@@ -661,7 +661,7 @@ fn location_row(s: &State, u: &Ui, location: &Location) -> El {
                 .gap(6.0)
                 .center_y()
                 .child(spacer())
-                .child(text(ping.clone()).font(MICRO).color(ping_tone).a11y_hidden())
+                .child(text(ping.clone()).font(SMALL_NUM).color(ping_tone).a11y_hidden())
                 .child(if ping.is_empty() || ping == "..." {
                     el().size(6.0, 6.0)
                 } else {
@@ -903,10 +903,10 @@ pub fn health_popover(s: &State, u: &Ui, sum: &probe::Summary) -> El {
                 .child(text(tr(line.region.label())).font(SMALL).color(u.ink).grow(1.0).min_w(0.0).truncate())
                 .child(
                     text(fill(tr("{} of {}"), &[&line.answering.to_string(), &line.measured.to_string()]))
-                        .font(MICRO)
+                        .font(SMALL_NUM)
                         .color(u.faint),
                 )
-                .child(row().w(56.0).child(spacer()).child(text(best).font(MICRO).color(tone))),
+                .child(row().w(56.0).child(spacer()).child(text(best).font(SMALL_NUM).color(tone))),
         );
     }
     let when = match regions.probed_at {
@@ -948,13 +948,13 @@ pub fn health_popover(s: &State, u: &Ui, sum: &probe::Summary) -> El {
                 .center_y()
                 .child(text(tr("Relay health")).font(SMALL).color(u.muted))
                 .child(spacer())
-                .child(text(when).font(MICRO).color(u.faint)),
+                .child(text(when).font(SMALL_NUM).color(u.faint)),
         )
         .child(lines)
-        .child(text(fastest).font(MICRO).color(u.faint).wrap().w_full())
+        .child(text(fastest).font(SMALL_NUM).color(u.faint).wrap().w_full())
         .child(
             text(tr("Ping from this computer to Valve's relays. It says how far each region is, not whether Deadlock's servers are up."))
-                .font(MICRO)
+                .font(SMALL_NUM)
                 .color(u.faint)
                 .wrap()
                 .w_full(),

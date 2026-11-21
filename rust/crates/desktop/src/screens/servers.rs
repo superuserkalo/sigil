@@ -508,6 +508,7 @@ enum FilterChipKind {
     Map,
 }
 
+#[allow(dead_code)]
 fn clear_chip(filters: &mut ServerFilter, kind: FilterChipKind) {
     match kind {
         FilterChipKind::Search => filters.query.clear(),
@@ -1025,14 +1026,6 @@ fn password_segment(u: &Ui, current: PasswordFilter) -> El {
     segment
 }
 
-fn truncate(value: &str, max: usize) -> String {
-    if value.chars().count() <= max {
-        return value.to_string();
-    }
-    let mut out: String = value.chars().take(max.saturating_sub(1)).collect();
-    out.push('…');
-    out
-}
 
 fn head(u: &Ui, key: ServerSortKey, width: f32, end: bool, sort: Option<ServerSort>) -> El {
     let label = key.label();
