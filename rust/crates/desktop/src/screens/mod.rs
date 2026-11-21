@@ -1,4 +1,5 @@
 pub mod autoexec;
+pub mod autoexec_convars;
 pub mod autoexec_flags;
 pub mod browse;
 pub mod character;

@@ -540,6 +540,7 @@ fn backup_stamp() -> String {
     now_iso().replace([':', '.'], "-")
 }
 
+pub mod convars;
 pub mod launch_options;
 
 #[cfg(test)]
