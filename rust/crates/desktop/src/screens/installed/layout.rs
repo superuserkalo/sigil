@@ -91,18 +91,28 @@ impl<'a> Group<'a> {
 /// Bundle the shown mods into cards, keeping the order they are already in. A group's first
 /// appearance decides where its card sits.
 pub fn groups<'a>(st: &State, shown: &[&'a AddonRow]) -> Vec<Group<'a>> {
+    groups_in(st, &super::index::Index::new(st), shown)
+}
+
+/// [`groups`] with the page's lookups.
+pub(super) fn groups_in<'a>(st: &State, idx: &super::index::Index, shown: &[&'a AddonRow]) -> Vec<Group<'a>> {
     let mut cards: Vec<Group<'a>> = Vec::new();
+    // Where each group's card is, so a group finds its card at once.
+    let mut at: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
     for addon in shown {
-        let extra = notes::extra(st, addon);
-        let id = meta_for(st, addon).and_then(|meta| meta.gamebanana_id);
+        let extra = idx.extra(st, addon);
+        let id = idx.meta(st, addon).and_then(|meta| meta.gamebanana_id);
         let key = deadlock_core::mod_extras::variant_key(Some(&extra), id);
         match key {
-            Some(key) => match cards.iter_mut().find(|card| card.key.as_deref() == Some(&key)) {
-                Some(card) => card.addons.push(addon),
-                None => cards.push(Group {
-                    key: Some(key),
-                    addons: vec![addon],
-                }),
+            Some(key) => match at.get(&key) {
+                Some(&i) => cards[i].addons.push(addon),
+                None => {
+                    at.insert(key.clone(), cards.len());
+                    cards.push(Group {
+                        key: Some(key),
+                        addons: vec![addon],
+                    });
+                }
             },
             None => cards.push(Group {
                 key: None,
@@ -385,13 +395,13 @@ pub fn picker_dialog(s: &State, u: &Ui) -> Option<El> {
 
 /// One mod as a list row: a 64 by 36 preview, the name and detail, chips, the switch and the
 /// card's own menu. Used by the list look in place of [`super::card`].
-pub fn list_row(s: &State, u: &Ui, card: &Group) -> El {
+pub fn list_row(s: &State, u: &Ui, idx: &super::index::Index, card: &Group) -> El {
     let addon = card.primary();
     let slot = addon.slot;
-    let name = meta_for(s, addon)
+    let name = idx.meta(s, addon)
         .map(|meta| meta.name.clone())
         .unwrap_or_else(|| "Unnamed mod".to_string());
-    let mut detail = match meta_for(s, addon).and_then(|meta| meta.author.clone()) {
+    let mut detail = match idx.meta(s, addon).and_then(|meta| meta.author.clone()) {
         Some(author) => format!("by {author}"),
         None => super::slot_file_name(addon),
     };

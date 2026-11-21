@@ -21,6 +21,7 @@ pub mod list_sections;
 pub mod locales_ux;
 pub mod sound;
 mod drag;
+pub(crate) mod index;
 pub mod enable;
 pub mod folder_fix;
 mod layout;
@@ -128,6 +129,9 @@ pub struct View {
     pub hidden: BTreeSet<u16>,
     /// A card being dragged to a new load order.
     pub drag: Option<drag::Dragging>,
+    /// The section's cards, by slot, as they stood when the drag began (`drag::order`), so a
+    /// pointer move and every card's drop mark read it instead of sorting the library again.
+    pub drag_order: Vec<u16>,
     /// Enabled slots that share game paths with other enabled mods, from the last scan.
     pub overlaps: overlap::Overlaps,
     /// Mods that load after a mod their GameBanana page requires, so it hides them.
@@ -413,14 +417,18 @@ pub enum Menu {
 
 /// The mods the page shows: search, source and group applied, in the chosen order.
 fn shown_addons(s: &State) -> Vec<&AddonRow> {
+    shown_addons_in(s, &index::Index::new(s))
+}
+
+fn shown_addons_in<'a>(s: &'a State, idx: &index::Index) -> Vec<&'a AddonRow> {
     let query = s.installed_query.text.trim().to_lowercase();
     let v = &s.installed;
     let mut shown: Vec<&AddonRow> = s
         .addons
         .addons
         .iter()
-        .filter(|addon| matches_query(s, addon, &query))
-        .filter(|addon| v.source.matches(meta_for(s, addon)))
+        .filter(|addon| matches_query(s, idx, addon, &query))
+        .filter(|addon| v.source.matches(idx.meta(s, addon)))
         .filter(|addon| notes::matches(s, addon))
         .filter(|addon| match v.show {
             Show::All => true,
@@ -430,33 +438,30 @@ fn shown_addons(s: &State) -> Vec<&AddonRow> {
         .collect();
     match v.sort {
         Sort::LoadOrder => shown.sort_by_key(|addon| addon.slot),
-        Sort::Name => shown.sort_by_key(|addon| display_name(s, addon).to_lowercase()),
+        Sort::Name => shown.sort_by_cached_key(|addon| display_name_in(s, idx, addon).to_lowercase()),
         Sort::Recent => shown.sort_by(|a, b| {
-            let at = |addon: &AddonRow| {
-                meta_for(s, addon)
-                    .map(|meta| meta.recorded_at.clone())
-                    .unwrap_or_default()
-            };
-            at(b).cmp(&at(a)).then(a.slot.cmp(&b.slot))
+            let at = |addon: &AddonRow| idx.meta(s, addon).map(|meta| meta.recorded_at.as_str()).unwrap_or_default();
+            at(b).cmp(at(a)).then(a.slot.cmp(&b.slot))
         }),
         Sort::Size => shown.sort_by_key(|addon| std::cmp::Reverse(addon.size_bytes)),
-        Sort::Hero => shown.sort_by_key(|addon| {
-            let hero = notes::extra(s, addon).hero.map(|h| h.to_lowercase());
-            (hero.is_none(), hero.unwrap_or_default(), display_name(s, addon).to_lowercase())
+        Sort::Hero => shown.sort_by_cached_key(|addon| {
+            let hero = idx.extra_ref(s, addon).and_then(|e| e.hero.as_ref()).map(|h| h.to_lowercase());
+            (hero.is_none(), hero.unwrap_or_default(), display_name_in(s, idx, addon).to_lowercase())
         }),
     }
     // Pinned mods sit at the top of the disabled group, in the chosen order within it. Saved
     // mods (Grimoire #593) sort first within each group.
     shown.sort_by_key(|addon| {
-        let extra = notes::extra(s, addon);
+        let extra = idx.extra_ref(s, addon);
+        let (pinned, favorite) = extra.map_or((false, false), |e| (e.pinned, e.favorite));
         let group = if addon.enabled {
             0
-        } else if extra.pinned {
+        } else if pinned {
             1
         } else {
             2
         };
-        (group, !extra.favorite)
+        (group, !favorite)
     });
     shown
 }
@@ -467,9 +472,16 @@ pub(crate) fn display_name(s: &State, addon: &AddonRow) -> String {
         .unwrap_or_else(|| slot_file_name(addon))
 }
 
+fn display_name_in(s: &State, idx: &index::Index, addon: &AddonRow) -> String {
+    idx.meta(s, addon)
+        .map(|meta| meta.name.clone())
+        .unwrap_or_else(|| slot_file_name(addon))
+}
+
 pub fn view(s: &State, u: &Ui) -> El {
-    let shown = shown_addons(s);
-    let cards = layout::groups(s, &shown);
+    let idx = std::rc::Rc::new(index::Index::new(s));
+    let shown = shown_addons_in(s, &idx);
+    let cards = layout::groups_in(s, &idx, &shown);
     let enabled: Vec<&layout::Group> = cards.iter().filter(|card| card.enabled()).collect();
     let disabled: Vec<&layout::Group> = cards.iter().filter(|card| !card.enabled()).collect();
     let has_mods = s.game_detected && s.addons.scanned && !s.addons.addons.is_empty();
@@ -515,22 +527,22 @@ pub fn view(s: &State, u: &Ui) -> El {
         )
     } else if s.installed.by_list && !s.installed.notes.extras.lists.is_empty() {
         list_sections::body(s, u, &shown, |members| {
-            let groups = layout::groups(s, members);
+            let groups = layout::groups_in(s, &idx, members);
             let refs: Vec<&layout::Group> = groups.iter().collect();
-            cards_block(s, u, &refs)
+            cards_block(s, u, &idx, &refs)
         })
     } else {
         let mut list = col().w_full().gap(24.0).pb(32.0);
         if !enabled.is_empty() {
-            list = list.child(section(s, u, Section::Enabled, &enabled));
+            list = list.child(section(s, u, &idx, Section::Enabled, &enabled));
         }
         if !disabled.is_empty() {
-            list = list.child(section(s, u, Section::Disabled, &disabled));
+            list = list.child(section(s, u, &idx, Section::Disabled, &disabled));
         }
         list
     };
 
-    let trailing = if has_mods { Some(toolbar(s, u)) } else { None };
+    let trailing = if has_mods { Some(toolbar(s, u, &idx)) } else { None };
 
     let mut page = col()
         .key("installed-page")
@@ -548,7 +560,7 @@ pub fn view(s: &State, u: &Ui) -> El {
         page = page.child(if s.installed.selected.is_empty() {
             filter_bar(s, u)
         } else {
-            selection_bar(s, u)
+            selection_bar(s, u, &idx)
         });
         if let Some(line) = notes::filter_row(s, u) {
             page = page.child(line);
@@ -725,7 +737,7 @@ fn filter_bar(s: &State, u: &Ui) -> El {
 
 // --- toolbar -----------------------------------------------------------------
 
-fn toolbar(s: &State, u: &Ui) -> El {
+fn toolbar(s: &State, u: &Ui, idx: &index::Index) -> El {
     let mut actions = row().gap(8.0).center_y();
     if !s.addons.conflicts.is_empty() {
         let count = s.addons.conflicts.len();
@@ -751,7 +763,7 @@ fn toolbar(s: &State, u: &Ui) -> El {
                 .child(text(label).font(BODY_MED).color(u.amber).a11y_hidden()),
         );
     }
-    if let Some(button) = update_all_button(s, u) {
+    if let Some(button) = update_all_button(s, u, idx) {
         actions = actions.child(button);
     }
     actions
@@ -981,7 +993,7 @@ enum Section {
 }
 
 /// One section: the head with its count, then the cards or rows.
-fn section(s: &State, u: &Ui, which: Section, cards: &[&layout::Group]) -> El {
+fn section(s: &State, u: &Ui, idx: &std::rc::Rc<index::Index>, which: Section, cards: &[&layout::Group]) -> El {
     let collapsed = match which {
         Section::Enabled => s.installed.collapsed_enabled,
         Section::Disabled => s.installed.collapsed_disabled,
@@ -1027,36 +1039,99 @@ fn section(s: &State, u: &Ui, which: Section, cards: &[&layout::Group]) -> El {
     if collapsed {
         return c;
     }
-    c.child(cards_block(s, u, cards))
+    c.child(cards_block(s, u, idx, cards))
 }
 
-/// A set of cards drawn the page's way: the grid, or the list rows.
-fn cards_block(s: &State, u: &Ui, cards: &[&layout::Group]) -> El {
-    let mut c = col().w_full();
+/// A set of cards drawn the page's way: the grid, or the list rows. Only the rows near the
+/// viewport are built (`virtual_rows`): a library of hundreds of mods built every card on
+/// every commit, 17 to 19 ms of view at 300 mods on an M-series Mac.
+fn cards_block(s: &State, u: &Ui, idx: &std::rc::Rc<index::Index>, cards: &[&layout::Group]) -> El {
+    let _ = u;
+    // What the row builders keep: each card's group key and slots, in order. Rows look their
+    // mods up by slot when they build, so they never hold on to the state they were made from.
+    let entries: std::rc::Rc<Vec<CardSlots>> = std::rc::Rc::new(
+        cards
+            .iter()
+            .map(|card| CardSlots { key: card.key.clone(), slots: card.addons.iter().map(|a| a.slot).collect() })
+            .collect(),
+    );
+    let first = entries.first().and_then(|e| e.slots.first()).copied().unwrap_or(0);
+    let block = format!("installed-rows-{first:02}");
+    let growth = rune::GrowthSpec { spring: rune::GROWTH, edge: rune::edge::NO_MASK };
+    let (keys, build, idx) = (entries.clone(), entries.clone(), idx.clone());
     if s.installed.layout.is_cards() {
         let cols = s.installed.layout.columns();
-        // One card and its gap, from the last layout, so a drag steps card by card.
-        let pitch = cards
-            .first()
-            .and_then(|card| rune::memo::layout_size(&format!("addon-{:02}", card.primary().slot)))
+        // The block's width, settled in the same commit; before any layout, the page's.
+        let width = rune::memo::layout_with(&block, |r| r[2].round())
+            .or_else(|| rune::memo::layout_with("installed-page", |r| (r[2] - 2.0 * PAGE_X).round()))
+            .unwrap_or(1016.0);
+        let card_w = ((width - GRID_GAP * (cols as f32 - 1.0)) / cols as f32).max(1.0);
+        // A card: its 16:9 image inside a 1 pt frame, then the footer.
+        let card_h = (card_w - 2.0) * 9.0 / 16.0 + CARD_FOOTER_H;
+        // One card and its gap, from the last layout when the first card is built, so a drag
+        // steps card by card.
+        let pitch = rune::memo::layout_size(&format!("addon-{first:02}"))
             .map(|[w, h]| [w + GRID_GAP, h + GRID_GAP])
-            .unwrap_or([260.0, 220.0]);
-        let mut grid = el()
-            .w_full()
-            .equal_columns(cols)
-            .gap(GRID_GAP);
-        for card in cards {
-            grid = grid.child(card_view(s, u, card, pitch, cols));
-        }
-        c = c.child(grid);
+            .unwrap_or([card_w + GRID_GAP, card_h + GRID_GAP]);
+        let rows = entries.len().div_ceil(cols);
+        col().key(block).w_full().growth(growth).virtual_rows(
+            rows,
+            card_h + GRID_GAP,
+            move |_s: &State, i| -> std::borrow::Cow<'_, str> {
+                let slot = keys.get(i * cols).and_then(|e| e.slots.first()).copied().unwrap_or(0);
+                std::borrow::Cow::Owned(format!("installed-row-{slot:02}"))
+            },
+            move |s: &State, i| {
+                let u = Ui::new();
+                let mut grid = el().w_full().equal_columns(cols).gap(GRID_GAP);
+                if i + 1 < rows {
+                    grid = grid.pb(GRID_GAP);
+                }
+                for entry in build.iter().skip(i * cols).take(cols) {
+                    if let Some(card) = entry.group(s, &idx) {
+                        grid = grid.child(card_view(s, &u, &idx, &card, pitch, cols));
+                    }
+                }
+                grid
+            },
+        )
     } else {
-        let mut list = col().w_full();
-        for card in cards {
-            list = list.child(layout::list_row(s, u, card));
-        }
-        c = c.child(list);
+        col().key(block).w_full().growth(growth).virtual_rows(
+            entries.len(),
+            LIST_ROW_H,
+            move |_s: &State, i| -> std::borrow::Cow<'_, str> {
+                // The row's own key, so a row keeps its identity as before.
+                let slot = keys.get(i).and_then(|e| e.slots.first()).copied().unwrap_or(0);
+                std::borrow::Cow::Owned(format!("addon-row-{slot:02}"))
+            },
+            move |s: &State, i| {
+                let u = Ui::new();
+                match build.get(i).and_then(|entry| entry.group(s, &idx)) {
+                    Some(card) => layout::list_row(s, &u, &idx, &card),
+                    None => el(),
+                }
+            },
+        )
     }
-    c
+}
+
+/// The footer under a card's image: name, detail line and switch, with their padding.
+const CARD_FOOTER_H: f32 = 58.0;
+/// One row of the list look.
+const LIST_ROW_H: f32 = 52.0;
+
+/// A card as the row builders keep it: no borrow of the state.
+struct CardSlots {
+    key: Option<String>,
+    slots: Vec<u16>,
+}
+
+impl CardSlots {
+    /// The card again from the state a row builds from, or `None` when a mod has gone.
+    fn group<'a>(&self, s: &'a State, idx: &index::Index) -> Option<layout::Group<'a>> {
+        let addons: Option<Vec<&AddonRow>> = self.slots.iter().map(|&slot| idx.addon(s, slot)).collect();
+        Some(layout::Group { key: self.key.clone(), addons: addons.filter(|a| !a.is_empty())? })
+    }
 }
 
 /// A control that shows on hover: always when `shown` (picking, its menu open, a scene's
@@ -1074,7 +1149,7 @@ pub fn meta_for<'a>(s: &'a State, addon: &AddonRow) -> Option<&'a ModMeta> {
 /// One card: a 16:9 preview with the selection box, warning buttons and the "more" button,
 /// the slot number and an update chip on it; the name, a line of detail and the switch below.
 /// A variant group shows the file it is playing and how many it holds.
-fn card_view(s: &State, u: &Ui, card: &layout::Group, pitch: [f32; 2], cols: usize) -> El {
+fn card_view(s: &State, u: &Ui, idx: &index::Index, card: &layout::Group, pitch: [f32; 2], cols: usize) -> El {
     let addon = card.primary();
     let slot = addon.slot;
     let enable = !addon.enabled;
@@ -1206,7 +1281,7 @@ fn card_view(s: &State, u: &Ui, card: &layout::Group, pitch: [f32; 2], cols: usi
     if !s.installed.hide_slot {
         bottom = bottom.child(chip);
     }
-    if let Some(update) = update_chip(s, u, addon) {
+    if let Some(update) = update_chip(s, u, idx, addon) {
         bottom = bottom.child(update);
     }
     if let Some(merged) = tools::merged_chip(s, u, slot) {
@@ -1435,7 +1510,7 @@ pub(super) fn check_box(u: &Ui, on: bool, on_image: bool) -> El {
 }
 
 /// "Update", "Queued", "Updating" or "Update failed" on the preview, when it applies.
-fn update_chip(s: &State, u: &Ui, addon: &AddonRow) -> Option<El> {
+fn update_chip(s: &State, u: &Ui, idx: &index::Index, addon: &AddonRow) -> Option<El> {
     let slot = addon.slot;
     let updates = &s.installed.updates;
     let cancellable = updates.running == Some(slot) || updates.queue.contains(&slot);
@@ -1446,7 +1521,7 @@ fn update_chip(s: &State, u: &Ui, addon: &AddonRow) -> Option<El> {
     } else if !s.shell.w4.update_badges {
         // Settings > Show mod update badges is off: no Update mark (a running update still shows).
         return None;
-    } else if update_for(s, addon).is_some() {
+    } else if update_for_in(s, idx, addon).is_some() {
         if updates.failed.contains_key(&slot) {
             ("Update failed", &icons::TRIANGLE_ALERT, true)
         } else {
@@ -1516,11 +1591,11 @@ pub(super) fn slot_file_name(addon: &AddonRow) -> String {
         .to_string()
 }
 
-fn matches_query(s: &State, addon: &AddonRow, query: &str) -> bool {
+fn matches_query(s: &State, idx: &index::Index, addon: &AddonRow, query: &str) -> bool {
     if query.is_empty() {
         return true;
     }
-    let meta = meta_for(s, addon);
+    let meta = idx.meta(s, addon);
     addon.file.to_lowercase().contains(query)
         || addon.slot_label().contains(query)
         || meta.is_some_and(|meta| {
@@ -3241,7 +3316,7 @@ fn select_all_shown(st: &mut State) {
 }
 
 /// The bar that replaces the filters while cards are picked.
-fn selection_bar(s: &State, u: &Ui) -> El {
+fn selection_bar(s: &State, u: &Ui, idx: &index::Index) -> El {
     let count = s.installed.selected.len();
     let shown = shown_order(s);
     let all = shown.iter().all(|slot| s.installed.selected.contains(slot));
@@ -3286,12 +3361,13 @@ fn selection_bar(s: &State, u: &Ui) -> El {
         );
     }
     use crate::screens::settings::i18n::{fill, tr};
+    let available = available_updates_in(s, idx);
     let updates: Vec<u16> = s
         .installed
         .selected
         .iter()
         .copied()
-        .filter(|slot| available_updates(s).contains(slot))
+        .filter(|slot| available.contains(slot))
         .collect();
     bar = bar.child(spacer());
     if !updates.is_empty() {
@@ -3820,22 +3896,44 @@ fn reorder(st: &mut State, plan: ReorderPlan) {
 
 // --- updates ---------------------------------------------------------------------------
 
-/// The newer GameBanana file for a slot, when the last check found one.
+/// The newer GameBanana file for a slot, when the last check found one. One call builds an
+/// [`index::Index`]; a loop over mods builds one and calls [`update_for_in`].
 pub fn update_for(s: &State, addon: &AddonRow) -> Option<RemoteFile> {
-    let meta = meta_for(s, addon)?;
+    update_for_in(s, &index::Index::new(s), addon)
+}
+
+/// [`update_for`] with the lookups an index has made, the answer kept in it.
+pub(crate) fn update_for_in(s: &State, idx: &index::Index, addon: &AddonRow) -> Option<RemoteFile> {
+    idx.update(addon.slot, || update_from(s, addon, |a| idx.meta(s, a), |id| idx.variant_slots(s, id), |a| idx.extra(s, a)))
+}
+
+/// The answer as it was worked out before the index, kept for tests to hold the index to.
+#[cfg(test)]
+pub(crate) fn update_for_linear(s: &State, addon: &AddonRow) -> Option<RemoteFile> {
+    update_from(s, addon, |a| meta_for(s, a), |id| variant_slots(s, id), |a| notes::extra(s, a))
+}
+
+fn update_from<'a>(
+    s: &'a State,
+    addon: &AddonRow,
+    meta_of: impl Fn(&AddonRow) -> Option<&'a ModMeta>,
+    slots_of: impl Fn(u64) -> Vec<&'a AddonRow>,
+    extra_of: impl Fn(&AddonRow) -> deadlock_core::mod_extras::ModExtra,
+) -> Option<RemoteFile> {
+    let meta = meta_of(addon)?;
     let id = meta.gamebanana_id?;
     if crate::screens::browse::update_ignored(s, id) {
         return None;
     }
     let updates = &s.installed.updates;
     let remote = updates.cache.mods.get(&id)?;
-    let file = match variant_slots(s, id).as_slice() {
+    let file = match slots_of(id).as_slice() {
         // Several files of this mod: each is matched to its own successor.
         siblings if siblings.len() > 1 => {
             let installed: Vec<update_match::Installed> = siblings
                 .iter()
                 .map(|other| {
-                    let recorded = meta_for(s, other).map(|m| m.recorded_at.clone()).unwrap_or_default();
+                    let recorded = meta_of(other).map(|m| m.recorded_at.clone()).unwrap_or_default();
                     let base = mod_updates::baseline_for_repaired(&updates.journal, &updates.aliases, id, other.size_bytes, None, &recorded);
                     update_match::Installed {
                         slot: other.slot,
@@ -3856,7 +3954,7 @@ pub fn update_for(s: &State, addon: &AddonRow) -> Option<RemoteFile> {
             }
         }
     };
-    let ignored = notes::extra(s, addon).ignored_update;
+    let ignored = extra_of(addon).ignored_update;
     match ignored {
         Some(ignored) if ignored == 0 || ignored == file.file_id => None,
         _ => Some(file),
@@ -3950,17 +4048,21 @@ pub fn pending_update_count(s: &State) -> usize {
 }
 
 fn available_updates(s: &State) -> Vec<u16> {
+    available_updates_in(s, &index::Index::new(s))
+}
+
+fn available_updates_in(s: &State, idx: &index::Index) -> Vec<u16> {
     let updates = &s.installed.updates;
     s.addons
         .addons
         .iter()
-        .filter(|addon| update_for(s, addon).is_some())
+        .filter(|addon| update_for_in(s, idx, addon).is_some())
         .map(|addon| addon.slot)
         .filter(|slot| updates.running != Some(*slot) && !updates.queue.contains(slot))
         .collect()
 }
 
-fn update_all_button(s: &State, u: &Ui) -> Option<El> {
+fn update_all_button(s: &State, u: &Ui, idx: &index::Index) -> Option<El> {
     let updates = &s.installed.updates;
     if let Some(slot) = updates.running {
         let left = updates.queue.len();
@@ -3990,7 +4092,7 @@ fn update_all_button(s: &State, u: &Ui) -> Option<El> {
                 ),
         );
     }
-    let slots = available_updates(s);
+    let slots = available_updates_in(s, idx);
     if slots.is_empty() {
         return None;
     }

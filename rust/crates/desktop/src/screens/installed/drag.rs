@@ -79,8 +79,12 @@ pub fn drop_mark(s: &State, slot: u16, enabled: bool) -> Option<bool> {
     if d.enabled != enabled || d.from == d.to || d.slot == slot {
         return None;
     }
-    let shown = order(s, enabled);
-    (shown.get(d.to) == Some(&slot)).then_some(d.to > d.from)
+    let target = match s.installed.drag_order.get(d.to) {
+        Some(target) => *target,
+        // A drag staged without its order (a scene): work it out.
+        None => *order(s, enabled).get(d.to)?,
+    };
+    (target == slot).then_some(d.to > d.from)
 }
 
 /// The grip on a card or row. `pitch` is one card and its gap; `cols` the cards across.
@@ -94,29 +98,38 @@ pub fn grip(u: &Ui, slot: u16, enabled: bool, pitch: [f32; 2], cols: usize, drag
         .press(u.over.alpha(0.08))
         .label(tr("Drag to change the load order"))
         .cursor(if dragging { rune::Cursor::Grabbing } else { rune::Cursor::Grab })
-        .on_drag(move |st: &mut State, d: &mut Drag, _tx: &mut Tx| drag(st, slot, enabled, pitch, cols, d))
+        .on_drag(move |st: &mut State, d: &mut Drag, tx: &mut Tx| drag(st, slot, enabled, pitch, cols, d, tx))
         .child(icon(&GRIP_VERTICAL, 14.0).color(rune::Color::WHITE.alpha(0.9)).a11y_hidden());
     super::hover_reveal(grip, show || dragging)
 }
 
-fn drag(st: &mut State, slot: u16, enabled: bool, pitch: [f32; 2], cols: usize, d: &mut Drag) {
+fn drag(st: &mut State, slot: u16, enabled: bool, pitch: [f32; 2], cols: usize, d: &mut Drag, tx: &mut Tx) {
     match d.phase {
         Phase::Down => {
-            let from = order(st, enabled).iter().position(|s| *s == slot).unwrap_or(0);
+            // The order is worked out once here: every pointer move and every card's drop
+            // mark read it, where each sorted the whole library again.
+            let shown = order(st, enabled);
+            let from = shown.iter().position(|s| *s == slot).unwrap_or(0);
+            st.installed.drag_order = shown;
             st.installed.drag = Some(Dragging { slot, enabled, from, to: from });
         }
         Phase::Move => {
-            let count = order(st, enabled).len();
+            let count = st.installed.drag_order.len();
             if let Some(drag) = st.installed.drag.as_mut() {
-                drag.to = grid_target(drag.from, count, cols, pitch, d.dx, d.dy);
+                let to = grid_target(drag.from, count, cols, pitch, d.dx, d.dy);
+                if to == drag.to {
+                    // Nothing on screen moves until the landing place does.
+                    tx.live_only();
+                }
+                drag.to = to;
             }
         }
         Phase::Up => {
+            let shown = std::mem::take(&mut st.installed.drag_order);
             let Some(drag) = st.installed.drag.take() else { return };
             if d.cancelled() || drag.from == drag.to {
                 return;
             }
-            let shown = order(st, enabled);
             let group = super::group_slots(st, enabled);
             let wanted = wanted_order(&group, &shown, slot, drag.to);
             super::ask_reorder(st, &group, &wanted);

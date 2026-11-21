@@ -18,6 +18,7 @@ const BROWSE_FIXTURE: &str = include_str!("../fixtures/browse/subfeed.json");
 fn scene(name: &str) -> Scene {
     app::scenes()
         .iter()
+        .chain(crate::bench_scenes::SCENES.iter())
         .find(|(n, _)| *n == name)
         .map(|(_, f)| *f)
         .unwrap_or_else(|| panic!("no scene {name}"))
@@ -170,6 +171,9 @@ fn core_scenes_come_to_rest() {
 fn core_scenes_stay_inside_their_node_budget() {
     let budgets: &[(&str, usize)] = &[
         ("demo-installed", 480),
+        // 96 mods. Before rows were virtual it built every card: 2685 and 2106 nodes.
+        ("installed-stress", 2000),
+        ("installed-list-stress", 1700),
         ("browse-card-stress", 700),
         ("locker", 400),
         ("stats", 400),
@@ -278,4 +282,24 @@ fn resizing_across_a_column_break_keeps_the_page_where_it_is() {
         let at = scrolled(&rt).unwrap_or(0.0);
         assert!(at.abs() < 0.5, "at {width} pt wide the page scrolled {at} pt by itself");
     }
+}
+
+
+/// Installed builds the rows near the window only (and about two windows either side), so past
+/// that a larger library costs the same to build. Before rows were virtual, every card was
+/// built: 2685 layout nodes at 96 mods, about 8000 at 300.
+#[test]
+fn installed_cost_does_not_grow_with_the_library() {
+    let nodes = |mods: u16| {
+        let mut s = crate::data::init_state();
+        crate::bench_scenes::installed_stress_of(&mut s, mods);
+        let mut rt = Runtime::new(s, app::view, (1280.0, 800.0), Env::new(true, 1.0));
+        rt.check_live_only(false);
+        settle(&mut rt);
+        rt.stats.layout_nodes
+    };
+    let (small, large) = (nodes(300), nodes(600));
+    eprintln!("jank: installed at 300 mods {small} nodes, at 600 mods {large}");
+    assert!(small < 3000, "300 mods built {small} layout nodes");
+    assert!(large < small + small / 10, "600 mods built {large} layout nodes against {small} for 300");
 }

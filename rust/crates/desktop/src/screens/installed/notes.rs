@@ -317,6 +317,22 @@ pub fn heroes(st: &State) -> Vec<String> {
     names.into_iter().collect()
 }
 
+/// `!heroes(st).is_empty()`, stopping at the first hero.
+fn has_heroes(st: &State) -> bool {
+    st.installed.notes.extras.mods.iter().any(|entry| entry.hero.as_ref().is_some_and(|h| !h.trim().is_empty()))
+        || st
+            .addons
+            .addons
+            .iter()
+            .any(|addon| hero_guess::heroes_of(st, addon).iter().any(|name| !name.trim().is_empty()))
+}
+
+/// `!tag_options(st).is_empty()`, stopping at the first tag.
+fn has_tags(st: &State) -> bool {
+    st.addons.addons.iter().any(|addon| !tags_of(st, addon).is_empty())
+        || !st.installed.notes.extras.all_tags().is_empty()
+}
+
 /// Leaf categories in the library, sorted.
 pub fn categories(st: &State) -> Vec<String> {
     let mut names: BTreeSet<String> = st
@@ -521,11 +537,12 @@ pub fn clear(st: &mut State) {
 
 /// The filter buttons and the active filter values, under the status switch.
 pub fn filter_row(s: &State, u: &Ui) -> Option<El> {
-    let heroes = heroes(s);
-    let categories = categories(s);
-    let tags = tag_options(s);
+    // Only whether each kind exists matters here, so stop at the first one found: building
+    // every hero guess and every tag of the library took 3 ms a build at 96 mods, 9 at 300.
+    let has_categories = !categories(s).is_empty();
+    let has_tags = has_tags(s);
     let lists = &s.installed.notes.extras.lists;
-    if heroes.is_empty() && categories.is_empty() && tags.is_empty() && lists.is_empty() {
+    if !has_categories && !has_tags && lists.is_empty() && !has_heroes(s) {
         return None;
     }
     let notes = &s.installed.notes;
@@ -598,13 +615,13 @@ pub fn filter_row(s: &State, u: &Ui) -> Option<El> {
             dropdown(u, "installed-hero", "Hero", &icons::USER)
                 .on_press(|st: &mut State| super::open_menu(st, super::Menu::Hero)),
         );
-        if !categories.is_empty() {
+        if has_categories {
             line = line.child(
                 dropdown(u, "installed-category", "Category", &icons::LAYERS)
                     .on_press(|st: &mut State| super::open_menu(st, super::Menu::Category)),
             );
         }
-        if !tags.is_empty() {
+        if has_tags {
             line = line.child(
                 dropdown(u, "installed-tag", "Tag", &icons::FILTER)
                     .on_press(|st: &mut State| super::open_menu(st, super::Menu::Tag)),
