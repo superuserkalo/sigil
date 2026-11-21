@@ -747,7 +747,7 @@ impl Ui {
         self.section(&sentence(&s.into()))
     }
 
-    /// A section header inside a page: `SECTION` (12/600) in `muted` on a 24 point row. The
+    /// A section header inside a page: `SECTION` (12/600) in `prose` on a 24 point row. The
     /// only 600 weight in content, so it reads as a header without being loud. Leave 24
     /// points above it (none when first on the page) and 8 below.
     pub fn section(&self, title: &str) -> El {
@@ -765,7 +765,7 @@ impl Ui {
             .child(
                 text(title.to_string())
                     .font(SECTION)
-                    .color(self.muted)
+                    .color(self.prose)
                     .role("heading")
                     .level(2),
             );
