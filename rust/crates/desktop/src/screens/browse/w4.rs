@@ -42,7 +42,7 @@ pub struct W4 {
     pub last_random: Option<String>,
     /// This week's featured mods, per category, from the saved catalog.
     pub featured: Vec<(String, BrowseCard)>,
-    featured_key: Option<(usize, (i32, u32))>,
+    featured_key: Option<((usize, usize, i64), (i32, u32))>,
     /// Featured picks checked against their mod page this run (DMM `6bdb2970`): the saved
     /// catalog keeps mods GameBanana has since withheld, so a pick is confirmed before it
     /// stays. `true` when the page said the mod is hidden.
@@ -378,11 +378,14 @@ fn recompute_featured(st: &mut State) -> bool {
         return false;
     };
     let now = chrono_now();
-    let page = mirror.page(&MirrorFilter::section(BrowseSection::Mods), BrowseOrder::MostLiked, 1, 4000);
-    let key = (page.total, library_facts::iso_week(now));
+    // This runs on every poll: key on what is cheap to read, and sort the catalog only when
+    // it or the week changed (sorting and copying up to 4000 entries cost milliseconds a frame).
+    let catalog = (mirror.entries.len(), mirror.meta.withheld.len(), mirror.meta.synced_at);
+    let key = (catalog, library_facts::iso_week(now));
     if st.browse_view.w4.featured_key == Some(key) {
         return false;
     }
+    let page = mirror.page(&MirrorFilter::section(BrowseSection::Mods), BrowseOrder::MostLiked, 1, 4000);
     let rows: Vec<BrowseMod> = page.entries.iter().map(browse_row).collect();
     let picks = library_facts::featured(&rows, now, 0);
     st.browse_view.w4.featured = picks
