@@ -72,12 +72,14 @@ pub struct LookOptions {
     pub exposure: f32,
     /// Deadlock Mod Manager's wireframe toggle.
     pub wireframe: bool,
+    /// Deadlock Mod Manager's axis gizmo, on the preview only (`gizmo`).
+    pub gizmo: bool,
 }
 
 impl Default for LookOptions {
     fn default() -> Self {
         let l = sigil_viewer::Look::default();
-        LookOptions { backdrop: l.backdrop, lighting: l.lighting, bloom: l.bloom, shadows: l.shadows, cloth: l.cloth, particles: l.particles, transparent: l.transparent, exposure: l.exposure, wireframe: l.wireframe }
+        LookOptions { backdrop: l.backdrop, lighting: l.lighting, bloom: l.bloom, shadows: l.shadows, cloth: l.cloth, particles: l.particles, transparent: l.transparent, exposure: l.exposure, wireframe: l.wireframe, gizmo: false }
     }
 }
 
@@ -443,6 +445,7 @@ fn run_inner(source: Source, before: Option<Source>, rx: Receiver<Cmd>, out: Out
     let mut dirty = true;
     let mut last = Instant::now();
     let mut first_frame = true;
+    let mut gizmo = false;
     loop {
         // Sleep until the next frame while playing; otherwise until a command arrives.
         let animating = visible && (viewer.animating() || rec.busy()) && w > 0;
@@ -519,6 +522,7 @@ fn run_inner(source: Source, before: Option<Source>, rx: Receiver<Cmd>, out: Out
                     viewer.look.transparent = l.transparent;
                     viewer.look.exposure = l.exposure;
                     viewer.look.wireframe = l.wireframe;
+                    gizmo = l.gizmo;
                     viewer.look.floor = !l.transparent;
                 }
                 Cmd::BackdropImage(path) => {
@@ -565,7 +569,7 @@ fn run_inner(source: Source, before: Option<Source>, rx: Receiver<Cmd>, out: Out
             // The frame is what the device renders: a viewport past its edge limit is clamped.
             let edge = viewer.max_edge();
             let (fw, fh) = (w.min(edge), h.min(edge));
-            let rgba = viewer.render(fw, fh, dt).to_vec();
+            let mut rgba = viewer.render(fw, fh, dt).to_vec();
             let t = viewer.timings();
             if gpu_failed(&out, &viewer) {
                 return;
@@ -575,6 +579,9 @@ fn run_inner(source: Source, before: Option<Source>, rx: Receiver<Cmd>, out: Out
                 log::info(format!("viewer: first frame {fw}x{fh} in {} ms (GPU wait {:.1} ms)", started.elapsed().as_millis(), t.gpu_wait_ms));
             }
             rec.frame(&rgba, fw, fh, &out);
+            if gizmo {
+                super::gizmo::draw(&mut rgba, fw, fh, viewer.camera.yaw, viewer.camera.pitch, crate::data::pixel_scale());
+            }
             out.pixels.set(fw, fh, rgba);
             publish_live(&out, &viewer);
             if held {

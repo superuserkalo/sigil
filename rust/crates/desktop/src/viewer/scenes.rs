@@ -6,11 +6,20 @@ use super::Status;
 use crate::app::State;
 use crate::model::Screen;
 
+/// The stand-in with the wireframe, the axis gizmo and a stop of extra exposure on.
+fn extras(s: &mut State) {
+    let mut prefs = super::controls::Prefs::default();
+    (prefs.look.wireframe, prefs.look.gizmo, prefs.look.exposure) = (true, true, 1.0);
+    s.viewers.prefs = Some(prefs);
+    super::scene_viewer(s);
+}
+
 /// A headless scene: its name and how it sets the state up.
 pub type Scene = (&'static str, fn(&mut State));
 
-pub const SCENES: [Scene; 18] = [
+pub const SCENES: [Scene; 19] = [
     ("viewer", super::scene_viewer),
+    ("viewer-extras", extras),
     ("viewer-split", super::scene_viewer_split),
     ("viewer-hideout", super::scene_viewer_hideout),
     ("viewer-locker", locker),

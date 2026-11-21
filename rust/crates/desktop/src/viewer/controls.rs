@@ -137,6 +137,7 @@ impl Prefs {
                 particles: flag("particles", d.particles),
                 transparent: flag("transparent", false),
                 wireframe: flag("wireframe", false),
+                gizmo: flag("axisGizmo", false),
                 exposure: v.get("exposure").and_then(|x| x.as_f64()).map(|x| x as f32).filter(|x| x.is_finite()).map_or(d.exposure, |x| x.clamp(-EXPOSURE_STOPS, EXPOSURE_STOPS)),
             },
             image: v.get("image").and_then(|x| x.as_str()).map(PathBuf::from),
@@ -156,6 +157,7 @@ impl Prefs {
             "transparent": self.look.transparent,
             "exposure": self.look.exposure,
             "wireframe": self.look.wireframe,
+            "axisGizmo": self.look.gizmo,
             "image": self.image.as_ref().map(|p| p.display().to_string()),
             "askWhere": self.ask_where,
         })
@@ -457,6 +459,7 @@ pub fn popover(s: &State, u: &Ui) -> Option<El> {
         ("Particles", v.ui.look.particles, |l| &mut l.particles),
         ("Bloom", v.ui.look.bloom, |l| &mut l.bloom),
         ("Shadows", v.ui.look.shadows, |l| &mut l.shadows),
+        ("Axis gizmo", v.ui.look.gizmo, |l| &mut l.gizmo),
     ];
     if v.ui.can_wireframe {
         flags.push(("Wireframe", v.ui.look.wireframe, |l| &mut l.wireframe));
@@ -653,7 +656,7 @@ mod tests {
     fn prefs_round_trip_and_survive_junk() {
         let p = Prefs {
             auto_rotate: true,
-            look: LookOptions { backdrop: Backdrop::Gradient(3), lighting: Lighting::Midtown, bloom: false, shadows: true, cloth: false, particles: true, transparent: false, exposure: -0.75, wireframe: true },
+            look: LookOptions { backdrop: Backdrop::Gradient(3), lighting: Lighting::Midtown, bloom: false, shadows: true, cloth: false, particles: true, transparent: false, exposure: -0.75, wireframe: true, gizmo: true },
             image: Some(PathBuf::from("/tmp/x.png")),
             ask_where: true,
         };

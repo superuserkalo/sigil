@@ -458,6 +458,10 @@ keys are absent when empty.
   `info_particle_system` overrides with `snapshot_file`, and per-effect model bones other than
   control point 0's hero. Animation-event effects keep at most two playing instances each
   (Grimoire makes one per event); a third event restarts the oldest.
+- Deadlock Mod Manager's body-group toggles: the pinned exporter keeps only the default mesh
+  group and tags no `meshGroups` in the glb, so the other choices are not in the file to switch.
+- Deadlock Mod Manager's ability bar: the glb carries the `ui` showcase clips, not the ability
+  casts, and Sigil has no clip-to-ability table yet.
 - Material groups and skins per hero form; WIP heroes whose pose lives only in a loose NM pose
   clip.
 - A real-game run. The ignored test and the CLI are ready for the first machine with Deadlock.
@@ -666,8 +670,9 @@ a video. The Controls panel (Grimoire's, anchored to its button by `viewer::popo
 clip picker grouped Idle, Movement, Combat, Other with the sidecar's friendly names, Lighting
 (Studio, Midtown dusk), Background (Studio, None, Transparent, Deadlock Mod Manager's studio
 gradient, Grimoire's ten soul gradients, a picture of the player's up to 12 MB) and switches for
-Auto-rotate, Cloth, Particles, Bloom, Shadows and (where the device can draw lines) Deadlock Mod
-Manager's Wireframe, its exposure slider (plus
+Auto-rotate, Cloth, Particles, Bloom, Shadows, Deadlock Mod Manager's axis gizmo (off by default,
+drawn on the preview only, never in a picture or recording), its Wireframe (where the device can
+draw lines), its exposure slider (plus
 or minus two stops in quarter stops over the scene's exposure; the value resets it) and "Ask
 where to save", kept across sessions in `<data>/viewer.json`. The studio camera's angle (yaw,
 pitch and zoom over the framing) is kept per hero in `<data>/viewer-camera.json` when a view
