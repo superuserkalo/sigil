@@ -1,0 +1,97 @@
+name: linux-build
+
+# Builds the Linux x86_64 AppImage and .deb with scripts/package-linux.sh and uploads them as a
+# workflow artifact. Nothing is published and no release is touched: the maintainer merges the
+# AppImage entry into the release's sigil-update.json and signs it locally
+# (docs/runbooks/packaging.md, docs/runbooks/releasing.md). The signing key never reaches CI.
+#
+# Ubuntu 22.04 on purpose: the AppImage runs on its glibc (2.35) or newer, so an older runner
+# reaches more distros than ubuntu-latest would. Move it forward only with a distro-support
+# decision in docs/runbooks/packaging.md.
+# Free: GitHub-hosted runners cost nothing for a public repository.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: linux-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  linux-x64:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
+        with:
+          toolchain: stable
+          targets: x86_64-unknown-linux-gnu
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          workspaces: rust
+
+      - name: Vendor Rune, TinyAgent and the Grimoire art
+        run: |
+          set -euo pipefail
+          ./scripts/vendor-rune.sh
+          ./scripts/vendor-tinyagent.sh
+          ./scripts/vendor-grimoire.sh
+
+      - name: Build the AppImage and the .deb
+        run: ./scripts/package-linux.sh --deps
+
+      - name: Smoke test
+        run: |
+          set -euo pipefail
+          image="$(ls "$PWD"/.scratch/package/Sigil-*-x86_64.AppImage)"
+          version="$(sed -n 's/^version = "\(.*\)"/\1/p' rust/Cargo.toml | head -1)"
+          # The CLI is a subcommand of the one binary; it needs no display.
+          APPIMAGE_EXTRACT_AND_RUN=1 "$image" cli --help > /dev/null
+          dpkg-deb --info .scratch/package/sigil_*_amd64.deb
+          dpkg-deb --contents .scratch/package/sigil_*_amd64.deb
+          ldd rust/target/x86_64-unknown-linux-gnu/release/dah-desktop
+
+          # What linuxdeploy bundled must stay off the system library list: one copy of
+          # Wayland, ALSA, fontconfig, libstdc++ or libgcc_s in the process breaks or
+          # shadows the distro's own (the excludes in scripts/package-linux.sh).
+          rm -rf .scratch/smoke
+          mkdir -p .scratch/smoke
+          (cd .scratch/smoke && "$image" --appimage-extract > /dev/null)
+          bundled="$(find .scratch/smoke/squashfs-root/usr/lib \
+            -name 'libwayland*' -o -name 'libasound*' -o -name 'libfontconfig*' \
+            -o -name 'libfreetype*' -o -name 'libstdc++*' -o -name 'libgcc_s*' 2>/dev/null || true)"
+          if [ -n "$bundled" ]; then
+            echo "The AppImage bundles a library it must leave to the system:" >&2
+            echo "$bundled" >&2
+            exit 1
+          fi
+
+          # The unsigned manifest in the artifact names this AppImage byte for byte.
+          manifest="$(ls "$PWD"/.scratch/package/release-$version/sigil-update.json)"
+          expected="$(sha256sum "$image" | cut -d' ' -f1)"
+          actual="$(node -e 'const m=require(process.argv[1]); console.log(m.extra_platforms["linux-x86_64"].sha256)' "$manifest")"
+          test "$expected" = "$actual"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: Sigil-linux-x86_64
+          path: |
+            .scratch/package/Sigil-*-x86_64.AppImage
+            .scratch/package/sigil_*_amd64.deb
+            .scratch/package/release-*/sigil-update.json
+          if-no-files-found: error
