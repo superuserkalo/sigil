@@ -40,6 +40,7 @@ use crate::ui::{ActionKind, BODY, BODY_MED, H1, H2, LABEL, PAGE_TOP, PAGE_X, SMA
 
 mod audio;
 pub mod collections;
+pub mod creator_page;
 mod detail_state;
 pub mod details;
 pub mod grid;

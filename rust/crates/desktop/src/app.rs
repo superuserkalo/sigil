@@ -2620,6 +2620,7 @@ pub fn scenes() -> &'static [(&'static str, fn(&mut State))] {
         ("browse-category-menu", screens::browse::scene_category_menu),
         ("browse-tree-menu", screens::browse::tree::scene_tree_menu),
         ("browse-tree-crumbs", screens::browse::tree::scene_tree_crumbs),
+        ("browse-creator", screens::browse::creator_page::scene_creator),
         ("browse-favorites-empty", screens::browse::scene_favorites_empty),
         ("browse-live-filtered", screens::browse::scene_live_filtered),
         ("browse-live-sounds", screens::browse::scene_live_sounds),

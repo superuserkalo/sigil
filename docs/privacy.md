@@ -196,6 +196,10 @@ hosts those answers name (`images.gamebanana.com`, `files.gamebanana.com`,
   256 KiB range from at most three servers, only when you press Test now. Favorites, hidden items,
   ignored updates and filters stay local.
 - Linking a GameBanana account reads the public member name once.
+- A creator's page (Browse scoped to one creator, or More from a creator on an Installed card)
+  reads that member's public `Member/<id>/ProfilePage` and their Deadlock `Mod/Index` and
+  `Sound/Index` lists filtered to the member (at most six and two pages of 50). More from a
+  creator first reads the mod's own page to find who posted it. Only public ids are sent.
 - Remote Install, if you pair it, reads your queued mods from GameBanana every five minutes while
   Sigil is open. The member id and pair token travel in that URL; the token is in the OS keychain.
   Each read marks returned entries retrieved on GameBanana, which is the only acknowledgement the
