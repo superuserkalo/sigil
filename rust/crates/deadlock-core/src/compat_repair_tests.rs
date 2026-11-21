@@ -338,3 +338,72 @@ fn revert_puts_the_backup_back_only_over_the_repaired_file() {
     assert_eq!(fs::read(&mod_vpk).unwrap(), b"original");
     let _ = fs::remove_dir_all(&root);
 }
+
+const TEXT_ENTRY: &str = "resource/localization/citadel_heroes/citadel_heroes_english.txt";
+
+fn text_table(rows: &[(&str, &str)]) -> Vec<u8> {
+    let mut text = String::from("\"lang\"\n{\n\t\"Tokens\"\n\t{\n");
+    for (key, value) in rows {
+        text.push_str(&format!("\t\t\"{key}\"\t\t\"{value}\"\n"));
+    }
+    text.push_str("\t}\n}\n");
+    text.into_bytes()
+}
+
+#[test]
+fn a_complete_text_table_opens_and_a_damaged_one_says_why() {
+    assert!(strict_text_table(&text_table(&[("Hero_Atlas", "Atlas")])).is_ok());
+    let utf16: Vec<u8> = [0xff, 0xfe]
+        .into_iter()
+        .chain(
+            "\"lang\" { \"Tokens\" { \"Hero_Atlas\" \"Atlas\" } }"
+                .encode_utf16()
+                .flat_map(u16::to_le_bytes),
+        )
+        .collect();
+    assert!(strict_text_table(&utf16).is_ok());
+    let bare = b"lang { Tokens { \"Hero_Atlas\" \"Atlas\" } }".to_vec();
+    assert!(strict_text_table(&bare).unwrap_err().contains("unquoted"));
+
+    let unclosed = b"\"lang\" { \"Tokens\" { \"Hero_Atlas\" \"Atlas\" }".to_vec();
+    assert!(strict_text_table(&unclosed).unwrap_err().contains("unclosed"));
+    let duplicate = text_table(&[("Hero_Atlas", "Atlas"), ("hero_atlas:0", "Dupe")]);
+    assert!(strict_text_table(&duplicate).unwrap_err().contains("twice"));
+    let no_tokens = b"\"lang\" { \"Other\" \"x\" \"More\" \"y\" }".to_vec();
+    assert!(strict_text_table(&no_tokens).unwrap_err().contains("Tokens block"));
+    assert!(strict_text_table(b"\xff\xfe\x00").is_err());
+}
+
+#[test]
+fn a_damaged_game_text_file_stops_a_repair_and_names_the_file() {
+    let root = root("game-text");
+    let citadel = root.join("citadel");
+    fs::create_dir_all(&citadel).unwrap();
+    let base = single_file_vpk(&citadel, "pak01", &[(TEXT_ENTRY, text_table(&[("Hero_Atlas", "Atlas")]).as_slice())]);
+    let mod_vpk = single_file_vpk(&root, "pak03", &[(TEXT_ENTRY, text_table(&[("Hero_Atlas", "Old Atlas")]).as_slice())]);
+
+    assert_eq!(game_text_problem(&base, &mod_vpk).unwrap(), None, "a complete table is usable");
+
+    // A patch or verify wrote half the game file: the repair must not merge from it.
+    let loose = citadel.join(TEXT_ENTRY);
+    fs::create_dir_all(loose.parent().unwrap()).unwrap();
+    fs::write(&loose, b"\"lang\" { \"Tokens\" { \"Hero_Atlas\" \"Atlas\"").unwrap();
+    let problem = game_text_problem(&base, &mod_vpk).unwrap().expect("the damaged loose file is found");
+    assert_eq!(problem.entry, TEXT_ENTRY);
+    assert!(problem.detail.contains("never closes") || problem.detail.contains("unclosed"), "{problem:?}");
+
+    let error = check(&base, &mod_vpk, RepairKind::Data, false).unwrap_err().to_string();
+    assert!(error.contains(TEXT_ENTRY), "{error}");
+    assert!(error.contains("Verify integrity"), "{error}");
+    assert!(error.contains("Nothing was repaired"), "{error}");
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn a_mod_with_its_own_text_is_not_blocked_by_the_game_lacking_it() {
+    let root = root("game-text-own");
+    let base = single_file_vpk(&root, "pak01", &[("materials/rock.vmat_c", b"base")]);
+    let mod_vpk = single_file_vpk(&root, "pak04", &[(TEXT_ENTRY, text_table(&[("Sigil_Test", "Hi")]).as_slice())]);
+    assert_eq!(game_text_problem(&base, &mod_vpk).unwrap(), None);
+    let _ = fs::remove_dir_all(&root);
+}

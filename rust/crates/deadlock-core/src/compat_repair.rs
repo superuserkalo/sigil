@@ -119,6 +119,7 @@ fn check_single(
 ) -> Result<Vec<RepairFinding>> {
     match kind {
         RepairKind::Data => {
+            refuse_damaged_game_text(base_pak01, mod_vpk)?;
             let mut repairer = CompatibilityRepairer::new(base_pak01).map_err(|error| {
                 Error::msg(format!(
                     "Could not open the game pak01 {} for repair: {error:#}",
@@ -149,6 +150,222 @@ fn check_single(
                 .collect())
         }
     }
+}
+
+/// A game text file that cannot be used as the repair's baseline.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DamagedGameText {
+    /// Path inside the game's `pak01` or its loose files, for example
+    /// `resource/localization/citadel_heroes/citadel_heroes_english.txt`.
+    pub entry: String,
+    /// What the strict read found wrong.
+    pub detail: String,
+}
+
+/// The repair merges game text only from a complete base table (DMM PR #1397 and #1400). A
+/// damaged game `lang` file, half written by a patch or a Steam verify, would otherwise be
+/// used as the baseline and could drop tokens the mod needs. Read the game's copy of every
+/// localization file the mod ships and stop when one does not parse.
+///
+/// Loose game files beside `pak01` take precedence, as they do for the game and for vpkmerge.
+/// A localization file the game does not have is skipped: the mod adds its own text.
+pub fn game_text_problem(base_pak01: &Path, mod_vpk: &Path) -> Result<Option<DamagedGameText>> {
+    let directory = read_vpk_directory_with(
+        mod_vpk,
+        &ReadVpkOptions {
+            keep_preload: false,
+        },
+    )?;
+    let mut entries: Vec<String> = directory
+        .entries
+        .iter()
+        .map(|entry| entry.path.clone())
+        .filter(|path| is_game_text_path(path))
+        .collect();
+    entries.sort();
+    entries.dedup();
+    if entries.is_empty() {
+        return Ok(None);
+    }
+    let loose_root = base_pak01.parent().unwrap_or_else(|| Path::new("."));
+    for entry in entries {
+        let loose = loose_root.join(&entry);
+        let bytes = if loose.is_file() {
+            fs::read(&loose)?
+        } else {
+            let mut wanted = entry_bytes(base_pak01, std::slice::from_ref(&entry))?;
+            let Some(bytes) = wanted.remove(&entry.to_ascii_lowercase()) else {
+                continue;
+            };
+            bytes
+        };
+        if let Err(detail) = strict_text_table(&bytes) {
+            return Ok(Some(DamagedGameText { entry, detail }));
+        }
+    }
+    Ok(None)
+}
+
+/// Stop a repair when the game's own text is damaged, naming the file and the way back.
+fn refuse_damaged_game_text(base_pak01: &Path, mod_vpk: &Path) -> Result<()> {
+    let Some(problem) = game_text_problem(base_pak01, mod_vpk)? else {
+        return Ok(());
+    };
+    Err(Error::msg(format!(
+        "The game's text file {} is damaged ({}). Steam can replace it: right click Deadlock in Steam, open Properties, Installed Files, and press Verify integrity of game files. Nothing was repaired.",
+        problem.entry, problem.detail
+    )))
+}
+
+/// True for a localization table the repairs merge: `resource/localization/.../*.txt`.
+fn is_game_text_path(path: &str) -> bool {
+    let lower = path.to_ascii_lowercase();
+    lower.starts_with("resource/localization/") && lower.ends_with(".txt")
+}
+
+/// Decode and strictly read a Valve-KeyValues `lang { Tokens { ... } }` table. The same shape
+/// vpkmerge reads, so a table this function accepts is one the repair can merge from.
+fn strict_text_table(bytes: &[u8]) -> std::result::Result<(), String> {
+    let text = decode_text(bytes)?;
+    let tokens = kv_tokens(&text)?;
+    if tokens.len() < 6 {
+        return Err("the file is too short to hold a Tokens table".to_string());
+    }
+    if !tokens[0].eq_ignore_ascii_case("lang") || tokens[1] != "{" {
+        return Err("the file does not open a lang block".to_string());
+    }
+    let mut pos = 2;
+    let mut rows: Option<usize> = None;
+    while pos + 1 < tokens.len() && tokens[pos] != "}" {
+        if tokens[pos].eq_ignore_ascii_case("tokens") {
+            if rows.is_some() {
+                return Err("the Tokens block appears twice".to_string());
+            }
+            if tokens[pos + 1] != "{" {
+                return Err("the Tokens block does not open".to_string());
+            }
+            pos += 2;
+            let mut keys = BTreeSet::new();
+            let mut count = 0;
+            while pos < tokens.len() && tokens[pos] != "}" {
+                let key = tokens.get(pos).ok_or("a token key is missing")?;
+                let value = tokens.get(pos + 1).ok_or("a token value is missing")?;
+                if matches!(key.as_str(), "{" | "}") || matches!(value.as_str(), "{" | "}") {
+                    return Err("a token is nested or incomplete".to_string());
+                }
+                let normalized = key.split(':').next().unwrap_or(key).to_ascii_lowercase();
+                if !keys.insert(normalized) {
+                    return Err(format!("the token {key} appears twice"));
+                }
+                count += 1;
+                pos += 2;
+            }
+            if pos >= tokens.len() {
+                return Err("the Tokens block never closes".to_string());
+            }
+            rows = Some(count);
+            pos += 1;
+        } else {
+            if tokens.get(pos + 1).is_none_or(|next| next == "{") {
+                return Err(format!("the block {} is unknown", tokens[pos]));
+            }
+            pos += 2;
+        }
+    }
+    if pos + 1 != tokens.len() || tokens[pos] != "}" {
+        return Err("the file has unclosed or extra blocks".to_string());
+    }
+    match rows {
+        None => Err("there is no Tokens block".to_string()),
+        Some(0) => Err("the Tokens block is empty".to_string()),
+        Some(_) => Ok(()),
+    }
+}
+
+fn decode_text(bytes: &[u8]) -> std::result::Result<String, String> {
+    if bytes.starts_with(&[0xff, 0xfe]) || bytes.starts_with(&[0xfe, 0xff]) {
+        if !bytes.len().is_multiple_of(2) {
+            return Err("the UTF-16 text ends on half a character".to_string());
+        }
+        let little = bytes[0] == 0xff;
+        let units: Vec<u16> = bytes[2..]
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|pair| {
+                if little {
+                    u16::from_le_bytes(*pair)
+                } else {
+                    u16::from_be_bytes(*pair)
+                }
+            })
+            .collect();
+        return String::from_utf16(&units).map_err(|_| "the UTF-16 text is damaged".to_string());
+    }
+    let bom = bytes.starts_with(&[0xef, 0xbb, 0xbf]);
+    let body = if bom { &bytes[3..] } else { bytes };
+    std::str::from_utf8(body)
+        .map(str::to_string)
+        .map_err(|_| "the text is not valid UTF-8".to_string())
+}
+
+/// Split Valve-KeyValues text into quoted values, bare values and braces. Comments are skipped.
+fn kv_tokens(text: &str) -> std::result::Result<Vec<String>, String> {
+    let mut out = Vec::new();
+    let mut chars = text.chars().peekable();
+    while let Some(&c) = chars.peek() {
+        match c {
+            c if c.is_whitespace() => {
+                chars.next();
+            }
+            '/' => {
+                chars.next();
+                if chars.peek() == Some(&'/') {
+                    for c in chars.by_ref() {
+                        if c == '\n' {
+                            break;
+                        }
+                    }
+                } else {
+                    return Err("a stray slash sits outside a value".to_string());
+                }
+            }
+            '{' | '}' => {
+                out.push(c.to_string());
+                chars.next();
+            }
+            '"' => {
+                chars.next();
+                let mut value = String::new();
+                let mut closed = false;
+                while let Some(c) = chars.next() {
+                    match c {
+                        '"' => {
+                            closed = true;
+                            break;
+                        }
+                        '\\' => match chars.next() {
+                            Some('n') => value.push('\n'),
+                            Some('t') => value.push('\t'),
+                            Some(other) => value.push(other),
+                            None => break,
+                        },
+                        other => value.push(other),
+                    }
+                }
+                if !closed {
+                    return Err("a quoted value never closes".to_string());
+                }
+                out.push(value);
+            }
+            _ => {
+                // vpkmerge's reader takes only quoted values, so anything else means the
+                // game's table is not one the repair could merge from.
+                return Err("an unquoted value sits in the table".to_string());
+            }
+        }
+    }
+    Ok(out)
 }
 
 /// Write the repaired archive to `out_vpk` (a staging path the caller picks), then verify it.
@@ -189,6 +406,7 @@ pub fn repair_to(
 
     let (applied, repaired_entries) = match kind {
         RepairKind::Data => {
+            refuse_damaged_game_text(base_pak01, mod_vpk)?;
             let mut repairer = CompatibilityRepairer::new(base_pak01).map_err(|error| {
                 Error::msg(format!(
                     "Could not open the game pak01 {} for repair: {error:#}",
@@ -216,6 +434,8 @@ pub fn repair_to(
                     mod_vpk.display()
                 ))
             })?;
+            // DMM PR #1399: attachments already in the current frame keep the author's values.
+            let healed = keep_current_attachments(base_pak01, mod_vpk, out_vpk, healed)?;
             let applied: Vec<RepairFinding> = healed
                 .into_iter()
                 .map(|model| RepairFinding {
@@ -253,6 +473,67 @@ pub fn repair_to(
     }
 
     Ok(applied)
+}
+
+/// The repair rules' revision. A repair made under an older revision is rebuilt from its
+/// backup (DMM bumps its repair revision the same way). 2: the camera repair keeps attachments
+/// already in the current frame ([`cameras`]).
+pub const REPAIR_RULE: u32 = 2;
+
+/// Run [`cameras::keep_current`] over every model vpkmerge healed into `out_vpk`,
+/// write the kept values back into `out_vpk`, and drop the kept names from the report.
+fn keep_current_attachments(
+    base_pak01: &Path,
+    mod_vpk: &Path,
+    out_vpk: &Path,
+    mut healed: Vec<vpkmerge_core::attachment_heal::HealedModel>,
+) -> Result<Vec<vpkmerge_core::attachment_heal::HealedModel>> {
+    if healed.is_empty() || !out_vpk.is_file() {
+        return Ok(healed);
+    }
+    let entries: Vec<String> = healed.iter().map(|model| model.entry.clone()).collect();
+    let original = entry_bytes(mod_vpk, &entries)?;
+    let repaired = entry_bytes(out_vpk, &entries)?;
+    let game = entry_bytes(base_pak01, &entries)?;
+    let mut replaced: Vec<(String, Vec<u8>)> = Vec::new();
+    for model in &mut healed {
+        let key = model.entry.to_ascii_lowercase();
+        let (Some(original), Some(repaired), Some(game)) = (original.get(&key), repaired.get(&key), game.get(&key)) else {
+            continue;
+        };
+        if let Some((bytes, kept)) = cameras::keep_current(original, repaired, game)? {
+            model.attachments.retain(|name| !kept.contains(name));
+            replaced.push((model.entry.clone(), bytes));
+        }
+    }
+    if replaced.is_empty() {
+        return Ok(healed);
+    }
+    let raw = out_vpk.with_file_name(format!(
+        "{}-raw_dir.vpk",
+        archive_stem(out_vpk).unwrap_or_else(|| "cameras".to_string())
+    ));
+    let _ = fs::remove_file(&raw);
+    fs::rename(out_vpk, &raw)?;
+    let extras: Vec<(&str, &[u8])> = replaced.iter().map(|(entry, bytes)| (entry.as_str(), bytes.as_slice())).collect();
+    let written = vpkmerge_core::embed_metadata(&raw, None, &extras, &[], out_vpk);
+    let _ = fs::remove_file(&raw);
+    written.map_err(|error| Error::msg(format!("Could not write the repaired models: {error:#}")))?;
+    Ok(healed)
+}
+
+/// The bytes of these entries in `vpk`, keyed by lowercase path. Missing entries are left out.
+fn entry_bytes(vpk: &Path, entries: &[String]) -> Result<BTreeMap<String, Vec<u8>>> {
+    let wanted: BTreeSet<String> = entries.iter().map(|entry| entry.to_ascii_lowercase()).collect();
+    let directory = read_vpk_directory_with(vpk, &ReadVpkOptions { keep_preload: true })?;
+    let mut out = BTreeMap::new();
+    for entry in &directory.entries {
+        let key = entry.path.to_ascii_lowercase();
+        if wanted.contains(&key) {
+            out.insert(key, crate::vpk::read_vpk_entry_data(&directory, entry)?);
+        }
+    }
+    Ok(out)
 }
 
 /// Grimoire's guard: true when any of these other VPKs ships animation resources
@@ -688,6 +969,9 @@ fn replace_file(from: &Path, to: &Path) -> Result<()> {
     }
     Ok(())
 }
+
+#[path = "compat_cameras.rs"]
+pub mod cameras;
 
 #[cfg(test)]
 #[path = "compat_repair_tests.rs"]
