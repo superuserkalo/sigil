@@ -1110,7 +1110,8 @@ fn game_sounds(cli: Arc<DahRsCli>) -> Result<Tool> {
             }),
             &["hero", "slot", "search", "limit"],
         ),
-        true,
+        // The first call writes the sound index into the workspace cache.
+        false,
         game_sounds_args,
     )
 }
@@ -1292,10 +1293,11 @@ mod contract_tests {
                 .unwrap_or_else(|| panic!("{name} is registered"))
                 .idempotent()
         };
-        for name in ["game_textures", "game_sounds", "files_list", "files_show", "files_search", "files_compare"] {
+        for name in ["game_textures", "files_list", "files_show", "files_search", "files_compare"] {
             assert!(idempotent(name), "{name} reads only");
         }
         assert!(!idempotent("files_export"), "export writes into the project");
+        assert!(!idempotent("game_sounds"), "the first call writes the sound cache");
         for tool in &tools {
             let schema = tool.definition().parameters;
             assert_eq!(schema["type"], "object", "{} has an object schema", tool.name());
