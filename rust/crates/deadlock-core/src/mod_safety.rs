@@ -181,6 +181,67 @@ impl ScanReport {
     }
 }
 
+/// What an install that should land switched on may do after [`scan_vpk`].
+///
+/// The decision is the scan's own rule, not the screen's: a report with any finding, or one
+/// Sigil could not finish, keeps the install off. The caller applies a trust or the "Allow
+/// script mods" setting before asking, so this cannot be talked into landing a flagged install
+/// on by accident.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Landing {
+    /// Nothing to ask about: the install may be switched on now.
+    On,
+    /// The scan found something to ask about, so the install stays off with these findings.
+    Off {
+        /// The findings the review lists, worst first.
+        findings: Vec<Finding>,
+        /// Findings past [`MAX_FINDINGS`] that the review only counts.
+        more: usize,
+        /// Set when the whole VPK could not be read. Being unreadable is no way past the gate.
+        error: Option<String>,
+    },
+}
+
+impl Landing {
+    /// True when the install stays switched off.
+    pub fn is_off(&self) -> bool {
+        matches!(self, Landing::Off { .. })
+    }
+
+    /// The findings that keep it off, empty when it may land on.
+    pub fn findings(&self) -> &[Finding] {
+        match self {
+            Landing::On => &[],
+            Landing::Off { findings, .. } => findings,
+        }
+    }
+
+    /// The reason the VPK could not be read, when that is why it stays off.
+    pub fn error(&self) -> Option<&str> {
+        match self {
+            Landing::On => None,
+            Landing::Off { error, .. } => error.as_deref(),
+        }
+    }
+}
+
+/// Decide whether an install that should land switched on may: only a clear scan goes on.
+pub fn landing(report: &ScanReport) -> Landing {
+    if report.is_clear() {
+        return Landing::On;
+    }
+    Landing::Off {
+        findings: report.findings.clone(),
+        more: report.more,
+        error: report.error.clone(),
+    }
+}
+
+/// [`landing`] for the file as written in the addon folder. Reads the VPK; run off the UI thread.
+pub fn landing_at(path: &Path) -> Landing {
+    landing(&scan_vpk(path))
+}
+
 /// `call` of an [`Risk::Unchecked`] finding for a file over [`MAX_TEXT_BYTES`].
 pub const TOO_LARGE: &str = "too large";
 /// `call` of an [`Risk::Unchecked`] finding for a file whose bytes could not be read.
@@ -676,6 +737,39 @@ mod tests {
 
         let missing = root.join("nope_dir.vpk");
         assert!(scan_vpk(&missing).error.is_some());
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn an_install_lands_on_only_when_the_scan_is_clear() {
+        assert_eq!(landing(&ScanReport::default()), Landing::On);
+        let flagged = ScanReport {
+            findings: vec![Finding { path: "bin/x.exe".into(), risk: Risk::Program, call: String::new() }],
+            ..ScanReport::default()
+        };
+        let decision = landing(&flagged);
+        assert!(decision.is_off());
+        assert_eq!(decision.findings(), flagged.findings);
+        assert_eq!(decision.error(), None);
+        // A VPK the scan could not open stays off too, with the reason kept.
+        let broken = ScanReport { error: Some("bad header".into()), ..ScanReport::default() };
+        let decision = landing(&broken);
+        assert!(decision.is_off());
+        assert!(decision.findings().is_empty());
+        assert_eq!(decision.error(), Some("bad header"));
+        // The count past the list still reaches the review.
+        let many = ScanReport { more: 7, ..flagged };
+        assert!(matches!(landing(&many), Landing::Off { more: 7, .. }));
+    }
+
+    #[test]
+    fn landing_at_reads_the_file_as_written() {
+        let root = root("landing");
+        let clean = vpk(&root, "pak06", &[("materials/a.vmat_c", b"a")]);
+        assert_eq!(landing_at(&clean), Landing::On);
+        let flagged = vpk(&root, "pak07", &[("bin/helper.exe", b"MZ")]);
+        assert!(landing_at(&flagged).is_off());
+        assert!(landing_at(&root.join("missing_dir.vpk")).is_off(), "unreadable is no way past");
         let _ = fs::remove_dir_all(&root);
     }
 
