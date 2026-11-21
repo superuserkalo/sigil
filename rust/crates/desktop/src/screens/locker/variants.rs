@@ -7,13 +7,13 @@
 
 use std::collections::BTreeMap;
 
-use rune::{El, col, row, text};
+use rune::{El, col, el, row, text};
 
 use crate::app::State;
 use crate::icons;
-use crate::ui::{ActionKind, BODY_MED, SMALL, Ui};
+use crate::ui::{ActionKind, SMALL, Ui};
 
-use super::{hero_sounds, mod_row, plural, HeroCard, ModRow, View};
+use super::{hero_sounds, mod_row, HeroCard, ModRow, View};
 
 fn enabled(s: &State, m: &ModRow) -> bool {
     s.addons
@@ -110,23 +110,39 @@ pub(super) fn skins_list(s: &State, u: &Ui, v: &View, hero: &HeroCard, full: boo
             );
         }
 
-        if Some(slot) != equipped {
-            let equip_name = name.clone();
-            trailing = trailing.child(
-                u.action("Equip", ActionKind::Ghost)
-                    .key(format!("locker-equip-{}", m.slot))
-                    .label(format!("Equip {} for {}", m.label, hero.display_name))
-                    .cursor(rune::Cursor::Pointer)
-                    .on_press(move |st: &mut State| {
-                        crate::data::equip_locker_skin(st, &equip_name, slot)
-                    }),
-            );
-        }
+        let equip_name = name.clone();
+        trailing = trailing.child(state_slot(
+            u,
+            Some(slot) == equipped,
+            "Equipped",
+            u.action_m("Equip", ActionKind::Ghost)
+                .key(format!("locker-equip-{}", m.slot))
+                .label(format!("Equip {} for {}", m.label, hero.display_name))
+                .cursor(rune::Cursor::Pointer)
+                .on_press(move |st: &mut State| {
+                    crate::data::equip_locker_skin(st, &equip_name, slot)
+                }),
+        ));
 
         rows = rows.child(mod_row(s, u, m, Some(trailing)));
     }
 
     rows
+}
+
+/// The fixed 72 point state slot: "Equip", or the state word with a teal mark, so the
+/// switch and the buttons beside it never move between rows.
+fn state_slot(u: &Ui, on: bool, word: &str, equip: El) -> El {
+    row().w(72.0).h(28.0).center_y().justify_end().child(if on {
+        row()
+            .gap(6.0)
+            .center_y()
+            .pr(4.0)
+            .child(u.mark(u.teal))
+            .child(text(word.to_string()).font(SMALL).color(u.muted))
+    } else {
+        equip
+    })
 }
 
 /// The ability slot a sound label names: 1 to 3, 4 for the ultimate, 0 for anything else.
@@ -164,48 +180,25 @@ pub(super) fn sounds_list(s: &State, u: &Ui, v: &View, hero: &HeroCard) -> El {
             .filter(|m| enabled(s, m))
             .map(|m| m.slot)
             .min();
-        let mut group = col().w_full().child(
-            row()
-                .w_full()
-                .h(28.0)
-                .gap(8.0)
-                .center_y()
-                .child(
-                    text(ability_label(ability))
-                        .font(BODY_MED)
-                        .color(u.muted)
-                        .grow(1.0)
-                        .min_w(0.0),
-                )
-                .child(
-                    text(plural(list.len(), "mod", "mods"))
-                        .font(SMALL)
-                        .color(u.faint),
-                ),
-        );
+        let mut group = col()
+            .w_full()
+            .child(el().pb(8.0).child(u.section_head(&ability_label(ability), Some(list.len()), None)));
 
         for m in list {
             let slot = m.slot;
             let name = hero.display_name.clone();
-            let trailing = if Some(slot) == equipped {
-                row().gap(2.0)
-                    .child(
-                        text("Playing")
-                            .font(SMALL)
-                            .color(u.faint)
-                            .pr(4.0),
-                    )
-            } else {
-                row().gap(2.0).child(
-                    u.action("Equip", ActionKind::Ghost)
-                        .key(format!("locker-sound-equip-{}", m.slot))
-                        .label(format!("Equip {} for {}", m.label, ability_label(ability)))
-                        .cursor(rune::Cursor::Pointer)
-                        .on_press(move |st: &mut State| {
-                            crate::data::equip_locker_sound(st, &name, ability, slot)
-                        }),
-                )
-            };
+            let trailing = row().gap(2.0).child(state_slot(
+                u,
+                Some(slot) == equipped,
+                "Playing",
+                u.action_m("Equip", ActionKind::Ghost)
+                    .key(format!("locker-sound-equip-{}", m.slot))
+                    .label(format!("Equip {} for {}", m.label, ability_label(ability)))
+                    .cursor(rune::Cursor::Pointer)
+                    .on_press(move |st: &mut State| {
+                        crate::data::equip_locker_sound(st, &name, ability, slot)
+                    }),
+            ));
             group = group.child(mod_row(s, u, m, Some(trailing)));
         }
 

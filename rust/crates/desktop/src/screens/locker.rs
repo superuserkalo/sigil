@@ -17,7 +17,7 @@ use rune::{
 use crate::app::State;
 use crate::icons;
 use crate::model::Screen;
-use crate::ui::{ActionKind, BODY, BODY_MED, H1, H2, MONO, SMALL, Ui};
+use crate::ui::{ActionKind, BODY, BODY_MED, H1, MONO, SMALL, SMALL_NUM, Ui};
 
 mod cards;
 pub mod art;
@@ -284,9 +284,9 @@ impl Default for View {
 }
 
 const GRID_GAP: f32 = 12.0;
-const CARD_RADIUS: f32 = 12.0;
-const CARD_MIN_W: f32 = 160.0;
-const RAIL_W: f32 = 300.0;
+const CARD_RADIUS: f32 = 8.0;
+const CARD_MIN_W: f32 = 128.0;
+const RAIL_W: f32 = 240.0;
 const PANE_W: f32 = 480.0;
 /// With the 3D view on the pane gives up width down to this, so the view keeps about
 /// `VIEW3D_W`; below `VIEW3D_MIN_W` the view replaces the pane.
@@ -372,18 +372,12 @@ fn hero_name_matches(name: &str, codename: &str, query: &str) -> bool {
 
 fn grid_columns(v: &View) -> (usize, f32) {
     let avail = (page_size(v).0 - 2.0 * crate::ui::PAGE_X).max(CARD_MIN_W);
-    let cols = (((avail + GRID_GAP) / (CARD_MIN_W + GRID_GAP)).floor() as usize).clamp(2, 8);
+    let cols = (((avail + GRID_GAP) / (CARD_MIN_W + GRID_GAP)).floor() as usize).clamp(3, 10);
     let card_w = (avail - GRID_GAP * (cols as f32 - 1.0)) / cols as f32;
     (cols, card_w.floor())
 }
 
 fn grid_page(s: &State, u: &Ui, v: &View) -> El {
-    let modded = v.heroes.iter().filter(|hero| hero.mod_count > 0).count();
-    let starred = v
-        .heroes
-        .iter()
-        .filter(|hero| v.prefs.is_favorite(&hero.display_name))
-        .count();
     let shown = sorted_heroes(v);
 
     let search = rune::text_input(&v.query, BODY)
@@ -408,48 +402,50 @@ fn grid_page(s: &State, u: &Ui, v: &View) -> El {
             }
         });
 
-    let mut actions = row().shrink().min_w(0.0).gap(8.0).center_y().child(u.search_shell(search).shrink().min_w(120.0));
-    if v.loaded && !v.heroes.is_empty() {
-        actions = actions.child(filter(u, v.modded_only, v.starred_only));
+    // Every control is drawn from the first frame (disabled until the heroes load), so
+    // nothing shifts when they arrive.
+    let ready = v.loaded && !v.heroes.is_empty();
+    let off = |e: El, off: bool| e.disabled(off).opacity(if off { 0.45 } else { 1.0 });
+    let art_missing = ready && !v.heroes.iter().any(|hero| hero.render.is_some());
+    let mut rescan = u
+        .icon_button(&icons::REFRESH_CW, "Rescan")
+        .key("locker-rescan")
+        .cursor(rune::Cursor::Pointer)
+        .on_press(|st: &mut State| crate::data::start_locker_load(st));
+    if art_missing {
+        // Missing hero art: a quiet amber mark on Rescan, the reason in its tooltip.
+        rescan = rescan.help("Hero art was not found next to Sigil").child(
+            el().pin(None, Some(6.0), Some(6.0), None)
+                .size(6.0, 6.0)
+                .radius(2.0)
+                .fill(u.amber)
+                .a11y_hidden(),
+        );
     }
-    if v.loaded {
-        actions = actions
-            .child(view_toggle(u, v.list_view))
-            .child(
-                u.icon_button(&icons::SLIDERS_HORIZONTAL, "Locker changes")
-                    .key("locker-applied")
-                    .cursor(rune::Cursor::Pointer)
-                    .on_press(|st: &mut State| st.locker.dialog = Some(Dialog::Applied)),
-            )
-            .child(
-                u.icon_button(&icons::ROTATE_CCW, "Shuffle on launch")
-                    .key("locker-shuffle")
-                    .cursor(rune::Cursor::Pointer)
-                    .on_press(|st: &mut State| st.locker.dialog = Some(Dialog::Shuffle)),
-            );
-    }
-    actions = actions.child(
-        u.icon_button(&icons::REFRESH_CW, "Rescan")
-            .key("locker-rescan")
-            .cursor(rune::Cursor::Pointer)
-            .on_press(|st: &mut State| crate::data::start_locker_load(st)),
+    let actions = vec![
+        off(view_toggle(u, v.list_view), !v.loaded),
+        off(
+            u.icon_button(&icons::ROTATE_CCW, "Shuffle on launch")
+                .key("locker-shuffle")
+                .cursor(rune::Cursor::Pointer)
+                .on_press(|st: &mut State| st.locker.dialog = Some(Dialog::Shuffle)),
+            !v.loaded,
+        ),
+        off(
+            u.icon_button(&icons::SLIDERS_HORIZONTAL, "Locker changes")
+                .key("locker-applied")
+                .cursor(rune::Cursor::Pointer)
+                .on_press(|st: &mut State| st.locker.dialog = Some(Dialog::Applied)),
+            !v.loaded,
+        ),
+        rescan,
+    ];
+    let toolbar = u.page_toolbar(
+        u.page_title("Locker"),
+        vec![off(filter(u, v.modded_only, v.starred_only), !ready).ml(8.0)],
+        Some(u.page_search(search)),
+        actions,
     );
-
-    let detail = if v.loaded && !v.heroes.is_empty() {
-        let mut parts = vec![plural(v.heroes.len(), "hero", "heroes")];
-        if modded > 0 {
-            parts.push(format!("{modded} modded"));
-        }
-        if starred > 0 {
-            parts.push(format!("{starred} starred"));
-        }
-        if !v.heroes.iter().any(|hero| hero.render.is_some()) {
-            parts.push("hero art not found next to Sigil".to_string());
-        }
-        parts.join(", ")
-    } else {
-        String::new()
-    };
 
     let (cols, card_w) = grid_columns(v);
     let body = if v.heroes.is_empty() {
@@ -524,7 +520,7 @@ fn grid_page(s: &State, u: &Ui, v: &View) -> El {
                 .pt(crate::ui::PAGE_TOP)
                 .pb(32.0)
                 .gap(16.0)
-                .child(u.page_head("", "Locker", &detail, Some(actions)))
+                .child(toolbar)
                 .child(body),
         )
 }
@@ -534,9 +530,9 @@ fn view_toggle(u: &Ui, list: bool) -> El {
     let segment = |glyph: &'static rune::Icon, label: &'static str, on: bool, value: bool| {
         row()
             .key(format!("locker-view-{label}"))
-            .size(26.0, 26.0)
+            .size(28.0, 26.0)
             .center()
-            .radius(crate::ui::r(6.0))
+            .radius(crate::ui::r(4.0))
             .fill(if on { u.selected } else { Color::TRANSPARENT })
             .hover(u.hover)
             .focusable(true)
@@ -563,7 +559,7 @@ fn view_toggle(u: &Ui, list: bool) -> El {
         .padding(2.0)
         .gap(2.0)
         .center_y()
-        .radius(crate::ui::r(8.0))
+        .radius(crate::ui::r(4.0))
         .border(1.0, u.hair)
         .role("radiogroup")
         .label("View")
@@ -586,7 +582,7 @@ fn filter(u: &Ui, modded_only: bool, starred_only: bool) -> El {
             .h(26.0)
             .px(10.0)
             .center()
-            .radius(crate::ui::r(6.0))
+            .radius(crate::ui::r(4.0))
             .fill(if on { u.selected } else { Color::TRANSPARENT })
             .hover(u.hover)
             .focusable(true)
@@ -611,7 +607,7 @@ fn filter(u: &Ui, modded_only: bool, starred_only: bool) -> El {
         .padding(2.0)
         .gap(2.0)
         .center_y()
-        .radius(crate::ui::r(8.0))
+        .radius(crate::ui::r(4.0))
         .border(1.0, u.hair)
         .role("radiogroup")
         .label("Show heroes")
@@ -691,8 +687,7 @@ fn card_chrome() -> [El; 2] {
             .w_full()
             .h_full()
             .radius(crate::ui::r(CARD_RADIUS))
-            .border(1.0, crate::ui::Ui::new().hair)
-            .fill(Color::WHITE.alpha(0.05))
+            .border(1.0, crate::ui::Ui::new().hair_strong)
             .group_opacity(0.0, 1.0)
             .a11y_hidden(),
     ]
@@ -725,27 +720,25 @@ fn hero_card(s: &State, u: &Ui, v: &View, hero: &HeroCard, card_w: f32) -> El {
     if hero.mod_count > 0 || pinned_here || shuffles {
         let mut pill = row()
             .absolute(8.0, 8.0)
-            .h(22.0)
-            .px(8.0)
+            .h(20.0)
+            .px(6.0)
             .gap(4.0)
             .center_y()
-            .radius(crate::ui::r(11.0))
+            .radius(crate::ui::r(4.0))
             .fill(Color::BLACK.alpha(0.55))
             .a11y_hidden();
         if hero.mod_count > 0 {
-            pill = pill
-                .child(rune::icon(&icons::SHIRT, 12.0).color(Color::WHITE.alpha(0.85)))
-                .child(
-                    text(hero.mod_count.to_string())
-                        .font(SMALL)
-                        .color(Color::WHITE.alpha(0.85)),
-                );
+            pill = pill.child(
+                text(hero.mod_count.to_string())
+                    .font(SMALL_NUM)
+                    .color(Color::WHITE),
+            );
         }
         if shuffles {
             pill = pill.child(rune::icon(&icons::ROTATE_CCW, 12.0).color(Color::WHITE.alpha(0.85)));
         }
         if pinned_here {
-            pill = pill.child(text("Project").font(SMALL).color(Color::WHITE.alpha(0.85)));
+            pill = pill.child(rune::icon(&icons::PIN, 12.0).color(Color::WHITE.alpha(0.85)));
         }
         frame = frame.child(pill);
     }
@@ -755,15 +748,11 @@ fn hero_card(s: &State, u: &Ui, v: &View, hero: &HeroCard, card_w: f32) -> El {
     frame = frame.child(
         el().key(format!("locker-star-{}", hero.codename))
             .pin(None, Some(8.0), Some(8.0), None)
-            .size(26.0, 26.0)
+            .size(24.0, 24.0)
             .center()
-            .radius(13.0)
-            .fill(if favorite {
-                Color::WHITE.alpha(0.22)
-            } else {
-                Color::BLACK.alpha(0.42)
-            })
-            .hover(Color::BLACK.alpha(0.60))
+            .radius(crate::ui::r(4.0))
+            .fill(Color::BLACK.alpha(0.55))
+            .hover(Color::BLACK.alpha(0.70))
             .focusable(true)
             .role("button")
             .label(if favorite {
@@ -777,26 +766,28 @@ fn hero_card(s: &State, u: &Ui, v: &View, hero: &HeroCard, card_w: f32) -> El {
                 crate::data::toggle_locker_favorite(st, &hero_name)
             })
             .child(
-                rune::icon(&icons::HEART, 13.0)
-                    .color(if favorite {
-                        Color::WHITE
-                    } else {
-                        Color::WHITE.alpha(0.90)
-                    })
+                rune::icon(&icons::HEART, 12.0)
+                    .color(if favorite { u.accent } else { Color::WHITE })
                     .a11y_hidden(),
             ),
     );
 
-    frame = frame.child(name_plate(s, u, hero, (card_w * 0.7).floor(), 26.0, true));
+    frame = frame.child(name_plate(s, u, hero, (card_w * 0.7).floor(), 24.0, true));
     frame.child(wash)
 }
 
 /// The name art, right aligned at the bottom of a card, or the name as text without art.
 fn name_plate(s: &State, u: &Ui, hero: &HeroCard, max_w: f32, max_h: f32, on_card: bool) -> El {
     let pixels = pixels_for(s, hero.name_art.as_deref());
+    // On a card the plate is a fixed box (70 percent by 24, bottom left 8/8): art or text
+    // sits in the same box, so decoding the art never moves it.
     let place = |e: El| {
         if on_card {
-            e.pin(None, None, Some(12.0), Some(12.0))
+            row()
+                .pin(Some(8.0), None, None, Some(8.0))
+                .size(max_w, max_h)
+                .center_y()
+                .child(e)
         } else {
             e
         }
@@ -817,7 +808,7 @@ fn name_plate(s: &State, u: &Ui, hero: &HeroCard, max_w: f32, max_h: f32, on_car
         }
         _ => place(
             text(hero.display_name.clone())
-                .font(if on_card { H2 } else { H1 })
+                .font(if on_card { BODY_MED } else { H1 })
                 .color(if on_card { Color::WHITE } else { u.ink })
                 .truncate(),
         ),
@@ -856,17 +847,17 @@ fn general_card(s: &State, _u: &Ui, v: &View, card_w: f32) -> El {
     frame
         .child(scrim)
         .child(
+            // Bottom left, 8/8, like every hero's name plate.
             col()
-                .pin(Some(12.0), None, Some(12.0), Some(12.0))
+                .pin(Some(8.0), None, Some(8.0), Some(8.0))
                 .gap(2.0)
-                .items_end()
-                .child(text("General").font(H1).color(Color::WHITE))
+                .items_start()
+                .child(text("General").font(BODY_MED).color(Color::WHITE))
                 .child(
                     text(detail)
                         .font(SMALL)
-                        .color(Color::WHITE.alpha(0.70))
-                        .align(rune::Align::End)
-                        .wrap(),
+                        .color(Color::WHITE.alpha(0.80))
+                        .truncate(),
                 ),
         )
         .child(wash)
@@ -906,17 +897,21 @@ fn list_row(s: &State, u: &Ui, v: &View, hero: &HeroCard) -> El {
 
     let (art, art_size, focus) = hero.art();
     let thumb = el()
-        .size(40.0, 53.0)
-        .radius(crate::ui::r(8.0))
-        .clip_rounded(crate::ui::r(8.0))
+        .size(32.0, 32.0)
+        .radius(crate::ui::r(4.0))
+        .clip_rounded(crate::ui::r(4.0))
         .fill(Color::WHITE.alpha(0.04))
         .a11y_hidden();
     let thumb = match pixels_for(s, art.as_deref()) {
-        Some(pixels) => thumb.child(cover_at(&pixels, art_size, 40.0, 53.0, focus, 20.0)),
+        Some(pixels) => thumb.child(cover_at(&pixels, art_size, 32.0, 32.0, focus, 20.0)),
         None => thumb,
     };
 
-    let mut meta = vec![plural(hero.mod_count, "mod", "mods")];
+    // "0 mods" is not written: the line stays empty.
+    let mut meta = Vec::new();
+    if hero.mod_count > 0 {
+        meta.push(plural(hero.mod_count, "mod", "mods"));
+    }
     let sounds = v
         .mods
         .iter()
@@ -936,7 +931,8 @@ fn list_row(s: &State, u: &Ui, v: &View, hero: &HeroCard) -> El {
     let header = row()
         .key(format!("locker-list-{}", hero.codename))
         .w_full()
-        .h(64.0)
+        .h(48.0)
+        .px(8.0)
         .gap(12.0)
         .center_y()
         .border_sides([0.0, 0.0, 1.0, 0.0], u.hair)
@@ -951,30 +947,25 @@ fn list_row(s: &State, u: &Ui, v: &View, hero: &HeroCard) -> El {
             }
         })
         .child(thumb)
-        .child(
-            col()
-                .grow(1.0)
-                .min_w(0.0)
-                .child(
-                    text(hero.display_name.clone())
-                        .font(BODY_MED)
-                        .color(u.ink)
-                        .truncate(),
-                )
-                .child(text(meta.join(", ")).font(SMALL).color(u.faint).truncate()),
-        );
+        .child({
+            let mut names = col().grow(1.0).min_w(0.0).child(
+                text(hero.display_name.clone())
+                    .font(BODY_MED)
+                    .color(u.ink)
+                    .truncate(),
+            );
+            if !meta.is_empty() {
+                names = names.child(text(meta.join(" · ")).font(SMALL).color(u.muted).truncate());
+            }
+            names
+        });
 
     let star_name = hero.display_name.clone();
     let star = el()
         .key(format!("locker-list-star-{}", hero.codename))
         .size(28.0, 28.0)
         .center()
-        .radius(crate::ui::r(14.0))
-        .fill(if favorite {
-            Color::WHITE.alpha(0.10)
-        } else {
-            Color::TRANSPARENT
-        })
+        .radius(crate::ui::r(4.0))
         .hover(u.hover)
         .focusable(true)
         .role("button")
@@ -989,7 +980,7 @@ fn list_row(s: &State, u: &Ui, v: &View, hero: &HeroCard) -> El {
         })
         .child(
             rune::icon(&icons::HEART, 14.0)
-                .color(if favorite { u.ink } else { u.faint })
+                .color(if favorite { u.accent } else { u.muted })
                 .a11y_hidden(),
         );
 
@@ -997,21 +988,36 @@ fn list_row(s: &State, u: &Ui, v: &View, hero: &HeroCard) -> El {
     let header = header
         .child(star)
         .child(
-            u.icon_button(&icons::CHEVRON_RIGHT, &format!("Open {}", hero.display_name))
+            el().size(28.0, 28.0)
+                .center()
+                .radius(crate::ui::r(4.0))
+                .hover(u.hover)
+                .focusable(true)
+                .role("button")
+                .label(format!("Open {}", hero.display_name))
+                .help(format!("Open {}", hero.display_name))
+                .child(
+                    rune::icon(&icons::ARROW_LEFT, 14.0)
+                        .color(u.muted)
+                        .rotate(std::f32::consts::PI)
+                        .a11y_hidden(),
+                )
                 .key(format!("locker-list-open-{}", hero.codename))
                 .cursor(rune::Cursor::Pointer)
                 .on_press(move |st: &mut State| open_hero(st, &open_name)),
         )
         .child(
-            rune::icon(&icons::CHEVRON_DOWN, 16.0)
-                .color(u.faint)
-                .rotate(if open { std::f32::consts::PI } else { 0.0 })
-                .a11y_hidden(),
+            el().size(28.0, 28.0).center().child(
+                rune::icon(if open { &icons::CHEVRON_DOWN } else { &icons::CHEVRON_RIGHT }, 14.0)
+                    .color(u.muted)
+                    .a11y_hidden(),
+            ),
         );
 
     let mut body = col().w_full();
     if open {
-        body = body.child(variants::skins_list(s, u, v, hero, false, false));
+        // Indented 44 so the mod names line up with the hero name.
+        body = body.child(col().w_full().pl(44.0).child(variants::skins_list(s, u, v, hero, false, false)));
     }
 
     col().key(format!("locker-list-block-{}", hero.codename)).w_full().child(header).child(body)
@@ -1141,15 +1147,15 @@ fn back_row(u: &Ui, extra: Option<El>) -> El {
 }
 
 /// A rail row: label, count on the right, neutral fill when active.
-fn rail_row(u: &Ui, key: String, label: &str, count: usize, active: bool, dim: bool) -> El {
+fn rail_row(u: &Ui, key: String, label: &str, count: usize, active: bool, _dim: bool) -> El {
     row()
         .key(key)
         .w_full()
-        .h(40.0)
-        .px(12.0)
-        .gap(12.0)
+        .h(32.0)
+        .px(10.0)
+        .gap(8.0)
         .center_y()
-        .radius(crate::ui::r(8.0))
+        .radius(crate::ui::r(4.0))
         .fill(if active { u.selected } else { Color::TRANSPARENT })
         .hover(u.hover)
         .focusable(true)
@@ -1159,19 +1165,19 @@ fn rail_row(u: &Ui, key: String, label: &str, count: usize, active: bool, dim: b
         .cursor(rune::Cursor::Pointer)
         .child(
             text(label.to_string())
-                .font(BODY_MED)
-                .color(if active || !dim { u.ink } else { u.muted })
+                .font(crate::ui::NAV)
+                .color(if active { u.ink } else { u.prose })
                 .grow(1.0)
                 .min_w(0.0)
                 .truncate()
                 .a11y_hidden(),
         )
-        .child(
-            text(count.to_string())
-                .font(SMALL)
-                .color(u.faint)
-                .a11y_hidden(),
-        )
+        // The count in a fixed 28 point slot, drawn only above zero.
+        .child(row().w(28.0).justify_end().child(if count > 0 {
+            text(count.to_string()).font(SMALL_NUM).color(u.muted).a11y_hidden()
+        } else {
+            el()
+        }))
 }
 
 /// A rail action: an icon and a label, tinted while its state is on.
@@ -1179,11 +1185,11 @@ fn rail_action(u: &Ui, key: String, glyph: &'static rune::Icon, label: &str, act
     row()
         .key(key)
         .w_full()
-        .h(40.0)
-        .px(12.0)
-        .gap(10.0)
+        .h(32.0)
+        .px(10.0)
+        .gap(8.0)
         .center_y()
-        .radius(crate::ui::r(8.0))
+        .radius(crate::ui::r(4.0))
         .fill(if active { u.selected } else { Color::TRANSPARENT })
         .hover(u.hover)
         .focusable(true)
@@ -1191,13 +1197,13 @@ fn rail_action(u: &Ui, key: String, glyph: &'static rune::Icon, label: &str, act
         .label(label.to_string())
         .child(
             rune::icon(glyph, 16.0)
-                .color(if active { u.ink } else { u.muted })
+                .color(u.muted)
                 .a11y_hidden(),
         )
         .child(
             text(label.to_string())
-                .font(BODY_MED)
-                .color(if active { u.ink } else { u.muted })
+                .font(BODY)
+                .color(if active { u.ink } else { u.prose })
                 .grow(1.0)
                 .min_w(0.0)
                 .truncate()
@@ -1205,18 +1211,10 @@ fn rail_action(u: &Ui, key: String, glyph: &'static rune::Icon, label: &str, act
         )
 }
 
-fn pane_head(u: &Ui, title: &str, count: String, trailing: Option<El>) -> El {
-    let mut r = row()
-        .w_full()
-        .h(32.0)
-        .gap(8.0)
-        .center_y()
-        .child(text(title.to_string()).font(H2).color(u.ink).truncate())
-        .child(text(count).font(SMALL).color(u.faint));
-    if let Some(t) = trailing {
-        r = r.child(spacer()).child(t);
-    }
-    r
+/// The pane's header: the shared section header. The count lives on the rail, so the
+/// header has none; its action is a ghost 24 that is always in the header.
+fn pane_head(u: &Ui, title: &str, _count: String, trailing: Option<El>) -> El {
+    u.section_head(title, None, trailing).w_full()
 }
 
 /// One installed mod: name, what it is, and its on or off state.
@@ -1243,7 +1241,7 @@ pub(super) fn mod_row(s: &State, u: &Ui, m: &ModRow, trailing: Option<El>) -> El
         .key(format!("locker-mod-{}", m.key))
         .label(format!("{}, {}", m.label, m.file))
         .w_full()
-        .h(52.0)
+        .h(48.0)
         .gap(12.0)
         .center_y()
         .border_sides([0.0, 0.0, 1.0, 0.0], u.hair)
@@ -1258,7 +1256,7 @@ pub(super) fn mod_row(s: &State, u: &Ui, m: &ModRow, trailing: Option<El>) -> El
                         .color(if enabled { u.ink } else { u.muted })
                         .truncate(),
                 )
-                .child(text(detail).font(SMALL).color(u.faint).truncate()),
+                .child(text(detail).font(SMALL).color(u.muted).truncate()),
         )
         .child(favorite_button(s, u, m))
         .child(art::edit_button(u, m.slot, &m.label));
@@ -1406,13 +1404,15 @@ fn hero_page(s: &State, u: &Ui, v: &View, hero: &HeroCard) -> El {
         .pinned
         .as_deref()
         .is_some_and(|pinned| same_hero(hero, pinned));
-    let mut identity = col()
-        .w_full()
-        .px(12.0)
-        .gap(8.0)
-        .child(name_plate(s, u, hero, RAIL_W - 72.0, 34.0, false));
+    // The name plate's box is fixed (240 by 56): art or text, so decoding never moves the rail.
+    let mut identity = row()
+        .w(RAIL_W)
+        .h(56.0)
+        .center_y()
+        .pl(10.0)
+        .child(name_plate(s, u, hero, 200.0, 40.0, false));
     if pinned_here {
-        identity = identity.child(text("Your project hero").font(SMALL).color(u.muted));
+        identity = identity.help("Your project hero");
     }
 
     // Star, shuffle and the card picker, as three rail rows. The star and the switch are
@@ -1423,9 +1423,11 @@ fn hero_page(s: &State, u: &Ui, v: &View, hero: &HeroCard) -> El {
     let shuffle_name = hero.display_name.clone();
     let card_hero = hero.clone();
     let hideout_hero = hero.display_name.clone();
+    // The two switches first (pressed directly), then the four actions: one weight for all.
     let controls = col()
         .w_full()
-        .gap(2.0)
+        .gap(0.0)
+        .child(el().pl(10.0).pb(8.0).child(u.section("Hero")))
         .child(
             rail_action(
                 u,
@@ -1439,6 +1441,33 @@ fn hero_page(s: &State, u: &Ui, v: &View, hero: &HeroCard) -> El {
             .cursor(rune::Cursor::Pointer)
             .on_press(toggle_3d)
             .child(u.toggle_mark(v.view3d)),
+        )
+        .child(
+            row()
+                .key(format!("locker-hero-shuffle-{}", hero.codename))
+                .w_full()
+                .h(32.0)
+                .px(10.0)
+                .gap(8.0)
+                .center_y()
+                .radius(crate::ui::r(4.0))
+                .hover(u.hover)
+                .focusable(true)
+                .role("switch")
+                .checked(shuffles)
+                .label(format!("Shuffle {} skins at launch", hero.display_name))
+                .cursor(rune::Cursor::Pointer)
+                .on_press(move |st: &mut State| crate::data::toggle_locker_shuffle(st, &shuffle_name))
+                .child(rune::icon(&icons::ROTATE_CCW, 16.0).color(u.muted).a11y_hidden())
+                .child(
+                    text("Shuffle at launch".to_string())
+                        .font(BODY)
+                        .color(u.prose)
+                        .grow(1.0)
+                        .min_w(0.0)
+                        .truncate(),
+                )
+                .child(u.toggle_mark(shuffles)),
         )
         .child(
             rail_action(
@@ -1486,40 +1515,16 @@ fn hero_page(s: &State, u: &Ui, v: &View, hero: &HeroCard) -> El {
             )
             .cursor(rune::Cursor::Pointer)
             .on_press(move |st: &mut State| card_art::open(st, &code, &display))
-        })
-        .child(
-            row()
-                .key(format!("locker-hero-shuffle-{}", hero.codename))
-                .w_full()
-                .h(40.0)
-                .px(12.0)
-                .gap(12.0)
-                .center_y()
-                .radius(crate::ui::r(8.0))
-                .hover(u.hover)
-                .focusable(true)
-                .role("switch")
-                .checked(shuffles)
-                .label(format!("Shuffle {} skins at launch", hero.display_name))
-                .cursor(rune::Cursor::Pointer)
-                .on_press(move |st: &mut State| crate::data::toggle_locker_shuffle(st, &shuffle_name))
-                .child(
-                    text("Shuffle at launch".to_string())
-                        .font(BODY_MED)
-                        .color(u.ink)
-                        .grow(1.0)
-                        .min_w(0.0)
-                        .truncate(),
-                )
-                .child(u.toggle_mark(shuffles)),
-        );
+        });
 
     let rail = col()
         .key("locker-hero-rail")
-        .w(RAIL_W)
+        .w(RAIL_W + crate::ui::PAGE_X)
         .h_full()
-        .padding(24.0)
-        .gap(24.0)
+        .pl(crate::ui::PAGE_X)
+        .pt(crate::ui::PAGE_TOP)
+        .pb(16.0)
+        .gap(16.0)
         .child(back_row(u, Some(nav)))
         .child(identity)
         .child(sections)
@@ -1530,7 +1535,11 @@ fn hero_page(s: &State, u: &Ui, v: &View, hero: &HeroCard) -> El {
             let browse_name = hero.display_name.clone();
             let browse = move |kind: ActionKind| {
                 let name = browse_name.clone();
-                u.icon_action(&icons::COMPASS, "Browse skins", kind)
+                let _ = kind;
+                u.icon_action(&icons::COMPASS, "Browse skins", ActionKind::Ghost)
+                    .h(24.0)
+                    .pl(6.0)
+                    .pr(8.0)
                     .key("locker-find-mods")
                     .label(format!("Browse skins for {name}"))
                     .cursor(rune::Cursor::Pointer)
@@ -1543,17 +1552,15 @@ fn hero_page(s: &State, u: &Ui, v: &View, hero: &HeroCard) -> El {
                 u,
                 "Skins",
                 plural(mods.len(), "mod", "mods"),
-                (!empty).then(|| browse(ActionKind::Secondary)),
+                Some(browse(ActionKind::Ghost)),
             ));
             if empty {
-                c = c
-                    .child(
-                        text(format!("No installed mod changes {} yet.", hero.display_name))
-                            .font(BODY)
-                            .color(u.muted)
-                            .wrap(),
-                    )
-                    .child(row().pt(8.0).child(browse(ActionKind::Primary)));
+                c = c.child(
+                    text(format!("No installed mod changes {} yet.", hero.display_name))
+                        .font(SMALL)
+                        .color(u.muted)
+                        .wrap(),
+                );
             } else {
                 c = c.child(variants::skins_list(s, u, v, hero, !v.view3d, true));
             }
@@ -1563,7 +1570,7 @@ fn hero_page(s: &State, u: &Ui, v: &View, hero: &HeroCard) -> El {
             let empty = sounds.is_empty();
             let mut c = col().w_full().gap(8.0).child(pane_head(
                 u,
-                "Ability sounds",
+                "Sounds",
                 plural(sounds.len(), "mod", "mods"),
                 None,
             ));
@@ -1573,7 +1580,7 @@ fn hero_page(s: &State, u: &Ui, v: &View, hero: &HeroCard) -> El {
                         "No installed mod changes {}'s ability sounds yet.",
                         hero.display_name
                     ))
-                    .font(BODY)
+                    .font(SMALL)
                     .color(u.muted)
                     .wrap(),
                 );
@@ -1598,11 +1605,12 @@ fn hero_page(s: &State, u: &Ui, v: &View, hero: &HeroCard) -> El {
             let recolor_hero = hero.clone();
             let can = !hero.recolor_paths.is_empty();
             let action = u
-                .icon_action(
-                    &icons::SPARKLES,
-                    "Recolor",
-                    if can { ActionKind::Primary } else { ActionKind::Secondary },
-                )
+                .icon_action(&icons::SPARKLES, "Recolor", ActionKind::Ghost)
+                .h(24.0)
+                .pl(6.0)
+                .pr(8.0)
+                .disabled(!can)
+                .opacity(if can { 1.0 } else { 0.45 })
                 .key(format!("recolor-{}", hero.codename))
                 .cursor(rune::Cursor::Pointer)
                 .on_press(move |st: &mut State| open_recolor(st, &recolor_hero));
@@ -1619,7 +1627,7 @@ fn hero_page(s: &State, u: &Ui, v: &View, hero: &HeroCard) -> El {
                     } else {
                         "Index the game files to find this hero's materials."
                     })
-                    .font(BODY)
+                    .font(SMALL)
                     .color(u.muted)
                     .wrap(),
                 );
@@ -1644,15 +1652,30 @@ fn hero_page(s: &State, u: &Ui, v: &View, hero: &HeroCard) -> El {
     };
 
     let (pane_w, room) = if v.view3d { pane_with_3d(page_w) } else { (PANE_W, true) };
+    // An opaque pane: text never sits on the art.
     let pane = col()
-        .key("locker-hero-pane")
+        .key("locker-hero-pane-frame")
         .w(pane_w)
-        .h_full()
+        .self_stretch()
         .min_h(0.0)
-        .scroll(ScrollSpec {
-            stick_bottom: false,
-        })
-        .child(col().w_full().padding(24.0).child(pane_body));
+        .ml(if page_w < 1100.0 { 16.0 } else { 24.0 })
+        .mt(crate::ui::PAGE_TOP)
+        .mb(16.0)
+        .fill(u.bg)
+        .border(1.0, u.hair)
+        .radius(crate::ui::r(8.0))
+        .clip_rounded(crate::ui::r(8.0))
+        .child(
+            col()
+                .key("locker-hero-pane")
+                .w_full()
+                .grow(1.0)
+                .min_h(0.0)
+                .scroll(ScrollSpec {
+                    stick_bottom: false,
+                })
+                .child(col().w_full().padding(16.0).child(pane_body)),
+        );
 
     drill_shell(
         u,
