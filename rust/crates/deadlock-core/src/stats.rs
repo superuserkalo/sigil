@@ -213,6 +213,31 @@ pub struct PlayerRank {
     pub last_match: Option<RankedMatch>,
     /// Population benchmark for the badge, when the caller fetched it.
     pub benchmark: Option<RankBenchmark>,
+    /// Whether the rank request answered. A failed request leaves this false so the
+    /// screen reads `--` instead of calling a ranked player unranked. Bundles and
+    /// fixtures written before the field existed answer a rank.
+    #[serde(default = "reported_default")]
+    pub reported: bool,
+}
+
+impl PlayerRank {
+    /// What a failed rank request leaves behind: no badge and `reported` false, so the
+    /// card reads `--` while the rest of the page still loads.
+    pub fn unavailable() -> Self {
+        Self {
+            badge: 0,
+            rank: 0,
+            subrank: 0,
+            tier_name: None,
+            last_match: None,
+            benchmark: None,
+            reported: false,
+        }
+    }
+}
+
+fn reported_default() -> bool {
+    true
 }
 
 /// Where a badge sits among ranked players, from `/v1/players/rank/distribution`.
@@ -231,6 +256,35 @@ pub struct RankBenchmark {
     pub top_percent: f64,
     /// The distribution's time filter. The API defaults to the last 30 days.
     pub window: String,
+    /// Whether the latest ranked match was played in the season running now. A badge
+    /// last set in an earlier season is not comparable with this season's players,
+    /// so its share is left out of the screen. Defaults to true for older bundles.
+    #[serde(default = "reported_default")]
+    pub current_season: bool,
+}
+
+impl RankBenchmark {
+    /// The share of ranked players at or above the badge as the screen writes it:
+    /// a whole number from 1 percent up, one decimal below that, and `None` under
+    /// 0.1 percent, where any rounded number would read "0.0".
+    ///
+    /// Benchmarks cached before `top_percent` existed fall back to
+    /// `100 - percentile`.
+    pub fn top_percent_text(&self) -> Option<String> {
+        let top = if self.top_percent > 0.0 {
+            self.top_percent
+        } else {
+            (100.0 - self.percentile).max(0.0)
+        };
+        if top < 0.1 {
+            return None;
+        }
+        Some(if top < 1.0 {
+            format!("{top:.1}")
+        } else {
+            format!("{top:.0}")
+        })
+    }
 }
 
 /// One badge row from `/v1/players/rank/distribution`.
@@ -989,14 +1043,28 @@ impl StatsClient {
         ensure_account(account_id)?;
         self.reset_age();
         let profile = self.fetch_player(account_id)?;
-        let raw_rank: RawRankResponse = self.get_cached(
-            &format!("/v1/players/{account_id}/rank"),
-            &[],
-            cache::TTL_RANK,
-        )?;
+        // A rank 429 or outage must not take the hero rows and the match window down with
+        // it: the card reads `--` and the rest of the page still loads.
+        let raw_rank: Option<RawRankResponse> = self
+            .get_cached(
+                &format!("/v1/players/{account_id}/rank"),
+                &[],
+                cache::TTL_RANK,
+            )
+            .ok();
         let tier_names = self.fetch_rank_names().unwrap_or_default();
-        let mut rank = raw_rank.into_rank();
+        let mut rank = raw_rank
+            .map(RawRankResponse::into_rank)
+            .unwrap_or_else(PlayerRank::unavailable);
         rank.benchmark = self.fetch_rank_benchmark(rank.badge).unwrap_or(None);
+        if rank.benchmark.is_some() {
+            // Show the share only for a badge earned in the season running now.
+            let seasons = self.fetch_seasons().unwrap_or_default();
+            let in_current_season = rank_in_current_season(&rank, &seasons, now_unix());
+            if let Some(benchmark) = rank.benchmark.as_mut() {
+                benchmark.current_season = in_current_season;
+            }
+        }
         let (heroes, matches) = match filter {
             Some(filter) => (
                 self.fetch_hero_stats_filtered(account_id, filter)?,
@@ -1389,7 +1457,27 @@ pub fn rank_benchmark(badge: u32, distribution: &[RankDistributionEntry]) -> Opt
         percentile: percent(at_or_below, ranked_players),
         top_percent: percent(at_or_above, ranked_players),
         window: "last 30 days (API default)".to_string(),
+        // The caller knows the seasons; `snapshot_in` gates this with
+        // [`rank_in_current_season`].
+        current_season: true,
     })
+}
+
+/// Whether the badge's latest ranked match was played in the season running at `now`.
+///
+/// A badge last set in an earlier season is not comparable with this season's ranked
+/// players, so the screen leaves its "top X%" share out instead of showing a stale one.
+/// False when the rank request failed, reported no match, or no season has started.
+pub fn rank_in_current_season(rank: &PlayerRank, seasons: &[leaderboard::RankedSeason], now: i64) -> bool {
+    if !rank.reported {
+        return false;
+    }
+    let Some(season) = leaderboard::current_season(seasons, now) else {
+        return false;
+    };
+    rank.last_match
+        .as_ref()
+        .is_some_and(|last| last.start_time >= season.starts_at)
 }
 
 /// Name the rows, sort heroes by sample size and derive the totals. Shared by
@@ -1756,6 +1844,7 @@ impl RawRankResponse {
             tier_name: None,
             last_match: self.last_match.map(RawRankMatch::into_match),
             benchmark: None,
+            reported: true,
         }
     }
 }
@@ -2010,3 +2099,106 @@ impl RawKillDeath {
     }
 }
 
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn season(id: u32, starts_at: i64, ends_at: i64) -> leaderboard::RankedSeason {
+        leaderboard::RankedSeason {
+            leaderboard_id: id,
+            name: format!("Season {id}"),
+            starts_at,
+            ends_at,
+        }
+    }
+
+    fn ranked(badge: u32, last_start: Option<i64>) -> PlayerRank {
+        PlayerRank {
+            badge,
+            rank: badge / 10,
+            subrank: badge % 10,
+            tier_name: None,
+            last_match: last_start.map(|start_time| RankedMatch {
+                match_id: 1,
+                start_time,
+                started_at: unix_seconds_to_iso(start_time),
+                initial_display_rank: Some(badge),
+                initial_flat_progress: None,
+                final_flat_progress: None,
+                desired_progress_change: Some(1),
+                initial_calibration_games: None,
+                initial_win_streak: None,
+            }),
+            benchmark: None,
+            reported: true,
+        }
+    }
+
+    fn benchmark(top_percent: f64, percentile: f64) -> RankBenchmark {
+        RankBenchmark {
+            badge: 121,
+            ranked_players: 100_000,
+            percentile,
+            top_percent,
+            window: "last 30 days (API default)".to_string(),
+            current_season: true,
+        }
+    }
+
+    #[test]
+    fn a_share_is_only_shown_for_the_running_season() {
+        let seasons = vec![season(2, 1_000, 2_000), season(1, 0, 1_000)];
+        assert!(
+            rank_in_current_season(&ranked(121, Some(1_500)), &seasons, 1_600),
+            "a badge earned this season"
+        );
+        assert!(
+            rank_in_current_season(&ranked(121, Some(1_000)), &seasons, 1_600),
+            "the season's first match counts"
+        );
+        assert!(
+            !rank_in_current_season(&ranked(121, Some(900)), &seasons, 1_600),
+            "a badge from an earlier season is not comparable"
+        );
+        assert!(
+            !rank_in_current_season(&ranked(0, None), &seasons, 1_600),
+            "no ranked match, no share"
+        );
+        assert!(
+            !rank_in_current_season(&ranked(121, Some(1_500)), &[], 1_600),
+            "an unknown season list hides the share"
+        );
+        assert!(
+            !rank_in_current_season(&PlayerRank::unavailable(), &seasons, 1_600),
+            "a failed rank request hides the share"
+        );
+    }
+
+    #[test]
+    fn tiny_shares_floor_instead_of_reading_zero() {
+        assert_eq!(benchmark(0.04, 99.96).top_percent_text(), None);
+        assert_eq!(
+            benchmark(0.0, 99.96).top_percent_text(),
+            None,
+            "a benchmark cached before topPercent falls back to 100 - percentile"
+        );
+        assert_eq!(benchmark(0.1, 99.9).top_percent_text().as_deref(), Some("0.1"));
+        assert_eq!(benchmark(0.42, 99.58).top_percent_text().as_deref(), Some("0.4"));
+        assert_eq!(benchmark(12.4, 87.6).top_percent_text().as_deref(), Some("12"));
+        assert_eq!(benchmark(100.0, 0.0).top_percent_text().as_deref(), Some("100"));
+    }
+
+    #[test]
+    fn older_bundles_still_report_a_rank_and_a_current_season() {
+        let rank: PlayerRank =
+            serde_json::from_str(r#"{"badge":121,"rank":12,"subrank":1}"#).expect("rank");
+        assert!(rank.reported, "a bundle written before the field existed");
+        assert!(!PlayerRank::unavailable().reported);
+        let bench: RankBenchmark = serde_json::from_str(
+            r#"{"badge":121,"rankedPlayers":10,"percentile":1.0,"topPercent":99.0,"window":"last 30 days"}"#,
+        )
+        .expect("benchmark");
+        assert!(bench.current_season);
+    }
+}
