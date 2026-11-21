@@ -167,7 +167,9 @@ pub fn parse_source_link(rest: &str) -> std::result::Result<SourceLink, String> 
     }
     let url = url.ok_or_else(|| "The link has no source address.".to_string())?;
     check_url(&url).map_err(|e| e.to_string())?;
-    if url.contains('#') || url.contains('\\') {
+    // The confirm shows this address as the thing to trust, so it stays plain ASCII: no
+    // look-alike letters and no invisible direction marks.
+    if !url.bytes().all(|b| b.is_ascii_graphic()) || url.contains('#') || url.contains('\\') {
         return Err("The source address has characters Sigil does not read.".into());
     }
     let source = match action {
@@ -199,10 +201,15 @@ pub fn parse_source_link(rest: &str) -> std::result::Result<SourceLink, String> 
 }
 
 fn plain(value: &str, max: usize, name: &str) -> std::result::Result<String, String> {
-    if value.is_empty() || value.len() > max || value.chars().any(char::is_control) {
+    if value.is_empty() || value.len() > max || value.chars().any(|c| c.is_control() || is_invisible(c)) {
         return Err(format!("The link's {name} is empty or too long."));
     }
     Ok(value.to_string())
+}
+
+/// Zero-width and text-direction marks, which could make a dialog line read differently.
+fn is_invisible(c: char) -> bool {
+    matches!(c, '\u{200B}'..='\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2060}'..='\u{2069}' | '\u{FEFF}')
 }
 
 /// Percent-decode one query value. `+` stays a plus, as Deadlock Mod Manager reads it.
@@ -247,12 +254,27 @@ pub fn origin_of(url: &str) -> Option<String> {
 }
 
 fn is_private_host(host: &str) -> bool {
-    let host = host.split(':').next().unwrap_or(host);
+    // A trailing dot names the same host.
+    let host = host.split(':').next().unwrap_or(host).trim_end_matches('.');
     if host == "localhost" || host.ends_with(".localhost") || host.ends_with(".local") {
         return true;
     }
     if let Ok(ip) = host.parse::<std::net::Ipv4Addr>() {
-        return ip.is_private() || ip.is_loopback() || ip.is_link_local() || ip.is_unspecified();
+        let [first, second, ..] = ip.octets();
+        let shared = first == 100 && second & 0xc0 == 64;
+        return shared
+            || ip.is_private()
+            || ip.is_loopback()
+            || ip.is_link_local()
+            || ip.is_unspecified()
+            || ip.is_broadcast()
+            || ip.is_multicast();
+    }
+    // `2130706433`, `127.1` and `0x7f.0.0.1` also reach an address: no public name ends in a
+    // number, so anything shaped like that which is not a plain public IPv4 is refused.
+    let last = host.rsplit('.').next().unwrap_or(host);
+    if last.bytes().all(|b| b.is_ascii_digit()) || last.starts_with("0x") {
+        return true;
     }
     host.starts_with('[')
 }

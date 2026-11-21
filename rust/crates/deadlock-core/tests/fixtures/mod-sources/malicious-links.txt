@@ -18,3 +18,13 @@
 //sources/remove?url=https%3A%2F%2Fmods.example.org%2Fdmm-source.json
 //sources/add/../install?url=https%3A%2F%2Fmods.example.org%2Fx.json
 sources/add?url=https%3A%2F%2Fmods.example.org%2Fx.json
+//sources/add?url=https%3A%2F%2F2130706433%2Fx.json
+//sources/add?url=https%3A%2F%2F127.1%2Fx.json
+//sources/add?url=https%3A%2F%2F0x7f.0.0.1%2Fx.json
+//sources/add?url=https%3A%2F%2F127.0.0.1.%2Fx.json
+//sources/add?url=https%3A%2F%2Flocalhost.%2Fx.json
+//sources/add?url=https%3A%2F%2F100.64.0.1%2Fx.json
+//sources/add?url=https%3A%2F%2Fm%D0%BEds.example.org%2Fx.json
+//sources/add?url=https%3A%2F%2Fmods.example.org%2F%E2%80%AEnosj.x
+//sources/install?url=https%3A%2F%2Fmods.example.org%2Fx.json&source=community&listing=x&artifact=%E2%80%AEfile
+//sources/install?url=https%3A%2F%2Fmods.example.org%2Fx.json&source=community&listing=%E2%80%8Bx
