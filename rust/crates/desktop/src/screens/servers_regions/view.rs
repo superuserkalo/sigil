@@ -132,7 +132,7 @@ fn list_bar(s: &State, u: &Ui) -> El {
             .label(tr("Relay health in the status bar"))
             .cursor(rune::Cursor::Pointer)
             .on_press(super::toggle_health_bar)
-            .child(u.toggle(on).a11y_hidden())
+            .child(u.toggle_mark(on))
             .child(text(tr("Relay health in the status bar")).font(SMALL).color(u.muted).a11y_hidden()),
     )
 }

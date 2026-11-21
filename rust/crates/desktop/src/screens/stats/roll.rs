@@ -281,9 +281,13 @@ fn controls(s: &State, u: &Ui) -> El {
                 .key("stats-roll-lock")
                 .gap(8.0)
                 .center_y()
+                .focusable(true)
+                .role("switch")
+                .checked(r.lock_hero)
+                .label(tr("Keep the hero"))
                 .cursor(rune::Cursor::Pointer)
                 .on_press(|st: &mut State| st.stats.roll.lock_hero = !st.stats.roll.lock_hero)
-                .child(u.toggle(r.lock_hero).label(tr("Keep the hero")))
+                .child(u.toggle_mark(r.lock_hero))
                 .child(text(tr("Keep the hero")).font(SMALL).color(u.muted).a11y_hidden()),
         );
     }

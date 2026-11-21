@@ -391,7 +391,7 @@ fn switch_row(u: &Ui, key: String, label: &str, on: bool) -> El {
         .label(label.to_string())
         .cursor(rune::Cursor::Pointer)
         .child(text(label.to_string()).font(SMALL).color(Color::WHITE.alpha(0.86)).grow(1.0).a11y_hidden())
-        .child(u.toggle(on).a11y_hidden())
+        .child(u.toggle_mark(on))
 }
 
 const GROUPS: [(&str, &str); 4] = [("idle", "Idle"), ("movement", "Movement"), ("combat", "Combat"), ("other", "Other")];

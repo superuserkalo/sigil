@@ -1137,7 +1137,7 @@ fn details(u: &Ui, profile: &Row) -> El {
                         .wrap(),
                     ),
             )
-            .child(u.toggle(isolated).a11y_hidden()),
+            .child(u.toggle_mark(isolated)),
     );
 
     let rename = {

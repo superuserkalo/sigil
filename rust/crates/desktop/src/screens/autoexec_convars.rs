@@ -593,12 +593,16 @@ pub fn section(s: &State, u: &Ui) -> El {
                     .key("convars-cheats")
                     .gap(8.0)
                     .center_y()
+                    .focusable(true)
+                    .role("switch")
+                    .checked(c.cheats)
+                    .label(tr("Show cheat convars"))
                     .cursor(rune::Cursor::Pointer)
                     .on_press(|st: &mut State| {
                         st.autoexec.convars.cheats = !st.autoexec.convars.cheats;
                         st.autoexec.convars.shown = PAGE;
                     })
-                    .child(u.toggle(c.cheats).label(tr("Show cheat convars")))
+                    .child(u.toggle_mark(c.cheats))
                     .child(text(tr("Show cheat convars")).font(SMALL).color(u.muted).a11y_hidden()),
             ),
     );

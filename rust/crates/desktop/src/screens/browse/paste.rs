@@ -381,7 +381,7 @@ pub fn dialog(s: &State, u: &Ui) -> Option<El> {
                                 }
                             }
                         })
-                        .child(u.toggle(p.skip_nsfw).a11y_hidden())
+                        .child(u.toggle_mark(p.skip_nsfw))
                         .child(text(tr("Skip NSFW")).font(SMALL).color(u.muted)),
                 ),
         );

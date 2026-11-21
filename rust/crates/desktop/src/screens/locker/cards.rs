@@ -276,7 +276,6 @@ pub(super) fn shuffle_dialog(s: &State, u: &Ui) -> El {
                 .gap(12.0)
                 .center_y()
                 .border_sides([0.0, 0.0, 1.0, 0.0], u.hair)
-                .label(format!("Shuffle {} at launch", hero.display_name))
                 .child(
                     text(hero.display_name.clone())
                         .font(BODY_MED)
@@ -287,6 +286,7 @@ pub(super) fn shuffle_dialog(s: &State, u: &Ui) -> El {
                 )
                 .child(
                     u.toggle(on)
+                        .label(format!("Shuffle {} at launch", hero.display_name))
                         .cursor(rune::Cursor::Pointer)
                         .on_press(move |st: &mut State| {
                             crate::data::toggle_locker_shuffle(st, &name)
@@ -345,7 +345,7 @@ pub(super) fn shuffle_dialog(s: &State, u: &Ui) -> El {
                         .wrap(),
                 ),
         )
-        .child(u.toggle(multi).cursor(rune::Cursor::Pointer).on_press(|st: &mut State| {
+        .child(u.toggle(multi).label(tr("Several skins per hero")).cursor(rune::Cursor::Pointer).on_press(|st: &mut State| {
             st.locker.prefs.multi_skin = !st.locker.prefs.multi_skin;
             crate::data::save_locker_prefs(st);
         }));

@@ -1017,7 +1017,7 @@ fn lists_dialog(s: &State, u: &Ui) -> El {
                     .cursor(rune::Cursor::Pointer)
                     .on_press(move |st: &mut State| toggle_random(st, &id_random))
                     .child(text(crate::screens::settings::i18n::tr("Random")).font(SMALL).color(u.muted).a11y_hidden())
-                    .child(u.toggle(random).a11y_hidden()),
+                    .child(u.toggle_mark(random)),
             )
             .child(spacer())
             .child(

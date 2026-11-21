@@ -1430,7 +1430,8 @@ fn hero_page(s: &State, u: &Ui, v: &View, hero: &HeroCard) -> El {
             .role("switch")
             .checked(v.view3d)
             .cursor(rune::Cursor::Pointer)
-            .on_press(toggle_3d),
+            .on_press(toggle_3d)
+            .child(u.toggle_mark(v.view3d)),
         )
         .child(
             rail_action(
@@ -1489,7 +1490,12 @@ fn hero_page(s: &State, u: &Ui, v: &View, hero: &HeroCard) -> El {
                 .center_y()
                 .radius(crate::ui::r(8.0))
                 .hover(u.hover)
+                .focusable(true)
+                .role("switch")
+                .checked(shuffles)
                 .label(format!("Shuffle {} skins at launch", hero.display_name))
+                .cursor(rune::Cursor::Pointer)
+                .on_press(move |st: &mut State| crate::data::toggle_locker_shuffle(st, &shuffle_name))
                 .child(
                     text("Shuffle at launch".to_string())
                         .font(BODY_MED)
@@ -1498,13 +1504,7 @@ fn hero_page(s: &State, u: &Ui, v: &View, hero: &HeroCard) -> El {
                         .min_w(0.0)
                         .truncate(),
                 )
-                .child(
-                    u.toggle(shuffles)
-                        .cursor(rune::Cursor::Pointer)
-                        .on_press(move |st: &mut State| {
-                            crate::data::toggle_locker_shuffle(st, &shuffle_name)
-                        }),
-                ),
+                .child(u.toggle_mark(shuffles)),
         );
 
     let rail = col()
@@ -1851,6 +1851,7 @@ fn general_page(s: &State, u: &Ui, v: &View) -> El {
                 )
                 .child(
                     u.toggle(v.global.configured)
+                        .label(crate::screens::settings::i18n::tr("Global mods folder").to_string())
                         .cursor(rune::Cursor::Pointer)
                         .on_press(|st: &mut State| {
                             let on = !st.locker.global.configured;

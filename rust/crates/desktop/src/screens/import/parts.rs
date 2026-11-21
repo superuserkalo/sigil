@@ -490,7 +490,7 @@ pub fn panel(s: &State, u: &Ui) -> Option<El> {
                         .child(text(t("Import as one mod")).font(LABEL).color(u.ink))
                         .child(text(line).font(SMALL).color(u.muted).wrap()),
                 )
-                .child(u.toggle(p.as_one).a11y_hidden()),
+                .child(u.toggle_mark(p.as_one)),
         );
         if p.as_one {
             panel = panel.child(

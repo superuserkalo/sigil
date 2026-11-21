@@ -1407,6 +1407,7 @@ fn swatches(u: &Ui, crosshair: &deadlock_core::crosshair::Crosshair) -> El {
 fn switch_row(u: &Ui, label: &str, on: bool, press: fn(&mut State)) -> El {
     setting_row(u, label).child(
         u.toggle(on)
+            .key(format!("crosshair-switch-{label}"))
             .label(label.to_string())
             .cursor(rune::Cursor::Pointer)
             .on_press(press),

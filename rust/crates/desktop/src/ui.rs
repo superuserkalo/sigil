@@ -197,6 +197,16 @@ pub fn r(points: f32) -> f32 {
     }
 }
 
+/// A switch that is on, in every theme and preset. Never the accent.
+pub fn switch_green() -> Color {
+    oklch(0.56, 0.15, 150.0)
+}
+
+/// The knob of every switch, on or off.
+pub fn switch_knob() -> Color {
+    oklch(0.93, 0.0, 0.0)
+}
+
 /// A floating layer's shadow colour. Graphite separates layers with hard borders, so its
 /// shadow is off; every other look keeps the colour it asked for.
 pub fn soft(color: Color) -> Color {
@@ -846,28 +856,42 @@ impl Ui {
         }
     }
 
-    /// The switch: 36 by 20, ember when on, a white knob either way.
+    /// The switch: a square 24 by 16 track in a 32 by 24 press target. It takes its own press,
+    /// focus and name. Inside a row that is itself the switch, use `toggle_mark`.
     pub fn toggle(&self, on: bool) -> El {
-        let (w, h, k) = (36.0, 20.0, 16.0);
-        let inset = (h - k) / 2.0;
-        el().key(if on { "toggle-on" } else { "toggle-off" })
-            .role("switch")
-            .checked(on)
-            .focusable(true)
-            .size(w, h)
-            .radius(h / 2.0)
-            .fill(if on {
-                self.accent
-            } else {
-                self.over.alpha(if self.light { 0.16 } else { 0.14 })
-            })
-            .child(
-                el().size(k, k)
-                    .absolute(if on { w - k - inset } else { inset }, inset)
-                    .radius(k / 2.0)
-                    .fill(Color::WHITE)
-                    .a11y_hidden(),
-            )
+        self.toggle_mark(on).role("switch").checked(on).focusable(true)
+    }
+
+    /// The switch's look with no input of its own, so a press on it reaches the row around it.
+    /// That row carries the press, the "switch" role, `checked`, focus and the name.
+    pub fn toggle_mark(&self, on: bool) -> El {
+        const TRACK: (f32, f32) = (24.0, 16.0);
+        const KNOB: f32 = 12.0;
+        const INSET: f32 = 2.0;
+        // A critically damped spring: an ease-out over 90 ms. Reduced motion lands it at once.
+        let motion = rune::Spring::from_motion(0.09, 0.0);
+        el().key("toggle-mark").size(32.0, 24.0).center().child(
+            el().key("toggle-track")
+                .size(TRACK.0, TRACK.1)
+                .radius(4.0)
+                .fill(if on { switch_green() } else { self.switch_off() })
+                .motion(motion)
+                .a11y_hidden()
+                .child(
+                    el().key("toggle-knob")
+                        .size(KNOB, KNOB)
+                        .absolute(if on { TRACK.0 - KNOB - INSET } else { INSET }, INSET)
+                        .radius(2.0)
+                        .fill(switch_knob())
+                        .motion(motion)
+                        .a11y_hidden(),
+                ),
+        )
+    }
+
+    /// The off track: neutral, a step away from the surface in dark and light themes alike.
+    pub fn switch_off(&self) -> Color {
+        oklch(if self.light { 0.58 } else { 0.40 }, 0.0, 0.0)
     }
 
     pub fn kv(&self, key: &str, value: &str, value_color: Color) -> El {
@@ -1111,6 +1135,21 @@ mod look_tests {
             assert!((layer.r - layer.g).abs() < 0.004 && (layer.g - layer.b).abs() < 0.004);
             for ink in [u.ink, u.prose, u.muted, u.faint] {
                 assert!(contrast(ink, layer) >= AA_TEXT, "{} on {}", hex6(ink), hex6(layer));
+            }
+        }
+    }
+
+    /// The knob reads on both tracks, and the green reads on every theme's and preset's layers.
+    #[test]
+    fn switches_read_on_every_surface() {
+        let mut looks: Vec<Ui> = Theme::ALL.into_iter().map(|t| Ui::themed(t, None)).collect();
+        looks.extend(PRESETS.iter().map(|p| p.palette().to_ui()));
+        for u in &looks {
+            assert!(contrast(switch_knob(), switch_green()) >= 3.0);
+            assert!(contrast(switch_knob(), u.switch_off()) >= 3.0);
+            for layer in [u.bg, u.sidebar, u.raised, u.well] {
+                let layer = layer.alpha(1.0);
+                assert!(contrast(switch_green(), layer) >= 3.0, "green on {}", hex6(layer));
             }
         }
     }
