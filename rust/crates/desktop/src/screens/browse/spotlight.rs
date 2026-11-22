@@ -1,6 +1,7 @@
 //! The spotlight over the landing (`design/browse.md` 2.1): one large pick from today's top
 //! mods with its cover, title, author, category and likes, Install, the favorite star and a
-//! hand-stepped pager, beside the quick stats column (installed, updates, queue, profile).
+//! hand-stepped pager, across the full page width. (The quick numbers it once carried repeat
+//! the sidebar, status bar and Installed, so they are gone.)
 //!
 //! Nothing turns by itself: no timer, no rotation, no fade. Every part has a fixed size, so
 //! stepping the pager swaps cover and text in place and nothing else moves.
@@ -47,19 +48,16 @@ const PICKS: usize = 5;
 struct Size {
     cover_w: f32,
     cover_h: f32,
-    stats_w: f32,
-    /// The stats sit beside the card; below 720 they move under it as one row.
-    side_stats: bool,
     big_title: bool,
 }
 
 fn size(width: f32) -> Size {
     if width >= 960.0 {
-        Size { cover_w: 384.0, cover_h: 216.0, stats_w: 208.0, side_stats: true, big_title: true }
+        Size { cover_w: 384.0, cover_h: 216.0, big_title: true }
     } else if width >= 720.0 {
-        Size { cover_w: 320.0, cover_h: 180.0, stats_w: 176.0, side_stats: true, big_title: false }
+        Size { cover_w: 320.0, cover_h: 180.0, big_title: false }
     } else {
-        Size { cover_w: 240.0, cover_h: 135.0, stats_w: 0.0, side_stats: false, big_title: false }
+        Size { cover_w: 240.0, cover_h: 135.0, big_title: false }
     }
 }
 
@@ -138,7 +136,13 @@ pub fn view(s: &State, u: &Ui) -> El {
     // The text and actions.
     let title_font = if sz.big_title { crate::ui::PAGE_TITLE } else { H1 };
     let title_h = if sz.big_title { 48.0 } else { 44.0 };
-    let mut info = col().key("browse-spot-info").grow(1.0).min_w(0.0).h_full().padding(16.0).gap(4.0);
+    let mut info = col()
+        .key("browse-spot-info")
+        .grow(1.0)
+        .min_w(0.0)
+        .h_full()
+        .padding(if sz.big_title { 24.0 } else { 16.0 })
+        .gap(4.0);
     match pick {
         Some(p) => {
             let eyebrow = super::tree::tr(if p.period == "today" { "Trending today" } else { "Trending this week" });
@@ -235,7 +239,7 @@ pub fn view(s: &State, u: &Ui) -> El {
     }
     info = info.child(spacer()).child(actions);
 
-    let mut card = row()
+    let card = row()
         .key("browse-spotlight")
         .w_full()
         .h(sz.cover_h)
@@ -245,23 +249,5 @@ pub fn view(s: &State, u: &Ui) -> El {
         .border(1.0, u.hair)
         .child(cover)
         .child(info);
-    if sz.side_stats {
-        let mut column = col()
-            .key("browse-quick-stats")
-            .w(sz.stats_w)
-            .min_w(sz.stats_w)
-            .h_full()
-            .border_sides([0.0, 0.0, 0.0, 1.0], u.hair);
-        for stat in super::strip::cells(s, u, ((sz.cover_h - 2.0) / 4.0).floor(), true) {
-            column = column.child(stat);
-        }
-        card = card.child(column);
-        return card;
-    }
-    // Narrow: the four numbers as one 28 point row under the card.
-    let mut strip = row().key("browse-quick-stats").w_full().h(28.0).gap(8.0);
-    for stat in super::strip::cells(s, u, 28.0, false) {
-        strip = strip.child(stat);
-    }
-    col().w_full().gap(8.0).child(card).child(strip)
+    card
 }

@@ -21,15 +21,13 @@ const SMALL_CONTROL: f32 = 24.0;
 pub const TRENDING: usize = 0;
 pub const MONTH: usize = 1;
 pub const FEATURED: usize = 2;
-pub const HEROES: usize = 3;
-pub const ALL_TIME: usize = 4;
 
-/// The three reads behind the shelves: most liked this week, this month and of all time.
+/// The two reads behind the shelves: most liked this week and this month. (All time is the
+/// Most liked sort itself, one press away, so it has no shelf.)
 #[derive(Clone, Default)]
 pub struct Feeds {
     pub week: Vec<BrowseCard>,
     pub month: Vec<BrowseCard>,
-    pub all: Vec<BrowseCard>,
 }
 
 #[derive(Default)]
@@ -75,7 +73,7 @@ pub fn page_count(len: usize, n: usize) -> usize {
     len.div_ceil(n.max(1)).max(1)
 }
 
-/// Start the three reads once per run, off the UI thread.
+/// Start the two reads once per run, off the UI thread.
 pub fn start(st: &mut State) {
     if st.browse_view.shelves.featured.is_none() {
         st.browse_view.shelves.featured = Some(!st.browse_view.w4.featured.is_empty());
@@ -100,7 +98,6 @@ pub fn start(st: &mut State) {
         Ok(Feeds {
             week: read(BrowseOrder::MostLiked, BrowsePeriod::Week).unwrap_or_default(),
             month: read(BrowseOrder::MostLiked, BrowsePeriod::Month).unwrap_or_default(),
-            all: read(BrowseOrder::MostLiked, BrowsePeriod::Any).unwrap_or_default(),
         })
     });
 }
@@ -127,7 +124,7 @@ pub fn allowed<'a>(s: &State, list: &'a [BrowseCard]) -> Vec<&'a BrowseCard> {
 /// The covers worth fetching: the first `count` allowed cards of each shelf. Hidden art is
 /// never downloaded.
 pub fn cover_urls(s: &State, feeds: &Feeds, count: usize) -> Vec<String> {
-    [&feeds.week, &feeds.month, &feeds.all]
+    [&feeds.week, &feeds.month]
         .into_iter()
         .flat_map(|list| allowed(s, list).into_iter().take(count).filter_map(|c| c.thumbnail_url.clone()))
         .collect()
@@ -315,6 +312,24 @@ pub fn shelf(
         .child(arrow(u, slot, key, true, page + 1 < pages, pages));
     let head = u.section_head(title, None, Some(controls));
     let mut strip = row().key(key).w_full().gap(gap);
+    if tiles.is_empty() {
+        // Everything this shelf had is already on the landing: one quiet line at the shelf's
+        // full height, so nothing below moves.
+        let h = (tile_w * 9.0 / 16.0).round() + 8.0 + 20.0 + 16.0 + 14.0;
+        return col()
+            .key(format!("{key}-shelf"))
+            .w_full()
+            .gap(8.0)
+            .child(u.section(title))
+            .child(
+                row()
+                    .key(key)
+                    .w_full()
+                    .h(h)
+                    .center_y()
+                    .child(text(super::tree::tr("Nothing new here yet")).font(SMALL).color(u.muted)),
+            );
+    }
     let mut shown = 0;
     for tile in tiles.into_iter().skip(page * n).take(n) {
         strip = strip.child(tile);
@@ -354,9 +369,9 @@ mod tests {
         let list = vec![row(1, "Fine", false), row(2, "Fine", false), row(3, "hidden maker", false), row(4, "Fine", true)];
         let ids: Vec<u64> = allowed(&st, &list).iter().map(|c| c.id).collect();
         assert_eq!(ids, vec![1], "shelves");
-        let feeds = Feeds { week: list.clone(), month: list.clone(), all: list.clone() };
+        let feeds = Feeds { week: list.clone(), month: list.clone() };
         let urls = cover_urls(&st, &feeds, 15);
-        assert_eq!(urls, vec!["https://images.example/1.jpg".to_string(); 3], "shelf image queue");
+        assert_eq!(urls, vec!["https://images.example/1.jpg".to_string(); 2], "shelf image queue");
         st.browse_view.top = Some(
             list.iter()
                 .map(|c| TopSub {
