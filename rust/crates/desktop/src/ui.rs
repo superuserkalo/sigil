@@ -1024,8 +1024,9 @@ impl Ui {
         const TRACK: (f32, f32) = (24.0, 16.0);
         const KNOB: f32 = 12.0;
         const INSET: f32 = 2.0;
-        // A critically damped spring: an ease-out over 90 ms. Reduced motion lands it at once.
-        let motion = rune::Spring::from_motion(0.09, 0.0);
+        // The knob slides and the track's fill eases on `fast` (90 ms, no overshoot). Both boxes
+        // are fixed, so only the knob's place inside the track moves.
+        let motion = crate::motion::fast();
         el().key("toggle-mark").size(32.0, 24.0).center().child(
             el().key("toggle-track")
                 .size(TRACK.0, TRACK.1)
@@ -1261,7 +1262,7 @@ impl Ui {
     /// A state chip for a status row: 24 high, 4 point corners, a quiet fill, `LABEL` text in
     /// `prose`. The tone lives in the 12 point icon only. Add `.on_press` to make it a button.
     pub fn state_chip(&self, glyph: &'static Icon, label: &str, tone: Tone) -> El {
-        row()
+        crate::motion::colors(row())
             .h(CONTROL_S)
             .px(8.0)
             .gap(6.0)

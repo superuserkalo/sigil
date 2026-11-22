@@ -94,7 +94,7 @@ pub fn segmented(u: &Ui, items: Vec<El>) -> El {
 
 /// One option inside `segmented`.
 pub fn segment(u: &Ui, label: &str, on: bool) -> El {
-    row()
+    crate::motion::colors(row())
         .h(26.0)
         .px(10.0)
         .center()

@@ -7,7 +7,6 @@ use std::path::PathBuf;
 use std::time::Instant;
 
 use crate::screens::settings::i18n::tr;
-use rune::tok::motion;
 use rune::{
     Color, Cx, El, ImageCache, Key, KeyEvent, Pixels, TextEdit, Tx, Waker, col, el, row, spacer,
     text,
@@ -1516,7 +1515,8 @@ fn sidebar(s: &State, u: &Ui, insets: rune::ChromeInsets) -> El {
 }
 
 fn nav_row(u: &Ui, key: String, on: bool) -> El {
-    row()
+    // The fill, icon and label ease to and from selected; the row's place lands at once.
+    crate::motion::colors(row())
         .key(key)
         .w_full()
         .h(crate::ui::CONTROL_L)
@@ -2994,7 +2994,7 @@ pub fn scenes() -> &'static [(&'static str, fn(&mut State))] {
 
 /// Shared by screens: a small uppercase filter chip.
 pub fn filter_chip(u: &Ui, label: &str, on: bool) -> El {
-    row()
+    crate::motion::colors(row())
         .h(crate::ui::CONTROL_M)
         .px(10.0)
         .center()
@@ -3011,7 +3011,6 @@ pub fn filter_chip(u: &Ui, label: &str, on: bool) -> El {
         .role("button")
         .label(label)
         .checked(on)
-        .motion(motion::SNAPPY)
         .child(
             text(label)
                 .font(LABEL)

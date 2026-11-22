@@ -151,10 +151,11 @@ pub fn page_enter() -> Transition {
     Transition::opacity().springs(SpringPair::new(page(), Spring::NONE))
 }
 
-/// No entrance or exit: shows whole the frame it mounts, gone the frame it leaves. Its
-/// children still play their own entrance unless they are cut too.
+/// No entrance or exit: shows whole the frame it mounts, gone the frame it leaves, and so does
+/// everything in it. (`Transition::none()` alone lets the children fade in on their own
+/// default; an opacity transition on instant springs covers them, measured in Rune.)
 pub fn cut() -> Transition {
-    Transition::none()
+    Transition::opacity().springs(SpringPair::NONE)
 }
 
 /// The root of the view: layout and colour land at once unless a control below opts in, and

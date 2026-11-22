@@ -954,7 +954,7 @@ fn segmented<T: Copy + PartialEq + 'static>(
         let on = *value == current;
         let value = *value;
         r = r.child(
-            row()
+            crate::motion::colors(row())
                 .key(format!("{key}-{index}"))
                 .h_full()
                 .px(10.0)
@@ -1089,7 +1089,7 @@ fn button(u: &Ui, key: &str, label: &str, kind: ActionKind) -> El {
 }
 
 fn disabled(e: El, off: bool) -> El {
-    e.disabled(off).opacity(if off { 0.45 } else { 1.0 })
+    crate::motion::dims(e.disabled(off).opacity(if off { 0.45 } else { 1.0 }))
 }
 
 fn field(input: El, u: &Ui) -> El {
