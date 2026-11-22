@@ -804,7 +804,7 @@ fn viewport(s: &State, u: &Ui, key: &str, fullscreen: bool) -> El {
         Status::Ready => stage = stage.child(strip(v, u, key, fullscreen, only_full)),
     }
     if v.ui.flash {
-        stage = stage.child(el().key(format!("viewer-{key}-flash")).absolute(0.0, 0.0).w_full().h_full().fill(Color::WHITE.alpha(0.55)).transition(rune::Transition::opacity()).a11y_hidden());
+        stage = stage.child(el().key(format!("viewer-{key}-flash")).absolute(0.0, 0.0).w_full().h_full().fill(Color::WHITE.alpha(0.55)).transition(crate::motion::flash()).a11y_hidden());
     }
     // Full screen always has a way out, whatever the state (the strip has its own when ready).
     if fullscreen && v.status != Status::Ready {

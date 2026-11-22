@@ -128,12 +128,12 @@ pub fn fade() -> Transition {
     Transition::opacity().springs(SpringPair::new(enter(), exit()))
 }
 
-/// A short fade for small marks that come and go under the pointer (a drop line).
-pub fn blink() -> Transition {
+/// The 3D viewer's capture flash: Rune's own fade (0.3 s in, 0.24 s out), as it always was.
+pub fn flash() -> Transition {
     if reduced() {
         return Transition::none();
     }
-    Transition::opacity().springs(SpringPair::new(fast(), fast()))
+    Transition::opacity()
 }
 
 /// A shelf or spotlight page: in from 32 points on the side it comes from (`dir` 1 from the
@@ -202,4 +202,11 @@ pub fn dims(e: El) -> El {
 /// once, mounts and unmounts included. Colours keep their own easing.
 pub fn lands(e: El) -> El {
     e.instant_changes()
+}
+
+/// A mark that is rebuilt in a new place when it moves (a slider thumb drawn in its stop's
+/// cell): Rune flies it from where it was on `fast`. Under reduced motion nothing is matched,
+/// so it lands.
+pub fn follows(e: El, id: &str) -> El {
+    if reduced() { e } else { e.matched(id.to_string()).motion(fast()) }
 }

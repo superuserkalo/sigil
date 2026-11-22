@@ -1264,6 +1264,7 @@ fn slider(u: &Ui, label: &str, field: Field, frac: f32, width: f32) -> El {
         .child(
             el().absolute(0.0, track_y)
                 .w((width * frac).max(0.0))
+                .motion(crate::motion::fast())
                 .h(4.0)
                 .radius(2.0)
                 .fill(u.muted)
@@ -1272,6 +1273,7 @@ fn slider(u: &Ui, label: &str, field: Field, frac: f32, width: f32) -> El {
         .child(
             el().absolute((width - knob) * frac, (24.0 - knob) / 2.0)
                 .size(knob, knob)
+                .motion(crate::motion::fast())
                 .radius(knob / 2.0)
                 .fill(Color::WHITE)
                 .shadow(1.0, 3.0, Color::BLACK.alpha(0.4))

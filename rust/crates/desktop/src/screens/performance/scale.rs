@@ -124,7 +124,12 @@ pub fn view(s: &State, u: &Ui, catalog: &Catalog, on: Option<Tier>, note: String
     for i in 0..n {
         let mut c = row().w(0.0).grow(1.0).h(THUMB_H).center();
         if i == picked {
-            c = c.child(el().size(THUMB_W, THUMB_H).radius(2.0).fill(u.prose).border(1.0, u.bg));
+            // The thumb is a new element in its new cell: matched, it flies there from the old
+            // one on `fast` after a key step or a release (drags land at once).
+            c = c.child(crate::motion::follows(
+                el().size(THUMB_W, THUMB_H).radius(2.0).fill(u.prose).border(1.0, u.bg),
+                "perf-scale-thumb",
+            ));
         }
         overlay = overlay.child(c);
     }
