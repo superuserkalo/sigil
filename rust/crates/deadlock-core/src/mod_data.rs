@@ -396,38 +396,64 @@ pub fn sibling_slots(library: &crate::import::Library, mod_id: u64, new_slot: u1
         .collect()
 }
 
+/// What [`switch_variants`] did.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct VariantSwitch {
+    /// Siblings turned off now.
+    pub off: Vec<u16>,
+    /// Siblings that are on and could not turn off because a file is in use (Deadlock runs):
+    /// the caller queues their switch off for when the game closes.
+    pub held: Vec<u16>,
+}
+
 /// GAME WRITE. Grimoire's "Switch variants": after a new file of a mod lands in `new_slot`,
 /// turn off the other files of the same mod that are on, and turn the new one on when any
-/// were. Returns the slots turned off.
+/// were. A sibling whose file is held open counts as going off (it is reported in `held`, so
+/// the switch off can wait for the game to close) and the new one still turns on: turning on
+/// renames a file the game never opened.
 pub fn switch_variants(
     game_root: &Path,
     library: &crate::import::Library,
     mod_id: u64,
     new_slot: u16,
     approve: bool,
-) -> Result<Vec<u16>> {
+) -> Result<VariantSwitch> {
     if !approve {
         return Err(Error::msg("Not approved: switch variants. Nothing was changed."));
     }
+    switch_variants_with(game_root, library, mod_id, new_slot, &mut |slot| {
+        crate::addons::set_enabled(game_root, slot, false, true).map(|_| ())
+    })
+}
+
+fn switch_variants_with(
+    game_root: &Path,
+    library: &crate::import::Library,
+    mod_id: u64,
+    new_slot: u16,
+    turn_off: &mut dyn FnMut(u16) -> Result<()>,
+) -> Result<VariantSwitch> {
     let files = read_slot_files(&addons_dir(game_root))?;
-    let mut off = Vec::new();
-    for slot in sibling_slots(library, mod_id, new_slot) {
-        let on = files
+    let on = |slot: u16| {
+        files
             .get(&slot)
-            .is_some_and(|names| names.iter().any(|n| n.eq_ignore_ascii_case(&format!("pak{slot:02}_dir.vpk"))));
-        if on && crate::addons::set_enabled(game_root, slot, false, true).is_ok() {
-            off.push(slot);
+            .is_some_and(|names| names.iter().any(|n| n.eq_ignore_ascii_case(&crate::addons::slot_name(slot, "_dir.vpk"))))
+    };
+    let mut report = VariantSwitch::default();
+    for slot in sibling_slots(library, mod_id, new_slot) {
+        if !on(slot) {
+            continue;
+        }
+        match turn_off(slot) {
+            Ok(()) => report.off.push(slot),
+            Err(error) if crate::error::mentions_in_use(&error.to_string()) => report.held.push(slot),
+            Err(_) => {}
         }
     }
-    if !off.is_empty() {
-        let new_on = files
-            .get(&new_slot)
-            .is_some_and(|names| names.iter().any(|n| n.eq_ignore_ascii_case(&format!("pak{new_slot:02}_dir.vpk"))));
-        if !new_on {
-            let _ = crate::addons::set_enabled(game_root, new_slot, true, true);
-        }
+    if (!report.off.is_empty() || !report.held.is_empty()) && !on(new_slot) {
+        let _ = crate::addons::set_enabled(game_root, new_slot, true, true);
     }
-    Ok(off)
+    Ok(report)
 }
 
 // --- moving a folder -----------------------------------------------------------------------
@@ -879,9 +905,26 @@ mod tests {
         let meta = |slot, id| crate::import::ModMeta { slot, gamebanana_id: Some(id), ..Default::default() };
         let lib = crate::import::Library { schema: 1, mods: vec![meta(1, 7), meta(2, 8), meta(3, 7)] };
         assert_eq!(sibling_slots(&lib, 7, 3), vec![1]);
-        let off = switch_variants(&root, &lib, 7, 3, true).unwrap();
-        assert_eq!(off, vec![1]);
+        let switched = switch_variants(&root, &lib, 7, 3, true).unwrap();
+        assert_eq!(switched.off, vec![1]);
+        assert!(switched.held.is_empty());
         assert_eq!(names(&root), vec!["pak01_dir.vpk.disabled", "pak02_dir.vpk", "pak03_dir.vpk"]);
+
+        // A sibling the game holds open is reported to wait, and the new one still turns on.
+        let held_root = game(&tmp.path().join("h"), &["pak01_dir.vpk", "pak03_dir.vpk.disabled"]);
+        let switched = switch_variants_with(&held_root, &lib, 7, 3, &mut |_| {
+            Err(crate::error::Error::msg(format!("rename failed. {}", crate::error::IN_USE_HINT)))
+        })
+        .unwrap();
+        assert!(switched.off.is_empty());
+        assert_eq!(switched.held, vec![1]);
+        assert_eq!(names(&held_root), vec!["pak01_dir.vpk", "pak03_dir.vpk"]);
+        // Any other failure turns nothing on.
+        let other_root = game(&tmp.path().join("o"), &["pak01_dir.vpk", "pak03_dir.vpk.disabled"]);
+        let switched =
+            switch_variants_with(&other_root, &lib, 7, 3, &mut |_| Err(crate::error::Error::msg("gone"))).unwrap();
+        assert_eq!(switched, VariantSwitch::default());
+        assert_eq!(names(&other_root), vec!["pak01_dir.vpk", "pak03_dir.vpk.disabled"]);
 
         let cache = tmp.path().join("ws").join("downloads");
         fs::create_dir_all(cache.join("gb-1")).unwrap();
