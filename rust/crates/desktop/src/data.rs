@@ -2623,6 +2623,16 @@ pub fn equip_locker_skin(state: &mut State, hero: &str, slot: u16) {
         );
         return;
     };
+    // Equipping that turns another skin off waits for the game to close: half of it would land.
+    if let Ok(wanted) = deadlock_core::locker_parts::equip_wanted(&locker_mods(state), hero, slot, state.locker.prefs.equip_mode()) {
+        let mods = locker_mods(state);
+        let turns_off = wanted.iter().any(|(s, on)| !on && mods.iter().any(|m| m.slot == *s && m.enabled));
+        if turns_off
+            && crate::screens::installed::waiting::refuse_held(state, crate::screens::installed::waiting::HELD_SKIN)
+        {
+            return;
+        }
+    }
     // C14: with "several skins per hero" on, equip adds the skin instead of replacing the others.
     let equipped = match state.locker.prefs.equip_mode() {
         deadlock_core::locker_parts::EquipMode::Add => {
@@ -2647,6 +2657,9 @@ pub fn equip_locker_skin(state: &mut State, hero: &str, slot: u16) {
 
 pub fn move_locker_skin(state: &mut State, hero: &str, slot: u16, to_index: usize) {
     use crate::notify::{self, Notice};
+    if crate::screens::installed::waiting::refuse_held(state, crate::screens::installed::waiting::HELD_ORDER) {
+        return;
+    }
     let Some(game_root) = state.game_root.clone() else {
         notify::push(
             state,
@@ -3738,6 +3751,12 @@ pub fn start_install_apply(state: &mut State) {
     let Some(summary) = state.install.plan.clone() else {
         return;
     };
+    // Replacing an installed slot rewrites files the game may hold open.
+    if summary.replace_required
+        && crate::screens::installed::waiting::refuse_held(state, crate::screens::installed::waiting::HELD_UPDATE)
+    {
+        return;
+    }
     let workspace = workspace_dir();
     let wake = state.wake.clone();
     // What the Browse card showed, remembered for the Installed card once the slot is written.
@@ -3795,7 +3814,9 @@ pub fn start_install_apply(state: &mut State) {
                     && let Some(id) = mod_id
                     && let Ok(lib) = deadlock_core::import::read_library(&library)
                 {
-                    let _ = deadlock_core::mod_data::switch_variants(root, &lib, id, plan.slot, true);
+                    if let Ok(switched) = deadlock_core::mod_data::switch_variants(root, &lib, id, plan.slot, true) {
+                        crate::screens::installed::waiting::hold_from_worker(root, &lib, &switched.held);
+                    }
                 }
                 // Settings > Experimental > Imprint installed mods.
                 crate::screens::settings::tools::imprint_after_install(root, plan.slot, &meta);

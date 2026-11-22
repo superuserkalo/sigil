@@ -1382,6 +1382,9 @@ pub fn toggle_pin(st: &mut State, slot: u16) {
 /// Turn "load first" on or off. On, the mod moves to the lowest slot of its group, where it
 /// wins every file it shares with another mod.
 pub fn toggle_always_first(st: &mut State, slot: u16) {
+    if crate::screens::installed::waiting::refuse_held(st, crate::screens::installed::waiting::HELD_ORDER) {
+        return;
+    }
     if crate::screens::settings::watch::refuse_while_running(st) {
         return;
     }

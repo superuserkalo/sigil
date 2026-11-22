@@ -72,6 +72,9 @@ impl Recap {
 
 /// Turn every other mod off. The card menu's "Test this mod alone".
 pub fn solo_start(st: &mut State, slot: u16) {
+    if crate::screens::installed::waiting::refuse_held(st, crate::screens::installed::waiting::HELD_SOLO) {
+        return;
+    }
     if crate::screens::settings::watch::refuse_while_running(st) {
         return;
     }
@@ -235,6 +238,9 @@ pub fn search_start(st: &mut State) {
 
 /// Switch the game to the round's set: the current suspects on, everything else off.
 fn search_apply(st: &mut State) {
+    if crate::screens::installed::waiting::refuse_held(st, crate::screens::installed::waiting::HELD_SOLO) {
+        return;
+    }
     if crate::screens::settings::watch::refuse_while_running(st) {
         return;
     }
@@ -277,6 +283,9 @@ pub fn search_judge(st: &mut State, verdict: Verdict) {
 
 /// End the search, putting the original set back, or that set minus the culprits.
 pub fn search_finish(st: &mut State, leave_culprits_off: bool) {
+    if crate::screens::installed::waiting::refuse_held(st, crate::screens::installed::waiting::HELD_MIXED) {
+        return;
+    }
     if crate::screens::settings::watch::refuse_while_running(st) {
         return;
     }

@@ -68,6 +68,43 @@ pub fn must_wait(st: &State) -> bool {
     !st.demo && game_running(st)
 }
 
+/// The guard for a change that cannot wait faithfully (load order, updates, merges, solo
+/// tests): while the game holds the files it does not start, and one line says why. Returns
+/// true when the change has to stop.
+pub fn refuse_held(st: &mut State, reason: &str) -> bool {
+    if !must_wait(st) {
+        return false;
+    }
+    st.installed.menu = None;
+    crate::notify::push(
+        st,
+        crate::notify::Notice::warning(tr("Close Deadlock first")).detail(reason.to_string()),
+    );
+    true
+}
+
+/// Set by a worker that queued changes itself; the next poll reads the queue again.
+static DIRTY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// From a worker (an install with Switch variants on): queue the switch off of `slots`, whose
+/// files the game holds, for when it closes. The next poll shows them.
+pub fn hold_from_worker(root: &std::path::Path, library: &deadlock_core::import::Library, slots: &[u16]) {
+    let file = queue_file();
+    for &slot in slots {
+        let meta = library.mods.iter().find(|m| m.slot == slot);
+        let name = meta
+            .map(|m| m.name.clone())
+            .filter(|n| !n.is_empty())
+            .unwrap_or_else(|| deadlock_core::addons::slot_label(slot));
+        if let Ok(change) = pending::new_change(root, PendingKind::TurnOff, slot, &name, meta.cloned()) {
+            let _ = pending::enqueue(&file, root, change);
+        }
+    }
+    if !slots.is_empty() {
+        DIRTY.store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
 /// The waiting change of a slot.
 pub fn for_slot(s: &State, slot: u16) -> Option<&pending::PendingChange> {
     s.installed.waiting.queue.for_slot(slot)
@@ -188,6 +225,19 @@ pub fn poll(st: &mut State) -> bool {
     let mut changed = false;
     if st.demo {
         return false;
+    }
+    if DIRTY.swap(false, std::sync::atomic::Ordering::SeqCst) {
+        let before = st.installed.waiting.queue.len();
+        reload(st);
+        let added = st.installed.waiting.queue.len().saturating_sub(before);
+        if added > 0 {
+            crate::notify::push(
+                st,
+                crate::notify::Notice::info(tr("Other variants turn off when Deadlock closes"))
+                    .detail(fill(tr("Deadlock has their files open. {} waiting."), &[&added.to_string()])),
+            );
+        }
+        changed = true;
     }
     if st.installed.waiting.loaded_for.as_ref() != Some(&st.game_root) {
         reload(st);
@@ -684,7 +734,30 @@ pub const DE: &[(&str, &str)] = &[
     ),
     ("Cancel all", "Alle abbrechen"),
     ("Set the game folder in Settings first.", "Lege zuerst den Spielordner in den Einstellungen fest."),
+    ("Close Deadlock first", "Schließe zuerst Deadlock"),
+    ("Other variants turn off when Deadlock closes", "Andere Varianten werden ausgeschaltet, sobald Deadlock geschlossen ist"),
+    ("Deadlock has their files open. {} waiting.", "Deadlock hat ihre Dateien geöffnet. {} warten."),
+    (HELD_ORDER, "Die Ladereihenfolge benennt Moddateien um, die Deadlock geöffnet hat. Ändere sie, nachdem das Spiel geschlossen ist."),
+    (HELD_UPDATE, "Ein Update ersetzt Moddateien, die Deadlock geöffnet hat. Aktualisiere, nachdem das Spiel geschlossen ist."),
+    (HELD_MERGE, "Zusammenführen und Packen schalten Mods aus, die Deadlock geöffnet hat. Mach es, nachdem das Spiel geschlossen ist."),
+    (HELD_UNMERGE, "Das Auflösen verschiebt eine Moddatei, die Deadlock geöffnet hat. Mach es, nachdem das Spiel geschlossen ist."),
+    (HELD_SOLO, "Ein Einzeltest schaltet Mods aus, die Deadlock geöffnet hat. Starte ihn, nachdem das Spiel geschlossen ist."),
+    (HELD_MIXED, "Das schaltet Mods gleichzeitig ein und aus, und Deadlock hat ihre Dateien geöffnet. Mach es, nachdem das Spiel geschlossen ist."),
+    (HELD_SKIN, "Das Ausrüsten schaltet einen anderen Skin aus, dessen Datei Deadlock geöffnet hat. Rüste aus, nachdem das Spiel geschlossen ist."),
+    (HELD_UNDO, "Rückgängig ändert Moddateien, die Deadlock geöffnet hat. Mach es, nachdem das Spiel geschlossen ist."),
+    (HELD_REWRITE, "Das schreibt Moddateien neu, die Deadlock geöffnet hat. Mach es, nachdem das Spiel geschlossen ist."),
 ];
+
+/// One line per change that is blocked while the game holds the files.
+pub const HELD_ORDER: &str = "The load order renames mod files Deadlock has open. Change it after the game closes.";
+pub const HELD_UPDATE: &str = "An update replaces mod files Deadlock has open. Update after the game closes.";
+pub const HELD_MERGE: &str = "Merging and packing turn off mods Deadlock has open. Do it after the game closes.";
+pub const HELD_UNMERGE: &str = "Taking a merge apart moves a mod file Deadlock has open. Do it after the game closes.";
+pub const HELD_SOLO: &str = "A solo test turns off mods Deadlock has open. Start it after the game closes.";
+pub const HELD_MIXED: &str = "This turns mods on and off together, and Deadlock has their files open. Do it after the game closes.";
+pub const HELD_SKIN: &str = "Equipping turns off another skin whose file Deadlock has open. Equip after the game closes.";
+pub const HELD_UNDO: &str = "Undo changes mod files Deadlock has open. Do it after the game closes.";
+pub const HELD_REWRITE: &str = "This rewrites mod files Deadlock has open. Do it after the game closes.";
 
 #[cfg(test)]
 mod tests {
@@ -726,6 +799,65 @@ mod tests {
         assert!(!must_wait(&s));
         assert!(!poll(&mut s));
         assert_eq!(s.installed.waiting.queue.len(), 2);
+    }
+
+    /// A live library (not the demo) with the game running and no game folder, so nothing
+    /// can reach a disk.
+    fn running() -> State {
+        let mut s = crate::data::init_state();
+        crate::app::scene_demo_installed(&mut s);
+        s.demo = false;
+        s.game_root = None;
+        s.settings.game_running = true;
+        s
+    }
+
+    fn told_to_close(s: &State) -> bool {
+        s.notices.visible().any(|t| t.notice.title == "Close Deadlock first")
+    }
+
+    #[test]
+    fn changes_that_cannot_wait_are_refused_up_front() {
+        let mut s = running();
+        assert!(must_wait(&s));
+        super::super::ask(&mut s, super::super::Confirm::UpdateAll(vec![2]));
+        assert!(s.installed.confirm.is_none(), "no confirm opens");
+        assert!(told_to_close(&s));
+
+        let mut s = running();
+        super::super::apply_undo(&mut s, super::super::Undo::FontsInstalled(2));
+        assert!(told_to_close(&s));
+
+        // A mix of on and off cannot wait: refused, nothing asked.
+        let mut s = running();
+        let on = s.addons.addons.iter().find(|a| a.enabled).unwrap().slot;
+        let off = s.addons.addons.iter().find(|a| !a.enabled).unwrap().slot;
+        let wanted = [(on, false), (off, true)].into_iter().collect();
+        super::super::apply_switch(&mut s, std::path::Path::new("/none"), &wanted, String::new());
+        assert!(told_to_close(&s));
+        assert!(s.installed.waiting.ask.is_none());
+
+        // Once the game is gone nothing is refused.
+        let mut s = running();
+        s.settings.game_running = false;
+        assert!(!refuse_held(&mut s, HELD_ORDER));
+        assert!(!told_to_close(&s));
+    }
+
+    #[test]
+    fn turning_several_off_asks_to_wait_for_each() {
+        let mut s = running();
+        let ons: Vec<u16> = s.addons.addons.iter().filter(|a| a.enabled).map(|a| a.slot).take(2).collect();
+        let wanted = ons.iter().map(|slot| (*slot, false)).collect();
+        super::super::apply_switch(&mut s, std::path::Path::new("/none"), &wanted, String::new());
+        let ask = s.installed.waiting.ask.clone().expect("the question opens");
+        assert_eq!(ask.kind, PendingKind::TurnOff);
+        assert_eq!(ask.slots, ons);
+        // Bulk turn off from the selection bar asks the same.
+        let mut s = running();
+        let targets = ons.iter().map(|slot| (*slot, String::new())).collect();
+        assert!(super::super::switch_slots(&mut s, targets, false).is_empty());
+        assert_eq!(s.installed.waiting.ask.as_ref().map(|a| a.slots.clone()), Some(ons));
     }
 
     #[test]

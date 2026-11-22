@@ -1359,6 +1359,9 @@ fn preview_merge(st: &mut State) {
 }
 
 fn run_merge(st: &mut State) {
+    if crate::screens::installed::waiting::refuse_held(st, crate::screens::installed::waiting::HELD_MERGE) {
+        return;
+    }
     if crate::screens::settings::watch::refuse_while_running(st) {
         return;
     }
@@ -1409,6 +1412,9 @@ fn apply_merge_record(st: &mut State, merged: &MergedMod) {
 
 /// Take a merge apart: its slot to the trash, its sources back on.
 pub fn unmerge(st: &mut State, merged: &MergedMod) {
+    if crate::screens::installed::waiting::refuse_held(st, crate::screens::installed::waiting::HELD_UNMERGE) {
+        return;
+    }
     if crate::screens::settings::watch::refuse_while_running(st) {
         return;
     }

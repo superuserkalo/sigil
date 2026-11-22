@@ -45,6 +45,9 @@ pub fn open(st: &mut State) {
 }
 
 fn run(st: &mut State) {
+    if crate::screens::installed::waiting::refuse_held(st, crate::screens::installed::waiting::HELD_MERGE) {
+        return;
+    }
     if crate::screens::settings::watch::refuse_while_running(st) {
         return;
     }

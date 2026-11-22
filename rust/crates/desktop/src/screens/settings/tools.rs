@@ -455,6 +455,9 @@ pub fn copy_dev(st: &mut State, target: PathBuf) {
 
 /// Imprint every slot whose library entry has a name.
 pub fn imprint_all(st: &mut State) {
+    if crate::screens::installed::waiting::refuse_held(st, crate::screens::installed::waiting::HELD_REWRITE) {
+        return;
+    }
     if super::watch::refuse_while_running(st) {
         return;
     }

@@ -1103,6 +1103,13 @@ fn apply_bulk(st: &mut State, enable: bool) {
         st.status = "Demo library: nothing was changed.".to_string();
         return;
     }
+    // Turning several off while the game holds them: each one waits as its own change.
+    if !enable && waiting::must_wait(st) {
+        let slots: Vec<u16> = bulk_targets(st, false).into_iter().map(|addon| addon.slot).collect();
+        waiting::offer(st, deadlock_core::pending::PendingKind::TurnOff, slots, false);
+        st.installed.selected.clear();
+        return;
+    }
     if crate::screens::settings::watch::refuse_while_running(st) {
         return;
     }
@@ -1118,6 +1125,11 @@ fn apply_bulk(st: &mut State, enable: bool) {
 /// (`deadlock_core::addons::set_many`), reported once in a recap and put behind Undo. The
 /// caller has already checked demo mode and a running game. Returns the slots that changed.
 pub(super) fn switch_slots(st: &mut State, targets: Vec<(u16, String)>, enable: bool) -> Vec<u16> {
+    if !enable && waiting::must_wait(st) {
+        let slots = targets.iter().map(|(slot, _)| *slot).collect();
+        waiting::offer(st, deadlock_core::pending::PendingKind::TurnOff, slots, false);
+        return Vec::new();
+    }
     let Some(game_root) = st.game_root.clone() else {
         st.status = "Set the game folder in Settings first.".to_string();
         return Vec::new();
@@ -3916,6 +3928,20 @@ pub(super) fn apply_switch(
     wanted: &BTreeMap<u16, bool>,
     line: String,
 ) {
+    // While the game holds the files: only turning off can wait (each mod its own change);
+    // a mix of on and off cannot, or half of it would land now.
+    if waiting::must_wait(st) && wanted.values().any(|on| !on) {
+        let on_now: std::collections::BTreeSet<u16> =
+            st.addons.addons.iter().filter(|a| a.enabled).map(|a| a.slot).collect();
+        let offs: Vec<u16> = wanted.iter().filter(|(slot, on)| !**on && on_now.contains(slot)).map(|(slot, _)| *slot).collect();
+        let ons = wanted.iter().any(|(slot, on)| *on && !on_now.contains(slot));
+        if ons {
+            waiting::refuse_held(st, waiting::HELD_MIXED);
+        } else {
+            waiting::offer(st, deadlock_core::pending::PendingKind::TurnOff, offs, false);
+        }
+        return;
+    }
     if crate::screens::settings::watch::refuse_while_running(st) {
         return;
     }
@@ -4001,6 +4027,17 @@ pub(super) fn ask(st: &mut State, confirm: Confirm) {
         && waiting::must_wait(st)
     {
         waiting::offer(st, deadlock_core::pending::PendingKind::Delete, slots.clone(), false);
+        return;
+    }
+    // A load order change or an update cannot wait faithfully: say so before the confirm.
+    let held = match &confirm {
+        Confirm::Reorder(_) => Some(waiting::HELD_ORDER),
+        Confirm::UpdateAll(_) => Some(waiting::HELD_UPDATE),
+        Confirm::Delete(_) => None,
+    };
+    if let Some(reason) = held
+        && waiting::refuse_held(st, reason)
+    {
         return;
     }
     if st.prefs.skip_confirm.contains(confirm.id()) {
@@ -4164,6 +4201,16 @@ pub fn offer_undo(st: &mut State) -> bool {
 
 pub fn apply_undo(st: &mut State, undo: Undo) {
     // An Undo renames or restores files in the addon folder like the change it reverses.
+    // Restoring from the trash and turning mods back on only write names the game has not
+    // opened; anything else waits for the game to close.
+    let held = match &undo {
+        Undo::Delete(_) => false,
+        Undo::Toggle(results) => results.iter().any(|r| !r.to.ends_with(deadlock_core::addons::DISABLED_SUFFIX)),
+        _ => true,
+    };
+    if held && waiting::refuse_held(st, waiting::HELD_UNDO) {
+        return;
+    }
     if crate::screens::settings::watch::refuse_while_running(st) {
         return;
     }
@@ -4363,6 +4410,9 @@ fn plan_moves(st: &mut State, moves: Vec<load_order::SlotMove>) -> Option<Reorde
 /// Apply a reorder plan (`deadlock_core::load_order::apply_reorder`) and move the library
 /// entries with their slots.
 fn reorder(st: &mut State, plan: ReorderPlan) {
+    if crate::screens::installed::waiting::refuse_held(st, crate::screens::installed::waiting::HELD_ORDER) {
+        return;
+    }
     if crate::screens::settings::watch::refuse_while_running(st) {
         return;
     }
@@ -4613,6 +4663,9 @@ pub(crate) fn check_updates(st: &mut State, force: bool) {
 /// Queue slots for update and start the first. Each one is a button press or the Update all
 /// confirm.
 pub(super) fn queue_updates(st: &mut State, slots: Vec<u16>) {
+    if crate::screens::installed::waiting::refuse_held(st, crate::screens::installed::waiting::HELD_UPDATE) {
+        return;
+    }
     if crate::screens::settings::watch::refuse_while_running(st) {
         return;
     }
@@ -4712,6 +4765,11 @@ pub fn update_cancelling(s: &State) -> bool {
 /// landing on or off as the slot was. The library entry keeps its name and preview.
 fn start_next_update(st: &mut State) {
     if st.installed.updates.job.is_running() || st.installed.updates.queue.is_empty() {
+        return;
+    }
+    // The game started while updates were queued: stop before the next file is touched.
+    if waiting::refuse_held(st, waiting::HELD_UPDATE) {
+        st.installed.updates.queue.clear();
         return;
     }
     let slot = st.installed.updates.queue.remove(0);

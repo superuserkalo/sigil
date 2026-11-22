@@ -808,7 +808,9 @@ fn install(work: Work) -> Result<Finished, String> {
     if work.switch_variants
         && let Ok(lib) = deadlock_core::import::read_library(&work.library)
     {
-        let _ = deadlock_core::mod_data::switch_variants(&work.game_root, &lib, work.id, plan.slot, true);
+        if let Ok(switched) = deadlock_core::mod_data::switch_variants(&work.game_root, &lib, work.id, plan.slot, true) {
+            crate::screens::installed::waiting::hold_from_worker(&work.game_root, &lib, &switched.held);
+        }
     }
     // Settings > Experimental > Imprint installed mods.
     crate::screens::settings::tools::imprint_after_install(&work.game_root, plan.slot, &meta);

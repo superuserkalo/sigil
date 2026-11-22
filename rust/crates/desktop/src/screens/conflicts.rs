@@ -882,6 +882,9 @@ fn resolve(s: &State, u: &Ui, path: &str, slots: &[u16], winner: u16, loser: u16
 /// `load_order::apply_reorder`; it never overwrites and rolls back on failure.
 fn make_win(st: &mut State, winner: u16, loser: u16) {
     use crate::notify::{self, Notice};
+    if crate::screens::installed::waiting::refuse_held(st, crate::screens::installed::waiting::HELD_ORDER) {
+        return;
+    }
     if crate::screens::settings::watch::refuse_while_running(st) {
         return;
     }

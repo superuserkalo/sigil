@@ -102,6 +102,9 @@ fn ask(st: &mut State, hero: &str, slot: u16, name: &str, others: &[(u16, String
 
 /// The player's yes: turn the hero's other skins off. Game write, player-triggered.
 fn keep_only(st: &mut State, hero: &str, slot: u16, name: &str, off: &[u16]) {
+    if crate::screens::installed::waiting::refuse_held(st, crate::screens::installed::waiting::HELD_MIXED) {
+        return;
+    }
     if st.demo || crate::screens::settings::watch::refuse_while_running(st) {
         return;
     }

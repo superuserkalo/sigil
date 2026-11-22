@@ -300,6 +300,9 @@ pub fn ask_repair(st: &mut State, slots: Vec<u16>) {
 
 /// The approved repair: one worker pass over the slots.
 pub fn run_repair(st: &mut State, slots: Vec<u16>) {
+    if crate::screens::installed::waiting::refuse_held(st, crate::screens::installed::waiting::HELD_REWRITE) {
+        return;
+    }
     st.installed.repairs.ask = None;
     if st.demo {
         st.status = tr("Demo library: nothing was changed.").to_string();
@@ -381,6 +384,9 @@ fn start_rebuild(st: &mut State, tasks: Vec<(u16, bool)>, records: BTreeMap<u16,
 
 /// Revert one repair from its backup.
 pub fn revert(st: &mut State, record: Record) {
+    if crate::screens::installed::waiting::refuse_held(st, crate::screens::installed::waiting::HELD_REWRITE) {
+        return;
+    }
     if st.demo {
         st.status = tr("Demo library: nothing was changed.").to_string();
         return;
