@@ -2779,6 +2779,8 @@ pub fn scenes() -> &'static [(&'static str, fn(&mut State))] {
         ("installed-drop", screens::installed::scene_drop),
         ("installed-select", screens::installed::scene_select),
         ("installed-delete", screens::installed::scene_delete),
+        ("installed-pending", screens::installed::waiting::scene),
+        ("installed-pending-review", screens::installed::waiting::scene_review),
         ("installed-reorder", screens::installed::scene_reorder),
         ("installed-updates", screens::installed::scene_updates),
         ("installed-update-all", screens::installed::scene_update_all),
