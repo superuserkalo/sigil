@@ -397,7 +397,10 @@ pub fn view(s: &State, u: &Ui) -> El {
     let compact = crate::ui::fit() != crate::ui::Fit::Full;
     let labelled = |glyph: &'static rune::Icon, label: &str, key: &str| {
         if compact {
-            u.icon_button(glyph, label).key(key.to_string())
+            u.icon_button(glyph, label)
+                .key(key.to_string())
+                .fill(u.over.alpha(0.035))
+                .border(1.0, u.hair_strong)
         } else {
             u.icon_action(glyph, label, ActionKind::Secondary).key(key.to_string())
         }
@@ -408,12 +411,16 @@ pub fn view(s: &State, u: &Ui) -> El {
             tr(if pinned { "Unpin the window" } else { "Keep the window above other windows" }),
         )
         .key("crosshair-pin")
-        .fill(if pinned { u.selected } else { Color::TRANSPARENT })
+        // Bordered like the labelled actions beside it, so the row is one control style.
+        .fill(if pinned { u.selected } else { u.over.alpha(0.035) })
+        .border(1.0, u.hair_strong)
         .checked(pinned)
         .cursor(rune::Cursor::Pointer)
         .on_press(toggle_pin),
         u.icon_button(&icons::ROTATE_CCW, tr("Reset"))
             .key("crosshair-reset")
+            .fill(u.over.alpha(0.035))
+            .border(1.0, u.hair_strong)
             .cursor(rune::Cursor::Pointer)
             .on_press(|st: &mut State| {
                 st.crosshair.settings = deadlock_core::crosshair::Crosshair::default();
@@ -433,7 +440,8 @@ pub fn view(s: &State, u: &Ui) -> El {
         {
             // Nothing to apply while the editor matches what the game has.
             let same = v.applied.as_ref() == Some(&v.settings);
-            u.action(tr("Apply"), ActionKind::Secondary)
+            // The page's one primary action: it writes the crosshair to the game.
+            u.action(tr("Apply"), ActionKind::Primary)
                 .key("crosshair-apply")
                 .disabled(same)
                 .opacity(if same { 0.45 } else { 1.0 })
@@ -474,9 +482,15 @@ pub fn view(s: &State, u: &Ui) -> El {
                 .grow(1.0)
                 .min_h(0.0)
                 .scroll(ScrollSpec { stick_bottom: false })
-                .child(controls.key(format!("crosshair-group-{:?}", v.group)).transition(crate::motion::page_enter())),
-        )
-        .child(commands(s, u));
+                // The console row follows the controls, so no dead band separates them.
+                .child(
+                    col()
+                        .w_full()
+                        .gap(16.0)
+                        .child(controls.key(format!("crosshair-group-{:?}", v.group)).transition(crate::motion::page_enter()))
+                        .child(commands(s, u)),
+                ),
+        );
 
     col()
         .key("crosshair-page")
@@ -1234,7 +1248,7 @@ fn slider_row(u: &Ui, label: &str, c: &deadlock_core::crosshair::Crosshair, fiel
         .child(slider(u, label, field, frac, COLUMN_W - LABEL_W - 16.0 - value_w))
         .child(
             text(shown)
-                .font(MONO)
+                .font(crate::ui::BODY_NUM)
                 .color(u.ink)
                 .w(value_w)
                 .align(rune::Align::End),
@@ -1689,6 +1703,8 @@ fn dot_summary(c: &deadlock_core::crosshair::Crosshair) -> String {
 
 /// The side of a preset tile's art.
 const TILE: f32 = 64.0;
+/// A preset's width: its 64 point art plus room for a two-word name.
+const TILE_W: f32 = 80.0;
 /// Clear space kept between a mini reticle and its tile edge.
 const TILE_MARGIN: f32 = 8.0;
 
@@ -1806,9 +1822,11 @@ fn presets_section(s: &State, u: &Ui) -> El {
         );
 
     // One strip that scrolls sideways and never wraps, a fixed 88 high.
+    // Pulled left by the tile's side room, so the first art lines up with the stage.
     let mut grid = row()
         .key("crosshair-presets")
-        .gap(8.0)
+        .ml(-(TILE_W - TILE) / 2.0)
+        .gap(4.0)
         .role("list")
         .label("Crosshair presets");
     for preset in deadlock_core::crosshair::builtin_presets() {
@@ -1866,10 +1884,12 @@ fn tile(u: &Ui, key: String, name: &str, c: &Crosshair, on: bool) -> El {
                 .hover(Color::WHITE.alpha(0.05))
                 .a11y_hidden(),
         );
+    // The tile is wider than its art so names like "Cross and dot" fit on one line.
     col()
         .key(key)
-        .w(TILE)
+        .w(TILE_W)
         .gap(6.0)
+        .items_center()
         .focusable(true)
         .role("button")
         .label(format!("Load the {name} preset"))
@@ -1880,7 +1900,7 @@ fn tile(u: &Ui, key: String, name: &str, c: &Crosshair, on: bool) -> El {
             text(name.to_string())
                 .font(SMALL)
                 .color(if on { u.ink } else { u.muted })
-                .w(TILE)
+                .w(TILE_W)
                 .align(rune::Align::Center)
                 .truncate()
                 .help_when_truncated(name.to_string()),
