@@ -142,8 +142,9 @@ pub fn paged(dir: i8) -> Transition {
     travel(f32::from(dir.signum()) * PAGE, 0.0, SpringPair::new(enter(), exit()))
 }
 
-/// The page body after a sidebar press: the new page fades in over 120 ms with no travel, and
-/// the old one is gone the same frame (its exit spring is none), so one page is ever mounted.
+/// A page body after a sidebar press, or a tab body after a tab press: the new one fades in over
+/// 120 ms with no travel, and the old one is gone the same frame (its exit spring is none), so
+/// one body is ever mounted. Its children do not fade on their own under it.
 pub fn page_enter() -> Transition {
     if reduced() {
         return Transition::none();
@@ -151,11 +152,11 @@ pub fn page_enter() -> Transition {
     Transition::opacity().springs(SpringPair::new(page(), Spring::NONE))
 }
 
-/// No entrance or exit: shows whole the frame it mounts, gone the frame it leaves, and so does
-/// everything in it. (`Transition::none()` alone lets the children fade in on their own
-/// default; an opacity transition on instant springs covers them, measured in Rune.)
+/// No entrance or exit of its own: shows whole the frame it mounts and is gone the frame it
+/// leaves. Measured in Rune: its children still fade in on their own default (0.3 s) when it
+/// mounts, so a new page or tab body takes `page_enter`, whose fade covers them.
 pub fn cut() -> Transition {
-    Transition::opacity().springs(SpringPair::NONE)
+    Transition::none()
 }
 
 /// The root of the view: layout and colour land at once unless a control below opts in, and

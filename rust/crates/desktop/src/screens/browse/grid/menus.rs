@@ -348,9 +348,9 @@ pub fn overlay(s: &State, u: &Ui) -> Option<El> {
                 );
             }
             items = items
-                .child(segmented(u, super::super::tree::tr("Installed"), owned))
-                .child(segmented(u, super::super::tree::tr("Mature"), mature))
-                .child(segmented(u, super::super::tree::tr("Match"), matching))
+                .child(segmented(u, super::super::tree::tr("Installed"), Owned::ALL.iter().position(|o| *o == f.owned), owned))
+                .child(segmented(u, super::super::tree::tr("Mature"), MatureView::ALL.iter().position(|m| *m == f.mature), mature))
+                .child(segmented(u, super::super::tree::tr("Match"), Some(usize::from(f.exclude)), matching))
                 .child(menu_rule(u))
                 .child(
                     toggle_row(u, "menu-featured", super::super::tree::tr("Featured only"), "", f.featured)
@@ -512,8 +512,8 @@ pub fn overlay(s: &State, u: &Ui) -> Option<El> {
                 );
             }
             items = items
-                .child(segmented(u, super::super::tree::tr("Layout"), layouts))
-                .child(segmented(u, super::super::tree::tr("Cards"), sizes))
+                .child(segmented(u, super::super::tree::tr("Layout"), Layout::ALL.iter().position(|l| *l == s.browse_view.layout), layouts))
+                .child(segmented(u, super::super::tree::tr("Cards"), CardSize::ALL.iter().position(|c| *c == s.browse_view.card_size), sizes))
                 .child(menu_rule(u))
                 .child(
                     toggle_row(u, "menu-paged", super::super::tree::tr("Numbered pages"), "", s.browse_view.paged).on_press(|st: &mut State| {
@@ -756,19 +756,17 @@ pub(crate) fn toggle_row(u: &Ui, key: &str, label: &str, detail: &str, on: bool)
     r.child(u.toggle_mark(on))
 }
 
-/// One segment of a segmented choice.
+/// One segment of a segmented choice. The selected look is the box's thumb, which slides
+/// under the segments; a segment carries its label colour only.
 pub(crate) fn segment(u: &Ui, key: &str, label: &str, on: bool) -> El {
-    row()
+    crate::motion::colors(row())
         .key(key.to_string())
         .h_full()
-        .grow(1.0)
         .min_w(0.0)
         .px(6.0)
         .center()
         .radius(crate::ui::r(4.0))
-        .fill(if on { u.selected } else { Color::TRANSPARENT })
-        .border(1.0, if on { u.hair_strong } else { Color::TRANSPARENT })
-        .hover(if on { u.selected } else { u.hover })
+        .hover(if on { Color::TRANSPARENT } else { u.hover })
         .focusable(true)
         .role("radio")
         .checked(on)
@@ -777,8 +775,39 @@ pub(crate) fn segment(u: &Ui, key: &str, label: &str, on: bool) -> El {
         .child(text(label.to_string()).font(LABEL).color(if on { u.ink } else { u.muted }).truncate().min_w(0.0).a11y_hidden())
 }
 
-/// A labelled row of segments, 28 high, inside a menu.
-pub(crate) fn segmented(u: &Ui, label: &str, segments: Vec<El>) -> El {
+/// A labelled row of segments, 28 high, inside a menu: equal columns, and a thumb under the
+/// selected one that slides to a new pick on `base` (it is placed by its grid cell, so it
+/// takes no part in the row's layout).
+pub(crate) fn segmented(u: &Ui, label: &str, selected: Option<usize>, segments: Vec<El>) -> El {
+    let n = segments.len().max(1);
+    let mut cells = row()
+        .key(format!("menu-seg-{label}"))
+        .h(28.0)
+        .grow(1.0)
+        .min_w(0.0)
+        .padding(2.0)
+        .gap(2.0)
+        .equal_columns(n)
+        .radius(crate::ui::r(8.0))
+        .fill(u.well)
+        .border(1.0, u.hair)
+        .role("radiogroup")
+        .label(label.to_string());
+    if let Some(at) = selected {
+        cells = cells.child(crate::motion::slides(
+            el().key(format!("menu-seg-{label}-thumb"))
+                .grid_cell(at)
+                .h(22.0)
+                .radius(crate::ui::r(4.0))
+                .fill(u.selected)
+                .border(1.0, u.hair_strong)
+                .a11y_hidden(),
+            crate::motion::base(),
+        ));
+    }
+    for (index, segment) in segments.into_iter().enumerate() {
+        cells = cells.child(segment.grid_cell(index).h(22.0));
+    }
     row()
         .w_full()
         .h(36.0)
@@ -786,25 +815,12 @@ pub(crate) fn segmented(u: &Ui, label: &str, segments: Vec<El>) -> El {
         .gap(8.0)
         .center_y()
         .child(text(label.to_string()).font(BODY).color(u.prose).w(72.0))
-        .child(
-            row()
-                .h(28.0)
-                .grow(1.0)
-                .min_w(0.0)
-                .padding(2.0)
-                .gap(2.0)
-                .radius(crate::ui::r(8.0))
-                .fill(u.well)
-                .border(1.0, u.hair)
-                .role("radiogroup")
-                .label(label.to_string())
-                .children(segments),
-        )
+        .child(cells)
 }
 
 /// A row that does not apply here, greyed in place.
 pub(crate) fn usable_row(e: El, on: bool) -> El {
-    if on { e } else { e.disabled(true).opacity(0.4) }
+    crate::motion::dims(if on { e } else { e.disabled(true).opacity(0.4) })
 }
 
 /// The card's right-click menu, anchored to the card itself so it never leaves the window.

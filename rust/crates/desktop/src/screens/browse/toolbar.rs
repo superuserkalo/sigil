@@ -140,7 +140,7 @@ fn tabs(s: &State, u: &Ui) -> El {
     for tab in Tab::ALL {
         let on = tab == current;
         r = r.child(
-            row()
+            crate::motion::colors(row())
                 .key(format!("browse-tab-{}", tab.id()))
                 .h_full()
                 .px(TAB_PX)
@@ -169,7 +169,7 @@ fn tabs(s: &State, u: &Ui) -> El {
 /// A fixed-width 32 point dropdown trigger: an optional icon, the label truncating, a chevron.
 fn dropdown(u: &Ui, key: &'static str, w: f32, glyph: Option<&'static Icon>, label: &str, active: bool, open: bool) -> El {
     let ink = if active { u.ink } else { u.muted };
-    let mut b = row()
+    let mut b = crate::motion::colors(row())
         .key(key)
         .w(w)
         .h(32.0)

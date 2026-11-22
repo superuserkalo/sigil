@@ -824,7 +824,7 @@ fn tabs(s: &State, u: &Ui) -> El {
 
 /// One 28 point segment: `BODY_MED`, the selected one raised.
 fn segment(u: &Ui, key: &str, label: &str, on: bool, role: &'static str) -> El {
-    row()
+    crate::motion::colors(row())
         .key(key.to_string())
         .h(28.0)
         .px(10.0)

@@ -347,6 +347,8 @@ const MOTION_CASES: &[(&str, &[Step], Step, f32)] = &[
     ("settings-general", &[], Step::Press("settings-confirm-launch-switch"), 1400.0),
     ("demo-installed", &[Step::Press("nav-settings")], Step::Escape, 800.0),
     ("servers-detail", &[], Step::Press("server-panel-close"), 800.0),
+    ("crosshair", &[], Step::Press("crosshair-groups-1"), 1400.0),
+    ("browse-view-menu", &[], Step::Press("menu-size-large"), 800.0),
 ];
 
 /// Keys whose element, and everything under it, may travel or fade: overlays and the parts

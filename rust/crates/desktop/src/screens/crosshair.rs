@@ -474,7 +474,7 @@ pub fn view(s: &State, u: &Ui) -> El {
                 .grow(1.0)
                 .min_h(0.0)
                 .scroll(ScrollSpec { stick_bottom: false })
-                .child(controls.key(format!("crosshair-group-{:?}", v.group))),
+                .child(controls.key(format!("crosshair-group-{:?}", v.group)).transition(crate::motion::page_enter())),
         )
         .child(commands(s, u));
 
@@ -916,7 +916,7 @@ fn segmented(
             .fill(u.well)
             .border(1.0, u.hair);
     }
-    grid = grid.child(
+    grid = grid.child(crate::motion::slides(
         el().key(format!("{key}-indicator"))
             .grid_cell(selected)
             .h(h)
@@ -928,10 +928,11 @@ fn segmented(
             })
             .border(1.0, if compact { Color::TRANSPARENT } else { u.hair_strong })
             .a11y_hidden(),
-    );
+        crate::motion::base(),
+    ));
     for (index, label) in labels.iter().enumerate() {
         let on = index == selected;
-        let mut cell = row()
+        let mut cell = crate::motion::colors(row())
             .key(format!("{key}-{index}"))
             .grid_cell(index)
             .h(h)
