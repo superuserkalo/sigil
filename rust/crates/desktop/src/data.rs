@@ -3814,7 +3814,7 @@ pub fn start_install_apply(state: &mut State) {
                     && let Some(id) = mod_id
                     && let Ok(lib) = deadlock_core::import::read_library(&library)
                 {
-                    if let Ok(switched) = deadlock_core::mod_data::switch_variants(root, &lib, id, plan.slot, true) {
+                    if let Ok(switched) = deadlock_core::mod_data::switch_variants(root, &lib, id, plan.slot, deadlock_core::mod_data::may_enable_after_install(land_disabled, gated.is_some()), true) {
                         crate::screens::installed::waiting::hold_from_worker(root, &lib, &switched.held);
                     }
                 }

@@ -411,19 +411,33 @@ pub struct VariantSwitch {
 /// were. A sibling whose file is held open counts as going off (it is reported in `held`, so
 /// the switch off can wait for the game to close) and the new one still turns on: turning on
 /// renames a file the game never opened.
+///
+/// `may_enable_new` says the new file may be on: false for an install that lands switched off
+/// or that the mod safety gate held back for review. Then nothing changes at all: the new file
+/// stays off and the sibling stays on, so the player keeps a working variant. Every caller
+/// passes it explicitly.
 pub fn switch_variants(
     game_root: &Path,
     library: &crate::import::Library,
     mod_id: u64,
     new_slot: u16,
+    may_enable_new: bool,
     approve: bool,
 ) -> Result<VariantSwitch> {
     if !approve {
         return Err(Error::msg("Not approved: switch variants. Nothing was changed."));
     }
+    if !may_enable_new {
+        return Ok(VariantSwitch::default());
+    }
     switch_variants_with(game_root, library, mod_id, new_slot, &mut |slot| {
         crate::addons::set_enabled(game_root, slot, false, true).map(|_| ())
     })
+}
+
+/// `may_enable_new` for an install: only one that lands on and passed the mod safety gate.
+pub fn may_enable_after_install(land_disabled: bool, gated: bool) -> bool {
+    !land_disabled && !gated
 }
 
 fn switch_variants_with(
@@ -898,6 +912,35 @@ mod tests {
         assert_eq!(names(&dev), vec!["pak01_dir.vpk", "pak02_dir.vpk"]);
     }
 
+    /// An install the safety gate held back, beside an enabled sibling: the new file stays off
+    /// and the sibling stays on.
+    #[test]
+    fn a_gated_install_never_switches_variants() {
+        let tmp = Scratch::new("variants-gated");
+        let root = game(&tmp.path().join("g"), &["pak01_dir.vpk", "pak03_dir.vpk.disabled"]);
+        let meta = |slot, id| crate::import::ModMeta { slot, gamebanana_id: Some(id), ..Default::default() };
+        let lib = crate::import::Library { schema: 1, mods: vec![meta(1, 7), meta(3, 7)] };
+        let may = may_enable_after_install(false, true);
+        assert!(!may);
+        assert_eq!(switch_variants(&root, &lib, 7, 3, may, true).unwrap(), VariantSwitch::default());
+        assert_eq!(names(&root), vec!["pak01_dir.vpk", "pak03_dir.vpk.disabled"]);
+    }
+
+    /// An install that lands switched off, beside an enabled sibling: the same.
+    #[test]
+    fn a_land_disabled_install_never_switches_variants() {
+        let tmp = Scratch::new("variants-off");
+        let root = game(&tmp.path().join("g"), &["pak01_dir.vpk", "pak03_dir.vpk.disabled"]);
+        let meta = |slot, id| crate::import::ModMeta { slot, gamebanana_id: Some(id), ..Default::default() };
+        let lib = crate::import::Library { schema: 1, mods: vec![meta(1, 7), meta(3, 7)] };
+        let may = may_enable_after_install(true, false);
+        assert!(!may);
+        assert_eq!(switch_variants(&root, &lib, 7, 3, may, true).unwrap(), VariantSwitch::default());
+        assert_eq!(names(&root), vec!["pak01_dir.vpk", "pak03_dir.vpk.disabled"]);
+        // An install that lands on and passed the gate switches as before.
+        assert!(may_enable_after_install(false, false));
+    }
+
     #[test]
     fn variants_and_relocation() {
         let tmp = Scratch::new("variants");
@@ -905,7 +948,13 @@ mod tests {
         let meta = |slot, id| crate::import::ModMeta { slot, gamebanana_id: Some(id), ..Default::default() };
         let lib = crate::import::Library { schema: 1, mods: vec![meta(1, 7), meta(2, 8), meta(3, 7)] };
         assert_eq!(sibling_slots(&lib, 7, 3), vec![1]);
-        let switched = switch_variants(&root, &lib, 7, 3, true).unwrap();
+        // A land-disabled or gated install (may not turn on): the new file stays off and the
+        // sibling stays on.
+        let switched = switch_variants(&root, &lib, 7, 3, false, true).unwrap();
+        assert_eq!(switched, VariantSwitch::default());
+        assert_eq!(names(&root), vec!["pak01_dir.vpk", "pak02_dir.vpk", "pak03_dir.vpk.disabled"]);
+        // The player's own switch between two installed variants.
+        let switched = switch_variants(&root, &lib, 7, 3, true, true).unwrap();
         assert_eq!(switched.off, vec![1]);
         assert!(switched.held.is_empty());
         assert_eq!(names(&root), vec!["pak01_dir.vpk.disabled", "pak02_dir.vpk", "pak03_dir.vpk"]);

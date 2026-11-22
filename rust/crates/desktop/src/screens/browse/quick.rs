@@ -808,7 +808,7 @@ fn install(work: Work) -> Result<Finished, String> {
     if work.switch_variants
         && let Ok(lib) = deadlock_core::import::read_library(&work.library)
     {
-        if let Ok(switched) = deadlock_core::mod_data::switch_variants(&work.game_root, &lib, work.id, plan.slot, true) {
+        if let Ok(switched) = deadlock_core::mod_data::switch_variants(&work.game_root, &lib, work.id, plan.slot, deadlock_core::mod_data::may_enable_after_install(work.land_disabled, gated.is_some()), true) {
             crate::screens::installed::waiting::hold_from_worker(&work.game_root, &lib, &switched.held);
         }
     }
