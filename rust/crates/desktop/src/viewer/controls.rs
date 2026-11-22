@@ -490,6 +490,7 @@ pub fn popover(s: &State, u: &Ui) -> Option<El> {
             .border(1.0, Color::WHITE.alpha(0.1))
             .shadow(12.0, 32.0, Color::BLACK.alpha(0.5))
             .anchored_fit(format!("viewer-{key}-controls"), Side::Top, rune::Align::End, 8.0)
+            .transition(crate::motion::pop(true))
             .modal(true, move |st: &mut State| {
                 if let Some(v) = st.viewers.map.get_mut(&k) {
                     v.ui.panel = false;

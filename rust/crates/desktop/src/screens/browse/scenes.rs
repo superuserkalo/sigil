@@ -199,13 +199,11 @@ pub fn scene_dashboard(s: &mut State) {
     }
     // The shelves from the stored page, ordered as their reads would be.
     if let Some(page) = s.browse.page.as_ref() {
-        let mut week = page.mods.clone();
-        week.sort_by(|a, b| b.likes.cmp(&a.likes));
-        let mut month = page.mods.clone();
-        month.sort_by(|a, b| b.views.cmp(&a.views));
-        let mut all = week.clone();
-        all.reverse();
-        s.browse_view.shelves.feeds = Some(super::shelf::Feeds { week, month, all });
+        let mut all = page.mods.clone();
+        all.sort_by(|a, b| b.likes.cmp(&a.likes));
+        let month = all.split_off(all.len() / 2);
+        let week = all;
+        s.browse_view.shelves.feeds = Some(super::shelf::Feeds { week, month });
     }
 }
 

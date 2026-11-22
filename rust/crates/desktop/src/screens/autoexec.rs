@@ -798,7 +798,8 @@ fn popover_layer(s: &State, u: &Ui) -> El {
         .absolute(0.0, 0.0)
         .w_full()
         .h_full()
-        .child(el().absolute(0.0, 0.0).w_full().h_full().on_press(close));
+        .transition(crate::motion::layer())
+        .child(el().absolute(0.0, 0.0).w_full().h_full().transition(crate::motion::cut()).on_press(close));
     if s.autoexec.more_open {
         let empty = s.autoexec.blocks.is_empty();
         let clear = u.menu_item("autoexec-clear", &icons::TRASH_2, tr("Clear all"), true).on_press(|st: &mut State| {
@@ -819,7 +820,8 @@ fn popover_layer(s: &State, u: &Ui) -> El {
         let catalog = core::autoexec_presets();
         let mut menu = shell("autoexec-category-menu", 200.0)
             .role("listbox")
-            .anchored("autoexec-category", rune::Side::Bottom, rune::Align::Start, 4.0);
+            .anchored("autoexec-category", rune::Side::Bottom, rune::Align::Start, 4.0)
+            .transition(crate::motion::pop(false));
         for (index, category) in catalog.iter().enumerate() {
             let on = index == s.autoexec.category;
             menu = menu.child(
@@ -855,6 +857,7 @@ fn popover_layer(s: &State, u: &Ui) -> El {
             shell("autoexec-flags-popover", 560.0)
                 .padding(8.0)
                 .anchored("autoexec-flags-chip", rune::Side::Bottom, rune::Align::Start, 4.0)
+                .transition(crate::motion::pop(false))
                 .child(notice),
         );
     }

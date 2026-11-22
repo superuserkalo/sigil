@@ -238,6 +238,7 @@ fn volume_popover(s: &State, u: &Ui, level: f32) -> El {
         .border(1.0, u.hair_strong)
         .shadow(12.0, 32.0, crate::ui::soft(rune::Color::BLACK.alpha(0.5)))
         .anchored("statusbar-volume", Side::Top, Align::End, 8.0)
+        .transition(crate::motion::pop(true))
         .modal(true, |st: &mut State| st.bar.volume_open = false)
         .on_key(|st: &mut State, ev: &KeyEvent, _| {
             if ev.key == Key::Escape {

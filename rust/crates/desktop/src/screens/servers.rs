@@ -2121,6 +2121,7 @@ pub fn overlay(s: &State, u: &Ui) -> Option<El> {
             .border(1.0, u.hair_strong)
             .shadow(4.0, 12.0, Color::BLACK.alpha(if u.light { 0.12 } else { 0.35 }))
             .anchored(menu.anchor(), Side::Bottom, Align::Start, 6.0)
+            .transition(crate::motion::pop(false))
             .modal(true, |st: &mut State| st.servers.menu = None)
             .on_key(|st: &mut State, ev: &KeyEvent, _| {
                 if ev.key == Key::Escape {

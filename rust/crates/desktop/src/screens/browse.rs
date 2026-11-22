@@ -58,7 +58,6 @@ pub mod paste;
 pub mod replace;
 pub mod scenes;
 pub mod store;
-pub mod strip;
 pub mod shelf;
 pub mod spotlight;
 pub mod toolbar;

@@ -693,7 +693,8 @@ fn ignore_all_popover(s: &State, u: &Ui) -> El {
         .absolute(0.0, 0.0)
         .w_full()
         .h_full()
-        .child(el().absolute(0.0, 0.0).w_full().h_full().on_press(cancel))
+        .transition(crate::motion::layer())
+        .child(el().absolute(0.0, 0.0).w_full().h_full().transition(crate::motion::cut()).on_press(cancel))
         .child(
             col()
                 .key("conflicts-ignore-all-ask")
@@ -706,6 +707,7 @@ fn ignore_all_popover(s: &State, u: &Ui) -> El {
                 .border(1.0, u.hair_strong)
                 .shadow(4.0, 12.0, rune::Color::BLACK.alpha(if u.light { 0.12 } else { 0.35 }))
                 .anchored("conflicts-ignore-all", rune::Side::Bottom, rune::Align::End, 4.0)
+                .transition(crate::motion::pop(false))
                 .on_key(move |st: &mut State, ev: &rune::KeyEvent, _| {
                     if ev.key == rune::Key::Escape {
                         cancel(st);

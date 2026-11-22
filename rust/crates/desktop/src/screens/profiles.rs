@@ -3136,6 +3136,7 @@ pub fn titlebar_switcher(s: &State, u: &Ui) -> El {
             .border(1.0, u.hair_strong)
             .shadow(12.0, 32.0, crate::ui::soft(rune::Color::BLACK.alpha(0.5)))
             .anchored("titlebar-profile", Side::Bottom, Align::Start, 6.0)
+            .transition(crate::motion::pop(false))
             .modal(true, |st: &mut State| st.profiles.titlebar_open = false)
             .on_key(|st: &mut State, ev: &KeyEvent, _| {
                 if ev.key == Key::Escape {

@@ -802,6 +802,8 @@ pub fn region(s: &State, u: &Ui) -> Option<El> {
             .pin(None, None, Some(PAGE_X), Some(24.0))
             .w(TOAST_W)
             .gap(8.0)
+            // The stack has no entrance, so the first toast slides in on its own; it fades with the last.
+            .transition(crate::motion::layer())
             .children(toasts)
     });
     let Some(dialog) = feedback::dialog(s, u) else {
@@ -812,6 +814,7 @@ pub fn region(s: &State, u: &Ui) -> Option<El> {
         .absolute(0.0, 0.0)
         .w_full()
         .h_full()
+        .transition(crate::motion::layer())
         .child(u.modal_layer("feedback-modal", dialog));
     Some(match stack {
         Some(stack) => layer.child(stack),
@@ -919,10 +922,10 @@ fn card(toast: &Toast<State>, u: &Ui) -> El {
                 false
             }
         })
-        .transition(
-            rune::Transition::offset(24.0, 0.0).combined(rune::Transition::opacity()),
-        )
-        .motion(rune::tok::motion::SNAPPY)
+        // In from the right, out in place; survivors close the gap on `base`. The stack is an
+        // overlay with no page content in it, so this is the one layout spring allowed.
+        .transition(crate::motion::from_right())
+        .motion(crate::motion::base())
         .child(body);
     if error {
         let (title, detail) = (notice.title.clone(), notice.detail.clone().unwrap_or_default());

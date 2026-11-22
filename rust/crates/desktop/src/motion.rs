@@ -152,6 +152,18 @@ pub fn page_enter() -> Transition {
     Transition::opacity().springs(SpringPair::new(page(), Spring::NONE))
 }
 
+/// A full-window layer holding a scrim and a surface (a dialog, a menu with its scrim): no
+/// entrance of its own, so its scrim and surface play theirs, and on close the whole layer
+/// fades out in 110 ms in place. A removed element takes its children with it, so the layer's
+/// exit is the only one that shows.
+pub fn layer() -> Transition {
+    if reduced() {
+        return Transition::none();
+    }
+    Transition::asymmetric(Transition::identity(), Transition::opacity())
+        .springs(SpringPair::new(Spring::NONE, exit()))
+}
+
 /// No entrance or exit of its own: shows whole the frame it mounts and is gone the frame it
 /// leaves. Measured in Rune: its children still fade in on their own default (0.3 s) when it
 /// mounts, so a new page or tab body takes `page_enter`, whose fade covers them.

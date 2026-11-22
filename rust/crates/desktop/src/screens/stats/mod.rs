@@ -1040,6 +1040,7 @@ fn account_popover(s: &State, u: &Ui) -> El {
     col()
         .key("stats-account-panel")
         .anchored("stats-account-button", rune::Side::Bottom, rune::Align::End, 4.0)
+        .transition(crate::motion::pop(false))
         .w(460.0)
         .max_h(480.0)
         .padding(12.0)

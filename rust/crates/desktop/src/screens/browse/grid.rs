@@ -48,16 +48,16 @@ pub(crate) fn dashboard(s: &State, u: &Ui) -> Option<El> {
     let n = shelf::per_page(width);
     let w = shelf::card_width(width, n);
     let feeds = s.browse_view.shelves.feeds.as_ref();
-    // A mod shows on one shelf only: the month shelf skips this week's, all time skips both.
-    let mut seen: HashSet<u64> = HashSet::new();
+    // A mod shows once on the landing: not in a shelf when the spotlight has it, and in one
+    // shelf only. A short shelf keeps empty slots rather than repeat a mod.
+    let mut seen: HashSet<u64> = super::spotlight::picks(s).iter().map(|t| t.id).collect();
     let mut tiles = |scope: &str, list: Option<&Vec<BrowseCard>>| -> Vec<El> {
         match list {
             Some(list) => {
-                let usable = shelf::allowed(s, list);
-                let fresh: Vec<&BrowseCard> = usable.iter().copied().filter(|c| !seen.contains(&c.id)).collect();
-                // Repeats are skipped only while the shelf still fills a page without them.
-                let pick = if fresh.len() >= n { fresh } else { usable };
-                pick.into_iter()
+                let fresh: Vec<&BrowseCard> =
+                    shelf::allowed(s, list).into_iter().filter(|c| !seen.contains(&c.id)).collect();
+                fresh
+                    .into_iter()
                     .take(shelf::PER_SHELF)
                     .map(|c| {
                         seen.insert(c.id);
@@ -76,7 +76,7 @@ pub(crate) fn dashboard(s: &State, u: &Ui) -> Option<El> {
             })
         })
     };
-    // The spotlight, with DMM's quick numbers beside it: always on the plain landing.
+    // The spotlight: always on the plain landing.
     let mut rails = col().key("browse-dashboard").w_full().gap(24.0).child(super::spotlight::view(s, u));
     rails = rails
         .child(shelf::shelf(
@@ -128,133 +128,11 @@ pub(crate) fn dashboard(s: &State, u: &Ui) -> Option<El> {
             shelf::GAP,
         ));
     }
-    if let Some(heroes) = hero_shelf(s, u, width) {
-        rails = rails.child(heroes);
-    }
-    rails = rails.child(shelf::shelf(
-        s,
-        u,
-        shelf::ALL_TIME,
-        "browse-shelf-all",
-        super::tree::tr("All-time favorites"),
-        Some(see("browse-shelf-all-all", BrowsePeriod::Any)),
-        tiles("all", feeds.map(|f| &f.all)),
-        n,
-        w,
-        shelf::GAP,
-    ));
     Some(
         rails.child(
             u.section(super::tree::tr("All mods")).key("browse-all-head"),
         ),
     )
-}
-
-/// Hero portraits from the Skins tree as a shelf of 72 point tiles. A press opens that hero's
-/// skins. Paged like every shelf; "Random" stands where "See all" is.
-pub(crate) fn hero_shelf(s: &State, u: &Ui, width: f32) -> Option<El> {
-    use super::shelf;
-    const TILE: f32 = 72.0;
-    let n = shelf::heroes_per_page(width);
-    let gap = if n > 1 { ((width - TILE * n as f32) / (n as f32 - 1.0)).floor() } else { 0.0 };
-    let heroes = hero_list(s);
-    if heroes.is_empty() {
-        // The Skins tree is still on its way: hold the shelf's place at its final size.
-        if categories_of(s, BrowseSection::Mods).is_some()
-            || s.browse_view.categories_failed.contains(&BrowseSection::Mods)
-        {
-            return None;
-        }
-        let tiles = (0..n)
-            .map(|_| {
-                col()
-                    .w(TILE)
-                    .min_w(TILE)
-                    .gap(8.0)
-                    .items_center()
-                    .child(el().size(56.0, 56.0).radius(crate::ui::r(8.0)).fill(u.hover))
-                    .child(el().w(48.0).h(16.0).py(4.0).child(el().w_full().h_full().radius(crate::ui::r(4.0)).fill(u.hover)))
-            })
-            .collect();
-        return Some(shelf::shelf(s, u, shelf::HEROES, "browse-heroes", super::tree::tr("Browse by hero"), None, tiles, n, TILE, gap));
-    }
-    let tiles: Vec<El> = heroes
-        .into_iter()
-        .map(|hero| {
-            let name = hero.name.clone();
-            let portrait = hero_portrait(s, &hero.name);
-            col()
-                .key(format!("browse-hero-{}", hero.id))
-                .w(TILE)
-                .min_w(TILE)
-                .gap(8.0)
-                .items_center()
-                .focusable(true)
-                .role("button")
-                .label(format!("Browse {} skins", hero.name))
-                .cursor(rune::Cursor::Pointer)
-                .on_press_tx(move |st: &mut State, tx: &mut Tx| open_skins_for(st, tx, &name))
-                .child(
-                    el().size(56.0, 56.0)
-                        .radius(crate::ui::r(8.0))
-                        .clip_rounded(crate::ui::r(8.0))
-                        .fill(u.hover)
-                        .hover(u.over.alpha(0.12))
-                        .child(match portrait {
-                            Some(pixels) => el()
-                                .absolute(0.0, 0.0)
-                                .w_full()
-                                .h_full()
-                                .pixels_fit(pixels, SurfaceFit::Fill)
-                                .a11y_hidden(),
-                            None => el()
-                                .absolute(0.0, 0.0)
-                                .w_full()
-                                .h_full()
-                                .center()
-                                .child(
-                                    text(hero.name.chars().next().unwrap_or('?').to_string())
-                                        .font(BODY_MED)
-                                        .color(u.muted)
-                                        .a11y_hidden(),
-                                ),
-                        }),
-                )
-                .child(
-                    text(hero.name)
-                        .font(SMALL)
-                        .color(u.muted)
-                        .truncate()
-                        .max_w(TILE)
-                        .align(rune::Align::Center),
-                )
-        })
-        .collect();
-    Some(shelf::shelf(
-        s,
-        u,
-        shelf::HEROES,
-        "browse-heroes",
-        super::tree::tr("Browse by hero"),
-        // Wave 4: DMM's random hero.
-        Some(super::w4::random_button(u)),
-        tiles,
-        n,
-        TILE,
-        gap,
-    ))
-}
-
-pub(crate) fn hero_portrait<'a>(s: &'a State, hero: &str) -> Option<&'a rune::Pixels> {
-    let list = categories_of(s, BrowseSection::Mods)?;
-    let skins = list
-        .iter()
-        .find(|root| root.name.eq_ignore_ascii_case("Skins"))?;
-    let child = skins
-        .children
-        .iter()
-        .find(|child| child.name.eq_ignore_ascii_case(hero))?;
-    child.icon_url.as_ref().and_then(|url| s.thumbnails.get(url))
 }
 
 /// Open Mods on Skins with one hero's category picked.

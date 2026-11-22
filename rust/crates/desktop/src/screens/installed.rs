@@ -35,6 +35,7 @@ mod req_order;
 mod search;
 pub mod tools;
 pub mod update_match;
+pub mod waiting;
 pub mod wave_scenes;
 
 use std::collections::{BTreeMap, BTreeSet, HashSet};
@@ -119,6 +120,8 @@ pub struct View {
     /// "Don't ask again" is ticked in the open confirm.
     pub dont_ask: bool,
     pub trash: TrashView,
+    /// Deletes and switch offs waiting for Deadlock to close (`waiting.rs`).
+    pub waiting: waiting::Waiting,
     /// Moving deleted mods to the trash runs on a worker.
     pub trash_job: Job<TrashDone>,
     pub updates: Updates,
@@ -896,6 +899,9 @@ fn filter_chip(u: &Ui, key: &str, label: String, clear: fn(&mut State)) -> El {
 /// then the shown count. Always 24 high, empty when nothing applies.
 fn status_row(s: &State, u: &Ui, idx: &index::Index, shown: usize) -> El {
     let mut left: Vec<El> = Vec::new();
+    if let Some(chip) = waiting::status_chip(s, u) {
+        left.push(chip);
+    }
     if let Some(chip) = search::solo_chip(s, u) {
         left.push(chip);
     }
@@ -1672,6 +1678,10 @@ pub(super) fn card_marks(s: &State, _u: &Ui, addon: &AddonRow) -> Vec<El> {
 /// review, when either has something to say about this mod.
 pub(super) fn warning_buttons(s: &State, u: &Ui, addon: &AddonRow) -> Vec<El> {
     let mut buttons = Vec::new();
+    // A change waiting for the game to close comes first, so it is never folded away.
+    if let Some(mark) = waiting::mark(s, u, addon.slot) {
+        buttons.push(mark);
+    }
     if let Some(badge) = enable::hidden_badge(s, u, addon.slot) {
         buttons.push(badge);
     }
@@ -2621,6 +2631,7 @@ pub fn overlay(s: &State, u: &Ui) -> Option<El> {
         .border(1.0, u.hair_strong)
         .shadow(12.0, 32.0, crate::ui::soft(Color::BLACK.alpha(0.5)))
         .anchored_fit(anchor, Side::Bottom, align, 6.0)
+        .transition(crate::motion::pop(false))
         .modal(true, |st: &mut State| st.installed.menu = None)
         .child(list);
     Some(panel)
@@ -2908,6 +2919,7 @@ pub fn poll(st: &mut State) -> bool {
     changed |= imprint::poll(st);
     changed |= folder_fix::poll(st);
     changed |= sound::poll(st);
+    changed |= waiting::poll(st);
     crate::screens::conflicts::sync_scope(st);
     changed |= crate::screens::locker::art::poll(st);
 
@@ -3240,6 +3252,9 @@ pub fn dialog(s: &State, u: &Ui) -> Option<El> {
     }
     if s.installed.trash.open {
         return Some(trash_dialog(s, u));
+    }
+    if let Some(dialog) = waiting::dialog(s, u) {
+        return Some(dialog);
     }
     if let Some(confirm) = &s.installed.confirm {
         return Some(confirm_dialog(s, u, confirm));
@@ -3941,6 +3956,21 @@ pub(super) fn warn_at_cap(st: &mut State) {
 /// The card switch: one rename, remembered for Undo.
 pub(super) fn toggle_one(st: &mut State, slot: u16, enable: bool) {
     st.addon_dialog = None;
+    // Turning back on a mod that waits to turn off only takes it out of the queue.
+    if let Some(change) = waiting::for_slot(st, slot)
+        && change.kind == deadlock_core::pending::PendingKind::TurnOff
+        && enable
+    {
+        let id = change.id;
+        waiting::cancel(st, id);
+        return;
+    }
+    // The game holds an enabled mod's file open: turning it off waits for the game to close.
+    // Turning on renames a file the game never opened, so it runs now.
+    if !enable && waiting::must_wait(st) {
+        waiting::offer(st, deadlock_core::pending::PendingKind::TurnOff, vec![slot], false);
+        return;
+    }
     if crate::screens::settings::watch::refuse_while_running(st) {
         return;
     }
@@ -3955,6 +3985,10 @@ pub(super) fn toggle_one(st: &mut State, slot: u16, enable: bool) {
             rescan(st);
             warn_at_cap(st);
         }
+        Err(error) if !enable && deadlock_core::error::mentions_in_use(&error.to_string()) => {
+            st.status = error.to_string();
+            waiting::offer(st, deadlock_core::pending::PendingKind::TurnOff, vec![slot], true);
+        }
         Err(error) => st.status = error.to_string(),
     }
 }
@@ -3962,6 +3996,13 @@ pub(super) fn toggle_one(st: &mut State, slot: u16, enable: bool) {
 /// Open a confirm, or run the change at once when the user said not to ask.
 pub(super) fn ask(st: &mut State, confirm: Confirm) {
     st.installed.menu = None;
+    // While the game runs a delete would fail on its open files: ask to wait instead.
+    if let Confirm::Delete(slots) = &confirm
+        && waiting::must_wait(st)
+    {
+        waiting::offer(st, deadlock_core::pending::PendingKind::Delete, slots.clone(), false);
+        return;
+    }
     if st.prefs.skip_confirm.contains(confirm.id()) {
         run_confirm(st, confirm);
     } else {
@@ -4070,6 +4111,15 @@ fn finish_delete(
     }
     for entry in &entries {
         st.installed.selected.remove(&entry.manifest.slot);
+    }
+    // Slots whose files were held open can wait for the game to close instead.
+    let locked: Vec<u16> = errors
+        .iter()
+        .filter(|(_, error)| deadlock_core::error::mentions_in_use(error))
+        .map(|(slot, _)| *slot)
+        .collect();
+    if !locked.is_empty() && !st.demo {
+        waiting::offer(st, deadlock_core::pending::PendingKind::Delete, locked, true);
     }
     let n = entries.len();
     st.status = if errors.is_empty() {

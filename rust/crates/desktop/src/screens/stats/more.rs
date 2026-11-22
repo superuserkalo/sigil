@@ -485,6 +485,7 @@ pub(super) fn season_menu(s: &State, u: &Ui) -> Option<El> {
     let mut list = col()
         .key("stats-season-menu")
         .anchored("stats-filter-season", rune::Side::Bottom, rune::Align::Start, 4.0)
+        .transition(crate::motion::pop(false))
         .w(200.0)
         .padding(4.0)
         .gap(0.0)

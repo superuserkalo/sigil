@@ -261,6 +261,9 @@ pub fn random_button(u: &Ui) -> El {
                 st.browse_view.w4.last_random = Some(hero.clone());
                 open_skins_for(st, tx, &hero);
             }
+            // Pressed in the Filters menu: the grid it opened is the answer, so the menu closes.
+            st.browse_view.menu = None;
+            st.browse_view.from_filters = false;
         })
 }
 
@@ -589,6 +592,7 @@ pub fn image_menu(s: &State, u: &Ui) -> Option<El> {
             .border(1.0, u.hair_strong)
             .shadow(12.0, 32.0, crate::ui::soft(Color::BLACK.alpha(0.5)))
             .anchored(anchor, Side::Bottom, Align::Start, 6.0)
+            .transition(crate::motion::pop(false))
             .modal(true, close)
             .on_key(|st: &mut State, ev: &KeyEvent, _| {
                 if ev.key == Key::Escape {

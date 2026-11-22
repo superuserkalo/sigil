@@ -846,7 +846,9 @@ impl Ui {
         col()
     }
 
-    /// A full-window modal layer: a flat scrim and the dialog centred over the shell.
+    /// A full-window modal layer: a flat scrim and the dialog centred over the shell. The scrim
+    /// fades; the dialog rises 8 points as it fades in and fades out in place. The layer itself
+    /// has no entrance, so each part plays its own, and fades out whole.
     pub fn modal_layer(&self, key: &str, inner: El) -> El {
         let scrim = el()
             .key(format!("{key}-scrim"))
@@ -854,13 +856,23 @@ impl Ui {
             .w_full()
             .h_full()
             .fill(self.scrim)
+            .transition(crate::motion::fade())
             .a11y_hidden();
         el().key(key)
             .absolute(0.0, 0.0)
             .w_full()
             .h_full()
+            .transition(crate::motion::layer())
             .child(scrim)
-            .child(el().h_full().w_full().padding(32.0).center().child(inner))
+            .child(
+                el().key(format!("{key}-panel"))
+                    .h_full()
+                    .w_full()
+                    .padding(32.0)
+                    .center()
+                    .transition(crate::motion::lift())
+                    .child(inner),
+            )
     }
 
     /// An inset field for a path, hash or prompt.
@@ -1135,7 +1147,7 @@ impl Ui {
     }
 
     /// Sigil's tooltip for every `El::help`: a raised graphite block with a 1 point line, 4
-    /// point corners, small text, a short delay and no fade, so it never lags or moves. Rune
+    /// point corners, small text, a short delay and a 90 ms fade (60 ms out), no travel. Rune
     /// draws it on macOS too instead of AppKit's yellow-grey tip.
     pub fn help_look(&self) -> rune::HelpLook {
         rune::HelpLook::system(!self.light)
@@ -1150,6 +1162,7 @@ impl Ui {
             .margin(8.0)
             .delay(0.4)
             .skip_delay(0.3)
+            .fade(crate::motion::tip_fade().0, crate::motion::tip_fade().1, 1.0)
             .keycaps(self.over.alpha(0.08), self.muted, MICRO, false)
             .keycap_shape(16.0, 4.0, 2.0, 2.0, 8.0)
             .shadows([rune::Shadow {
@@ -1330,6 +1343,7 @@ impl Ui {
             .key(key.to_string())
             .pin(Some(24.0), None, Some(24.0), Some(16.0))
             .justify_center()
+            .transition(crate::motion::lift())
             .child(bar)
     }
 
@@ -1346,6 +1360,7 @@ impl Ui {
             .fill(self.raised)
             .border_sides([0.0, 0.0, 0.0, 1.0], self.hair)
             .shadow(4.0, 12.0, Color::BLACK.alpha(if self.light { 0.12 } else { 0.35 }))
+            .transition(crate::motion::from_right())
             .child(
                 el().pin(None, Some(12.0), Some(12.0), None)
                     .key(format!("{key}-close"))
@@ -1502,6 +1517,7 @@ impl Ui {
             .border(1.0, self.hair_strong)
             .shadow(4.0, 12.0, Color::BLACK.alpha(if self.light { 0.12 } else { 0.35 }))
             .anchored_fit(anchor.to_string(), rune::Side::Bottom, rune::Align::End, 4.0)
+            .transition(crate::motion::pop(false))
     }
 
     /// One menu row: 32 high, a 14 point icon, the label. `danger` uses `rose` text.
@@ -1527,11 +1543,14 @@ impl Ui {
     /// A full-window layer for a menu or popover: a transparent `scrim` (the page gives it the
     /// press that closes) under the menu.
     pub fn popover_layer(&self, key: &str, scrim: El, menu: El) -> El {
+        // The layer has no entrance and its scrim none at all: the scrim takes the closing press
+        // on the first frame, and the menu plays its own `pop`.
         el().key(key.to_string())
             .absolute(0.0, 0.0)
             .w_full()
             .h_full()
-            .child(scrim.absolute(0.0, 0.0).w_full().h_full())
+            .transition(crate::motion::layer())
+            .child(scrim.absolute(0.0, 0.0).w_full().h_full().transition(crate::motion::cut()))
             .child(menu)
     }
 

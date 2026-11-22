@@ -1398,6 +1398,7 @@ pub fn files_menu(s: &State, u: &Ui) -> Option<El> {
             .border(1.0, u.hair_strong)
             .shadow(12.0, 32.0, crate::ui::soft(Color::BLACK.alpha(0.5)))
             .anchored(format!("details-install-more-{id}"), Side::Bottom, Align::End, 6.0)
+            .transition(crate::motion::pop(false))
             .modal(true, |st: &mut State| st.browse_view.installs.files_menu = None)
             .on_key(|st: &mut State, ev: &KeyEvent, _| {
                 if ev.key == Key::Escape {

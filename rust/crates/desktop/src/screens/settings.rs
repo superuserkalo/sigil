@@ -645,20 +645,23 @@ pub fn modal(s: &State, u: &Ui, window: (f32, f32)) -> Option<El> {
         })
         .child(list(s, u))
         .child(body);
+    // The sheet is a dialog: the scrim fades, the panel rises 8 points as it fades in.
     let mut layer = el()
         .key("settings-layer")
         .absolute(0.0, 0.0)
         .w_full()
         .h_full()
+        .transition(crate::motion::layer())
         .child(
             el().key("settings-scrim")
                 .absolute(0.0, 0.0)
                 .w_full()
                 .h_full()
                 .fill(u.scrim)
+                .transition(crate::motion::fade())
                 .on_press(close),
         )
-        .child(el().w_full().h_full().center().child(panel));
+        .child(el().key("settings-panel").w_full().h_full().center().transition(crate::motion::lift()).child(panel));
     if let Some(menu) = SELECT_MENU.with(|m| m.borrow_mut().take()) {
         // A press outside the menu closes it.
         layer = layer
@@ -667,6 +670,7 @@ pub fn modal(s: &State, u: &Ui, window: (f32, f32)) -> Option<El> {
                     .absolute(0.0, 0.0)
                     .w_full()
                     .h_full()
+                    .transition(crate::motion::cut())
                     .on_press(|st: &mut State| st.settings.select_open = None),
             )
             .child(menu);
@@ -1011,7 +1015,8 @@ fn select_choice<T: Copy + PartialEq + 'static>(
             .fill(u.raised.mix(u.over, 0.04).alpha(1.0))
             .border(1.0, u.hair_strong)
             .shadow(4.0, 12.0, Color::BLACK.alpha(if u.light { 0.12 } else { 0.35 }))
-            .anchored_fit(owned.clone(), rune::Side::Bottom, rune::Align::End, 4.0);
+            .anchored_fit(owned.clone(), rune::Side::Bottom, rune::Align::End, 4.0)
+            .transition(crate::motion::pop(false));
         for (index, (value, label)) in choices.iter().enumerate() {
             let on = *value == current;
             let value = *value;

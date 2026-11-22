@@ -260,7 +260,34 @@ pub fn overlay(s: &State, u: &Ui) -> Option<El> {
                 );
             }
             let saved = favorites(s).len();
-            items = items.child(head).child(
+            // Hero first: the landing has no hero shelf, so this row is where a hero is picked.
+            // Sounds and WiPs have no hero categories, so a name match stands in. Under
+            // Mods > Skins the Type row picks the hero.
+            let hero_skins = f
+                .category
+                .as_ref()
+                .is_some_and(|pick| pick.name.eq_ignore_ascii_case("Skins"));
+            let hero_usable = s.browse_view.tab != Tab::Collections
+                && !(f.favorites || f.owned == Owned::Installed)
+                && !(s.browse_view.tab == Tab::Mods && hero_skins);
+            let hero_row = row()
+                .w_full()
+                .gap(4.0)
+                .center_y()
+                .child(
+                    picker_row(u, "menu-pick-hero", super::super::tree::tr("Hero"), f.hero.as_deref().unwrap_or(super::super::tree::tr("Any")))
+                        .grow(1.0)
+                        .min_w(0.0)
+                        .on_press(|st: &mut State| {
+                            st.browse_view.menu = None;
+                            st.browse_view.from_filters = false;
+                            st.browse_view.hero_picker = Some(HeroTarget::Filter);
+                            st.browse_view.hero_query = TextEdit::new("");
+                        }),
+                )
+                // Wave 4: DMM's random hero, here now that the hero shelf is gone.
+                .child(super::super::w4::random_button(u));
+            items = items.child(head).child(usable_row(hero_row, hero_usable)).child(menu_rule(u)).child(
                 toggle_row(u, "menu-favorites", super::super::tree::tr("Favorites only"), &format_count(saved as u64), f.favorites)
                     .on_press_tx(|st: &mut State, tx: &mut Tx| {
                         ensure_favorites(st);
@@ -298,23 +325,7 @@ pub fn overlay(s: &State, u: &Ui) -> Option<El> {
                     pickers,
                 ));
             }
-            // Sounds and WiPs have no hero categories, so a name match stands in. Under
-            // Mods > Skins the Type row above picks the hero.
-            let skins = f
-                .category
-                .as_ref()
-                .is_some_and(|pick| pick.name.eq_ignore_ascii_case("Skins"));
             items = items
-                .child(usable_row(
-                    picker_row(u, "menu-pick-hero", super::super::tree::tr("Hero"), f.hero.as_deref().unwrap_or(super::super::tree::tr("Any")))
-                        .on_press(|st: &mut State| {
-                            st.browse_view.menu = None;
-                            st.browse_view.from_filters = false;
-                            st.browse_view.hero_picker = Some(HeroTarget::Filter);
-                            st.browse_view.hero_query = TextEdit::new("");
-                        }),
-                    pickers && !(s.browse_view.tab == Tab::Mods && skins),
-                ))
                 .child(usable_row(
                     picker_row(u, "menu-pick-date", super::super::tree::tr("Date"), &date_label(f))
                         .on_press(|st: &mut State| open_panel(st, FilterMenu::Date)),
@@ -669,6 +680,7 @@ pub fn overlay(s: &State, u: &Ui) -> Option<El> {
             .border(1.0, u.hair_strong)
             .shadow(12.0, 32.0, crate::ui::soft(Color::BLACK.alpha(0.5)))
             .anchored(crate::screens::browse::toolbar::anchor(s, menu), Side::Bottom, align, 8.0)
+            .transition(crate::motion::pop(false))
             .modal(true, |st: &mut State| {
                 st.browse_view.menu = None;
                 st.browse_view.from_filters = false;
@@ -951,6 +963,7 @@ pub(crate) fn context_menu(s: &State, u: &Ui) -> Option<El> {
             .border(1.0, u.hair_strong)
             .shadow(12.0, 32.0, crate::ui::soft(Color::BLACK.alpha(0.5)))
             .anchored(format!("browse-card-{id}"), Side::Bottom, Align::Start, 6.0)
+            .transition(crate::motion::pop(false))
             .modal(true, |st: &mut State| st.browse_view.context = None)
             .on_key(|st: &mut State, ev: &KeyEvent, _| {
                 if ev.key == Key::Escape {

@@ -126,6 +126,8 @@ pub struct Monitor {
     shared: Arc<Mutex<GameProcess>>,
     stop: Option<Arc<AtomicBool>>,
     started: bool,
+    /// Set once the thread has read the process list, so "not running" is an answer.
+    checked: Arc<AtomicBool>,
 }
 
 impl Default for Monitor {
@@ -134,6 +136,7 @@ impl Default for Monitor {
             shared: Arc::new(Mutex::new(GameProcess::default())),
             stop: None,
             started: false,
+            checked: Arc::new(AtomicBool::new(false)),
         }
     }
 }
@@ -147,6 +150,7 @@ impl Monitor {
         }
         self.started = true;
         let shared = Arc::clone(&self.shared);
+        let checked = Arc::clone(&self.checked);
         let stop = Arc::new(AtomicBool::new(false));
         self.stop = Some(Arc::clone(&stop));
         let wake: Option<Arc<dyn Fn() + Send + Sync>> = wake.map(|wake| {
@@ -169,7 +173,8 @@ impl Monitor {
                             changed
                         })
                         .unwrap_or(false);
-                    if changed && let Some(wake) = &wake {
+                    let first = !checked.swap(true, Ordering::SeqCst);
+                    if (changed || first) && let Some(wake) = &wake {
                         wake();
                     }
                     for _ in 0..8 {
@@ -196,6 +201,11 @@ impl Monitor {
     /// True once the watch thread runs (never in headless renders).
     pub fn is_started(&self) -> bool {
         self.started
+    }
+
+    /// True once the thread has read the process list at least once.
+    pub fn has_checked(&self) -> bool {
+        self.checked.load(Ordering::SeqCst)
     }
 }
 

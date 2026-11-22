@@ -57,6 +57,7 @@ const DE: &[(&str, &str)] = &[
     ("All", "Alle"),
     ("Collections", "Sammlungen"),
     ("Maps", "Karten"),
+    ("Nothing new here yet", "Hier gibt es noch nichts Neues"),
     ("Popular now", "Gerade beliebt"),
     ("Newest", "Neueste"),
     ("Recently updated", "Zuletzt aktualisiert"),

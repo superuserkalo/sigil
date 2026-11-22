@@ -343,6 +343,8 @@ enum Step {
 
 /// Scene, steps before the measured one, the measured step, and the window height.
 const MOTION_CASES: &[(&str, &[Step], Step, f32)] = &[
+    ("demo-installed", &[], Step::Press("installed-more-03"), 800.0),
+    ("demo-installed", &[], Step::Press("nav-settings"), 800.0),
     ("demo-installed", &[Step::Press("installed-more-03")], Step::Escape, 800.0),
     ("settings-general", &[], Step::Press("settings-confirm-launch-switch"), 1400.0),
     ("demo-installed", &[Step::Press("nav-settings")], Step::Escape, 800.0),
@@ -557,3 +559,51 @@ fn hover_never_commits() {
     }
     assert!(wrong.is_empty(), "hover is not paint only:\n{}", wrong.join("\n"));
 }
+
+/// The motion is there: a menu, the settings sheet and the selection thumbs visibly move or
+/// fade over at least three frames after their input (a guard against tokens that collapse
+/// to nothing), and land within 20.
+#[test]
+fn overlays_and_selections_move() {
+    let _globals = crate::ui::test_globals();
+    let cases: &[(&str, &[Step], Step, &str, f32)] = &[
+        ("demo-installed", &[], Step::Press("installed-more-03"), "installed-menu", 800.0),
+        ("demo-installed", &[], Step::Press("nav-settings"), "settings-panel", 800.0),
+        ("crosshair", &[], Step::Press("crosshair-groups-1"), "crosshair-groups-indicator", 1400.0),
+        ("browse-view-menu", &[], Step::Press("menu-size-large"), "menu-seg-Cards-thumb", 800.0),
+    ];
+    let mut wrong = Vec::new();
+    for &(scene_name, before, step, key, height) in cases {
+        let mut rt = runtime(scene_name, (1280.0, height));
+        for &b in before {
+            apply(&mut rt, b, scene_name);
+            settle(&mut rt);
+        }
+        let name = case_name(scene_name, step);
+        apply(&mut rt, step, &name);
+        let pose = |rt: &Runtime<State>| {
+            rt.elements()
+                .into_iter()
+                .find(|e| !e.exiting && e.key.as_deref().is_some_and(|k| k.ends_with(key)))
+                .map(|e| (e.rect, e.opacity))
+        };
+        let mut last = pose(&rt);
+        let mut moving = Vec::new();
+        for n in 0..40 {
+            rt.frame(1.0 / 60.0);
+            let now = pose(&rt);
+            if let (Some((r0, o0)), Some((r1, o1))) = (last, now)
+                && ((o1 - o0).abs() > 0.004 || r0.iter().zip(r1).any(|(a, b)| (a - b).abs() > 0.5))
+            {
+                moving.push(n);
+            }
+            last = now;
+        }
+        eprintln!("motion: {name}: {key} moved on frames {moving:?}");
+        if moving.len() < 3 || moving.last().is_some_and(|&n| n >= 20) {
+            wrong.push(format!("{name}: {key} moved on frames {moving:?}"));
+        }
+    }
+    assert!(wrong.is_empty(), "expected motion is missing or long:\n{}", wrong.join("\n"));
+}
+

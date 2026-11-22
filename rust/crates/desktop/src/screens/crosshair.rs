@@ -1552,6 +1552,7 @@ fn console_popover(s: &State, u: &Ui) -> El {
         .border(1.0, u.hair_strong)
         .shadow(4.0, 12.0, Color::BLACK.alpha(if u.light { 0.12 } else { 0.35 }))
         .anchored("crosshair-console", rune::Side::Top, rune::Align::End, 4.0)
+        .transition(crate::motion::pop(true))
         .on_key(|st: &mut State, ev: &KeyEvent, _| {
             if ev.key == Key::Escape {
                 st.crosshair.console_open = false;

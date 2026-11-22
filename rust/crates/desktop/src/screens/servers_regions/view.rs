@@ -933,6 +933,7 @@ pub fn health_popover(s: &State, u: &Ui, sum: &probe::Summary) -> El {
         .border(1.0, u.hair_strong)
         .shadow(12.0, 32.0, crate::ui::soft(Color::BLACK.alpha(0.5)))
         .anchored("statusbar-relays", rune::Side::Top, rune::Align::Start, 8.0)
+        .transition(crate::motion::pop(true))
         .modal(true, |st: &mut State| st.servers.regions.health_open = false)
         .on_key(|st: &mut State, ev: &KeyEvent, _| {
             if ev.key == Key::Escape {
