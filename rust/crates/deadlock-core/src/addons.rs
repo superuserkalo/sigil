@@ -501,8 +501,13 @@ pub fn set_enabled(
     }
 
     fs::rename(from_path, to_path).map_err(|error| {
+        let hint = if crate::error::io_in_use(&error) {
+            format!(" {}", crate::error::IN_USE_HINT)
+        } else {
+            String::new()
+        };
         Error::msg(format!(
-            "Could not {action} slot {slot:02}: rename {} to {} failed: {error}",
+            "Could not {action} slot {slot:02}: rename {} to {} failed: {error}.{hint}",
             from_path.display(),
             to_path.display()
         ))

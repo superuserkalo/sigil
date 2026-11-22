@@ -595,26 +595,12 @@ pub fn undo_update(
 /// The sentence for a file that would not move (DMM 2.4.0 names the path that blocked a
 /// removal): its full path, the OS error, and a hint when the OS says the file is in use.
 fn blocked(path: &Path, error: &Error) -> String {
-    let hint = if in_use(error) {
-        " Deadlock or another program has it open: close it and try again."
+    let hint = if error.is_in_use() {
+        format!(" {}", crate::error::IN_USE_HINT)
     } else {
-        ""
+        String::new()
     };
     format!("{} could not be moved ({error}).{hint}", path.display())
-}
-
-/// Whether the OS refused because something holds the file: a sharing or lock violation on
-/// Windows (errors 32 and 33), a busy file, or a permission refusal.
-fn in_use(error: &Error) -> bool {
-    match error {
-        Error::Io(io) => {
-            matches!(
-                io.kind(),
-                std::io::ErrorKind::PermissionDenied | std::io::ErrorKind::ResourceBusy
-            ) || (cfg!(windows) && matches!(io.raw_os_error(), Some(32 | 33)))
-        }
-        _ => false,
-    }
 }
 
 fn slot_files_in(addons: &Path, slot: u16) -> Result<Vec<String>> {
