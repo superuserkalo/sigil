@@ -603,6 +603,12 @@ fn finish_apply(st: &mut State, name: String, applied: core::ProfileApplyResult)
     let for_undo = applied.clone();
     let undo_name = name.clone();
     notice = notice.undo(move |st: &mut State| {
+        // Undo renames slot files back; the game holds enabled ones open, and a half done
+        // undo has no rollback. Refuse up front, like the other held actions.
+        use crate::screens::installed::waiting;
+        if waiting::refuse_held(st, waiting::HELD_UNDO) {
+            return;
+        }
         let Some(root) = root.clone() else {
             crate::notify::push(st, Notice::error("Deadlock folder not found. Nothing was changed."));
             return;
