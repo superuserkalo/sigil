@@ -201,9 +201,10 @@ pub fn clean_name(name: &str) -> Result<String> {
 ///
 /// `sources` must hold two to [`MAX_SOURCES`] installed slots. The merged VPK lands switched off
 /// in the lowest free slot, its file name in `store` records what it was built from, then every
-/// source is switched off with [`set_enabled`]. If a source cannot be switched off the merge
-/// still stands and the report lists it, because the merged file already exists and deleting it
-/// again would be a worse state.
+/// source that is on is switched off with [`set_enabled`]. All or nothing: when a source cannot
+/// be switched off (Deadlock holds its file open on Windows), the sources already switched off
+/// go back on and the merged files Sigil just wrote are removed again, so the sources and the
+/// merge never both load.
 #[allow(clippy::too_many_arguments)]
 pub fn merge_mods(
     game_root: &Path,
@@ -340,10 +341,28 @@ pub fn merge_mods(
     };
     let _ = fs::remove_dir_all(&work);
 
-    // Every source is switched off, keeping its files.
+    // Every source that is on is switched off, keeping its files. A failure takes the merge
+    // back: the switched sources go on again and the new merged files (never loaded, they
+    // landed switched off) are removed.
+    let mut switched = Vec::new();
     for source in &preview.sources {
-        if let Err(error) = set_enabled(game_root, source.slot, false, true) {
-            let _ = error;
+        if !crate::addons::slot_path(&addons, source.slot, "_dir.vpk").is_file() {
+            continue;
+        }
+        match set_enabled(game_root, source.slot, false, true) {
+            Ok(result) => switched.push(result),
+            Err(error) => {
+                let reverted = crate::addons::revert_toggles(game_root, &switched, true).is_ok();
+                let folder = crate::addons::slot_folder(&addons, slot);
+                for name in &files {
+                    let _ = fs::remove_file(folder.join(name));
+                }
+                return Err(Error::msg(if reverted {
+                    format!("{error} The merge was taken back: every mod is as it was.")
+                } else {
+                    format!("{error} The merge was taken back, but some mods stayed off: turn them on again.")
+                }));
+            }
         }
     }
 
@@ -795,6 +814,27 @@ mod tests {
         let directory = read_vpk_directory(&pack).unwrap();
         let entry = directory.by_path.get("materials/shared.vmat_c").unwrap();
         assert_eq!(read_vpk_entry_data(&directory, entry).unwrap(), b"first", "slot 1 still wins");
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    /// A source that will not switch off (the game holds it on Windows) takes the merge back.
+    #[test]
+    fn a_source_that_will_not_switch_off_takes_the_merge_back() {
+        let root = root("merge-held");
+        let game = game(&root);
+        let addons = addons_dir(&game);
+        vpk_into(&addons, "pak01", &[("materials/a.vmat_c", b"first")]);
+        vpk_into(&addons, "pak02", &[("materials/c.vmat_c", b"two")]);
+        // Slot 01 has both names, so its switch off is refused after slot 02 went off.
+        fs::write(addons.join("pak01_dir.vpk.disabled"), b"old copy").unwrap();
+        let store = merged_path(&root.join("app"));
+        let error = merge_mods(&game, &root.join("work"), &store, &inputs(), "Both", false, true).unwrap_err();
+        assert!(error.to_string().contains("every mod is as it was"), "{error}");
+        assert!(addons.join("pak01_dir.vpk").is_file());
+        assert!(addons.join("pak02_dir.vpk").is_file(), "slot 02 is on again");
+        assert!(!addons.join("pak02_dir.vpk.disabled").exists());
+        assert!(!addons.join("pak03_dir.vpk.disabled").exists(), "the merged file is gone");
+        assert!(read_merged(&store).merged.is_empty());
         let _ = fs::remove_dir_all(&root);
     }
 
