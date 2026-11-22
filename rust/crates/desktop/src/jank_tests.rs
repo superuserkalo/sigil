@@ -26,6 +26,8 @@ fn scene(name: &str) -> Scene {
 
 fn runtime(name: &str, size: (f32, f32)) -> Runtime<State> {
     let mut s = crate::data::init_state();
+    // The player's own Reduce motion setting must not decide what the motion guards see.
+    s.prefs.reduce_motion = false;
     if name.starts_with("browse") {
         // Headless scenes read the stored subfeed; a test is not headless, so load it here.
         crate::data::browse_from_body(&mut s, BROWSE_FIXTURE);
@@ -339,6 +341,7 @@ fn installed_cost_does_not_grow_with_the_library() {
 enum Step {
     Press(&'static str),
     Escape,
+    Right,
 }
 
 /// Scene, steps before the measured one, the measured step, and the window height.
@@ -376,6 +379,7 @@ fn centre_of(rt: &Runtime<State>, key: &str) -> Option<(f32, f32)> {
 fn apply(rt: &mut Runtime<State>, step: Step, what: &str) {
     match step {
         Step::Escape => rt.key(rune::KeyEvent { key: rune::Key::Escape, mods: Default::default() }),
+        Step::Right => rt.key(rune::KeyEvent { key: rune::Key::Right, mods: Default::default() }),
         Step::Press(key) => {
             let (x, y) = centre_of(rt, key).unwrap_or_else(|| panic!("{what}: no {key} to press"));
             rt.pointer_move(x, y);
@@ -391,6 +395,7 @@ fn case_name(scene: &str, step: Step) -> String {
     match step {
         Step::Press(k) => format!("{scene}: press {k}"),
         Step::Escape => format!("{scene}: Escape"),
+        Step::Right => format!("{scene}: Right"),
     }
 }
 
@@ -403,12 +408,22 @@ struct Seen {
     off: Vec<String>,
 }
 
-fn run_case(scene_name: &str, before: &[Step], step: Step, height: f32, reduced: bool) -> Vec<Seen> {
+/// How motion is reduced in a case: not, by the system, or by Settings > Appearance.
+#[derive(Clone, Copy, PartialEq)]
+enum Reduced {
+    No,
+    System,
+    Setting,
+}
+
+fn run_case(scene_name: &str, before: &[Step], step: Step, height: f32, reduced: Reduced) -> Vec<Seen> {
     let mut rt = runtime(scene_name, (1280.0, height));
-    if reduced {
-        rt.set_system_reduced_motion(true);
-        settle(&mut rt);
+    match reduced {
+        Reduced::No => {}
+        Reduced::System => rt.set_system_reduced_motion(true),
+        Reduced::Setting => rt.update(|s, _| s.prefs.reduce_motion = true),
     }
+    settle(&mut rt);
     for &b in before {
         apply(&mut rt, b, scene_name);
         settle(&mut rt);
@@ -459,7 +474,7 @@ fn motion_settles_fast() {
     let _globals = crate::ui::test_globals();
     let mut slow = Vec::new();
     for &(scene_name, before, step, height) in MOTION_CASES {
-        let frames = run_case(scene_name, before, step, height, false);
+        let frames = run_case(scene_name, before, step, height, Reduced::No);
         let still = frames.iter().rposition(|f| !f.visible.is_empty()).map_or(0, |i| i + 1);
         let rests = frames.iter().rposition(|f| f.asked).map_or(0, |i| i + 1);
         let name = case_name(scene_name, step);
@@ -479,7 +494,7 @@ fn motion_moves_nothing_in_flow() {
     let _globals = crate::ui::test_globals();
     let mut moved = Vec::new();
     for &(scene_name, before, step, height) in MOTION_CASES {
-        let frames = run_case(scene_name, before, step, height, false);
+        let frames = run_case(scene_name, before, step, height, Reduced::No);
         if let Some((n, f)) = frames.iter().enumerate().find(|(_, f)| !f.off.is_empty()) {
             moved.push(format!("{} frame {n}: {}", case_name(scene_name, step), f.off.join("; ")));
         }
@@ -487,15 +502,16 @@ fn motion_moves_nothing_in_flow() {
     assert!(moved.is_empty(), "in-flow content eased:\n{}", moved.join("\n"));
 }
 
-/// Under reduced motion every input lands at once: whatever changes, changes in one step (the
+/// Under reduced motion, from the system or from Settings > Appearance > Reduce motion, every
+/// input lands at once: whatever changes, changes in one step (the
 /// commit's frame, or the next for hover reveals that follow it), and nothing travels or fades
 /// after that.
 #[test]
 fn reduced_motion_is_instant() {
     let _globals = crate::ui::test_globals();
     let mut slow = Vec::new();
-    for &(scene_name, before, step, height) in MOTION_CASES {
-        let frames = run_case(scene_name, before, step, height, true);
+    for (&(scene_name, before, step, height), reduced) in MOTION_CASES.iter().flat_map(|c| [(c, Reduced::System), (c, Reduced::Setting)]) {
+        let frames = run_case(scene_name, before, step, height, reduced);
         if let Some((n, f)) = frames.iter().enumerate().skip(2).find(|(_, f)| !f.visible.is_empty()) {
             slow.push(format!("{}: still moving at frame {n}: {}", case_name(scene_name, step), f.visible.join("; ")));
         }
@@ -573,6 +589,8 @@ fn overlays_and_selections_move() {
         ("crosshair", &[], Step::Press("crosshair-groups-1"), "crosshair-groups-indicator", 1400.0),
         ("browse-view-menu", &[], Step::Press("menu-size-large"), "menu-seg-Cards-thumb", 800.0),
         ("demo-installed", &[], Step::Press("nav-browse"), "page-browse", 800.0),
+        // A key step on a slider moves its knob on `fast` (a drag lands it under the hand).
+        ("crosshair", &[Step::Press("crosshair-groups-1"), Step::Press("slider-DotSize")], Step::Right, "slider-DotSize/#2", 1400.0),
     ];
     let mut wrong = Vec::new();
     for &(scene_name, before, step, key, height) in cases {
@@ -586,7 +604,7 @@ fn overlays_and_selections_move() {
         let pose = |rt: &Runtime<State>| {
             rt.elements()
                 .into_iter()
-                .find(|e| !e.exiting && e.key.as_deref().is_some_and(|k| k.ends_with(key)))
+                .find(|e| !e.exiting && (e.path.ends_with(key) || e.key.as_deref().is_some_and(|k| k.ends_with(key))))
                 .map(|e| (e.rect, e.opacity))
         };
         let mut last = pose(&rt);
@@ -595,7 +613,7 @@ fn overlays_and_selections_move() {
             rt.frame(1.0 / 60.0);
             let now = pose(&rt);
             if let (Some((r0, o0)), Some((r1, o1))) = (last, now)
-                && ((o1 - o0).abs() > 0.004 || r0.iter().zip(r1).any(|(a, b)| (a - b).abs() > 0.5))
+                && ((o1 - o0).abs() > 0.004 || r0.iter().zip(r1).any(|(a, b)| (a - b).abs() > 0.1))
             {
                 moving.push(n);
             }
@@ -676,4 +694,40 @@ fn shelf_paging_slides_the_page_only() {
     let first = xs.first().copied().unwrap_or(0.0);
     let last = xs.last().copied().unwrap_or(0.0);
     assert!(first > last + 8.0, "page 2 should come in from the right: x {first} to {last}");
+}
+
+/// Motion is written in `motion.rs` only: no other desktop source builds a spring, a tween, a
+/// transition or reaches for Rune's motion tokens, so every duration has one home and reduced
+/// motion reaches all of it. (The agent's "Working for" pulse is a `Cycle`, which is allowed.)
+#[test]
+fn motion_literals_live_in_motion_rs() {
+    let banned = [
+        ["Spring::", "new("].concat(),
+        ["Spring::", "from_motion("].concat(),
+        ["Curve::", "tween("].concat(),
+        ["tok::", "motion::"].concat(),
+        ["Transition", "::"].concat(),
+    ];
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut stack = vec![root.clone()];
+    let mut found = Vec::new();
+    while let Some(dir) = stack.pop() {
+        for entry in std::fs::read_dir(&dir).expect("read src") {
+            let path = entry.expect("entry").path();
+            if path.is_dir() {
+                stack.push(path);
+                continue;
+            }
+            if path.extension().is_none_or(|e| e != "rs") || path.ends_with("motion.rs") {
+                continue;
+            }
+            let text = std::fs::read_to_string(&path).unwrap_or_default();
+            for (n, line) in text.lines().enumerate() {
+                if banned.iter().any(|b| line.contains(b.as_str())) {
+                    found.push(format!("{}:{}: {}", path.strip_prefix(&root).unwrap_or(&path).display(), n + 1, line.trim()));
+                }
+            }
+        }
+    }
+    assert!(found.is_empty(), "motion written outside motion.rs:\n{}", found.join("\n"));
 }

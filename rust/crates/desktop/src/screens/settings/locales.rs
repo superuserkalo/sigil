@@ -323,6 +323,8 @@ pub const DE: &[(&str, &str)] = &[
     ("Remove this colour", "Diese Farbe entfernen"),
     ("Interface size", "Größe der Oberfläche"),
     ("Scales text, icons and spacing together.", "Skaliert Text, Symbole und Abstände gemeinsam."),
+    ("Reduce motion", "Bewegung reduzieren"),
+    ("Menus, drawers and selections change at once.", "Menüs, Detailbereiche und Auswahlen wechseln sofort."),
     ("Transparent sidebar", "Transparente Seitenleiste"),
     ("The sidebar sits on the page background, without its own panel.", "Die Seitenleiste liegt auf dem Seitenhintergrund, ohne eigene Fläche."),
     ("Sigil has no telemetry, analytics or crash reporting. It goes online only for the features below, and never sends anything about you on its own.", "Sigil hat keine Telemetrie, keine Analyse und keine Absturzmeldungen. Es geht nur für die Funktionen unten online und sendet nie von sich aus etwas über dich."),

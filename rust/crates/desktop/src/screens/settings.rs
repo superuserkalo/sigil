@@ -1812,6 +1812,14 @@ fn appearance(s: &State, u: &Ui) -> El {
             prefs::edit(st, |p| p.zoom = pct as f32 / 100.0)
         }),
     )];
+    interface.push(toggle_row(
+        u,
+        "settings-reduce-motion",
+        "Reduce motion",
+        "Menus, drawers and selections change at once.",
+        s.prefs.reduce_motion,
+        |st| prefs::edit(st, |p| p.reduce_motion = !p.reduce_motion),
+    ));
     interface.extend(personalize::interface_rows(s, u));
     col()
         .w_full()

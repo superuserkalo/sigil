@@ -376,6 +376,9 @@ pub struct Prefs {
     pub channel: Channel,
     pub custom_accents: Vec<String>,
     pub transparent_sidebar: bool,
+    /// Settings > Appearance > Reduce motion: menus, drawers and selections change at once.
+    /// Off by default; the system setting reduces motion either way.
+    pub reduce_motion: bool,
     /// The quiet bar under every page: game, catalog, downloads, profile, volume, update.
     pub status_bar: bool,
     pub single_launch: bool,
@@ -422,6 +425,7 @@ impl Default for Prefs {
             channel: Channel::Stable,
             custom_accents: Vec::new(),
             transparent_sidebar: false,
+            reduce_motion: false,
             status_bar: true,
             single_launch: false,
             flags: BTreeMap::new(),
@@ -543,6 +547,7 @@ impl Prefs {
                 })
                 .unwrap_or_default(),
             transparent_sidebar: b("transparent_sidebar", d.transparent_sidebar),
+            reduce_motion: b("reduce_motion", d.reduce_motion),
             status_bar: b("status_bar", d.status_bar),
             single_launch: b("single_launch", d.single_launch),
             flags: map
@@ -654,6 +659,7 @@ impl Prefs {
         map.insert("channel".into(), json!(self.channel.id()));
         map.insert("custom_accents".into(), json!(self.custom_accents));
         map.insert("transparent_sidebar".into(), json!(self.transparent_sidebar));
+        map.insert("reduce_motion".into(), json!(self.reduce_motion));
         map.insert("status_bar".into(), json!(self.status_bar));
         map.insert("single_launch".into(), json!(self.single_launch));
         map.insert("flags".into(), json!(self.flags));
@@ -674,7 +680,9 @@ impl Prefs {
 
     /// Write the file through a temporary sibling. Headless runs write nothing.
     pub fn save(&self) -> Result<(), String> {
-        if rune::is_headless() {
+        // Unit tests drive real handlers (a settings switch saves): never into the player's own
+        // settings unless a test points the data folder somewhere.
+        if rune::is_headless() || (cfg!(test) && std::env::var_os("DAH_DATA_DIR").is_none()) {
             return Ok(());
         }
         let path = path();
@@ -804,6 +812,7 @@ mod tests {
             channel: Channel::Preview,
             custom_accents: vec!["#12ab34".into(), "#abc".into()],
             transparent_sidebar: true,
+            reduce_motion: true,
             status_bar: false,
             single_launch: true,
             flags: [("servers".to_string(), false), ("docked_details".to_string(), true)]

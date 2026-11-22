@@ -59,6 +59,7 @@ pub const INDEX: &[Entry] = &[
     e(Tab::Appearance, "Theme", "Dark, light and the rest.", "dark light oled colors"),
     e(Tab::Appearance, "Accent colour", "The colour of the main action and switches.", "accent color colour custom hex"),
     e(Tab::Appearance, "Interface size", "Scales text, icons and spacing.", "zoom scale font size"),
+    e(Tab::Appearance, "Reduce motion", "Menus, drawers and selections change at once.", "animation motion fade slide accessibility"),
     e(Tab::Appearance, "Transparent sidebar", "The sidebar sits on the page background.", "sidebar background"),
     e(Tab::Appearance, "Status bar", "A quiet line under every page.", "bottom bar footer downloads volume catalog profile"),
     // Integrations

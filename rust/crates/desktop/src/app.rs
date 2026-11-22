@@ -1155,7 +1155,7 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
         .layout_size("root")
         .map_or((1360.0, 860.0), |size| (size[0], size[1]));
     // Reduce motion: the system setting, or Settings > Appearance. Every motion token reads it.
-    crate::motion::set_reduced(cx.is_reduced_motion());
+    crate::motion::set_reduced(cx.is_reduced_motion() || s.prefs.reduce_motion);
     let u = Ui::new();
     cx.foreground(u.ink);
     cx.caption_color(u.muted);

@@ -44,6 +44,11 @@ volume. Cmd or Ctrl+B collapses the sidebar. Cmd or Ctrl+comma opens Settings. C
 minus and 0 change the interface size. Alt+Enter or F11 switches full screen. The mouse back and
 forward buttons walk back and forward through pages, mod pages and creator pages.
 
+Motion is short and only follows what you do: a new page fades in, menus and dialogs rise into
+place, selections slide, and shelves page with a short slide. Nothing moves at rest or while work
+runs, and nothing in the page moves out of the way. Settings > Appearance > Reduce motion (off by
+default) makes all of it change at once; the system's reduce motion setting does the same.
+
 ## Browse
 
 Browse reads GameBanana live. The tabs are Mods, Sounds, WiPs and All. Pick a category, a
