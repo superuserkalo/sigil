@@ -22,6 +22,7 @@ mod jobs;
 mod jank_tests;
 mod memory;
 mod model;
+mod motion;
 mod notify;
 mod package_manager;
 mod prefs;
