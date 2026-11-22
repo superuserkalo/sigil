@@ -1155,6 +1155,8 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
     let window = cx
         .layout_size("root")
         .map_or((1360.0, 860.0), |size| (size[0], size[1]));
+    // Reduce motion: the system setting, or Settings > Appearance. Every motion token reads it.
+    crate::motion::set_reduced(cx.is_reduced_motion());
     let u = Ui::new();
     cx.foreground(u.ink);
     cx.caption_color(u.muted);
@@ -1205,8 +1207,7 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
     if let Some(banner) = crate::banner::view(s, &u) {
         main = main.child(banner);
     }
-    let mut root = row()
-        .key("root")
+    let mut root = crate::motion::root(row().key("root"))
         .w_full()
         .h_full()
         .fill(u.bg)
