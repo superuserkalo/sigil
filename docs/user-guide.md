@@ -94,6 +94,12 @@ list or tag them. A mod's menu also has:
 - **Load first**, earlier and later to move it in the load order.
 - **Reinstall**, **Delete** and **Delete and reinstall**. Deletes move the files to Sigil's trash
   with Undo.
+- **While Deadlock runs** the game holds its mod files open, so a delete or a switch off asks
+  first: **Delete when Deadlock closes** (or Turn off when Deadlock closes) or Cancel, with **Do
+  this from now on**. A file the OS reports as in use offers the same. A waiting mod shows a clock
+  mark (press it to cancel), the status row counts the waiting changes and opens a review, and the
+  changes run in order once the game closes, with one notice. A mod that changed since you chose
+  it is left alone. Turning a mod on never waits: it loads on the next start.
 - **Backups** for the copy an update replaced, with Put this version back.
 - **View imprint** for the file's fingerprint, its embedded addon information and where it came
   from.
