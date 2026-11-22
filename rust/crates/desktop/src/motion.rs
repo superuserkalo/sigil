@@ -38,14 +38,17 @@ fn tween(seconds: f32) -> Anim {
     if reduced() { Anim::INSTANT } else { Curve::tween(seconds, Easing::EASE_OUT).into() }
 }
 
-/// The pointer arrives: hover and press fills light over 70 ms.
+/// The pointer arrives: hover and press fills light at once. Measured: a 70 ms ease in with
+/// a 140 ms fade out (the spec's first values) drew 20 to 45 percent more frames in a pointer
+/// sweep than Rune's own default (at once in, 100 ms out), with no commit either way, so the
+/// tokens keep that cost: the hover answers in the frame the pointer arrives.
 pub fn hover_in() -> Anim {
-    tween(0.07)
+    Anim::INSTANT
 }
 
-/// The pointer leaves: hover fills fade over 140 ms.
+/// The pointer leaves: hover fills fade over 100 ms.
 pub fn hover_out() -> Anim {
-    tween(0.14)
+    tween(0.10)
 }
 
 /// 90 ms: fills, colours, the switch knob, a slider settling, a drag dim.
