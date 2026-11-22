@@ -350,7 +350,9 @@ fn shortcuts(u: &Ui) -> El {
 
 fn bar(u: &Ui) -> El {
     // Parts carry 8 points of padding, so their icons start on the page's 24 point edge.
-    row()
+    // Parts that come and go with the page (the catalog on Browse) land at once: a status line
+    // never fades.
+    crate::motion::lands(row())
         .key("statusbar")
         .role("status")
         .label(tr("Status bar"))

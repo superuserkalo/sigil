@@ -1231,6 +1231,15 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
         })
         .child(sidebar(s, &u, insets))
         .child({
+            // The page body is keyed per screen: after a sidebar press the new one fades in over
+            // 120 ms and the old one is gone in the same frame, so one page is ever mounted.
+            let body = col()
+                .key(format!("page-{}", s.screen.key()))
+                .grow(1.0)
+                .min_h(0.0)
+                .w_full()
+                .transition(crate::motion::page_enter())
+                .child(body);
             let main = main.child(col().key("page").grow(1.0).min_h(0.0).w_full().child(body));
             match crate::statusbar::view(s, &u) {
                 Some(bar) => main.child(bar),

@@ -34,6 +34,11 @@ pub struct Feeds {
 pub struct Shelves {
     /// The page each shelf shows.
     pub pages: [usize; SLOTS],
+    /// The way each shelf last paged (1 forward, -1 back), so the new page slides in from
+    /// the side it comes from.
+    pub dirs: [i8; SLOTS],
+    /// The same for the spotlight.
+    pub spot_dir: i8,
     /// The reads, once they land. Decided once per run: a late read never inserts a shelf
     /// above what is on screen, because every shelf is drawn at full size from the start.
     pub feeds: Option<Feeds>,
@@ -266,6 +271,7 @@ fn arrow(u: &Ui, slot: usize, key: &'static str, forward: bool, enabled: bool, p
         .on_press(move |st: &mut State| {
             let page = &mut st.browse_view.shelves.pages[slot];
             *page = if forward { (*page + 1).min(pages.saturating_sub(1)) } else { page.saturating_sub(1) };
+            st.browse_view.shelves.dirs[slot] = if forward { 1 } else { -1 };
         })
 }
 
@@ -311,7 +317,17 @@ pub fn shelf(
         .child(arrow(u, slot, key, false, page > 0, pages))
         .child(arrow(u, slot, key, true, page + 1 < pages, pages));
     let head = u.section_head(title, None, Some(controls));
-    let mut strip = row().key(key).w_full().gap(gap);
+    // One page row keyed by its number: a new page comes in 32 points from the side it pages
+    // from while fading in, the old one fades out in place. Its slots keep their size, so
+    // nothing around the shelf moves; the page's scroll viewport clips the travel at its edges
+    // (a clip here would cut the cards' focus rings).
+    let mut strip = row()
+        .key(format!("{key}-page-{page}"))
+        .w_full()
+        .gap(gap)
+        // A leaving page stays in the tree after the arriving one, so it would paint over it.
+        .paint_order(1)
+        .transition(crate::motion::paged(s.browse_view.shelves.dirs[slot]));
     if tiles.is_empty() {
         // Everything this shelf had is already on the landing: one quiet line at the shelf's
         // full height, so nothing below moves.
@@ -338,7 +354,12 @@ pub fn shelf(
     for _ in shown..n {
         strip = strip.child(el().w(tile_w).min_w(tile_w));
     }
-    col().key(format!("{key}-shelf")).w_full().gap(8.0).child(head).child(strip)
+    col()
+        .key(format!("{key}-shelf"))
+        .w_full()
+        .gap(8.0)
+        .child(head)
+        .child(col().key(key).w_full().child(strip))
 }
 
 #[cfg(test)]

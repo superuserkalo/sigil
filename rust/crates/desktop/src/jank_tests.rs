@@ -351,6 +351,7 @@ const MOTION_CASES: &[(&str, &[Step], Step, f32)] = &[
     ("servers-detail", &[], Step::Press("server-panel-close"), 800.0),
     ("crosshair", &[], Step::Press("crosshair-groups-1"), 1400.0),
     ("browse-view-menu", &[], Step::Press("menu-size-large"), 800.0),
+    ("demo-installed", &[], Step::Press("nav-browse"), 800.0),
 ];
 
 /// Keys whose element, and everything under it, may travel or fade: overlays and the parts
@@ -571,6 +572,7 @@ fn overlays_and_selections_move() {
         ("demo-installed", &[], Step::Press("nav-settings"), "settings-panel", 800.0),
         ("crosshair", &[], Step::Press("crosshair-groups-1"), "crosshair-groups-indicator", 1400.0),
         ("browse-view-menu", &[], Step::Press("menu-size-large"), "menu-seg-Cards-thumb", 800.0),
+        ("demo-installed", &[], Step::Press("nav-browse"), "page-browse", 800.0),
     ];
     let mut wrong = Vec::new();
     for &(scene_name, before, step, key, height) in cases {
@@ -607,3 +609,71 @@ fn overlays_and_selections_move() {
     assert!(wrong.is_empty(), "expected motion is missing or long:\n{}", wrong.join("\n"));
 }
 
+/// A sidebar press leaves one page mounted: the frame after it, nothing of the old page is
+/// drawn, not even fading out, while the new page fades in. A shelf's old page fades out in
+/// place under the new one, which paints last.
+#[test]
+fn page_switch_leaves_one_page() {
+    let _globals = crate::ui::test_globals();
+    let mut rt = runtime("demo-installed", (1280.0, 800.0));
+    apply(&mut rt, Step::Press("nav-browse"), "nav-browse");
+    rt.frame(1.0 / 60.0);
+    let old: Vec<String> = rt
+        .elements()
+        .into_iter()
+        .filter(|e| e.path.split('/').any(|seg| seg == "page-installed"))
+        .take(3)
+        .map(|e| e.path)
+        .collect();
+    assert!(old.is_empty(), "the old page is still drawn after the switch: {old:?}");
+    let new = rt.elements().into_iter().find(|e| e.key.as_deref() == Some("page-browse")).map(|e| e.opacity);
+    assert!(new.is_some_and(|o| o > 0.0 && o < 1.0), "the new page should be fading in, at {new:?}");
+
+}
+
+fn shelf_view(s: &State, cx: &mut rune::Cx<State>) -> rune::El {
+    crate::motion::set_reduced(cx.is_reduced_motion());
+    let u = crate::ui::Ui::new();
+    let tiles = (0..12).map(|i| rune::el().key(format!("tile-{i}")).size(100.0, 60.0).fill(u.hover)).collect();
+    crate::motion::root(rune::col().key("root").w_full().h_full().padding(24.0)).child(
+        crate::screens::browse::shelf::shelf(s, &u, 0, "test-shelf", "Shelf", None, tiles, 4, 100.0, 8.0),
+    )
+}
+
+/// A shelf page comes in 32 points from the side it pages from while fading in, and the old
+/// page fades out in place; the shelf, its head and its arrows stay where they are.
+#[test]
+fn shelf_paging_slides_the_page_only() {
+    let _globals = crate::ui::test_globals();
+    let mut rt = Runtime::new(crate::data::init_state(), shelf_view, (800.0, 300.0), Env::new(true, 1.0));
+    rt.check_live_only(false);
+    settle(&mut rt);
+    let still = |rt: &Runtime<State>| -> Vec<(String, [i32; 4])> {
+        rects(rt).into_iter().filter(|(k, _)| !k.contains("-page-") && !k.starts_with("tile-")).collect()
+    };
+    let before = still(&rt);
+    apply(&mut rt, Step::Press("test-shelf-next"), "shelf next");
+    let mut xs = Vec::new();
+    let mut both = false;
+    for n in 0..40 {
+        rt.frame(1.0 / 60.0);
+        let pages: Vec<(String, bool, f32, f32)> = rt
+            .elements()
+            .into_iter()
+            .filter(|e| e.key.as_deref().is_some_and(|k| k.starts_with("test-shelf-page-")))
+            .map(|e| (e.key.unwrap_or_default(), e.exiting, e.rect[0], e.opacity))
+            .collect();
+        if n == 1 {
+            eprintln!("motion: shelf pages in tree order {pages:?}");
+        }
+        both |= pages.len() == 2;
+        if let Some(p) = pages.iter().find(|p| p.0 == "test-shelf-page-1") {
+            xs.push(p.2);
+        }
+        assert_eq!(still(&rt), before, "frame {n}: the shelf around the page moved");
+    }
+    assert!(both, "the old page should fade out while the new one comes in");
+    let first = xs.first().copied().unwrap_or(0.0);
+    let last = xs.last().copied().unwrap_or(0.0);
+    assert!(first > last + 8.0, "page 2 should come in from the right: x {first} to {last}");
+}

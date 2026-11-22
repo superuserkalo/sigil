@@ -197,3 +197,9 @@ pub fn slides(e: El, spring: Spring) -> El {
 pub fn dims(e: El) -> El {
     e.opacity_motion(fast())
 }
+
+/// A strip whose parts come and go with the page (the status bar): everything in it lands at
+/// once, mounts and unmounts included. Colours keep their own easing.
+pub fn lands(e: El) -> El {
+    e.instant_changes()
+}

@@ -97,6 +97,7 @@ fn pager_button(u: &Ui, key: &'static str, forward: bool, enabled: bool, count: 
         .on_press(move |st: &mut State| {
             let spot = &mut st.browse_view.shelves.spot;
             *spot = if forward { (*spot + 1).min(count.saturating_sub(1)) } else { spot.saturating_sub(1) };
+            st.browse_view.shelves.spot_dir = if forward { 1 } else { -1 };
         })
 }
 
@@ -117,13 +118,24 @@ pub fn view(s: &State, u: &Ui) -> El {
         .size(sz.cover_w, sz.cover_h)
         .min_w(sz.cover_w)
         .fill(u.hover)
-        .border_sides([0.0, 1.0, 0.0, 0.0], u.hair);
+        .border_sides([0.0, 1.0, 0.0, 0.0], u.hair)
+        .clip_rounded(0.0);
     if let Some(p) = pick {
         let veil = veiled(s, p.id, p.nsfw);
-        cover = cover.child(image_fill(s, format!("spot-{}", p.id), p.image_url.as_ref(), [0.0; 4], veil));
+        // The picture pages as a shelf does: the next pick comes in 32 points from the side
+        // it pages from while fading in, the last one fades out in place.
+        let mut picture = el()
+            .key(format!("browse-spot-page-{}", p.id))
+            .absolute(0.0, 0.0)
+            .w_full()
+            .h_full()
+            .paint_order(1)
+            .transition(crate::motion::paged(s.browse_view.shelves.spot_dir))
+            .child(image_fill(s, format!("spot-{}", p.id), p.image_url.as_ref(), [0.0; 4], veil));
         if veil {
-            cover = cover.child(nsfw_veil(u, "spot", p.id, true));
+            picture = picture.child(nsfw_veil(u, "spot", p.id, true));
         }
+        cover = cover.child(picture);
         let opened = card_of(p);
         cover = cover
             .focusable(true)
