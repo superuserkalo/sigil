@@ -63,6 +63,9 @@ pub struct View {
     pub glow_to: TextEdit,
     /// Decoded images last poll (see `ready_count`).
     pub ready: usize,
+    /// "More themes" under Appearance's theme row. None follows the pick: open while a preset
+    /// or a theme of your own is in use.
+    pub more: Option<bool>,
 }
 
 // --- the shell ---------------------------------------------------------------------
@@ -711,13 +714,14 @@ fn export_file(st: &mut State, tx: &mut Tx, id: String) {
 
 // --- the view ----------------------------------------------------------------------
 
-/// The Personalize sections under Appearance: the theme builder while drafting, then the
-/// background image, glow and sidebar art.
+/// The theme builder while drafting, drawn right under the theme row.
+pub fn builder_view(s: &State, u: &Ui) -> Option<El> {
+    s.settings.personalize.draft.as_ref().map(|draft| builder(s, u, draft))
+}
+
+/// The Personalize sections under Appearance: the background image, glow and sidebar art.
 pub fn view(s: &State, u: &Ui) -> El {
-    let mut c = col().key("settings-personalize").w_full().gap(super::LIST_GAP_PUB);
-    if let Some(draft) = &s.settings.personalize.draft {
-        c = c.child(builder(s, u, draft));
-    }
+    let c = col().key("settings-personalize").w_full().gap(super::LIST_GAP_PUB);
     c.child(background_section(s, u))
         .child(glow_section(s, u))
         .child(art_section(s, u))
@@ -731,12 +735,13 @@ pub fn interface_rows(s: &State, u: &Ui) -> Vec<El> {
                     "settings-radius",
                     "Corners",
                     detail(u, "Rounding on buttons, fields, panels and dialogs."),
-                    segmented(
+                    super::segmented_w(
                         u,
                         "settings-radius-pick",
                         &Radius::ALL.map(|r| (r, r.label())),
                         s.prefs.personal.radius,
                         |st, radius| edit(st, |p| p.radius = radius),
+                        super::DISPLAY_CONTROL_W,
                     ),
                 ),
                 setting_row(
@@ -744,12 +749,13 @@ pub fn interface_rows(s: &State, u: &Ui) -> Vec<El> {
                     "settings-density",
                     "Density",
                     detail(u, "Sizes for text, rows and controls. The zoom shortcuts fine-tune it."),
-                    segmented(
+                    super::segmented_w(
                         u,
                         "settings-density-pick",
                         &Density::ALL.map(|d| (d, d.label())),
                         s.prefs.personal.density,
                         |st, density| edit(st, |p| p.density = density),
+                        super::DISPLAY_CONTROL_W,
                     ),
                 ),
     ]
@@ -797,81 +803,80 @@ fn palette_picture(p: &Palette, h: f32) -> El {
         )
 }
 
-fn preset_tile(s: &State, u: &Ui, index: usize) -> El {
-    let preset = &PRESETS[index];
-    let on = s.prefs.personal.theme == Some(ThemePick::Preset(preset.id));
-    let id = preset.id;
-    col()
-        .key(format!("settings-preset-{id}"))
-        .w(92.0)
-        .gap(6.0)
-        .focusable(true)
-        .role("radio")
-        .checked(on)
-        .label(tr(preset.name).to_string())
-        .cursor(rune::Cursor::Pointer)
-        .on_press(move |st: &mut State| {
-            st.settings.personalize.draft = None;
-            edit(st, |p| p.theme = Some(ThemePick::Preset(id)))
-        })
-        .child(
-            col()
-                .w_full()
-                .padding(2.0)
-                .radius(crate::ui::r(8.0))
-                .border(1.0, if on { u.ink } else { Color::TRANSPARENT })
-                .child(palette_picture(&preset.palette(), 64.0)),
-        )
-        .child(
-            text(tr(preset.name).to_string())
-                .font(SMALL)
-                .color(if on { u.ink } else { u.muted })
-                .a11y_hidden(),
-        )
+/// Whether "More themes" is open.
+pub fn more_open(s: &State) -> bool {
+    s.settings.personalize.more.unwrap_or(s.prefs.personal.theme.is_some())
 }
 
-/// The rows of Appearance's one Theme section after the built-in tiles: presets, your
-/// themes and import.
-pub fn theme_rows(s: &State, u: &Ui) -> Vec<El> {
-    let p = &s.prefs.personal;
-    let mut tiles = row()
-        .key("settings-presets")
+pub fn toggle_more(st: &mut State) {
+    let open = more_open(st);
+    st.settings.personalize.more = Some(!open);
+}
+
+/// A quiet label over a group inside "More themes", with an optional trailing control.
+fn sub_head(u: &Ui, title: &str, trailing: Option<El>) -> El {
+    let mut r = row()
         .w_full()
-        .flex_wrap()
-        .gap(12.0);
-    for index in 0..PRESETS.len() {
-        tiles = tiles.child(preset_tile(s, u, index));
-    }
-    let mut actions = row()
+        .h(24.0)
         .gap(8.0)
         .center_y()
-        .child(
-            button(u, "settings-theme-new", "New theme", ActionKind::Secondary)
-                .on_press(new_theme),
-        );
-    if p.theme.is_some() {
-        actions = actions.child(
-            button(u, "settings-theme-stop", "Use the theme above", ActionKind::Ghost)
-                .on_press(|st: &mut State| {
-                    st.settings.personalize.draft = None;
-                    edit(st, |p| p.theme = None)
-                }),
-        );
+        .child(text(tr(title).to_string()).font(crate::ui::LABEL).color(u.muted));
+    if let Some(t) = trailing {
+        r = r.child(spacer()).child(t);
     }
-    let mut rows = vec![stacked_row(
-        u,
-        "settings-presets-row",
-        "Presets",
-        "Picking one replaces the theme above until you choose a theme there.",
-        col().w_full().gap(16.0).child(tiles).child(actions),
-    )];
+    r
+}
+
+/// "More themes": the presets as chips in two even rows of five, your themes, then new and
+/// import on one line. One bordered box under the theme row.
+pub fn more_themes(s: &State, u: &Ui) -> El {
+    let p = &s.prefs.personal;
+    let mut presets = col()
+        .key("settings-presets")
+        .w_full()
+        .gap(8.0)
+        .help(tr("Picking one replaces the theme above until you choose a theme there."));
+    for chunk in PRESETS.chunks(5) {
+        let mut line = row().w_full().gap(8.0);
+        for preset in chunk {
+            let on = p.theme == Some(ThemePick::Preset(preset.id));
+            let id = preset.id;
+            let t = preset.palette().to_ui();
+            line = line.child(
+                super::theme_chip(u, &t, format!("settings-preset-{id}"), tr(preset.name), on)
+                    .on_press(move |st: &mut State| {
+                        st.settings.personalize.draft = None;
+                        edit(st, |p| p.theme = Some(ThemePick::Preset(id)))
+                    }),
+            );
+        }
+        presets = presets.child(line);
+    }
+    let stop = p.theme.is_some().then(|| {
+        u.action_m(tr("Use the theme above"), ActionKind::Ghost)
+            .key("settings-theme-stop")
+            .cursor(rune::Cursor::Pointer)
+            .on_press(|st: &mut State| {
+                st.settings.personalize.draft = None;
+                edit(st, |p| p.theme = None)
+            })
+    });
+    let mut c = col()
+        .key("settings-more-themes")
+        .w_full()
+        .padding(12.0)
+        .gap(8.0)
+        .radius(crate::ui::r(4.0))
+        .border(1.0, u.hair)
+        .child(sub_head(u, "Presets", stop))
+        .child(presets);
 
     if !p.themes.is_empty() {
         let mut list = col().key("settings-my-themes").w_full();
         for theme in &p.themes {
             list = list.child(saved_row(s, u, theme));
         }
-        rows.push(stacked_row(u, "settings-my-themes-row", "Your themes", "", list));
+        c = c.child(sub_head(u, "Your themes", None)).child(list);
     }
 
     let paste = rune::text_input(&s.settings.personalize.paste, MONO)
@@ -884,38 +889,57 @@ pub fn theme_rows(s: &State, u: &Ui) -> Vec<El> {
         .caret(u.accent, u.accent.alpha(0.22))
         .on_edit(|st: &mut State| &mut st.settings.personalize.paste);
     let empty = s.settings.personalize.paste.text.trim().is_empty();
-    rows.push(stacked_row(
-        u,
-        "settings-theme-import",
-        "Import a theme",
-        "Paste a theme code someone shared, or open a theme file.",
-        row()
-            .w_full()
-            .gap(8.0)
-            .center_y()
-            .child(
-                row()
-                    .grow(1.0)
-                    .min_w(0.0)
-                    .h(32.0)
-                    .px(10.0)
-                    .center_y()
-                    .radius(crate::ui::r(8.0))
-                    .fill(u.well)
-                    .border(1.0, u.hair)
-                    .child(paste),
-            )
-            .child(super::disabled(
-                button(u, "settings-theme-import-go", "Import", ActionKind::Secondary)
-                    .on_press(import_pasted),
-                empty,
-            ))
-            .child(
-                button(u, "settings-theme-import-file", "Open file", ActionKind::Ghost)
-                    .on_press_tx(|st: &mut State, tx: &mut Tx| import_file(st, tx)),
-            ),
-    ));
-    rows
+    c.child(
+        super::mark_hit(
+            col()
+                .key("settings-theme-import")
+                .w_full()
+                .gap(8.0)
+                .pt(8.0)
+                .border_sides([1.0, 0.0, 0.0, 0.0], u.hair)
+                .child(sub_head(u, "Import a theme", None))
+                .child(
+                    row()
+                        .w_full()
+                        .gap(8.0)
+                        .center_y()
+                        .help(tr("Paste a theme code someone shared, or open a theme file."))
+                        .child(
+                            row()
+                                .grow(1.0)
+                                .min_w(0.0)
+                                .h(28.0)
+                                .px(8.0)
+                                .center_y()
+                                .radius(crate::ui::r(4.0))
+                                .fill(u.well)
+                                .border(1.0, u.hair)
+                                .child(paste),
+                        )
+                        .child(super::disabled(
+                            u.action_m(tr("Import"), ActionKind::Secondary)
+                                .key("settings-theme-import-go")
+                                .cursor(rune::Cursor::Pointer)
+                                .on_press(import_pasted),
+                            empty,
+                        ))
+                        .child(
+                            u.action_m(tr("Open file"), ActionKind::Secondary)
+                                .key("settings-theme-import-file")
+                                .cursor(rune::Cursor::Pointer)
+                                .on_press_tx(|st: &mut State, tx: &mut Tx| import_file(st, tx)),
+                        )
+                        .child(
+                            u.action_m(tr("New theme"), ActionKind::Secondary)
+                                .key("settings-theme-new")
+                                .cursor(rune::Cursor::Pointer)
+                                .on_press(new_theme),
+                        ),
+                ),
+            u,
+            "Import a theme",
+        ),
+    )
 }
 
 fn saved_row(s: &State, u: &Ui, theme: &model::SavedTheme) -> El {

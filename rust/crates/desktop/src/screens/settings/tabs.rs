@@ -52,26 +52,26 @@ pub fn general(s: &State, u: &Ui) -> El {
         .gap(LIST_GAP)
         .child(section(
             u,
-            "",
+            "Language and dates",
             vec![
                 setting_row(
                     u,
                     "settings-language",
                     "Language",
                     detail(u, &lang_line),
-                    segmented(u, "settings-language-pick", &langs, s.prefs.language, |st, lang| {
+                    super::segmented_w(u, "settings-language-pick", &langs, s.prefs.language, |st, lang| {
                         prefs::edit(st, |p| p.language = lang);
                         i18n::set(lang);
-                    }),
+                    }, super::CONTROL_W),
                 ),
                 setting_row(
                     u,
                     "settings-date-format",
                     "Dates",
                     detail(u, ""),
-                    segmented(u, "settings-date-pick", &dates, s.prefs.date_format, |st, f| {
+                    super::segmented_w(u, "settings-date-pick", &dates, s.prefs.date_format, |st, f| {
                         prefs::edit(st, |p| p.date_format = f)
-                    }),
+                    }, super::CONTROL_W),
                 ),
             ],
         ))
@@ -84,9 +84,9 @@ pub fn general(s: &State, u: &Ui) -> El {
                     "settings-startup",
                     "Open on",
                     detail(u, "The page Sigil shows when it starts."),
-                    segmented(u, "settings-startup-pick", &startup, s.prefs.startup, |st, screen| {
+                    super::segmented_w(u, "settings-startup-pick", &startup, s.prefs.startup, |st, screen| {
                         prefs::edit(st, |p| p.startup = screen)
-                    }),
+                    }, super::CONTROL_W),
                 ),
                 toggle_row(
                     u,
@@ -123,9 +123,9 @@ pub fn general(s: &State, u: &Ui) -> El {
                     "settings-on-launch",
                     "When the game starts",
                     detail(u, "What Sigil does once Steam starts Deadlock."),
-                    segmented(u, "settings-on-launch-pick", &launch, s.prefs.on_launch, |st, o| {
+                    super::segmented_w(u, "settings-on-launch-pick", &launch, s.prefs.on_launch, |st, o| {
                         prefs::edit(st, |p| p.on_launch = o)
-                    }),
+                    }, super::CONTROL_W),
                 ),
                 toggle_row(
                     u,

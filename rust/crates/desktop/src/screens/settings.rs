@@ -69,6 +69,9 @@ const MARGIN: f32 = 32.0;
 const RADIUS: f32 = 14.0;
 const CONTENT_MAX: f32 = 680.0;
 const ROW_H: f32 = 56.0;
+/// The open category's title: one step above `PAGE_TITLE` so it clearly leads the 12 point
+/// section heads under it. A 28 point line inside the 32 point header.
+const SHEET_TITLE: rune::TextStyle = rune::TextStyle::new(20.0, 600.0).lh(28.0).tracking(-0.3);
 const FIELD_W: f32 = 280.0;
 /// Space between the sections of a category.
 const LIST_GAP: f32 = 24.0;
@@ -557,7 +560,10 @@ pub fn modal(s: &State, u: &Ui, window: (f32, f32)) -> Option<El> {
         .h(24.0)
         .px(24.0)
         .center_y()
-        .border_sides([1.0, 0.0, 0.0, 0.0], u.hair);
+        .border_sides(
+            [1.0, 0.0, 0.0, 0.0],
+            if s.settings.message.is_some() { u.hair } else { Color::TRANSPARENT },
+        );
     if let Some((message, error)) = &s.settings.message {
         foot = foot.child(
             text(message.clone())
@@ -580,7 +586,7 @@ pub fn modal(s: &State, u: &Ui, window: (f32, f32)) -> Option<El> {
         .center_y()
         .child(
             text(heading)
-                .font(PAGE_TITLE)
+                .font(SHEET_TITLE)
                 .color(u.ink)
                 .role("heading")
                 .level(1)
@@ -599,15 +605,28 @@ pub fn modal(s: &State, u: &Ui, window: (f32, f32)) -> Option<El> {
         .h_full()
         .child(head)
         .child(
-            col()
-                .key("settings-scroll")
+            el().key("settings-scroll-frame")
                 .w_full()
                 .grow(1.0)
                 .min_h(0.0)
-                .scroll(ScrollSpec {
-                    stick_bottom: false,
-                })
-                .child(pane),
+                .child(
+                    col()
+                        .key("settings-scroll")
+                        .w_full()
+                        .h_full()
+                        .scroll(ScrollSpec {
+                            stick_bottom: false,
+                        })
+                        .child(pane),
+                )
+                // A 24 point fade over the last rows says the list goes on; paint only.
+                .child(
+                    el().key("settings-scroll-fade")
+                        .pin(Some(0.0), None, Some(0.0), Some(0.0))
+                        .h(24.0)
+                        .gradient(u.bg.alpha(0.0), u.bg)
+                        .a11y_hidden(),
+                ),
         )
         .child(foot);
     let panel = row()
@@ -837,11 +856,34 @@ fn section(u: &Ui, title: &str, rows: Vec<El>) -> El {
     for r in rows {
         list = list.child(r);
     }
-    let mut c = col().w_full().gap(8.0);
+    let mut c = col().w_full();
     if !title.is_empty() {
-        c = c.child(u.section(tr(title)));
+        c = c.child(sheet_head(u, title, None));
     }
     c.child(list)
+}
+
+/// A section head in the sheet: small capitals in `muted` over a hairline, so it reads as a
+/// group label above the 13 point row titles, never as one more row. 32 high, the optional
+/// trailing control sits on its right edge.
+fn sheet_head(u: &Ui, title: &str, trailing: Option<El>) -> El {
+    let mut line = row()
+        .w_full()
+        .h(32.0)
+        .gap(8.0)
+        .center_y()
+        .border_sides([0.0, 0.0, 1.0, 0.0], u.hair_strong)
+        .child(
+            text(tr(title).to_uppercase())
+                .font(SECTION.tracking(0.8))
+                .color(u.muted)
+                .role("heading")
+                .level(2),
+        );
+    if let Some(trailing) = trailing {
+        line = line.child(spacer()).child(trailing);
+    }
+    line
 }
 
 /// A settings row: title, one line under it, and a trailing control. 56 points, one hairline.
@@ -887,7 +929,7 @@ fn detail(u: &Ui, s: &str) -> El {
     if s.is_empty() {
         return el().size(0.0, 0.0);
     }
-    text(tr(s).to_string()).font(SMALL).color(u.muted).max_w(400.0).max_lines(2)
+    text(tr(s).to_string()).font(SMALL).color(u.muted).max_w(520.0).max_lines(2)
 }
 
 fn path_detail(u: &Ui, s: &str) -> El {
@@ -919,7 +961,10 @@ fn toggle_row(u: &Ui, key: &str, title: &str, line: &str, on: bool, press: fn(&m
         key,
         title,
         detail(u, line),
+        // The track is 24 wide in a 32 press target: pull it 4 points right so the track ends
+        // on the edge the other controls share.
         u.toggle(on)
+            .mr(-4.0)
             .key(format!("{key}-switch"))
             .label(tr(title).to_string())
             .cursor(rune::Cursor::Pointer)
@@ -937,13 +982,37 @@ fn segmented<T: Copy + PartialEq + 'static>(
     current: T,
     pick: fn(&mut State, T),
 ) -> El {
+    segmented_in(u, key, choices, current, pick, None)
+}
+
+/// `segmented` at a fixed width with even segments (the select takes the same width), so a
+/// column of controls shares its left and right edges.
+fn segmented_w<T: Copy + PartialEq + 'static>(
+    u: &Ui,
+    key: &str,
+    choices: &[(T, &str)],
+    current: T,
+    pick: fn(&mut State, T),
+    width: f32,
+) -> El {
+    segmented_in(u, key, choices, current, pick, Some(width))
+}
+
+fn segmented_in<T: Copy + PartialEq + 'static>(
+    u: &Ui,
+    key: &str,
+    choices: &[(T, &str)],
+    current: T,
+    pick: fn(&mut State, T),
+    width: Option<f32>,
+) -> El {
     let est: f32 = choices
         .iter()
         .map(|(_, l)| tr(l).chars().count() as f32 * 7.0 + 22.0)
         .sum::<f32>()
         + 4.0;
     if choices.len() >= 5 || est > 300.0 {
-        return select_choice(u, key, choices, current, pick);
+        return select_choice(u, key, choices, current, pick, width.unwrap_or(200.0));
     }
     let mut r = row()
         .key(key.to_string())
@@ -954,11 +1023,18 @@ fn segmented<T: Copy + PartialEq + 'static>(
         .fill(u.well)
         .border(1.0, u.hair)
         .role("radiogroup");
+    if let Some(w) = width {
+        r = r.w(w);
+    }
     for (index, (value, label)) in choices.iter().enumerate() {
         let on = *value == current;
         let value = *value;
+        let mut seg = crate::motion::colors(row());
+        if width.is_some() {
+            seg = seg.grow(1.0).min_w(0.0);
+        }
         r = r.child(
-            crate::motion::colors(row())
+            seg
                 .key(format!("{key}-{index}"))
                 .h_full()
                 .px(10.0)
@@ -997,6 +1073,7 @@ fn select_choice<T: Copy + PartialEq + 'static>(
     choices: &[(T, &str)],
     current: T,
     pick: fn(&mut State, T),
+    width: f32,
 ) -> El {
     let now = choices
         .iter()
@@ -1009,7 +1086,7 @@ fn select_choice<T: Copy + PartialEq + 'static>(
         let mut menu = col()
             .key(format!("{key}-menu"))
             .role("listbox")
-            .w(200.0)
+            .w(width)
             .padding(4.0)
             .radius(crate::ui::r(8.0))
             .fill(u.raised.mix(u.over, 0.04).alpha(1.0))
@@ -1057,7 +1134,7 @@ fn select_choice<T: Copy + PartialEq + 'static>(
         }
         SELECT_MENU.with(|m| *m.borrow_mut() = Some(menu));
     }
-    u.select_box(&now, 200.0)
+    u.select_box(&now, width)
         .key(owned.clone())
         .on_press(move |st: &mut State| {
             st.settings.select_open = if st.settings.select_open.as_deref() == Some(owned.as_str()) {
@@ -1681,12 +1758,66 @@ fn demo_backups() -> Vec<BackupEntry> {
 // --- appearance ------------------------------------------------------------------
 
 fn appearance(s: &State, u: &Ui) -> El {
-    let mut tiles = row().key("settings-themes").w_full().flex_wrap().gap(12.0).pt(8.0).pb(16.0);
+    // One compact theme row; presets, your themes and import sit behind "More themes".
+    let mut chips = row().key("settings-themes").w_full().gap(8.0).center_y();
     for theme in Theme::ALL {
-        tiles = tiles.child(theme_tile(s, u, theme));
+        let t = Ui::themed(theme, s.prefs.accent_color());
+        let on = s.prefs.theme == theme && s.prefs.personal.theme.is_none();
+        chips = chips.child(
+            theme_chip(u, &t, format!("settings-theme-{}", theme.id()), tr(theme.label()), on)
+                .on_press(move |st: &mut State| {
+                    st.settings.personalize.draft = None;
+                    prefs::edit(st, |p| {
+                        p.theme = theme;
+                        p.personal.theme = None;
+                    })
+                }),
+        );
+    }
+    let more_open = personalize::more_open(s);
+    let more = row()
+        .key("settings-theme-more")
+        .h(24.0)
+        .px(8.0)
+        .mr(-8.0)
+        .gap(6.0)
+        .center_y()
+        .radius(crate::ui::r(4.0))
+        .hover(u.hover)
+        .press(u.over.alpha(0.08))
+        .focusable(true)
+        .role("button")
+        .expanded(more_open)
+        .label(tr("More themes").to_string())
+        .cursor(rune::Cursor::Pointer)
+        .on_press(personalize::toggle_more)
+        .child(text(tr("More themes").to_string()).font(LABEL).color(u.prose).a11y_hidden())
+        .child(
+            if more_open {
+                icon(&icons::CHEVRON_DOWN, 12.0).rotate(std::f32::consts::PI)
+            } else {
+                icon(&icons::CHEVRON_DOWN, 12.0)
+            }
+            .color(u.muted)
+            .a11y_hidden(),
+        );
+    let mut theme = col()
+        .key("settings-theme-section")
+        .w_full()
+        .child(sheet_head(u, "Theme", Some(more)))
+        .child(
+            row()
+                .w_full()
+                .h(ROW_H)
+                .center_y()
+                .border_sides([0.0, 0.0, 1.0, 0.0], u.hair)
+                .child(chips),
+        );
+    if more_open {
+        theme = theme.child(el().w_full().pt(12.0).child(personalize::more_themes(s, u)));
     }
 
-    let mut swatches = row().key("settings-accents").w_full().gap(10.0).center_y();
+    let mut swatches = row().key("settings-accents").gap(8.0).center_y();
     for (id, label, _) in ACCENTS {
         let accent = if id == "ember" {
             Accent::Theme
@@ -1707,34 +1838,39 @@ fn appearance(s: &State, u: &Ui) -> El {
         .single_line()
         .grow(1.0)
         .color(u.ink)
-        .placeholder("#22c55e", u.faint)
+        .placeholder("#rrggbb", u.faint)
         .caret(u.accent, u.accent.alpha(0.22))
         .on_edit(|st: &mut State| &mut st.settings.accent_hex);
+    // The well previews the typed colour, else the accent in use, so it never reads as an
+    // empty swatch.
+    let preview = typed.unwrap_or(u.accent);
     let custom = row()
         .gap(8.0)
         .center_y()
-        .child(spacer())
+        .child(el().w(1.0).h(20.0).fill(u.hair_strong).a11y_hidden())
         .child(
             el().size(20.0, 20.0)
                 .radius(crate::ui::r(2.0))
-                .fill(typed.unwrap_or(Color::TRANSPARENT))
+                .fill(preview)
                 .border(1.0, u.hair_strong)
                 .a11y_hidden(),
         )
         .child(
             row()
-                .w(132.0)
-                .h(32.0)
-                .px(10.0)
+                .w(112.0)
+                .h(28.0)
+                .px(8.0)
                 .center_y()
-                .radius(crate::ui::r(8.0))
+                .radius(crate::ui::r(4.0))
                 .fill(u.well)
                 .border(1.0, if custom_on { u.accent } else { u.hair })
                 .child(hex_input),
         )
         .child(disabled(
-            button(u, "settings-accent-apply", "Use", ActionKind::Secondary).on_press(
-                |st: &mut State| {
+            u.action_m(tr("Use"), ActionKind::Secondary)
+                .key("settings-accent-apply")
+                .cursor(rune::Cursor::Pointer)
+                .on_press(|st: &mut State| {
                     let typed = st.settings.accent_hex.text.trim().to_lowercase();
                     match prefs::parse_hex(&typed) {
                         Some(_) => {
@@ -1750,20 +1886,27 @@ fn appearance(s: &State, u: &Ui) -> El {
                         }
                         None => say(st, "Type a colour as #rgb or #rrggbb.", true),
                     }
-                },
-            ),
+                }),
             typed.is_none(),
         ));
 
-    let mut accent_rows = vec![stacked_row(
+    // The section head names it; the row holds the swatches and the hex field on one line.
+    let mut accent_rows = vec![mark_hit(
+        row()
+            .key("settings-accent")
+            .w_full()
+            .h(ROW_H)
+            .gap(12.0)
+            .center_y()
+            .border_sides([0.0, 0.0, 1.0, 0.0], u.hair)
+            .help(tr("Marks the main action, switches that are on, and focus. Or type any hex colour."))
+            .child(swatches)
+            .child(custom),
         u,
-        "settings-accent",
         "Accent colour",
-        "Marks the main action, switches that are on, and focus. Or type any hex colour.",
-        swatches.child(custom),
     )];
     if !s.prefs.custom_accents.is_empty() {
-        let mut mine = row().key("settings-my-accents").w_full().gap(10.0).center_y();
+        let mut mine = row().key("settings-my-accents").gap(8.0).center_y();
         for (index, hex) in s.prefs.custom_accents.iter().enumerate() {
             let color = prefs::parse_hex(hex).unwrap_or(Color::TRANSPARENT);
             let accent = Accent::Custom(hex.clone());
@@ -1790,139 +1933,130 @@ fn appearance(s: &State, u: &Ui) -> El {
                     ),
             );
         }
-        accent_rows.push(stacked_row(
+        accent_rows.push(setting_row(
             u,
             "settings-my-accents-row",
             "Your colours",
-            "Colours you used before. Sigil keeps the last six.",
+            detail(u, "Colours you used before. Sigil keeps the last six."),
             mine,
         ));
     }
     let zooms: Vec<(u32, &str)> = vec![(90, "90%"), (100, "100%"), (110, "110%"), (125, "125%")];
     let zoom_now = (s.prefs.zoom * 100.0).round() as u32;
 
-    let mut theme_rows = vec![tiles.border_sides([0.0, 0.0, 1.0, 0.0], u.hair)];
-    theme_rows.extend(personalize::theme_rows(s, u));
-    let mut interface = vec![setting_row(
-        u,
-        "settings-zoom",
-        "Interface size",
-        detail(u, "Scales text, icons and spacing together."),
-        segmented(u, "settings-zoom-pick", &zooms, zoom_now, |st, pct| {
-            prefs::edit(st, |p| p.zoom = pct as f32 / 100.0)
-        }),
-    )];
-    interface.push(toggle_row(
-        u,
-        "settings-reduce-motion",
-        "Reduce motion",
-        "Menus, drawers and selections change at once.",
-        s.prefs.reduce_motion,
-        |st| prefs::edit(st, |p| p.reduce_motion = !p.reduce_motion),
-    ));
-    interface.extend(personalize::interface_rows(s, u));
-    col()
-        .w_full()
-        .gap(LIST_GAP)
-        .child(section(u, "Theme", theme_rows))
-        .child(section(u, "Accent", accent_rows))
-        .child(section(u, "Interface", interface))
-        .child(section(
+    // Interface size and the switches come first so they show without scrolling; corners and
+    // density follow.
+    let mut interface = vec![
+        setting_row(
             u,
-            "Bars",
-            vec![
-                toggle_row(
-                    u,
-                    "settings-transparent-sidebar",
-                    "Transparent sidebar",
-                    "The sidebar sits on the page background, without its own panel.",
-                    s.prefs.transparent_sidebar,
-                    |st| prefs::edit(st, |p| p.transparent_sidebar = !p.transparent_sidebar),
-                ),
-                toggle_row(
-                    u,
-                    "settings-status-bar",
-                    "Status bar",
-                    "A quiet line under every page: the game, the catalog, downloads, your profile, the preview volume and updates.",
-                    s.prefs.status_bar,
-                    |st| prefs::edit(st, |p| p.status_bar = !p.status_bar),
-                ),
-            ],
-        ))
+            "settings-zoom",
+            "Interface size",
+            detail(u, "Scales text, icons and spacing together."),
+            segmented_w(
+                u,
+                "settings-zoom-pick",
+                &zooms,
+                zoom_now,
+                |st, pct| prefs::edit(st, |p| p.zoom = pct as f32 / 100.0),
+                DISPLAY_CONTROL_W,
+            ),
+        ),
+        toggle_row(
+            u,
+            "settings-reduce-motion",
+            "Reduce motion",
+            "Menus, drawers and selections change at once.",
+            s.prefs.reduce_motion,
+            |st| prefs::edit(st, |p| p.reduce_motion = !p.reduce_motion),
+        ),
+        toggle_row(
+            u,
+            "settings-transparent-sidebar",
+            "Transparent sidebar",
+            "The sidebar sits on the page background, without its own panel.",
+            s.prefs.transparent_sidebar,
+            |st| prefs::edit(st, |p| p.transparent_sidebar = !p.transparent_sidebar),
+        ),
+        toggle_row(
+            u,
+            "settings-status-bar",
+            "Status bar",
+            "A quiet line under every page: the game, the catalog, downloads, your profile, the preview volume and updates.",
+            s.prefs.status_bar,
+            |st| prefs::edit(st, |p| p.status_bar = !p.status_bar),
+        ),
+    ];
+    interface.extend(personalize::interface_rows(s, u));
+    let mut c = col().w_full().gap(LIST_GAP).child(theme);
+    if let Some(builder) = personalize::builder_view(s, u) {
+        c = c.child(builder);
+    }
+    c.child(section(u, "Accent", accent_rows))
+        .child(section(u, "Display", interface))
         .child(personalize::view(s, u))
 }
 
-/// A small picture of the theme: its sidebar, a page with three lines, and the accent.
-fn theme_tile(s: &State, u: &Ui, theme: Theme) -> El {
-    let t = Ui::themed(theme, s.prefs.accent_color());
-    let on = s.prefs.theme == theme && s.prefs.personal.theme.is_none();
+/// The width a column of row controls shares (segmented and select), so their left edges
+/// line up. Fits three date formats or four zoom steps.
+pub(crate) const CONTROL_W: f32 = 264.0;
+/// Appearance's Display rows: four zoom steps and three densities, narrower so the
+/// descriptions keep their measure.
+pub(crate) const DISPLAY_CONTROL_W: f32 = 240.0;
+
+/// A theme as a chip: a small picture of its sidebar, page and accent, then the name. All
+/// chips in a row share its width. Selected: accent border, `selected` fill and a check in
+/// the picture, all inside the same fixed box.
+pub(crate) fn theme_chip(u: &Ui, t: &Ui, key: String, name: &str, on: bool) -> El {
+    // Sidebar strip, a line of ink on the page and the accent: enough to tell the dark
+    // themes apart by their page colour and ink.
     let picture = row()
-        .w_full()
-        .h(64.0)
-        .padding(1.0)
-        .radius(crate::ui::r(8.0))
+        .size(24.0, 18.0)
+        .radius(crate::ui::r(2.0))
+        .clip_rounded(crate::ui::r(2.0))
         .fill(t.bg)
-        .child(
-            col()
-                .w(36.0)
-                .h_full()
-                .corners([7.0, 0.0, 0.0, 7.0])
-                .fill(t.sidebar)
-                .border_sides([0.0, 1.0, 0.0, 0.0], t.hair)
-                .pt(10.0)
-                .px(7.0)
-                .gap(5.0)
-                .child(el().w(22.0).h(4.0).radius(crate::ui::r(2.0)).fill(t.ink.alpha(0.6)))
-                .child(el().w(18.0).h(4.0).radius(crate::ui::r(2.0)).fill(t.muted.alpha(0.5)))
-                .child(el().w(20.0).h(4.0).radius(crate::ui::r(2.0)).fill(t.muted.alpha(0.5))),
-        )
+        .border(1.0, t.hair_strong)
+        .a11y_hidden()
+        .child(el().w(6.0).h_full().fill(t.sidebar).border_sides([0.0, 1.0, 0.0, 0.0], t.hair))
         .child(
             col()
                 .grow(1.0)
                 .h_full()
-                .pt(10.0)
-                .px(8.0)
-                .gap(6.0)
-                .child(el().w(40.0).h(6.0).radius(crate::ui::r(3.0)).fill(t.ink.alpha(0.85)))
-                .child(el().w_full().h(4.0).radius(crate::ui::r(2.0)).fill(t.muted.alpha(0.45)))
-                .child(el().w(32.0).h(4.0).radius(crate::ui::r(2.0)).fill(t.muted.alpha(0.45)))
-                .child(spacer())
+                .px(3.0)
+                .pt(4.0)
+                .gap(3.0)
+                .child(el().w_full().h(2.0).fill(t.ink.alpha(0.85)))
                 .child(
                     row()
                         .w_full()
-                        .pb(8.0)
                         .child(spacer())
-                        .child(el().w(24.0).h(10.0).radius(crate::ui::r(4.0)).fill(t.accent)),
+                        .child(el().w(6.0).h(4.0).fill(t.accent)),
                 ),
         );
-    col()
-        .key(format!("settings-theme-{}", theme.id()))
-        .w(92.0)
+    crate::motion::colors(row())
+        .key(key)
+        .grow(1.0)
+        .min_w(0.0)
+        .h(32.0)
+        .px(6.0)
         .gap(6.0)
+        .center_y()
+        .radius(crate::ui::r(4.0))
+        .fill(if on { u.selected } else { Color::TRANSPARENT })
+        .border(1.0, if on { u.accent } else { u.hair })
+        .hover(if on { u.selected } else { u.hover })
         .focusable(true)
         .role("radio")
         .checked(on)
-        .label(tr(theme.label()))
+        .label(name.to_string())
         .cursor(rune::Cursor::Pointer)
-        .on_press(move |st: &mut State| {
-            st.settings.personalize.draft = None;
-            prefs::edit(st, |p| {
-                p.theme = theme;
-                p.personal.theme = None;
-            })
-        })
+        .child(picture)
         .child(
-            col()
-                .w_full()
-                .padding(2.0)
-                .radius(crate::ui::r(8.0))
-                .border(1.0, if on { u.ink } else { Color::TRANSPARENT })
-                .child(picture.border(1.0, t.hair_strong)),
-        )
-        .child(
-            text(tr(theme.label()))
-                .font(SMALL)
-                .color(if on { u.ink } else { u.muted })
+            text(name.to_string())
+                .font(BODY)
+                .color(if on { u.ink } else { u.prose })
+                .truncate()
+                .grow(1.0)
+                .min_w(0.0)
                 .a11y_hidden(),
         )
 }
