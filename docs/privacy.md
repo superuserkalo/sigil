@@ -93,7 +93,9 @@ placeholders. Identical crashes are one row with a repeat count, matched on the 
 first frames. Kept 90 days.
 
 How a crash becomes a report: Sigil writes a small session marker in its data folder when it starts
-and removes it whenever it exits cleanly (window close, tray Quit, Restart to update). A marker
+and removes it whenever it exits cleanly (window close, tray Quit, the quit key, Restart to update).
+Versions before 0.1.29 did not remove it on a normal quit, so a marker they left is ignored unless a
+crash was also recorded. A marker
 found at the next start means the last run did not exit cleanly. A panic is written to a local
 crash file the moment it happens; a run that died without one (an abort, a stack overflow, a driver
 crash, a forced quit) becomes an `unclean_exit` report, and on Windows an unhandled exception leaves

@@ -86,6 +86,13 @@ pub fn end() {
     crash::end_session(&data());
 }
 
+/// Every quit runs this before the process ends (window close, tray Quit, the quit key, quit
+/// when the game starts, the end of a Windows session). Rune ends the process right after its
+/// quit hooks, so code after `run` in `main` is not reached on a normal quit.
+pub fn on_quit(_st: &mut State, _tx: &mut rune::Tx) {
+    end();
+}
+
 /// In `setup`, once the consent file is read: send, ask or drop.
 pub fn on_startup(st: &mut State) {
     let Some(last) = LAST.lock().ok().and_then(|mut slot| slot.take()) else {

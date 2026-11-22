@@ -131,6 +131,21 @@ pub fn end_session(data_dir: &Path) {
     let _ = fs::remove_file(session_path(data_dir));
 }
 
+/// The first version whose every quit removes the session marker.
+const MARKER_RELIABLE_SINCE: (u64, u64, u64) = (0, 1, 29);
+
+/// Whether a marker left by `version` means that run really ended without a clean exit.
+/// An unreadable version counts as reliable, so a damaged marker is still reported.
+fn marker_is_reliable(version: &str) -> bool {
+    let mut parts = version.trim().trim_start_matches('v').split('.').map(|part| {
+        part.chars().take_while(char::is_ascii_digit).collect::<String>().parse::<u64>().ok()
+    });
+    match (parts.next().flatten(), parts.next().flatten(), parts.next().flatten()) {
+        (Some(major), Some(minor), Some(patch)) => (major, minor, patch) >= MARKER_RELIABLE_SINCE,
+        _ => true,
+    }
+}
+
 /// The crash files of a run that did not exit cleanly, or a new one for an unclean exit.
 fn record_last_run(
     data_dir: &Path,
@@ -163,6 +178,11 @@ fn record_last_run(
         // Nothing recorded and the machine started after the run did: a shutdown or restart
         // under a running Sigil (a tray app often is), not a crash.
         if boot_ms().is_some_and(|boot| boot > previous.started) {
+            return None;
+        }
+        // Sigil before 0.1.29 never removed its marker on a normal quit, so a marker from one
+        // of those versions with nothing recorded says nothing about how that run ended.
+        if !marker_is_reliable(&previous.version) {
             return None;
         }
     }

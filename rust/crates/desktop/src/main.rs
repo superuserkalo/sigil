@@ -93,6 +93,8 @@ fn main() -> std::process::ExitCode {
     // The tray owns the close only when "Close to tray" is on; otherwise on_close quits as before.
     .keep_running()
     .on_close(screens::settings::tray::on_close)
+    // The clean-exit marker goes here: nothing after `run` executes on a normal quit.
+    .on_quit(screens::settings::crash::on_quit)
     // The window handle behind always-on-top (Crosshair's pin) and the shell switch.
     .on_window(|window| {
         shell::remember_window(window);
@@ -102,7 +104,7 @@ fn main() -> std::process::ExitCode {
     screens::settings::tray::install(sigil.handle());
     single_instance::attach(sigil.handle());
     sigil.run();
-    // Every quit that reaches here is a clean exit.
+    // Reached only when Rune exits in order or the window never opened; `on_quit` covers a normal quit.
     screens::settings::crash::end();
     rune::release_instance();
     std::process::ExitCode::SUCCESS
