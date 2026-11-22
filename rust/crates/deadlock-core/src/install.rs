@@ -3361,10 +3361,11 @@ pub fn apply_install_with(
     }
 
     fs::create_dir_all(&plan.addons_dir)?;
+    fs::create_dir_all(&slot_folder)?;
 
+    // The slot's own folder: `sigil-addonsN` for a slot above 99, like `plan.target`.
     let destination = if options.land_disabled {
-        plan.addons_dir
-            .join(format!("{slot_file}{}", crate::addons::DISABLED_SUFFIX))
+        slot_folder.join(format!("{slot_file}{}", crate::addons::DISABLED_SUFFIX))
     } else {
         plan.target.clone()
     };
@@ -5303,6 +5304,45 @@ mod tests {
         assert!(addons.join("pak03_dir.vpk").is_file());
         assert!(!disabled.exists());
 
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    /// Slot 101 lives in `citadel/sigil-addons2` as `pak02`: a disabled landing goes there,
+    /// never into `citadel/addons` under the local name.
+    #[test]
+    fn land_disabled_in_an_overflow_slot_lands_in_its_own_folder() {
+        let root = scratch("land-disabled-overflow");
+        let game_root = fake_game(&root);
+        let workspace = root.join("workspace");
+        let addons = addons_dir(&game_root);
+        fs::create_dir_all(&addons).unwrap();
+        let archive = root.join("mod.zip");
+        fs::write(
+            &archive,
+            build_stored_zip(&[(
+                "citadel/materials/heroes/billy/billy_color.vmat_c",
+                b"new payload",
+                0o100644,
+            )]),
+        )
+        .unwrap();
+        let options = PlanOptions {
+            game_root: Some(game_root.clone()),
+            tools: ToolPaths::default(),
+            ..PlanOptions::default()
+        };
+        let request = InstallRequest::new(archive.display().to_string(), workspace.clone())
+            .unwrap()
+            .with_slot(Some(101));
+        let plan = plan_install(&request, &options).unwrap();
+        let record = apply_install_with(&plan, true, ApplyOptions { land_disabled: true }).unwrap();
+        let overflow = crate::addons::slot_folder(&addons, 101);
+        assert!(overflow.ends_with("sigil-addons2"));
+        assert!(overflow.join("pak02_dir.vpk.disabled").is_file());
+        assert!(!addons.join("pak02_dir.vpk.disabled").exists());
+        assert_eq!(record.target, overflow.join("pak02_dir.vpk.disabled"));
+        crate::addons::set_enabled(&game_root, 101, true, true).unwrap();
+        assert!(overflow.join("pak02_dir.vpk").is_file());
         let _ = fs::remove_dir_all(&root);
     }
 
