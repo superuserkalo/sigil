@@ -24,7 +24,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
-use std::time::UNIX_EPOCH;
+use std::time::{Duration, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
@@ -330,12 +330,31 @@ pub fn cancel_all(file: &Path, game_root: &Path) -> Result<PendingQueue> {
     Ok(queue)
 }
 
+/// How long to wait before each retry of a change whose file is still held: Windows can keep
+/// a file locked for a moment after the game process is gone.
+pub const RETRY_BACKOFF: [Duration; 3] = [Duration::from_secs(1), Duration::from_secs(3), Duration::from_secs(8)];
+
 /// GAME WRITE. Run every waiting change in order. The caller makes sure the game is closed.
 /// Each change is validated again and its slot compared with the stamps the player saw; a
 /// changed slot is skipped and dropped, a failed change stays with its error, and an applied
 /// one leaves the queue. The file is saved after every change, so a crash midway never runs
 /// a change twice (the second run finds the slot changed). Refuses without `approve`.
+///
+/// A change that fails only because a file is in use is tried again after each pause of
+/// [`RETRY_BACKOFF`] (1, 3 and 8 seconds) before it counts as failed. Run this on a worker: it
+/// sleeps.
 pub fn apply_all(file: &Path, game_root: &Path, trash_root: &Path, approve: bool) -> Result<ApplyReport> {
+    apply_all_with(file, game_root, trash_root, approve, &RETRY_BACKOFF)
+}
+
+/// [`apply_all`] with its own retry pauses (tests pass zero length ones).
+pub fn apply_all_with(
+    file: &Path,
+    game_root: &Path,
+    trash_root: &Path,
+    approve: bool,
+    backoff: &[Duration],
+) -> Result<ApplyReport> {
     if !approve {
         return Err(Error::msg("Not approved: apply the waiting changes. Nothing was changed."));
     }
@@ -355,7 +374,19 @@ pub fn apply_all(file: &Path, game_root: &Path, trash_root: &Path, approve: bool
             load_unlocked(file, game_root)?.queue.changes.into_iter().find(|c| c.id == id)
         };
         let Some(change) = change else { continue };
-        let outcome = run_one(game_root, trash_root, &change);
+        let outcome = with_retries(backoff, || {
+            // The player may cancel while a retry waits.
+            let still = {
+                let _guard = LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+                load_unlocked(file, game_root)
+                    .map(|loaded| loaded.queue.changes.iter().any(|c| c.id == id))
+                    .unwrap_or(false)
+            };
+            if still { run_one(game_root, trash_root, &change) } else { Outcome::Cancelled }
+        });
+        if matches!(outcome, Outcome::Cancelled) {
+            continue;
+        }
         let _guard = LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let mut queue = load_unlocked(file, game_root)?.queue;
         match outcome {
@@ -367,6 +398,7 @@ pub fn apply_all(file: &Path, game_root: &Path, trash_root: &Path, approve: bool
                 queue.changes.retain(|c| c.id != id);
                 report.skipped.push((change, why));
             }
+            Outcome::Cancelled => {}
             Outcome::Failed(error) => {
                 if let Some(kept) = queue.changes.iter_mut().find(|c| c.id == id) {
                     kept.error = Some(error.clone());
@@ -383,6 +415,22 @@ enum Outcome {
     Applied(Applied),
     Skipped(String),
     Failed(String),
+    Cancelled,
+}
+
+/// Run `attempt`, and again after each pause while it fails only because a file is in use.
+fn with_retries(backoff: &[Duration], mut attempt: impl FnMut() -> Outcome) -> Outcome {
+    let mut outcome = attempt();
+    for pause in backoff {
+        match &outcome {
+            Outcome::Failed(error) if crate::error::mentions_in_use(error) => {
+                std::thread::sleep(*pause);
+                outcome = attempt();
+            }
+            _ => break,
+        }
+    }
+    outcome
 }
 
 fn run_one(game_root: &Path, trash_root: &Path, change: &PendingChange) -> Outcome {
@@ -479,7 +527,7 @@ mod tests {
         queue(&f, PendingKind::Delete, 3);
         queue(&f, PendingKind::TurnOff, 4);
         assert!(apply_all(&f.file, &f.game, &f.trash, false).is_err());
-        let report = apply_all(&f.file, &f.game, &f.trash, true).unwrap();
+        let report = apply_all_with(&f.file, &f.game, &f.trash, true, &[]).unwrap();
         assert_eq!(report.applied.len(), 2);
         assert_eq!(report.applied[0].0.slot, 3);
         let Applied::Trashed(entry) = &report.applied[0].1 else { panic!("delete goes to the trash") };
@@ -503,7 +551,7 @@ mod tests {
         // Slot 06 was replaced by another mod of a different size; slot 07 gained a chunk.
         fs::write(f.addons.join("pak06_dir.vpk"), "a different mod").unwrap();
         fs::write(f.addons.join("pak07_000.vpk"), "chunk").unwrap();
-        let report = apply_all(&f.file, &f.game, &f.trash, true).unwrap();
+        let report = apply_all_with(&f.file, &f.game, &f.trash, true, &[]).unwrap();
         assert!(report.applied.is_empty());
         assert_eq!(report.skipped.len(), 2);
         assert!(report.skipped[0].1.contains("changed since"), "{}", report.skipped[0].1);
@@ -551,7 +599,7 @@ mod tests {
         bad.path = outside.clone();
         assert!(enqueue(&f.file, &f.game, bad).is_err());
         // Apply drops the rejected ones and never touches the outside file.
-        let report = apply_all(&f.file, &f.game, &f.trash, true).unwrap();
+        let report = apply_all_with(&f.file, &f.game, &f.trash, true, &[]).unwrap();
         assert_eq!(report.rejected.len(), 5);
         assert_eq!(report.applied.len(), 1);
         assert!(outside.is_file());
@@ -570,7 +618,7 @@ mod tests {
         // The trash cannot be made: a plain file sits where its folder goes.
         fs::create_dir_all(f.trash.parent().unwrap()).unwrap();
         fs::write(&f.trash, "not a folder").unwrap();
-        let report = apply_all(&f.file, &f.game, &f.trash, true).unwrap();
+        let report = apply_all_with(&f.file, &f.game, &f.trash, true, &[]).unwrap();
         assert_eq!(report.failed.len(), 1);
         let kept = load(&f.file, &f.game).unwrap().queue;
         assert_eq!(kept.len(), 1);
@@ -578,8 +626,37 @@ mod tests {
         assert!(f.addons.join("pak10_dir.vpk").is_file());
         // Once the cause is gone the same change applies.
         fs::remove_file(&f.trash).unwrap();
-        let report = apply_all(&f.file, &f.game, &f.trash, true).unwrap();
+        let report = apply_all_with(&f.file, &f.game, &f.trash, true, &[]).unwrap();
         assert_eq!(report.applied.len(), 1);
+    }
+
+    #[test]
+    fn a_locked_file_is_tried_again_after_each_pause_and_other_errors_are_not() {
+        let locked = || Outcome::Failed(format!("x could not be moved. {}", crate::error::IN_USE_HINT));
+        let pauses = [Duration::ZERO; 3];
+        let mut tries = 0;
+        let outcome = with_retries(&pauses, || {
+            tries += 1;
+            if tries < 3 { locked() } else { Outcome::Skipped("done".into()) }
+        });
+        assert_eq!(tries, 3);
+        assert!(matches!(outcome, Outcome::Skipped(_)));
+        // Still locked after every pause: one try plus three retries, then it fails.
+        let mut tries = 0;
+        let outcome = with_retries(&pauses, || {
+            tries += 1;
+            locked()
+        });
+        assert_eq!(tries, 4);
+        assert!(matches!(outcome, Outcome::Failed(_)));
+        // Any other failure is final at once.
+        let mut tries = 0;
+        with_retries(&pauses, || {
+            tries += 1;
+            Outcome::Failed("Slot 04 is not installed.".into())
+        });
+        assert_eq!(tries, 1);
+        assert_eq!(RETRY_BACKOFF.map(|d| d.as_secs()), [1, 3, 8]);
     }
 
     #[test]
