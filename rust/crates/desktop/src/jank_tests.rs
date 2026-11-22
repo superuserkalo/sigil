@@ -331,3 +331,227 @@ fn installed_cost_does_not_grow_with_the_library() {
     assert!(small < 3000, "300 mods built {small} layout nodes");
     assert!(large < small + small / 10, "600 mods built {large} layout nodes against {small} for 300");
 }
+
+// --- Motion guards (`motion.rs`, `.scratch/polish-climb/design/motion.md` section 7) ---------
+
+/// One scripted input: press the element with this key, or press Escape.
+#[derive(Clone, Copy)]
+enum Step {
+    Press(&'static str),
+    Escape,
+}
+
+/// Scene, steps before the measured one, the measured step, and the window height.
+const MOTION_CASES: &[(&str, &[Step], Step, f32)] = &[
+    ("demo-installed", &[Step::Press("installed-more-03")], Step::Escape, 800.0),
+    ("settings-general", &[], Step::Press("settings-confirm-launch-switch"), 1400.0),
+    ("demo-installed", &[Step::Press("nav-settings")], Step::Escape, 800.0),
+    ("servers-detail", &[], Step::Press("server-panel-close"), 800.0),
+];
+
+/// Keys whose element, and everything under it, may travel or fade: overlays and the parts
+/// that slide inside a fixed box. Anything else is in page flow and must land at once.
+const MOVERS: &[&str] = &[
+    "-menu", "-popover", "-drawer", "-bar", "toast", "-thumb", "-underline", "-modal", "-scrim",
+    "toggle-knob", "-indicator", "settings-layer", "-page-", "-layer",
+];
+
+fn mover(path: &str) -> bool {
+    path.split('/').any(|seg| MOVERS.iter().any(|m| seg.contains(m)))
+}
+
+fn centre_of(rt: &Runtime<State>, key: &str) -> Option<(f32, f32)> {
+    rt.elements()
+        .into_iter()
+        .filter(|e| !e.exiting)
+        .find(|e| e.key.as_deref() == Some(key))
+        .map(|e| (e.rect[0] + e.rect[2] / 2.0, e.rect[1] + e.rect[3] / 2.0))
+}
+
+fn apply(rt: &mut Runtime<State>, step: Step, what: &str) {
+    match step {
+        Step::Escape => rt.key(rune::KeyEvent { key: rune::Key::Escape, mods: Default::default() }),
+        Step::Press(key) => {
+            let (x, y) = centre_of(rt, key).unwrap_or_else(|| panic!("{what}: no {key} to press"));
+            rt.pointer_move(x, y);
+            rt.frame(1.0 / 60.0);
+            rt.pointer_down(x, y);
+            rt.frame(1.0 / 60.0);
+            rt.pointer_up(x, y);
+        }
+    }
+}
+
+fn case_name(scene: &str, step: Step) -> String {
+    match step {
+        Step::Press(k) => format!("{scene}: press {k}"),
+        Step::Escape => format!("{scene}: Escape"),
+    }
+}
+
+/// One frame after an input: whether anything visibly moved or faded since the frame before
+/// (half a point, or 0.4 percent opacity), whether the window asked for another frame, and the
+/// in-flow elements drawn away from where they are laid out.
+struct Seen {
+    visible: Vec<String>,
+    asked: bool,
+    off: Vec<String>,
+}
+
+fn run_case(scene_name: &str, before: &[Step], step: Step, height: f32, reduced: bool) -> Vec<Seen> {
+    let mut rt = runtime(scene_name, (1280.0, height));
+    if reduced {
+        rt.set_system_reduced_motion(true);
+        settle(&mut rt);
+    }
+    for &b in before {
+        apply(&mut rt, b, scene_name);
+        settle(&mut rt);
+    }
+    let name = case_name(scene_name, step);
+    let commits = rt.stats.commits;
+    apply(&mut rt, step, &name);
+    let look = |rt: &Runtime<State>| -> std::collections::HashMap<String, ([f32; 4], f32)> {
+        rt.elements().into_iter().map(|e| (format!("{}{}", e.path, if e.exiting { "~" } else { "" }), (e.rect, e.opacity))).collect()
+    };
+    let mut last = look(&rt);
+    let mut out = Vec::new();
+    for _ in 0..48 {
+        let asked = rt.frame(1.0 / 60.0);
+        let now = look(&rt);
+        let visible: Vec<String> = now
+            .iter()
+            .filter(|(path, (rect, opacity))| match last.get(*path) {
+                Some((r, o)) => (opacity - o).abs() > 0.004 || rect.iter().zip(r).any(|(a, b)| (a - b).abs() > 0.5),
+                // Mounted since the last frame: visible unless it is already whole or gone.
+                None => *opacity > 0.004 && *opacity < 0.996,
+            })
+            .take(3)
+            .map(|(path, (rect, opacity))| format!("{path} {rect:?} {opacity:.3}"))
+            .collect();
+        let off: Vec<String> = rt
+            .elements()
+            .into_iter()
+            .filter(|e| !e.exiting && !mover(&e.path) && e.rect[2] > 0.0)
+            .filter(|e| e.rect.iter().zip(e.target.iter()).any(|(a, b)| (a - b).abs() > 0.5))
+            .take(3)
+            .map(|e| format!("{} drawn {:?} placed {:?}", e.path, e.rect, e.target))
+            .collect();
+        out.push(Seen { visible, asked, off });
+        last = now;
+    }
+    assert!(rt.stats.commits > commits, "{name}: the input did nothing");
+    out
+}
+
+/// Every scripted input comes to rest: nothing visibly moves or fades 20 frames (333 ms) after
+/// it, at 60 Hz (the longest token is 180 ms), and the window stops drawing within 40 frames.
+/// Rune rests a spring when it is within a hair of its target, about 2.5 times its visual
+/// duration, and the press fill releases on Rune's own 0.25 s spring, so the last frames
+/// before rest change nothing a player can see.
+#[test]
+fn motion_settles_fast() {
+    let _globals = crate::ui::test_globals();
+    let mut slow = Vec::new();
+    for &(scene_name, before, step, height) in MOTION_CASES {
+        let frames = run_case(scene_name, before, step, height, false);
+        let still = frames.iter().rposition(|f| !f.visible.is_empty()).map_or(0, |i| i + 1);
+        let rests = frames.iter().rposition(|f| f.asked).map_or(0, |i| i + 1);
+        let name = case_name(scene_name, step);
+        eprintln!("motion: {name}: still after {still} frames, rests after {rests}");
+        if still > 20 || rests > 40 {
+            let late = frames.get(still.saturating_sub(1)).map(|f| f.visible.join("; ")).unwrap_or_default();
+            slow.push(format!("{name}: still after {still}, rests after {rests} frames ({late})"));
+        }
+    }
+    assert!(slow.is_empty(), "motion did not come to rest:\n{}", slow.join("\n"));
+}
+
+/// While an input's motion runs, everything in page flow is drawn where it is laid out: only
+/// overlays and the parts that slide inside a fixed box move. An eased container fails here.
+#[test]
+fn motion_moves_nothing_in_flow() {
+    let _globals = crate::ui::test_globals();
+    let mut moved = Vec::new();
+    for &(scene_name, before, step, height) in MOTION_CASES {
+        let frames = run_case(scene_name, before, step, height, false);
+        if let Some((n, f)) = frames.iter().enumerate().find(|(_, f)| !f.off.is_empty()) {
+            moved.push(format!("{} frame {n}: {}", case_name(scene_name, step), f.off.join("; ")));
+        }
+    }
+    assert!(moved.is_empty(), "in-flow content eased:\n{}", moved.join("\n"));
+}
+
+/// Under reduced motion every input lands at once: whatever changes, changes in one step (the
+/// commit's frame, or the next for hover reveals that follow it), and nothing travels or fades
+/// after that.
+#[test]
+fn reduced_motion_is_instant() {
+    let _globals = crate::ui::test_globals();
+    let mut slow = Vec::new();
+    for &(scene_name, before, step, height) in MOTION_CASES {
+        let frames = run_case(scene_name, before, step, height, true);
+        if let Some((n, f)) = frames.iter().enumerate().skip(2).find(|(_, f)| !f.visible.is_empty()) {
+            slow.push(format!("{}: still moving at frame {n}: {}", case_name(scene_name, step), f.visible.join("; ")));
+        }
+        if let Some((n, f)) = frames.iter().enumerate().find(|(_, f)| !f.off.is_empty()) {
+            slow.push(format!("{} frame {n}: {}", case_name(scene_name, step), f.off.join("; ")));
+        }
+    }
+    assert!(slow.is_empty(), "reduced motion still animates:\n{}", slow.join("\n"));
+}
+
+/// Hover across the sidebar, a page toolbar, a settings page and an open menu: paint only, no
+/// commit, and the window rests within 12 frames (200 ms) of the pointer leaving.
+#[test]
+fn hover_never_commits() {
+    let _globals = crate::ui::test_globals();
+    let cases: &[(&str, &str, f32)] = &[
+        ("demo-installed", "nav-", 800.0),
+        ("demo-installed", "-toolbar", 800.0),
+        ("settings-general", "settings-", 1400.0),
+        ("installed-menu", "menu-", 800.0),
+    ];
+    let mut wrong = Vec::new();
+    for &(name, part, height) in cases {
+        let size = (1280.0, height);
+        let mut rt = runtime(name, size);
+        let points: Vec<(f32, f32)> = rt
+            .elements()
+            .into_iter()
+            .filter(|e| !e.exiting && e.key.as_deref().is_some_and(|k| k.contains(part)))
+            .flat_map(|e| {
+                // Its centre and a point near each end, so a toolbar's controls are crossed.
+                let y = e.rect[1] + e.rect[3] / 2.0;
+                [0.1, 0.5, 0.9].map(|f| (e.rect[0] + e.rect[2] * f, y))
+            })
+            .filter(|(x, y)| *x > 0.0 && *y > 0.0 && *x < size.0 && *y < size.1)
+            .take(60)
+            .collect();
+        if points.len() < 3 {
+            wrong.push(format!("{name}: only {} points under {part}", points.len()));
+            continue;
+        }
+        let before = rt.stats.commits;
+        for &(x, y) in &points {
+            rt.pointer_move(x, y);
+            for _ in 0..3 {
+                rt.frame(1.0 / 60.0);
+            }
+        }
+        rt.pointer_leave();
+        let mut rest = 0;
+        for n in 1..=60 {
+            if !rt.frame(1.0 / 60.0) {
+                rest = n;
+                break;
+            }
+        }
+        let commits = rt.stats.commits - before;
+        eprintln!("motion: hover {name} {part}: {} points, {commits} commits, rests after {rest} frames", points.len());
+        if commits > 0 || rest == 0 || rest > 12 {
+            wrong.push(format!("{name} {part}: {commits} commits, rests after {rest} frames"));
+        }
+    }
+    assert!(wrong.is_empty(), "hover is not paint only:\n{}", wrong.join("\n"));
+}
