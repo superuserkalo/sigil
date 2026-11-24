@@ -355,3 +355,46 @@ export function parseRelated(search: URLSearchParams): number | null {
   const id = Number(text);
   return isId(id) ? id : null;
 }
+
+/** `mods=1,2,3`: GameBanana ids, at most `max`, or null when any part is not one. */
+export function parseHealthMods(search: URLSearchParams, max: number): number[] | null {
+  const text = search.get("mods") ?? "";
+  if (text.length === 0 || text.length > max * 11) return null;
+  const parts = text.split(",");
+  if (parts.length > max) return null;
+  const ids: number[] = [];
+  for (const part of parts) {
+    if (!/^\d{1,10}$/.test(part)) return null;
+    const id = Number(part);
+    if (!isId(id)) return null;
+    ids.push(id);
+  }
+  return [...new Set(ids)];
+}
+
+/** `gpu=<model>&cpu=<model>&height=<px>`: model names reduced the way records are, or null. */
+export function parseFpsQuery(search: URLSearchParams): { gpu: string; cpu: string | null; height: number } | null {
+  const gpu = modelName(search.get("gpu"));
+  if (gpu === null) return null;
+  const cpuText = search.get("cpu");
+  const cpu = cpuText === null || cpuText === "" ? null : modelName(cpuText);
+  const heightText = search.get("height") ?? "";
+  if (!/^\d{3,5}$/.test(heightText)) return null;
+  const height = Number(heightText);
+  if (height < 200 || height > 16384) return null;
+  return { gpu, cpu, height };
+}
+
+/**
+ * The owner's admin key check: `authorization: Bearer <PRODUCT_ADMIN_KEY>`. False when the secret
+ * is unset or shorter than `MIN_SECRET_CHARS` (fail closed), and compared in constant time.
+ */
+export async function adminAllowed(header: string | null, secret: string | undefined): Promise<boolean> {
+  if (!secretOk(secret) || header === null) return false;
+  const match = /^Bearer (.{1,256})$/.exec(header);
+  if (match === null) return false;
+  const [given, wanted] = await Promise.all([sha256Hex(`sigil-admin\n${match[1]}`), sha256Hex(`sigil-admin\n${secret}`)]);
+  let diff = 0;
+  for (let i = 0; i < wanted.length; i += 1) diff |= wanted.charCodeAt(i) ^ given.charCodeAt(i);
+  return diff === 0;
+}

@@ -149,13 +149,13 @@ describe("POST /v1/product/delete", () => {
     await call("/v1/product", { body: body([{ type: "launch", modded: false }], { installId: other }) });
     const mine = await installHash(INSTALL_ID, SALT);
     const before = await env.DB.prepare("SELECT COUNT(*) AS n FROM product_contrib WHERE install_hash = ?1").bind(mine).first<{ n: number }>();
-    // seen, two mods and one pair.
-    expect(before?.n).toBe(4);
+    // seen, two mods, one pair and the two mods' use on game build 5911.
+    expect(before?.n).toBe(6);
 
     const response = await call("/v1/product/delete", { body: { installId: INSTALL_ID } });
     expect(response.status).toBe(200);
-    // Two events and four contributions.
-    expect(await readJson<{ deleted: number }>(response)).toEqual({ deleted: 6 });
+    // Two events and six contributions.
+    expect(await readJson<{ deleted: number }>(response)).toEqual({ deleted: 8 });
 
     const left = await rows();
     expect(left.length).toBe(1);
@@ -304,7 +304,7 @@ describe("the distinct-contributor floor", () => {
     await closeAll();
     expect((await env.DB.prepare("SELECT COUNT(*) AS n FROM product_contrib WHERE epoch <= ?1").bind(epochOf(E0)).first<{ n: number }>())?.n).toBe(0);
     const columns = await env.DB.prepare("SELECT name FROM pragma_table_info('product_totals')").all<{ name: string }>();
-    expect(columns.results.map((c) => c.name)).toEqual(["epoch", "kind", "key", "mod_a", "mod_b", "installs", "buckets", "days", "created_at"]);
+    expect(columns.results.map((c) => c.name)).toEqual(["epoch", "kind", "key", "mod_a", "mod_b", "installs", "buckets", "days", "created_at", "median", "low"]);
     const totals = JSON.stringify(await env.DB.prepare("SELECT * FROM product_totals").all());
     expect(totals).not.toMatch(/[0-9a-f]{16}/);
     const eventColumns = await env.DB.prepare("SELECT name FROM pragma_table_info('product_events')").all<{ name: string }>();

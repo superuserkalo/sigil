@@ -49,13 +49,31 @@ export const PER_INSTALL_CAP: Readonly<Record<string, number>> = {
   bench: 20,
   hardware: 5,
   search: 50,
+  attempt: 64,
+  use: 64,
+  conflict: 200,
+  fps: 20,
+  search_zero: 50,
+  search_few: 50,
 };
+/** Health and conflicts read only the closed epochs this recent (about 90 days), so a mod that
+ * was fixed stops carrying old reports. */
+export const RECENT_EPOCHS = 3;
+/** A Browse search with at most this many results counts as a search gap. */
+export const FEW_RESULTS = 5;
+/** Install failure reasons that point at the mod, not at the player's PC or network. */
+export const MOD_REASONS: ReadonlySet<string> = new Set(["nothing_installable", "several_vpks", "other", "unknown"]);
+/** Health codes that mean "this mod did not work on that game build". */
+export const BROKEN_CODES: ReadonlySet<string> = new Set(["moved", "gone", "skeleton", "off_after_crash", "crash_suspect"]);
+/** The most mods one health request may ask about. Two IN lists of this size stay under D1's
+ * 100 bound values. */
+export const MAX_HEALTH_MODS = 40;
 /** Contribution rows deleted per statement and statements per closing run, so the cron job
  * stays short; an epoch that does not finish closing continues the next day. */
 const DELETE_CHUNK = 5000;
 const DELETE_BUDGET = 40;
 /** Kinds whose keys are written by players (search text, hardware names). */
-export const FREE_TEXT_KINDS = ["search", "hardware"] as const;
+export const FREE_TEXT_KINDS = ["search", "hardware", "fps", "search_zero", "search_few"] as const;
 
 export type Contributor = { readonly hash: string; readonly bucket: string; readonly epoch: number; readonly day: string };
 
@@ -106,13 +124,68 @@ export async function bucketOf(address: string | null, secret: string | undefine
   return toHex(new Uint8Array(mac)).slice(0, 16);
 }
 
+/** One aggregate key. `value` and `value2` only for kind `fps`: average and 1% low frame rate. */
+export type Contribution = { readonly kind: string; readonly key: string; readonly value?: number; readonly value2?: number };
+
+/** What a record's keys need besides the record: the request's game build and, for a benchmark,
+ * the install's hardware class and the versions of the configs it applied. */
+export type KeyContext = {
+  readonly gameBuild: number | null;
+  readonly fps?: FpsClass | null;
+};
+
+/** A benchmark's hardware class (GPU model, CPU tier) and the versions of the configs applied. */
+export type FpsClass = { readonly gpu: string; readonly tier: string; readonly versions: ReadonlyMap<string, number> };
+
+const NO_CONTEXT: KeyContext = { gameBuild: null };
+
+/**
+ * A coarse CPU tier from a reduced model name: `high`, `mid`, `low` or `other`. The hardware class
+ * is the GPU model and this tier, so frame rates group PCs that play alike without a CPU table.
+ */
+export function cpuTier(name: string | null | undefined): string {
+  if (typeof name !== "string") return "other";
+  const n = name.toLowerCase();
+  if (/x3d\b/.test(n)) return "high";
+  const ryzen = /ryzen\s+(?:ai\s+)?(\d)\s+(?:pro\s+)?(\d)(\d)\d{2}/.exec(n);
+  if (ryzen !== null) {
+    const [family, gen] = [Number(ryzen[1]), Number(ryzen[2])];
+    if (family >= 7 && gen >= 5) return "high";
+    if (family >= 5 && gen >= 3) return "mid";
+    return "low";
+  }
+  const ultra = /core\s+ultra\s+(\d)/.exec(n);
+  if (ultra !== null) return Number(ultra[1]) >= 7 ? "high" : "mid";
+  const core = /\bi(\d)[\s-]+(\d{4,5})/.exec(n);
+  if (core !== null) {
+    const family = Number(core[1]);
+    const digits = core[2] as string;
+    const gen = digits.length === 5 ? Number(digits.slice(0, 2)) : Number(digits.slice(0, 1));
+    if (family >= 7 && gen >= 12) return "high";
+    if (family >= 5 && gen >= 10) return "mid";
+    return "low";
+  }
+  if (/\bapple\s+m\d/.test(n)) return "mid";
+  if (/\b(?:celeron|pentium|athlon|atom)\b/.test(n)) return "low";
+  return "other";
+}
+
+/** A resolution bucket from a height in pixels. */
+export function resolutionBucket(height: number): string {
+  if (height < 1000) return "720p";
+  if (height < 1300) return "1080p";
+  if (height < 1800) return "1440p";
+  return "2160p";
+}
+
 /** The aggregate keys one record contributes to. */
-export function keysOf(record: ProductRecord): { kind: string; key: string }[] {
+export function keysOf(record: ProductRecord, ctx: KeyContext = NO_CONTEXT): Contribution[] {
   const f = record.fields;
+  const build = ctx.gameBuild ?? 0;
   switch (record.type) {
     case "enabled_set": {
       const mods = (f.mods as { mod_id: number }[]).slice(0, 24).map((m) => m.mod_id);
-      const keys = mods.map((mod) => ({ kind: "mod", key: String(mod) }));
+      const keys: Contribution[] = mods.map((mod) => ({ kind: "mod", key: String(mod) }));
       for (let i = 0; i < mods.length; i += 1) {
         for (let j = i + 1; j < mods.length; j += 1) {
           const a = Math.min(mods[i] as number, mods[j] as number);
@@ -120,23 +193,93 @@ export function keysOf(record: ProductRecord): { kind: string; key: string }[] {
           keys.push({ kind: "pair", key: `${a}|${b}` });
         }
       }
+      // Installs that use the mod on this game build: the base of "reported broken".
+      if (build > 0) for (const mod of mods) keys.push({ kind: "use", key: `${mod}|${build}` });
       return keys;
     }
     case "compat_finding":
-      return [{ kind: "health", key: `${f.mod_id}|${f.finding}|${f.game_build ?? 0}` }];
+      return [{ kind: "health", key: `${f.mod_id}|${f.finding}|${f.game_build ?? build}` }];
     case "repair_result":
       return [{ kind: "health", key: `${f.mod_id}|repair_${f.repair}|${f.ok ? 1 : 0}` }];
-    case "install_result":
-      return f.ok ? [] : [{ kind: "health", key: `${f.mod_id}|install_${f.reason ?? "unknown"}` }];
-    case "benchmark":
-      return [{ kind: "bench", key: `${f.scene}|${f.width}x${f.height}|${f.preset ?? ""}` }];
+    case "install_result": {
+      const reason = typeof f.reason === "string" ? f.reason : "unknown";
+      // Cancelled, offline, game running, disk full: not the mod's fault, not an attempt.
+      const counts = f.ok === true || MOD_REASONS.has(reason);
+      const keys: Contribution[] = counts ? [{ kind: "attempt", key: String(f.mod_id) }] : [];
+      if (f.ok !== true) {
+        keys.push({ kind: "health", key: `${f.mod_id}|install_${reason}` });
+        if (MOD_REASONS.has(reason)) keys.push({ kind: "health", key: `${f.mod_id}|install_failed` });
+      }
+      return keys;
+    }
+    case "off_after_crash":
+      return [{ kind: "health", key: `${f.mod_id}|off_after_crash|${build}` }];
+    case "crash_suspect":
+      return [{ kind: "health", key: `${f.mod_id}|crash_suspect|${build}` }];
+    case "mod_pair":
+      return [{ kind: "conflict", key: `${f.a}|${f.b}` }];
+    case "benchmark": {
+      const keys: Contribution[] = [{ kind: "bench", key: `${f.scene}|${f.width}x${f.height}|${f.preset ?? ""}` }];
+      if (ctx.fps) {
+        const config = typeof f.preset === "string" ? f.preset : "none";
+        const version = ctx.fps.versions.get(config) ?? 0;
+        keys.push({
+          kind: "fps",
+          key: `${ctx.fps.gpu}|${ctx.fps.tier}|${config}|${version}|${resolutionBucket(f.height as number)}`,
+          value: f.avg_fps as number,
+          value2: f.low_fps as number,
+        });
+      }
+      return keys;
+    }
     case "hardware":
       return f.gpu === null ? [] : [{ kind: "hardware", key: `${f.gpu}|${f.width}x${f.height}` }];
-    case "browse_query":
-      return typeof f.search === "string" ? [{ kind: "search", key: f.search }] : [];
+    case "browse_query": {
+      if (typeof f.search !== "string") return [];
+      const keys: Contribution[] = [{ kind: "search", key: f.search }];
+      const results = f.results as number;
+      if (results === 0) keys.push({ kind: "search_zero", key: f.search });
+      else if (results <= FEW_RESULTS) keys.push({ kind: "search_few", key: f.search });
+      return keys;
+    }
     default:
       return [];
   }
+}
+
+/**
+ * The hardware class and config versions a benchmark is filed under, from the install's own raw
+ * records (the latest `hardware` and `perf_config`). Null without a GPU model.
+ */
+export async function fpsContext(db: D1Database, hash: string): Promise<FpsClass | null> {
+  const { results } = await db
+    .prepare(
+      `SELECT type, payload FROM product_events
+       WHERE install_hash = ?1 AND type IN ('hardware', 'perf_config')
+       ORDER BY id DESC LIMIT 40`,
+    )
+    .bind(hash)
+    .all<{ type: string; payload: string }>();
+  let gpu: string | null = null;
+  let tier = "other";
+  let seenHardware = false;
+  const versions = new Map<string, number>();
+  for (const row of results) {
+    let fields: Record<string, unknown>;
+    try {
+      fields = JSON.parse(row.payload) as Record<string, unknown>;
+    } catch {
+      continue;
+    }
+    if (row.type === "hardware" && !seenHardware) {
+      seenHardware = true;
+      gpu = typeof fields.gpu === "string" ? fields.gpu : null;
+      tier = cpuTier(typeof fields.cpu === "string" ? fields.cpu : null);
+    } else if (row.type === "perf_config" && typeof fields.config === "string" && !versions.has(fields.config)) {
+      versions.set(fields.config, typeof fields.version === "number" ? fields.version : 0);
+    }
+  }
+  return gpu === null ? null : { gpu, tier, versions };
 }
 
 /**
@@ -151,6 +294,7 @@ export async function contribute(
   hash: string,
   records: readonly ProductRecord[],
   now: number,
+  ctx: KeyContext = NO_CONTEXT,
 ): Promise<boolean> {
   const epoch = epochOf(now);
   const bucket = await bucketOf(address, secret, epoch);
@@ -172,7 +316,7 @@ export async function contribute(
     .all<{ kind: string; n: number }>();
   const room = new Map(Object.entries(PER_INSTALL_CAP));
   for (const row of held) room.set(row.kind, (room.get(row.kind) ?? 0) - row.n);
-  const rows = [{ kind: "seen", key: who.day }, ...records.flatMap(keysOf)]
+  const rows: Contribution[] = [{ kind: "seen", key: who.day }, ...records.flatMap((record) => keysOf(record, ctx))]
     .filter(({ kind }) => {
       const left = room.get(kind) ?? 0;
       room.set(kind, left - 1);
@@ -181,13 +325,18 @@ export async function contribute(
     .slice(0, MAX_CONTRIB_ROWS);
   if (rows.length === 0) return true;
   await db.batch(
-    rows.map(({ kind, key }) =>
+    rows.map(({ kind, key, value, value2 }) =>
       db
         .prepare(
-          `INSERT OR IGNORE INTO product_contrib (epoch, kind, key, install_hash, bucket, day, created_at)
-           VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)`,
+          // A later benchmark for the same key replaces the install's frame rates; nothing else
+          // about the row changes, so its bucket and first day stay.
+          `INSERT INTO product_contrib (epoch, kind, key, install_hash, bucket, day, created_at, value, value2)
+           VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+           ON CONFLICT(epoch, kind, key, install_hash) DO UPDATE SET
+             value = COALESCE(excluded.value, product_contrib.value),
+             value2 = COALESCE(excluded.value2, product_contrib.value2)`,
         )
-        .bind(epoch, kind, key.slice(0, 200), who.hash, who.bucket, who.day, now),
+        .bind(epoch, kind, key.slice(0, 200), who.hash, who.bucket, who.day, now, value ?? null, value2 ?? null),
     ),
   );
   return true;
@@ -217,25 +366,12 @@ export async function closeEpochs(db: D1Database, now: number): Promise<number[]
     for (const { kind } of kinds) {
       await db
         .prepare(
-          `WITH seen AS (
-             SELECT install_hash, bucket, MIN(created_at) AS first_at FROM product_contrib
-             WHERE epoch = ?1 AND kind = 'seen' GROUP BY install_hash, bucket
-           ),
-           ranked AS (
-             SELECT install_hash, ROW_NUMBER() OVER (PARTITION BY bucket ORDER BY first_at, install_hash) AS place FROM seen
-           ),
-           days AS (
-             SELECT install_hash FROM product_contrib WHERE epoch = ?1 AND kind = 'seen'
-             GROUP BY install_hash HAVING COUNT(DISTINCT key) >= ?3
-           ),
-           eligible AS (
-             SELECT DISTINCT r.install_hash FROM ranked r JOIN days d ON d.install_hash = r.install_hash WHERE r.place <= ?4
-           )
+          `${ELIGIBLE}
            INSERT INTO product_totals (epoch, kind, key, mod_a, mod_b, installs, buckets, days, created_at)
            SELECT ?1, c.kind, c.key,
-             CASE c.kind WHEN 'pair' THEN CAST(substr(c.key, 1, instr(c.key, '|') - 1) AS INTEGER)
-                         WHEN 'mod' THEN CAST(c.key AS INTEGER) END,
-             CASE c.kind WHEN 'pair' THEN CAST(substr(c.key, instr(c.key, '|') + 1) AS INTEGER) END,
+             CASE WHEN c.kind IN ('pair', 'conflict', 'health', 'use') THEN CAST(substr(c.key, 1, instr(c.key, '|') - 1) AS INTEGER)
+                  WHEN c.kind IN ('mod', 'attempt') THEN CAST(c.key AS INTEGER) END,
+             CASE WHEN c.kind IN ('pair', 'conflict') THEN CAST(substr(c.key, instr(c.key, '|') + 1) AS INTEGER) END,
              COUNT(DISTINCT c.install_hash), COUNT(DISTINCT c.bucket), COUNT(DISTINCT c.day), ?5
            FROM product_contrib c JOIN eligible e ON e.install_hash = c.install_hash
            WHERE c.epoch = ?1 AND c.kind = ?2
@@ -245,6 +381,7 @@ export async function closeEpochs(db: D1Database, now: number): Promise<number[]
         )
         .bind(epoch, kind, MIN_DAYS_SEEN, INSTALLS_PER_BUCKET, now, FLOOR.installs, FLOOR.buckets, FLOOR.days)
         .run();
+      if (kind === "fps") await fillMedians(db, epoch);
       budget = await deleteChunks(db, epoch, kind, budget);
       if (budget <= 0) return closed;
     }
@@ -253,6 +390,64 @@ export async function closeEpochs(db: D1Database, now: number): Promise<number[]
     closed.push(epoch);
   }
   return closed;
+}
+
+/** The installs of epoch ?1 that count: seen on ?3 or more days, among the first ?4 of their
+ * bucket. Shared by closing and by the frame rate medians. */
+const ELIGIBLE = `WITH seen AS (
+     SELECT install_hash, bucket, MIN(created_at) AS first_at FROM product_contrib
+     WHERE epoch = ?1 AND kind = 'seen' GROUP BY install_hash, bucket
+   ),
+   ranked AS (
+     SELECT install_hash, ROW_NUMBER() OVER (PARTITION BY bucket ORDER BY first_at, install_hash) AS place FROM seen
+   ),
+   days AS (
+     SELECT install_hash FROM product_contrib WHERE epoch = ?1 AND kind = 'seen'
+     GROUP BY install_hash HAVING COUNT(DISTINCT key) >= ?3
+   ),
+   eligible AS (
+     SELECT DISTINCT r.install_hash FROM ranked r JOIN days d ON d.install_hash = r.install_hash WHERE r.place <= ?4
+   )`;
+
+/** The median of a list of whole numbers, rounded. */
+export function median(values: readonly number[]): number {
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  if (sorted.length === 0) return 0;
+  return sorted.length % 2 === 1 ? (sorted[mid] as number) : Math.round(((sorted[mid - 1] as number) + (sorted[mid] as number)) / 2);
+}
+
+/**
+ * Frame rate medians for the `fps` keys of an epoch that met the floor: the median average and
+ * the median 1% low over the eligible installs. Only the two medians are written; no single
+ * install's value leaves the contribution table, which is deleted right after.
+ */
+async function fillMedians(db: D1Database, epoch: number): Promise<void> {
+  const { results } = await db
+    .prepare(
+      `${ELIGIBLE}
+       SELECT c.key AS key, c.value AS value, c.value2 AS value2
+       FROM product_contrib c JOIN eligible e ON e.install_hash = c.install_hash
+       WHERE c.epoch = ?1 AND c.kind = 'fps' AND c.value IS NOT NULL
+         AND c.key IN (SELECT key FROM product_totals WHERE epoch = ?1 AND kind = 'fps' AND median IS NULL)`,
+    )
+    .bind(epoch, null, MIN_DAYS_SEEN, INSTALLS_PER_BUCKET)
+    .all<{ key: string; value: number; value2: number | null }>();
+  const byKey = new Map<string, { avg: number[]; low: number[] }>();
+  for (const row of results) {
+    const entry = byKey.get(row.key) ?? { avg: [], low: [] };
+    entry.avg.push(row.value);
+    entry.low.push(row.value2 ?? 0);
+    byKey.set(row.key, entry);
+  }
+  if (byKey.size === 0) return;
+  await db.batch(
+    [...byKey].map(([key, entry]) =>
+      db
+        .prepare("UPDATE product_totals SET median = ?3, low = ?4 WHERE epoch = ?1 AND kind = 'fps' AND key = ?2")
+        .bind(epoch, key, median(entry.avg), median(entry.low)),
+    ),
+  );
 }
 
 /** Delete one kind of an epoch's contributions, `DELETE_CHUNK` rows at a time. */
@@ -338,4 +533,150 @@ export async function related(
     .sort((x, y) => y.score - x.score || x.modId - y.modId)
     .slice(0, MAX_RELATED)
     .map(({ modId, installs }) => ({ modId, installs }));
+}
+
+// --- what players get back: mod health, frame rates, and the owner's search gaps --------------
+
+export type InstallHealth = { readonly failed: number; readonly attempts: number; readonly reasons: { reason: string; installs: number }[] };
+export type BuildHealth = { readonly build: number; readonly reports: number; readonly users: number };
+export type ConflictHealth = { readonly modId: number; readonly reports: number; readonly together: number };
+export type ModHealth = {
+  readonly modId: number;
+  readonly install: InstallHealth | null;
+  readonly broken: BuildHealth[];
+  readonly conflicts: ConflictHealth[];
+};
+
+/** The first closed epoch health still reads. */
+function recentFrom(now: number): number {
+  return epochOf(now) - RECENT_EPOCHS;
+}
+
+/**
+ * Mod health for up to `MAX_HEALTH_MODS` mods, from the recent closed epochs that met the floor
+ * (no open epoch, nothing below the floor). Every number is a count of installs; a rate is two
+ * such counts from the same epochs. Mods with nothing published are left out.
+ */
+export async function modHealth(db: D1Database, secret: string | undefined, mods: readonly number[], now: number): Promise<ModHealth[]> {
+  if (!hasBucketKey(secret) || mods.length === 0) return [];
+  const ids = [...new Set(mods)].slice(0, MAX_HEALTH_MODS);
+  const from = recentFrom(now);
+  const marks = ids.map((_, n) => `?${n + 2}`).join(",");
+  const { results: own } = await db
+    .prepare(
+      `SELECT kind, key, mod_a, epoch, installs FROM product_totals
+       WHERE kind IN ('health', 'attempt', 'use') AND mod_a IN (${marks}) AND epoch >= ?1 AND ${MEETS_FLOOR}`,
+    )
+    .bind(from, ...ids)
+    .all<{ kind: string; key: string; mod_a: number; epoch: number; installs: number }>();
+  const marksB = ids.map((_, n) => `?${n + 2 + ids.length}`).join(",");
+  const { results: conflicts } = await db
+    .prepare(
+      `SELECT key, mod_a, mod_b, SUM(installs) AS installs FROM product_totals
+       WHERE kind = 'conflict' AND (mod_a IN (${marks}) OR mod_b IN (${marksB})) AND epoch >= ?1 AND ${MEETS_FLOOR}
+       GROUP BY key LIMIT 90`,
+    )
+    .bind(from, ...ids, ...ids)
+    .all<{ key: string; mod_a: number; mod_b: number; installs: number }>();
+  const together = new Map<string, number>();
+  if (conflicts.length > 0) {
+    const keys = conflicts.map((row) => row.key);
+    const { results: pairs } = await db
+      .prepare(
+        `SELECT key, SUM(installs) AS installs FROM product_totals
+         WHERE kind = 'pair' AND key IN (${keys.map((_, n) => `?${n + 2}`).join(",")}) AND epoch >= ?1 AND ${MEETS_FLOOR}
+         GROUP BY key`,
+      )
+      .bind(from, ...keys)
+      .all<{ key: string; installs: number }>();
+    for (const row of pairs) together.set(row.key, row.installs);
+  }
+
+  const out: ModHealth[] = [];
+  for (const mod of ids) {
+    const rows = own.filter((row) => row.mod_a === mod);
+    // Install failures, with attempts from the same epochs.
+    const failedRows = rows.filter((row) => row.kind === "health" && row.key === `${mod}|install_failed`);
+    let install: InstallHealth | null = null;
+    if (failedRows.length > 0) {
+      const epochs = new Set(failedRows.map((row) => row.epoch));
+      const failed = failedRows.reduce((sum, row) => sum + row.installs, 0);
+      const attempts = rows.filter((row) => row.kind === "attempt" && epochs.has(row.epoch)).reduce((sum, row) => sum + row.installs, 0);
+      const reasons = new Map<string, number>();
+      for (const row of rows) {
+        const code = row.kind === "health" ? row.key.split("|")[1] ?? "" : "";
+        if (code.startsWith("install_") && code !== "install_failed") reasons.set(code.slice(8), (reasons.get(code.slice(8)) ?? 0) + row.installs);
+      }
+      install = {
+        failed,
+        attempts: Math.max(attempts, failed),
+        reasons: [...reasons].map(([reason, installs]) => ({ reason, installs })).sort((a, b) => b.installs - a.installs),
+      };
+    }
+    // Broken on a game build: the strongest single signal per build (one install can send
+    // several, so they are not added), and the installs that used the mod on that build.
+    const perBuild = new Map<number, Map<string, number>>();
+    for (const row of rows) {
+      if (row.kind !== "health") continue;
+      const [, code = "", buildText = ""] = row.key.split("|");
+      const build = Number(buildText);
+      if (!BROKEN_CODES.has(code) || !Number.isSafeInteger(build) || build <= 0) continue;
+      const codes = perBuild.get(build) ?? new Map<string, number>();
+      codes.set(code, (codes.get(code) ?? 0) + row.installs);
+      perBuild.set(build, codes);
+    }
+    const broken: BuildHealth[] = [...perBuild]
+      .map(([build, codes]) => ({
+        build,
+        reports: Math.max(...codes.values()),
+        users: rows.filter((row) => row.kind === "use" && row.key === `${mod}|${build}`).reduce((sum, row) => sum + row.installs, 0),
+      }))
+      .sort((a, b) => b.build - a.build);
+    const mine: ConflictHealth[] = conflicts
+      .filter((row) => row.mod_a === mod || row.mod_b === mod)
+      .map((row) => ({ modId: row.mod_a === mod ? row.mod_b : row.mod_a, reports: row.installs, together: Math.max(together.get(row.key) ?? 0, row.installs) }))
+      .sort((a, b) => b.reports - a.reports || a.modId - b.modId)
+      .slice(0, 10);
+    if (install !== null || broken.length > 0 || mine.length > 0) out.push({ modId: mod, install, broken, conflicts: mine });
+  }
+  return out;
+}
+
+export type FpsExpectation = { readonly config: string; readonly version: number; readonly fps: number; readonly low: number; readonly installs: number };
+
+/**
+ * Frame rates other players measured on the same hardware class (GPU model and CPU tier) at the
+ * same resolution bucket, per performance config and version. Medians from closed epochs that met
+ * the floor, weighted by their installs. Empty when there is none.
+ */
+export async function fpsFor(db: D1Database, secret: string | undefined, gpu: string, tier: string, bucket: string): Promise<FpsExpectation[]> {
+  if (!hasBucketKey(secret)) return [];
+  const prefix = `${gpu}|${tier}|`;
+  const { results } = await db
+    .prepare(
+      `SELECT key, SUM(installs) AS installs, SUM(median * installs) AS fps, SUM(low * installs) AS low FROM product_totals
+       WHERE kind = 'fps' AND substr(key, 1, length(?1)) = ?1 AND median IS NOT NULL AND ${MEETS_FLOOR}
+       GROUP BY key LIMIT 200`,
+    )
+    .bind(prefix)
+    .all<{ key: string; installs: number; fps: number; low: number }>();
+  return results
+    .map((row) => {
+      const [, , config = "", version = "0", res = ""] = row.key.split("|");
+      return { res, config, version: Number(version), fps: Math.round(row.fps / row.installs), low: Math.round(row.low / row.installs), installs: row.installs };
+    })
+    .filter((row) => row.res === bucket && row.config !== "")
+    .map(({ config, version, fps, low, installs }) => ({ config, version, fps, low, installs }))
+    .sort((a, b) => b.installs - a.installs || a.config.localeCompare(b.config));
+}
+
+/** The owner's search gaps: published Browse searches that found nothing or few mods. */
+export async function searchGaps(
+  db: D1Database,
+  secret: string | undefined,
+  limit: number,
+): Promise<{ zero: { term: string; installs: number }[]; few: { term: string; installs: number }[] }> {
+  const [zero, few] = await Promise.all([publishedKeys(db, secret, "search_zero", limit), publishedKeys(db, secret, "search_few", limit)]);
+  const term = ({ key, installs }: { key: string; installs: number }) => ({ term: key, installs });
+  return { zero: zero.map(term), few: few.map(term) };
 }

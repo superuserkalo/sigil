@@ -1,7 +1,7 @@
 /**
  * Sigil's opt-in telemetry Worker.
  *
- * Eight endpoints, one cron job, no UI:
+ * Eleven endpoints, one cron job, no UI:
  *
  *   POST /v1/events       usage events, one Analytics Engine point per event
  *   POST /v1/crash        scrubbed crash report (panic, unclean exit or native), deduplicated
@@ -12,6 +12,9 @@
  *   POST /v1/product      opt-in product data records, "Help build Sigil" (ADR 0017)
  *   POST /v1/product/delete  every raw product row for one install, on the player's press
  *   GET  /v1/product/related co-installed mods that pass the distinct-contributor floor
+ *   GET  /v1/product/health  mod health (install failures, broken on a game build, conflicts)
+ *   GET  /v1/product/fps     frame rates per performance config on the caller's hardware class
+ *   GET  /v1/product/admin/search-gaps  the owner's searches that found nothing; owner key only
  *
  * The app is the only intended client and nothing here is fetched by the desktop app on its own:
  * every request is behind a Settings > Privacy switch (docs/decisions/0014-opt-in-telemetry.md,
@@ -30,11 +33,14 @@ import { isEventName } from "./events";
 import { crashFingerprint } from "./fingerprint";
 import { sha256Hex } from "./hash";
 import { allowRequest } from "./limiter";
-import { contribute, related } from "./aggregates";
+import { contribute, cpuTier, fpsContext, fpsFor, MAX_HEALTH_MODS, modHealth, related, resolutionBucket, searchGaps } from "./aggregates";
 import { scheduledJob } from "./cron";
 import {
+  adminAllowed,
   installHash,
   secretOk,
+  parseFpsQuery,
+  parseHealthMods,
   parseInstallId,
   parseProduct,
   parseRelated,
@@ -81,9 +87,17 @@ const ROUTES: Readonly<Record<string, Route>> = {
   "/v1/product": { method: "POST", run: handleProduct },
   "/v1/product/delete": { method: "POST", run: handleProductDelete },
   "/v1/product/related": { method: "GET", run: handleRelated },
+  "/v1/product/health": { method: "GET", run: handleHealth },
+  "/v1/product/fps": { method: "GET", run: handleFps },
+  "/v1/product/admin/search-gaps": { method: "GET", run: handleSearchGaps },
 };
 
-type ProductSecrets = { readonly PRODUCT_SALT?: string; readonly PRODUCT_BUCKET_KEY?: string };
+type ProductSecrets = { readonly PRODUCT_SALT?: string; readonly PRODUCT_BUCKET_KEY?: string; readonly PRODUCT_ADMIN_KEY?: string };
+
+/** The owner's key for the admin route (`wrangler secret put PRODUCT_ADMIN_KEY`). Never in the repo. */
+function adminKey(env: Env): string | undefined {
+  return (env as Env & ProductSecrets).PRODUCT_ADMIN_KEY;
+}
 
 /** The product salt secret, when the owner set one (`wrangler secret put PRODUCT_SALT`). */
 function productSalt(env: Env): string | undefined {
@@ -352,8 +366,14 @@ async function handleProduct(request: Request, env: Env): Promise<Response> {
       ),
     );
   }
+  // A benchmark is filed under the install's hardware class and config versions, read from its
+  // own raw records (this batch included).
+  const fps = product.records.some((record) => record.type === "benchmark") ? await fpsContext(env.DB, hash) : null;
   // Open-epoch contributions: none without the bucket secret or past the bucket's cap.
-  await contribute(env.DB, secrets.bucket, request.headers.get("cf-connecting-ip"), hash, product.records, now);
+  await contribute(env.DB, secrets.bucket, request.headers.get("cf-connecting-ip"), hash, product.records, now, {
+    gameBuild: product.gameBuild,
+    fps,
+  });
 
   return jsonResponse(202, { accepted: product.records.length, dropped: product.dropped });
 }
@@ -390,6 +410,40 @@ async function handleRelated(_request: Request, env: Env, url: URL): Promise<Res
   const mod = parseRelated(url.searchParams);
   if (mod === null) return errorResponse(400, "bad_mod");
   return jsonResponse(200, { mods: await related(env.DB, secrets.bucket, mod) });
+}
+
+/** Mod health for up to 40 mods (`aggregates.ts` `modHealth`): counts above the floor only. */
+async function handleHealth(_request: Request, env: Env, url: URL): Promise<Response> {
+  const secrets = productSecrets(env);
+  if (secrets === null) return errorResponse(503, "not_configured");
+  const mods = parseHealthMods(url.searchParams, MAX_HEALTH_MODS);
+  if (mods === null) return errorResponse(400, "bad_mods");
+  return jsonResponse(200, { mods: await modHealth(env.DB, secrets.bucket, mods, Date.now()) });
+}
+
+/** Frame rates on PCs like the caller's. The model names are read, reduced and dropped. */
+async function handleFps(_request: Request, env: Env, url: URL): Promise<Response> {
+  const secrets = productSecrets(env);
+  if (secrets === null) return errorResponse(503, "not_configured");
+  const query = parseFpsQuery(url.searchParams);
+  if (query === null) return errorResponse(400, "bad_hardware");
+  const configs = await fpsFor(env.DB, secrets.bucket, query.gpu, cpuTier(query.cpu), resolutionBucket(query.height));
+  return jsonResponse(200, { configs });
+}
+
+/**
+ * The owner's view of what players look for and do not find. The only route that needs a secret
+ * besides the product ones: without `PRODUCT_ADMIN_KEY` (32 characters or more) it answers 503 and
+ * reads nothing; a wrong key gets 401.
+ */
+async function handleSearchGaps(request: Request, env: Env, url: URL): Promise<Response> {
+  const secrets = productSecrets(env);
+  const admin = adminKey(env);
+  if (secrets === null || !secretOk(admin)) return errorResponse(503, "not_configured");
+  if (!(await adminAllowed(request.headers.get("authorization"), admin))) return errorResponse(401, "unauthorized");
+  const limitText = url.searchParams.get("limit") ?? "100";
+  const limit = /^\d{1,3}$/.test(limitText) ? Math.min(500, Math.max(1, Number(limitText))) : 100;
+  return jsonResponse(200, await searchGaps(env.DB, secrets.bucket, limit));
 }
 
 function bodyError(reason: "too_large" | "invalid_utf8" | "invalid_json"): Response {

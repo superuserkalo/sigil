@@ -16,6 +16,12 @@ party: usage events go to Analytics Engine, everything else to D1.
 | POST | `/v1/diagnostics` | 1 MiB | One D1 row, returns a support code such as `SGL-7K4M-9QZT`. |
 | GET | `/v1/identify?sha256=<hex>&size=<n>` | none | Nothing. Reads the hash index. |
 | POST | `/v1/hashes` | 4 KiB | Upserts one `mod_hashes` row and counts reports. |
+| POST | `/v1/product` | 32 KiB | Help build Sigil records (ADR 0017), raw rows and open-epoch contributions. |
+| POST | `/v1/product/delete` | 1 KiB | Deletes one install's raw rows and open-epoch contributions. |
+| GET | `/v1/product/related?mod=<id>` | none | Nothing. Co-installed mods above the floor. |
+| GET | `/v1/product/health?mods=<id,id,...>` | none | Nothing. Mod health above the floor, at most 40 mods. |
+| GET | `/v1/product/fps?gpu=<model>&cpu=<model>&height=<px>` | none | Nothing. Frame rates per config on that hardware class. |
+| GET | `/v1/product/admin/search-gaps` | none | Nothing. Owner only, needs `PRODUCT_ADMIN_KEY`. |
 
 Every request needs `x-sigil-client: 1` and a semver `x-sigil-version`, otherwise 400. The limiter
 allows 60 requests per 60 seconds per Cloudflare location, keyed by a salted hash of
@@ -147,6 +153,52 @@ nothing. The app keeps its queue within its usual limits and tries again later.
 4. `npx wrangler deploy`.
 
 A mistake in the data is fixed by deleting rows from D1, not by deploying a key.
+
+### What players get back (migration 0004)
+
+Every answer below is built only from `product_totals`: closed epochs whose key met the floor (10
+eligible installs, 6 network buckets, 3 days). No install hash, bucket or single install's value
+leaves the Worker. The routes are rate limited like every other route.
+
+- `GET /v1/product/related?mod=<id>`: `{mods: [{modId, installs}]}`, at most 20, damped cosine.
+- `GET /v1/product/health?mods=<id,...>`: per mod, from the last 3 closed epochs only (about 90
+  days, so a fixed mod stops carrying old reports): `install` (`failed` installs whose reason
+  points at the mod, `attempts` from the same epochs, `reasons`), `broken` per game build
+  (`reports`: the strongest of moved, gone, skeleton, turned off after a crash and crash suspect;
+  `users`: installs that had the mod on at that build) and `conflicts` (`reports` of overlap or
+  conflict pairs, `together`: installs that had both on). Kinds: `health`, `attempt`, `use`,
+  `conflict`. The app decides what is strong enough to show (`deadlock_core::product_data`).
+- `GET /v1/product/fps?gpu=<model>&cpu=<model>&height=<px>`: `{configs: [{config, version, fps,
+  low, installs}]}`. The hardware class is the reduced GPU model and a CPU tier (`cpuTier`: high,
+  mid, low, other); `height` picks the bucket (720p, 1080p, 1440p, 2160p). A benchmark is filed
+  under kind `fps` with the install's latest `hardware` and `perf_config` records; closing an
+  epoch writes the median average and the median 1% low of the eligible installs (`median`,
+  `low`) and deletes the per-install values with the rest of the epoch.
+
+### Search gaps (owner only)
+
+Browse searches that found nothing (`search_zero`) or at most 5 mods (`search_few`), above the
+same floor. Set the key once; without it (or with one shorter than 32 characters) the route answers
+503 and reads nothing, and a wrong key gets 401:
+
+```bash
+npx wrangler secret put PRODUCT_ADMIN_KEY   # openssl rand -hex 32; keep it out of the repo
+curl -s https://sigil-telemetry.gantchevkaloyan.workers.dev/v1/product/admin/search-gaps?limit=100 \
+  -H 'x-sigil-client: 1' -H 'x-sigil-version: 0.1.0' \
+  -H "authorization: Bearer $PRODUCT_ADMIN_KEY"
+# {"zero":[{"term":"kelvin hat","installs":14}],"few":[{"term":"yamato sword","installs":11}]}
+```
+
+### Deploying migration 0004
+
+```bash
+npx wrangler d1 migrations apply sigil --remote   # 0004_product_uses.sql: four columns, one index
+npx wrangler secret put PRODUCT_ADMIN_KEY         # only for the search gaps route
+npx wrangler deploy
+```
+
+Contributions sent before 0004 keep counting: the new kinds start from the deploy, and a
+benchmark sent before it has no frame rate row.
 
 ## What the apply step (desktop side) still has to do
 
