@@ -113,7 +113,7 @@ pub fn badge(s: &State, u: &Ui, slot: u16, on_image: bool) -> Option<El> {
     } else {
         base.size(24.0, 24.0)
             .center()
-            .radius(crate::ui::r(6.0))
+            .radius(crate::ui::r(4.0))
             .fill(if open { u.selected } else { Color::TRANSPARENT })
             .border(1.0, u.hair_strong)
             .hover(u.hover)

@@ -509,7 +509,8 @@ pub fn view(s: &State, u: &Ui) -> El {
             "Deadlock was not found",
             "Set the game folder in Settings and your mods show up here.",
             Some(
-                u.action("Open Settings", ActionKind::Secondary)
+                // The one thing to do on this screen, so it is the solid action.
+                u.action("Open Settings", ActionKind::Primary)
                     .cursor(rune::Cursor::Pointer)
                     .on_press(|st: &mut State| st.go(Screen::Settings)),
             ),
@@ -835,6 +836,11 @@ fn sort_button(s: &State, u: &Ui) -> El {
 
 /// The page's one toolbar line: title, scope, Filters, search, sort, view, import, more.
 fn toolbar_line(s: &State, u: &Ui, has_mods: bool) -> El {
+    // With no game there is nothing to filter, sort, view or import into: the title alone, so
+    // the one action on the screen is Open Settings. The line keeps its height.
+    if !s.game_detected {
+        return u.page_toolbar(u.page_title(tr("Installed")).pr(8.0), Vec::new(), None, Vec::new());
+    }
     let ready = has_mods;
     let dim = |e: El| if ready { e } else { e.disabled(true).opacity(0.45) };
     let view_glyph = if s.installed.layout == layout::Layout::List { &icons::LIST } else { &icons::LAYOUT_GRID };
@@ -1536,7 +1542,7 @@ fn card_view(s: &State, u: &Ui, idx: &index::Index, card: &layout::Group, pitch:
     // One row of marks, warnings first, at most three (two on small cards): the rest fold
     // into "+N", which opens the card menu. It never wraps, so every card keeps one height.
     let cap = if compact { 2 } else { 3 };
-    let all: Vec<El> = warning_buttons(s, u, addon).into_iter().chain(card_marks(s, u, addon)).collect();
+    let all: Vec<El> = warning_buttons(s, u, addon, true).into_iter().chain(card_marks(s, u, addon, true)).collect();
     let total = all.len();
     let shown_marks = if total > cap { cap - 1 } else { total };
     let mut marks = row().grow(1.0).shrink().min_w(0.0).gap(4.0).justify_end();
@@ -1658,7 +1664,22 @@ fn card_view(s: &State, u: &Ui, idx: &index::Index, card: &layout::Group, pitch:
 }
 
 /// The quiet marks on a preview corner: pinned, loads first, mature. Not buttons.
-pub(super) fn card_marks(s: &State, _u: &Ui, addon: &AddonRow) -> Vec<El> {
+/// A mark's box: a dark plate over a preview, or a quiet outlined square on a list row, where a
+/// dark plate on the flat background reads heavier than the mod's name.
+pub(super) fn mark_box(u: &Ui, e: El, on_image: bool) -> El {
+    if on_image {
+        e.size(28.0, 28.0).center().radius(crate::ui::r(4.0)).fill(Color::BLACK.alpha(0.6))
+    } else {
+        e.size(24.0, 24.0).center().radius(crate::ui::r(4.0)).border(1.0, u.hair_strong)
+    }
+}
+
+/// A mark's glyph colour when it carries no warning tone.
+pub(super) fn mark_ink(u: &Ui, on_image: bool) -> Color {
+    if on_image { Color::WHITE.alpha(0.9) } else { u.muted }
+}
+
+pub(super) fn card_marks(s: &State, u: &Ui, addon: &AddonRow, on_image: bool) -> Vec<El> {
     let extra = notes::extra(s, addon);
     let mut marks = Vec::new();
     // Fixed priority; the caller caps how many show and folds the rest into "+N".
@@ -1672,15 +1693,10 @@ pub(super) fn card_marks(s: &State, _u: &Ui, addon: &AddonRow) -> Vec<El> {
             continue;
         }
         marks.push(
-            el()
-                .key(format!("installed-mark-{label}-{:02}", addon.slot))
-                .size(28.0, 28.0)
-                .center()
-                .radius(crate::ui::r(4.0))
-                .fill(Color::BLACK.alpha(0.6))
+            mark_box(u, el().key(format!("installed-mark-{label}-{:02}", addon.slot)), on_image)
                 .help(tr(label))
                 .label(tr(label))
-                .child(icon(glyph, 14.0).color(Color::WHITE.alpha(0.9)).a11y_hidden()),
+                .child(icon(glyph, if on_image { 14.0 } else { 13.0 }).color(mark_ink(u, on_image)).a11y_hidden()),
         );
     }
     marks
@@ -1688,19 +1704,19 @@ pub(super) fn card_marks(s: &State, _u: &Ui, addon: &AddonRow) -> Vec<El> {
 
 /// The small warning buttons on a preview corner: the safety scan and the compatibility
 /// review, when either has something to say about this mod.
-pub(super) fn warning_buttons(s: &State, u: &Ui, addon: &AddonRow) -> Vec<El> {
+pub(super) fn warning_buttons(s: &State, u: &Ui, addon: &AddonRow, on_image: bool) -> Vec<El> {
     let mut buttons = Vec::new();
     // A change waiting for the game to close comes first, so it is never folded away.
-    if let Some(mark) = waiting::mark(s, u, addon.slot) {
+    if let Some(mark) = waiting::mark(s, u, addon.slot, on_image) {
         buttons.push(mark);
     }
-    if let Some(badge) = enable::hidden_badge(s, u, addon.slot) {
+    if let Some(badge) = enable::hidden_badge(s, u, addon.slot, on_image) {
         buttons.push(badge);
     }
-    if let Some(badge) = req_order::badge(s, u, addon.slot, true) {
+    if let Some(badge) = req_order::badge(s, u, addon.slot, on_image) {
         buttons.push(badge);
     }
-    if let Some(badge) = overlap::badge(s, u, addon.slot, true) {
+    if let Some(badge) = overlap::badge(s, u, addon.slot, on_image) {
         buttons.push(badge);
     }
     let scan = s
@@ -1713,13 +1729,8 @@ pub(super) fn warning_buttons(s: &State, u: &Ui, addon: &AddonRow) -> Vec<El> {
         let worst = report.worst().unwrap_or(deadlock_core::mod_safety::Risk::Script);
         let slot = addon.slot;
         buttons.push(
-            el()
-                .key(format!("installed-safety-{:02}", addon.slot))
-                .size(28.0, 28.0)
-                .center()
-                .radius(crate::ui::r(8.0))
-                .fill(Color::BLACK.alpha(0.6))
-                .hover(Color::BLACK.alpha(0.78))
+            mark_box(u, el().key(format!("installed-safety-{:02}", addon.slot)), on_image)
+                .hover(if on_image { Color::BLACK.alpha(0.78) } else { u.hover })
                 .focusable(true)
                 .role("button")
                 .label(format!(
@@ -1751,13 +1762,8 @@ pub(super) fn warning_buttons(s: &State, u: &Ui, addon: &AddonRow) -> Vec<El> {
         })
     {
         buttons.push(
-            el()
-                .key(format!("installed-health-{:02}", addon.slot))
-                .size(28.0, 28.0)
-                .center()
-                .radius(crate::ui::r(8.0))
-                .fill(Color::BLACK.alpha(0.6))
-                .hover(Color::BLACK.alpha(0.78))
+            mark_box(u, el().key(format!("installed-health-{:02}", addon.slot)), on_image)
+                .hover(if on_image { Color::BLACK.alpha(0.78) } else { u.hover })
                 .focusable(true)
                 .role("button")
                 .label("Paths the game no longer has")

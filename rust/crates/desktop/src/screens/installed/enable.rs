@@ -790,18 +790,13 @@ fn breaks_dialog(s: &State, u: &Ui, slot: u16, dependents: &[u16]) -> El {
 
 /// The hidden-model mark on a card: the game shows another mod's model instead of this one.
 /// A press opens Overlap, where the winner is chosen.
-pub fn hidden_badge(s: &State, u: &Ui, slot: u16) -> Option<El> {
+pub fn hidden_badge(s: &State, u: &Ui, slot: u16, on_image: bool) -> Option<El> {
     if !s.installed.hidden.contains(&slot) {
         return None;
     }
     Some(
-        rune::el()
-            .key(format!("installed-hidden-{slot:02}"))
-            .size(28.0, 28.0)
-            .center()
-            .radius(crate::ui::r(8.0))
-            .fill(Color::BLACK.alpha(0.6))
-            .hover(Color::BLACK.alpha(0.78))
+        super::mark_box(u, rune::el().key(format!("installed-hidden-{slot:02}")), on_image)
+            .hover(if on_image { Color::BLACK.alpha(0.78) } else { u.hover })
             .focusable(true)
             .role("button")
             .label(tr("Model hidden. Another mod's model is used instead of this one."))

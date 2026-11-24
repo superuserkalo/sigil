@@ -434,10 +434,9 @@ pub fn list_row(s: &State, u: &Ui, idx: &super::index::Index, card: &Group) -> E
     // word chips (right aligned, cut at the column's edge) and the marks.
     let wide = crate::ui::fit() == crate::ui::Fit::Full;
     // Marks: the same as the card's, warnings first, at most three.
-    let mut all: Vec<El> = super::warning_buttons(s, u, addon);
-    all.extend(super::req_order::badge(s, u, slot, false));
-    all.extend(super::overlap::badge(s, u, slot, false));
-    all.extend(super::card_marks(s, u, addon));
+    // The flat look: an outlined square per mark, not the dark plate the preview needs.
+    let mut all: Vec<El> = super::warning_buttons(s, u, addon, false);
+    all.extend(super::card_marks(s, u, addon, false));
     let mut marks = row().w(MARKS_W).gap(4.0).center_y().justify_end();
     for mark in all.into_iter().take(3) {
         marks = marks.child(mark);

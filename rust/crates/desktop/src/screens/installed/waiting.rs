@@ -409,7 +409,7 @@ fn waits_line(kind: PendingKind) -> &'static str {
 
 /// The mark on a card and a list row whose slot has a waiting change. It sits first in the
 /// mark row (marks are fixed 28 point slots, so nothing moves). Pressing it cancels the change.
-pub fn mark(s: &State, u: &Ui, slot: u16) -> Option<El> {
+pub fn mark(s: &State, u: &Ui, slot: u16, on_image: bool) -> Option<El> {
     let change = for_slot(s, slot)?;
     let id = change.id;
     let help = match &change.error {
@@ -417,12 +417,8 @@ pub fn mark(s: &State, u: &Ui, slot: u16) -> Option<El> {
         None => format!("{}. {}", waits_line(change.kind), tr("Click to cancel.")),
     };
     Some(
-        el().key(format!("installed-waiting-{slot:02}"))
-            .size(28.0, 28.0)
-            .center()
-            .radius(crate::ui::r(4.0))
-            .fill(Color::BLACK.alpha(0.6))
-            .hover(Color::BLACK.alpha(0.78))
+        super::mark_box(u, el().key(format!("installed-waiting-{slot:02}")), on_image)
+            .hover(if on_image { Color::BLACK.alpha(0.78) } else { u.hover })
             .focusable(true)
             .role("button")
             .label(waits_line(change.kind))
@@ -431,7 +427,7 @@ pub fn mark(s: &State, u: &Ui, slot: u16) -> Option<El> {
             .on_press(move |st: &mut State| cancel(st, id))
             .child(
                 icon(&icons::HISTORY, 14.0)
-                    .color(if change.error.is_some() { u.amber } else { Color::WHITE.alpha(0.9) })
+                    .color(if change.error.is_some() { u.amber } else { super::mark_ink(u, on_image) })
                     .a11y_hidden(),
             ),
     )
