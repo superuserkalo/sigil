@@ -8,8 +8,10 @@ use std::hash::{Hash, Hasher};
 use crate::app::State;
 use crate::model::BrowseCard;
 
-/// How many picks are kept: a few pages of the row.
+/// How many picks the landing's row shows: a few pages.
 pub const KEEP: usize = 24;
+/// How many the "For you" page lists.
+pub const KEEP_ALL: usize = 240;
 const DAY: f64 = 24.0 * 60.0 * 60.0;
 
 /// What the player's own history says they like. Names are lower case.
@@ -157,6 +159,8 @@ impl Memory {
 #[derive(Clone, Default)]
 pub struct ForYou {
     pub picks: Vec<BrowseCard>,
+    /// The whole ranking, best first: what "See all" lists. `picks` is its head.
+    pub all: Vec<BrowseCard>,
     pub reasons: HashMap<u64, Reason>,
     /// False when there was no history to go on and the row is "Rising".
     pub personal: bool,
@@ -283,6 +287,11 @@ fn quality(card: &BrowseCard, top_likes: f64, now: i64) -> f32 {
 
 /// Rank `candidates` for a player. Returns at most `KEEP` picks, best first, each with why.
 pub fn rank(candidates: &[BrowseCard], sig: &Signals, now: i64) -> (Vec<BrowseCard>, HashMap<u64, Reason>, bool) {
+    rank_n(candidates, sig, now, KEEP)
+}
+
+/// [`rank`] with its own length, for the page that lists the whole ranking.
+pub fn rank_n(candidates: &[BrowseCard], sig: &Signals, now: i64, keep: usize) -> (Vec<BrowseCard>, HashMap<u64, Reason>, bool) {
     let mut seen = HashSet::new();
     let pool: Vec<&BrowseCard> = candidates
         .iter()
@@ -340,7 +349,7 @@ pub fn rank(candidates: &[BrowseCard], sig: &Signals, now: i64) -> (Vec<BrowseCa
     let mut reasons = HashMap::new();
     let mut per_hero: HashMap<String, u32> = HashMap::new();
     let mut per_author: HashMap<String, u32> = HashMap::new();
-    while picks.len() < KEEP && !scored.is_empty() {
+    while picks.len() < keep && !scored.is_empty() {
         let mut best = 0;
         let mut best_score = f32::MIN;
         for (i, (score, _, _, hero, author)) in scored.iter().enumerate() {
@@ -387,7 +396,7 @@ pub fn rank(candidates: &[BrowseCard], sig: &Signals, now: i64) -> (Vec<BrowseCa
             picks.insert(at, super::store::clone_card(card));
             at += 4;
         }
-        picks.truncate(KEEP);
+        picks.truncate(keep);
     }
     (picks, reasons, personal)
 }
@@ -444,9 +453,10 @@ pub fn refresh(st: &mut State) -> bool {
                 .filter(|c| wanted(&c.category) || sig.authors.contains_key(&c.author.to_lowercase())),
         );
     }
-    let (picks, reasons, personal) = rank(&candidates, &sig, deadlock_core::gamebanana::now_unix());
+    let (all, reasons, personal) = rank_n(&candidates, &sig, deadlock_core::gamebanana::now_unix(), KEEP_ALL);
     let fy = &mut st.browse_view.shelves.for_you;
-    fy.picks = picks;
+    fy.picks = all.iter().take(KEEP).map(super::store::clone_card).collect();
+    fy.all = all;
     fy.reasons = reasons;
     fy.personal = personal;
     fy.key = key;
@@ -458,6 +468,10 @@ pub fn refresh(st: &mut State) -> bool {
         let memory = fy.memory.clone();
         std::thread::spawn(move || memory.save());
     }
+    // The page that lists them all is a local view: read it again.
+    if st.browse_view.filters.for_you {
+        crate::data::start_browse_fetch(st, 1);
+    }
     true
 }
 
@@ -468,6 +482,7 @@ pub fn dismiss(st: &mut State, id: u64) {
     let Some(card) = fy.picks.iter().find(|c| c.id == id).map(super::store::clone_card) else { return };
     fy.memory.dismiss(&card);
     fy.picks.retain(|c| c.id != id);
+    fy.all.retain(|c| c.id != id);
     let memory = fy.memory.clone();
     std::thread::spawn(move || memory.save());
 }
@@ -615,6 +630,26 @@ mod tests {
         // It survives a save and a load, and a damaged file is simply empty.
         assert_eq!(Memory::from_json(&m.to_json()), m);
         assert_eq!(Memory::from_json("not json"), Memory::default());
+    }
+
+    /// "See all" lists the whole ranking in its order, as a page of the catalog.
+    #[test]
+    fn the_page_lists_the_whole_ranking_in_order() {
+        let mut sig = Signals::default();
+        sig.heroes.insert("haze".into(), 1.0);
+        sig.heroes.insert("paradox".into(), 0.8);
+        let (all, _, _) = rank_n(&pool(), &sig, NOW, KEEP_ALL);
+        let (head, _, _) = rank(&pool(), &sig, NOW);
+        assert!(all.len() >= head.len());
+        let mut st = State::default();
+        st.browse_view.shelves.for_you.all = all.iter().map(super::super::store::clone_card).collect();
+        st.browse_view.filters.for_you = true;
+        let page = crate::screens::browse::local_page(&mut st, 7).expect("a local page");
+        assert_eq!(page.mods.iter().map(|c| c.id).collect::<Vec<_>>(), all.iter().map(|c| c.id).collect::<Vec<_>>());
+        assert!(page.complete && page.total == all.len());
+        // Without the filter the catalog is the network's, not this list.
+        st.browse_view.filters.for_you = false;
+        assert!(crate::screens::browse::local_page(&mut st, 7).is_none());
     }
 
     /// A barely liked mod is never a recommendation, however well it matches.

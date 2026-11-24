@@ -87,6 +87,8 @@ pub struct See {
     pub order: BrowseOrder,
     pub period: BrowsePeriod,
     pub category: Option<String>,
+    /// Open the page of every mod picked for the player instead of a sorted catalog.
+    pub for_you: bool,
 }
 
 pub struct Row<'a> {
@@ -277,7 +279,7 @@ pub fn plan(s: &State, n: usize, now: i64) -> Plan<'_> {
 
     let mut rows: Vec<Row> = Vec::new();
     let mut taken: HashSet<u64> = HashSet::new();
-    let see = |order, period, category: Option<&str>| Some(See { order, period, category: category.map(str::to_string) });
+    let see = |order, period, category: Option<&str>| Some(See { order, period, category: category.map(str::to_string), for_you: false });
 
     // Top 10: the true ranking, so it may repeat a billboard pick. The title names the window.
     let windows: [(Option<i64>, &str, BrowsePeriod); 4] = [
@@ -306,7 +308,8 @@ pub fn plan(s: &State, n: usize, now: i64) -> Plan<'_> {
     let mine = fresh_cards(fy.picks.iter().filter(ok).collect(), &taken);
     if mine.len() >= min_fill {
         let title = super::tree::tr(if fy.personal { "For you" } else { "Rising" }).to_string();
-        let see = if fy.personal { None } else { see(BrowseOrder::MostLiked, BrowsePeriod::Week, None) };
+        // See all opens the whole ranking as a page of its own.
+        let see = Some(See { order: BrowseOrder::MostLiked, period: BrowsePeriod::Any, category: None, for_you: true });
         push_row(&mut rows, &mut taken, min_fill, Row { kind: RowKind::New, title, cards: mine, see, reasons: Some(&fy.reasons) });
     }
     // New this week: newest first, liked at least once; then without the floor; then 14 days.
@@ -952,6 +955,10 @@ fn row_view(s: &State, u: &Ui, r: &Row, width: f32, n: usize) -> El {
 }
 
 fn apply_see(st: &mut State, tx: &mut Tx, see: &See) {
+    if see.for_you {
+        set_filters(st, Some(tx), |f| f.for_you = true);
+        return;
+    }
     let category = see.category.as_ref().and_then(|name| {
         st.browse_view
             .categories
@@ -1406,7 +1413,7 @@ mod tests {
         let p = plan(&st, 4, NOW);
         assert_eq!(p.rows.len(), 2);
         assert_eq!(p.rows[1].title, "For you");
-        assert!(p.rows[1].see.is_none() && p.rows[1].reasons.is_some());
+        assert!(p.rows[1].see.as_ref().is_some_and(|see| see.for_you) && p.rows[1].reasons.is_some());
         assert!(!ids(&p.rows[1]).contains(&1), "mod 1 is in the Top 10 already");
         assert_rows_ok(&p, 4);
     }

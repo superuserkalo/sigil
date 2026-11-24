@@ -618,6 +618,8 @@ pub struct Filters {
     pub exclude: bool,
     /// Show the saved mods instead of the catalog.
     pub favorites: bool,
+    /// Show the mods picked for this player (`foryou`) instead of the catalog.
+    pub for_you: bool,
 }
 
 impl Filters {
@@ -635,6 +637,7 @@ impl Filters {
             self.hide_outdated,
             self.exclude,
             self.favorites,
+            self.for_you,
         ]
         .iter()
         .filter(|on| **on)
@@ -917,6 +920,7 @@ pub fn query_key(s: &State, query: &BrowseQuery) -> u64 {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     query.hash(&mut hasher);
     f.favorites.hash(&mut hasher);
+    f.for_you.hash(&mut hasher);
     (f.owned == Owned::Installed).hash(&mut hasher);
     s.browse_view.tab.hash(&mut hasher);
     hasher.finish()
@@ -934,6 +938,9 @@ pub fn local_page(st: &mut State, key: u64) -> Option<BrowsePageView> {
             .filter(|fav| fav.model.eq_ignore_ascii_case(model))
             .map(Favorite::card)
             .collect()
+    } else if f.for_you {
+        // The whole ranking, best first, of which the landing's row shows the head.
+        st.browse_view.shelves.for_you.all.iter().map(store::clone_card).collect()
     } else if f.owned == Owned::Installed {
         st.installed
             .library
@@ -1220,7 +1227,7 @@ fn shown_indices(s: &State) -> Vec<usize> {
     let v = &s.browse_view;
     let f = &v.filters;
     let typed = s.browse_query.text.trim().to_lowercase();
-    let local = f.favorites || f.owned == Owned::Installed;
+    let local = f.favorites || f.for_you || f.owned == Owned::Installed;
     let query = if local || typed != v.applied_search.to_lowercase() {
         typed
     } else {
