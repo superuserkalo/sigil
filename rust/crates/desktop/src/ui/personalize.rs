@@ -339,7 +339,10 @@ impl Density {
 
     pub fn scale(self) -> f32 {
         match self {
-            Density::Compact => 0.9,
+            // 0.95, not 0.9: every inset scales with it, and at 0.9 an 8 point padding drew 7
+            // pixels at 100% Windows scaling and page edges crowded the content. At 0.95 an 8
+            // point padding still rounds to 8 and the page margin is 22.8.
+            Density::Compact => 0.95,
             Density::Default => 1.0,
             Density::Spacious => 1.1,
         }

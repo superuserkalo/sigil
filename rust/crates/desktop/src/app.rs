@@ -1151,10 +1151,12 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
     crate::ui::set_look(s.prefs.theme, s.prefs.accent_color());
     // Settings > Appearance > Personalize: a custom palette and corner radius, off by default.
     screens::settings::personalize::apply(s);
-    // Zoom from the shortcuts, times the density chosen in Appearance (100% by default).
-    cx.zoom(s.prefs.zoom * crate::ui::density());
+    // Zoom from the shortcuts, times the density chosen in Appearance (100% by default), kept
+    // inside the range where page and panel insets stay readable (`ui::zoom_for`).
+    let zoom = crate::ui::zoom_for(s.prefs.zoom);
+    cx.zoom(zoom);
     // Thumbnails decode at the pixels a card covers: the screen scale times the zoom.
-    crate::data::set_pixel_scale(cx.env().scale * s.prefs.zoom * crate::ui::density());
+    crate::data::set_pixel_scale(cx.env().scale * zoom);
     let window = cx
         .layout_size("root")
         .map_or((1360.0, 860.0), |size| (size[0], size[1]));

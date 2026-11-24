@@ -319,6 +319,23 @@ pub fn density() -> f32 {
     f32::from_bits(DENSITY.load(std::sync::atomic::Ordering::Relaxed))
 }
 
+/// The smallest whole-window zoom (interface size times density). Every inset scales with the
+/// zoom, so Interface size 90% with Compact (0.855) would put a 24 point page margin, an 18
+/// point sidebar icon inset and an 8 point padding at 20.5, 15.4 and 6.8 points: content pressed
+/// against the window and panel edges. At 0.9 they stay at 21.6, 16.2 and 7.2.
+pub const MIN_ZOOM: f32 = 0.9;
+/// The largest whole-window zoom: 125% with Spacious would leave a 1040 by 680 window about 750
+/// points wide, too narrow for the page toolbars; 1.25 keeps them on one line.
+pub const MAX_ZOOM: f32 = 1.25;
+
+/// The zoom the window draws at: the interface size (`Prefs::zoom`, the zoom shortcuts) times
+/// the density, kept between [`MIN_ZOOM`] and [`MAX_ZOOM`]. Compact still shrinks text and
+/// controls at 100%, Spacious still grows them; only the extremes stop where insets give out.
+pub fn zoom_for(interface: f32) -> f32 {
+    let k = interface * density();
+    if k.is_finite() { k.clamp(MIN_ZOOM, MAX_ZOOM) } else { 1.0 }
+}
+
 /// The selection thumb of a segmented control or tab strip: the selected part's fill and
 /// border, a child placed before the label and pinned to the part's edges, so it takes no part
 /// in the layout. `id` names the strip (and is the thumb's key): on a new pick the thumb glides from the

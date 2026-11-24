@@ -81,7 +81,17 @@ pub fn apply(s: &State) {
         .map(|d| d.palette)
         .or_else(|| personal.palette());
     crate::ui::set_personal(palette, personal.radius.scale());
-    crate::ui::set_density(personal.density.scale());
+    crate::ui::set_density(snap_density().unwrap_or(personal.density).scale());
+}
+
+/// A headless snapshot with `SIGIL_SNAP_DENSITY=compact` (or `default`, `spacious`) draws every
+/// scene at that density, so the three can be checked side by side.
+fn snap_density() -> Option<Density> {
+    if !rune::is_headless() {
+        return None;
+    }
+    let id = std::env::var("SIGIL_SNAP_DENSITY").ok()?;
+    Density::ALL.into_iter().find(|d| d.id() == id)
 }
 
 /// Copied images. Headless runs (scenes, snapshots) keep theirs in a temporary folder.
