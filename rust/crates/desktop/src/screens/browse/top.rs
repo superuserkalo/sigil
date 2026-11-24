@@ -943,9 +943,6 @@ fn row_view(s: &State, u: &Ui, r: &Row, width: f32, n: usize) -> El {
             .on_press_tx(move |st: &mut State, tx: &mut Tx| apply_see(st, tx, &see))
             .child(text(super::tree::tr("See all")).font(SMALL).color(u.muted).ml(8.0))
             .child(icon(&icons::CHEVRON_RIGHT, 12.0).color(u.muted).a11y_hidden());
-    } else if r.reasons.is_some() {
-        // A row picked for this player says where it comes from: nothing left this PC.
-        title = title.child(text(super::tree::tr("Picked on this PC from your heroes, mods and favorites")).font(SMALL).color(u.muted).ml(8.0).truncate().min_w(0.0));
     }
     let mut head = row().w_full().h(28.0).gap(6.0).center_y().child(title).child(spacer());
     if pages > 1 {

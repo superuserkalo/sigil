@@ -30,7 +30,6 @@ const DE: &[(&str, &str)] = &[
     ("Because you play {}", "Weil du {} spielst"),
     ("More from {}", "Mehr von {}"),
     ("More {}", "Mehr {}"),
-    ("Picked on this PC from your heroes, mods and favorites", "Auf diesem PC ausgewählt: nach deinen Helden, Mods und Favoriten"),
     ("All mods", "Alle Mods"),
     ("Trending today", "Heute im Trend"),
     ("Author", "Autor"),
