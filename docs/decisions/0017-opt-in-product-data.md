@@ -65,6 +65,28 @@ The limits below are what keeps this honest. They are part of the decision, not 
 - `docs/privacy.md` lists every field before the first build that sends one, and the
   onboarding step links to it.
 
+## Amendment 2026-11-25: counting distinct contributors
+
+An install id is a random id the app makes, so one person can send ten made-up ids. The
+10-install floor therefore counts distinct contributors, not ids (`services/telemetry/src/aggregates.ts`):
+
+- Each request gets a network bucket: a hash of the rate limiter's key, which is a hash of the
+  caller's address with a salt held only in the Worker's memory and replaced every UTC day. The IP
+  address itself is never stored. The bucket id is stored only on aggregate contributions (never on
+  raw events), cannot be linked across days, and is deleted with the contribution after 13 months
+  or on "Delete my data".
+- One bucket may bring at most 3 new installs a day into the aggregates. Extra installs are kept as
+  raw data but never count.
+- An install counts only after it has sent data on at least 2 different days.
+- A mod pair, a mod health finding, a hardware class or a search term is shown to players only
+  when at least 10 counting installs from at least 6 different buckets on at least 3 different days
+  share it.
+- "Players who use this also use" ranks by a damped score (cosine similarity over support capped at
+  3 installs per bucket, times support / (support + 10)), not raw counts, and lists at most 20.
+
+A patient person on one network can still reach the floor over about a week, and a person with
+many networks sooner. The rule raises the cost of poisoning; it does not make it impossible.
+
 ## Consequences
 
 - The privacy page's promise that no mod or hero name ever leaves the PC becomes "not unless

@@ -11,7 +11,7 @@
  *   POST /v1/hashes       hash contributed by an app that just installed that file
  *   POST /v1/product      opt-in product data records, "Help build Sigil" (ADR 0017)
  *   POST /v1/product/delete  every raw product row for one install, on the player's press
- *   GET  /v1/product/related co-installed mods, only for pairs 10 or more installs share
+ *   GET  /v1/product/related co-installed mods that pass the distinct-contributor floor
  *
  * The app is the only intended client and nothing here is fetched by the desktop app on its own:
  * every request is behind a Settings > Privacy switch (docs/decisions/0014-opt-in-telemetry.md,
@@ -32,8 +32,17 @@ import { sha256Hex } from "./hash";
 import { allowRequest } from "./limiter";
 import { runRetention } from "./retention";
 import {
+  bucketOf,
+  keyStatement,
+  keysOf,
+  pairStatement,
+  registerInstall,
+  related,
+  utcDay,
+  type Contributor,
+} from "./aggregates";
+import {
   installHash,
-  MIN_RELATED_INSTALLS,
   pairsOf,
   parseInstallId,
   parseProduct,
@@ -60,7 +69,6 @@ const DIAGNOSTICS_BODY_LIMIT = 1024 * 1024;
 const HASHES_BODY_LIMIT = 4 * 1024;
 const PRODUCT_BODY_LIMIT = 32 * 1024;
 const PRODUCT_DELETE_BODY_LIMIT = 1024;
-const MAX_RELATED = 20;
 const MAX_PAIRS_PER_REQUEST = 600;
 
 const MAX_IDENTIFY_MATCHES = 5;
@@ -324,8 +332,15 @@ async function handleProduct(request: Request, env: Env): Promise<Response> {
   if (!parsed.ok) return errorResponse(400, parsed.error);
 
   const product = parsed.value;
-  const hash = await installHash(product.installId, productSalt(env));
   const now = Date.now();
+  const who: Contributor = {
+    hash: await installHash(product.installId, productSalt(env)),
+    bucket: await bucketOf(request, now),
+    day: utcDay(now),
+  };
+  await registerInstall(env.DB, who, now);
+
+  // Raw rows carry the install hash only: no bucket, no address, no user agent.
   const statements: D1PreparedStatement[] = [];
   let pairs = 0;
   for (const record of product.records) {
@@ -333,19 +348,16 @@ async function handleProduct(request: Request, env: Env): Promise<Response> {
       env.DB.prepare(
         `INSERT INTO product_events (created_at, install_hash, type, version, os, os_build, game_build, payload)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)`,
-      ).bind(now, hash, record.type, product.version, product.os, product.osBuild, product.gameBuild, JSON.stringify(record.fields)),
+      ).bind(now, who.hash, record.type, product.version, product.os, product.osBuild, product.gameBuild, JSON.stringify(record.fields)),
     );
     for (const [a, b] of pairsOf(record)) {
       // One request writes at most MAX_PAIRS_PER_REQUEST pairs; the app sends one set a session.
       if (pairs >= MAX_PAIRS_PER_REQUEST) break;
       pairs += 1;
-      statements.push(
-        env.DB.prepare(
-          `INSERT INTO product_pairs (mod_a, mod_b, install_hash, created_at, updated_at)
-           VALUES (?1, ?2, ?3, ?4, ?4)
-           ON CONFLICT(mod_a, mod_b, install_hash) DO UPDATE SET updated_at = excluded.updated_at`,
-        ).bind(a, b, hash, now),
-      );
+      statements.push(pairStatement(env.DB, a, b, who, now));
+    }
+    for (const { kind, key } of keysOf(record)) {
+      statements.push(keyStatement(env.DB, kind, key, who, now));
     }
   }
   if (statements.length > 0) await env.DB.batch(statements);
@@ -362,36 +374,20 @@ async function handleProductDelete(request: Request, env: Env): Promise<Response
   if (installId === null) return errorResponse(400, "bad_install_id");
 
   const hash = await installHash(installId, productSalt(env));
-  const results = await env.DB.batch([
-    env.DB.prepare("DELETE FROM product_events WHERE install_hash = ?1").bind(hash),
-    env.DB.prepare("DELETE FROM product_pairs WHERE install_hash = ?1").bind(hash),
-  ]);
-  const deleted = (results[0]?.meta.changes ?? 0) + (results[1]?.meta.changes ?? 0);
+  const results = await env.DB.batch(
+    ["product_events", "product_pairs", "product_keys", "product_installs"].map((table) =>
+      env.DB.prepare(`DELETE FROM ${table} WHERE install_hash = ?1`).bind(hash),
+    ),
+  );
+  const deleted = results.reduce((sum, result) => sum + (result.meta.changes ?? 0), 0);
   return jsonResponse(200, { deleted });
 }
 
+/** Co-installed mods that pass the distinct-contributor floor (`aggregates.ts`). */
 async function handleRelated(_request: Request, env: Env, url: URL): Promise<Response> {
   const mod = parseRelated(url.searchParams);
   if (mod === null) return errorResponse(400, "bad_mod");
-
-  // Each row is one install and one pair, so a count is a count of distinct installs.
-  const { results } = await env.DB.prepare(
-    `SELECT other, COUNT(*) AS installs FROM (
-       SELECT mod_b AS other FROM product_pairs WHERE mod_a = ?1
-       UNION ALL
-       SELECT mod_a AS other FROM product_pairs WHERE mod_b = ?1
-     )
-     GROUP BY other
-     HAVING COUNT(*) >= ?2
-     ORDER BY installs DESC, other ASC
-     LIMIT ?3`,
-  )
-    .bind(mod, MIN_RELATED_INSTALLS, MAX_RELATED)
-    .all<{ other: number; installs: number }>();
-
-  return jsonResponse(200, {
-    mods: results.map((row) => ({ modId: row.other, installs: row.installs })),
-  });
+  return jsonResponse(200, { mods: await related(env.DB, mod) });
 }
 
 function bodyError(reason: "too_large" | "invalid_utf8" | "invalid_json"): Response {

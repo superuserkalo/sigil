@@ -2,6 +2,7 @@ import { createScheduledController } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { beforeEach, describe, expect, it } from "vitest";
 import worker from "../src/index";
+import { publishedKeys } from "../src/aggregates";
 import { installHash, modelName, PRODUCT_TYPES, scrubSearch } from "../src/product";
 import { call, clearTables, INSTALL_ID, readJson, VERSION } from "./helpers";
 
@@ -135,13 +136,16 @@ describe("POST /v1/product/delete", () => {
 
     const response = await call("/v1/product/delete", { body: { installId: INSTALL_ID } });
     expect(response.status).toBe(200);
-    expect(await readJson<{ deleted: number }>(response)).toEqual({ deleted: 3 });
+    // Two events, one pair and the install row.
+    expect(await readJson<{ deleted: number }>(response)).toEqual({ deleted: 4 });
 
     const left = await rows();
     expect(left.length).toBe(1);
     expect(left[0]?.install_hash).toBe(await installHash(other, undefined));
     const pairs = await env.DB.prepare("SELECT COUNT(*) AS n FROM product_pairs").first<{ n: number }>();
     expect(pairs?.n).toBe(0);
+    const installs = await env.DB.prepare("SELECT COUNT(*) AS n FROM product_installs").first<{ n: number }>();
+    expect(installs?.n).toBe(1);
   });
 
   it("needs a real install id", async () => {
@@ -150,28 +154,87 @@ describe("POST /v1/product/delete", () => {
   });
 });
 
-describe("GET /v1/product/related", () => {
-  it("answers only for pairs at least 10 installs share", async () => {
-    const set = { type: "enabled_set", mods: [{ mod_id: 100, slot: 1 }, { mod_id: 200, slot: 2 }, { mod_id: 300, slot: 3 }] };
-    for (let n = 0; n < 9; n += 1) {
-      await call("/v1/product", { body: body([set], { installId: crypto.randomUUID() }) });
-    }
-    // The same install twice still counts once.
-    await call("/v1/product", { body: body([set]) });
-    await call("/v1/product", { body: body([set]) });
-    let response = await call("/v1/product/related?mod=100", { method: "GET" });
-    expect(response.status).toBe(200);
-    // 9 random installs + INSTALL_ID = 10.
-    expect(await readJson<Related>(response)).toEqual({
+const SET = { type: "enabled_set", mods: [{ mod_id: 100, slot: 1 }, { mod_id: 200, slot: 2 }, { mod_id: 300, slot: 3 }] };
+
+/** Send the set from `installs` new installs, each from its own address unless `ip` is given. */
+async function contribute(installs: number, ip?: string): Promise<void> {
+  for (let n = 0; n < installs; n += 1) {
+    const options = ip === undefined ? {} : { ip };
+    await call("/v1/product", { body: body([SET, { type: "browse_query", sort: null, filters: [], search: "haze", results: 3 }], { installId: crypto.randomUUID() }), ...options });
+  }
+}
+
+/** Age the stored contributions: every install seen on two days, contributions over three days. */
+async function spreadOverDays(): Promise<void> {
+  await env.DB.prepare("UPDATE product_installs SET days_seen = 2").run();
+  for (const table of ["product_pairs", "product_keys"]) {
+    await env.DB.prepare(
+      `UPDATE ${table} SET day = '2026-11-0' || (1 + (SELECT i.rowid % 3 FROM product_installs i WHERE i.install_hash = ${table}.install_hash))`,
+    ).run();
+  }
+}
+
+async function relatedTo(mod: number): Promise<Related> {
+  const response = await call(`/v1/product/related?mod=${mod}`, { method: "GET" });
+  expect(response.status).toBe(200);
+  return readJson<Related>(response);
+}
+
+describe("GET /v1/product/related and the distinct-contributor floor", () => {
+  it("publishes a pair that ten installs from many networks share over several days", async () => {
+    await contribute(10);
+    await spreadOverDays();
+    expect(await relatedTo(100)).toEqual({
       mods: [
         { modId: 200, installs: 10 },
         { modId: 300, installs: 10 },
       ],
     });
+    expect(await publishedKeys(env.DB, "search", 10)).toEqual([{ key: "haze", installs: 10 }]);
+  });
 
-    await call("/v1/product", { body: body([{ type: "enabled_set", mods: [{ mod_id: 100, slot: 1 }, { mod_id: 400, slot: 2 }] }]) });
-    response = await call("/v1/product/related?mod=400", { method: "GET" });
-    expect(await readJson<Related>(response)).toEqual({ mods: [] });
+  it("publishes nothing for ten made-up ids from one network bucket", async () => {
+    await contribute(12, "198.51.100.7");
+    await spreadOverDays();
+    expect(await relatedTo(100)).toEqual({ mods: [] });
+    expect(await publishedKeys(env.DB, "search", 10)).toEqual([]);
+    // Only the first three new installs of that bucket and day may ever count.
+    const eligible = await env.DB.prepare("SELECT SUM(eligible) AS n, COUNT(*) AS total FROM product_installs").first<{ n: number; total: number }>();
+    expect(eligible).toEqual({ n: 3, total: 12 });
+  });
+
+  it("does not count installs seen on one day only", async () => {
+    await contribute(10);
+    for (const table of ["product_pairs", "product_keys"]) {
+      await env.DB.prepare(
+        `UPDATE ${table} SET day = '2026-11-0' || (1 + (SELECT i.rowid % 3 FROM product_installs i WHERE i.install_hash = ${table}.install_hash))`,
+      ).run();
+    }
+    expect(await relatedTo(100)).toEqual({ mods: [] });
+  });
+
+  it("needs three distinct days", async () => {
+    await contribute(10);
+    await env.DB.prepare("UPDATE product_installs SET days_seen = 2").run();
+    expect(await relatedTo(100)).toEqual({ mods: [] });
+  });
+
+  it("counts a second day for an install that comes back", async () => {
+    const id = crypto.randomUUID();
+    await call("/v1/product", { body: body([{ type: "launch", modded: true }], { installId: id }) });
+    await env.DB.prepare("UPDATE product_installs SET last_day = '2000-01-01'").run();
+    await call("/v1/product", { body: body([{ type: "launch", modded: true }], { installId: id }) });
+    await call("/v1/product", { body: body([{ type: "launch", modded: true }], { installId: id }) });
+    const row = await env.DB.prepare("SELECT days_seen FROM product_installs").first<{ days_seen: number }>();
+    expect(row?.days_seen).toBe(2);
+  });
+
+  it("never stores a bucket or an address on raw events", async () => {
+    await contribute(2, "198.51.100.9");
+    const columns = await env.DB.prepare("SELECT name FROM pragma_table_info('product_events')").all<{ name: string }>();
+    expect(columns.results.map((c) => c.name)).not.toContain("bucket");
+    const dump = JSON.stringify(await env.DB.prepare("SELECT * FROM product_pairs").all());
+    expect(dump).not.toContain("198.51.100.9");
   });
 
   it("rejects a bad mod id", async () => {
@@ -193,7 +256,9 @@ describe("product retention", () => {
       )
         .bind(now - age * DAY_MS, type)
         .run();
-      await env.DB.prepare(`INSERT INTO product_pairs (mod_a, mod_b, install_hash, created_at, updated_at) VALUES (1, ?1, 'h', ?2, ?2)`)
+      await env.DB.prepare(
+        `INSERT INTO product_pairs (mod_a, mod_b, install_hash, bucket, day, created_at, updated_at) VALUES (1, ?1, 'h', 'b', 'd', ?2, ?2)`,
+      )
         .bind(age, now - age * DAY_MS)
         .run();
     }

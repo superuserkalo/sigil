@@ -49,8 +49,6 @@ export const MAX_SEARCH_CHARS = 64;
 export const MAX_MODEL_CHARS = 48;
 /** Mods of one enabled set that feed the co-install pairs, lowest slots first. */
 export const MAX_PAIR_MODS = 24;
-/** Installs that must share a pair before `related` shows it (ADR 0017). */
-export const MIN_RELATED_INSTALLS = 10;
 
 const MAX_GAMEBANANA_ID = 1_000_000_000;
 
