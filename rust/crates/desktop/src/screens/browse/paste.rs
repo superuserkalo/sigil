@@ -5,8 +5,9 @@
 //! files (Grimoire's variant pick; the newest file when none is picked). Queue sends the picked
 //! ones to the download queue one by one; Cancel remaining takes back those still waiting; once
 //! some are installed, Save as profile keeps them as a profile. A collection link opens that
-//! collection; a profile code (`mp1:`) or profile JSON goes to Profiles > Import, as Grimoire
-//! routes a profile code to its import dialog.
+//! collection; a pack code or link opens the pack preview (`screens::packs`); a profile code
+//! (`mp1:`) or profile JSON goes to Profiles > Import, as Grimoire routes a profile code to its
+//! import dialog.
 
 use std::collections::{BTreeSet, HashMap};
 
@@ -230,6 +231,12 @@ fn known(s: &State, id: u64) -> (String, bool) {
 
 fn preview(st: &mut State) {
     let text = st.browse_view.paste.text.text.clone();
+    // A pack code or link opens the pack preview; nothing installs from here.
+    if deadlock_core::packs::is_pack(&text) {
+        close(st);
+        crate::screens::packs::open_pasted(st, &text);
+        return;
+    }
     if is_profile(&text) {
         return to_profiles(st, text);
     }

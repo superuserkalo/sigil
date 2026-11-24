@@ -10,6 +10,9 @@
 //! - `sigil:https://gamebanana.com/mmdl/<fileId>,Mod,<modId>` (GameBanana 1-Click; `Sound` too,
 //!   `/dl/<fileId>` too, on the GameBanana download hosts in `install::GAMEBANANA_DOWNLOAD_HOSTS`)
 //! - `sigil://install/mod/<modId>` and `sigil://install/mod/<modId>/<fileId>` (`sound` too)
+//! - `sigil://pack/mp1:<code>`: a shared pack (`screens::packs`). It only opens the pack's
+//!   preview; nothing installs until the player presses Install pack there. The code must be
+//!   `mp1:` plus base64url and at most `deadlock_core::packs::MAX_CODE_BYTES` long.
 //! - `sigil://open/<one of the above>`: the Windows and Linux handler command wraps the link the
 //!   system passes so Rune's single-instance hand-off (which forwards only `scheme://` arguments)
 //!   carries GameBanana's opaque `sigil:https://...` form as well.
@@ -86,11 +89,38 @@ impl std::fmt::Display for LinkError {
     }
 }
 
-/// What a link asks for: a GameBanana install, or a custom source action.
+/// What a link asks for: a GameBanana install, a custom source action, or a pack preview.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Link {
     Install(InstallLink),
     Source(SourceLink),
+    /// The `mp1:` code of a shared pack, checked for shape only; `deadlock_core::packs` reads it.
+    Pack(String),
+}
+
+/// The longest pack link: the code cap plus the `sigil://open/sigil://pack/` prefix.
+pub const MAX_PACK_LINK: usize = deadlock_core::packs::MAX_CODE_BYTES + 32;
+
+/// `sigil://pack/mp1:<base64url>`, maybe inside the handler's `sigil://open/` wrapper. `None`
+/// when the link is not a pack link at all; an error when it is one but malformed.
+fn parse_pack(raw: &str) -> Option<Result<String, LinkError>> {
+    let rest = strip_scheme(raw)?;
+    let rest = match strip_prefix_ci(rest, "//open/") {
+        Some(inner) => strip_scheme(inner)?,
+        None => rest,
+    };
+    let code = strip_prefix_ci(rest, "//pack/")?;
+    if raw.len() > MAX_PACK_LINK {
+        return Some(Err(LinkError::TooLong));
+    }
+    let code = code.strip_suffix('/').unwrap_or(code);
+    let Some(body) = code.strip_prefix(deadlock_core::profiles::SHARE_CODE_PREFIX) else {
+        return Some(Err(LinkError::Malformed));
+    };
+    if body.is_empty() || !body.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_') {
+        return Some(Err(LinkError::Malformed));
+    }
+    Some(Ok(code.to_string()))
 }
 
 /// Read any link Sigil accepts: its own `sigil:` forms and Deadlock Mod Manager's
@@ -111,6 +141,9 @@ pub fn parse_any(raw: &str) -> Result<Link, LinkError> {
         return mod_sources::parse_source_link(dmm)
             .map(Link::Source)
             .map_err(|_| LinkError::BadSourceLink);
+    }
+    if let Some(pack) = parse_pack(raw) {
+        return pack.map(Link::Pack);
     }
     parse(raw).map(Link::Install)
 }
@@ -298,6 +331,8 @@ pub fn handle(s: &mut State, url: &str) {
     match parse_any(url) {
         Ok(Link::Install(link)) => open(s, link),
         Ok(Link::Source(link)) => source(s, link),
+        // Only the preview opens; its Install pack button is the approval.
+        Ok(Link::Pack(code)) => crate::screens::packs::open_link(s, &code),
         Err(error) => s.status = format!("Could not open the link: {error}."),
     }
 }
@@ -945,6 +980,37 @@ mod tests {
             "--snap",
             "C:\\evil.png"
         ])));
+    }
+
+    #[test]
+    fn reads_pack_links_and_refuses_hostile_ones() {
+        let pack = deadlock_core::packs::Pack {
+            name: "Friday".into(),
+            note: None,
+            mods: vec![deadlock_core::packs::PackMod { mod_id: 5, file_id: Some(6), enabled: true }],
+        };
+        let link = deadlock_core::packs::to_link(&pack).unwrap();
+        let code = link.trim_start_matches("sigil://pack/").to_string();
+        assert_eq!(parse_any(&link), Ok(Link::Pack(code.clone())));
+        assert_eq!(parse_any(&format!("sigil://open/{link}")), Ok(Link::Pack(code.clone())));
+        assert_eq!(parse_any(&format!("SIGIL://PACK/{code}")), Ok(Link::Pack(code.clone())));
+        assert_eq!(parse_any(&format!("{link}/")), Ok(Link::Pack(code.clone())));
+        for bad in [
+            "sigil://pack/".to_string(),
+            "sigil://pack/mp1:".to_string(),
+            "sigil://pack/https://evil.example/x".to_string(),
+            "sigil://pack/mp1:abc/../../etc".to_string(),
+            "sigil://pack/mp1:abc%2F..".to_string(),
+            "sigil://pack/mp1:abc def".to_string(),
+            "sigil://pack/mp1:abc\\x".to_string(),
+            "sigil://pack/mp1:a\u{200B}b".to_string(),
+            format!("sigil://pack/mp1:{}", "A".repeat(MAX_PACK_LINK)),
+            "sigil://pack/mp2:abc".to_string(),
+        ] {
+            assert!(parse_any(&bad).is_err(), "{bad}");
+        }
+        // A pack link never reads as an install of anything.
+        assert!(parse(&link).is_err());
     }
 
     #[test]

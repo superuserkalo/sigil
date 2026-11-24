@@ -98,6 +98,20 @@ pub fn menu_items(s: &State, u: &Ui) -> Vec<El> {
     let mut items = Vec::new();
     let count = s.installed.selected.len();
     items.push(
+        super::menu_item(
+            u,
+            "selection-make-pack",
+            Some(&icons::PACKAGE),
+            &crate::screens::packs::from_selection_label(count),
+            "",
+            count > 0,
+        )
+        .on_press(|st: &mut State| {
+            let slots: Vec<u16> = st.installed.selected.iter().copied().collect();
+            crate::screens::packs::open_create(st, crate::screens::packs::Source::Selection(slots), None);
+        }),
+    );
+    items.push(
         super::menu_item(u, "selection-group", Some(&icons::LAYERS), tr("Group as one mod"), "", count >= 2)
             .on_press(group),
     );

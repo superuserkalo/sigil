@@ -2558,6 +2558,14 @@ pub fn overlay(s: &State, u: &Ui) -> Option<El> {
             items.push(menu_rule(u));
             items.push(menu_label(u, tr("Lists and packs")));
             items.push(
+                menu_item(u, "menu-packs", Some(&icons::PACKAGE), crate::screens::packs::tr("Packs"), "", true)
+                    .on_press(crate::screens::packs::open_list),
+            );
+            items.push(
+                menu_item(u, "menu-make-pack", Some(&icons::UPLOAD), crate::screens::packs::tr("Make a pack"), "", true)
+                    .on_press(|st: &mut State| crate::screens::packs::open_create(st, crate::screens::packs::Source::Enabled, None)),
+            );
+            items.push(
                 menu_item(u, "menu-lists", Some(&icons::LIST), tr("Mod lists"), "", true)
                     .on_press(|st: &mut State| {
                         st.installed.menu = None;

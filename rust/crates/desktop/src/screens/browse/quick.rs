@@ -71,6 +71,8 @@ pub struct Entry {
     cancelled: bool,
     /// The file server it failed over from, and when (Grimoire's "Switching from X").
     pub switched: Option<(String, std::time::Instant)>,
+    /// A pack install's own choice: land on (true) or off (false) instead of the setting.
+    land_on: Option<bool>,
 }
 
 impl Entry {
@@ -92,6 +94,7 @@ impl Entry {
             server: None,
             cancelled: false,
             switched: None,
+            land_on: None,
         }
     }
 
@@ -125,6 +128,9 @@ pub struct Installs {
     pub choose: Option<u64>,
     /// The review of a gameinfo.gi, .cfg or video.txt that came inside a mod.
     pub settings: settings_review::SettingsReview,
+    /// A pack's mods in its load order (`screens::packs`): one installs only after every
+    /// earlier one is done, so each takes the next free slot and the order holds.
+    pub pack_order: Vec<u64>,
 }
 
 /// What the install worker reports.
@@ -483,6 +489,50 @@ pub fn start(st: &mut State, id: u64, name: &str, target: String, file: Option<u
     st.status = fill(tr("Downloading {}."), &[name]);
 }
 
+/// A pack's mod: one file of it, landing on only when the player asked for that in the pack
+/// preview (the safety gate still holds a mod it has a question about). Same path as any
+/// one-press install: the download queue, the install checks, backups.
+pub fn start_pack(st: &mut State, id: u64, name: &str, target: String, file: u64, land_on: bool, thumbnail: Option<String>) {
+    if st.browse_view.installs.items.get(&id).is_some_and(Entry::busy) {
+        return;
+    }
+    start(st, id, name, target, Some(file), Vec::new());
+    if let Some(entry) = st.browse_view.installs.items.get_mut(&id)
+        && entry.step == Step::Queued
+    {
+        entry.land_on = Some(land_on);
+        if entry.thumbnail.is_none() {
+            entry.thumbnail = thumbnail;
+        }
+    }
+}
+
+/// Install these mods in this order (a pack's load order).
+pub fn set_pack_order(st: &mut State, ids: Vec<u64>) {
+    let installs = &mut st.browse_view.installs;
+    installs.pack_order.retain(|id| installs.items.get(id).is_some_and(Entry::busy));
+    for id in ids {
+        if !installs.pack_order.contains(&id) {
+            installs.pack_order.push(id);
+        }
+    }
+}
+
+/// The next downloaded install to start: the first ready one whose earlier pack mods are all
+/// done (a mod outside any pack is never held).
+fn next_ready(installs: &Installs) -> Option<u64> {
+    let ready = |e: &Entry| e.step == Step::Installing && !e.started;
+    installs
+        .items
+        .iter()
+        .filter(|(_, e)| ready(e))
+        .map(|(id, _)| *id)
+        .find(|id| match installs.pack_order.iter().position(|p| p == id) {
+            Some(at) => !installs.pack_order[..at].iter().any(|earlier| installs.items.get(earlier).is_some_and(Entry::busy)),
+            None => true,
+        })
+}
+
 #[allow(clippy::too_many_arguments)]
 fn fail(st: &mut State, id: u64, name: &str, target: String, file: Option<u64>, update: Vec<u16>, error: String) {
     let entry = Entry::new(name, target, file, update, Step::Failed(error.clone()));
@@ -652,14 +702,7 @@ fn start_next(st: &mut State) -> bool {
     if st.browse_view.installs.job.is_running() || st.install_job.is_running() {
         return false;
     }
-    let Some(id) = st
-        .browse_view
-        .installs
-        .items
-        .iter()
-        .find(|(_, e)| e.step == Step::Installing && !e.started)
-        .map(|(id, _)| *id)
-    else {
+    let Some(id) = next_ready(&st.browse_view.installs) else {
         return false;
     };
     let Some(entry) = st.browse_view.installs.items.get_mut(&id) else {
@@ -735,7 +778,7 @@ fn start_next(st: &mut State) -> bool {
         game_root,
         workspace: crate::data::workspace_dir(),
         library: deadlock_core::import::library_path(&crate::data::data_dir()),
-        land_disabled: st.prefs.land_disabled,
+        land_disabled: entry.land_on.map(|on| !on).unwrap_or(st.prefs.land_disabled),
         switch_variants: crate::screens::settings::options::switch_variants(),
         cancel,
     };
@@ -1522,6 +1565,26 @@ mod tests {
         stage(&mut st, 1, "Mod A", Step::Done);
         assert_eq!(button(&st, 1), Button::Installed);
         assert_eq!(button(&st, 2), Button::Retry("no network".into()));
+    }
+
+    #[test]
+    fn pack_mods_install_in_pack_order() {
+        let mut installs = Installs::default();
+        let entry = |step: Step| Entry::new("m", String::new(), Some(1), Vec::new(), step);
+        // 30 downloaded first, but 20 comes before it in the pack and is still downloading.
+        installs.items.insert(20, entry(Step::Downloading(Some(0.5))));
+        installs.items.insert(30, entry(Step::Installing));
+        installs.items.insert(40, entry(Step::Installing));
+        installs.pack_order = vec![20, 30];
+        assert_eq!(next_ready(&installs), Some(40), "a mod outside the pack is never held");
+        installs.items.remove(&40);
+        assert_eq!(next_ready(&installs), None, "30 waits for 20");
+        installs.items.insert(20, entry(Step::Installing));
+        assert_eq!(next_ready(&installs), Some(20));
+        installs.items.insert(20, entry(Step::Done));
+        assert_eq!(next_ready(&installs), Some(30));
+        installs.items.insert(20, entry(Step::Failed("x".into())));
+        assert_eq!(next_ready(&installs), Some(30), "a failed mod does not block the rest");
     }
 
     #[test]

@@ -102,6 +102,8 @@ pub struct State {
     pub subscription_log: Option<String>,
     pub crosshair: screens::crosshair::View,
     pub profiles: screens::profiles::View,
+    /// Packs: shareable sets of GameBanana mods (`screens::packs`).
+    pub packs: screens::packs::View,
     pub profiles_job: Job<screens::profiles::Load>,
     pub autoexec: screens::autoexec::View,
     pub autoexec_original: String,
@@ -210,6 +212,7 @@ impl Default for State {
             subscription_log: None,
             crosshair: screens::crosshair::View::default(),
             profiles: screens::profiles::View::default(),
+            packs: screens::packs::View::default(),
             profiles_job: Job::default(),
             autoexec: screens::autoexec::View::default(),
             autoexec_original: String::new(),
@@ -1332,6 +1335,7 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
         ("browse-modal", screens::browse::dialog(s, &u)),
         ("browse-replace-modal", screens::browse::replace::dialog(s, &u)),
         ("profiles-modal", screens::profiles::dialog(s, &u)),
+        ("packs-modal", screens::packs::dialog(s, &u)),
         ("autoexec-modal", screens::autoexec::dialog(s, &u)),
         ("performance-modal", screens::performance::dialog(s, &u)),
         ("settings-review-modal", screens::browse::quick::settings_review::dialog(s, &u)),
@@ -2175,6 +2179,7 @@ pub fn poll(s: &mut State, t: f64, _tx: &mut Tx) -> bool {
     changed |= screens::performance::poll(s);
     changed |= screens::servers::poll(s, t, _tx);
     changed |= screens::profiles::poll(s);
+    changed |= screens::packs::poll(s);
     changed |= screens::installed::poll(s);
     changed |= screens::stats::poll(s);
     changed |= screens::browse::poll(s, _tx);
@@ -2896,6 +2901,10 @@ pub fn scenes() -> &'static [(&'static str, fn(&mut State))] {
         ("profiles-apply", screens::profiles::scene_apply),
         ("profiles-export", screens::profiles::scene_export),
         ("profiles-import", screens::profiles::scene_import),
+        ("packs-preview", screens::packs::scene_preview),
+        ("packs-list", screens::packs::scene_list),
+        ("packs-share", screens::packs::scene_share),
+        ("packs-create", screens::packs::scene_create),
         ("profiles-import-input", screens::profiles::scene_import_input),
         ("profiles-import-early", screens::profiles::scene_import_early),
         ("profiles-one-skin", screens::one_skin::scene),
