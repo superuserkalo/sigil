@@ -77,6 +77,8 @@ const COL_PLAYERS: f32 = 88.0;
 const COL_PING: f32 = 64.0;
 const COL_REGION: f32 = 56.0;
 const COL_JOIN: f32 = 72.0;
+/// Extra room between the right aligned ping and the left aligned region.
+const REGION_GAP: f32 = 12.0;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Tab {
@@ -896,7 +898,6 @@ fn filters(s: &State, u: &Ui) -> El {
     let open = s.servers.menu.is_some();
     let filters_button = row()
         .key("servers-filters")
-        .w(104.0)
         .h(28.0)
         .px(8.0)
         .gap(6.0)
@@ -913,9 +914,9 @@ fn filters(s: &State, u: &Ui) -> El {
             st.servers.menu = if st.servers.menu.is_some() { None } else { Some(FilterMenu::Filters) }
         })
         .child(icon(&icons::SLIDERS_HORIZONTAL, 14.0).color(u.muted).a11y_hidden())
-        .child(text(tr("Filters")).font(BODY_MED).color(u.ink).grow(1.0).min_w(0.0).a11y_hidden())
+        .child(text(tr("Filters")).font(BODY_MED).color(u.ink).a11y_hidden())
         .child(
-            row().w(16.0).justify_end().child(if hidden > 0 {
+            row().w(12.0).justify_end().child(if hidden > 0 {
                 text(hidden.to_string()).font(SMALL_NUM).color(u.ink).a11y_hidden()
             } else {
                 el()
@@ -956,8 +957,9 @@ fn filters(s: &State, u: &Ui) -> El {
                 .h(24.0)
                 .px(8.0)
                 .key("servers-clear-filters")
+                // Its place is kept while there is nothing to clear, so the row never moves.
                 .disabled(nothing)
-                .opacity(if nothing { 0.45 } else { 1.0 })
+                .opacity(if nothing { 0.0 } else { 1.0 })
                 .cursor(rune::Cursor::Pointer)
                 .on_press(clear_filters),
         )
@@ -1051,16 +1053,26 @@ fn head(u: &Ui, key: ServerSortKey, width: f32, end: bool, sort: Option<ServerSo
                 .color(if direction.is_some() { u.ink } else { u.muted })
                 .a11y_hidden(),
         );
-    // The arrow has a reserved 12 point slot, so sorting never moves the labels.
-    cell = cell.child(el().w(12.0).child(match direction {
+    // The arrow has a reserved 12 point slot, so sorting never moves the labels. A right
+    // aligned column puts it before the label, so the label ends on its values' edge.
+    let arrow = el().w(12.0).child(match direction {
         Some(direction) => text(if direction == SortDirection::Asc { "↑" } else { "↓" })
             .font(SMALL)
             .color(u.muted)
             .a11y_hidden(),
         None => el(),
-    }));
+    });
     if end {
-        cell = cell.justify_end();
+        cell = row()
+            .key(format!("servers-head-{}-cell", key.id()))
+            .h(28.0)
+            .gap(4.0)
+            .center_y()
+            .justify_end()
+            .child(arrow)
+            .child(cell);
+    } else {
+        cell = cell.child(arrow);
     }
     if width > 0.0 {
         cell.w(width)
@@ -1084,7 +1096,7 @@ fn table(s: &State, u: &Ui, shown: &[Server]) -> El {
         .child(head(u, ServerSortKey::Map, COL_MAP, false, sort))
         .child(head(u, ServerSortKey::Players, COL_PLAYERS, false, sort))
         .child(head(u, ServerSortKey::Ping, COL_PING, true, sort))
-        .child(head(u, ServerSortKey::Region, COL_REGION, false, sort))
+        .child(head(u, ServerSortKey::Region, COL_REGION, false, sort).ml(REGION_GAP))
         .child(row().w(COL_JOIN).justify_end().child(steam_down(s, u)));
     let mut rows = col().w_full().grow(1.0).min_w(0.0).child(header);
     for server in shown {
@@ -1145,27 +1157,29 @@ fn server_row(s: &State, u: &Ui, server: &Server) -> El {
         Color::WHITE.alpha(0.22)
     };
     let favorite = dw::is_favorite(&s.servers.saved, &server.address);
-    // Lock and heart sit in two fixed 16 point slots, so names line up on every row.
-    let mark = |on: bool, glyph: &'static rune::Icon| {
-        el().size(16.0, 16.0).center().child(if on {
-            icon(glyph, 12.0).color(u.muted).a11y_hidden()
-        } else {
-            el()
-        })
+    // Lock and heart follow the name on its line, centred on it, so they read as the row's
+    // state. Only the name moves them, never another row.
+    let mark = |glyph: &'static rune::Icon| {
+        el().size(16.0, 16.0).center().child(icon(glyph, 12.0).color(u.muted).a11y_hidden())
     };
-    let name_line = row()
+    let mut name_line = row()
+        .w_full()
         .gap(4.0)
         .center_y()
         .min_w(0.0)
-        .child(text(server.name.clone()).font(BODY_MED).color(u.ink).truncate().grow(1.0).min_w(0.0))
-        .child(mark(server.password, &icons::LOCK))
-        .child(mark(favorite, &icons::HEART));
+        .child(text(server.name.clone()).font(BODY_MED).color(u.ink).truncate().min_w(0.0));
+    if server.password {
+        name_line = name_line.child(mark(&icons::LOCK));
+    }
+    if favorite {
+        name_line = name_line.child(mark(&icons::HEART));
+    }
     let meta = server_meta(server);
-    let name_col = col()
-        .grow(1.0)
-        .min_w(200.0)
-        .child(name_line)
-        .child(text(meta).font(SMALL).color(u.muted).truncate());
+    // A server with no details keeps one line, centred in the row like the other cells.
+    let mut name_col = col().grow(1.0).min_w(200.0).child(name_line);
+    if !meta.is_empty() {
+        name_col = name_col.child(text(meta).font(SMALL).color(u.muted).truncate());
+    }
     let select = server.clone();
     let join_target = server.clone();
     let chosen = s
@@ -1225,7 +1239,8 @@ fn server_row(s: &State, u: &Ui, server: &Server) -> El {
             text(dw::region_label(&server.country))
                 .font(SMALL)
                 .color(u.muted)
-                .w(COL_REGION),
+                .w(COL_REGION)
+                .ml(REGION_GAP),
         )
         .child(
             u.action_m(tr("Join"), ActionKind::Secondary)
