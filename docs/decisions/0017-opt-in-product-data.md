@@ -78,7 +78,10 @@ therefore count distinct contributors in 30-day epochs (`services/telemetry/src/
   the Worker still stores raw records but writes and publishes no aggregate (fail closed).
 - Open-epoch contributions (`product_contrib`) are the only place a bucket sits next to an install
   hash. They live only until their epoch closes (30 days plus 2 days of grace) and go at once with
-  "Delete my data". A bucket admits at most 3 installs per epoch, counted from that table, so a
+  "Delete my data". A backstop in the daily retention deletes any such row older than 75 days
+  whether or not its epoch closed, so the network marker lives 75 days at most; a closing that
+  keeps failing loses those totals instead of keeping the link, and shows as an error in the
+  Worker log. A bucket admits at most 3 installs per epoch, counted from that table, so a
   deleted install frees its slot and nothing grows forever.
 - One install may hold a bounded number of contribution rows per epoch and kind (for example 500
   mod pairs, 50 search terms), so one client cannot bloat an epoch.

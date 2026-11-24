@@ -13,11 +13,20 @@ export const DIAGNOSTICS_RETENTION_MS = 30 * DAY_MS;
 export const CRASH_RETENTION_MS = 90 * DAY_MS;
 /** Raw product data (ADR 0017): 13 months, counted as 396 days. */
 export const PRODUCT_RETENTION_MS = 396 * DAY_MS;
+/**
+ * The hard limit for `product_contrib`, the only table that links a network bucket to an install:
+ * an epoch (30 days), its grace (2 days) and a backlog for a closing that keeps failing. Rows
+ * older than this go whether or not their epoch was closed; their totals are lost, the link is not
+ * kept.
+ */
+export const CONTRIB_BACKSTOP_MS = 75 * DAY_MS;
 
 export type RetentionResult = {
   readonly diagnostics: number;
   readonly crashes: number;
   readonly product: number;
+  /** Contribution rows the backstop deleted. Above zero means closing fell behind. */
+  readonly backstop: number;
 };
 
 export async function runRetention(db: D1Database, now: number): Promise<RetentionResult> {
@@ -31,13 +40,14 @@ export async function runRetention(db: D1Database, now: number): Promise<Retenti
     db
       .prepare("DELETE FROM product_totals WHERE kind IN ('search', 'hardware') AND created_at < ?1")
       .bind(now - PRODUCT_RETENTION_MS),
+    // The backstop: never depends on closing.
+    db.prepare("DELETE FROM product_contrib WHERE created_at < ?1").bind(now - CONTRIB_BACKSTOP_MS),
   ]);
 
   return {
     diagnostics: results[0]?.meta.changes ?? 0,
     crashes: results[1]?.meta.changes ?? 0,
     product: (results[2]?.meta.changes ?? 0) + (results[3]?.meta.changes ?? 0),
-    // Stray contributions are not deleted here: a closing that has not finished would lose the
-    // rows its totals need. `closeEpochs` deletes them, bounded, and carries on the next day.
+    backstop: results[4]?.meta.changes ?? 0,
   };
 }

@@ -373,6 +373,25 @@ describe("the daily job", () => {
     expect((await rows()).length).toBe(0);
   });
 
+  it("deletes contributions older than 75 days even when closing keeps failing", async () => {
+    const now = Date.now();
+    for (const [age, key] of [
+      [76, "old"],
+      [74, "recent"],
+    ] as const) {
+      await env.DB.prepare(
+        `INSERT INTO product_contrib (epoch, kind, key, install_hash, bucket, day, created_at) VALUES (?1, 'search', ?2, 'h', 'b', 'd', ?3)`,
+      )
+        .bind(epochOf(now - age * DAY_MS), key, now - age * DAY_MS)
+        .run();
+    }
+    await scheduledJob(env, now, "17 3 * * *", async () => {
+      throw new Error("closing failed");
+    });
+    const left = await env.DB.prepare("SELECT key FROM product_contrib").all<{ key: string }>();
+    expect(left.results.map((r) => r.key)).toEqual(["recent"]);
+  });
+
   it("still closes epochs when retention throws", async () => {
     await sendEpoch(0, 10, SIX_NETWORKS);
     // A database whose batch (retention's only call) fails, and whose other calls work.
