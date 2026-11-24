@@ -1522,7 +1522,7 @@ pub struct PortableGame {
     pub name: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PortableExportedBy {
     pub tool: String,
     pub version: String,
@@ -1600,8 +1600,12 @@ impl PortableMod {
 pub struct PortableProfile {
     pub format: String,
     pub schema_version: String,
+    #[serde(default)]
     pub game: PortableGame,
+    /// A pack (`crate::packs`) leaves these out: they are not needed to install anything.
+    #[serde(default)]
     pub exported_at: String,
+    #[serde(default)]
     pub exported_by: PortableExportedBy,
     pub profile: PortableMeta,
     pub mods: Vec<PortableMod>,

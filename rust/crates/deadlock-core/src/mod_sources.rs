@@ -208,7 +208,7 @@ fn plain(value: &str, max: usize, name: &str) -> std::result::Result<String, Str
 }
 
 /// Zero-width and text-direction marks, which could make a dialog line read differently.
-fn is_invisible(c: char) -> bool {
+pub(crate) fn is_invisible(c: char) -> bool {
     matches!(c, '\u{200B}'..='\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2060}'..='\u{2069}' | '\u{FEFF}')
 }
 

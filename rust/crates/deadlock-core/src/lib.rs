@@ -46,6 +46,7 @@ pub mod locker;
 pub mod locker_parts;
 pub mod obsolete_commands;
 pub mod overflow;
+pub mod packs;
 pub mod patch_notes;
 pub mod performance;
 pub mod payload;
