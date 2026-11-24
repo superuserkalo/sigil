@@ -1221,6 +1221,8 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
             crate::shell::dropped(st, files)
         })
         .on_drop_hover(|st: &mut State, over: bool, _tx: &mut Tx| st.shell.drop_hover = over)
+        // Any pointer move in the window counts as input for the Browse billboard's idle stop.
+        .on_pointer_move_local(|st: &mut State, _p, tx: &mut Tx| screens::browse::top::note_input(st, tx))
         // Mouse Back and Forward walk pages and the details or creator opened over them.
         .pointer_buttons([rune::PointerButton::Back, rune::PointerButton::Forward])
         .on_press_tx(|st: &mut State, tx: &mut Tx| match tx.button() {
@@ -2138,9 +2140,8 @@ pub fn poll(s: &mut State, t: f64, _tx: &mut Tx) -> bool {
         );
         changed = true;
     }
-    if crate::data::drain_thumbnails(s) {
-        changed = true;
-    }
+    // Images that landed fade in over their placeholders (`motion.md` 4.16), decided at the end.
+    let thumbs_landed = crate::data::drain_thumbnails(s);
     if let Some(result) = s.review_job.try_take() {
         crate::data::apply_review_queue(s, result);
         changed = true;
@@ -2210,6 +2211,14 @@ pub fn poll(s: &mut State, t: f64, _tx: &mut Tx) -> bool {
             changed = true;
         }
     }
+    if thumbs_landed {
+        // Animated only when the images are the commit's sole change, so no late data
+        // elsewhere slides; never under Reduce motion.
+        if !changed && !crate::motion::reduced() {
+            _tx.animated();
+        }
+        changed = true;
+    }
     changed
 }
 
@@ -2222,6 +2231,7 @@ fn elapsed_label(seconds: u64) -> String {
 }
 
 pub fn on_key(s: &mut State, ev: &KeyEvent, tx: &mut Tx) -> bool {
+    screens::browse::top::note_key(s, tx);
     // The shortcuts sheet, zoom, and the mods folder. These win over the screen chords.
     if crate::shell::on_key(s, ev, tx) {
         return true;
@@ -2768,6 +2778,10 @@ pub fn scenes() -> &'static [(&'static str, fn(&mut State))] {
         ("browse-list", screens::browse::scene_list),
         ("browse-paged", screens::browse::scene_paged),
         ("browse-dashboard", screens::browse::scene_dashboard),
+        ("browse-top-loading", screens::browse::scenes::scene_top_loading),
+        ("browse-top-failed", screens::browse::scenes::scene_top_failed),
+        ("browse-top-hover", screens::browse::scenes::scene_top_hover),
+        ("browse-top-blur", screens::browse::scenes::scene_top_blur),
         ("browse-mirror", screens::browse::scene_mirror),
         ("browse-collections", screens::browse::scene_collections),
         ("browse-collection-open", screens::browse::scene_collection_open),

@@ -997,6 +997,8 @@ fn progress_fill(fraction: f32, color: Color) -> El {
 pub fn button_el(u: &Ui, b: &Button, key: String, id: u64, name: &str, size: Size) -> El {
     let (ink, glyph_ink, fill_color, border) = match b {
         Button::Install if size == Size::File => (u.prose, u.muted, Color::TRANSPARENT, u.hair),
+        // The details window's main button is its one solid action.
+        Button::Install | Button::Update | Button::Enable if size == Size::Wide => (u.accent_ink, u.accent_ink, u.accent, u.accent),
         Button::Install => (u.ink, u.ink, Color::WHITE.alpha(0.035), u.hair_strong),
         Button::Retry(_) => (u.ink, u.rose, u.rose.alpha(0.08), u.rose.alpha(0.45)),
         Button::Queued => (u.muted, u.faint, Color::TRANSPARENT, u.hair_strong),
@@ -1337,17 +1339,16 @@ pub fn details_install(s: &State, u: &Ui, d: &Details, profile: &ModProfile) -> 
         .and_then(|e| e.file)
         .and_then(|file| profile.files.iter().find(|f| f.id == file))
         .unwrap_or(primary);
-    let line = col()
-        .key("details-install-row")
-        .w_full()
-        .gap(6.0)
-        .child(main)
-        .child(
+    let mut line = col().key("details-install-row").w_full().gap(6.0).child(main);
+    // Which file it installs, when no Files list below names it.
+    if profile.files.len() == 1 {
+        line = line.child(
             text(format!("{} · {}", which.name, crate::model::format_size(which.size_bytes)))
                 .font(crate::ui::SMALL_NUM)
                 .color(u.muted)
                 .truncate(),
         );
+    }
     let mut c = col().key("details-install").w_full().gap(6.0).child(line);
     if let Button::Retry(error) = &b {
         c = c.child(

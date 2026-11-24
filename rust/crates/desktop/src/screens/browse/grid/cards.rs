@@ -13,7 +13,7 @@ pub(crate) fn image_fill(s: &State, key: String, url: Option<&String>, radii: [f
     let base = el().absolute(0.0, 0.0).w_full().h_full().corners(radii);
     match pixels_for(s, url) {
         Some(pixels) => {
-            let image = base.key(key).pixels_fit(pixels, SurfaceFit::Fill).a11y_hidden();
+            let image = base.key(key).pixels_fit(pixels, SurfaceFit::Fill).transition(crate::motion::image_in()).a11y_hidden();
             if blur { image.blur(crate::screens::settings::nsfw::card_blur()) } else { image }
         }
         None => base

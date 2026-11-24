@@ -84,10 +84,9 @@ pub(crate) fn file_card(s: &State, u: &Ui, d: &Details, file: &ModFile, _only: b
     let lead = if file.description.trim().is_empty() { file.name.clone() } else { file.description.clone() };
     // Size, downloads and date first, so a long file name is what truncates.
     let mut meta = vec![crate::model::format_size(file.size_bytes)];
-    meta.push(crate::screens::settings::i18n::fill(super::super::tree::tr(if file.downloads == 1 { "{} download" } else { "{} downloads" }), &[&group_digits(file.downloads)]));
-    if file.added_ts > 0 {
-        meta.push(gamebanana::calendar_date(file.added_ts));
-    }
+    let downloads = crate::screens::settings::i18n::fill(super::super::tree::tr(if file.downloads == 1 { "{} download" } else { "{} downloads" }), &[&group_digits(file.downloads)]);
+    // The date has its own column before the button, so it is never what truncates.
+    let date = if file.added_ts > 0 { gamebanana::calendar_date(file.added_ts) } else { String::new() };
     if lead != file.name {
         meta.push(file.name.clone());
     }
@@ -109,8 +108,22 @@ pub(crate) fn file_card(s: &State, u: &Ui, d: &Details, file: &ModFile, _only: b
                 .min_w(0.0)
                 .gap(2.0)
                 .child(text(lead).font(BODY_MED).color(if file.archived { u.muted } else { u.ink }).truncate())
-                .child(text(meta.join(" · ")).font(crate::ui::SMALL_NUM).color(u.muted).truncate()),
+                // Size, then the download count as a glyph and a number, so the line stays short.
+                .child(
+                    row()
+                        .w_full()
+                        .h(16.0)
+                        .gap(4.0)
+                        .center_y()
+                        .min_w(0.0)
+                        .child(text(meta.remove(0)).font(crate::ui::SMALL_NUM).color(u.muted))
+                        .child(text("·").font(SMALL).color(u.faint))
+                        .child(row().gap(3.0).center_y().label(downloads).child(icon(&icons::DOWNLOAD, 12.0).color(u.faint).a11y_hidden()).child(text(card_count(file.downloads)).font(crate::ui::SMALL_NUM).color(u.muted).a11y_hidden()))
+                        .children((!meta.is_empty()).then(|| text("·").font(SMALL).color(u.faint)))
+                        .child(text(meta.join(" · ")).font(crate::ui::SMALL_NUM).color(u.muted).truncate().min_w(0.0).shrink()),
+                ),
         )
+        .child(text(date).font(crate::ui::SMALL_NUM).color(u.muted).w(88.0).align(rune::Align::End))
         .child(install)
 }
 

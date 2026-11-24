@@ -35,40 +35,61 @@ pub(crate) fn carousel(s: &State, u: &Ui, d: &Details) -> El {
     if count < 2 || veiled(s, d.id, d.nsfw) {
         return main;
     }
+    // The strip spans the image's width in six equal 16:9 slots, so it shares both edges with
+    // the image. Past six, the last slot of a page shows how many follow and pages on.
     const PER: usize = 6;
     let index = d.image.min(count - 1);
     let start = (index / PER) * PER;
-    let mut thumbs = row().key("carousel-thumbs").w_full().h(36.0).gap(8.0);
-    for (i, image) in images.iter().enumerate().skip(start).take(PER) {
+    let more = count.saturating_sub(start + PER);
+    let mut thumbs = el().key("carousel-thumbs").w_full().equal_columns(PER).gap(8.0);
+    for (slot, (i, image)) in images.iter().enumerate().skip(start).take(PER).enumerate() {
         let on = i == index;
-        thumbs = thumbs.child(
-            el().key(format!("carousel-thumb-{i}"))
-                .size(64.0, 36.0)
-                .min_w(64.0)
+        let pager = more > 0 && slot + 1 == PER;
+        let target = if pager { start + PER } else { i };
+        let mut t = el()
+            .key(format!("carousel-thumb-{i}"))
+            .w_full()
+            .min_w(0.0)
+            .aspect_ratio(16.0 / 9.0)
+            .radius(crate::ui::r(4.0))
+            .clip_rounded(crate::ui::r(4.0))
+            .fill(u.hover)
+            .focusable(true)
+            .role("button")
+            .label(if pager { format!("{more} more images") } else { format!("Image {}", i + 1) })
+            .checked(on)
+            .cursor(rune::Cursor::Pointer)
+            .hover(Color::WHITE.alpha(0.06))
+            .on_press(move |st: &mut State| {
+                if let Some(details) = st.browse_view.details.as_mut() {
+                    details.image = target;
+                }
+            })
+            .child(image_fill(s, format!("carousel-thumb-img-{i}"), Some(&image.url), [crate::ui::r(4.0); 4], false));
+        if pager {
+            t = t.child(
+                el().absolute(0.0, 0.0)
+                    .w_full()
+                    .h_full()
+                    .center()
+                    .fill(Color::BLACK.alpha(0.6))
+                    .child(text(format!("+{more}")).font(LABEL).color(Color::WHITE).a11y_hidden()),
+            );
+        } else if !on {
+            // The open image is the one at full strength.
+            t = t.child(el().absolute(0.0, 0.0).w_full().h_full().fill(Color::BLACK.alpha(0.35)).a11y_hidden());
+        }
+        t = t.child(
+            el().absolute(0.0, 0.0)
+                .w_full()
+                .h_full()
                 .radius(crate::ui::r(4.0))
-                .clip_rounded(crate::ui::r(4.0))
-                .fill(u.hover)
-                .focusable(true)
-                .role("button")
-                .label(format!("Image {}", i + 1))
-                .checked(on)
-                .cursor(rune::Cursor::Pointer)
-                .on_press(move |st: &mut State| {
-                    if let Some(details) = st.browse_view.details.as_mut() {
-                        details.image = i;
-                    }
-                })
-                .child(image_fill(s, format!("carousel-thumb-img-{i}"), Some(&image.url), [crate::ui::r(4.0); 4], false))
-                .child(
-                    el().absolute(0.0, 0.0)
-                        .w_full()
-                        .h_full()
-                        .radius(crate::ui::r(4.0))
-                        .border(if on { 2.0 } else { 1.0 }, if on { u.ink } else { u.hair })
-                        .a11y_hidden(),
-                ),
+                .border(if on { 2.0 } else { 1.0 }, if on { u.ink } else { u.hair })
+                .a11y_hidden(),
         );
+        thumbs = thumbs.child(t);
     }
+    // A short last page keeps the slots' size: empty cells stay empty.
     col().key("carousel-gallery").w_full().gap(8.0).child(main).child(thumbs)
 }
 

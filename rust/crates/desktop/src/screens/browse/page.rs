@@ -146,12 +146,6 @@ pub(crate) fn grid_page(s: &State, u: &Ui) -> El {
 
     col()
         .key("browse-scroll")
-        // Any pointer move or key here counts as input for the billboard's idle stop.
-        .on_pointer_move_local(|st: &mut State, _p, tx: &mut Tx| super::top::note_input(st, tx))
-        .on_key(|st: &mut State, _ev: &KeyEvent, tx: &mut Tx| {
-            super::top::note_key(st, tx);
-            false
-        })
         .w_full()
         .h_full()
         .min_h(0.0)

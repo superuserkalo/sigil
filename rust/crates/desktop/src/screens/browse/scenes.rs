@@ -235,6 +235,48 @@ pub fn scene_dashboard(s: &mut State) {
     }
 }
 
+/// The landing with its plan known and no image landed yet: every tile shows its title and a
+/// glyph on the plain fill, the billboard its text and actions.
+pub fn scene_top_loading(s: &mut State) {
+    scene_dashboard(s);
+    s.pending_thumbs.clear();
+    s.thumbnails.clear();
+}
+
+/// Two covers that came back empty: their tiles keep the title, up to two lines, and a glyph.
+pub fn scene_top_failed(s: &mut State) {
+    scene_dashboard(s);
+    let urls: Vec<String> = s
+        .browse_view
+        .shelves
+        .feeds
+        .as_ref()
+        .map(|f| f.recent.iter().skip(1).step_by(3).take(2).filter_map(|c| c.thumbnail_url.clone()).collect())
+        .unwrap_or_default();
+    for url in urls {
+        s.pending_thumbs.retain(|(u, _)| *u != url);
+        s.thumbnails.remove(&url);
+        s.thumb_crew.mark_failed(&url);
+    }
+}
+
+/// The landing to snap with the pointer over a tile (`--script` moves it there): the hover
+/// layer with Install and the star.
+pub fn scene_top_hover(s: &mut State) {
+    scene_dashboard(s);
+}
+
+/// The default Blur setting with several mature mods in the rows: each a veiled tile.
+pub fn scene_top_blur(s: &mut State) {
+    scene_dashboard(s);
+    s.prefs.mature = crate::prefs::Mature::Blur;
+    if let Some(feeds) = s.browse_view.shelves.feeds.as_mut() {
+        for (i, c) in feeds.recent.iter_mut().enumerate() {
+            c.nsfw = i % 4 == 1;
+        }
+    }
+}
+
 /// The mirror with a few rows, for the creator rail and the saved catalog row.
 pub fn scene_mirror(s: &mut State) {
     scene_dashboard(s);

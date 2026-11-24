@@ -965,6 +965,11 @@ impl ThumbCrew {
         self.generation
     }
 
+    /// Mark `url` as failed just now, as a worker that got nothing back does (scenes).
+    pub fn mark_failed(&mut self, url: &str) {
+        self.failed.insert(url.to_string(), Instant::now());
+    }
+
     /// Whether `url` came back empty and still rests before its next try.
     pub fn failed(&self, url: &str) -> bool {
         self.failed.get(url).is_some_and(|at| at.elapsed() < THUMB_RETRY)

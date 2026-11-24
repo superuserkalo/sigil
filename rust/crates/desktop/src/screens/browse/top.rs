@@ -179,6 +179,13 @@ pub fn page_window(len: usize, n: usize, page: usize, width: f32) -> (usize, usi
     (start, len, width - (count * tw + (count - 1.0) * GAP))
 }
 
+/// The tiles page `page` shows whole (the peek excluded).
+pub fn whole_tiles(len: usize, n: usize, page: usize) -> std::ops::Range<usize> {
+    let pages = page_count(len, n);
+    let page = page.min(pages - 1);
+    if page + 1 < pages || len <= n { page * n..(page * n + n).min(len) } else { len - n..len }
+}
+
 /// The landing's plan for the page width's `n` and the clock `now`: what the billboard and
 /// each row show, after the gate (hidden mods and creators, mature under Hide), with no mod
 /// twice and every row a full page plus its peek or not there at all.
@@ -527,7 +534,7 @@ pub fn view(s: &State, u: &Ui) -> El {
         return c.child(el().h(32.0));
     }
     if !p.billboard.is_empty() {
-        c = c.child(billboard(s, u, &p.billboard, width)).child(strip(s, u, &p.billboard).mt(8.0));
+        c = c.child(billboard(s, u, &p.billboard, width)).child(strip(s, u, &p.billboard, width).mt(8.0));
     }
     for (i, r) in p.rows.iter().enumerate() {
         let top = if i == 0 && p.billboard.is_empty() { 0.0 } else { 24.0 };
@@ -795,18 +802,22 @@ fn billboard(s: &State, u: &Ui, picks: &[Slide], width: f32) -> El {
 }
 
 /// The segment strip under the billboard: one press target per pick, a line and its label.
-fn strip(s: &State, u: &Ui, picks: &[Slide]) -> El {
+fn strip(s: &State, u: &Ui, picks: &[Slide], width: f32) -> El {
     let count = picks.len();
     if count < 2 {
         return el().key("bb-strip").h(0.0);
     }
     let at = s.browse_view.shelves.spot % count;
+    // Segments on the rows' grid: one tile wide while the picks fit a page of tiles, else half a
+    // tile, so every divider lines up with a tile edge below.
+    let n = per_page(width);
+    let (tw, _) = tile_size(width, n);
+    let seg_w = if count <= n { tw } else { ((tw - GAP) / 2.0).floor() };
     row()
         .key("bb-strip")
         .w_full()
         .h(28.0)
-        .equal_columns(count)
-        .gap(6.0)
+        .gap(GAP)
         .on_hover_change(|st: &mut State, over: bool, tx: &mut Tx| {
             tx.live_only();
             st.browse_view.shelves.hovered = over;
@@ -818,7 +829,8 @@ fn strip(s: &State, u: &Ui, picks: &[Slide]) -> El {
             let on = i == at;
             col()
                 .key(format!("bb-seg-{i}"))
-                .min_w(0.0)
+                .w(seg_w)
+                .min_w(seg_w)
                 .h(28.0)
                 .gap(6.0)
                 .pt(4.0)
@@ -859,9 +871,28 @@ fn row_view(s: &State, u: &Ui, r: &Row, width: f32, n: usize) -> El {
         .transition(crate::motion::paged(s.browse_view.shelves.dirs[slot]));
     // The numeral only on whole tiles: a peeking tile's rank would be cut mid glyph.
     let last_page = page + 1 == pages && len > n;
+    // Left and Right move focus tile to tile, and page the row when focus crosses its edge.
+    let ids: std::rc::Rc<Vec<u64>> = std::rc::Rc::new(r.cards.iter().map(|c| c.id).collect());
     for (i, card) in r.cards.iter().enumerate().take(end).skip(start) {
         let whole = if last_page { i > start } else { i < start + n };
-        strip = strip.child(tile(s, u, slot, card, tw, th, (ranked && whole).then_some(i + 1)));
+        let ids = ids.clone();
+        let keyed = tile(s, u, slot, card, tw, th, (ranked && whole).then_some(i + 1)).on_key(move |st: &mut State, ev: &KeyEvent, tx: &mut Tx| {
+            let to = match ev.key {
+                Key::Left if i > 0 => i - 1,
+                Key::Right if i + 1 < ids.len() => i + 1,
+                _ => return false,
+            };
+            let page = st.browse_view.shelves.pages[slot].min(pages - 1);
+            let shown = whole_tiles(ids.len(), n, page);
+            if !shown.contains(&to) {
+                let next = if to > i { (page + 1).min(pages - 1) } else { page.saturating_sub(1) };
+                st.browse_view.shelves.pages[slot] = next;
+                st.browse_view.shelves.dirs[slot] = if to > i { 1 } else { -1 };
+            }
+            tx.focus_when_shown(format!("top-{slot}-{}", ids[to]), true);
+            true
+        });
+        strip = strip.child(keyed);
     }
     let arrow = |forward: bool| {
         el().key(format!("top-row-{slot}-{}", if forward { "next" } else { "prev" }))
@@ -882,13 +913,21 @@ fn row_view(s: &State, u: &Ui, r: &Row, width: f32, n: usize) -> El {
             })
             .child(icon(if forward { &icons::CHEVRON_RIGHT } else { &icons::CHEVRON_LEFT }, 16.0).color(Color::WHITE).a11y_hidden())
     };
+    // The peek fades out at the row's edge, so a cut tile reads as more to come.
+    let last = page + 1 >= pages;
+    // The arrows sit outside the faded clip, so the fade never dims them.
     let mut viewport = el()
         .key(format!("top-row-{slot}"))
         .w_full()
         .h(th)
-        .clip_rounded(0.0)
         .hover_group()
-        .child(strip);
+        .child(
+            el().absolute(0.0, 0.0)
+                .w_full()
+                .h_full()
+                .clip_fade_linear(if last && len > n { PEEK } else { 0.0 }, 0.0, if last { 0.0 } else { PEEK }, 0.0)
+                .child(strip),
+        );
     if page > 0 {
         viewport = viewport.child(arrow(false));
     }
@@ -1031,6 +1070,7 @@ fn tile(s: &State, u: &Ui, slot: usize, card: &BrowseCard, tw: f32, th: f32, ran
                 el().pin(Some(0.0), None, None, Some(0.0))
                     .size(160.0, 96.0)
                     .radial_gradient([0.0, 1.0], [160.0, 96.0], [(0.0, Color::BLACK.alpha(0.8)), (1.0, Color::BLACK.alpha(0.0))])
+                    .group_opacity(1.0, 0.0)
                     .a11y_hidden(),
             )
             .child(
@@ -1038,17 +1078,15 @@ fn tile(s: &State, u: &Ui, slot: usize, card: &BrowseCard, tw: f32, th: f32, ran
                     .font(RANK)
                     .color(Color::WHITE)
                     .pin(Some(8.0), None, None, Some(0.0))
+                    // Out of the way of Install and the star on hover.
+                    .group_opacity(1.0, 0.0)
                     .a11y_hidden(),
             );
     }
     // Hover layer: scrim, title, byline and likes, then Install and the star. A veiled tile
     // offers Show instead of Install.
     let white = |a: f32| Color::WHITE.alpha(a);
-    let byline = format!(
-        "{}{}",
-        if card.author.is_empty() { String::new() } else { format!("{} · ", card.author) },
-        card_count(card.likes)
-    );
+    let author = if card.author.is_empty() { "-".to_string() } else { card.author.clone() };
     let mut hover = col()
         .key(format!("top-hover-{slot}-{id}"))
         .absolute(0.0, 0.0)
@@ -1059,7 +1097,13 @@ fn tile(s: &State, u: &Ui, slot: usize, card: &BrowseCard, tw: f32, th: f32, ran
         .fill(Color::BLACK.alpha(0.62))
         .group_opacity(0.0, 1.0)
         .child(title(Color::WHITE, 2))
-        .child(row().gap(4.0).center_y().child(icon(&icons::THUMBS_UP, 12.0).color(white(0.7)).a11y_hidden()).child(text(byline).font(SMALL).color(white(0.7)).truncate().min_w(0.0)))
+        .child(
+            row().gap(4.0).center_y().min_w(0.0)
+                .child(text(author).font(SMALL).color(white(0.7)).truncate().min_w(0.0).shrink())
+                .child(text("·").font(SMALL).color(white(0.5)))
+                .child(icon(&icons::THUMBS_UP, 12.0).color(white(0.7)).a11y_hidden())
+                .child(text(card_count(card.likes)).font(crate::ui::SMALL_NUM).color(white(0.7))),
+        )
         .child(spacer());
     if veil {
         hover = hover.child(

@@ -131,6 +131,16 @@ pub fn fade() -> Transition {
     Transition::opacity().springs(SpringPair::new(enter(), exit()))
 }
 
+/// An image leaf arriving over its placeholder fill: it fades in over `base` (140 ms) and is gone
+/// at once when it leaves, so a picture never crossfades with another. Only in a commit the
+/// landing images alone cause (`app::poll`), so it never runs at rest.
+pub fn image_in() -> Transition {
+    if reduced() {
+        return Transition::none();
+    }
+    Transition::opacity().springs(SpringPair::new(base(), Spring::NONE))
+}
+
 /// The 3D viewer's capture flash: Rune's own fade (0.3 s in, 0.24 s out), as it always was.
 pub fn flash() -> Transition {
     if reduced() {
