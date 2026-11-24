@@ -30,8 +30,8 @@ import { isEventName } from "./events";
 import { crashFingerprint } from "./fingerprint";
 import { sha256Hex } from "./hash";
 import { allowRequest } from "./limiter";
-import { runRetention } from "./retention";
-import { closeEpochs, contribute, related } from "./aggregates";
+import { contribute, related } from "./aggregates";
+import { scheduledJob } from "./cron";
 import {
   installHash,
   parseInstallId,
@@ -122,16 +122,7 @@ export default {
   },
 
   async scheduled(controller: ScheduledController, env: Env): Promise<void> {
-    const closed = await closeEpochs(env.DB, Date.now());
-    const result = await runRetention(env.DB, Date.now());
-    logLine({
-      event: "retention",
-      cron: controller.cron,
-      diagnostics: result.diagnostics,
-      crashes: result.crashes,
-      product: result.product,
-      epochsClosed: closed.length,
-    });
+    await scheduledJob(env, Date.now(), controller.cron);
   },
 } satisfies ExportedHandler<Env>;
 

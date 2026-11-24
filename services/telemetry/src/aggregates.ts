@@ -40,6 +40,22 @@ const DAMPING = 10;
 export const MAX_RELATED = 20;
 /** One request writes at most this many contribution rows. */
 const MAX_CONTRIB_ROWS = 600;
+/** Rows one install may hold per epoch and kind, so one client cannot bloat an epoch. */
+export const PER_INSTALL_CAP: Readonly<Record<string, number>> = {
+  seen: 40,
+  mod: 64,
+  pair: 500,
+  health: 100,
+  bench: 20,
+  hardware: 5,
+  search: 50,
+};
+/** Contribution rows deleted per statement and statements per closing run, so the cron job
+ * stays short; an epoch that does not finish closing continues the next day. */
+const DELETE_CHUNK = 5000;
+const DELETE_BUDGET = 40;
+/** Kinds whose keys are written by players (search text, hardware names). */
+export const FREE_TEXT_KINDS = ["search", "hardware"] as const;
 
 export type Contributor = { readonly hash: string; readonly bucket: string; readonly epoch: number; readonly day: string };
 
@@ -141,16 +157,29 @@ export async function contribute(
   if (bucket === null) return false;
   const who: Contributor = { hash, bucket, epoch, day: utcDay(now) };
 
-  const room = await db
+  const slot = await db
     .prepare(
       `SELECT COUNT(DISTINCT install_hash) AS installs, COALESCE(SUM(install_hash = ?3), 0) AS mine
        FROM product_contrib WHERE epoch = ?1 AND bucket = ?2`,
     )
     .bind(epoch, bucket, hash)
     .first<{ installs: number; mine: number }>();
-  if ((room?.mine ?? 0) === 0 && (room?.installs ?? 0) >= INSTALLS_PER_BUCKET) return false;
+  if ((slot?.mine ?? 0) === 0 && (slot?.installs ?? 0) >= INSTALLS_PER_BUCKET) return false;
 
-  const rows = [{ kind: "seen", key: who.day }, ...records.flatMap(keysOf)].slice(0, MAX_CONTRIB_ROWS);
+  const { results: held } = await db
+    .prepare("SELECT kind, COUNT(*) AS n FROM product_contrib WHERE epoch = ?1 AND install_hash = ?2 GROUP BY kind")
+    .bind(epoch, hash)
+    .all<{ kind: string; n: number }>();
+  const room = new Map(Object.entries(PER_INSTALL_CAP));
+  for (const row of held) room.set(row.kind, (room.get(row.kind) ?? 0) - row.n);
+  const rows = [{ kind: "seen", key: who.day }, ...records.flatMap(keysOf)]
+    .filter(({ kind }) => {
+      const left = room.get(kind) ?? 0;
+      room.set(kind, left - 1);
+      return left > 0;
+    })
+    .slice(0, MAX_CONTRIB_ROWS);
+  if (rows.length === 0) return true;
   await db.batch(
     rows.map(({ kind, key }) =>
       db
@@ -165,8 +194,12 @@ export async function contribute(
 }
 
 /**
- * Close every epoch that ended more than `GRACE_MS` ago: counts to `product_totals`, then its
- * contribution rows go. Returns the epochs closed.
+ * Close every epoch that ended more than `GRACE_MS` ago. Kind by kind: the totals of keys that
+ * met the floor in that epoch go to `product_totals` (counts only), then the kind's contribution
+ * rows are deleted in chunks. Keys below the floor leave nothing behind. `seen` rows go last,
+ * since every kind's eligibility reads them. Work is bounded per run; an unfinished epoch carries
+ * on the next day, and a kind's totals, once written, are never recomputed from fewer rows.
+ * Returns the epochs fully closed.
  */
 export async function closeEpochs(db: D1Database, now: number): Promise<number[]> {
   const last = epochOf(now - GRACE_MS) - 1;
@@ -174,10 +207,15 @@ export async function closeEpochs(db: D1Database, now: number): Promise<number[]
     .prepare("SELECT DISTINCT epoch FROM product_contrib WHERE epoch <= ?1 ORDER BY epoch")
     .bind(last)
     .all<{ epoch: number }>();
+  let budget = DELETE_BUDGET;
   const closed: number[] = [];
   for (const { epoch } of results) {
-    await db.batch([
-      db
+    const { results: kinds } = await db
+      .prepare("SELECT DISTINCT kind FROM product_contrib WHERE epoch = ?1 AND kind <> 'seen'")
+      .bind(epoch)
+      .all<{ kind: string }>();
+    for (const { kind } of kinds) {
+      await db
         .prepare(
           `WITH seen AS (
              SELECT install_hash, bucket, MIN(created_at) AS first_at FROM product_contrib
@@ -188,29 +226,51 @@ export async function closeEpochs(db: D1Database, now: number): Promise<number[]
            ),
            days AS (
              SELECT install_hash FROM product_contrib WHERE epoch = ?1 AND kind = 'seen'
-             GROUP BY install_hash HAVING COUNT(DISTINCT key) >= ?2
+             GROUP BY install_hash HAVING COUNT(DISTINCT key) >= ?3
            ),
            eligible AS (
-             SELECT DISTINCT r.install_hash FROM ranked r JOIN days d ON d.install_hash = r.install_hash WHERE r.place <= ?3
+             SELECT DISTINCT r.install_hash FROM ranked r JOIN days d ON d.install_hash = r.install_hash WHERE r.place <= ?4
            )
-           INSERT INTO product_totals (epoch, kind, key, mod_a, mod_b, installs, buckets, days)
+           INSERT INTO product_totals (epoch, kind, key, mod_a, mod_b, installs, buckets, days, created_at)
            SELECT ?1, c.kind, c.key,
              CASE c.kind WHEN 'pair' THEN CAST(substr(c.key, 1, instr(c.key, '|') - 1) AS INTEGER)
                          WHEN 'mod' THEN CAST(c.key AS INTEGER) END,
              CASE c.kind WHEN 'pair' THEN CAST(substr(c.key, instr(c.key, '|') + 1) AS INTEGER) END,
-             COUNT(DISTINCT c.install_hash), COUNT(DISTINCT c.bucket), COUNT(DISTINCT c.day)
+             COUNT(DISTINCT c.install_hash), COUNT(DISTINCT c.bucket), COUNT(DISTINCT c.day), ?5
            FROM product_contrib c JOIN eligible e ON e.install_hash = c.install_hash
-           WHERE c.epoch = ?1 AND c.kind <> 'seen'
-           GROUP BY c.kind, c.key
-           ON CONFLICT(epoch, kind, key) DO UPDATE SET
-             installs = excluded.installs, buckets = excluded.buckets, days = excluded.days`,
+           WHERE c.epoch = ?1 AND c.kind = ?2
+           GROUP BY c.key
+           HAVING COUNT(DISTINCT c.install_hash) >= ?6 AND COUNT(DISTINCT c.bucket) >= ?7 AND COUNT(DISTINCT c.day) >= ?8
+           ON CONFLICT(epoch, kind, key) DO NOTHING`,
         )
-        .bind(epoch, MIN_DAYS_SEEN, INSTALLS_PER_BUCKET),
-      db.prepare("DELETE FROM product_contrib WHERE epoch = ?1").bind(epoch),
-    ]);
+        .bind(epoch, kind, MIN_DAYS_SEEN, INSTALLS_PER_BUCKET, now, FLOOR.installs, FLOOR.buckets, FLOOR.days)
+        .run();
+      budget = await deleteChunks(db, epoch, kind, budget);
+      if (budget <= 0) return closed;
+    }
+    budget = await deleteChunks(db, epoch, "seen", budget);
+    if (budget <= 0) return closed;
     closed.push(epoch);
   }
   return closed;
+}
+
+/** Delete one kind of an epoch's contributions, `DELETE_CHUNK` rows at a time. */
+async function deleteChunks(db: D1Database, epoch: number, kind: string, budget: number): Promise<number> {
+  let left = budget;
+  while (left > 0) {
+    const result = await db
+      .prepare(
+        `DELETE FROM product_contrib WHERE rowid IN (
+           SELECT rowid FROM product_contrib WHERE epoch = ?1 AND kind = ?2 LIMIT ?3
+         )`,
+      )
+      .bind(epoch, kind, DELETE_CHUNK)
+      .run();
+    left -= 1;
+    if ((result.meta.changes ?? 0) < DELETE_CHUNK) return left;
+  }
+  return left;
 }
 
 const MEETS_FLOOR = `installs >= ${FLOOR.installs} AND buckets >= ${FLOOR.buckets} AND days >= ${FLOOR.days}`;

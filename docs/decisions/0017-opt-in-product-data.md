@@ -80,10 +80,14 @@ therefore count distinct contributors in 30-day epochs (`services/telemetry/src/
   hash. They live only until their epoch closes (30 days plus 2 days of grace) and go at once with
   "Delete my data". A bucket admits at most 3 installs per epoch, counted from that table, so a
   deleted install frees its slot and nothing grows forever.
-- Closing an epoch (daily cron) writes, per aggregate key, counts only to `product_totals`:
-  eligible installs (seen on at least 2 days in the epoch, within the 3 per bucket), distinct
-  buckets and distinct days. No install hash and no bucket. Then the epoch's contributions are
-  deleted.
+- One install may hold a bounded number of contribution rows per epoch and kind (for example 500
+  mod pairs, 50 search terms), so one client cannot bloat an epoch.
+- Closing an epoch (daily cron, after retention and independent of it, in bounded chunks) writes
+  counts only to `product_totals`, and only for keys that met the floor in that epoch: eligible
+  installs (seen on at least 2 days in the epoch, within the 3 per bucket), distinct buckets and
+  distinct days. No install hash and no bucket. Keys below the floor leave no row. Then the
+  epoch's contributions are deleted. Totals for keys players wrote (search text, hardware names)
+  are deleted after 13 months; totals keyed by mod ids and codes are kept.
 - A mod pair, a mod health finding, a hardware class or a search term is shown to players only
   when at least one closed epoch met the floor on its own: at least 10 eligible installs from at
   least 6 buckets on at least 3 days. Its strength is the sum over epochs that met the floor;

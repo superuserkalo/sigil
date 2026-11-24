@@ -13,8 +13,6 @@ export const DIAGNOSTICS_RETENTION_MS = 30 * DAY_MS;
 export const CRASH_RETENTION_MS = 90 * DAY_MS;
 /** Raw product data (ADR 0017): 13 months, counted as 396 days. */
 export const PRODUCT_RETENTION_MS = 396 * DAY_MS;
-/** Longer than an epoch plus its grace, so only stragglers are caught. */
-export const CONTRIB_RETENTION_MS = 40 * DAY_MS;
 
 export type RetentionResult = {
   readonly diagnostics: number;
@@ -29,13 +27,17 @@ export async function runRetention(db: D1Database, now: number): Promise<Retenti
       .bind(now - DIAGNOSTICS_RETENTION_MS),
     db.prepare("DELETE FROM crashes WHERE created_at < ?1").bind(now - CRASH_RETENTION_MS),
     db.prepare("DELETE FROM product_events WHERE created_at < ?1").bind(now - PRODUCT_RETENTION_MS),
-    // Contributions of an epoch go when it closes; this catches any the cron missed.
-    db.prepare("DELETE FROM product_contrib WHERE created_at < ?1").bind(now - CONTRIB_RETENTION_MS),
+    // Totals whose key players wrote (search text, hardware names) are not kept forever.
+    db
+      .prepare("DELETE FROM product_totals WHERE kind IN ('search', 'hardware') AND created_at < ?1")
+      .bind(now - PRODUCT_RETENTION_MS),
   ]);
 
   return {
     diagnostics: results[0]?.meta.changes ?? 0,
     crashes: results[1]?.meta.changes ?? 0,
     product: (results[2]?.meta.changes ?? 0) + (results[3]?.meta.changes ?? 0),
+    // Stray contributions are not deleted here: a closing that has not finished would lose the
+    // rows its totals need. `closeEpochs` deletes them, bounded, and carries on the next day.
   };
 }

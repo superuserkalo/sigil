@@ -1,8 +1,9 @@
 import { createScheduledController } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { beforeEach, describe, expect, it } from "vitest";
+import { scheduledJob } from "../src/cron";
 import worker from "../src/index";
-import { closeEpochs, contribute, EPOCH_MS, epochOf, networkPrefix, publishedKeys } from "../src/aggregates";
+import { closeEpochs, contribute, EPOCH_MS, epochOf, networkPrefix, PER_INSTALL_CAP, publishedKeys } from "../src/aggregates";
 import { installHash, modelName, parseRecord, PRODUCT_TYPES, scrubSearch, type ProductRecord } from "../src/product";
 import { call, clearTables, INSTALL_ID, readJson, VERSION } from "./helpers";
 
@@ -223,8 +224,9 @@ describe("the distinct-contributor floor", () => {
     await closeAll();
     expect(await relatedTo(100)).toEqual({ mods: [] });
     expect(await publishedKeys(env.DB, KEY, "search", 10)).toEqual([]);
-    const totals = await env.DB.prepare("SELECT MAX(installs) AS n FROM product_totals").first<{ n: number }>();
-    expect(totals?.n).toBe(3);
+    // Nothing met the floor, so nothing is left at all.
+    const totals = await env.DB.prepare("SELECT COUNT(*) AS n FROM product_totals").first<{ n: number }>();
+    expect(totals?.n).toBe(0);
   });
 
   it("publishes nothing from two networks", async () => {
@@ -302,7 +304,7 @@ describe("the distinct-contributor floor", () => {
     await closeAll();
     expect((await env.DB.prepare("SELECT COUNT(*) AS n FROM product_contrib WHERE epoch <= ?1").bind(epochOf(E0)).first<{ n: number }>())?.n).toBe(0);
     const columns = await env.DB.prepare("SELECT name FROM pragma_table_info('product_totals')").all<{ name: string }>();
-    expect(columns.results.map((c) => c.name)).toEqual(["epoch", "kind", "key", "mod_a", "mod_b", "installs", "buckets", "days"]);
+    expect(columns.results.map((c) => c.name)).toEqual(["epoch", "kind", "key", "mod_a", "mod_b", "installs", "buckets", "days", "created_at"]);
     const totals = JSON.stringify(await env.DB.prepare("SELECT * FROM product_totals").all());
     expect(totals).not.toMatch(/[0-9a-f]{16}/);
     const eventColumns = await env.DB.prepare("SELECT name FROM pragma_table_info('product_events')").all<{ name: string }>();
@@ -317,6 +319,39 @@ describe("the distinct-contributor floor", () => {
     }
   });
 
+  it("leaves no row for a key below the floor once the epoch closes", async () => {
+    await sendEpoch(0, 10, SIX_NETWORKS);
+    // A rare search term from two installs.
+    const rare = [parseRecord({ type: "browse_query", sort: null, filters: [], search: "rare words", results: 1 }) as ProductRecord];
+    for (const n of [0, 1]) {
+      const hash = await installHash(crypto.randomUUID(), undefined);
+      for (const day of [0, 1, 2]) await contribute(env.DB, KEY, `10.20.${n}.1`, hash, rare, E0 + day * DAY + 3_600_000);
+    }
+    await closeAll();
+    const keys = await env.DB.prepare("SELECT key FROM product_totals WHERE kind = 'search'").all<{ key: string }>();
+    expect(keys.results.map((r) => r.key)).toEqual(["haze"]);
+    expect(JSON.stringify(await env.DB.prepare("SELECT * FROM product_totals").all())).not.toContain("rare words");
+  });
+
+  it("caps the rows one install may hold per epoch and kind", async () => {
+    const hash = await installHash(crypto.randomUUID(), undefined);
+    const searches = Array.from({ length: 80 }, (_, n) =>
+      parseRecord({
+        type: "browse_query",
+        sort: null,
+        filters: [],
+        search: `term ${String.fromCharCode(97 + (n % 26))}${String.fromCharCode(97 + Math.floor(n / 26))}`,
+        results: 1,
+      }),
+    ) as ProductRecord[];
+    await contribute(env.DB, KEY, "10.30.0.1", hash, searches.slice(0, 40), E0 + 3_600_000);
+    await contribute(env.DB, KEY, "10.30.0.1", hash, searches.slice(40), E0 + 7_200_000);
+    const held = await env.DB.prepare("SELECT COUNT(*) AS n FROM product_contrib WHERE kind = 'search' AND install_hash = ?1")
+      .bind(hash)
+      .first<{ n: number }>();
+    expect(held?.n).toBe(PER_INSTALL_CAP.search);
+  });
+
   it("rejects a bad mod id", async () => {
     for (const mod of ["", "0", "abc", "76561198012345678"]) {
       expect((await call(`/v1/product/related?mod=${mod}`, { method: "GET" })).status).toBe(400);
@@ -324,8 +359,37 @@ describe("the distinct-contributor floor", () => {
   });
 });
 
+describe("the daily job", () => {
+  it("still runs retention when closing an epoch throws", async () => {
+    const now = Date.now();
+    await env.DB.prepare(
+      `INSERT INTO product_events (created_at, install_hash, type, version, os, payload) VALUES (?1, 'h', 'old', '0.1.0', 'windows', '{}')`,
+    )
+      .bind(now - 400 * DAY_MS)
+      .run();
+    await scheduledJob(env, now, "17 3 * * *", async () => {
+      throw new Error("closing failed");
+    });
+    expect((await rows()).length).toBe(0);
+  });
+
+  it("still closes epochs when retention throws", async () => {
+    await sendEpoch(0, 10, SIX_NETWORKS);
+    // A database whose batch (retention's only call) fails, and whose other calls work.
+    const db = new Proxy(env.DB, {
+      get(target, name) {
+        if (name === "batch") return async () => { throw new Error("retention failed"); };
+        const value = Reflect.get(target, name);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
+    await scheduledJob({ ...env, DB: db } as typeof env, E0 + 40 * EPOCH_MS, "17 3 * * *");
+    expect((await relatedTo(100)).mods.length).toBe(2);
+  });
+});
+
 describe("product retention", () => {
-  it("deletes raw rows older than 13 months and stray contributions, and keeps totals", async () => {
+  it("deletes raw rows and free-text totals older than 13 months, and closes stale epochs", async () => {
     const now = Date.now();
     for (const [age, type] of [
       [400, "old"],
@@ -342,10 +406,20 @@ describe("product retention", () => {
     )
       .bind(now - 45 * DAY_MS)
       .run();
-    await env.DB.prepare(`INSERT INTO product_totals (epoch, kind, key, installs, buckets, days) VALUES (1, 'search', 'haze', 12, 7, 4)`).run();
+    for (const [epoch, kind, key, age] of [
+      [1, "search", "haze", 10],
+      [2, "search", "old term", 400],
+      [2, "mod", "5", 400],
+    ] as const) {
+      await env.DB.prepare(`INSERT INTO product_totals (epoch, kind, key, installs, buckets, days, created_at) VALUES (?1, ?2, ?3, 12, 7, 4, ?4)`)
+        .bind(epoch, kind, key, now - age * DAY_MS)
+        .run();
+    }
     await worker.scheduled(createScheduledController({ cron: "17 3 * * *" }), env);
     expect((await rows()).map((row) => row.type)).toEqual(["new"]);
     expect((await env.DB.prepare("SELECT COUNT(*) AS n FROM product_contrib").first<{ n: number }>())?.n).toBe(0);
-    expect((await env.DB.prepare("SELECT COUNT(*) AS n FROM product_totals").first<{ n: number }>())?.n).toBe(1);
+    // The free-text total from 400 days ago is gone; the mod total of the same age stays.
+    const kept = await env.DB.prepare("SELECT key FROM product_totals ORDER BY key").all<{ key: string }>();
+    expect(kept.results.map((r) => r.key)).toEqual(["5", "haze"]);
   });
 });

@@ -12,9 +12,11 @@
 --   (IPv4 /24, IPv6 /48), so it changes every epoch. Rows are deleted when their epoch closes (the
 --   daily cron, two days after the epoch ends) and at once by POST /v1/product/delete.
 --
--- `product_totals`: per closed epoch and aggregate key, counts only (eligible installs, distinct
---   buckets, distinct days). No install hash and no bucket. Kept; Delete my data cannot reach
---   them because nothing in them points to an install.
+-- `product_totals`: per closed epoch and aggregate key that met the floor in that epoch (10
+--   eligible installs, 6 buckets, 3 days), counts only (installs, buckets, days). No install hash
+--   and no bucket; keys below the floor leave no row. Rows of mod ids and codes are kept; rows
+--   whose key players wrote (search text, hardware names) go after 13 months. Delete my data
+--   cannot reach them because nothing in them points to an install.
 
 CREATE TABLE IF NOT EXISTS product_events (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -55,6 +57,7 @@ CREATE TABLE IF NOT EXISTS product_totals (
   installs INTEGER NOT NULL,
   buckets INTEGER NOT NULL,
   days INTEGER NOT NULL,
+  created_at INTEGER NOT NULL,
   PRIMARY KEY (epoch, kind, key)
 );
 
