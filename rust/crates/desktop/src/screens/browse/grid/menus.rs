@@ -360,7 +360,7 @@ pub fn overlay(s: &State, u: &Ui) -> Option<El> {
             }
             items = items
                 .child(segmented(u, super::super::tree::tr("Installed"), Owned::ALL.iter().position(|o| *o == f.owned), owned))
-                .child(segmented(u, super::super::tree::tr("Mature"), MatureView::ALL.iter().position(|m| *m == f.mature), mature))
+                .child(segmented(u, super::super::tree::tr("NSFW"), MatureView::ALL.iter().position(|m| *m == f.mature), mature))
                 .child(segmented(u, super::super::tree::tr("Match"), Some(usize::from(f.exclude)), matching))
                 .child(menu_rule(u))
                 .child(

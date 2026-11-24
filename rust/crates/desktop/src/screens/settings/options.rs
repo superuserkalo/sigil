@@ -16,7 +16,7 @@ use crate::app::State;
 
 pub const FILE_NAME: &str = "options.json";
 
-/// Blur strengths offered for mature previews, in points.
+/// Blur strengths offered for NSFW previews, in points.
 pub const BLURS: [u32; 4] = [8, 18, 28, 40];
 /// Download parts offered. 1 means one connection.
 pub const PARTS: [u32; 3] = [1, 4, 8];
@@ -70,7 +70,7 @@ pub struct Options {
     // Window
     pub tray_minimize: bool,
     pub tray_close: bool,
-    // Mature content
+    // NSFW content
     pub blur: u32,
     pub remember_reveals: bool,
     pub revealed: Vec<u64>,

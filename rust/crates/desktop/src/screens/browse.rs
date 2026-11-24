@@ -318,7 +318,7 @@ pub struct View {
     pub visible: Range<usize>,
     /// The page's box in the window, for a context menu that stays on screen.
     pub page_rect: [f32; 4],
-    /// Mature mods the player chose to show.
+    /// NSFW mods the player chose to show.
     pub revealed: HashSet<u64>,
     /// Mods and creators hidden for this session and later runs, and the names the
     /// management list shows (a set loses them on load).
@@ -539,7 +539,7 @@ impl Owned {
     }
 }
 
-/// Mature content in this view, on top of the app-wide setting.
+/// NSFW content in this view, on top of the app-wide setting.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum MatureView {
     /// Follow Settings (show, blur or hide).
@@ -554,8 +554,8 @@ impl MatureView {
     fn label(self) -> &'static str {
         match self {
             MatureView::Setting => "As in Settings",
-            MatureView::Hide => "Hide mature",
-            MatureView::Only => "Mature only",
+            MatureView::Hide => "Hide NSFW",
+            MatureView::Only => "NSFW only",
         }
     }
 
@@ -1328,7 +1328,7 @@ fn shown_indices(s: &State) -> Vec<usize> {
 
 /// Columns and card width for a grid `width` points wide.
 /// The one gate every Browse surface (grid, shelves, spotlight, image queue) shares: a hidden
-/// mod or creator never shows, and a mature one never shows while Settings hide mature content.
+/// mod or creator never shows, and a mature one never shows while Settings hide NSFW content.
 /// `nsfw` is false where the caller applies its own mature rule (the grid's Mature filter).
 pub(crate) fn content_allowed(s: &State, id: u64, nsfw: bool, author: &str) -> bool {
     !(nsfw && s.prefs.mature == crate::prefs::Mature::Hide) && !mod_hidden(s, id) && !author_hidden(s, author)

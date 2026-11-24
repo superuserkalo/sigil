@@ -1108,9 +1108,9 @@ fn edit_dialog(s: &State, u: &Ui, slot: u16) -> El {
                         .grow(1.0)
                         .min_w(0.0)
                         .gap(2.0)
-                        .child(text("Mature").font(BODY).color(u.ink))
+                        .child(text("NSFW").font(BODY).color(u.ink))
                         .child(
-                            text("Blurs the picture while Mature mods are hidden or blurred.")
+                            text("Blurs the picture while NSFW mods are hidden or blurred.")
                                 .font(SMALL)
                                 .color(u.faint),
                         ),
@@ -1118,7 +1118,7 @@ fn edit_dialog(s: &State, u: &Ui, slot: u16) -> El {
                 .child(
                     u.toggle(nsfw)
                         .key("edit-nsfw")
-                        .label("Mark as mature")
+                        .label("Mark as NSFW")
                         .cursor(rune::Cursor::Pointer)
                         .on_press(|st: &mut State| st.installed.notes.nsfw = !st.installed.notes.nsfw),
                 ),

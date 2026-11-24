@@ -1686,7 +1686,7 @@ pub(super) fn card_marks(s: &State, u: &Ui, addon: &AddonRow, on_image: bool) ->
     for (glyph, label, on) in [
         (&icons::ARROW_UP, "Loads first", addon.enabled && extra.always_first),
         (&icons::PIN, "Pinned", extra.pinned),
-        (&icons::EYE, "Mature", extra.is_nsfw()),
+        (&icons::EYE, "NSFW", extra.is_nsfw()),
         (&icons::HEART, "Saved", extra.favorite),
     ] {
         if !on {

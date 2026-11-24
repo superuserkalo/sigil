@@ -61,7 +61,7 @@ impl OnLaunch {
     }
 }
 
-/// How Browse treats mods GameBanana marks as mature.
+/// How Browse treats mods GameBanana marks as NSFW.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum Mature {
     Show,

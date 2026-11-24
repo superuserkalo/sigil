@@ -1,4 +1,4 @@
-//! Mature content extras: blur strength, reveal on hover, an always-visible 18+ tag, showing
+//! NSFW content extras: blur strength, reveal on hover, an always-visible 18+ tag, showing
 //! unclassified items while hiding mature ones, and remembering what you revealed. Browse
 //! reads them through the small functions here.
 
@@ -45,7 +45,7 @@ pub fn revealed(st: &mut State, id: u64) {
     }
 }
 
-/// An item from a source with no mature classification: hidden with mature content unless
+/// An item from a source with no mature classification: hidden with NSFW content unless
 /// "Show unclassified items" is on (DMM's Show likely NSFW).
 pub fn hide_unclassified(mature: Mature) -> bool {
     mature == Mature::Hide && !options::get().likely_nsfw
@@ -62,7 +62,7 @@ pub fn rows(s: &State, u: &Ui) -> Vec<El> {
         setting_row(
             u,
             "settings-mature",
-            "Mature content",
+            "NSFW content",
             detail(u, ""),
             segmented(u, "settings-mature-pick", &mature, s.prefs.mature, |st, m| {
                 crate::prefs::edit(st, |p| p.mature = m)
@@ -92,8 +92,8 @@ pub fn rows(s: &State, u: &Ui) -> Vec<El> {
         toggle_row(
             u,
             "settings-always-tag",
-            "Always show the 18+ tag",
-            "Mature cards keep their tag, also when they are not blurred.",
+            "Always show the NSFW tag",
+            "NSFW cards keep their tag, also when they are not blurred.",
             o.always_tag,
             |st| options::edit(st, |o| o.always_tag = !o.always_tag),
         ),
@@ -102,7 +102,7 @@ pub fn rows(s: &State, u: &Ui) -> Vec<El> {
                 u,
                 "settings-likely-nsfw",
                 "Show unclassified items",
-                "While mature content is hidden, still show source mods that do not say whether they are mature.",
+                "While NSFW content is hidden, still show source mods that do not say whether they are NSFW.",
                 o.likely_nsfw,
                 |st| options::edit(st, |o| o.likely_nsfw = !o.likely_nsfw),
             ),

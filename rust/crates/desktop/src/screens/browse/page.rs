@@ -144,10 +144,22 @@ pub(crate) fn grid_page(s: &State, u: &Ui) -> El {
         result_line(s, shown.len(), stale)
     };
 
-    col()
+    // The header stays put: the toolbar line and, under it, the count, the filter chips and
+    // Clear all are always in reach while the catalog scrolls beneath them.
+    let head = {
+        let head = col().key("browse-head").w_full().px(PAGE_X).pt(PAGE_TOP).pb(12.0).gap(8.0).child(super::toolbar::line(s, u));
+        // The landing has no filter chips, and its count would describe the grid far below:
+        // the row is left out there, unless it carries "Saved copy".
+        if super::grid::landing_shown(s) && !s.browse_view.from_mirror {
+            head
+        } else {
+            head.child(super::toolbar::status_row(s, u, &detail))
+        }
+    };
+    let scroll = col()
         .key("browse-scroll")
         .w_full()
-        .h_full()
+        .grow(1.0)
         .min_h(0.0)
         .scroll(ScrollSpec {
             stick_bottom: false,
@@ -161,25 +173,8 @@ pub(crate) fn grid_page(s: &State, u: &Ui) -> El {
                 tx.live_only();
             }
         })
-        .child(
-            col()
-                .key("browse-page")
-                .w_full()
-                .px(PAGE_X)
-                .pt(PAGE_TOP)
-                .gap(16.0)
-                .child({
-                    let head = col().key("browse-head").w_full().gap(8.0).child(super::toolbar::line(s, u));
-                    // The landing has no filter chips, and its count would describe the grid
-                    // far below: the row is left out there, unless it carries "Saved copy".
-                    if super::grid::landing_shown(s) && !s.browse_view.from_mirror {
-                        head
-                    } else {
-                        head.child(super::toolbar::status_row(s, u, &detail))
-                    }
-                })
-                .child(body),
-        )
+        .child(col().key("browse-page").w_full().px(PAGE_X).pt(4.0).gap(16.0).child(body));
+    col().key("browse-frame").w_full().h_full().min_h(0.0).child(head).child(scroll)
 }
 
 /// Creators whose name matches the search, from the local copy. Pressing one scopes the grid

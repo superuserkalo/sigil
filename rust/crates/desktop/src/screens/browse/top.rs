@@ -426,9 +426,9 @@ pub fn paused(s: &State, focused: Option<&str>) -> Option<&'static str> {
     if v.shelves.last_input.is_some_and(|t| t.elapsed() >= IDLE) {
         return Some("idle");
     }
-    if focused.is_some_and(|k| k.starts_with("bb-")) {
-        return Some("focus");
-    }
+    // Focus inside the billboard does not pause it: a press on a pager button leaves focus
+    // there, which used to stop the billboard for good after the first manual step.
+    let _ = focused;
     if v.audio.playing.is_some() {
         return Some("sample");
     }
@@ -604,6 +604,9 @@ fn billboard(s: &State, u: &Ui, picks: &[Slide], width: f32) -> El {
         w as f32 / h.max(1) as f32
     });
     let aw = (h * aspect).clamp(h * 0.75, width * 0.60).floor();
+    // The art melts into the dark side over a wide band that starts fully opaque, so where the
+    // picture begins cannot be seen.
+    let feather = (aw * 0.55).clamp(220.0, 420.0).floor();
     let dir = s.browse_view.shelves.spot_dir;
     let motion = crate::motion::paged(dir);
     let mut b = el()
@@ -668,22 +671,28 @@ fn billboard(s: &State, u: &Ui, picks: &[Slide], width: f32) -> El {
                     .w(aw)
                     .transition(motion)
                     .a11y_hidden()
-                    .child(el().absolute(0.0, 0.0).w_full().h_full().pixels_fit(px, SurfaceFit::Fit))
+                    .child(el().absolute(0.0, 0.0).w_full().h_full().pixels_fit(px, SurfaceFit::Fill))
                     // The feather into the scrim, drawn with the art so it moves with it.
                     .child(
                         el().absolute(0.0, 0.0)
-                            .w(160.0)
+                            .w(feather)
                             .h_full()
                             .linear_gradient(
                                 std::f32::consts::FRAC_PI_2,
-                                [(0.0, INK_ON_WHITE.alpha(0.92)), (0.35, INK_ON_WHITE.alpha(0.55)), (1.0, INK_ON_WHITE.alpha(0.0))],
+                                [
+                                    (0.0, INK_ON_WHITE.alpha(1.0)),
+                                    (0.18, INK_ON_WHITE.alpha(0.94)),
+                                    (0.45, INK_ON_WHITE.alpha(0.66)),
+                                    (0.75, INK_ON_WHITE.alpha(0.26)),
+                                    (1.0, INK_ON_WHITE.alpha(0.0)),
+                                ],
                             ),
                     ),
             );
     }
     // The scrim is the same in every theme: text on art is always white.
-    let edge = ((width - aw) / width).clamp(0.0, 1.0);
-    let fade = ((width - aw + 160.0) / width).clamp(edge, 1.0);
+    let edge = ((width - aw + feather * 0.15) / width).clamp(0.0, 1.0);
+    let fade = ((width - aw + feather) / width).clamp(edge, 1.0);
     b = b
         .child(
             el().absolute(0.0, 0.0)
@@ -691,7 +700,7 @@ fn billboard(s: &State, u: &Ui, picks: &[Slide], width: f32) -> El {
                 .h_full()
                 .linear_gradient(
                     std::f32::consts::FRAC_PI_2,
-                    [(0.0, INK_ON_WHITE.alpha(0.92)), (edge, INK_ON_WHITE.alpha(0.92)), (fade, INK_ON_WHITE.alpha(0.0)), (1.0, INK_ON_WHITE.alpha(0.0))],
+                    [(0.0, INK_ON_WHITE.alpha(0.94)), (edge, INK_ON_WHITE.alpha(0.94)), (fade, INK_ON_WHITE.alpha(0.0)), (1.0, INK_ON_WHITE.alpha(0.0))],
                 )
                 // Over the art, which slides in with its own paint order.
                 .paint_order(2)
@@ -993,7 +1002,10 @@ fn tile(s: &State, u: &Ui, slot: usize, card: &BrowseCard, tw: f32, th: f32, ran
         Some(_) => 60.0,
         None => 10.0,
     };
-    let opened = id;
+    // The tile opens with its own card: a mod in these rows is usually not on the catalog page
+    // loaded below, so it cannot be looked up there by id.
+    let opened = std::rc::Rc::new(super::store::clone_card(card));
+    let open_tile = opened.clone();
     let mut b = el()
         .key(format!("top-{slot}-{id}"))
         .size(tw, th)
@@ -1006,7 +1018,7 @@ fn tile(s: &State, u: &Ui, slot: usize, card: &BrowseCard, tw: f32, th: f32, ran
         .role("button")
         .label(format!("{} by {}", card.name, card.author))
         .cursor(rune::Cursor::Pointer)
-        .on_press(move |st: &mut State| open_details(st, opened))
+        .on_press(move |st: &mut State| show_details(st, Details::from_card(&open_tile)))
         .on_secondary_press(move |st: &mut State, _press, _tx: &mut Tx| {
             st.browse_view.context = Some(id);
             st.browse_view.menu = None;
@@ -1106,7 +1118,7 @@ fn tile(s: &State, u: &Ui, slot: usize, card: &BrowseCard, tw: f32, th: f32, ran
         // The layer covers the tile, so it opens the details itself: a press anywhere on the
         // tile that is not Install or the star goes to the mod.
         .cursor(rune::Cursor::Pointer)
-        .on_press(move |st: &mut State| open_details(st, opened))
+        .on_press(move |st: &mut State| show_details(st, Details::from_card(&opened)))
         .child(title(Color::WHITE, 2))
         .child(
             row().gap(4.0).center_y().min_w(0.0)
@@ -1117,7 +1129,7 @@ fn tile(s: &State, u: &Ui, slot: usize, card: &BrowseCard, tw: f32, th: f32, ran
         )
         .child(spacer());
     if veil {
-        hover = hover.child(
+        hover = hover.child(row().w_full().center().child(nsfw_tag(u))).child(el().h(6.0)).child(
             row().w_full().center().child(
                 row().key(format!("top-show-{slot}-{id}"))
                     .h(28.0)
@@ -1130,7 +1142,7 @@ fn tile(s: &State, u: &Ui, slot: usize, card: &BrowseCard, tw: f32, th: f32, ran
                     .hover(white(0.10))
                     .focusable(true)
                     .role("button")
-                    .label("Show mature preview")
+                    .label("Show NSFW preview")
                     .cursor(rune::Cursor::Pointer)
                     .on_press(move |st: &mut State| crate::screens::settings::nsfw::revealed(st, id))
                     .child(icon(&icons::EYE, 14.0).color(Color::WHITE).a11y_hidden())
@@ -1185,16 +1197,18 @@ fn tile(s: &State, u: &Ui, slot: usize, card: &BrowseCard, tw: f32, th: f32, ran
     b = b.child(hover);
     if veil {
         // A deliberate veil: the tag and an eye at rest, never an empty box.
-        b = b
-            .child(row().pin(Some(8.0), Some(8.0), None, None).child(nsfw_tag(u)))
-            .child(
-                el().absolute(0.0, 0.0)
-                    .w_full()
-                    .h(th - 24.0)
-                    .center()
-                    .group_opacity(1.0, 0.0)
-                    .child(icon(&icons::EYE, 20.0).color(white(0.8)).a11y_hidden()),
-            );
+        // The tag sits over the eye in the middle, as on the catalog's cards, clear of the
+        // title; on hover the layer above shows the same tag over its Show button.
+        b = b.child(
+            col().absolute(0.0, 0.0)
+                .w_full()
+                .h(th - 40.0)
+                .center()
+                .gap(8.0)
+                .group_opacity(1.0, 0.0)
+                .child(nsfw_tag(u))
+                .child(icon(&icons::EYE, 20.0).color(white(0.8)).a11y_hidden()),
+        );
     } else if card.nsfw && crate::screens::settings::nsfw::always_tag() {
         b = b.child(row().pin(Some(8.0), Some(8.0), None, None).child(nsfw_tag(u)));
     }
@@ -1428,7 +1442,8 @@ mod tests {
             assert!(paused(st, focus).is_some(), "{what} should pause it");
         }
         check(&mut st, "hover", &|s| s.browse_view.shelves.hovered = true, None);
-        check(&mut st, "focus in the billboard", &|s| s.browse_view.shelves.hovered = false, Some("bb-install-901"));
+        st.browse_view.shelves.hovered = false;
+        assert_eq!(paused(&st, Some("bb-next")), None, "a pressed pager button must not stop it");
         check(&mut st, "background", &|s| s.browse_view.shelves.window_inactive = true, None);
         check(&mut st, "scrolled past", &|s| {
             s.browse_view.shelves.window_inactive = false;

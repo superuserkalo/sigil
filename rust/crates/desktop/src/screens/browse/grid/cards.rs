@@ -48,7 +48,7 @@ pub(crate) fn nsfw_veil(u: &Ui, scope: &str, id: u64, compact: bool) -> El {
                 .press(Color::WHITE.alpha(0.12))
                 .focusable(true)
                 .role("button")
-                .label("Show mature preview")
+                .label("Show NSFW preview")
                 .cursor(rune::Cursor::Pointer)
                 .on_press(move |st: &mut State| {
                     crate::screens::settings::nsfw::revealed(st, id);
@@ -67,7 +67,7 @@ pub(crate) fn nsfw_tag(u: &Ui) -> El {
         .radius(crate::ui::r(4.0))
         .fill(u.rose.alpha(0.16))
         .border(1.0, u.rose.alpha(0.45))
-        .child(text(super::super::tree::tr("Mature")).font(MICRO_CAPS).color(u.rose))
+        .child(text(super::super::tree::tr("NSFW")).font(MICRO_CAPS).color(u.rose))
 }
 
 pub(crate) fn veiled(s: &State, id: u64, nsfw: bool) -> bool {
@@ -139,7 +139,7 @@ pub(crate) fn card_el(s: &State, u: &Ui, card: &BrowseCard) -> El {
     if veil {
         frame = frame.child(nsfw_veil(u, "card", id, true));
     } else if card.nsfw && crate::screens::settings::nsfw::always_tag() {
-        // Settings > Mods > Always show the 18+ tag.
+        // Settings > Mods > Always show the NSFW tag.
         tags = tags.child(nsfw_tag(u));
     }
 

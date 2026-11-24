@@ -345,7 +345,7 @@ fn card(s: &State, u: &Ui, d: &Descriptor, url: &str, index: usize, l: &Listing)
                 .gap(2.0)
                 .child(text(l.title.clone()).font(BODY_MED).color(u.ink).truncate())
                 .child(text(meta.join(" · ")).font(SMALL).color(u.muted).truncate())
-                .children(mature.then(|| text(tr("Mature")).font(SMALL).color(u.amber))),
+                .children(mature.then(|| text(tr("NSFW")).font(SMALL).color(u.amber))),
         )
 }
 

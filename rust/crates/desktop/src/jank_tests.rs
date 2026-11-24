@@ -808,6 +808,16 @@ fn a_landing_tile_opens_its_mod_when_pressed() {
     let _globals = crate::ui::test_globals();
     let mut rt = runtime("browse-dashboard", (1280.0, 800.0));
     settle(&mut rt);
+    // As in the real app: the catalog page below does not hold the mods of the top rows, so a
+    // tile cannot rely on finding its mod there.
+    rt.update(|s, _tx| {
+        if let Some(page) = s.browse.page.as_mut() {
+            for card in &mut page.mods {
+                card.id += 9_000_000;
+            }
+        }
+    });
+    settle(&mut rt);
     assert!(rt.state.browse_view.details.is_none());
     let key = rt
         .elements()
@@ -815,6 +825,11 @@ fn a_landing_tile_opens_its_mod_when_pressed() {
         .filter_map(|e| e.key.clone())
         .find(|k| k.starts_with("top-0-"))
         .expect("a Top 10 tile");
+    let tile_id: u64 = key.rsplit('-').next().and_then(|id| id.parse().ok()).expect("the tile's mod id");
+    assert!(
+        rt.state.browse.page.as_ref().is_none_or(|page| page.mods.iter().all(|m| m.id != tile_id)),
+        "the test must press a mod that is not on the catalog page"
+    );
     let (x, y) = centre_of(&rt, &key).expect("tile on screen");
     // Hover first, as a player does: the hover layer is then on top.
     rt.pointer_move(x, y);

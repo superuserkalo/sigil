@@ -582,7 +582,7 @@ pub struct BrowseCard {
     pub added_ts: i64,
     /// Unix seconds of the latest change GameBanana reports. Zero when unknown.
     pub updated_ts: i64,
-    /// Mature content: the card blurs its image until the player reveals it.
+    /// NSFW content: the card blurs its image until the player reveals it.
     pub nsfw: bool,
     /// `Mod` or `Sound`.
     pub model: String,

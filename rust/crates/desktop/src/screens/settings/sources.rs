@@ -393,7 +393,7 @@ fn listing_row(s: &State, u: &Ui, index: usize, url: &str, l: &Listing) -> El {
         meta.push(l.version.clone());
     }
     if l.nsfw == Some(true) {
-        meta.push(tr("Mature").to_string());
+        meta.push(tr("NSFW").to_string());
     }
     let installing = s.settings.extra.sources.installing.as_deref() == Some(l.id.as_str());
     let busy = s.settings.extra.sources.install_job.is_running();

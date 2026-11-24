@@ -53,7 +53,7 @@ default) makes all of it change at once; the system's reduce motion setting does
 
 Browse reads GameBanana live. The tabs are Mods, Sounds, WiPs and All. Pick a category, a
 subcategory or a hero on the left, or search by name. A hero pick also finds that hero's sounds
-and HUD work. Filters cover mature content, outdated mods, whether a mod is installed, featured
+and HUD work. Filters cover NSFW content, outdated mods, whether a mod is installed, featured
 mods and a category match mode. You can sort by newest, updated, most liked, viewed, downloaded,
 discussed, latest comment or A to Z, and limit the results to a date window. Active filters appear
 as removable chips.
@@ -81,7 +81,7 @@ A mod that is already installed shows Update or Replace instead. Updates keep th
 your on or off choice. The old files go to Sigil's trash or backups.
 
 You can paste a GameBanana link or id into the search to open that mod. You can also paste many
-links at once to queue several mods, skip mature or duplicate ones, and save the result as a
+links at once to queue several mods, skip NSFW or duplicate ones, and save the result as a
 profile. Custom mod sources can be added in Settings > Mods > Sources.
 
 ## Installed
@@ -109,7 +109,7 @@ list or tag them. A mod's menu also has:
 - **View imprint** for the file's fingerprint, its embedded addon information and where it came
   from.
 - **Check what is inside** and the mod safety list (see below).
-- **Edit local mod** for the name, a picture and the mature flag.
+- **Edit local mod** for the name, a picture and the NSFW flag.
 - **Add to a Locker category** and tags.
 - **Find which mod this is** for an unknown file in Analyze.
 

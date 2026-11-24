@@ -611,7 +611,7 @@ pub fn scene_content(s: &State, u: &Ui, tab: Tab) -> Option<El> {
         Tab::Mods if s.settings.extra.scene_page == 2 => c
             .child(super::sources::section_el(s, u))
             .child(super::pages::section_el(s, u)),
-        Tab::Mods => c.child(section(u, "Mature content", super::nsfw::rows(s, u))),
+        Tab::Mods => c.child(section(u, "NSFW content", super::nsfw::rows(s, u))),
         Tab::General if s.settings.extra.scene_page == 3 => c.child(super::tabs::pages(s, u)),
         Tab::General => c
             .child(super::tray::rows(s, u))
