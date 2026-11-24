@@ -727,7 +727,7 @@ pub fn view(s: &State, u: &Ui) -> El {
         .h_full()
         .min_h(0.0)
         .child(
-            col()
+            u.scroll_area(col()
                 .key("stats-scroll")
                 .w_full()
                 .h_full()
@@ -735,7 +735,7 @@ pub fn view(s: &State, u: &Ui) -> El {
                 .scroll(ScrollSpec {
                     stick_bottom: false,
                 })
-                .child(page),
+                .child(page)),
         );
     // Tracked players and the season list open over the page instead of pushing it down.
     if v.account_open && v.snapshot.is_some() {
@@ -1075,12 +1075,12 @@ fn account_popover(s: &State, u: &Ui) -> El {
                 ),
         )
         .child(
-            col()
+            u.scroll_area(col()
                 .w_full()
                 .min_h(0.0)
                 .shrink()
                 .scroll(ScrollSpec { stick_bottom: false })
-                .child(list),
+                .child(list)),
         )
 }
 

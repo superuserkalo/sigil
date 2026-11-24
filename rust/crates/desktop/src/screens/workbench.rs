@@ -125,7 +125,7 @@ fn threads(s: &State, u: &Ui) -> El {
                 ),
         )
         .child(
-            col()
+            u.scroll_area(col()
                 .key("agent-mods-scroll")
                 .w_full()
                 .grow(1.0)
@@ -133,7 +133,7 @@ fn threads(s: &State, u: &Ui) -> El {
                 .scroll(ScrollSpec {
                     stick_bottom: false,
                 })
-                .child(list),
+                .child(list)),
         )
         .child(tools)
 }
@@ -221,13 +221,13 @@ fn conversation(s: &State, u: &Ui) -> El {
             .pb(48.0)
             .justify_center()
     } else {
-        col()
+        u.scroll_area(col()
             .key("agent-transcript")
             .w_full()
             .grow(1.0)
             .min_h(0.0)
             .scroll(ScrollSpec { stick_bottom: true })
-            .child(centred(transcript(s, u)))
+            .child(centred(transcript(s, u))))
     };
 
     let mut dock = col().w_full().gap(8.0);

@@ -700,13 +700,13 @@ pub fn view(s: &State, u: &Ui) -> El {
                 top
             })
             .child(
-                col()
+                u.scroll_area(col()
                     .key("servers-scroll")
                     .w_full()
                     .grow(1.0)
                     .min_h(0.0)
                     .scroll(ScrollSpec { stick_bottom: false })
-                    .child(page),
+                    .child(page)),
             );
     }
 
@@ -760,13 +760,13 @@ pub fn view(s: &State, u: &Ui) -> El {
         .grow(1.0)
         .min_h(0.0)
         .child(
-            col()
+            u.scroll_area(col()
                 .key("servers-scroll")
                 .w_full()
                 .h_full()
                 .min_h(0.0)
                 .scroll(ScrollSpec { stick_bottom: false })
-                .child(col().w_full().px(PAGE_X).pb(40.0).child(table)),
+                .child(col().w_full().px(PAGE_X).pb(40.0).child(table))),
         );
     if let Some(server) = &s.servers.selected {
         stage = stage.child(detail_panel(s, u, server));
@@ -2146,7 +2146,7 @@ pub fn overlay(s: &State, u: &Ui) -> Option<El> {
                     false
                 }
             })
-            .child(col().w_full().max_h(400.0).scroll(ScrollSpec { stick_bottom: false }).child(items)),
+            .child(u.scroll_area(col().w_full().max_h(400.0).scroll(ScrollSpec { stick_bottom: false }).child(items))),
     )
 }
 

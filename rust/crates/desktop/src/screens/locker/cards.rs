@@ -397,7 +397,7 @@ pub(super) fn shuffle_dialog(s: &State, u: &Ui) -> El {
                 ),
         )
         .child(
-            col()
+            u.scroll_area(col()
                 .key("locker-shuffle-scroll")
                 .w_full()
                 .max_h(360.0)
@@ -405,7 +405,7 @@ pub(super) fn shuffle_dialog(s: &State, u: &Ui) -> El {
                 .scroll(rune::ScrollSpec {
                     stick_bottom: false,
                 })
-                .child(list),
+                .child(list)),
         )
         .child(buttons);
 
@@ -645,7 +645,7 @@ pub(super) fn applied_dialog(s: &State, u: &Ui) -> El {
 
     if !nothing {
         body = body.child(
-            col()
+            u.scroll_area(col()
                 .key("locker-applied-scroll")
                 .w_full()
                 .max_h(420.0)
@@ -653,7 +653,7 @@ pub(super) fn applied_dialog(s: &State, u: &Ui) -> El {
                 .scroll(rune::ScrollSpec {
                     stick_bottom: false,
                 })
-                .child(list),
+                .child(list)),
         );
     }
 

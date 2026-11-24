@@ -661,6 +661,90 @@ impl Default for Ui {
     }
 }
 
+/// The end padding a scroll viewport's content keeps where it would otherwise run to the edge,
+/// so the scroll bar (`Ui::scroll_area`) sits in room of its own. It is there whether or not
+/// the content overflows, so the bar appearing never changes the content's width.
+pub const SCROLL_GUTTER: f32 = 12.0;
+
+/// Rune's launch flags with scroll bars always shown while content overflows, unless the
+/// command line already chose (`--scroll-bars when-scrolling`).
+#[cfg_attr(target_os = "macos", allow(dead_code))]
+pub fn scroll_bars_shown(mut args: Vec<String>) -> Vec<String> {
+    if !args.iter().any(|a| a == "--scroll-bars") {
+        args.extend(["--scroll-bars".to_owned(), "always".to_owned()]);
+    }
+    args
+}
+
+thread_local! {
+    /// The scroll bar style for the last palette asked, built once per look rather than per
+    /// viewport: the kit it comes from solves a whole palette.
+    static SCROLL_BAR: std::cell::Cell<Option<(Color, Color, f32, rune_kit::ScrollBarStyle)>> =
+        const { std::cell::Cell::new(None) };
+}
+
+impl Ui {
+    /// A `rune-kit` kit on Sigil's palette: Rune's neutral tokens for this theme, with the
+    /// border tokens the kit's components read taken from Sigil's hairlines and muted ink.
+    pub fn kit(&self) -> rune_kit::Kit {
+        let mut k = rune_kit::Kit::neutral(!self.light);
+        k.c.border_muted = self.hair;
+        k.c.border_base = self.hair_strong;
+        k.c.border_strong = self.muted;
+        k.c.text_base = self.ink;
+        k.c.text_muted = self.muted;
+        k.c.page = self.bg;
+        k.c.bg_base = self.raised;
+        k
+    }
+
+    /// Sigil's scroll bar: a graphite thumb (`hair_strong` at rest, `muted` under the pointer or
+    /// while dragged), 6 points wide and 10 under the pointer, 24 long at least. Under Reduce
+    /// motion it keeps its width under the pointer and only changes colour. Its ends are the
+    /// kit's rounded ones: the kit draws the thumb as a pill and offers no corner of its own.
+    pub fn scroll_bar_style(&self) -> rune_kit::ScrollBarStyle {
+        let (rest, hover) = (self.hair_strong, self.muted);
+        let hover_width = if crate::motion::reduced() { 6.0 } else { 10.0 };
+        if let Some((r, h, w, style)) = SCROLL_BAR.with(std::cell::Cell::get)
+            && r == rest
+            && h == hover
+            && w == hover_width
+        {
+            return style;
+        }
+        let style = rune_kit::ScrollBarStyle::from_kit(&self.kit())
+            .thumb(rest)
+            .thumb_hover(hover)
+            .width(6.0)
+            .hover_width(hover_width)
+            .min_thumb(24.0);
+        SCROLL_BAR.with(|c| c.set(Some((rest, hover, hover_width, style))));
+        style
+    }
+
+    /// Every scroll viewport goes through here: `viewport` (a `.scroll(..)` column, last in its
+    /// chain) with a scroll bar over its end edge. The wrapper takes the viewport's own sizing
+    /// and placement, keeps its key and scroll handlers, and moves the thumb through live
+    /// values, so scrolling never rebuilds the view. The bar overlays the viewport's edge and
+    /// takes no layout width; content that runs to the edge keeps `SCROLL_GUTTER` of end
+    /// padding. Shown whenever the content overflows on Windows and Linux (`main.rs` asks Rune
+    /// for always-shown bars there); on macOS it follows "Show scroll bars". A viewport without
+    /// a key is told apart by the call site, so give one built in a loop a key.
+    #[track_caller]
+    pub fn scroll_area(&self, viewport: El) -> El {
+        use rune_kit::ScrollBar;
+        viewport.scroll_bar_styled(self.scroll_bar_style())
+    }
+
+    /// `scroll_area` for a viewport that scrolls sideways (`.scroll_x()`): the bar runs along
+    /// its bottom edge.
+    #[track_caller]
+    pub fn scroll_area_x(&self, viewport: El) -> El {
+        use rune_kit::ScrollBar;
+        viewport.scroll_bar_styled(self.scroll_bar_style().horizontal())
+    }
+}
+
 impl Ui {
     /// The palette for the current look (see `set_look`).
     pub fn new() -> Ui {
@@ -1419,13 +1503,15 @@ impl Ui {
                     .child(close),
             )
             .child(
-                col()
-                    .key(format!("{key}-scroll"))
-                    .w_full()
-                    .grow(1.0)
-                    .min_h(0.0)
-                    .scroll(rune::ScrollSpec { stick_bottom: false })
-                    .child(col().w_full().padding(16.0).gap(8.0).child(body)),
+                self.scroll_area(
+                    col()
+                        .key(format!("{key}-scroll"))
+                        .w_full()
+                        .grow(1.0)
+                        .min_h(0.0)
+                        .scroll(rune::ScrollSpec { stick_bottom: false })
+                        .child(col().w_full().padding(16.0).gap(8.0).child(body)),
+                ),
             )
     }
 

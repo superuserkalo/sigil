@@ -350,7 +350,7 @@ pub fn diagnostics_dialog(s: &State, u: &Ui) -> Option<El> {
                     .wrap(),
             )
             .child(
-                col()
+                u.scroll_area(col()
                     .key("diagnostics-text")
                     .w_full()
                     .h(280.0)
@@ -359,7 +359,7 @@ pub fn diagnostics_dialog(s: &State, u: &Ui) -> Option<El> {
                     .fill(u.well)
                     .border(1.0, u.hair)
                     .scroll(rune::ScrollSpec { stick_bottom: false })
-                    .child(text(preview.clone()).font(MONO).color(u.prose).wrap_anywhere().selectable(true).w_full()),
+                    .child(text(preview.clone()).font(MONO).color(u.prose).wrap_anywhere().selectable(true).w_full())),
             )
             .child(
                 row()

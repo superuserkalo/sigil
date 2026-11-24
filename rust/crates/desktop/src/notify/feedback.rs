@@ -380,7 +380,7 @@ pub fn dialog(s: &State, u: &Ui) -> Option<El> {
                 .wrap(),
         )
         .child(
-            col()
+            u.scroll_area(col()
                 .key("feedback-text")
                 .w_full()
                 .h(200.0)
@@ -389,7 +389,7 @@ pub fn dialog(s: &State, u: &Ui) -> Option<El> {
                 .fill(u.well)
                 .border(1.0, u.hair)
                 .scroll(rune::ScrollSpec { stick_bottom: false })
-                .child(text(shown).font(MONO).color(u.prose).wrap_anywhere().selectable(true).w_full()),
+                .child(text(shown).font(MONO).color(u.prose).wrap_anywhere().selectable(true).w_full())),
         )
         .child(text(tr("What were you doing?")).font(BODY_MED).color(u.ink))
         .child(field);

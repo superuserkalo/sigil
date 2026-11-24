@@ -531,13 +531,13 @@ pub(crate) fn collection_dialog(s: &State, u: &Ui) -> Option<El> {
                     ),
             )
             .child(
-                col()
+                u.scroll_area(col()
                     .w_full()
                     .max_h(480.0)
                     .scroll(ScrollSpec {
                         stick_bottom: false,
                     })
-                    .child(rows),
+                    .child(rows)),
             )
             .child({
                 let mut actions = row()

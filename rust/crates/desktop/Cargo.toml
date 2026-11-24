@@ -29,6 +29,9 @@ zip = { version = "2", default-features = false, features = ["deflate"] }
 # Settings > About shows the Rust heap beside the process total (src/memory.rs): the counting
 # allocator from Rune's own process watcher. libc only.
 procwatch = { path = "../../../vendor/rune/crates/procwatch" }
+# Scroll bars on every scroll viewport (`Ui::scroll_area` in src/ui.rs): Rune's own component
+# crate, from the same vendored tree. No markdown or mermaid features.
+rune-kit = { path = "../../../vendor/rune/crates/rune-kit" }
 # Sound previews (screens/browse/audio.rs). Playback plus the MP3 decoder GameBanana serves
 # its samples in; no recording, no other formats.
 rodio = { version = "0.23", default-features = false, features = ["playback", "mp3"] }

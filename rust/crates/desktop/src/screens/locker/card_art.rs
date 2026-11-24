@@ -402,11 +402,11 @@ pub fn dialog(s: &State, u: &Ui) -> Option<El> {
                 grid = grid.child(tile(s, u, card, slot));
             }
             body = body.child(
-                col()
+                u.scroll_area(col()
                     .w_full()
                     .max_h(470.0)
                     .scroll(rune::ScrollSpec { stick_bottom: false })
-                    .child(grid),
+                    .child(grid)),
             );
             let placeholder = default_name(card);
             let name = rune::text_input(&card.name, BODY)

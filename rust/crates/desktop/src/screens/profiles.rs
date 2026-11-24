@@ -725,7 +725,7 @@ pub fn view(s: &State, u: &Ui) -> El {
         .child(snapshots_section(s, u));
 
     let mut frame = el().key("profiles-stage").w_full().grow(1.0).min_h(0.0).child(
-        col()
+        u.scroll_area(col()
             .key("profiles-scroll")
             .w_full()
             .h_full()
@@ -734,7 +734,7 @@ pub fn view(s: &State, u: &Ui) -> El {
                 stick_bottom: false,
             })
             // 72 at the foot so the last row never hides under the selection bar.
-            .child(col().w_full().px(PAGE_X).pb(72.0).child(content)),
+            .child(col().w_full().px(PAGE_X).pb(72.0).child(content))),
     );
     if !v.snapshot_selected.is_empty() {
         let ids = v.snapshot_selected.clone();
@@ -2719,7 +2719,7 @@ fn import_review(s: &State, u: &Ui) -> El {
     for (index, entry) in import.entries.iter().enumerate() {
         list = list.child(import_row(u, entry, import.keep[index], &import.status[index], index, installing));
     }
-    let list = col()
+    let list = u.scroll_area(col()
         .key("profile-import-list")
         .w_full()
         .max_h(264.0)
@@ -2727,7 +2727,7 @@ fn import_review(s: &State, u: &Ui) -> El {
             stick_bottom: false,
         })
         .border_sides([1.0, 0.0, 1.0, 0.0], u.hair)
-        .child(list);
+        .child(list));
 
     let mut content = col()
         .w_full()

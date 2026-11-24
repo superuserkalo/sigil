@@ -903,7 +903,7 @@ fn details_dialog(s: &State, u: &Ui) -> Option<El> {
             .modal(true, close_details)
             .child(text(title).font(crate::ui::H2).color(u.ink).wrap_anywhere().w_full())
             .child(
-                col()
+                u.scroll_area(col()
                     .key("toast-details-text")
                     .w_full()
                     .max_h(280.0)
@@ -912,7 +912,7 @@ fn details_dialog(s: &State, u: &Ui) -> Option<El> {
                     .fill(u.well)
                     .border(1.0, u.hair)
                     .scroll(rune::ScrollSpec { stick_bottom: false })
-                    .child(text(full).font(BODY).color(u.prose).wrap_anywhere().selectable(true).w_full()),
+                    .child(text(full).font(BODY).color(u.prose).wrap_anywhere().selectable(true).w_full())),
             )
             .child(
                 row()

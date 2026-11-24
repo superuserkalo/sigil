@@ -1594,7 +1594,7 @@ fn sidebar(s: &State, u: &Ui, insets: rune::ChromeInsets) -> El {
                 .child(screens::profiles::titlebar_switcher(s, u, collapsed)),
         )
         .child(
-            col()
+            u.scroll_area(col()
                 .key("nav-scroll")
                 .w_full()
                 .grow(1.0)
@@ -1603,7 +1603,7 @@ fn sidebar(s: &State, u: &Ui, insets: rune::ChromeInsets) -> El {
                 .scroll(rune::ScrollSpec {
                     stick_bottom: false,
                 })
-                .child(nav),
+                .child(nav)),
         )
         .child(foot)
 }

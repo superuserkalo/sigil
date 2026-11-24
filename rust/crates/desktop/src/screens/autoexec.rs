@@ -595,7 +595,7 @@ pub fn view(s: &State, u: &Ui) -> El {
         // Two columns: the file on the left (its own scroll), the premade commands and the
         // convar catalogue on the right (its own scroll). A category change on the right never
         // moves the editor.
-        let left = col()
+        let left = u.scroll_area(col()
             .key("autoexec-left-scroll")
             .grow(1.0)
             .min_w(360.0)
@@ -611,7 +611,7 @@ pub fn view(s: &State, u: &Ui) -> El {
                     .gap(24.0)
                     .child(if v.loaded { editor(s, u) } else { loading_rows(u) })
                     .children(v.loaded.then(|| launch_section(s, u))),
-            );
+            ));
         let right = col()
             .key("autoexec-right")
             .w(right_w())
@@ -620,7 +620,7 @@ pub fn view(s: &State, u: &Ui) -> El {
             .gap(8.0)
             .child(right_tabs(s, u))
             .child(
-                col()
+                u.scroll_area(col()
                     .key("autoexec-right-scroll")
                     .w_full()
                     .grow(1.0)
@@ -630,7 +630,7 @@ pub fn view(s: &State, u: &Ui) -> El {
                         crate::screens::autoexec_convars::section(s, u)
                     } else {
                         premade(s, u)
-                    }),
+                    })),
             );
         row().key("autoexec-body").w_full().h_full().gap(24.0).child(left).child(right)
     };

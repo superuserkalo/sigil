@@ -506,7 +506,7 @@ pub fn popover(s: &State, u: &Ui) -> Option<El> {
                     false
                 }
             })
-            .child(col().w_full().shrink().min_h(0.0).scroll(rune::ScrollSpec { stick_bottom: false }).child(body)),
+            .child(u.scroll_area(col().w_full().shrink().min_h(0.0).scroll(rune::ScrollSpec { stick_bottom: false }).child(body))),
     )
 }
 

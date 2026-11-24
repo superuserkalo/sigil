@@ -184,7 +184,7 @@ pub fn dialog(s: &State, u: &Ui) -> Option<El> {
                 .color(u.muted)
                 .wrap(),
         )
-        .child(col().w_full().max_h(380.0).scroll(rune::ScrollSpec { stick_bottom: false }).child(rows));
+        .child(u.scroll_area(col().w_full().max_h(380.0).scroll(rune::ScrollSpec { stick_bottom: false }).child(rows)));
     if let Some(error) = &d.error {
         body = body.child(crate::notify::feedback::error_box(u, "backups-error", error));
     }

@@ -643,11 +643,11 @@ fn tree(s: &State, u: &Ui, listing: &Listing) -> El {
         .child(crumbs(s, u))
         .child(if ex.folder.is_empty() { el() } else { actions })
         .child(
-            col()
+            u.scroll_area(col()
                 .w_full()
                 .h(520.0)
                 .scroll(ScrollSpec { stick_bottom: false })
-                .child(list),
+                .child(list)),
         )
 }
 
@@ -781,11 +781,11 @@ fn preview_pane(s: &State, u: &Ui) -> El {
         .gap(10.0)
         .child(head)
         .child(
-            col()
+            u.scroll_area(col()
                 .w_full()
                 .h(500.0)
                 .scroll(ScrollSpec { stick_bottom: false })
-                .child(body),
+                .child(body)),
         )
 }
 
@@ -884,7 +884,7 @@ fn search_pane(s: &State, u: &Ui) -> El {
         .child(u.search_shell(field))
         .child(controls)
         .child(text(status).font(SMALL).color(u.faint).wrap())
-        .child(col().w_full().h(440.0).scroll(ScrollSpec { stick_bottom: false }).child(list))
+        .child(u.scroll_area(col().w_full().h(440.0).scroll(ScrollSpec { stick_bottom: false }).child(list)))
 }
 
 fn compare_pane(s: &State, u: &Ui, listing: &Listing) -> El {
@@ -965,7 +965,7 @@ fn compare_pane(s: &State, u: &Ui, listing: &Listing) -> El {
                 .child(text(entry.path.clone()).font(MONO).color(u.ink).grow(1.0).min_w(0.0).truncate()),
         );
     }
-    pane.child(col().w_full().h(440.0).scroll(ScrollSpec { stick_bottom: false }).child(list))
+    pane.child(u.scroll_area(col().w_full().h(440.0).scroll(ScrollSpec { stick_bottom: false }).child(list)))
 }
 
 fn line_diff_pane(s: &State, u: &Ui) -> El {
@@ -1004,7 +1004,7 @@ fn line_diff_pane(s: &State, u: &Ui) -> El {
                         .on_press(|st: &mut State| st.explorer.line_diff = None),
                 ),
         )
-        .child(col().w_full().h(500.0).scroll(ScrollSpec { stick_bottom: false }).child(body))
+        .child(u.scroll_area(col().w_full().h(500.0).scroll(ScrollSpec { stick_bottom: false }).child(body)))
 }
 
 // --- scenes ----------------------------------------------------------------------------------

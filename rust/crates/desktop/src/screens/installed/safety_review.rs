@@ -391,7 +391,7 @@ pub fn dialog(s: &State, u: &Ui) -> Option<El> {
     }
     Some(
         shell
-            .child(col().w_full().max_h(420.0).scroll(rune::ScrollSpec { stick_bottom: false }).child(list))
+            .child(u.scroll_area(col().w_full().max_h(420.0).scroll(rune::ScrollSpec { stick_bottom: false }).child(list)))
             .child(
                 row().w_full().child(spacer()).child(
                     u.action(tr("Done"), ActionKind::Ghost)

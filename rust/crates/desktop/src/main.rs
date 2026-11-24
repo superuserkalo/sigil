@@ -22,6 +22,8 @@ mod jobs;
 #[cfg(test)]
 mod jank_tests;
 #[cfg(test)]
+mod scroll_bar_tests;
+#[cfg(test)]
 mod toast_tests;
 mod memory;
 mod model;
@@ -111,6 +113,10 @@ fn main() -> std::process::ExitCode {
     // Once: whether the GPU surface really composites the glass's see-through pixels.
     .on_frame_drawn(|rt| glass::frame_drawn(rt.transparent))
     .on_open_url(deeplink::on_open_url);
+    // Scroll bars stay up whenever content overflows on Windows and Linux, where Rune would
+    // otherwise fade them out at rest; macOS follows its own "Show scroll bars" setting.
+    #[cfg(not(target_os = "macos"))]
+    let sigil = sigil.args(ui::scroll_bars_shown(args));
     screens::settings::tray::install(sigil.handle());
     single_instance::attach(sigil.handle());
     {

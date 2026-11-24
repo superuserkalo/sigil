@@ -200,14 +200,14 @@ pub fn overlay(s: &State, u: &Ui) -> Option<El> {
                 }
             }
             items = items.child(
-                col()
+                u.scroll_area(col()
                     .key("menu-sub-scroll")
                     .w_full()
                     .max_h(360.0)
                     .scroll(ScrollSpec {
                         stick_bottom: false,
                     })
-                    .child(list),
+                    .child(list)),
             );
         }
         FilterMenu::Sort => {
@@ -695,14 +695,14 @@ pub fn overlay(s: &State, u: &Ui) -> Option<El> {
                 }
             })
             .child(
-                col()
+                u.scroll_area(col()
                     .key("browse-menu-scroll")
                     .w_full()
                     .min_h(0.0)
                     .shrink()
                     .padding(4.0)
                     .scroll(ScrollSpec { stick_bottom: false })
-                    .child(items),
+                    .child(items)),
             ),
     )
 }

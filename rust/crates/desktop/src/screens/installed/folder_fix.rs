@@ -538,7 +538,7 @@ pub fn dialog(s: &State, u: &Ui) -> Option<El> {
                     .color(u.muted)
                     .wrap(),
             )
-            .child(col().w_full().shrink().min_h(0.0).scroll(rune::ScrollSpec { stick_bottom: false }).child(body))
+            .child(u.scroll_area(col().w_full().shrink().min_h(0.0).scroll(rune::ScrollSpec { stick_bottom: false }).child(body)))
             .child(
                 row()
                     .w_full()

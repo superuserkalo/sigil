@@ -1095,7 +1095,7 @@ fn console(s: &State, u: &Ui) -> El {
         .gap(8.0)
         .child(head)
         .child(
-            col()
+            u.scroll_area(col()
                 .key("host-console")
                 .w_full()
                 .h(260.0)
@@ -1103,7 +1103,7 @@ fn console(s: &State, u: &Ui) -> El {
                 .fill(u.well)
                 .border(1.0, u.hair)
                 .scroll(ScrollSpec { stick_bottom: true })
-                .child(lines),
+                .child(lines)),
         )
         .child(command)
         .child(
@@ -1955,13 +1955,13 @@ pub fn overlay(s: &State, u: &Ui) -> Option<El> {
                 }
             })
             .child(
-                col()
+                u.scroll_area(col()
                     .w_full()
                     .max_h(360.0)
                     .scroll(ScrollSpec {
                         stick_bottom: false,
                     })
-                    .child(items),
+                    .child(items)),
             ),
     )
 }

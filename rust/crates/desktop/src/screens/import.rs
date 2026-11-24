@@ -528,7 +528,7 @@ fn item_list(s: &State, u: &Ui, d: &Dialog, plan: &ImportPlan) -> El {
         }
         list = list.child(r);
     }
-    col()
+    u.scroll_area(col()
         .key("import-list")
         .w_full()
         .max_h(360.0)
@@ -536,7 +536,7 @@ fn item_list(s: &State, u: &Ui, d: &Dialog, plan: &ImportPlan) -> El {
         .scroll(ScrollSpec {
             stick_bottom: false,
         })
-        .child(list)
+        .child(list))
 }
 
 fn checkbox(u: &Ui, on: bool, disabled: bool) -> El {

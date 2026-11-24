@@ -366,7 +366,7 @@ pub fn dialog(s: &State, u: &Ui) -> Option<El> {
                     .wrap(),
             )
             .child(search)
-            .child(list)
+            .child(u.scroll_area(list))
             .child(text(hint).font(SMALL).color(u.faint).wrap())
             .child(foot),
     )

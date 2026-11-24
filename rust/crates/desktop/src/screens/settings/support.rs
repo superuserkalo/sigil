@@ -285,7 +285,7 @@ pub fn crash_dialog(s: &State, u: &Ui, path: &Path) -> El {
         .w(560.0)
         .child(text(format!("{file} · {}", super::size_label(bytes))).font(MONO).color(u.muted).truncate())
         .child(
-            col()
+            u.scroll_area(col()
                 .w_full()
                 .max_h(220.0)
                 .padding(12.0)
@@ -300,7 +300,7 @@ pub fn crash_dialog(s: &State, u: &Ui, path: &Path) -> El {
                         .wrap()
                         .selectable(true)
                         .w_full(),
-                ),
+                )),
         )
         .child(
             text(tr("A dump can hold parts of memory. Share the file itself only with people you trust."))

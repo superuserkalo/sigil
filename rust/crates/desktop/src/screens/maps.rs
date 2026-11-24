@@ -808,7 +808,7 @@ pub fn view(s: &State, u: &Ui) -> El {
     }
     lists = lists.child(catalog_list(s, u));
     let mut stage = el().key("maps-stage").w_full().grow(1.0).min_h(0.0).child(
-        col()
+        u.scroll_area(col()
             .key("maps-scroll")
             .w_full()
             .h_full()
@@ -823,7 +823,7 @@ pub fn view(s: &State, u: &Ui) -> El {
                     .gap(24.0)
                     .child(crate::screens::host::listen::card(s, u, "maps"))
                     .child(lists),
-            ),
+            )),
     );
     if let Some(panel) = panel(s, u) {
         stage = stage.child(panel);

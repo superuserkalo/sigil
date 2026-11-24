@@ -610,14 +610,14 @@ pub fn modal(s: &State, u: &Ui, window: (f32, f32)) -> Option<El> {
                 .grow(1.0)
                 .min_h(0.0)
                 .child(
-                    col()
+                    u.scroll_area(col()
                         .key("settings-scroll")
                         .w_full()
                         .h_full()
                         .scroll(ScrollSpec {
                             stick_bottom: false,
                         })
-                        .child(pane),
+                        .child(pane)),
                 )
                 // A 24 point fade over the last rows says the list goes on; paint only.
                 .child(

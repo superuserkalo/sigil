@@ -284,7 +284,7 @@ pub fn view(s: &State, u: &Ui) -> El {
         .min_h(0.0)
         .child(head)
         .child(
-            col()
+            u.scroll_area(col()
                 .key("launch-scroll")
                 .w_full()
                 .grow(1.0)
@@ -300,7 +300,7 @@ pub fn view(s: &State, u: &Ui) -> El {
                         .pt(16.0)
                         .pb(32.0)
                         .child(body),
-                ),
+                )),
         )
 }
 
@@ -682,7 +682,7 @@ fn crash_card(s: &State, u: &Ui, crash: &Crash) -> El {
                 .px(16.0)
                 .pb(16.0)
                 .child(
-                    col()
+                    u.scroll_area(col()
                         .key("launch-crash-evidence")
                         .w_full()
                         .max_h(240.0)
@@ -691,7 +691,7 @@ fn crash_card(s: &State, u: &Ui, crash: &Crash) -> El {
                         .fill(u.well)
                         .radius(crate::ui::r(4.0))
                         .scroll(rune::ScrollSpec { stick_bottom: false })
-                        .children(crate::screens::launch_crash::groups(u, &crash.evidence, crash.suspect.as_ref(), crash.comment.as_deref())),
+                        .children(crate::screens::launch_crash::groups(u, &crash.evidence, crash.suspect.as_ref(), crash.comment.as_deref()))),
                 ),
         );
     }

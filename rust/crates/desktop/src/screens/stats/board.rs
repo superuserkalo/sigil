@@ -97,13 +97,15 @@ pub(super) fn board_dialog(s: &State, u: &Ui, match_id: u64) -> El {
         .child(head)
         .child(
             // The teams take what the window leaves; header and footer never move.
-            body.h(0.0)
-                .grow(1.0)
-                .shrink()
-                .min_h(0.0)
-                .scroll(ScrollSpec {
-                    stick_bottom: false,
-                }),
+            u.scroll_area(
+                body.h(0.0)
+                    .grow(1.0)
+                    .shrink()
+                    .min_h(0.0)
+                    .scroll(ScrollSpec {
+                        stick_bottom: false,
+                    }),
+            ),
         )
         .child(footer)
 }

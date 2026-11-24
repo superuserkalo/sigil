@@ -615,7 +615,7 @@ pub fn view(s: &State, u: &Ui) -> El {
 }
 
 fn scroll(key: &str, page: El) -> El {
-    col()
+    crate::ui::Ui::new().scroll_area(col()
         .key(format!("{key}-scroll"))
         .w_full()
         .h_full()
@@ -623,7 +623,7 @@ fn scroll(key: &str, page: El) -> El {
         .scroll(ScrollSpec {
             stick_bottom: false,
         })
-        .child(page)
+        .child(page))
 }
 
 fn page(key: &str) -> El {

@@ -297,7 +297,7 @@ pub fn recovery_dialog(s: &State, u: &Ui) -> El {
             .wrap()
             .w_full(),
         )
-        .child(col().w_full().max_h(220.0).scroll(rune::ScrollSpec { stick_bottom: false }).child(list))
+        .child(u.scroll_area(col().w_full().max_h(220.0).scroll(rune::ScrollSpec { stick_bottom: false }).child(list)))
         .child(
             row()
                 .w_full()

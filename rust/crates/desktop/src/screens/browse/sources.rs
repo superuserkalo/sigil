@@ -257,7 +257,7 @@ pub fn page(s: &State, u: &Ui, url: &str) -> El {
             ),
     );
     bar = bar.child(sync_button(s, u, url));
-    col()
+    u.scroll_area(col()
         .key("browse-scroll")
         .w_full()
         .h_full()
@@ -281,7 +281,7 @@ pub fn page(s: &State, u: &Ui, url: &str) -> El {
                 .child(u.page_head("", "Browse", "", Some(head_tools(s, u, &count))))
                 .child(bar)
                 .child(body),
-        )
+        ))
 }
 
 fn head_tools(s: &State, u: &Ui, count: &str) -> El {
@@ -528,7 +528,7 @@ pub fn details_dialog(s: &State, u: &Ui) -> Option<El> {
                     .child(text(l.title.clone()).font(H1).color(u.ink).wrap().w_full())
                     .child(text(d.name.clone()).font(SMALL).color(u.faint)),
             )
-            .child(col().w_full().min_h(0.0).grow(1.0).scroll(ScrollSpec { stick_bottom: false }).child(c))
+            .child(u.scroll_area(col().w_full().min_h(0.0).grow(1.0).scroll(ScrollSpec { stick_bottom: false }).child(c)))
             .child(buttons),
     )
 }

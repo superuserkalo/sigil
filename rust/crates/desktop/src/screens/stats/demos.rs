@@ -187,7 +187,7 @@ pub(super) fn review_dialog(s: &State, u: &Ui, review: &ReviewPanel) -> El {
     body = body
         .child(
             col().w_full().gap(6.0).child(label("Prompt")).child(
-                col()
+                u.scroll_area(col()
                     .key("review-prompt")
                     .w_full()
                     .h(96.0)
@@ -204,7 +204,7 @@ pub(super) fn review_dialog(s: &State, u: &Ui, review: &ReviewPanel) -> El {
                             .color(u.prose)
                             .wrap_anywhere()
                             .selectable(true),
-                    ),
+                    )),
             ),
         )
         .child(

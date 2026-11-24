@@ -510,7 +510,7 @@ fn grid_page(s: &State, u: &Ui, v: &View) -> El {
         grid
     };
 
-    col()
+    u.scroll_area(col()
         .key("locker-scroll")
         .w_full()
         .h_full()
@@ -528,7 +528,7 @@ fn grid_page(s: &State, u: &Ui, v: &View) -> El {
                 .gap(16.0)
                 .child(toolbar)
                 .child(body),
-        )
+        ))
 }
 
 /// Grid or list, as a two part segmented control.
@@ -1707,7 +1707,7 @@ fn hero_page(s: &State, u: &Ui, v: &View, hero: &HeroCard) -> El {
             .child(col().key("locker-hero-pane").w_full().padding(16.0).child(pane_body))
     } else {
         pane.self_stretch().child(
-            col()
+            u.scroll_area(col()
                 .key("locker-hero-pane")
                 .w_full()
                 .grow(1.0)
@@ -1715,7 +1715,7 @@ fn hero_page(s: &State, u: &Ui, v: &View, hero: &HeroCard) -> El {
                 .scroll(ScrollSpec {
                     stick_bottom: false,
                 })
-                .child(col().w_full().padding(16.0).child(pane_body)),
+                .child(col().w_full().padding(16.0).child(pane_body))),
         )
     };
 
@@ -1941,7 +1941,7 @@ fn general_page(s: &State, u: &Ui, v: &View) -> El {
         );
 
     // The hero page's rail: same width, edges and back row, so the two pages share a grid.
-    let rail = col()
+    let rail = u.scroll_area(col()
         .key("locker-general-rail")
         .w(RAIL_W + crate::ui::PAGE_X)
         .h_full()
@@ -1967,7 +1967,7 @@ fn general_page(s: &State, u: &Ui, v: &View) -> El {
                         .child(text(plural(total, "mod", "mods")).font(crate::ui::SMALL_NUM).color(u.muted)),
                 )
                 .child(tabs),
-        );
+        ));
 
     let mut mods = tab_mods(v, &active);
     let mods_count = mods.len();
@@ -2065,7 +2065,7 @@ fn general_page(s: &State, u: &Ui, v: &View) -> El {
         frame.self_start().child(col().key("locker-general-pane").w_full().padding(16.0).child(pane_body))
     } else {
         frame.self_stretch().child(
-            col()
+            u.scroll_area(col()
                 .key("locker-general-pane")
                 .w_full()
                 .grow(1.0)
@@ -2073,7 +2073,7 @@ fn general_page(s: &State, u: &Ui, v: &View) -> El {
                 .scroll(ScrollSpec {
                     stick_bottom: false,
                 })
-                .child(col().w_full().padding(16.0).child(pane_body)),
+                .child(col().w_full().padding(16.0).child(pane_body))),
         )
     };
 
@@ -2418,14 +2418,14 @@ fn picker_dialog(s: &State, u: &Ui, id: &str) -> El {
         .child(if mods.is_empty() {
             text("No installed mods yet.").font(BODY).color(u.muted)
         } else {
-            col()
+            u.scroll_area(col()
                 .key("locker-picker-scroll")
                 .w_full()
                 .max_h(360.0)
                 .scroll(ScrollSpec {
                     stick_bottom: false,
                 })
-                .child(list)
+                .child(list))
         })
         .child(
             row().w_full().child(spacer()).child(

@@ -114,7 +114,7 @@ fn pair(u: &Ui, key: &str, value: String) -> El {
 }
 
 fn well(u: &Ui, key: &str, body: &str) -> El {
-    col()
+    u.scroll_area(col()
         .key(key.to_string())
         .w_full()
         .max_h(160.0)
@@ -123,7 +123,7 @@ fn well(u: &Ui, key: &str, body: &str) -> El {
         .fill(u.well)
         .border(1.0, u.hair)
         .scroll(rune::ScrollSpec { stick_bottom: false })
-        .child(text(body.to_string()).font(MONO).color(u.prose).wrap_anywhere().selectable(true).w_full())
+        .child(text(body.to_string()).font(MONO).color(u.prose).wrap_anywhere().selectable(true).w_full()))
 }
 
 pub fn dialog(s: &State, u: &Ui) -> Option<El> {
@@ -182,7 +182,7 @@ pub fn dialog(s: &State, u: &Ui) -> Option<El> {
             .gap(14.0)
             .modal(true, close)
             .child(text(fill(tr("Imprint of {}"), &[&v.name])).font(H1).color(u.ink).wrap())
-            .child(col().w_full().shrink().min_h(0.0).scroll(rune::ScrollSpec { stick_bottom: false }).child(body))
+            .child(u.scroll_area(col().w_full().shrink().min_h(0.0).scroll(rune::ScrollSpec { stick_bottom: false }).child(body)))
             .child(
                 row()
                     .w_full()

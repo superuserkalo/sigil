@@ -404,7 +404,7 @@ pub fn view(s: &State, u: &Ui) -> El {
         .min_h(0.0)
         .child(top)
         .child(
-            col()
+            u.scroll_area(col()
                 .key("conflicts-scroll")
                 .w_full()
                 .grow(1.0)
@@ -412,7 +412,7 @@ pub fn view(s: &State, u: &Ui) -> El {
                 .scroll(ScrollSpec {
                     stick_bottom: false,
                 })
-                .child(page),
+                .child(page)),
         )
 }
 

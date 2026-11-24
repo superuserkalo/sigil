@@ -312,7 +312,7 @@ pub fn dialog(s: &State, u: &Ui) -> Option<El> {
     );
     if c.expanded {
         body = body.child(
-            col()
+            u.scroll_area(col()
                 .key("crash-offer-text")
                 .w_full()
                 .h(240.0)
@@ -321,7 +321,7 @@ pub fn dialog(s: &State, u: &Ui) -> Option<El> {
                 .fill(u.well)
                 .border(1.0, u.hair)
                 .scroll(rune::ScrollSpec { stick_bottom: false })
-                .child(text(c.preview.clone()).font(MONO).color(u.prose).wrap_anywhere().selectable(true).w_full()),
+                .child(text(c.preview.clone()).font(MONO).color(u.prose).wrap_anywhere().selectable(true).w_full())),
         );
     }
     body = body.child(

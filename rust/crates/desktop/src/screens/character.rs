@@ -437,13 +437,13 @@ fn task_list(u: &Ui, rows: &[Row], selected: usize) -> El {
         .min_h(0.0)
         .border_sides([0.0, 1.0, 0.0, 0.0], u.hair)
         .child(
-            col()
+            u.scroll_area(col()
                 .grow(1.0)
                 .min_h(0.0)
                 .scroll(ScrollSpec {
                     stick_bottom: false,
                 })
-                .child(list),
+                .child(list)),
         )
 }
 
@@ -576,7 +576,7 @@ fn task_detail(s: &State, u: &Ui, index: usize, item: &Row) -> El {
                 .wrap(),
         );
 
-    col()
+    u.scroll_area(col()
         .key("character-detail")
         .grow(1.0)
         .min_w(0.0)
@@ -585,7 +585,7 @@ fn task_detail(s: &State, u: &Ui, index: usize, item: &Row) -> El {
         .scroll(ScrollSpec {
             stick_bottom: false,
         })
-        .child(page)
+        .child(page))
 }
 
 /// One stage on one line: its name, whether this machine can run it, and a short note.

@@ -571,7 +571,7 @@ pub fn view(s: &State, u: &Ui) -> El {
     if s.game_detected {
         head = head.child(status_row(s, u, &idx, shown.len()));
     }
-    let scroll = col()
+    let scroll = u.scroll_area(col()
         .key("installed-scroll")
         .w_full()
         .grow(1.0)
@@ -588,7 +588,7 @@ pub fn view(s: &State, u: &Ui) -> El {
                 // Room for the selection bar, always, so the last row never hides under it.
                 .pb(72.0)
                 .child(body),
-        );
+        ));
 
     // Files dropped anywhere on the page open the import review, which asks before writing.
     let mut root = col()
@@ -2651,7 +2651,7 @@ pub fn overlay(s: &State, u: &Ui) -> Option<El> {
         .anchored_fit(anchor, Side::Bottom, align, 6.0)
         .transition(crate::motion::pop(false))
         .modal(true, |st: &mut State| st.installed.menu = None)
-        .child(list);
+        .child(u.scroll_area(list));
     Some(panel)
 }
 

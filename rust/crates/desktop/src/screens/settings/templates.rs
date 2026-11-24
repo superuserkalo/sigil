@@ -428,7 +428,7 @@ pub fn dialog(s: &State, u: &Ui) -> El {
                 draft(st).switch(tab, Some(name.clone()))
             }));
         }
-        scope = scope.child(col().w_full().max_h(180.0).scroll(rune::ScrollSpec { stick_bottom: false }).child(grid));
+        scope = scope.child(u.scroll_area(col().w_full().max_h(180.0).scroll(rune::ScrollSpec { stick_bottom: false }).child(grid)));
     }
     let mut chips = row().w_full().gap(6.0).center_y().child(text(tr("Insert")).font(SMALL).color(u.muted));
     for (token, label) in PLACEHOLDERS {

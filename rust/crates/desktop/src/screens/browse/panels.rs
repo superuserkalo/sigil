@@ -58,13 +58,13 @@ pub(crate) fn hidden_dialog(s: &State, u: &Ui) -> Option<El> {
                     ),
             )
             .child(
-                col()
+                u.scroll_area(col()
                     .w_full()
                     .max_h(400.0)
                     .scroll(ScrollSpec {
                         stick_bottom: false,
                     })
-                    .child(rows),
+                    .child(rows)),
             )
             .child(
                 row()
@@ -175,13 +175,13 @@ pub(crate) fn ignored_dialog(s: &State, u: &Ui) -> Option<El> {
                     ),
             )
             .child(
-                col()
+                u.scroll_area(col()
                     .w_full()
                     .max_h(360.0)
                     .scroll(ScrollSpec {
                         stick_bottom: false,
                     })
-                    .child(rows),
+                    .child(rows)),
             )
             .child(
                 row()
@@ -389,13 +389,13 @@ pub(crate) fn hero_picker_dialog(s: &State, u: &Ui) -> Option<El> {
                     ),
             )
             .child(
-                col()
+                u.scroll_area(col()
                     .w_full()
                     .max_h(420.0)
                     .scroll(ScrollSpec {
                         stick_bottom: false,
                     })
-                    .child(rows),
+                    .child(rows)),
             )
             .child(
                 row().w_full().gap(8.0).center_y().child(spacer()).child(

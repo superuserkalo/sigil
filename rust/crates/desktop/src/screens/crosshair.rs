@@ -476,7 +476,7 @@ pub fn view(s: &State, u: &Ui) -> El {
         .gap(8.0)
         .child(picker(u, v.group))
         .child(
-            col()
+            u.scroll_area(col()
                 .key("crosshair-controls-scroll")
                 .w_full()
                 .grow(1.0)
@@ -489,7 +489,7 @@ pub fn view(s: &State, u: &Ui) -> El {
                         .gap(16.0)
                         .child(controls.key(format!("crosshair-group-{:?}", v.group)).transition(crate::motion::page_enter()))
                         .child(commands(s, u)),
-                ),
+                )),
         );
 
     col()
@@ -1578,7 +1578,7 @@ fn console_popover(s: &State, u: &Ui) -> El {
             }
         })
         .child(
-            col()
+            u.scroll_area(col()
                 .w_full()
                 .grow(1.0)
                 .min_h(0.0)
@@ -1592,7 +1592,7 @@ fn console_popover(s: &State, u: &Ui) -> El {
                         .color(u.prose)
                         .wrap_anywhere()
                         .selectable(true),
-                ),
+                )),
         )
         .child(actions)
 }
@@ -1860,11 +1860,11 @@ fn presets_section(s: &State, u: &Ui) -> El {
         .gap(8.0)
         .child(u.section_head(tr("Presets"), None, Some(trailing)))
         .child(
-            el().key("crosshair-presets-strip")
+            u.scroll_area_x(el().key("crosshair-presets-strip")
                 .w_full()
                 .h(88.0)
                 .scroll_x()
-                .child(grid),
+                .child(grid)),
         )
 }
 

@@ -217,7 +217,7 @@ pub fn page(s: &State, u: &Ui) -> El {
             )),
         )
         .child(
-            col()
+            u.scroll_area(col()
                 .key("downloads-scroll")
                 .w_full()
                 .grow(1.0)
@@ -232,7 +232,7 @@ pub fn page(s: &State, u: &Ui) -> El {
                         .pt(16.0)
                         .pb(32.0)
                         .child(page_body(s, u)),
-                ),
+                )),
         )
 }
 
@@ -678,7 +678,7 @@ pub fn panel(s: &State, u: &Ui) -> Option<El> {
                 }
             })
             .child(
-                col()
+                u.scroll_area(col()
                     .key("downloads-panel-scroll")
                     .w_full()
                     .shrink()
@@ -689,7 +689,7 @@ pub fn panel(s: &State, u: &Ui) -> Option<El> {
                     .scroll(rune::ScrollSpec { stick_bottom: false })
                     .child(head(u, &s.launch.downloads.snapshot(), false))
                     .child(add_row(s, u))
-                    .child(list(s, u, &s.launch.downloads.snapshot())),
+                    .child(list(s, u, &s.launch.downloads.snapshot()))),
             ),
     )
 }

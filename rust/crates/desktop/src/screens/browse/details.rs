@@ -110,7 +110,7 @@ pub(crate) fn details_modal(s: &State, u: &Ui, d: &Details) -> El {
         })
         .child(details_header(s, u, d, false))
         .child(
-            col()
+            u.scroll_area(col()
                 .key("browse-details-scroll")
                 .w_full()
                 .grow(1.0)
@@ -143,7 +143,7 @@ pub(crate) fn details_modal(s: &State, u: &Ui, d: &Details) -> El {
                                 .min_w(ACTION_W)
                                 .child(details_actions(s, u, d)),
                         ),
-                ),
+                )),
         )
 }
 
@@ -177,7 +177,7 @@ pub(crate) fn details_sidebar(s: &State, u: &Ui, d: &Details) -> El {
         // Wave 4: drag the left edge to resize (Grimoire), kept across launches.
         .child(super::w4::dock_handle(s, u, SIDEBAR_W))
         .child(
-            col()
+            u.scroll_area(col()
                 .key("browse-details-dock-scroll")
                 .w_full()
                 .grow(1.0)
@@ -193,7 +193,7 @@ pub(crate) fn details_sidebar(s: &State, u: &Ui, d: &Details) -> El {
                         .child(carousel(s, u, d))
                         .child(details_actions(s, u, d))
                         .child(details_reading(s, u, d)),
-                ),
+                )),
         )
 }
 

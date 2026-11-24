@@ -49,7 +49,7 @@ pub fn view(s: &State, u: &Ui) -> El {
             .child(detail_pane(s, u))
     };
 
-    col()
+    u.scroll_area(col()
         .key("projects-scroll")
         .w_full()
         .h_full()
@@ -67,7 +67,7 @@ pub fn view(s: &State, u: &Ui) -> El {
                 .gap(16.0)
                 .child(u.page_head("", "Projects", &detail, Some(actions)))
                 .child(body),
-        )
+        ))
 }
 
 fn list(s: &State, u: &Ui) -> El {

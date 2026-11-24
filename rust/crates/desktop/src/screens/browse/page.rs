@@ -156,7 +156,7 @@ pub(crate) fn grid_page(s: &State, u: &Ui) -> El {
             head.child(super::toolbar::status_row(s, u, &detail))
         }
     };
-    let scroll = col()
+    let scroll = u.scroll_area(col()
         .key("browse-scroll")
         .w_full()
         .grow(1.0)
@@ -173,7 +173,7 @@ pub(crate) fn grid_page(s: &State, u: &Ui) -> El {
                 tx.live_only();
             }
         })
-        .child(col().key("browse-page").w_full().px(PAGE_X).pt(4.0).gap(16.0).child(body));
+        .child(col().key("browse-page").w_full().px(PAGE_X).pt(4.0).gap(16.0).child(body)));
     col().key("browse-frame").w_full().h_full().min_h(0.0).child(head).child(scroll)
 }
 

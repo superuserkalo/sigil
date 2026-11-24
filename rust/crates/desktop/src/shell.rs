@@ -503,12 +503,12 @@ pub fn whats_new_dialog(s: &State, u: &Ui) -> Option<El> {
                 .a11y_hidden()
         });
     }
-    let scrolling = col()
+    let scrolling = u.scroll_area(col()
         .key("whats-new-scroll")
         .w_full()
         .max_h(320.0)
         .scroll(ScrollSpec { stick_bottom: false })
-        .child(list);
+        .child(list));
     let body = col()
         .w_full()
         .gap(16.0)

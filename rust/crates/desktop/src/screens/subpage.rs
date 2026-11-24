@@ -42,7 +42,7 @@ pub fn head(u: &Ui, title: &str, detail: &str, actions: Option<El>) -> El {
 
 /// A scrolling page with one left edge.
 pub fn page(key: &str, head: El, body: El) -> El {
-    col()
+    crate::ui::Ui::new().scroll_area(col()
         .key(format!("{key}-scroll"))
         .w_full()
         .h_full()
@@ -60,7 +60,7 @@ pub fn page(key: &str, head: El, body: El) -> El {
                 .gap(16.0)
                 .child(head)
                 .child(body),
-        )
+        ))
 }
 
 /// A fixed-height page whose body fills the window (for list and detail splits).

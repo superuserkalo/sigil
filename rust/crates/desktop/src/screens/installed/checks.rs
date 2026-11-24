@@ -462,7 +462,7 @@ pub fn dialog(s: &State, u: &Ui) -> Option<El> {
             .modal(true, close)
             .child(text(tr("Analyze the addons folder")).font(H1).color(u.ink))
             .child(text(tr("What each addon folder holds, and what needs a look. Nothing here changes a file.")).font(BODY).color(u.muted).wrap())
-            .child(col().w_full().shrink().min_h(0.0).scroll(rune::ScrollSpec { stick_bottom: false }).child(body))
+            .child(u.scroll_area(col().w_full().shrink().min_h(0.0).scroll(rune::ScrollSpec { stick_bottom: false }).child(body)))
             .child(
                 row()
                     .w_full()

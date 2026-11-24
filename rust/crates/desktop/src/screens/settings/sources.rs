@@ -367,7 +367,7 @@ pub fn browse_dialog(s: &State, u: &Ui, url: &str) -> El {
     super::extra::shell(u, "settings-source-browse", &title)
         .w(600.0)
         .child(search)
-        .child(col().w_full().max_h(360.0).scroll(rune::ScrollSpec { stick_bottom: false }).child(body))
+        .child(u.scroll_area(col().w_full().max_h(360.0).scroll(rune::ScrollSpec { stick_bottom: false }).child(body)))
         .child(
             row()
                 .w_full()

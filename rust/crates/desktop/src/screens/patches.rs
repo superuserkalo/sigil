@@ -69,13 +69,13 @@ fn list(s: &State, u: &Ui) -> El {
         .min_h(0.0)
         .border_sides([0.0, 1.0, 0.0, 0.0], u.hair)
         .child(
-            col()
+            u.scroll_area(col()
                 .grow(1.0)
                 .min_h(0.0)
                 .scroll(ScrollSpec {
                     stick_bottom: false,
                 })
-                .child(rows),
+                .child(rows)),
         )
 }
 
@@ -208,7 +208,7 @@ fn detail_pane(s: &State, u: &Ui) -> El {
 
     page = page.child(touched(s, u, note));
 
-    col()
+    u.scroll_area(col()
         .key("patch-detail")
         .grow(1.0)
         .min_w(0.0)
@@ -217,7 +217,7 @@ fn detail_pane(s: &State, u: &Ui) -> El {
         .scroll(ScrollSpec {
             stick_bottom: false,
         })
-        .child(page)
+        .child(page))
 }
 
 fn touched(s: &State, u: &Ui, note: &PatchNote) -> El {

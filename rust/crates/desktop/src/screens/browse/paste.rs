@@ -448,7 +448,7 @@ pub fn dialog(s: &State, u: &Ui) -> Option<El> {
                 list = list.child(files_list(s, u, id));
             }
         }
-        body = body.child(list);
+        body = body.child(u.scroll_area(list));
     }
     let waiting = p.queued.iter().filter(|id| quick::button(s, **id) == quick::Button::Queued).count();
     let mut actions = row()
