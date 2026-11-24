@@ -54,11 +54,14 @@ Scheme: `sigil` (any case). Every other link is refused with one short reason in
 | GameBanana 1-Click, sound | `sigil:https://gamebanana.com/mmdl/13,Sound,42` | Sound 42, file 13 |
 | Sigil link | `sigil://install/mod/741478` | Mod 741478, details only |
 | Sigil link with file | `sigil://install/mod/741478/1234567` | Mod 741478, file 1234567 preselected |
+| Pack | `sigil://pack/mp1:H4sI...` | The pack preview (`docs/design/packs.md`); nothing installs until Install pack |
 | Handler wrapper | `sigil://open/<one of the above>` | What the inner link opens |
 
 Rules, all enforced in `deeplink::parse` and covered by its tests:
 
-- At most 512 characters, printable ASCII only, no backslash, no whitespace or control characters.
+- A pack link: `mp1:` plus base64url only, at most `packs::MAX_CODE_BYTES` (64 KiB) plus the
+  prefix (`deeplink::parse_pack`). It opens the preview and never installs.
+- At most 512 characters (install links), printable ASCII only, no backslash, no whitespace or control characters.
 - 1-Click: `https://` only; host exactly one of `install::GAMEBANANA_DOWNLOAD_HOSTS`
   (`gamebanana.com`, `www.gamebanana.com`, `files.gamebanana.com`); no user info, no port; path
   exactly `/mmdl/<id>` or `/dl/<id>`; no query or fragment; type `Mod` or `Sound`; exactly three

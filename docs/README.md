@@ -54,6 +54,7 @@ Every doc starts with a status line. Values: `active`, `draft`, `planned`, `supe
 | `design/stats-live.md` | active | Live match view: the console lane, the live bridge HUD mod built from the player's game, the Stats panel, the opt-in player lookup and the budget. Real game unverified. |
 | `design/settings-parity.md` | current | Every Grimoire and Deadlock Mod Manager setting, with Sigil's status and place. |
 | `design/deep-links.md` | current | Install with Sigil links: accepted formats, OS registration, single instance, GameBanana 1-Click listing. |
+| `design/packs.md` | active | Packs: share a set of GameBanana mods as a code, link or file; preview, install in load order, safety rules. |
 | `design/settings-social.md` | current | Integrations built without a backend; the services a community gallery and remote install would need. |
 | `decisions/0001-grimoire-fork-and-monorepo.md` | accepted | Fork and repo layout. |
 | `decisions/0002-durable-agent-runtime.md` | accepted | Pi Durable, SQLite, secrets and process split. |
