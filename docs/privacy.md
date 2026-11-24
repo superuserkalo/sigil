@@ -1,8 +1,8 @@
 # Privacy and network activity
 
-Status: draft. Describes the intended behavior of the code in this repository. The telemetry Worker
-exists in `services/telemetry/` with tests; it is not deployed. The desktop app does not send
-telemetry yet, and the Settings > Privacy switches for it do not exist yet.
+Status: draft. Describes the behavior of the code in this repository. The telemetry Worker is in
+`services/telemetry/` with tests; its deployment is the owner's step. The desktop app has the
+Settings > Privacy switches and sends only what they allow.
 Updated: 2026-11-25
 
 This page lists every service Sigil contacts, what each one receives, and how to turn it off.
@@ -169,7 +169,9 @@ ones are dropped unsent), and every 10 minutes it sends them in batches of 50 to
 `POST /v1/product` on Sigil's own Worker, waiting longer after each failure (1 minute doubling to
 6 hours). What the Worker accepted is added to `<data>/telemetry/product/shared.json`, the last 200
 records, which Settings > Privacy > What Sigil shared shows. Turning the switch off clears the
-list, the queue and that log at once. Nothing is recorded, queued or sent while it is off.
+list, the queue and that log at once. Nothing is recorded, queued or sent while it is off. If the
+Worker is missing its secrets it answers 503 and stores nothing; the app keeps its queue within the
+limits above and tries again later, without showing an error.
 
 Every batch carries: the product data id, Sigil's version, the OS (windows, macos, linux or
 other), the OS build number (digits and dots, for example `10.0.22631`) and the game build number
@@ -223,9 +225,17 @@ address and no user agent.
 
 | Table | Holds | Kept |
 | --- | --- | --- |
-| `product_events` | One row per record: salted SHA-256 of the product data id, record type, Sigil version, OS, OS build, game build, the record's fields | 13 months, or until Delete my data |
+| `product_events` | One row per record: salted SHA-256 of the product data id, record type, Sigil version, OS, OS build, game build, the record's fields | While you keep sharing, until you press Delete my data. After 24 months with nothing new from you, the id hash is replaced by a random value (see below) |
 | `product_contrib` | Working rows for the current 30-day period: the salted id hash, the aggregate key, the day, and a network marker | Until the period closes (about 32 days), never more than 75 days, or until Delete my data |
-| `product_totals` | Counts only, per period and key: installs, networks, days. No id, no network marker | Kept for mod ids and codes; search text and hardware names 13 months |
+| `product_totals` | Counts only, per period and key: installs, networks, days. No id, no network marker. Only keys that met the floor | Kept indefinitely |
+
+Sigil keeps this data as long as possible, on purpose: a longer history makes the suggestions and
+the mod health warnings better. The flip side is that a breach of the Worker's database would
+expose more history, which is why the network marker below lives 75 days at most and Delete my
+data works at any time. When an install has sent nothing for 24 months, the daily job replaces the
+id hash on all of its records with one fresh random value made for that install and stored
+nowhere else: the records stay, but they can no longer be tied to your id, and nothing new is
+added to them. After that, Delete my data can no longer find them.
 
 The network marker is how Sigil counts distinct contributors without storing addresses: a keyed
 hash (HMAC-SHA256 under a secret only the Worker holds) of your network prefix (the first three
@@ -506,11 +516,6 @@ agent host's model provider calls, subscription sign-in or publish; see Known ga
   then the app's sends fail quietly and wait in the local queue (14 days at most). Nothing in the
   app shows "players who use this also use", mod health warnings or frame rate expectations yet.
   The monitor refresh rate is not read (sent as 0).
-
-- The telemetry Worker is not deployed and the desktop client that sends to it does not exist yet.
-  The switches above describe the agreed behavior, not shipped UI.
-- Some desktop strings still say Sigil has no telemetry. They are being replaced with this page's
-  wording.
 - Offline mode does not cover the agent host's provider calls (`rust/crates/agent-host`,
   `apps/agent-host`), subscription sign-in (`desktop/src/signin.rs`) or publish
   (`desktop/src/publish.rs`).

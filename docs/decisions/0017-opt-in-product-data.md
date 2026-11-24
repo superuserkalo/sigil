@@ -49,9 +49,13 @@ The limits below are what keeps this honest. They are part of the decision, not 
   chat, file names or paths, mods with no GameBanana id (local or private files), mod contents,
   API keys or tokens, IP address (not stored by the Worker), hardware serials or any id that
   outlives a reinstall, anything from the AI agent's conversations.
-- The Worker stores no IP address or user agent. Raw events are kept 13 months, then deleted.
-  Aggregates built from them (co-install counts, mod health per game build, frame rates per
-  hardware class) are kept. Nothing is published or shown to other players for a mod pair, a
+- The Worker stores no IP address or user agent. Retention (owner decision, 2026-11-25: keep the
+  data as long as possible): raw events are kept while the install keeps sharing and until the
+  player presses "Delete my data". When an install has sent nothing for 24 months, its raw events
+  are unlinked: the daily job replaces their install hash with a fresh random value, one per
+  install, made in the job and stored nowhere else, so the history stays usable but can no longer
+  be tied to that install id or extended by it. Aggregates built from them (co-install counts, mod
+  health per game build, frame rates per hardware class, search terms) are kept indefinitely. Nothing is published or shown to other players for a mod pair, a
   hardware class or a search term until at least 10 different installs share it (counted as
   distinct contributors, see the amendment below).
 - The player can see what was sent ("What Sigil shared" lists the last events locally) and can
@@ -74,8 +78,9 @@ therefore count distinct contributors in 30-day epochs (`services/telemetry/src/
 - Network bucket. Each request gets a bucket: a keyed hash (HMAC-SHA256 under the Worker secret
   `PRODUCT_BUCKET_KEY`) of the epoch number and the caller's network prefix (an IPv4 /24 or an
   IPv6 /48), cut to 16 hex characters. It changes every epoch, so a network cannot be followed
-  from one epoch to the next. The IP address and the prefix are never stored. Without the secret
-  the Worker still stores raw records but writes and publishes no aggregate (fail closed).
+  from one epoch to the next. The IP address and the prefix are never stored. Without both secrets
+  (`PRODUCT_SALT` for the install id hash, `PRODUCT_BUCKET_KEY`), each at least 32 characters, the
+  product routes answer 503 and store nothing (fail closed); there is no unsalted fallback.
 - Open-epoch contributions (`product_contrib`) are the only place a bucket sits next to an install
   hash. They live only until their epoch closes (30 days plus 2 days of grace) and go at once with
   "Delete my data". A backstop in the daily retention deletes any such row older than 75 days
@@ -89,8 +94,7 @@ therefore count distinct contributors in 30-day epochs (`services/telemetry/src/
   counts only to `product_totals`, and only for keys that met the floor in that epoch: eligible
   installs (seen on at least 2 days in the epoch, within the 3 per bucket), distinct buckets and
   distinct days. No install hash and no bucket. Keys below the floor leave no row. Then the
-  epoch's contributions are deleted. Totals for keys players wrote (search text, hardware names)
-  are deleted after 13 months; totals keyed by mod ids and codes are kept.
+  epoch's contributions are deleted. Totals of every kind are kept indefinitely.
 - A mod pair, a mod health finding, a hardware class or a search term is shown to players only
   when at least one closed epoch met the floor on its own: at least 10 eligible installs from at
   least 6 buckets on at least 3 days. Its strength is the sum over epochs that met the floor;
@@ -109,8 +113,15 @@ raises the cost of poisoning; it does not make it impossible.
 
 - The privacy page's promise that no mod or hero name ever leaves the PC becomes "not unless
   you turn on Help build Sigil".
-- Sigil holds data that describes one install's taste and hardware. The salted hash, the
-  10-install floor, the 13-month limit, the local log and the delete button bound that.
+- Sigil holds data that describes one install's taste and hardware, for as long as the install
+  shares. Long retention means a breach of the Worker's database would expose more history. That
+  is why the network marker stays short (one epoch, 75 days at most), no IP address or user agent
+  is ever stored, the install id is only kept as a salted hash, inactive installs are unlinked
+  after 24 months, and "Delete my data" is on the Privacy page next to the switch and works at
+  any time while the rows are still linked.
+- Not built yet: the monitor refresh rate (sent as 0), frame rates stored per hardware class on
+  the Worker (the hardware key only gates publishing), and any player-facing use of the data
+  ("players who use this also use", mod health warnings, frame rate expectations).
 - Search text is the riskiest field (free text). It is scrubbed on the device and again on the
   Worker, and can be dropped without touching the rest.
 - An opt-in that is off by default will be on for a minority of players. The data is a sample,

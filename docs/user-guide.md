@@ -365,7 +365,8 @@ frame rates with your GPU and CPU model, and which pages you use. It is for sugg
 warnings and frame rate expectations. It never sends your Steam id, your files or paths, local
 mods, your keys, your IP address or anything from the agent. Settings > Privacy > Help build Sigil
 turns it on or off at any time, What Sigil shared lists the last records sent, and Delete my data
-removes them from Sigil's server and starts a new id. `docs/privacy.md` lists every field.
+removes them from Sigil's server and starts a new id. Sigil keeps what you share until you
+delete it; if Sigil hears nothing from you for two years, your records are cut loose from your id. `docs/privacy.md` lists every field.
 
 ## Sending feedback
 

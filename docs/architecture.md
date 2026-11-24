@@ -792,5 +792,6 @@ Phase 7, packaging:
 - Gameplay cheats, aim assistance, wallhacks, or anything that gives an advantage in matchmaking.
 - Redistributing Valve assets.
 - A hosted model proxy or a paid inference tier.
-- Telemetry, analytics, or a heartbeat.
+- Telemetry or analytics without the player's yes (the opt-ins are ADR 0014 and ADR 0017), and
+  any heartbeat.
 - Automatic public releases without a human decision.
