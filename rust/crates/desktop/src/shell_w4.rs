@@ -87,7 +87,11 @@ pub fn collapse_button(s: &State, u: &Ui) -> El {
     let label = tr(if collapsed { "Expand sidebar" } else { "Collapse sidebar" });
     row()
         .key("sidebar-collapse")
-        .size(crate::ui::CONTROL_M, crate::ui::CONTROL_M)
+        // A 32 point target in the rail, like the nav icons under it; 28 on the brand row.
+        .size(
+            if collapsed { crate::ui::CONTROL_L } else { crate::ui::CONTROL_M },
+            if collapsed { crate::ui::CONTROL_L } else { crate::ui::CONTROL_M },
+        )
         .center()
         .radius(crate::ui::r(6.0))
         .hover(u.hover)
@@ -99,7 +103,12 @@ pub fn collapse_button(s: &State, u: &Ui) -> El {
         .help_keys([tr(if cfg!(target_os = "macos") { "Cmd" } else { "Ctrl" }), "B"])
         .cursor(rune::Cursor::Pointer)
         .on_press(toggle_sidebar)
-        .child(rune::icon(&icons::PANEL_LEFT, 16.0).color(u.muted).a11y_hidden())
+        .child(
+            // The arrow points the way the sidebar goes: left to close, right to open.
+            rune::icon(if collapsed { &icons::PANEL_LEFT_OPEN } else { &icons::PANEL_LEFT_CLOSE }, 16.0)
+                .color(u.muted)
+                .a11y_hidden(),
+        )
 }
 
 // --- New marks ------------------------------------------------------------------------------

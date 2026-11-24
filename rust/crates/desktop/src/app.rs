@@ -1169,7 +1169,7 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
     cx.caption_color(u.muted);
     cx.focus_ring(crate::ui::FOCUS_W, crate::ui::FOCUS_GAP, u.accent);
     cx.help_look(u.help_look());
-    let insets = cx.chrome_insets();
+    let insets = snap_insets(cx.chrome_insets());
     crate::ui::set_window(window);
     // The page toolbars fold by width alone: the window less the sidebar and the page margins.
     crate::ui::set_fit(crate::ui::Fit::from_width(
@@ -1455,6 +1455,24 @@ fn glass_wallpaper(window: (f32, f32), kind: crate::glass::Backdrop, light: bool
 
 /// The macOS traffic lights' own strip over the brand row: they sit 9 to 23 points down.
 const LIGHTS_H: f32 = 28.0;
+/// The brand row where nothing sits over it (Windows, Linux): 12 points clear of the window's
+/// top edge above the 24 point mark and the collapse button, centred on one line.
+const BRAND_H: f32 = 48.0;
+/// The rail's top inset over the Expand button (Windows, Linux).
+const RAIL_TOP: f32 = 12.0;
+
+/// The window's chrome insets. A headless snapshot with `SIGIL_SNAP_OS=windows` gets the
+/// Windows ones (caption buttons on the right, nothing on the left), so the Windows shell can be
+/// checked from a Mac.
+fn snap_insets(insets: rune::ChromeInsets) -> rune::ChromeInsets {
+    if !rune::is_headless() || std::env::var("SIGIL_SNAP_OS").as_deref() != Ok("windows") {
+        return insets;
+    }
+    let mut windows = rune::ChromeInsets::default();
+    windows.trailing = 138.0;
+    windows.height = TITLEBAR_H;
+    windows
+}
 
 fn sidebar(s: &State, u: &Ui, insets: rune::ChromeInsets) -> El {
     // On glass: the tint over the system's backdrop, a 1 point highlight inside the right edge,
@@ -1496,6 +1514,10 @@ fn sidebar(s: &State, u: &Ui, insets: rune::ChromeInsets) -> El {
             .child(if s.prefs.single_launch { el() } else { launch_lock(s, compact_launch(s, u, true)) })
             .child(el().h(4.0))
             .children(crate::shell_tips::season_mark(s, u))
+            // The status bar is off: the profile switcher sits with Settings instead.
+            .children((!s.prefs.status_bar).then(|| {
+                screens::profiles::switcher(s, u, screens::profiles::SwitcherPlace::Rail)
+            }))
             // macOS: the traffic lights fill the narrow top row, so Expand sits here, centred.
             .child(if insets.leading > 0.0 {
                 row().w_full().center().child(crate::shell_w4::collapse_button(s, u))
@@ -1532,6 +1554,10 @@ fn sidebar(s: &State, u: &Ui, insets: rune::ChromeInsets) -> El {
             })
             .child(el().h(4.0))
             .children(crate::shell_tips::season_mark(s, u))
+            // The status bar is off: the profile switcher sits with Settings instead.
+            .children((!s.prefs.status_bar).then(|| {
+                screens::profiles::switcher(s, u, screens::profiles::SwitcherPlace::Sidebar)
+            }))
             .child(settings_item(s, u))
     };
     col()
@@ -1554,24 +1580,32 @@ fn sidebar(s: &State, u: &Ui, insets: rune::ChromeInsets) -> El {
             // The traffic lights alone, as tight as they allow; the brand row follows.
             row().key("sidebar-lights").w_full().h(LIGHTS_H).window_drag()
         }))
-        .child(if collapsed {
-            // Icons only: the rail's top row, with Expand centred where the row is free (on
-            // macOS the traffic lights fill it and Expand sits in the foot).
-            row()
+        .child(if collapsed && lights_row {
+            // macOS rail: the traffic lights fill the top row; Expand sits in the foot.
+            row().key("brand").w_full().h(TITLEBAR_H).window_drag()
+        } else if collapsed {
+            // Icons only: Expand 12 points under the window's top, then the mark, both centred
+            // on the rail's axis like the 32 point nav targets below.
+            col()
                 .key("brand")
                 .w_full()
-                .h(TITLEBAR_H)
-                .center()
+                .pt(RAIL_TOP)
+                .gap(8.0)
+                .items_center()
                 .window_drag()
-                .child(if lights_row { el() } else { crate::shell_w4::collapse_button(s, u) })
+                .child(crate::shell_w4::collapse_button(s, u))
+                .child(crate::brand::rail_mark(s, u))
         } else {
             row()
                 .key("brand")
                 .w_full()
-                .h(TITLEBAR_H)
-                // The mark spans the nav icon column (16 to 36) and the wordmark starts on the
-                // label edge (44); the collapse button mirrors the icon axis on the right.
-                .pl(16.0)
+                // Under the traffic lights on macOS; elsewhere the row's own 12 point inset
+                // above the mark.
+                .h(if lights_row { TITLEBAR_H } else { BRAND_H })
+                // The 24 point mark is centred on the nav icon axis (14 to 38, centre 26) and
+                // the wordmark starts on the label edge (44); the collapse button mirrors the
+                // icon axis on the right.
+                .pl(14.0)
                 .pr(12.0)
                 .center_y()
                 .window_drag()
@@ -1584,15 +1618,6 @@ fn sidebar(s: &State, u: &Ui, insets: rune::ChromeInsets) -> El {
                 .child(spacer())
                 .child(crate::shell_w4::collapse_button(s, u))
         })
-        // The active profile, on the nav grid under the brand: every page gets the band back.
-        .child(
-            col()
-                .key("sidebar-profile")
-                .w_full()
-                .px(8.0)
-                .pt(4.0)
-                .child(screens::profiles::titlebar_switcher(s, u, collapsed)),
-        )
         .child(
             u.scroll_area(col()
                 .key("nav-scroll")

@@ -81,6 +81,7 @@ pub const DE: &[(&str, &str)] = &[
     ("Snapshot now", "Jetzt sichern"),
     ("Snapshots ({})", "Wiederherstellungspunkte ({})"),
     ("Switch profile", "Profil wechseln"),
+    ("Profile: {}. Switch profile", "Profil: {}. Profil wechseln"),
     ("Switched back from {}", "Zurückgewechselt von {}"),
     ("The saved profile goes away. Your mods stay as they are.", "Das gespeicherte Profil wird entfernt. Deine Mods bleiben, wie sie sind."),
     ("These recovery points go away. Your mods stay as they are.", "Diese Wiederherstellungspunkte werden entfernt. Deine Mods bleiben, wie sie sind."),

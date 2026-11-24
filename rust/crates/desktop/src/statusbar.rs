@@ -331,8 +331,13 @@ pub fn view(s: &State, u: &Ui) -> Option<El> {
     if let Some(update) = update(s, u) {
         right = right.child(update).child(divider(u));
     }
-    // The profile lives in the titlebar switcher, the one that acts.
-    right = right.child(volume(s, u)).child(divider(u)).child(shortcuts(u));
+    // The active profile and its switcher, then the preview volume and the shortcuts.
+    right = right
+        .child(crate::screens::profiles::switcher(s, u, crate::screens::profiles::SwitcherPlace::StatusBar))
+        .child(divider(u))
+        .child(volume(s, u))
+        .child(divider(u))
+        .child(shortcuts(u));
     Some(bar(u).child(left).child(spacer()).child(right))
 }
 

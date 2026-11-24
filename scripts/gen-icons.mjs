@@ -7,10 +7,11 @@ const dir = process.argv[2];
 if (!dir) throw new Error('pass the lucide-react dist/esm/icons directory');
 const names = `layers compass shirt crosshair square-terminal chart-line bookmark sparkles settings play
 search refresh-cw folder-open plus arrow-up arrow-left x minus square copy check chevron-down chevron-right
-chevron-left triangle-alert download external-link ellipsis trash-2 square-pen wrench hammer package
+chevron-left triangle-alert download upload external-link ellipsis trash-2 square-check square-pen wrench hammer package
 history eye heart thumbs-up panel-left square-stop paperclip shield key-round log-in user message-square
 folder file terminal layout-grid list sliders-horizontal filter rotate-ccw circle-check circle-x loader
-git-compare zap box globe info lock power gauge pin pin-off keyboard volume-2 volume-1 volume-x database gamepad-2`.split(/\s+/).filter(Boolean);
+git-compare zap box globe info lock power gauge pin pin-off keyboard volume-2 volume-1 volume-x database gamepad-2
+panel-left-close panel-left-open chevron-up`.split(/\s+/).filter(Boolean);
 
 const attrs = (o) => Object.entries(o).filter(([k]) => k !== 'key')
   .map(([k, v]) => `${k.replace(/[A-Z]/g, (c) => '-' + c.toLowerCase())}="${v}"`).join(' ');
@@ -27,15 +28,17 @@ for (const name of names) {
     if (!alias) break;
     src = readFileSync(join(dir, `${alias[1]}.mjs`), 'utf8');
   }
-  const start = src.indexOf('node: [');
-  if (start < 0) throw new Error('no node in ' + name);
+  // Older lucide-react writes `node: [`, 1.x writes `const __iconNode = [`.
+  const found = src.match(/(?:node: |__iconNode = )\[/);
+  if (!found) throw new Error('no node in ' + name);
+  const start = found.index + found[0].length - 1;
   // The node array is plain object literals; cut it out by bracket depth.
-  let depth = 0, end = start + 6;
-  for (let i = start + 6; i < src.length; i++) {
+  let depth = 0, end = start;
+  for (let i = start; i < src.length; i++) {
     if (src[i] === '[') depth++;
     if (src[i] === ']' && --depth === 0) { end = i + 1; break; }
   }
-  const node = Function(`return ${src.slice(start + 6, end)}`)();
+  const node = Function(`return ${src.slice(start, end)}`)();
   const body = node.map(([tag, a]) => `<${tag} ${attrs(a)}/>`).join('');
   const id = name.toUpperCase().replace(/-/g, '_');
   out += `pub static ${id}: Icon = Icon {\n    name: "sigil-${name}",\n    view: 24.0,\n    body: r#"<g fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">${body}</g>"#,\n};\n`;

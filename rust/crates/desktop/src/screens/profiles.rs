@@ -3016,13 +3016,23 @@ pub fn short_date(iso: &str) -> String {
 }
 
 // ---------------------------------------------------------------------------
-// Titlebar profile switcher
+// Profile switcher
 // ---------------------------------------------------------------------------
 
-/// The active profile, a 28 point row under the sidebar's brand. Pressing it opens the saved
-/// profiles, so switching is one press plus one; the menu hangs under the row. In the collapsed
-/// rail it is the icon alone, its name in the tooltip, and the menu opens to the right.
-pub fn titlebar_switcher(s: &State, u: &Ui, collapsed: bool) -> El {
+/// Where the profile switcher sits. It never comes back as a row over the pages.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SwitcherPlace {
+    /// A 24 point part in the status bar's right group, beside the preview volume.
+    StatusBar,
+    /// The status bar is off: a compact row in the sidebar's foot, beside Settings.
+    Sidebar,
+    /// The status bar is off and the sidebar is collapsed: the icon alone, its name in the tip.
+    Rail,
+}
+
+/// The active profile. Pressing it opens the saved profiles, so switching is one press plus
+/// one; the menu opens upward from the bottom of the window (to the right from the rail).
+pub fn switcher(s: &State, u: &Ui, place: SwitcherPlace) -> El {
     let active = s
         .profiles
         .active
@@ -3032,14 +3042,14 @@ pub fn titlebar_switcher(s: &State, u: &Ui, collapsed: bool) -> El {
         .map(|row| row.name.clone())
         .unwrap_or_else(|| tr("No profile").to_string());
     let has_profiles = !s.profiles.rows.is_empty();
+    let name_color = if active.is_some() { u.prose } else { u.muted };
     let chip = row()
-        .key("titlebar-profile")
-        .h(crate::ui::CONTROL_M)
-        .radius(crate::ui::r(8.0))
+        .key("profile-switch")
         .hover(u.hover)
+        .press(u.over.alpha(0.08))
         .focusable(true)
         .role("button")
-        .label(format!("Profile: {label}. Switch profile"))
+        .label(fill(tr("Profile: {}. Switch profile"), &[&label]))
         .cursor(rune::Cursor::Pointer)
         .on_press(|st: &mut State| {
             if !st.profiles.rows.is_empty() {
@@ -3048,29 +3058,53 @@ pub fn titlebar_switcher(s: &State, u: &Ui, collapsed: bool) -> El {
                 st.go(Screen::Profiles);
             }
         });
-    let chip = if collapsed {
-        chip.w_full()
-            .center()
-            .help(label.clone())
-            .help_side(Side::Right)
-            .child(icon(&icons::USER, 16.0).color(u.muted).a11y_hidden())
-    } else {
+    let chip = match place {
+        // The status bar's part: the bar's own look (24 high, 14 point icon, small words).
+        SwitcherPlace::StatusBar => chip
+            .h(crate::statusbar::BAR_H)
+            .px(8.0)
+            .gap(6.0)
+            .center_y()
+            .help(tr("Switch profile"))
+            .help_above()
+            .child(icon(&icons::USER, 14.0).color(u.muted).a11y_hidden())
+            .child(
+                text(label)
+                    .font(SMALL)
+                    .color(name_color)
+                    .max_w(160.0)
+                    .min_w(0.0)
+                    .truncate()
+                    .a11y_hidden(),
+            )
+            .child(icon(&icons::CHEVRON_UP, 12.0).color(u.faint).a11y_hidden()),
         // On the nav grid: the icon on the icon column, the name on the label edge.
-        chip.w_full()
+        SwitcherPlace::Sidebar => chip
+            .w_full()
+            .h(crate::ui::CONTROL_L)
             .px(10.0)
             .gap(10.0)
             .center_y()
+            .radius(crate::ui::r(8.0))
             .child(icon(&icons::USER, 16.0).color(u.muted).a11y_hidden())
             .child(
                 text(label)
-                    .font(crate::ui::BODY)
-                    .color(if active.is_some() { u.prose } else { u.muted })
+                    .font(crate::ui::NAV)
+                    .color(name_color)
                     .grow(1.0)
                     .min_w(0.0)
                     .truncate()
                     .a11y_hidden(),
             )
-            .child(icon(&icons::CHEVRON_DOWN, 14.0).color(u.muted).a11y_hidden())
+            .child(icon(&icons::CHEVRON_UP, 14.0).color(u.faint).a11y_hidden()),
+        SwitcherPlace::Rail => chip
+            .w_full()
+            .h(crate::ui::CONTROL_L)
+            .center()
+            .radius(crate::ui::r(8.0))
+            .help(label.clone())
+            .help_side(Side::Right)
+            .child(icon(&icons::USER, 16.0).color(u.muted).a11y_hidden()),
     };
 
     if !s.profiles.titlebar_open || !has_profiles {
@@ -3154,12 +3188,19 @@ pub fn titlebar_switcher(s: &State, u: &Ui, collapsed: bool) -> El {
             .border(1.0, u.hair_strong)
             .shadow(12.0, 32.0, crate::ui::soft(rune::Color::BLACK.alpha(0.5)))
             .anchored(
-                "titlebar-profile",
-                if collapsed { Side::Right } else { Side::Bottom },
-                Align::Start,
-                if collapsed { 8.0 } else { 4.0 },
+                "profile-switch",
+                match place {
+                    SwitcherPlace::Rail => Side::Right,
+                    _ => Side::Top,
+                },
+                match place {
+                    SwitcherPlace::StatusBar => Align::End,
+                    SwitcherPlace::Sidebar => Align::Start,
+                    SwitcherPlace::Rail => Align::End,
+                },
+                if place == SwitcherPlace::Rail { 8.0 } else { 4.0 },
             )
-            .transition(crate::motion::pop(false))
+            .transition(crate::motion::pop(place != SwitcherPlace::Rail))
             .modal(true, |st: &mut State| st.profiles.titlebar_open = false)
             .on_key(|st: &mut State, ev: &KeyEvent, _| {
                 if ev.key == Key::Escape {
@@ -3320,7 +3361,7 @@ pub fn scene_snapshot_restore(st: &mut State) {
     st.profiles.dialog = Dialog::SnapshotRestore("snap-1".to_string());
 }
 
-/// The titlebar switcher open over the profiles page.
+/// The profile switcher's menu open, from the status bar.
 pub fn scene_titlebar(st: &mut State) {
     fixture_load(st);
     st.screen = crate::model::Screen::Browse;

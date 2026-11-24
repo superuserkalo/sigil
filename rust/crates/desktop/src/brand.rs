@@ -23,8 +23,12 @@ const WORD_DARK_KEY: &str = "sigil:brand/word-dark";
 
 /// The wordmark's width over its height (248 by 112).
 const WORD_ASPECT: f32 = 248.0 / 112.0;
-const MARK_PT: f32 = 20.0;
-const WORD_PT: f32 = 14.0;
+const MARK_PT: f32 = 24.0;
+/// The wordmark image's height; its letters read about 16 points, beside 13 point nav labels.
+const WORD_PT: f32 = 18.0;
+/// Mark to wordmark: the 24 point mark is centred on the nav icon axis (x 26), so 6 points put
+/// the wordmark on the nav label edge (x 44).
+const GAP: f32 = 6.0;
 
 /// The app icon for windows and the Dock. Call before `run`.
 pub fn install_app_icon() {
@@ -72,7 +76,7 @@ pub fn header(s: &State, u: &Ui) -> El {
     match (s.thumbnails.get(mark), s.thumbnails.get(word)) {
         (Some(mark), Some(word)) => row()
             .key("brand-lockup")
-            .gap(8.0)
+            .gap(GAP)
             .center_y()
             .label("Sigil")
             .child(el().key("brand-mark").size(MARK_PT, MARK_PT).pixels_fit(mark, SurfaceFit::Fit))
@@ -84,10 +88,20 @@ pub fn header(s: &State, u: &Ui) -> El {
             ),
         _ => row()
             .key("brand-lockup")
-            .size(MARK_PT + 8.0 + WORD_PT * WORD_ASPECT, MARK_PT)
+            .size(MARK_PT + GAP + WORD_PT * WORD_ASPECT, MARK_PT)
             .center_y()
             .label("Sigil")
-            .child(el().w(MARK_PT + 8.0))
+            .child(el().w(MARK_PT + GAP))
             .child(text("Sigil").font(WORDMARK).color(u.ink).a11y_hidden()),
+    }
+}
+
+/// The mark alone at the lockup's size, for the collapsed rail; an empty box of the same size
+/// until it decodes.
+pub fn rail_mark(s: &State, u: &Ui) -> El {
+    let mark_box = el().key("brand-mark").size(MARK_PT, MARK_PT).label("Sigil");
+    match mark(s, u) {
+        Some(px) => mark_box.pixels_fit(px, SurfaceFit::Fit),
+        None => mark_box,
     }
 }
