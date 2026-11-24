@@ -212,6 +212,13 @@ pub fn slides(e: El, spring: Spring) -> El {
     e.motion(spring)
 }
 
+/// A selection thumb drawn inside the selected segment or tab of a strip whose parts differ in
+/// width: on a new pick Rune flies it from the old part to the new one on `base`, without
+/// measuring anything. Under reduced motion nothing is matched, so it lands.
+pub fn glides(e: El, id: &str) -> El {
+    if reduced() { e } else { e.matched(id.to_string()).motion(base()) }
+}
+
 /// A control that dims when it is unavailable: its opacity eases on `fast`.
 pub fn dims(e: El) -> El {
     e.opacity_motion(fast())

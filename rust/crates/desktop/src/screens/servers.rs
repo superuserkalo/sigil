@@ -815,7 +815,7 @@ fn tabs(s: &State, u: &Ui) -> El {
     for (tab, key, label) in items {
         let on = s.servers.tab == tab;
         bar = bar.child(
-            segment(u, key, label, on, "tab").on_press(move |st: &mut State| {
+            segment(u, "servers-tabs", key, label, on, "tab").on_press(move |st: &mut State| {
                 st.servers.tab = tab;
                 st.servers.menu = None;
             }),
@@ -824,29 +824,29 @@ fn tabs(s: &State, u: &Ui) -> El {
     bar
 }
 
-/// One 28 point segment: `BODY_MED`, the selected one raised.
-fn segment(u: &Ui, key: &str, label: &str, on: bool, role: &'static str) -> El {
-    crate::motion::colors(row())
+/// One 28 point segment of the strip `strip`: `BODY_MED`, the selected one raised by a thumb
+/// that glides from the old segment to the new on `base`.
+fn segment(u: &Ui, strip: &str, key: &str, label: &str, on: bool, role: &'static str) -> El {
+    row()
         .key(key.to_string())
         .h(28.0)
         .px(10.0)
         .gap(6.0)
         .center_y()
         .radius(crate::ui::r(4.0))
-        .fill(if on { u.raised } else { Color::TRANSPARENT })
-        .border(1.0, if on { u.hair_strong } else { Color::TRANSPARENT })
-        .hover(if on { u.raised } else { u.hover })
+        .child(crate::ui::seg_thumb(on, &format!("{strip}-thumb"), u.raised, u.hair_strong, crate::ui::r(4.0)))
+        .hover(if on { Color::TRANSPARENT } else { u.hover })
         .focusable(true)
         .role(role)
         .checked(on)
         .label(label.to_string())
         .cursor(rune::Cursor::Pointer)
-        .child(
+        .child(crate::motion::colors(
             text(label.to_string())
                 .font(BODY_MED)
                 .color(if on { u.ink } else { u.muted })
                 .a11y_hidden(),
-        )
+        ))
 }
 
 /// The filter row, 32 high with 28 controls: scope, three toggle chips, the Filters menu,
@@ -873,7 +873,7 @@ fn filters(s: &State, u: &Ui) -> El {
         ),
         ("servers-scope-recent", tr("Recent"), Some(s.servers.saved.recent.len()), Scope::Recent),
     ] {
-        let mut seg = segment(u, key, label, s.servers.scope == value, "radio").on_press(
+        let mut seg = segment(u, "servers-scope", key, label, s.servers.scope == value, "radio").on_press(
             move |st: &mut State| {
                 st.servers.scope = value;
                 st.servers.selected = None;
@@ -1010,7 +1010,7 @@ fn password_segment(u: &Ui, current: PasswordFilter) -> El {
                 .px(8.0)
                 .center_y()
                 .radius(crate::ui::r(4.0))
-                .fill(if on { u.selected } else { Color::TRANSPARENT })
+                .child(crate::ui::seg_thumb(on, "servers-password-thumb", u.selected, Color::TRANSPARENT, crate::ui::r(4.0)))
                 .focusable(true)
                 .role("button")
                 .checked(on)

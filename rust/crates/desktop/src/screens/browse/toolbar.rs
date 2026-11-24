@@ -139,28 +139,29 @@ fn tabs(s: &State, u: &Ui) -> El {
         .role("radiogroup");
     for tab in Tab::ALL {
         let on = tab == current;
+        // The selection is one thumb that glides from the old tab to the new on `base`; the
+        // tabs keep their boxes and only their text colour eases.
         r = r.child(
-            crate::motion::colors(row())
+            row()
                 .key(format!("browse-tab-{}", tab.id()))
                 .h_full()
                 .px(TAB_PX)
                 .center()
                 .radius(crate::ui::r(4.0))
-                .fill(if on { u.selected } else { Color::TRANSPARENT })
-                .border(1.0, if on { u.hair_strong } else { Color::TRANSPARENT })
-                .hover(if on { u.selected } else { u.hover })
+                .child(crate::ui::seg_thumb(on, "browse-sections-thumb", u.selected, u.hair_strong, crate::ui::r(4.0)))
+                .hover(if on { Color::TRANSPARENT } else { u.hover })
                 .focusable(true)
                 .role("radio")
                 .label(super::tree::tr(tab.label()))
                 .checked(on)
                 .cursor(rune::Cursor::Pointer)
                 .on_press_tx(move |st: &mut State, tx: &mut Tx| set_tab(st, Some(tx), tab))
-                .child(
+                .child(crate::motion::colors(
                     text(super::tree::tr(tab.label()))
                         .font(LABEL)
                         .color(if on { u.ink } else { u.muted })
                         .a11y_hidden(),
-                ),
+                )),
         );
     }
     r

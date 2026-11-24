@@ -371,7 +371,7 @@ fn tab(u: &Ui, editor: &Editor, tab: Tab, label: &str) -> El {
         .px(10.0)
         .center()
         .radius(crate::ui::r(6.0))
-        .fill(if on { u.selected } else { rune::Color::TRANSPARENT })
+        .child(crate::ui::seg_thumb(on, "perf-editor-tabs-thumb", u.selected, rune::Color::TRANSPARENT, crate::ui::r(6.0)))
         .hover(u.hover)
         .focusable(true)
         .role("tab")

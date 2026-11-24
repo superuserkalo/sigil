@@ -87,39 +87,39 @@ fn toolbar(s: &State, u: &Ui) -> El {
         });
 
     let mut heroes = vec![
-        subpage::segment(u, "All heroes", s.hero_filter.is_none())
+        subpage::segment_in(u, "index-heroes", "All heroes", s.hero_filter.is_none())
             .cursor(rune::Cursor::Pointer)
             .on_press(|st: &mut State| st.hero_filter = None),
     ];
     for hero in HEROES {
         heroes.push(
-            subpage::segment(u, hero, s.hero_filter.as_deref() == Some(hero))
+            subpage::segment_in(u, "index-heroes", hero, s.hero_filter.as_deref() == Some(hero))
                 .cursor(rune::Cursor::Pointer)
                 .on_press(move |st: &mut State| st.hero_filter = Some(hero.to_string())),
         );
     }
 
     let mut types = vec![
-        subpage::segment(u, "All types", s.type_filter.is_none())
+        subpage::segment_in(u, "index-types", "All types", s.type_filter.is_none())
             .cursor(rune::Cursor::Pointer)
             .on_press(|st: &mut State| st.type_filter = None),
     ];
     for kind in TYPES {
         types.push(
-            subpage::segment(u, &capital(kind), s.type_filter.as_deref() == Some(kind))
+            subpage::segment_in(u, "index-types", &capital(kind), s.type_filter.as_deref() == Some(kind))
                 .cursor(rune::Cursor::Pointer)
                 .on_press(move |st: &mut State| st.type_filter = Some(kind.to_string())),
         );
     }
 
     let vpks = vec![
-        subpage::segment(u, "All VPKs", s.vpk_filter.is_none())
+        subpage::segment_in(u, "index-vpks", "All VPKs", s.vpk_filter.is_none())
             .cursor(rune::Cursor::Pointer)
             .on_press(|st: &mut State| st.vpk_filter = None),
-        subpage::segment(u, "pak01", s.vpk_filter.as_deref() == Some("pak01"))
+        subpage::segment_in(u, "index-vpks", "pak01", s.vpk_filter.as_deref() == Some("pak01"))
             .cursor(rune::Cursor::Pointer)
             .on_press(|st: &mut State| st.vpk_filter = Some("pak01".to_string())),
-        subpage::segment(u, "Maps", s.vpk_filter.as_deref() == Some("maps"))
+        subpage::segment_in(u, "index-vpks", "Maps", s.vpk_filter.as_deref() == Some("maps"))
             .cursor(rune::Cursor::Pointer)
             .on_press(|st: &mut State| st.vpk_filter = Some("maps".to_string())),
     ];

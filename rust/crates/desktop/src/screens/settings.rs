@@ -808,8 +808,9 @@ fn list_item(s: &State, u: &Ui, tab: Tab) -> El {
         .gap(10.0)
         .center_y()
         .radius(crate::ui::r(8.0))
-        .fill(if on { u.selected } else { Color::TRANSPARENT })
-        .hover(if on { u.selected } else { u.hover })
+        // The selection glides from the old section to the new on `base`.
+        .child(crate::ui::seg_thumb(on, "settings-nav-thumb", u.selected, Color::TRANSPARENT, crate::ui::r(8.0)))
+        .hover(if on { Color::TRANSPARENT } else { u.hover })
         .focusable(true)
         .role("tab")
         .checked(on)
@@ -1029,10 +1030,12 @@ fn segmented_in<T: Copy + PartialEq + 'static>(
     for (index, (value, label)) in choices.iter().enumerate() {
         let on = *value == current;
         let value = *value;
-        let mut seg = crate::motion::colors(row());
+        let mut seg = row();
         if width.is_some() {
             seg = seg.grow(1.0).min_w(0.0);
         }
+        // One thumb per control glides to the new pick on `base`; the labels ease colour.
+        let thumb = format!("{key}-thumb");
         r = r.child(
             seg
                 .key(format!("{key}-{index}"))
@@ -1040,21 +1043,20 @@ fn segmented_in<T: Copy + PartialEq + 'static>(
                 .px(10.0)
                 .center()
                 .radius(crate::ui::r(4.0))
-                .fill(if on { u.raised } else { Color::TRANSPARENT })
-                .border(1.0, if on { u.hair_strong } else { Color::TRANSPARENT })
-                .hover(if on { u.raised } else { u.hover })
+                .child(crate::ui::seg_thumb(on, &thumb, u.raised, u.hair_strong, crate::ui::r(4.0)))
+                .hover(if on { Color::TRANSPARENT } else { u.hover })
                 .focusable(true)
                 .role("radio")
                 .checked(on)
                 .label(tr(label).to_string())
                 .cursor(rune::Cursor::Pointer)
                 .on_press(move |st: &mut State| pick(st, value))
-                .child(
+                .child(crate::motion::colors(
                     text(tr(label).to_string())
                         .font(LABEL)
                         .color(if on { u.ink } else { u.muted })
                         .a11y_hidden(),
-                ),
+                )),
         );
     }
     r

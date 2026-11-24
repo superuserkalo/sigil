@@ -735,9 +735,9 @@ fn scope(s: &State, u: &Ui) -> El {
                 .gap(6.0)
                 .center()
                 .radius(crate::ui::r(6.0))
-                .fill(if active { u.raised } else { Color::TRANSPARENT })
-                .border(1.0, if active { u.hair_strong } else { Color::TRANSPARENT })
-                .hover(if active { u.raised } else { u.hover })
+                // One thumb glides to the new scope on `base`; the segments keep their boxes.
+                .child(crate::ui::seg_thumb(active, "installed-show-thumb", u.raised, u.hair_strong, crate::ui::r(6.0)))
+                .hover(if active { Color::TRANSPARENT } else { u.hover })
                 .focusable(true)
                 .role("radio")
                 .checked(active)

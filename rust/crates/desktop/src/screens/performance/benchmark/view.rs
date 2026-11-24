@@ -131,11 +131,11 @@ fn tabs(s: &State, u: &Ui) -> El {
     let page = &s.performance.benchmark;
     let count = page.runs.len();
     let items = vec![
-        subpage::segment(u, tr("New run"), page.tab == Tab::Setup)
+        subpage::segment_in(u, "bench-tabs", tr("New run"), page.tab == Tab::Setup)
             .key("bench-tab-setup")
             .cursor(rune::Cursor::Pointer)
             .on_press(|st: &mut State| st.performance.benchmark.tab = Tab::Setup),
-        subpage::segment(u, tr("History"), page.tab == Tab::History)
+        subpage::segment_in(u, "bench-tabs", tr("History"), page.tab == Tab::History)
             .key("bench-tab-history")
             .cursor(rune::Cursor::Pointer)
             .on_press(|st: &mut State| st.performance.benchmark.tab = Tab::History)
@@ -340,7 +340,7 @@ fn options(s: &State, u: &Ui) -> El {
         .iter()
         .map(|l| {
             let l = *l;
-            subpage::segment(u, tr(l.label()), page.length == l)
+            subpage::segment_in(u, "bench-length", tr(l.label()), page.length == l)
                 .key(format!("bench-length-{l:?}"))
                 .cursor(rune::Cursor::Pointer)
                 .on_press(move |st: &mut State| st.performance.benchmark.length = l)
@@ -349,7 +349,7 @@ fn options(s: &State, u: &Ui) -> El {
     let n = super::passes(page);
     let passes: Vec<El> = (1..=deadlock_core::benchmark::MAX_PASSES)
         .map(|p| {
-            subpage::segment(u, &p.to_string(), n == p)
+            subpage::segment_in(u, "bench-passes", &p.to_string(), n == p)
                 .key(format!("bench-passes-{p}"))
                 .cursor(rune::Cursor::Pointer)
                 .on_press(move |st: &mut State| st.performance.benchmark.passes = p)
@@ -363,7 +363,7 @@ fn options(s: &State, u: &Ui) -> El {
                 Display::Game => tr("Game settings").to_string(),
                 Display::Fixed { height, .. } => format!("{height}p"),
             };
-            subpage::segment(u, &label, page.display == d)
+            subpage::segment_in(u, "bench-display", &label, page.display == d)
                 .key(format!("bench-display-{}", match d { Display::Game => 0, Display::Fixed { height, .. } => height }))
                 .cursor(rune::Cursor::Pointer)
                 .on_press(move |st: &mut State| st.performance.benchmark.display = d)

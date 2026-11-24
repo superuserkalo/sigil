@@ -359,6 +359,40 @@ const MOTION_CASES: &[(&str, &[Step], Step, f32)] = &[
     ("stats-profile", &[], Step::Press("stats-tab-heroes"), 800.0),
 ];
 
+/// Picks in strips of uneven parts (`ui::seg_thumb`): scene, the press, the thumb, the height.
+const SELECTION_CASES: &[(&str, Step, &str, f32)] = &[
+    ("browse", Step::Press("browse-tab-sounds"), "browse-sections-thumb", 800.0),
+    ("demo-installed", Step::Press("installed-show-Enabled"), "installed-show-thumb", 800.0),
+    ("servers", Step::Press("servers-tab-maps"), "servers-tabs-thumb", 800.0),
+    ("settings-general", Step::Press("settings-tab-appearance"), "settings-nav-thumb", 1400.0),
+];
+
+/// A pick in a segmented control or tab strip: the thumb glides, every part of the strip and
+/// everything else in page flow is drawn where it is laid out on every frame, the window comes
+/// to rest, and under reduced motion (system or Settings) the thumb lands in one step.
+#[test]
+fn selection_thumbs_glide_and_nothing_in_flow_moves() {
+    let _globals = crate::ui::test_globals();
+    let mut wrong = Vec::new();
+    for &(scene_name, step, thumb, height) in SELECTION_CASES {
+        let name = case_name(scene_name, step);
+        let frames = run_case(scene_name, &[], step, height, Reduced::No);
+        if let Some((n, f)) = frames.iter().enumerate().find(|(_, f)| !f.off.is_empty()) {
+            wrong.push(format!("{name} frame {n}: {}", f.off.join("; ")));
+        }
+        if frames.last().is_some_and(|f| f.asked) {
+            wrong.push(format!("{name}: still drawing 48 frames later"));
+        }
+        for reduced in [Reduced::System, Reduced::Setting] {
+            let frames = run_case(scene_name, &[], step, height, reduced);
+            if let Some((n, f)) = frames.iter().enumerate().skip(1).find(|(_, f)| f.visible.iter().any(|v| v.contains(thumb))) {
+                wrong.push(format!("{name}: reduced, the thumb still moves at frame {n}: {}", f.visible.join("; ")));
+            }
+        }
+    }
+    assert!(wrong.is_empty(), "selection motion is wrong:\n{}", wrong.join("\n"));
+}
+
 /// Keys whose element, and everything under it, may travel or fade: overlays and the parts
 /// that slide inside a fixed box. Anything else is in page flow and must land at once.
 const MOVERS: &[&str] = &[
@@ -595,6 +629,12 @@ fn overlays_and_selections_move() {
         ("demo-installed", &[], Step::Press("nav-browse"), "page-browse", 800.0),
         // The Stats tab underline flies to the pressed tab on `base`; the tabs stay put.
         ("stats-profile", &[], Step::Press("stats-tab-heroes"), "stats-tabs-underline", 800.0),
+        // The shared selection thumb (`ui::seg_thumb`) glides between parts of uneven width:
+        // Browse's sections, Installed's scope, the Servers tabs and the Settings sections.
+        ("browse", &[], Step::Press("browse-tab-sounds"), "browse-sections-thumb", 800.0),
+        ("demo-installed", &[], Step::Press("installed-show-Enabled"), "installed-show-thumb", 800.0),
+        ("servers", &[], Step::Press("servers-tab-maps"), "servers-tabs-thumb", 800.0),
+        ("settings-general", &[], Step::Press("settings-tab-appearance"), "settings-nav-thumb", 1400.0),
         // A key step on a slider moves its knob on `fast` (a drag lands it under the hand).
         ("crosshair", &[Step::Press("crosshair-groups-1"), Step::Press("slider-DotSize")], Step::Right, "slider-DotSize/#2", 1400.0),
     ];

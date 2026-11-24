@@ -428,11 +428,11 @@ pub fn tabs(s: &State, u: &Ui) -> El {
     row().w_full().child(subpage::segmented(
         u,
         vec![
-            subpage::segment(u, tr("Paths"), s.explorer.tab == Tab::Paths)
+            subpage::segment_in(u, "explorer-tabs", tr("Paths"), s.explorer.tab == Tab::Paths)
                 .key("index-tab-paths")
                 .cursor(rune::Cursor::Pointer)
                 .on_press(|st: &mut State| st.explorer.tab = Tab::Paths),
-            subpage::segment(u, tr("Files"), s.explorer.tab == Tab::Files)
+            subpage::segment_in(u, "explorer-tabs", tr("Files"), s.explorer.tab == Tab::Files)
                 .key("index-tab-files")
                 .cursor(rune::Cursor::Pointer)
                 .on_press(open_tab),
@@ -447,7 +447,7 @@ pub fn view(s: &State, u: &Ui) -> El {
         [(Mode::Browse, tr("Browse")), (Mode::Search, tr("Search contents")), (Mode::Compare, tr("Compare"))]
             .into_iter()
             .map(|(mode, label)| {
-                subpage::segment(u, label, ex.mode == mode)
+                subpage::segment_in(u, "explorer-mode", label, ex.mode == mode)
                     .key(format!("explorer-mode-{mode:?}"))
                     .cursor(rune::Cursor::Pointer)
                     .on_press(move |st: &mut State| st.explorer.mode = mode)
@@ -505,7 +505,7 @@ fn source_bar(s: &State, u: &Ui) -> El {
         let on = ex.source_path.as_deref() == Some(src.path.as_path());
         let path = src.path.clone();
         chips = chips.child(
-            subpage::segment(u, &src.label, on)
+            subpage::segment_in(u, "explorer-sources", &src.label, on)
                 .key(format!("explorer-source-{i}"))
                 .border(1.0, u.hair)
                 .cursor(rune::Cursor::Pointer)
@@ -897,7 +897,7 @@ fn compare_pane(s: &State, u: &Ui, listing: &Listing) -> El {
         let on = ex.right_path.as_deref() == Some(src.path.as_path());
         let path = src.path.clone();
         picks = picks.child(
-            subpage::segment(u, &src.label, on)
+            subpage::segment_in(u, "explorer-rights", &src.label, on)
                 .key(format!("explorer-right-{i}"))
                 .border(1.0, u.hair)
                 .cursor(rune::Cursor::Pointer)

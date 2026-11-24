@@ -358,14 +358,15 @@ fn refilter(st: &mut State) {
 // --- views -------------------------------------------------------------------------------
 
 /// One choice inside a filter group: a short word on screen, the full name for assistive tech.
-fn pill(u: &Ui, key: String, label: &str, full: &str, on: bool) -> El {
+/// `strip` names the group, whose selection glides between its choices.
+fn pill(u: &Ui, strip: &str, key: String, label: &str, full: &str, on: bool) -> El {
     row()
         .key(key)
         .h(24.0)
         .px(10.0)
         .center_y()
         .radius(crate::ui::r(2.0))
-        .fill(if on { u.selected } else { rune::Color::TRANSPARENT })
+        .child(crate::ui::seg_thumb(on, &format!("{strip}-thumb"), u.selected, rune::Color::TRANSPARENT, crate::ui::r(2.0)))
         .hover(u.hover)
         .focusable(true)
         .role("radio")
@@ -389,7 +390,7 @@ pub(super) fn filter_bar(s: &State, u: &Ui) -> El {
         ("Unranked", "Unranked", Some(false)),
     ] {
         modes = modes.child(
-            pill(u, format!("stats-filter-mode-{full}"), label, full, m.ranked == value).on_press(move |st: &mut State| {
+            pill(u, "stats-filter-mode", format!("stats-filter-mode-{full}"), label, full, m.ranked == value).on_press(move |st: &mut State| {
                 st.stats.more.ranked = value;
                 refilter(st);
             }),
@@ -398,7 +399,7 @@ pub(super) fn filter_bar(s: &State, u: &Ui) -> El {
     let mut since = group(u);
     for ((full, days), label) in SINCE.into_iter().zip(["All time", "7 d", "30 d", "90 d"]) {
         since = since.child(
-            pill(u, format!("stats-filter-days-{days}"), label, full, m.season.is_none() && m.days == days).on_press(move |st: &mut State| {
+            pill(u, "stats-filter-days", format!("stats-filter-days-{days}"), label, full, m.season.is_none() && m.days == days).on_press(move |st: &mut State| {
                 st.stats.more.days = days;
                 st.stats.more.season = None;
                 refilter(st);
@@ -454,7 +455,7 @@ pub(super) fn filter_bar(s: &State, u: &Ui) -> El {
         ("Only", "Street Brawl only", Brawl::Only),
     ] {
         brawl = brawl.child(
-            pill(u, format!("stats-filter-brawl-{full}"), label, full, m.brawl == value)
+            pill(u, "stats-filter-brawl", format!("stats-filter-brawl-{full}"), label, full, m.brawl == value)
                 .on_press(move |st: &mut State| st.stats.more.brawl = value),
         );
     }

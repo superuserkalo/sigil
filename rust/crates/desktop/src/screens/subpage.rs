@@ -92,7 +92,8 @@ pub fn segmented(u: &Ui, items: Vec<El>) -> El {
     r
 }
 
-/// One option inside `segmented`.
+/// One option inside `segmented` that stands alone (a toggle such as Match case): its own
+/// fill eases on and off.
 pub fn segment(u: &Ui, label: &str, on: bool) -> El {
     crate::motion::colors(row())
         .h(26.0)
@@ -111,6 +112,28 @@ pub fn segment(u: &Ui, label: &str, on: bool) -> El {
                 .color(if on { u.ink } else { u.muted })
                 .a11y_hidden(),
         )
+}
+
+/// One choice of the strip `strip` (one pick among its siblings): the selection is a thumb that
+/// glides from the old choice to the new on `motion::base()`, and the labels ease their colour.
+pub fn segment_in(u: &Ui, strip: &str, label: &str, on: bool) -> El {
+    row()
+        .h(26.0)
+        .px(10.0)
+        .center()
+        .radius(crate::ui::r(6.0))
+        .child(crate::ui::seg_thumb(on, &format!("{strip}-thumb"), u.selected, Color::TRANSPARENT, crate::ui::r(6.0)))
+        .hover(if on { Color::TRANSPARENT } else { u.hover })
+        .focusable(true)
+        .role("button")
+        .label(label.to_string())
+        .checked(on)
+        .child(crate::motion::colors(
+            text(label.to_string())
+                .font(BODY)
+                .color(if on { u.ink } else { u.muted })
+                .a11y_hidden(),
+        ))
 }
 
 /// A section title with an optional count, 32 points tall, matching Installed's group heads.
