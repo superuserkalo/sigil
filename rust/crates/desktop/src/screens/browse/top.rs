@@ -976,6 +976,7 @@ fn reason_text(reason: &super::foryou::Reason) -> String {
         Reason::Author(author) => fill(super::tree::tr("More from {}"), &[author]),
         Reason::Category(category) => fill(super::tree::tr("More {}"), &[category]),
         Reason::Rising => super::tree::tr("Rising fast").to_string(),
+        Reason::Explore => super::tree::tr("Something different").to_string(),
     }
 }
 
@@ -1145,6 +1146,24 @@ fn tile(s: &State, u: &Ui, slot: usize, card: &BrowseCard, tw: f32, th: f32, ran
             actions = actions.child(super::quick::button_on_art(u, &state, format!("top-install-{slot}-{id}"), id, &card.name, 28.0, 0.0).grow(1.0).min_w(0.0));
         } else {
             actions = actions.child(spacer());
+        }
+        if why.is_some() {
+            actions = actions.child(
+                el().key(format!("top-less-{slot}-{id}"))
+                    .size(28.0, 28.0)
+                    .center()
+                    .radius(crate::ui::r(4.0))
+                    .fill(Color::BLACK.alpha(0.45))
+                    .border(1.0, white(0.18))
+                    .hover(white(0.10))
+                    .focusable(true)
+                    .role("button")
+                    .label("Not interested")
+                    .help(super::tree::tr("Not interested: show fewer like this"))
+                    .cursor(rune::Cursor::Pointer)
+                    .on_press(move |st: &mut State| super::foryou::dismiss(st, id))
+                    .child(icon(&icons::X, 14.0).color(Color::WHITE).a11y_hidden()),
+            );
         }
         actions = actions.child(
             el().key(format!("top-star-{slot}-{id}"))
@@ -1372,7 +1391,7 @@ mod tests {
         let mut st = state_with(recent, Vec::new());
         let picks: Vec<BrowseCard> = (0..12u64).map(|i| card(if i == 0 { 1 } else { 500 + i }, 40, 30 + i, "Skins", false)).collect();
         let reasons = picks.iter().map(|c| (c.id, crate::screens::browse::foryou::Reason::Hero("Haze".into()))).collect();
-        st.browse_view.shelves.for_you = crate::screens::browse::foryou::ForYou { picks, reasons, personal: true, key: 1 };
+        st.browse_view.shelves.for_you = crate::screens::browse::foryou::ForYou { picks, reasons, personal: true, key: 1, ..Default::default() };
         let p = plan(&st, 4, NOW);
         assert_eq!(p.rows.len(), 2);
         assert_eq!(p.rows[1].title, "For you");

@@ -23,6 +23,12 @@ pub struct Signals {
     pub roots: HashMap<String, f32>,
     /// Mods the player already has or saved: never recommended.
     pub owned: HashSet<u64>,
+    /// Heroes and creators the player waved off ("Not interested"), with how often.
+    pub less_heroes: HashMap<String, u32>,
+    pub less_authors: HashMap<String, u32>,
+    /// How often each mod was already shown in the row without being opened: shown picks
+    /// fade, so the row changes between visits.
+    pub seen: HashMap<u64, u32>,
 }
 
 impl Signals {
@@ -38,6 +44,114 @@ pub enum Reason {
     Author(String),
     Category(String),
     Rising,
+    /// A well liked mod from outside the player's usual taste, so the row can learn.
+    Explore,
+}
+
+/// What the row remembers between runs, in Sigil's data folder on this PC only.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Memory {
+    /// "Not interested": the mod, and the hero and creator it counted against.
+    pub dismissed: Vec<Dismissed>,
+    /// Mod id to how often it was shown and when last (Unix seconds).
+    pub seen: HashMap<u64, (u32, i64)>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Dismissed {
+    pub id: u64,
+    pub hero: String,
+    pub author: String,
+}
+
+const FILE_NAME: &str = "for-you.json";
+/// A shown pick counts for a week, then half as much each further week.
+const SEEN_HALF_LIFE: i64 = 7 * 24 * 60 * 60;
+const MAX_DISMISSED: usize = 500;
+const MAX_SEEN: usize = 2000;
+
+impl Memory {
+    pub fn load() -> Memory {
+        if rune::is_headless() || cfg!(test) {
+            return Memory::default();
+        }
+        std::fs::read_to_string(crate::data::data_dir().join(FILE_NAME)).ok().map(|text| Memory::from_json(&text)).unwrap_or_default()
+    }
+
+    /// Read the saved form. Anything unreadable is skipped: a damaged file is an empty memory.
+    pub fn from_json(text: &str) -> Memory {
+        let mut memory = Memory::default();
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(text) else { return memory };
+        for d in value["dismissed"].as_array().into_iter().flatten().take(MAX_DISMISSED) {
+            if let Some(id) = d["id"].as_u64() {
+                memory.dismissed.push(Dismissed {
+                    id,
+                    hero: d["hero"].as_str().unwrap_or("").chars().take(80).collect(),
+                    author: d["author"].as_str().unwrap_or("").chars().take(80).collect(),
+                });
+            }
+        }
+        for s in value["seen"].as_array().into_iter().flatten().take(MAX_SEEN) {
+            if let (Some(id), Some(count), Some(last)) = (s[0].as_u64(), s[1].as_u64(), s[2].as_i64()) {
+                memory.seen.insert(id, (count.min(1000) as u32, last));
+            }
+        }
+        memory
+    }
+
+    pub fn to_json(&self) -> String {
+        let dismissed: Vec<serde_json::Value> =
+            self.dismissed.iter().map(|d| serde_json::json!({ "id": d.id, "hero": d.hero, "author": d.author })).collect();
+        let mut seen: Vec<(u64, u32, i64)> = self.seen.iter().map(|(&id, &(count, last))| (id, count, last)).collect();
+        seen.sort_unstable();
+        serde_json::json!({ "dismissed": dismissed, "seen": seen }).to_string()
+    }
+
+    /// Write through a temporary sibling. Headless runs and unit tests write nothing.
+    pub fn save(&self) {
+        if rune::is_headless() || cfg!(test) {
+            return;
+        }
+        let dir = crate::data::data_dir();
+        let text = self.to_json();
+        let _ = std::fs::create_dir_all(&dir);
+        let partial = dir.join(format!("{FILE_NAME}.{}.tmp", std::process::id()));
+        if std::fs::write(&partial, text).is_ok() && std::fs::rename(&partial, dir.join(FILE_NAME)).is_err() {
+            let _ = std::fs::remove_file(&partial);
+        }
+    }
+
+    /// The count a shown mod still carries at `now`.
+    pub fn seen_now(&self, id: u64, now: i64) -> u32 {
+        let Some(&(count, last)) = self.seen.get(&id) else { return 0 };
+        let weeks = ((now - last).max(0) / SEEN_HALF_LIFE).min(16) as u32;
+        count >> weeks
+    }
+
+    /// The player saw these picks: count them once.
+    pub fn note_shown(&mut self, ids: &[u64], now: i64) {
+        for &id in ids {
+            let count = self.seen_now(id, now);
+            self.seen.insert(id, (count.saturating_add(1), now));
+        }
+        if self.seen.len() > MAX_SEEN {
+            let mut by_age: Vec<(u64, i64)> = self.seen.iter().map(|(&id, &(_, last))| (id, last)).collect();
+            by_age.sort_by_key(|&(_, last)| last);
+            for (id, _) in by_age.into_iter().take(self.seen.len() - MAX_SEEN) {
+                self.seen.remove(&id);
+            }
+        }
+    }
+
+    pub fn dismiss(&mut self, card: &BrowseCard) {
+        if self.dismissed.iter().any(|d| d.id == card.id) {
+            return;
+        }
+        self.dismissed.push(Dismissed { id: card.id, hero: leaf(&card.category), author: card.author.to_lowercase() });
+        if self.dismissed.len() > MAX_DISMISSED {
+            self.dismissed.remove(0);
+        }
+    }
 }
 
 #[derive(Clone, Default)]
@@ -48,6 +162,10 @@ pub struct ForYou {
     pub personal: bool,
     /// What the picks were worked out from, so they are redone only when that changes.
     pub key: u64,
+    pub memory: Memory,
+    /// The memory was read from disk, and this run's first picks were counted as shown.
+    pub loaded: bool,
+    pub counted: bool,
 }
 
 fn leaf(category: &str) -> String {
@@ -127,6 +245,23 @@ pub fn signals(s: &State) -> Signals {
         *sig.heroes.entry(hero).or_default() += 0.4 * weight;
     }
     scale(&mut sig.heroes);
+    let memory = &s.browse_view.shelves.for_you.memory;
+    let now = deadlock_core::gamebanana::now_unix();
+    for d in &memory.dismissed {
+        sig.owned.insert(d.id);
+        if !d.hero.is_empty() {
+            *sig.less_heroes.entry(d.hero.clone()).or_default() += 1;
+        }
+        if !d.author.is_empty() {
+            *sig.less_authors.entry(d.author.clone()).or_default() += 1;
+        }
+    }
+    for &id in memory.seen.keys() {
+        let count = memory.seen_now(id, now);
+        if count > 0 {
+            sig.seen.insert(id, count);
+        }
+    }
     // Categories as shares, so one stray mod does not count like a habit.
     let total: f32 = roots.values().sum();
     if total > 0.0 {
@@ -169,7 +304,12 @@ pub fn rank(candidates: &[BrowseCard], sig: &Signals, now: i64) -> (Vec<BrowseCa
             if hero <= 0.0 && author <= 0.0 && category < 0.15 {
                 continue;
             }
-            let score = quality(c, top_likes, now) * (1.0 + 2.0 * hero + 1.0 * author + 0.5 * category);
+            // "Not interested" turns a hero or creator down a step each time; a pick already
+            // shown and passed over fades.
+            let less = 0.6f32.powi(sig.less_heroes.get(&hero_name).copied().unwrap_or(0).min(4) as i32)
+                * 0.4f32.powi(sig.less_authors.get(&author_name).copied().unwrap_or(0).min(3) as i32);
+            let tired = 0.8f32.powi(sig.seen.get(&c.id).copied().unwrap_or(0).min(8) as i32);
+            let score = quality(c, top_likes, now) * (1.0 + 2.0 * hero + 1.0 * author + 0.5 * category) * less * tired;
             let reason = if 2.0 * hero >= author && hero > 0.0 {
                 Reason::Hero(c.category.rsplit('/').next().unwrap_or("").trim().to_string())
             } else if author > 0.0 {
@@ -222,6 +362,33 @@ pub fn rank(candidates: &[BrowseCard], sig: &Signals, now: i64) -> (Vec<BrowseCa
         reasons.insert(card.id, reason);
         picks.push(super::store::clone_card(card));
     }
+    // Exploration: two of every eight are well liked mods from outside the player's taste, so
+    // the row is not a closed loop and Sigil can learn what else they like. The choice moves
+    // with the day and skips what was waved off or shown often.
+    if personal {
+        let day = (now / 86_400) as u64;
+        let mut outside: Vec<&BrowseCard> = pool
+            .iter()
+            .copied()
+            .filter(|c| c.likes >= 20 && !reasons.contains_key(&c.id))
+            .filter(|c| !sig.heroes.contains_key(&leaf(&c.category)) && !sig.authors.contains_key(&c.author.to_lowercase()))
+            .filter(|c| !sig.less_heroes.contains_key(&leaf(&c.category)) && sig.seen.get(&c.id).copied().unwrap_or(0) < 3)
+            .collect();
+        outside.sort_by(|a, b| quality(b, top_likes, now).total_cmp(&quality(a, top_likes, now)).then(a.id.cmp(&b.id)));
+        outside.truncate(30);
+        // A different order each day, the same within a day so the row does not flicker.
+        outside.sort_by_key(|c| c.id.wrapping_mul(0x9E37_79B9_7F4A_7C15).rotate_left((day % 63) as u32) ^ day);
+        let mut at = 3;
+        for card in outside {
+            if at > picks.len() {
+                break;
+            }
+            reasons.insert(card.id, Reason::Explore);
+            picks.insert(at, super::store::clone_card(card));
+            at += 4;
+        }
+        picks.truncate(KEEP);
+    }
     (picks, reasons, personal)
 }
 
@@ -238,6 +405,8 @@ fn key_of(s: &State) -> u64 {
         (addon.slot, addon.enabled).hash(&mut h);
     }
     s.stats.snapshot.as_ref().map(|snap| snap.heroes.iter().map(|x| x.matches_played).sum::<u64>()).hash(&mut h);
+    // A dismissal redoes the row; being shown does not (the row must hold still while open).
+    v.shelves.for_you.memory.dismissed.len().hash(&mut h);
     h.finish()
 }
 
@@ -245,6 +414,10 @@ fn key_of(s: &State) -> u64 {
 pub fn refresh(st: &mut State) -> bool {
     if st.browse_view.shelves.feeds.is_none() && st.browse_view.mirror.is_none() {
         return false;
+    }
+    if !st.browse_view.shelves.for_you.loaded {
+        st.browse_view.shelves.for_you.memory = Memory::load();
+        st.browse_view.shelves.for_you.loaded = true;
     }
     let key = key_of(st);
     if st.browse_view.shelves.for_you.key == key {
@@ -272,8 +445,31 @@ pub fn refresh(st: &mut State) -> bool {
         );
     }
     let (picks, reasons, personal) = rank(&candidates, &sig, deadlock_core::gamebanana::now_unix());
-    st.browse_view.shelves.for_you = ForYou { picks, reasons, personal, key };
+    let fy = &mut st.browse_view.shelves.for_you;
+    fy.picks = picks;
+    fy.reasons = reasons;
+    fy.personal = personal;
+    fy.key = key;
+    // Once per run, the first page of picks counts as shown, so the next run leads with others.
+    if !fy.counted && fy.picks.len() >= 4 {
+        fy.counted = true;
+        let shown: Vec<u64> = fy.picks.iter().take(5).map(|c| c.id).collect();
+        fy.memory.note_shown(&shown, deadlock_core::gamebanana::now_unix());
+        let memory = fy.memory.clone();
+        std::thread::spawn(move || memory.save());
+    }
     true
+}
+
+/// "Not interested" on a tile: the mod leaves the row for good and its hero and creator count
+/// for less. The row is redone on the next poll.
+pub fn dismiss(st: &mut State, id: u64) {
+    let fy = &mut st.browse_view.shelves.for_you;
+    let Some(card) = fy.picks.iter().find(|c| c.id == id).map(super::store::clone_card) else { return };
+    fy.memory.dismiss(&card);
+    fy.picks.retain(|c| c.id != id);
+    let memory = fy.memory.clone();
+    std::thread::spawn(move || memory.save());
 }
 
 #[cfg(test)]
@@ -317,8 +513,11 @@ mod tests {
         let (picks, reasons, personal) = rank(&pool(), &sig, NOW);
         assert!(personal);
         assert_eq!(leaf(&picks[0].category), "haze");
-        assert!(picks.iter().take(8).all(|c| ["haze", "paradox"].contains(&leaf(&c.category).as_str())), "top picks are for played heroes");
-        assert!(picks.iter().all(|c| leaf(&c.category) != "abrams"), "no mods for a hero they do not play");
+        // Apart from the exploration slots, every pick is for a hero they play.
+        let matched: Vec<&BrowseCard> = picks.iter().filter(|c| reasons[&c.id] != Reason::Explore).collect();
+        assert!(matched.len() >= 6);
+        assert!(matched.iter().all(|c| ["haze", "paradox"].contains(&leaf(&c.category).as_str())), "matched picks are for played heroes");
+        assert!(picks.iter().take(8).filter(|c| reasons[&c.id] == Reason::Explore).count() <= 2, "at most two of the first eight explore");
         assert_eq!(reasons[&picks[0].id], Reason::Hero("Haze".into()));
     }
 
@@ -374,6 +573,48 @@ mod tests {
         assert_eq!(picks[0].id, 1, "60 likes in a day beats 90 in twelve");
         assert!(picks.iter().all(|c| NOW - c.added_ts <= 14 * 24 * 60 * 60));
         assert_eq!(reasons[&1], Reason::Rising);
+    }
+
+    /// "Not interested" removes the mod and turns its hero down; shown picks fade; a couple
+    /// of slots go to good mods from outside the player's taste.
+    #[test]
+    fn the_row_learns_and_explores() {
+        let mut sig = Signals::default();
+        sig.heroes.insert("haze".into(), 1.0);
+        sig.heroes.insert("paradox".into(), 0.9);
+        let (before, reasons, _) = rank(&pool(), &sig, NOW);
+        let explored: Vec<&BrowseCard> = before.iter().filter(|c| reasons[&c.id] == Reason::Explore).collect();
+        assert!((1..=6).contains(&explored.len()), "{} exploration picks", explored.len());
+        assert!(explored.iter().all(|c| !["haze", "paradox"].contains(&leaf(&c.category).as_str())));
+        assert_ne!(reasons[&before[0].id], Reason::Explore, "the lead is always a match");
+        // Waving Haze off three times puts Paradox in front.
+        sig.less_heroes.insert("haze".into(), 3);
+        let (after, _, _) = rank(&pool(), &sig, NOW);
+        assert_eq!(leaf(&after[0].category), "paradox");
+        // A pick shown many times gives way to one that was not.
+        let mut sig = Signals::default();
+        sig.heroes.insert("haze".into(), 1.0);
+        let (fresh, _, _) = rank(&pool(), &sig, NOW);
+        sig.seen.insert(fresh[0].id, 6);
+        let (tired, _, _) = rank(&pool(), &sig, NOW);
+        assert_ne!(tired[0].id, fresh[0].id);
+    }
+
+    /// What was shown counts for a week and then halves; a dismissal is remembered once.
+    #[test]
+    fn memory_fades_and_keeps_dismissals() {
+        let mut m = Memory::default();
+        m.note_shown(&[5, 5, 6], NOW);
+        assert_eq!(m.seen_now(5, NOW), 2);
+        assert_eq!(m.seen_now(5, NOW + 8 * 24 * 60 * 60), 1);
+        assert_eq!(m.seen_now(5, NOW + 30 * 24 * 60 * 60), 0);
+        let c = card(9, "Skins / Haze", "Maker", 50, 3);
+        m.dismiss(&c);
+        m.dismiss(&c);
+        assert_eq!(m.dismissed, vec![Dismissed { id: 9, hero: "haze".into(), author: "maker".into() }]);
+        // It survives a save and a load, and a damaged file is simply empty.
+        assert_eq!(Memory::from_json(&m.to_json()), m);
+        assert_eq!(Memory::from_json("not json"), Memory::default());
     }
 
     /// A barely liked mod is never a recommendation, however well it matches.
