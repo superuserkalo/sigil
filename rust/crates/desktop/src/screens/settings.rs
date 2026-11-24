@@ -1969,14 +1969,7 @@ fn appearance(s: &State, u: &Ui) -> El {
             s.prefs.reduce_motion,
             |st| prefs::edit(st, |p| p.reduce_motion = !p.reduce_motion),
         ),
-        toggle_row(
-            u,
-            "settings-transparent-sidebar",
-            "Transparent sidebar",
-            "The sidebar sits on the page background, without its own panel.",
-            s.prefs.transparent_sidebar,
-            |st| prefs::edit(st, |p| p.transparent_sidebar = !p.transparent_sidebar),
-        ),
+        glass_row(s, u),
         toggle_row(
             u,
             "settings-status-bar",
@@ -1994,6 +1987,32 @@ fn appearance(s: &State, u: &Ui) -> El {
     c.child(section(u, "Accent", accent_rows))
         .child(section(u, "Display", interface))
         .child(personalize::view(s, u))
+}
+
+/// Settings > Appearance > Transparent sidebar: a switch that does something now, a switch that
+/// says it applies after a restart, or the reason the system cannot show glass.
+fn glass_row(s: &State, u: &Ui) -> El {
+    use crate::glass::{Row, Why};
+    const KEY: &str = "settings-transparent-sidebar";
+    const TITLE: &str = "Transparent sidebar";
+    let press = |st: &mut State| prefs::edit(st, |p| p.transparent_sidebar = !p.transparent_sidebar);
+    let on = s.prefs.transparent_sidebar;
+    match crate::glass::row_state(on) {
+        Row::Ready => toggle_row(u, KEY, TITLE, "Frosted glass: the desktop shows through the sidebar, blurred.", on, press),
+        Row::Restart => toggle_row(u, KEY, TITLE, "Applies after restart.", on, press),
+        Row::Unavailable(why) => {
+            let line = match why {
+                Why::Platform => "Needs Windows 10 or 11, or macOS.",
+                Why::OldWindows => "This version of Windows has no see-through windows.",
+                Why::TransparencyOff => "Transparency effects are off in Windows settings.",
+                Why::HighContrast => "Off while a high contrast setting is on.",
+                Why::Remote => "Off in a remote desktop session.",
+                Why::Surface => "The graphics driver cannot draw a see-through window.",
+                Why::Refused => "Windows refused the glass effect for this window.",
+            };
+            setting_row(u, KEY, TITLE, detail(u, line), status_word(u, "Not available", false))
+        }
+    }
 }
 
 /// The width a column of row controls shares (segmented and select), so their left edges

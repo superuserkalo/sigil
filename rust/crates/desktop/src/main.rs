@@ -15,6 +15,7 @@ mod banner;
 mod data;
 mod deeplink;
 mod forge;
+mod glass;
 mod helpers;
 mod icons;
 mod jobs;
@@ -81,6 +82,9 @@ fn main() -> std::process::ExitCode {
                 .concat()
                 .into_boxed_slice(),
         );
+    // Settings > Appearance > Transparent sidebar: a see-through window only when the setting
+    // is on at launch and the system can show glass (`glass.rs`).
+    let glass = glass::launch(prefs::Prefs::load().transparent_sidebar);
     let sigil = rune::App::new(AppSpec::<State> {
         scenes,
         setup: Some(app::setup),
@@ -90,6 +94,7 @@ fn main() -> std::process::ExitCode {
         ..AppSpec::new("Sigil", (1360.0, 860.0), data::init_state, app::view)
     })
     .titlebar(rune::Titlebar::new(ui::TITLEBAR_H))
+    .window_options(rune::WindowOptions { transparent: glass, ..Default::default() })
     // The tray owns the close only when "Close to tray" is on; otherwise on_close quits as before.
     .keep_running()
     .on_close(screens::settings::tray::on_close)
@@ -99,10 +104,17 @@ fn main() -> std::process::ExitCode {
     .on_window(|window| {
         shell::remember_window(window);
         screens::crosshair::remember_window(window);
+        glass::on_window(window);
     })
+    // Once: whether the GPU surface really composites the glass's see-through pixels.
+    .on_frame_drawn(|rt| glass::frame_drawn(rt.transparent))
     .on_open_url(deeplink::on_open_url);
     screens::settings::tray::install(sigil.handle());
     single_instance::attach(sigil.handle());
+    {
+        let handle = sigil.handle();
+        glass::set_waker(move || handle.wake());
+    }
     sigil.run();
     // Reached only when Rune exits in order or the window never opened; `on_quit` covers a normal quit.
     screens::settings::crash::end();
@@ -115,5 +127,5 @@ fn poll(s: &mut State, t: f64, tx: &mut rune::Tx) -> bool {
     let changed = app::poll(s, t, tx);
     // The 3D viewer's render threads: loaded, failed, a picture saved.
     let viewer = viewer::poll(s);
-    deeplink::poll(s) || changed || viewer
+    deeplink::poll(s) || changed || viewer || glass::take_dirty()
 }

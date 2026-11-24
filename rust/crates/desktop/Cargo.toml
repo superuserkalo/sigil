@@ -36,5 +36,6 @@ rodio = { version = "0.23", default-features = false, features = ["playback", "m
 # "Install with Sigil" links (src/deeplink.rs): the per-user HKCU\Software\Classes\sigil handler.
 # The same windows-sys Rune already links; no new crate. Diagnostics_Debug, Kernel, Storage,
 # IO and SystemInformation are for Sigil's own crash detection (screens/settings/crash.rs).
+# Graphics_Dwm, UI_Controls and UI_Accessibility are for the glass sidebar (src/glass.rs).
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Security", "Win32_System_Registry", "Win32_System_ProcessStatus", "Win32_System_Threading", "Win32_System_Memory", "Win32_System_LibraryLoader", "Win32_UI_WindowsAndMessaging", "Win32_Graphics_Gdi", "Win32_UI_HiDpi", "Win32_System_Diagnostics_Debug", "Win32_System_Kernel", "Win32_Storage_FileSystem", "Win32_System_IO", "Win32_System_SystemInformation"] }
+windows-sys = { version = "0.59", features = ["Win32_Graphics_Dwm", "Win32_UI_Controls", "Win32_UI_Accessibility", "Win32_Foundation", "Win32_Security", "Win32_System_Registry", "Win32_System_ProcessStatus", "Win32_System_Threading", "Win32_System_Memory", "Win32_System_LibraryLoader", "Win32_UI_WindowsAndMessaging", "Win32_Graphics_Gdi", "Win32_UI_HiDpi", "Win32_System_Diagnostics_Debug", "Win32_System_Kernel", "Win32_Storage_FileSystem", "Win32_System_IO", "Win32_System_SystemInformation"] }

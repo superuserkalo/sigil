@@ -291,6 +291,7 @@ fn diagnostics_parts(st: &State) -> (String, String) {
         format!("Game found: {}", st.game_detected),
         format!("Mods: {} installed, {} on", st.addons.addons.len(), st.addons.enabled_count()),
         format!("Offline mode: {}", st.prefs.offline),
+        crate::glass::report(),
     ]
     .join("\n");
     (telemetry::scrub(&summary), telemetry::scrub(&super::log::tail(400)))

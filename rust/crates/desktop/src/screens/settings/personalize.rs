@@ -230,9 +230,9 @@ pub fn backdrop(s: &State, u: &Ui, _window: (f32, f32)) -> Option<El> {
         );
     }
     if p.glow.on {
-        // The glow starts where the page does unless the sidebar lets it through.
-        let open_sidebar = s.prefs.transparent_sidebar
-            || (p.background.sidebar && image.is_some());
+        // The glow starts where the page does unless the image runs under the sidebar. A glass
+        // sidebar shows the system's backdrop, not the glow.
+        let open_sidebar = p.background.sidebar && image.is_some();
         let left = if open_sidebar { 0.0 } else { side_w(s) };
         layer = layer.child(
             el().key("personal-glow")
@@ -337,18 +337,17 @@ fn bake_glow(from: Color, to: Color, alpha: f32, reach: f32) -> Vec<u8> {
     out
 }
 
-/// The sidebar's fill. A background image that reaches under the sidebar shows through it.
+/// The sidebar's fill. On glass, the tint over the system's backdrop (`glass.rs`). A
+/// background image that reaches under the sidebar shows through it.
 pub fn sidebar_fill(s: &State, u: &Ui) -> Color {
+    if let Some(kind) = crate::glass::live(s.prefs.transparent_sidebar) {
+        return u.glass(kind.tinted()).tint;
+    }
     let p = &s.prefs.personal;
-    let base = if s.prefs.transparent_sidebar { u.bg } else { u.sidebar };
     if p.background.on && p.background.sidebar && pixels(s, background_path(p)).is_some() {
-        if s.prefs.transparent_sidebar {
-            Color::TRANSPARENT
-        } else {
-            base.alpha(0.62)
-        }
+        u.sidebar.alpha(0.62)
     } else {
-        base
+        u.sidebar
     }
 }
 
@@ -430,8 +429,8 @@ pub fn tab_art(s: &State, u: &Ui, item: El, on: bool) -> El {
     }
 }
 
-fn sidebar_base(s: &State, u: &Ui) -> Color {
-    if s.prefs.transparent_sidebar { u.bg } else { u.sidebar }
+fn sidebar_base(_s: &State, u: &Ui) -> Color {
+    u.sidebar
 }
 
 /// Art behind a launch button.

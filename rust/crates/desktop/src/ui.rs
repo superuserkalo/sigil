@@ -168,6 +168,25 @@ pub struct Ui {
     pub light: bool,
 }
 
+/// The glass sidebar's tint: the sidebar colour at this opacity over the system backdrop.
+/// Over Mica or vibrancy, which carry their own dark or light tint, and over a plain blur,
+/// which shows the wallpaper as it is. `glass::tests` holds every text tier to AA over the
+/// brightest (dark) or darkest (light) backdrop each can show.
+pub const GLASS_TINT_DARK: f32 = 0.60;
+pub const GLASS_TINT_DARK_BLUR: f32 = 0.88;
+pub const GLASS_TINT_LIGHT: f32 = 0.45;
+pub const GLASS_TINT_LIGHT_BLUR: f32 = 0.80;
+
+/// The sidebar's colours on glass (`Ui::glass`).
+#[derive(Clone, Copy, Debug)]
+pub struct Glass {
+    pub tint: Color,
+    /// The 1 point inner highlight on the sidebar's right edge.
+    pub edge: Color,
+    pub hover: Color,
+    pub selected: Color,
+}
+
 /// The palettes Settings offers. Dark is the original Sigil look; the rest keep its structure
 /// (near flat layers, hairlines, one accent) and change the neutrals.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
@@ -769,6 +788,32 @@ impl Ui {
             scrim: Color::BLACK.alpha(0.6),
             light: false,
         }
+    }
+
+    /// The sidebar's look over a system backdrop (Settings > Appearance > Transparent sidebar).
+    /// `tinted`: the material brings its own tint (Mica, vibrancy); a plain blur does not, so
+    /// the tint is denser over it.
+    pub fn glass(&self, tinted: bool) -> Glass {
+        let a = match (self.light, tinted) {
+            (false, true) => GLASS_TINT_DARK,
+            (false, false) => GLASS_TINT_DARK_BLUR,
+            (true, true) => GLASS_TINT_LIGHT,
+            (true, false) => GLASS_TINT_LIGHT_BLUR,
+        };
+        Glass {
+            tint: self.sidebar.alpha(a),
+            // A 1 point line inside the right edge: light catching the pane's edge on a dark
+            // theme, a hairline on a light one.
+            edge: if self.light { Color::BLACK.alpha(0.09) } else { Color::WHITE.alpha(0.10) },
+            hover: self.over.alpha(if self.light { 0.06 } else { 0.07 }),
+            selected: self.over.alpha(if self.light { 0.10 } else { 0.12 }),
+        }
+    }
+
+    /// This palette for the parts drawn on glass: hover and selected fills a step stronger, so
+    /// they still read over a busy backdrop.
+    pub fn on_glass(&self, glass: &Glass) -> Ui {
+        Ui { hover: glass.hover, selected: glass.selected, ..*self }
     }
 
     /// A quiet section label in sentence case. Kept for old call sites; prefer `section`.

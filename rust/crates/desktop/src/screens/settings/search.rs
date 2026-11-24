@@ -60,7 +60,7 @@ pub const INDEX: &[Entry] = &[
     e(Tab::Appearance, "Accent colour", "The colour of the main action and switches.", "accent color colour custom hex"),
     e(Tab::Appearance, "Interface size", "Scales text, icons and spacing.", "zoom scale font size"),
     e(Tab::Appearance, "Reduce motion", "Menus, drawers and selections change at once.", "animation motion fade slide accessibility"),
-    e(Tab::Appearance, "Transparent sidebar", "The sidebar sits on the page background.", "sidebar background"),
+    e(Tab::Appearance, "Transparent sidebar", "The desktop shows through the sidebar, blurred.", "sidebar background glass blur frosted mica acrylic vibrancy see-through"),
     e(Tab::Appearance, "Status bar", "A quiet line under every page.", "bottom bar footer downloads volume catalog profile"),
     // Integrations
     e(Tab::Integrations, "Discord Rich Presence", "Shows what you do in Sigil on Discord.", "discord rpc status activity"),

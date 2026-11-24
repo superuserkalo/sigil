@@ -1157,6 +1157,10 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
     // Reduce motion: the system setting, or Settings > Appearance. Every motion token reads it.
     crate::motion::set_reduced(cx.is_reduced_motion() || s.prefs.reduce_motion);
     let u = Ui::new();
+    // Transparent sidebar: glass behind the sidebar when the system shows it, solid otherwise.
+    crate::glass::set_contrast(cx.system_increased_contrast());
+    let glass = crate::glass::live(s.prefs.transparent_sidebar);
+    crate::glass::sync(s.prefs.transparent_sidebar, glass, !u.light);
     cx.foreground(u.ink);
     cx.caption_color(u.muted);
     cx.focus_ring(crate::ui::FOCUS_W, crate::ui::FOCUS_GAP, u.accent);
@@ -1209,7 +1213,8 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
     let mut root = crate::motion::root(row().key("root"))
         .w_full()
         .h_full()
-        .fill(u.bg)
+        // Under glass the window is see-through: the pages get their own ground below.
+        .fill(if glass.is_some() { Color::TRANSPARENT } else { u.bg })
         // Files dropped on a page without its own target import from anywhere in the window.
         .accepts_extensions(&crate::shell::MODS)
         .on_drop_files(|st: &mut State, files: &[PathBuf], _tx: &mut Tx| {
@@ -1227,6 +1232,8 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
         .on_window_focus(|st: &mut State, focused: bool, _tx: &mut Tx| {
             if focused {
                 crate::banner::recheck(st);
+                // Windows' transparency effects may have changed meanwhile.
+                crate::glass::recheck();
             }
         })
         .child(sidebar(s, &u, insets))
@@ -1246,6 +1253,21 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
                 None => main,
             }
         });
+    if glass.is_some() {
+        // The pages' opaque ground, under the Personalize backdrop; only the sidebar is glass.
+        let left = crate::shell_w4::sidebar_width(s, insets.leading);
+        root = root.child(
+            el().key("page-ground")
+                .pin(Some(left), Some(0.0), Some(0.0), Some(0.0))
+                .fill(u.bg)
+                .paint_order(-2)
+                .a11y_hidden(),
+        );
+        // A scene previews the glass over a painted wallpaper (headless only).
+        if let Some(kind) = crate::glass::preview() {
+            root = root.child(glass_wallpaper(window, kind, u.light));
+        }
+    }
     // Personalize: the background image and glow, painted under the sidebar and pages.
     if let Some(backdrop) = screens::settings::personalize::backdrop(s, &u, window) {
         root = root.child(backdrop);
@@ -1388,7 +1410,39 @@ pub fn under_agent(screen: Screen) -> bool {
     )
 }
 
+/// The scene preview's stand-in for the desktop behind the window: white, a bright yellow, a
+/// saturated blue and a dark green from top to bottom, the worst a wallpaper does to text on
+/// glass. Under Mica or vibrancy the system's own tint (dark or light, as Sigil's theme) veils it.
+fn glass_wallpaper(window: (f32, f32), kind: crate::glass::Backdrop, light: bool) -> El {
+    let veil = if kind.tinted() {
+        if light { Color::WHITE.alpha(0.55) } else { rune::oklch(0.2, 0.0, 0.0).alpha(0.65) }
+    } else {
+        Color::TRANSPARENT
+    };
+    el().key("glass-wallpaper")
+        .absolute(0.0, 0.0)
+        .size(window.0, window.1)
+        .paint_order(-3)
+        .linear_gradient(
+            std::f32::consts::PI,
+            [
+                (0.0, Color::WHITE),
+                (0.35, rune::oklch(0.9, 0.15, 95.0)),
+                (0.65, rune::oklch(0.55, 0.2, 260.0)),
+                (1.0, rune::oklch(0.25, 0.05, 160.0)),
+            ],
+        )
+        .child(el().pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0)).fill(veil))
+        .a11y_hidden()
+}
+
 fn sidebar(s: &State, u: &Ui, insets: rune::ChromeInsets) -> El {
+    // On glass: the tint over the system's backdrop, a 1 point highlight inside the right edge,
+    // and hover and selected fills a step stronger.
+    let kind = crate::glass::live(s.prefs.transparent_sidebar);
+    let glass = kind.map(|k| u.glass(k.tinted()));
+    let on_glass = glass.map(|g| u.on_glass(&g));
+    let u = on_glass.as_ref().unwrap_or(u);
     let mut nav = col().key("nav").w_full().px(8.0).gap(2.0);
     for screen in PLACES {
         // Settings > General > Pages turns a page off; it leaves the sidebar and its route.
@@ -1465,7 +1519,17 @@ fn sidebar(s: &State, u: &Ui, insets: rune::ChromeInsets) -> El {
         .w(crate::shell_w4::sidebar_width(s, insets.leading))
         .h_full()
         .fill(screens::settings::personalize::sidebar_fill(s, u))
-        .border_sides([0.0, 1.0, 0.0, 0.0], u.hair)
+        .border_sides([0.0, 1.0, 0.0, 0.0], glass.map_or(u.hair, |g| g.edge))
+        .children((kind == Some(crate::glass::Backdrop::Vibrancy)).then(|| {
+            // macOS: the vibrancy view under the sidebar. Where no native view backs it (an
+            // opaque window, a headless render) it draws the solid sidebar instead.
+            el().key("sidebar-material")
+                .pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0))
+                .paint_order(-1)
+                .system_material(rune::SystemMaterial::Popover)
+                .fill(u.sidebar)
+                .a11y_hidden()
+        }))
         .children((lights_row && !collapsed).then(|| {
             // The traffic lights and the collapse button, on the titlebar's band.
             row()
@@ -2596,6 +2660,24 @@ fn scene_settings_confirm(s: &mut State) {
     ));
 }
 
+/// Transparent sidebar over a painted wallpaper: Mica's look on Windows 11 (`glass.rs`).
+fn scene_glass_sidebar(s: &mut State) {
+    scene_demo_installed(s);
+    s.prefs.transparent_sidebar = true;
+    crate::glass::set_preview(Some(crate::glass::Backdrop::Mica));
+}
+
+/// The Windows 10 blur: no system tint, Sigil's denser one.
+fn scene_glass_sidebar_blur(s: &mut State) {
+    scene_glass_sidebar(s);
+    crate::glass::set_preview(Some(crate::glass::Backdrop::Blur));
+}
+
+fn scene_glass_sidebar_light(s: &mut State) {
+    scene_glass_sidebar(s);
+    s.prefs.theme = crate::ui::Theme::Light;
+}
+
 fn scene_settings_light(s: &mut State) {
     scene_settings_appearance(s);
     s.prefs.theme = crate::ui::Theme::Light;
@@ -2971,6 +3053,9 @@ pub fn scenes() -> &'static [(&'static str, fn(&mut State))] {
         ("single-launch", scene_single_launch),
         ("settings-confirm", scene_settings_confirm),
         ("settings-light", scene_settings_light),
+        ("glass-sidebar", scene_glass_sidebar),
+        ("glass-sidebar-blur", scene_glass_sidebar_blur),
+        ("glass-sidebar-light", scene_glass_sidebar_light),
         ("parity-game", |s| screens::settings::extra::scene_parity(s, screens::settings::Tab::Game)),
         ("parity-backups", |s| screens::settings::extra::scene_parity(s, screens::settings::Tab::Backups)),
         ("parity-mods", |s| screens::settings::extra::scene_parity(s, screens::settings::Tab::Mods)),

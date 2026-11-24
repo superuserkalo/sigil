@@ -159,7 +159,8 @@ fn hovering_browse_cards_neither_commits_nor_moves() {
 #[test]
 fn core_scenes_come_to_rest() {
     let _globals = crate::ui::test_globals();
-    for name in ["demo-installed", "installed-list", "browse-card-stress", "locker", "stats", "launch-page", "performance"] {
+    // The glass sidebar last: its scene preview is per thread.
+    for name in ["demo-installed", "installed-list", "browse-card-stress", "locker", "stats", "launch-page", "performance", "glass-sidebar"] {
         let mut rt = runtime(name, (1280.0, 800.0));
         let mut awake = 0;
         for _ in 0..120 {
@@ -533,6 +534,8 @@ fn hover_never_commits() {
         ("demo-installed", "-toolbar", 800.0),
         ("settings-general", "settings-", 1400.0),
         ("installed-menu", "menu-", 800.0),
+        // Last: the glass preview is per thread.
+        ("glass-sidebar", "nav-", 800.0),
     ];
     let mut wrong = Vec::new();
     for &(name, part, height) in cases {
