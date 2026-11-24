@@ -174,14 +174,16 @@ pub(crate) fn grid_page(s: &State, u: &Ui) -> El {
                 .px(PAGE_X)
                 .pt(PAGE_TOP)
                 .gap(16.0)
-                .child(
-                    col()
-                        .key("browse-head")
-                        .w_full()
-                        .gap(8.0)
-                        .child(super::toolbar::line(s, u))
-                        .child(super::toolbar::status_row(s, u, &detail)),
-                )
+                .child({
+                    let head = col().key("browse-head").w_full().gap(8.0).child(super::toolbar::line(s, u));
+                    // The landing has no filter chips, and its count would describe the grid
+                    // far below: the row is left out there, unless it carries "Saved copy".
+                    if super::grid::landing_shown(s) && !s.browse_view.from_mirror {
+                        head
+                    } else {
+                        head.child(super::toolbar::status_row(s, u, &detail))
+                    }
+                })
                 .child(body),
         )
 }

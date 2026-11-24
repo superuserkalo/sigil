@@ -222,11 +222,13 @@ pub fn scene_dashboard(s: &mut State) {
         liked.sort_by(|a, b| b.likes.cmp(&a.likes));
         s.browse_view.shelves.feeds = Some(super::shelf::Feeds { recent, liked });
         // Three weekly category picks for the billboard's later slides.
+        // One pick per category, as the weekly picks are.
+        let mut seen = std::collections::HashSet::new();
         let picks: Vec<(String, BrowseCard)> = page
             .mods
             .iter()
-            .filter(|c| c.thumbnail_url.is_some() && !c.nsfw)
-            .take(3)
+            .filter(|c| c.thumbnail_url.is_some() && !c.nsfw && seen.insert(super::top::root_category(c).to_string()))
+            .take(4)
             .map(|c| (super::top::root_category(c).to_string(), super::store::clone_card(c)))
             .collect();
         s.browse_view.w4.featured = picks;

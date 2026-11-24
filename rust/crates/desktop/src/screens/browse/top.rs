@@ -220,7 +220,8 @@ pub fn plan(s: &State, n: usize, now: i64) -> Plan<'_> {
                     _ => "Popular this month",
                 })
                 .to_string(),
-                label: super::tree::tr("Trending").to_string(),
+                // The strip names the slide's category; the eyebrow already says why it leads.
+                label: if t.category.is_empty() { super::tree::tr("Trending").to_string() } else { t.category.clone() },
                 description: t.description.clone(),
                 image: t.image_url.clone(),
             });
@@ -832,7 +833,7 @@ fn strip(s: &State, u: &Ui, picks: &[Slide]) -> El {
                 })
                 .child(el().w_full().h(2.0).radius(1.0).fill(if on { u.ink } else { u.hair_strong }).motion(crate::motion::fast()))
                 .child(
-                    text(p.card.name.to_uppercase())
+                    text(p.label.to_uppercase())
                         .font(super::MICRO_CAPS)
                         .color(if on { u.ink } else { u.muted })
                         .truncate()
@@ -940,7 +941,12 @@ fn tile(s: &State, u: &Ui, slot: usize, card: &BrowseCard, tw: f32, th: f32, ran
     let url = card.thumbnail_url.as_ref();
     let loaded = pixels_for(s, url).is_some();
     let failed = url.is_some_and(|u| s.thumb_crew.failed(u));
-    let left = if rank.is_some() { 84.0 } else { 10.0 };
+    // The title starts after the numeral: one digit, or the wider "10".
+    let left = match rank {
+        Some(10..) => 84.0,
+        Some(_) => 60.0,
+        None => 10.0,
+    };
     let opened = id;
     let mut b = el()
         .key(format!("top-{slot}-{id}"))
@@ -999,11 +1005,13 @@ fn tile(s: &State, u: &Ui, slot: usize, card: &BrowseCard, tw: f32, th: f32, ran
         b = b
             .child(
                 el().pin(Some(0.0), None, Some(0.0), Some(0.0))
-                    .h(80.0)
-                    .linear_gradient(std::f32::consts::PI, [(0.0, Color::BLACK.alpha(0.0)), (0.45, Color::BLACK.alpha(0.55)), (1.0, Color::BLACK.alpha(0.88))])
+                    .h(96.0)
+                    .linear_gradient(std::f32::consts::PI, [(0.0, Color::BLACK.alpha(0.0)), (0.35, Color::BLACK.alpha(0.66)), (1.0, Color::BLACK.alpha(0.94))])
                     .group_opacity(1.0, 0.0)
                     .a11y_hidden(),
             )
+            // A flat band under the two text lines, so busy art never shows through them.
+            .child(el().pin(Some(0.0), None, Some(0.0), Some(0.0)).h(48.0).fill(Color::BLACK.alpha(0.40)).group_opacity(1.0, 0.0).a11y_hidden())
             .child(rest_text(Color::WHITE, Color::WHITE.alpha(0.72)));
     } else {
         // Pending or failed: a finished graphite tile with the title, never a hole.
@@ -1029,7 +1037,6 @@ fn tile(s: &State, u: &Ui, slot: usize, card: &BrowseCard, tw: f32, th: f32, ran
                 text(rank.to_string())
                     .font(RANK)
                     .color(Color::WHITE)
-                    .w(72.0)
                     .pin(Some(8.0), None, None, Some(0.0))
                     .a11y_hidden(),
             );
