@@ -153,7 +153,7 @@ fn intro(u: &Ui) -> El {
                 .w_full()
                 .gap(8.0)
                 .items_start()
-                .child(el().size(4.0, 4.0).mt(8.0).radius(2.0).fill(u.amber).a11y_hidden())
+                .child(el().size(4.0, 4.0).mt(8.0).fill(u.muted).a11y_hidden())
                 .child(text(line).font(SMALL).color(u.prose).grow(1.0).min_w(0.0).wrap()),
         );
     }
@@ -167,17 +167,31 @@ fn intro(u: &Ui) -> El {
                 .wrap(),
         )
         .child(
-            col()
+            // A quiet note, not an alarm: hairline box, the amber only in the icon and a 2 point
+            // bar on its left edge.
+            row()
                 .key("regions-downsides")
                 .w_full()
-                .gap(6.0)
-                .px(14.0)
-                .py(10.0)
-                .radius(crate::ui::r(10.0))
-                .fill(u.amber.alpha(0.06))
-                .border(1.0, u.amber.alpha(0.25))
-                .child(text(tr("Before you block a region")).font(BODY_MED).color(u.ink))
-                .child(downsides),
+                .radius(crate::ui::r(4.0))
+                .clip_rounded(crate::ui::r(4.0))
+                .border(1.0, u.hair)
+                .child(el().w(2.0).self_stretch().fill(u.amber).a11y_hidden())
+                .child(
+                    col()
+                        .grow(1.0)
+                        .min_w(0.0)
+                        .gap(6.0)
+                        .px(12.0)
+                        .py(10.0)
+                        .child(
+                            row()
+                                .gap(8.0)
+                                .center_y()
+                                .child(icon(&icons::TRIANGLE_ALERT, 14.0).color(u.amber).a11y_hidden())
+                                .child(text(tr("Before you block a region")).font(BODY_MED).color(u.ink)),
+                        )
+                        .child(downsides.pl(22.0)),
+                ),
         )
 }
 
@@ -188,7 +202,7 @@ fn not_windows(u: &Ui) -> El {
         .gap(10.0)
         .items_start()
         .padding(14.0)
-        .radius(crate::ui::r(10.0))
+        .radius(crate::ui::r(4.0))
         .fill(u.well)
         .border(1.0, u.hair)
         .child(icon(&icons::INFO, 16.0).color(u.muted).mt(2.0).a11y_hidden())
@@ -309,7 +323,7 @@ fn status(s: &State, u: &Ui) -> El {
         .gap(12.0)
         .items_start()
         .padding(14.0)
-        .radius(crate::ui::r(10.0))
+        .radius(crate::ui::r(4.0))
         .fill(u.well)
         .border(1.0, u.hair)
         .child(el().size(8.0, 8.0).mt(6.0).radius(4.0).fill(tone).a11y_hidden())
@@ -707,32 +721,44 @@ fn action_bar(s: &State, u: &Ui) -> El {
     } else {
         fill(tr("{} changes not applied yet"), &[&changes.to_string()])
     };
-    let mut bar = row()
+    // One fixed 48 point bar. Discard keeps its place while there is nothing to discard, so
+    // the line and Apply never move when the first location is ticked.
+    let line_color = if all {
+        u.rose
+    } else if changes > 0 {
+        u.ink
+    } else {
+        u.muted
+    };
+    row()
         .key("regions-actions")
         .w_full()
-        .gap(10.0)
+        .h(48.0)
+        .gap(8.0)
         .center_y()
-        .px(14.0)
-        .py(10.0)
-        .radius(crate::ui::r(10.0))
+        .px(12.0)
+        .radius(crate::ui::r(4.0))
         .fill(u.well)
         .border(1.0, if all { u.rose.alpha(0.4) } else { u.hair })
-        .child(text(line).font(SMALL).color(if all { u.rose } else { u.muted }).grow(1.0).min_w(0.0).wrap());
-    if changes > 0 {
-        bar = bar.child(
-            u.action(tr("Discard"), ActionKind::Ghost)
-                .key("regions-discard")
-                .cursor(rune::Cursor::Pointer)
-                .on_press(super::discard),
-        );
-    }
-    bar.child(
-        u.icon_action(&icons::SHIELD, tr("Apply"), ActionKind::Primary)
-            .key("regions-apply")
-            .opacity(if can_apply { 1.0 } else { 0.45 })
-            .cursor(if can_apply { rune::Cursor::Pointer } else { rune::Cursor::Default })
-            .on_press(super::ask_apply),
-    )
+        .child(text(line.clone()).font(BODY).color(line_color).grow(1.0).min_w(0.0).truncate().help_when_truncated(line.clone()))
+        .child(
+            crate::motion::dims(
+                u.action_m(tr("Discard"), ActionKind::Secondary)
+                    .key("regions-discard")
+                    .disabled(changes == 0)
+                    .opacity(if changes > 0 { 1.0 } else { 0.0 })
+                    .cursor(rune::Cursor::Pointer)
+                    .on_press(super::discard),
+            ),
+        )
+        .child(
+            u.icon_action_m(&icons::SHIELD, tr("Apply"), ActionKind::Primary)
+                .key("regions-apply")
+                .disabled(!can_apply)
+                .opacity(if can_apply { 1.0 } else { 0.45 })
+                .cursor(if can_apply { rune::Cursor::Pointer } else { rune::Cursor::Default })
+                .on_press(super::ask_apply),
+        )
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -929,7 +955,7 @@ pub fn health_popover(s: &State, u: &Ui, sum: &probe::Summary) -> El {
         .padding(12.0)
         .gap(8.0)
         .fill(u.raised)
-        .radius(crate::ui::r(10.0))
+        .radius(crate::ui::r(4.0))
         .border(1.0, u.hair_strong)
         .shadow(12.0, 32.0, crate::ui::soft(Color::BLACK.alpha(0.5)))
         .anchored("statusbar-relays", rune::Side::Top, rune::Align::Start, 8.0)
