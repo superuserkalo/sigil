@@ -7,18 +7,18 @@
 -- re-built from the Worker's own schema, so it holds only allowlisted fields.
 --
 -- The other tables feed aggregates shown to players and carry the distinct-contributor rule
--- (src/aggregates.ts): `bucket` is 16 hex characters of a hash of the rate limiter's key, which is
--- a hash of the caller address with a salt held only in memory and replaced every UTC day. It is
--- stored on aggregate contributions only, never on `product_events`.
+-- (src/aggregates.ts): `bucket` is 16 hex characters of HMAC-SHA256 of the caller's network
+-- prefix (IPv4 /24, IPv6 /48) under the Worker secret PRODUCT_BUCKET_KEY. The address and the
+-- prefix are never stored. The bucket is kept on aggregate rows only, never on `product_events`.
 --
 -- `product_installs`: when an install was first and last seen, on how many days, and whether it
 --   may count toward aggregates (`eligible`: its bucket was under the daily cap for new installs).
--- `product_buckets`: new installs per bucket and day, for that cap. Deleted after two days.
+-- `product_buckets`: installs per bucket over the whole window, for the cap of 3 that count.
 -- `product_pairs`: one row per install and co-installed mod pair (from `enabled_set`).
 -- `product_keys`: one row per install and aggregate key: mod health, hardware, benchmark scene,
 --   search term.
 --
--- Raw rows (events, installs, pairs, keys) go after 13 months in the daily cron and at once on
+-- Raw rows (events, installs, buckets, pairs, keys) go after 13 months in the daily cron and at once on
 -- POST /v1/product/delete.
 
 CREATE TABLE IF NOT EXISTS product_events (
@@ -50,11 +50,10 @@ CREATE TABLE IF NOT EXISTS product_installs (
 CREATE INDEX IF NOT EXISTS product_installs_updated_at ON product_installs (updated_at);
 
 CREATE TABLE IF NOT EXISTS product_buckets (
-  bucket TEXT NOT NULL,
-  day TEXT NOT NULL,
-  new_installs INTEGER NOT NULL DEFAULT 0,
+  bucket TEXT PRIMARY KEY,
+  installs INTEGER NOT NULL DEFAULT 0,
   created_at INTEGER NOT NULL,
-  PRIMARY KEY (bucket, day)
+  updated_at INTEGER NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS product_pairs (

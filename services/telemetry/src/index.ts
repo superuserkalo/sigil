@@ -93,9 +93,16 @@ const ROUTES: Readonly<Record<string, Route>> = {
   "/v1/product/related": { method: "GET", run: handleRelated },
 };
 
+type ProductSecrets = { readonly PRODUCT_SALT?: string; readonly PRODUCT_BUCKET_KEY?: string };
+
 /** The product salt secret, when the owner set one (`wrangler secret put PRODUCT_SALT`). */
 function productSalt(env: Env): string | undefined {
-  return (env as Env & { readonly PRODUCT_SALT?: string }).PRODUCT_SALT;
+  return (env as Env & ProductSecrets).PRODUCT_SALT;
+}
+
+/** The network bucket key (`wrangler secret put PRODUCT_BUCKET_KEY`). Never in the repo. */
+function bucketKey(env: Env): string | undefined {
+  return (env as Env & ProductSecrets).PRODUCT_BUCKET_KEY;
 }
 
 export default {
@@ -333,12 +340,11 @@ async function handleProduct(request: Request, env: Env): Promise<Response> {
 
   const product = parsed.value;
   const now = Date.now();
-  const who: Contributor = {
-    hash: await installHash(product.installId, productSalt(env)),
-    bucket: await bucketOf(request, now),
-    day: utcDay(now),
-  };
-  await registerInstall(env.DB, who, now);
+  const hash = await installHash(product.installId, productSalt(env));
+  const bucket = await bucketOf(request, bucketKey(env));
+  // Without a bucket (no secret, no address) the records are kept raw and feed no aggregate.
+  const who: Contributor | null = bucket === null ? null : { hash, bucket, day: utcDay(now) };
+  if (who !== null) await registerInstall(env.DB, who, now);
 
   // Raw rows carry the install hash only: no bucket, no address, no user agent.
   const statements: D1PreparedStatement[] = [];
@@ -348,8 +354,9 @@ async function handleProduct(request: Request, env: Env): Promise<Response> {
       env.DB.prepare(
         `INSERT INTO product_events (created_at, install_hash, type, version, os, os_build, game_build, payload)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)`,
-      ).bind(now, who.hash, record.type, product.version, product.os, product.osBuild, product.gameBuild, JSON.stringify(record.fields)),
+      ).bind(now, hash, record.type, product.version, product.os, product.osBuild, product.gameBuild, JSON.stringify(record.fields)),
     );
+    if (who === null) continue;
     for (const [a, b] of pairsOf(record)) {
       // One request writes at most MAX_PAIRS_PER_REQUEST pairs; the app sends one set a session.
       if (pairs >= MAX_PAIRS_PER_REQUEST) break;
@@ -387,7 +394,7 @@ async function handleProductDelete(request: Request, env: Env): Promise<Response
 async function handleRelated(_request: Request, env: Env, url: URL): Promise<Response> {
   const mod = parseRelated(url.searchParams);
   if (mod === null) return errorResponse(400, "bad_mod");
-  return jsonResponse(200, { mods: await related(env.DB, mod) });
+  return jsonResponse(200, { mods: await related(env.DB, bucketKey(env), mod) });
 }
 
 function bodyError(reason: "too_large" | "invalid_utf8" | "invalid_json"): Response {

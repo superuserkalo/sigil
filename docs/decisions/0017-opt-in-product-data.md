@@ -67,25 +67,27 @@ The limits below are what keeps this honest. They are part of the decision, not 
 
 ## Amendment 2026-11-25: counting distinct contributors
 
-An install id is a random id the app makes, so one person can send ten made-up ids. The
+An install id is a random id the app makes, so one person can send many made-up ids. The
 10-install floor therefore counts distinct contributors, not ids (`services/telemetry/src/aggregates.ts`):
 
-- Each request gets a network bucket: a hash of the rate limiter's key, which is a hash of the
-  caller's address with a salt held only in the Worker's memory and replaced every UTC day. The IP
-  address itself is never stored. The bucket id is stored only on aggregate contributions (never on
-  raw events), cannot be linked across days, and is deleted with the contribution after 13 months
-  or on "Delete my data".
-- One bucket may bring at most 3 new installs a day into the aggregates. Extra installs are kept as
-  raw data but never count.
+- Each request gets a network bucket: a keyed hash (HMAC-SHA256 under the Worker secret
+  `PRODUCT_BUCKET_KEY`) of the caller's network prefix, an IPv4 /24 or an IPv6 /48, cut to 16 hex
+  characters. The IP address and the prefix themselves are never stored. The bucket is kept only
+  with the aggregate rows (co-install pairs, aggregate keys, a per-bucket install count), never on
+  raw events, for at most 13 months, and goes at once with "Delete my data" for that install's
+  rows. Without the secret the Worker still stores raw records but writes and publishes no
+  aggregate (fail closed).
+- At most 3 installs per bucket ever count toward an aggregate. Later installs from the same
+  network are kept as raw data only.
 - An install counts only after it has sent data on at least 2 different days.
 - A mod pair, a mod health finding, a hardware class or a search term is shown to players only
   when at least 10 counting installs from at least 6 different buckets on at least 3 different days
-  share it.
+  share it. Every aggregate shown to players goes through this floor (`publishedKeys`, `related`).
 - "Players who use this also use" ranks by a damped score (cosine similarity over support capped at
   3 installs per bucket, times support / (support + 10)), not raw counts, and lists at most 20.
 
-A patient person on one network can still reach the floor over about a week, and a person with
-many networks sooner. The rule raises the cost of poisoning; it does not make it impossible.
+A person who controls six or more networks can still reach the floor. The rule raises the cost of
+poisoning; it does not make it impossible.
 
 ## Consequences
 
