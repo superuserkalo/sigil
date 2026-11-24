@@ -38,6 +38,8 @@ pub mod locales_upstream;
 pub mod sources;
 pub mod support;
 pub mod tabs;
+pub mod product;
+mod locales_product;
 pub mod telemetry;
 pub mod templates;
 pub mod tools;
@@ -2267,6 +2269,7 @@ fn privacy(s: &State, u: &Ui) -> El {
                 .max_w(560.0),
         )
         .child(telemetry::privacy_section(s, u))
+        .child(product::privacy_section(s, u))
         .child(tabs::match_sharing(s, u))
         .child(section(
             u,

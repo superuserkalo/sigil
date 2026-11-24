@@ -467,6 +467,7 @@ pub fn refresh(st: &mut State) -> bool {
         fy.memory.note_shown(&shown, deadlock_core::gamebanana::now_unix());
         let memory = fy.memory.clone();
         std::thread::spawn(move || memory.save());
+        crate::screens::settings::product::rec_shown(st);
     }
     // The page that lists them all is a local view: read it again.
     if st.browse_view.filters.for_you {
@@ -478,6 +479,7 @@ pub fn refresh(st: &mut State) -> bool {
 /// "Not interested" on a tile: the mod leaves the row for good and its hero and creator count
 /// for less. The row is redone on the next poll.
 pub fn dismiss(st: &mut State, id: u64) {
+    crate::screens::settings::product::action(st, Some(id), deadlock_core::product_data::ModAction::NotInterested);
     let fy = &mut st.browse_view.shelves.for_you;
     let Some(card) = fy.picks.iter().find(|c| c.id == id).map(super::store::clone_card) else { return };
     fy.memory.dismiss(&card);

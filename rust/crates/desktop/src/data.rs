@@ -1399,7 +1399,9 @@ pub fn apply_browse_page(state: &mut State, result: Result<BrowsePageView, Strin
                 Some(_) if view.page > 1 => {}
                 _ => {
                     state.thumb_crew.clear();
+                    let total = view.total;
                     state.browse.page = Some(view);
+                    crate::screens::settings::product::browse_query(state, total);
                 }
             }
             // Thumbnails load as cards scroll into view (`browse::store::track_visible`), not
@@ -1936,6 +1938,7 @@ pub fn apply_stats(state: &mut State, result: Result<crate::screens::stats::Load
                     state.status = format!("Loaded player stats for account {}.", load.account_id);
                     crate::screens::stats::set_snapshot(&mut state.stats, snapshot);
                     state.stats.error = None;
+                    crate::screens::settings::product::stats(state);
                 }
                 Err(error) => {
                     state.stats.error = Some(error.clone());
@@ -3254,6 +3257,7 @@ pub fn apply_launch(state: &mut State, result: Result<crate::screens::launch::Re
             state.launch.read = Some(read);
             state.launch.loaded = true;
             state.launch.error = None;
+            crate::screens::settings::product::crash_suspect(state);
             if stashed {
                 state.status =
                     "A vanilla stash is pending. Restore it before editing addons.".to_string();
@@ -3909,6 +3913,7 @@ pub fn apply_install_outcome(state: &mut State, outcome: crate::screens::browse:
     }
     if let Some(applied) = outcome.applied {
         crate::screens::settings::telemetry::event(state, "install:done", Some("page:browse"));
+        crate::screens::settings::product::install_done(state, state.install.target.trim().parse().ok(), None);
         // Unknown-mod lookup (opt-in): add the installed file's hash to the index.
         if let (Ok(id), Some(plan)) = (state.install.target.trim().parse::<u64>(), state.install.plan.as_ref()) {
             let journal = deadlock_core::install::read_journal(&workspace_dir()).unwrap_or_default();
@@ -3944,6 +3949,7 @@ pub fn apply_install_outcome(state: &mut State, outcome: crate::screens::browse:
     }
     if let Some(error) = outcome.error {
         crate::screens::settings::telemetry::event(state, "install:failed", Some("page:browse"));
+        crate::screens::settings::product::install_done(state, state.install.target.trim().parse().ok(), Some(&error));
         state.install.log = Some(error.clone());
         state.install.tone = crate::ui::Tone::Bad;
         state.status = error;

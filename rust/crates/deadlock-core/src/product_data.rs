@@ -370,6 +370,12 @@ pub fn rank_tier(badge: u32) -> Option<u8> {
     (tier <= 11).then_some(tier as u8)
 }
 
+/// Seconds from an RFC 3339 time (as Sigil's library records it) until now, for [`KeptBucket`].
+pub fn seconds_since(rfc3339: &str) -> Option<u64> {
+    let then = chrono::DateTime::parse_from_rfc3339(rfc3339.trim()).ok()?;
+    u64::try_from((Utc::now() - then.with_timezone(&Utc)).num_seconds()).ok()
+}
+
 // --- buckets -------------------------------------------------------------------------------
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -673,6 +679,15 @@ fn valid_resolution(width: u16, height: u16) -> bool {
 pub struct Stamped {
     pub at: i64,
     pub record: Record,
+}
+
+impl Stamped {
+    /// Local time for the "What Sigil shared" list, `2026-11-25 14:03`.
+    pub fn when(&self) -> String {
+        chrono::DateTime::from_timestamp_millis(self.at)
+            .map(|t| t.with_timezone(&chrono::Local).format("%Y-%m-%d %H:%M").to_string())
+            .unwrap_or_default()
+    }
 }
 
 /// What goes with every batch, besides the install id: Sigil's version, the OS and its build,

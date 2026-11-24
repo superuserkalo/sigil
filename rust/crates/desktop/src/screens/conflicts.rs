@@ -888,6 +888,7 @@ fn make_win(st: &mut State, winner: u16, loser: u16) {
     if crate::screens::settings::watch::refuse_while_running(st) {
         return;
     }
+    crate::screens::settings::product::conflict(st, winner, loser);
     let Some(root) = st.game_root.clone() else {
         st.status = tr("No Deadlock install was found. Nothing was renamed.").to_string();
         return;

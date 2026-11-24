@@ -424,6 +424,7 @@ pub fn finish(st: &mut State, done: Vec<Done>) {
     for item in done {
         match item {
             Done::Repaired { slot, file, applied } => {
+                crate::screens::settings::product::repair(st, slot, true);
                 rekey(st, slot, applied.old_size, applied.new_size);
                 let changes = applied.findings.iter().map(|f| f.changes.max(1)).sum();
                 st.installed.repairs.records.retain(|r| r.slot != slot);
@@ -452,7 +453,10 @@ pub fn finish(st: &mut State, done: Vec<Done>) {
                     c.findings.remove(&slot);
                 }
             }
-            Done::Failed(slot, error) => failed.push(format!("{slot:02}: {error}")),
+            Done::Failed(slot, error) => {
+                crate::screens::settings::product::repair(st, slot, false);
+                failed.push(format!("{slot:02}: {error}"));
+            }
         }
     }
     save_records(&st.installed.repairs.records);

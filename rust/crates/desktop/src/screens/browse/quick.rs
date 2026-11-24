@@ -369,6 +369,9 @@ pub fn press_file(st: &mut State, id: u64, name: &str, target: String, file: u64
         return;
     }
     st.browse_view.installs.files_menu = None;
+    if let (Some(mod_id), Some(file_id)) = (deadlock_core::product_data::ModId::new(id), deadlock_core::product_data::ModId::new(file)) {
+        crate::screens::settings::product::record(st, deadlock_core::product_data::Record::VariantChosen { mod_id, file_id });
+    }
     start(st, id, name, target, Some(file), Vec::new());
 }
 
@@ -925,6 +928,7 @@ fn take_result(st: &mut State) -> bool {
             if let Some(entry) = st.browse_view.installs.items.get_mut(&id) {
                 entry.step = Step::Failed(error.clone());
             }
+            crate::screens::settings::product::install_done(st, Some(id), Some(&error));
             st.status = error.clone();
             crate::notify::push(
                 st,

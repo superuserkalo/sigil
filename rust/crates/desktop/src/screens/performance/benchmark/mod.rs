@@ -747,6 +747,7 @@ pub fn poll(st: &mut State) -> bool {
         changed = true;
     }
     let mut finished = None;
+    let mut bench_done = None;
     if let Some(result) = page.run_job.try_take() {
         page.running = None;
         changed = true;
@@ -759,6 +760,9 @@ pub fn poll(st: &mut State) -> bool {
                     Some(Outcome::Failed(why)) => (why.clone(), true),
                     None => (String::new(), false),
                 };
+                if matches!(record.outcome, Some(Outcome::Complete)) {
+                    bench_done = Some(record.clone());
+                }
                 page.runs.retain(|r| r.spec.id != id);
                 page.runs.insert(0, record);
                 page.message = Some(line);
@@ -766,6 +770,9 @@ pub fn poll(st: &mut State) -> bool {
             }
             Err(error) => page.message = Some((error, true)),
         }
+    }
+    if let Some(run) = bench_done {
+        crate::screens::settings::product::benchmark(st, &run);
     }
     if let Some(id) = finished {
         show(st, id);

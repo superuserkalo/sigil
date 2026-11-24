@@ -4011,6 +4011,7 @@ pub(super) fn toggle_one(st: &mut State, slot: u16, enable: bool) {
     };
     match deadlock_core::addons::set_enabled(&game_root, slot, enable, true) {
         Ok(result) => {
+            crate::screens::settings::product::toggled(st, result.slot, enable);
             st.status = format!("Slot {:02} turned {}.", result.slot, if enable { "on" } else { "off" });
             st.installed.last_undo = Some(Undo::Toggle(vec![result]));
             st.installed.undo_fresh = true;
@@ -4154,6 +4155,7 @@ fn finish_delete(
     }
     for entry in &entries {
         st.installed.selected.remove(&entry.manifest.slot);
+        crate::screens::settings::product::removed(st, entry.manifest.meta.as_ref());
     }
     // Slots whose files were held open can wait for the game to close instead.
     let locked: Vec<u16> = errors
@@ -4929,6 +4931,7 @@ fn poll_changes(st: &mut State) -> bool {
                     format!("Updated {}. The old file is backed up.", done.name)
                 };
                 st.installed.updates.journal = done.journal;
+                crate::screens::settings::product::action(st, done.old_meta.as_ref().and_then(|m| m.gamebanana_id), deadlock_core::product_data::ModAction::Updated);
                 repair::after_update(st, done.slot);
                 st.installed.last_undo = Some(Undo::Update {
                     slot: done.slot,

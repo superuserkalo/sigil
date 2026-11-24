@@ -89,7 +89,8 @@ pub fn end() {
 /// Every quit runs this before the process ends (window close, tray Quit, the quit key, quit
 /// when the game starts, the end of a Windows session). Rune ends the process right after its
 /// quit hooks, so code after `run` in `main` is not reached on a normal quit.
-pub fn on_quit(_st: &mut State, _tx: &mut rune::Tx) {
+pub fn on_quit(st: &mut State, _tx: &mut rune::Tx) {
+    super::product::on_quit(st);
     end();
 }
 

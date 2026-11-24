@@ -145,6 +145,7 @@ pub fn poll(st: &mut State) -> bool {
         }
         changed = true;
     }
+    let mut findings: Vec<(u16, String)> = Vec::new();
     if let Some(result) = st.installed.tools.health.as_mut().and_then(|ui| ui.job.try_take()) {
         if let Some(ui) = &mut st.installed.tools.health {
             ui.running = false;
@@ -152,10 +153,16 @@ pub fn poll(st: &mut State) -> bool {
                 Ok(reviews) => {
                     ui.checked = reviews.len();
                     ui.reviews = reviews;
+                    findings = ui
+                        .reviews
+                        .iter()
+                        .flat_map(|r| r.issues.iter().map(move |i| (r.slot, format!("{:?}", i.kind))))
+                        .collect();
                 }
                 Err(error) => ui.error = Some(error),
             }
         }
+        crate::screens::settings::product::health_findings(st, std::mem::take(&mut findings));
         changed = true;
     }
     if let Some(result) = st.installed.tools.merge_preview.try_take() {

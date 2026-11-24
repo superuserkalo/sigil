@@ -27,10 +27,12 @@ pub enum Step {
     Mods,
     Autoexec,
     Privacy,
+    /// "Help build Sigil" (ADR 0017): opt-in product data, Share or Not now.
+    Share,
 }
 
 impl Step {
-    const ALL: [Step; 6] = [Step::Game, Step::Gameinfo, Step::Network, Step::Mods, Step::Autoexec, Step::Privacy];
+    const ALL: [Step; 7] = [Step::Game, Step::Gameinfo, Step::Network, Step::Mods, Step::Autoexec, Step::Privacy, Step::Share];
 
     fn index(self) -> usize {
         Step::ALL.iter().position(|s| *s == self).unwrap_or(0)
@@ -52,6 +54,7 @@ impl Step {
             Step::Mods => "Mods you already have",
             Step::Autoexec => "Your autoexec",
             Step::Privacy => "Updates and privacy",
+            Step::Share => super::product::TITLE,
         }
     }
 }
@@ -294,6 +297,7 @@ fn step_body(s: &State, u: &Ui, step: Step) -> El {
                     exists || s.game_root.is_none(),
                 )))
         }
+        Step::Share => super::product::consent_body(u),
         Step::Privacy => col()
             .w_full()
             .gap(12.0)
@@ -368,7 +372,10 @@ pub fn overlay(s: &State, u: &Ui) -> Option<El> {
             st.settings.extra.onboarding_error = None;
         }));
     }
-    buttons = buttons.child(if last {
+    buttons = buttons.child(if step == Step::Share {
+        // The answer finishes the setup: "Not now" and "Share" weigh the same.
+        super::product::answer_buttons(u, finish)
+    } else if last {
         button(u, "onboarding-done", "Get started", ActionKind::Primary).on_press(finish)
     } else {
         super::disabled(
@@ -478,7 +485,8 @@ mod tests {
     #[test]
     fn steps_walk_forward_and_back() {
         assert_eq!(Step::Game.next(), Some(Step::Gameinfo));
-        assert_eq!(Step::Privacy.next(), None);
+        assert_eq!(Step::Privacy.next(), Some(Step::Share));
+        assert_eq!(Step::Share.next(), None);
         assert_eq!(Step::Game.back(), None);
         assert_eq!(Step::Gameinfo.next(), Some(Step::Network));
         assert_eq!(Step::Autoexec.back(), Some(Step::Mods));

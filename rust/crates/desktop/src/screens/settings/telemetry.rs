@@ -43,6 +43,8 @@ pub struct Telemetry {
     pub code: Option<Result<String, String>>,
     /// Sigil's own crash in the last run: the dialog or the quiet send (`crash.rs`).
     pub crash: super::crash::Offer,
+    /// "Help build Sigil" (ADR 0017): the question, the log, the delete, the workers.
+    pub product: super::product::Product,
 }
 
 fn data() -> std::path::PathBuf {
@@ -63,6 +65,7 @@ pub fn on_startup(st: &mut State) {
     st.settings.telemetry.consent = telemetry::read_consent(&dir);
     st.settings.telemetry.loaded = true;
     event(st, "app:start", None);
+    super::product::on_startup(st);
     super::crash::on_startup(st);
 }
 
@@ -131,7 +134,7 @@ pub fn poll(st: &mut State) -> bool {
             Ok(crashes + events)
         });
     }
-    changed
+    changed | super::product::poll(st)
 }
 
 fn save(st: &mut State, consent: Consent) {
@@ -163,7 +166,7 @@ fn flip(st: &mut State, change: fn(&mut Consent)) {
 
 /// Sigil's own crash in the last run first, then the first-start question.
 pub fn dialog(s: &State, u: &Ui) -> Option<El> {
-    super::crash::dialog(s, u).or_else(|| question(s, u))
+    super::crash::dialog(s, u).or_else(|| question(s, u)).or_else(|| super::product::question(s, u))
 }
 
 /// The first-start question.

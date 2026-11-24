@@ -381,6 +381,7 @@ fn start_apply(st: &mut State, id: String) {
     };
     let options = options_for(st, &config);
     st.performance.options.remove(&id);
+    crate::screens::settings::product::perf_config(st, config.id(), &config.version);
     let Some(root) = st.game_root.clone() else {
         return;
     };

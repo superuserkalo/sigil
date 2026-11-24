@@ -863,6 +863,11 @@ fn toggle_favorite(st: &mut State, card: Favorite) {
         st.status = format!("Favorites could not be saved: {error}");
         return;
     }
+    crate::screens::settings::product::action(
+        st,
+        Some(card.id),
+        if saved { deadlock_core::product_data::ModAction::Saved } else { deadlock_core::product_data::ModAction::Unsaved },
+    );
     st.status = if saved {
         format!("Saved {} to favorites.", card.name)
     } else {

@@ -232,6 +232,8 @@ pub(crate) fn show_details(st: &mut State, details: Details) {
     if let Some(url) = details.thumbnail_url.clone() {
         crate::data::queue_images(st, vec![url], true);
     }
+    crate::screens::settings::product::action(st, Some(details.id), deadlock_core::product_data::ModAction::Opened);
+    crate::screens::settings::product::rec_outcome(st, details.id, deadlock_core::product_data::RecOutcome::Opened);
     st.browse_view.details = Some(details);
     start_details_fetch(st);
 }
@@ -856,6 +858,7 @@ pub(crate) fn author_hidden(s: &State, author: &str) -> bool {
 }
 
 pub(crate) fn hide_mod(st: &mut State, id: u64) {
+    crate::screens::settings::product::action(st, Some(id), deadlock_core::product_data::ModAction::NotInterested);
     let (name, model, thumb, author) = st
         .browse_view
         .details

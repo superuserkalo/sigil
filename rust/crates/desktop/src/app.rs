@@ -348,6 +348,10 @@ impl State {
                 _ => {}
             }
         }
+        if self.screen != screen {
+            // "Help build Sigil": a page opened counts as feature use (a push, no IO).
+            screens::settings::product::feature(self, screen.key());
+        }
         if self.screen != screen
             && let Some(name) = screens::settings::telemetry::page_event(screen)
         {
@@ -481,6 +485,7 @@ impl State {
         match opened {
             Ok(()) => {
                 self.settings.launched = true;
+                screens::settings::product::record(self, deadlock_core::product_data::Record::Launch { modded: !vanilla });
                 // The marker starts a new session: a crash dump from before it is an old one,
                 // and the Launch page must not show it as the last session's crash.
                 crate::data::mark_launch(
@@ -1366,6 +1371,10 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
     // Send diagnostics opens from inside Settings, so it sits over the sheet.
     if let Some(preview) = screens::settings::telemetry::diagnostics_dialog(s, &u) {
         root = root.child(u.modal_layer("diagnostics-modal", preview));
+    }
+    // "What Sigil shared" opens from Settings > Privacy, so it sits over the sheet too.
+    if let Some(log) = screens::settings::product::log_dialog(s, &u) {
+        root = root.child(u.modal_layer("product-log-modal", log));
     }
     // A drag anywhere in the window, over any dialog, shows the same target.
     if s.shell.drop_hover {
@@ -3043,6 +3052,9 @@ pub fn scenes() -> &'static [(&'static str, fn(&mut State))] {
         ("w4b-stats", screens::w4b_scenes::stats),
         ("w4b-crosshair-hero", screens::w4b_scenes::crosshair_hero),
         ("w4b-onboarding-network", screens::w4b_scenes::onboarding_network),
+        ("product-onboarding", screens::settings::product::scene_onboarding),
+        ("product-question", screens::settings::product::scene_question),
+        ("product-privacy", screens::settings::product::scene_privacy),
         ("w4b-onboarding-mods", screens::w4b_scenes::onboarding_mods),
         ("w4b-feature-tip", screens::w4b_scenes::feature_tip),
         ("w4b-tour", screens::w4b_scenes::tour),

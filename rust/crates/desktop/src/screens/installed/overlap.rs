@@ -67,6 +67,7 @@ pub fn refresh(st: &mut State) -> bool {
     let fresh = by_slot(&st.addons.conflicts, &enabled, |row| ignores.hides(&row.path, &row.slots, row.winner));
     if fresh != st.installed.overlaps {
         st.installed.overlaps = fresh;
+        crate::screens::settings::product::overlaps(st);
         return true;
     }
     false
