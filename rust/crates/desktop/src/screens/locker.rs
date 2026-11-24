@@ -409,9 +409,12 @@ fn grid_page(s: &State, u: &Ui, v: &View) -> El {
     // nothing shifts when they arrive.
     let ready = v.loaded && !v.heroes.is_empty();
     let off = |e: El, off: bool| e.disabled(off).opacity(if off { 0.45 } else { 1.0 });
+    // The trailing icon buttons carry the same box as the search and view toggle, so the
+    // toolbar is one control style.
+    let boxed = |e: El| e.fill(u.over.alpha(0.035)).border(1.0, u.hair_strong);
     let art_missing = ready && !v.heroes.iter().any(|hero| hero.render.is_some());
-    let mut rescan = u
-        .icon_button(&icons::REFRESH_CW, crate::screens::settings::i18n::tr("Rescan"))
+    let mut rescan = boxed(u
+        .icon_button(&icons::REFRESH_CW, crate::screens::settings::i18n::tr("Rescan")))
         .key("locker-rescan")
         .cursor(rune::Cursor::Pointer)
         .on_press(|st: &mut State| crate::data::start_locker_load(st));
@@ -428,14 +431,14 @@ fn grid_page(s: &State, u: &Ui, v: &View) -> El {
     let actions = vec![
         off(view_toggle(u, v.list_view), !v.loaded),
         off(
-            u.icon_button(&icons::ROTATE_CCW, crate::screens::settings::i18n::tr("Shuffle on launch"))
+            boxed(u.icon_button(&icons::ROTATE_CCW, crate::screens::settings::i18n::tr("Shuffle on launch")))
                 .key("locker-shuffle")
                 .cursor(rune::Cursor::Pointer)
                 .on_press(|st: &mut State| st.locker.dialog = Some(Dialog::Shuffle)),
             !v.loaded,
         ),
         off(
-            u.icon_button(&icons::SLIDERS_HORIZONTAL, crate::screens::settings::i18n::tr("Locker changes"))
+            boxed(u.icon_button(&icons::SLIDERS_HORIZONTAL, crate::screens::settings::i18n::tr("Locker changes")))
                 .key("locker-applied")
                 .cursor(rune::Cursor::Pointer)
                 .on_press(|st: &mut State| st.locker.dialog = Some(Dialog::Applied)),
@@ -827,6 +830,9 @@ fn general_counts(v: &View) -> (usize, usize) {
 
 /// The General tile: the environment backdrop, the label bottom right, as Grimoire's
 /// `GlobalGalleryCard`.
+/// The General tile's name: as tall as the hero wordmarks beside it.
+const GENERAL_PLATE: rune::TextStyle = rune::TextStyle::new(22.0, 600.0).lh(28.0).tracking(0.4);
+
 fn general_card(s: &State, _u: &Ui, v: &View, card_w: f32) -> El {
     let card_h = (card_w * 4.0 / 3.0).round();
     let (count, types) = general_counts(v);
@@ -855,12 +861,19 @@ fn general_card(s: &State, _u: &Ui, v: &View, card_w: f32) -> El {
                 .pin(Some(8.0), None, Some(8.0), Some(8.0))
                 .gap(2.0)
                 .items_start()
-                .child(text(crate::screens::settings::i18n::tr("General")).font(BODY_MED).color(Color::WHITE))
+                // A plate at the scale of the hero wordmarks, the detail on up to two lines so
+                // nothing is cut.
+                .child(
+                    text(crate::screens::settings::i18n::tr("General").to_uppercase())
+                        .font(GENERAL_PLATE)
+                        .color(Color::WHITE),
+                )
                 .child(
                     text(detail)
                         .font(SMALL)
-                        .color(Color::WHITE.alpha(0.80))
-                        .truncate(),
+                        .color(Color::WHITE.alpha(0.85))
+                        .wrap()
+                        .max_lines(2),
                 ),
         )
         .child(wash)
@@ -1438,7 +1451,16 @@ fn hero_page(s: &State, u: &Ui, v: &View, hero: &HeroCard) -> El {
     let controls = col()
         .w_full()
         .gap(0.0)
-        .child(el().pl(10.0).pb(8.0).child(u.section(crate::screens::settings::i18n::tr("Hero"))))
+        // A group label, not one more row: small capitals in `muted`.
+        .child(
+            el().pl(10.0).pb(8.0).child(
+                text(crate::screens::settings::i18n::tr("Hero").to_uppercase())
+                    .font(crate::ui::SECTION.tracking(0.8))
+                    .color(u.muted)
+                    .role("heading")
+                    .level(2),
+            ),
+        )
         .child(
             rail_action(
                 u,
@@ -1547,10 +1569,8 @@ fn hero_page(s: &State, u: &Ui, v: &View, hero: &HeroCard) -> El {
             let browse = move |kind: ActionKind| {
                 let name = browse_name.clone();
                 let _ = kind;
-                u.icon_action(&icons::COMPASS, crate::screens::settings::i18n::tr("Browse skins"), ActionKind::Ghost)
-                    .h(24.0)
-                    .pl(6.0)
-                    .pr(8.0)
+                // The pane's one action, a real button so the empty state has a next step.
+                u.icon_action_m(&icons::COMPASS, crate::screens::settings::i18n::tr("Browse skins"), ActionKind::Secondary)
                     .key("locker-find-mods")
                     .label(format!("Browse skins for {name}"))
                     .cursor(rune::Cursor::Pointer)
@@ -1663,20 +1683,30 @@ fn hero_page(s: &State, u: &Ui, v: &View, hero: &HeroCard) -> El {
     };
 
     let (pane_w, room) = if v.view3d { pane_with_3d(page_w) } else { (PANE_W, true) };
-    // An opaque pane: text never sits on the art.
+    // With nothing listed the pane hugs its header and line, so the art stays in view.
+    let hug = match section {
+        HeroSection::Mods => mods.is_empty(),
+        HeroSection::Sounds => sounds.is_empty(),
+        HeroSection::Recolor => hero.recolor_paths.is_empty(),
+        _ => false,
+    };
+    // An opaque pane: text never sits on the art. Its top meets the art's top edge and its
+    // header shares the "Locker" back row's centre line.
     let pane = col()
         .key("locker-hero-pane-frame")
         .w(pane_w)
-        .self_stretch()
         .min_h(0.0)
         .ml(if page_w < 1100.0 { 16.0 } else { 24.0 })
-        .mt(crate::ui::PAGE_TOP)
         .mb(16.0)
         .fill(u.bg)
         .border(1.0, u.hair)
         .radius(crate::ui::r(8.0))
-        .clip_rounded(crate::ui::r(8.0))
-        .child(
+        .clip_rounded(crate::ui::r(8.0));
+    let pane = if hug {
+        pane.self_start()
+            .child(col().key("locker-hero-pane").w_full().padding(16.0).child(pane_body))
+    } else {
+        pane.self_stretch().child(
             col()
                 .key("locker-hero-pane")
                 .w_full()
@@ -1686,7 +1716,8 @@ fn hero_page(s: &State, u: &Ui, v: &View, hero: &HeroCard) -> El {
                     stick_bottom: false,
                 })
                 .child(col().w_full().padding(16.0).child(pane_body)),
-        );
+        )
+    };
 
     drill_shell(
         u,
@@ -1812,9 +1843,41 @@ fn general_page(s: &State, u: &Ui, v: &View) -> El {
         rail_row(u, "locker-tab-cursors".to_string(), "Cursors", packs, active == GeneralTab::Cursors, packs == 0)
             .on_press(|st: &mut State| st.locker.general_tab = Some(GeneralTab::Cursors)),
     );
-    if !v.categories.is_empty() {
-        tabs = tabs.child(el().w_full().h(1.0).my(4.0).fill(u.hair).a11y_hidden());
-    }
+    // Your own categories under one head; New and Manage sit on it as ghost 24 buttons.
+    let tr = crate::screens::settings::i18n::tr;
+    let ghost = |key: &'static str, glyph: &'static rune::Icon, label: &str| {
+        u.icon_button(glyph, tr(label)).size(24.0, 24.0).key(key).cursor(rune::Cursor::Pointer)
+    };
+    let none = v.categories.is_empty();
+    tabs = tabs.child(
+        row()
+            .key("locker-categories-head")
+            .w_full()
+            .h(32.0)
+            .pl(10.0)
+            .pr(4.0)
+            .mt(12.0)
+            .gap(4.0)
+            .center_y()
+            .child(
+                text(tr("Categories").to_uppercase())
+                    .font(crate::ui::SECTION.tracking(0.8))
+                    .color(u.muted)
+                    .role("heading")
+                    .level(2),
+            )
+            .child(spacer())
+            .child(
+                ghost("locker-new-category", &icons::PLUS, "New category")
+                    .on_press(|st: &mut State| open_name_dialog(st, None, None)),
+            )
+            .child(
+                ghost("locker-manage-categories", &icons::SLIDERS_HORIZONTAL, "Manage")
+                    .disabled(none)
+                    .opacity(if none { 0.45 } else { 1.0 })
+                    .on_press(|st: &mut State| st.locker.dialog = Some(Dialog::Manage)),
+            ),
+    );
     for category in &v.categories {
         let tab = GeneralTab::Custom(category.id.clone());
         let count = tab_mods(v, &tab).len();
@@ -1833,46 +1896,18 @@ fn general_page(s: &State, u: &Ui, v: &View) -> El {
             }),
         );
     }
-    let small_link = |key: &'static str, glyph: &'static rune::Icon, label: &'static str| {
-        row()
-            .key(key)
-            .h(28.0)
-            .pl(10.0)
-            .pr(12.0)
-            .gap(6.0)
-            .center_y()
-            .radius(crate::ui::r(6.0))
-            .hover(u.hover)
-            .focusable(true)
-            .role("button")
-            .label(label)
-            .cursor(rune::Cursor::Pointer)
-            .child(rune::icon(glyph, 14.0).color(u.muted).a11y_hidden())
-            .child(text(label).font(SMALL).color(u.muted).a11y_hidden())
-    };
-    let mut links = col().pt(4.0).gap(2.0).child(
-        small_link("locker-new-category", &icons::PLUS, "New category")
-            .on_press(|st: &mut State| open_name_dialog(st, None, None)),
-    );
-    if !v.categories.is_empty() {
-        links = links.child(
-            small_link("locker-manage-categories", &icons::SLIDERS_HORIZONTAL, "Manage")
-                .on_press(|st: &mut State| st.locker.dialog = Some(Dialog::Manage)),
-        );
-    }
-    tabs = tabs.child(links);
     tabs = tabs
-        .child(el().w_full().h(1.0).my(4.0).fill(u.hair).a11y_hidden())
+        .child(el().w_full().h(1.0).my(8.0).fill(u.hair).a11y_hidden())
         .child(
             row()
                 .key("locker-global")
                 .w_full()
-                .h(40.0)
-                .px(12.0)
+                .h(48.0)
+                .px(10.0)
                 .gap(12.0)
                 .center_y()
-                .radius(crate::ui::r(8.0))
                 .label("Load the Global mods folder before addons")
+                .help(tr("A mod in game/citadel/grimoire wins any file it shares with an addon."))
                 .child(
                     col()
                         .grow(1.0)
@@ -1890,7 +1925,7 @@ fn general_page(s: &State, u: &Ui, v: &View) -> El {
                                 "Off"
                             })
                             .font(SMALL)
-                            .color(u.faint)
+                            .color(u.muted)
                             .truncate(),
                         ),
                 )
@@ -1903,18 +1938,12 @@ fn general_page(s: &State, u: &Ui, v: &View) -> El {
                             crate::data::set_locker_global(st, on)
                         }),
                 ),
-        )
-        .child(
-            text("A mod in game/citadel/grimoire wins any file it shares with an addon.")
-                .font(SMALL)
-                .color(u.faint)
-                .px(12.0)
-                .wrap(),
         );
 
+    // The hero page's rail: same width, edges and back row, so the two pages share a grid.
     let rail = col()
         .key("locker-general-rail")
-        .w(RAIL_W)
+        .w(RAIL_W + crate::ui::PAGE_X)
         .h_full()
         .min_h(0.0)
         .scroll(ScrollSpec {
@@ -1923,21 +1952,25 @@ fn general_page(s: &State, u: &Ui, v: &View) -> El {
         .child(
             col()
                 .w_full()
-                .padding(24.0)
-                .gap(24.0)
+                .pl(crate::ui::PAGE_X)
+                .pt(crate::ui::PAGE_TOP)
+                .pb(16.0)
+                .gap(16.0)
                 .child(back_row(u, None))
                 .child(
                     row()
-                        .px(12.0)
+                        .h(56.0)
+                        .pl(10.0)
                         .gap(8.0)
-                        .items_end()
-                        .child(text("General").font(H1).color(u.ink))
-                        .child(text(plural(total, "mod", "mods")).font(SMALL).color(u.faint).pb(2.0)),
+                        .center_y()
+                        .child(text(tr("General")).font(crate::ui::PAGE_TITLE).color(u.ink))
+                        .child(text(plural(total, "mod", "mods")).font(crate::ui::SMALL_NUM).color(u.muted)),
                 )
                 .child(tabs),
         );
 
     let mut mods = tab_mods(v, &active);
+    let mods_count = mods.len();
     // Saved mods first (Grimoire #593: favorites shared with Installed), stable otherwise.
     mods.sort_by_key(|m| !crate::screens::installed::notes::is_favorite(s, m.slot));
     let (title, custom_id) = match &active {
@@ -2012,17 +2045,37 @@ fn general_page(s: &State, u: &Ui, v: &View) -> El {
         pane_body = pane_body.child(rows);
     }
 
-    let pane = col()
-        .key("locker-general-pane")
-        .grow(1.0)
-        .max_w(640.0)
-        .min_w(0.0)
-        .h_full()
+    // The hero page's pane: opaque, so rows never sit on the art; it hugs a short list.
+    // A list that fits the page needs no scroll, so the pane ends under its last row.
+    let (_, page_h) = page_size(v);
+    // Before the first layout there is no height yet: hug, as a short list does.
+    let page_h = if page_h > 0.0 { page_h } else { f32::MAX };
+    let hug = active != GeneralTab::Cursors && (mods_count as f32) * 48.0 + 96.0 < page_h - 32.0;
+    let frame = col()
+        .key("locker-general-pane-frame")
+        .w(PANE_W)
         .min_h(0.0)
-        .scroll(ScrollSpec {
-            stick_bottom: false,
-        })
-        .child(col().w_full().padding(24.0).child(pane_body));
+        .ml(24.0)
+        .mb(16.0)
+        .fill(u.bg)
+        .border(1.0, u.hair)
+        .radius(crate::ui::r(8.0))
+        .clip_rounded(crate::ui::r(8.0));
+    let pane = if hug {
+        frame.self_start().child(col().key("locker-general-pane").w_full().padding(16.0).child(pane_body))
+    } else {
+        frame.self_stretch().child(
+            col()
+                .key("locker-general-pane")
+                .w_full()
+                .grow(1.0)
+                .min_h(0.0)
+                .scroll(ScrollSpec {
+                    stick_bottom: false,
+                })
+                .child(col().w_full().padding(16.0).child(pane_body)),
+        )
+    };
 
     drill_shell(
         u,

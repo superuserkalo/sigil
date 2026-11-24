@@ -405,31 +405,24 @@ pub fn pane(s: &State, u: &Ui) -> El {
     let c = &s.locker.cursors;
     let state = c.state.clone().unwrap_or_default();
     let busy = c.work.is_running();
-    let head = row()
-        .w_full()
-        .gap(8.0)
-        .center_y()
-        .child(text(tr("Cursors")).font(crate::ui::H1).color(u.ink))
-        .child(text(fill(tr("{} packs"), &[&state.packs.len().to_string()])).font(SMALL).color(u.faint))
-        .child(spacer())
-        .child(
-            u.icon_action(&icons::PLUS, tr("Create from images"), ActionKind::Secondary)
-                .key("locker-cursor-create")
-                .cursor(rune::Cursor::Pointer)
-                .on_press(super::cursor_create::open),
-        )
-        .child(
-            u.icon_action(&icons::FOLDER_OPEN, tr("Import folder"), ActionKind::Secondary)
-                .key("locker-cursor-import-folder")
-                .cursor(rune::Cursor::Pointer)
-                .on_press_tx(pick_folder),
-        )
-        .child(
-            u.icon_action(&icons::PLUS, tr("Import"), ActionKind::Secondary)
-                .key("locker-cursor-import")
-                .cursor(rune::Cursor::Pointer)
-                .on_press_tx(pick_file),
-        );
+    // The pane's shared section head: title, pack count, and the three ways in as 24 point
+    // icon buttons with their names as tooltips, so the head fits the 480 pane.
+    let add = |glyph: &'static rune::Icon, label: &str, key: &str| {
+        u.icon_button(glyph, tr(label)).size(24.0, 24.0).key(key.to_string()).cursor(rune::Cursor::Pointer)
+    };
+    let head = u.section_head(
+        tr("Cursors"),
+        Some(state.packs.len()),
+        Some(
+            row()
+                .gap(4.0)
+                .center_y()
+                .child(add(&icons::PLUS, "Create from images", "locker-cursor-create").on_press(super::cursor_create::open))
+                .child(add(&icons::FOLDER_OPEN, "Import folder", "locker-cursor-import-folder").on_press_tx(pick_folder))
+                .child(add(&icons::DOWNLOAD, "Import", "locker-cursor-import").on_press_tx(pick_file)),
+        ),
+    )
+    .w_full();
     let mut grid = el().w_full().equal_columns(2).gap(12.0);
     grid = grid.child(card(
         s,
@@ -476,9 +469,14 @@ pub fn pane(s: &State, u: &Ui) -> El {
                 .color(u.muted)
                 .wrap(),
         );
-    if busy {
-        body = body.child(text(tr("Working on the cursor folder")).font(SMALL).color(u.muted));
-    }
+    // A reserved 16 point line, so starting and finishing work never moves the grid.
+    body = body.child(
+        el().w_full().h(16.0).child(if busy {
+            text(tr("Working on the cursor folder")).font(SMALL).color(u.muted)
+        } else {
+            el()
+        }),
+    );
     if let Some(banner) = reapply_banner(s, u) {
         body = body.child(banner);
     }
@@ -554,8 +552,9 @@ pub fn pane(s: &State, u: &Ui) -> El {
     body = body.child(grid);
     if state.packs.is_empty() {
         body = body.child(
-            row().w_full().gap(8.0).center_y().child(text(tr("No cursor packs yet. Import one, or find some on GameBanana.")).font(BODY).color(u.muted)).child(spacer()).child(
-                u.action(tr("Find cursors"), ActionKind::Ghost)
+            // The line wraps in the 480 pane and the action sits under it, never cut.
+            col().w_full().gap(8.0).items_start().child(text(tr("No cursor packs yet. Import one, or find some on GameBanana.")).font(BODY).color(u.muted).wrap()).child(
+                u.action_m(tr("Find cursors"), ActionKind::Secondary)
                     .key("locker-cursor-find")
                     .cursor(rune::Cursor::Pointer)
                     .on_press(|st: &mut State| {
