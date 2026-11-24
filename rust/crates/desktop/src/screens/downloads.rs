@@ -761,8 +761,10 @@ fn item_row(
     } else {
         item.detail()
     };
+    // The bytes and the place in line come first; the resume note goes last, so a narrow
+    // column cuts the note and not the numbers.
     let detail = match resume_note(item) {
-        Some(note) => fill(tr("{} · {}"), &[note, &detail]),
+        Some(note) => fill(tr("{} · {}"), &[&detail, note]),
         None => detail,
     };
     let detail = if slow { fill(tr("Slow · {}"), &[&detail]) } else { detail };
@@ -836,7 +838,12 @@ fn item_row(
             });
         }
     }
-    let mut controls = row().gap(4.0).center_y().child(first);
+    // A running, paused or failed row has nothing for slot 1, so its detail line (bytes,
+    // server, speed, time left) takes that room. The icon slots keep their places.
+    let mut controls = row().gap(4.0).center_y();
+    if matches!(item.state, ItemState::Done | ItemState::Queued) {
+        controls = controls.child(first);
+    }
 
     // Slot 4: pause, resume or retry.
     let (act_glyph, words, key, command): (&'static rune::Icon, &str, &str, fn(String) -> queue::Command) = match item.state {

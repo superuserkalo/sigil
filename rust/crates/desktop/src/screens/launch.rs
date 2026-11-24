@@ -417,8 +417,9 @@ fn game_panel(s: &State, u: &Ui, read: Option<&Read>, process: &GameProcess, run
         } else {
             tr("Moves your mods aside, then starts the game. Restore them here afterwards.")
         };
-        let button = |label: &str, key: &str| {
-            u.action_m(label, ActionKind::Secondary)
+        // Launch modded is the page's one solid action; vanilla stays the quiet alternative.
+        let button = |label: &str, key: &str, kind: ActionKind| {
+            u.action_m(label, kind)
                 .key(key.to_string())
                 .disabled(!ready)
                 .opacity(if ready { 1.0 } else { 0.45 })
@@ -430,7 +431,7 @@ fn game_panel(s: &State, u: &Ui, read: Option<&Read>, process: &GameProcess, run
             .center_y()
             .child(spacer())
             .child(
-                button(tr("Launch vanilla"), "launch-go-vanilla")
+                button(tr("Launch vanilla"), "launch-go-vanilla", ActionKind::Secondary)
                     .help(vanilla_help)
                     .on_press(move |st: &mut State| {
                         if ready {
@@ -438,7 +439,7 @@ fn game_panel(s: &State, u: &Ui, read: Option<&Read>, process: &GameProcess, run
                         }
                     }),
             )
-            .child(button(tr("Launch modded"), "launch-go-modded").on_press(move |st: &mut State| {
+            .child(button(tr("Launch modded"), "launch-go-modded", ActionKind::Primary).on_press(move |st: &mut State| {
                 if ready {
                     press_launch(st, false);
                 }
