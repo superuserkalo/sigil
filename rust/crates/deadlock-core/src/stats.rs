@@ -954,7 +954,8 @@ impl StatsClient {
     /// Teammates and opponents, named, from the mate and enemy statistics.
     ///
     /// Three responses of about 700 KB each, then one profile request for the
-    /// names of the top fifty. Kept for an hour.
+    /// names of the top fifty, then one bulk match request for the lanes of the
+    /// most recent shared matches. Kept for an hour.
     pub fn fetch_social(&self, account_id: u64) -> Result<social::Social> {
         ensure_account(account_id)?;
         let sample = social::MIN_SHARED_MATCHES.to_string();
@@ -986,7 +987,32 @@ impl StatsClient {
                     .collect()
             })
             .unwrap_or_default();
-        social::assemble_social(&mates, &party, &enemies, &names)
+        let mut people = social::assemble_social(&mates, &party, &enemies, &names)?;
+        // Lanes are extra: a failed or refused request leaves the lists as they are.
+        if let Ok(lanes) = self.fetch_match_lanes(&social::lane_match_ids(&mates)) {
+            social::apply_lanes(&mut people, account_id, &mates, &lanes);
+        }
+        Ok(people)
+    }
+
+    /// Team, lane and winner of up to [`social::LANE_MATCH_IDS`] matches in one bulk request
+    /// (`GET /v1/matches/metadata`). Finished matches never change, so a week's cache holds.
+    fn fetch_match_lanes(&self, ids: &[u64]) -> Result<HashMap<u64, social::MatchLanes>> {
+        if ids.is_empty() {
+            return Ok(HashMap::new());
+        }
+        let ids: Vec<String> = ids.iter().take(social::LANE_MATCH_IDS).map(u64::to_string).collect();
+        let body = self.get_text(
+            "/v1/matches/metadata",
+            &[
+                ("match_ids", ids.join(",")),
+                ("include_info", "true".to_string()),
+                ("include_player_info", "true".to_string()),
+                ("limit", ids.len().to_string()),
+            ],
+            cache::TTL_MATCH_METADATA,
+        )?;
+        social::parse_match_lanes(&body)
     }
 
     /// Aggregate kill and death positions for the last 30 days.
