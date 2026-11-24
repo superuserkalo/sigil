@@ -411,12 +411,12 @@ fn chips(s: &State, u: &Ui) -> Vec<El> {
     if f.favorites {
         out.push(clearing("favorites", "Favorites".into(), |f| f.favorites = false));
     }
-    out
-}
-
     if f.for_you {
         out.push(clearing("for-you", super::tree::tr("For you").to_string(), |f| f.for_you = false));
     }
+    out
+}
+
 /// The status row: always 24 points high, one line. With no filters the chip area is empty and
 /// the row keeps its height, so the grid under it never moves.
 pub(crate) fn status_row(s: &State, u: &Ui, detail: &str) -> El {
