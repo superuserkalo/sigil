@@ -34,10 +34,12 @@ pub struct Shelves {
     /// the landing shows (or the image store, or the image queue) changed.
     pub queued_for: u64,
     /// The billboard advances by itself (`top::tick`): when the next pick is due, how far the
-    /// progress bar on the active segment is (0 to `top::STEPS`), whether the pointer is over
+    /// progress bar on the active segment is filling (`running`), whether the pointer is over
     /// the billboard and whether the window is in the background.
     pub due: Option<Instant>,
-    pub step: u8,
+    /// The active pager bar is filling: set in the commit that starts an interval, so the bar
+    /// runs from empty to full on one curve, and cleared (at once) whenever the count stops.
+    pub running: bool,
     pub hovered: bool,
     pub window_inactive: bool,
     /// The billboard is scrolled out of view: it waits until it is back.

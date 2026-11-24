@@ -51,10 +51,10 @@ pub fn hover_out() -> Anim {
     tween(0.10)
 }
 
-/// The Browse billboard's pager bar: it glides from one half-second step to the next, so the
-/// fill reads as one steady movement.
-pub fn countdown() -> Spring {
-    spring(0.5)
+/// The Browse billboard's pager bar: one even, unbroken fill over the whole interval, drawn
+/// by the renderer. Instant under Reduce motion (the billboard does not advance then anyway).
+pub fn countdown(seconds: f32) -> Anim {
+    if reduced() { Anim::INSTANT } else { Curve::tween(seconds, Easing::LINEAR).into() }
 }
 
 /// 90 ms: fills, colours, the switch knob, a slider settling, a drag dim.

@@ -816,10 +816,11 @@ fn measure_toggle_cost_at_300_mods() {
     );
 }
 
-/// The billboard's timer costs nothing between advances: armed on the landing, the window
-/// comes to rest and draws no frame and makes no commit while the deadline waits.
+/// The billboard's interval is two commits: one that starts the bar filling on a single even
+/// curve, and one that steps. Between them the app commits nothing: the bar is drawn by the
+/// renderer alone, and a pause empties it at once.
 #[test]
-fn billboard_rests_between_advances() {
+fn billboard_fills_on_one_curve_and_commits_nothing_between() {
     let _globals = crate::ui::test_globals();
     let mut rt = runtime("browse-dashboard", (1280.0, 800.0));
     // The test runtime runs the view, not `app::poll`, so the poll's step is run by hand.
@@ -828,17 +829,37 @@ fn billboard_rests_between_advances() {
         s.browse_view.shelves.last_input = Some(std::time::Instant::now());
         crate::screens::browse::top::tick(s, tx);
     });
-    settle(&mut rt);
     assert!(
-        rt.state.browse_view.shelves.due.is_some(),
-        "the landing arms the billboard's timer (paused: {:?})",
+        rt.state.browse_view.shelves.due.is_some() && rt.state.browse_view.shelves.running,
+        "the landing starts the billboard's interval (paused: {:?})",
         crate::screens::browse::top::paused(&rt.state, None)
     );
+    let fill = |rt: &Runtime<State>| {
+        rt.elements().into_iter().filter(|e| e.key.as_deref().is_some_and(|k| k.starts_with("bb-fill-"))).map(|e| e.rect[2]).fold(0.0f32, f32::max)
+    };
+    // The start commit lands with the first frame; from then on nothing may commit.
+    rt.frame(1.0 / 60.0);
     let commits = rt.stats.commits;
-    for n in 0..30 {
-        assert!(!rt.frame(1.0 / 60.0), "frame {n}: the window drew while the billboard waited");
+    let mut widths = Vec::new();
+    for _ in 0..60 {
+        rt.frame(1.0 / 60.0);
+        widths.push(fill(&rt));
     }
-    assert_eq!(rt.stats.commits, commits, "a commit while the billboard waited");
+    assert_eq!(rt.stats.commits, commits, "a commit while the bar filled");
+    // One second in: partly filled, growing every frame by an even amount.
+    assert!(widths[59] > widths[5] && widths[59] < 31.0, "the bar should be part way after a second: {widths:?}");
+    assert!(widths.windows(2).all(|w| w[1] >= w[0]), "the bar only grows: {widths:?}");
+    let steps: Vec<f32> = widths.windows(2).skip(5).map(|w| w[1] - w[0]).collect();
+    let (lo, hi) = steps.iter().fold((f32::MAX, f32::MIN), |(lo, hi), s| (lo.min(*s), hi.max(*s)));
+    assert!(hi - lo < 0.2, "the bar moves evenly, frame to frame: {lo}..{hi}");
+    // A pause empties it in one commit, with no slide back.
+    rt.update(|s, tx| {
+        s.browse_view.shelves.hovered = true;
+        crate::screens::browse::top::tick(s, tx);
+    });
+    rt.frame(1.0 / 60.0);
+    assert_eq!(fill(&rt), 0.0, "a paused bar is empty at once");
+    assert!(!rt.state.browse_view.shelves.running && rt.state.browse_view.shelves.due.is_none());
 }
 
 /// A press anywhere on a landing tile opens that mod: the hover layer that covers the tile must

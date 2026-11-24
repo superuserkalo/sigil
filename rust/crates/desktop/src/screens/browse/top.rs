@@ -30,10 +30,6 @@ pub const MAX_PICKS: usize = 6;
 pub const ADVANCE: Duration = Duration::from_secs(7);
 /// No input for this long and the billboard stops until the next one.
 pub const IDLE: Duration = Duration::from_secs(120);
-/// The active pager bar fills in this many steps over `ADVANCE`: one small commit each, and the
-/// bar glides between them on `motion::countdown`.
-pub const STEPS: u8 = 14;
-
 /// The original upload behind a GameBanana thumbnail: `.../530-90_a.jpg` is `.../a.jpg`. The
 /// billboard draws it once it is decoded; the thumbnail stands in until then.
 pub fn large_of(url: &str) -> String {
@@ -447,9 +443,9 @@ pub fn paused(s: &State, focused: Option<&str>) -> Option<&'static str> {
     None
 }
 
-/// Count the billboard's interval in `STEPS` small steps and move to the next pick when it is
-/// full. One wake per step while it runs; while it is paused nothing is armed and the bar
-/// keeps its place, so it goes on from there. True when the view must run.
+/// Run the billboard's interval: start it (the bar begins to fill), and when it is over move
+/// to the next pick. While paused nothing is armed and the bar is empty; the count starts
+/// over afterwards. Two commits per interval, none in between. True when the view must run.
 pub fn tick(st: &mut State, tx: &mut Tx) -> bool {
     // The first look counts as input: a fresh window is not idle.
     if st.browse_view.shelves.last_input.is_none() {
@@ -458,33 +454,31 @@ pub fn tick(st: &mut State, tx: &mut Tx) -> bool {
     let focused = tx.focused().map(str::to_string);
     if paused(st, focused.as_deref()).is_some() {
         st.browse_view.shelves.due = None;
-        return false;
+        // The bar empties at once: this commit carries no motion.
+        return std::mem::take(&mut st.browse_view.shelves.running);
     }
-    let step = ADVANCE / STEPS as u32;
     let now = Instant::now();
     let Some(due) = st.browse_view.shelves.due else {
-        st.browse_view.shelves.due = Some(now + step);
-        tx.wake_after(step);
-        return false;
+        // Start: the bar is mounted empty, and this commit fills it over the whole interval on
+        // one even curve. Nothing else changes in it.
+        st.browse_view.shelves.due = Some(now + ADVANCE);
+        st.browse_view.shelves.running = true;
+        tx.motion_curve(crate::motion::countdown(ADVANCE.as_secs_f32()));
+        tx.wake_after(ADVANCE);
+        return true;
     };
     if now < due {
         tx.wake_after(due - now);
         return false;
     }
-    st.browse_view.shelves.due = Some(now + step);
-    tx.wake_after(step);
-    // The bar glides to its new length (`motion::countdown`); nothing else moves.
-    tx.animated();
-    if st.browse_view.shelves.step + 1 < STEPS {
-        st.browse_view.shelves.step += 1;
-        return true;
-    }
-    st.browse_view.shelves.step = 0;
-    // Step only to a pick whose image is decoded: the next ready one, or count again.
+    // Over: the bar empties at once and the next pick slides in. The next poll starts its bar.
+    st.browse_view.shelves.due = None;
+    st.browse_view.shelves.running = false;
     let width = super::toolbar::page_width(st);
     let p = plan(st, per_page(width), gamebanana::now_unix());
     let count = p.billboard.len();
     let at = st.browse_view.shelves.spot % count.max(1);
+    // Only to a pick whose image is decoded: the next ready one, or stay and count again.
     let ready = (1..count).map(|k| (at + k) % count).find(|&i| {
         let pick = &p.billboard[i];
         [&pick.image, &pick.small].into_iter().flatten().any(|url| st.thumbnails.contains_key(url))
@@ -493,15 +487,17 @@ pub fn tick(st: &mut State, tx: &mut Tx) -> bool {
     if let Some(next) = ready {
         st.browse_view.shelves.spot = next;
         st.browse_view.shelves.spot_dir = 1;
+        tx.animated();
     }
+    tx.wake_after(Duration::ZERO);
     true
 }
 
-/// A manual step: at once, and the interval starts over.
+/// A manual step: at once, and the interval starts over with an empty bar.
 fn step_to(st: &mut State, index: usize, dir: i8) {
     st.browse_view.shelves.spot = index;
     st.browse_view.shelves.spot_dir = dir;
-    st.browse_view.shelves.step = 0;
+    st.browse_view.shelves.running = false;
     st.browse_view.shelves.due = None;
 }
 
@@ -625,11 +621,8 @@ fn billboard(s: &State, u: &Ui, picks: &[Slide], width: f32) -> El {
             // and the poll goes on from there once the pointer has left.
             tx.live_only();
             st.browse_view.shelves.hovered = over;
-            if over {
-                st.browse_view.shelves.due = None;
-            } else {
-                tx.wake_after(Duration::ZERO);
-            }
+            // The poll empties the bar when the pointer arrives and starts it over when it left.
+            tx.wake_after(Duration::ZERO);
         })
         .on_window_focus(|st: &mut State, focused: bool, tx: &mut Tx| {
             tx.live_only();
@@ -802,10 +795,11 @@ fn billboard(s: &State, u: &Ui, picks: &[Slide], width: f32) -> El {
     if count > 1 {
         // The pager sits in its own corner, clear of the text: one bar per pick, the current
         // one filling as its turn runs, then the two step buttons. Always shown.
-        let step = s.browse_view.shelves.step.min(STEPS) as f32 / STEPS as f32;
+        let running = s.browse_view.shelves.running;
         let bars = picks.iter().enumerate().map(|(i, pick)| {
             let on = i == at;
-            let filled = if on { (SEG * step).round() } else { 0.0 };
+            // Full while its turn runs (reached on the start commit's curve), else empty at once.
+            let filled = if on && running { SEG } else { 0.0 };
             el().key(format!("bb-seg-{i}"))
                 .size(SEG, 24.0)
                 .center()
@@ -824,7 +818,7 @@ fn billboard(s: &State, u: &Ui, picks: &[Slide], width: f32) -> El {
                         .radius(1.5)
                         .clip_rounded(1.5)
                         .fill(white(if on { 0.38 } else { 0.28 }))
-                        .child(el().key(format!("bb-fill-{i}")).h(3.0).w(filled).fill(Color::WHITE).motion(crate::motion::countdown())),
+                        .child(el().key(format!("bb-fill-{i}")).h(3.0).w(filled).fill(Color::WHITE)),
                 )
         });
         let arrow = |forward: bool| {
