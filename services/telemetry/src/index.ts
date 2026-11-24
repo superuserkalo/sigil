@@ -1,7 +1,7 @@
 /**
  * Sigil's opt-in telemetry Worker.
  *
- * Five endpoints, one cron job, no UI:
+ * Eight endpoints, one cron job, no UI:
  *
  *   POST /v1/events       usage events, one Analytics Engine point per event
  *   POST /v1/crash        scrubbed crash report (panic, unclean exit or native), deduplicated
@@ -9,6 +9,9 @@
  *   POST /v1/diagnostics  scrubbed bundle the player chose to send, returns a support code
  *   GET  /v1/identify     hash lookup for an installed VPK, stores nothing
  *   POST /v1/hashes       hash contributed by an app that just installed that file
+ *   POST /v1/product      opt-in product data records, "Help build Sigil" (ADR 0017)
+ *   POST /v1/product/delete  every raw product row for one install, on the player's press
+ *   GET  /v1/product/related co-installed mods, only for pairs 10 or more installs share
  *
  * The app is the only intended client and nothing here is fetched by the desktop app on its own:
  * every request is behind a Settings > Privacy switch (docs/decisions/0014-opt-in-telemetry.md,
@@ -28,6 +31,14 @@ import { crashFingerprint } from "./fingerprint";
 import { sha256Hex } from "./hash";
 import { allowRequest } from "./limiter";
 import { runRetention } from "./retention";
+import {
+  installHash,
+  MIN_RELATED_INSTALLS,
+  pairsOf,
+  parseInstallId,
+  parseProduct,
+  parseRelated,
+} from "./product";
 import { scrub } from "./scrub";
 import {
   isSemver,
@@ -47,6 +58,10 @@ const EVENTS_BODY_LIMIT = 32 * 1024;
 const CRASH_BODY_LIMIT = 96 * 1024;
 const DIAGNOSTICS_BODY_LIMIT = 1024 * 1024;
 const HASHES_BODY_LIMIT = 4 * 1024;
+const PRODUCT_BODY_LIMIT = 32 * 1024;
+const PRODUCT_DELETE_BODY_LIMIT = 1024;
+const MAX_RELATED = 20;
+const MAX_PAIRS_PER_REQUEST = 600;
 
 const MAX_IDENTIFY_MATCHES = 5;
 /// Distinct installs that must report a mapping before identify returns it.
@@ -65,7 +80,15 @@ const ROUTES: Readonly<Record<string, Route>> = {
   "/v1/diagnostics": { method: "POST", run: handleDiagnostics },
   "/v1/identify": { method: "GET", run: handleIdentify },
   "/v1/hashes": { method: "POST", run: handleHashes },
+  "/v1/product": { method: "POST", run: handleProduct },
+  "/v1/product/delete": { method: "POST", run: handleProductDelete },
+  "/v1/product/related": { method: "GET", run: handleRelated },
 };
+
+/** The product salt secret, when the owner set one (`wrangler secret put PRODUCT_SALT`). */
+function productSalt(env: Env): string | undefined {
+  return (env as Env & { readonly PRODUCT_SALT?: string }).PRODUCT_SALT;
+}
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
@@ -101,6 +124,7 @@ export default {
       cron: controller.cron,
       diagnostics: result.diagnostics,
       crashes: result.crashes,
+      product: result.product,
     });
   },
 } satisfies ExportedHandler<Env>;
@@ -290,6 +314,84 @@ async function handleHashes(request: Request, env: Env): Promise<Response> {
     .first<{ reports: number }>();
 
   return jsonResponse(202, { reports: stored?.reports ?? 1 });
+}
+
+async function handleProduct(request: Request, env: Env): Promise<Response> {
+  const body = await readJsonBody(request, PRODUCT_BODY_LIMIT);
+  if (!body.ok) return bodyError(body.reason);
+
+  const parsed = parseProduct(body.value);
+  if (!parsed.ok) return errorResponse(400, parsed.error);
+
+  const product = parsed.value;
+  const hash = await installHash(product.installId, productSalt(env));
+  const now = Date.now();
+  const statements: D1PreparedStatement[] = [];
+  let pairs = 0;
+  for (const record of product.records) {
+    statements.push(
+      env.DB.prepare(
+        `INSERT INTO product_events (created_at, install_hash, type, version, os, os_build, game_build, payload)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)`,
+      ).bind(now, hash, record.type, product.version, product.os, product.osBuild, product.gameBuild, JSON.stringify(record.fields)),
+    );
+    for (const [a, b] of pairsOf(record)) {
+      // One request writes at most MAX_PAIRS_PER_REQUEST pairs; the app sends one set a session.
+      if (pairs >= MAX_PAIRS_PER_REQUEST) break;
+      pairs += 1;
+      statements.push(
+        env.DB.prepare(
+          `INSERT INTO product_pairs (mod_a, mod_b, install_hash, created_at, updated_at)
+           VALUES (?1, ?2, ?3, ?4, ?4)
+           ON CONFLICT(mod_a, mod_b, install_hash) DO UPDATE SET updated_at = excluded.updated_at`,
+        ).bind(a, b, hash, now),
+      );
+    }
+  }
+  if (statements.length > 0) await env.DB.batch(statements);
+
+  return jsonResponse(202, { accepted: product.records.length, dropped: product.dropped });
+}
+
+/** Knowing the raw install id is the proof: only the app that made it can send it. */
+async function handleProductDelete(request: Request, env: Env): Promise<Response> {
+  const body = await readJsonBody(request, PRODUCT_DELETE_BODY_LIMIT);
+  if (!body.ok) return bodyError(body.reason);
+  const raw = body.value;
+  const installId = typeof raw === "object" && raw !== null ? parseInstallId((raw as Record<string, unknown>).installId) : null;
+  if (installId === null) return errorResponse(400, "bad_install_id");
+
+  const hash = await installHash(installId, productSalt(env));
+  const results = await env.DB.batch([
+    env.DB.prepare("DELETE FROM product_events WHERE install_hash = ?1").bind(hash),
+    env.DB.prepare("DELETE FROM product_pairs WHERE install_hash = ?1").bind(hash),
+  ]);
+  const deleted = (results[0]?.meta.changes ?? 0) + (results[1]?.meta.changes ?? 0);
+  return jsonResponse(200, { deleted });
+}
+
+async function handleRelated(_request: Request, env: Env, url: URL): Promise<Response> {
+  const mod = parseRelated(url.searchParams);
+  if (mod === null) return errorResponse(400, "bad_mod");
+
+  // Each row is one install and one pair, so a count is a count of distinct installs.
+  const { results } = await env.DB.prepare(
+    `SELECT other, COUNT(*) AS installs FROM (
+       SELECT mod_b AS other FROM product_pairs WHERE mod_a = ?1
+       UNION ALL
+       SELECT mod_a AS other FROM product_pairs WHERE mod_b = ?1
+     )
+     GROUP BY other
+     HAVING COUNT(*) >= ?2
+     ORDER BY installs DESC, other ASC
+     LIMIT ?3`,
+  )
+    .bind(mod, MIN_RELATED_INSTALLS, MAX_RELATED)
+    .all<{ other: number; installs: number }>();
+
+  return jsonResponse(200, {
+    mods: results.map((row) => ({ modId: row.other, installs: row.installs })),
+  });
 }
 
 function bodyError(reason: "too_large" | "invalid_utf8" | "invalid_json"): Response {

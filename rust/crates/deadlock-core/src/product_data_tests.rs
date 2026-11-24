@@ -368,6 +368,17 @@ fn no_record_type_can_carry_a_steam_id_a_path_or_free_text() {
     assert!(serde_json::from_str::<Record>(gpu).is_err());
 }
 
+#[test]
+fn the_worker_allows_the_same_types() {
+    let source = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../services/telemetry/src/product.ts");
+    let text = fs::read_to_string(&source).expect("services/telemetry/src/product.ts");
+    let start = text.find("export const PRODUCT_TYPES").expect("PRODUCT_TYPES");
+    let list = &text[start..start + text[start..].find("] as const").expect("end of PRODUCT_TYPES")];
+    let worker: BTreeSet<&str> = list.split('"').skip(1).step_by(2).collect();
+    let app: BTreeSet<&str> = KINDS.iter().copied().collect();
+    assert_eq!(worker, app);
+}
+
 /// The CLI and the agent host cannot emit or read product data: neither crate names the module.
 #[test]
 fn the_cli_and_the_agent_host_do_not_touch_product_data() {

@@ -1,19 +1,23 @@
 /**
  * Retention.
  *
- * Diagnostics are kept 30 days and crashes 90, counted from when the row was created. The daily
- * cron trigger calls this. Rows are plain text with no identifiers, so the dates are the whole
- * policy (`docs/privacy.md`).
+ * Diagnostics are kept 30 days, crashes 90 and raw product data 13 months, counted from when
+ * the row was created (a co-install pair from when an install last reported it). The daily cron
+ * trigger calls this. Diagnostics and crashes carry no identifier; product rows carry only a
+ * salted hash of the install id and can also be deleted on request (`docs/privacy.md`).
  */
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 export const DIAGNOSTICS_RETENTION_MS = 30 * DAY_MS;
 export const CRASH_RETENTION_MS = 90 * DAY_MS;
+/** Raw product data (ADR 0017): 13 months, counted as 396 days. */
+export const PRODUCT_RETENTION_MS = 396 * DAY_MS;
 
 export type RetentionResult = {
   readonly diagnostics: number;
   readonly crashes: number;
+  readonly product: number;
 };
 
 export async function runRetention(db: D1Database, now: number): Promise<RetentionResult> {
@@ -22,10 +26,13 @@ export async function runRetention(db: D1Database, now: number): Promise<Retenti
       .prepare("DELETE FROM diagnostics WHERE created_at < ?1")
       .bind(now - DIAGNOSTICS_RETENTION_MS),
     db.prepare("DELETE FROM crashes WHERE created_at < ?1").bind(now - CRASH_RETENTION_MS),
+    db.prepare("DELETE FROM product_events WHERE created_at < ?1").bind(now - PRODUCT_RETENTION_MS),
+    db.prepare("DELETE FROM product_pairs WHERE updated_at < ?1").bind(now - PRODUCT_RETENTION_MS),
   ]);
 
   return {
     diagnostics: results[0]?.meta.changes ?? 0,
     crashes: results[1]?.meta.changes ?? 0,
+    product: (results[2]?.meta.changes ?? 0) + (results[3]?.meta.changes ?? 0),
   };
 }
