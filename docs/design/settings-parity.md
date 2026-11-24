@@ -88,7 +88,7 @@ Grouped by task, thirteen categories in three groups, a search field over all of
 | 50 | Appearance | Adjust framing | Crop the render | Built now | Appearance > Personalize > Art: Across, Down, Zoom, Reset framing |
 | 51 | Appearance | Upload image | Custom art | Built now | Appearance > Personalize > Art > Your image (copied and scaled on a worker) |
 | 52 | Appearance | Art Cancel / Apply | Save art | Built now | Appearance > Personalize > Art applies live; Reset framing undoes |
-| 53 | Appearance | Transparent sidebar | Sidebar on the page background | Built now | Appearance > Transparent sidebar |
+| 53 | Appearance | Transparent sidebar | Glass sidebar over the system backdrop (Mica on Windows 11, blur on Windows 10, vibrancy on macOS; solid elsewhere; `glass.rs`) | Built now | Appearance > Transparent sidebar |
 | 54 | Appearance | Language | App language | Built now | General > Language (System, English, Deutsch) |
 | 55 | Appearance | Date format | MM/DD or DD/MM | Built now | General > Dates (ISO, day first, month first) |
 | 56 | Preferences | Expand Locker cards | Locker list expanded | Built now | Mods > Preferences; the Locker opens expanded (`options::locker_expanded()`) |
