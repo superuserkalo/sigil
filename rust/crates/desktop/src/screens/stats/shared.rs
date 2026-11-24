@@ -60,13 +60,23 @@ pub(super) fn tabs(s: &State, u: &Ui, open: super::Tab, enabled: bool) -> El {
                     .a11y_hidden(),
             );
         }
-        t = t.child(
-            el().absolute(0.0, 30.0)
+        // One underline for the strip, in the open tab: on a tab press it flies from the old
+        // tab to the new one on the `base` token (`design/motion.md` 4.5). Absolute, so no tab
+        // changes size; under Reduce motion it is not matched and lands at once.
+        if on {
+            let bar = el()
+                .key("stats-tabs-underline")
+                .absolute(0.0, 30.0)
                 .w_full()
                 .h(2.0)
-                .fill(if on { u.ink } else { Color::TRANSPARENT })
-                .a11y_hidden(),
-        );
+                .fill(u.ink)
+                .a11y_hidden();
+            t = t.child(if crate::motion::reduced() {
+                bar
+            } else {
+                bar.matched("stats-tabs-underline").motion(crate::motion::base())
+            });
+        }
         if usable {
             t = t
                 .focusable(true)

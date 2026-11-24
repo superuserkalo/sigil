@@ -750,9 +750,11 @@ pub fn view(s: &State, u: &Ui) -> El {
 /// One tab's sections. Every section of the old single page lives in exactly one tab.
 fn tab_body(s: &State, u: &Ui, tab: Tab, snap: &StatsSnapshot, derived: &Derived) -> El {
     let (osnap, oderived) = w4::overview(s).unwrap_or((snap, derived));
-    let section = |key: &str| col().key(key.to_string()).w_full().gap(24.0);
+    // A tab body fades in whole on a tab press and the old one is gone that frame
+    // (`design/motion.md` 4.12), so its rows never fade in one by one on their own default.
+    let section = |key: &str| col().key(key.to_string()).w_full().gap(24.0).transition(crate::motion::page_enter());
     match tab {
-        Tab::Overview => brief::overview(s, u, osnap, oderived),
+        Tab::Overview => brief::overview(s, u, osnap, oderived).transition(crate::motion::page_enter()),
         Tab::Live => section("stats-tab-live").child(live::panel(s, u).unwrap_or_else(|| {
             // Starts at the same y as every other tab's first section.
             col()

@@ -517,49 +517,70 @@ fn band(u: &Ui, snap: &StatsSnapshot) -> El {
     } else {
         "--".to_string()
     };
-    let cell = |label: &str, value: String, first: bool| {
-        let mut c = col()
-            .w(132.0)
-            .h(44.0)
+    // Four cells on the same columns as the four tiles below (equal widths, 8 apart), so the
+    // band's dividers sit on the tiles' edges and no gap opens between the name and the rank.
+    let cell = |key: &'static str, label: &str, value: El| {
+        col()
+            .key(key)
+            .min_w(0.0)
+            .h(48.0)
             .pl(12.0)
             .gap(2.0)
+            .justify_center()
+            .border_sides([0.0, 0.0, 0.0, 1.0], u.hair)
             .child(text(tr(label).to_string()).font(SMALL).color(u.muted))
-            .child(text(value).font(crate::ui::NUM).color(u.ink).truncate());
-        if !first {
-            c = c.border_sides([0.0, 0.0, 0.0, 1.0], u.hair);
-        }
-        c
+            .child(value)
     };
-    row()
-        .key("stats-identity")
+    let number = |value: String| text(value).font(crate::ui::NUM).color(u.ink).truncate().min_w(0.0);
+    // The rank and how high it places, on one line: "Eternus 5  Top <0.1%".
+    let mut rank_line = row().w_full().gap(8.0).items_end().child(number(rank).shrink());
+    if top != "--" {
+        rank_line = rank_line.child(
+            text(format!("{} {top}", tr("Top")))
+                .font(TNUM_SMALL)
+                .color(u.muted)
+                .truncate()
+                .min_w(0.0)
+                .shrink(),
+        );
+    }
+    el().key("stats-identity")
         .w_full()
         .h(72.0)
-        .padding(12.0)
-        .gap(12.0)
-        .center_y()
+        .py(12.0)
+        .equal_columns(4)
+        .gap(8.0)
         .radius(crate::ui::r(4.0))
         .fill(u.raised)
         .border(1.0, u.hair)
-        .child(avatar(u, &snap.profile.persona_name, 48.0))
         .child(
-            col()
-                .grow(1.0)
+            row()
                 .min_w(0.0)
-                .gap(2.0)
-                .child(text(snap.profile.persona_name.clone()).font(H1).color(u.ink).truncate())
+                .h(48.0)
+                .pl(12.0)
+                .gap(12.0)
+                .center_y()
+                .child(avatar(u, &snap.profile.persona_name, 48.0))
                 .child(
-                    text(crate::screens::settings::i18n::fill(
-                        tr("Account {}"),
-                        &[&snap.account_id.to_string()],
-                    ))
-                    .font(TNUM_SMALL)
-                    .color(u.muted),
+                    col()
+                        .grow(1.0)
+                        .min_w(0.0)
+                        .gap(2.0)
+                        .child(text(snap.profile.persona_name.clone()).font(H1).color(u.ink).truncate())
+                        .child(
+                            text(crate::screens::settings::i18n::fill(
+                                tr("Account {}"),
+                                &[&snap.account_id.to_string()],
+                            ))
+                            .font(TNUM_SMALL)
+                            .color(u.muted)
+                            .truncate(),
+                        ),
                 ),
         )
-        .child(cell("Rank", rank, true))
-        .child(cell("Top", top, false))
-        .child(cell("Win rate", win_rate, false))
-        .child(cell("Matches 30 d", snap.profile.matches_played_last_30d.to_string(), false))
+        .child(cell("stats-band-rank", "Rank", rank_line))
+        .child(cell("stats-band-win", "Win rate", number(win_rate)))
+        .child(cell("stats-band-matches", "Matches 30 d", number(snap.profile.matches_played_last_30d.to_string())))
 }
 
 /// The four numbers for the newest matches, each a tile of the same size.
