@@ -658,6 +658,10 @@ pub fn view(s: &State, u: &Ui) -> El {
                     crate::data::start_profile_list(st);
                 }
             }),
+        // Packs (shareable mod sets) open the same dialog as Installed > More > Packs.
+        labelled(&icons::PACKAGE, crate::screens::packs::tr("Packs"), "profiles-packs")
+            .cursor(rune::Cursor::Pointer)
+            .on_press(crate::screens::packs::open_list),
         labelled(&icons::DOWNLOAD, tr("Import"), "profiles-import")
             .cursor(rune::Cursor::Pointer)
             .on_press(open_import),
