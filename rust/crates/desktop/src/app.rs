@@ -1598,19 +1598,19 @@ fn sidebar(s: &State, u: &Ui, insets: rune::ChromeInsets) -> El {
         }))
         .child(if collapsed && lights_row {
             // macOS rail: the traffic lights fill the top row; Expand sits in the foot.
-            row().key("brand").w_full().h(TITLEBAR_H).window_drag()
+            row().key("brand").w_full().h(TITLEBAR_H).clip_rounded(0.0).window_drag()
         } else if collapsed {
-            // Icons only: Expand 12 points under the window's top, then the mark, both centred
-            // on the rail's axis like the 32 point nav targets below.
+            // Icons only: Expand 12 points under the window's top, centred on the rail's axis
+            // like the 32 point nav targets below. No logo in the rail. The row clips, so the
+            // lockup fading out on collapse never draws past the rail's edge.
             col()
                 .key("brand")
                 .w_full()
                 .pt(RAIL_TOP)
-                .gap(8.0)
                 .items_center()
+                .clip_rounded(0.0)
                 .window_drag()
                 .child(crate::shell_w4::collapse_button(s, u))
-                .child(crate::brand::rail_mark(s, u))
         } else {
             row()
                 .key("brand")
@@ -1624,6 +1624,7 @@ fn sidebar(s: &State, u: &Ui, insets: rune::ChromeInsets) -> El {
                 .pl(14.0)
                 .pr(12.0)
                 .center_y()
+                .clip_rounded(0.0)
                 .window_drag()
                 .child(if s.shell.w4.eggs {
                     // Easter eggs: five knocks on the wordmark open the news computer.

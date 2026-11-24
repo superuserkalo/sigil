@@ -931,3 +931,62 @@ fn billboard_stops_when_idle() {
     });
     assert!(rt.state.browse_view.shelves.due.is_some(), "input arms it again");
 }
+
+/// The sidebar's brand on collapse and expand (owner, 0.1.38): the lockup keeps its size on
+/// every frame (no scaling, wrapping or re-layout), fades on a motion token rather than
+/// Rune's default, never draws past the brand row it is clipped to, and the collapsed rail
+/// has no brand element at all.
+#[test]
+fn sidebar_brand_keeps_its_size_and_leaves_the_rail() {
+    let _globals = crate::ui::test_globals();
+    let mut rt = runtime("demo-installed", (1280.0, 800.0));
+    let brand = |rt: &Runtime<State>| -> Vec<(String, bool, [f32; 4], f32)> {
+        rt.elements()
+            .into_iter()
+            .filter(|e| matches!(e.key.as_deref(), Some("brand-mark") | Some("brand-word") | Some("brand-lockup")))
+            .map(|e| (e.key.unwrap_or_default(), e.exiting, e.rect, e.opacity))
+            .collect()
+    };
+    let size_of = |key: &str| -> (f32, f32) {
+        match key {
+            "brand-lockup" => crate::brand::LOCKUP,
+            "brand-mark" => (24.0, 24.0),
+            _ => (crate::brand::LOCKUP.0 - 30.0, 18.0),
+        }
+    };
+    let open = brand(&rt);
+    assert!(open.iter().any(|b| b.0 == "brand-lockup"), "the open sidebar shows the lockup");
+    let mut wrong = Vec::new();
+    for (step, label) in [("sidebar-collapse", "collapse"), ("sidebar-collapse", "expand")] {
+        apply(&mut rt, Step::Press(step), label);
+        let mut fading = 0;
+        for n in 0..40 {
+            rt.frame(1.0 / 60.0);
+            for (key, exiting, rect, opacity) in brand(&rt) {
+                let (w, h) = size_of(&key);
+                if (rect[2] - w).abs() > 0.5 || (rect[3] - h).abs() > 0.5 {
+                    wrong.push(format!("{label} frame {n}: {key} is {}x{}", rect[2], rect[3]));
+                }
+                if rect[0] < 13.5 || rect[0] > 26.5 && key != "brand-word" {
+                    wrong.push(format!("{label} frame {n}: {key} moved to x {}", rect[0]));
+                }
+                if opacity > 0.01 && opacity < 0.99 {
+                    fading = fading.max(n + 1);
+                }
+                if label == "collapse" && !exiting {
+                    wrong.push(format!("collapse frame {n}: {key} is in the rail"));
+                }
+            }
+        }
+        if fading == 0 || fading > 24 {
+            wrong.push(format!("{label}: the lockup faded over {fading} frames"));
+        }
+        if label == "collapse" {
+            let sidebar = rt.elements().into_iter().find(|e| e.key.as_deref() == Some("sidebar")).map(|e| e.rect[2]);
+            assert!(sidebar.is_some_and(|w| w < 64.0), "collapsed: {sidebar:?}");
+            assert!(brand(&rt).is_empty(), "the collapsed rail has no brand: {:?}", brand(&rt));
+        }
+    }
+    assert!(brand(&rt).iter().any(|b| b.0 == "brand-lockup" && !b.1 && (b.3 - 1.0).abs() < 0.01), "expanded again: {:?}", brand(&rt));
+    assert!(wrong.is_empty(), "the sidebar brand jumps:\n{}", wrong.join("\n"));
+}

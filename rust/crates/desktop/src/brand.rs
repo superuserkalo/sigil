@@ -66,7 +66,15 @@ pub fn mark<'a>(s: &'a State, u: &Ui) -> Option<&'a rune::Pixels> {
 /// The mark and the wordmark in the theme's ink; the plain name until they decode, in the
 /// lockup's exact box so nothing moves when the images arrive. The mark spans the nav icon
 /// column and the wordmark starts on the nav label edge.
+///
+/// Only the open sidebar shows it; the collapsed rail has no brand. On collapse the lockup
+/// keeps its size and place, clipped by the brand row at the sidebar's edge, and fades out on
+/// `motion::fade`; on expand it fades in the same way. Nothing in it scales or wraps.
 pub fn header(s: &State, u: &Ui) -> El {
+    lockup(s, u).transition(crate::motion::fade())
+}
+
+fn lockup(s: &State, u: &Ui) -> El {
     let dark_theme = (u.ink.r + u.ink.g + u.ink.b) / 3.0 > 0.5;
     let (mark, word) = if dark_theme {
         (MARK_LIGHT_KEY, WORD_LIGHT_KEY)
@@ -96,12 +104,6 @@ pub fn header(s: &State, u: &Ui) -> El {
     }
 }
 
-/// The mark alone at the lockup's size, for the collapsed rail; an empty box of the same size
-/// until it decodes.
-pub fn rail_mark(s: &State, u: &Ui) -> El {
-    let mark_box = el().key("brand-mark").size(MARK_PT, MARK_PT).label("Sigil");
-    match mark(s, u) {
-        Some(px) => mark_box.pixels_fit(px, SurfaceFit::Fit),
-        None => mark_box,
-    }
-}
+/// The lockup's fixed size: the mark, the gap and the wordmark (the sidebar jank guard reads it).
+#[cfg_attr(not(test), allow(dead_code))]
+pub const LOCKUP: (f32, f32) = (MARK_PT + GAP + WORD_PT * WORD_ASPECT, MARK_PT);
