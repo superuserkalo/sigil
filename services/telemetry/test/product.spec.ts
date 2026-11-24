@@ -2,8 +2,8 @@ import { createScheduledController } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { beforeEach, describe, expect, it } from "vitest";
 import worker from "../src/index";
-import { networkPrefix, publishedKeys } from "../src/aggregates";
-import { installHash, modelName, PRODUCT_TYPES, scrubSearch } from "../src/product";
+import { closeEpochs, contribute, EPOCH_MS, epochOf, networkPrefix, publishedKeys } from "../src/aggregates";
+import { installHash, modelName, parseRecord, PRODUCT_TYPES, scrubSearch, type ProductRecord } from "../src/product";
 import { call, clearTables, INSTALL_ID, readJson, VERSION } from "./helpers";
 
 type Accepted = { readonly accepted: number; readonly dropped: number };
@@ -129,23 +129,25 @@ describe("scrubbers", () => {
 });
 
 describe("POST /v1/product/delete", () => {
-  it("removes every raw row for that install and only that install", async () => {
+  it("removes the install's raw rows and open-epoch contributions, and only that install's", async () => {
     const other = crypto.randomUUID();
     await call("/v1/product", { body: body([{ type: "launch", modded: true }, { type: "enabled_set", mods: [{ mod_id: 1, slot: 1 }, { mod_id: 2, slot: 2 }] }]) });
     await call("/v1/product", { body: body([{ type: "launch", modded: false }], { installId: other }) });
+    const mine = await installHash(INSTALL_ID, undefined);
+    const before = await env.DB.prepare("SELECT COUNT(*) AS n FROM product_contrib WHERE install_hash = ?1").bind(mine).first<{ n: number }>();
+    // seen, two mods and one pair.
+    expect(before?.n).toBe(4);
 
     const response = await call("/v1/product/delete", { body: { installId: INSTALL_ID } });
     expect(response.status).toBe(200);
-    // Two events, one pair and the install row.
-    expect(await readJson<{ deleted: number }>(response)).toEqual({ deleted: 4 });
+    // Two events and four contributions.
+    expect(await readJson<{ deleted: number }>(response)).toEqual({ deleted: 6 });
 
     const left = await rows();
     expect(left.length).toBe(1);
     expect(left[0]?.install_hash).toBe(await installHash(other, undefined));
-    const pairs = await env.DB.prepare("SELECT COUNT(*) AS n FROM product_pairs").first<{ n: number }>();
-    expect(pairs?.n).toBe(0);
-    const installs = await env.DB.prepare("SELECT COUNT(*) AS n FROM product_installs").first<{ n: number }>();
-    expect(installs?.n).toBe(1);
+    const contrib = await env.DB.prepare("SELECT DISTINCT install_hash FROM product_contrib").all<{ install_hash: string }>();
+    expect(contrib.results.map((r) => r.install_hash)).toEqual([await installHash(other, undefined)]);
   });
 
   it("needs a real install id", async () => {
@@ -157,25 +159,32 @@ describe("POST /v1/product/delete", () => {
 const SET = { type: "enabled_set", mods: [{ mod_id: 100, slot: 1 }, { mod_id: 200, slot: 2 }, { mod_id: 300, slot: 3 }] };
 
 const KEY = (env as typeof env & { readonly PRODUCT_BUCKET_KEY: string }).PRODUCT_BUCKET_KEY;
+const DAY = 24 * 60 * 60 * 1000;
+/** The start of a fixed epoch, so tests do not depend on today's date. */
+const E0 = (epochOf(Date.UTC(2026, 0, 1)) + 1) * EPOCH_MS;
 
-/** Send the set from `installs` new installs; `network(n)` picks the address of install n. */
-async function contribute(installs: number, network: (n: number) => string): Promise<void> {
-  for (let n = 0; n < installs; n += 1) {
-    await call("/v1/product", {
-      body: body([SET, { type: "browse_query", sort: null, filters: [], search: "haze", results: 3 }], { installId: crypto.randomUUID() }),
-      ip: network(n),
-    });
-  }
+function records(): ProductRecord[] {
+  return [SET, { type: "browse_query", sort: null, filters: [], search: "haze", results: 3 }].map((raw) => parseRecord(raw) as ProductRecord);
 }
 
-/** Every install seen on two days, contributions spread over three days (as after 30 days). */
-async function spreadOverDays(): Promise<void> {
-  await env.DB.prepare("UPDATE product_installs SET days_seen = 2").run();
-  for (const table of ["product_pairs", "product_keys"]) {
-    await env.DB.prepare(
-      `UPDATE ${table} SET day = '2026-11-0' || (1 + (SELECT i.rowid % 3 FROM product_installs i WHERE i.install_hash = ${table}.install_hash))`,
-    ).run();
+/**
+ * `installs` installs in epoch `epoch`; install n is on the network `network(n)` and sends on two
+ * days, `n % 3` and `n % 3 + 1`, so an epoch with three or more installs spans three days.
+ */
+async function sendEpoch(epoch: number, installs: number, network: (n: number) => string, ids?: string[]): Promise<string[]> {
+  const made: string[] = [];
+  for (let n = 0; n < installs; n += 1) {
+    const hash = ids?.[n] ?? (await installHash(crypto.randomUUID(), undefined));
+    made.push(hash);
+    for (const day of [n % 3, (n % 3) + 1]) {
+      await contribute(env.DB, KEY, network(n), hash, records(), E0 + epoch * EPOCH_MS + day * DAY + 3_600_000);
+    }
   }
+  return made;
+}
+
+async function closeAll(): Promise<void> {
+  await closeEpochs(env.DB, E0 + 40 * EPOCH_MS);
 }
 
 async function relatedTo(mod: number, envOverride?: Record<string, unknown>): Promise<Related> {
@@ -192,11 +201,14 @@ async function relatedTo(mod: number, envOverride?: Record<string, unknown>): Pr
   return readJson<Related>(response);
 }
 
-describe("GET /v1/product/related and the distinct-contributor floor", () => {
-  it("publishes a pair ten installs on six or more networks share over several days", async () => {
-    // Ten installs on six /24 networks: 2, 2, 2, 2, 1, 1.
-    await contribute(10, (n) => `10.${n % 6}.0.${n + 1}`);
-    await spreadOverDays();
+const SIX_NETWORKS = (n: number): string => `10.${n % 6}.0.${n + 1}`;
+
+describe("the distinct-contributor floor", () => {
+  it("publishes a pair ten installs on six networks share on three days of one epoch", async () => {
+    await sendEpoch(0, 10, SIX_NETWORKS);
+    // The open epoch is never published.
+    expect(await relatedTo(100)).toEqual({ mods: [] });
+    await closeAll();
     expect(await relatedTo(100)).toEqual({
       mods: [
         { modId: 200, installs: 10 },
@@ -206,35 +218,62 @@ describe("GET /v1/product/related and the distinct-contributor floor", () => {
     expect(await publishedKeys(env.DB, KEY, "search", 10)).toEqual([{ key: "haze", installs: 10 }]);
   });
 
-  it("publishes nothing for fifty made-up ids on one network over thirty days", async () => {
-    await contribute(50, (n) => `198.51.100.${n + 1}`);
-    await spreadOverDays();
+  it("publishes nothing for fifty made-up ids on one network over three epochs", async () => {
+    for (const epoch of [0, 1, 2]) await sendEpoch(epoch, 50, (n) => `198.51.100.${n + 1}`);
+    await closeAll();
     expect(await relatedTo(100)).toEqual({ mods: [] });
     expect(await publishedKeys(env.DB, KEY, "search", 10)).toEqual([]);
-    const eligible = await env.DB.prepare("SELECT SUM(eligible) AS n, COUNT(*) AS total FROM product_installs").first<{ n: number; total: number }>();
-    expect(eligible).toEqual({ n: 3, total: 50 });
+    const totals = await env.DB.prepare("SELECT MAX(installs) AS n FROM product_totals").first<{ n: number }>();
+    expect(totals?.n).toBe(3);
   });
 
   it("publishes nothing from two networks", async () => {
-    await contribute(40, (n) => `172.16.${n % 2}.${n + 1}`);
-    await spreadOverDays();
+    await sendEpoch(0, 40, (n) => `172.16.${n % 2}.${n + 1}`);
+    await closeAll();
     expect(await relatedTo(100)).toEqual({ mods: [] });
   });
 
-  it("counts an IPv6 /48 as one network", async () => {
+  it("does not let a flood from one network block real installs in the next epoch", async () => {
+    await sendEpoch(0, 30, () => "10.0.0.1");
+    await sendEpoch(1, 10, SIX_NETWORKS);
+    await closeAll();
+    expect((await relatedTo(100)).mods.map((m) => m.modId)).toEqual([200, 300]);
+  });
+
+  it("frees a bucket slot and lowers the counts when an install is deleted in the open epoch", async () => {
+    const network = (): string => "10.9.9.9";
+    const ids = await sendEpoch(0, 3, network);
+    const fourth = await installHash(crypto.randomUUID(), undefined);
+    expect(await contribute(env.DB, KEY, "10.9.9.10", fourth, records(), E0 + 3_600_000)).toBe(false);
+    await env.DB.prepare("DELETE FROM product_contrib WHERE install_hash = ?1").bind(ids[0]).run();
+    expect(await contribute(env.DB, KEY, "10.9.9.10", fourth, records(), E0 + 3_600_000)).toBe(true);
+    const counted = await env.DB.prepare("SELECT COUNT(DISTINCT install_hash) AS n FROM product_contrib WHERE kind = 'mod' AND key = '100'").first<{ n: number }>();
+    expect(counted?.n).toBe(3);
+  });
+
+  it("a delete through the endpoint removes the install from the open epoch", async () => {
+    const id = crypto.randomUUID();
+    await call("/v1/product", { body: body([SET], { installId: id }), ip: "10.7.7.7" });
+    expect((await env.DB.prepare("SELECT COUNT(*) AS n FROM product_contrib").first<{ n: number }>())?.n).toBeGreaterThan(0);
+    await call("/v1/product/delete", { body: { installId: id } });
+    expect((await env.DB.prepare("SELECT COUNT(*) AS n FROM product_contrib").first<{ n: number }>())?.n).toBe(0);
+  });
+
+  it("counts an IPv6 /48 as one network", () => {
     expect(networkPrefix("2001:db8:abcd:12::1")).toBe(networkPrefix("2001:db8:abcd:ffff::9"));
     expect(networkPrefix("2001:db8:abcd::1")).not.toBe(networkPrefix("2001:db8:abce::1"));
     expect(networkPrefix("203.0.113.9")).toBe(networkPrefix("203.0.113.200"));
     expect(networkPrefix("not an address")).toBeNull();
   });
 
-  it("publishes nothing and writes no aggregate rows without the bucket secret", async () => {
-    await contribute(10, (n) => `10.${n % 6}.0.${n + 1}`);
-    await spreadOverDays();
+  it("publishes nothing and writes no contribution without the bucket secret", async () => {
+    await sendEpoch(0, 10, SIX_NETWORKS);
+    await closeAll();
     expect(await relatedTo(100, { PRODUCT_BUCKET_KEY: undefined })).toEqual({ mods: [] });
     expect(await publishedKeys(env.DB, undefined, "search", 10)).toEqual([]);
 
     await clearTables();
+    expect(await contribute(env.DB, undefined, "203.0.113.5", "h", records(), Date.now())).toBe(false);
     const response = await worker.fetch(
       new Request("http://telemetry.test/v1/product", {
         method: "POST",
@@ -245,43 +284,34 @@ describe("GET /v1/product/related and the distinct-contributor floor", () => {
     );
     expect(response.status).toBe(202);
     expect((await rows()).length).toBe(1);
-    for (const table of ["product_pairs", "product_installs", "product_buckets"]) {
-      const count = await env.DB.prepare(`SELECT COUNT(*) AS n FROM ${table}`).first<{ n: number }>();
-      expect(count?.n).toBe(0);
-    }
+    expect((await env.DB.prepare("SELECT COUNT(*) AS n FROM product_contrib").first<{ n: number }>())?.n).toBe(0);
   });
 
   it("does not count installs seen on one day only", async () => {
-    await contribute(10, (n) => `10.${n % 6}.0.${n + 1}`);
-    for (const table of ["product_pairs", "product_keys"]) {
-      await env.DB.prepare(
-        `UPDATE ${table} SET day = '2026-11-0' || (1 + (SELECT i.rowid % 3 FROM product_installs i WHERE i.install_hash = ${table}.install_hash))`,
-      ).run();
+    for (let n = 0; n < 12; n += 1) {
+      const hash = await installHash(crypto.randomUUID(), undefined);
+      await contribute(env.DB, KEY, SIX_NETWORKS(n), hash, records(), E0 + (n % 3) * DAY);
     }
+    await closeAll();
     expect(await relatedTo(100)).toEqual({ mods: [] });
   });
 
-  it("needs three distinct days", async () => {
-    await contribute(10, (n) => `10.${n % 6}.0.${n + 1}`);
-    await env.DB.prepare("UPDATE product_installs SET days_seen = 2").run();
-    expect(await relatedTo(100)).toEqual({ mods: [] });
+  it("leaves no install hash or bucket outside raw events once an epoch closes", async () => {
+    await sendEpoch(0, 10, SIX_NETWORKS);
+    await call("/v1/product", { body: body([SET]) });
+    await closeAll();
+    expect((await env.DB.prepare("SELECT COUNT(*) AS n FROM product_contrib WHERE epoch <= ?1").bind(epochOf(E0)).first<{ n: number }>())?.n).toBe(0);
+    const columns = await env.DB.prepare("SELECT name FROM pragma_table_info('product_totals')").all<{ name: string }>();
+    expect(columns.results.map((c) => c.name)).toEqual(["epoch", "kind", "key", "mod_a", "mod_b", "installs", "buckets", "days"]);
+    const totals = JSON.stringify(await env.DB.prepare("SELECT * FROM product_totals").all());
+    expect(totals).not.toMatch(/[0-9a-f]{16}/);
+    const eventColumns = await env.DB.prepare("SELECT name FROM pragma_table_info('product_events')").all<{ name: string }>();
+    expect(eventColumns.results.map((c) => c.name)).not.toContain("bucket");
   });
 
-  it("counts a second day for an install that comes back", async () => {
-    const id = crypto.randomUUID();
-    await call("/v1/product", { body: body([{ type: "launch", modded: true }], { installId: id }) });
-    await env.DB.prepare("UPDATE product_installs SET last_day = '2000-01-01'").run();
-    await call("/v1/product", { body: body([{ type: "launch", modded: true }], { installId: id }) });
-    await call("/v1/product", { body: body([{ type: "launch", modded: true }], { installId: id }) });
-    const row = await env.DB.prepare("SELECT days_seen FROM product_installs").first<{ days_seen: number }>();
-    expect(row?.days_seen).toBe(2);
-  });
-
-  it("never stores an address, a prefix or a bucket on raw events", async () => {
-    await contribute(2, () => "198.51.100.9");
-    const columns = await env.DB.prepare("SELECT name FROM pragma_table_info('product_events')").all<{ name: string }>();
-    expect(columns.results.map((c) => c.name)).not.toContain("bucket");
-    for (const table of ["product_events", "product_pairs", "product_keys", "product_buckets", "product_installs"]) {
+  it("never stores an address or a network prefix", async () => {
+    await call("/v1/product", { body: body([SET]), ip: "198.51.100.9" });
+    for (const table of ["product_events", "product_contrib", "product_totals"]) {
       const dump = JSON.stringify(await env.DB.prepare(`SELECT * FROM ${table}`).all());
       expect(dump).not.toContain("198.51.100");
     }
@@ -295,7 +325,7 @@ describe("GET /v1/product/related and the distinct-contributor floor", () => {
 });
 
 describe("product retention", () => {
-  it("deletes raw rows older than 13 months", async () => {
+  it("deletes raw rows older than 13 months and stray contributions, and keeps totals", async () => {
     const now = Date.now();
     for (const [age, type] of [
       [400, "old"],
@@ -306,15 +336,16 @@ describe("product retention", () => {
       )
         .bind(now - age * DAY_MS, type)
         .run();
-      await env.DB.prepare(
-        `INSERT INTO product_pairs (mod_a, mod_b, install_hash, bucket, day, created_at, updated_at) VALUES (1, ?1, 'h', 'b', 'd', ?2, ?2)`,
-      )
-        .bind(age, now - age * DAY_MS)
-        .run();
     }
+    await env.DB.prepare(
+      `INSERT INTO product_contrib (epoch, kind, key, install_hash, bucket, day, created_at) VALUES (1, 'seen', 'd', 'h', 'b', 'd', ?1)`,
+    )
+      .bind(now - 45 * DAY_MS)
+      .run();
+    await env.DB.prepare(`INSERT INTO product_totals (epoch, kind, key, installs, buckets, days) VALUES (1, 'search', 'haze', 12, 7, 4)`).run();
     await worker.scheduled(createScheduledController({ cron: "17 3 * * *" }), env);
     expect((await rows()).map((row) => row.type)).toEqual(["new"]);
-    const pairs = await env.DB.prepare("SELECT mod_b FROM product_pairs").all<{ mod_b: number }>();
-    expect(pairs.results.map((row) => row.mod_b)).toEqual([380]);
+    expect((await env.DB.prepare("SELECT COUNT(*) AS n FROM product_contrib").first<{ n: number }>())?.n).toBe(0);
+    expect((await env.DB.prepare("SELECT COUNT(*) AS n FROM product_totals").first<{ n: number }>())?.n).toBe(1);
   });
 });

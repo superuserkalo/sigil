@@ -101,9 +101,7 @@ export async function clearTables(): Promise<void> {
     env.DB.prepare("DELETE FROM mod_hashes"),
     env.DB.prepare("DELETE FROM hash_contributors"),
     env.DB.prepare("DELETE FROM product_events"),
-    env.DB.prepare("DELETE FROM product_pairs"),
-    env.DB.prepare("DELETE FROM product_keys"),
-    env.DB.prepare("DELETE FROM product_installs"),
-    env.DB.prepare("DELETE FROM product_buckets"),
+    env.DB.prepare("DELETE FROM product_contrib"),
+    env.DB.prepare("DELETE FROM product_totals"),
   ]);
 }

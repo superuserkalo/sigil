@@ -31,19 +31,9 @@ import { crashFingerprint } from "./fingerprint";
 import { sha256Hex } from "./hash";
 import { allowRequest } from "./limiter";
 import { runRetention } from "./retention";
-import {
-  bucketOf,
-  keyStatement,
-  keysOf,
-  pairStatement,
-  registerInstall,
-  related,
-  utcDay,
-  type Contributor,
-} from "./aggregates";
+import { closeEpochs, contribute, related } from "./aggregates";
 import {
   installHash,
-  pairsOf,
   parseInstallId,
   parseProduct,
   parseRelated,
@@ -69,7 +59,6 @@ const DIAGNOSTICS_BODY_LIMIT = 1024 * 1024;
 const HASHES_BODY_LIMIT = 4 * 1024;
 const PRODUCT_BODY_LIMIT = 32 * 1024;
 const PRODUCT_DELETE_BODY_LIMIT = 1024;
-const MAX_PAIRS_PER_REQUEST = 600;
 
 const MAX_IDENTIFY_MATCHES = 5;
 /// Distinct installs that must report a mapping before identify returns it.
@@ -133,6 +122,7 @@ export default {
   },
 
   async scheduled(controller: ScheduledController, env: Env): Promise<void> {
+    const closed = await closeEpochs(env.DB, Date.now());
     const result = await runRetention(env.DB, Date.now());
     logLine({
       event: "retention",
@@ -140,6 +130,7 @@ export default {
       diagnostics: result.diagnostics,
       crashes: result.crashes,
       product: result.product,
+      epochsClosed: closed.length,
     });
   },
 } satisfies ExportedHandler<Env>;
@@ -341,33 +332,20 @@ async function handleProduct(request: Request, env: Env): Promise<Response> {
   const product = parsed.value;
   const now = Date.now();
   const hash = await installHash(product.installId, productSalt(env));
-  const bucket = await bucketOf(request, bucketKey(env));
-  // Without a bucket (no secret, no address) the records are kept raw and feed no aggregate.
-  const who: Contributor | null = bucket === null ? null : { hash, bucket, day: utcDay(now) };
-  if (who !== null) await registerInstall(env.DB, who, now);
 
   // Raw rows carry the install hash only: no bucket, no address, no user agent.
-  const statements: D1PreparedStatement[] = [];
-  let pairs = 0;
-  for (const record of product.records) {
-    statements.push(
-      env.DB.prepare(
-        `INSERT INTO product_events (created_at, install_hash, type, version, os, os_build, game_build, payload)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)`,
-      ).bind(now, hash, record.type, product.version, product.os, product.osBuild, product.gameBuild, JSON.stringify(record.fields)),
+  if (product.records.length > 0) {
+    await env.DB.batch(
+      product.records.map((record) =>
+        env.DB.prepare(
+          `INSERT INTO product_events (created_at, install_hash, type, version, os, os_build, game_build, payload)
+           VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)`,
+        ).bind(now, hash, record.type, product.version, product.os, product.osBuild, product.gameBuild, JSON.stringify(record.fields)),
+      ),
     );
-    if (who === null) continue;
-    for (const [a, b] of pairsOf(record)) {
-      // One request writes at most MAX_PAIRS_PER_REQUEST pairs; the app sends one set a session.
-      if (pairs >= MAX_PAIRS_PER_REQUEST) break;
-      pairs += 1;
-      statements.push(pairStatement(env.DB, a, b, who, now));
-    }
-    for (const { kind, key } of keysOf(record)) {
-      statements.push(keyStatement(env.DB, kind, key, who, now));
-    }
   }
-  if (statements.length > 0) await env.DB.batch(statements);
+  // Open-epoch contributions: none without the bucket secret or past the bucket's cap.
+  await contribute(env.DB, bucketKey(env), request.headers.get("cf-connecting-ip"), hash, product.records, now);
 
   return jsonResponse(202, { accepted: product.records.length, dropped: product.dropped });
 }
@@ -382,7 +360,9 @@ async function handleProductDelete(request: Request, env: Env): Promise<Response
 
   const hash = await installHash(installId, productSalt(env));
   const results = await env.DB.batch(
-    ["product_events", "product_pairs", "product_keys", "product_installs"].map((table) =>
+    // Raw events and open-epoch contributions (the only rows with a bucket). Closed-epoch totals
+    // are counts with no install hash, so there is nothing of this install in them to delete.
+    ["product_events", "product_contrib"].map((table) =>
       env.DB.prepare(`DELETE FROM ${table} WHERE install_hash = ?1`).bind(hash),
     ),
   );

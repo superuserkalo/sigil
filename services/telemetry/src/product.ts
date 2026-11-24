@@ -47,8 +47,6 @@ export const MAX_FILTERS = 8;
 export const MAX_HEROES = 10;
 export const MAX_SEARCH_CHARS = 64;
 export const MAX_MODEL_CHARS = 48;
-/** Mods of one enabled set that feed the co-install pairs, lowest slots first. */
-export const MAX_PAIR_MODS = 24;
 
 const MAX_GAMEBANANA_ID = 1_000_000_000;
 
@@ -328,21 +326,6 @@ export function parseProduct(raw: unknown): Parsed<ProductBody> {
 export async function installHash(installId: string, salt: string | undefined): Promise<string> {
   const pepper = salt !== undefined && salt.length > 0 ? salt : "sigil-product-v1";
   return sha256Hex(`${pepper}\nsigil-product:${installId}`);
-}
-
-/** Co-install pairs of one enabled set: the lowest `MAX_PAIR_MODS` slots, each pair once. */
-export function pairsOf(record: ProductRecord): [number, number][] {
-  if (record.type !== "enabled_set") return [];
-  const mods = (record.fields.mods as { mod_id: number }[]).slice(0, MAX_PAIR_MODS).map((m) => m.mod_id);
-  const pairs: [number, number][] = [];
-  for (let i = 0; i < mods.length; i += 1) {
-    for (let j = i + 1; j < mods.length; j += 1) {
-      const a = mods[i] as number;
-      const b = mods[j] as number;
-      pairs.push([Math.min(a, b), Math.max(a, b)]);
-    }
-  }
-  return pairs;
 }
 
 export function parseRelated(search: URLSearchParams): number | null {

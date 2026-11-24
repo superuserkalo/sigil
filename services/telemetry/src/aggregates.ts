@@ -1,41 +1,59 @@
 /**
- * Aggregates from product data, and the rule that decides when one may be shown to players.
+ * Aggregates from product data, and the rule that decides when one may be shown to players
+ * (ADR 0017, "Counting distinct contributors").
  *
- * An install id is a UUID the app makes, so one person could send many made-up ids. Counting
- * install ids alone would let that person cross the 10-install floor of ADR 0017 and push a mod
- * into "players who use this also use". The rule here counts distinct contributors instead:
+ * An install id is a UUID the app makes, so one person could send many made-up ids. The rule:
  *
- * 1. Network bucket. Each request gets a bucket id: HMAC-SHA256 of the caller's network prefix
- *    (IPv4 /24, IPv6 /48) under the Worker secret `PRODUCT_BUCKET_KEY`, cut to 16 hex
- *    characters. It is the same across isolates and days, the address and the prefix are never
- *    stored, and the bucket id is stored only on aggregate rows (never on raw events) and deleted
- *    with them after 13 months or on Delete my data. Without the secret no bucket is made: raw
- *    records are still stored, and no aggregate row is written or published (fail closed).
- * 2. Installs per bucket. At most `INSTALLS_PER_BUCKET` install hashes per bucket, over the whole
- *    retention window, count toward any aggregate (`eligible = 1`). Later ones from that bucket
- *    are stored as raw data only.
- * 3. Seen on two days. An install counts only once it has sent data on at least two UTC days.
- * 4. The floor. An aggregate key (a mod pair, a mod health finding, a hardware class, a search
- *    term) is shown only with at least `FLOOR.installs` eligible installs from `FLOOR.buckets`
- *    distinct buckets on `FLOOR.days` distinct days.
- * 5. Damped ranking. Related mods are ranked by a cosine score over effective support (installs
- *    capped per bucket) times a support damper, not by raw counts, and the list is cut.
+ * 1. Epochs. Time is cut into 30-day epochs (`EPOCH_MS`). Each request gets a network bucket:
+ *    HMAC-SHA256 under the Worker secret `PRODUCT_BUCKET_KEY` of the epoch number and the caller's
+ *    network prefix (IPv4 /24, IPv6 /48), cut to 16 hex characters. A network's bucket changes
+ *    every epoch, so it cannot be linked across epochs. The address and the prefix are never
+ *    stored. Without the secret no bucket is made: raw records are kept and no aggregate is
+ *    written or published (fail closed).
+ * 2. Open-epoch contributions. `product_contrib` is the only table where a bucket sits next to an
+ *    install hash. One row per (epoch, kind, key, install): kind `seen` (key = the UTC day, one
+ *    row per day the install sent anything), `mod`, `pair`, `health`, `hardware`, `bench`,
+ *    `search`. A bucket admits at most `INSTALLS_PER_BUCKET` distinct installs per epoch, counted
+ *    from the table itself, so deleting an install frees its slot and nothing grows forever.
+ * 3. Closing an epoch (daily cron, `GRACE_MS` after its end). For each (kind, key): eligible
+ *    installs (seen on 2 or more days in the epoch, among the first 3 of their bucket), distinct
+ *    buckets and distinct days go to `product_totals` as counts only, with no install hash and no
+ *    bucket. Then the epoch's contribution rows are deleted.
+ * 4. Publishing. A key is shown only when at least one closed epoch met the floor on its own:
+ *    `FLOOR.installs` eligible installs from `FLOOR.buckets` buckets on `FLOOR.days` days. Its
+ *    strength is the sum over epochs that met the floor; other epochs add nothing. The open epoch
+ *    is never published. Related mods rank by a damped cosine score.
  */
 
 import { toHex } from "./hash";
 import type { ProductRecord } from "./product";
 
+const DAY_MS = 24 * 60 * 60 * 1000;
+export const EPOCH_MS = 30 * DAY_MS;
+/** Late requests for an epoch still land in it for this long before it closes. */
+export const GRACE_MS = 2 * DAY_MS;
 export const FLOOR = { installs: 10, buckets: 6, days: 3 } as const;
 export const INSTALLS_PER_BUCKET = 3;
 export const MIN_DAYS_SEEN = 2;
-/** Damper constant: a pair with support k scores half of what infinite support would. */
+/** Damper: a pair with support k scores half of what infinite support would. */
 const DAMPING = 10;
 export const MAX_RELATED = 20;
+/** One request writes at most this many contribution rows. */
+const MAX_CONTRIB_ROWS = 600;
 
-export type Contributor = { readonly hash: string; readonly bucket: string; readonly day: string };
+export type Contributor = { readonly hash: string; readonly bucket: string; readonly epoch: number; readonly day: string };
+
+export function epochOf(now: number): number {
+  return Math.floor(now / EPOCH_MS);
+}
 
 export function utcDay(now: number): string {
   return new Date(now).toISOString().slice(0, 10);
+}
+
+/** Without the bucket secret nothing is aggregated or published (fail closed). */
+export function hasBucketKey(secret: string | undefined): secret is string {
+  return secret !== undefined && secret.length >= 16;
 }
 
 /** The caller's network prefix: IPv4 /24 or IPv6 /48, or null when there is no usable address. */
@@ -62,63 +80,32 @@ export function networkPrefix(address: string | null): string | null {
 
 const encoder = new TextEncoder();
 
-/**
- * The request's network bucket: HMAC-SHA256 of its network prefix under `secret`, 16 hex
- * characters. Null without the secret or an address, and then no aggregate row is written.
- */
-export async function bucketOf(request: Request, secret: string | undefined): Promise<string | null> {
-  if (secret === undefined || secret.length < 16) return null;
-  const prefix = networkPrefix(request.headers.get("cf-connecting-ip"));
+/** HMAC-SHA256(secret, epoch + prefix), 16 hex characters. Null without the secret or a prefix. */
+export async function bucketOf(address: string | null, secret: string | undefined, epoch: number): Promise<string | null> {
+  if (!hasBucketKey(secret)) return null;
+  const prefix = networkPrefix(address);
   if (prefix === null) return null;
   const key = await crypto.subtle.importKey("raw", encoder.encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
-  const mac = await crypto.subtle.sign("HMAC", key, encoder.encode(`sigil-product-bucket\n${prefix}`));
+  const mac = await crypto.subtle.sign("HMAC", key, encoder.encode(`sigil-product-bucket\n${epoch}\n${prefix}`));
   return toHex(new Uint8Array(mac)).slice(0, 16);
 }
 
-/**
- * Note one request from an install. A new install is eligible only while its bucket has fewer
- * than `INSTALLS_PER_BUCKET` installs; a known install gains a day when today is new for it.
- */
-export async function registerInstall(db: D1Database, who: Contributor, now: number): Promise<void> {
-  const known = await db
-    .prepare("SELECT last_day FROM product_installs WHERE install_hash = ?1")
-    .bind(who.hash)
-    .first<{ last_day: string }>();
-  if (known === null) {
-    const counted = await db
-      .prepare(
-        `INSERT INTO product_buckets (bucket, installs, created_at, updated_at) VALUES (?1, 1, ?2, ?2)
-         ON CONFLICT(bucket) DO UPDATE SET installs = product_buckets.installs + 1, updated_at = excluded.updated_at
-         RETURNING installs`,
-      )
-      .bind(who.bucket, now)
-      .first<{ installs: number }>();
-    const eligible = (counted?.installs ?? 1) <= INSTALLS_PER_BUCKET ? 1 : 0;
-    await db
-      .prepare(
-        `INSERT OR IGNORE INTO product_installs (install_hash, first_day, last_day, days_seen, eligible, created_at, updated_at)
-         VALUES (?1, ?2, ?2, 1, ?3, ?4, ?4)`,
-      )
-      .bind(who.hash, who.day, eligible, now)
-      .run();
-    return;
-  }
-  if (known.last_day !== who.day) {
-    await db
-      .prepare(
-        `UPDATE product_installs SET days_seen = days_seen + 1, last_day = ?2, updated_at = ?3 WHERE install_hash = ?1`,
-      )
-      .bind(who.hash, who.day, now)
-      .run();
-  } else {
-    await db.prepare("UPDATE product_installs SET updated_at = ?2 WHERE install_hash = ?1").bind(who.hash, now).run();
-  }
-}
-
-/** The aggregate keys one record contributes to, besides mod pairs. */
+/** The aggregate keys one record contributes to. */
 export function keysOf(record: ProductRecord): { kind: string; key: string }[] {
   const f = record.fields;
   switch (record.type) {
+    case "enabled_set": {
+      const mods = (f.mods as { mod_id: number }[]).slice(0, 24).map((m) => m.mod_id);
+      const keys = mods.map((mod) => ({ kind: "mod", key: String(mod) }));
+      for (let i = 0; i < mods.length; i += 1) {
+        for (let j = i + 1; j < mods.length; j += 1) {
+          const a = Math.min(mods[i] as number, mods[j] as number);
+          const b = Math.max(mods[i] as number, mods[j] as number);
+          keys.push({ kind: "pair", key: `${a}|${b}` });
+        }
+      }
+      return keys;
+    }
     case "compat_finding":
       return [{ kind: "health", key: `${f.mod_id}|${f.finding}|${f.game_build ?? 0}` }];
     case "repair_result":
@@ -136,34 +123,102 @@ export function keysOf(record: ProductRecord): { kind: string; key: string }[] {
   }
 }
 
-export function keyStatement(db: D1Database, kind: string, key: string, who: Contributor, now: number): D1PreparedStatement {
-  return db
-    .prepare(
-      `INSERT INTO product_keys (kind, key, install_hash, bucket, day, created_at, updated_at)
-       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6)
-       ON CONFLICT(kind, key, install_hash) DO UPDATE SET updated_at = excluded.updated_at`,
-    )
-    .bind(kind, key.slice(0, 200), who.hash, who.bucket, who.day, now);
-}
+/**
+ * Add one request's contributions to the open epoch. Nothing without the secret or an address,
+ * and nothing when the bucket already holds `INSTALLS_PER_BUCKET` other installs this epoch.
+ * Returns whether the install counted.
+ */
+export async function contribute(
+  db: D1Database,
+  secret: string | undefined,
+  address: string | null,
+  hash: string,
+  records: readonly ProductRecord[],
+  now: number,
+): Promise<boolean> {
+  const epoch = epochOf(now);
+  const bucket = await bucketOf(address, secret, epoch);
+  if (bucket === null) return false;
+  const who: Contributor = { hash, bucket, epoch, day: utcDay(now) };
 
-export function pairStatement(db: D1Database, a: number, b: number, who: Contributor, now: number): D1PreparedStatement {
-  return db
+  const room = await db
     .prepare(
-      `INSERT INTO product_pairs (mod_a, mod_b, install_hash, bucket, day, created_at, updated_at)
-       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6)
-       ON CONFLICT(mod_a, mod_b, install_hash) DO UPDATE SET updated_at = excluded.updated_at`,
+      `SELECT COUNT(DISTINCT install_hash) AS installs, COALESCE(SUM(install_hash = ?3), 0) AS mine
+       FROM product_contrib WHERE epoch = ?1 AND bucket = ?2`,
     )
-    .bind(a, b, who.hash, who.bucket, who.day, now);
-}
+    .bind(epoch, bucket, hash)
+    .first<{ installs: number; mine: number }>();
+  if ((room?.mine ?? 0) === 0 && (room?.installs ?? 0) >= INSTALLS_PER_BUCKET) return false;
 
-const ELIGIBLE = `JOIN product_installs i ON i.install_hash = c.install_hash AND i.eligible = 1 AND i.days_seen >= ${MIN_DAYS_SEEN}`;
-const MEETS_FLOOR = `HAVING COUNT(DISTINCT c.install_hash) >= ${FLOOR.installs}
-  AND COUNT(DISTINCT c.bucket) >= ${FLOOR.buckets}
-  AND COUNT(DISTINCT c.day) >= ${FLOOR.days}`;
+  const rows = [{ kind: "seen", key: who.day }, ...records.flatMap(keysOf)].slice(0, MAX_CONTRIB_ROWS);
+  await db.batch(
+    rows.map(({ kind, key }) =>
+      db
+        .prepare(
+          `INSERT OR IGNORE INTO product_contrib (epoch, kind, key, install_hash, bucket, day, created_at)
+           VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)`,
+        )
+        .bind(epoch, kind, key.slice(0, 200), who.hash, who.bucket, who.day, now),
+    ),
+  );
+  return true;
+}
 
 /**
- * Keys of one kind that pass the floor, with their eligible install counts. Any aggregate shown
- * to players (mod health, frame rates per hardware class, search terms) must come through here.
+ * Close every epoch that ended more than `GRACE_MS` ago: counts to `product_totals`, then its
+ * contribution rows go. Returns the epochs closed.
+ */
+export async function closeEpochs(db: D1Database, now: number): Promise<number[]> {
+  const last = epochOf(now - GRACE_MS) - 1;
+  const { results } = await db
+    .prepare("SELECT DISTINCT epoch FROM product_contrib WHERE epoch <= ?1 ORDER BY epoch")
+    .bind(last)
+    .all<{ epoch: number }>();
+  const closed: number[] = [];
+  for (const { epoch } of results) {
+    await db.batch([
+      db
+        .prepare(
+          `WITH seen AS (
+             SELECT install_hash, bucket, MIN(created_at) AS first_at FROM product_contrib
+             WHERE epoch = ?1 AND kind = 'seen' GROUP BY install_hash, bucket
+           ),
+           ranked AS (
+             SELECT install_hash, ROW_NUMBER() OVER (PARTITION BY bucket ORDER BY first_at, install_hash) AS place FROM seen
+           ),
+           days AS (
+             SELECT install_hash FROM product_contrib WHERE epoch = ?1 AND kind = 'seen'
+             GROUP BY install_hash HAVING COUNT(DISTINCT key) >= ?2
+           ),
+           eligible AS (
+             SELECT DISTINCT r.install_hash FROM ranked r JOIN days d ON d.install_hash = r.install_hash WHERE r.place <= ?3
+           )
+           INSERT INTO product_totals (epoch, kind, key, mod_a, mod_b, installs, buckets, days)
+           SELECT ?1, c.kind, c.key,
+             CASE c.kind WHEN 'pair' THEN CAST(substr(c.key, 1, instr(c.key, '|') - 1) AS INTEGER)
+                         WHEN 'mod' THEN CAST(c.key AS INTEGER) END,
+             CASE c.kind WHEN 'pair' THEN CAST(substr(c.key, instr(c.key, '|') + 1) AS INTEGER) END,
+             COUNT(DISTINCT c.install_hash), COUNT(DISTINCT c.bucket), COUNT(DISTINCT c.day)
+           FROM product_contrib c JOIN eligible e ON e.install_hash = c.install_hash
+           WHERE c.epoch = ?1 AND c.kind <> 'seen'
+           GROUP BY c.kind, c.key
+           ON CONFLICT(epoch, kind, key) DO UPDATE SET
+             installs = excluded.installs, buckets = excluded.buckets, days = excluded.days`,
+        )
+        .bind(epoch, MIN_DAYS_SEEN, INSTALLS_PER_BUCKET),
+      db.prepare("DELETE FROM product_contrib WHERE epoch = ?1").bind(epoch),
+    ]);
+    closed.push(epoch);
+  }
+  return closed;
+}
+
+const MEETS_FLOOR = `installs >= ${FLOOR.installs} AND buckets >= ${FLOOR.buckets} AND days >= ${FLOOR.days}`;
+
+/**
+ * Keys of one kind that met the floor in at least one closed epoch, with their strength (the sum
+ * of installs over the epochs that met it). Every aggregate shown to players (mod health, frame
+ * rates per hardware class, search terms) must come through here or `related`.
  */
 export async function publishedKeys(
   db: D1Database,
@@ -174,26 +229,16 @@ export async function publishedKeys(
   if (!hasBucketKey(secret)) return [];
   const { results } = await db
     .prepare(
-      `SELECT c.key AS key, COUNT(DISTINCT c.install_hash) AS installs
-       FROM product_keys c ${ELIGIBLE}
-       WHERE c.kind = ?1
-       GROUP BY c.key ${MEETS_FLOOR}
-       ORDER BY installs DESC, key ASC
-       LIMIT ?2`,
+      `SELECT key, SUM(installs) AS installs FROM product_totals
+       WHERE kind = ?1 AND ${MEETS_FLOOR}
+       GROUP BY key ORDER BY installs DESC, key ASC LIMIT ?2`,
     )
     .bind(kind, limit)
     .all<{ key: string; installs: number }>();
   return results;
 }
 
-/** Without the bucket secret nothing is published (fail closed). */
-export function hasBucketKey(secret: string | undefined): boolean {
-  return secret !== undefined && secret.length >= 16;
-}
-
-type Candidate = { other: number; installs: number; buckets: number };
-
-/** Mods used with `mod` that pass the floor, ranked by a damped cosine score. */
+/** Mods used with `mod`, from closed epochs that met the floor, ranked by a damped cosine score. */
 export async function related(
   db: D1Database,
   secret: string | undefined,
@@ -202,31 +247,22 @@ export async function related(
   if (!hasBucketKey(secret)) return [];
   const { results } = await db
     .prepare(
-      `SELECT c.other AS other, COUNT(DISTINCT c.install_hash) AS installs, COUNT(DISTINCT c.bucket) AS buckets
-       FROM (
-         SELECT mod_b AS other, install_hash, bucket, day FROM product_pairs WHERE mod_a = ?1
-         UNION ALL
-         SELECT mod_a AS other, install_hash, bucket, day FROM product_pairs WHERE mod_b = ?1
-       ) c ${ELIGIBLE}
-       GROUP BY c.other ${MEETS_FLOOR}
+      `SELECT CASE WHEN mod_a = ?1 THEN mod_b ELSE mod_a END AS other, SUM(installs) AS installs
+       FROM product_totals
+       WHERE kind = 'pair' AND (mod_a = ?1 OR mod_b = ?1) AND ${MEETS_FLOOR}
+       GROUP BY other
        LIMIT 90`,
     )
     .bind(mod)
-    .all<Candidate>();
-  // D1 allows 100 bound values; 90 candidates and the mod itself stay under it.
+    .all<{ other: number; installs: number }>();
   if (results.length === 0) return [];
 
+  // Per-mod totals over every closed epoch, for the cosine denominator. D1 allows 100 bound
+  // values; 90 candidates and the mod itself stay under it.
   const ids = [mod, ...results.map((row) => row.other)];
   const marks = ids.map((_, n) => `?${n + 1}`).join(",");
   const totals = await db
-    .prepare(
-      `SELECT m AS mod, COUNT(DISTINCT c.install_hash) AS installs FROM (
-         SELECT mod_a AS m, install_hash FROM product_pairs WHERE mod_a IN (${marks})
-         UNION ALL
-         SELECT mod_b AS m, install_hash FROM product_pairs WHERE mod_b IN (${marks})
-       ) c ${ELIGIBLE}
-       GROUP BY m`,
-    )
+    .prepare(`SELECT mod_a AS mod, SUM(installs) AS installs FROM product_totals WHERE kind = 'mod' AND mod_a IN (${marks}) GROUP BY mod_a`)
     .bind(...ids)
     .all<{ mod: number; installs: number }>();
   const total = new Map(totals.results.map((row) => [row.mod, row.installs]));
@@ -234,10 +270,9 @@ export async function related(
 
   return results
     .map((row) => {
-      // A burst from few buckets cannot add more than three installs per bucket.
-      const support = Math.min(row.installs, row.buckets * INSTALLS_PER_BUCKET);
+      const support = row.installs;
       const other = Math.max(1, total.get(row.other) ?? 1);
-      const score = (support / Math.sqrt(base * other)) * (support / (support + DAMPING));
+      const score = (support / Math.sqrt(Math.max(base, support) * Math.max(other, support))) * (support / (support + DAMPING));
       return { modId: row.other, installs: row.installs, score };
     })
     .sort((x, y) => y.score - x.score || x.modId - y.modId)
