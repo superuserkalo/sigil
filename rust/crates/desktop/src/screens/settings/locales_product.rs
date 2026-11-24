@@ -33,15 +33,15 @@ pub const DE: &[(&str, &str)] = &[
         "App-Nutzung: Seiten, die du öffnest, Design, Sprache, Spielstarts, wie lange Sigil offen ist, und die Version von Sigil, System und Spiel.",
     ),
     (
-        "Never sent: your Steam id or name, friends, matches, chat, file names or paths, local mods, mod files, keys, your IP address, or anything from the AI agent. Sent with a random id that the server keeps only as a hash; Delete my data in Settings removes the records and starts a new id.",
-        "Nie gesendet: deine Steam-ID oder dein Name, Freunde, Matches, Chat, Dateinamen oder Pfade, lokale Mods, Mod-Dateien, Schlüssel, deine IP-Adresse oder irgendetwas vom KI-Agenten. Gesendet wird mit einer zufälligen ID, die der Server nur als Hash speichert; Meine Daten löschen in den Einstellungen entfernt die Einträge und startet eine neue ID.",
+        "Never sent: your Steam id or name, friends, matches, chat, file names or paths, local mods, mod files, keys, your IP address, or anything from the AI agent. Sent with a random id the server keeps only as a hash, and kept until you delete it with Delete my data in Settings. After two years with nothing new it is cut loose from your id.",
+        "Nie gesendet: deine Steam-ID oder dein Name, Freunde, Matches, Chat, Dateinamen oder Pfade, lokale Mods, Mod-Dateien, Schlüssel, deine IP-Adresse oder irgendetwas vom KI-Agenten. Gesendet mit einer zufälligen ID, die der Server nur als Hash speichert, und aufbewahrt, bis du es mit Meine Daten löschen in den Einstellungen löschst. Nach zwei Jahren ohne Neues wird es von deiner ID getrennt.",
     ),
     ("Not now", "Jetzt nicht"),
     ("Share", "Teilen"),
     ("Share product data", "Produktdaten teilen"),
     (
-        "Mods, Browse, play, performance and app use, to Sigil's own server. Off unless you turn it on.",
-        "Mods, Durchsuchen, Spielen, Leistung und App-Nutzung, an Sigils eigenen Server. Aus, bis du es einschaltest.",
+        "Mods, Browse, play, performance and app use, to Sigil's own server, kept until you delete it. Off unless you turn it on.",
+        "Mods, Durchsuchen, Spielen, Leistung und App-Nutzung, an Sigils eigenen Server, aufbewahrt bis du es löschst. Aus, bis du es einschaltest.",
     ),
     ("What Sigil shared", "Was Sigil geteilt hat"),
     ("The last records sent from this computer.", "Die letzten Einträge, die von diesem Computer gesendet wurden."),
@@ -112,6 +112,50 @@ mod tests {
             assert_eq!(en.matches("{}").count(), de.matches("{}").count(), "holes in {en:?}");
             assert!(!de.contains('\u{2014}') && !en.contains('\u{2014}'), "em dash in {en:?}");
         }
+    }
+
+    /// Sigil has opt-in telemetry (ADR 0014) and product data (ADR 0017), so the app must not
+    /// claim it has none. Fails on "no telemetry" or "never sends" style absolutes in any string
+    /// of the desktop app, English or German. Comments are not checked.
+    #[test]
+    fn no_app_string_claims_sigil_sends_nothing() {
+        const ABSOLUTES: [&str; 8] = [
+            "no telemetry",
+            "keine telemetrie",
+            "no analytics",
+            "keine analyse",
+            "no crash reporting",
+            "keine absturzmeldungen",
+            "never sends",
+            "sendet nie",
+        ];
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let mut stack = vec![root];
+        let mut found = Vec::new();
+        while let Some(dir) = stack.pop() {
+            for entry in std::fs::read_dir(&dir).unwrap().flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    stack.push(path);
+                    continue;
+                }
+                if path.extension().is_none_or(|e| e != "rs") || path.ends_with("locales_product.rs") {
+                    continue;
+                }
+                let text = std::fs::read_to_string(&path).unwrap();
+                for (n, line) in text.lines().enumerate() {
+                    let trimmed = line.trim_start();
+                    if trimmed.starts_with("//") {
+                        continue;
+                    }
+                    let lower = line.to_lowercase();
+                    if ABSOLUTES.iter().any(|a| lower.contains(a)) {
+                        found.push(format!("{}:{}", path.display(), n + 1));
+                    }
+                }
+            }
+        }
+        assert!(found.is_empty(), "absolute privacy claims: {found:#?}");
     }
 
     /// A key here that another table also has would make one of them win at random.

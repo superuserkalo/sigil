@@ -114,7 +114,8 @@ fn keep_only(st: &mut State, hero: &str, slot: u16, name: &str, off: &[u16]) {
     };
     let wanted: BTreeMap<u16, bool> = off.iter().map(|other| (*other, false)).chain([(slot, true)]).collect();
     match deadlock_core::addons::set_many(&game_root, &wanted, true) {
-        Ok(_) => {
+        Ok(report) => {
+            crate::screens::settings::product::switched(st, report.done.iter().map(|done| done.slot), &wanted);
             notify::push(st, Notice::success(fill(tr("Only {} is on for {}"), &[name, hero])));
             crate::data::scan_addons_now(st);
             crate::data::start_addon_scan(st);

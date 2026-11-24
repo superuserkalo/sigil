@@ -265,6 +265,16 @@ pub fn toggled(st: &State, slot: u16, enable: bool) {
     }
 }
 
+/// Several mods switched at once (bulk toggles, Locker's "only this one", profiles of a map):
+/// one record per mod that actually changed.
+pub fn switched(st: &State, slots: impl Iterator<Item = u16>, wanted: &std::collections::BTreeMap<u16, bool>) {
+    for slot in slots {
+        if let Some(on) = wanted.get(&slot) {
+            toggled(st, slot, *on);
+        }
+    }
+}
+
 /// Overlap pairs between enabled mods, each pair once per run.
 pub fn overlaps(st: &mut State) {
     if quiet(st) || !pd::global().is_some_and(|r| r.enabled()) {
@@ -569,7 +579,23 @@ const SENT: [&str; 6] = [
     "Performance: configs you apply, benchmark frame rates, your GPU and CPU model, RAM rounded and screen size.",
     "App use: pages you open, theme, language, launches, how long Sigil stays open, and the Sigil, system and game version.",
 ];
-const NEVER: &str = "Never sent: your Steam id or name, friends, matches, chat, file names or paths, local mods, mod files, keys, your IP address, or anything from the AI agent. Sent with a random id that the server keeps only as a hash; Delete my data in Settings removes the records and starts a new id.";
+const NEVER: &str = "Never sent: your Steam id or name, friends, matches, chat, file names or paths, local mods, mod files, keys, your IP address, or anything from the AI agent. Sent with a random id the server keeps only as a hash, and kept until you delete it with Delete my data in Settings. After two years with nothing new it is cut loose from your id.";
+
+/// The window height, noted by the view each frame (a store, no work), so the list in
+/// [`consent_body`] scrolls instead of pushing the buttons off a short window.
+static WINDOW_H: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+pub fn note_window(height: f32) {
+    WINDOW_H.store(height.to_bits(), Ordering::Relaxed);
+}
+
+/// Height left for the list of what is sent: the window minus the card's other parts (title,
+/// intro, the never-sent note, the link, the buttons and the setup's step line).
+fn list_max_h() -> f32 {
+    let window = f32::from_bits(WINDOW_H.load(Ordering::Relaxed));
+    let window = if window > 0.0 { window } else { 800.0 };
+    (window - 500.0).clamp(120.0, 600.0)
+}
 
 /// What is sent and what never is, for the setup step and the dialog.
 pub fn consent_body(u: &Ui) -> El {
@@ -588,7 +614,14 @@ pub fn consent_body(u: &Ui) -> El {
         .w_full()
         .gap(12.0)
         .child(text(tr(INTRO).to_string()).font(BODY).color(u.muted).wrap().w_full())
-        .child(list)
+        .child(u.scroll_area(
+            col()
+                .key("product-sent-list")
+                .w_full()
+                .max_h(list_max_h())
+                .scroll(rune::ScrollSpec { stick_bottom: false })
+                .child(list),
+        ))
         .child(text(tr(NEVER).to_string()).font(SMALL).color(u.faint).wrap().w_full())
         .child(
             row().child(
@@ -606,7 +639,7 @@ pub fn answer_buttons(u: &Ui, after: fn(&mut State)) -> El {
     let choice = |key: &'static str, label: &str, share: bool| {
         u.action(tr(label), ActionKind::Secondary)
             .key(key)
-            .w(112.0)
+            .w(100.0)
             .cursor(rune::Cursor::Pointer)
             .on_press(move |st: &mut State| {
                 set(st, share);
@@ -654,7 +687,7 @@ pub fn privacy_section(s: &State, u: &Ui) -> El {
                 u,
                 "settings-product",
                 "Share product data",
-                "Mods, Browse, play, performance and app use, to Sigil's own server. Off unless you turn it on.",
+                "Mods, Browse, play, performance and app use, to Sigil's own server, kept until you delete it. Off unless you turn it on.",
                 on,
                 |st| {
                     let share = !pd::allowed(&st.settings.telemetry.consent);

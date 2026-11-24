@@ -103,6 +103,7 @@ pub fn solo_start(st: &mut State, slot: u16) {
     let wanted: BTreeMap<u16, bool> = others.iter().map(|(slot, _, _)| (*slot, false)).collect();
     match deadlock_core::addons::set_many(&game_root, &wanted, true) {
         Ok(report) => {
+            crate::screens::settings::product::switched(st, report.done.iter().map(|done| done.slot), &wanted);
             let name = meta_for(st, addon)
                 .map(|meta| meta.name.clone())
                 .unwrap_or_else(|| format!("slot {}", deadlock_core::addons::slot_label(slot)));
@@ -153,6 +154,7 @@ pub fn solo_restore(st: &mut State) {
     }
     match deadlock_core::addons::set_many(&game_root, &wanted, true) {
         Ok(report) => {
+            crate::screens::settings::product::switched(st, report.done.iter().map(|done| done.slot), &wanted);
             st.status = format!(
                 "Put {} mod{} back on.",
                 report.done.len(),
@@ -253,6 +255,7 @@ fn search_apply(st: &mut State) {
     }
     match deadlock_core::addons::set_many(&game_root, &wanted, true) {
         Ok(report) => {
+            crate::screens::settings::product::switched(st, report.done.iter().map(|done| done.slot), &wanted);
             if !report.done.is_empty() {
                 st.installed.last_undo = Some(super::Undo::Toggle(report.done));
                 st.installed.undo_fresh = true;
@@ -308,6 +311,7 @@ pub fn search_finish(st: &mut State, leave_culprits_off: bool) {
     }
     match deadlock_core::addons::set_many(&game_root, &wanted, true) {
         Ok(report) => {
+            crate::screens::settings::product::switched(st, report.done.iter().map(|done| done.slot), &wanted);
             if !report.done.is_empty() {
                 st.installed.last_undo = Some(super::Undo::Toggle(report.done));
                 st.installed.undo_fresh = true;

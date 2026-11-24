@@ -128,6 +128,7 @@ pub fn roll_before_launch(st: &mut State) {
     let on = wanted.values().filter(|v| **v).count();
     match deadlock_core::addons::set_many(&game_root, &wanted, true) {
         Ok(report) => {
+            crate::screens::settings::product::switched(st, report.done.iter().map(|done| done.slot), &wanted);
             if !report.done.is_empty() {
                 st.installed.last_undo = Some(crate::screens::installed::Undo::Toggle(report.done));
                 st.installed.undo_fresh = true;
@@ -252,6 +253,7 @@ fn answer(st: &mut State, turn_off: bool) {
             let wanted: BTreeMap<u16, bool> = ask.slots.iter().map(|slot| (*slot, false)).collect();
             match deadlock_core::addons::set_many(&game_root, &wanted, true) {
                 Ok(report) => {
+                    crate::screens::settings::product::switched(st, report.done.iter().map(|done| done.slot), &wanted);
                     if !report.done.is_empty() {
                         st.installed.last_undo = Some(crate::screens::installed::Undo::Toggle(report.done));
                         st.installed.undo_fresh = true;

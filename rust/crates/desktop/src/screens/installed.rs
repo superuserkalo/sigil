@@ -1150,6 +1150,7 @@ pub(super) fn switch_slots(st: &mut State, targets: Vec<(u16, String)>, enable: 
     let mut changed = Vec::new();
     match deadlock_core::addons::set_many(&game_root, &wanted, true) {
         Ok(report) => {
+            crate::screens::settings::product::switched(st, report.done.iter().map(|done| done.slot), &wanted);
             changed = report.done.iter().map(|done| done.slot).collect();
             for done in &report.done {
                 recap
@@ -3953,6 +3954,7 @@ pub(super) fn apply_switch(
     }
     match deadlock_core::addons::set_many(game_root, wanted, true) {
         Ok(report) => {
+            crate::screens::settings::product::switched(st, report.done.iter().map(|done| done.slot), &wanted);
             if !report.done.is_empty() {
                 st.installed.last_undo = Some(Undo::Toggle(report.done));
                 st.installed.undo_fresh = true;

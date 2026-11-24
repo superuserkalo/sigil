@@ -243,6 +243,7 @@ pub fn poll(st: &mut State) -> bool {
     };
     let done = result.unwrap_or_else(|error| Done { slots: Vec::new(), gated: Vec::new(), error: Some(error) });
     let name = st.install.label.clone();
+    crate::screens::settings::product::install_done(st, Some(st.install.mod_id), done.error.as_deref().filter(|_| done.slots.is_empty()));
     if !done.slots.is_empty() {
         st.installed.library = deadlock_core::import::read_library(&deadlock_core::import::library_path(
             &crate::data::data_dir(),

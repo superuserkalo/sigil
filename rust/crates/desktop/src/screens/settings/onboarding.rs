@@ -301,7 +301,7 @@ fn step_body(s: &State, u: &Ui, step: Step) -> El {
         Step::Privacy => col()
             .w_full()
             .gap(12.0)
-            .child(line("Sigil has no telemetry. It goes online for GameBanana, the features you use, and the update check if you want it. Settings > Privacy lists every host."))
+            .child(line("Sigil goes online for GameBanana, the features you use and, if you want it, the update check. Crash reports, usage events, unknown-mod lookup and Help build Sigil are sent only if you turn them on. Settings > Privacy lists every host and switch."))
             .child(
                 row()
                     .w_full()
@@ -315,6 +315,15 @@ fn step_body(s: &State, u: &Ui, step: Step) -> El {
                             .cursor(rune::Cursor::Pointer)
                             .on_press(|st: &mut State| crate::prefs::edit(st, |p| p.check_updates = !p.check_updates)),
                     ),
+            )
+            .child(
+                row().child(
+                    u.action(tr("What Sigil sends"), ActionKind::Ghost)
+                        .key("onboarding-privacy-doc")
+                        .role("link")
+                        .cursor(rune::Cursor::Pointer)
+                        .on_press_tx(|st: &mut State, tx: &mut Tx| super::tabs::open_url(st, tx, super::telemetry::PRIVACY_DOC)),
+                ),
             ),
     }
 }

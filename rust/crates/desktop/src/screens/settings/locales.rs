@@ -337,7 +337,6 @@ pub const DE: &[(&str, &str)] = &[
     ("Off in a remote desktop session.", "Aus in einer Remotedesktop-Sitzung."),
     ("The graphics driver cannot draw a see-through window.", "Der Grafiktreiber kann kein durchsichtiges Fenster zeichnen."),
     ("Windows refused the glass effect for this window.", "Windows hat den Glaseffekt für dieses Fenster abgelehnt."),
-    ("Sigil has no telemetry, analytics or crash reporting. It goes online only for the features below, and never sends anything about you on its own.", "Sigil hat keine Telemetrie, keine Analyse und keine Absturzmeldungen. Es geht nur für die Funktionen unten online und sendet nie von sich aus etwas über dich."),
     ("Optional features", "Optionale Funktionen"),
     ("Player stats", "Spielerstatistiken"),
     ("Looks up public match data for the account you enter on Stats.", "Ruft öffentliche Matchdaten für das Konto ab, das du unter Statistiken eingibst."),

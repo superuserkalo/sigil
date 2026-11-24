@@ -4081,6 +4081,7 @@ fn toggle_addon(state: &mut State, slot: u16, enable: bool, offer_undo: bool) {
     state.addon_dialog = None;
     match addons::set_enabled(&game_root, slot, enable, true) {
         Ok(result) => {
+            crate::screens::settings::product::toggled(state, result.slot, enable);
             let what = state
                 .installed
                 .library

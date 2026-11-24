@@ -350,7 +350,7 @@ pub const DE: &[(&str, &str)] = &[
     ("Setup and tips", "Einrichtung und Tipps"),
     ("Show page tips", "Seitentipps zeigen"),
     ("Shows every page tip again.", "Zeigt jeden Seitentipp wieder."),
-    ("Sigil has no telemetry. It goes online for GameBanana, the features you use, and the update check if you want it. Settings > Privacy lists every host.", "Sigil hat keine Telemetrie. Es geht für GameBanana, die Funktionen, die du nutzt, und auf Wunsch die Updateprüfung online. Einstellungen > Datenschutz listet jeden Host."),
+    ("Sigil goes online for GameBanana, the features you use and, if you want it, the update check. Crash reports, usage events, unknown-mod lookup and Help build Sigil are sent only if you turn them on. Settings > Privacy lists every host and switch.", "Sigil geht für GameBanana, die Funktionen, die du nutzt, und auf Wunsch die Updateprüfung online. Absturzberichte, Nutzungsereignisse, die Suche nach unbekannten Mods und Hilf mit, Sigil zu verbessern werden nur gesendet, wenn du sie einschaltest. Einstellungen > Datenschutz listet jeden Host und jeden Schalter."),
     ("Sigil installs mods into the game's addons folder. It looks in your Steam libraries first.", "Sigil installiert Mods in den addons-Ordner des Spiels. Es sucht zuerst in deinen Steam-Bibliotheken."),
     ("Skip for now", "Vorerst überspringen"),
     ("Step {} of {}", "Schritt {} von {}"),
