@@ -548,6 +548,11 @@ pub fn install(st: &mut State) {
     }
     let count = jobs.len();
     let ids: Vec<u64> = jobs.iter().map(|job| job.0).collect();
+    // Help build Sigil (opt-in, gated in `product::record`): the GameBanana ids only.
+    let mods: Vec<deadlock_core::product_data::ModId> = ids.iter().filter_map(|id| deadlock_core::product_data::ModId::new(*id)).collect();
+    if !mods.is_empty() {
+        crate::screens::settings::product::record(st, deadlock_core::product_data::Record::PackInstall { mods });
+    }
     for (id, name, url, file, land_on, thumbnail) in jobs {
         crate::screens::browse::quick::start_pack(st, id, &name, url, file, land_on, thumbnail);
     }

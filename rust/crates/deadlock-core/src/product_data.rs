@@ -515,6 +515,9 @@ pub enum Record {
     ModKept { mod_id: ModId, kept: KeptBucket },
     EnabledSet { mods: Vec<SlotMod> },
     VariantChosen { mod_id: ModId, file_id: ModId },
+    /// A shared pack was installed: the GameBanana mods it queued, in pack order (the count is
+    /// the list's length). No pack name or note.
+    PackInstall { mods: Vec<ModId> },
 
     // 2. Mod health.
     InstallResult { mod_id: ModId, ok: bool, reason: Option<Code> },
@@ -557,6 +560,7 @@ pub const KINDS: &[&str] = &[
     "mod_kept",
     "enabled_set",
     "variant_chosen",
+    "pack_install",
     "install_result",
     "mod_pair",
     "compat_finding",
@@ -584,6 +588,7 @@ impl Record {
             Record::ModKept { .. } => "mod_kept",
             Record::EnabledSet { .. } => "enabled_set",
             Record::VariantChosen { .. } => "variant_chosen",
+            Record::PackInstall { .. } => "pack_install",
             Record::InstallResult { .. } => "install_result",
             Record::ModPair { .. } => "mod_pair",
             Record::CompatFinding { .. } => "compat_finding",
@@ -618,6 +623,15 @@ impl Record {
                     return None;
                 }
                 Record::EnabledSet { mods }
+            }
+            Record::PackInstall { mut mods } => {
+                let mut seen = std::collections::HashSet::new();
+                mods.retain(|m| seen.insert(*m));
+                mods.truncate(MAX_SET);
+                if mods.is_empty() {
+                    return None;
+                }
+                Record::PackInstall { mods }
             }
             Record::ModPair { a, b, kind } => {
                 if a == b {

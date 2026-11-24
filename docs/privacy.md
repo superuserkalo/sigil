@@ -189,6 +189,7 @@ Mods appear only as GameBanana ids (whole numbers up to 1,000,000,000). A mod wi
 | Mods | `mod_kept` | `mod_id`; `kept`: under_1d, d1_7, d7_30, d30_90, over_90d (sent at removal) |
 | Mods | `enabled_set` | `mods`: up to 64 pairs of `mod_id` and `slot` (load order), once per run |
 | Mods | `variant_chosen` | `mod_id`, `file_id` (the GameBanana file picked) |
+| Mods | `pack_install` | `mods`: up to 64 GameBanana mod ids a shared pack queued, in pack order (never the pack's name or note) |
 | Mod health | `install_result` | `mod_id`, `ok`, `reason` code (for example download_failed, game_running, file_in_use) |
 | Mod health | `mod_pair` | `a`, `b` (mod ids), `kind`: overlap or conflict |
 | Mod health | `compat_finding` | `mod_id`, `finding` code (moved, gone, skeleton, unreadable), `game_build` |

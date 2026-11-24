@@ -20,6 +20,7 @@ export const PRODUCT_TYPES = [
   "mod_kept",
   "enabled_set",
   "variant_chosen",
+  "pack_install",
   "install_result",
   "mod_pair",
   "compat_finding",
@@ -60,6 +61,7 @@ type Spec =
   | { readonly k: "search" }
   | { readonly k: "model" }
   | { readonly k: "slots" }
+  | { readonly k: "ids"; readonly max: number }
   | { readonly k: "heroes" };
 
 const ID: Spec = { k: "id" };
@@ -83,6 +85,7 @@ export const SCHEMA: Readonly<Record<ProductType, Readonly<Record<string, Spec>>
   mod_kept: { mod_id: ID, kept: { k: "enum", values: ["under_1d", "d1_7", "d7_30", "d30_90", "over_90d"] } },
   enabled_set: { mods: { k: "slots" } },
   variant_chosen: { mod_id: ID, file_id: ID },
+  pack_install: { mods: { k: "ids", max: MAX_SET } },
   install_result: { mod_id: ID, ok: BOOL, reason: CODE_OPT },
   mod_pair: { a: ID, b: ID, kind: { k: "enum", values: ["overlap", "conflict"] } },
   compat_finding: { mod_id: ID, finding: CODE, game_build: BUILD },
@@ -239,6 +242,15 @@ function field(spec: Spec, value: unknown): unknown {
       return scrubSearch(value);
     case "model":
       return modelName(value);
+    case "ids": {
+      if (!Array.isArray(value)) return undefined;
+      const ids: number[] = [];
+      for (const entry of value) {
+        if (isId(entry) && !ids.includes(entry)) ids.push(entry);
+        if (ids.length >= spec.max) break;
+      }
+      return ids.length > 0 ? ids : undefined;
+    }
     case "slots": {
       if (!Array.isArray(value)) return undefined;
       const seen = new Set<number>();

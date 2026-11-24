@@ -99,6 +99,18 @@ describe("POST /v1/product", () => {
     expect(payloads[4]).toMatchObject({ gpu: "NVIDIA GeForce RTX 3060", cpu: "Intel Core i7-9700K" });
   });
 
+  it("keeps a pack install as GameBanana ids only, unique and bounded", () => {
+    const ids = Array.from({ length: 80 }, (_, n) => n + 1);
+    const parsed = parseRecord({ type: "pack_install", mods: [5, 5, "6", -1, 1.5, 7, ...ids], name: "Friday" }) as ProductRecord;
+    expect(parsed.type).toBe("pack_install");
+    expect(Object.keys(parsed.fields)).toEqual(["mods"]);
+    const mods = parsed.fields.mods as number[];
+    expect(mods.slice(0, 3)).toEqual([5, 7, 1]);
+    expect(mods.length).toBe(64);
+    expect(parseRecord({ type: "pack_install", mods: ["x", 0] })).toBeNull();
+    expect(parseRecord({ type: "pack_install", mods: "1,2" })).toBeNull();
+  });
+
   it("rejects a bad envelope and an oversized body", async () => {
     expect((await call("/v1/product", { body: body([], {}) })).status).toBe(400);
     expect((await call("/v1/product", { body: body([{ type: "launch", modded: true }], { installId: "nope" }) })).status).toBe(400);
@@ -109,7 +121,7 @@ describe("POST /v1/product", () => {
   });
 
   it("knows the same types as the app", () => {
-    expect(PRODUCT_TYPES.length).toBe(21);
+    expect(PRODUCT_TYPES.length).toBe(22);
     expect(new Set(PRODUCT_TYPES).size).toBe(PRODUCT_TYPES.length);
   });
 });

@@ -36,6 +36,7 @@ fn samples() -> Vec<Record> {
         Record::ModKept { mod_id: id(512_345), kept: KeptBucket::D7To30 },
         Record::EnabledSet { mods: vec![SlotMod { mod_id: id(1), slot: 1 }, SlotMod { mod_id: id(2), slot: 7 }] },
         Record::VariantChosen { mod_id: id(512_345), file_id: id(1_414_905) },
+        Record::PackInstall { mods: vec![id(741_478), id(741_608)] },
         Record::InstallResult { mod_id: id(9), ok: false, reason: Some(code("download_failed")) },
         Record::ModPair { a: id(3), b: id(4), kind: PairKind::Overlap },
         Record::CompatFinding { mod_id: id(9), finding: code("path_moved"), game_build: Some(5_911) },

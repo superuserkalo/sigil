@@ -24,7 +24,7 @@ A pack is a named set of GameBanana mods a player shares so friends run the same
 - Make: Installed > More > Make a pack (every enabled mod, in load order) or the selection bar's
   More > Make a pack from N mods. Local files have no GameBanana id: they are listed as not
   shareable and left out.
-- Packs list: Installed > More > Packs. Saved packs (yours and received) with Install, Share,
+- Packs list: Installed > More > Packs, or the Packs button on the Profiles page (same dialog). Saved packs (yours and received) with Install, Share,
   Update from current mods, Rename, Delete; Paste a code and Open a file. Stored in
   `<workspace>/.dah/packs/`.
 - Receive: Browse > Paste mods, Packs > Paste a code or Open a file, or a `sigil://pack/` link.
@@ -33,7 +33,8 @@ A pack is a named set of GameBanana mods a player shares so friends run the same
   GameBanana, no file, could not check). Install pack and Cancel.
 - Install: each mod goes to the download queue (Downloads page) through the normal one-press
   install: install checks, backups, safety gate. Mods install one at a time in pack order so each
-  takes the next free slot and the load order holds; the shared file is used, or the newest when
+  takes the next free slot and the load order holds. With Help build Sigil on, a `pack_install`
+  record lists the GameBanana ids queued (never the name or note); the shared file is used, or the newest when
   it is gone. They land off unless "Turn on after installing" is ticked (a mod off in the pack
   stays off; the safety gate still holds a mod it has a question about).
 
