@@ -42,6 +42,7 @@ mod audio;
 pub mod collections;
 pub mod creator_page;
 mod detail_state;
+pub mod foryou;
 pub mod details;
 pub mod grid;
 pub mod hidden;

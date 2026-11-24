@@ -94,7 +94,10 @@ pub struct Row<'a> {
     /// The title, already in the player's language.
     pub title: String,
     pub cards: Vec<&'a BrowseCard>,
-    pub see: See,
+    /// What the title link applies to the grid; a row picked for the player has none.
+    pub see: Option<See>,
+    /// Why each mod is here, shown on its tile ("Because you play Haze").
+    pub reasons: Option<&'a std::collections::HashMap<u64, super::foryou::Reason>>,
 }
 
 /// One billboard slide.
@@ -274,7 +277,7 @@ pub fn plan(s: &State, n: usize, now: i64) -> Plan<'_> {
 
     let mut rows: Vec<Row> = Vec::new();
     let mut taken: HashSet<u64> = HashSet::new();
-    let see = |order, period, category: Option<&str>| See { order, period, category: category.map(str::to_string) };
+    let see = |order, period, category: Option<&str>| Some(See { order, period, category: category.map(str::to_string) });
 
     // Top 10: the true ranking, so it may repeat a billboard pick. The title names the window.
     let windows: [(Option<i64>, &str, BrowsePeriod); 4] = [
@@ -292,11 +295,20 @@ pub fn plan(s: &State, n: usize, now: i64) -> Plan<'_> {
         if list.len() >= 10 {
             list.truncate(10);
             taken.extend(list.iter().map(|c| c.id));
-            rows.push(Row { kind: RowKind::Top10, title: super::tree::tr(title).to_string(), cards: list, see: see(BrowseOrder::MostLiked, period, None) });
+            rows.push(Row { kind: RowKind::Top10, title: super::tree::tr(title).to_string(), cards: list, see: see(BrowseOrder::MostLiked, period, None), reasons: None });
             break;
         }
     }
     taken.extend(lead.iter().copied());
+    // The second row is the player's own: picked from their heroes, mods and favorites, or
+    // "Rising" while there is no history. New this week stands in until those picks exist.
+    let fy = &v.shelves.for_you;
+    let mine = fresh_cards(fy.picks.iter().filter(ok).collect(), &taken);
+    if mine.len() >= min_fill {
+        let title = super::tree::tr(if fy.personal { "For you" } else { "Rising" }).to_string();
+        let see = if fy.personal { None } else { see(BrowseOrder::MostLiked, BrowsePeriod::Week, None) };
+        push_row(&mut rows, &mut taken, min_fill, Row { kind: RowKind::New, title, cards: mine, see, reasons: Some(&fy.reasons) });
+    }
     // New this week: newest first, liked at least once; then without the floor; then 14 days.
     let newest = |days: i64, floor: u64| -> Vec<&BrowseCard> {
         let mut list: Vec<&BrowseCard> = recent.iter().copied().filter(|c| within(c, days) && c.likes >= floor).collect();
@@ -309,9 +321,12 @@ pub fn plan(s: &State, n: usize, now: i64) -> Plan<'_> {
         (14, 0, "New mods", BrowsePeriod::Month),
         (30, 0, "New mods", BrowsePeriod::Month),
     ] {
+        if rows.iter().any(|r| r.kind == RowKind::New) {
+            break;
+        }
         let cards = fresh_cards(newest(days, floor), &taken);
         if cards.len() >= min_fill {
-            push_row(&mut rows, &mut taken, min_fill, Row { kind: RowKind::New, title: super::tree::tr(title).to_string(), cards, see: see(BrowseOrder::Newest, period, None) });
+            push_row(&mut rows, &mut taken, min_fill, Row { kind: RowKind::New, title: super::tree::tr(title).to_string(), cards, see: see(BrowseOrder::Newest, period, None), reasons: None });
             break;
         }
     }
@@ -855,7 +870,8 @@ fn row_view(s: &State, u: &Ui, r: &Row, width: f32, n: usize) -> El {
     for (i, card) in r.cards.iter().enumerate().take(end).skip(start) {
         let whole = if last_page { i > start } else { i < start + n };
         let ids = ids.clone();
-        let keyed = tile(s, u, slot, card, tw, th, (ranked && whole).then_some(i + 1)).on_key(move |st: &mut State, ev: &KeyEvent, tx: &mut Tx| {
+        let why = r.reasons.and_then(|m| m.get(&card.id)).map(reason_text);
+        let keyed = tile(s, u, slot, card, tw, th, (ranked && whole).then_some(i + 1), why).on_key(move |st: &mut State, ev: &KeyEvent, tx: &mut Tx| {
             let to = match ev.key {
                 Key::Left if i > 0 => i - 1,
                 Key::Right if i + 1 < ids.len() => i + 1,
@@ -908,20 +924,20 @@ fn row_view(s: &State, u: &Ui, r: &Row, width: f32, n: usize) -> El {
                 .clip_fade_linear(if last && len > n { PEEK } else { 0.0 }, 0.0, if last { 0.0 } else { PEEK }, 0.0)
                 .child(strip),
         );
-    let see = r.see.clone();
-    let title = row()
-        .key(format!("top-row-{slot}-head"))
-        .h(28.0)
-        .gap(4.0)
-        .center_y()
-        .focusable(true)
-        .role("link")
-        .label(r.title.clone())
-        .cursor(rune::Cursor::Pointer)
-        .on_press_tx(move |st: &mut State, tx: &mut Tx| apply_see(st, tx, &see))
-        .child(text(r.title.clone()).font(SECTION).color(u.ink))
-        .child(text(super::tree::tr("See all")).font(SMALL).color(u.muted).ml(8.0))
-        .child(icon(&icons::CHEVRON_RIGHT, 12.0).color(u.muted).a11y_hidden());
+    let mut title = row().key(format!("top-row-{slot}-head")).h(28.0).gap(4.0).center_y().child(text(r.title.clone()).font(SECTION).color(u.ink));
+    if let Some(see) = r.see.clone() {
+        title = title
+            .focusable(true)
+            .role("link")
+            .label(r.title.clone())
+            .cursor(rune::Cursor::Pointer)
+            .on_press_tx(move |st: &mut State, tx: &mut Tx| apply_see(st, tx, &see))
+            .child(text(super::tree::tr("See all")).font(SMALL).color(u.muted).ml(8.0))
+            .child(icon(&icons::CHEVRON_RIGHT, 12.0).color(u.muted).a11y_hidden());
+    } else if r.reasons.is_some() {
+        // A row picked for this player says where it comes from: nothing left this PC.
+        title = title.child(text(super::tree::tr("Picked on this PC from your heroes, mods and favorites")).font(SMALL).color(u.muted).ml(8.0).truncate().min_w(0.0));
+    }
     let mut head = row().w_full().h(28.0).gap(6.0).center_y().child(title).child(spacer());
     if pages > 1 {
         head = head.child(arrow(false)).child(arrow(true));
@@ -951,7 +967,19 @@ fn apply_see(st: &mut State, tx: &mut Tx, see: &See) {
 
 /// A tile: the art is the tile. Title on a gradient at rest; on hover a scrim with the title,
 /// the byline and likes, Install and the star. Pending and failed images keep the title.
-fn tile(s: &State, u: &Ui, slot: usize, card: &BrowseCard, tw: f32, th: f32, rank: Option<usize>) -> El {
+/// A pick's reason in the player's language.
+fn reason_text(reason: &super::foryou::Reason) -> String {
+    use super::foryou::Reason;
+    let fill = crate::screens::settings::i18n::fill;
+    match reason {
+        Reason::Hero(hero) => fill(super::tree::tr("Because you play {}"), &[hero]),
+        Reason::Author(author) => fill(super::tree::tr("More from {}"), &[author]),
+        Reason::Category(category) => fill(super::tree::tr("More {}"), &[category]),
+        Reason::Rising => super::tree::tr("Rising fast").to_string(),
+    }
+}
+
+fn tile(s: &State, u: &Ui, slot: usize, card: &BrowseCard, tw: f32, th: f32, rank: Option<usize>, why: Option<String>) -> El {
     let id = card.id;
     let r = crate::ui::r(8.0);
     let veil = veiled(s, id, card.nsfw);
@@ -1008,7 +1036,7 @@ fn tile(s: &State, u: &Ui, slot: usize, card: &BrowseCard, tw: f32, th: f32, ran
             .child(title(ink, 1))
             .child(
                 row().h(16.0).gap(4.0).center_y().min_w(0.0)
-                    .child(text(if card.author.is_empty() { "-".to_string() } else { card.author.clone() }).font(SMALL).color(quiet).truncate().min_w(0.0).shrink())
+                    .child(text(why.clone().unwrap_or_else(|| if card.author.is_empty() { "-".to_string() } else { card.author.clone() })).font(SMALL).color(quiet).truncate().min_w(0.0).shrink())
                     .child(text("·").font(SMALL).color(quiet))
                     .child(icon(&icons::THUMBS_UP, 12.0).color(quiet).a11y_hidden())
                     .child(text(card_count(card.likes)).font(crate::ui::SMALL_NUM).color(quiet)),
@@ -1334,6 +1362,23 @@ mod tests {
         let p = plan(&st, 4, NOW);
         assert!(p.rows.len() <= 2, "{} rows", p.rows.len());
         assert_eq!(p.rows[0].kind, RowKind::Top10);
+    }
+
+    /// With picks for the player, the second row is theirs and says why each mod is there; a
+    /// mod already in the Top 10 is not repeated in it.
+    #[test]
+    fn the_second_row_is_for_the_player() {
+        let recent: Vec<BrowseCard> = (0..60u64).map(|i| card(i + 1, (i % 7) as i64, 100 - i, "Skins", false)).collect();
+        let mut st = state_with(recent, Vec::new());
+        let picks: Vec<BrowseCard> = (0..12u64).map(|i| card(if i == 0 { 1 } else { 500 + i }, 40, 30 + i, "Skins", false)).collect();
+        let reasons = picks.iter().map(|c| (c.id, crate::screens::browse::foryou::Reason::Hero("Haze".into()))).collect();
+        st.browse_view.shelves.for_you = crate::screens::browse::foryou::ForYou { picks, reasons, personal: true, key: 1 };
+        let p = plan(&st, 4, NOW);
+        assert_eq!(p.rows.len(), 2);
+        assert_eq!(p.rows[1].title, "For you");
+        assert!(p.rows[1].see.is_none() && p.rows[1].reasons.is_some());
+        assert!(!ids(&p.rows[1]).contains(&1), "mod 1 is in the Top 10 already");
+        assert_rows_ok(&p, 4);
     }
 
     /// The billboard asks for the original upload behind a thumbnail.

@@ -42,6 +42,8 @@ pub struct Shelves {
     pub window_inactive: bool,
     /// The billboard is scrolled out of view: it waits until it is back.
     pub offscreen: bool,
+    /// The row picked for this player (`foryou`), redone when their history changes.
+    pub for_you: super::foryou::ForYou,
     /// The last pointer or key input on Browse. Two minutes without one stops the billboard:
     /// a window left alone draws nothing, focused or not.
     pub last_input: Option<Instant>,
