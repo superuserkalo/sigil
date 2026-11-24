@@ -23,9 +23,10 @@ pub const FILE_NAME: &str = "settings.json";
 pub const ZOOMS: [f32; 4] = [0.9, 1.0, 1.1, 1.25];
 
 /// Screens Sigil can open on.
-pub const STARTUP_SCREENS: [Screen; 5] = [
+pub const STARTUP_SCREENS: [Screen; 6] = [
     Screen::Browse,
     Screen::Installed,
+    Screen::Downloads,
     Screen::Locker,
     Screen::Stats,
     Screen::Agent,

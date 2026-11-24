@@ -9,7 +9,7 @@ pub const DE: &[(&str, &str)] = &[
     ("Autoexec", "Autoexec"),
     ("Performance", "Leistung"),
     ("Stats", "Statistiken"),
-    ("Overlap", "Überschneidungen"),
+    ("Overlap", "Überlappung"),
     ("Profiles", "Profile"),
     ("Servers", "Server"),
     ("Agent", "Agent"),

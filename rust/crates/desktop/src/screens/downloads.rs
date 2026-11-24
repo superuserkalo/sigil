@@ -200,6 +200,54 @@ fn demo_apply(queue: &mut queue::Queue, command: queue::Command) {
 
 /// The section on the Launch page: heading with the queue's controls, the add row, then the
 /// list in a panel with one fixed 56 point row per archive.
+/// The Downloads page: its title on the toolbar line, then the queue (link field, Add, rows,
+/// review) in one reading column.
+pub fn page(s: &State, u: &Ui) -> El {
+    col()
+        .key("downloads-root")
+        .w_full()
+        .h_full()
+        .min_h(0.0)
+        .child(
+            col().w_full().px(crate::ui::PAGE_X).pt(crate::ui::PAGE_TOP).child(u.page_toolbar(
+                u.page_title(tr("Downloads")),
+                Vec::new(),
+                None,
+                Vec::new(),
+            )),
+        )
+        .child(
+            col()
+                .key("downloads-scroll")
+                .w_full()
+                .grow(1.0)
+                .min_h(0.0)
+                .scroll(rune::ScrollSpec { stick_bottom: false })
+                .child(
+                    col()
+                        .key("downloads-page")
+                        .w_full()
+                        .max_w(880.0)
+                        .px(crate::ui::PAGE_X)
+                        .pt(16.0)
+                        .pb(32.0)
+                        .child(page_body(s, u)),
+                ),
+        )
+}
+
+/// The Downloads page's body: the queue without its own section title, which the page title
+/// already says.
+pub fn page_body(s: &State, u: &Ui) -> El {
+    let queue = s.launch.downloads.snapshot();
+    col()
+        .w_full()
+        .gap(8.0)
+        .child(head(u, &queue, false))
+        .child(add_row(s, u))
+        .child(list(s, u, &queue))
+}
+
 pub fn section(s: &State, u: &Ui) -> El {
     let queue = s.launch.downloads.snapshot();
     col()

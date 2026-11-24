@@ -86,7 +86,9 @@ pub fn page_event(screen: crate::model::Screen) -> Option<&'static str> {
         Screen::Browse => "page:browse",
         Screen::Installed => "page:installed",
         Screen::Profiles => "page:profiles",
-        Screen::Launch => "page:downloads",
+        // The Worker knows one name for the old Launch page, which held both; a separate
+        // name for each needs the Worker's list to change first.
+        Screen::Launch | Screen::Downloads => "page:downloads",
         Screen::Locker => "page:locker",
         Screen::Crosshair => "page:crosshair",
         Screen::Autoexec => "page:autoexec",

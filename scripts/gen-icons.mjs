@@ -10,7 +10,7 @@ search refresh-cw folder-open plus arrow-up arrow-left x minus square copy check
 chevron-left triangle-alert download external-link ellipsis trash-2 square-pen wrench hammer package
 history eye heart thumbs-up panel-left square-stop paperclip shield key-round log-in user message-square
 folder file terminal layout-grid list sliders-horizontal filter rotate-ccw circle-check circle-x loader
-git-compare zap box globe info lock power gauge pin pin-off keyboard volume-2 volume-1 volume-x database`.split(/\s+/).filter(Boolean);
+git-compare zap box globe info lock power gauge pin pin-off keyboard volume-2 volume-1 volume-x database gamepad-2`.split(/\s+/).filter(Boolean);
 
 const attrs = (o) => Object.entries(o).filter(([k]) => k !== 'key')
   .map(([k, v]) => `${k.replace(/[A-Z]/g, (c) => '-' + c.toLowerCase())}="${v}"`).join(' ');

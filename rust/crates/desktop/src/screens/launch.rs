@@ -5,9 +5,10 @@
 //! moves aside, and the running state comes from the monitor thread that watches the process
 //! table (see [`Monitor`]).
 //!
-//! Two things sit next to the launch buttons: a crash advisory for the last session (the newest
-//! dump that the launch marker has not seen, with the mod that most likely caused it, from
-//! `deadlock_core::impact`) and the download queue (`screens::downloads`).
+//! The page is called Game: the game's state, the vanilla stash and a crash advisory for the last
+//! session (the newest dump that the launch marker has not seen, with the mod that most likely
+//! caused it, from `deadlock_core::impact`). The download queue has its own page
+//! (`screens::downloads::page`); the sidebar's buttons are the launch controls.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -232,9 +233,20 @@ pub fn view(s: &State, u: &Ui) -> El {
     let head = col()
         .key("launch-head")
         .w_full()
+        // The toolbar ends on the panel's right edge, so Recheck sits over what it rereads.
+        .max_w(COLUMN_W + 2.0 * PAGE_X)
         .px(PAGE_X)
         .pt(PAGE_TOP)
-        .child(u.page_toolbar(u.page_title(tr("Launch")), vec![status_line(u, v.last.as_deref())], None, Vec::new()));
+        .child(u.page_toolbar(
+            u.page_title(tr("Game")),
+            vec![status_line(u, v.last.as_deref())],
+            None,
+            vec![u
+                .icon_button(&icons::REFRESH_CW, tr("Recheck"))
+                .key("launch-recheck")
+                .cursor(rune::Cursor::Pointer)
+                .on_press(|st: &mut State| crate::data::start_launch_read(st))],
+        ));
 
     let body = if !s.game_detected {
         u.empty_state(
@@ -255,41 +267,14 @@ pub fn view(s: &State, u: &Ui) -> El {
             Some(crate::notify::feedback::button(u, "launch-error-feedback", tr("Launch status could not be read"), error)),
         )
     } else {
-        let mut game = col().w_full().gap(24.0).child(
-            col()
-                .w_full()
-                .gap(8.0)
-                .child(
-                    u.section_head(
-                        tr("Game"),
-                        None,
-                        Some(
-                            u.icon_button(&icons::REFRESH_CW, tr("Recheck"))
-                                .size(24.0, 24.0)
-                                .key("launch-recheck")
-                                .cursor(rune::Cursor::Pointer)
-                                .on_press(|st: &mut State| crate::data::start_launch_read(st)),
-                        ),
-                    )
-                    .pr(16.0 - 4.0),
-                )
-                .child(game_panel(s, u, read, &process, running)),
-        );
+        // The page title already says Game; Recheck sits on the toolbar line.
+        let mut game = col().w_full().gap(24.0).child(game_panel(s, u, read, &process, running));
         if let Some(crash) = read.and_then(|read| read.crash.as_ref()) {
             game = game.child(crash_card(s, u, crash));
         }
-        // Full width: the game and its crash on the left, downloads on the right, one top
-        // edge. Narrower: one reading column.
-        if crate::ui::fit() == crate::ui::Fit::Full {
-            row()
-                .w_full()
-                .gap(24.0)
-                .items_start()
-                .child(game.grow(1.0).min_w(0.0))
-                .child(col().grow(1.0).min_w(0.0).child(downloads::section(s, u)))
-        } else {
-            game.max_w(COLUMN_W).child(downloads::section(s, u))
-        }
+        // One column: the game and its crash take the content width up to the reading
+        // measure. The download queue has its own page (`screens::downloads::page`).
+        game.max_w(COLUMN_W)
     };
 
     col()
@@ -319,8 +304,8 @@ pub fn view(s: &State, u: &Ui) -> El {
         )
 }
 
-/// The reading column when the page is too narrow for two.
-const COLUMN_W: f32 = 720.0;
+/// The Game page's one column.
+const COLUMN_W: f32 = 880.0;
 /// One Game panel row, a crash suspect row and a download row: all the same 56 points.
 const PANEL_ROW_H: f32 = 56.0;
 
@@ -1329,6 +1314,7 @@ pub fn scene_vanilla(st: &mut State) {
 /// `launch-downloads`: the queue with one row of every state.
 pub fn scene_downloads(st: &mut State) {
     scene_base(st);
+    st.screen = Screen::Downloads;
     st.launch.read = Some(demo_read(false, None));
     stage_queue(st);
 }

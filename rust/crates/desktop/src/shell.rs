@@ -572,6 +572,8 @@ pub fn shortcuts_dialog(s: &State, u: &Ui) -> Option<El> {
                 ("Profiles", "⌘P"),
                 ("Autoexec", "⌘E"),
                 ("Crosshair", "⌘X"),
+                ("Game", "⌘L"),
+                ("Downloads", "⌘J"),
                 ("Settings", "⌘,"),
             ],
         ),

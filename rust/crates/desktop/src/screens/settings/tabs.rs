@@ -410,6 +410,7 @@ pub fn presence_activity(s: &State) -> Activity {
             Screen::Profiles => "Managing profiles",
             Screen::Servers => "Browsing servers",
             Screen::Launch => "Getting ready to play",
+            Screen::Downloads => "Downloading mods",
             _ => "Building a mod",
         }
     };

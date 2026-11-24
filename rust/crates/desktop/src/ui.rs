@@ -1236,6 +1236,9 @@ impl Ui {
     ) -> El {
         let mut line = row()
             .key("page-toolbar")
+            // With no band over the page, the toolbar's empty stretch moves the window; its
+            // controls keep their presses.
+            .window_drag()
             .w_full()
             .h(CONTROL_L)
             .gap(8.0)

@@ -3019,9 +3019,10 @@ pub fn short_date(iso: &str) -> String {
 // Titlebar profile switcher
 // ---------------------------------------------------------------------------
 
-/// The active profile in the titlebar. Pressing it opens the saved profiles, so switching is
-/// one press plus one. Mount it inside the titlebar row; the menu hangs under the chip.
-pub fn titlebar_switcher(s: &State, u: &Ui) -> El {
+/// The active profile, a 28 point row under the sidebar's brand. Pressing it opens the saved
+/// profiles, so switching is one press plus one; the menu hangs under the row. In the collapsed
+/// rail it is the icon alone, its name in the tooltip, and the menu opens to the right.
+pub fn titlebar_switcher(s: &State, u: &Ui, collapsed: bool) -> El {
     let active = s
         .profiles
         .active
@@ -3033,10 +3034,7 @@ pub fn titlebar_switcher(s: &State, u: &Ui) -> El {
     let has_profiles = !s.profiles.rows.is_empty();
     let chip = row()
         .key("titlebar-profile")
-        .h(28.0)
-        .px(10.0)
-        .gap(6.0)
-        .center_y()
+        .h(crate::ui::CONTROL_M)
         .radius(crate::ui::r(8.0))
         .hover(u.hover)
         .focusable(true)
@@ -3049,17 +3047,31 @@ pub fn titlebar_switcher(s: &State, u: &Ui) -> El {
             } else {
                 st.go(Screen::Profiles);
             }
-        })
-        .child(icon(&icons::LAYERS, 14.0).color(u.muted).a11y_hidden())
-        .child(
-            text(label)
-                .font(SMALL)
-                .color(if active.is_some() { u.prose } else { u.muted })
-                .max_w(150.0)
-                .truncate()
-                .a11y_hidden(),
-        )
-        .child(icon(&icons::CHEVRON_DOWN, 12.0).color(u.faint).a11y_hidden());
+        });
+    let chip = if collapsed {
+        chip.w_full()
+            .center()
+            .help(label.clone())
+            .help_side(Side::Right)
+            .child(icon(&icons::USER, 16.0).color(u.muted).a11y_hidden())
+    } else {
+        // On the nav grid: the icon on the icon column, the name on the label edge.
+        chip.w_full()
+            .px(10.0)
+            .gap(10.0)
+            .center_y()
+            .child(icon(&icons::USER, 16.0).color(u.muted).a11y_hidden())
+            .child(
+                text(label)
+                    .font(crate::ui::BODY)
+                    .color(if active.is_some() { u.prose } else { u.muted })
+                    .grow(1.0)
+                    .min_w(0.0)
+                    .truncate()
+                    .a11y_hidden(),
+            )
+            .child(icon(&icons::CHEVRON_DOWN, 14.0).color(u.muted).a11y_hidden())
+    };
 
     if !s.profiles.titlebar_open || !has_profiles {
         return chip;
@@ -3141,7 +3153,12 @@ pub fn titlebar_switcher(s: &State, u: &Ui) -> El {
             .radius(crate::ui::r(10.0))
             .border(1.0, u.hair_strong)
             .shadow(12.0, 32.0, crate::ui::soft(rune::Color::BLACK.alpha(0.5)))
-            .anchored("titlebar-profile", Side::Bottom, Align::Start, 6.0)
+            .anchored(
+                "titlebar-profile",
+                if collapsed { Side::Right } else { Side::Bottom },
+                Align::Start,
+                if collapsed { 8.0 } else { 4.0 },
+            )
             .transition(crate::motion::pop(false))
             .modal(true, |st: &mut State| st.profiles.titlebar_open = false)
             .on_key(|st: &mut State, ev: &KeyEvent, _| {

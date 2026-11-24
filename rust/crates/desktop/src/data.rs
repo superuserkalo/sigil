@@ -3233,8 +3233,8 @@ pub fn queue_install(state: &mut State, target: &str) {
         .launch
         .downloads
         .send(deadlock_core::download_queue::Command::Add(target.to_string()));
-    state.screen = crate::model::Screen::Launch;
-    // The page needs its launch read before the first frame on it.
+    state.screen = crate::model::Screen::Downloads;
+    // The page needs its launch read (it starts the queue's worker) before the first frame.
     start_launch_read(state);
 }
 

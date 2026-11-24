@@ -419,6 +419,10 @@ impl State {
                     crate::data::start_launch_read(self);
                 }
             }
+            Screen::Downloads => {
+                // The queue's worker; the launch read also starts it, and the monitor.
+                crate::data::start_launch_read(self);
+            }
             Screen::Toolchain => {
                 if !self.toolchain.loaded && !self.toolchain_job.is_running() {
                     crate::data::start_toolchain_read(self);
@@ -1186,6 +1190,7 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
         Screen::Stats => screens::stats::view(s, &u),
         Screen::Locker => screens::locker::view(s, &u),
         Screen::Launch => screens::launch::view(s, &u),
+        Screen::Downloads => screens::downloads::page(s, &u),
         Screen::Agent => screens::workbench::view(s, &u),
         Screen::Projects => screens::projects::view(s, &u),
         Screen::Index => screens::index::view(s, &u),
@@ -1203,7 +1208,15 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
         .grow(1.0)
         .h_full()
         .min_w(0.0)
-        .child(titlebar(s, &u, insets));
+        // The band over the page exists only where it holds something for the whole run: the
+        // Windows caption buttons, or the transient chips while the status bar is hidden. Pages
+        // otherwise start at the top, and their toolbar line moves the window.
+        .children(titlebar_shown(s, insets).then(|| titlebar(s, &u, insets)))
+        // macOS without the band: a drag strip that puts the page's toolbar line on the
+        // sidebar's brand row (the traffic lights' strip sits above that row).
+        .children((!titlebar_shown(s, insets) && insets.leading > 0.0).then(|| {
+            el().key("page-lights-strip").w_full().h(LIGHTS_H - crate::ui::PAGE_TOP).window_drag()
+        }));
     if let Some(banner) = crate::shell_w4::update_banner(s, &u) {
         main = main.child(banner);
     }
@@ -1381,9 +1394,10 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
     root
 }
 
-/// The primary places, in Grimoire's order, then Launch (the crash report, the vanilla stash
-/// and Restore, the download queue). Everything else is reached from inside a place.
-const PLACES: [Screen; 11] = [
+/// The primary places, in Grimoire's order, then Game (the game's state, the crash report, the
+/// vanilla stash and Restore) and Downloads (the queue). Everything else is reached from inside
+/// a place. "Launch" stays on the two sidebar buttons only.
+const PLACES: [Screen; 12] = [
     Screen::Browse,
     Screen::Installed,
     Screen::Locker,
@@ -1395,6 +1409,7 @@ const PLACES: [Screen; 11] = [
     Screen::Profiles,
     Screen::Servers,
     Screen::Launch,
+    Screen::Downloads,
 ];
 
 /// Screens that live under the Agent place, so it stays selected while one is open.
@@ -1437,6 +1452,9 @@ fn glass_wallpaper(window: (f32, f32), kind: crate::glass::Backdrop, light: bool
         .child(el().pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0)).fill(veil))
         .a11y_hidden()
 }
+
+/// The macOS traffic lights' own strip over the brand row: they sit 9 to 23 points down.
+const LIGHTS_H: f32 = 28.0;
 
 fn sidebar(s: &State, u: &Ui, insets: rune::ChromeInsets) -> El {
     // On glass: the tint over the system's backdrop, a 1 point highlight inside the right edge,
@@ -1533,16 +1551,8 @@ fn sidebar(s: &State, u: &Ui, insets: rune::ChromeInsets) -> El {
                 .a11y_hidden()
         }))
         .children((lights_row && !collapsed).then(|| {
-            // The traffic lights and the collapse button, on the titlebar's band.
-            row()
-                .key("sidebar-lights")
-                .w_full()
-                .h(TITLEBAR_H)
-                .pr(12.0)
-                .center_y()
-                .window_drag()
-                .child(spacer())
-                .child(crate::shell_w4::collapse_button(s, u))
+            // The traffic lights alone, as tight as they allow; the brand row follows.
+            row().key("sidebar-lights").w_full().h(LIGHTS_H).window_drag()
         }))
         .child(if collapsed {
             // Icons only: the rail's top row, with Expand centred where the row is free (on
@@ -1572,8 +1582,17 @@ fn sidebar(s: &State, u: &Ui, insets: rune::ChromeInsets) -> El {
                     crate::brand::header(s, u)
                 })
                 .child(spacer())
-                .children((!lights_row).then(|| crate::shell_w4::collapse_button(s, u)))
+                .child(crate::shell_w4::collapse_button(s, u))
         })
+        // The active profile, on the nav grid under the brand: every page gets the band back.
+        .child(
+            col()
+                .key("sidebar-profile")
+                .w_full()
+                .px(8.0)
+                .pt(4.0)
+                .child(screens::profiles::titlebar_switcher(s, u, collapsed)),
+        )
         .child(
             col()
                 .key("nav-scroll")
@@ -1677,6 +1696,11 @@ fn nav_item(s: &State, u: &Ui, screen: Screen) -> El {
 /// A live count. `None` means the scan has not run, so nothing is shown rather than a number
 /// the shell does not have.
 fn nav_count(s: &State, screen: Screen) -> Option<(String, bool)> {
+    // Downloads: queued or running, from the status bar's once-a-second count.
+    if screen == Screen::Downloads {
+        let queued = s.bar.counts.queued();
+        return (queued > 0).then(|| (queued.to_string(), false));
+    }
     if !s.addons.scanned || s.addons.error.is_some() {
         return None;
     }
@@ -1849,6 +1873,12 @@ fn settings_item(s: &State, u: &Ui) -> El {
 /// The band across the top of the content. It moves the window, holds the profile switcher
 /// and transient chips, and reports a problem only when there is one. Search lives in each
 /// page's toolbar. Windows caption buttons sit over its trailing edge.
+/// The band shows for the Windows caption buttons, or while the status bar is hidden (it then
+/// carries the chips). Both hold for the whole run, so pages never jump when a chip appears.
+fn titlebar_shown(s: &State, insets: rune::ChromeInsets) -> bool {
+    insets.trailing > 0.0 || !s.prefs.status_bar
+}
+
 fn titlebar(s: &State, u: &Ui, insets: rune::ChromeInsets) -> El {
     let mut bar = row()
         .key("titlebar")
@@ -1860,7 +1890,7 @@ fn titlebar(s: &State, u: &Ui, insets: rune::ChromeInsets) -> El {
         .gap(8.0)
         .center_y()
         .window_drag();
-    if s.demo {
+    if s.demo && !s.prefs.status_bar {
         // Development only: a quiet chip, never the accent.
         bar = bar.child(
             row()
@@ -1873,7 +1903,10 @@ fn titlebar(s: &State, u: &Ui, insets: rune::ChromeInsets) -> El {
         );
     }
     bar = bar.child(spacer());
-    bar = bar.child(screens::profiles::titlebar_switcher(s, u));
+    // With the status bar on, the chips live there; the band keeps only the caption buttons.
+    if s.prefs.status_bar {
+        return bar;
+    }
     // Downloads running: on every page, a press opens the list.
     if let Some(downloads) = screens::downloads::indicator(s, u) {
         bar = bar.child(downloads);
@@ -2875,6 +2908,8 @@ pub fn scenes() -> &'static [(&'static str, fn(&mut State))] {
         ("locker-global", screens::locker::scene_global),
         ("launch", scene_launch),
         ("launch-page", screens::launch::scene_page),
+        // The Game page (once Launch); `launch-page` stays as its old name.
+        ("game-page", screens::launch::scene_page),
         ("launch-running", screens::launch::scene_running),
         ("launch-crash", screens::launch::scene_crash),
         ("launch-checklist", screens::launch::scene_checklist),
@@ -2882,6 +2917,8 @@ pub fn scenes() -> &'static [(&'static str, fn(&mut State))] {
         ("launch-stop", screens::launch::scene_stop),
         ("launch-vanilla", screens::launch::scene_vanilla),
         ("launch-downloads", screens::launch::scene_downloads),
+        // The Downloads page; `launch-downloads` stays as its old name.
+        ("downloads-page", screens::launch::scene_downloads),
         ("launch-downloads-review", screens::launch::scene_downloads_review),
         ("conflicts-resolve", screens::conflicts::scene_resolve),
         ("conflicts-ignored", screens::conflicts::scene_ignored),

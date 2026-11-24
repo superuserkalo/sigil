@@ -125,7 +125,8 @@ pub(crate) fn part(u: &Ui, key: &str, glyph: &'static rune::Icon, words: String,
         .cursor(rune::Cursor::Pointer)
         .help_above()
         .child(icon(glyph, 14.0).color(tint).a11y_hidden())
-        .child(text(words).font(SMALL).color(u.muted).a11y_hidden())
+        .shrink()
+        .child(text(words).font(SMALL).color(u.muted).truncate().min_w(0.0).a11y_hidden())
 }
 
 fn divider(u: &Ui) -> El {
@@ -307,7 +308,8 @@ pub fn view(s: &State, u: &Ui) -> Option<El> {
     if !s.prefs.status_bar {
         return regions.map(|chip| bar(u).child(chip).child(spacer()));
     }
-    let mut left = row().gap(2.0).center_y().child(game(s, u));
+    // The left group gives way first when the window is narrow; its words cut, nothing spills.
+    let mut left = row().gap(2.0).center_y().shrink().child(game(s, u));
     if let Some(catalog) = catalog(s, u) {
         left = left.child(divider(u)).child(catalog);
     }
@@ -321,12 +323,48 @@ pub fn view(s: &State, u: &Ui) -> Option<El> {
         left = left.child(divider(u)).child(downloads);
     }
     let mut right = row().gap(2.0).center_y();
+    // The chips that used to sit in the band over the page: they come and go here, in a bar
+    // that is always there, so nothing above moves.
+    for chip in chips(s, u) {
+        right = right.child(chip).child(divider(u));
+    }
     if let Some(update) = update(s, u) {
         right = right.child(update).child(divider(u));
     }
     // The profile lives in the titlebar switcher, the one that acts.
     right = right.child(volume(s, u)).child(divider(u)).child(shortcuts(u));
     Some(bar(u).child(left).child(spacer()).child(right))
+}
+
+/// Demo data, mods to check after a game update, and an agent approval waiting.
+fn chips(s: &State, u: &Ui) -> Vec<El> {
+    let mut out = Vec::new();
+    if s.demo {
+        out.push(
+            row()
+                .key("statusbar-demo")
+                .h(BAR_H)
+                .px(8.0)
+                .center_y()
+                .child(text(tr("Demo data")).font(SMALL).color(u.muted)),
+        );
+    }
+    let review = s.release.review.as_ref().map(|queue| queue.review_count()).unwrap_or(0);
+    if review > 0 && s.screen != Screen::Updates {
+        let words = fill(tr("{} to check after the update"), &[&review.to_string()]);
+        out.push(
+            part(u, "statusbar-updates", &icons::REFRESH_CW, words.clone(), u.amber, words)
+                .on_press(|st: &mut State| st.go(Screen::Updates)),
+        );
+    }
+    if s.agent.pause.is_some() && !crate::app::under_agent(s.screen) {
+        let words = tr("Approval waiting").to_string();
+        out.push(
+            part(u, "statusbar-approval", &icons::TRIANGLE_ALERT, words.clone(), u.amber, words)
+                .on_press(|st: &mut State| st.go(Screen::Agent)),
+        );
+    }
+    out
 }
 
 /// Keyboard shortcuts, at the bar's trailing end (`?` opens the same sheet).

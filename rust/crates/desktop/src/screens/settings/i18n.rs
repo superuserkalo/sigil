@@ -360,7 +360,7 @@ mod tests {
         "Using Sigil", "Playing Deadlock", "Vanilla", "Modded", "Modded, {}", "Changing settings",
         "Browsing mods", "Managing mods", "In the Locker", "Designing a crosshair",
         "Editing the autoexec", "Tuning performance", "Checking stats", "Sorting out mod overlap",
-        "Managing profiles", "Browsing servers", "Getting ready to play", "Building a mod",
+        "Managing profiles", "Browsing servers", "Getting ready to play", "Downloading mods", "Building a mod",
         // Discord presence with the party size hidden
         "In a party",
         // Log and report lines
