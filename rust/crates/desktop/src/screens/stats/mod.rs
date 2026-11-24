@@ -243,6 +243,8 @@ pub struct View {
     pub social: Fetched<Social>,
     pub social_job: Job<Social>,
     pub social_all: bool,
+    /// The People tab's teammates sort.
+    pub people_sort: social::PeopleSort,
     pub leaderboard: Fetched<Leaderboard>,
     pub leaderboard_job: Job<Leaderboard>,
     pub leaderboard_all: bool,
@@ -308,6 +310,7 @@ impl Default for View {
             social: Fetched::Idle,
             social_job: Job::default(),
             social_all: false,
+            people_sort: social::PeopleSort::default(),
             leaderboard: Fetched::Idle,
             leaderboard_job: Job::default(),
             leaderboard_all: false,
@@ -610,7 +613,8 @@ pub fn scene_board(s: &mut State) {
 pub fn scene_people(s: &mut State) {
     load_fixture(s);
     s.stats.tab = Tab::People;
-    if let Ok(social) = deadlock_core::stats::social::social_from_bundle(EXTRA) {
+    if let Ok(mut social) = deadlock_core::stats::social::social_from_bundle(EXTRA) {
+        scene_lanes(&mut social);
         s.stats.social = Fetched::Ready(social);
     }
     if let Ok(captured) = deadlock_core::stats::leaderboard::board_from_bundle(EXTRA) {
@@ -618,6 +622,30 @@ pub fn scene_people(s: &mut State) {
         s.stats.seasons = captured.seasons;
         s.stats.leaderboard = Fetched::Ready(captured.board);
     }
+}
+
+/// Lane counts for the scene's teammates: the captured bundle has only three shared match ids
+/// per mate, so the scene fills a fixed spread (some below the five-match floor).
+fn scene_lanes(social: &mut Social) {
+    use deadlock_core::stats::social::LaneRecord;
+    for (index, mate) in social.mates.iter_mut().enumerate() {
+        let checked = mate.matches.min(60);
+        let matches = match index % 4 {
+            0 => checked * 2 / 3,
+            1 => checked / 3,
+            2 => 3,
+            _ => checked / 2,
+        };
+        let wins = (matches * (40 + (index as u64 * 7) % 35)) / 100;
+        mate.lane = Some(LaneRecord { checked, matches, wins });
+    }
+    social.lanes_known = true;
+}
+
+/// Overview with the People data loaded: the partner row names the best lane partner.
+pub fn scene_partner(s: &mut State) {
+    scene_people(s);
+    s.stats.tab = Tab::Overview;
 }
 
 /// Items rows for a scene (`wave3_scenes`).

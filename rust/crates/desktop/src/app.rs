@@ -2923,6 +2923,7 @@ pub fn scenes() -> &'static [(&'static str, fn(&mut State))] {
         ("stats-entry", screens::stats::scene_entry),
         ("stats-board", screens::stats::scene_board),
         ("stats-people", screens::stats::scene_people),
+        ("stats-partner", screens::stats::scene_partner),
         ("stats-tracked", screens::stats::scene_tracked),
         ("stats-live-idle", screens::stats::live::scene_idle),
         ("stats-live-console", screens::stats::live::scene_console),

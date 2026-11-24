@@ -692,7 +692,74 @@ fn insights(s: &State, u: &Ui, snap: &StatsSnapshot, d: &Derived) -> El {
             note.detail.clone(),
         ));
     }
+    if let Some(partner) = partner_row(s, u) {
+        list = list.child(partner);
+    }
     list
+}
+
+/// "Best lane partner" (or "Best duo" without lane data): the teammate you win with most,
+/// from the People data once it is loaded. Before that, one press loads it.
+fn partner_row(s: &State, u: &Ui) -> Option<El> {
+    use crate::screens::settings::i18n::fill;
+    let frame = |lead: El, title: String, detail: String| {
+        row()
+            .key("stats-partner")
+            .w_full()
+            .h(44.0)
+            .gap(12.0)
+            .center_y()
+            .border_sides([0.0, 0.0, 1.0, 0.0], u.hair)
+            .child(row().w(24.0).h(24.0).center().child(lead))
+            .child(text(tr("Partner").to_string()).font(LABEL).color(u.muted).w(88.0))
+            .child(
+                col()
+                    .grow(1.0)
+                    .min_w(0.0)
+                    .gap(0.0)
+                    .child(text(title).font(BODY_MED).color(u.ink).truncate())
+                    .child(text(detail).font(SMALL).color(u.muted).truncate()),
+            )
+    };
+    let mark = || el().size(8.0, 8.0).radius(1.0).fill(u.muted).a11y_hidden();
+    match &s.stats.social {
+        super::Fetched::Ready(social) => {
+            let best = social.best_partner()?;
+            let name = best.persona_name.clone().unwrap_or_else(|| best.account_id.to_string());
+            let account_id = best.account_id;
+            let (title, detail) = if best.in_lane {
+                (
+                    fill(tr("Best lane partner: {}"), &[&name]),
+                    fill(tr("{}% when you share a lane, {} of {} matches"), &[&format!("{:.0}", best.rate_percent), &best.wins.to_string(), &best.matches.to_string()]),
+                )
+            } else {
+                (
+                    fill(tr("Best duo: {}"), &[&name]),
+                    fill(tr("{}% together, {} of {} matches"), &[&format!("{:.0}", best.rate_percent), &best.wins.to_string(), &best.matches.to_string()]),
+                )
+            };
+            Some(
+                frame(avatar(u, &name, 24.0), title, detail)
+                    .hover(u.hover)
+                    .focusable(true)
+                    .role("button")
+                    .label(fill(tr("Open the stats for {}"), &[&name]))
+                    .cursor(rune::Cursor::Pointer)
+                    .on_press(move |st: &mut State| crate::data::load_stats_account(st, account_id)),
+            )
+        }
+        super::Fetched::Idle => Some(
+            frame(mark(), tr("Best lane partner").to_string(), tr("Who you win with most when you share a lane").to_string()).child(
+                u.action(tr("Find out"), crate::ui::ActionKind::Ghost)
+                    .key("stats-partner-load")
+                    .h(28.0)
+                    .cursor(rune::Cursor::Pointer)
+                    .on_press(|st: &mut State| crate::data::start_social_load(st)),
+            ),
+        ),
+        super::Fetched::Loading => Some(frame(mark(), tr("Best lane partner").to_string(), tr("Loading teammates and opponents").to_string())),
+        super::Fetched::Failed(_) => None,
+    }
 }
 
 const SHORT_ROWS: usize = 5;

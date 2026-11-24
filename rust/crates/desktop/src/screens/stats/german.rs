@@ -297,6 +297,28 @@ pub const DE: &[(&str, &str)] = &[
     ("No patch date was found, so this is the last 30 days. Items need 500 matches to show.", "Kein Patchdatum gefunden, daher die letzten 30 Tage. Gegenstände brauchen 500 Matches, um zu erscheinen."),
     ("top {}% of {} ranked players", "top {} % von {} gewerteten Spielern"),
     ("top <0.1% of {} ranked players", "top <0,1 % von {} gewerteten Spielern"),
+    // People: teammates table and the overview's partner row (0.1.38).
+    ("Teammates", "Mitspieler"),
+    ("Together", "Zusammen"),
+    ("Against", "Gegen"),
+    ("Same lane", "Gleiche Lane"),
+    ("Lane win rate", "Lane-Siegquote"),
+    ("Sort by {}", "Nach {} sortieren"),
+    ("Matches on the same team", "Matches im selben Team"),
+    ("Your win rate in those matches, from 5 matches up", "Deine Siegquote in diesen Matches, ab 5 Matches"),
+    ("Matches where you two had the same lane", "Matches, in denen ihr beide dieselbe Lane hattet"),
+    ("Your win rate when you shared the lane, from 5 matches up", "Deine Siegquote, wenn ihr euch die Lane geteilt habt, ab 5 Matches"),
+    ("Lane data did not come back from the stats service.", "Der Statistikdienst hat keine Lane-Daten geliefert."),
+    ("Lane data did not come back from the stats service, so only matches together are shown.", "Der Statistikdienst hat keine Lane-Daten geliefert, daher siehst du nur gemeinsame Matches."),
+    ("Fewer than {} matches: too few for a rate", "Weniger als {} Matches: zu wenige für eine Quote"),
+    ("Partner", "Partner"),
+    ("Best lane partner", "Bester Lane-Partner"),
+    ("Best lane partner: {}", "Bester Lane-Partner: {}"),
+    ("Best duo: {}", "Bestes Duo: {}"),
+    ("{}% when you share a lane, {} of {} matches", "{} Prozent in derselben Lane, {} von {} Matches"),
+    ("{}% together, {} of {} matches", "{} Prozent zusammen, {} von {} Matches"),
+    ("Who you win with most when you share a lane", "Mit wem du in derselben Lane am häufigsten gewinnst"),
+    ("Find out", "Herausfinden"),
 ];
 
 pub fn get(text: &str) -> Option<&'static str> {
