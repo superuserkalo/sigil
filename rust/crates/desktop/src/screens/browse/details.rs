@@ -469,10 +469,48 @@ pub(crate) fn details_reading(s: &State, u: &Ui, d: &Details) -> El {
         }
         c = c.child(about);
     }
+    // Right after About: what players who share pair with this mod, before the long blocks.
+    if let Some(related) = related_section(s, u, d) {
+        c = c.child(related);
+    }
     c.child(videos_section(u, d, profile))
         .child(changelog_section(u, d, profile))
         .child(comments_section(s, u, d, profile))
 }
+
+/// "Players who use this also use": up to eight image-led tiles, as on the Browse landing, from
+/// Help build Sigil. Nothing at all until the server answered with mods that pass the content
+/// gate.
+pub(crate) fn related_section(s: &State, u: &Ui, d: &Details) -> Option<El> {
+    let cards = crate::insights::related_cards(s, d.id);
+    if cards.is_empty() {
+        return None;
+    }
+    let width = rune::memo::layout_size("details-reading").map(|[w, _]| w).filter(|w| *w > 0.0).unwrap_or(READING_MAX_W);
+    let cols = if width >= 620.0 { 4 } else if width >= 440.0 { 3 } else { 2 };
+    const GAP: f32 = 8.0;
+    let tw = ((width - GAP * (cols as f32 - 1.0)) / cols as f32).floor().max(60.0);
+    let th = (tw * 9.0 / 16.0).round();
+    let mut grid = col().key("details-related-grid").w_full().gap(GAP);
+    for line in cards.chunks(cols) {
+        let mut r = row().w_full().gap(GAP);
+        for card in line {
+            r = r.child(super::top::tile(s, u, RELATED_SLOT, card, tw, th, None, None));
+        }
+        grid = grid.child(r);
+    }
+    Some(
+        col()
+            .key("details-related")
+            .w_full()
+            .gap(8.0)
+            .child(section_head(u, None, "Players who use this also use", None))
+            .child(grid),
+    )
+}
+
+/// The tile key slot for the related row, apart from the landing's rows.
+const RELATED_SLOT: usize = 7;
 
 /// About's line length: about 72 characters of 13 point text.
 const READING_MAX_W: f32 = 560.0;
@@ -555,10 +593,14 @@ pub(crate) fn status_row(s: &State, u: &Ui, d: &Details) -> Option<El> {
         .unwrap_or(d.updated_ts);
     let old = d.profile.as_ref().map(|p| p.obsolete).unwrap_or(false)
         || (stale > 0 && stale < OUTDATED_BEFORE);
-    if slot.is_none() && update.is_none() && !ignored && !old {
+    let health = crate::insights::chips(s, d.id, stale);
+    if slot.is_none() && update.is_none() && !ignored && !old && health.is_empty() {
         return None;
     }
     let mut r = row().w_full().gap(8.0).center_y().flex_wrap();
+    for (i, chip) in health.iter().enumerate() {
+        r = r.child(crate::insights::chip_el(s, u, format!("details-health-{i}"), chip, false, None));
+    }
     if let Some(slot) = slot {
         r = r.child(tag(u, &format!("Installed in slot {slot:02}")));
         // The hero it changes, in 3D, as the player has it (on or off).

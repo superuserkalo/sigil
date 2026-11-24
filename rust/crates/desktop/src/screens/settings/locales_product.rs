@@ -39,10 +39,6 @@ pub const DE: &[(&str, &str)] = &[
     ("Not now", "Jetzt nicht"),
     ("Share", "Teilen"),
     ("Share product data", "Produktdaten teilen"),
-    (
-        "Mods, Browse, play, performance and app use, to Sigil's own server, kept until you delete it. Off unless you turn it on.",
-        "Mods, Durchsuchen, Spielen, Leistung und App-Nutzung, an Sigils eigenen Server, aufbewahrt bis du es löschst. Aus, bis du es einschaltest.",
-    ),
     ("What Sigil shared", "Was Sigil geteilt hat"),
     ("The last records sent from this computer.", "Die letzten Einträge, die von diesem Computer gesendet wurden."),
     ("Delete my data", "Meine Daten löschen"),
@@ -63,6 +59,38 @@ pub const DE: &[(&str, &str)] = &[
         "The last {} records sent from this computer, newest first. Sigil keeps this list only here.",
         "Die letzten {} Einträge, die von diesem Computer gesendet wurden, neueste zuerst. Sigil speichert diese Liste nur hier.",
     ),
+    // What sharing gives back (`insights.rs`, Browse, Installed, Performance).
+    (
+        "Sharing is what turns on mods other players use with yours, mod health warnings and frame rates on PCs like yours. Without it, Sigil asks its server nothing.",
+        "Erst das Teilen schaltet Mods frei, die andere Spieler mit deinen nutzen, Warnungen zum Zustand von Mods und Bildraten auf PCs wie deinem. Ohne Teilen fragt Sigil seinen Server nichts.",
+    ),
+    (
+        "Mods, Browse, play, performance and app use, to Sigil's own server, kept until you delete it. Sharing also turns on related mods, mod health warnings and frame rates on PCs like yours.",
+        "Mods, Durchsuchen, Spielen, Leistung und App-Nutzung, an Sigils eigenen Server, aufbewahrt bis du es löschst. Teilen schaltet auch passende Mods, Warnungen zum Zustand von Mods und Bildraten auf PCs wie deinem frei.",
+    ),
+    ("Often fails to install", "Scheitert oft bei der Installation"),
+    (
+        "{} of {} installs reported by players who share data failed.",
+        "{} von {} Installationen, die Spieler mit geteilten Daten gemeldet haben, sind fehlgeschlagen.",
+    ),
+    ("Reported broken on the current game build", "Für die aktuelle Spielversion als defekt gemeldet"),
+    (
+        "{} players who share data reported problems with it on this game build.",
+        "{} Spieler, die Daten teilen, haben mit dieser Spielversion Probleme damit gemeldet.",
+    ),
+    ("Often conflicts with {}", "Gerät oft in Konflikt mit {}"),
+    ("Reported broken", "Als defekt gemeldet"),
+    ("Often conflicts", "Oft im Konflikt"),
+    ("a mod you have", "einem deiner Mods"),
+    (
+        "{} players who share data and use both reported a conflict.",
+        "{} Spieler, die Daten teilen und beide nutzen, haben einen Konflikt gemeldet.",
+    ),
+    ("Players who use this also use", "Spieler, die diesen Mod nutzen, nutzen auch"),
+    ("Players with your mods also use", "Spieler mit deinen Mods nutzen auch"),
+    ("On PCs like yours: about {} fps (from {} players)", "Auf PCs wie deinem: etwa {} FPS (von {} Spielern)"),
+    ("By tier", "Nach Stufe"),
+    ("By frame rate on PCs like yours", "Nach Bildrate auf PCs wie deinem"),
 ];
 
 #[cfg(test)]
@@ -97,6 +125,7 @@ mod tests {
     fn every_string_of_help_build_sigil_has_german() {
         let mut missing: Vec<String> = ui_literals(include_str!("product.rs"))
             .into_iter()
+            .chain(ui_literals(include_str!("../../insights.rs")))
             .filter(|s| super::super::i18n::german_of(s).is_none())
             .collect();
         missing.sort();

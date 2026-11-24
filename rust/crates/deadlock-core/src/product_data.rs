@@ -1025,6 +1025,220 @@ fn related_at(base: &str, mod_id: ModId, version: &str) -> Result<Vec<ModId>> {
         .unwrap_or_default())
 }
 
+// --- what sharing gives back ---------------------------------------------------------------
+//
+// Every reader below sends only what its query names (mod ids, or a GPU and CPU model name and a
+// screen height), never the install id, and the Worker answers only with counts that met the
+// floor. The app calls them only while `allowed` says yes; that gate lives with the caller, which
+// also caches the answers.
+
+pub const HEALTH_PATH: &str = "/v1/product/health";
+pub const FPS_PATH: &str = "/v1/product/fps";
+/// Mods one health request may ask about (the Worker's own limit).
+pub const MAX_HEALTH_MODS: usize = 40;
+
+/// Install failures of one mod: failed installs whose reason points at the mod, and the attempts
+/// from the same epochs.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InstallHealth {
+    pub failed: u32,
+    pub attempts: u32,
+    /// Unix seconds when the newest period behind the numbers ended (0 when unknown).
+    #[serde(default)]
+    pub until: i64,
+}
+
+/// Reports that a mod did not work on one game build, and how many installs used it there.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BuildHealth {
+    pub build: u32,
+    pub reports: u32,
+    pub users: u32,
+    #[serde(default)]
+    pub until: i64,
+}
+
+/// Reports that a mod overlaps or conflicts with another, and how many installs had both on.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConflictHealth {
+    pub mod_id: u64,
+    pub reports: u32,
+    pub together: u32,
+    #[serde(default)]
+    pub until: i64,
+}
+
+/// What players who share reported about one mod, from `GET /v1/product/health`.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModHealth {
+    pub mod_id: u64,
+    #[serde(default)]
+    pub install: Option<InstallHealth>,
+    #[serde(default)]
+    pub broken: Vec<BuildHealth>,
+    #[serde(default)]
+    pub conflicts: Vec<ConflictHealth>,
+}
+
+/// The fewest reports a health chip rests on: the Worker's floor (10 installs), checked again
+/// here so a chip can never stand on less.
+pub const HEALTH_MIN_REPORTS: u32 = 10;
+/// "Often fails to install": at least this share of attempts failed, in percent.
+pub const FAIL_RATE_PCT: u32 = 25;
+/// "Reported broken on the current game build": at least this share of the installs that used
+/// the mod on that build reported it, in percent. Without a known base the reports must reach
+/// twice the floor instead.
+pub const BROKEN_RATE_PCT: u32 = 20;
+/// "Often conflicts with": at least this share of installs that had both on reported it.
+pub const CONFLICT_RATE_PCT: u32 = 30;
+
+/// One chip a mod card may carry. Wording is about reports, never about safety.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum HealthChip {
+    /// `failed` of `attempts` reported installs failed.
+    FailsToInstall { failed: u32, attempts: u32 },
+    /// `reports` installs reported it broken on the current build, of `users` that used it there.
+    BrokenOnBuild { reports: u32, users: u32 },
+    /// `reports` installs that had both on reported an overlap or a conflict with `other`.
+    ConflictsWith { other: u64, reports: u32 },
+}
+
+fn rate_at_least(part: u32, whole: u32, pct: u32) -> bool {
+    whole > 0 && u64::from(part) * 100 >= u64::from(whole) * u64::from(pct)
+}
+
+impl ModHealth {
+    /// The chips this mod earns, strongest first. `build` is the game build the player has now:
+    /// a broken report counts only for that exact build, so a game update clears it. `have` is
+    /// the player's installed GameBanana mods: a conflict counts only with one of those.
+    /// `updated` is when the creator last updated the mod (Unix seconds, 0 when unknown):
+    /// reports from periods that all ended before it are about an older version and are dropped.
+    pub fn chips(&self, build: Option<u32>, have: &std::collections::HashSet<u64>, updated: i64) -> Vec<HealthChip> {
+        let current = |until: i64| updated <= 0 || until <= 0 || until > updated;
+        let mut out = Vec::new();
+        if let Some(b) = build.filter(|b| *b > 0)
+            && let Some(found) = self.broken.iter().find(|f| f.build == b && current(f.until))
+        {
+            let strong = if found.users >= found.reports {
+                rate_at_least(found.reports, found.users, BROKEN_RATE_PCT)
+            } else {
+                found.reports >= 2 * HEALTH_MIN_REPORTS
+            };
+            if found.reports >= HEALTH_MIN_REPORTS && strong {
+                out.push(HealthChip::BrokenOnBuild { reports: found.reports, users: found.users });
+            }
+        }
+        if let Some(install) = self.install.as_ref().filter(|i| current(i.until)) {
+            let attempts = install.attempts.max(install.failed);
+            if install.failed >= HEALTH_MIN_REPORTS && rate_at_least(install.failed, attempts, FAIL_RATE_PCT) {
+                out.push(HealthChip::FailsToInstall { failed: install.failed, attempts });
+            }
+        }
+        if let Some(c) = self
+            .conflicts
+            .iter()
+            .filter(|c| c.mod_id != self.mod_id && have.contains(&c.mod_id) && current(c.until))
+            .filter(|c| c.reports >= HEALTH_MIN_REPORTS && rate_at_least(c.reports, c.together.max(c.reports), CONFLICT_RATE_PCT))
+            .max_by_key(|c| (c.reports, std::cmp::Reverse(c.mod_id)))
+        {
+            out.push(HealthChip::ConflictsWith { other: c.mod_id, reports: c.reports });
+        }
+        out
+    }
+}
+
+/// Mod health for up to [`MAX_HEALTH_MODS`] mods from `GET /v1/product/health`. Sends only the
+/// mod ids. Mods with nothing published are absent from the answer.
+pub fn health(mods: &[ModId], version: &str) -> Result<Vec<ModHealth>> {
+    health_at(telemetry::ENDPOINT, mods, version)
+}
+
+fn health_at(base: &str, mods: &[ModId], version: &str) -> Result<Vec<ModHealth>> {
+    if mods.is_empty() {
+        return Ok(Vec::new());
+    }
+    let version = telemetry::app_version(version);
+    let ids: Vec<String> = mods.iter().take(MAX_HEALTH_MODS).map(|m| m.get().to_string()).collect();
+    let url = format!("{}?mods={}", telemetry::endpoint_at(base, HEALTH_PATH), ids.join(","));
+    let value = read_json(&telemetry::get(&url, &version, TIMEOUT)?)?;
+    Ok(value
+        .get("mods")
+        .and_then(Value::as_array)
+        .map(|list| {
+            list.iter()
+                .filter_map(|item| serde_json::from_value::<ModHealth>(item.clone()).ok())
+                .filter(|h| ModId::new(h.mod_id).is_some())
+                .collect()
+        })
+        .unwrap_or_default())
+}
+
+/// Frame rates other players measured with one performance config on PCs like this one.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FpsExpectation {
+    /// The config id as a [`Code`] spells it (`Code::new(config id)`).
+    pub config: String,
+    pub version: u32,
+    /// Median average frame rate.
+    pub fps: u32,
+    /// Median 1% low.
+    pub low: u32,
+    /// Installs it rests on (at least the floor).
+    pub installs: u32,
+}
+
+/// The version number Sigil records for a config version text: its first run of digits.
+pub fn config_version(text: &str) -> u32 {
+    text.split(|c: char| !c.is_ascii_digit()).find(|p| !p.is_empty()).and_then(|p| p.parse().ok()).unwrap_or(0)
+}
+
+/// Frame rates per config on this hardware class, from `GET /v1/product/fps`. Sends the reduced
+/// GPU and CPU model names and the screen height, nothing else.
+pub fn fps(gpu: &ModelName, cpu: Option<&ModelName>, height: u16, version: &str) -> Result<Vec<FpsExpectation>> {
+    fps_at(telemetry::ENDPOINT, gpu, cpu, height, version)
+}
+
+fn fps_at(base: &str, gpu: &ModelName, cpu: Option<&ModelName>, height: u16, version: &str) -> Result<Vec<FpsExpectation>> {
+    let version = telemetry::app_version(version);
+    let mut url = format!("{}?gpu={}&height={height}", telemetry::endpoint_at(base, FPS_PATH), query_encode(gpu.as_str()));
+    if let Some(cpu) = cpu {
+        url.push_str(&format!("&cpu={}", query_encode(cpu.as_str())));
+    }
+    let value = read_json(&telemetry::get(&url, &version, TIMEOUT)?)?;
+    Ok(value
+        .get("configs")
+        .and_then(Value::as_array)
+        .map(|list| {
+            list.iter()
+                .filter_map(|item| serde_json::from_value::<FpsExpectation>(item.clone()).ok())
+                .filter(|e| e.fps > 0 && e.installs >= HEALTH_MIN_REPORTS && Code::new(&e.config).is_some())
+                .collect()
+        })
+        .unwrap_or_default())
+}
+
+fn read_json(text: &str) -> Result<Value> {
+    serde_json::from_str(text).map_err(|error| Error::Message(format!("The Sigil server answered something unreadable: {error}")))
+}
+
+/// Percent-encodes everything but unreserved characters. Model names are already reduced to
+/// letters, digits, spaces, `+` and `-`.
+fn query_encode(value: &str) -> String {
+    let mut out = String::with_capacity(value.len() * 3);
+    for byte in value.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => out.push(byte as char),
+            other => out.push_str(&format!("%{other:02X}")),
+        }
+    }
+    out
+}
+
 /// The `/v1/product` body. Records go without their local time.
 pub fn envelope(install_id: &str, version: &str, context: &Context, batch: &[Stamped]) -> Value {
     let records: Vec<&Record> = batch.iter().map(|s| &s.record).collect();

@@ -119,9 +119,13 @@ raises the cost of poisoning; it does not make it impossible.
   is ever stored, the install id is only kept as a salted hash, inactive installs are unlinked
   after 24 months, and "Delete my data" is on the Privacy page next to the switch and works at
   any time while the rows are still linked.
-- Not built yet: the monitor refresh rate (sent as 0), frame rates stored per hardware class on
-  the Worker (the hardware key only gates publishing), and any player-facing use of the data
-  ("players who use this also use", mod health warnings, frame rate expectations).
+- Not built yet: the monitor refresh rate (sent as 0).
+- Built 2026-11-24 (migration 0004, `services/telemetry/src/aggregates.ts`,
+  `rust/crates/desktop/src/insights.rs`): "players who use this also use" on details and in For
+  you, mod health chips, frame rates per hardware class (GPU model and CPU tier, median and 1%
+  low per config and version, stored only as medians of a key that met the floor) and the
+  owner-only search gaps route behind `PRODUCT_ADMIN_KEY`. Every new aggregate is a kind of the
+  same epoch machinery with the same floor. The app asks only while sharing is on.
 - Search text is the riskiest field (free text). It is scrubbed on the device and again on the
   Worker, and can be dropped without touching the rest.
 - An opt-in that is off by default will be on for a minority of players. The data is a sample,

@@ -140,13 +140,14 @@ describe("mod health", () => {
     expect(text).not.toMatch(HEX_ID);
     const body = JSON.parse(text) as { mods: { modId: number }[] };
     expect(body.mods.map((m) => m.modId)).toEqual([100, 200]);
+    const until = (RECENT + EPOCH_MS) / 1000;
     expect(body.mods[0]).toEqual({
       modId: 100,
-      install: { failed: 10, attempts: 22, reasons: [{ reason: "nothing_installable", installs: 10 }] },
-      broken: [{ build: 6100, reports: 10, users: 10 }],
-      conflicts: [{ modId: 200, reports: 10, together: 10 }],
+      install: { failed: 10, attempts: 22, reasons: [{ reason: "nothing_installable", installs: 10 }], until },
+      broken: [{ build: 6100, reports: 10, users: 10, until }],
+      conflicts: [{ modId: 200, reports: 10, together: 10, until }],
     });
-    expect(body.mods[1]).toEqual({ modId: 200, install: null, broken: [], conflicts: [{ modId: 100, reports: 10, together: 10 }] });
+    expect(body.mods[1]).toEqual({ modId: 200, install: null, broken: [], conflicts: [{ modId: 100, reports: 10, together: 10, until }] });
   });
 
   it("publishes nothing from nine installs, from one network, or from the open epoch", async () => {

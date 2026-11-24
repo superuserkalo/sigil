@@ -1,6 +1,8 @@
 //! "For you": the landing row picked for this player, worked out on this PC from what Sigil
-//! already holds (the heroes they play, the mods they installed, their favorites). Nothing is
-//! sent anywhere. A player with no history gets "Rising": new mods ranked by likes per day.
+//! already holds (the heroes they play, the mods they installed, their favorites) and, for a
+//! player who shares with Help build Sigil, the mods other players use with theirs
+//! (`crate::insights`). Ranking happens here; nothing about it is sent. A player with no history
+//! gets "Rising": new mods ranked by likes per day.
 
 use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
@@ -31,11 +33,13 @@ pub struct Signals {
     /// How often each mod was already shown in the row without being opened: shown picks
     /// fade, so the row changes between visits.
     pub seen: HashMap<u64, u32>,
+    /// Mods players with the player's enabled mods also use, 0 to 1 (Help build Sigil only).
+    pub related: HashMap<u64, f32>,
 }
 
 impl Signals {
     pub fn is_empty(&self) -> bool {
-        self.heroes.is_empty() && self.authors.is_empty() && self.roots.is_empty()
+        self.heroes.is_empty() && self.authors.is_empty() && self.roots.is_empty() && self.related.is_empty()
     }
 }
 
@@ -48,6 +52,8 @@ pub enum Reason {
     Rising,
     /// A well liked mod from outside the player's usual taste, so the row can learn.
     Explore,
+    /// Players who share and use the player's enabled mods also use this one.
+    AlsoUsed,
 }
 
 /// What the row remembers between runs, in Sigil's data folder on this PC only.
@@ -266,6 +272,7 @@ pub fn signals(s: &State) -> Signals {
             sig.seen.insert(id, count);
         }
     }
+    sig.related = crate::insights::related_weights(s, &crate::insights::enabled_mods(s));
     // Categories as shares, so one stray mod does not count like a habit.
     let total: f32 = roots.values().sum();
     if total > 0.0 {
@@ -300,6 +307,9 @@ pub fn rank_n(candidates: &[BrowseCard], sig: &Signals, now: i64, keep: usize) -
         .collect();
     let top_likes = pool.iter().map(|c| c.likes).max().unwrap_or(0) as f64;
     let mut scored: Vec<(f32, &BrowseCard, Reason, String, String)> = Vec::new();
+    // Picks for "players with your mods also use" fall off faster than a hero or a creator, so
+    // that reason never fills the row.
+    const ALSO_STEP: f32 = 0.55;
     if !sig.is_empty() {
         for c in &pool {
             if c.likes < 3 {
@@ -310,7 +320,8 @@ pub fn rank_n(candidates: &[BrowseCard], sig: &Signals, now: i64, keep: usize) -
             let author_name = c.author.to_lowercase();
             let author = sig.authors.get(&author_name).copied().unwrap_or(0.0);
             let category = sig.roots.get(&root(&c.category)).copied().unwrap_or(0.0);
-            if hero <= 0.0 && author <= 0.0 && category < 0.15 {
+            let related = sig.related.get(&c.id).copied().unwrap_or(0.0);
+            if hero <= 0.0 && author <= 0.0 && category < 0.15 && related <= 0.0 {
                 continue;
             }
             // "Not interested" turns a hero or creator down a step each time; a pick already
@@ -318,8 +329,10 @@ pub fn rank_n(candidates: &[BrowseCard], sig: &Signals, now: i64, keep: usize) -
             let less = 0.6f32.powi(sig.less_heroes.get(&hero_name).copied().unwrap_or(0).min(4) as i32)
                 * 0.4f32.powi(sig.less_authors.get(&author_name).copied().unwrap_or(0).min(3) as i32);
             let tired = 0.8f32.powi(sig.seen.get(&c.id).copied().unwrap_or(0).min(8) as i32);
-            let score = quality(c, top_likes, now) * (1.0 + 2.0 * hero + 1.0 * author + 0.5 * category) * less * tired;
-            let reason = if 2.0 * hero >= author && hero > 0.0 {
+            let score = quality(c, top_likes, now) * (1.0 + 2.0 * hero + 1.0 * author + 0.5 * category + 1.5 * related) * less * tired;
+            let reason = if 1.5 * related > (2.0 * hero).max(author) {
+                Reason::AlsoUsed
+            } else if 2.0 * hero >= author && hero > 0.0 {
                 Reason::Hero(c.category.rsplit('/').next().unwrap_or("").trim().to_string())
             } else if author > 0.0 {
                 Reason::Author(c.author.clone())
@@ -349,19 +362,24 @@ pub fn rank_n(candidates: &[BrowseCard], sig: &Signals, now: i64, keep: usize) -
     let mut reasons = HashMap::new();
     let mut per_hero: HashMap<String, u32> = HashMap::new();
     let mut per_author: HashMap<String, u32> = HashMap::new();
+    let mut also = 0;
     while picks.len() < keep && !scored.is_empty() {
         let mut best = 0;
         let mut best_score = f32::MIN;
-        for (i, (score, _, _, hero, author)) in scored.iter().enumerate() {
+        for (i, (score, _, reason, hero, author)) in scored.iter().enumerate() {
             let h = per_hero.get(hero).copied().unwrap_or(0);
             let a = per_author.get(author).copied().unwrap_or(0);
-            let adjusted = score * 0.65f32.powi(h as i32) * 0.5f32.powi(a as i32);
+            let r = if *reason == Reason::AlsoUsed { ALSO_STEP.powi(also) } else { 1.0 };
+            let adjusted = score * 0.65f32.powi(h as i32) * 0.5f32.powi(a as i32) * r;
             if adjusted > best_score {
                 best_score = adjusted;
                 best = i;
             }
         }
         let (_, card, reason, hero, author) = scored.swap_remove(best);
+        if reason == Reason::AlsoUsed {
+            also += 1;
+        }
         if !hero.is_empty() {
             *per_hero.entry(hero).or_default() += 1;
         }
@@ -416,6 +434,8 @@ fn key_of(s: &State) -> u64 {
     s.stats.snapshot.as_ref().map(|snap| snap.heroes.iter().map(|x| x.matches_played).sum::<u64>()).hash(&mut h);
     // A dismissal redoes the row; being shown does not (the row must hold still while open).
     v.shelves.for_you.memory.dismissed.len().hash(&mut h);
+    // New answers from Help build Sigil (related mods) redo the row.
+    s.insights.generation.hash(&mut h);
     h.finish()
 }
 
@@ -450,7 +470,7 @@ pub fn refresh(st: &mut State) -> bool {
                 .iter()
                 .filter(|e| e.likes >= 3)
                 .map(super::store::mirror_card)
-                .filter(|c| wanted(&c.category) || sig.authors.contains_key(&c.author.to_lowercase())),
+                .filter(|c| wanted(&c.category) || sig.authors.contains_key(&c.author.to_lowercase()) || sig.related.contains_key(&c.id)),
         );
     }
     let (all, reasons, personal) = rank_n(&candidates, &sig, deadlock_core::gamebanana::now_unix(), KEEP_ALL);
@@ -536,6 +556,43 @@ mod tests {
         assert!(matched.iter().all(|c| ["haze", "paradox"].contains(&leaf(&c.category).as_str())), "matched picks are for played heroes");
         assert!(picks.iter().take(8).filter(|c| reasons[&c.id] == Reason::Explore).count() <= 2, "at most two of the first eight explore");
         assert_eq!(reasons[&picks[0].id], Reason::Hero("Haze".into()));
+    }
+
+    /// Mods players with the player's mods also use come in with their own reason and weight.
+    #[test]
+    fn players_with_your_mods_also_use() {
+        let mut sig = Signals::default();
+        sig.heroes.insert("haze".into(), 1.0);
+        // Abrams and crosshair mods, outside the player's heroes, that sharing players pair with theirs.
+        for (id, w) in [(300u64, 1.0f32), (301, 0.9), (302, 0.8), (303, 0.7), (400, 0.6), (401, 0.5)] {
+            sig.related.insert(id, w);
+        }
+        let (picks, reasons, personal) = rank(&pool(), &sig, NOW);
+        assert!(personal);
+        let also: Vec<u64> = picks.iter().filter(|c| reasons[&c.id] == Reason::AlsoUsed).map(|c| c.id).collect();
+        assert!(also.contains(&300), "{also:?}");
+        assert!(picks.iter().take(8).any(|c| reasons[&c.id] == Reason::AlsoUsed));
+        // Varied: the reason never takes over the first eight.
+        let first = picks.iter().take(8).filter(|c| reasons[&c.id] == Reason::AlsoUsed).count();
+        assert!((1..=4).contains(&first), "{first}");
+        assert!(picks.iter().take(8).any(|c| matches!(reasons[&c.id], Reason::Hero(_))));
+    }
+
+    /// Without answers from the server nothing changes: no related weight, no such reason.
+    #[test]
+    fn no_answers_no_also_used() {
+        let mut sig = Signals::default();
+        sig.heroes.insert("haze".into(), 1.0);
+        let (picks, reasons, _) = rank(&pool(), &sig, NOW);
+        assert!(picks.iter().all(|c| reasons[&c.id] != Reason::AlsoUsed));
+        // Related mods alone make the row personal.
+        let mut only = Signals::default();
+        for id in 300..306u64 {
+            only.related.insert(id, 1.0);
+        }
+        let (picks, reasons, personal) = rank(&pool(), &only, NOW);
+        assert!(personal);
+        assert!(picks.iter().filter(|c| reasons.get(&c.id) == Some(&Reason::AlsoUsed)).count() >= 4);
     }
 
     /// The row is varied: not one hero or one creator over and over.

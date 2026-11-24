@@ -250,8 +250,32 @@ Nothing from a single install. A mod pair ("players who use this also use"), a m
 a frame rate for a hardware class or a search term is used only when, within one 30-day period, at
 least 10 installs that sent data on at least 2 days, from at least 6 different networks, on at
 least 3 different days, share it. A network counts at most 3 installs per period. Keys below that
-floor are discarded when the period closes. The current period is never shown. Today only
-`GET /v1/product/related?mod=<id>` answers, with mod ids that pass the floor.
+floor are discarded when the period closes. The current period is never shown.
+
+### What you get back for sharing
+
+Sharing and getting the results go together: the app asks the Worker for any of these only while
+Help build Sigil is on (`rust/crates/desktop/src/insights.rs`), and turning it off deletes the
+answers it kept (`<data>/telemetry/product/given.json`) at once. Each request runs on a worker
+thread, carries no product data id and stores nothing on the Worker; answers are kept a day. Until
+the Worker returns something that passed the floor, nothing of it appears in the app.
+
+- "Players who use this also use": `GET /v1/product/related?mod=<id>`, the mod id of a details
+  page you open (once per mod a day) and of up to eight of your enabled mods (for For you, where
+  such picks say "Players with your mods also use").
+- Mod health chips on Browse, the details and Installed: `GET /v1/product/health?mods=<ids>`, the
+  GameBanana ids on screen and installed, 40 at a time. A chip shows only when it rests on at least
+  10 installs and a clear share of them: "Often fails to install" (25% of reported installs failed
+  for a reason that points at the mod, over about the last 90 days), "Reported broken on the
+  current game build" (20% of installs that used the mod on your exact game build reported it
+  moved, gone, turned off after a crash or a crash suspect; a game update clears it) and "Often
+  conflicts with" a mod you have (30% of installs that had both on). The tooltip says how many
+  reports it rests on.
+- Frame rates on the Performance page: `GET /v1/product/fps?gpu=<model>&cpu=<model>&height=<px>`,
+  your GPU and CPU model names (reduced as above) and screen height, once a day while the page is
+  open. The Worker groups PCs by GPU model and a CPU tier (high, mid, low) and the screen height by
+  bucket (720p, 1080p, 1440p, 2160p), and answers with the median and 1% low other players
+  measured per config and version.
 
 ### Delete my data
 
@@ -512,11 +536,10 @@ agent host's model provider calls, subscription sign-in or publish; see Known ga
 
 ## Known gaps
 
-- Help build Sigil: the Worker routes and migration `0003_product_data.sql` are written and tested
-  but not deployed, and the `PRODUCT_SALT` and `PRODUCT_BUCKET_KEY` secrets are not set. Until
-  then the app's sends fail quietly and wait in the local queue (14 days at most). Nothing in the
-  app shows "players who use this also use", mod health warnings or frame rate expectations yet.
-  The monitor refresh rate is not read (sent as 0).
+- Help build Sigil: migration `0004_product_uses.sql` (the health, frame rate and search gap
+  kinds) is written and tested but not applied, and the routes that read it are not deployed
+  until it is. A related mod the app has not seen in Browse or its saved catalog is left out of
+  "Players who use this also use". The monitor refresh rate is not read (sent as 0).
 - Offline mode does not cover the agent host's provider calls (`rust/crates/agent-host`,
   `apps/agent-host`), subscription sign-in (`desktop/src/signin.rs`) or publish
   (`desktop/src/publish.rs`).

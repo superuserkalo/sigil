@@ -537,9 +537,20 @@ export async function related(
 
 // --- what players get back: mod health, frame rates, and the owner's search gaps --------------
 
-export type InstallHealth = { readonly failed: number; readonly attempts: number; readonly reasons: { reason: string; installs: number }[] };
-export type BuildHealth = { readonly build: number; readonly reports: number; readonly users: number };
-export type ConflictHealth = { readonly modId: number; readonly reports: number; readonly together: number };
+/** `until`: Unix seconds when the newest epoch behind the numbers ended, so the app can drop
+ * reports made before the creator's last update. */
+export type InstallHealth = {
+  readonly failed: number;
+  readonly attempts: number;
+  readonly reasons: { reason: string; installs: number }[];
+  readonly until: number;
+};
+export type BuildHealth = { readonly build: number; readonly reports: number; readonly users: number; readonly until: number };
+export type ConflictHealth = { readonly modId: number; readonly reports: number; readonly together: number; readonly until: number };
+
+function epochEnd(epochs: Iterable<number>): number {
+  return ((Math.max(...epochs) + 1) * EPOCH_MS) / 1000;
+}
 export type ModHealth = {
   readonly modId: number;
   readonly install: InstallHealth | null;
@@ -572,12 +583,12 @@ export async function modHealth(db: D1Database, secret: string | undefined, mods
   const marksB = ids.map((_, n) => `?${n + 2 + ids.length}`).join(",");
   const { results: conflicts } = await db
     .prepare(
-      `SELECT key, mod_a, mod_b, SUM(installs) AS installs FROM product_totals
+      `SELECT key, mod_a, mod_b, SUM(installs) AS installs, MAX(epoch) AS last FROM product_totals
        WHERE kind = 'conflict' AND (mod_a IN (${marks}) OR mod_b IN (${marksB})) AND epoch >= ?1 AND ${MEETS_FLOOR}
        GROUP BY key LIMIT 90`,
     )
     .bind(from, ...ids, ...ids)
-    .all<{ key: string; mod_a: number; mod_b: number; installs: number }>();
+    .all<{ key: string; mod_a: number; mod_b: number; installs: number; last: number }>();
   const together = new Map<string, number>();
   if (conflicts.length > 0) {
     const keys = conflicts.map((row) => row.key);
@@ -611,11 +622,13 @@ export async function modHealth(db: D1Database, secret: string | undefined, mods
         failed,
         attempts: Math.max(attempts, failed),
         reasons: [...reasons].map(([reason, installs]) => ({ reason, installs })).sort((a, b) => b.installs - a.installs),
+        until: epochEnd(epochs),
       };
     }
     // Broken on a game build: the strongest single signal per build (one install can send
     // several, so they are not added), and the installs that used the mod on that build.
     const perBuild = new Map<number, Map<string, number>>();
+    const buildEpochs = new Map<number, number[]>();
     for (const row of rows) {
       if (row.kind !== "health") continue;
       const [, code = "", buildText = ""] = row.key.split("|");
@@ -624,17 +637,24 @@ export async function modHealth(db: D1Database, secret: string | undefined, mods
       const codes = perBuild.get(build) ?? new Map<string, number>();
       codes.set(code, (codes.get(code) ?? 0) + row.installs);
       perBuild.set(build, codes);
+      buildEpochs.set(build, [...(buildEpochs.get(build) ?? []), row.epoch]);
     }
     const broken: BuildHealth[] = [...perBuild]
       .map(([build, codes]) => ({
         build,
         reports: Math.max(...codes.values()),
         users: rows.filter((row) => row.kind === "use" && row.key === `${mod}|${build}`).reduce((sum, row) => sum + row.installs, 0),
+        until: epochEnd(buildEpochs.get(build) ?? []),
       }))
       .sort((a, b) => b.build - a.build);
     const mine: ConflictHealth[] = conflicts
       .filter((row) => row.mod_a === mod || row.mod_b === mod)
-      .map((row) => ({ modId: row.mod_a === mod ? row.mod_b : row.mod_a, reports: row.installs, together: Math.max(together.get(row.key) ?? 0, row.installs) }))
+      .map((row) => ({
+        modId: row.mod_a === mod ? row.mod_b : row.mod_a,
+        reports: row.installs,
+        together: Math.max(together.get(row.key) ?? 0, row.installs),
+        until: epochEnd([row.last]),
+      }))
       .sort((a, b) => b.reports - a.reports || a.modId - b.modId)
       .slice(0, 10);
     if (install !== null || broken.length > 0 || mine.length > 0) out.push({ modId: mod, install, broken, conflicts: mine });

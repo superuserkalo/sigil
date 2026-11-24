@@ -18,6 +18,7 @@ mod forge;
 mod glass;
 mod helpers;
 mod icons;
+mod insights;
 mod jobs;
 #[cfg(test)]
 mod jank_tests;

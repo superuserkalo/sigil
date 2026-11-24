@@ -466,3 +466,99 @@ fn related_reads_mod_ids_only() {
     let server = Server::start(r#"{"mods":[{"modId":12,"installs":14},{"modId":0},{"modId":"x"}]}"#);
     assert_eq!(related_at(&server.base, id(5), "0.1.38").unwrap(), vec![id(12)]);
 }
+
+// --- what sharing gives back ---------------------------------------------------------------
+
+fn have(ids: &[u64]) -> std::collections::HashSet<u64> {
+    ids.iter().copied().collect()
+}
+
+#[test]
+fn health_chips_need_the_floor_and_a_rate() {
+    let mut h = ModHealth { mod_id: 5, install: Some(InstallHealth { failed: 10, attempts: 40, until: 0 }), ..ModHealth::default() };
+    // 10 of 40 is 25 percent: just enough.
+    assert_eq!(h.chips(None, &have(&[]), 0), vec![HealthChip::FailsToInstall { failed: 10, attempts: 40 }]);
+    h.install = Some(InstallHealth { failed: 10, attempts: 41, until: 0 });
+    assert!(h.chips(None, &have(&[]), 0).is_empty());
+    // Below the floor never shows, whatever the rate.
+    h.install = Some(InstallHealth { failed: 9, attempts: 9, until: 0 });
+    assert!(h.chips(None, &have(&[]), 0).is_empty());
+}
+
+#[test]
+fn a_broken_report_counts_only_on_the_current_build() {
+    let h = ModHealth { mod_id: 5, broken: vec![BuildHealth { build: 6100, reports: 12, users: 40, until: 0 }], ..ModHealth::default() };
+    assert_eq!(h.chips(Some(6100), &have(&[]), 0), vec![HealthChip::BrokenOnBuild { reports: 12, users: 40 }]);
+    // The game updated: the old build's reports say nothing about this one.
+    assert!(h.chips(Some(6101), &have(&[]), 0).is_empty());
+    assert!(h.chips(None, &have(&[]), 0).is_empty());
+    // A low rate is not a warning.
+    let weak = ModHealth { mod_id: 5, broken: vec![BuildHealth { build: 6100, reports: 12, users: 100, until: 0 }], ..ModHealth::default() };
+    assert!(weak.chips(Some(6100), &have(&[]), 0).is_empty());
+    // Without a base the reports must reach twice the floor.
+    let unknown = ModHealth { mod_id: 5, broken: vec![BuildHealth { build: 6100, reports: 12, users: 0, until: 0 }], ..ModHealth::default() };
+    assert!(unknown.chips(Some(6100), &have(&[]), 0).is_empty());
+    let many = ModHealth { mod_id: 5, broken: vec![BuildHealth { build: 6100, reports: 20, users: 0, until: 0 }], ..ModHealth::default() };
+    assert_eq!(many.chips(Some(6100), &have(&[]), 0).len(), 1);
+}
+
+#[test]
+fn a_conflict_counts_only_with_a_mod_the_player_has() {
+    let h = ModHealth {
+        mod_id: 5,
+        conflicts: vec![
+            ConflictHealth { mod_id: 7, reports: 12, together: 20, until: 0 },
+            ConflictHealth { mod_id: 8, reports: 30, together: 40, until: 0 },
+            ConflictHealth { mod_id: 9, reports: 11, together: 100, until: 0 },
+        ],
+        ..ModHealth::default()
+    };
+    assert!(h.chips(None, &have(&[]), 0).is_empty());
+    assert_eq!(h.chips(None, &have(&[7]), 0), vec![HealthChip::ConflictsWith { other: 7, reports: 12 }]);
+    assert_eq!(h.chips(None, &have(&[7, 8]), 0), vec![HealthChip::ConflictsWith { other: 8, reports: 30 }]);
+    // 11 of 100 is below the rate.
+    assert!(h.chips(None, &have(&[9]), 0).is_empty());
+}
+
+#[test]
+fn health_sends_mod_ids_only_and_reads_counts() {
+    let server = Server::start(
+        r#"{"mods":[{"modId":5,"install":{"failed":10,"attempts":20,"reasons":[]},"broken":[{"build":6100,"reports":10,"users":20}],"conflicts":[]},{"modId":0},{"modId":"x"}]}"#,
+    );
+    let got = health_at(&server.base, &[id(5), id(6)], "0.1.38").unwrap();
+    assert_eq!(got.len(), 1);
+    assert_eq!(got[0].install, Some(InstallHealth { failed: 10, attempts: 20, until: 0 }));
+    let head = &server.heads()[0];
+    assert!(head.starts_with("GET /v1/product/health?mods=5,6 "), "{head}");
+    assert!(health_at(&server.base, &[], "0.1.38").unwrap().is_empty());
+    assert_eq!(server.hits(), 1);
+}
+
+#[test]
+fn fps_sends_the_hardware_class_only() {
+    let server = Server::start(
+        r#"{"configs":[{"config":"optilock","version":3,"fps":120,"low":70,"installs":14},{"config":"x","version":1,"fps":90,"low":50,"installs":3},{"config":"a/b","version":1,"fps":1,"low":1,"installs":40}]}"#,
+    );
+    let gpu = model_name("NVIDIA GeForce RTX 3060").unwrap();
+    let cpu = model_name("AMD Ryzen 5 3600 6-Core Processor").unwrap();
+    let got = fps_at(&server.base, &gpu, Some(&cpu), 1440, "0.1.38").unwrap();
+    assert_eq!(got, vec![FpsExpectation { config: "optilock".into(), version: 3, fps: 120, low: 70, installs: 14 }]);
+    let head = &server.heads()[0];
+    assert!(head.starts_with("GET /v1/product/fps?gpu=NVIDIA%20GeForce%20RTX%203060&height=1440&cpu=AMD%20Ryzen%205%203600 "), "{head}");
+    assert_eq!(config_version("v3.2"), 3);
+    assert_eq!(config_version("beta"), 0);
+}
+
+#[test]
+fn reports_from_before_the_creators_update_are_dropped() {
+    let h = ModHealth {
+        mod_id: 5,
+        install: Some(InstallHealth { failed: 20, attempts: 40, until: 1_000 }),
+        broken: vec![BuildHealth { build: 6100, reports: 15, users: 30, until: 2_000 }],
+        ..ModHealth::default()
+    };
+    // Updated between the two: only the newer reports stand.
+    assert_eq!(h.chips(Some(6100), &have(&[]), 1_500), vec![HealthChip::BrokenOnBuild { reports: 15, users: 30 }]);
+    assert!(h.chips(Some(6100), &have(&[]), 2_000).is_empty());
+    assert_eq!(h.chips(Some(6100), &have(&[]), 0).len(), 2);
+}

@@ -118,7 +118,7 @@ impl Server {
         self.hits.load(Ordering::SeqCst)
     }
 
-    fn heads(&self) -> Vec<String> {
+    pub(crate) fn heads(&self) -> Vec<String> {
         self.heads.lock().unwrap().clone()
     }
 

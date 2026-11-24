@@ -124,7 +124,10 @@ pub(super) fn page(s: &State, u: &Ui, config: &Config) -> El {
                         .min_w(0.0)
                         .gap(4.0)
                         .child(text(config.name()).font(DISPLAY).color(u.ink).truncate())
-                        .child(text(meta).font(SMALL).color(u.muted).truncate()),
+                        .child(text(meta).font(SMALL).color(u.muted).truncate())
+                        .children(super::expected_line(s, config).map(|line| {
+                            text(line).key("perf-detail-expected").font(SMALL_NUM).color(u.prose).truncate()
+                        })),
                 )
                 .child(actions),
         )
