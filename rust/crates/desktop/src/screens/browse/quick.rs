@@ -1128,6 +1128,65 @@ pub fn cancel(st: &mut State, id: u64) {
 /// The line a card or row shows instead of its byline while an install moves or after it
 /// failed: "Downloading 40%", "Installing", the error.
 pub fn status_line(s: &State, u: &Ui, id: u64) -> Option<El> {
+    let (words, color) = status_words(s, u, id)?;
+    Some(
+        row()
+            .key(format!("install-status-{id}"))
+            .w_full()
+            .min_w(0.0)
+            .gap(6.0)
+            .center_y()
+            .child(
+                text(words.clone())
+                    .font(SMALL)
+                    .color(color)
+                    .truncate()
+                    .min_w(0.0)
+                    .shrink()
+                    .label(words),
+            ),
+    )
+}
+
+/// A paused or failed install as a tag along the bottom of a card's image, so the card's text
+/// keeps its fields in their places. Queued, downloading and installing say so on the card's
+/// own button and bar, so they get no tag. An error wraps to two lines.
+pub fn status_chip(s: &State, u: &Ui, id: u64) -> Option<El> {
+    if !matches!(button(s, id), Button::Paused(_) | Button::Retry(_)) {
+        return None;
+    }
+    let (words, color) = status_words(s, u, id)?;
+    // On a darkened image in every theme: muted words read as white.
+    let color = if color == u.muted { Color::WHITE.alpha(0.86) } else { color };
+    Some(
+        row()
+            .key(format!("install-chip-{id}"))
+            .pin(Some(8.0), None, Some(8.0), Some(11.0))
+            .child(
+                row()
+                    .px(6.0)
+                    .py(2.0)
+                    .min_w(0.0)
+                    .shrink()
+                    .center_y()
+                    .radius(crate::ui::r(4.0))
+                    .fill(Color::BLACK.alpha(0.72))
+                    .border(1.0, Color::WHITE.alpha(0.12))
+                    .child(
+                        text(words.clone())
+                            .font(SMALL)
+                            .color(color)
+                            .wrap()
+                            .max_lines(2)
+                            .min_w(0.0)
+                            .shrink()
+                            .label(words),
+                    ),
+            ),
+    )
+}
+
+fn status_words(s: &State, u: &Ui, id: u64) -> Option<(String, Color)> {
     let b = button(s, id);
     let (words, color) = match &b {
         Button::Retry(error) => (error.clone(), u.rose),
@@ -1151,23 +1210,7 @@ pub fn status_line(s: &State, u: &Ui, id: u64) -> Option<El> {
         Button::Paused(_) => (b.label(), u.muted),
         _ => return None,
     };
-    Some(
-        row()
-            .key(format!("install-status-{id}"))
-            .w_full()
-            .min_w(0.0)
-            .gap(6.0)
-            .center_y()
-            .child(
-                text(words.clone())
-                    .font(SMALL)
-                    .color(color)
-                    .truncate()
-                    .min_w(0.0)
-                    .shrink()
-                    .label(words),
-            ),
-    )
+    Some((words, color))
 }
 
 /// A thin bar along the bottom of a card's image while its archive downloads or installs.
@@ -1180,34 +1223,10 @@ pub fn image_bar(s: &State, u: &Ui, id: u64) -> Option<El> {
             .pin(Some(0.0), None, Some(0.0), Some(0.0))
             .h(3.0)
             .fill(Color::BLACK.alpha(0.35))
-            .child(el().h_full().grow(fraction.clamp(0.0, 1.0)).fill(u.accent))
+            // A paused download keeps its place but not the accent: only a moving one is orange.
+            .child(el().h_full().grow(fraction.clamp(0.0, 1.0)).fill(if matches!(b, Button::Paused(_)) { u.muted } else { u.accent }))
             .child(el().h_full().grow(1.0 - fraction.clamp(0.0, 1.0)))
             .a11y_hidden(),
-    )
-}
-
-/// The Installed tag on a card's image.
-pub fn installed_badge(s: &State, id: u64) -> Option<El> {
-    let b = button(s, id);
-    let (glyph, words) = match b {
-        Button::Installed => (&icons::CHECK, tr("Installed")),
-        Button::Update => (&icons::REFRESH_CW, tr("Update")),
-        Button::Enable => (&icons::POWER, tr("Off")),
-        _ => return None,
-    };
-    Some(
-        row()
-            .key(format!("installed-badge-{id}"))
-            .h(20.0)
-            .px(6.0)
-            .gap(4.0)
-            .center()
-            .radius(crate::ui::r(4.0))
-            .fill(Color::BLACK.alpha(0.62))
-            .border(1.0, Color::WHITE.alpha(0.16))
-            // On a darkened image in every theme, so the ink is always white.
-            .child(icon(glyph, 12.0).color(Color::WHITE).a11y_hidden())
-            .child(text(words.to_string()).font(MICRO_CAPS).color(Color::WHITE)),
     )
 }
 

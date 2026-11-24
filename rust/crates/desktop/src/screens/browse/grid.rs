@@ -130,7 +130,8 @@ pub(crate) fn dashboard(s: &State, u: &Ui) -> Option<El> {
     }
     Some(
         rails.child(
-            u.section(super::tree::tr("All mods")).key("browse-all-head"),
+            // The grid below is in the order the sort button names, so its header says that.
+            u.section(super::tree::tr(current_query(s).shown_order().label())).key("browse-all-head"),
         ),
     )
 }

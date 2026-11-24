@@ -869,6 +869,12 @@ pub fn scene_card_stress(s: &mut State) {
     }
     page.mods = mods;
     page.total = page.mods.len();
+    // The grid itself, not the landing over it: a sort the landing does not show.
+    s.browse_view.filters.order = Some(BrowseOrder::MostLiked);
+    let key = query_key(s, &current_query(s));
+    if let Some(page) = s.browse.page.as_mut() {
+        page.key = key;
+    }
 }
 
 /// The same cards in German, whose install labels are the longest.

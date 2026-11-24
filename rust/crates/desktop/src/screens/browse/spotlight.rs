@@ -77,6 +77,37 @@ pub(crate) fn picks(s: &State) -> Vec<&TopSub> {
     if today.is_empty() { of("week") } else { today }
 }
 
+/// The facts block's height: a label line over a value line.
+const FACTS_H: f32 = 40.0;
+
+/// Author, category and likes as labelled columns, so the text column reads top to bottom:
+/// what it is, who made it, then what to do.
+fn facts(u: &Ui, p: &TopSub) -> El {
+    let cell = |key: &'static str, label: &str, value: String, num: bool| {
+        col()
+            .key(key)
+            .min_w(0.0)
+            .gap(4.0)
+            .child(text(super::tree::tr(label)).font(SMALL).color(u.muted))
+            .child(
+                text(value)
+                    .font(if num { crate::ui::BODY_NUM } else { BODY })
+                    .color(u.prose)
+                    .truncate()
+                    .min_w(0.0),
+            )
+    };
+    let or_dash = |v: &str| if v.is_empty() { "-".to_string() } else { v.to_string() };
+    el().key("browse-spot-facts")
+        .w_full()
+        .h(FACTS_H)
+        .equal_columns(3)
+        .gap(16.0)
+        .child(cell("browse-spot-author", "Author", or_dash(&p.author), false))
+        .child(cell("browse-spot-category", "Category", or_dash(&p.category), false))
+        .child(cell("browse-spot-likes", "Likes", group_digits(p.likes), true).label(format!("{} likes", group_digits(p.likes))))
+}
+
 fn pager_button(u: &Ui, key: &'static str, forward: bool, enabled: bool, count: usize) -> El {
     let b = el()
         .key(key)
@@ -165,36 +196,15 @@ pub fn view(s: &State, u: &Ui) -> El {
                         .h(title_h)
                         .child(text(p.name.clone()).font(title_font).color(u.ink).wrap().max_lines(2).min_w(0.0)),
                 )
-                .child(
-                    text(if p.author.is_empty() { "-".to_string() } else { format!("by {}", p.author) })
-                        .font(BODY)
-                        .color(u.muted)
-                        .truncate(),
-                )
-                .child(
-                    row()
-                        .w_full()
-                        .h(16.0)
-                        .gap(8.0)
-                        .center_y()
-                        .child(
-                            text(if p.category.is_empty() { "-".to_string() } else { p.category.clone() })
-                                .font(SMALL)
-                                .color(u.muted)
-                                .truncate()
-                                .min_w(0.0)
-                                .shrink(),
-                        )
-                        .child(icon(&icons::THUMBS_UP, 12.0).color(u.faint).a11y_hidden())
-                        .child(text(card_count(p.likes)).font(SMALL_NUM).color(u.muted))
-                        .label(format!("{} likes", group_digits(p.likes))),
-                );
+                .child(spacer())
+                .child(facts(u, p));
         }
         None => {
             info = info
                 .child(el().w(96.0).h(12.0).radius(crate::ui::r(4.0)).fill(u.hover))
                 .child(el().h(title_h).pt(8.0).child(el().w(220.0).h(16.0).radius(crate::ui::r(4.0)).fill(u.hover)))
-                .child(el().w(120.0).h(12.0).radius(crate::ui::r(4.0)).fill(u.hover));
+                .child(spacer())
+                .child(el().w(240.0).h(FACTS_H).pt(4.0).child(el().w(240.0).h(12.0).radius(crate::ui::r(4.0)).fill(u.hover)));
         }
     }
     let mut actions = row().key("browse-spot-actions").w_full().h(32.0).gap(8.0).center_y();
@@ -249,7 +259,7 @@ pub fn view(s: &State, u: &Ui) -> El {
             )
             .child(pager_button(u, "browse-spot-next", true, at + 1 < count, count));
     }
-    info = info.child(spacer()).child(actions);
+    info = info.child(el().h(12.0)).child(actions);
 
     let card = row()
         .key("browse-spotlight")

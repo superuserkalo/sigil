@@ -98,16 +98,18 @@ pub(crate) fn card_count(n: u64) -> String {
 }
 
 /// One column of the counts row. A count nobody has yet reads as a dash, so the column stays.
-fn count_cell(u: &Ui, key: String, glyph: &'static Icon, name: &str, value: Option<u64>) -> El {
+fn count_cell(u: &Ui, key: String, glyph: &'static Icon, name: &str, value: Option<u64>, place: u8) -> El {
     let words = value.map_or_else(|| "-".to_string(), card_count);
     let label = format!("{}: {words}", super::super::tree::tr(name));
-    row()
-        .key(key)
-        .min_w(0.0)
-        .h_full()
-        .gap(4.0)
-        .center_y()
-        .label(label)
+    // First column to the left edge, last to the right edge, the middle one centred, so the
+    // row spans the same width as the byline and the action above and below it.
+    let cell = row().key(key).min_w(0.0).h_full().gap(4.0).center_y().label(label);
+    let cell = match place {
+        0 => cell,
+        1 => cell.justify_center(),
+        _ => cell.justify_end(),
+    };
+    cell
         .child(icon(glyph, 12.0).color(u.faint).a11y_hidden())
         .child(text(words).font(crate::ui::SMALL_NUM).color(u.muted).a11y_hidden())
 }
@@ -149,7 +151,7 @@ pub(crate) fn card_el(s: &State, u: &Ui, card: &BrowseCard) -> El {
             text(if card.author.is_empty() {
                 super::super::tree::tr("Unknown author").to_string()
             } else {
-                crate::screens::settings::i18n::fill(super::super::tree::tr("by {}"), &[&card.author])
+                card.author.clone()
             })
             .font(SMALL)
             .color(u.muted)
@@ -178,18 +180,17 @@ pub(crate) fn card_el(s: &State, u: &Ui, card: &BrowseCard) -> El {
     } else {
         install.on_press(move |st: &mut State| open_details(st, id))
     };
-    // While this mod installs, or after it failed, its own state takes the byline's place.
-    let byline = match is_mod.then(|| super::super::quick::status_line(s, u, id)).flatten() {
-        Some(line) => line,
-        None => byline,
-    };
+    // While this mod installs, or after it failed, its state sits on the image, so the text
+    // below keeps the same fields in the same places on every card.
     if is_mod {
+        if !veil && let Some(chip) = super::super::quick::status_chip(s, u, id) {
+            frame = frame.child(chip);
+        }
         if let Some(bar) = super::super::quick::image_bar(s, u, id) {
             frame = frame.child(bar);
         }
-        if !veil && let Some(badge) = super::super::quick::installed_badge(s, id) {
-            tags = tags.child(badge);
-        }
+        // Installed, Update and Off are spelled out by the card's own button, so the image
+        // carries no second tag for them.
     }
 
     let saved = is_favorite(s, &card.model, id);
@@ -200,8 +201,8 @@ pub(crate) fn card_el(s: &State, u: &Ui, card: &BrowseCard) -> El {
         .size(24.0, 24.0)
         .center()
         .radius(crate::ui::r(4.0))
-        .fill(Color::BLACK.alpha(0.45))
-        .hover(Color::BLACK.alpha(0.7))
+        .fill(Color::BLACK.alpha(0.32))
+        .hover(Color::BLACK.alpha(0.6))
         .focusable(true)
         .role("button")
         .label(if saved { "Remove from favorites" } else { "Save to favorites" })
@@ -232,8 +233,8 @@ pub(crate) fn card_el(s: &State, u: &Ui, card: &BrowseCard) -> El {
             el().key(format!("sample-{id}"))
                 .size(size, size)
                 .center()
-                .radius(crate::ui::r(8.0))
-                .border(1.0, u.hair_strong)
+                .radius(crate::ui::r(4.0))
+                .fill(Color::BLACK.alpha(0.55))
         };
         button = button
             .hover(u.hover)
@@ -246,13 +247,25 @@ pub(crate) fn card_el(s: &State, u: &Ui, card: &BrowseCard) -> El {
             })
             .child(
                 icon(if playing { &icons::SQUARE_STOP } else { &icons::PLAY }, if big { 20.0 } else { 14.0 })
-                    .color(if big { u.ink } else { u.muted })
+                    // The small one sits on the image: white ink in every theme.
+                    .color(if big { u.ink } else { Color::WHITE })
                     .a11y_hidden(),
             );
         button
     };
     // A sound without art gets one large play button in the image slot instead.
     let bare_sound = card.thumbnail_url.is_none() && card.audio_url.is_some();
+    // A mod with no image at all says so quietly, so it never reads as still loading.
+    if card.thumbnail_url.is_none() && !bare_sound && !veil {
+        frame = frame.child(
+            el().key(format!("thumb-none-{id}"))
+                .absolute(0.0, 0.0)
+                .w_full()
+                .h_full()
+                .center()
+                .child(icon(&icons::PACKAGE, 28.0).color(u.faint.alpha(0.6)).a11y_hidden()),
+        );
+    }
     if bare_sound && !veil {
         frame = frame.child(
             col()
@@ -273,20 +286,22 @@ pub(crate) fn card_el(s: &State, u: &Ui, card: &BrowseCard) -> El {
         .mt(4.0)
         .equal_columns(3)
         .gap(4.0)
-        .child(count_cell(u, format!("card-stat-likes-{id}"), &icons::THUMBS_UP, "Likes", Some(card.likes)))
-        .child(count_cell(u, format!("card-stat-views-{id}"), &icons::EYE, "Views", Some(card.views)))
+        .child(count_cell(u, format!("card-stat-likes-{id}"), &icons::THUMBS_UP, "Likes", Some(card.likes), 0))
+        .child(count_cell(u, format!("card-stat-views-{id}"), &icons::EYE, "Views", Some(card.views), 1))
         .child(count_cell(
             u,
             format!("card-stat-downloads-{id}"),
             &icons::DOWNLOAD,
             "Downloads",
             s.browse_view.download_counts.get(&id).copied(),
+            2,
         ));
-    let mut actions = row().key(format!("card-actions-{id}")).w_full().h(28.0).mt(8.0).gap(6.0).center_y();
-    if card.audio_url.is_some() && !bare_sound {
-        actions = actions.child(sample(28.0, false));
+    // A sound with art plays from the corner of its image, so every card's action is the same
+    // full-width button.
+    if card.audio_url.is_some() && !bare_sound && !veil {
+        frame = frame.child(el().pin(None, None, Some(8.0), Some(8.0)).child(sample(24.0, false)));
     }
-    let actions = actions.child(install);
+    let actions = row().key(format!("card-actions-{id}")).w_full().h(28.0).mt(8.0).center_y().child(install);
 
     let mut card_el = col()
         .key(format!("browse-card-{id}"))

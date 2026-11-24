@@ -302,7 +302,7 @@ pub(crate) fn collections_page(s: &State, u: &Ui) -> El {
                                     text(if summary.author.is_empty() {
                                         "Unknown author".to_string()
                                     } else {
-                                        format!("by {}", summary.author)
+                                        summary.author.clone()
                                     })
                                     .font(SMALL)
                                     .color(u.muted)

@@ -179,7 +179,7 @@ pub fn card(s: &State, u: &Ui, scope: &str, card: &BrowseCard, w: f32) -> El {
     let veil = veiled(s, id, card.nsfw);
     // Details open with the card's own state, so its mature gate, author and dates hold.
     let opened = card.clone();
-    let byline = if card.author.is_empty() { "-".to_string() } else { format!("by {}", card.author) };
+    let byline = if card.author.is_empty() { "-".to_string() } else { card.author.clone() };
     let category = if card.category.is_empty() { "-".to_string() } else { card.category.clone() };
     let mut frame = cover(s, u, format!("shelf-{scope}-{id}"), card.thumbnail_url.as_ref(), w, h, veil);
     if let Some(url) = card.audio_url.clone() {
@@ -208,7 +208,7 @@ pub fn card(s: &State, u: &Ui, scope: &str, card: &BrowseCard, w: f32) -> El {
         .hover_group()
         .focusable(true)
         .role("button")
-        .label(format!("{}, {byline}", card.name))
+        .label(format!("{} by {byline}", card.name))
         .cursor(rune::Cursor::Pointer)
         .on_press(move |st: &mut State| show_details(st, Details::from_card(&opened)))
         .child(frame)

@@ -1303,7 +1303,7 @@ pub(crate) fn list_row(s: &State, u: &Ui, card: &BrowseCard) -> El {
     let age_color = if outdated(card) { u.amber } else { u.muted };
     let age_column = width >= 720.0;
     let counts_inline = width >= 528.0;
-    let author = if card.author.is_empty() { "Unknown author".to_string() } else { format!("by {}", card.author) };
+    let author = if card.author.is_empty() { "Unknown author".to_string() } else { card.author.clone() };
     let mut sub = format!("{author} · {}", card.category);
     if !age_column && !age.is_empty() {
         sub = format!("{sub} · {age}");

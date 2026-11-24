@@ -23,6 +23,8 @@ const DE: &[(&str, &str)] = &[
     ("See all", "Alle ansehen"),
     ("All mods", "Alle Mods"),
     ("Trending today", "Heute im Trend"),
+    ("Author", "Autor"),
+    ("Category", "Kategorie"),
     ("Filters", "Filter"),
     ("More", "Mehr"),
     ("View options", "Ansicht"),
