@@ -445,12 +445,12 @@ pub fn poll(st: &mut State, tx: &mut Tx) -> bool {
     if let Some(result) = st.browse_view.top_job.try_take() {
         let top = result.unwrap_or_default();
         st.browse_view.top = Some(top);
-        // Only the spotlight's covers, through the shared gate: each decoded image holds about
-        // 1 MB, and hidden or mature art is never fetched.
-        let urls = super::spotlight::cover_urls(st);
-        crate::data::queue_images(st, urls, false);
         changed = true;
     }
+    // Every cover the landing shows (spotlight and shelves, current and next page), through
+    // the shared gate: hidden or mature art is never fetched. Asked again whenever what the
+    // landing shows changes, an image is evicted or the queue is cleared.
+    super::shelf::queue_covers(st);
     if let Some(result) = st.browse_view.details_job.try_take() {
         match result {
             Ok(load) => apply_details(st, load),

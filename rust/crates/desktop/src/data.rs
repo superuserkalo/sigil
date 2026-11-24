@@ -816,6 +816,9 @@ pub struct ThumbCrew {
     failed: std::collections::HashMap<String, Instant>,
     /// Scale Browse card thumbnails to the card on the worker (`shrink_card_thumb`).
     shrink: bool,
+    /// Bumped by `clear`, so a surface that queued its images once (the Browse landing) can
+    /// see that the queue forgot them and ask again.
+    generation: u64,
 }
 
 /// How long a failed image waits before it is asked for again.
@@ -957,7 +960,13 @@ impl ThumbCrew {
         self.inflight.contains(url)
     }
 
+    /// How many times the queue was cleared.
+    pub fn generation(&self) -> u64 {
+        self.generation
+    }
+
     pub fn clear(&mut self) {
+        self.generation += 1;
         if let Ok(mut queue) = self.queue.lock() {
             queue.urls.clear();
         }
@@ -967,6 +976,14 @@ impl ThumbCrew {
         self.tx = None;
         self.inflight.clear();
     }
+}
+
+/// Whole minutes since the process started: a surface that asks for its images only when
+/// something changed folds this in, so an image that failed is asked for again once its
+/// retry wait (`THUMB_RETRY`) has passed.
+pub fn minute_bucket() -> u64 {
+    static START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+    START.get_or_init(Instant::now).elapsed().as_secs() / 60
 }
 
 /// Queue images for the browse grid or the mod details view, skipping any the

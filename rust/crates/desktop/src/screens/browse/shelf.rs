@@ -28,6 +28,9 @@ pub const FEATURED: usize = 2;
 pub struct Feeds {
     pub week: Vec<BrowseCard>,
     pub month: Vec<BrowseCard>,
+    /// Most liked over three months: what refills a shelf the gate and the one-mod-once rule
+    /// left short, so a shelf is never half empty.
+    pub reserve: Vec<BrowseCard>,
 }
 
 #[derive(Default)]
@@ -48,6 +51,9 @@ pub struct Shelves {
     /// Whether this run shows the Featured shelf, decided once when Browse first polls, so a
     /// saved catalog that loads late never inserts a shelf above the grid (next run shows it).
     pub featured: Option<bool>,
+    /// What the landing's covers were last queued for, so a poll asks again only when what
+    /// the landing shows (or the image store, or the image queue) changed.
+    pub queued_for: u64,
 }
 
 /// Cards per page for a page `width` points wide.
@@ -89,22 +95,45 @@ pub fn start(st: &mut State) {
     }
     let wake = st.wake.clone();
     st.browse_view.shelves.job.start(wake, || {
-        let read = |order: BrowseOrder, period: BrowsePeriod| -> Result<Vec<BrowseCard>, String> {
-            let query = BrowseQuery {
-                section: BrowseSection::Mods,
-                order,
-                period,
-                ..BrowseQuery::default()
-            };
-            gamebanana::fetch_browse(&query, 1, PER_SHELF)
-                .map(|page| page.mods.iter().map(card_from_browse).collect())
+        // GameBanana has no date filter: a query with a period is served newest first
+        // (`BrowseQuery::server_order`), so asking for "most liked this week" got the 15
+        // newest mods for both shelves. Read the last 30 days newest first instead, and the
+        // all-time most liked, and rank the windows here (`feeds_from`).
+        let read = |order: BrowseOrder, page: usize| -> Result<Vec<BrowseMod>, String> {
+            let query = BrowseQuery { section: BrowseSection::Mods, order, ..BrowseQuery::default() };
+            gamebanana::fetch_browse(&query, page, gamebanana::GAMEBANANA_MAX_PERPAGE)
+                .map(|page| page.mods)
                 .map_err(|e| e.to_string())
         };
-        Ok(Feeds {
-            week: read(BrowseOrder::MostLiked, BrowsePeriod::Week).unwrap_or_default(),
-            month: read(BrowseOrder::MostLiked, BrowsePeriod::Month).unwrap_or_default(),
-        })
+        let start = gamebanana::now_unix() - 30 * DAY;
+        let mut recent: Vec<BrowseMod> = Vec::new();
+        for page in 1..=RECENT_PAGES {
+            let Ok(rows) = read(BrowseOrder::Newest, page) else { break };
+            let done = rows.is_empty() || rows.iter().any(|m| m.added_ts > 0 && m.added_ts < start);
+            recent.extend(rows);
+            if done {
+                break;
+            }
+        }
+        let liked = read(BrowseOrder::MostLiked, 1).unwrap_or_default();
+        Ok(feeds_from(&recent, &liked, gamebanana::now_unix()))
     });
+}
+
+const DAY: i64 = 24 * 60 * 60;
+/// Newest-first pages read for the last 30 days, 50 a page.
+const RECENT_PAGES: usize = 4;
+
+/// The shelves from the reads: most liked of the mods added in the last 7 and 30 days, and
+/// the all-time most liked as the reserve that refills a short shelf.
+pub fn feeds_from(recent: &[BrowseMod], liked: &[BrowseMod], now: i64) -> Feeds {
+    let window = |days: i64| -> Vec<BrowseCard> {
+        let start = now - days * DAY;
+        let mut rows: Vec<&BrowseMod> = recent.iter().filter(|m| m.added_ts >= start).collect();
+        rows.sort_by(|a, b| b.likes.cmp(&a.likes).then(b.added_ts.cmp(&a.added_ts)));
+        rows.into_iter().map(card_from_browse).collect()
+    };
+    Feeds { week: window(7), month: window(30), reserve: liked.iter().map(card_from_browse).collect() }
 }
 
 /// Take the reads when they land and ask for the first two pages of covers.
@@ -112,27 +141,123 @@ pub fn poll(st: &mut State) -> bool {
     let Some(result) = st.browse_view.shelves.job.try_take() else {
         return false;
     };
-    let feeds = result.unwrap_or_default();
-    let n = per_page(super::toolbar::page_width(st));
-    let urls = cover_urls(st, &feeds, n * 2);
-    crate::data::queue_images(st, urls, false);
-    st.browse_view.shelves.feeds = Some(feeds);
+    st.browse_view.shelves.feeds = Some(result.unwrap_or_default());
+    // The covers are asked for by `queue_covers`, from what the landing then shows.
     true
+}
+
+/// What the landing shows, in order, decided in one place for the view and the cover queue:
+/// the spotlight's picks, then the week, month and featured shelves. The gate applies to all
+/// of them (hidden mods and creators, and mature mods while Settings hide them, are never
+/// shown), and a mod shows once: not in a shelf when the spotlight has it, in one shelf only.
+/// A week or month shelf the rule leaves short refills from the month and three-month reads,
+/// and shows whole pages only, so no page ends in empty slots. `None` for a shelf whose read
+/// has not landed (it draws placeholders).
+pub struct Landing<'a> {
+    pub week: Option<Vec<&'a BrowseCard>>,
+    pub month: Option<Vec<&'a BrowseCard>>,
+    pub featured: Vec<&'a BrowseCard>,
+}
+
+pub fn landing<'a>(s: &'a State, n: usize) -> Landing<'a> {
+    let n = n.max(1);
+    let mut seen: HashSet<u64> = super::spotlight::picks(s).iter().map(|t| t.id).collect();
+    let feeds = s.browse_view.shelves.feeds.as_ref();
+    let mut fill = |sources: &[&'a [BrowseCard]]| -> Vec<&'a BrowseCard> {
+        let mut out: Vec<&'a BrowseCard> = Vec::new();
+        for list in sources {
+            for card in allowed(s, list) {
+                if out.len() == PER_SHELF {
+                    break;
+                }
+                if seen.insert(card.id) {
+                    out.push(card);
+                }
+            }
+        }
+        // Whole pages only: a short last page is dropped (its mods go back to the pool), unless
+        // that would leave the shelf with nothing.
+        let keep = if out.len() >= n { out.len() - out.len() % n } else { out.len() };
+        for card in out.drain(keep..) {
+            seen.remove(&card.id);
+        }
+        out
+    };
+    let week = feeds.map(|f| fill(&[&f.week, &f.month, &f.reserve]));
+    let month = feeds.map(|f| fill(&[&f.month, &f.reserve]));
+    let featured: Vec<&'a BrowseCard> = s
+        .browse_view
+        .w4
+        .featured
+        .iter()
+        .map(|(_, card)| card)
+        .filter(|card| content_allowed(s, card.id, card.nsfw, &card.author) && seen.insert(card.id))
+        .collect();
+    Landing { week, month, featured }
+}
+
+/// The covers the landing shows now and next: the spotlight's pick and the one after it, and
+/// for each shelf its current page and the next. Through the same lists the view draws, so a
+/// tile that is shown always has its cover asked for, and hidden art never is.
+pub fn landing_cover_urls(s: &State) -> (Vec<String>, Vec<String>) {
+    let n = per_page(super::toolbar::page_width(s));
+    let lists = landing(s, n);
+    let mut now = Vec::new();
+    let mut next = Vec::new();
+    let picks = super::spotlight::picks(s);
+    let spot = s.browse_view.shelves.spot.min(picks.len().saturating_sub(1));
+    for (i, pick) in picks.iter().enumerate() {
+        if let Some(url) = pick.image_url.clone() {
+            if i == spot {
+                now.push(url);
+            } else if i == spot + 1 {
+                next.push(url);
+            }
+        }
+    }
+    let shelves: [(usize, Option<&Vec<&BrowseCard>>); 3] =
+        [(TRENDING, lists.week.as_ref()), (MONTH, lists.month.as_ref()), (FEATURED, Some(&lists.featured))];
+    for (slot, list) in shelves {
+        let Some(list) = list else { continue };
+        let page = s.browse_view.shelves.pages[slot].min(page_count(list.len(), n) - 1);
+        for (i, card) in list.iter().enumerate() {
+            let Some(url) = card.thumbnail_url.clone() else { continue };
+            if i / n == page {
+                now.push(url);
+            } else if i / n == page + 1 {
+                next.push(url);
+            }
+        }
+    }
+    (now, next)
+}
+
+/// Ask for the landing's covers when what it shows changed, or the image store or queue did
+/// (an image evicted, the queue cleared for a new grid page), and once a minute for covers
+/// that failed. Cheap when nothing changed: one hash of the lists.
+pub fn queue_covers(st: &mut State) -> bool {
+    use std::hash::{Hash, Hasher};
+    if st.browse_view.shelves.feeds.is_none() && st.browse_view.top.is_none() && st.browse_view.w4.featured.is_empty() {
+        return false;
+    }
+    let (now, next) = landing_cover_urls(st);
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    (&now, &next, st.thumbnails.len(), st.thumb_crew.generation(), crate::data::minute_bucket()).hash(&mut h);
+    let key = h.finish();
+    if st.browse_view.shelves.queued_for == key {
+        return false;
+    }
+    st.browse_view.shelves.queued_for = key;
+    // On screen first, ahead of the grid's own; the next pages behind.
+    crate::data::queue_images(st, now, true);
+    crate::data::queue_images(st, next, false);
+    false
 }
 
 /// The cards a shelf may show, in order: hidden mods, hidden creators and (while Settings hide
 /// mature content) mature mods never reach a shelf.
 pub fn allowed<'a>(s: &State, list: &'a [BrowseCard]) -> Vec<&'a BrowseCard> {
     list.iter().filter(|c| content_allowed(s, c.id, c.nsfw, &c.author)).collect()
-}
-
-/// The covers worth fetching: the first `count` allowed cards of each shelf. Hidden art is
-/// never downloaded.
-pub fn cover_urls(s: &State, feeds: &Feeds, count: usize) -> Vec<String> {
-    [&feeds.week, &feeds.month]
-        .into_iter()
-        .flat_map(|list| allowed(s, list).into_iter().take(count).filter_map(|c| c.thumbnail_url.clone()))
-        .collect()
 }
 
 /// A flat placeholder bar for text that has not arrived.
@@ -144,12 +269,24 @@ fn bar(u: &Ui, w: f32, h: f32) -> El {
 /// ring lights when the card around it (a hover group) is hovered.
 pub fn cover(s: &State, u: &Ui, key: String, url: Option<&String>, w: f32, h: f32, veil: bool) -> El {
     let radius = crate::ui::r(8.0);
-    el().key(format!("{key}-box"))
+    let mut b = el()
+        .key(format!("{key}-box"))
         .size(w, h)
         .radius(radius)
         .clip_rounded(radius)
         .fill(u.hover)
-        .child(image_fill(s, key.clone(), url, [radius; 4], veil))
+        .child(image_fill(s, key.clone(), url, [radius; 4], veil));
+    // A mod with no image at all says so, as a grid card does, so it never reads as loading.
+    if url.is_none() {
+        b = b.child(
+            el().absolute(0.0, 0.0)
+                .w_full()
+                .h_full()
+                .center()
+                .child(icon(&icons::PACKAGE, 28.0).color(u.faint.alpha(0.6)).a11y_hidden()),
+        );
+    }
+    b
         .child(
             el().key(format!("{key}-ring"))
                 .absolute(0.0, 0.0)
@@ -182,6 +319,11 @@ pub fn card(s: &State, u: &Ui, scope: &str, card: &BrowseCard, w: f32) -> El {
     let byline = if card.author.is_empty() { "-".to_string() } else { card.author.clone() };
     let category = if card.category.is_empty() { "-".to_string() } else { card.category.clone() };
     let mut frame = cover(s, u, format!("shelf-{scope}-{id}"), card.thumbnail_url.as_ref(), w, h, veil);
+    // A veiled mature cover says so (the tag and Show, as on a grid card), so it never reads
+    // as a broken image.
+    if veil {
+        frame = frame.child(nsfw_veil(u, &format!("shelf-{scope}"), id, true));
+    }
     if let Some(url) = card.audio_url.clone() {
         let playing = s.browse_view.audio.playing == Some(id);
         frame = frame.child(
@@ -390,9 +532,10 @@ mod tests {
         let list = vec![row(1, "Fine", false), row(2, "Fine", false), row(3, "hidden maker", false), row(4, "Fine", true)];
         let ids: Vec<u64> = allowed(&st, &list).iter().map(|c| c.id).collect();
         assert_eq!(ids, vec![1], "shelves");
-        let feeds = Feeds { week: list.clone(), month: list.clone() };
-        let urls = cover_urls(&st, &feeds, 15);
-        assert_eq!(urls, vec!["https://images.example/1.jpg".to_string(); 2], "shelf image queue");
+        st.browse_view.shelves.feeds = Some(Feeds { week: list.clone(), month: list.clone(), reserve: Vec::new() });
+        let (now, next) = landing_cover_urls(&st);
+        assert_eq!(now, vec!["https://images.example/1.jpg".to_string()], "shelf image queue");
+        assert!(next.is_empty());
         st.browse_view.top = Some(
             list.iter()
                 .map(|c| TopSub {
@@ -409,11 +552,104 @@ mod tests {
         );
         let picks: Vec<u64> = super::super::spotlight::picks(&st).iter().map(|t| t.id).collect();
         assert_eq!(picks, vec![1], "spotlight");
-        assert_eq!(super::super::spotlight::cover_urls(&st), vec!["https://images.example/1.jpg".to_string()], "spotlight image queue");
+        // Mod 1 is the spotlight's now, so no shelf repeats it; its cover is the spotlight's.
+        assert_eq!(landing_cover_urls(&st).0, vec!["https://images.example/1.jpg".to_string()], "spotlight image queue");
         // The grid's gate is the same function.
         assert!(!content_allowed(&st, 2, false, "Fine"));
         assert!(!content_allowed(&st, 3, false, "HIDDEN MAKER"));
         assert!(!content_allowed(&st, 4, true, "Fine"));
+    }
+
+    fn ids(list: &[&BrowseCard]) -> Vec<u64> {
+        list.iter().map(|c| c.id).collect()
+    }
+
+    /// The bug the owner saw: a shelf tile that stayed a grey box until it was opened. The
+    /// cover queue asked for the first two pages of each read before the one-mod-once rule,
+    /// so the month shelf (whose first mods the week shelf already had) showed tiles nobody
+    /// asked a cover for, and the featured shelf asked for none. Now the queue reads the lists
+    /// the view draws: every tile on a shown page has its cover asked for, in every mature mode.
+    #[test]
+    fn every_shown_tile_has_its_cover_asked_for() {
+        for mode in crate::prefs::Mature::ALL {
+            let mut st = State::default();
+            st.prefs.mature = mode;
+            let week: Vec<BrowseCard> = (1..=15).map(|i| row(i, "a", i % 4 == 0)).collect();
+            let month: Vec<BrowseCard> = (1..=30).map(|i| row(i, "a", i % 4 == 0)).collect();
+            st.browse_view.shelves.feeds = Some(Feeds { week, month, reserve: Vec::new() });
+            st.browse_view.w4.featured = vec![("Skins".into(), row(99, "b", false)), ("HUD".into(), row(98, "b", true))];
+            let n = per_page(super::super::toolbar::page_width(&st));
+            for page in 0..3 {
+                st.browse_view.shelves.pages = [page; SLOTS];
+                let lists = landing(&st, n);
+                let (now, _) = landing_cover_urls(&st);
+                let shelves = [lists.week.clone().unwrap(), lists.month.clone().unwrap(), lists.featured.clone()];
+                for list in &shelves {
+                    let page = page.min(page_count(list.len(), n) - 1);
+                    for card in list.iter().skip(page * n).take(n) {
+                        let url = card.thumbnail_url.clone().unwrap();
+                        assert!(now.contains(&url), "{mode:?} page {page}: tile {} shown without its cover asked for", card.id);
+                    }
+                }
+                // Hide keeps mature mods off every shelf and out of the queue.
+                if mode == crate::prefs::Mature::Hide {
+                    for list in &shelves {
+                        assert!(list.iter().all(|c| !c.nsfw), "a mature mod reached a shelf");
+                    }
+                    assert!(!now.iter().any(|u| u.ends_with("/4.jpg") || u.ends_with("/98.jpg")));
+                }
+            }
+        }
+    }
+
+    /// A shelf shows whole pages: the one-mod-once rule and the gate never leave a page that
+    /// ends in empty slots. A short shelf refills from the month and three-month reads first.
+    #[test]
+    fn shelves_refill_and_show_whole_pages() {
+        let mut st = State::default();
+        let n = 5;
+        // Week has 7, all of them also in month: week takes 5 (a whole page) and gives two back.
+        let week: Vec<BrowseCard> = (1..=7).map(|i| row(i, "a", false)).collect();
+        let month: Vec<BrowseCard> = (1..=9).map(|i| row(i, "a", false)).collect();
+        let reserve: Vec<BrowseCard> = (20..=40).map(|i| row(i, "a", false)).collect();
+        st.browse_view.shelves.feeds = Some(Feeds { week: week.clone(), month: month.clone(), reserve: Vec::new() });
+        let lists = landing(&st, n);
+        assert_eq!(ids(lists.week.as_ref().unwrap()), vec![1, 2, 3, 4, 5, 6, 7, 8, 9].into_iter().take(5).collect::<Vec<_>>());
+        // Month had 6..9 left: 4, fewer than a page, so it shows them rather than nothing.
+        assert_eq!(ids(lists.month.as_ref().unwrap()), vec![6, 7, 8, 9]);
+        // With the three-month read, both shelves fill whole pages and repeat nothing.
+        st.browse_view.shelves.feeds = Some(Feeds { week, month, reserve });
+        let lists = landing(&st, n);
+        let (w, m) = (ids(lists.week.as_ref().unwrap()), ids(lists.month.as_ref().unwrap()));
+        assert_eq!(w.len(), 15);
+        assert_eq!(m.len(), 15);
+        assert!(w.iter().all(|id| !m.contains(id)), "a mod shows on two shelves");
+    }
+
+    /// Root cause of the empty second shelf: GameBanana serves a query with a period newest
+    /// first, so "most liked this week" and "most liked this month" were the same newest mods.
+    /// The shelves now rank the windows here.
+    #[test]
+    fn shelves_rank_their_windows_locally() {
+        let bounded = BrowseQuery { order: BrowseOrder::MostLiked, period: BrowsePeriod::Week, ..BrowseQuery::default() };
+        assert_eq!(bounded.server_order(), BrowseOrder::Newest, "a bounded read is newest first");
+        let now = 1_800_000_000;
+        let day = 24 * 60 * 60;
+        let m = |id: u64, days_ago: i64, likes: u64| -> BrowseMod {
+            serde_json::from_value(serde_json::json!({
+                "id": id, "name": format!("Mod {id}"), "profileUrl": "", "model": "Mod", "author": "a",
+                "category": "Skins", "subcategory": "", "version": null, "updatedAt": "", "likes": likes,
+                "views": 0, "hasFiles": true, "thumbnailUrl": null, "addedTs": now - days_ago * day,
+            }))
+            .expect("row")
+        };
+        // Newest first, as the read returns them.
+        let recent = vec![m(1, 1, 5), m(2, 3, 50), m(3, 6, 20), m(4, 10, 90), m(5, 25, 10), m(6, 40, 999)];
+        let feeds = feeds_from(&recent, &[m(7, 400, 5000)], now);
+        let ids = |l: &[BrowseCard]| l.iter().map(|c| c.id).collect::<Vec<_>>();
+        assert_eq!(ids(&feeds.week), vec![2, 3, 1], "week: added in 7 days, most liked first");
+        assert_eq!(ids(&feeds.month), vec![4, 2, 3, 5, 1], "month: added in 30 days, most liked first");
+        assert_eq!(ids(&feeds.reserve), vec![7]);
     }
 
     #[test]

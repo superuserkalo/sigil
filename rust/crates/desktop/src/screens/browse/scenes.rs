@@ -203,7 +203,7 @@ pub fn scene_dashboard(s: &mut State) {
         all.sort_by(|a, b| b.likes.cmp(&a.likes));
         let month = all.split_off(all.len() / 2);
         let week = all;
-        s.browse_view.shelves.feeds = Some(super::shelf::Feeds { week, month });
+        s.browse_view.shelves.feeds = Some(super::shelf::Feeds { week, month, reserve: Vec::new() });
     }
 }
 

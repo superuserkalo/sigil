@@ -47,24 +47,12 @@ pub(crate) fn dashboard(s: &State, u: &Ui) -> Option<El> {
     let width = super::toolbar::page_width(s);
     let n = shelf::per_page(width);
     let w = shelf::card_width(width, n);
-    let feeds = s.browse_view.shelves.feeds.as_ref();
-    // A mod shows once on the landing: not in a shelf when the spotlight has it, and in one
-    // shelf only. A short shelf keeps empty slots rather than repeat a mod.
-    let mut seen: HashSet<u64> = super::spotlight::picks(s).iter().map(|t| t.id).collect();
-    let mut tiles = |scope: &str, list: Option<&Vec<BrowseCard>>| -> Vec<El> {
+    // What each shelf shows (gate, one mod once, refill, whole pages) is decided in
+    // `shelf::landing`, which the cover queue reads too, so every tile drawn has its cover.
+    let lists = shelf::landing(s, n);
+    let tiles = |scope: &str, list: Option<&Vec<&BrowseCard>>| -> Vec<El> {
         match list {
-            Some(list) => {
-                let fresh: Vec<&BrowseCard> =
-                    shelf::allowed(s, list).into_iter().filter(|c| !seen.contains(&c.id)).collect();
-                fresh
-                    .into_iter()
-                    .take(shelf::PER_SHELF)
-                    .map(|c| {
-                        seen.insert(c.id);
-                        shelf::card(s, u, scope, c, w)
-                    })
-                    .collect()
-            }
+            Some(list) => list.iter().map(|c| shelf::card(s, u, scope, c, w)).collect(),
             None => (0..n).map(|_| shelf::placeholder(u, w)).collect(),
         }
     };
@@ -86,7 +74,7 @@ pub(crate) fn dashboard(s: &State, u: &Ui) -> Option<El> {
             "browse-shelf-week",
             super::tree::tr("Trending this week"),
             Some(see("browse-shelf-week-all", BrowsePeriod::Week)),
-            tiles("week", feeds.map(|f| &f.week)),
+            tiles("week", lists.week.as_ref()),
             n,
             w,
             shelf::GAP,
@@ -98,21 +86,17 @@ pub(crate) fn dashboard(s: &State, u: &Ui) -> Option<El> {
             "browse-shelf-month",
             super::tree::tr("Popular this month"),
             Some(see("browse-shelf-month-all", BrowsePeriod::Month)),
-            tiles("month", feeds.map(|f| &f.month)),
+            tiles("month", lists.month.as_ref()),
             n,
             w,
             shelf::GAP,
         ));
     // Wave 4: one featured mod per category this week (DMM), from the saved catalog. Known
     // before the page draws, so it never pops in above the grid.
-    let featured: Vec<BrowseCard> = s
-        .browse_view
-        .w4
-        .featured
-        .iter()
-        .map(|(_, card)| card.clone())
-        .collect();
-    if !featured.is_empty() && s.browse_view.shelves.featured.unwrap_or(true) {
+    let featured = &lists.featured;
+    // Whether the shelf is there follows the catalog's picks, not what is left after the
+    // one-mod-once rule, so a read landing late never removes a shelf from under the player.
+    if !s.browse_view.w4.featured.is_empty() && s.browse_view.shelves.featured.unwrap_or(true) {
         rails = rails.child(shelf::shelf(
             s,
             u,
@@ -122,7 +106,7 @@ pub(crate) fn dashboard(s: &State, u: &Ui) -> Option<El> {
             Some(shelf::see_all(u, "browse-shelf-featured-all").on_press_tx(|st: &mut State, tx: &mut Tx| {
                 set_filters(st, Some(tx), |f| f.featured = true)
             })),
-            tiles("featured", Some(&featured)),
+            tiles("featured", Some(featured)),
             n,
             w,
             shelf::GAP,

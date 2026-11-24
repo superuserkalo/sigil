@@ -35,11 +35,6 @@ pub(crate) fn card_of(t: &TopSub) -> BrowseCard {
     }
 }
 
-/// The spotlight's covers worth fetching, through the same gate as what it shows.
-pub(crate) fn cover_urls(s: &State) -> Vec<String> {
-    picks(s).into_iter().filter_map(|t| t.image_url.clone()).collect()
-}
-
 /// The most picks the pager steps through.
 const PICKS: usize = 5;
 

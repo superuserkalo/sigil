@@ -540,6 +540,11 @@ pub(crate) fn track_visible(st: &mut State, range: Range<usize>, shown: &[usize]
     if st.thumbnails.len() > THUMB_CAP {
         let keep: HashSet<String> = urls_in(st, near(THUMB_MARGIN_ROWS)).into_iter().collect();
         let mut keep = keep;
+        // The landing's covers are the same mods as the top of the grid: never evict them
+        // while the landing shows them.
+        let (now, next) = super::shelf::landing_cover_urls(st);
+        keep.extend(now);
+        keep.extend(next);
         if let Some(details) = &st.browse_view.details {
             keep.extend(details.thumbnail_url.clone());
         }
