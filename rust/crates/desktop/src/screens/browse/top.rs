@@ -20,6 +20,8 @@ const BILLBOARD_S: TextStyle = TextStyle::new(22.0, 600.0).lh(28.0).tracking(-0.
 /// Space between tiles, and the slice of the next tile left showing at a row's right edge.
 pub const GAP: f32 = 8.0;
 pub const PEEK: f32 = 40.0;
+/// One pager bar on the billboard.
+const SEG: f32 = 32.0;
 /// Tiles a row holds at most.
 pub const MAX_ROW: usize = 20;
 /// Billboard picks at most.
@@ -28,6 +30,20 @@ pub const MAX_PICKS: usize = 6;
 pub const ADVANCE: Duration = Duration::from_secs(7);
 /// No input for this long and the billboard stops until the next one.
 pub const IDLE: Duration = Duration::from_secs(120);
+/// The active pager bar fills in this many steps over `ADVANCE`: one small commit each, and the
+/// bar glides between them on `motion::countdown`.
+pub const STEPS: u8 = 14;
+
+/// The original upload behind a GameBanana thumbnail: `.../530-90_a.jpg` is `.../a.jpg`. The
+/// billboard draws it once it is decoded; the thumbnail stands in until then.
+pub fn large_of(url: &str) -> String {
+    for size in ["/530-90_", "/220-90_", "/100-90_"] {
+        if let Some(at) = url.rfind(size) {
+            return format!("{}/{}", &url[..at], &url[at + size.len()..]);
+        }
+    }
+    url.to_string()
+}
 
 /// A pointer move or key on Browse: the billboard counts from here. When it had stopped for
 /// idleness, the poll is woken once to arm a full interval again. Never commits.
@@ -54,9 +70,6 @@ const DAY: i64 = 24 * 60 * 60;
 pub enum RowKind {
     Top10,
     New,
-    Trending(usize),
-    Month,
-    AllTime,
 }
 
 impl RowKind {
@@ -64,9 +77,6 @@ impl RowKind {
         match self {
             RowKind::Top10 => 0,
             RowKind::New => 1,
-            RowKind::Trending(i) => 2 + i.min(2),
-            RowKind::Month => 5,
-            RowKind::AllTime => 6,
         }
     }
 }
@@ -92,11 +102,11 @@ pub struct Slide {
     pub card: BrowseCard,
     /// "Trending today" or "This week in Skins".
     pub eyebrow: String,
-    /// The strip label: "Trending" or the root category.
-    pub label: String,
     pub description: String,
-    /// The large image: the top list's 800 px art, else the thumbnail.
+    /// The large image: the top list's 800 px art, else the original upload.
     pub image: Option<String>,
+    /// The thumbnail, shown until the large image is decoded or when it cannot be read.
+    pub small: Option<String>,
 }
 
 #[derive(Default)]
@@ -227,10 +237,9 @@ pub fn plan(s: &State, n: usize, now: i64) -> Plan<'_> {
                     _ => "Popular this month",
                 })
                 .to_string(),
-                // The strip names the slide's category; the eyebrow already says why it leads.
-                label: if t.category.is_empty() { super::tree::tr("Trending").to_string() } else { t.category.clone() },
                 description: t.description.clone(),
                 image: t.image_url.clone(),
+                small: t.image_url.clone(),
             });
         }
     };
@@ -249,9 +258,9 @@ pub fn plan(s: &State, n: usize, now: i64) -> Plan<'_> {
             billboard.push(Slide {
                 card: super::store::clone_card(card),
                 eyebrow: crate::screens::settings::i18n::fill(super::tree::tr("This week in {}"), &[category]),
-                label: category.clone(),
                 description: String::new(),
-                image: card.thumbnail_url.clone(),
+                image: card.thumbnail_url.as_deref().map(large_of),
+                small: card.thumbnail_url.clone(),
             });
         }
     }
@@ -298,6 +307,7 @@ pub fn plan(s: &State, n: usize, now: i64) -> Plan<'_> {
         (7, 1, "New this week", BrowsePeriod::Week),
         (7, 0, "New this week", BrowsePeriod::Week),
         (14, 0, "New mods", BrowsePeriod::Month),
+        (30, 0, "New mods", BrowsePeriod::Month),
     ] {
         let cards = fresh_cards(newest(days, floor), &taken);
         if cards.len() >= min_fill {
@@ -306,50 +316,7 @@ pub fn plan(s: &State, n: usize, now: i64) -> Plan<'_> {
         }
     }
 
-    // Trending in the three root categories with the most recent mods.
-    let mut counts: Vec<(String, usize)> = Vec::new();
-    for c in &recent {
-        let root = root_category(c);
-        if root.is_empty() {
-            continue;
-        }
-        match counts.iter_mut().find(|(name, _)| name == root) {
-            Some((_, count)) => *count += 1,
-            None => counts.push((root.to_string(), 1)),
-        }
-    }
-    counts.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
-    let mut trending = 0;
-    for (category, _) in counts {
-        if trending == 3 {
-            break;
-        }
-        let in_category = |c: &&&BrowseCard| root_category(c) == category;
-        let mut list: Vec<&BrowseCard> = recent.iter().filter(in_category).copied().filter(|c| within(c, 30)).collect();
-        by_likes(&mut list);
-        let mut more: Vec<&BrowseCard> = liked.iter().filter(in_category).copied().collect();
-        by_likes(&mut more);
-        list.extend(more);
-        let cards = fresh_cards(list, &taken);
-        if cards.len() >= min_fill {
-            let title = crate::screens::settings::i18n::fill(super::tree::tr("Trending in {}"), &[&category]);
-            push_row(&mut rows, &mut taken, min_fill, Row { kind: RowKind::Trending(trending), title, cards, see: see(BrowseOrder::MostLiked, BrowsePeriod::Month, Some(&category)) });
-            trending += 1;
-        }
-    }
-
-    // Popular this month: the rest of the window by likes, topped up from the all-time list.
-    let mut month: Vec<&BrowseCard> = recent.iter().copied().filter(|c| within(c, 30)).collect();
-    by_likes(&mut month);
-    month.extend(liked.iter().copied());
-    let cards = fresh_cards(month, &taken);
-    push_row(&mut rows, &mut taken, min_fill, Row { kind: RowKind::Month, title: super::tree::tr("Popular this month").to_string(), cards, see: see(BrowseOrder::MostLiked, BrowsePeriod::Month, None) });
-
-    let mut all: Vec<&BrowseCard> = liked.clone();
-    by_likes(&mut all);
-    let cards = fresh_cards(all, &taken);
-    push_row(&mut rows, &mut taken, min_fill, Row { kind: RowKind::AllTime, title: super::tree::tr("All-time favorites").to_string(), cards, see: see(BrowseOrder::MostLiked, BrowsePeriod::Any, None) });
-
+    // Two rows only: the catalog starts right under them.
     // No saved catalog and nothing on the top list: the Top 10's head leads.
     if billboard.is_empty()
         && let Some(card) = rows.first().and_then(|r| r.cards.iter().find(|c| mature_lead || !c.nsfw))
@@ -357,9 +324,9 @@ pub fn plan(s: &State, n: usize, now: i64) -> Plan<'_> {
         billboard.push(Slide {
             card: super::store::clone_card(card),
             eyebrow: rows[0].title.clone(),
-            label: super::tree::tr("Trending").to_string(),
             description: String::new(),
-            image: card.thumbnail_url.clone(),
+            image: card.thumbnail_url.as_deref().map(large_of),
+            small: card.thumbnail_url.clone(),
         });
     }
     Plan { billboard, rows, known }
@@ -392,7 +359,7 @@ pub fn cover_urls(s: &State) -> (Vec<String>, Vec<String>) {
         let at = s.browse_view.shelves.spot % count;
         for (i, pick) in p.billboard.iter().enumerate() {
             let near = i == (at + 1) % count || i == (at + count - 1) % count;
-            if let Some(url) = pick.image.clone() {
+            for url in [pick.small.clone(), pick.image.clone()].into_iter().flatten() {
                 if i == at {
                     now.push(url);
                 } else if near {
@@ -438,6 +405,9 @@ pub fn paused(s: &State, focused: Option<&str>) -> Option<&'static str> {
     if v.shelves.hovered || v.shelves.window_inactive {
         return Some("hover or background");
     }
+    if v.shelves.offscreen {
+        return Some("scrolled past");
+    }
     if v.shelves.last_input.is_some_and(|t| t.elapsed() >= IDLE) {
         return Some("idle");
     }
@@ -459,8 +429,9 @@ pub fn paused(s: &State, focused: Option<&str>) -> Option<&'static str> {
     None
 }
 
-/// Step the billboard when its deadline passed, arm the next one, or clear it while paused.
-/// One wake per interval: between steps the app does nothing. True when the view must run.
+/// Count the billboard's interval in `STEPS` small steps and move to the next pick when it is
+/// full. One wake per step while it runs; while it is paused nothing is armed and the bar
+/// keeps its place, so it goes on from there. True when the view must run.
 pub fn tick(st: &mut State, tx: &mut Tx) -> bool {
     // The first look counts as input: a fresh window is not idle.
     if st.browse_view.shelves.last_input.is_none() {
@@ -471,32 +442,40 @@ pub fn tick(st: &mut State, tx: &mut Tx) -> bool {
         st.browse_view.shelves.due = None;
         return false;
     }
+    let step = ADVANCE / STEPS as u32;
     let now = Instant::now();
     let Some(due) = st.browse_view.shelves.due else {
-        st.browse_view.shelves.due = Some(now + ADVANCE);
-        tx.wake_after(ADVANCE);
+        st.browse_view.shelves.due = Some(now + step);
+        tx.wake_after(step);
         return false;
     };
     if now < due {
         tx.wake_after(due - now);
         return false;
     }
-    // Step only to a pick whose image is decoded: the next ready one, or wait another turn.
+    st.browse_view.shelves.due = Some(now + step);
+    tx.wake_after(step);
+    // The bar glides to its new length (`motion::countdown`); nothing else moves.
+    tx.animated();
+    if st.browse_view.shelves.step + 1 < STEPS {
+        st.browse_view.shelves.step += 1;
+        return true;
+    }
+    st.browse_view.shelves.step = 0;
+    // Step only to a pick whose image is decoded: the next ready one, or count again.
     let width = super::toolbar::page_width(st);
     let p = plan(st, per_page(width), gamebanana::now_unix());
     let count = p.billboard.len();
     let at = st.browse_view.shelves.spot % count.max(1);
     let ready = (1..count).map(|k| (at + k) % count).find(|&i| {
-        p.billboard[i].image.as_ref().is_some_and(|url| st.thumbnails.contains_key(url))
+        let pick = &p.billboard[i];
+        [&pick.image, &pick.small].into_iter().flatten().any(|url| st.thumbnails.contains_key(url))
     });
     drop(p);
-    st.browse_view.shelves.due = Some(now + ADVANCE);
-    tx.wake_after(ADVANCE);
-    let Some(next) = ready else { return false };
-    st.browse_view.shelves.spot = next;
-    st.browse_view.shelves.spot_dir = 1;
-    // The poll's own step slides like a manual one (`motion::paged(1)`).
-    tx.animated();
+    if let Some(next) = ready {
+        st.browse_view.shelves.spot = next;
+        st.browse_view.shelves.spot_dir = 1;
+    }
     true
 }
 
@@ -504,6 +483,7 @@ pub fn tick(st: &mut State, tx: &mut Tx) -> bool {
 fn step_to(st: &mut State, index: usize, dir: i8) {
     st.browse_view.shelves.spot = index;
     st.browse_view.shelves.spot_dir = dir;
+    st.browse_view.shelves.step = 0;
     st.browse_view.shelves.due = None;
 }
 
@@ -528,13 +508,13 @@ pub fn view(s: &State, u: &Ui) -> El {
     let mut c = col().key("browse-dashboard").w_full();
     if !p.known {
         c = c.child(billboard_placeholder(u, width));
-        for i in 0..4 {
+        for i in 0..2 {
             c = c.child(row_placeholder(u, width, n, i).mt(if i == 0 { 32.0 } else { 28.0 }));
         }
         return c.child(el().h(32.0));
     }
     if !p.billboard.is_empty() {
-        c = c.child(billboard(s, u, &p.billboard, width)).child(strip(s, u, &p.billboard, width).mt(8.0));
+        c = c.child(billboard(s, u, &p.billboard, width));
     }
     for (i, r) in p.rows.iter().enumerate() {
         let top = if i == 0 && p.billboard.is_empty() { 0.0 } else { 24.0 };
@@ -563,7 +543,6 @@ fn billboard_placeholder(u: &Ui, width: f32) -> El {
                 .child(bar(u, 160.0, 12.0))
                 .child(bar(u, 120.0, 32.0).mt(12.0)),
         )
-        .child(row().w_full().h(28.0).mt(8.0).gap(6.0).equal_columns(5).children((0..5).map(|_| el().h(2.0).fill(u.hair_strong))))
 }
 
 fn row_placeholder(u: &Ui, width: f32, n: usize, i: usize) -> El {
@@ -600,12 +579,18 @@ fn billboard(s: &State, u: &Ui, picks: &[Slide], width: f32) -> El {
     let p = &picks[at];
     let id = p.card.id;
     let r = crate::ui::r(8.0);
-    // The art's box is fixed from `W` and `H` alone, so a pick of another shape never moves
-    // the text: it fills the box centred (wide banners lose their sides).
-    let aw = (h * 16.0 / 9.0).clamp(h * 1.25, width * 0.62).floor();
+    // The sharp art is the original upload once it is decoded, else the thumbnail.
+    let decoded = |url: Option<&String>| pixels_for(s, url).filter(|px| px.size().0 > 0);
+    let pixels = decoded(p.image.as_ref()).or_else(|| decoded(p.small.as_ref()));
+    // The art keeps its own shape, so nothing is cropped or stretched: full height, as wide as
+    // its aspect asks, within limits. The text column does not depend on it.
+    let aspect = pixels.map_or(16.0 / 9.0, |px| {
+        let (w, h) = px.size();
+        w as f32 / h.max(1) as f32
+    });
+    let aw = (h * aspect).clamp(h * 0.75, width * 0.60).floor();
     let dir = s.browse_view.shelves.spot_dir;
     let motion = crate::motion::paged(dir);
-    let pixels = pixels_for(s, p.image.as_ref());
     let mut b = el()
         .key("bb-billboard")
         .w_full()
@@ -615,16 +600,30 @@ fn billboard(s: &State, u: &Ui, picks: &[Slide], width: f32) -> El {
         .fill(u.well)
         .hover_group()
         .on_hover_change(|st: &mut State, over: bool, tx: &mut Tx| {
-            // The view does not read this: pausing never commits.
+            // The view does not read this: pausing never commits. The bar keeps its place
+            // and the poll goes on from there once the pointer has left.
             tx.live_only();
             st.browse_view.shelves.hovered = over;
             if over {
                 st.browse_view.shelves.due = None;
+            } else {
+                tx.wake_after(Duration::ZERO);
             }
         })
         .on_window_focus(|st: &mut State, focused: bool, tx: &mut Tx| {
             tx.live_only();
             st.browse_view.shelves.window_inactive = !focused;
+            if focused {
+                tx.wake_after(Duration::ZERO);
+            }
+        })
+        // Scrolled out of view: it waits, and goes on when it is back.
+        .on_visible(|st: &mut State, on: bool, tx: &mut Tx| {
+            tx.live_only();
+            st.browse_view.shelves.offscreen = !on;
+            if on {
+                tx.wake_after(Duration::ZERO);
+            }
         })
         .on_key(move |st: &mut State, ev: &KeyEvent, _tx: &mut Tx| {
             let step = match ev.key {
@@ -654,7 +653,7 @@ fn billboard(s: &State, u: &Ui, picks: &[Slide], width: f32) -> El {
                     .w(aw)
                     .transition(motion)
                     .a11y_hidden()
-                    .child(el().absolute(0.0, 0.0).w_full().h_full().pixels_fit(px, SurfaceFit::Fill))
+                    .child(el().absolute(0.0, 0.0).w_full().h_full().pixels_fit(px, SurfaceFit::Fit))
                     // The feather into the scrim, drawn with the art so it moves with it.
                     .child(
                         el().absolute(0.0, 0.0)
@@ -744,7 +743,7 @@ fn billboard(s: &State, u: &Ui, picks: &[Slide], width: f32) -> El {
                 .on_press(move |st: &mut State| toggle_favorite(st, favorite.clone()))
                 .child(icon(if saved { &STAR_FILLED } else { &STAR }, 16.0).color(Color::WHITE).a11y_hidden()),
         );
-    let text_w = (width - aw + 96.0).min(420.0).max(200.0);
+    let text_w = (width * 0.42).clamp(200.0, 440.0);
     let mut column = col()
         .key("bb-text")
         .paint_order(3)
@@ -774,21 +773,38 @@ fn billboard(s: &State, u: &Ui, picks: &[Slide], width: f32) -> El {
         .on_press(move |st: &mut State| show_details(st, Details::from_card(&opened)))
         .child(column);
     if count > 1 {
-        let arrow = |forward: bool| {
-            let key = if forward { "bb-next" } else { "bb-prev" };
-            el().key(key)
-                .pin(if forward { None } else { Some(12.0) }, Some((h - 48.0) / 2.0), if forward { Some(12.0) } else { None }, None)
-                .size(32.0, 48.0)
+        // The pager sits in its own corner, clear of the text: one bar per pick, the current
+        // one filling as its turn runs, then the two step buttons. Always shown.
+        let step = s.browse_view.shelves.step.min(STEPS) as f32 / STEPS as f32;
+        let bars = picks.iter().enumerate().map(|(i, pick)| {
+            let on = i == at;
+            let filled = if on { (SEG * step).round() } else { 0.0 };
+            el().key(format!("bb-seg-{i}"))
+                .size(SEG, 24.0)
                 .center()
-                .radius(crate::ui::r(4.0))
-                .fill(Color::BLACK.alpha(0.45))
-                .hover(Color::BLACK.alpha(0.65))
-                .paint_order(3)
-                .group_opacity(0.0, 1.0)
                 .focusable(true)
                 .role("button")
-                .label(if forward { "Next pick" } else { "Previous pick" })
+                .checked(on)
+                .label(pick.card.name.clone())
                 .cursor(rune::Cursor::Pointer)
+                .on_press(move |st: &mut State| {
+                    let from = st.browse_view.shelves.spot % count;
+                    step_to(st, i, if i >= from { 1 } else { -1 });
+                })
+                .child(
+                    el().w(SEG)
+                        .h(3.0)
+                        .radius(1.5)
+                        .clip_rounded(1.5)
+                        .fill(white(if on { 0.38 } else { 0.28 }))
+                        .child(el().key(format!("bb-fill-{i}")).h(3.0).w(filled).fill(Color::WHITE).motion(crate::motion::countdown())),
+                )
+        });
+        let arrow = |forward: bool| {
+            dark_button(if forward { "bb-next".into() } else { "bb-prev".into() })
+                .w(32.0)
+                .role("button")
+                .label(if forward { "Next pick" } else { "Previous pick" })
                 .on_press(move |st: &mut State| {
                     let at = st.browse_view.shelves.spot % count;
                     let next = if forward { (at + 1) % count } else { (at + count - 1) % count };
@@ -796,62 +812,25 @@ fn billboard(s: &State, u: &Ui, picks: &[Slide], width: f32) -> El {
                 })
                 .child(icon(if forward { &icons::CHEVRON_RIGHT } else { &icons::CHEVRON_LEFT }, 16.0).color(Color::WHITE).a11y_hidden())
         };
-        b = b.child(arrow(false)).child(arrow(true));
+        b = b.child(
+            row().key("bb-pager")
+                .pin(None, None, Some(inset), Some(inset))
+                .h(40.0)
+                .px(8.0)
+                .gap(6.0)
+                .center_y()
+                // Its own dark plate, so the bars read on any art.
+                .radius(crate::ui::r(8.0))
+                .fill(Color::BLACK.alpha(0.84))
+                .border(1.0, white(0.14))
+                .paint_order(3)
+                .children(bars)
+                .child(el().w(6.0))
+                .child(arrow(false))
+                .child(arrow(true)),
+        );
     }
     b
-}
-
-/// The segment strip under the billboard: one press target per pick, a line and its label.
-fn strip(s: &State, u: &Ui, picks: &[Slide], width: f32) -> El {
-    let count = picks.len();
-    if count < 2 {
-        return el().key("bb-strip").h(0.0);
-    }
-    let at = s.browse_view.shelves.spot % count;
-    // Segments on the rows' grid: one tile wide while the picks fit a page of tiles, else half a
-    // tile, so every divider lines up with a tile edge below.
-    let n = per_page(width);
-    let (tw, _) = tile_size(width, n);
-    let seg_w = if count <= n { tw } else { ((tw - GAP) / 2.0).floor() };
-    row()
-        .key("bb-strip")
-        .w_full()
-        .h(28.0)
-        .gap(GAP)
-        .on_hover_change(|st: &mut State, over: bool, tx: &mut Tx| {
-            tx.live_only();
-            st.browse_view.shelves.hovered = over;
-            if over {
-                st.browse_view.shelves.due = None;
-            }
-        })
-        .children(picks.iter().enumerate().map(|(i, p)| {
-            let on = i == at;
-            col()
-                .key(format!("bb-seg-{i}"))
-                .w(seg_w)
-                .min_w(seg_w)
-                .h(28.0)
-                .gap(6.0)
-                .pt(4.0)
-                .focusable(true)
-                .role("button")
-                .checked(on)
-                .label(p.card.name.clone())
-                .cursor(rune::Cursor::Pointer)
-                .on_press(move |st: &mut State| {
-                    let from = st.browse_view.shelves.spot % count;
-                    step_to(st, i, if i >= from { 1 } else { -1 });
-                })
-                .child(el().w_full().h(2.0).radius(1.0).fill(if on { u.ink } else { u.hair_strong }).motion(crate::motion::fast()))
-                .child(
-                    text(p.label.to_uppercase())
-                        .font(super::MICRO_CAPS)
-                        .color(if on { u.ink } else { u.muted })
-                        .truncate()
-                        .min_w(0.0),
-                )
-        }))
 }
 
 /// One row: its title link, then a clipped viewport that shows a page of tiles and the peek.
@@ -894,33 +873,34 @@ fn row_view(s: &State, u: &Ui, r: &Row, width: f32, n: usize) -> El {
         });
         strip = strip.child(keyed);
     }
+    // The step buttons sit in the row's header, clear of the tiles: always shown, dimmed at
+    // either end.
     let arrow = |forward: bool| {
-        el().key(format!("top-row-{slot}-{}", if forward { "next" } else { "prev" }))
-            .pin(if forward { None } else { Some(0.0) }, Some(0.0), if forward { Some(0.0) } else { None }, Some(0.0))
-            .w(32.0)
+        let live = if forward { page + 1 < pages } else { page > 0 };
+        let mut b = el().key(format!("top-row-{slot}-{}", if forward { "next" } else { "prev" }))
+            .size(28.0, 28.0)
             .center()
-            // Above the page strip, which paints over its leaving page.
-            .paint_order(2)
-            .fill(Color::BLACK.alpha(0.55))
-            .group_opacity(0.0, 1.0)
+            .radius(crate::ui::r(4.0))
+            .border(1.0, u.hair_strong)
             .role("button")
             .label(if forward { "Next page" } else { "Previous page" })
-            .cursor(rune::Cursor::Pointer)
-            .on_press(move |st: &mut State| {
+            .disabled(!live)
+            .child(icon(if forward { &icons::CHEVRON_RIGHT } else { &icons::CHEVRON_LEFT }, 16.0).color(if live { u.ink } else { u.faint }).a11y_hidden());
+        if live {
+            b = b.hover(u.hover).focusable(true).cursor(rune::Cursor::Pointer).on_press(move |st: &mut State| {
                 let p = &mut st.browse_view.shelves.pages[slot];
                 *p = if forward { (*p + 1).min(pages - 1) } else { p.saturating_sub(1) };
                 st.browse_view.shelves.dirs[slot] = if forward { 1 } else { -1 };
-            })
-            .child(icon(if forward { &icons::CHEVRON_RIGHT } else { &icons::CHEVRON_LEFT }, 16.0).color(Color::WHITE).a11y_hidden())
+            });
+        }
+        b
     };
     // The peek fades out at the row's edge, so a cut tile reads as more to come.
     let last = page + 1 >= pages;
-    // The arrows sit outside the faded clip, so the fade never dims them.
-    let mut viewport = el()
+    let viewport = el()
         .key(format!("top-row-{slot}"))
         .w_full()
         .h(th)
-        .hover_group()
         .child(
             el().absolute(0.0, 0.0)
                 .w_full()
@@ -928,26 +908,24 @@ fn row_view(s: &State, u: &Ui, r: &Row, width: f32, n: usize) -> El {
                 .clip_fade_linear(if last && len > n { PEEK } else { 0.0 }, 0.0, if last { 0.0 } else { PEEK }, 0.0)
                 .child(strip),
         );
-    if page > 0 {
-        viewport = viewport.child(arrow(false));
-    }
-    if page + 1 < pages {
-        viewport = viewport.child(arrow(true));
-    }
     let see = r.see.clone();
-    let head = row()
+    let title = row()
         .key(format!("top-row-{slot}-head"))
-        .h(24.0)
+        .h(28.0)
         .gap(4.0)
         .center_y()
-        .hover_group()
         .focusable(true)
         .role("link")
         .label(r.title.clone())
         .cursor(rune::Cursor::Pointer)
         .on_press_tx(move |st: &mut State, tx: &mut Tx| apply_see(st, tx, &see))
         .child(text(r.title.clone()).font(SECTION).color(u.ink))
-        .child(icon(&icons::CHEVRON_RIGHT, 12.0).color(u.muted).group_opacity(0.0, 1.0).a11y_hidden());
+        .child(text(super::tree::tr("See all")).font(SMALL).color(u.muted).ml(8.0))
+        .child(icon(&icons::CHEVRON_RIGHT, 12.0).color(u.muted).a11y_hidden());
+    let mut head = row().w_full().h(28.0).gap(6.0).center_y().child(title).child(spacer());
+    if pages > 1 {
+        head = head.child(arrow(false)).child(arrow(true));
+    }
     col().key(format!("top-row-{slot}-box")).w_full().gap(8.0).child(head).child(viewport)
 }
 
@@ -1096,6 +1074,10 @@ fn tile(s: &State, u: &Ui, slot: usize, card: &BrowseCard, tw: f32, th: f32, ran
         .gap(2.0)
         .fill(Color::BLACK.alpha(0.62))
         .group_opacity(0.0, 1.0)
+        // The layer covers the tile, so it opens the details itself: a press anywhere on the
+        // tile that is not Install or the star goes to the mod.
+        .cursor(rune::Cursor::Pointer)
+        .on_press(move |st: &mut State| open_details(st, opened))
         .child(title(Color::WHITE, 2))
         .child(
             row().gap(4.0).center_y().min_w(0.0)
@@ -1342,6 +1324,26 @@ mod tests {
         }
     }
 
+    /// The landing is short: at most two rows, so the catalog starts right under them.
+    #[test]
+    fn the_landing_has_at_most_two_rows() {
+        let recent: Vec<BrowseCard> =
+            (0..200u64).map(|i| card(i + 1, (i % 30) as i64, i * 7 % 50, ["Skins", "HUD", "Sounds", "Maps"][(i % 4) as usize], false)).collect();
+        let liked: Vec<BrowseCard> = (0..60).map(|i| card(1000 + i, 400, 5000 - i, "Skins", false)).collect();
+        let st = state_with(recent, liked);
+        let p = plan(&st, 4, NOW);
+        assert!(p.rows.len() <= 2, "{} rows", p.rows.len());
+        assert_eq!(p.rows[0].kind, RowKind::Top10);
+    }
+
+    /// The billboard asks for the original upload behind a thumbnail.
+    #[test]
+    fn the_large_image_is_the_thumbnail_without_its_size() {
+        assert_eq!(large_of("https://images.gamebanana.com/img/ss/mods/530-90_a.jpg"), "https://images.gamebanana.com/img/ss/mods/a.jpg");
+        assert_eq!(large_of("https://images.gamebanana.com/img/ss/mods/220-90_b.png"), "https://images.gamebanana.com/img/ss/mods/b.png");
+        assert_eq!(large_of("https://images.example/t1.jpg"), "https://images.example/t1.jpg");
+    }
+
     /// The timer: never armed under Reduce motion, with the setting off, while hovered, in the
     /// background, off Browse, or with one pick.
     #[test]
@@ -1364,6 +1366,11 @@ mod tests {
         check(&mut st, "hover", &|s| s.browse_view.shelves.hovered = true, None);
         check(&mut st, "focus in the billboard", &|s| s.browse_view.shelves.hovered = false, Some("bb-install-901"));
         check(&mut st, "background", &|s| s.browse_view.shelves.window_inactive = true, None);
+        check(&mut st, "scrolled past", &|s| {
+            s.browse_view.shelves.window_inactive = false;
+            s.browse_view.shelves.offscreen = true;
+        }, None);
+        st.browse_view.shelves.offscreen = false;
         check(&mut st, "details open", &|s| {
             s.browse_view.shelves.window_inactive = false;
             s.browse_view.context = Some(1);

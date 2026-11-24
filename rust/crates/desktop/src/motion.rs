@@ -51,6 +51,12 @@ pub fn hover_out() -> Anim {
     tween(0.10)
 }
 
+/// The Browse billboard's pager bar: it glides from one half-second step to the next, so the
+/// fill reads as one steady movement.
+pub fn countdown() -> Spring {
+    spring(0.5)
+}
+
 /// 90 ms: fills, colours, the switch knob, a slider settling, a drag dim.
 pub fn fast() -> Spring {
     spring(0.09)

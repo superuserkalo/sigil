@@ -801,6 +801,31 @@ fn billboard_rests_between_advances() {
     assert_eq!(rt.stats.commits, commits, "a commit while the billboard waited");
 }
 
+/// A press anywhere on a landing tile opens that mod: the hover layer that covers the tile must
+/// not swallow it. The billboard's pager and the rows' step buttons keep to their own corners.
+#[test]
+fn a_landing_tile_opens_its_mod_when_pressed() {
+    let _globals = crate::ui::test_globals();
+    let mut rt = runtime("browse-dashboard", (1280.0, 800.0));
+    settle(&mut rt);
+    assert!(rt.state.browse_view.details.is_none());
+    let key = rt
+        .elements()
+        .into_iter()
+        .filter_map(|e| e.key.clone())
+        .find(|k| k.starts_with("top-0-"))
+        .expect("a Top 10 tile");
+    let (x, y) = centre_of(&rt, &key).expect("tile on screen");
+    // Hover first, as a player does: the hover layer is then on top.
+    rt.pointer_move(x, y);
+    settle(&mut rt);
+    rt.pointer_down(x, y - 20.0);
+    rt.frame(1.0 / 60.0);
+    rt.pointer_up(x, y - 20.0);
+    settle(&mut rt);
+    assert!(rt.state.browse_view.details.is_some(), "pressing a tile must open its details");
+}
+
 /// Two minutes without input stops the billboard: no deadline, no frame; the next input arms
 /// it again.
 #[test]
