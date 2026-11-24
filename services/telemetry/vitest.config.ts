@@ -15,8 +15,12 @@ export default defineConfig(async () => {
       cloudflareTest({
         wrangler: { configPath: "./wrangler.jsonc" },
         miniflare: {
-          // A test-only bucket key: the real one is a Worker secret, never in the repo.
-          bindings: { TEST_MIGRATIONS: migrations, PRODUCT_BUCKET_KEY: "test-only-bucket-key-0123456789" },
+          // Test-only product secrets: the real ones are Worker secrets, never in the repo.
+          bindings: {
+            TEST_MIGRATIONS: migrations,
+            PRODUCT_SALT: "test-only-product-salt-0123456789abcdef",
+            PRODUCT_BUCKET_KEY: "test-only-bucket-key-0123456789abcdef",
+          },
         },
       }),
     ],

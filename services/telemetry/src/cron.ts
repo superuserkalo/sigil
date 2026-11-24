@@ -3,11 +3,11 @@
  */
 
 import { closeEpochs, epochOf, GRACE_MS } from "./aggregates";
-import { runRetention } from "./retention";
+import { runRetention, unlinkInactive } from "./retention";
 import { scrub } from "./scrub";
 
 /**
- * The daily job: retention first, then closing product epochs. Each step has its own try, so an
+ * The daily job: retention first, then unlinking inactive installs, then closing product epochs. Each step has its own try, so an
  * error or a timeout in one never skips the other.
  */
 export async function scheduledJob(
@@ -18,12 +18,18 @@ export async function scheduledJob(
 ): Promise<void> {
   try {
     const result = await runRetention(env.DB, now);
-    logLine({ event: "retention", cron, diagnostics: result.diagnostics, crashes: result.crashes, product: result.product });
+    logLine({ event: "retention", cron, diagnostics: result.diagnostics, crashes: result.crashes });
     if (result.backstop > 0) {
       logLine({ event: "error", what: "product_contrib_backstop", cron, rows: result.backstop });
     }
   } catch (error) {
     logLine({ event: "retention_error", cron, message: describeError(error) });
+  }
+  try {
+    const unlinked = await unlinkInactive(env.DB, now);
+    logLine({ event: "product_unlinked", cron, installs: unlinked });
+  } catch (error) {
+    logLine({ event: "unlink_error", cron, message: describeError(error) });
   }
   try {
     const closed = await close(env.DB, now);

@@ -34,6 +34,7 @@ import { contribute, related } from "./aggregates";
 import { scheduledJob } from "./cron";
 import {
   installHash,
+  secretOk,
   parseInstallId,
   parseProduct,
   parseRelated,
@@ -92,6 +93,17 @@ function productSalt(env: Env): string | undefined {
 /** The network bucket key (`wrangler secret put PRODUCT_BUCKET_KEY`). Never in the repo. */
 function bucketKey(env: Env): string | undefined {
   return (env as Env & ProductSecrets).PRODUCT_BUCKET_KEY;
+}
+
+/**
+ * The product routes run only with both secrets set and long enough. Otherwise they answer 503
+ * `not_configured` and store nothing: no unsalted hash, no aggregate. The app treats it as "try
+ * later" and keeps its queue.
+ */
+function productSecrets(env: Env): { readonly salt: string; readonly bucket: string } | null {
+  const salt = productSalt(env);
+  const bucket = bucketKey(env);
+  return secretOk(salt) && secretOk(bucket) ? { salt, bucket } : null;
 }
 
 export default {
@@ -314,6 +326,11 @@ async function handleHashes(request: Request, env: Env): Promise<Response> {
 }
 
 async function handleProduct(request: Request, env: Env): Promise<Response> {
+  const secrets = productSecrets(env);
+  if (secrets === null) {
+    await request.body?.cancel();
+    return errorResponse(503, "not_configured");
+  }
   const body = await readJsonBody(request, PRODUCT_BODY_LIMIT);
   if (!body.ok) return bodyError(body.reason);
 
@@ -322,7 +339,7 @@ async function handleProduct(request: Request, env: Env): Promise<Response> {
 
   const product = parsed.value;
   const now = Date.now();
-  const hash = await installHash(product.installId, productSalt(env));
+  const hash = await installHash(product.installId, secrets.salt);
 
   // Raw rows carry the install hash only: no bucket, no address, no user agent.
   if (product.records.length > 0) {
@@ -336,20 +353,25 @@ async function handleProduct(request: Request, env: Env): Promise<Response> {
     );
   }
   // Open-epoch contributions: none without the bucket secret or past the bucket's cap.
-  await contribute(env.DB, bucketKey(env), request.headers.get("cf-connecting-ip"), hash, product.records, now);
+  await contribute(env.DB, secrets.bucket, request.headers.get("cf-connecting-ip"), hash, product.records, now);
 
   return jsonResponse(202, { accepted: product.records.length, dropped: product.dropped });
 }
 
 /** Knowing the raw install id is the proof: only the app that made it can send it. */
 async function handleProductDelete(request: Request, env: Env): Promise<Response> {
+  const secrets = productSecrets(env);
+  if (secrets === null) {
+    await request.body?.cancel();
+    return errorResponse(503, "not_configured");
+  }
   const body = await readJsonBody(request, PRODUCT_DELETE_BODY_LIMIT);
   if (!body.ok) return bodyError(body.reason);
   const raw = body.value;
   const installId = typeof raw === "object" && raw !== null ? parseInstallId((raw as Record<string, unknown>).installId) : null;
   if (installId === null) return errorResponse(400, "bad_install_id");
 
-  const hash = await installHash(installId, productSalt(env));
+  const hash = await installHash(installId, secrets.salt);
   const results = await env.DB.batch(
     // Raw events and open-epoch contributions (the only rows with a bucket). Closed-epoch totals
     // are counts with no install hash, so there is nothing of this install in them to delete.
@@ -363,9 +385,11 @@ async function handleProductDelete(request: Request, env: Env): Promise<Response
 
 /** Co-installed mods that pass the distinct-contributor floor (`aggregates.ts`). */
 async function handleRelated(_request: Request, env: Env, url: URL): Promise<Response> {
+  const secrets = productSecrets(env);
+  if (secrets === null) return errorResponse(503, "not_configured");
   const mod = parseRelated(url.searchParams);
   if (mod === null) return errorResponse(400, "bad_mod");
-  return jsonResponse(200, { mods: await related(env.DB, bucketKey(env), mod) });
+  return jsonResponse(200, { mods: await related(env.DB, secrets.bucket, mod) });
 }
 
 function bodyError(reason: "too_large" | "invalid_utf8" | "invalid_json"): Response {

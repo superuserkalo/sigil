@@ -318,14 +318,23 @@ export function parseProduct(raw: unknown): Parsed<ProductBody> {
   return { ok: true, value: { installId, version: raw.version, os: raw.os, osBuild, gameBuild, records, dropped } };
 }
 
+/** Both product secrets must be at least this long, or the product routes answer 503. */
+export const MIN_SECRET_CHARS = 32;
+
+/** True when a product secret is set and long enough. */
+export function secretOk(secret: string | undefined): secret is string {
+  return secret !== undefined && secret.length >= MIN_SECRET_CHARS;
+}
+
 /**
- * The only form of the install id this Worker keeps: SHA-256 over a salt and the id. The salt
- * is the `PRODUCT_SALT` secret when the owner set one (set it before the first deploy of this
- * route; changing it later orphans existing rows from Delete my data), else a fixed label.
+ * The only form of the install id this Worker keeps: SHA-256 over the `PRODUCT_SALT` secret and
+ * the id. There is no fallback: the routes refuse (503 `not_configured`) before calling this
+ * without a salt. Set the salt before the first deploy and never change it, or Delete my data
+ * misses older rows.
  */
-export async function installHash(installId: string, salt: string | undefined): Promise<string> {
-  const pepper = salt !== undefined && salt.length > 0 ? salt : "sigil-product-v1";
-  return sha256Hex(`${pepper}\nsigil-product:${installId}`);
+export async function installHash(installId: string, salt: string): Promise<string> {
+  if (!secretOk(salt)) throw new Error("PRODUCT_SALT is not configured");
+  return sha256Hex(`${salt}\nsigil-product:${installId}`);
 }
 
 export function parseRelated(search: URLSearchParams): number | null {

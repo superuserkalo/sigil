@@ -4,7 +4,10 @@
 --
 -- `product_events`: one row per accepted record. `install_hash` is a salted SHA-256 of the app's
 --   random product install id (src/product.ts `installHash`); `payload` is the record re-built
---   from the Worker's own schema. Kept 13 months; deleted at once by POST /v1/product/delete.
+--   from the Worker's own schema. Kept while the install keeps sharing; deleted at once by POST
+--   /v1/product/delete. After 24 months with nothing new from an install, the daily job replaces
+--   its `install_hash` with a fresh random value (`u:` prefix) so the history can no longer be
+--   tied to that install id.
 --
 -- `product_contrib`: open-epoch contributions (src/aggregates.ts). The only table where a network
 --   bucket sits next to an install hash. `bucket` is 16 hex characters of HMAC-SHA256 under the
@@ -14,8 +17,7 @@
 --
 -- `product_totals`: per closed epoch and aggregate key that met the floor in that epoch (10
 --   eligible installs, 6 buckets, 3 days), counts only (installs, buckets, days). No install hash
---   and no bucket; keys below the floor leave no row. Rows of mod ids and codes are kept; rows
---   whose key players wrote (search text, hardware names) go after 13 months. Delete my data
+--   and no bucket; keys below the floor leave no row. Kept indefinitely. Delete my data
 --   cannot reach them because nothing in them points to an install.
 
 CREATE TABLE IF NOT EXISTS product_events (

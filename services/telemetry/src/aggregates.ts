@@ -8,8 +8,8 @@
  *    HMAC-SHA256 under the Worker secret `PRODUCT_BUCKET_KEY` of the epoch number and the caller's
  *    network prefix (IPv4 /24, IPv6 /48), cut to 16 hex characters. A network's bucket changes
  *    every epoch, so it cannot be linked across epochs. The address and the prefix are never
- *    stored. Without the secret no bucket is made: raw records are kept and no aggregate is
- *    written or published (fail closed).
+ *    stored. Without the secret no bucket is made and nothing is published (fail closed); the
+ *    routes in `index.ts` answer 503 before getting here.
  * 2. Open-epoch contributions. `product_contrib` is the only table where a bucket sits next to an
  *    install hash. One row per (epoch, kind, key, install): kind `seen` (key = the UTC day, one
  *    row per day the install sent anything), `mod`, `pair`, `health`, `hardware`, `bench`,
@@ -26,7 +26,7 @@
  */
 
 import { toHex } from "./hash";
-import type { ProductRecord } from "./product";
+import { secretOk, type ProductRecord } from "./product";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 export const EPOCH_MS = 30 * DAY_MS;
@@ -69,7 +69,7 @@ export function utcDay(now: number): string {
 
 /** Without the bucket secret nothing is aggregated or published (fail closed). */
 export function hasBucketKey(secret: string | undefined): secret is string {
-  return secret !== undefined && secret.length >= 16;
+  return secretOk(secret);
 }
 
 /** The caller's network prefix: IPv4 /24 or IPv6 /48, or null when there is no usable address. */

@@ -18,6 +18,7 @@ type EventRow = {
 type Related = { readonly mods: readonly { readonly modId: number; readonly installs: number }[] };
 
 const DAY_MS = 24 * 60 * 60 * 1000;
+const SALT = (env as typeof env & { readonly PRODUCT_SALT: string }).PRODUCT_SALT;
 
 function body(records: readonly unknown[], extra: Readonly<Record<string, unknown>> = {}): Record<string, unknown> {
   return { installId: INSTALL_ID, version: VERSION, os: "windows", osBuild: "10.0.22631", gameBuild: 5911, records, ...extra };
@@ -45,7 +46,7 @@ describe("POST /v1/product", () => {
 
     const stored = await rows();
     expect(stored.map((row) => row.type)).toEqual(["mod_action", "launch"]);
-    expect(stored[0]?.install_hash).toBe(await installHash(INSTALL_ID, undefined));
+    expect(stored[0]?.install_hash).toBe(await installHash(INSTALL_ID, SALT));
     expect(stored[0]?.install_hash).not.toContain(INSTALL_ID);
     expect(stored[0]?.os_build).toBe("10.0.22631");
     expect(stored[0]?.game_build).toBe(5911);
@@ -134,7 +135,7 @@ describe("POST /v1/product/delete", () => {
     const other = crypto.randomUUID();
     await call("/v1/product", { body: body([{ type: "launch", modded: true }, { type: "enabled_set", mods: [{ mod_id: 1, slot: 1 }, { mod_id: 2, slot: 2 }] }]) });
     await call("/v1/product", { body: body([{ type: "launch", modded: false }], { installId: other }) });
-    const mine = await installHash(INSTALL_ID, undefined);
+    const mine = await installHash(INSTALL_ID, SALT);
     const before = await env.DB.prepare("SELECT COUNT(*) AS n FROM product_contrib WHERE install_hash = ?1").bind(mine).first<{ n: number }>();
     // seen, two mods and one pair.
     expect(before?.n).toBe(4);
@@ -146,9 +147,9 @@ describe("POST /v1/product/delete", () => {
 
     const left = await rows();
     expect(left.length).toBe(1);
-    expect(left[0]?.install_hash).toBe(await installHash(other, undefined));
+    expect(left[0]?.install_hash).toBe(await installHash(other, SALT));
     const contrib = await env.DB.prepare("SELECT DISTINCT install_hash FROM product_contrib").all<{ install_hash: string }>();
-    expect(contrib.results.map((r) => r.install_hash)).toEqual([await installHash(other, undefined)]);
+    expect(contrib.results.map((r) => r.install_hash)).toEqual([await installHash(other, SALT)]);
   });
 
   it("needs a real install id", async () => {
@@ -175,7 +176,7 @@ function records(): ProductRecord[] {
 async function sendEpoch(epoch: number, installs: number, network: (n: number) => string, ids?: string[]): Promise<string[]> {
   const made: string[] = [];
   for (let n = 0; n < installs; n += 1) {
-    const hash = ids?.[n] ?? (await installHash(crypto.randomUUID(), undefined));
+    const hash = ids?.[n] ?? (await installHash(crypto.randomUUID(), SALT));
     made.push(hash);
     for (const day of [n % 3, (n % 3) + 1]) {
       await contribute(env.DB, KEY, network(n), hash, records(), E0 + epoch * EPOCH_MS + day * DAY + 3_600_000);
@@ -245,7 +246,7 @@ describe("the distinct-contributor floor", () => {
   it("frees a bucket slot and lowers the counts when an install is deleted in the open epoch", async () => {
     const network = (): string => "10.9.9.9";
     const ids = await sendEpoch(0, 3, network);
-    const fourth = await installHash(crypto.randomUUID(), undefined);
+    const fourth = await installHash(crypto.randomUUID(), SALT);
     expect(await contribute(env.DB, KEY, "10.9.9.10", fourth, records(), E0 + 3_600_000)).toBe(false);
     await env.DB.prepare("DELETE FROM product_contrib WHERE install_hash = ?1").bind(ids[0]).run();
     expect(await contribute(env.DB, KEY, "10.9.9.10", fourth, records(), E0 + 3_600_000)).toBe(true);
@@ -268,30 +269,17 @@ describe("the distinct-contributor floor", () => {
     expect(networkPrefix("not an address")).toBeNull();
   });
 
-  it("publishes nothing and writes no contribution without the bucket secret", async () => {
+  it("publishes nothing from contributions without the bucket secret", async () => {
     await sendEpoch(0, 10, SIX_NETWORKS);
     await closeAll();
-    expect(await relatedTo(100, { PRODUCT_BUCKET_KEY: undefined })).toEqual({ mods: [] });
     expect(await publishedKeys(env.DB, undefined, "search", 10)).toEqual([]);
-
-    await clearTables();
+    expect(await publishedKeys(env.DB, "too-short", "search", 10)).toEqual([]);
     expect(await contribute(env.DB, undefined, "203.0.113.5", "h", records(), Date.now())).toBe(false);
-    const response = await worker.fetch(
-      new Request("http://telemetry.test/v1/product", {
-        method: "POST",
-        headers: { "x-sigil-client": "1", "x-sigil-version": VERSION, "cf-connecting-ip": "203.0.113.5", "content-type": "application/json" },
-        body: JSON.stringify(body([SET])),
-      }),
-      { ...env, PRODUCT_BUCKET_KEY: undefined } as typeof env,
-    );
-    expect(response.status).toBe(202);
-    expect((await rows()).length).toBe(1);
-    expect((await env.DB.prepare("SELECT COUNT(*) AS n FROM product_contrib").first<{ n: number }>())?.n).toBe(0);
   });
 
   it("does not count installs seen on one day only", async () => {
     for (let n = 0; n < 12; n += 1) {
-      const hash = await installHash(crypto.randomUUID(), undefined);
+      const hash = await installHash(crypto.randomUUID(), SALT);
       await contribute(env.DB, KEY, SIX_NETWORKS(n), hash, records(), E0 + (n % 3) * DAY);
     }
     await closeAll();
@@ -324,7 +312,7 @@ describe("the distinct-contributor floor", () => {
     // A rare search term from two installs.
     const rare = [parseRecord({ type: "browse_query", sort: null, filters: [], search: "rare words", results: 1 }) as ProductRecord];
     for (const n of [0, 1]) {
-      const hash = await installHash(crypto.randomUUID(), undefined);
+      const hash = await installHash(crypto.randomUUID(), SALT);
       for (const day of [0, 1, 2]) await contribute(env.DB, KEY, `10.20.${n}.1`, hash, rare, E0 + day * DAY + 3_600_000);
     }
     await closeAll();
@@ -334,7 +322,7 @@ describe("the distinct-contributor floor", () => {
   });
 
   it("caps the rows one install may hold per epoch and kind", async () => {
-    const hash = await installHash(crypto.randomUUID(), undefined);
+    const hash = await installHash(crypto.randomUUID(), SALT);
     const searches = Array.from({ length: 80 }, (_, n) =>
       parseRecord({
         type: "browse_query",
@@ -359,18 +347,54 @@ describe("the distinct-contributor floor", () => {
   });
 });
 
+describe("product routes without their secrets", () => {
+  function request(path: string, method: "GET" | "POST", payload?: unknown): Request {
+    return new Request(`http://telemetry.test${path}`, {
+      method,
+      headers: { "x-sigil-client": "1", "x-sigil-version": VERSION, "cf-connecting-ip": "203.0.113.5", "content-type": "application/json" },
+      ...(payload === undefined ? {} : { body: JSON.stringify(payload) }),
+    });
+  }
+  const cases: [string, Record<string, unknown>][] = [
+    ["no salt", { PRODUCT_SALT: undefined }],
+    ["a short salt", { PRODUCT_SALT: "short-salt" }],
+    ["no bucket key", { PRODUCT_BUCKET_KEY: undefined }],
+    ["a short bucket key", { PRODUCT_BUCKET_KEY: "short-key" }],
+  ];
+  for (const [name, override] of cases) {
+    it(`answers 503 not_configured and stores nothing with ${name}`, async () => {
+      const broken = { ...env, ...override } as typeof env;
+      for (const req of [
+        request("/v1/product", "POST", body([SET, { type: "launch", modded: true }])),
+        request("/v1/product/delete", "POST", { installId: INSTALL_ID }),
+        request("/v1/product/related?mod=100", "GET"),
+      ]) {
+        const response = await worker.fetch(req, broken);
+        expect(response.status).toBe(503);
+        expect(await readJson<{ error: string }>(response)).toEqual({ error: "not_configured" });
+      }
+      for (const table of ["product_events", "product_contrib", "product_totals"]) {
+        const count = await env.DB.prepare(`SELECT COUNT(*) AS n FROM ${table}`).first<{ n: number }>();
+        expect(count?.n).toBe(0);
+      }
+    });
+  }
+
+  it("never hashes without a salt", async () => {
+    await expect(installHash(INSTALL_ID, "")).rejects.toThrow();
+  });
+});
+
 describe("the daily job", () => {
   it("still runs retention when closing an epoch throws", async () => {
     const now = Date.now();
-    await env.DB.prepare(
-      `INSERT INTO product_events (created_at, install_hash, type, version, os, payload) VALUES (?1, 'h', 'old', '0.1.0', 'windows', '{}')`,
-    )
-      .bind(now - 400 * DAY_MS)
+    await env.DB.prepare(`INSERT INTO diagnostics (created_at, code, version, os, summary, log) VALUES (?1, 'SGL-OLD0-AAAA', '0.1.0', 'windows', 's', '')`)
+      .bind(now - 40 * DAY_MS)
       .run();
     await scheduledJob(env, now, "17 3 * * *", async () => {
       throw new Error("closing failed");
     });
-    expect((await rows()).length).toBe(0);
+    expect((await env.DB.prepare("SELECT COUNT(*) AS n FROM diagnostics").first<{ n: number }>())?.n).toBe(0);
   });
 
   it("deletes contributions older than 75 days even when closing keeps failing", async () => {
@@ -407,38 +431,75 @@ describe("the daily job", () => {
   });
 });
 
+async function insertEvent(hash: string, type: string, ageDays: number, now: number): Promise<void> {
+  await env.DB.prepare(
+    `INSERT INTO product_events (created_at, install_hash, type, version, os, payload) VALUES (?1, ?2, ?3, '0.1.0', 'windows', '{}')`,
+  )
+    .bind(now - ageDays * DAY_MS, hash, type)
+    .run();
+}
+
 describe("product retention", () => {
-  it("deletes raw rows and free-text totals older than 13 months, and closes stale epochs", async () => {
+  it("keeps raw records past 13 months and totals of every kind", async () => {
     const now = Date.now();
-    for (const [age, type] of [
-      [400, "old"],
-      [380, "new"],
+    await insertEvent("h-active", "old", 400, now);
+    await insertEvent("h-active", "new", 10, now);
+    for (const [kind, key] of [
+      ["search", "old term"],
+      ["hardware", "old gpu"],
+      ["mod", "5"],
     ] as const) {
-      await env.DB.prepare(
-        `INSERT INTO product_events (created_at, install_hash, type, version, os, payload) VALUES (?1, 'h', ?2, '0.1.0', 'windows', '{}')`,
-      )
-        .bind(now - age * DAY_MS, type)
+      await env.DB.prepare(`INSERT INTO product_totals (epoch, kind, key, installs, buckets, days, created_at) VALUES (2, ?1, ?2, 12, 7, 4, ?3)`)
+        .bind(kind, key, now - 900 * DAY_MS)
         .run();
     }
+    await worker.scheduled(createScheduledController({ cron: "17 3 * * *" }), env);
+    expect((await rows()).map((row) => [row.install_hash, row.type])).toEqual([
+      ["h-active", "old"],
+      ["h-active", "new"],
+    ]);
+    expect((await env.DB.prepare("SELECT COUNT(*) AS n FROM product_totals").first<{ n: number }>())?.n).toBe(3);
+  });
+
+  it("unlinks an install that sent nothing for 24 months, with one fresh value for its whole history", async () => {
+    const now = Date.now();
+    await insertEvent("h-gone", "a", 900, now);
+    await insertEvent("h-gone", "b", 740, now);
+    await insertEvent("h-other-gone", "c", 735, now);
+    // Active within 24 months: an old row stays linked because a newer one exists.
+    await insertEvent("h-back", "d", 800, now);
+    await insertEvent("h-back", "e", 100, now);
+    await worker.scheduled(createScheduledController({ cron: "17 3 * * *" }), env);
+    const stored = await rows();
+    const byType = new Map(stored.map((row) => [row.type, row.install_hash]));
+    expect(byType.get("a")).toMatch(/^u:[0-9a-f]{64}$/);
+    expect(byType.get("a")).toBe(byType.get("b"));
+    expect(byType.get("c")).toMatch(/^u:[0-9a-f]{64}$/);
+    expect(byType.get("c")).not.toBe(byType.get("a"));
+    expect([byType.get("d"), byType.get("e")]).toEqual(["h-back", "h-back"]);
+    expect(stored.some((row) => row.install_hash === "h-gone")).toBe(false);
+    // A second run leaves unlinked rows alone.
+    const before = byType.get("a");
+    await worker.scheduled(createScheduledController({ cron: "17 3 * * *" }), env);
+    expect(new Map((await rows()).map((row) => [row.type, row.install_hash])).get("a")).toBe(before);
+  });
+
+  it("Delete my data still removes an install's old rows before they are unlinked", async () => {
+    const hash = await installHash(INSTALL_ID, SALT);
+    await insertEvent(hash, "old", 700, Date.now());
+    const response = await call("/v1/product/delete", { body: { installId: INSTALL_ID } });
+    expect(await readJson<{ deleted: number }>(response)).toEqual({ deleted: 1 });
+    expect((await rows()).length).toBe(0);
+  });
+
+  it("closes stale epochs and keeps the contribution backstop", async () => {
+    const now = Date.now();
     await env.DB.prepare(
       `INSERT INTO product_contrib (epoch, kind, key, install_hash, bucket, day, created_at) VALUES (1, 'seen', 'd', 'h', 'b', 'd', ?1)`,
     )
       .bind(now - 45 * DAY_MS)
       .run();
-    for (const [epoch, kind, key, age] of [
-      [1, "search", "haze", 10],
-      [2, "search", "old term", 400],
-      [2, "mod", "5", 400],
-    ] as const) {
-      await env.DB.prepare(`INSERT INTO product_totals (epoch, kind, key, installs, buckets, days, created_at) VALUES (?1, ?2, ?3, 12, 7, 4, ?4)`)
-        .bind(epoch, kind, key, now - age * DAY_MS)
-        .run();
-    }
     await worker.scheduled(createScheduledController({ cron: "17 3 * * *" }), env);
-    expect((await rows()).map((row) => row.type)).toEqual(["new"]);
     expect((await env.DB.prepare("SELECT COUNT(*) AS n FROM product_contrib").first<{ n: number }>())?.n).toBe(0);
-    // The free-text total from 400 days ago is gone; the mod total of the same age stays.
-    const kept = await env.DB.prepare("SELECT key FROM product_totals ORDER BY key").all<{ key: string }>();
-    expect(kept.results.map((r) => r.key)).toEqual(["5", "haze"]);
   });
 });
