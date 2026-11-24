@@ -218,18 +218,22 @@ pub fn view(s: &State, u: &Ui, catalog: &Catalog, on: Option<Tier>, note: String
         (Some(tier), count) => (tr(tier.label()).to_string(), count),
         (None, count) => (tr("Every tier").to_string(), count),
     };
+    // Set to the row's right edge, the edge the list below ends on.
     let readout = col()
         .w(0.0)
         .grow(1.0)
         .min_w(0.0)
         .h(H)
         .pt(LINE_Y - 10.0)
+        .items_end()
         .a11y_hidden()
         .child(
             row()
+                .w_full()
                 .h(20.0)
                 .gap(8.0)
                 .center_y()
+                .justify_end()
                 .child(text(name).font(BODY_MED).color(u.ink).truncate())
                 .child(
                     text(fill(tr("{} configs"), &[&count.to_string()]))
@@ -240,7 +244,7 @@ pub fn view(s: &State, u: &Ui, catalog: &Catalog, on: Option<Tier>, note: String
                         .shrink(),
                 ),
         )
-        .child(row().w_full().h(16.0).child(text(note).font(SMALL).color(u.muted).truncate()));
+        .child(row().w_full().h(16.0).justify_end().child(text(note).font(SMALL).color(u.muted).truncate().min_w(0.0)));
 
     row()
         .w_full()

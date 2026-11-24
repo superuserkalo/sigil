@@ -1092,7 +1092,8 @@ fn config_row(s: &State, u: &Ui, config: &Config, is_on: bool) -> El {
                 config.def.note
             })
             .font(BODY)
-            .color(if error { u.amber } else { u.prose })
+            // Quieter than the name, so the name leads the row.
+            .color(if error { u.amber } else { u.muted })
             .grow(1.0)
             .min_w(0.0)
             .truncate(),
@@ -1191,8 +1192,10 @@ fn hosted_section(s: &State, u: &Ui) -> El {
             row()
                 .key(format!("perf-hosted-row-{id}"))
                 .w_full()
-                .h(56.0)
-                .gap(20.0)
+                // The same columns and height as the GitHub rows above, so both lists share
+                // one name column and one description edge.
+                .h(48.0)
+                .gap(16.0)
                 .center_y()
                 .border_sides([0.0, 0.0, 1.0, 0.0], u.hair)
                 .hover(u.hover)
@@ -1203,11 +1206,11 @@ fn hosted_section(s: &State, u: &Ui) -> El {
                 .on_press(move |st: &mut State| hosted::open(st, &id))
                 .child(
                     col()
-                        .w(260.0)
-                        .gap(2.0)
+                        .w(240.0)
+                        .gap(0.0)
                         .child(text(def.name).font(BODY_MED).color(u.ink).truncate())
                         .child(
-                            text(format!("by {} · {}", def.author, def.tier.label()))
+                            text(format!("{} · {}", def.author, def.tier.label()))
                                 .font(SMALL)
                                 .color(u.muted)
                                 .truncate(),
@@ -1215,7 +1218,7 @@ fn hosted_section(s: &State, u: &Ui) -> El {
                 )
                 .child(
                     text(def.note)
-                        .font(SMALL)
+                        .font(BODY)
                         .color(u.muted)
                         .grow(1.0)
                         .min_w(0.0)

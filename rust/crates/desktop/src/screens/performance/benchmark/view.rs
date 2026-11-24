@@ -370,30 +370,38 @@ fn options(s: &State, u: &Ui) -> El {
         })
         .collect();
     let warm = !page.no_warmup;
-    let group = |label: &str, control: El| col().gap(8.0).child(text(tr(label).to_string()).font(SMALL).color(u.muted)).child(control);
-    row()
+    let group = |label: &str, control: El| col().gap(8.0).items_start().child(text(tr(label).to_string()).font(SMALL).color(u.muted)).child(control);
+    let warmup = group(
+        "Warm-up pass",
+        row()
+            .h(32.0)
+            .gap(10.0)
+            .center_y()
+            .child(
+                u.toggle(warm)
+                    .key("bench-warmup")
+                    .label(tr("Warm-up pass"))
+                    .cursor(rune::Cursor::Pointer)
+                    .on_press(|st: &mut State| st.performance.benchmark.no_warmup = !st.performance.benchmark.no_warmup),
+            )
+            .child(text(tr(if warm { "First pass fills the shader cache" } else { "Off" })).font(SMALL).color(u.muted)),
+    );
+    // Two equal columns, two rows: every setting starts on one of two shared left edges
+    // instead of wherever the control before it happened to end.
+    let pair = |key: &'static str, a: El, b: El| el().key(key).w_full().equal_columns(2).gap(32.0).child(a.min_w(0.0)).child(b.min_w(0.0));
+    col()
         .key("bench-options")
         .w_full()
-        .gap(32.0)
-        .items_start()
-        .flex_wrap()
-        .child(group("Section", subpage::segmented(u, lengths).role("radiogroup").label(tr("Section"))))
-        .child(group("Window", subpage::segmented(u, displays).role("radiogroup").label(tr("Window"))))
-        .child(group(if page.pick == Pick::Cost { "Base passes" } else { "Passes per side" }, subpage::segmented(u, passes).role("radiogroup").label(tr("Passes"))))
-        .child(group(
-            "Warm-up pass",
-            row()
-                .h(32.0)
-                .gap(10.0)
-                .center_y()
-                .child(
-                    u.toggle(warm)
-                        .key("bench-warmup")
-                        .label(tr("Warm-up pass"))
-                        .cursor(rune::Cursor::Pointer)
-                        .on_press(|st: &mut State| st.performance.benchmark.no_warmup = !st.performance.benchmark.no_warmup),
-                )
-                .child(text(tr(if warm { "First pass fills the shader cache" } else { "Off" })).font(SMALL).color(u.muted)),
+        .gap(20.0)
+        .child(pair(
+            "bench-options-a",
+            group("Section", subpage::segmented(u, lengths).role("radiogroup").label(tr("Section"))),
+            group("Window", subpage::segmented(u, displays).role("radiogroup").label(tr("Window"))),
+        ))
+        .child(pair(
+            "bench-options-b",
+            group(if page.pick == Pick::Cost { "Base passes" } else { "Passes per side" }, subpage::segmented(u, passes).role("radiogroup").label(tr("Passes"))),
+            warmup,
         ))
 }
 
