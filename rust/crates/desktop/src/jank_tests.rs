@@ -355,6 +355,7 @@ const MOTION_CASES: &[(&str, &[Step], Step, f32)] = &[
     ("crosshair", &[], Step::Press("crosshair-groups-1"), 1400.0),
     ("browse-view-menu", &[], Step::Press("menu-size-large"), 800.0),
     ("demo-installed", &[], Step::Press("nav-browse"), 800.0),
+    ("stats-profile", &[], Step::Press("stats-tab-heroes"), 800.0),
 ];
 
 /// Keys whose element, and everything under it, may travel or fade: overlays and the parts
@@ -589,6 +590,8 @@ fn overlays_and_selections_move() {
         ("crosshair", &[], Step::Press("crosshair-groups-1"), "crosshair-groups-indicator", 1400.0),
         ("browse-view-menu", &[], Step::Press("menu-size-large"), "menu-seg-Cards-thumb", 800.0),
         ("demo-installed", &[], Step::Press("nav-browse"), "page-browse", 800.0),
+        // The Stats tab underline flies to the pressed tab on `base`; the tabs stay put.
+        ("stats-profile", &[], Step::Press("stats-tab-heroes"), "stats-tabs-underline", 800.0),
         // A key step on a slider moves its knob on `fast` (a drag lands it under the hand).
         ("crosshair", &[Step::Press("crosshair-groups-1"), Step::Press("slider-DotSize")], Step::Right, "slider-DotSize/#2", 1400.0),
     ];
@@ -730,4 +733,54 @@ fn motion_literals_live_in_motion_rs() {
         }
     }
     assert!(found.is_empty(), "motion written outside motion.rs:\n{}", found.join("\n"));
+}
+
+/// What one mod toggle costs at 300 mods, timed: the press, its commit and the frame after.
+/// A measurement, not a guard (timing on a shared machine is noisy): run it by name with
+/// `--ignored --nocapture` and compare medians before and after a change.
+#[test]
+#[ignore]
+fn measure_toggle_cost_at_300_mods() {
+    let _globals = crate::ui::test_globals();
+    let mut s = crate::data::init_state();
+    crate::bench_scenes::installed_stress_of(&mut s, 300);
+    let mut rt = Runtime::new(s, app::view, (1280.0, 800.0), Env::new(true, 1.0));
+    rt.check_live_only(false);
+    settle(&mut rt);
+    let key = rt
+        .elements()
+        .into_iter()
+        .filter(|e| !e.exiting && e.key.as_deref().is_some_and(|k| k.starts_with("toggle-")))
+        .find_map(|e| e.key.clone())
+        .expect("a toggle");
+    let mut times = Vec::new();
+    let mut downs = Vec::new();
+    let mut commit_counts = Vec::new();
+    for _ in 0..30 {
+        let (x, y) = centre_of(&rt, &key).expect("toggle on screen");
+        rt.pointer_move(x, y);
+        settle(&mut rt);
+        let commits = rt.stats.commits;
+        let start = std::time::Instant::now();
+        rt.pointer_down(x, y);
+        rt.frame(1.0 / 60.0);
+        let pressed = start.elapsed().as_secs_f64() * 1000.0;
+        let on_down = rt.stats.commits - commits;
+        let enabled_after_down = rt.state.addons.addons.iter().find(|a| format!("toggle-{:02}", a.slot) == key).map(|a| a.enabled);
+        rt.pointer_up(x, y);
+        rt.frame(1.0 / 60.0);
+        times.push(start.elapsed().as_secs_f64() * 1000.0);
+        downs.push(pressed);
+        commit_counts.push((on_down, rt.stats.commits - commits, enabled_after_down));
+        settle(&mut rt);
+    }
+    times.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    downs.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    eprintln!("jank: press frame median {:.2} ms, commits per toggle {:?}", downs[downs.len() / 2], &commit_counts[..3]);
+    eprintln!(
+        "jank: toggle at 300 mods ({key}): median {:.2} ms, p90 {:.2} ms, {} layout nodes",
+        times[times.len() / 2],
+        times[times.len() * 9 / 10],
+        rt.stats.layout_nodes
+    );
 }
