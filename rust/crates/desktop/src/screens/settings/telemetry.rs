@@ -146,7 +146,8 @@ fn save(st: &mut State, consent: Consent) {
 
 fn answer(st: &mut State, yes: bool) {
     st.settings.telemetry.asking = false;
-    save(st, Consent { asked: true, usage: yes, crashes: yes, hash_lookup: yes });
+    let kept = st.settings.telemetry.consent;
+    save(st, Consent { asked: true, usage: yes, crashes: yes, hash_lookup: yes, ..kept });
     if yes {
         event(st, "app:start", None);
     }

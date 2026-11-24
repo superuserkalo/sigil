@@ -207,8 +207,8 @@ fn the_fingerprint_ignores_addresses_and_line_numbers() {
 #[test]
 fn the_decision_follows_the_crash_switch() {
     let ledger = Ledger::default();
-    let opted_in = Consent { asked: true, usage: false, crashes: true, hash_lookup: false };
-    let opted_out = Consent { asked: true, usage: true, crashes: false, hash_lookup: true };
+    let opted_in = Consent { asked: true, usage: false, crashes: true, hash_lookup: false, ..Consent::default() };
+    let opted_out = Consent { asked: true, usage: true, crashes: false, hash_lookup: true, ..Consent::default() };
     let all_off = Consent { asked: true, ..Consent::default() };
     let never_asked = Consent::default();
     // A switch without the shown prompt does not count as consent.

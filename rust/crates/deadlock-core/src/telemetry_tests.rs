@@ -30,6 +30,7 @@ fn usage_on(data_dir: &Path) {
             usage: true,
             crashes: false,
             hash_lookup: false,
+            ..Consent::default()
         },
     )
     .unwrap();
@@ -52,8 +53,8 @@ fn sha256_of(text: &str) -> String {
 // A loopback server that records request heads and bodies
 // ---------------------------------------------------------------------------
 
-pub(super) struct Server {
-    pub(super) base: String,
+pub(crate) struct Server {
+    pub(crate) base: String,
     heads: Arc<StdMutex<Vec<String>>>,
     bodies: Arc<StdMutex<Vec<String>>>,
     hits: Arc<AtomicUsize>,
@@ -62,7 +63,7 @@ pub(super) struct Server {
 }
 
 impl Server {
-    pub(super) fn start(reply: &str) -> Server {
+    pub(crate) fn start(reply: &str) -> Server {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         listener.set_nonblocking(true).unwrap();
         let base = format!("http://{}", listener.local_addr().unwrap());
@@ -113,7 +114,7 @@ impl Server {
         }
     }
 
-    pub(super) fn hits(&self) -> usize {
+    pub(crate) fn hits(&self) -> usize {
         self.hits.load(Ordering::SeqCst)
     }
 
@@ -121,7 +122,7 @@ impl Server {
         self.heads.lock().unwrap().clone()
     }
 
-    pub(super) fn bodies(&self) -> Vec<String> {
+    pub(crate) fn bodies(&self) -> Vec<String> {
         self.bodies.lock().unwrap().clone()
     }
 }
@@ -193,6 +194,7 @@ fn consent_defaults_to_off_and_round_trips() {
         usage: true,
         crashes: false,
         hash_lookup: true,
+        ..Consent::default()
     };
     write_consent(&dir, &chosen).unwrap();
     assert_eq!(read_consent(&dir), chosen);
@@ -213,6 +215,7 @@ fn a_switch_without_a_shown_prompt_still_sends_nothing() {
             usage: true,
             crashes: true,
             hash_lookup: true,
+            ..Consent::default()
         },
     )
     .unwrap();
@@ -405,6 +408,7 @@ fn pending_crashes_wait_for_consent_then_are_sent_once() {
             usage: false,
             crashes: true,
             hash_lookup: false,
+            ..Consent::default()
         })
         .unwrap(),
     )

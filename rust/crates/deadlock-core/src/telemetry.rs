@@ -141,6 +141,13 @@ pub struct Consent {
     pub usage: bool,
     pub crashes: bool,
     pub hash_lookup: bool,
+    /// "Help build Sigil" (ADR 0017) was asked, in onboarding or once for an older install.
+    /// Separate from `asked`, so an install that answered the first-start question is still
+    /// asked this one.
+    pub product_asked: bool,
+    /// "Help build Sigil" product data. Off by default; only counts with `product_asked`.
+    /// [`crate::product_data::allowed`] is the one place that reads the pair.
+    pub product: bool,
 }
 
 impl Consent {
@@ -780,7 +787,7 @@ fn write_queue(data_dir: &Path, queue: &[Queued]) -> Result<()> {
     write_atomic(&queue_path(data_dir), &text)
 }
 
-fn endpoint_at(base: &str, path: &str) -> String {
+pub(crate) fn endpoint_at(base: &str, path: &str) -> String {
     format!("{}{}", base.trim_end_matches('/'), path)
 }
 
@@ -792,7 +799,7 @@ fn agent(timeout: Duration) -> ureq::Agent {
         .new_agent()
 }
 
-fn post(url: &str, version: &str, body: &Value, timeout: Duration) -> Result<String> {
+pub(crate) fn post(url: &str, version: &str, body: &Value, timeout: Duration) -> Result<String> {
     let payload = serde_json::to_vec(body)?;
     let mut response = agent(timeout)
         .post(url)
@@ -812,7 +819,7 @@ fn post(url: &str, version: &str, body: &Value, timeout: Duration) -> Result<Str
     Ok(text)
 }
 
-fn get(url: &str, version: &str, timeout: Duration) -> Result<String> {
+pub(crate) fn get(url: &str, version: &str, timeout: Duration) -> Result<String> {
     let mut response = agent(timeout)
         .get(url)
         .header("Accept", "application/json")
@@ -832,17 +839,17 @@ fn get(url: &str, version: &str, timeout: Duration) -> Result<String> {
 }
 
 /// One line on stderr, the only logging the core does. Nothing here carries a key or a token.
-fn note(message: &str) {
+pub(crate) fn note(message: &str) {
     eprintln!("[sigil telemetry] {message}");
 }
 
-fn os_name() -> &'static str {
+pub(crate) fn os_name() -> &'static str {
     std::env::consts::OS
 }
 
 /// A version the Worker accepts: semver-ish, starting with a digit. Anything else falls back to
 /// the workspace version.
-fn app_version(version: &str) -> String {
+pub(crate) fn app_version(version: &str) -> String {
     let value = version.trim();
     let valid = !value.is_empty()
         && value.len() <= 32
@@ -859,7 +866,7 @@ fn app_version(version: &str) -> String {
 
 /// A random UUID v4. `getrandom` reads the OS source; if that fails, a sha256 of the clock and
 /// the process id still gives 16 different bytes.
-fn uuid_v4() -> String {
+pub(crate) fn uuid_v4() -> String {
     let mut bytes = [0_u8; 16];
     if getrandom::fill(&mut bytes).is_err() {
         let nanos = SystemTime::now()
@@ -885,7 +892,7 @@ fn uuid_v4() -> String {
     )
 }
 
-fn is_uuid(value: &str) -> bool {
+pub(crate) fn is_uuid(value: &str) -> bool {
     value.len() == 36
         && value
             .char_indices()
@@ -924,4 +931,4 @@ pub mod crash;
 
 #[cfg(test)]
 #[path = "telemetry_tests.rs"]
-mod tests;
+pub(crate) mod tests;

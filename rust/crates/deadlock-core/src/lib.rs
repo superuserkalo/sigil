@@ -92,6 +92,7 @@ pub mod stats;
 pub mod steam_launch;
 pub mod subscription;
 pub mod telemetry;
+pub mod product_data;
 pub mod toolchain;
 pub mod trash;
 pub mod viewer;

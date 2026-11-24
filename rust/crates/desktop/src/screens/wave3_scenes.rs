@@ -202,7 +202,7 @@ pub fn telemetry_privacy(s: &mut State) {
     crate::screens::settings::scene_tab(s, Tab::Privacy);
     s.settings.telemetry.loaded = true;
     s.settings.telemetry.consent =
-        deadlock_core::telemetry::Consent { asked: true, usage: true, crashes: true, hash_lookup: false };
+        deadlock_core::telemetry::Consent { asked: true, usage: true, crashes: true, hash_lookup: false, ..Default::default() };
 }
 
 /// Send diagnostics: the scrubbed preview over Settings > Logs.
