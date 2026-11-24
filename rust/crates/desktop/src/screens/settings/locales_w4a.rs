@@ -3,6 +3,14 @@
 //! same file; `i18n` reads it next to the others (declared there with `#[path]`).
 
 pub const DE: &[(&str, &str)] = &[
+    // Toasts: the waiting count, and launch presses while a launch runs
+    ("+{} more", "+{} weitere"),
+    ("Deadlock is already starting", "Deadlock startet bereits"),
+    ("Wait for it, or stop the launch first.", "Warte darauf oder brich den Start zuerst ab."),
+    ("Deadlock is already running", "Deadlock läuft bereits"),
+    ("Close the game first, then launch again.", "Schließe zuerst das Spiel und starte dann neu."),
+    ("Deadlock is using the mod files", "Deadlock nutzt gerade die Mod-Dateien"),
+    ("Close the game, then launch vanilla again.", "Schließe das Spiel und starte dann erneut ohne Mods."),
     // Send feedback (issue #5)
     ("Send feedback", "Feedback senden"),
     ("Copy details", "Details kopieren"),
@@ -202,6 +210,8 @@ pub const DE: &[(&str, &str)] = &[
 /// scenes and the report lines Send feedback builds (read by whoever fixes the bug).
 #[cfg_attr(not(test), allow(dead_code))]
 pub const NOT_TEXT: &[&str] = &[
+    // An OS error a held file reads as (`launch_progress::held`)
+    "Resource busy",
     "Page: {}",
     "Warning: {}",
     // Scene fixtures

@@ -21,6 +21,8 @@ mod icons;
 mod jobs;
 #[cfg(test)]
 mod jank_tests;
+#[cfg(test)]
+mod toast_tests;
 mod memory;
 mod model;
 mod motion;

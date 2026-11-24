@@ -143,6 +143,18 @@ fn lookup(lang: Lang, english: &'static str) -> &'static str {
         .unwrap_or(english)
 }
 
+/// Every German string, for tests that lay out the longest ones.
+#[cfg(test)]
+pub(crate) fn german_strings() -> Vec<&'static str> {
+    maps()[index(Lang::German) as usize].values().copied().collect()
+}
+
+/// The German for `english`, when a table has it.
+#[cfg(test)]
+pub(crate) fn german_of(english: &str) -> Option<&'static str> {
+    maps()[index(Lang::German) as usize].get(english).copied()
+}
+
 /// `t` for any string: the translation, or the text itself. Settings' row helpers pass every
 /// title and line through this, so a literal handed to a helper is routed without a wrapper.
 pub fn tr(text: &str) -> &str {

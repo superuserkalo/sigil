@@ -1474,8 +1474,8 @@ fn sidebar(s: &State, u: &Ui, insets: rune::ChromeInsets) -> El {
             .pb(8.0)
             .gap(4.0)
             .border_sides([1.0, 0.0, 0.0, 0.0], u.hair)
-            .child(compact_launch(s, u, false))
-            .child(if s.prefs.single_launch { el() } else { compact_launch(s, u, true) })
+            .child(launch_lock(s, compact_launch(s, u, false)))
+            .child(if s.prefs.single_launch { el() } else { launch_lock(s, compact_launch(s, u, true)) })
             .child(el().h(4.0))
             .children(crate::shell_tips::season_mark(s, u))
             // macOS: the traffic lights fill the narrow top row, so Expand sits here, centred.
@@ -1505,12 +1505,12 @@ fn sidebar(s: &State, u: &Ui, insets: rune::ChromeInsets) -> El {
                     s.settings.launch_vanilla_pick,
                 )
             } else {
-                screens::settings::personalize::launch_art(s, u, launch_modded(u), false)
+                screens::settings::personalize::launch_art(s, u, launch_lock(s, launch_modded(u)), false)
             })
             .child(if s.prefs.single_launch {
                 el()
             } else {
-                screens::settings::personalize::launch_art(s, u, launch_vanilla(u), true)
+                screens::settings::personalize::launch_art(s, u, launch_lock(s, launch_vanilla(u)), true)
             })
             .child(el().h(4.0))
             .children(crate::shell_tips::season_mark(s, u))
@@ -1720,6 +1720,15 @@ fn launch_modded(u: &Ui) -> El {
                 .color(u.accent_ink)
                 .grow(1.0),
         )
+}
+
+/// A launch button while a launch runs or the game is up: off, dimmed in place (same size, no
+/// layout change), the reason in its tooltip.
+pub fn launch_lock(s: &State, button: El) -> El {
+    match screens::launch_progress::busy_line(s) {
+        Some(why) => button.disabled(true).opacity(0.45).cursor(rune::Cursor::Default).help(why),
+        None => button,
+    }
 }
 
 /// The single launch button in the sidebar (Settings, General).
@@ -2743,6 +2752,10 @@ pub fn scenes() -> &'static [(&'static str, fn(&mut State))] {
         ("notify-stack", crate::notify::scene_stack),
         ("notify-undo", crate::notify::scene_undo),
         ("notify-banner", crate::notify::scene_with_banner),
+        ("toast-launch-busy", crate::notify::scene_launch_busy),
+        ("toast-long-error", crate::notify::scene_long_error),
+        ("toast-path", crate::notify::scene_path),
+        ("toast-stack", crate::notify::scene_toast_stack),
         ("shell-shortcuts", crate::shell::scene_shortcuts),
         ("shell-whats-new", crate::shell::scene_whats_new),
         ("shell-drop", crate::shell::scene_drop),

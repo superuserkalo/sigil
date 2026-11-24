@@ -3331,7 +3331,17 @@ pub fn run_launch(state: &mut State, dialog: crate::screens::launch::Dialog) {
             }
         }
         Err(error) => {
-            state.launch.last = Some(error.to_string());
+            let raw = error.to_string();
+            state.launch.last = Some(if dialog == Dialog::Vanilla {
+                // The raw error (paths, OS code) goes to the log; the toast says what to do.
+                crate::screens::settings::log::error(format!("Launch vanilla failed: {raw}"));
+                if let Some(notice) = crate::screens::launch_progress::vanilla_held_notice(&raw) {
+                    crate::notify::push(state, notice);
+                }
+                crate::screens::launch_progress::vanilla_failure(&raw)
+            } else {
+                raw
+            });
         }
     }
     state.launch.busy = false;

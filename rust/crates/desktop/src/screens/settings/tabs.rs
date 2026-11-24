@@ -178,7 +178,7 @@ pub fn single_launch(s: &State, u: &Ui) -> El {
         .w_full()
         .h(36.0)
         .gap(4.0)
-        .child(
+        .child(crate::app::launch_lock(s,
             row()
                 .key("launch-single-go")
                 .grow(1.0)
@@ -198,7 +198,7 @@ pub fn single_launch(s: &State, u: &Ui) -> El {
                 })
                 .child(rune::icon(&icons::PLAY, 14.0).color(u.accent_ink).a11y_hidden())
                 .child(text(tr(label)).font(BODY_MED).color(u.accent_ink).grow(1.0).truncate()),
-        )
+        ))
         .child(
             u.icon_button(&icons::REFRESH_CW, tr("Switch between modded and vanilla"))
                 .key("launch-single-swap")

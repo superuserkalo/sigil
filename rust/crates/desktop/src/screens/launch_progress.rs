@@ -140,6 +140,12 @@ pub fn plan(vanilla: bool, stashed: bool, page: bool, repair: bool) -> Vec<Step>
 /// Start a launch. A modded one first asks about map mods when any are on
 /// (`launch_extras::ask_first`); the answer starts it through [`begin_checked`].
 pub fn begin(st: &mut State, vanilla: bool, page: bool) {
+    // A second launch while one runs would set mods aside under a starting game: the buttons
+    // are off then, and a press that still gets here (a shortcut, a dialog) says why.
+    if let Some((title, detail)) = busy(st) {
+        crate::notify::push(st, crate::notify::Notice::warning(tr(title)).detail(tr(detail)));
+        return;
+    }
     // Every launch passes the gate first: a gameinfo.gi that would crash the game stops here.
     if crate::screens::launch_gate::blocked(st, vanilla, page) {
         return;
@@ -151,6 +157,70 @@ pub fn begin(st: &mut State, vanilla: bool, page: bool) {
     }
 
     begin_checked(st, vanilla, page);
+}
+
+/// Why a launch cannot start now, as a title and what to do: a launch is under way, or the
+/// game is already up. `None` when a launch may start.
+pub fn busy(st: &State) -> Option<(&'static str, &'static str)> {
+    if st.launch.progress.is_some() {
+        Some(("Deadlock is already starting", "Wait for it, or stop the launch first."))
+    } else if st.launch.monitor.running() {
+        Some(("Deadlock is already running", "Close the game first, then launch again."))
+    } else {
+        None
+    }
+}
+
+/// The reason a launch button shows in its tooltip while it is off.
+pub fn busy_line(st: &State) -> Option<String> {
+    busy(st).map(|(title, detail)| format!("{}. {}", tr(title), tr(detail)))
+}
+
+/// A launch already handed to Steam and waiting for the game, its overlay hidden: what the
+/// sidebar looks like while Deadlock starts. For scenes and tests; nothing runs.
+pub fn stage_waiting(st: &mut State, vanilla: bool) {
+    let steps = plan(vanilla, false, false, false);
+    st.launch.progress = Some(Progress {
+        at: steps.len() - 1,
+        steps,
+        vanilla,
+        hidden: true,
+        closing: false,
+        waiting_since: Some(Instant::now()),
+        stopping: false,
+        cancel_error: None,
+    });
+}
+
+/// The toast a failed vanilla launch raises when the starting game holds the mod files: what
+/// happened and what to do, as a warning. `None` for any other failure, which keeps its own
+/// words through the status line.
+pub fn vanilla_held_notice(raw: &str) -> Option<crate::notify::Notice<State>> {
+    held(raw).then(|| {
+        crate::notify::Notice::warning(tr("Deadlock is using the mod files"))
+            .detail(tr("Close the game, then launch vanilla again."))
+    })
+}
+
+fn held(raw: &str) -> bool {
+    deadlock_core::error::mentions_in_use(raw)
+        || ["os error 32", "os error 33", "being used by another process", "Resource busy"]
+            .iter()
+            .any(|sign| raw.contains(sign))
+}
+
+/// What a failed vanilla launch says. A file the starting game holds open is the usual cause:
+/// say that in plain words; anything else keeps its own message.
+pub fn vanilla_failure(raw: &str) -> String {
+    if held(raw) {
+        format!(
+            "{}. {}",
+            tr("Deadlock is using the mod files"),
+            tr("Close the game, then launch vanilla again.")
+        )
+    } else {
+        raw.to_string()
+    }
 }
 
 /// Start a launch with every question answered. The press is the approval; the steps run from

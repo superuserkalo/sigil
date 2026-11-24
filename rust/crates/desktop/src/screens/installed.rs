@@ -4168,14 +4168,15 @@ fn finish_delete(
     st.status = if errors.is_empty() {
         format!("Moved {n} mod{} to the trash.", if n == 1 { "" } else { "s" })
     } else {
+        // The count is the title; each slot's reason follows as the detail, one per slot.
         format!(
-            "Moved {n} to the trash; {} failed ({}).",
+            "Moved {n} to the trash; {} failed. Slot {}",
             errors.len(),
             errors
                 .iter()
                 .map(|(slot, error)| format!("{slot:02}: {error}"))
                 .collect::<Vec<_>>()
-                .join("; ")
+                .join("; slot ")
         )
     };
     rescan(st);

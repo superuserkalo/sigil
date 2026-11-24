@@ -380,7 +380,9 @@ fn game_panel(s: &State, u: &Ui, read: Option<&Read>, process: &GameProcess, run
     let v = &s.launch;
     let pending = read.and_then(|read| read.stash.as_ref());
     let stashed = pending.is_some();
-    let ready = !stashed && !v.busy && !running;
+    // A launch under way (its overlay may be hidden) keeps both buttons off, with the reason.
+    let launching = crate::screens::launch_progress::busy_line(s);
+    let ready = !stashed && !v.busy && !running && launching.is_none();
 
     // Row 1: the game.
     let game = if running {
@@ -432,14 +434,14 @@ fn game_panel(s: &State, u: &Ui, read: Option<&Read>, process: &GameProcess, run
             .child(spacer())
             .child(
                 button(tr("Launch vanilla"), "launch-go-vanilla", ActionKind::Secondary)
-                    .help(vanilla_help)
+                    .help(launching.clone().unwrap_or_else(|| vanilla_help.to_string()))
                     .on_press(move |st: &mut State| {
                         if ready {
                             st.launch.dialog = Dialog::Vanilla;
                         }
                     }),
             )
-            .child(button(tr("Launch modded"), "launch-go-modded", ActionKind::Primary).on_press(move |st: &mut State| {
+            .child(button(tr("Launch modded"), "launch-go-modded", ActionKind::Primary).help(launching.clone().unwrap_or_default()).on_press(move |st: &mut State| {
                 if ready {
                     press_launch(st, false);
                 }

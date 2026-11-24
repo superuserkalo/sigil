@@ -24,7 +24,7 @@ use rune::{Color, El, Key, KeyEvent, Tx, col, el, row, text};
 
 use crate::app::State;
 use crate::icons;
-use crate::screens::settings::i18n::tr;
+use crate::screens::settings::i18n::{fill, tr};
 use crate::ui::{BODY, BODY_MED, PAGE_X, SMALL, Ui};
 
 pub mod feedback;
@@ -43,8 +43,6 @@ pub const ACTION_MIN: f64 = 8.0;
 pub const WARNING_MIN: f64 = 20.0;
 /// Reading time per word: about 200 words a minute (issue #5).
 pub const PER_WORD: f64 = 0.3;
-/// Longest detail drawn on a toast; the rest is in Send feedback and Copy details.
-pub const DETAIL_MAX: usize = 240;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {
@@ -204,17 +202,6 @@ impl<C> Notice<C> {
             self.undo = newer.undo;
         }
     }
-
-    /// The detail as a toast draws it: at most [`DETAIL_MAX`] characters.
-    pub fn short_detail(&self) -> Option<String> {
-        let detail = self.detail.as_deref()?;
-        if detail.chars().count() <= DETAIL_MAX {
-            return Some(detail.to_string());
-        }
-        let cut: String = detail.chars().take(DETAIL_MAX).collect();
-        let cut = cut.rsplit_once(' ').map_or(cut.as_str(), |(head, _)| head);
-        Some(format!("{}\u{2026}", cut.trim_end_matches([',', ';', ':', ' '])))
-    }
 }
 
 /// One format for every title: no trailing period (an ellipsis stays), no doubled spaces, and
@@ -333,6 +320,8 @@ pub struct Notices<C> {
     pushed: Vec<(Kind, String, String)>,
     /// The Send feedback dialog (`feedback.rs`, issue #5).
     pub feedback: feedback::Feedback,
+    /// The Details dialog: a cut toast's title and whole message.
+    pub details: Option<(String, String)>,
 }
 
 impl<C> Default for Notices<C> {
@@ -345,11 +334,17 @@ impl<C> Default for Notices<C> {
             pending: Vec::new(),
             pushed: Vec::new(),
             feedback: feedback::Feedback::default(),
+            details: None,
         }
     }
 }
 
 impl<C> Notices<C> {
+    /// Toasts waiting behind the cap, for the stack's "+N more" line.
+    pub fn waiting(&self) -> usize {
+        self.toasts.iter().filter(|toast| toast.phase == Phase::Queued).count()
+    }
+
     /// The toasts to draw, oldest first.
     pub fn visible(&self) -> impl Iterator<Item = &Toast<C>> {
         self.toasts.iter().filter(|toast| toast.visible())
@@ -788,12 +783,69 @@ fn hover(st: &mut State, id: Id, inside: bool, tx: &mut Tx) {
 
 // --- view -----------------------------------------------------------------------------------
 
+/// Every toast is this wide; it fits the 1040 point window beside the sidebar with margins.
 pub const TOAST_W: f32 = 400.0;
+/// Most text lines a toast draws, title and detail together; the rest is under Details.
+pub const MAX_LINES: usize = 4;
+/// Most lines the title takes when a detail follows it.
+pub const TITLE_LINES: usize = 2;
+/// The line height of `BODY` and `BODY_MED`.
+const LINE: f32 = 20.0;
+/// Card padding (left, right), the icon slot, the two gaps beside the words, the close button.
+const CHROME_W: f32 = 12.0 + 8.0 + 16.0 + 10.0 + 10.0 + 24.0;
+/// Widest a toast button grows; a longer label is cut, with the whole label in its tooltip.
+const BUTTON_MAX_W: f32 = 160.0;
 
-/// The stack, pinned to the window's bottom-right corner, and the Send feedback dialog over
-/// everything when it is open. None when neither is shown.
+/// How a toast's words fit: the line caps for the title and the detail, and whether anything
+/// is cut, which brings the Details button.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Fit {
+    pub title_lines: usize,
+    pub detail_lines: usize,
+    pub clamped: bool,
+}
+
+/// Lines `text` takes at `width` points, wrapping inside long words as the toast does.
+fn lines_at(text: &str, style: rune::TextStyle, width: f32) -> usize {
+    let (_, h) = rune::text::measure_with(
+        text,
+        &[],
+        style,
+        Some(width.max(1.0)),
+        rune::text::RichLayoutOptions::new().wrap_anywhere(),
+    );
+    ((h - 0.5) / LINE).ceil().max(1.0) as usize
+}
+
+/// The line caps for a title and detail laid out `width` points wide.
+pub fn fit(title: &str, detail: Option<&str>, width: f32) -> Fit {
+    let title_need = lines_at(title, BODY_MED, width);
+    let Some(detail) = detail else {
+        return Fit { title_lines: MAX_LINES, detail_lines: 0, clamped: title_need > MAX_LINES };
+    };
+    let title_lines = title_need.min(TITLE_LINES);
+    let detail_lines = MAX_LINES - title_lines;
+    let detail_need = lines_at(detail, BODY, width);
+    Fit {
+        title_lines: TITLE_LINES,
+        detail_lines,
+        clamped: title_need > TITLE_LINES || detail_need > detail_lines,
+    }
+}
+
+/// The whole message, for Details and the tooltips.
+fn full_text<C>(notice: &Notice<C>) -> String {
+    match &notice.detail {
+        Some(detail) => format!("{}\n\n{detail}", notice.title),
+        None => notice.title.clone(),
+    }
+}
+
+/// The stack, pinned to the window's bottom-right corner, and the Send feedback or Details
+/// dialog over everything when one is open. None when nothing is shown.
 pub fn region(s: &State, u: &Ui) -> Option<El> {
     let toasts: Vec<El> = s.notices.visible().map(|toast| card(toast, u)).collect();
+    let waiting = s.notices.waiting();
     let stack = (!toasts.is_empty()).then(|| {
         col()
             .key("toasts")
@@ -804,9 +856,18 @@ pub fn region(s: &State, u: &Ui) -> Option<El> {
             .gap(8.0)
             // The stack has no entrance, so the first toast slides in on its own; it fades with the last.
             .transition(crate::motion::layer())
+            // Past the cap the rest wait their turn: one quiet line counts them.
+            .children((waiting > 0).then(|| {
+                row().key("toasts-more").w_full().h(16.0).justify_end().center_y().child(
+                    text(fill(tr("+{} more"), &[&waiting.to_string()]))
+                        .font(SMALL)
+                        .color(u.muted),
+                )
+            }))
             .children(toasts)
     });
-    let Some(dialog) = feedback::dialog(s, u) else {
+    let dialog = feedback::dialog(s, u).map(|d| ("feedback-modal", d)).or_else(|| details_dialog(s, u).map(|d| ("toast-details-modal", d)));
+    let Some((modal_key, dialog)) = dialog else {
         return stack;
     };
     let layer = el()
@@ -815,11 +876,64 @@ pub fn region(s: &State, u: &Ui) -> Option<El> {
         .w_full()
         .h_full()
         .transition(crate::motion::layer())
-        .child(u.modal_layer("feedback-modal", dialog));
+        .child(u.modal_layer(modal_key, dialog));
     Some(match stack {
         Some(stack) => layer.child(stack),
         None => layer,
     })
+}
+
+fn close_details(st: &mut State) {
+    st.notices.details = None;
+}
+
+/// Details: a toast's whole message, selectable, with Copy.
+fn details_dialog(s: &State, u: &Ui) -> Option<El> {
+    let (title, full) = s.notices.details.clone()?;
+    let copy = full.clone();
+    Some(
+        u.dialog_shell()
+            .key("toast-details")
+            .role("dialog")
+            .label(title.clone())
+            .w(560.0)
+            .max_w(560.0)
+            .padding(24.0)
+            .gap(14.0)
+            .modal(true, close_details)
+            .child(text(title).font(crate::ui::H2).color(u.ink).wrap_anywhere().w_full())
+            .child(
+                col()
+                    .key("toast-details-text")
+                    .w_full()
+                    .max_h(280.0)
+                    .padding(12.0)
+                    .radius(crate::ui::r(8.0))
+                    .fill(u.well)
+                    .border(1.0, u.hair)
+                    .scroll(rune::ScrollSpec { stick_bottom: false })
+                    .child(text(full).font(BODY).color(u.prose).wrap_anywhere().selectable(true).w_full()),
+            )
+            .child(
+                row()
+                    .w_full()
+                    .gap(8.0)
+                    .center_y()
+                    .child(rune::spacer())
+                    .child(
+                        u.action(tr("Copy"), crate::ui::ActionKind::Secondary)
+                            .key("toast-details-copy")
+                            .cursor(rune::Cursor::Pointer)
+                            .on_press_tx(move |_st: &mut State, tx: &mut Tx| tx.copy(copy.clone())),
+                    )
+                    .child(
+                        u.action(tr("Close"), crate::ui::ActionKind::Primary)
+                            .key("toast-details-close")
+                            .cursor(rune::Cursor::Pointer)
+                            .on_press(close_details),
+                    ),
+            ),
+    )
 }
 
 fn kind_icon(kind: Kind, u: &Ui) -> El {
@@ -832,18 +946,50 @@ fn kind_icon(kind: Kind, u: &Ui) -> El {
     rune::icon(glyph, 16.0).color(color).a11y_hidden()
 }
 
+/// The width a toast button takes beside the words.
+fn button_w(label: &str) -> f32 {
+    (rune::text::measure(label, &[], BODY_MED, None).0 + 16.0).min(BUTTON_MAX_W)
+}
+
+/// The width the words get on a card: what the icon, close and inline buttons leave.
+pub fn words_width<C>(notice: &Notice<C>) -> f32 {
+    let mut width = TOAST_W - CHROME_W;
+    if !notice.kind.loud() {
+        if let Some(label) = notice.action_label() {
+            width -= button_w(label) + 10.0;
+        }
+        if notice.has_undo() {
+            width -= button_w(tr("Undo")) + 10.0;
+        }
+    }
+    if notice.repeats >= 2 {
+        width -= 30.0;
+    }
+    width
+}
+
 fn card(toast: &Toast<State>, u: &Ui) -> El {
     let id = toast.id;
     let notice = &toast.notice;
+    let full = full_text(notice);
+    let fit = fit(&notice.title, notice.detail.as_deref(), words_width(notice));
     let mut words = col()
         .grow(1.0)
         .shrink()
         .min_w(0.0)
         .gap(2.0)
         .a11y_hidden()
-        .child(title_line(notice, u));
-    if let Some(detail) = notice.short_detail() {
-        words = words.child(text(detail).font(BODY).color(u.muted).wrap().w_full());
+        .child(title_line(notice, fit.title_lines, &full, u));
+    if let Some(detail) = &notice.detail {
+        words = words.child(
+            text(detail.clone())
+                .font(BODY)
+                .color(u.muted)
+                .wrap_anywhere()
+                .max_lines(fit.detail_lines)
+                .help_when_truncated(full.clone())
+                .w_full(),
+        );
     }
     let mut body = row()
         .w_full()
@@ -853,7 +999,7 @@ fn card(toast: &Toast<State>, u: &Ui) -> El {
         .child(words);
     // One format: at most one action (Undo, Show, Retry) beside the words. An error or a
     // warning puts its action and Send feedback on a row of their own under the words, so long
-    // titles keep room.
+    // titles keep room; so does Details, when the words are cut.
     let error = notice.kind.loud();
     let mut buttons: Vec<El> = Vec::new();
     if let Some(label) = notice.action_label() {
@@ -872,7 +1018,7 @@ fn card(toast: &Toast<State>, u: &Ui) -> El {
     }
     if !error {
         for button in buttons.drain(..) {
-            body = body.child(button);
+            body = body.child(button.mt(-2.0));
         }
     }
     body = body.child(
@@ -890,6 +1036,17 @@ fn card(toast: &Toast<State>, u: &Ui) -> El {
             .on_press_tx(move |st: &mut State, tx: &mut Tx| dismiss(st, id, tx))
             .child(rune::icon(&icons::X, 14.0).color(u.faint).a11y_hidden()),
     );
+    if fit.clamped {
+        let title = notice.title.clone();
+        let whole = full.clone();
+        buttons.push(
+            text_button(u, &format!("toast-{id}-details"), tr("Details"))
+                .cursor(rune::Cursor::Pointer)
+                .on_press(move |st: &mut State| {
+                    st.notices.details = Some((title.clone(), whole.clone()));
+                }),
+        );
+    }
     let border = match notice.kind {
         Kind::Error => u.rose.alpha(0.35),
         Kind::Warning => u.amber.alpha(0.35),
@@ -927,6 +1084,7 @@ fn card(toast: &Toast<State>, u: &Ui) -> El {
         .transition(crate::motion::from_right())
         .motion(crate::motion::base())
         .child(body);
+    let mut footer = row().key(format!("toast-{id}-buttons")).w_full().pl(18.0).pt(6.0).gap(4.0).center_y().children(buttons);
     if error {
         let (title, detail) = (notice.title.clone(), notice.detail.clone().unwrap_or_default());
         let warning = notice.kind == Kind::Warning;
@@ -935,16 +1093,10 @@ fn card(toast: &Toast<State>, u: &Ui) -> El {
                 dismiss(st, id, tx);
                 feedback::open_as(st, warning, &title, &detail);
             });
-        card = card.child(
-            row()
-                .w_full()
-                .pl(18.0)
-                .pt(6.0)
-                .gap(4.0)
-                .center_y()
-                .children(buttons)
-                .child(feedback),
-        );
+        footer = footer.child(feedback);
+        card = card.child(footer);
+    } else if fit.clamped {
+        card = card.child(footer);
     }
     if let Some(detail) = &notice.detail {
         card = card.description(detail.clone());
@@ -953,8 +1105,13 @@ fn card(toast: &Toast<State>, u: &Ui) -> El {
 }
 
 /// The title, and a quiet repeat count when the same thing was pushed more than once.
-fn title_line<C>(notice: &Notice<C>, u: &Ui) -> El {
-    let title = text(notice.title.clone()).font(BODY_MED).color(u.ink).wrap();
+fn title_line<C>(notice: &Notice<C>, lines: usize, full: &str, u: &Ui) -> El {
+    let title = text(notice.title.clone())
+        .font(BODY_MED)
+        .color(u.ink)
+        .wrap_anywhere()
+        .max_lines(lines)
+        .help_when_truncated(full.to_string());
     if notice.repeats < 2 {
         return title.w_full();
     }
@@ -971,13 +1128,14 @@ fn title_line<C>(notice: &Notice<C>, u: &Ui) -> El {
         )
 }
 
-/// A compact text button for a toast: 24 points tall, ink text, a hover fill.
+/// A compact text button for a toast: 24 points tall, ink text, a hover fill. A long label is
+/// cut at [`BUTTON_MAX_W`] with the whole label in its tooltip.
 fn text_button(u: &Ui, key: &str, label: &str) -> El {
     row()
         .key(key.to_string())
         .h(24.0)
-        .mt(-2.0)
         .px(8.0)
+        .max_w(BUTTON_MAX_W)
         .center()
         .radius(crate::ui::r(6.0))
         .hover(u.hover)
@@ -985,7 +1143,14 @@ fn text_button(u: &Ui, key: &str, label: &str) -> El {
         .focusable(true)
         .role("button")
         .label(label)
-        .child(text(label.to_string()).font(BODY_MED).color(u.ink).a11y_hidden())
+        .child(
+            text(label.to_string())
+                .font(BODY_MED)
+                .color(u.ink)
+                .truncate()
+                .help_when_truncated(label.to_string())
+                .a11y_hidden(),
+        )
 }
 
 // --- scenes ---------------------------------------------------------------------------------
@@ -1032,6 +1197,71 @@ pub fn scene_undo(s: &mut State) {
             push(st, Notice::info("Turned slot 03 back on"));
         }),
     );
+}
+
+/// The raw stash failure a second launch hit on Windows while Deadlock was starting (0.1.31).
+pub const SCENE_LAUNCH_BUSY_RAW: &str = "Could not stash D:\\SteamLibrary\\steamapps\\common\\Deadlock\\game\\citadel\\addons\\pak04_dir.vpk into C:\\Users\\Player\\AppData\\Roaming\\Sigil\\vanilla-stash\\20261121-183344\\pak04_dir.vpk: Nothing was moved. The process cannot access the file because it is being used by another process. (os error 32)";
+
+/// `toast-launch-busy`: Launch vanilla pressed while Deadlock was still starting. The launch
+/// is still under way (overlay hidden), so the sidebar's launch buttons are off; the toast is
+/// what the stash failure now says.
+pub fn scene_launch_busy(s: &mut State) {
+    crate::screens::launch::scene_page(s);
+    crate::screens::launch_progress::stage_waiting(s, false);
+    if let Some(notice) = crate::screens::launch_progress::vanilla_held_notice(SCENE_LAUNCH_BUSY_RAW) {
+        push(s, notice);
+    }
+}
+
+/// A 300 character sentence, for the overflow guards.
+pub const SCENE_LONG_SENTENCE: &str = "Sigil could not finish applying the profile because three of the mods in it were changed on disk after the last scan, one of them now ships files for a hero folder that moved in the latest game update, and the addon folder ran out of free slots before the rest of the profile could be put in place for you";
+/// A 180 character Windows path with no spaces.
+pub const SCENE_LONG_PATH: &str = "D:\\SteamLibrary\\steamapps\\common\\Deadlock\\game\\citadel\\addons\\sigil-addons10\\pak990_dir_backup_before_profile_switch_2026-11-21T18-33-44Z_from_GameBanana_mod_612345_v3.vpk";
+/// The trash error with a list of failures, one per line.
+pub const SCENE_TRASH_LIST: &str = "Moved 0 to the trash; 1 failed (04: D:\\Downloads\\Steam\\steamapps\\common\\Deadlock\\game\\citadel\\addons\\pak04_dir.vpk could not be moved: Deadlock or another program has it open: close it and try again.)\n05: D:\\Downloads\\Steam\\steamapps\\common\\Deadlock\\game\\citadel\\addons\\pak05_dir.vpk could not be moved\n06: access denied";
+
+/// The trash failure as Installed now words it: the count, then each slot's reason.
+pub const SCENE_TRASH_SPLIT: &str = "Moved 0 to the trash; 1 failed. Slot 04: D:\\Downloads\\Steam\\steamapps\\common\\Deadlock\\game\\citadel\\addons\\pak04_dir.vpk could not be moved: Deadlock or another program has it open: close it and try again.";
+
+/// Every synthetic worst case, as notices, for the scenes and the overflow test.
+pub fn worst_cases() -> Vec<Notice<State>> {
+    vec![
+        Notice::error(SCENE_LONG_SENTENCE),
+        Notice::error("Could not apply the profile").detail(SCENE_LONG_SENTENCE),
+        Notice::warning(SCENE_LONG_PATH).detail(SCENE_LONG_PATH),
+        from_status(SCENE_TRASH_LIST),
+        from_status(SCENE_TRASH_SPLIT),
+        from_status(SCENE_LAUNCH_BUSY_RAW),
+        Notice::success(SCENE_LONG_PATH).undo(|_st: &mut State| {}),
+        Notice::info("Installed Ashfall in slot 03").action(
+            "Open the folder where Sigil keeps every backup it made",
+            |_st: &mut State| {},
+        ),
+    ]
+}
+
+/// `toast-long-error`: a 300 character error and the trash failure list.
+pub fn scene_long_error(s: &mut State) {
+    crate::app::scene_demo_installed(s);
+    push(s, Notice::error("Could not apply the profile").detail(SCENE_LONG_SENTENCE));
+    push(s, from_status(SCENE_TRASH_SPLIT));
+}
+
+/// `toast-path`: a title and a detail that are one long Windows path, and an Undo.
+pub fn scene_path(s: &mut State) {
+    crate::app::scene_demo_installed(s);
+    push(s, Notice::warning(SCENE_LONG_PATH).detail(SCENE_LONG_PATH));
+    push(s, Notice::success(SCENE_LONG_PATH).undo(|_st: &mut State| {}));
+}
+
+/// `toast-stack`: five toasts: three on screen, the rest counted as "+2 more".
+pub fn scene_toast_stack(s: &mut State) {
+    crate::app::scene_demo_installed(s);
+    push(s, from_status(SCENE_LAUNCH_BUSY_RAW));
+    push(s, Notice::success("Installed Ashfall in slot 03"));
+    push(s, Notice::error(SCENE_LONG_SENTENCE));
+    push(s, Notice::info("Checked 12 mods. All up to date"));
+    push(s, Notice::warning("2 mods were not installed"));
 }
 
 /// `notify-banner`: toasts and the gameinfo.gi banner together.
@@ -1200,8 +1430,10 @@ mod tests {
         let prefixed: Notice<Log> = Notice::error("Install failed").detail("Install failed: disk full");
         assert_eq!(prefixed.detail.as_deref(), Some("disk full"));
         let long: Notice<Log> = Notice::error("x").detail("word ".repeat(100));
-        let shown = long.short_detail().unwrap();
-        assert!(shown.chars().count() <= DETAIL_MAX + 1 && shown.ends_with('\u{2026}'));
+        let cut = fit(&long.title, long.detail.as_deref(), words_width(&long));
+        assert!(cut.clamped && cut.title_lines + cut.detail_lines <= MAX_LINES + 1);
+        let short: Notice<Log> = Notice::error("Install failed").detail("Disk full.");
+        assert!(!fit(&short.title, short.detail.as_deref(), words_width(&short)).clamped);
     }
 
     #[test]
