@@ -355,6 +355,18 @@ when you press Send diagnostics, after a preview. Keys live in your operating sy
 Sigil does not read your Steam login. Settings > Privacy lists every host inline, and About carries
 the third-party notices.
 
+### Help build Sigil
+
+The last step of the first-run setup asks whether to share product data, with Share and Not now.
+If you set Sigil up before this existed, it asks once in a dialog. With Share, Sigil sends which
+GameBanana mods you install, turn on, open or hide, which ones break or clash, your Browse filters
+and short search text, your ten most played heroes in rough hours and your rank tier, benchmark
+frame rates with your GPU and CPU model, and which pages you use. It is for suggestions, mod health
+warnings and frame rate expectations. It never sends your Steam id, your files or paths, local
+mods, your keys, your IP address or anything from the agent. Settings > Privacy > Help build Sigil
+turns it on or off at any time, What Sigil shared lists the last records sent, and Delete my data
+removes them from Sigil's server and starts a new id. `docs/privacy.md` lists every field.
+
 ## Sending feedback
 
 Every error toast and inline error box has Send feedback. It shows the scrubbed details, takes a

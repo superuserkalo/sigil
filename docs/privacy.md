@@ -3,7 +3,7 @@
 Status: draft. Describes the intended behavior of the code in this repository. The telemetry Worker
 exists in `services/telemetry/` with tests; it is not deployed. The desktop app does not send
 telemetry yet, and the Settings > Privacy switches for it do not exist yet.
-Updated: 2026-11-18
+Updated: 2026-11-25
 
 This page lists every service Sigil contacts, what each one receives, and how to turn it off.
 Sigil's own receiving end is a Cloudflare Worker in this repository, so the code that handles each
@@ -17,6 +17,7 @@ below and is not repeated in each one. Sigil itself stores no IP address and no 
 | Recipient | What it receives | Default |
 | --- | --- | --- |
 | [Sigil telemetry](#sigil-telemetry) | Usage events, crash reports, diagnostics you send, mod hash lookups | Off until you agree |
+| [Help build Sigil](#help-build-sigil-product-data) | Product data: GameBanana mod ids and actions, mod health, Browse use, top heroes, performance, app use | Off until you choose Share |
 | [Model provider](#model-provider) | Your prompts, the files the agent reads, the model's answers | Only when you chat |
 | [Steam](#steam) | Patch note requests | On |
 | [GameBanana](#gamebanana) | Catalog and update requests, the mods you open and install | On |
@@ -35,6 +36,8 @@ Sigil sends four kinds of identifier. Nothing else it sends is tied to you.
 
 - **Install id**, a random UUID Sigil makes on first start. It is not a machine id and is not
   derived from hardware. It is sent with telemetry only, and the Worker stores only its SHA-256.
+- **Product data id**, a second random UUID, made only when Help build Sigil is on and sent only
+  with product data. The Worker stores only a salted SHA-256 of it. Delete my data replaces it.
 - **Steam account id**, the numeric id of the account you enter in Stats. It is sent to
   deadlock-api for the player and match views you open.
 - **GameBanana member id**, only if you link a GameBanana account for Remote Install. The pair
@@ -144,6 +147,109 @@ store it.
 Events are aggregate points. Cloudflare keeps them for the retention period set on the dataset in
 the owner's account, and Sigil keeps no separate copy. The daily cron job deletes diagnostics older
 than 30 days and crashes older than 90.
+
+## Help build Sigil (product data)
+
+Decision: `docs/decisions/0017-opt-in-product-data.md`. Off by default. The first-run setup asks
+once with two equal buttons, Share and Not now; players who finished setup before this existed are
+asked once in a dialog. Settings > Privacy > Help build Sigil has the switch (on or off at any
+time), What Sigil shared and Delete my data. Saying no changes nothing else in the app.
+
+Code: the app side is `rust/crates/deadlock-core/src/product_data.rs` (schema, scrubbers, consent
+gate, queue) and `rust/crates/desktop/src/screens/settings/product.rs` (asking, recording, the
+Privacy rows). The Worker side is `services/telemetry/src/product.ts` (validation) and
+`services/telemetry/src/aggregates.ts` (totals and the publishing floor). Only the desktop app
+records or reads product data; the CLI and the agent host have no access to it.
+
+### How it travels
+
+Each record is pushed onto a list in memory. Every 30 seconds a worker thread moves waiting
+records to `<data>/telemetry/product/queue.json` (at most 1000 records, 512 KB and 14 days; older
+ones are dropped unsent), and every 10 minutes it sends them in batches of 50 to
+`POST /v1/product` on Sigil's own Worker, waiting longer after each failure (1 minute doubling to
+6 hours). What the Worker accepted is added to `<data>/telemetry/product/shared.json`, the last 200
+records, which Settings > Privacy > What Sigil shared shows. Turning the switch off clears the
+list, the queue and that log at once. Nothing is recorded, queued or sent while it is off.
+
+Every batch carries: the product data id, Sigil's version, the OS (windows, macos, linux or
+other), the OS build number (digits and dots, for example `10.0.22631`) and the game build number
+(`ClientVersion` from steam.inf). A record carries no time; the Worker stamps the day it arrives.
+
+### Every record and field
+
+Mods appear only as GameBanana ids (whole numbers up to 1,000,000,000). A mod with no GameBanana id
+(a local or private file) cannot be recorded. "Code" means a short lower-case word Sigil chose,
+`[a-z][a-z0-9_]`, at most 32 characters and never four digits in a row.
+
+| Group | Record | Fields |
+| --- | --- | --- |
+| Mods | `mod_action` | `mod_id`; `action`: installed, removed, enabled, disabled, updated, opened, saved, unsaved, not_interested |
+| Mods | `mod_kept` | `mod_id`; `kept`: under_1d, d1_7, d7_30, d30_90, over_90d (sent at removal) |
+| Mods | `enabled_set` | `mods`: up to 64 pairs of `mod_id` and `slot` (load order), once per run |
+| Mods | `variant_chosen` | `mod_id`, `file_id` (the GameBanana file picked) |
+| Mod health | `install_result` | `mod_id`, `ok`, `reason` code (for example download_failed, game_running, file_in_use) |
+| Mod health | `mod_pair` | `a`, `b` (mod ids), `kind`: overlap or conflict |
+| Mod health | `compat_finding` | `mod_id`, `finding` code (moved, gone, skeleton, unreadable), `game_build` |
+| Mod health | `repair_result` | `mod_id`, `repair` code, `ok`, `game_build` |
+| Mod health | `off_after_crash` | `mod_id` of a mod turned off while the last game session ended in a crash |
+| Mod health | `crash_suspect` | `mod_id` of the crash card's suspect |
+| Browse | `rec_shown` | `row` code (for_you, rising), `position` (0 to 100), `mod_id`, `outcome`: shown, opened, installed |
+| Browse | `browse_query` | `sort` code, `filters` (up to 8 codes), `search` (see below), `results` (count) |
+| Play | `top_heroes` | up to 10 of `hero_id` with `playtime`: under_1h, h1_10, h10_50, h50_200, over_200h |
+| Play | `rank_tier` | `tier`, 0 to 11 (not the rating, not the sub-rank) |
+| Performance | `perf_config` | `config` code, `version` number |
+| Performance | `benchmark` | `avg_fps`, `low_fps` (1% low), `scene` code (map name, never a match id), `width`, `height`, `preset` code |
+| Performance | `hardware` | `gpu`, `cpu` (model names), `ram_gb` (rounded to 4 GB), `width`, `height`, `refresh_hz` (0 until Sigil reads it); once per Sigil version |
+| App use | `feature_use` | `feature` code (the page opened), `count` |
+| App use | `settings` | `theme`, `density`, `language` codes, `mature` (true unless mature mods are hidden); once per version and per change |
+| App use | `launch` | `modded` (true for a modded launch, false for vanilla) |
+| App use | `session` | `length`: under_5m, m5_30, m30_2h, over_2h |
+
+Search text is the only free text. On your PC and again on the Worker it is lower-cased, its
+spaces collapsed and cut to 64 characters, and it is dropped whole when it has an `@`, a slash or
+backslash, a drive letter, a `~`, a link (`://`, `www.`, or `name.tld`), a Steam id form, five
+digits in a row, or more than eight digits. GPU and CPU names lose trademark marks, clock speeds,
+core counts and anything after a `/`; a name with a backslash, a colon or six digits in a row
+(a serial) is dropped. The Worker drops any record type and any field that is not in this table.
+
+### Never sent
+
+Your Steam id, account or persona name, friends, match ids or match history, chat, file names or
+paths, mods with no GameBanana id, mod contents, API keys or tokens, hardware serials or any id
+that outlives a reinstall, and anything from the AI agent's conversations. The Worker stores no IP
+address and no user agent.
+
+### What the Worker keeps, and for how long
+
+| Table | Holds | Kept |
+| --- | --- | --- |
+| `product_events` | One row per record: salted SHA-256 of the product data id, record type, Sigil version, OS, OS build, game build, the record's fields | 13 months, or until Delete my data |
+| `product_contrib` | Working rows for the current 30-day period: the salted id hash, the aggregate key, the day, and a network marker | Until the period closes (about 32 days), never more than 75 days, or until Delete my data |
+| `product_totals` | Counts only, per period and key: installs, networks, days. No id, no network marker | Kept for mod ids and codes; search text and hardware names 13 months |
+
+The network marker is how Sigil counts distinct contributors without storing addresses: a keyed
+hash (HMAC-SHA256 under a secret only the Worker holds) of your network prefix (the first three
+parts of an IPv4 address, the first three groups of an IPv6 address) and the 30-day period. It
+changes every period, is kept only in `product_contrib`, and lives 75 days at most. Your IP address
+itself is never stored.
+
+### What is shown to other players, and when
+
+Nothing from a single install. A mod pair ("players who use this also use"), a mod health finding,
+a frame rate for a hardware class or a search term is used only when, within one 30-day period, at
+least 10 installs that sent data on at least 2 days, from at least 6 different networks, on at
+least 3 different days, share it. A network counts at most 3 installs per period. Keys below that
+floor are discarded when the period closes. The current period is never shown. Today only
+`GET /v1/product/related?mod=<id>` answers, with mod ids that pass the floor.
+
+### Delete my data
+
+Settings > Privacy > Delete my data sends your product data id to `POST /v1/product/delete`. The
+Worker deletes every `product_events` row and every `product_contrib` row for it, the app clears its
+queue and its What Sigil shared log, and a new id is made if you share again. Totals from periods
+that already closed are anonymous counts with nothing pointing to you, so they stay: you may still
+be one of the installs in a count from an earlier period. If the request fails, nothing changes on
+your PC and you can press again.
 
 ## Model provider
 
@@ -378,6 +484,7 @@ host fails.
 | Usage events | Settings > Privacy | Off |
 | Crash reports | Settings > Privacy | Off |
 | Unknown mod lookup and hash contribution | Settings > Privacy | Off |
+| Help build Sigil (product data) | Settings > Privacy | Off |
 | Player and match stats | Settings > Privacy | On |
 | Crosshair share codes | Settings > Privacy | On |
 | Share match data with deadlock-api | Settings > Privacy | Off |
@@ -393,6 +500,12 @@ Offline mode blocks every request the core makes through `deadlock-core`. It doe
 agent host's model provider calls, subscription sign-in or publish; see Known gaps.
 
 ## Known gaps
+
+- Help build Sigil: the Worker routes and migration `0003_product_data.sql` are written and tested
+  but not deployed, and the `PRODUCT_SALT` and `PRODUCT_BUCKET_KEY` secrets are not set. Until
+  then the app's sends fail quietly and wait in the local queue (14 days at most). Nothing in the
+  app shows "players who use this also use", mod health warnings or frame rate expectations yet.
+  The monitor refresh rate is not read (sent as 0).
 
 - The telemetry Worker is not deployed and the desktop client that sends to it does not exist yet.
   The switches above describe the agreed behavior, not shipped UI.

@@ -123,11 +123,26 @@ The owner deploys. Nothing here writes to a game install.
 5. Record the address in `docs/privacy.md` and add the host to the network allowlist in
    `docs/architecture.md`, then point the desktop app at it once the client exists.
 
-The cron trigger runs at 03:17 UTC daily and deletes diagnostics older than 30 days and crashes
-older than 90. Analytics Engine retention is Cloudflare's own; query it with the SQL API.
+The cron trigger runs at 03:17 UTC daily: retention first (diagnostics older than 30 days, crashes
+older than 90, raw product data and free-text product totals older than 13 months, product
+contributions older than 75 days), then it closes finished 30-day product epochs. Analytics Engine
+retention is Cloudflare's own; query it with the SQL API.
 
-Rotate nothing: there is no secret, no API key and no account in this Worker. A mistake in the data
-is fixed by deleting rows from D1, not by deploying a key.
+### Help build Sigil (product data, ADR 0017)
+
+Before deploying the product routes, set two secrets once. Never put them in the repo or in
+`wrangler.jsonc`:
+
+1. `npx wrangler secret put PRODUCT_SALT`: a long random string (for example
+   `openssl rand -hex 32`). It salts the install id hash. Set it before the first deploy of these
+   routes and never change it: a new salt makes Delete my data miss older rows.
+2. `npx wrangler secret put PRODUCT_BUCKET_KEY`: another long random string (at least 16
+   characters). It keys the network bucket. Without it the Worker stores raw records but writes and
+   publishes no aggregate. Changing it only starts the buckets of the current epoch over.
+3. `npx wrangler d1 migrations apply sigil --remote` applies `0003_product_data.sql`.
+4. `npx wrangler deploy`.
+
+A mistake in the data is fixed by deleting rows from D1, not by deploying a key.
 
 ## What the apply step (desktop side) still has to do
 

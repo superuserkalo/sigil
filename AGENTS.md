@@ -74,14 +74,20 @@ These are product constraints, not preferences.
   v2 with durable sessions, pause and resume. The UI never runs agent tools in its render loop.
 - BYOK keys live in the Rust app and never enter the UI transcript, tool output, logs or a commit.
   The CLI store is `chmod 600`; the desktop store uses the OS keychain.
-- Nothing leaves the machine without the player's yes. No third-party analytics (no Google
+- Nothing leaves the machine without the player's yes (for product data: the Share answer or the
+  Help build Sigil switch, ADR 0017). No third-party analytics (no Google
   Analytics, no Sentry SaaS), no heartbeat. Network calls come from a documented allowlist: model
   provider endpoints, `api.steampowered.com` for the official patch feed and Valve's relay list, GameBanana, and the
   GitHub update check. Owner-approved opt-ins, off by default: match data sharing to
   `api.deadlock-api.com` (`/v1/matches/salts`), Discord Rich Presence over the local Discord IPC
   socket (no network) (2026-11-17), and Sigil's own telemetry Worker on Cloudflare (2026-11-18):
   usage events, scrubbed crash reports, player-sent diagnostics and unknown-mod hash lookups, each
-  off until the player agrees (`docs/decisions/0014-opt-in-telemetry.md`, `docs/privacy.md`).
+  off until the player agrees (`docs/decisions/0014-opt-in-telemetry.md`, `docs/privacy.md`), and
+  "Help build Sigil" product data to the same Worker (2026-11-25): GameBanana mod ids and actions,
+  mod health, Browse use with scrubbed search text, top heroes and rank tier, performance and
+  hardware class, app use; asked in onboarding, off by default, switchable and deletable at any
+  time (`docs/decisions/0017-opt-in-product-data.md`). Only the desktop app records it; the CLI and
+  the agent host never do.
 - Preserve MIT attribution for Rune, TinyAgent, Grimoire and every bundled community tool. See
   `THIRD_PARTY_NOTICES.md`. CSDK 12 has no license and is never redistributed.
 - No em dashes in code, UI strings, comments or docs. Use a colon, period or parentheses.
