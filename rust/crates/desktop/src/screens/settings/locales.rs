@@ -325,6 +325,8 @@ pub const DE: &[(&str, &str)] = &[
     ("Scales text, icons and spacing together.", "Skaliert Text, Symbole und Abstände gemeinsam."),
     ("Reduce motion", "Bewegung reduzieren"),
     ("Menus, drawers and selections change at once.", "Menüs, Detailbereiche und Auswahlen wechseln sofort."),
+    ("Auto-advance the Browse billboard", "Banner in Browse automatisch weiterschalten"),
+    ("The banner at the top of Browse moves to its next mod every 7 seconds. Never with Reduce motion on.", "Das Banner oben in Browse zeigt alle 7 Sekunden den nächsten Mod. Nie bei reduzierter Bewegung."),
     ("Transparent sidebar", "Transparente Seitenleiste"),
     ("Frosted glass: the desktop shows through the sidebar, blurred.", "Milchglas: Der Desktop scheint verschwommen durch die Seitenleiste."),
     ("Applies after restart.", "Wirkt nach einem Neustart."),

@@ -67,7 +67,7 @@ pub(crate) fn nsfw_tag(u: &Ui) -> El {
         .radius(crate::ui::r(4.0))
         .fill(u.rose.alpha(0.16))
         .border(1.0, u.rose.alpha(0.45))
-        .child(text("NSFW").font(MICRO_CAPS).color(u.rose))
+        .child(text(super::super::tree::tr("Mature")).font(MICRO_CAPS).color(u.rose))
 }
 
 pub(crate) fn veiled(s: &State, id: u64, nsfw: bool) -> bool {

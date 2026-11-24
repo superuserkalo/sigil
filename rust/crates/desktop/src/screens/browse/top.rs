@@ -1,0 +1,1339 @@
+//! The Browse landing top (`design/browse-top.md`): a billboard with its segment strip, then
+//! image-led rows (Top 10 this week, New this week, up to three "Trending in" category rows,
+//! Popular this month, All-time favourites).
+//!
+//! One pure `plan` decides what is shown; the view and the cover queue both read it, so a tile
+//! that is drawn always has its cover asked for and a hidden mod is never drawn or fetched.
+//! Every box is sized from the page width alone, so nothing moves when images land. Hover is
+//! paint only. The billboard advances by itself every 8 seconds through one timer wake
+//! (`tick`), never a running animation, and pauses for everything in spec section 2.3.
+
+use super::*;
+use crate::screens::browse::grid::{image_fill, nsfw_tag, pixels_for, veiled};
+use crate::ui::{BILLBOARD, RANK, SECTION};
+
+/// Ink on a white control drawn over art: the billboard's near black, `#0c0c0e`.
+pub const INK_ON_WHITE: Color = Color { r: 0.0036, g: 0.0036, b: 0.0044, a: 1.0 };
+/// The medium billboard title, 22/28.
+const BILLBOARD_S: TextStyle = TextStyle::new(22.0, 600.0).lh(28.0).tracking(-0.2);
+
+/// Space between tiles, and the slice of the next tile left showing at a row's right edge.
+pub const GAP: f32 = 8.0;
+pub const PEEK: f32 = 40.0;
+/// Tiles a row holds at most.
+pub const MAX_ROW: usize = 20;
+/// Billboard picks at most.
+pub const MAX_PICKS: usize = 6;
+/// Seconds between automatic billboard steps.
+pub const ADVANCE: Duration = Duration::from_secs(7);
+/// No input for this long and the billboard stops until the next one.
+pub const IDLE: Duration = Duration::from_secs(120);
+
+/// A pointer move or key on Browse: the billboard counts from here. When it had stopped for
+/// idleness, the poll is woken once to arm a full interval again. Never commits.
+pub fn note_input(st: &mut State, tx: &mut Tx) {
+    tx.live_only();
+    note_key(st, tx);
+}
+
+/// `note_input` for a key passing through: the key may still act, so this never marks the
+/// event live only.
+pub fn note_key(st: &mut State, tx: &mut Tx) {
+    let was_idle = st.browse_view.shelves.last_input.is_none_or(|t| t.elapsed() >= IDLE);
+    st.browse_view.shelves.last_input = Some(Instant::now());
+    if was_idle {
+        tx.wake_after(Duration::ZERO);
+    }
+}
+const DAY: i64 = 24 * 60 * 60;
+
+// --- the plan ------------------------------------------------------------------------------
+
+/// Which row, which is also its page slot in `Shelves::pages`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RowKind {
+    Top10,
+    New,
+    Trending(usize),
+    Month,
+    AllTime,
+}
+
+impl RowKind {
+    pub fn slot(self) -> usize {
+        match self {
+            RowKind::Top10 => 0,
+            RowKind::New => 1,
+            RowKind::Trending(i) => 2 + i.min(2),
+            RowKind::Month => 5,
+            RowKind::AllTime => 6,
+        }
+    }
+}
+
+/// What a row's title link applies to the grid.
+#[derive(Clone, Debug, PartialEq)]
+pub struct See {
+    pub order: BrowseOrder,
+    pub period: BrowsePeriod,
+    pub category: Option<String>,
+}
+
+pub struct Row<'a> {
+    pub kind: RowKind,
+    /// The title, already in the player's language.
+    pub title: String,
+    pub cards: Vec<&'a BrowseCard>,
+    pub see: See,
+}
+
+/// One billboard slide.
+pub struct Slide {
+    pub card: BrowseCard,
+    /// "Trending today" or "This week in Skins".
+    pub eyebrow: String,
+    /// The strip label: "Trending" or the root category.
+    pub label: String,
+    pub description: String,
+    /// The large image: the top list's 800 px art, else the thumbnail.
+    pub image: Option<String>,
+}
+
+#[derive(Default)]
+pub struct Plan<'a> {
+    pub billboard: Vec<Slide>,
+    pub rows: Vec<Row<'a>>,
+    /// False until any read has landed: the view reserves placeholders.
+    pub known: bool,
+}
+
+/// The root category of a card's path: "Skins" of "Skins / Haze".
+pub fn root_category(card: &BrowseCard) -> &str {
+    card.category.split(" / ").next().unwrap_or("").trim()
+}
+
+/// A top-list row as a card, so details open with its mature flag, author and link.
+pub fn card_of(t: &TopSub) -> BrowseCard {
+    BrowseCard {
+        id: t.id,
+        name: t.name.clone(),
+        author: t.author.clone(),
+        category: t.category.clone(),
+        updated_at: String::new(),
+        likes: t.likes,
+        views: 0,
+        profile_url: t.profile_url.clone(),
+        thumbnail_url: t.image_url.clone(),
+        version: None,
+        added_ts: 0,
+        updated_ts: 0,
+        nsfw: t.nsfw,
+        model: "Mod".to_string(),
+        audio_url: None,
+        featured: false,
+        comments: 0,
+        author_id: 0,
+        obsolete: false,
+        sub_category_id: 0,
+    }
+}
+
+/// Tiles per page for a page `width` points wide.
+pub fn per_page(width: f32) -> usize {
+    if width >= 960.0 {
+        4
+    } else if width >= 720.0 {
+        3
+    } else if width >= 528.0 {
+        2
+    } else {
+        1
+    }
+}
+
+/// One tile's width and height: `n` tiles, their gaps and the peek fill the page.
+pub fn tile_size(width: f32, n: usize) -> (f32, f32) {
+    let w = ((width - PEEK - GAP * n as f32) / n as f32).floor().max(1.0);
+    (w, (w * 9.0 / 16.0).round())
+}
+
+/// The pages a row of `len` tiles has at `n` a page: every page shows `n` whole tiles, the last
+/// one aligned to the row's end.
+pub fn page_count(len: usize, n: usize) -> usize {
+    len.div_ceil(n.max(1)).max(1)
+}
+
+/// The tiles page `page` draws (`n + 1`, the last cut by the clip) and the strip's x offset:
+/// 0, or for the last page the offset that ends the row flush right with the previous tile
+/// peeking at the left.
+pub fn page_window(len: usize, n: usize, page: usize, width: f32) -> (usize, usize, f32) {
+    let (tw, _) = tile_size(width, n);
+    let pages = page_count(len, n);
+    let page = page.min(pages - 1);
+    if page + 1 < pages || len <= n {
+        let start = page * n;
+        return (start, (start + n + 1).min(len), 0.0);
+    }
+    let start = len.saturating_sub(n + 1);
+    let count = (len - start) as f32;
+    (start, len, width - (count * tw + (count - 1.0) * GAP))
+}
+
+/// The landing's plan for the page width's `n` and the clock `now`: what the billboard and
+/// each row show, after the gate (hidden mods and creators, mature under Hide), with no mod
+/// twice and every row a full page plus its peek or not there at all.
+pub fn plan(s: &State, n: usize, now: i64) -> Plan<'_> {
+    let v = &s.browse_view;
+    let feeds = v.shelves.feeds.as_ref();
+    let known = feeds.is_some() || v.top.is_some() || !v.w4.featured.is_empty();
+    let ok = |c: &&BrowseCard| {
+        content_allowed(s, c.id, c.nsfw, &c.author) && !c.obsolete && c.thumbnail_url.is_some()
+    };
+    let none: &[BrowseCard] = &[];
+    let recent: Vec<&BrowseCard> = feeds.map_or(none, |f| &f.recent[..]).iter().filter(ok).collect();
+    let liked: Vec<&BrowseCard> = feeds.map_or(none, |f| &f.liked[..]).iter().filter(ok).collect();
+    let within = |c: &BrowseCard, days: i64| c.added_ts >= now - days * DAY;
+    let by_likes = |list: &mut Vec<&BrowseCard>| list.sort_by(|a, b| b.likes.cmp(&a.likes).then(b.added_ts.cmp(&a.added_ts)));
+    let min_fill = n + 1;
+    // Blur and Hide never lead with a mature mod: a large blurred lead is a dead banner. Show
+    // treats mature mods as any other.
+    let mature_lead = s.prefs.mature == crate::prefs::Mature::Show;
+    let failed = |url: &Option<String>| url.as_deref().is_none_or(|u| u.is_empty() || s.thumb_crew.failed(u));
+
+    // The billboard: today's first top mod, then the week's pick in each category.
+    let mut billboard: Vec<Slide> = Vec::new();
+    let mut lead: HashSet<u64> = HashSet::new();
+    let top: &[TopSub] = v.top.as_deref().unwrap_or(&[]);
+    let top_ok = |t: &TopSub| {
+        t.model.eq_ignore_ascii_case("mod")
+            && content_allowed(s, t.id, t.nsfw, &t.author)
+            && (mature_lead || !t.nsfw)
+            && !failed(&t.image_url)
+    };
+    let push_top = |billboard: &mut Vec<Slide>, lead: &mut HashSet<u64>, t: &TopSub| {
+        if billboard.len() < MAX_PICKS && lead.insert(t.id) {
+            billboard.push(Slide {
+                card: card_of(t),
+                eyebrow: super::tree::tr(match t.period.as_str() {
+                    "today" => "Trending today",
+                    "week" => "Trending this week",
+                    _ => "Popular this month",
+                })
+                .to_string(),
+                label: super::tree::tr("Trending").to_string(),
+                description: t.description.clone(),
+                image: t.image_url.clone(),
+            });
+        }
+    };
+    if let Some(t) = top.iter().find(|t| t.period == "today" && top_ok(t)) {
+        push_top(&mut billboard, &mut lead, t);
+    }
+    for (category, card) in &v.w4.featured {
+        if billboard.len() >= MAX_PICKS {
+            break;
+        }
+        let allowed = content_allowed(s, card.id, card.nsfw, &card.author)
+            && (mature_lead || !card.nsfw)
+            && !card.obsolete
+            && !failed(&card.thumbnail_url);
+        if allowed && lead.insert(card.id) {
+            billboard.push(Slide {
+                card: super::store::clone_card(card),
+                eyebrow: crate::screens::settings::i18n::fill(super::tree::tr("This week in {}"), &[category]),
+                label: category.clone(),
+                description: String::new(),
+                image: card.thumbnail_url.clone(),
+            });
+        }
+    }
+    if billboard.len() < 2 && v.w4.featured.is_empty() {
+        for period in ["today", "week", "month"] {
+            for t in top.iter().filter(|t| t.period == period && top_ok(t)) {
+                push_top(&mut billboard, &mut lead, t);
+            }
+        }
+    }
+
+    let mut rows: Vec<Row> = Vec::new();
+    let mut taken: HashSet<u64> = HashSet::new();
+    let see = |order, period, category: Option<&str>| See { order, period, category: category.map(str::to_string) };
+
+    // Top 10: the true ranking, so it may repeat a billboard pick. The title names the window.
+    let windows: [(Option<i64>, &str, BrowsePeriod); 4] = [
+        (Some(7), "Top 10 this week", BrowsePeriod::Week),
+        (Some(14), "Top 10 of the last 14 days", BrowsePeriod::Month),
+        (Some(30), "Top 10 this month", BrowsePeriod::Month),
+        (None, "Top 10 of all time", BrowsePeriod::Any),
+    ];
+    for (days, title, period) in windows {
+        let mut list: Vec<&BrowseCard> = match days {
+            Some(days) => recent.iter().copied().filter(|c| within(c, days)).collect(),
+            None => liked.clone(),
+        };
+        by_likes(&mut list);
+        if list.len() >= 10 {
+            list.truncate(10);
+            taken.extend(list.iter().map(|c| c.id));
+            rows.push(Row { kind: RowKind::Top10, title: super::tree::tr(title).to_string(), cards: list, see: see(BrowseOrder::MostLiked, period, None) });
+            break;
+        }
+    }
+    taken.extend(lead.iter().copied());
+    // New this week: newest first, liked at least once; then without the floor; then 14 days.
+    let newest = |days: i64, floor: u64| -> Vec<&BrowseCard> {
+        let mut list: Vec<&BrowseCard> = recent.iter().copied().filter(|c| within(c, days) && c.likes >= floor).collect();
+        list.sort_by(|a, b| b.added_ts.cmp(&a.added_ts));
+        list
+    };
+    for (days, floor, title, period) in [
+        (7, 1, "New this week", BrowsePeriod::Week),
+        (7, 0, "New this week", BrowsePeriod::Week),
+        (14, 0, "New mods", BrowsePeriod::Month),
+    ] {
+        let cards = fresh_cards(newest(days, floor), &taken);
+        if cards.len() >= min_fill {
+            push_row(&mut rows, &mut taken, min_fill, Row { kind: RowKind::New, title: super::tree::tr(title).to_string(), cards, see: see(BrowseOrder::Newest, period, None) });
+            break;
+        }
+    }
+
+    // Trending in the three root categories with the most recent mods.
+    let mut counts: Vec<(String, usize)> = Vec::new();
+    for c in &recent {
+        let root = root_category(c);
+        if root.is_empty() {
+            continue;
+        }
+        match counts.iter_mut().find(|(name, _)| name == root) {
+            Some((_, count)) => *count += 1,
+            None => counts.push((root.to_string(), 1)),
+        }
+    }
+    counts.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+    let mut trending = 0;
+    for (category, _) in counts {
+        if trending == 3 {
+            break;
+        }
+        let in_category = |c: &&&BrowseCard| root_category(c) == category;
+        let mut list: Vec<&BrowseCard> = recent.iter().filter(in_category).copied().filter(|c| within(c, 30)).collect();
+        by_likes(&mut list);
+        let mut more: Vec<&BrowseCard> = liked.iter().filter(in_category).copied().collect();
+        by_likes(&mut more);
+        list.extend(more);
+        let cards = fresh_cards(list, &taken);
+        if cards.len() >= min_fill {
+            let title = crate::screens::settings::i18n::fill(super::tree::tr("Trending in {}"), &[&category]);
+            push_row(&mut rows, &mut taken, min_fill, Row { kind: RowKind::Trending(trending), title, cards, see: see(BrowseOrder::MostLiked, BrowsePeriod::Month, Some(&category)) });
+            trending += 1;
+        }
+    }
+
+    // Popular this month: the rest of the window by likes, topped up from the all-time list.
+    let mut month: Vec<&BrowseCard> = recent.iter().copied().filter(|c| within(c, 30)).collect();
+    by_likes(&mut month);
+    month.extend(liked.iter().copied());
+    let cards = fresh_cards(month, &taken);
+    push_row(&mut rows, &mut taken, min_fill, Row { kind: RowKind::Month, title: super::tree::tr("Popular this month").to_string(), cards, see: see(BrowseOrder::MostLiked, BrowsePeriod::Month, None) });
+
+    let mut all: Vec<&BrowseCard> = liked.clone();
+    by_likes(&mut all);
+    let cards = fresh_cards(all, &taken);
+    push_row(&mut rows, &mut taken, min_fill, Row { kind: RowKind::AllTime, title: super::tree::tr("All-time favorites").to_string(), cards, see: see(BrowseOrder::MostLiked, BrowsePeriod::Any, None) });
+
+    // No saved catalog and nothing on the top list: the Top 10's head leads.
+    if billboard.is_empty()
+        && let Some(card) = rows.first().and_then(|r| r.cards.iter().find(|c| mature_lead || !c.nsfw))
+    {
+        billboard.push(Slide {
+            card: super::store::clone_card(card),
+            eyebrow: rows[0].title.clone(),
+            label: super::tree::tr("Trending").to_string(),
+            description: String::new(),
+            image: card.thumbnail_url.clone(),
+        });
+    }
+    Plan { billboard, rows, known }
+}
+
+/// The mods of `list` no earlier row took, once each, at most `MAX_ROW`.
+fn fresh_cards<'a>(list: Vec<&'a BrowseCard>, taken: &HashSet<u64>) -> Vec<&'a BrowseCard> {
+    let mut seen = HashSet::new();
+    list.into_iter().filter(|c| !taken.contains(&c.id) && seen.insert(c.id)).take(MAX_ROW).collect()
+}
+
+/// Add a row only when it holds a page and its peek; its mods are then taken.
+fn push_row<'a>(rows: &mut Vec<Row<'a>>, taken: &mut HashSet<u64>, min_fill: usize, row: Row<'a>) {
+    if row.cards.len() >= min_fill {
+        taken.extend(row.cards.iter().map(|c| c.id));
+        rows.push(row);
+    }
+}
+
+/// The covers the landing shows now and soon: the billboard's pick and its two neighbours,
+/// and for each row its current page and the next. Read from the same plan the view draws.
+pub fn cover_urls(s: &State) -> (Vec<String>, Vec<String>) {
+    let width = super::toolbar::page_width(s);
+    let n = per_page(width);
+    let p = plan(s, n, gamebanana::now_unix());
+    let mut now = Vec::new();
+    let mut next = Vec::new();
+    let count = p.billboard.len();
+    if count > 0 {
+        let at = s.browse_view.shelves.spot % count;
+        for (i, pick) in p.billboard.iter().enumerate() {
+            let near = i == (at + 1) % count || i == (at + count - 1) % count;
+            if let Some(url) = pick.image.clone() {
+                if i == at {
+                    now.push(url);
+                } else if near {
+                    next.push(url);
+                }
+            }
+        }
+    }
+    for (index, row) in p.rows.iter().enumerate() {
+        let page = s.browse_view.shelves.pages[row.kind.slot()];
+        let pages = page_count(row.cards.len(), n);
+        let (a, b, _) = page_window(row.cards.len(), n, page, width);
+        let (c, d, _) = page_window(row.cards.len(), n, (page + 1).min(pages - 1), width);
+        for (i, card) in row.cards.iter().enumerate() {
+            let Some(url) = card.thumbnail_url.clone() else { continue };
+            if (a..b).contains(&i) && index < 2 {
+                now.push(url);
+            } else if (a..b).contains(&i) || (c..d).contains(&i) {
+                next.push(url);
+            }
+        }
+    }
+    (now, next)
+}
+
+// --- the billboard's own timer -------------------------------------------------------------
+
+/// Why the billboard does not advance by itself right now, if it does not.
+pub fn paused(s: &State, focused: Option<&str>) -> Option<&'static str> {
+    let v = &s.browse_view;
+    if crate::motion::reduced() || s.prefs.reduce_motion {
+        return Some("reduce motion");
+    }
+    if !s.prefs.browse_auto_advance {
+        return Some("setting");
+    }
+    if s.screen != Screen::Browse || v.details.is_some() || v.menu.is_some() || v.context.is_some() {
+        return Some("not in view");
+    }
+    if !super::grid::landing_shown(s) {
+        return Some("not on the landing");
+    }
+    if v.shelves.hovered || v.shelves.window_inactive {
+        return Some("hover or background");
+    }
+    if v.shelves.last_input.is_some_and(|t| t.elapsed() >= IDLE) {
+        return Some("idle");
+    }
+    if focused.is_some_and(|k| k.starts_with("bb-")) {
+        return Some("focus");
+    }
+    if v.audio.playing.is_some() {
+        return Some("sample");
+    }
+    let at = v.shelves.spot;
+    let width = super::toolbar::page_width(s);
+    let p = plan(s, per_page(width), gamebanana::now_unix());
+    if p.billboard.len() < 2 {
+        return Some("one pick");
+    }
+    if p.billboard.get(at % p.billboard.len()).is_some_and(|pick| v.installs.items.get(&pick.card.id).is_some_and(|e| e.busy())) {
+        return Some("installing");
+    }
+    None
+}
+
+/// Step the billboard when its deadline passed, arm the next one, or clear it while paused.
+/// One wake per interval: between steps the app does nothing. True when the view must run.
+pub fn tick(st: &mut State, tx: &mut Tx) -> bool {
+    // The first look counts as input: a fresh window is not idle.
+    if st.browse_view.shelves.last_input.is_none() {
+        st.browse_view.shelves.last_input = Some(Instant::now());
+    }
+    let focused = tx.focused().map(str::to_string);
+    if paused(st, focused.as_deref()).is_some() {
+        st.browse_view.shelves.due = None;
+        return false;
+    }
+    let now = Instant::now();
+    let Some(due) = st.browse_view.shelves.due else {
+        st.browse_view.shelves.due = Some(now + ADVANCE);
+        tx.wake_after(ADVANCE);
+        return false;
+    };
+    if now < due {
+        tx.wake_after(due - now);
+        return false;
+    }
+    // Step only to a pick whose image is decoded: the next ready one, or wait another turn.
+    let width = super::toolbar::page_width(st);
+    let p = plan(st, per_page(width), gamebanana::now_unix());
+    let count = p.billboard.len();
+    let at = st.browse_view.shelves.spot % count.max(1);
+    let ready = (1..count).map(|k| (at + k) % count).find(|&i| {
+        p.billboard[i].image.as_ref().is_some_and(|url| st.thumbnails.contains_key(url))
+    });
+    drop(p);
+    st.browse_view.shelves.due = Some(now + ADVANCE);
+    tx.wake_after(ADVANCE);
+    let Some(next) = ready else { return false };
+    st.browse_view.shelves.spot = next;
+    st.browse_view.shelves.spot_dir = 1;
+    // The poll's own step slides like a manual one (`motion::paged(1)`).
+    tx.animated();
+    true
+}
+
+/// A manual step: at once, and the interval starts over.
+fn step_to(st: &mut State, index: usize, dir: i8) {
+    st.browse_view.shelves.spot = index;
+    st.browse_view.shelves.spot_dir = dir;
+    st.browse_view.shelves.due = None;
+}
+
+// --- the view ------------------------------------------------------------------------------
+
+pub fn billboard_height(width: f32) -> f32 {
+    if width >= 960.0 {
+        288.0
+    } else if width >= 720.0 {
+        248.0
+    } else {
+        200.0
+    }
+}
+
+/// The landing top: billboard and strip, then the rows. Placeholders at their final size
+/// until a read lands.
+pub fn view(s: &State, u: &Ui) -> El {
+    let width = super::toolbar::page_width(s);
+    let n = per_page(width);
+    let p = plan(s, n, gamebanana::now_unix());
+    let mut c = col().key("browse-dashboard").w_full();
+    if !p.known {
+        c = c.child(billboard_placeholder(u, width));
+        for i in 0..4 {
+            c = c.child(row_placeholder(u, width, n, i).mt(if i == 0 { 32.0 } else { 28.0 }));
+        }
+        return c.child(el().h(32.0));
+    }
+    if !p.billboard.is_empty() {
+        c = c.child(billboard(s, u, &p.billboard, width)).child(strip(s, u, &p.billboard).mt(8.0));
+    }
+    for (i, r) in p.rows.iter().enumerate() {
+        let top = if i == 0 && p.billboard.is_empty() { 0.0 } else { 24.0 };
+        c = c.child(row_view(s, u, r, width, n).mt(top));
+    }
+    c.child(el().h(32.0))
+}
+
+fn bar(u: &Ui, w: f32, h: f32) -> El {
+    el().w(w).h(h).radius(crate::ui::r(4.0)).fill(u.hover)
+}
+
+fn billboard_placeholder(u: &Ui, width: f32) -> El {
+    let h = billboard_height(width);
+    let r = crate::ui::r(8.0);
+    col().key("bb-placeholder")
+        .child(
+            col().w_full()
+                .h(h)
+                .radius(r)
+                .fill(u.well)
+                .padding(32.0)
+                .gap(12.0)
+                .justify_end()
+                .child(bar(u, 220.0, 20.0))
+                .child(bar(u, 160.0, 12.0))
+                .child(bar(u, 120.0, 32.0).mt(12.0)),
+        )
+        .child(row().w_full().h(28.0).mt(8.0).gap(6.0).equal_columns(5).children((0..5).map(|_| el().h(2.0).fill(u.hair_strong))))
+}
+
+fn row_placeholder(u: &Ui, width: f32, n: usize, i: usize) -> El {
+    let (tw, th) = tile_size(width, n);
+    let r = crate::ui::r(8.0);
+    col().key(format!("top-row-placeholder-{i}"))
+        .w_full()
+        .gap(8.0)
+        .child(row().h(24.0).center_y().child(bar(u, 120.0, 10.0)))
+        .child(
+            row().w_full().h(th).gap(GAP).clip_rounded(0.0).children((0..=n).map(|_| {
+                el().size(tw, th)
+                    .min_w(tw)
+                    .radius(r)
+                    .fill(u.well)
+                    .border(1.0, u.hair)
+                    .child(bar(u, (tw * 0.6).floor(), 10.0).pin(Some(10.0), None, None, Some(12.0)))
+            })),
+        )
+}
+
+/// The billboard: blurred backdrop, sharp art at the right, scrim, text and actions, arrows.
+fn billboard(s: &State, u: &Ui, picks: &[Slide], width: f32) -> El {
+    let h = billboard_height(width);
+    let (title_font, title_h, desc_lines, inset) = if width >= 960.0 {
+        (BILLBOARD, 64.0, 2usize, 32.0)
+    } else if width >= 720.0 {
+        (BILLBOARD_S, 56.0, 1, 24.0)
+    } else {
+        (crate::ui::PAGE_TITLE, 24.0, 0, 24.0)
+    };
+    let count = picks.len();
+    let at = s.browse_view.shelves.spot % count;
+    let p = &picks[at];
+    let id = p.card.id;
+    let r = crate::ui::r(8.0);
+    // The art's box is fixed from `W` and `H` alone, so a pick of another shape never moves
+    // the text: it fills the box centred (wide banners lose their sides).
+    let aw = (h * 16.0 / 9.0).clamp(h * 1.25, width * 0.62).floor();
+    let dir = s.browse_view.shelves.spot_dir;
+    let motion = crate::motion::paged(dir);
+    let pixels = pixels_for(s, p.image.as_ref());
+    let mut b = el()
+        .key("bb-billboard")
+        .w_full()
+        .h(h)
+        .radius(r)
+        .clip_rounded(r)
+        .fill(u.well)
+        .hover_group()
+        .on_hover_change(|st: &mut State, over: bool, tx: &mut Tx| {
+            // The view does not read this: pausing never commits.
+            tx.live_only();
+            st.browse_view.shelves.hovered = over;
+            if over {
+                st.browse_view.shelves.due = None;
+            }
+        })
+        .on_window_focus(|st: &mut State, focused: bool, tx: &mut Tx| {
+            tx.live_only();
+            st.browse_view.shelves.window_inactive = !focused;
+        })
+        .on_key(move |st: &mut State, ev: &KeyEvent, _tx: &mut Tx| {
+            let step = match ev.key {
+                Key::Left => count - 1,
+                Key::Right => 1,
+                _ => return false,
+            };
+            let next = (st.browse_view.shelves.spot % count + step) % count;
+            step_to(st, next, if step == 1 { 1 } else { -1 });
+            true
+        });
+    if let Some(px) = pixels {
+        b = b
+            .child(
+                el().key(format!("bb-back-{id}"))
+                    .absolute(0.0, 0.0)
+                    .w_full()
+                    .h_full()
+                    .pixels_fit(px, SurfaceFit::Fill)
+                    .blur(32.0)
+                    .transition(motion)
+                    .a11y_hidden(),
+            )
+            .child(
+                el().key(format!("bb-art-{id}"))
+                    .pin(None, Some(0.0), Some(0.0), Some(0.0))
+                    .w(aw)
+                    .transition(motion)
+                    .a11y_hidden()
+                    .child(el().absolute(0.0, 0.0).w_full().h_full().pixels_fit(px, SurfaceFit::Fill))
+                    // The feather into the scrim, drawn with the art so it moves with it.
+                    .child(
+                        el().absolute(0.0, 0.0)
+                            .w(160.0)
+                            .h_full()
+                            .linear_gradient(
+                                std::f32::consts::FRAC_PI_2,
+                                [(0.0, INK_ON_WHITE.alpha(0.92)), (0.35, INK_ON_WHITE.alpha(0.55)), (1.0, INK_ON_WHITE.alpha(0.0))],
+                            ),
+                    ),
+            );
+    }
+    // The scrim is the same in every theme: text on art is always white.
+    let edge = ((width - aw) / width).clamp(0.0, 1.0);
+    let fade = ((width - aw + 160.0) / width).clamp(edge, 1.0);
+    b = b
+        .child(
+            el().absolute(0.0, 0.0)
+                .w_full()
+                .h_full()
+                .linear_gradient(
+                    std::f32::consts::FRAC_PI_2,
+                    [(0.0, INK_ON_WHITE.alpha(0.92)), (edge, INK_ON_WHITE.alpha(0.92)), (fade, INK_ON_WHITE.alpha(0.0)), (1.0, INK_ON_WHITE.alpha(0.0))],
+                )
+                // Over the art, which slides in with its own paint order.
+                .paint_order(2)
+                .a11y_hidden(),
+        )
+        .child(
+            el().pin(Some(0.0), None, Some(0.0), Some(0.0))
+                .h(96.0)
+                .gradient(Color::BLACK.alpha(0.0), Color::BLACK.alpha(0.55))
+                .paint_order(2)
+                .a11y_hidden(),
+        );
+
+    // Text and actions in fixed slots, so stepping picks moves nothing.
+    let white = |a: f32| Color::WHITE.alpha(a);
+    let mut meta = row().h(20.0).gap(8.0).center_y().min_w(0.0);
+    let category = if p.card.category.is_empty() { "-".to_string() } else { p.card.category.clone() };
+    meta = meta
+        .child(text(category).font(BODY).color(white(0.7)).truncate().min_w(0.0).shrink())
+        .child(text("·").font(BODY).color(white(0.5)))
+        .child(text(if p.card.author.is_empty() { "-".to_string() } else { p.card.author.clone() }).font(BODY).color(white(0.7)).truncate().min_w(0.0).shrink());
+    if p.card.likes > 0 {
+        meta = meta
+            .child(text("·").font(BODY).color(white(0.5)))
+            .child(icon(&icons::THUMBS_UP, 12.0).color(white(0.7)).a11y_hidden())
+            .child(text(card_count(p.card.likes)).font(crate::ui::BODY_NUM).color(white(0.7)));
+    }
+    let state = super::quick::button(s, id);
+    let saved = is_favorite(s, "Mod", id);
+    let favorite = Favorite::from_card(&p.card);
+    let dark_button = |key: String| {
+        row().key(key)
+            .h(32.0)
+            .gap(6.0)
+            .center()
+            .radius(crate::ui::r(8.0))
+            .fill(Color::BLACK.alpha(0.45))
+            .border(1.0, white(0.18))
+            .hover(white(0.10))
+            .focusable(true)
+            .cursor(rune::Cursor::Pointer)
+    };
+    let opened = super::store::clone_card(&p.card);
+    let actions = row()
+        .key("bb-actions")
+        .h(32.0)
+        .gap(8.0)
+        .center_y()
+        .child(super::quick::button_on_art(u, &state, format!("bb-install-{id}"), id, &p.card.name, 32.0, 120.0))
+        .child(
+            dark_button("bb-details".into())
+                .px(12.0)
+                .role("button")
+                .label(format!("{} {}", super::tree::tr("Details"), p.card.name))
+                .on_press(move |st: &mut State| show_details(st, Details::from_card(&opened)))
+                .child(icon(&icons::INFO, 14.0).color(Color::WHITE).a11y_hidden())
+                .child(text(super::tree::tr("Details")).font(LABEL).color(Color::WHITE).a11y_hidden()),
+        )
+        .child(
+            dark_button("bb-star".into())
+                .w(32.0)
+                .role("button")
+                .label(if saved { "Remove from favorites" } else { "Save to favorites" })
+                .on_press(move |st: &mut State| toggle_favorite(st, favorite.clone()))
+                .child(icon(if saved { &STAR_FILLED } else { &STAR }, 16.0).color(Color::WHITE).a11y_hidden()),
+        );
+    let text_w = (width - aw + 96.0).min(420.0).max(200.0);
+    let mut column = col()
+        .key("bb-text")
+        .paint_order(3)
+        .pin(Some(inset), None, None, Some(inset))
+        .w(text_w)
+        // The eyebrow sits on the title, whatever its line count; the block keeps one height.
+        .child(
+            col().w_full().h(16.0 + 8.0 + title_h).gap(8.0).justify_end()
+                .child(row().h(16.0).child(text(p.eyebrow.clone()).font(LABEL).color(white(0.7)).truncate().min_w(0.0)))
+                .child(text(p.card.name.clone()).font(title_font).color(Color::WHITE).wrap().max_lines(if title_h > 30.0 { 2 } else { 1 }).min_w(0.0)),
+        )
+        .child(meta.mt(8.0).w_full());
+    if desc_lines > 0 {
+        column = column.child(
+            el().w_full().h(20.0 * desc_lines as f32).mt(4.0).child(
+                text(p.description.clone()).font(SMALL).color(white(0.6)).wrap().max_lines(desc_lines).min_w(0.0),
+            ),
+        );
+    }
+    column = column.child(actions.mt(16.0));
+    let opened = super::store::clone_card(&p.card);
+    b = b
+        .focusable(true)
+        .role("group")
+        .label(p.card.name.clone())
+        .cursor(rune::Cursor::Pointer)
+        .on_press(move |st: &mut State| show_details(st, Details::from_card(&opened)))
+        .child(column);
+    if count > 1 {
+        let arrow = |forward: bool| {
+            let key = if forward { "bb-next" } else { "bb-prev" };
+            el().key(key)
+                .pin(if forward { None } else { Some(12.0) }, Some((h - 48.0) / 2.0), if forward { Some(12.0) } else { None }, None)
+                .size(32.0, 48.0)
+                .center()
+                .radius(crate::ui::r(4.0))
+                .fill(Color::BLACK.alpha(0.45))
+                .hover(Color::BLACK.alpha(0.65))
+                .paint_order(3)
+                .group_opacity(0.0, 1.0)
+                .focusable(true)
+                .role("button")
+                .label(if forward { "Next pick" } else { "Previous pick" })
+                .cursor(rune::Cursor::Pointer)
+                .on_press(move |st: &mut State| {
+                    let at = st.browse_view.shelves.spot % count;
+                    let next = if forward { (at + 1) % count } else { (at + count - 1) % count };
+                    step_to(st, next, if forward { 1 } else { -1 });
+                })
+                .child(icon(if forward { &icons::CHEVRON_RIGHT } else { &icons::CHEVRON_LEFT }, 16.0).color(Color::WHITE).a11y_hidden())
+        };
+        b = b.child(arrow(false)).child(arrow(true));
+    }
+    b
+}
+
+/// The segment strip under the billboard: one press target per pick, a line and its label.
+fn strip(s: &State, u: &Ui, picks: &[Slide]) -> El {
+    let count = picks.len();
+    if count < 2 {
+        return el().key("bb-strip").h(0.0);
+    }
+    let at = s.browse_view.shelves.spot % count;
+    row()
+        .key("bb-strip")
+        .w_full()
+        .h(28.0)
+        .equal_columns(count)
+        .gap(6.0)
+        .on_hover_change(|st: &mut State, over: bool, tx: &mut Tx| {
+            tx.live_only();
+            st.browse_view.shelves.hovered = over;
+            if over {
+                st.browse_view.shelves.due = None;
+            }
+        })
+        .children(picks.iter().enumerate().map(|(i, p)| {
+            let on = i == at;
+            col()
+                .key(format!("bb-seg-{i}"))
+                .min_w(0.0)
+                .h(28.0)
+                .gap(6.0)
+                .pt(4.0)
+                .focusable(true)
+                .role("button")
+                .checked(on)
+                .label(p.card.name.clone())
+                .cursor(rune::Cursor::Pointer)
+                .on_press(move |st: &mut State| {
+                    let from = st.browse_view.shelves.spot % count;
+                    step_to(st, i, if i >= from { 1 } else { -1 });
+                })
+                .child(el().w_full().h(2.0).radius(1.0).fill(if on { u.ink } else { u.hair_strong }).motion(crate::motion::fast()))
+                .child(
+                    text(p.card.name.to_uppercase())
+                        .font(super::MICRO_CAPS)
+                        .color(if on { u.ink } else { u.muted })
+                        .truncate()
+                        .min_w(0.0),
+                )
+        }))
+}
+
+/// One row: its title link, then a clipped viewport that shows a page of tiles and the peek.
+fn row_view(s: &State, u: &Ui, r: &Row, width: f32, n: usize) -> El {
+    let slot = r.kind.slot();
+    let len = r.cards.len();
+    let (tw, th) = tile_size(width, n);
+    let pages = page_count(len, n);
+    let page = s.browse_view.shelves.pages[slot].min(pages - 1);
+    let (start, end, x) = page_window(len, n, page, width);
+    let ranked = r.kind == RowKind::Top10;
+    let mut strip = row()
+        .key(format!("top-row-{slot}-page-{page}"))
+        .absolute(x, 0.0)
+        .gap(GAP)
+        .paint_order(1)
+        .transition(crate::motion::paged(s.browse_view.shelves.dirs[slot]));
+    // The numeral only on whole tiles: a peeking tile's rank would be cut mid glyph.
+    let last_page = page + 1 == pages && len > n;
+    for (i, card) in r.cards.iter().enumerate().take(end).skip(start) {
+        let whole = if last_page { i > start } else { i < start + n };
+        strip = strip.child(tile(s, u, slot, card, tw, th, (ranked && whole).then_some(i + 1)));
+    }
+    let arrow = |forward: bool| {
+        el().key(format!("top-row-{slot}-{}", if forward { "next" } else { "prev" }))
+            .pin(if forward { None } else { Some(0.0) }, Some(0.0), if forward { Some(0.0) } else { None }, Some(0.0))
+            .w(32.0)
+            .center()
+            // Above the page strip, which paints over its leaving page.
+            .paint_order(2)
+            .fill(Color::BLACK.alpha(0.55))
+            .group_opacity(0.0, 1.0)
+            .role("button")
+            .label(if forward { "Next page" } else { "Previous page" })
+            .cursor(rune::Cursor::Pointer)
+            .on_press(move |st: &mut State| {
+                let p = &mut st.browse_view.shelves.pages[slot];
+                *p = if forward { (*p + 1).min(pages - 1) } else { p.saturating_sub(1) };
+                st.browse_view.shelves.dirs[slot] = if forward { 1 } else { -1 };
+            })
+            .child(icon(if forward { &icons::CHEVRON_RIGHT } else { &icons::CHEVRON_LEFT }, 16.0).color(Color::WHITE).a11y_hidden())
+    };
+    let mut viewport = el()
+        .key(format!("top-row-{slot}"))
+        .w_full()
+        .h(th)
+        .clip_rounded(0.0)
+        .hover_group()
+        .child(strip);
+    if page > 0 {
+        viewport = viewport.child(arrow(false));
+    }
+    if page + 1 < pages {
+        viewport = viewport.child(arrow(true));
+    }
+    let see = r.see.clone();
+    let head = row()
+        .key(format!("top-row-{slot}-head"))
+        .h(24.0)
+        .gap(4.0)
+        .center_y()
+        .hover_group()
+        .focusable(true)
+        .role("link")
+        .label(r.title.clone())
+        .cursor(rune::Cursor::Pointer)
+        .on_press_tx(move |st: &mut State, tx: &mut Tx| apply_see(st, tx, &see))
+        .child(text(r.title.clone()).font(SECTION).color(u.ink))
+        .child(icon(&icons::CHEVRON_RIGHT, 12.0).color(u.muted).group_opacity(0.0, 1.0).a11y_hidden());
+    col().key(format!("top-row-{slot}-box")).w_full().gap(8.0).child(head).child(viewport)
+}
+
+fn apply_see(st: &mut State, tx: &mut Tx, see: &See) {
+    let category = see.category.as_ref().and_then(|name| {
+        st.browse_view
+            .categories
+            .iter()
+            .filter(|(section, _)| *section == BrowseSection::Mods)
+            .flat_map(|(_, list)| list.iter())
+            .find(|c| c.name.eq_ignore_ascii_case(name))
+            .map(|c| super::Pick { id: c.id, name: c.name.clone() })
+    });
+    let (order, period) = (see.order, see.period);
+    set_filters(st, Some(tx), move |f| {
+        f.order = Some(order);
+        f.period = period;
+        if category.is_some() {
+            f.category = category;
+        }
+    });
+}
+
+/// A tile: the art is the tile. Title on a gradient at rest; on hover a scrim with the title,
+/// the byline and likes, Install and the star. Pending and failed images keep the title.
+fn tile(s: &State, u: &Ui, slot: usize, card: &BrowseCard, tw: f32, th: f32, rank: Option<usize>) -> El {
+    let id = card.id;
+    let r = crate::ui::r(8.0);
+    let veil = veiled(s, id, card.nsfw);
+    let url = card.thumbnail_url.as_ref();
+    let loaded = pixels_for(s, url).is_some();
+    let failed = url.is_some_and(|u| s.thumb_crew.failed(u));
+    let left = if rank.is_some() { 84.0 } else { 10.0 };
+    let opened = id;
+    let mut b = el()
+        .key(format!("top-{slot}-{id}"))
+        .size(tw, th)
+        .min_w(tw)
+        .radius(r)
+        .clip_rounded(r)
+        .fill(u.well)
+        .hover_group()
+        .focusable(true)
+        .role("button")
+        .label(format!("{} by {}", card.name, card.author))
+        .cursor(rune::Cursor::Pointer)
+        .on_press(move |st: &mut State| open_details(st, opened))
+        .on_secondary_press(move |st: &mut State, _press, _tx: &mut Tx| {
+            st.browse_view.context = Some(id);
+            st.browse_view.menu = None;
+        })
+        .on_hover_change(move |st: &mut State, over: bool, tx: &mut Tx| {
+            // Only a mature tile that reveals on hover draws differently; otherwise the hover
+            // is for the details prefetch and never commits.
+            if !(card_nsfw_reveals(st, id)) {
+                tx.live_only();
+            }
+            if over {
+                st.browse_view.hovered = Some(id);
+                st.browse_view.hover_since = Some((id, Instant::now()));
+            } else if st.browse_view.hovered == Some(id) {
+                st.browse_view.hovered = None;
+                st.browse_view.hover_since = None;
+            }
+        });
+    let title = |color: Color, lines: usize| {
+        let t = text(card.name.clone()).font(BODY_MED).color(color).min_w(0.0);
+        if lines == 1 { t.truncate() } else { t.wrap().max_lines(lines) }
+    };
+    // At rest: the title and, under it, the creator and likes, on the bottom gradient.
+    let rest_text = |ink: Color, quiet: Color| {
+        col()
+            .pin(Some(left), None, Some(10.0), Some(8.0))
+            .group_opacity(1.0, 0.0)
+            .child(title(ink, 1))
+            .child(
+                row().h(16.0).gap(4.0).center_y().min_w(0.0)
+                    .child(text(if card.author.is_empty() { "-".to_string() } else { card.author.clone() }).font(SMALL).color(quiet).truncate().min_w(0.0).shrink())
+                    .child(text("·").font(SMALL).color(quiet))
+                    .child(icon(&icons::THUMBS_UP, 12.0).color(quiet).a11y_hidden())
+                    .child(text(card_count(card.likes)).font(crate::ui::SMALL_NUM).color(quiet)),
+            )
+    };
+    if loaded {
+        b = b.child(image_fill(s, format!("top-thumb-{slot}-{id}"), url, [r; 4], veil));
+        if veil {
+            b = b.child(el().absolute(0.0, 0.0).w_full().h_full().fill(Color::BLACK.alpha(0.35)).a11y_hidden());
+        }
+        b = b
+            .child(
+                el().pin(Some(0.0), None, Some(0.0), Some(0.0))
+                    .h(80.0)
+                    .linear_gradient(std::f32::consts::PI, [(0.0, Color::BLACK.alpha(0.0)), (0.45, Color::BLACK.alpha(0.55)), (1.0, Color::BLACK.alpha(0.88))])
+                    .group_opacity(1.0, 0.0)
+                    .a11y_hidden(),
+            )
+            .child(rest_text(Color::WHITE, Color::WHITE.alpha(0.72)));
+    } else {
+        // Pending or failed: a finished graphite tile with the title, never a hole.
+        b = b
+            .child(
+                el().absolute(0.0, 0.0)
+                    .w_full()
+                    .h(th - 24.0)
+                    .center()
+                    .child(icon(&icons::PACKAGE, 24.0).color(if failed { u.muted } else { u.faint }).a11y_hidden()),
+            )
+            .child(rest_text(u.prose, u.muted));
+    }
+    if let Some(rank) = rank.filter(|_| loaded || !failed) {
+        b = b
+            .child(
+                el().pin(Some(0.0), None, None, Some(0.0))
+                    .size(160.0, 96.0)
+                    .radial_gradient([0.0, 1.0], [160.0, 96.0], [(0.0, Color::BLACK.alpha(0.8)), (1.0, Color::BLACK.alpha(0.0))])
+                    .a11y_hidden(),
+            )
+            .child(
+                text(rank.to_string())
+                    .font(RANK)
+                    .color(Color::WHITE)
+                    .w(72.0)
+                    .pin(Some(8.0), None, None, Some(0.0))
+                    .a11y_hidden(),
+            );
+    }
+    // Hover layer: scrim, title, byline and likes, then Install and the star. A veiled tile
+    // offers Show instead of Install.
+    let white = |a: f32| Color::WHITE.alpha(a);
+    let byline = format!(
+        "{}{}",
+        if card.author.is_empty() { String::new() } else { format!("{} · ", card.author) },
+        card_count(card.likes)
+    );
+    let mut hover = col()
+        .key(format!("top-hover-{slot}-{id}"))
+        .absolute(0.0, 0.0)
+        .w_full()
+        .h_full()
+        .padding(10.0)
+        .gap(2.0)
+        .fill(Color::BLACK.alpha(0.62))
+        .group_opacity(0.0, 1.0)
+        .child(title(Color::WHITE, 2))
+        .child(row().gap(4.0).center_y().child(icon(&icons::THUMBS_UP, 12.0).color(white(0.7)).a11y_hidden()).child(text(byline).font(SMALL).color(white(0.7)).truncate().min_w(0.0)))
+        .child(spacer());
+    if veil {
+        hover = hover.child(
+            row().w_full().center().child(
+                row().key(format!("top-show-{slot}-{id}"))
+                    .h(28.0)
+                    .px(12.0)
+                    .gap(6.0)
+                    .center()
+                    .radius(crate::ui::r(4.0))
+                    .fill(Color::BLACK.alpha(0.45))
+                    .border(1.0, white(0.18))
+                    .hover(white(0.10))
+                    .focusable(true)
+                    .role("button")
+                    .label("Show mature preview")
+                    .cursor(rune::Cursor::Pointer)
+                    .on_press(move |st: &mut State| crate::screens::settings::nsfw::revealed(st, id))
+                    .child(icon(&icons::EYE, 14.0).color(Color::WHITE).a11y_hidden())
+                    .child(text(super::tree::tr("Show")).font(LABEL).color(Color::WHITE).a11y_hidden()),
+            ),
+        );
+    } else {
+        let state = super::quick::button(s, id);
+        let saved = is_favorite(s, &card.model, id);
+        let favorite = Favorite::from_card(card);
+        let mut actions = row().w_full().h(28.0).gap(6.0).center_y();
+        if card.model.eq_ignore_ascii_case("mod") {
+            actions = actions.child(super::quick::button_on_art(u, &state, format!("top-install-{slot}-{id}"), id, &card.name, 28.0, 0.0).grow(1.0).min_w(0.0));
+        } else {
+            actions = actions.child(spacer());
+        }
+        actions = actions.child(
+            el().key(format!("top-star-{slot}-{id}"))
+                .size(28.0, 28.0)
+                .center()
+                .radius(crate::ui::r(4.0))
+                .fill(Color::BLACK.alpha(0.45))
+                .border(1.0, white(0.18))
+                .hover(white(0.10))
+                .focusable(true)
+                .role("button")
+                .label(if saved { "Remove from favorites" } else { "Save to favorites" })
+                .cursor(rune::Cursor::Pointer)
+                .on_press(move |st: &mut State| toggle_favorite(st, favorite.clone()))
+                .child(icon(if saved { &STAR_FILLED } else { &STAR }, 14.0).color(Color::WHITE).a11y_hidden()),
+        );
+        hover = hover.child(actions);
+    }
+    b = b.child(hover);
+    if veil {
+        // A deliberate veil: the tag and an eye at rest, never an empty box.
+        b = b
+            .child(row().pin(Some(8.0), Some(8.0), None, None).child(nsfw_tag(u)))
+            .child(
+                el().absolute(0.0, 0.0)
+                    .w_full()
+                    .h(th - 24.0)
+                    .center()
+                    .group_opacity(1.0, 0.0)
+                    .child(icon(&icons::EYE, 20.0).color(white(0.8)).a11y_hidden()),
+            );
+    } else if card.nsfw && crate::screens::settings::nsfw::always_tag() {
+        b = b.child(row().pin(Some(8.0), Some(8.0), None, None).child(nsfw_tag(u)));
+    }
+    // The two rings: quiet at rest, stronger on hover.
+    b.child(el().absolute(0.0, 0.0).w_full().h_full().radius(r).border(1.0, u.hair).group_opacity(1.0, 0.0).a11y_hidden())
+        .child(el().absolute(0.0, 0.0).w_full().h_full().radius(r).border(1.0, u.hair_strong).group_opacity(0.0, 1.0).a11y_hidden())
+}
+
+fn card_nsfw_reveals(st: &State, _id: u64) -> bool {
+    crate::screens::settings::nsfw::reveal_on_hover() && st.prefs.mature == crate::prefs::Mature::Blur
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::screens::browse::shelf::Feeds;
+
+    const NOW: i64 = 1_800_000_000;
+
+    fn card(id: u64, days_ago: i64, likes: u64, category: &str, nsfw: bool) -> BrowseCard {
+        let mut c = card_of(&TopSub {
+            id,
+            name: format!("Mod {id}"),
+            author: "maker".into(),
+            image_url: Some(format!("https://images.example/{id}.jpg")),
+            nsfw,
+            ..TopSub::default()
+        });
+        c.category = format!("{category} / Sub");
+        c.likes = likes;
+        c.added_ts = NOW - days_ago * DAY;
+        c
+    }
+
+    fn state_with(recent: Vec<BrowseCard>, liked: Vec<BrowseCard>) -> State {
+        let mut st = State::default();
+        st.browse_view.shelves.feeds = Some(Feeds { recent, liked });
+        st
+    }
+
+    fn ids(row: &Row) -> Vec<u64> {
+        row.cards.iter().map(|c| c.id).collect()
+    }
+
+    fn assert_rows_ok(p: &Plan, n: usize) {
+        let mut seen = HashSet::new();
+        for r in &p.rows {
+            if r.kind == RowKind::Top10 {
+                assert_eq!(r.cards.len(), 10, "{}", r.title);
+            } else {
+                assert!(r.cards.len() > n, "{} has {} tiles", r.title, r.cards.len());
+                assert!(r.cards.len() <= MAX_ROW);
+            }
+            for c in &r.cards {
+                assert!(seen.insert(c.id), "mod {} is in two rows", c.id);
+            }
+        }
+    }
+
+    /// Every row in the plan is a full page plus its peek, or not there at all; the Top 10 has
+    /// exactly ten; no mod is in two rows.
+    #[test]
+    fn plan_fills_or_drops() {
+        for count in [0usize, 3, 9, 40, 200] {
+            let recent: Vec<BrowseCard> =
+                (0..count as u64).map(|i| card(i + 1, (i % 30) as i64, i * 7 % 50, ["Skins", "HUD", "Sounds", "Maps"][(i % 4) as usize], false)).collect();
+            let liked: Vec<BrowseCard> = (0..40).map(|i| card(1000 + i, 400, 5000 - i, "Skins", false)).collect();
+            let st = state_with(recent, liked);
+            for n in [1, 2, 3, 4] {
+                let p = plan(&st, n, NOW);
+                assert_rows_ok(&p, n);
+                assert!(p.rows.iter().any(|r| r.kind == RowKind::Top10), "{count} recent: no Top 10");
+            }
+        }
+    }
+
+    /// A thin week ranks the month and says so.
+    #[test]
+    fn plan_title_names_the_window() {
+        // Three mods this week, twelve more this month.
+        let mut recent: Vec<BrowseCard> = (1..=3).map(|i| card(i, 2, 10 * i, "Skins", false)).collect();
+        recent.extend((4..=15).map(|i| card(i, 20, i, "Skins", false)));
+        let st = state_with(recent, Vec::new());
+        let p = plan(&st, 4, NOW);
+        assert_eq!(p.rows[0].title, "Top 10 this month");
+        assert_eq!(ids(&p.rows[0])[0], 3, "most liked first");
+    }
+
+    /// Hide: mature mods are nowhere, not even in the image queue. Blur: in rows, never on the
+    /// billboard. Show: everywhere, the billboard included.
+    #[test]
+    fn plan_respects_mature() {
+        use crate::prefs::Mature;
+        for mode in Mature::ALL {
+            let recent: Vec<BrowseCard> = (1..=40).map(|i| card(i, (i % 7) as i64, 100 - i, "Skins", i % 2 == 0)).collect();
+            let mut st = state_with(recent, Vec::new());
+            st.prefs.mature = mode;
+            st.browse_view.top = Some(vec![
+                TopSub { id: 2, model: "Mod".into(), period: "today".into(), image_url: Some("https://images.example/2.jpg".into()), nsfw: true, ..TopSub::default() },
+                TopSub { id: 3, model: "Mod".into(), period: "today".into(), image_url: Some("https://images.example/3.jpg".into()), ..TopSub::default() },
+            ]);
+            let p = plan(&st, 4, NOW);
+            let shown: Vec<bool> = p.rows.iter().flat_map(|r| r.cards.iter().map(|c| c.nsfw)).collect();
+            let lead_mature = p.billboard.iter().any(|pick| pick.card.nsfw);
+            match mode {
+                Mature::Hide => {
+                    assert!(!shown.contains(&true), "Hide: a mature mod in a row");
+                    assert!(!lead_mature);
+                }
+                Mature::Blur => {
+                    assert!(shown.contains(&true), "Blur: mature mods stay in rows");
+                    assert!(!lead_mature, "Blur: never a billboard pick");
+                }
+                Mature::Show => {
+                    assert!(shown.contains(&true));
+                    assert_eq!(p.billboard[0].card.id, 2, "Show: a mature mod may lead");
+                }
+            }
+        }
+    }
+
+    /// Every page a row can show starts with `n` whole tiles and never leaves an empty slot.
+    #[test]
+    fn pages_end_flush_with_no_empty_slots() {
+        let w = 1016.0;
+        let n = 4;
+        let (tw, _) = tile_size(w, n);
+        assert_eq!(page_count(10, 4), 3);
+        assert_eq!(page_window(10, 4, 0, w), (0, 5, 0.0));
+        assert_eq!(page_window(10, 4, 1, w), (4, 9, 0.0));
+        let (start, end, x) = page_window(10, 4, 2, w);
+        assert_eq!((start, end), (5, 10));
+        // The last tile ends at the right edge; the first of the five peeks at the left.
+        assert!((x + 5.0 * tw + 4.0 * GAP - w).abs() < 0.5);
+        assert!(x < 0.0 && x > -tw);
+    }
+
+    /// The tile sizes the spec gives at the two window widths.
+    #[test]
+    fn tiles_follow_the_spec() {
+        assert_eq!(per_page(1016.0), 4);
+        assert_eq!(tile_size(1016.0, 4), (236.0, 133.0));
+        assert_eq!(per_page(776.0), 3);
+        assert_eq!(tile_size(776.0, 3), (237.0, 133.0));
+    }
+
+    /// The cover queue reads the plan: every tile on a shown page and the billboard's pick are
+    /// asked for, under every mature mode, and Hide never asks for mature art.
+    #[test]
+    fn every_shown_tile_has_its_cover_asked_for() {
+        for mode in crate::prefs::Mature::ALL {
+            let recent: Vec<BrowseCard> = (1..=60).map(|i| card(i, (i % 30) as i64, 200 - i, ["Skins", "HUD"][(i % 2) as usize], i % 5 == 0)).collect();
+            let liked: Vec<BrowseCard> = (100..=140).map(|i| card(i, 400, 900 - i, "Skins", false)).collect();
+            let mut st = state_with(recent, liked);
+            st.prefs.mature = mode;
+            let width = super::super::toolbar::page_width(&st);
+            let n = per_page(width);
+            for page in 0..4 {
+                st.browse_view.shelves.pages = [page; super::super::shelf::SLOTS];
+                let (now, next) = cover_urls(&st);
+                let p = plan(&st, n, gamebanana::now_unix());
+                for r in &p.rows {
+                    let (a, b, _) = page_window(r.cards.len(), n, page, width);
+                    for c in &r.cards[a..b] {
+                        let url = c.thumbnail_url.clone().unwrap();
+                        assert!(now.contains(&url) || next.contains(&url), "{mode:?}: tile {} shown without its cover asked for", c.id);
+                    }
+                }
+                if mode == crate::prefs::Mature::Hide {
+                    let mature: Vec<String> = (1..=60u64).filter(|i| i % 5 == 0).map(|i| format!("https://images.example/{i}.jpg")).collect();
+                    assert!(now.iter().chain(&next).all(|u| !mature.contains(u)), "Hide asked for mature art");
+                }
+            }
+        }
+    }
+
+    /// The timer: never armed under Reduce motion, with the setting off, while hovered, in the
+    /// background, off Browse, or with one pick.
+    #[test]
+    fn billboard_pauses() {
+        let recent: Vec<BrowseCard> = (1..=30).map(|i| card(i, 1, 100 - i, "Skins", false)).collect();
+        let mut st = state_with(recent, Vec::new());
+        st.screen = Screen::Browse;
+        st.prefs.browse_auto_advance = true;
+        st.browse_view.top = Some(
+            (1..=3)
+                .map(|i| TopSub { id: 900 + i, model: "Mod".into(), period: "today".into(), image_url: Some(format!("https://images.example/t{i}.jpg")), ..TopSub::default() })
+                .collect(),
+        );
+        st.browse_view.w4.featured = vec![("HUD".into(), card(950, 1, 1, "HUD", false))];
+        assert_eq!(paused(&st, None), None, "it runs on the landing");
+        fn check(st: &mut State, what: &str, change: &dyn Fn(&mut State), focus: Option<&str>) {
+            change(st);
+            assert!(paused(st, focus).is_some(), "{what} should pause it");
+        }
+        check(&mut st, "hover", &|s| s.browse_view.shelves.hovered = true, None);
+        check(&mut st, "focus in the billboard", &|s| s.browse_view.shelves.hovered = false, Some("bb-install-901"));
+        check(&mut st, "background", &|s| s.browse_view.shelves.window_inactive = true, None);
+        check(&mut st, "details open", &|s| {
+            s.browse_view.shelves.window_inactive = false;
+            s.browse_view.context = Some(1);
+        }, None);
+        st.browse_view.context = None;
+        assert_eq!(paused(&st, None), None, "running again once every cause ended");
+        check(&mut st, "two minutes without input", &|s| s.browse_view.shelves.last_input = Some(Instant::now() - IDLE - Duration::from_secs(1)), None);
+        st.browse_view.shelves.last_input = Some(Instant::now());
+        assert_eq!(paused(&st, None), None, "input wakes it again");
+        let mut s = std::mem::take(&mut st);
+        s.screen = Screen::Installed;
+        assert!(paused(&s, None).is_some(), "another page");
+        s.screen = Screen::Browse;
+        s.prefs.reduce_motion = true;
+        assert_eq!(paused(&s, None), Some("reduce motion"));
+        s.prefs.reduce_motion = false;
+        s.prefs.browse_auto_advance = false;
+        assert_eq!(paused(&s, None), Some("setting"));
+        s.prefs.browse_auto_advance = true;
+        s.browse_view.top = None;
+        s.browse_view.w4.featured.clear();
+        assert!(paused(&s, None).is_some(), "one pick");
+    }
+}

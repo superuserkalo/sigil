@@ -59,7 +59,7 @@ pub mod replace;
 pub mod scenes;
 pub mod store;
 pub mod shelf;
-pub mod spotlight;
+pub mod top;
 pub mod toolbar;
 pub mod tree;
 

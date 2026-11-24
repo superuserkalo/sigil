@@ -379,6 +379,9 @@ pub struct Prefs {
     /// Settings > Appearance > Reduce motion: menus, drawers and selections change at once.
     /// Off by default; the system setting reduces motion either way.
     pub reduce_motion: bool,
+    /// Settings > Appearance: the Browse billboard steps to its next pick by itself every 7
+    /// seconds (never under Reduce motion). On by default.
+    pub browse_auto_advance: bool,
     /// The quiet bar under every page: game, catalog, downloads, profile, volume, update.
     pub status_bar: bool,
     pub single_launch: bool,
@@ -426,6 +429,7 @@ impl Default for Prefs {
             custom_accents: Vec::new(),
             transparent_sidebar: false,
             reduce_motion: false,
+            browse_auto_advance: true,
             status_bar: true,
             single_launch: false,
             flags: BTreeMap::new(),
@@ -548,6 +552,7 @@ impl Prefs {
                 .unwrap_or_default(),
             transparent_sidebar: b("transparent_sidebar", d.transparent_sidebar),
             reduce_motion: b("reduce_motion", d.reduce_motion),
+            browse_auto_advance: b("browse_auto_advance", d.browse_auto_advance),
             status_bar: b("status_bar", d.status_bar),
             single_launch: b("single_launch", d.single_launch),
             flags: map
@@ -660,6 +665,7 @@ impl Prefs {
         map.insert("custom_accents".into(), json!(self.custom_accents));
         map.insert("transparent_sidebar".into(), json!(self.transparent_sidebar));
         map.insert("reduce_motion".into(), json!(self.reduce_motion));
+        map.insert("browse_auto_advance".into(), json!(self.browse_auto_advance));
         map.insert("status_bar".into(), json!(self.status_bar));
         map.insert("single_launch".into(), json!(self.single_launch));
         map.insert("flags".into(), json!(self.flags));
@@ -813,6 +819,7 @@ mod tests {
             custom_accents: vec!["#12ab34".into(), "#abc".into()],
             transparent_sidebar: true,
             reduce_motion: true,
+            browse_auto_advance: false,
             status_bar: false,
             single_launch: true,
             flags: [("servers".to_string(), false), ("docked_details".to_string(), true)]

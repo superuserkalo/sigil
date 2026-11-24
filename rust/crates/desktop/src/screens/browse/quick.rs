@@ -1077,6 +1077,60 @@ pub fn button_el(u: &Ui, b: &Button, key: String, id: u64, name: &str, size: Siz
         .on_press(move |st: &mut State| press(st, id, &name))
 }
 
+/// The install button drawn on art (the billboard, a row tile's hover layer): the same
+/// states, labels, progress and presses as `button_el`, in white on any picture. Install is a
+/// solid white fill with near-black ink, the strongest control on the landing without taking
+/// the shell's orange.
+pub fn button_on_art(u: &Ui, b: &Button, key: String, id: u64, name: &str, h: f32, min_w: f32) -> El {
+    let dark = crate::screens::browse::top::INK_ON_WHITE;
+    let (ink, fill_color, border) = match b {
+        Button::Install | Button::Update | Button::Enable => (dark, Color::WHITE, Color::WHITE),
+        Button::Retry(_) => (dark, Color::WHITE, u.rose),
+        Button::Installed => (Color::WHITE, Color::WHITE.alpha(0.16), Color::WHITE.alpha(0.16)),
+        Button::Downloading(_) | Button::Installing | Button::Queued | Button::Paused(_) => {
+            (Color::WHITE, Color::BLACK.alpha(0.45), Color::WHITE.alpha(0.18))
+        }
+    };
+    let radius = crate::ui::r(8.0);
+    let mut button = row()
+        .key(key)
+        .h(h)
+        .min_w(min_w)
+        .px(12.0)
+        .gap(6.0)
+        .center()
+        .radius(radius)
+        .clip_rounded(radius)
+        .fill(fill_color)
+        .border(1.0, border)
+        .role("button")
+        .label(format!("{} {name}", b.label()));
+    if let Some(fraction) = b.fraction() {
+        let color = if matches!(b, Button::Paused(_)) { Color::WHITE.alpha(0.10) } else { u.accent.alpha(0.45) };
+        button = button.child(progress_fill(fraction, color));
+    }
+    button = button
+        .child(icon(glyph(b), 14.0).color(ink).a11y_hidden())
+        .child(text(b.label()).font(LABEL).color(ink).truncate().min_w(0.0).shrink().a11y_hidden());
+    if b.busy() {
+        let label = fill(tr("Cancel {}"), &[name]);
+        return button
+            .label(label)
+            .hover(Color::WHITE.alpha(0.10))
+            .focusable(true)
+            .cursor(rune::Cursor::Pointer)
+            .child(icon(&icons::X, 12.0).color(Color::WHITE.alpha(0.7)).a11y_hidden())
+            .on_press(move |st: &mut State| cancel(st, id));
+    }
+    let name = name.to_string();
+    button
+        .hover(Color::BLACK.alpha(0.10))
+        .press(Color::BLACK.alpha(0.16))
+        .focusable(true)
+        .cursor(rune::Cursor::Pointer)
+        .on_press(move |st: &mut State| press(st, id, &name))
+}
+
 /// Cancel one Browse install: its download queue row while it waits or streams (the queue
 /// removes the partial file), or the install worker's plan while it extracts and validates.
 pub fn cancel(st: &mut State, id: u64) {

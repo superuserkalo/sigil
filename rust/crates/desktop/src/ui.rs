@@ -53,6 +53,10 @@ pub const MONO_MED: TextStyle = TextStyle::new(12.0, 500.0)
     .lh(18.0)
     .family(Family::SystemMono);
 pub const NUM: TextStyle = TextStyle::new(16.0, 600.0).lh(24.0).features("'tnum' 1");
+/// The Browse billboard's title (`design/browse-top.md` 2): the only type this large.
+pub const BILLBOARD: TextStyle = TextStyle::new(28.0, 600.0).lh(32.0).tracking(-0.3);
+/// The Top 10 row's rank numeral, set on art.
+pub const RANK: TextStyle = TextStyle::new(56.0, 700.0).lh(56.0).features("'tnum' 1");
 
 /// Every shared text style, for the weight test.
 #[cfg(test)]

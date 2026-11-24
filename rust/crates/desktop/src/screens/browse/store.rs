@@ -542,7 +542,7 @@ pub(crate) fn track_visible(st: &mut State, range: Range<usize>, shown: &[usize]
         let mut keep = keep;
         // The landing's covers are the same mods as the top of the grid: never evict them
         // while the landing shows them.
-        let (now, next) = super::shelf::landing_cover_urls(st);
+        let (now, next) = super::top::cover_urls(st);
         keep.extend(now);
         keep.extend(next);
         if let Some(details) = &st.browse_view.details {

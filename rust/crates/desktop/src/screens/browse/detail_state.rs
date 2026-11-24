@@ -451,6 +451,7 @@ pub fn poll(st: &mut State, tx: &mut Tx) -> bool {
     // the shared gate: hidden or mature art is never fetched. Asked again whenever what the
     // landing shows changes, an image is evicted or the queue is cleared.
     super::shelf::queue_covers(st);
+    changed |= super::top::tick(st, tx);
     if let Some(result) = st.browse_view.details_job.try_take() {
         match result {
             Ok(load) => apply_details(st, load),

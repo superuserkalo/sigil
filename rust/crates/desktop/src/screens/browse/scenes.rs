@@ -197,13 +197,39 @@ pub fn scene_dashboard(s: &mut State) {
         }
         s.browse_view.top = Some(top);
     }
-    // The shelves from the stored page, ordered as their reads would be.
+    // The reads, made from the stored page: four copies of its mods spread over the last 28
+    // days with varied likes stand in for the 30-day read, and the page itself for the all-time
+    // list. The images are the page's own, so the scene needs no other download.
     if let Some(page) = s.browse.page.as_ref() {
-        let mut all = page.mods.clone();
-        all.sort_by(|a, b| b.likes.cmp(&a.likes));
-        let month = all.split_off(all.len() / 2);
-        let week = all;
-        s.browse_view.shelves.feeds = Some(super::shelf::Feeds { week, month, reserve: Vec::new() });
+        let now = gamebanana::now_unix();
+        let base: Vec<BrowseCard> = page.mods.iter().filter(|c| c.thumbnail_url.is_some()).map(super::store::clone_card).collect();
+        let mut recent = Vec::new();
+        for (i, card) in base.iter().enumerate() {
+            let mut c = super::store::clone_card(card);
+            let k = i as u64;
+            c.added_ts = now - ((k * 3) % 7) as i64 * 86_400 - 3_600;
+            c.likes = 400 - (k * 37) % 390;
+            // One mature mod, veiled under the default Blur.
+            c.nsfw = k == 12;
+            recent.push(c);
+        }
+        let mut liked = base;
+        // The top list's mods stand in for the rest of the all-time list (their images are
+        // fetched above).
+        if let Some(top) = s.browse_view.top.as_ref() {
+            liked.extend(top.iter().filter(|t| t.model.eq_ignore_ascii_case("mod")).map(super::top::card_of));
+        }
+        liked.sort_by(|a, b| b.likes.cmp(&a.likes));
+        s.browse_view.shelves.feeds = Some(super::shelf::Feeds { recent, liked });
+        // Three weekly category picks for the billboard's later slides.
+        let picks: Vec<(String, BrowseCard)> = page
+            .mods
+            .iter()
+            .filter(|c| c.thumbnail_url.is_some() && !c.nsfw)
+            .take(3)
+            .map(|c| (super::top::root_category(c).to_string(), super::store::clone_card(c)))
+            .collect();
+        s.browse_view.w4.featured = picks;
     }
 }
 

@@ -655,46 +655,34 @@ fn page_switch_leaves_one_page() {
 
 }
 
-fn shelf_view(s: &State, cx: &mut rune::Cx<State>) -> rune::El {
-    crate::motion::set_reduced(cx.is_reduced_motion());
-    let u = crate::ui::Ui::new();
-    let tiles = (0..12).map(|i| rune::el().key(format!("tile-{i}")).size(100.0, 60.0).fill(u.hover)).collect();
-    crate::motion::root(rune::col().key("root").w_full().h_full().padding(24.0)).child(
-        crate::screens::browse::shelf::shelf(s, &u, 0, "test-shelf", "Shelf", None, tiles, 4, 100.0, 8.0),
-    )
-}
-
-/// A shelf page comes in 32 points from the side it pages from while fading in, and the old
-/// page fades out in place; the shelf, its head and its arrows stay where they are.
+/// A row page comes in 32 points from the side it pages from while fading in, and the old
+/// page fades out in place; the row, its header and everything around it stay where they are.
 #[test]
-fn shelf_paging_slides_the_page_only() {
+fn row_paging_slides_the_page_only() {
     let _globals = crate::ui::test_globals();
-    let mut rt = Runtime::new(crate::data::init_state(), shelf_view, (800.0, 300.0), Env::new(true, 1.0));
-    rt.check_live_only(false);
-    settle(&mut rt);
-    let still = |rt: &Runtime<State>| -> Vec<(String, [i32; 4])> {
-        rects(rt).into_iter().filter(|(k, _)| !k.contains("-page-") && !k.starts_with("tile-")).collect()
-    };
+    let mut rt = runtime("browse-dashboard", (1280.0, 800.0));
+    // The page, its tiles and the row's own arrows (the back arrow appears once off page 1).
+    let moving = |k: &str| k.contains("-page-") || k == "top-row-0-prev" || k == "top-row-0-next" || ["top-0-", "top-hover-0-", "top-thumb-0-", "top-install-0-", "top-star-0-", "top-show-0-"].iter().any(|p| k.starts_with(p));
+    let still = |rt: &Runtime<State>| -> Vec<(String, [i32; 4])> { rects(rt).into_iter().filter(|(k, _)| !moving(k)).collect() };
     let before = still(&rt);
-    apply(&mut rt, Step::Press("test-shelf-next"), "shelf next");
+    apply(&mut rt, Step::Press("top-row-0-next"), "row next");
     let mut xs = Vec::new();
     let mut both = false;
     for n in 0..40 {
         rt.frame(1.0 / 60.0);
-        let pages: Vec<(String, bool, f32, f32)> = rt
+        let pages: Vec<(String, bool, f32)> = rt
             .elements()
             .into_iter()
-            .filter(|e| e.key.as_deref().is_some_and(|k| k.starts_with("test-shelf-page-")))
-            .map(|e| (e.key.unwrap_or_default(), e.exiting, e.rect[0], e.opacity))
+            .filter(|e| e.key.as_deref().is_some_and(|k| k.starts_with("top-row-0-page-")))
+            .map(|e| (e.key.unwrap_or_default(), e.exiting, e.rect[0]))
             .collect();
-        if n == 1 {
-            eprintln!("motion: shelf pages in tree order {pages:?}");
-        }
         both |= pages.len() == 2;
-        if let Some(p) = pages.iter().find(|p| p.0 == "test-shelf-page-1") {
+        if let Some(p) = pages.iter().find(|p| p.0 == "top-row-0-page-1") {
             xs.push(p.2);
         }
-        assert_eq!(still(&rt), before, "frame {n}: the shelf around the page moved");
+        let now = still(&rt);
+        let moved: Vec<_> = now.iter().filter(|r| !before.contains(r)).chain(before.iter().filter(|r| !now.contains(r))).take(6).collect();
+        assert!(moved.is_empty(), "frame {n}: the landing around the page moved: {moved:?}");
     }
     assert!(both, "the old page should fade out while the new one comes in");
     let first = xs.first().copied().unwrap_or(0.0);
@@ -786,4 +774,59 @@ fn measure_toggle_cost_at_300_mods() {
         times[times.len() * 9 / 10],
         rt.stats.layout_nodes
     );
+}
+
+/// The billboard's timer costs nothing between advances: armed on the landing, the window
+/// comes to rest and draws no frame and makes no commit while the deadline waits.
+#[test]
+fn billboard_rests_between_advances() {
+    let _globals = crate::ui::test_globals();
+    let mut rt = runtime("browse-dashboard", (1280.0, 800.0));
+    // The test runtime runs the view, not `app::poll`, so the poll's step is run by hand.
+    rt.update(|s, tx| {
+        s.prefs.browse_auto_advance = true;
+        s.browse_view.shelves.last_input = Some(std::time::Instant::now());
+        crate::screens::browse::top::tick(s, tx);
+    });
+    settle(&mut rt);
+    assert!(
+        rt.state.browse_view.shelves.due.is_some(),
+        "the landing arms the billboard's timer (paused: {:?})",
+        crate::screens::browse::top::paused(&rt.state, None)
+    );
+    let commits = rt.stats.commits;
+    for n in 0..30 {
+        assert!(!rt.frame(1.0 / 60.0), "frame {n}: the window drew while the billboard waited");
+    }
+    assert_eq!(rt.stats.commits, commits, "a commit while the billboard waited");
+}
+
+/// Two minutes without input stops the billboard: no deadline, no frame; the next input arms
+/// it again.
+#[test]
+fn billboard_stops_when_idle() {
+    let _globals = crate::ui::test_globals();
+    let mut rt = runtime("browse-dashboard", (1280.0, 800.0));
+    rt.update(|s, tx| {
+        s.prefs.browse_auto_advance = true;
+        s.browse_view.shelves.last_input = Some(std::time::Instant::now() - crate::screens::browse::top::IDLE - std::time::Duration::from_secs(1));
+        s.browse_view.shelves.due = Some(std::time::Instant::now());
+        crate::screens::browse::top::tick(s, tx);
+    });
+    settle(&mut rt);
+    assert!(rt.state.browse_view.shelves.due.is_none(), "an idle window must not arm the billboard");
+    for n in 0..30 {
+        assert!(!rt.frame(1.0 / 60.0), "frame {n}: an idle window drew");
+    }
+    // A pointer move over Browse counts as input; the poll then arms a full interval.
+    rt.pointer_move(700.0, 620.0);
+    settle(&mut rt);
+    assert!(
+        rt.state.browse_view.shelves.last_input.is_some_and(|t| t.elapsed() < std::time::Duration::from_secs(5)),
+        "a pointer move over Browse counts as input"
+    );
+    rt.update(|s, tx| {
+        crate::screens::browse::top::tick(s, tx);
+    });
+    assert!(rt.state.browse_view.shelves.due.is_some(), "input arms it again");
 }

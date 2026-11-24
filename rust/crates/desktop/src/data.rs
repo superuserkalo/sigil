@@ -965,6 +965,11 @@ impl ThumbCrew {
         self.generation
     }
 
+    /// Whether `url` came back empty and still rests before its next try.
+    pub fn failed(&self, url: &str) -> bool {
+        self.failed.get(url).is_some_and(|at| at.elapsed() < THUMB_RETRY)
+    }
+
     pub fn clear(&mut self) {
         self.generation += 1;
         if let Ok(mut queue) = self.queue.lock() {

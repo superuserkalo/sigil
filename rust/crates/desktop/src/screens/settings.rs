@@ -1972,6 +1972,14 @@ fn appearance(s: &State, u: &Ui) -> El {
         glass_row(s, u),
         toggle_row(
             u,
+            "settings-browse-auto-advance",
+            "Auto-advance the Browse billboard",
+            "The banner at the top of Browse moves to its next mod every 7 seconds. Never with Reduce motion on.",
+            s.prefs.browse_auto_advance,
+            |st| prefs::edit(st, |p| p.browse_auto_advance = !p.browse_auto_advance),
+        ),
+        toggle_row(
+            u,
             "settings-status-bar",
             "Status bar",
             "A quiet line under every page: the game, the catalog, downloads, your profile, the preview volume and updates.",

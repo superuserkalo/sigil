@@ -752,6 +752,9 @@ pub struct TopSub {
     pub profile_url: String,
     #[serde(default)]
     pub nsfw: bool,
+    /// `_sDescription`: the submission's one-line summary. Empty when it has none.
+    #[serde(default)]
+    pub description: String,
 }
 
 pub fn fetch_top_subs() -> Result<Vec<TopSub>> {
@@ -782,6 +785,7 @@ pub fn parse_top_subs(body: &str) -> Result<Vec<TopSub>> {
             image_url: Some(str_of(item, "_sImageUrl")).filter(|url| !url.is_empty()),
             profile_url: str_of(item, "_sProfileUrl"),
             nsfw: is_mature(None, false, Some(str_of(item, "_sInitialVisibility").as_str())),
+            description: decode_entities(&str_of(item, "_sDescription")).trim().to_string(),
         })
         .filter(|top| top.id > 0)
         .collect())
@@ -2449,8 +2453,10 @@ mod tests {
         let body = r#"[{"_idRow": 741478, "_sModelName": "Mod", "_sName": "Long Hair Haze",
             "_sPeriod": "today", "_nLikeCount": 9, "_sInitialVisibility": "warn",
             "_sImageUrl": "https://images.gamebanana.com/img/ss/mods/800-90_a.jpg",
+            "_sDescription": " Longer hair for Haze &amp; physics ",
             "_aSubmitter": {"_sName": "747shove"}, "_aRootCategory": {"_sName": "Skins"}}]"#;
         let top = parse_top_subs(body).unwrap();
+        assert_eq!(top[0].description, "Longer hair for Haze & physics");
         assert_eq!(top[0].period, "today");
         assert_eq!(top[0].author, "747shove");
         assert!(top[0].nsfw);
