@@ -19,8 +19,8 @@
       "dataset": "sigil_events"
     }
   ],
-  // `database_id` is a placeholder until the owner runs `wrangler d1 create sigil` and pastes the
-  // id. Local development and the tests use a Miniflare database and ignore it.
+  // The remote `sigil` database. Local development and the tests use a Miniflare database and
+  // ignore the id.
   "d1_databases": [
     {
       "binding": "DB",

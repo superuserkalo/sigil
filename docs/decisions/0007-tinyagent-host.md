@@ -2,6 +2,7 @@
 
 Status: accepted
 Date: 2026-11-16
+Update 2026-11-25: the cutover is complete. The Rust host (`Sigil agent-host`) is the only host, and the TypeScript reference host (`apps/agent-host`) and the Pi Durable harness (`packages/harness`) were removed from the repository.
 
 ## Context
 

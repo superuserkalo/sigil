@@ -51,7 +51,8 @@ cd services/telemetry && npm ci && npm test               # the Cloudflare Worke
 ```
 
 If you changed `rust/crates/sigil-viewer`, also run `cargo test -p sigil-viewer`. Tests never need
-a game install: they build synthetic VPKs and fake install trees.
+a game install: they build synthetic VPKs and fake install trees. CI runs the domain core, the app
+and the Worker tests on every pull request.
 
 ## Code style
 

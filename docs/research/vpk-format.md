@@ -4,9 +4,8 @@ Status: active. Verified against reference readers, not yet against a local Dead
 Updated: 2026-11-16
 
 This note records the facts the game index depends on. The parser lives in
-`rust/crates/deadlock-core/src/vpk.rs` (the writer is `vpk_write.rs`; the TypeScript
-`packages/deadlock-tools/src/vpk.ts` is the legacy prototype). When this note disagrees with a real Deadlock file, the file
-wins; update both.
+`rust/crates/deadlock-core/src/vpk.rs` (the writer is `vpk_write.rs`). When this note disagrees
+with a real Deadlock file, the file wins; update both.
 
 ## Why this matters
 

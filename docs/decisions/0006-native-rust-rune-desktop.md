@@ -2,6 +2,7 @@
 
 Status: accepted
 Date: 2026-11-16
+Update 2026-11-25: the transition is over. The TypeScript CLI, tools and agent host were removed from the repository; Cargo is the only build toolchain for the app (ADR 0007).
 
 ## Context
 

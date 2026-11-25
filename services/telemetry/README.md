@@ -1,16 +1,22 @@
 # Sigil telemetry Worker
 
-Status: deployed at `https://sigil-telemetry.gantchevkaloyan.workers.dev` (migrations 0001 and 0002
-applied, 2026-11-20). The desktop app sends only behind the Settings > Privacy switches or a press. The decision is `docs/decisions/0014-opt-in-telemetry.md`; the player-facing
-description is `docs/privacy.md`.
+Status: deployed at `https://sigil-telemetry.gantchevkaloyan.workers.dev` with every route below,
+migrations 0001 to 0007 applied (2026-11-25). Migration 0008 is in the repository; check
+`npx wrangler d1 migrations list sigil --remote` before deploying code that reads its columns. The
+desktop client is `deadlock_core::telemetry` (plus `product_data`, `catalog_index` and
+`crosshair_library`); it sends only behind the Settings > Privacy switches or a press, except the
+public catalog index and crosshair library reads, which carry nothing about the player. The
+decisions are ADR 0014 (telemetry), 0017 (product data), 0018 (catalog index) and 0019 (crosshair
+library) in `docs/decisions/`; the player-facing description is `docs/privacy.md`.
 
-One Cloudflare Worker, `sigil-telemetry`, owns every opt-in upload Sigil makes. There is no third
-party: usage events go to Analytics Engine, everything else to D1.
+One Cloudflare Worker, `sigil-telemetry`, owns every opt-in upload Sigil makes, the public catalog
+search index and the community crosshair library. There is no analytics third party: usage events
+go to Analytics Engine, everything else to D1.
 
 ## Endpoints
 
 The catalog routes (`/v1/catalog/...`) are public read routes over the catalog search index and
-are described under [Catalog search index](#catalog-search-index-adr-0018-migration-0006).
+are described under [Catalog search index](#catalog-search-index-adr-0018).
 
 | Method | Path | Body limit | What it stores |
 | --- | --- | --- | --- |
@@ -30,6 +36,8 @@ are described under [Catalog search index](#catalog-search-index-adr-0018-migrat
 | GET | `/v1/crosshairs?sort=used\|new&cursor=` | none | Nothing. 60 visible crosshairs per page, cacheable 5 minutes. |
 | POST | `/v1/crosshairs/<id>/delete`, `/use`, `/report` | 256 B | Delete by token; use dedupe and daily caps (2 days), per-crosshair report markers (90 days). |
 | GET, POST | `/v1/crosshairs/admin/...` | 2 KiB | Owner only: flagged list, remove, restore, upsert official. |
+| GET | `/v1/catalog/tags[?since=<ms>]` | none | Nothing. The catalog search index, or a delta. |
+| GET | `/v1/catalog/mod/<id>` | none | Nothing. One mod's file hint, when that flag ran. |
 
 Every request needs `x-sigil-client: 1` and a semver `x-sigil-version`, otherwise 400. The limiter
 allows 60 requests per 60 seconds per Cloudflare location, keyed by a salted hash of
@@ -93,23 +101,29 @@ map to several mods and the report count decides the order.
 
 ```text
 src/index.ts        routes, handlers, logging
+src/cron.ts         the daily job and the 10-minute catalog trigger
 src/events.ts       the event and page allowlist
 src/body.ts         capped streaming body reader
 src/validate.ts     shape validation for every body and query
 src/scrub.ts        server side scrubbing
 src/fingerprint.ts  crash fingerprints
 src/codes.ts        support codes
+src/hash.ts         hashing helpers
 src/limiter.ts      daily salt and limiter key
+src/product.ts      Help build Sigil records (ADR 0017)
+src/aggregates.ts   product epochs, the floor and the read routes
 src/retention.ts    the cron cleanup
-migrations/         D1 schema
+src/catalog/        the catalog search index: upkeep, judgments, publish, routes (ADR 0018)
+src/crosshairs/     the community crosshair library (ADR 0019)
+migrations/         D1 schema, 0001 to 0008 (see Migrations)
 test/               Workers runtime tests
 ```
 
 ## Develop and test
 
 ```bash
-npm install
-npx vitest run          # Workers runtime, real D1, Analytics Engine and limiter bindings
+npm ci
+npm test                # vitest in the Workers runtime, real D1, Analytics Engine and limiter bindings
 npm run typecheck
 npm run types           # regenerate worker-configuration.d.ts after a binding change
 npm run migrate:local   # apply migrations to the local D1 database
@@ -128,20 +142,39 @@ options) is the same.
 
 The owner deploys. Nothing here writes to a game install.
 
-1. `npx wrangler login` once on the machine that deploys.
-2. `npx wrangler d1 create sigil` and paste the returned `database_id` over the placeholder
-   `"TO_BE_CREATED"` in `wrangler.jsonc`. Local development and the tests ignore the id.
-3. `npx wrangler d1 migrations apply sigil --remote` to create the tables.
-4. `npx wrangler deploy`. The Worker answers on its `workers.dev` address or on a route added to
-   `wrangler.jsonc`.
-5. Record the address in `docs/privacy.md` and add the host to the network allowlist in
-   `docs/architecture.md`, then point the desktop app at it once the client exists.
+The D1 database `sigil` exists and its id is in `wrangler.jsonc` (local development and the tests
+ignore it). A deploy is:
+
+```bash
+cd services/telemetry
+npx wrangler login                                # once on the machine that deploys
+npx wrangler d1 migrations apply sigil --remote   # pending migrations first, before code that reads them
+npx wrangler deploy
+```
+
+The address is `ENDPOINT` in `rust/crates/deadlock-core/src/telemetry.rs`, recorded in
+`docs/privacy.md` and the network allowlist in `docs/architecture.md`.
 
 The cron trigger runs at 03:17 UTC daily: retention first (diagnostics older than 30 days, crashes
-older than 90, product contributions older than 21 days), then it unlinks the raw product records
-of installs that sent nothing for 24 months, then it closes finished weekly product epochs (7 days, `EPOCH_DAYS`). Raw
-product records and product totals are otherwise kept (ADR 0017). Analytics Engine
-retention is Cloudflare's own; query it with the SQL API.
+older than 90, product contributions older than 21 days, crosshair use and daily network rows
+older than 2 days, crosshair report markers older than 90 days), then it unlinks the raw product
+records of installs that sent nothing for 24 months, then it closes finished weekly product epochs
+(7 days, `EPOCH_DAYS`), then it runs the catalog index upkeep. Raw product records and product
+totals are otherwise kept (ADR 0017). Analytics Engine retention is Cloudflare's own; query it with
+the SQL API.
+
+## Migrations
+
+| Migration | Adds |
+| --- | --- |
+| `0001_init.sql` | `crashes`, `diagnostics`, `mod_hashes`, `hash_contributors` |
+| `0002_crash_context.sql` | the crash kind and the scrubbed log tail |
+| `0003_product_data.sql` | `product_events`, `product_contrib`, `product_totals` (ADR 0017) |
+| `0004_product_uses.sql` | the health, frame rate and search gap columns and an index |
+| `0005_weekly_epochs.sql` | a guard that drops rows numbered under the old 30-day epochs |
+| `0006_catalog_tags.sql` | `catalog_mods`, `mod_tags`, `enrich_state` (ADR 0018) |
+| `0007_crosshairs.sql` | `crosshairs`, `crosshair_uses`, `crosshair_reports`, `crosshair_daily` and 21 official seeds (ADR 0019) |
+| `0008_catalog_facts.sql` | likes, the content-rating flag, a facts change time and a judging failure count on `catalog_mods` |
 
 ### Help build Sigil (product data, ADR 0017)
 
@@ -157,12 +190,10 @@ Before deploying the product routes, set two secrets once. Never put them in the
 Without both secrets (or with one shorter than 32 characters) `POST /v1/product`,
 `POST /v1/product/delete` and `GET /v1/product/related` answer 503 `not_configured` and store
 nothing. The app keeps its queue within its usual limits and tries again later.
-3. `npx wrangler d1 migrations apply sigil --remote` applies `0003_product_data.sql`.
-4. `npx wrangler deploy`.
 
 A mistake in the data is fixed by deleting rows from D1, not by deploying a key.
 
-### What players get back (migration 0004)
+### What players get back
 
 Every answer below is built only from `product_totals`: closed epochs whose key met the floor (10
 eligible installs, 6 network buckets, 3 days). No install hash, bucket or single install's value
@@ -208,26 +239,9 @@ curl -s https://sigil-telemetry.gantchevkaloyan.workers.dev/v1/product/admin/sea
 Epochs are 7 days (`EPOCH_DAYS` in `src/aggregates.ts`, the one setting). Contributions live their
 week plus 2 days of grace, 21 days at most. Health and related mods read the last 8 closed weeks.
 `0005_weekly_epochs.sql` deletes any contribution or total numbered under the old 30-day epochs
-(epoch below 1500); the tables were empty when the change landed, so it is a guard. Apply it after
-deploying the weekly code:
+(epoch below 1500); the tables were empty when the change landed, so it is a guard.
 
-```bash
-npx wrangler deploy
-npx wrangler d1 migrations apply sigil --remote   # 0005_weekly_epochs.sql
-```
-
-### Deploying migration 0004
-
-```bash
-npx wrangler d1 migrations apply sigil --remote   # 0004_product_uses.sql: five columns, one index
-npx wrangler secret put PRODUCT_ADMIN_KEY         # only for the search gaps route
-npx wrangler deploy
-```
-
-Contributions sent before 0004 keep counting: the new kinds start from the deploy, and a
-benchmark sent before it has no frame rate row.
-
-### Catalog search index (ADR 0018, migration 0006)
+### Catalog search index (ADR 0018)
 
 A public search index of GameBanana's Deadlock catalog, which the app downloads and matches
 locally. Code in `src/catalog/`; the decision and the matcher algorithm are in
@@ -247,36 +261,25 @@ locally. Code in `src/catalog/`; the decision and the matcher algorithm are in
   `Cache-Control: public, max-age=10800`, `?since=<ms>` for a delta with its own string table) and
   `GET /v1/catalog/mod/<id>` (the file hint, when that flag ran).
 
-Deploy (the owner runs these; nothing was applied or deployed by the change that added this):
+- The index is version 3: a string table and per-mod ids, with likes, the content-rating flag
+  and the added time per mod (`l`, `n`, `a`, from migration 0008). There is no alias or synonym
+  table: the curated alias list was removed on 2026-11-25, and the only aliases are generated
+  terms that pass their own Jev check. Generated terms equal to a hero name or under 3 characters
+  are dropped at publish. A change to the publish logic bumps `INDEX_BUILD`, which rebuilds the
+  stored index once on the next run.
+- `CATALOG_EXPANSION` is on in `wrangler.jsonc` since 2026-11-25 as the live check of Jev's
+  verification, under the $1 daily cap; `CATALOG_FILE_LABELS` is off. Watch runs with
+  `npx wrangler tail --format=json | grep enrich_`. Turning a flag on or off is a `wrangler deploy`
+  with the var changed in `wrangler.jsonc`.
 
-```bash
-cd services/telemetry
-npx wrangler d1 migrations apply sigil --remote   # applies 0006_catalog_tags.sql (and 0005 if not yet)
-npx wrangler deploy                               # adds the 10-minute trigger, CATALOG_INDEX and the AI binding
-npx wrangler tail --format=json | grep enrich_    # watch the first runs
-```
+## The desktop client's side of the contract
 
-Migration 0008 (`0008_catalog_facts.sql`) adds likes, the content-rating flag, a facts change
-time and a judging failure count to `catalog_mods`; the index then carries `l`, `n` and `a` per
-mod (still version 3). Apply it before deploying the code that reads those columns:
+`rust/crates/deadlock-core/src/telemetry.rs` is the client. It must keep to this contract:
 
-```bash
-cd services/telemetry
-npx wrangler d1 migrations apply sigil --remote   # 0008_catalog_facts.sql
-npx wrangler deploy                               # first run rebuilds the index once (INDEX_BUILD)
-```
-
-The first full pass reads the catalog in about 51 text requests plus the list pages, so it fills
-within a few hours of runs. Turning on a flag later: `wrangler deploy` with the var added to
-`wrangler.jsonc`, after the live check in `.scratch/typesafe/eval.md` (local).
-
-## What the apply step (desktop side) still has to do
-
-This repository part is the receiving end only. The desktop session that builds the client must:
-
-- keep every kind (usage events, crash reports, unknown-mod lookup) off until the player agrees, and
-  keep diagnostics manual;
-- generate the install id once, store it in the app data directory, and never reuse a machine id;
-- scrub before sending, reuse the same rules as `src/scrub.ts`, and cap bodies to the limits above;
-- send `x-sigil-client: 1` and the app version, and respect 429 by waiting;
-- write the hash contribution only after a GameBanana install the player asked for.
+- every kind (usage events, crash reports, unknown-mod lookup, product data) stays off until the
+  player agrees, and diagnostics stay manual;
+- the install id is generated once and stored in the app data directory, never a machine id;
+- text is scrubbed before sending with the same rules as `src/scrub.ts`, and bodies stay within the
+  limits above;
+- every request sends `x-sigil-client: 1` and the app version, and a 429 is answered by waiting;
+- the hash contribution is written only after a GameBanana install the player asked for.

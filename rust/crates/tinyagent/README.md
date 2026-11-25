@@ -9,8 +9,9 @@ after a crash, pause and resume for approvals, `beforeTool` and `afterTool` hook
 streaming providers with usage reporting, run limits, and events that replay from the journal. The
 CLI, JSONL RPC mode and HTTP server all use the same agent loop and the same `Session`.
 
-The TypeScript host in `apps/agent-host` is still the supported one until this crate is exercised
-against a real provider on every platform. This crate is the long-term host.
+This crate is the agent runtime behind `rust/crates/agent-host` (`Sigil agent-host`). The upstream
+TypeScript implementation is vendored in `vendor/tinyagent` by `scripts/vendor-tinyagent.sh` as the
+reference this port is kept in sync with.
 
 ## Shape
 

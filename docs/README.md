@@ -43,7 +43,6 @@ Every doc starts with a status line. Values: `active` (maintained, describes the
 | `research/match-recording.md` | historical | The 2026-11-16 demo and review plan; its LLM review contract is still the spec. |
 | `research/meshy-reverse-engineering.md` | historical | The 2026-11-16 Meshy study the character code cites. |
 | `research/llm-mesh-generation.md` | historical | Can an LLM produce a mesh? 2026-11-16 research. |
-| `research/pi-durable.md` | historical | Legacy Pi Durable runtime notes, superseded by ADR 0007. |
 | `research/fx-libfx.md` | historical | The 2026-11-16 fx and libfx evaluation behind ADR 0004. |
 | `runbooks/development.md` | active | Local setup, tests, headless checks, the CLI and agent host, troubleshooting. |
 | `runbooks/windows.md` | active | The Windows build, installer, first run, launching and what is unverified on real Windows. |
@@ -68,8 +67,10 @@ Every doc starts with a status line. Values: `active` (maintained, describes the
 
 Removed on 2026-11-25, with their remaining facts folded into the docs that own them:
 `design/locker-3d.md` (superseded by `design/3d-viewer.md`), `design/settings-social.md` (gallery
-sketch now in `design/feature-parity.md`, DeadlockForge was built), and
-`research/install-pipeline.md` (superseded by `design/install-robustness.md` and the code).
+sketch now in `design/feature-parity.md`, DeadlockForge was built),
+`research/install-pipeline.md` (superseded by `design/install-robustness.md` and the code), and
+`research/pi-durable.md` (notes on the Pi Durable runtime, superseded by ADR 0007; no ADR linked
+to it, and the TypeScript packages that used it were removed the same day).
 
 ## Updating docs
 

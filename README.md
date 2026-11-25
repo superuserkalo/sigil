@@ -111,7 +111,6 @@ services/telemetry         Sigil's Cloudflare Worker: opt-in telemetry, search i
 scripts/                   vendoring, packaging, installer and release signing
 site/                      the sigilmods.app website
 docs/                      user guide, privacy notes, decisions, research and runbooks
-apps/, packages/           the earlier TypeScript prototype, kept for reference only
 ```
 
 ## Documentation

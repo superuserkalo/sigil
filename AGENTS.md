@@ -17,8 +17,7 @@ real Windows install are listed in `docs/runbooks/windows.md`.
 1. `CONTEXT.md` for the product vocabulary. Use those words in code, docs and UI.
 2. `docs/architecture.md` for boundaries, tool catalog, safety model and roadmap.
 3. `docs/research/deadlock-modding.md` for how mods actually load. This is the domain ground truth.
-4. `docs/decisions/0007-tinyagent-host.md` for the agent runtime (`docs/research/pi-durable.md` is
-   the superseded Pi Durable record).
+4. `docs/decisions/0007-tinyagent-host.md` for the agent runtime.
 5. `docs/decisions/` before changing a boundary that is hard to reverse.
 
 ## Repository layout
@@ -33,9 +32,8 @@ rust/crates/tinyagent     Rust TinyAgent v2 port
 rust/crates/agent-host    Rust TinyAgent JSONL host (dah-agent; folded in as `agent-host`)
 services/telemetry/       Sigil's Cloudflare Worker: opt-in telemetry, catalog index, crosshairs
 site/                     the sigilmods.app website (static, deployed on Vercel)
-apps/, packages/          legacy TypeScript CLI, agent host and Pi Durable harness, reference only
 docs/                     tracked project docs (architecture, decisions, research, runbooks)
-scripts/                  vendoring, packaging, installer, release signing, legacy test dispatch
+scripts/                  vendoring, packaging, installer, release signing
 vendor/                   local Rune, TinyAgent and Grimoire checkouts, gitignored
 .scratch/                 local specs, issues, worktrees, throwaway output, gitignored
 ```
@@ -53,15 +51,15 @@ pnpm rust:check                # cargo check the Rust workspace
 pnpm rust:app                  # run the Rune desktop app
 pnpm rust:dah -- doctor        # run the native CLI
 pnpm rust:agent                # run the Rust TinyAgent host
-(cd rust && cargo test -p dah-desktop -p deadlock-core)   # the tests that matter for the app
-(cd services/telemetry && npm test)                       # the Worker tests (vitest)
+cd rust && cargo test -p deadlock-core -p dah-desktop    # the domain core and the app (what CI runs)
+cd services/telemetry && npm test                        # the Worker tests (vitest, what CI runs)
 scripts/package-windows.sh     # Windows x64 Sigil.exe and zip via cargo-xwin
 scripts/package-installer.sh <Sigil.exe> <version> <out>  # Sigil-Setup.exe via NSIS
-pnpm test                      # legacy TypeScript packages only (what CI runs)
 ```
 
-Rust 1.99.1 (pinned in `rust/rust-toolchain.toml`). Node 24 and pnpm 10 for the scripts, the Worker
-and the legacy TypeScript packages, which run through `tsx` or Node type stripping.
+Rust 1.99.1 (pinned in `rust/rust-toolchain.toml`). Node 24 for the release scripts and the Worker
+(npm, `services/telemetry/package-lock.json`). pnpm 10 is optional: the root `package.json` only
+holds the `pnpm vendor*` and `pnpm rust:*` aliases above.
 
 ## Hard rules
 
@@ -127,16 +125,14 @@ These are product constraints, not preferences.
 - Providers are OpenAI Responses, Anthropic Messages and OpenAI-compatible Chat Completions. The
   last one is the local-model path.
 - Keys come from the app or environment and never enter the journal.
-- `apps/agent-host` is the TypeScript reference implementation during the cutover.
-  `packages/harness` is the legacy Pi Durable host; do not add features to it. See
-  `docs/decisions/0007-tinyagent-host.md`.
+- The Rust host is the only host; see `docs/decisions/0007-tinyagent-host.md`.
 
 Adding a tool:
 
 1. Define it in `rust/crates/agent-host` with a JSON Schema and an explicit `idempotent` value.
 2. Return compact model-facing text. Do not put secrets or large binaries in it.
 3. If it leaves the mod workspace, route it through the Rust app and pause for approval.
-4. Add a contract test in the owning crate or package. Rules belong in code, not only in the prompt.
+4. Add a contract test in the owning crate. Rules belong in code, not only in the prompt.
 
 ## Deadlock domain rules
 
@@ -183,8 +179,8 @@ clone. Keep it that way. `docs/README.md` is the index; every doc carries a stat
 ## Gotchas
 
 - TinyAgent is pinned and vendored. The Rust port in `rust/crates/tinyagent` is protocol v2. Keep it
-  in sync by reading the TypeScript implementation; run `scripts/vendor-tinyagent.sh` after a
-  revision bump.
+  in sync by reading the TypeScript implementation in `vendor/tinyagent`; run
+  `scripts/vendor-tinyagent.sh` after a revision bump.
 - Rune is pre-release. `rune = { git = ... }` alone fails because its patched `parley_engine` is not
   published. Run `scripts/vendor-rune.sh` and keep the `[patch.crates-io]` entries in
   `rust/Cargo.toml`. Bump the vendored revision deliberately.
@@ -196,7 +192,7 @@ clone. Keep it that way. `docs/README.md` is the index; every doc carries a stat
 - External binaries are resolved from settings, never downloaded on demand from an arbitrary URL.
   Pin a version and a hash when one is added.
 - The desktop app is one Rust executable: the CLI (`cli`) and the agent host (`agent-host`) are
-  subcommands of it. Packaging ships that file and its art; there is no Electron `node_modules`
-  allowlist to lean on.
+  subcommands of it. The Locker art (`rust/crates/desktop/build.rs`) and the notices are built
+  into that executable, so packaging ships the one file.
 - Game updates move hero folders and reset `gameinfo.gi`. A "worked yesterday" report is usually a
   path or SearchPaths regression, not an agent bug.

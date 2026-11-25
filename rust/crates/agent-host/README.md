@@ -1,10 +1,10 @@
 # dah-agent
 
-The Rust TinyAgent v2 host for the Deadlock workbench. It replaces the Node sidecar in
-`apps/agent-host`: one process, one durable session at a time, JSONL over stdin and stdout.
+The Rust TinyAgent v2 host for the Deadlock workbench, shipped inside the app as
+`Sigil agent-host`: one process, one durable session at a time, JSONL over stdin and stdout.
 
-Status: the host is complete against the Rust `tiny-agent` protocol v2 crate. The TypeScript host
-remains the reference until this one is exercised against a real provider on every platform.
+Status: the host is complete against the Rust `tiny-agent` protocol v2 crate and is the only host.
+The earlier TypeScript host was removed from the repository on 2026-11-25 (ADR 0007).
 
 ## Run
 
@@ -164,8 +164,8 @@ No tool in this host installs into the game, applies a migration, launches the g
 existing version folder.
 
 `dah-rs` is spawned with an argument array, never a shell string, from `DAH_WORKSPACE_DIR`, with a
-120 second timeout and no provider credentials. `validate_payload` ports
-`packages/deadlock-tools/src/validate.ts`: it rejects absolute, backslash, empty or parent segments,
+120 second timeout and no provider credentials. `validate_payload` mirrors
+`deadlock_core::payload`: it rejects absolute, backslash, empty or parent segments,
 staging-folder prefixes, tool caches, `*.vnmskel_c`, `scripts/*.vdata_c`, source assets, archives and
 executables, and reports duplicate paths case-insensitively. Entries that do not end in `_c` warn.
 
@@ -179,7 +179,7 @@ restart continues the conversation. One host process owns the directory; do not 
 it.
 
 The journal format is the Rust crate's version 1. It is not interchangeable with a journal written
-by the TypeScript host, and this host refuses an unknown version with `storage_error` rather than
+by the TypeScript TinyAgent, and this host refuses an unknown version with `storage_error` rather than
 guessing.
 
 The host keeps one session open at a time. `new_session` and a `prompt` for another id close the
@@ -196,7 +196,6 @@ redaction changed it. Provider keys are never printed at all.
 
 - One tool call at a time, in the order the model asked.
 - One active run at a time; other commands answer `busy`.
-- No compaction budget is configured, so a long session grows until the provider rejects it. The
-  TypeScript host behaves the same. Add a `ContextBudget` when a host-side token counter exists.
+- No compaction budget is configured, so a long session grows until the provider rejects it. Add a `ContextBudget` when a host-side token counter exists.
 - Image content and provider retries for plain provider errors are TinyAgent limitations, not host
   ones. See `rust/crates/tinyagent/README.md`.

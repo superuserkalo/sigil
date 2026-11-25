@@ -7,8 +7,8 @@ Updated: 2026-11-25
 
 - git and Rust through rustup. `rust/rust-toolchain.toml` pins 1.99.1 with rustfmt and clippy; it
   installs on the first build.
-- Node 24 for the release scripts and the Worker in `services/telemetry`; pnpm 10 only for the
-  `pnpm` shortcuts and the legacy TypeScript packages.
+- Node 24 for the release scripts and the Worker in `services/telemetry` (npm). pnpm 10 is optional:
+  the root `package.json` only holds the `pnpm vendor*` and `pnpm rust:*` shortcuts.
 - Linux: the system packages the app links (Wayland, ALSA, OpenSSL and friends).
   `scripts/package-linux.sh --deps` installs them on Debian and Ubuntu.
 - Optional: Deadlock through Steam for real game checks. Tests never need it.
@@ -37,14 +37,15 @@ Without it the build embeds no art and the app falls back to art it finds on dis
 ## Tests
 
 ```bash
-cd rust && cargo test -p dah-desktop -p deadlock-core       # the app and the domain core
+cd rust && cargo test -p deadlock-core -p dah-desktop       # the domain core and the app
 cd rust && cargo test -p sigil-viewer                        # when the 3D viewer changed
 cd rust && cargo test --workspace                            # everything, as a release does
 cd services/telemetry && npm ci && npm test                  # the Worker (vitest, local workerd)
 ```
 
 Tests build synthetic VPKs and fake install trees under `.scratch/`; no game install is needed.
-`pnpm test` only typechecks and tests the legacy TypeScript packages.
+CI (`.github/workflows/ci.yml`) runs the domain core, the app and the Worker tests on every pull
+request and every push to main.
 
 ## Headless UI checks
 
@@ -102,8 +103,8 @@ Configuration: `DAH_AGENT_PROVIDER` (`openai`, `anthropic`, `chat`, `codex` or `
 `DAH_AGENT_API_KEY`. Tools call the CLI with argument arrays; there is no general shell tool. Do not
 point two hosts at the same session directory.
 
-`apps/agent-host` (TypeScript reference host, needs `scripts/vendor-tinyagent.sh`), `apps/cli` and
-`packages/` are the legacy prototype. Do not add features there.
+The Rust port follows the upstream TypeScript TinyAgent, which `scripts/vendor-tinyagent.sh` checks
+out into `vendor/tinyagent` as a reference; nothing builds or runs it.
 
 ## Windows compile toolchain (agent workbench)
 

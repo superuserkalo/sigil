@@ -14,7 +14,7 @@ supersede one with a new record instead of rewriting it.
 | `0004-embedded-runtime-choice.md` | superseded by 0007 (the fx and libfx rejection stands) | Pi Durable over fx and libfx |
 | `0005-reference-images-and-likeness.md` | accepted | Reference images and likeness stay local and consent-based |
 | `0006-native-rust-rune-desktop.md` | accepted | Native Rune desktop; Rust core and CLI |
-| `0007-tinyagent-host.md` | accepted | TinyAgent host (the Rust host in production); durable sessions and approvals |
+| `0007-tinyagent-host.md` | accepted | TinyAgent host (the Rust host, the only one since 2026-11-25); durable sessions and approvals |
 | `0008-gamebanana-approved-handoff.md` | accepted | Approved GameBanana handoff and verification |
 | `0009-deadworks-servers.md` | accepted | Deadworks servers: third-party list, untrusted content, join writes |
 | `0010-one-executable.md` | accepted | The CLI and the agent host fold into Sigil as `cli` and `agent-host` subcommands |

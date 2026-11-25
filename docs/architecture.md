@@ -84,8 +84,9 @@ security boundary for game writes is the Rust app plus the approval gate.
 
 ## Agent runtime
 
-The agent host is TinyAgent v2 (MIT): the Rust port in `rust/crates/tinyagent`, with the TypeScript
-implementation vendored at a pinned revision as the reference. It provides:
+The agent host is TinyAgent v2 (MIT): the Rust port in `rust/crates/tinyagent`, with the upstream
+TypeScript implementation vendored at a pinned revision (`vendor/tinyagent`) as the reference the
+port follows. It provides:
 
 - Durable sessions as an ordered journal of JSON records with fenced appends.
 - Resume after a crash. A recorded tool call reruns only when it is marked idempotent; otherwise the
@@ -110,13 +111,11 @@ Mapping to the product:
 | Provider | BYOK provider or a local OpenAI-compatible endpoint |
 
 The host speaks JSONL over stdio. The Rust app owns the window, credentials, approvals UI and game
-writes. The choice is recorded in `docs/decisions/0007-tinyagent-host.md`; the earlier Pi Durable
-choice is superseded.
+writes. The choice is recorded in `docs/decisions/0007-tinyagent-host.md`.
 
 TinyAgent's Rust implementation is protocol v2 in `rust/crates/tinyagent`. `rust/crates/agent-host`
 is the host the Rune app spawns, as its own executable with the `agent-host` subcommand (a separate
-child process; see `decisions/0010-one-executable.md`). The TypeScript host is a reference implementation
-only. fx remains an optional external lane, not a dependency.
+child process; see `decisions/0010-one-executable.md`). It is the only host. fx remains an optional external lane, not a dependency.
 
 One app instance owns the session directory. Do not point two hosts at the same journal directory.
 
@@ -171,7 +170,7 @@ Rules for adding a tool:
 - Anything that leaves the mod workspace goes through the Rust app. The tool returns a plan, not a
   side effect.
 - Approval-gated tools pause through `beforeTool`. The run resumes with the user's decision.
-- Every new contract gets a test in the owning Rust crate or TypeScript package.
+- Every new contract gets a test in the owning Rust crate.
 
 ## Game index
 
@@ -426,7 +425,7 @@ Enforced in code:
    - Offline mode (Settings > Network) blocks every request the core makes: each `ureq::Agent` in
      `deadlock-core` carries `net::gate` as middleware, and `DAH_OFFLINE=1` carries the switch
      to the helper processes Sigil starts. Not covered yet: the agent host's model provider
-     calls (`rust/crates/agent-host`, `apps/agent-host`), subscription sign-in
+     calls (`rust/crates/agent-host`), subscription sign-in
      (`desktop/src/signin.rs`) and publish (`desktop/src/publish.rs`), which do not go through
      the core gate.
    - An HTTP, HTTPS or SOCKS5 (`socks5://`, or `socks5h://` to resolve names on the proxy) proxy
@@ -629,8 +628,7 @@ patched text stack.
 ## CLI
 
 `dah` is the headless surface: `rust/crates/dah-rs`, shipped inside the app as `Sigil cli`. The
-TypeScript CLI in `apps/cli` is a legacy prototype. The list below is the 2026-11-17 plan; `Sigil
-cli --help` is the source of truth.
+list below is the 2026-11-17 plan; `Sigil cli --help` is the source of truth.
 
 ```text
 dah doctor                 game install, gameinfo, slots, providers

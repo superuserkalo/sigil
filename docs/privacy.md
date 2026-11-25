@@ -587,11 +587,9 @@ agent host's model provider calls, subscription sign-in or publish; see Known ga
 
 ## Known gaps
 
-- Help build Sigil: migration `0004_product_uses.sql` (the health, frame rate and search gap
-  kinds) is written and tested but not applied, and the routes that read it are not deployed
-  until it is. The monitor refresh rate is not read (sent as 0).
-- Offline mode does not cover the agent host's provider calls (`rust/crates/agent-host`,
-  `apps/agent-host`), subscription sign-in (`desktop/src/signin.rs`) or publish
+- Help build Sigil: the monitor refresh rate is not read (sent as 0).
+- Offline mode does not cover the agent host's provider calls (`rust/crates/agent-host`),
+  subscription sign-in (`desktop/src/signin.rs`) or publish
   (`desktop/src/publish.rs`).
 - A proxy is not used by every download path yet (mod variants and Flatpak updates do not use it).
 - Mod descriptions can load images from the host the author chose.
