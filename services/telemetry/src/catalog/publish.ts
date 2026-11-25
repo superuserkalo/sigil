@@ -32,12 +32,19 @@ export const T = {
   termReference: 0.7,
   termVisual: 0.75,
   termTheme: 0.75,
+  learned: 0.67,
   bannerMin: 0.5,
   bannerText: 0.7,
 } as const;
 
-/** Term weight classes in the index: reference (and its aliases), tag, visual, theme. */
-export const CLS = { reference: 0, tag: 1, visual: 2, theme: 3 } as const;
+/**
+ * Term classes in the index, which say where a term came from so the matcher can weight it:
+ * a reference (franchise or character, and its other names) proposed from the page text, a tag
+ * (hero, kind, style, fact), a visual term, a theme, a reference proposed from the cover picture,
+ * and a term learned from floor-passed search gaps. Packed as `stringId * PACK + class`.
+ */
+export const CLS = { reference: 0, tag: 1, visual: 2, theme: 3, picture: 4, learned: 5 } as const;
+export const PACK = 8;
 
 export type JudgmentRows = Readonly<Record<string, Stored>>;
 
@@ -153,14 +160,32 @@ export function dupeOf(row: Stored | undefined): number | null {
   return best?.id ?? null;
 }
 
-export function keptTerms(row: Stored | undefined): { term: string; cls: number }[] {
-  const terms = Array.isArray(row?.terms) ? (row.terms as { term: string; cls: string; p: number }[]) : [];
-  return terms.flatMap((term): { term: string; cls: number }[] => {
-    if ((term.cls === "reference" || term.cls === "alias") && term.p >= T.termReference) return [{ term: term.term, cls: CLS.reference }];
-    if (term.cls === "visual" && term.p >= T.termVisual) return [{ term: term.term, cls: CLS.visual }];
-    if (term.cls === "theme" && term.p >= T.termTheme) return [{ term: term.term, cls: CLS.theme }];
+export type KeptTerm = { term: string; cls: number; facet: string };
+
+export function keptTerms(row: Stored | undefined): KeptTerm[] {
+  const terms = Array.isArray(row?.terms) ? (row.terms as { term: string; cls: string; facet?: string; src?: string; p: number }[]) : [];
+  return terms.flatMap((term): KeptTerm[] => {
+    const facet = term.facet ?? (term.cls === "visual" || term.cls === "theme" ? term.cls : "franchise");
+    if ((term.cls === "reference" || term.cls === "alias") && term.p >= T.termReference) {
+      return [{ term: term.term, cls: term.src === "picture" ? CLS.picture : CLS.reference, facet }];
+    }
+    if (term.cls === "visual" && term.p >= T.termVisual) return [{ term: term.term, cls: CLS.visual, facet }];
+    if (term.cls === "theme" && term.p >= T.termTheme) return [{ term: term.term, cls: CLS.theme, facet }];
     return [];
   });
+}
+
+/** Typed facets: the verified franchise and character names (not their other spellings). */
+export function facets(row: Stored | undefined): { franchises: string[]; characters: string[] } {
+  const terms = Array.isArray(row?.terms) ? (row.terms as { term: string; cls: string; facet?: string; p: number }[]) : [];
+  const named = (facet: string) => terms.filter((term) => term.cls === "reference" && (term.facet ?? "franchise") === facet && term.p >= T.termReference).map((term) => term.term);
+  return { franchises: named("franchise"), characters: named("character") };
+}
+
+/** Learned terms from search gaps that Jev judged relevant to this mod. */
+export function learnedTerms(row: Stored | undefined): string[] {
+  const terms = Array.isArray(row?.terms) ? (row.terms as { term: string; s: number }[]) : [];
+  return terms.filter((term) => term.s >= T.learned).map((term) => term.term);
 }
 
 export type IndexMod = {
@@ -178,6 +203,11 @@ export type IndexMod = {
   up?: [number, string, number];
   he?: string;
   d?: number;
+  /** Verified franchise and character names, as string ids. */
+  f?: number[];
+  ch?: number[];
+  /** Optional document embedding, int8, base64 (behind the index embeddings flag). */
+  e?: string;
 };
 
 export type CatalogIndex = {
@@ -189,7 +219,13 @@ export type CatalogIndex = {
 };
 
 /** The whole tag index: one shared string table, ids per mod, aliases for local matching. */
-export function buildIndex(mods: readonly ModMeta[], rows: ReadonlyMap<number, JudgmentRows>, heroes: readonly string[], now: number): CatalogIndex {
+export function buildIndex(
+  mods: readonly ModMeta[],
+  rows: ReadonlyMap<number, JudgmentRows>,
+  heroes: readonly string[],
+  now: number,
+  embeddings = false,
+): CatalogIndex {
   const strings: string[] = [];
   const ids = new Map<string, number>();
   const intern = (text: string): number => {
@@ -226,6 +262,11 @@ export function buildIndex(mods: readonly ModMeta[], rows: ReadonlyMap<number, J
     for (const id of publishedStyles(judged.style)) add(id, CLS.tag);
     for (const fact of publishedFacts(judged.facts)) if (FACT_TERMS[fact] !== undefined) add(FACT_TERMS[fact] ?? fact, CLS.tag);
     for (const term of keptTerms(judged.terms)) add(term.term, term.cls);
+    for (const term of learnedTerms(judged.learned)) add(term, CLS.learned);
+    const named = facets(judged.terms);
+    if (named.franchises.length > 0) record.f = named.franchises.map(intern);
+    if (named.characters.length > 0) record.ch = named.characters.map(intern);
+    if (embeddings && typeof judged.embed?.v === "string") record.e = judged.embed.v;
     if (nsfwHint(judged.nsfw)) record.n = 1;
     const cover = coverPicks(judged.cover);
     if (cover !== null) {
@@ -244,7 +285,7 @@ export function buildIndex(mods: readonly ModMeta[], rows: ReadonlyMap<number, J
     }
     const dupe = dupeOf(judged.dupes);
     if (dupe !== null) record.d = dupe;
-    record.x = [...terms.entries()].map(([id, cls]) => id * 4 + cls);
+    record.x = [...terms.entries()].map(([id, cls]) => id * PACK + cls);
     out.push(record);
   }
   // Canonical names for the alias table's targets are interned too, so the app can resolve them.

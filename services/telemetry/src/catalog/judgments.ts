@@ -299,8 +299,9 @@ const facts: Judgment = {
     };
     if (input.profile.links.length > 0) {
       const options: Record<string, string> = {};
-      input.profile.links.forEach((link, at) => {
-        options[`link${at}`] = `The mod linked as "${link.label}" (\`links[${at}].label\`).`;
+      input.profile.links.forEach((_, at) => {
+        // Link text is untrusted page content: the option points at it in the state, never quotes it.
+        options[`link${at}`] = `The mod linked as \`links[${at}].label\`.`;
       });
       options.none = "None of the linked mods is required.";
       out.which = choice("Which linked mod does this mod require?", options);
@@ -450,24 +451,33 @@ const dupes: Judgment = {
   },
 };
 
-/** The verifier of generated search terms (cascade: a generator proposes, Jev checks). */
+/**
+ * The verifier of generated search terms (the docs' cascade: a generator proposes, Jev checks
+ * each term against the public text and the pictures). Other names of a reference (abbreviations,
+ * misspellings) share its answer and are not asked.
+ */
 const terms: Judgment = {
   name: "terms",
-  version: 1,
+  version: 2,
   needs: ["text", "screenshots"],
   applies: (input) => input.expansion !== null && input.expansion.terms.length > 0,
   ask: (input) => {
     const out: Record<string, Question> = {};
+    const pictures = input.shots.length > 0;
     (input.expansion?.terms ?? []).forEach((term, at) => {
-      // Other names of a reference (abbreviations, misspellings) share its answer: not asked.
       if (term.cls === "alias") return;
-      const quoted = JSON.stringify(term.term);
-      out[`t${at}`] =
-        term.cls === "visual"
-          ? noul(`Do this mod's screenshots or description show ${quoted}?`)
-          : term.cls === "theme"
-            ? noul(`Does ${quoted} describe this mod's theme or mood?`)
-            : noul(`Is this mod about, or does it clearly reference, ${quoted}?`);
+      // Generated terms come from untrusted page content: they sit in the state as data and the
+      // question points at them by path.
+      const quoted = `\`terms[${at}]\``;
+      if (term.facet === "visual") {
+        out[`t${at}`] = noul(pictures ? `Do \`screenshots\` or the description show ${quoted}?` : `Does the description say the mod shows ${quoted}?`);
+      } else if (term.facet === "theme") {
+        out[`t${at}`] = noul(`Does ${quoted} describe this mod's theme or mood?`);
+      } else if (term.facet === "character") {
+        out[`t${at}`] = noul(`Does this mod depict the character ${quoted}, judging by its title, description and screenshots?`);
+      } else {
+        out[`t${at}`] = noul(`Is this mod based on, or does it clearly reference, ${quoted}, judging by its title, description and screenshots?`);
+      }
     });
     return out;
   },
@@ -481,6 +491,8 @@ const terms: Judgment = {
     const kept = expansion.terms.map((term) => ({
       term: term.term,
       cls: term.cls,
+      facet: term.facet,
+      src: term.src,
       ...(term.of === undefined ? {} : { of: term.of }),
       p: term.cls === "alias" ? (own.get(term.of ?? "") ?? 0) : (own.get(term.term) ?? 0),
     }));

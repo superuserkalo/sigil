@@ -1,7 +1,10 @@
 import { env } from "cloudflare:workers";
 import { beforeEach, describe, expect, it } from "vitest";
 import { scheduledJob } from "../src/cron";
-import { runEnrichment, buildAndStoreIndex, RUN_SUBREQUESTS } from "../src/catalog/enrich";
+import { runEnrichment, buildAndStoreIndex, loadIndex, RUN_SUBREQUESTS } from "../src/catalog/enrich";
+import { decodeEntities, htmlToText, modLinks } from "../src/catalog/gamebanana";
+import { learnRequest } from "../src/catalog/learn";
+import { LEARN_STATE_KEYS } from "../src/catalog/typesafe";
 import { parseExpansion, type AiRunner } from "../src/catalog/expand";
 import { imageSize } from "../src/catalog/images";
 import { JUDGMENTS } from "../src/catalog/judgments";
@@ -105,7 +108,7 @@ function jevAnswer(body: SystemOneBody, noul = 0.9): unknown {
 function fakeNet(
   mods: ModFixture[],
   calls: Calls,
-  options: { gbStatus?: number; typesafeStatus?: number; noul?: number } = {},
+  options: { gbStatus?: number; typesafeStatus?: number; noul?: number; profiles?: Record<number, unknown> } = {},
 ): Net {
   return {
     sleep: async () => {},
@@ -131,7 +134,12 @@ function fakeNet(
       if (url.includes("_idGameRow=")) return Response.json(HEROES_ROOT);
       if (url.includes("_idCategoryRow=")) return Response.json(HEROES);
       if (url.includes("/Mod/Index")) return Response.json(listBody(url.includes("_nPage=1&") ? mods : []));
-      if (url.endsWith("/ProfilePage")) return Response.json(PROFILE);
+      if (url.endsWith("/ProfilePage")) {
+        const id = Number(/Mod\/(\d+)\//.exec(url)?.[1]);
+        const custom = options.profiles?.[id];
+        if (custom === 404) return new Response("gone", { status: 404 });
+        return Response.json(custom ?? PROFILE);
+      }
       if (url.includes("/Posts")) return Response.json(POSTS);
       if (url.includes("/Updates")) return Response.json(UPDATES);
       return new Response("unknown", { status: 404 });
@@ -145,7 +153,8 @@ const fakeAi = (calls: { ai: number; input?: string }): AiRunner => ({
     calls.input = JSON.stringify(input);
     return {
       response: {
-        references: [{ name: "Counter-Strike", aliases: ["cs", "cs 1.6", "counter strike", "gign"] }],
+        franchises: [{ name: "Counter-Strike", aliases: ["cs", "cs 1.6", "counter strike", "gign"] }],
+        characters: [],
         visual: ["gas mask", "soldier"],
         themes: ["military"],
       },
@@ -203,7 +212,7 @@ describe("what is sent to TypeSafe", () => {
       walk(body.state);
     }
     // The generator saw only the public title, category and description.
-    expect(ai.ai).toBe(1);
+    expect(ai.ai).toBe(2);
     expect(ai.input).not.toContain(SENTINEL);
     expect(ai.input).not.toContain(COMMENTER);
     // The key travels only as the bearer header; images switch on the documented header.
@@ -221,7 +230,7 @@ describe("what is sent to TypeSafe", () => {
   it("pins the allowlists", () => {
     expect([...BODY_KEYS].sort()).toEqual(["assets", "model", "questions", "state"]);
     expect([...STATE_KEYS].sort()).toEqual(
-      ["age_days", "category", "changes", "commenter", "comments", "description", "files", "label", "lines", "links", "name", "note", "others", "screenshots", "size_mb", "subcategory", "text", "title", "updates"].sort(),
+      ["age_days", "category", "changes", "commenter", "comments", "description", "files", "label", "lines", "links", "name", "note", "others", "screenshots", "size_mb", "subcategory", "terms", "text", "title", "updates"].sort(),
     );
   });
 });
@@ -267,12 +276,13 @@ describe("re-enrichment", () => {
     await runEnrichment(testEnv(), NOW + 1000, fakeNet(mods, calls));
     expect(calls.typesafe.filter((body) => !("lines" in (body.state as object))).length).toBe(1);
 
-    await runEnrichment(testEnv(), NOW + 2000, fakeNet([{ id: 1, updated: 1795000500 }], calls));
+    const edited = { profiles: { 1: { ...PROFILE, _sText: "Now with a red variant." } } };
+    await runEnrichment(testEnv(), NOW + 2000, fakeNet([{ id: 1, updated: 1795000500 }], calls, edited));
     expect(calls.typesafe.filter((body) => !("lines" in (body.state as object))).length).toBe(2);
 
     // An older version of one judgment re-runs that judgment alone.
     await env.DB.prepare("UPDATE mod_tags SET version = 0 WHERE mod_id = 1 AND judgment = 'style'").run();
-    await runEnrichment(testEnv(), NOW + 3000, fakeNet([{ id: 1, updated: 1795000500 }], calls));
+    await runEnrichment(testEnv(), NOW + 3000, fakeNet([{ id: 1, updated: 1795000500 }], calls, edited));
     const last = calls.typesafe.filter((body) => !("lines" in (body.state as object))).at(-1);
     const groups = new Set(Object.keys(last?.questions ?? {}).map((id) => id.split("__")[0]));
     expect([...groups]).toEqual(["style"]);
@@ -365,7 +375,7 @@ describe("routes", () => {
     const index = await readJson<{ strings: string[]; mods: { i: number; x: number[]; h?: string; k?: string }[]; aliases: Record<string, string> }>(response);
     expect(index.mods[0]?.i).toBe(1);
     expect(index.mods[0]?.h).toBe("Venator");
-    const terms = (index.mods[0]?.x ?? []).map((packed) => index.strings[Math.floor(packed / 4)]);
+    const terms = (index.mods[0]?.x ?? []).map((packed) => index.strings[Math.floor(packed / 8)]);
     expect(terms).toContain("counter strike");
     expect(terms).toContain("gas mask");
     expect(index.aliases.bull).toBe("abrams");
@@ -378,7 +388,7 @@ describe("routes", () => {
     const full = await call("/v1/catalog/tags?since=0", { method: "GET" });
     const delta = await readJson<{ strings: string[]; mods: { x: number[] }[] }>(full);
     expect(delta.mods.length).toBe(1);
-    expect(Math.max(...(delta.mods[0]?.x ?? [0]).map((packed) => Math.floor(packed / 4)))).toBeLessThan(delta.strings.length);
+    expect(Math.max(...(delta.mods[0]?.x ?? [0]).map((packed) => Math.floor(packed / 8)))).toBeLessThan(delta.strings.length);
 
     expect((await call("/v1/catalog/tags?since=abc", { method: "GET" })).status).toBe(400);
   });
@@ -476,13 +486,13 @@ describe("parsers", () => {
   it("bounds and normalises generated terms", () => {
     const terms = parseExpansion({
       response: JSON.stringify({
-        references: [{ name: "Counter-Strike", aliases: ["CS", "cs", "Counter Strike", "x".repeat(80)] }],
+        franchises: [{ name: "Counter-Strike", aliases: ["CS", "cs", "Counter Strike", "x".repeat(80)] }],
         visual: Array.from({ length: 30 }, (_, at) => `thing ${at}`),
         themes: ["Deadlock", "military"],
       }),
     });
-    expect(terms?.[0]).toEqual({ term: "counter strike", cls: "reference" });
-    expect(terms?.filter((term) => term.cls === "visual").length).toBe(12);
+    expect(terms?.[0]).toEqual({ term: "counter strike", cls: "reference", facet: "franchise", src: "text" });
+    expect(terms?.filter((term) => term.cls === "visual").length).toBe(10);
     expect(terms?.some((term) => term.term === "deadlock")).toBe(false);
     expect(terms?.every((term) => term.term.length <= 40)).toBe(true);
     expect(parseExpansion("not json")).toBeNull();
@@ -500,5 +510,105 @@ describe("parsers", () => {
     ]);
     expect(published.systems).toEqual({ model: 1 });
     expect(published.heroes).toEqual([{ hero: "Apollo", lines: 1, visual: 1 }]);
+  });
+});
+
+describe("untrusted page content", () => {
+  it("decodes only valid code points", () => {
+    expect(decodeEntities("a&#99999999;b&#xD800;c&#x41;&#66;&#x110000;")).toBe("a\ufffdb\ufffdcAB\ufffd");
+  });
+
+  it("scans hostile HTML in linear time", () => {
+    const hostile = "<a href=".repeat(50_000) + "<".repeat(200_000) + "<a href='https://gamebanana.com/mods/1'>".repeat(20_000);
+    const started = Date.now();
+    htmlToText(hostile);
+    modLinks(hostile);
+    expect(Date.now() - started).toBeLessThan(500);
+    expect(modLinks('<p>x</p><a href="https://gamebanana.com/mods/42">Base</a>')).toEqual([{ id: 42, label: "Base" }]);
+    expect(htmlToText("<p>one</p><br>two &amp; <b>three</b>")).toBe("one\ntwo & three");
+  });
+
+  it("never quotes page text or generated terms in a question", async () => {
+    const calls = newCalls();
+    const ai = { ai: 0 };
+    await runEnrichment(testEnv({ AI: fakeAi(ai) }), NOW, fakeNet([{ id: 1, updated: 1795000000 }], calls));
+    const questions = JSON.stringify(calls.typesafe.map((body) => body.questions));
+    expect(questions).not.toContain("Base pack");
+    expect(questions).not.toContain("counter");
+    expect(questions).toContain("`terms[");
+  });
+
+  it("skips one broken mod page and carries on", async () => {
+    const calls = newCalls();
+    const report = await runEnrichment(
+      testEnv(),
+      NOW,
+      fakeNet([{ id: 1, updated: 1795000000 }, { id: 2, updated: 1795000001 }], calls, { profiles: { 2: { _sText: 5, _aFiles: "x", _aPreviewMedia: { _aImages: [{ _sBaseUrl: {}, _sFile: [] }] } } } }),
+    );
+    expect(report.mods).toBeGreaterThanOrEqual(1);
+    expect(report.stopped).toBeUndefined();
+  });
+});
+
+describe("upkeep", () => {
+  it("drops withdrawn mods from the index", async () => {
+    await runEnrichment(testEnv(), NOW, fakeNet([{ id: 1, updated: 1795000000 }, { id: 2, updated: 1795000001 }], newCalls()));
+    await runEnrichment(testEnv(), NOW + 1000, fakeNet([{ id: 1, updated: 1795000000 }, { id: 2, updated: 1795000999 }], newCalls(), { profiles: { 2: 404 } }));
+    await buildAndStoreIndex(env.DB, NOW + 2000);
+    expect((await loadIndex(env.DB))?.mods.map((mod) => mod.i)).toEqual([1]);
+  });
+
+  it("spends nothing when a page bump leaves the content the same", async () => {
+    const calls = newCalls();
+    const modCalls = () => calls.typesafe.filter((body) => !("lines" in (body.state as object)) && !("query" in (body.state as object))).length;
+    await runEnrichment(testEnv(), NOW, fakeNet([{ id: 1, updated: 1795000000 }], calls));
+    const before = modCalls();
+    const report = await runEnrichment(testEnv(), NOW + 1000, fakeNet([{ id: 1, updated: 1795000500 }], calls));
+    expect(modCalls()).toBe(before);
+    expect(report.unchanged).toBe(1);
+    expect(report.mods).toBe(0);
+  });
+
+  it("stops at the per-run mod cap and the daily spend cap", async () => {
+    const mods = Array.from({ length: 10 }, (_, at) => ({ id: at + 1, updated: 1795000000 + at }));
+    const capped = await runEnrichment(testEnv({ ENRICH_RUN_MODS: "2" }), NOW, fakeNet(mods, newCalls()));
+    expect(capped.mods).toBe(2);
+    expect(capped.stopped).toBe("run_mods");
+    await env.DB.prepare("INSERT INTO enrich_state (key, value, updated_at) VALUES ('spend_day', ?1, ?2) ON CONFLICT(key) DO UPDATE SET value = excluded.value")
+      .bind(JSON.stringify({ day: new Date(NOW).toISOString().slice(0, 10), usd: 30 }), NOW)
+      .run();
+    const calls = newCalls();
+    const blocked = await runEnrichment(testEnv(), NOW + 1000, fakeNet(mods, calls));
+    expect(blocked.skipped).toBe("daily_cap");
+    expect(calls.gb).toEqual([]);
+  });
+});
+
+describe("learning from search gaps", () => {
+  it("sends only floor-passed terms and adds learned terms to matching mods", async () => {
+    const ai = { ai: 0 };
+    await runEnrichment(testEnv({ AI: fakeAi(ai) }), NOW, fakeNet([{ id: 1, updated: 1795000000, title: "GIGN Vindicta" }], newCalls()));
+    await buildAndStoreIndex(env.DB, NOW);
+    await env.DB.batch([
+      env.DB.prepare("INSERT INTO product_totals (epoch, kind, key, installs, buckets, days, created_at) VALUES (1, 'search_zero', 'counter strike', 12, 7, 4, 0)"),
+      env.DB.prepare("INSERT INTO product_totals (epoch, kind, key, installs, buckets, days, created_at) VALUES (1, 'search_zero', 'below floor secret', 3, 1, 1, 0)"),
+      env.DB.prepare("UPDATE enrich_state SET value = '0' WHERE key = 'learn_at'"),
+    ]);
+    const calls = newCalls();
+    await runEnrichment(testEnv({ AI: fakeAi(ai) }), NOW + 25 * 3600_000, fakeNet([], calls));
+    const learn = calls.typesafe.filter((body) => "query" in (body.state as object));
+    expect(learn.length).toBe(1);
+    expect((learn[0]?.state as { query: string }).query).toBe("counter strike");
+    expect(JSON.stringify(calls.typesafe)).not.toContain("below floor secret");
+    for (const key of Object.keys(learn[0]?.state as object)) expect(LEARN_STATE_KEYS.has(key)).toBe(true);
+    const row = await env.DB.prepare("SELECT data FROM mod_tags WHERE mod_id = 1 AND judgment = 'learned'").first<{ data: string }>();
+    expect(JSON.parse(row?.data ?? "{}").terms[0].term).toBe("counter strike");
+  });
+
+  it("builds a request with the query as data and candidates as public fields", () => {
+    const body = learnRequest("gas mask", [{ id: 1, title: "t", category: "c", description: "d" }]);
+    expect(() => assertPublicOnly(body, LEARN_STATE_KEYS)).not.toThrow();
+    expect(() => assertPublicOnly(body)).toThrow(/query/);
+    expect(JSON.stringify(body.questions)).not.toContain("gas mask");
   });
 });

@@ -34,6 +34,9 @@ import { fetchPatches, PATCH_CHUNK, PATCH_VERSION, patchRequest, readPatch, type
 import { buildIndex, PUBLISH_VERSION, type JudgmentRows, type ModMeta } from "./publish";
 import { askJev, JEV_MODEL, RejectedRequest, typesafeKey, USD_PER_TOKEN, type Asset, type Question, type SystemOneBody } from "./typesafe";
 import { normalize } from "./aliases";
+import { embeddingsOn, embedText, EMBED_MODEL } from "./embed";
+import { LEARN_INTERVAL_MS, learnFromGaps } from "./learn";
+import type { CatalogIndex } from "./publish";
 import { sha256Hex } from "../hash";
 
 /** Subrequests per run: under the Workers free-plan limit of 50, with room to spare. */
@@ -46,11 +49,39 @@ export const HEALTH_MIN_AGE_MS = 3 * 24 * 60 * 60 * 1000;
 export const HEROES_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 export const INDEX_MIN_AGE_MS = 60 * 60 * 1000;
 export const LEASE_MS = 10 * 60 * 1000;
+/** Defaults for the two caps; override with the Worker vars ENRICH_RUN_MODS and ENRICH_DAILY_USD. */
+export const DEFAULT_RUN_MODS = 6;
+export const DEFAULT_DAILY_USD = 25;
+/** A mod not seen in the listing for this long (withdrawn or deleted) leaves the index. */
+export const UNSEEN_MS = 14 * 24 * 60 * 60 * 1000;
+
+function config(env: Env): { runMods: number; dailyUsd: number } {
+  const vars = env as Env & { readonly ENRICH_RUN_MODS?: string; readonly ENRICH_DAILY_USD?: string };
+  const runMods = Number(vars.ENRICH_RUN_MODS ?? DEFAULT_RUN_MODS);
+  const dailyUsd = Number(vars.ENRICH_DAILY_USD ?? DEFAULT_DAILY_USD);
+  return {
+    runMods: Number.isFinite(runMods) && runMods > 0 ? Math.min(50, Math.floor(runMods)) : DEFAULT_RUN_MODS,
+    dailyUsd: Number.isFinite(dailyUsd) && dailyUsd > 0 ? dailyUsd : DEFAULT_DAILY_USD,
+  };
+}
+
+/** Dollars spent so far today (UTC), from the running tally. */
+async function spentToday(db: D1Database, now: number): Promise<number> {
+  const day = new Date(now).toISOString().slice(0, 10);
+  const row = await getState(db, "spend_day");
+  const parsed = row === null ? null : (JSON.parse(row.value) as { day: string; usd: number });
+  return parsed !== null && parsed.day === day ? parsed.usd : 0;
+}
 const DESCRIPTION_CHARS = 2000;
 
 export type RunReport = {
   skipped?: string;
+  /** Mods sent to Jev. */
   mods: number;
+  /** Mods whose page bump changed nothing in the content hash: no model call. */
+  unchanged: number;
+  failed: number;
+  withdrawn: number;
   judgments: number;
   tokens: number;
   usd: number;
@@ -100,7 +131,7 @@ export function staleJudgments(mod: ListedMod, rows: readonly TagRow[], now: num
 // ---------------------------------------------------------------------------------------------
 
 export async function runEnrichment(env: Env, now: number, net: Net = liveNet, subrequests = RUN_SUBREQUESTS): Promise<RunReport> {
-  const report: RunReport = { mods: 0, judgments: 0, tokens: 0, usd: 0, patches: 0, indexBuilt: false };
+  const report: RunReport = { mods: 0, unchanged: 0, failed: 0, withdrawn: 0, judgments: 0, tokens: 0, usd: 0, patches: 0, indexBuilt: false };
   const key = typesafeKey(env);
   if (key === null) {
     log({ event: "enrich_skipped", reason: "no_typesafe_key" });
@@ -110,6 +141,13 @@ export async function runEnrichment(env: Env, now: number, net: Net = liveNet, s
   if (lease !== null && Number(lease.value) > now) return { ...report, skipped: "lease_held" };
   await setState(env.DB, "lease", String(now + LEASE_MS), now);
 
+  const caps = config(env);
+  const dayStart = await spentToday(env.DB, now);
+  if (dayStart >= caps.dailyUsd) {
+    log({ event: "error", what: "enrich_daily_cap", usd: dayStart });
+    await setState(env.DB, "lease", "0", now);
+    return { ...report, skipped: "daily_cap" };
+  }
   const budget = new Budget(subrequests);
   const gb = new GameBanana(net, budget);
   const ai = aiBinding(env);
@@ -129,13 +167,44 @@ export async function runEnrichment(env: Env, now: number, net: Net = liveNet, s
         report.stopped = "budget";
         break;
       }
-      const done = await enrichMod(env, net, budget, gb, key, ai, mod, stale, heroes, now, report);
+      if (report.mods + report.unchanged + report.failed >= caps.runMods) {
+        report.stopped = "run_mods";
+        break;
+      }
+      if (dayStart + report.usd >= caps.dailyUsd) {
+        report.stopped = "daily_cap";
+        log({ event: "error", what: "enrich_daily_cap", usd: dayStart + report.usd });
+        break;
+      }
+      let done: Outcome;
+      try {
+        done = await enrichMod(env, net, budget, gb, key, ai, mod, stale, heroes, now, report);
+      } catch (error) {
+        // A remote refusing or the budget ending stops the run; anything else is this mod's
+        // problem (a hostile or broken page): record it and go on to the next mod.
+        if (error instanceof RemoteError || error instanceof BudgetSpent) throw error;
+        log({ event: "enrich_mod_error", mod: mod.id, message: error instanceof Error ? `${error.name}: ${error.message}`.slice(0, 200) : "unknown" });
+        await noteFailure(env.DB, mod, now);
+        report.failed += 1;
+        continue;
+      }
       if (done === "stop") break;
       if (done === "stored") changed = true;
     }
     await advanceCursor(env.DB, listed, now, ai !== null);
     if (report.stopped === undefined && budget.remaining >= 3) {
       if (await enrichPatches(env, net, budget, key, heroes, now, report)) changed = true;
+    }
+    if (report.stopped === undefined && budget.remaining >= 2) {
+      const last = await getState(env.DB, "learn_at");
+      if (last === null || now - Number(last.value) >= LEARN_INTERVAL_MS) {
+        await setState(env.DB, "learn_at", String(now), now);
+        const bucket = (env as Env & { readonly PRODUCT_BUCKET_KEY?: string }).PRODUCT_BUCKET_KEY;
+        const learned = await learnFromGaps(env.DB, net, budget, key, bucket, await loadIndex(env.DB), now);
+        report.tokens += learned.tokens;
+        report.usd += learned.tokens * USD_PER_TOKEN;
+        if (learned.added > 0) changed = true;
+      }
     }
   } catch (error) {
     report.stopped = error instanceof BudgetSpent ? "budget" : error instanceof RemoteError ? `${error.host}_${error.status}` : "error";
@@ -145,11 +214,11 @@ export async function runEnrichment(env: Env, now: number, net: Net = liveNet, s
     await setState(env.DB, "lease", "0", now);
   }
   try {
-    report.indexBuilt = await maybeBuildIndex(env.DB, now, changed);
+    report.indexBuilt = await maybeBuildIndex(env.DB, now, changed, false, embeddingsOn(env));
   } catch (error) {
     log({ event: "enrich_index_error", message: error instanceof Error ? error.message.slice(0, 200) : "unknown" });
   }
-  log({ event: "enrich_run", mods: report.mods, judgments: report.judgments, tokens: report.tokens, usd: Math.round(report.usd * 10000) / 10000, patches: report.patches, stopped: report.stopped ?? "" });
+  log({ event: "enrich_run", mods: report.mods, unchanged: report.unchanged, failed: report.failed, withdrawn: report.withdrawn, judgments: report.judgments, tokens: report.tokens, usd: Math.round(report.usd * 10000) / 10000, patches: report.patches, stopped: report.stopped ?? "" });
   return report;
 }
 
@@ -243,6 +312,21 @@ async function duplicateCandidates(db: D1Database, mod: ListedMod, descSig: stri
   return results.map((row) => ({ id: row.mod_id, title: row.title, category: row.category, description: row.desc_excerpt }));
 }
 
+/** The public content a judgment reads: title, categories, text, files and screenshot URLs. */
+export async function contentHash(mod: ListedMod, profile: Profile): Promise<string> {
+  const parts = [
+    mod.title,
+    mod.category,
+    mod.subcategory,
+    profile.summary,
+    profile.text,
+    profile.files.map((file) => `${file.id}:${file.name}:${file.size}:${file.note}`).join("|"),
+    profile.shots.map((shot) => shot.full).join("|"),
+    String(profile.updatesCount),
+  ];
+  return (await sha256Hex(parts.join("\n"))).slice(0, 32);
+}
+
 async function descriptionSignature(profile: Profile): Promise<string> {
   const text = normalize(profile.text);
   return text.length >= 80 ? (await sha256Hex(text)).slice(0, 24) : "";
@@ -258,13 +342,39 @@ async function enrichMod(
   key: string,
   ai: ReturnType<typeof aiBinding>,
   mod: ListedMod,
-  stale: readonly Judgment[],
+  staleIn: readonly Judgment[],
   heroes: readonly string[],
   now: number,
   report: RunReport,
 ): Promise<Outcome> {
+  let stale = [...staleIn];
   const needs = new Set<Part>(stale.flatMap((judgment) => judgment.needs));
   const profile = await gb.profile(mod.id);
+  if (profile === null) {
+    await env.DB.prepare("UPDATE catalog_mods SET withdrawn = 1 WHERE mod_id = ?1").bind(mod.id).run();
+    report.withdrawn += 1;
+    return "stored";
+  }
+  const hash = await contentHash(mod, profile);
+  const known = await env.DB.prepare("SELECT content_hash FROM catalog_mods WHERE mod_id = ?1").bind(mod.id).first<{ content_hash: string }>();
+  await env.DB.prepare("UPDATE catalog_mods SET content_hash = ?2, withdrawn = 0 WHERE mod_id = ?1").bind(mod.id, hash).run();
+  // Same content under a new timestamp (a like, a file scan, a re-save): move the judgments that
+  // only went stale by timestamp to the new source, and spend nothing.
+  if (known !== null && known.content_hash === hash) {
+    const rows = await tagRows(env.DB, mod.id);
+    const onlyMoved = stale.filter((judgment) => {
+      const row = rows.find((candidate) => candidate.judgment === judgment.name);
+      return row !== undefined && row.version === judgment.version && row.model === JEV_MODEL && judgment.name !== "health";
+    });
+    for (const judgment of onlyMoved) {
+      await env.DB.prepare("UPDATE mod_tags SET source = ?3 WHERE mod_id = ?1 AND judgment = ?2").bind(mod.id, judgment.name, sourceFor(judgment, mod)).run();
+    }
+    stale = stale.filter((judgment) => !onlyMoved.includes(judgment));
+    if (stale.length === 0) {
+      report.unchanged += 1;
+      return "skipped";
+    }
+  }
   const descSig = await descriptionSignature(profile);
   await env.DB.prepare("UPDATE catalog_mods SET desc_excerpt = ?2, desc_sig = ?3 WHERE mod_id = ?1")
     .bind(mod.id, [profile.summary, profile.text].join("\n").trim().slice(0, 600), descSig)
@@ -284,7 +394,8 @@ async function enrichMod(
   const others = needs.has("others") ? await duplicateCandidates(env.DB, mod, descSig) : [];
 
   let expansion: Expansion | null = null;
-  if (ai !== null && stale.some((judgment) => judgment.name === "terms") && budget.take()) {
+  // One generator call for the text and one for the cover picture: two subrequests.
+  if (ai !== null && stale.some((judgment) => judgment.name === "terms") && budget.remaining >= 3 && budget.take() && budget.take()) {
     try {
       expansion = await expand(ai, mod, profile, shots[0]?.picture ?? null);
       if (expansion !== null) report.usd += expansion.usd;
@@ -341,6 +452,15 @@ async function enrichMod(
     if (data === null) continue;
     await storeRow(env.DB, mod.id, judgment.name, judgment.version, sourceFor(judgment, mod), JEV_MODEL, data, now);
     report.judgments += 1;
+    if (judgment.name === "terms" && ai !== null && embeddingsOn(env) && budget.take()) {
+      const kept = (data.terms as { term: string; p: number }[]).filter((term) => term.p >= 0.7).map((term) => term.term);
+      try {
+        const vector = await embedText(ai, [mod.title, ...kept].join(", "));
+        if (vector !== null) await storeRow(env.DB, mod.id, "embed", 1, sourceFor(judgment, mod), EMBED_MODEL, { v: vector }, now);
+      } catch (error) {
+        log({ event: "embed_error", message: error instanceof Error ? error.message.slice(0, 200) : "unknown" });
+      }
+    }
   }
   return "stored";
 }
@@ -389,6 +509,9 @@ export function modRequest(input: ModInput, judgments: readonly Judgment[], with
   }
   if (needs.has("others") && input.others.length > 0) {
     state.others = input.others.map((other) => ({ title: other.title, category: other.category, description: other.description.slice(0, 600) }));
+  }
+  if (input.expansion !== null && judgments.some((judgment) => judgment.name === "terms")) {
+    state.terms = input.expansion.terms.map((term) => term.term);
   }
   const questions: Record<string, Question> = {};
   for (const judgment of judgments) {
@@ -443,25 +566,32 @@ async function addSpend(db: D1Database, report: RunReport, now: number): Promise
   const current = JSON.parse((await getState(db, "spend"))?.value ?? '{"tokens":0,"usd":0}') as { tokens: number; usd: number };
   const next = { tokens: current.tokens + report.tokens, usd: Math.round((current.usd + report.usd) * 1e6) / 1e6 };
   await setState(db, "spend", JSON.stringify(next), now);
+  const day = new Date(now).toISOString().slice(0, 10);
+  await setState(db, "spend_day", JSON.stringify({ day, usd: Math.round(((await spentToday(db, now)) + report.usd) * 1e6) / 1e6 }), now);
   log({ event: "enrich_spend", tokens_total: next.tokens, usd_total: next.usd });
 }
 
-export async function maybeBuildIndex(db: D1Database, now: number, changed: boolean, force = false): Promise<boolean> {
+export async function maybeBuildIndex(db: D1Database, now: number, changed: boolean, force = false, embeddings = false): Promise<boolean> {
   const meta = await getState(db, "index_meta");
   const parsed = meta === null ? null : (JSON.parse(meta.value) as { v: number; built: number });
   const outdated = parsed === null || parsed.v !== PUBLISH_VERSION;
   if (!force && !outdated && !(changed && now - parsed.built >= INDEX_MIN_AGE_MS)) return false;
-  await buildAndStoreIndex(db, now);
+  await buildAndStoreIndex(db, now, embeddings);
   return true;
 }
 
-export async function buildAndStoreIndex(db: D1Database, now: number): Promise<void> {
+/** D1 rows top out at 2 MB: the gzipped index is stored in chunks well under that. */
+export const INDEX_CHUNK = 900_000;
+
+export async function buildAndStoreIndex(db: D1Database, now: number, embeddings = false): Promise<void> {
   const mods = await db
     .prepare(
       `SELECT c.mod_id, c.title, c.subcategory, MAX(t.enriched_at) AS enriched_at
        FROM catalog_mods c JOIN mod_tags t ON t.mod_id = c.mod_id AND t.judgment != '_failed'
+       WHERE c.withdrawn = 0 AND c.seen_at >= ?1
        GROUP BY c.mod_id ORDER BY c.mod_id`,
     )
+    .bind(now - UNSEEN_MS)
     .all<{ mod_id: number; title: string; subcategory: string; enriched_at: number }>();
   const rows = new Map<number, Record<string, Stored>>();
   const tags = await db.prepare("SELECT mod_id, judgment, data FROM mod_tags WHERE judgment != '_failed'").all<{ mod_id: number; judgment: string; data: string }>();
@@ -474,11 +604,23 @@ export async function buildAndStoreIndex(db: D1Database, now: number): Promise<v
   }
   const heroes = JSON.parse((await getState(db, "heroes"))?.value ?? "[]") as string[];
   const metas: ModMeta[] = mods.results.map((row) => ({ id: row.mod_id, title: row.title, subcategory: row.subcategory, enrichedAt: row.enriched_at }));
-  const index = buildIndex(metas, rows as ReadonlyMap<number, JudgmentRows>, heroes, now);
+  const index = buildIndex(metas, rows as ReadonlyMap<number, JudgmentRows>, heroes, now, embeddings);
   const json = JSON.stringify(index);
   const etag = (await sha256Hex(json)).slice(0, 32);
-  await setState(db, "index", await gzipBase64(json), now);
-  await setState(db, "index_meta", JSON.stringify({ v: PUBLISH_VERSION, built: now, etag, mods: index.mods.length, bytes: json.length }), now);
+  const packed = await gzipBase64(json);
+  const chunks = Math.max(1, Math.ceil(packed.length / INDEX_CHUNK));
+  for (let at = 0; at < chunks; at += 1) await setState(db, `index:${at}`, packed.slice(at * INDEX_CHUNK, (at + 1) * INDEX_CHUNK), now);
+  await setState(db, "index_meta", JSON.stringify({ v: PUBLISH_VERSION, built: now, etag, chunks, mods: index.mods.length, bytes: json.length, gzip: Math.round((packed.length * 3) / 4) }), now);
+}
+
+/** The stored index, or null before the first build. */
+export async function loadIndex(db: D1Database): Promise<CatalogIndex | null> {
+  const meta = await getState(db, "index_meta");
+  if (meta === null) return null;
+  const { chunks } = JSON.parse(meta.value) as { chunks: number };
+  let packed = "";
+  for (let at = 0; at < chunks; at += 1) packed += (await getState(db, `index:${at}`))?.value ?? "";
+  return JSON.parse(await gunzipBase64(packed)) as CatalogIndex;
 }
 
 export async function gzipBase64(text: string): Promise<string> {

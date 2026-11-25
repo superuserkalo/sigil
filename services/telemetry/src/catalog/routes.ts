@@ -8,8 +8,8 @@
  *   GET /v1/catalog/patch/<id>        one official patch's line classes; `latest` for the newest
  */
 
-import { getState, gunzipBase64 } from "./enrich";
-import { modDetail, PUBLISH_VERSION, type CatalogIndex, type JudgmentRows } from "./publish";
+import { getState, loadIndex } from "./enrich";
+import { modDetail, PACK, PUBLISH_VERSION, type CatalogIndex, type JudgmentRows } from "./publish";
 import { publishPatch, type PatchLine } from "./patches";
 import type { Stored } from "./judgments";
 
@@ -36,12 +36,11 @@ export async function handleTags(request: Request, env: Env, url: URL, respond: 
   const sinceText = url.searchParams.get("since");
   if (sinceText !== null && !/^\d{1,15}$/.test(sinceText)) return respond(400, { error: "bad_since" });
   const meta = await getState(env.DB, "index_meta");
-  const stored = meta === null ? null : await getState(env.DB, "index");
   const baseTag = meta === null ? "empty" : (JSON.parse(meta.value) as { etag: string }).etag;
   const etag = sinceText === null ? baseTag : `${baseTag}-${sinceText}`;
   const cached = notModified(request, etag, TAGS_MAX_AGE);
   if (cached !== null) return cached;
-  const index = stored === null ? EMPTY : (JSON.parse(await gunzipBase64(stored.value)) as CatalogIndex);
+  const index = (await loadIndex(env.DB)) ?? EMPTY;
   const body = sinceText === null ? index : delta(index, Number(sinceText));
   return respond(200, body, cacheHeaders(etag, TAGS_MAX_AGE));
 }
@@ -50,20 +49,24 @@ export async function handleTags(request: Request, env: Env, url: URL, respond: 
 export function delta(index: CatalogIndex, since: number): CatalogIndex {
   const strings: string[] = [];
   const ids = new Map<number, number>();
+  const remap = (old: number): number => {
+    let id = ids.get(old);
+    if (id === undefined) {
+      id = strings.length;
+      strings.push(index.strings[old] ?? "");
+      ids.set(old, id);
+    }
+    return id;
+  };
   const mods = index.mods
     .filter((mod) => mod.u > since)
     .map((mod) => ({
       ...mod,
       x: mod.x.map((packed) => {
-        const old = Math.floor(packed / 4);
-        let id = ids.get(old);
-        if (id === undefined) {
-          id = strings.length;
-          strings.push(index.strings[old] ?? "");
-          ids.set(old, id);
-        }
-        return id * 4 + (packed % 4);
+        return remap(Math.floor(packed / PACK)) * PACK + (packed % PACK);
       }),
+      ...(mod.f === undefined ? {} : { f: mod.f.map((old) => remap(old)) }),
+      ...(mod.ch === undefined ? {} : { ch: mod.ch.map((old) => remap(old)) }),
     }));
   return { v: index.v, built: index.built, strings, aliases: index.aliases, mods };
 }

@@ -10,8 +10,8 @@
  * 3. A unit matches a token exactly (1.0), as a prefix of at least 3 letters (0.8), or one edit
  *    away for words of 4 letters or more (0.7). A unit also matches a multi-word term written
  *    without spaces ("counterstrike").
- * 4. Fields and weights: title 3, verified reference 2.5, tag (hero, kind, style, fact) 2,
- *    visual 1.5, theme 1. Each field is weighted by idf = ln(1 + (N - df + 0.5) / (df + 0.5)).
+ * 4. Fields and weights: title 3, reference from the page text 2.5, tag (hero, kind, style,
+ *    fact) 2, reference from the cover picture 2, learned 2, visual 1.5, theme 1. Each field is weighted by idf = ln(1 + (N - df + 0.5) / (df + 0.5)).
  *    A multi-word term hit by only some of its words counts at 0.6.
  * 5. A mod scores, per unit, its best field. Exact title equality adds 1000; every unit found in
  *    the title adds 30, so title matches lead, then references, then tags.
@@ -19,10 +19,11 @@
  */
 
 import { normalize } from "./aliases";
-import type { CatalogIndex } from "./publish";
+import { PACK, type CatalogIndex } from "./publish";
 
-export const WEIGHTS = { title: 3, reference: 2.5, tag: 2, visual: 1.5, theme: 1 } as const;
-const CLASS_WEIGHT = [WEIGHTS.reference, WEIGHTS.tag, WEIGHTS.visual, WEIGHTS.theme];
+export const WEIGHTS = { title: 3, reference: 2.5, tag: 2, visual: 1.5, theme: 1, picture: 2, learned: 2 } as const;
+/** By term class (`publish.ts` CLS): text reference, tag, visual, theme, picture reference, learned. */
+const CLASS_WEIGHT = [WEIGHTS.reference, WEIGHTS.tag, WEIGHTS.visual, WEIGHTS.theme, WEIGHTS.picture, WEIGHTS.learned];
 const STOP = new Set(["the", "a", "an", "of", "for", "and", "mod", "mods", "with", "der", "die", "das", "und", "fur"]);
 
 type Field = { readonly tokens: readonly string[]; readonly joined: string; readonly weight: number; readonly key: string };
@@ -42,9 +43,9 @@ function prepare(index: CatalogIndex): Prepared {
     const title = normalize(mod.ti);
     const fields: Field[] = [{ tokens: title.split(" ").filter(Boolean), joined: title.replace(/ /g, ""), weight: WEIGHTS.title, key: "" }];
     for (const packed of mod.x) {
-      const text = index.strings[Math.floor(packed / 4)];
+      const text = index.strings[Math.floor(packed / PACK)];
       if (text === undefined) continue;
-      fields.push({ tokens: text.split(" "), joined: text.replace(/ /g, ""), weight: CLASS_WEIGHT[packed % 4] ?? 1, key: text });
+      fields.push({ tokens: text.split(" "), joined: text.replace(/ /g, ""), weight: CLASS_WEIGHT[packed % PACK] ?? 1, key: text });
     }
     for (const field of fields) {
       if (field.key.length > 0) df.set(field.key, (df.get(field.key) ?? 0) + 1);

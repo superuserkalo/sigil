@@ -3,7 +3,7 @@ import { aliasTable } from "../src/catalog/aliases";
 import { search, tokenMatch, withinOneEdit } from "../src/catalog/match";
 import { buildIndex, type JudgmentRows } from "../src/catalog/publish";
 
-const HEROES = ["Venator", "McGinnis", "Haze", "Lady Geist", "Mirage", "Abrams"];
+const HEROES = ["Venator", "McGinnis", "Haze", "Lady Geist", "Mirage", "Abrams", "Vindicta"];
 
 type Fixture = { id: number; title: string; sub?: string; terms?: [string, "reference" | "alias" | "visual" | "theme"][]; kind?: string; styles?: string[] };
 
@@ -17,6 +17,8 @@ const MODS: Fixture[] = [
   { id: 7, title: "Plague Doctor Abrams", sub: "Abrams", terms: [["gas mask", "visual"], ["plague doctor", "visual"], ["horror", "theme"]], styles: ["horror"] },
   { id: 8, title: "Minimal HUD", sub: "HUD", kind: "hud", styles: ["minimal"] },
   { id: 9, title: "Venator recolor black", sub: "Venator", kind: "recolour", styles: ["dark"] },
+  { id: 10, title: "CS 1.6 Vindicta skin", sub: "Vindicta", terms: [["counter strike", "reference"], ["cs", "alias"], ["counter strike 1 6", "alias"], ["sniper", "visual"]] },
+  { id: 11, title: "Vindicta but pink", sub: "Vindicta", terms: [["pink", "visual"]] },
 ];
 
 function index() {
@@ -46,10 +48,16 @@ describe("local matcher", () => {
     expect(top("cs go venator")[0]).toBe(1);
   });
 
+  it("passes the owner's failing case: counter strike finds the CS 1.6 Vindicta skin", () => {
+    expect(top("counter strike", 5)).toContain(10);
+    expect(top("counter strike vindicta")[0]).toBe(10);
+    expect(top("cs vindicta")[0]).toBe(10);
+  });
+
   it("puts an exact title match first, then title tokens, then references", () => {
     expect(top("counter strike")[0]).toBe(2);
     expect(new Set(top("strike", 2))).toEqual(new Set([2, 3]));
-    expect(top("strike", 3)[2]).toBe(1);
+    expect([1, 10]).toContain(top("strike", 3)[2]);
   });
 
   it("finds references in other directions", () => {

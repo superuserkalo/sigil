@@ -3,7 +3,9 @@
  *
  * HARD RULE: only public catalog content may be sent: GameBanana mod titles, descriptions,
  * category names, file names and notes, update notes, public comment text (never the commenter's
- * name), public screenshots, and the official Steam patch notes. Never anything a player sent:
+ * name), public screenshots, and the official Steam patch notes. The one exception is the learning
+ * job's search term, which must already have passed the product floor (`LEARN_STATE_KEYS`).
+ * Never anything else a player sent:
  * no install hash, no bucket, no search text, nothing from the product, crash, diagnostics or hash
  * tables. `assertPublicOnly` enforces this by shape: every object key anywhere in the state must be
  * on `STATE_KEYS`, and the body may hold only `model`, `state`, `questions` and `assets`. A body that
@@ -44,6 +46,7 @@ export const STATE_KEYS: ReadonlySet<string> = new Set([
   "comments",
   "commenter",
   "others",
+  "terms",
   // A patch note.
   "lines",
 ]);
@@ -75,8 +78,15 @@ export type SystemOneResult = {
   readonly inputTokens: number;
 };
 
+/**
+ * The learning job's state (`learn.ts`): a search term that already passed the product floor
+ * (shared by at least 10 installs from 6 networks on 3 days, scrubbed, ADR 0017) and public mod
+ * candidates. Nothing else a player sent is ever allowed in.
+ */
+export const LEARN_STATE_KEYS: ReadonlySet<string> = new Set(["query", "candidates", "title", "category", "description"]);
+
 /** Throws when the body has a field outside the allowlists. */
-export function assertPublicOnly(body: SystemOneBody): void {
+export function assertPublicOnly(body: SystemOneBody, stateKeys: ReadonlySet<string> = STATE_KEYS): void {
   for (const key of Object.keys(body)) {
     if (!BODY_KEYS.has(key)) throw new Error(`typesafe body field not allowed: ${key}`);
   }
@@ -87,7 +97,7 @@ export function assertPublicOnly(body: SystemOneBody): void {
     }
     if (typeof value === "object" && value !== null) {
       for (const [key, inner] of Object.entries(value)) {
-        if (!STATE_KEYS.has(key)) throw new Error(`typesafe state field not allowed: ${path}.${key}`);
+        if (!stateKeys.has(key)) throw new Error(`typesafe state field not allowed: ${path}.${key}`);
         walk(inner, `${path}.${key}`);
       }
     }
@@ -110,9 +120,15 @@ export class RejectedRequest extends Error {
   override readonly name = "RejectedRequest";
 }
 
-export async function askJev(net: Net, budget: Budget, key: string, body: SystemOneBody): Promise<SystemOneResult> {
+export async function askJev(
+  net: Net,
+  budget: Budget,
+  key: string,
+  body: SystemOneBody,
+  stateKeys: ReadonlySet<string> = STATE_KEYS,
+): Promise<SystemOneResult> {
   // Public catalog content only: see the rule at the top of this file. Checked on every call.
-  assertPublicOnly(body);
+  assertPublicOnly(body, stateKeys);
   if (!budget.take()) throw new BudgetSpent("subrequest budget spent");
   const headers: Record<string, string> = {
     authorization: `Bearer ${key}`,

@@ -16,6 +16,11 @@ CREATE TABLE catalog_mods (
   desc_sig TEXT NOT NULL DEFAULT '',
   gb_rated INTEGER NOT NULL DEFAULT 0,
   post_count INTEGER NOT NULL DEFAULT 0,
+  -- SHA-256 of the public text, files and screenshot URLs: a page bump with the same content costs
+  -- no model call.
+  content_hash TEXT NOT NULL DEFAULT '',
+  -- 1 when GameBanana withdrew, trashed or hid the page: dropped from the index.
+  withdrawn INTEGER NOT NULL DEFAULT 0,
   seen_at INTEGER NOT NULL
 );
 CREATE INDEX catalog_mods_title ON catalog_mods (title_norm);

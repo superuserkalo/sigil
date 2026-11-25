@@ -118,8 +118,16 @@ export class GameBanana {
     return parseList(await this.get(url));
   }
 
-  async profile(id: number): Promise<Profile> {
-    return parseProfile(await this.get(`${GB_API}/Mod/${id}/ProfilePage`));
+  /** Null when the page is gone, trashed, withheld or private. */
+  async profile(id: number): Promise<Profile | null> {
+    try {
+      const body = await this.get(`${GB_API}/Mod/${id}/ProfilePage`);
+      if (isObject(body) && (body._bIsTrashed === true || body._bIsWithheld === true || body._bIsPrivate === true)) return null;
+      return parseProfile(body);
+    } catch (error) {
+      if (error instanceof RemoteError && (error.status === 404 || error.status === 410)) return null;
+      throw error;
+    }
   }
 
   async updates(id: number, perpage: number): Promise<ModUpdate[]> {
@@ -221,29 +229,90 @@ function shotsOf(media: Json): Shot[] {
     .filter((shot) => !shot.full.endsWith("/"));
 }
 
-function modLinks(html: string): { id: number; label: string }[] {
+/** Untrusted HTML is cut to this many characters before any scanning. */
+export const MAX_HTML = 20_000;
+
+/**
+ * Links to other GameBanana mods, by a linear scan (no backtracking regex over untrusted HTML).
+ * Each `<a` opens a window of at most 600 characters to its `</a>`.
+ */
+export function modLinks(raw: string): { id: number; label: string }[] {
+  const html = raw.slice(0, MAX_HTML);
+  const lower = html.toLowerCase();
   const links: { id: number; label: string }[] = [];
-  const pattern = /<a\b[^>]*href="(?:https?:)?\/\/(?:www\.)?gamebanana\.com\/mods\/(\d+)[^"]*"[^>]*>([\s\S]*?)<\/a>/gi;
-  for (const match of html.matchAll(pattern)) {
-    const id = Number(match[1]);
-    const label = htmlToText(match[2] ?? "").slice(0, 80) || `mod ${id}`;
-    if (id > 0 && !links.some((link) => link.id === id)) links.push({ id, label });
-    if (links.length >= 8) break;
+  let at = 0;
+  // Remembered positions keep a run of unclosed "<a" linear.
+  let tagEnd = -1;
+  let close = -1;
+  while (links.length < 8) {
+    const open = lower.indexOf("<a", at);
+    if (open < 0) break;
+    at = open + 2;
+    if (tagEnd <= open) tagEnd = lower.indexOf(">", open);
+    if (tagEnd < 0) break;
+    if (tagEnd - open > 600) continue;
+    if (close <= tagEnd) close = lower.indexOf("</a>", tagEnd);
+    if (close < 0) break;
+    if (close - tagEnd > 600) continue;
+    const tag = lower.slice(open, tagEnd);
+    const marker = tag.indexOf("gamebanana.com/mods/");
+    if (marker < 0) continue;
+    let digits = "";
+    for (let i = marker + 20; i < tag.length && digits.length < 10; i += 1) {
+      const char = tag[i] ?? "";
+      if (char < "0" || char > "9") break;
+      digits += char;
+    }
+    const id = Number(digits);
+    if (!(id > 0)) continue;
+    const label = htmlToText(html.slice(tagEnd + 1, close)).slice(0, 80) || `mod ${id}`;
+    if (!links.some((link) => link.id === id)) links.push({ id, label });
+    at = close + 4;
   }
   return links;
 }
 
-/** Tags dropped, paragraphs and breaks kept as new lines, entities decoded, spaces collapsed. */
-export function htmlToText(html: string): string {
-  const text = html
-    .replace(/<\s*br\s*\/?\s*>|<\/\s*(p|li|div|h\d)\s*>/gi, "\n")
-    .replace(/<[^>]*>/g, "")
-    .replace(/\[\/?[a-z]+\]/gi, " ");
-  return decodeEntities(text)
+const BREAK_TAGS = new Set(["br", "p", "li", "div", "h1", "h2", "h3", "h4", "h5", "h6"]);
+
+/** Tags dropped by a linear scan, breaks kept as new lines, entities decoded, spaces collapsed. */
+export function htmlToText(raw: string): string {
+  const html = raw.slice(0, MAX_HTML);
+  let out = "";
+  let at = 0;
+  // The next ">" is remembered, so a run of "<" without one stays linear.
+  let close = -1;
+  while (at < html.length) {
+    const open = html.indexOf("<", at);
+    if (open < 0) {
+      out += html.slice(at);
+      break;
+    }
+    out += html.slice(at, open);
+    if (close <= open) close = html.indexOf(">", open);
+    if (close < 0) {
+      out += html.slice(open);
+      break;
+    }
+    // A very long "tag" is text, not markup.
+    if (close - open > 400) {
+      out += "<";
+      at = open + 1;
+      continue;
+    }
+    const name = (html.slice(open + 1, close).replace(/^\//, "").split(/[\s/]/)[0] ?? "").toLowerCase();
+    if (BREAK_TAGS.has(name)) out += "\n";
+    at = close + 1;
+  }
+  return decodeEntities(out.replace(/\[\/?[a-z]{1,10}\]/gi, " "))
     .split("\n")
     .map((line) => line.replace(/\s+/g, " ").trim())
     .filter((line) => line.length > 0)
     .join("\n");
+}
+
+function codePoint(value: number): string {
+  if (!Number.isInteger(value) || value < 0 || value > 0x10ffff || (value >= 0xd800 && value <= 0xdfff)) return "\ufffd";
+  return String.fromCodePoint(value);
 }
 
 export function decodeEntities(text: string): string {
@@ -253,7 +322,8 @@ export function decodeEntities(text: string): string {
     .replace(/&gt;/g, ">")
     .replace(/&quot;/g, '"')
     .replace(/&#0?39;|&apos;/g, "'")
-    .replace(/&#(\d+);/g, (_, code: string) => String.fromCodePoint(Number(code)))
+    .replace(/&#[xX]([0-9a-fA-F]{1,8});/g, (_, hex: string) => codePoint(parseInt(hex, 16)))
+    .replace(/&#(\d{1,10});/g, (_, code: string) => codePoint(Number(code)))
     .replace(/&amp;/g, "&");
 }
 
