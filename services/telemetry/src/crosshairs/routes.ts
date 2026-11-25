@@ -4,18 +4,28 @@
  *   POST /v1/crosshairs                    publish `{ name, config }`, returns `{ id, delete_token }`
  *   GET  /v1/crosshairs?sort=&cursor=      60 visible crosshairs per page, cacheable
  *   POST /v1/crosshairs/<id>/delete        `{ delete_token }`, removes the row
- *   POST /v1/crosshairs/<id>/use           counts an apply, once per network per crosshair per day
- *   POST /v1/crosshairs/<id>/report        once per network per crosshair per day; 3 hides the row
+ *   POST /v1/crosshairs/<id>/use           counts an apply, once per network per crosshair per day,
+ *                                          at most 30 per network per day
+ *   POST /v1/crosshairs/<id>/report        once per network per crosshair; 5 networks hide a
+ *                                          community row; at most 5 reports per network per day
  *   GET  /v1/crosshairs/admin/flagged      owner only: reported or hidden rows
  *   POST /v1/crosshairs/admin/<id>/remove  owner only
  *   POST /v1/crosshairs/admin/<id>/restore owner only: shows the row again, reports back to 0
  *   POST /v1/crosshairs/admin/official     owner only: upsert `{ id, name, config }` as by Sigil
  *
  * Privacy: a crosshair row holds its name, canonical config, the config hash, counts, flags, the
- * created time and a SHA-256 of its delete token. No install id, player id or address. The network
- * bucket (an HMAC under `PRODUCT_BUCKET_KEY` of the UTC day and the caller's /24 or /48) sits only
- * in `crosshair_uses`, `crosshair_reports` and `crosshair_publishes`, which the daily job empties
- * after 2 days (`retention.ts`). `crosshair_publishes` does not say which crosshair was published.
+ * created time and a SHA-256 of its delete token. No install id, player id or address.
+ *
+ * Two network markers, both HMACs under `PRODUCT_BUCKET_KEY` of the caller's /24 or /48:
+ *
+ * - The daily bucket (with the UTC day) sits in `crosshair_uses` and `crosshair_daily`, which the
+ *   daily job empties after 2 days. `crosshair_daily` does not say which crosshair.
+ * - The report marker (with the crosshair id, no day) sits in `crosshair_reports` for 90 days. A
+ *   network counts once per crosshair however many days it reports, and a marker for one crosshair
+ *   cannot be matched to the same network's marker for another or to any other table.
+ *
+ * Hiding is decided from the number of distinct report rows, never from a counter, and Sigil's
+ * own rows are never hidden by reports.
  */
 
 import { readJsonBody } from "../body";
@@ -30,9 +40,13 @@ export const LIST_MAX_AGE = 300;
 export const PUBLISHES_PER_BUCKET_PER_DAY = 3;
 export const PUBLISHES_PER_DAY = 300;
 export const MAX_ROWS = 20_000;
-export const REPORTS_TO_HIDE = 3;
-/** How long the dedupe and publish-limit rows live (`retention.ts`). */
+export const REPORTS_TO_HIDE = 5;
+export const REPORTS_PER_BUCKET_PER_DAY = 5;
+export const USES_PER_BUCKET_PER_DAY = 30;
+/** How long the daily-bucket rows live (`retention.ts`). */
 export const CROSSHAIR_DEDUPE_MS = 2 * 24 * 60 * 60 * 1000;
+/** How long a report marker lives (`retention.ts`). */
+export const CROSSHAIR_REPORT_MS = 90 * 24 * 60 * 60 * 1000;
 
 const PUBLISH_BODY_LIMIT = 2 * 1024;
 const DELETE_BODY_LIMIT = 256;
@@ -106,8 +120,21 @@ export async function crosshairBucket(address: string | null, secret: string, da
   return toHex(new Uint8Array(mac)).slice(0, 16);
 }
 
+/**
+ * HMAC-SHA256 under `PRODUCT_BUCKET_KEY` of the crosshair id and the caller's network prefix, with
+ * no day: the same network gets the same marker for one crosshair on every day, and unrelated
+ * markers for different crosshairs.
+ */
+export async function reportMarker(address: string | null, secret: string, crosshairId: string): Promise<string | null> {
+  const prefix = networkPrefix(address);
+  if (prefix === null) return null;
+  const key = await crypto.subtle.importKey("raw", encoder.encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  const mac = await crypto.subtle.sign("HMAC", key, encoder.encode(`sigil-crosshair-report\n${crosshairId}\n${prefix}`));
+  return toHex(new Uint8Array(mac)).slice(0, 32);
+}
+
 /** The bucket for this request, or the response that refuses it. */
-async function requestBucket(request: Request, env: Env, now: number, respond: Respond): Promise<{ bucket: string } | { response: Response }> {
+async function requestBucket(request: Request, env: Env, now: number, respond: Respond): Promise<{ bucket: string; secret: string } | { response: Response }> {
   const secret = bucketKey(env);
   if (!secretOk(secret)) {
     await request.body?.cancel();
@@ -118,7 +145,7 @@ async function requestBucket(request: Request, env: Env, now: number, respond: R
     await request.body?.cancel();
     return { response: respond(400, { error: "no_network" }) };
   }
-  return { bucket };
+  return { bucket, secret };
 }
 
 function bodyError(reason: "too_large" | "invalid_utf8" | "invalid_json", respond: Respond): Response {
@@ -187,8 +214,8 @@ async function publish(request: Request, env: Env, respond: Respond): Promise<Re
   if (duplicate !== null) return respond(409, { error: "duplicate", id: duplicate });
 
   const [mine, today, total] = await env.DB.batch<{ n: number }>([
-    env.DB.prepare("SELECT COUNT(*) AS n FROM crosshair_publishes WHERE bucket = ?1").bind(gate.bucket),
-    env.DB.prepare("SELECT COUNT(*) AS n FROM crosshair_publishes WHERE day = ?1").bind(day),
+    env.DB.prepare("SELECT COUNT(*) AS n FROM crosshair_daily WHERE bucket = ?1 AND kind = 'publish'").bind(gate.bucket),
+    env.DB.prepare("SELECT COUNT(*) AS n FROM crosshair_daily WHERE kind = 'publish' AND day = ?1").bind(day),
     env.DB.prepare("SELECT COUNT(*) AS n FROM crosshairs"),
   ]);
   if ((mine?.results[0]?.n ?? 0) >= PUBLISHES_PER_BUCKET_PER_DAY) return respond(429, { error: "publish_limit" });
@@ -206,13 +233,13 @@ async function publish(request: Request, env: Env, respond: Respond): Promise<Re
     env.DB.prepare(
       `INSERT OR IGNORE INTO crosshairs (id, name, config, config_hash, uses, reports, official, hidden, created_at, created_day, delete_token_hash)
        SELECT ?1, ?2, ?3, ?4, 0, 0, 0, 0, ?5, ?6, ?7
-       WHERE (SELECT COUNT(*) FROM crosshair_publishes WHERE bucket = ?8) < ?9
-         AND (SELECT COUNT(*) FROM crosshair_publishes WHERE day = ?6) < ?10
+       WHERE (SELECT COUNT(*) FROM crosshair_daily WHERE bucket = ?8 AND kind = 'publish') < ?9
+         AND (SELECT COUNT(*) FROM crosshair_daily WHERE kind = 'publish' AND day = ?6) < ?10
          AND (SELECT COUNT(*) FROM crosshairs) < ?11`,
     ).bind(id, entry.name, entry.config, entry.hash, now, day, await tokenHash(token), gate.bucket, PUBLISHES_PER_BUCKET_PER_DAY, PUBLISHES_PER_DAY, MAX_ROWS),
     env.DB.prepare(
-      `INSERT INTO crosshair_publishes (bucket, day, created_at)
-       SELECT ?1, ?2, ?3 WHERE EXISTS (SELECT 1 FROM crosshairs WHERE id = ?4 AND created_at = ?3)`,
+      `INSERT INTO crosshair_daily (bucket, kind, day, created_at)
+       SELECT ?1, 'publish', ?2, ?3 WHERE EXISTS (SELECT 1 FROM crosshairs WHERE id = ?4 AND created_at = ?3)`,
     ).bind(gate.bucket, day, now, id),
   ]);
   if ((inserted?.meta.changes ?? 0) === 0) {
@@ -338,8 +365,18 @@ async function use(request: Request, env: Env, id: string, respond: Respond): Pr
   if ("response" in gate) return gate.response;
   await request.body?.cancel();
   if ((await visible(env.DB, id)) === null) return respond(404, { error: "not_found" });
+  // One transaction: the dedupe row goes in only under the network's daily cap, the cap row and
+  // the count only when it did (`changes()` is the previous statement's).
   const [added] = await env.DB.batch([
-    env.DB.prepare("INSERT OR IGNORE INTO crosshair_uses (bucket, crosshair_id, created_at) VALUES (?1, ?2, ?3)").bind(gate.bucket, id, now),
+    env.DB.prepare(
+      `INSERT OR IGNORE INTO crosshair_uses (bucket, crosshair_id, created_at)
+       SELECT ?1, ?2, ?3 WHERE (SELECT COUNT(*) FROM crosshair_daily WHERE bucket = ?1 AND kind = 'use') < ?4`,
+    ).bind(gate.bucket, id, now, USES_PER_BUCKET_PER_DAY),
+    env.DB.prepare("INSERT INTO crosshair_daily (bucket, kind, day, created_at) SELECT ?1, 'use', ?2, ?3 WHERE changes() > 0").bind(
+      gate.bucket,
+      utcDay(now),
+      now,
+    ),
     env.DB.prepare("UPDATE crosshairs SET uses = uses + 1 WHERE id = ?1 AND changes() > 0").bind(id),
   ]);
   return respond(200, { counted: (added?.meta.changes ?? 0) > 0 });
@@ -352,13 +389,32 @@ async function report(request: Request, env: Env, id: string, respond: Respond):
   await request.body?.cancel();
   const row = await visible(env.DB, id);
   if (row === null) return respond(404, { error: "not_found" });
-  // Sigil's own crosshairs are not hidden by reports.
+  // Sigil's own crosshairs are never hidden by reports, so a report on one stores nothing.
   if (row.official === 1) return respond(200, { counted: false });
+  const marker = await reportMarker(request.headers.get("cf-connecting-ip"), gate.secret, id);
+  if (marker === null) return respond(400, { error: "no_network" });
+  const known = await env.DB.prepare("SELECT 1 AS n FROM crosshair_reports WHERE marker = ?1").bind(marker).first();
+  if (known !== null) return respond(200, { counted: false });
+  const today = await env.DB.prepare("SELECT COUNT(*) AS n FROM crosshair_daily WHERE bucket = ?1 AND kind = 'report'")
+    .bind(gate.bucket)
+    .first<number>("n");
+  if ((today ?? 0) >= REPORTS_PER_BUCKET_PER_DAY) return respond(429, { error: "report_limit" });
   const [added] = await env.DB.batch([
-    env.DB.prepare("INSERT OR IGNORE INTO crosshair_reports (bucket, crosshair_id, created_at) VALUES (?1, ?2, ?3)").bind(gate.bucket, id, now),
     env.DB.prepare(
-      `UPDATE crosshairs SET reports = reports + 1, hidden = CASE WHEN reports + 1 >= ?2 THEN 1 ELSE hidden END
-       WHERE id = ?1 AND changes() > 0`,
+      `INSERT OR IGNORE INTO crosshair_reports (marker, crosshair_id, created_at)
+       SELECT ?1, ?2, ?3 WHERE (SELECT COUNT(*) FROM crosshair_daily WHERE bucket = ?4 AND kind = 'report') < ?5`,
+    ).bind(marker, id, now, gate.bucket, REPORTS_PER_BUCKET_PER_DAY),
+    env.DB.prepare("INSERT INTO crosshair_daily (bucket, kind, day, created_at) SELECT ?1, 'report', ?2, ?3 WHERE changes() > 0").bind(
+      gate.bucket,
+      utcDay(now),
+      now,
+    ),
+    // The count is the distinct report rows, so nothing but distinct networks can raise it.
+    env.DB.prepare(
+      `UPDATE crosshairs SET
+         reports = (SELECT COUNT(*) FROM crosshair_reports WHERE crosshair_id = ?1),
+         hidden = CASE WHEN official = 0 AND (SELECT COUNT(*) FROM crosshair_reports WHERE crosshair_id = ?1) >= ?2 THEN 1 ELSE hidden END
+       WHERE id = ?1`,
     ).bind(id, REPORTS_TO_HIDE),
   ]);
   return respond(200, { counted: (added?.meta.changes ?? 0) > 0 });

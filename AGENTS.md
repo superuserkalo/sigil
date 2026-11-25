@@ -95,8 +95,8 @@ These are product constraints, not preferences.
   (`docs/decisions/0018-typesafe-catalog-tags.md`). Community crosshair library (2026-11-25,
   owner approved): on the player's own Publish, a crosshair's name and settings go to the same
   Worker and become public; browsing and applying send nothing about the player. No accounts, no
-  install id; a daily network hash for limits and dedupe is deleted after 2 days
-  (`docs/decisions/0019-community-crosshairs.md`).
+  install id, no IP stored; a daily network hash for limits and dedupe is deleted after 2 days, and
+  a per-crosshair report hash after 90 days (`docs/decisions/0019-community-crosshairs.md`).
 - Preserve MIT attribution for Rune, TinyAgent, Grimoire and every bundled community tool. See
   `THIRD_PARTY_NOTICES.md`. CSDK 12 has no license and is never redistributed.
 - No em dashes in code, UI strings, comments or docs. Use a colon, period or parentheses.

@@ -5,7 +5,7 @@
  */
 
 import { env } from "cloudflare:workers";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import worker from "../src/index";
 import { canonicalText, configHash, parseConfig, type CrosshairConfig } from "../src/crosshairs/config";
 import { blocklistForms, isBlocked, parseName } from "../src/crosshairs/name";
@@ -251,7 +251,7 @@ describe("publishing", () => {
     const day = new Date().toISOString().slice(0, 10);
     await env.DB.prepare(
       `WITH RECURSIVE n(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM n WHERE x < ?1)
-       INSERT INTO crosshair_publishes (bucket, day, created_at) SELECT 'b' || x, ?2, ?3 FROM n`,
+       INSERT INTO crosshair_daily (bucket, kind, day, created_at) SELECT 'b' || x, 'publish', ?2, ?3 FROM n`,
     )
       .bind(PUBLISHES_PER_DAY, day, Date.now())
       .run();
@@ -327,35 +327,95 @@ describe("uses and reports", () => {
     expect((await call("/v1/crosshairs/0123456789abcdef/use")).status).toBe(404);
   });
 
-  it("counts a report once per network and hides the row at 3 networks", async () => {
+  it("caps the uses one network adds per day across all crosshairs at 30", async () => {
+    const ip = "203.0.140.7";
+    const ids: string[] = [];
+    for (let n = 0; n < 31; n += 1) {
+      await env.DB.prepare(
+        `INSERT INTO crosshairs (id, name, config, config_hash, created_at, created_day) VALUES (printf('%016x', ?1 + 8192), 'Use ' || ?1, '{}', 'use' || ?1, 1, '2026-11-25')`,
+      )
+        .bind(n)
+        .run();
+      ids.push((8192 + n).toString(16).padStart(16, "0"));
+    }
+    for (const id of ids.slice(0, 30)) expect(await readJson(await call(`/v1/crosshairs/${id}/use`, { ip }))).toEqual({ counted: true });
+    expect(await readJson(await call(`/v1/crosshairs/${ids[30]}/use`, { ip }))).toEqual({ counted: false });
+    expect((await row(ids[30] ?? ""))?.uses).toBe(0);
+    expect(await readJson(await call(`/v1/crosshairs/${ids[30]}/use`, { ip: "203.0.141.7" }))).toEqual({ counted: true });
+  });
+
+  it("counts a report once per network per crosshair, from distinct report rows", async () => {
     const mine = await published(700);
     expect(await readJson(await call(`/v1/crosshairs/${mine.id}/report`, { ip: "203.0.113.60" }))).toEqual({ counted: true });
     expect(await readJson(await call(`/v1/crosshairs/${mine.id}/report`, { ip: "203.0.113.61" }))).toEqual({ counted: false });
-    await call(`/v1/crosshairs/${mine.id}/report`, { ip: "203.0.114.60" });
-    expect(await row(mine.id)).toMatchObject({ reports: 2, hidden: 0 });
-    await call(`/v1/crosshairs/${mine.id}/report`, { ip: "203.0.115.60" });
-    expect(await row(mine.id)).toMatchObject({ reports: 3, hidden: 1 });
+    expect(await row(mine.id)).toMatchObject({ reports: 1, hidden: 0 });
+    // The marker carries no IP and no day, and differs per crosshair for the same network.
+    const other = await published(701);
+    await call(`/v1/crosshairs/${other.id}/report`, { ip: "203.0.113.62" });
+    const { results } = await env.DB.prepare("SELECT marker FROM crosshair_reports").all<{ marker: string }>();
+    expect(results).toHaveLength(2);
+    expect(results[0]?.marker).not.toBe(results[1]?.marker);
+    expect(JSON.stringify(results)).not.toContain("203.0.113");
+  });
 
+  it("hides nothing when the same network reports on five different days", async () => {
+    const mine = await published(710);
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      const start = Date.now();
+      for (let d = 0; d < 5; d += 1) {
+        vi.setSystemTime(start + d * DAY);
+        await call(`/v1/crosshairs/${mine.id}/report`, { ip: `203.0.150.${d + 1}` });
+        // The clock really moved: a use from the same network counts again each day.
+        expect(await readJson(await call(`/v1/crosshairs/${mine.id}/use`, { ip: `203.0.150.${d + 1}` }))).toEqual({ counted: true });
+      }
+    } finally {
+      vi.useRealTimers();
+    }
+    expect(await row(mine.id)).toMatchObject({ reports: 1, hidden: 0, uses: 5 });
+    expect((await listAll("new")).some((entry) => entry.id === mine.id)).toBe(true);
+  });
+
+  it("hides a community row at 5 distinct networks, and never an official one", async () => {
+    const mine = await published(720);
+    for (let n = 0; n < 4; n += 1) await call(`/v1/crosshairs/${mine.id}/report`, { ip: `203.1.${n}.1` });
+    expect(await row(mine.id)).toMatchObject({ reports: 4, hidden: 0 });
+    await call(`/v1/crosshairs/${mine.id}/report`, { ip: "203.1.4.1" });
+    expect(await row(mine.id)).toMatchObject({ reports: 5, hidden: 1 });
     expect((await listAll("used")).some((entry) => entry.id === mine.id)).toBe(false);
     expect((await listAll("new")).some((entry) => entry.id === mine.id)).toBe(false);
     expect((await call(`/v1/crosshairs/${mine.id}/use`)).status).toBe(404);
     expect((await call(`/v1/crosshairs/${mine.id}/report`)).status).toBe(404);
-  });
 
-  it("does not hide Sigil's own crosshairs on reports", async () => {
-    for (let n = 0; n < 4; n += 1) await call("/v1/crosshairs/sigil-dot/report", { ip: `203.0.${120 + n}.1` });
+    for (let n = 0; n < 6; n += 1) await call("/v1/crosshairs/sigil-dot/report", { ip: `203.2.${n}.1` });
     expect(await row("sigil-dot")).toMatchObject({ reports: 0, hidden: 0 });
+    expect((await listAll("new")).some((entry) => entry.id === "sigil-dot")).toBe(true);
   });
 
-  it("keeps the dedupe rows 2 days, and keeps the counts", async () => {
+  it("caps one network at 5 reports a day across all crosshairs", async () => {
+    const ip = "203.0.160.1";
+    const ids: string[] = [];
+    for (let n = 0; n < 6; n += 1) ids.push((await published(730 + n)).id);
+    for (const id of ids.slice(0, 5)) expect(await readJson(await call(`/v1/crosshairs/${id}/report`, { ip }))).toEqual({ counted: true });
+    const sixth = await call(`/v1/crosshairs/${ids[5]}/report`, { ip });
+    expect(sixth.status).toBe(429);
+    expect(await readJson(sixth)).toEqual({ error: "report_limit" });
+    expect((await row(ids[5] ?? ""))?.reports).toBe(0);
+    expect(await readJson(await call(`/v1/crosshairs/${ids[5]}/report`, { ip: "203.0.161.1" }))).toEqual({ counted: true });
+  });
+
+  it("keeps daily rows 2 days and report markers 90 days, and keeps the counts", async () => {
     const mine = await published(800);
     await call(`/v1/crosshairs/${mine.id}/use`);
     await call(`/v1/crosshairs/${mine.id}/report`);
-    await runRetention(env.DB, Date.now() + DAY);
     const count = async (table: string) => env.DB.prepare(`SELECT COUNT(*) AS n FROM ${table}`).first<number>("n");
+    await runRetention(env.DB, Date.now() + DAY);
     expect(await count("crosshair_uses")).toBe(1);
     await runRetention(env.DB, Date.now() + 2 * DAY + 60_000);
-    for (const table of ["crosshair_uses", "crosshair_reports", "crosshair_publishes"]) expect(await count(table)).toBe(0);
+    for (const table of ["crosshair_uses", "crosshair_daily"]) expect(await count(table)).toBe(0);
+    expect(await count("crosshair_reports")).toBe(1);
+    await runRetention(env.DB, Date.now() + 90 * DAY + 60_000);
+    expect(await count("crosshair_reports")).toBe(0);
     expect(await row(mine.id)).toMatchObject({ uses: 1, reports: 1 });
   });
 });
@@ -446,9 +506,9 @@ describe("admin", () => {
 
   it("lists flagged rows, restores and removes them", async () => {
     const mine = await published(1000);
-    for (let n = 0; n < 3; n += 1) await call(`/v1/crosshairs/${mine.id}/report`, { ip: `203.0.${130 + n}.1` });
+    for (let n = 0; n < 5; n += 1) await call(`/v1/crosshairs/${mine.id}/report`, { ip: `203.0.${130 + n}.1` });
     const flagged = await readJson<{ crosshairs: { id: string; reports: number; hidden: boolean }[] }>(await get("/v1/crosshairs/admin/flagged", withKey, auth));
-    expect(flagged.crosshairs).toEqual([expect.objectContaining({ id: mine.id, reports: 3, hidden: true })]);
+    expect(flagged.crosshairs).toEqual([expect.objectContaining({ id: mine.id, reports: 5, hidden: true })]);
 
     expect((await post(`/v1/crosshairs/admin/${mine.id}/restore`, {}, withKey, auth)).status).toBe(200);
     expect(await row(mine.id)).toMatchObject({ reports: 0, hidden: 0 });

@@ -12,11 +12,12 @@
  * - `product_totals` (counts above the floor) are kept indefinitely.
  * - `product_contrib`, the only product table with a network marker, keeps its short life: its
  *   epoch, and the 21-day hard backstop below.
- * - `crosshair_uses`, `crosshair_reports` and `crosshair_publishes` (ADR 0019), the community
- *   crosshair dedupe and limit rows, are deleted 2 days after they were written.
+ * - `crosshair_uses` and `crosshair_daily` (ADR 0019), the community crosshair rows with a daily
+ *   network bucket, are deleted 2 days after they were written; `crosshair_reports`, the
+ *   per-crosshair report markers, after 90 days.
  */
 
-import { CROSSHAIR_DEDUPE_MS } from "./crosshairs/routes";
+import { CROSSHAIR_DEDUPE_MS, CROSSHAIR_REPORT_MS } from "./crosshairs/routes";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -51,10 +52,10 @@ export async function runRetention(db: D1Database, now: number): Promise<Retenti
     db.prepare("DELETE FROM crashes WHERE created_at < ?1").bind(now - CRASH_RETENTION_MS),
     // The backstop: never depends on closing.
     db.prepare("DELETE FROM product_contrib WHERE created_at < ?1").bind(now - CONTRIB_BACKSTOP_MS),
-    // Community crosshairs (ADR 0019): the dedupe and limit rows with a network bucket, 2 days.
+    // Community crosshairs (ADR 0019): daily-bucket rows 2 days, report markers 90 days.
     db.prepare("DELETE FROM crosshair_uses WHERE created_at < ?1").bind(now - CROSSHAIR_DEDUPE_MS),
-    db.prepare("DELETE FROM crosshair_reports WHERE created_at < ?1").bind(now - CROSSHAIR_DEDUPE_MS),
-    db.prepare("DELETE FROM crosshair_publishes WHERE created_at < ?1").bind(now - CROSSHAIR_DEDUPE_MS),
+    db.prepare("DELETE FROM crosshair_daily WHERE created_at < ?1").bind(now - CROSSHAIR_DEDUPE_MS),
+    db.prepare("DELETE FROM crosshair_reports WHERE created_at < ?1").bind(now - CROSSHAIR_REPORT_MS),
   ]);
 
   return {

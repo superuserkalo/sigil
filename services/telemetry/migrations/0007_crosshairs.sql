@@ -5,11 +5,15 @@
 -- `crosshairs` holds only the name, the canonical config (src/crosshairs/config.ts), its SHA-256,
 --   counts, flags, the created time and day, and a SHA-256 of the delete token (NULL for Sigil's
 --   own rows, which no token deletes). No install id, player id or address.
--- `crosshair_uses`, `crosshair_reports`: one row per network bucket and crosshair, so an apply or a
---   report counts once per network per day. `crosshair_publishes`: one row per publish, for the
---   per-network and per-day limits; it does not say which crosshair was published. The bucket is an
---   HMAC under PRODUCT_BUCKET_KEY of the UTC day and the caller's /24 or /48. The daily job deletes
---   these rows 2 days after they were written (src/retention.ts).
+-- `crosshair_uses`: one row per daily network bucket and crosshair, so an apply counts once per
+--   network per day. `crosshair_daily`: one row per counted publish, report or use, for the
+--   per-network daily caps and the overall daily publish cap; it does not say which crosshair. The
+--   daily bucket is an HMAC under PRODUCT_BUCKET_KEY of the UTC day and the caller's /24 or /48.
+--   The daily job deletes both tables' rows 2 days after they were written (src/retention.ts).
+-- `crosshair_reports`: one row per reporting network and crosshair. The marker is an HMAC under
+--   PRODUCT_BUCKET_KEY of the crosshair id and the network prefix, without a day, so a network
+--   counts once per crosshair however many days it reports, and a marker cannot be joined across
+--   crosshairs or to any other table. Kept 90 days, then deleted. No address is stored.
 
 CREATE TABLE IF NOT EXISTS crosshairs (
   id TEXT PRIMARY KEY,
@@ -39,22 +43,22 @@ CREATE INDEX IF NOT EXISTS crosshair_uses_created ON crosshair_uses (created_at)
 CREATE INDEX IF NOT EXISTS crosshair_uses_crosshair ON crosshair_uses (crosshair_id);
 
 CREATE TABLE IF NOT EXISTS crosshair_reports (
-  bucket TEXT NOT NULL,
+  marker TEXT PRIMARY KEY,
   crosshair_id TEXT NOT NULL,
-  created_at INTEGER NOT NULL,
-  PRIMARY KEY (bucket, crosshair_id)
+  created_at INTEGER NOT NULL
 ) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS crosshair_reports_created ON crosshair_reports (created_at);
 CREATE INDEX IF NOT EXISTS crosshair_reports_crosshair ON crosshair_reports (crosshair_id);
 
-CREATE TABLE IF NOT EXISTS crosshair_publishes (
+CREATE TABLE IF NOT EXISTS crosshair_daily (
   bucket TEXT NOT NULL,
+  kind TEXT NOT NULL,
   day TEXT NOT NULL,
   created_at INTEGER NOT NULL
 );
-CREATE INDEX IF NOT EXISTS crosshair_publishes_bucket ON crosshair_publishes (bucket);
-CREATE INDEX IF NOT EXISTS crosshair_publishes_day ON crosshair_publishes (day);
-CREATE INDEX IF NOT EXISTS crosshair_publishes_created ON crosshair_publishes (created_at);
+CREATE INDEX IF NOT EXISTS crosshair_daily_bucket ON crosshair_daily (bucket, kind);
+CREATE INDEX IF NOT EXISTS crosshair_daily_day ON crosshair_daily (kind, day);
+CREATE INDEX IF NOT EXISTS crosshair_daily_created ON crosshair_daily (created_at);
 
 -- Sigil's own crosshairs, shown as by Sigil: the built-in presets in crosshair.rs and clearly
 -- distinct variations. test/crosshairs.spec.ts checks every row against the Worker's validator.

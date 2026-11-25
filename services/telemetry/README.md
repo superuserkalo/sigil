@@ -28,7 +28,7 @@ are described under [Catalog search index](#catalog-search-index-adr-0018-migrat
 | GET | `/v1/product/admin/search-gaps` | none | Nothing. Owner only, needs `PRODUCT_ADMIN_KEY`. |
 | POST | `/v1/crosshairs` | 2 KiB | Publishes a community crosshair (ADR 0019): name, canonical config, token hash. |
 | GET | `/v1/crosshairs?sort=used\|new&cursor=` | none | Nothing. 60 visible crosshairs per page, cacheable 5 minutes. |
-| POST | `/v1/crosshairs/<id>/delete`, `/use`, `/report` | 256 B | Delete by token; use and report dedupe rows (2 days). |
+| POST | `/v1/crosshairs/<id>/delete`, `/use`, `/report` | 256 B | Delete by token; use dedupe and daily caps (2 days), per-crosshair report markers (90 days). |
 | GET, POST | `/v1/crosshairs/admin/...` | 2 KiB | Owner only: flagged list, remove, restore, upsert official. |
 
 Every request needs `x-sigil-client: 1` and a semver `x-sigil-version`, otherwise 400. The limiter

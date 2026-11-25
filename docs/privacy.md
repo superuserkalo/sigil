@@ -277,12 +277,15 @@ Publishing a crosshair to the community library is your own action, one crosshai
 only then does Sigil send its name and its settings to Sigil's Worker. Both become public: anyone
 using Sigil can see the name, the settings, how often it was applied and the day it was published.
 Nothing else is attached: no account, no install id, no player or Steam id, and the Worker stores
-no address. Browsing, applying and reporting send no data about you (an apply or a report counts
-once per network per day using a daily network hash that the Worker deletes after 2 days, see
+no address. Browsing, applying and reporting send no data about you. To count fairly, the Worker
+keeps two keyed hashes of your network (not your address): a daily one, deleted after 2 days, that
+counts an apply once per day and caps publishes, reports and applies per day; and, when you report
+a crosshair, a hash of your network and that crosshair, kept up to 90 days so one network counts
+once per crosshair, which cannot be matched to your reports of other crosshairs (see
 `docs/decisions/0019-community-crosshairs.md`). To remove a crosshair you published, use Delete in
 the library on the same PC: the app keeps the delete token the Worker gave it, and the row is
 gone at once. If you lose that token (a new PC, cleared app data), ask the owner to remove it.
-Crosshairs that three networks report are hidden until the owner reviews them.
+Crosshairs that five networks report are hidden until the owner reviews them.
 
 ## Catalog search index
 

@@ -108,6 +108,6 @@ export async function clearTables(): Promise<void> {
     env.DB.prepare("UPDATE crosshairs SET uses = 0, reports = 0, hidden = 0"),
     env.DB.prepare("DELETE FROM crosshair_uses"),
     env.DB.prepare("DELETE FROM crosshair_reports"),
-    env.DB.prepare("DELETE FROM crosshair_publishes"),
+    env.DB.prepare("DELETE FROM crosshair_daily"),
   ]);
 }

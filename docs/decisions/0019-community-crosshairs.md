@@ -26,14 +26,19 @@ and its D1 database (`sigil`), migration `0007_crosshairs.sql`.
   and report counts, the `official` and `hidden` flags, the created time and day, and a SHA-256 of
   a delete token. The token is returned once, to the publishing app, which keeps it to remove the
   crosshair later.
-- Limits and dedupe use a network bucket: HMAC-SHA256 under the `PRODUCT_BUCKET_KEY` Worker secret
-  of the UTC day and the caller's network prefix (IPv4 /24, IPv6 /48), cut to 16 hex characters.
-  It appears only in three small tables (`crosshair_uses`, `crosshair_reports`,
-  `crosshair_publishes`), whose rows the daily job deletes 2 days after they were written. The
-  publish table does not say which crosshair was published. The bucket changes every day, so
-  nothing links one day's network to the next.
+- Two network markers, both HMAC-SHA256 under the `PRODUCT_BUCKET_KEY` Worker secret of the
+  caller's network prefix (IPv4 /24, IPv6 /48). No address is stored anywhere.
+  - The daily bucket adds the UTC day (16 hex characters). It sits only in `crosshair_uses` (use
+    dedupe) and `crosshair_daily` (the per-network daily caps on publishes, reports and uses, and
+    the overall daily publish cap), whose rows the daily job deletes 2 days after they were
+    written. `crosshair_daily` does not say which crosshair. The bucket changes every day.
+  - The report marker adds the crosshair id instead of the day (32 hex characters). It sits only
+    in `crosshair_reports`, kept up to 90 days and then deleted. A network counts once per
+    crosshair however many days it reports, and its marker for one crosshair cannot be matched to
+    its marker for another or to the daily bucket.
 - Moderation without a model: strict validation, a short slur blocklist on a normalised name,
-  reports from distinct networks that hide a row automatically at 3, and owner-only admin routes.
+  reports that hide a community row automatically at 5 distinct reporting networks (decided from
+  the count of distinct report rows, never from a counter), and owner-only admin routes.
 - 21 official crosshairs ship in the migration, flagged `official` and shown as by Sigil. They
   pass the same validator (a test checks every row), cannot be deleted by token and are not hidden
   by reports.
@@ -168,20 +173,27 @@ Body (at most 256 bytes): `{"delete_token": string}`.
 
 ### POST /v1/crosshairs/<id>/use
 
-Counts one apply. The body is ignored (send `{}`). Once per network per crosshair per UTC day.
+Counts one apply. The body is ignored (send `{}`). Once per network per crosshair per UTC day,
+and at most 30 counted uses per network per UTC day across all crosshairs. Uses only order the
+`used` sort.
 
-- `200 {"counted": true}` the first time, `200 {"counted": false}` after.
+- `200 {"counted": true}` when counted, `200 {"counted": false}` for a repeat or past the daily
+  cap (the app need not tell the player either way).
 - `404 not_found` for a missing or hidden row; `503 not_configured` without the bucket key;
   `400 no_network` without a caller address.
 
 ### POST /v1/crosshairs/<id>/report
 
-Reports a crosshair. The body is ignored (send `{}`). Once per network per crosshair per UTC day.
-When a community row reaches 3 counted reports it is hidden until the owner decides. Reports on an
-official row answer `{"counted": false}` and change nothing.
+Reports a crosshair. The body is ignored (send `{}`). Once per network per crosshair, on any
+number of days (the marker has no day; it lives up to 90 days). At most 5 counted reports per
+network per UTC day across all crosshairs. When 5 distinct networks have reported a community row
+it is hidden until the owner decides. Reports on an official row answer `{"counted": false}`,
+store nothing and never hide it.
 
-- `200 {"counted": true | false}`; `404 not_found` for a missing or hidden row; `503`, `400` as
-  for use.
+- `200 {"counted": true}` when counted, `200 {"counted": false}` when this network already
+  reported this crosshair or the row is official.
+- `429 report_limit` past the daily cap; `404 not_found` for a missing or hidden row; `503`, `400`
+  as for use.
 
 ### Admin routes
 
@@ -192,7 +204,7 @@ shorter than 32 characters) `503 not_configured`; a missing or wrong key `401 un
 | --- | --- | --- |
 | `GET /v1/crosshairs/admin/flagged` | | `200 {"crosshairs": [ ...list fields, "reports": int, "hidden": bool ]}`, rows that are hidden or have reports, at most 500, hidden first. |
 | `POST /v1/crosshairs/admin/<id>/remove` | | `200 {"removed": true}` or `404`. Deletes the row and its dedupe rows. |
-| `POST /v1/crosshairs/admin/<id>/restore` | | `200 {"restored": true}` or `404`. Shows the row again with reports back to 0. |
+| `POST /v1/crosshairs/admin/<id>/restore` | | `200 {"restored": true}` or `404`. Shows the row again, deletes its report rows and sets reports back to 0. |
 | `POST /v1/crosshairs/admin/official` | `{"id": "sigil-...", "name", "config"}` | `200 {"id"}`. Inserts or replaces an official row through the same name and config rules; `400 bad_id`, `bad_name`, `blocked_name`, `bad_config`; `409 duplicate` (+ `id`) when another row has that config. |
 
 ## What is stored
@@ -200,12 +212,13 @@ shorter than 32 characters) `503 not_configured`; a missing or wrong key `401 un
 | Table | Columns | Kept |
 | --- | --- | --- |
 | `crosshairs` | `id`, `name`, `config`, `config_hash` (unique), `uses`, `reports`, `official`, `hidden`, `created_at`, `created_day`, `delete_token_hash` (NULL for official rows) | Until deleted by its token or removed by the owner. |
-| `crosshair_uses` | `bucket`, `crosshair_id`, `created_at` | 2 days. |
-| `crosshair_reports` | `bucket`, `crosshair_id`, `created_at` | 2 days. |
-| `crosshair_publishes` | `bucket`, `day`, `created_at` | 2 days. |
+| `crosshair_uses` | `bucket` (daily), `crosshair_id`, `created_at` | 2 days. |
+| `crosshair_daily` | `bucket` (daily), `kind` (`publish`, `report`, `use`), `day`, `created_at` | 2 days. |
+| `crosshair_reports` | `marker` (per crosshair, no day), `crosshair_id`, `created_at` | 90 days. |
 
-No install id, player id, Steam id, address or user agent is read into any of them. The use and
-report counts on a row stay after their dedupe rows go.
+No install id, player id, Steam id, address or user agent is read into any of them. The use count
+on a row stays after its dedupe rows go. `reports` is recomputed from the report rows on each
+report; a row already hidden stays hidden after its markers expire, until the owner decides.
 
 ## Seeds
 
@@ -224,8 +237,12 @@ equal pips, a square dot and square outlines, so there is no T shape and no circ
 - A network can publish 3 crosshairs a day; a shared network (a school, a carrier NAT) shares that
   allowance. A determined player on many networks can still publish; the daily and total caps
   bound the damage.
-- Reports dedupe per network per day, not forever (the bucket rotates daily so nothing is kept
-  longer). One network alone could reach 3 reports over three days; the owner's restore covers it.
+- One network cannot hide a crosshair: it counts once per crosshair for 90 days, and hiding needs
+  5 distinct networks. Five networks acting together still can; the owner's restore covers it. The
+  cost is a per-crosshair network marker kept 90 days instead of 2 (amended 2026-11-25 after a
+  security review: the first version keyed reports on the daily bucket and counted with a growing
+  counter, so one network could hide any crosshair over a few days).
+- One network adds at most 30 uses and 5 reports a day across the whole library.
 - The blocklist is short by design. Reports and the admin routes handle everything else.
 - Deploying needs migration 0007 applied remotely and the Worker redeployed; `PRODUCT_BUCKET_KEY`
   and `PRODUCT_ADMIN_KEY` already exist for ADR 0017.
@@ -236,7 +253,8 @@ equal pips, a square dot and square outlines, so there is no T shape and no circ
   without tying a crosshair to anyone.
 - A model to judge names: rejected. A character allowlist and a short blocklist are predictable
   and need no third party.
-- Storing the raw address or a long-lived network hash for dedupe: rejected. A daily HMAC in
-  tables that live 2 days is enough to stop casual spam.
+- Storing the raw address or one long-lived network hash shared across crosshairs: rejected. A
+  daily HMAC (2 days) covers limits and use dedupe; reports get a per-crosshair HMAC (90 days)
+  that cannot be joined across crosshairs.
 - Using `DL.` share codes as the stored form: rejected. Decoding needs deadlock-api; a validated
   JSON config is checked on the Worker and applied by the app directly.
