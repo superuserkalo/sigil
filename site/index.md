@@ -12,7 +12,7 @@ Source code: https://github.com/superuserkalo/sigil
 
 ## Find the mod you mean
 
-Browse GameBanana inside Sigil and install with one press. Search runs on your PC, forgives typos and knows what a mod is based on, so a series name finds skins whose title never mentions it. What you type is not sent anywhere.
+Browse GameBanana inside Sigil and install with one press. Search runs on your PC, forgives typos and knows what a mod is based on, so a series name finds skins whose title never mentions it. A mod search is matched on your PC and not sent to a server.
 
 [More about browsing and search](https://sigilmods.app/browse)
 

@@ -14,7 +14,7 @@ Filters cover NSFW content, outdated mods, whether a mod is already installed an
 
 ## Search that runs on your PC
 
-Sigil downloads a public index of the catalog and matches your search on your own computer. It forgives typos, copes with words written together or apart and knows what many mods are based on, so typing a game or series name finds skins whose title never mentions it. What you type is not sent anywhere.
+Sigil downloads a public index of the catalog and matches your search on your own computer. It forgives typos, copes with words written together or apart and knows what many mods are based on, so typing a game or series name finds skins whose title never mentions it. A search in the Mods tab is matched on your PC and is not sent anywhere. Sounds and work-in-progress mods are not in the index yet, so a search there, or before the index has downloaded, goes to GameBanana as it always did.
 
 ![A search for "chainsaw man" finding the skin "Asa Mitaka over Paige", whose title does not name the series.](https://sigilmods.app/img/search.webp)
 

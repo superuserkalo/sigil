@@ -74,7 +74,7 @@ HOME = {
             "text": (
                 "Browse GameBanana inside Sigil and install with one press. Search runs on your PC, "
                 "forgives typos and knows what a mod is based on, so a series name finds skins whose "
-                "title never mentions it. What you type is not sent anywhere."
+                "title never mentions it. A mod search is matched on your PC and not sent to a server."
             ),
             "img": "/img/search.webp",
             "alt": "A Browse search for “chainsaw man” finding the skin “Asa Mitaka over Paige”, whose title does not name the series.",
