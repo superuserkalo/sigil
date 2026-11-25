@@ -2,7 +2,8 @@
 
 Status: accepted (Worker built and tested; migration 0006 not applied, not deployed; the app does
 not fetch the index yet). Term expansion and file labels are built but off, pending a live check.
-Date: 2026-11-25, narrowed the same day after a product review
+Date: 2026-11-25, narrowed the same day after a product review; the curated alias list removed the
+same day (index version 3)
 
 ## Context
 
@@ -21,8 +22,11 @@ on the PC.
   and subcategory, the hero (GameBanana's hero subcategory under Skins, an exact lookup in code),
   and the author. One shared string table; per mod the title and field ids packed as
   `stringId * 8 + class` (0 description word, 1 category, 2 author, 3 hero, 4 verified term).
-- A small curated alias table ships with it: hero nicknames, mod-kind synonyms, a few German
-  words (`aliases.ts`). It is the only hand-made list.
+- There is no alias, nickname or synonym list of any kind, hand-made or generated. A curated
+  table (hero nicknames, mod-kind and style synonyms, German words) shipped briefly and was
+  removed on 2026-11-25: it had to be kept up by hand, went stale when heroes were added, and
+  added no hits in the recall eval (23 of 40 with and without it). The index carries `v`,
+  `built`, `strings` and `mods` only; dropping the table bumped `PUBLISH_VERSION` to 3.
 - `GET /v1/catalog/tags` serves it gzipped from D1 with an ETag and
   `Cache-Control: public, max-age=10800`; `?since=<ms>` returns only mods whose text changed
   after that time, with their own string table. No consent gate: the request carries no id and
@@ -35,13 +39,11 @@ Rust app ports:
 
 1. Normalise (lower case, accents and punctuation dropped) and split into words. Stop words (the,
    a, of, mod, and a few German ones) are scored but not required.
-2. Each word is a unit with alternatives from the alias table; three- and two-word phrases are
-   looked up first.
+2. Each word is a unit. No word is rewritten into another: misspellings and short forms are
+   covered by the tolerance in step 3, outside names by the flagged verified terms.
 3. A unit matches a token exactly (1.0), as a prefix of at least 3 letters (0.8), or one edit away
    (insert, delete, substitute or swap neighbours) for words of 4 letters or more (0.7). A unit
-   also matches a multi-word field written without spaces (`counterstrike`). A multi-word
-   alternative ("gasmaske" to "gas mask") may be spread over single-word fields: each word must
-   match somewhere, scoring the mean of its words' best fields.
+   also matches a multi-word field written without spaces (`counterstrike`).
 4. Field weights: title 3, verified term 2.5, hero 2, category 1.5, author 1.5, description word 1,
    each times idf = ln(1 + (N - df + 0.5) / (df + 0.5)). A multi-word field hit by only some of
    its words, by a unit that is not the whole field, counts 0.6.
@@ -78,8 +80,9 @@ Rust app ports:
   on and is written in one batch with the mod's judged hash, so a run that fails midway is retried
   and its old terms are marked stale (`st: 1`).
 - Evidence so far (`.scratch/typesafe/eval.md`): on 40 hand-made queries against the real catalog,
-  top-5 recall is 23 for plain text, 23 with aliases, and 35 with the generator's terms before
-  Jev's check (an upper bound). No live Jev answer exists yet: the key is only a Worker secret.
+  top-5 recall is 23 for plain text and 35 with the generator's terms before Jev's check (an
+  upper bound); rerun after the alias table was removed, unchanged. The removed alias table had
+  scored 23 as well. No live Jev answer exists yet: the key is only a Worker secret.
   The thresholds are the TypeSafe docs' starting points. Expansion is turned on only after a live
   run confirms the verified terms; file labels only after their accuracy is hand-checked.
 
@@ -101,7 +104,7 @@ the whole catalog once and about a cent a day after.
 
 ### Size
 
-The real catalog's index (2,547 mods) is 759 KB, 294 KB gzipped; scaled to 7,000 mods about
+The real catalog's index (2,547 mods) is 756 KB, 292 KB gzipped; scaled to 7,000 mods about
 710 KB gzipped. Full downloads with an ETag are fine at this size; deltas exist for growth.
 
 ## Rejected alternatives
@@ -109,6 +112,11 @@ The real catalog's index (2,547 mods) is 759 KB, 294 KB gzipped; scaled to 7,000
 - Sending the player's query to a server, TypeSafe or a model for natural-language search: player
   text would leave the PC for a third party.
 - A curated franchise list: covers only what we thought of.
+- A curated alias table (hero nicknames, kind and style synonyms, German words): built, then
+  removed (2026-11-25). Hand upkeep, stale on new heroes, no measured gain.
+- Generated hero nicknames (the generator proposes, Jev checks, per hero from the data):
+  considered as the self-maintaining replacement and not built, by the owner's call. Prefix and
+  one-edit matching already cover most short forms.
 - Removed after review (2026-11-25), not built: an NSFW hint, cover and banner picks with a
   subject box, terms from the cover picture, a model guess at the hero (the subcategory lookup
   stays), facts such as "requires another mod" and "work in progress", update-note classes,
