@@ -2,7 +2,7 @@
 
 Status: active. Measured on macOS 26.0 (Apple silicon) only; the Windows exe size is measured from
 a cross build, its run time is not.
-Updated: 2026-11-17
+Updated: 2026-11-25
 
 How Sigil is measured, what changed in the 2026-11-17 pass and what is left. The method follows
 the Rust Performance Book as bundled in the `rust-performance` skill: one falsifiable experiment at
@@ -135,7 +135,44 @@ Other screens' frame times stayed within noise. Sources changed in parallel duri
 (Browse, Settings, deadlock-core), so only paired or same-source comparisons above are attributed
 to a change.
 
+## Launch and mod toggle (2026-11-25)
+
+Launch: every launch step (put a stash back, roll random mods and the Locker shuffle, write Steam's
+launch options, set mods aside, mount the extra folders, add the `gameinfo.gi` lines, start Steam,
+write the launch marker, read the addon folder again) ran inside `launch_progress::poll` on the UI
+thread, so the window froze from the press until Steam had the game. Each step now returns its file,
+process and Steam work as a `Work` that runs on a worker and hands back an `Apply`; the overlay holds
+the step until it lands, so the order and every check are as before. The missing-files check a
+modded press starts runs on its own worker. Still on the UI thread at the press: the `gameinfo.gi`
+gate read (it decides whether a dialog opens), the stale map line in `autoexec.cfg` and the stash
+marker check, each one small file. Guard:
+`launch_progress::tests::launch_steps_run_on_a_worker_and_a_second_press_waits`.
+
+Mod toggle at 300 mods, debug test build, same Mac, load average 3 to 4 for both runs:
+
+| Bench | Before | After |
+| --- | --- | --- |
+| `measure_real_toggle_at_300_mods` (300 real VPKs, press to the switch drawn flipped, median / p90) | 593 / 610 ms | 112 / 116 ms |
+| Same, commits per toggle (press down, press up, scan landing) | 1, 1, 3 | 0, 1, 0 |
+| `measure_toggle_cost_at_300_mods` (demo library, no file work, median / p90) | 84 / 86 ms | 68 / 69 ms |
+| Same, commits per toggle | 2 | 1 |
+
+What changed: the switch takes no focus on press (that was a commit of its own), the row follows the
+rename at once and the folder and overlap read (every enabled VPK's directory) runs only on the scan
+worker, whose result commits nothing when it matches the rows shown. Sections are keyed per section
+and grid rows by index: keyed by their first mod, a card moving to the other section remounted
+whole lists over three more commits. Guard: `jank_tests::one_toggle_at_300_mods_is_one_commit`.
+
+Not reached: the one commit left costs the same as before (about 42 ms in a debug build here). About
+a sixth of it is building the mounted cards; the rest is Rune's apply and layout of about 2500
+nodes. A per-row `rune::memo` was tried and saved nothing measurable (the reused subtree is still
+applied), and Rune's virtual list overscan (two viewports a side) is a Rune constant.
+
 ## Remaining opportunities
+
+- The toggle commit itself (see above): fewer mounted cards needs a configurable overscan in Rune.
+- Windows: measure the launch steps and a toggle on a real install with antivirus; the numbers above
+  are from a Mac with no Deadlock install.
 
 - Send the traffic-lights fix upstream to Rune, then drop the local patch. Measure real time to
   first presented frame with `RUNE_READY_DIR` (`ready_ms`).
