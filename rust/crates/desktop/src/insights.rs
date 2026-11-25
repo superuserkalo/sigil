@@ -792,7 +792,7 @@ mod tests {
             c
         };
         st.browse_view.shelves.feeds =
-            Some(crate::screens::browse::shelf::Feeds { recent: vec![mk(1, false), mk(2, true), mk(3, false), mk(42, false)], liked: Vec::new() });
+            Some(crate::screens::browse::shelf::Feeds { recent: vec![mk(1, false), mk(2, true), mk(3, false), mk(42, false)], liked: Vec::new(), featured: Vec::new() });
         st.prefs.mature = crate::prefs::Mature::Hide;
         set_related(&mut st, 42, vec![42, 1, 2, 3, 99]);
         let ids: Vec<u64> = related_cards(&st, 42).iter().map(|c| c.id).collect();

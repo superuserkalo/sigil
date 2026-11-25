@@ -23,6 +23,7 @@ const DE: &[(&str, &str)] = &[
     ("See all", "Alle ansehen"),
     ("For you", "Für dich"),
     ("Rising", "Im Aufwind"),
+    ("Featured on GameBanana", "Von GameBanana empfohlen"),
     ("Rising fast", "Steigt schnell"),
     ("Something different", "Mal etwas anderes"),
     ("Not interested: show fewer like this", "Kein Interesse: weniger davon zeigen"),

@@ -63,6 +63,10 @@ pub struct Memory {
     pub dismissed: Vec<Dismissed>,
     /// Mod id to how often it was shown and when last (Unix seconds).
     pub seen: HashMap<u64, (u32, i64)>,
+    /// Mod id to two earlier readings of its like count, `[older, newer]` as (likes, Unix
+    /// seconds): GameBanana only says how many likes a mod has now, so what it gained lately is
+    /// worked out against what Sigil saw before.
+    pub likes: HashMap<u64, [(u64, i64); 2]>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -77,6 +81,10 @@ const FILE_NAME: &str = "for-you.json";
 const SEEN_HALF_LIFE: i64 = 7 * 24 * 60 * 60;
 const MAX_DISMISSED: usize = 500;
 const MAX_SEEN: usize = 2000;
+const MAX_LIKES: usize = 4000;
+/// A reading is old enough to measure against after this long, and is replaced after a day.
+const LIKES_MIN_AGE: i64 = 6 * 60 * 60;
+const LIKES_STEP: i64 = 24 * 60 * 60;
 
 impl Memory {
     pub fn load() -> Memory {
@@ -99,6 +107,11 @@ impl Memory {
                 });
             }
         }
+        for l in value["likes"].as_array().into_iter().flatten().take(MAX_LIKES) {
+            if let (Some(id), Some(a), Some(at), Some(b), Some(bt)) = (l[0].as_u64(), l[1].as_u64(), l[2].as_i64(), l[3].as_u64(), l[4].as_i64()) {
+                memory.likes.insert(id, [(a, at), (b, bt)]);
+            }
+        }
         for s in value["seen"].as_array().into_iter().flatten().take(MAX_SEEN) {
             if let (Some(id), Some(count), Some(last)) = (s[0].as_u64(), s[1].as_u64(), s[2].as_i64()) {
                 memory.seen.insert(id, (count.min(1000) as u32, last));
@@ -112,7 +125,9 @@ impl Memory {
             self.dismissed.iter().map(|d| serde_json::json!({ "id": d.id, "hero": d.hero, "author": d.author })).collect();
         let mut seen: Vec<(u64, u32, i64)> = self.seen.iter().map(|(&id, &(count, last))| (id, count, last)).collect();
         seen.sort_unstable();
-        serde_json::json!({ "dismissed": dismissed, "seen": seen }).to_string()
+        let mut likes: Vec<(u64, u64, i64, u64, i64)> = self.likes.iter().map(|(&id, r)| (id, r[0].0, r[0].1, r[1].0, r[1].1)).collect();
+        likes.sort_unstable();
+        serde_json::json!({ "dismissed": dismissed, "seen": seen, "likes": likes }).to_string()
     }
 
     /// Write through a temporary sibling. Headless runs and unit tests write nothing.
@@ -151,6 +166,42 @@ impl Memory {
         }
     }
 
+    /// Likes a mod gained per day since an earlier reading at least six hours old, if there
+    /// is one. None on a first look: the caller falls back to likes over age.
+    pub fn gained_per_day(&self, id: u64, likes: u64, now: i64) -> Option<f64> {
+        let readings = self.likes.get(&id)?;
+        let (then, at) = readings.iter().copied().find(|&(_, at)| now - at >= LIKES_MIN_AGE)?;
+        let days = ((now - at) as f64 / 86_400.0).max(0.25);
+        Some(likes.saturating_sub(then) as f64 / days)
+    }
+
+    /// Note today's like counts. The older reading moves up once the newer one is a day old,
+    /// so there is always one to measure against that is between one and two days old.
+    pub fn note_likes<'a>(&mut self, cards: impl Iterator<Item = &'a BrowseCard>, now: i64) -> bool {
+        let mut changed = false;
+        for card in cards {
+            match self.likes.get_mut(&card.id) {
+                None => {
+                    self.likes.insert(card.id, [(card.likes, now), (card.likes, now)]);
+                    changed = true;
+                }
+                Some(r) if now - r[1].1 >= LIKES_STEP => {
+                    *r = [r[1], (card.likes, now)];
+                    changed = true;
+                }
+                Some(_) => {}
+            }
+        }
+        if self.likes.len() > MAX_LIKES {
+            let mut by_age: Vec<(u64, i64)> = self.likes.iter().map(|(&id, r)| (id, r[1].1)).collect();
+            by_age.sort_by_key(|&(_, at)| at);
+            for (id, _) in by_age.into_iter().take(self.likes.len() - MAX_LIKES) {
+                self.likes.remove(&id);
+            }
+        }
+        changed
+    }
+
     pub fn dismiss(&mut self, card: &BrowseCard) {
         if self.dismissed.iter().any(|d| d.id == card.id) {
             return;
@@ -172,6 +223,8 @@ pub struct ForYou {
     pub personal: bool,
     /// What the picks were worked out from, so they are redone only when that changes.
     pub key: u64,
+    /// "Rising": the mods gaining fastest, whoever the player is. Always its own row.
+    pub rising: Vec<BrowseCard>,
     pub memory: Memory,
     /// The memory was read from disk, and this run's first picks were counted as shown.
     pub loaded: bool,
@@ -342,19 +395,10 @@ pub fn rank_n(candidates: &[BrowseCard], sig: &Signals, now: i64, keep: usize) -
             scored.push((score, c, reason, hero_name, author_name));
         }
     }
+    // Too few matches to call the row the player's own: it is left out, and Rising stands alone.
     let personal = scored.len() >= 6;
     if !personal {
-        // Rising: likes per day over the last two weeks, so a fast riser beats an older mod
-        // that merely had longer to collect.
         scored.clear();
-        for c in &pool {
-            let age_days = if c.added_ts > 0 { ((now - c.added_ts).max(0) as f64) / DAY } else { continue };
-            if age_days > 14.0 || c.likes < 3 {
-                continue;
-            }
-            let score = (c.likes as f64 / (age_days + 2.0).powf(1.2)) as f32;
-            scored.push((score, c, Reason::Rising, leaf(&c.category), c.author.to_lowercase()));
-        }
     }
     // Greedy pick with a falling return per hero and per creator, so the row is not ten skins
     // for one hero by one maker.
@@ -419,6 +463,51 @@ pub fn rank_n(candidates: &[BrowseCard], sig: &Signals, now: i64, keep: usize) -
     (picks, reasons, personal)
 }
 
+/// "Rising": the mods gaining fastest. Likes gained per day since Sigil last looked, where it
+/// has an earlier reading; likes over age for a mod it sees for the first time (two weeks old
+/// at most). Mods whose installs grew most among players who share (`server`, best first) are
+/// lifted, since an install says more than a like. Kept varied like the player's own row.
+pub fn rising(candidates: &[BrowseCard], memory: &Memory, server: &[u64], owned: &HashSet<u64>, now: i64) -> Vec<BrowseCard> {
+    let mut seen = HashSet::new();
+    let mut scored: Vec<(f64, &BrowseCard)> = Vec::new();
+    for c in candidates {
+        if !c.model.eq_ignore_ascii_case("mod") || c.obsolete || c.thumbnail_url.is_none() || owned.contains(&c.id) || !seen.insert(c.id) {
+            continue;
+        }
+        let age_days = if c.added_ts > 0 { ((now - c.added_ts).max(0) as f64) / DAY } else { 3650.0 };
+        let lift = server.iter().position(|&id| id == c.id).map(|at| 2.0 - (at as f64 / server.len().max(1) as f64)).unwrap_or(1.0);
+        let score = match memory.gained_per_day(c.id, c.likes, now) {
+            // A measured gain: at least two likes since, so one stray like is not a trend.
+            Some(gain) if gain >= 2.0 => gain,
+            Some(_) if lift == 1.0 => continue,
+            _ if age_days <= 14.0 && c.likes >= 3 => c.likes as f64 / (age_days + 2.0).powf(1.2),
+            _ if lift > 1.0 => 1.0,
+            _ => continue,
+        };
+        scored.push((score * lift, c));
+    }
+    let mut picks = Vec::new();
+    let mut per_hero: HashMap<String, u32> = HashMap::new();
+    let mut per_author: HashMap<String, u32> = HashMap::new();
+    while picks.len() < KEEP && !scored.is_empty() {
+        let (mut best, mut best_score) = (0, f64::MIN);
+        for (i, (score, c)) in scored.iter().enumerate() {
+            let h = per_hero.get(&leaf(&c.category)).copied().unwrap_or(0);
+            let a = per_author.get(&c.author.to_lowercase()).copied().unwrap_or(0);
+            let adjusted = score * 0.7f64.powi(h as i32) * 0.5f64.powi(a as i32);
+            if adjusted > best_score {
+                best_score = adjusted;
+                best = i;
+            }
+        }
+        let (_, card) = scored.swap_remove(best);
+        *per_hero.entry(leaf(&card.category)).or_default() += 1;
+        *per_author.entry(card.author.to_lowercase()).or_default() += 1;
+        picks.push(super::store::clone_card(card));
+    }
+    picks
+}
+
 /// A cheap fingerprint of everything the picks depend on.
 fn key_of(s: &State) -> u64 {
     let mut h = std::collections::hash_map::DefaultHasher::new();
@@ -434,6 +523,7 @@ fn key_of(s: &State) -> u64 {
     s.stats.snapshot.as_ref().map(|snap| snap.heroes.iter().map(|x| x.matches_played).sum::<u64>()).hash(&mut h);
     // A dismissal redoes the row; being shown does not (the row must hold still while open).
     v.shelves.for_you.memory.dismissed.len().hash(&mut h);
+    crate::insights::rising(s).len().hash(&mut h);
     // New answers from Help build Sigil (related mods) redo the row.
     s.insights.generation.hash(&mut h);
     h.finish()
@@ -473,8 +563,26 @@ pub fn refresh(st: &mut State) -> bool {
                 .filter(|c| wanted(&c.category) || sig.authors.contains_key(&c.author.to_lowercase()) || sig.related.contains_key(&c.id)),
         );
     }
-    let (all, reasons, personal) = rank_n(&candidates, &sig, deadlock_core::gamebanana::now_unix(), KEEP_ALL);
+    let now = deadlock_core::gamebanana::now_unix();
+    let (all, reasons, personal) = rank_n(&candidates, &sig, now, KEEP_ALL);
+    // Rising reads the two feeds only (the new mods and the most liked), measured against what
+    // Sigil saw of their likes before; then today's counts are noted for the next look.
+    let fresh: Vec<BrowseCard> = st
+        .browse_view
+        .shelves
+        .feeds
+        .as_ref()
+        .map(|f| f.recent.iter().chain(f.liked.iter()).map(super::store::clone_card).collect())
+        .unwrap_or_default();
+    let server: Vec<u64> = crate::insights::rising(st).to_vec();
+    let rising = rising(&fresh, &st.browse_view.shelves.for_you.memory, &server, &sig.owned, now);
+    let noted = st.browse_view.shelves.for_you.memory.note_likes(fresh.iter(), now);
     let fy = &mut st.browse_view.shelves.for_you;
+    fy.rising = rising;
+    if noted {
+        let memory = fy.memory.clone();
+        std::thread::spawn(move || memory.save());
+    }
     fy.picks = all.iter().take(KEEP).map(super::store::clone_card).collect();
     fy.all = all;
     fy.reasons = reasons;
@@ -636,17 +744,33 @@ mod tests {
         assert_eq!(reasons[&picks[0].id], Reason::Author("hud3".into()));
     }
 
-    /// No history: the row is Rising, the fastest climbers of the last two weeks.
+    /// No history: there is no row of the player's own, and Rising stands alone. On a first
+    /// look it is likes over age; once Sigil has an earlier reading it is likes gained since,
+    /// and mods whose installs grew among sharing players are lifted.
     #[test]
-    fn no_history_gives_rising() {
+    fn rising_measures_what_a_mod_gained() {
         let mut list = pool();
         list.push(card(1, "Skins / Wraith", "new", 60, 1));
         list.push(card(2, "Skins / Wraith", "new2", 90, 12));
-        let (picks, reasons, personal) = rank(&list, &Signals::default(), NOW);
-        assert!(!personal);
-        assert_eq!(picks[0].id, 1, "60 likes in a day beats 90 in twelve");
-        assert!(picks.iter().all(|c| NOW - c.added_ts <= 14 * 24 * 60 * 60));
-        assert_eq!(reasons[&1], Reason::Rising);
+        let (picks, _, personal) = rank(&list, &Signals::default(), NOW);
+        assert!(!personal && picks.is_empty(), "no history, no row of their own");
+        let none = HashSet::new();
+        let first = rising(&list, &Memory::default(), &[], &none, NOW);
+        assert_eq!(first[0].id, 1, "60 likes in a day beats 90 in twelve");
+        // A day later: an old mod that gained 40 likes since yesterday leads, a new one that
+        // gained nothing drops out.
+        let mut memory = Memory::default();
+        memory.note_likes(list.iter(), NOW - 86_400);
+        let mut later = list.clone();
+        later.iter_mut().find(|c| c.id == 300).unwrap().likes += 40;
+        let second = rising(&later, &memory, &[], &none, NOW);
+        assert_eq!(second[0].id, 300);
+        assert!(second.iter().all(|c| c.id != 1), "nothing gained, not rising");
+        // Installs among sharing players lift a mod the likes say nothing about.
+        let third = rising(&later, &memory, &[205], &none, NOW);
+        assert!(third.iter().any(|c| c.id == 205));
+        // Readings survive a save and a load.
+        assert_eq!(Memory::from_json(&memory.to_json()), memory);
     }
 
     /// "Not interested" removes the mod and turns its hero down; shown picks fade; a couple

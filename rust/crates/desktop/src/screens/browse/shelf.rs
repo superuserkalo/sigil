@@ -13,6 +13,8 @@ pub const SLOTS: usize = 8;
 pub struct Feeds {
     pub recent: Vec<BrowseCard>,
     pub liked: Vec<BrowseCard>,
+    /// Mods GameBanana's staff featured, newest first: the billboard's picks.
+    pub featured: Vec<BrowseCard>,
 }
 
 #[derive(Default)]
@@ -74,12 +76,13 @@ pub fn start(st: &mut State) {
     }
     let wake = st.wake.clone();
     st.browse_view.shelves.job.start(wake, || {
-        let read = |order: BrowseOrder, page: usize| -> Result<Vec<BrowseMod>, String> {
-            let query = BrowseQuery { section: BrowseSection::Mods, order, ..BrowseQuery::default() };
+        let read_with = |order: BrowseOrder, page: usize, featured: bool| -> Result<Vec<BrowseMod>, String> {
+            let query = BrowseQuery { section: BrowseSection::Mods, order, featured, ..BrowseQuery::default() };
             gamebanana::fetch_browse(&query, page, gamebanana::GAMEBANANA_MAX_PERPAGE)
                 .map(|page| page.mods)
                 .map_err(|e| e.to_string())
         };
+        let read = |order: BrowseOrder, page: usize| read_with(order, page, false);
         let start = gamebanana::now_unix() - 30 * DAY;
         let mut recent: Vec<BrowseMod> = Vec::new();
         for page in 1..=RECENT_PAGES {
@@ -91,7 +94,9 @@ pub fn start(st: &mut State) {
             }
         }
         let liked = read(BrowseOrder::MostLiked, 1).unwrap_or_default();
+        let featured = read_with(BrowseOrder::Newest, 1, true).unwrap_or_default();
         Ok(Feeds {
+            featured: featured.iter().map(card_from_browse).collect(),
             recent: recent.iter().map(card_from_browse).collect(),
             liked: liked.iter().map(card_from_browse).collect(),
         })

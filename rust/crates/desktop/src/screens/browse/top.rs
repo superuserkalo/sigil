@@ -67,6 +67,9 @@ const DAY: i64 = 24 * 60 * 60;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RowKind {
     Top10,
+    ForYou,
+    Rising,
+    /// "New this week": stands in for Rising while nothing can be measured.
     New,
 }
 
@@ -74,7 +77,8 @@ impl RowKind {
     pub fn slot(self) -> usize {
         match self {
             RowKind::Top10 => 0,
-            RowKind::New => 1,
+            RowKind::ForYou => 1,
+            RowKind::Rising | RowKind::New => 2,
         }
     }
 }
@@ -220,9 +224,66 @@ pub fn plan(s: &State, n: usize, now: i64) -> Plan<'_> {
     let mature_lead = s.prefs.mature == crate::prefs::Mature::Show;
     let failed = |url: &Option<String>| url.as_deref().is_none_or(|u| u.is_empty() || s.thumb_crew.failed(u));
 
-    // The billboard: today's first top mod, then the week's pick in each category.
+    let mut rows: Vec<Row> = Vec::new();
+    let mut taken: HashSet<u64> = HashSet::new();
+    let see = |order, period, category: Option<&str>| Some(See { order, period, category: category.map(str::to_string), for_you: false });
+
+    // Top 10: the true ranking by likes. The title names the window.
+    let windows: [(Option<i64>, &str, BrowsePeriod); 4] = [
+        (Some(7), "Top 10 this week", BrowsePeriod::Week),
+        (Some(14), "Top 10 of the last 14 days", BrowsePeriod::Month),
+        (Some(30), "Top 10 this month", BrowsePeriod::Month),
+        (None, "Top 10 of all time", BrowsePeriod::Any),
+    ];
+    for (days, title, period) in windows {
+        let mut list: Vec<&BrowseCard> = match days {
+            Some(days) => recent.iter().copied().filter(|c| within(c, days)).collect(),
+            None => liked.clone(),
+        };
+        by_likes(&mut list);
+        if list.len() >= 10 {
+            list.truncate(10);
+            taken.extend(list.iter().map(|c| c.id));
+            rows.push(Row { kind: RowKind::Top10, title: super::tree::tr(title).to_string(), cards: list, see: see(BrowseOrder::MostLiked, period, None), reasons: None });
+            break;
+        }
+    }
+
+    // The billboard: what GameBanana's staff featured lately. It is an editor's choice, so it
+    // is not ranked by likes, holds nothing the Top 10 shows, and is spread out: one mod per
+    // hero or sub-category and two per category at most, newest first.
     let mut billboard: Vec<Slide> = Vec::new();
     let mut lead: HashSet<u64> = HashSet::new();
+    let mut per_leaf: HashSet<String> = HashSet::new();
+    let mut per_root: std::collections::HashMap<String, u32> = std::collections::HashMap::new();
+    let mut featured: Vec<&BrowseCard> = feeds.map_or(none, |f| &f.featured[..]).iter().filter(ok).collect();
+    featured.sort_by(|a, b| b.added_ts.cmp(&a.added_ts));
+    for card in featured {
+        if billboard.len() >= MAX_PICKS {
+            break;
+        }
+        let fits = within(card, 30) && card.likes >= 3 && (mature_lead || !card.nsfw) && !failed(&card.thumbnail_url) && !taken.contains(&card.id);
+        if !fits || lead.contains(&card.id) {
+            continue;
+        }
+        let root = root_category(card).to_lowercase();
+        let leaf = card.category.to_lowercase();
+        if per_leaf.contains(&leaf) || per_root.get(&root).copied().unwrap_or(0) >= 2 {
+            continue;
+        }
+        per_leaf.insert(leaf);
+        *per_root.entry(root).or_default() += 1;
+        lead.insert(card.id);
+        billboard.push(Slide {
+            card: super::store::clone_card(card),
+            eyebrow: super::tree::tr("Featured on GameBanana").to_string(),
+            description: String::new(),
+            image: card.thumbnail_url.as_deref().map(large_of),
+            small: card.thumbnail_url.clone(),
+        });
+    }
+    // Too few featured mods to turn over: today's first top mod and the week's pick in each
+    // category fill in, as before.
     let top: &[TopSub] = v.top.as_deref().unwrap_or(&[]);
     let top_ok = |t: &TopSub| {
         t.model.eq_ignore_ascii_case("mod")
@@ -246,71 +307,52 @@ pub fn plan(s: &State, n: usize, now: i64) -> Plan<'_> {
             });
         }
     };
-    if let Some(t) = top.iter().find(|t| t.period == "today" && top_ok(t)) {
-        push_top(&mut billboard, &mut lead, t);
-    }
-    for (category, card) in &v.w4.featured {
-        if billboard.len() >= MAX_PICKS {
-            break;
+    if billboard.len() < 2 {
+        if let Some(t) = top.iter().find(|t| t.period == "today" && top_ok(t)) {
+            push_top(&mut billboard, &mut lead, t);
         }
-        let allowed = content_allowed(s, card.id, card.nsfw, &card.author)
-            && (mature_lead || !card.nsfw)
-            && !card.obsolete
-            && !failed(&card.thumbnail_url);
-        if allowed && lead.insert(card.id) {
-            billboard.push(Slide {
-                card: super::store::clone_card(card),
-                eyebrow: crate::screens::settings::i18n::fill(super::tree::tr("This week in {}"), &[category]),
-                description: String::new(),
-                image: card.thumbnail_url.as_deref().map(large_of),
-                small: card.thumbnail_url.clone(),
-            });
+        for (category, card) in &v.w4.featured {
+            if billboard.len() >= MAX_PICKS {
+                break;
+            }
+            let allowed = content_allowed(s, card.id, card.nsfw, &card.author)
+                && (mature_lead || !card.nsfw)
+                && !card.obsolete
+                && !failed(&card.thumbnail_url);
+            if allowed && lead.insert(card.id) {
+                billboard.push(Slide {
+                    card: super::store::clone_card(card),
+                    eyebrow: crate::screens::settings::i18n::fill(super::tree::tr("This week in {}"), &[category]),
+                    description: String::new(),
+                    image: card.thumbnail_url.as_deref().map(large_of),
+                    small: card.thumbnail_url.clone(),
+                });
+            }
         }
-    }
-    if billboard.len() < 2 && v.w4.featured.is_empty() {
-        for period in ["today", "week", "month"] {
-            for t in top.iter().filter(|t| t.period == period && top_ok(t)) {
-                push_top(&mut billboard, &mut lead, t);
+        if billboard.len() < 2 && v.w4.featured.is_empty() {
+            for period in ["today", "week", "month"] {
+                for t in top.iter().filter(|t| t.period == period && top_ok(t)) {
+                    push_top(&mut billboard, &mut lead, t);
+                }
             }
         }
     }
-
-    let mut rows: Vec<Row> = Vec::new();
-    let mut taken: HashSet<u64> = HashSet::new();
-    let see = |order, period, category: Option<&str>| Some(See { order, period, category: category.map(str::to_string), for_you: false });
-
-    // Top 10: the true ranking, so it may repeat a billboard pick. The title names the window.
-    let windows: [(Option<i64>, &str, BrowsePeriod); 4] = [
-        (Some(7), "Top 10 this week", BrowsePeriod::Week),
-        (Some(14), "Top 10 of the last 14 days", BrowsePeriod::Month),
-        (Some(30), "Top 10 this month", BrowsePeriod::Month),
-        (None, "Top 10 of all time", BrowsePeriod::Any),
-    ];
-    for (days, title, period) in windows {
-        let mut list: Vec<&BrowseCard> = match days {
-            Some(days) => recent.iter().copied().filter(|c| within(c, days)).collect(),
-            None => liked.clone(),
-        };
-        by_likes(&mut list);
-        if list.len() >= 10 {
-            list.truncate(10);
-            taken.extend(list.iter().map(|c| c.id));
-            rows.push(Row { kind: RowKind::Top10, title: super::tree::tr(title).to_string(), cards: list, see: see(BrowseOrder::MostLiked, period, None), reasons: None });
-            break;
-        }
-    }
     taken.extend(lead.iter().copied());
-    // The second row is the player's own: picked from their heroes, mods and favorites, or
-    // "Rising" while there is no history. New this week stands in until those picks exist.
+
+    // For you: the player's own row, once their heroes, mods and favorites say enough. It
+    // sits between the Top 10 and Rising and never replaces either.
     let fy = &v.shelves.for_you;
-    let mine = fresh_cards(fy.picks.iter().filter(ok).collect(), &taken);
-    if mine.len() >= min_fill {
-        let title = super::tree::tr(if fy.personal { "For you" } else { "Rising" }).to_string();
+    if fy.personal {
+        let mine = fresh_cards(fy.picks.iter().filter(ok).collect(), &taken);
         // See all opens the whole ranking as a page of its own.
         let see = Some(See { order: BrowseOrder::MostLiked, period: BrowsePeriod::Any, category: None, for_you: true });
-        push_row(&mut rows, &mut taken, min_fill, Row { kind: RowKind::New, title, cards: mine, see, reasons: Some(&fy.reasons) });
+        push_row(&mut rows, &mut taken, min_fill, Row { kind: RowKind::ForYou, title: super::tree::tr("For you").to_string(), cards: mine, see, reasons: Some(&fy.reasons) });
     }
-    // New this week: newest first, liked at least once; then without the floor; then 14 days.
+    // Rising: what is gaining fastest, for everyone. Always there when it can be measured.
+    let rising = fresh_cards(fy.rising.iter().filter(ok).collect(), &taken);
+    push_row(&mut rows, &mut taken, min_fill, Row { kind: RowKind::Rising, title: super::tree::tr("Rising").to_string(), cards: rising, see: None, reasons: None });
+    // New this week stands in while Rising cannot fill: newest first, liked at least once;
+    // then without the floor; then 14 and 30 days.
     let newest = |days: i64, floor: u64| -> Vec<&BrowseCard> {
         let mut list: Vec<&BrowseCard> = recent.iter().copied().filter(|c| within(c, days) && c.likes >= floor).collect();
         list.sort_by(|a, b| b.added_ts.cmp(&a.added_ts));
@@ -322,7 +364,7 @@ pub fn plan(s: &State, n: usize, now: i64) -> Plan<'_> {
         (14, 0, "New mods", BrowsePeriod::Month),
         (30, 0, "New mods", BrowsePeriod::Month),
     ] {
-        if rows.iter().any(|r| r.kind == RowKind::New) {
+        if rows.iter().any(|r| matches!(r.kind, RowKind::Rising | RowKind::New)) {
             break;
         }
         let cards = fresh_cards(newest(days, floor), &taken);
@@ -332,7 +374,7 @@ pub fn plan(s: &State, n: usize, now: i64) -> Plan<'_> {
         }
     }
 
-    // Two rows only: the catalog starts right under them.
+    // Three rows at most: the catalog starts right under them.
     // No saved catalog and nothing on the top list: the Top 10's head leads.
     if billboard.is_empty()
         && let Some(card) = rows.first().and_then(|r| r.cards.iter().find(|c| mature_lead || !c.nsfw))
@@ -1150,7 +1192,7 @@ mod tests {
 
     fn state_with(recent: Vec<BrowseCard>, liked: Vec<BrowseCard>) -> State {
         let mut st = State::default();
-        st.browse_view.shelves.feeds = Some(Feeds { recent, liked });
+        st.browse_view.shelves.feeds = Some(Feeds { recent, liked, featured: Vec::new() });
         st
     }
 
@@ -1290,15 +1332,15 @@ mod tests {
         }
     }
 
-    /// The landing is short: at most two rows, so the catalog starts right under them.
+    /// The landing is short: at most three rows, so the catalog starts right under them.
     #[test]
-    fn the_landing_has_at_most_two_rows() {
+    fn the_landing_has_at_most_three_rows() {
         let recent: Vec<BrowseCard> =
             (0..200u64).map(|i| card(i + 1, (i % 30) as i64, i * 7 % 50, ["Skins", "HUD", "Sounds", "Maps"][(i % 4) as usize], false)).collect();
         let liked: Vec<BrowseCard> = (0..60).map(|i| card(1000 + i, 400, 5000 - i, "Skins", false)).collect();
         let st = state_with(recent, liked);
         let p = plan(&st, 4, NOW);
-        assert!(p.rows.len() <= 2, "{} rows", p.rows.len());
+        assert!(p.rows.len() <= 3, "{} rows", p.rows.len());
         assert_eq!(p.rows[0].kind, RowKind::Top10);
     }
 
@@ -1310,13 +1352,51 @@ mod tests {
         let mut st = state_with(recent, Vec::new());
         let picks: Vec<BrowseCard> = (0..12u64).map(|i| card(if i == 0 { 1 } else { 500 + i }, 40, 30 + i, "Skins", false)).collect();
         let reasons = picks.iter().map(|c| (c.id, crate::screens::browse::foryou::Reason::Hero("Haze".into()))).collect();
-        st.browse_view.shelves.for_you = crate::screens::browse::foryou::ForYou { picks, reasons, personal: true, key: 1, ..Default::default() };
+        let rising: Vec<BrowseCard> = (0..12u64).map(|i| card(if i == 0 { 501 } else { 700 + i }, 2, 30 + i, "HUD", false)).collect();
+        st.browse_view.shelves.for_you = crate::screens::browse::foryou::ForYou { picks, rising, reasons, personal: true, key: 1, ..Default::default() };
         let p = plan(&st, 4, NOW);
-        assert_eq!(p.rows.len(), 2);
+        // For you sits between the Top 10 and Rising, and Rising stays.
+        assert_eq!(p.rows.len(), 3);
         assert_eq!(p.rows[1].title, "For you");
+        assert_eq!((p.rows[2].kind, p.rows[2].title.as_str()), (RowKind::Rising, "Rising"));
+        assert!(!ids(&p.rows[2]).contains(&501), "mod 501 is in For you already");
+        // Without enough history there is no row of the player's own; Rising is still there.
+        st.browse_view.shelves.for_you.personal = false;
+        let q = plan(&st, 4, NOW);
+        assert_eq!(q.rows.iter().map(|r| r.kind).collect::<Vec<_>>(), vec![RowKind::Top10, RowKind::Rising]);
+        st.browse_view.shelves.for_you.personal = true;
+        let p = plan(&st, 4, NOW);
         assert!(p.rows[1].see.as_ref().is_some_and(|see| see.for_you) && p.rows[1].reasons.is_some());
         assert!(!ids(&p.rows[1]).contains(&1), "mod 1 is in the Top 10 already");
         assert_rows_ok(&p, 4);
+    }
+
+    /// The billboard is the editor's choice: featured mods, newest first, none of them in the
+    /// Top 10, one per hero and two per category at most, never a mature one unless shown.
+    #[test]
+    fn the_billboard_is_what_gamebanana_featured() {
+        let recent: Vec<BrowseCard> = (0..60u64).map(|i| card(i + 1, (i % 7) as i64, 100 - i, "Skins", false)).collect();
+        let mut st = state_with(recent, Vec::new());
+        let mut featured = vec![
+            card(1, 1, 100, "Skins / Haze", false),    // in the Top 10
+            card(900, 1, 40, "Skins / Haze", false),
+            card(901, 2, 400, "Skins / Haze", false),  // a second Haze skin
+            card(902, 3, 20, "Skins / Wraith", false),
+            card(903, 4, 20, "Skins / Abrams", false), // a third skin
+            card(904, 5, 9, "HUD", true),              // mature
+            card(905, 6, 5, "Sounds", false),
+            card(906, 7, 1, "Maps", false),            // hardly liked
+            card(907, 90, 500, "Maps", false),         // old
+        ];
+        for c in &mut featured {
+            c.featured = true;
+        }
+        st.browse_view.shelves.feeds.as_mut().unwrap().featured = featured;
+        let p = plan(&st, 4, NOW);
+        assert_eq!(p.billboard.iter().map(|b| b.card.id).collect::<Vec<_>>(), vec![900, 902, 905]);
+        assert!(p.billboard.iter().all(|b| b.eyebrow == "Featured on GameBanana"));
+        let top: Vec<u64> = ids(&p.rows[0]);
+        assert!(p.billboard.iter().all(|b| !top.contains(&b.card.id)));
     }
 
     /// The billboard asks for the original upload behind a thumbnail.

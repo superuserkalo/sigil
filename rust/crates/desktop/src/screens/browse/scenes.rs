@@ -220,7 +220,7 @@ pub fn scene_dashboard(s: &mut State) {
             liked.extend(top.iter().filter(|t| t.model.eq_ignore_ascii_case("mod")).map(super::top::card_of));
         }
         liked.sort_by(|a, b| b.likes.cmp(&a.likes));
-        s.browse_view.shelves.feeds = Some(super::shelf::Feeds { recent, liked });
+        s.browse_view.shelves.feeds = Some(super::shelf::Feeds { recent, liked, featured: Vec::new() });
         // Three weekly category picks for the billboard's later slides.
         // One pick per category, as the weekly picks are.
         let mut seen = std::collections::HashSet::new();
