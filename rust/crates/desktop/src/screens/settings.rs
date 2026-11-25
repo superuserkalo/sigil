@@ -715,19 +715,62 @@ pub fn modal(s: &State, u: &Ui, window: (f32, f32)) -> Option<El> {
     Some(layer)
 }
 
+/// The section list's rows: a group heading, then its tabs.
+const NAV_HEAD_H: f32 = 24.0;
+const NAV_HEAD_MT: f32 = 16.0;
+const NAV_ITEM_H: f32 = 32.0;
+const NAV_GAP: f32 = 2.0;
+
+/// Where the selected tab's row starts in the section list, from the heights the list lays its
+/// rows out with, so the selection box can sit under it without measuring anything.
+fn nav_top(selected: Tab) -> Option<f32> {
+    let mut y = 0.0;
+    let mut first = true;
+    for (index, (_, tabs)) in GROUPS.iter().enumerate() {
+        if !first {
+            y += NAV_GAP;
+        }
+        first = false;
+        y += if index == 0 { 0.0 } else { NAV_HEAD_MT } + NAV_HEAD_H;
+        for &tab in tabs.iter().filter(|tab| tab.shown()) {
+            y += NAV_GAP;
+            if tab == selected {
+                return Some(y);
+            }
+            y += NAV_ITEM_H;
+        }
+    }
+    None
+}
+
 fn list(s: &State, u: &Ui) -> El {
     let mut items = col()
         .key("settings-sections")
         .role("tablist")
         .label(tr("Settings sections"))
         .w_full()
-        .gap(2.0);
+        .gap(NAV_GAP);
+    // The selection box first, so every label paints over it. It slides to a new pick by layout
+    // on `motion::base()`; it is never a matched flight, which Rune paints above the whole window
+    // and which dimmed the labels under it for the length of the glide.
+    let searching = !s.settings.search.text.trim().is_empty();
+    if !searching && let Some(top) = nav_top(s.settings.tab) {
+        items = items.child(crate::motion::slides(
+            el().key("settings-nav-thumb")
+                .pin(Some(0.0), Some(top), Some(0.0), None)
+                .h(NAV_ITEM_H)
+                .radius(crate::ui::r(8.0))
+                .fill(u.selected)
+                .a11y_hidden(),
+            crate::motion::base(),
+        ));
+    }
     for (index, (group, tabs)) in GROUPS.iter().enumerate() {
         items = items.child(
             row()
                 .w_full()
-                .h(24.0)
-                .mt(if index == 0 { 0.0 } else { 16.0 })
+                .h(NAV_HEAD_H)
+                .mt(if index == 0 { 0.0 } else { NAV_HEAD_MT })
                 .px(10.0)
                 .center_y()
                 .child(text(tr(group)).font(SECTION).color(u.muted)),
@@ -740,7 +783,8 @@ fn list(s: &State, u: &Ui) -> El {
         .key("settings-side")
         .w(LIST_W)
         .h_full()
-        .px(8.0)
+        // The column's edge inset keeps its floor under Compact density.
+        .px(crate::ui::inset_x(8.0))
         .pt(12.0)
         .fill(u.sidebar)
         .border_sides([0.0, 1.0, 0.0, 0.0], u.hair)
@@ -809,18 +853,19 @@ fn list_item(s: &State, u: &Ui, tab: Tab) -> El {
         .iter()
         .filter(|e| e.tab == tab)
         .count();
+    let key = format!("settings-tab-{}", tab.key());
     let item = row()
-        .key(format!("settings-tab-{}", tab.key()))
+        .key(key.clone())
         .w_full()
-        .h(32.0)
+        .h(NAV_ITEM_H)
         .px(10.0)
         .gap(10.0)
         .center_y()
         .radius(crate::ui::r(8.0))
-        // The selection glides from the old section to the new on `base`.
-        .child(crate::ui::seg_thumb(on, "settings-nav-thumb", u.selected, Color::TRANSPARENT, crate::ui::r(8.0)))
         .hover(if on { Color::TRANSPARENT } else { u.hover })
         .focusable(true)
+        // A press picks without taking focus, so it costs one commit; Tab still reaches it.
+        .keeps_text_selection()
         .role("tab")
         .checked(on)
         .label(tr(tab.label()))
@@ -829,20 +874,23 @@ fn list_item(s: &State, u: &Ui, tab: Tab) -> El {
             st.settings.search = TextEdit::new("");
             select(st, tab)
         })
-        .child(
+        // The icon and label keep their keys whichever tab is picked; only their colour eases.
+        .child(crate::motion::colors(
             icon(tab.icon(), 16.0)
+                .key(format!("{key}-icon"))
                 .color(if on { u.ink } else { u.muted })
                 .a11y_hidden(),
-        )
-        .child(
+        ))
+        .child(crate::motion::colors(
             text(tr(tab.label()))
+                .key(format!("{key}-label"))
                 .font(NAV)
                 .color(if on { u.ink } else { u.prose })
                 .truncate()
                 .grow(1.0)
                 .min_w(0.0)
                 .a11y_hidden(),
-        )
+        ))
         .child(if hits > 0 {
             // The match count while searching, in a slot only rows with matches draw, so the
             // labels keep their full width otherwise.
@@ -1067,7 +1115,7 @@ fn select_choice<T: Copy + PartialEq + 'static>(
             .key(format!("{key}-menu"))
             .role("listbox")
             .w(width)
-            .padding(4.0)
+            .padding(crate::ui::inset_y(4.0))
             .radius(crate::ui::r(8.0))
             .fill(u.raised.mix(u.over, 0.04).alpha(1.0))
             .border(1.0, u.hair_strong)
@@ -1082,7 +1130,7 @@ fn select_choice<T: Copy + PartialEq + 'static>(
                     .key(format!("{key}-opt-{index}"))
                     .w_full()
                     .h(32.0)
-                    .px(8.0)
+                    .px(crate::ui::inset_x(8.0))
                     .gap(8.0)
                     .center_y()
                     .radius(crate::ui::r(4.0))

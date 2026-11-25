@@ -372,15 +372,26 @@ pub fn dialog(s: &State, u: &Ui) -> El {
         return el();
     };
     let base = builtin(d.tab);
-    let mut tabs = el().key("settings-presence-tabs").w_full().equal_columns(3).gap(6.0);
-    for (key, label, _, _) in PHASES {
-        let mark = if d.custom(key) { format!("{} ·", tr(label)) } else { tr(label).to_string() };
-        tabs = tabs.child(
-            chip(u, format!("settings-presence-tab-{key}"), &mark, d.tab == key)
-                .on_press(move |st: &mut State| {
+    // The nine phases as three strips of the shared selector (`ui::Segmented`), three a strip so
+    // every label stays whole at the dialog's width; one part is picked across the three.
+    let mut tabs = col().key("settings-presence-phases").w_full().gap(6.0);
+    for (strip, phases) in PHASES.chunks(3).enumerate() {
+        let parts = phases.iter().map(|&(key, label, _, _)| {
+            let mark = if d.custom(key) { format!("{} ·", tr(label)) } else { tr(label).to_string() };
+            crate::ui::SegPart::new(format!("settings-presence-tab-{key}"), mark).on(d.tab == key).with(move |e| {
+                e.on_press(move |st: &mut State| {
                     let hero = if key == "sigil" { None } else { draft(st).hero.clone() };
                     draft(st).switch(key, hero)
-                }),
+                })
+            })
+        });
+        tabs = tabs.child(
+            crate::ui::Segmented::new(format!("settings-presence-strip-{strip}"), tr("Discord lines"))
+                .size(crate::ui::SegSize::M)
+                .width(crate::ui::SegWidth::Fill)
+                .tabs()
+                .parts(parts)
+                .build(u),
         );
     }
     let scope_label = match &d.hero {

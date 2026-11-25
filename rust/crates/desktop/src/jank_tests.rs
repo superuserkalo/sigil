@@ -359,7 +359,8 @@ const MOTION_CASES: &[(&str, &[Step], Step, f32)] = &[
     ("stats-profile", &[], Step::Press("stats-tab-heroes"), 800.0),
 ];
 
-/// Picks in strips of uneven parts (`ui::seg_thumb`): scene, the press, the thumb, the height.
+/// Picks in strips of uneven parts and the Settings section list: scene, the press, the thumb,
+/// the height.
 const SELECTION_CASES: &[(&str, Step, &str, f32)] = &[
     ("browse", Step::Press("browse-tab-sounds"), "browse-sections-thumb", 800.0),
     ("demo-installed", Step::Press("installed-show-Enabled"), "installed-show-thumb", 800.0),
@@ -629,7 +630,7 @@ fn overlays_and_selections_move() {
         ("demo-installed", &[], Step::Press("nav-browse"), "page-browse", 800.0),
         // The Stats tab underline flies to the pressed tab on `base`; the tabs stay put.
         ("stats-profile", &[], Step::Press("stats-tab-heroes"), "stats-tabs-underline", 800.0),
-        // The shared selection thumb (`ui::seg_thumb`) glides between parts of uneven width:
+        // The selection box glides between parts of uneven width:
         // Browse's sections, Installed's scope, the Servers tabs and the Settings sections.
         ("browse", &[], Step::Press("browse-tab-sounds"), "browse-sections-thumb", 800.0),
         ("demo-installed", &[], Step::Press("installed-show-Enabled"), "installed-show-thumb", 800.0),
@@ -1193,6 +1194,26 @@ fn segmented_labels_stay_over_the_sliding_box() {
         ),
         ("browse", "browse-tab-sounds", &["browse-tab-all-label", "browse-tab-mods-label", "browse-tab-sounds-label"], 800.0),
         ("crosshair", "crosshair-groups-1", &["crosshair-groups-0-label", "crosshair-groups-1-label", "crosshair-groups-2-label"], 1400.0),
+        // The Settings section list: its box slides down a vertical list the same way.
+        (
+            "settings-general",
+            "settings-tab-appearance",
+            &[
+                "settings-tab-general-label",
+                "settings-tab-general-icon",
+                "settings-tab-appearance-label",
+                "settings-tab-appearance-icon",
+                "settings-tab-mods-label",
+            ],
+            1400.0,
+        ),
+        // The Discord lines dialog's phases (three strips of the shared selector).
+        (
+            "parity-templates",
+            "settings-presence-tab-menu",
+            &["settings-presence-tab-sigil-label", "settings-presence-tab-menu-label", "settings-presence-tab-hideout-label"],
+            1400.0,
+        ),
     ];
     let mut wrong = Vec::new();
     for &(scene_name, press, labels, height) in cases {

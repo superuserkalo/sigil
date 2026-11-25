@@ -2720,6 +2720,12 @@ fn scene_settings_general(s: &mut State) {
     screens::settings::scene_tab(s, screens::settings::Tab::General);
 }
 
+/// Settings at Compact density: the section list and its search field keep their edge insets.
+fn scene_settings_compact(s: &mut State) {
+    screens::settings::scene_tab(s, screens::settings::Tab::General);
+    s.prefs.personal.density = crate::ui::personalize::Density::Compact;
+}
+
 fn scene_settings_appearance(s: &mut State) {
     screens::settings::scene_tab(s, screens::settings::Tab::Appearance);
 }
@@ -3228,6 +3234,7 @@ pub fn scenes() -> &'static [(&'static str, fn(&mut State))] {
         ("settings-storage", scene_settings_advanced),
         ("settings-backups", scene_settings_backups),
         ("settings-general", scene_settings_general),
+        ("settings-compact", scene_settings_compact),
         ("settings-appearance", scene_settings_appearance),
         ("settings-mods", scene_settings_mods),
         ("settings-privacy", scene_settings_privacy),

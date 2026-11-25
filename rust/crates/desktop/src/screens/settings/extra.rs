@@ -398,7 +398,7 @@ fn editor_dialog(s: &State, u: &Ui) -> El {
                 .key(format!("settings-editor-{index}"))
                 .w_full()
                 .h(44.0)
-                .px(8.0)
+                .px(crate::ui::inset_x(8.0))
                 .gap(12.0)
                 .center_y()
                 .radius(crate::ui::r(8.0))

@@ -380,9 +380,10 @@ mod tests {
     }
 
     /// There is one segmented selector. A screen that builds its own strip (a track of picks
-    /// on the well fill, a sliding thumb or indicator of its own) fails here: build it with
-    /// `ui::Segmented` instead. The Settings section list is a vertical navigation list, not a
-    /// segmented selector, and keeps its own highlight.
+    /// on the well fill, a sliding thumb or indicator of its own, a matched selection flight, or
+    /// a grid of tab chips keyed `-tabs`) fails here: build it with `ui::Segmented` instead. The
+    /// Settings section list is a vertical navigation list, not a segmented selector: its box
+    /// slides by layout under the labels as `Segmented`'s does.
     #[test]
     fn screens_build_no_segmented_selector_of_their_own() {
         let mut wrong = Vec::new();
@@ -394,10 +395,14 @@ mod tests {
             // Split into functions, roughly: each `fn ` starts a new body.
             for body in code.split("fn ").skip(1) {
                 let name: String = body.chars().take_while(|c| c.is_alphanumeric() || *c == '_').collect();
-                let thumb = body.contains("seg_thumb(") && !body.contains("\"settings-nav-thumb\"") && !(path == "ui.rs" && name == "seg_thumb");
+                // A selection that flies as a matched element paints over the labels it slides
+                // under (the old `seg_thumb`).
+                let thumb = body.contains("seg_thumb(") || (body.contains(".matched(") && body.contains("-thumb"));
                 let track = body.contains(".fill(u.well)") && (body.contains(".role(\"radiogroup\")") || body.contains(".role(\"tablist\")"));
                 let indicator = body.contains(".equal_columns(") && body.contains("-indicator");
-                if thumb || track || indicator {
+                // Tab chips laid out in equal columns (the Discord lines dialog's phases were).
+                let chips = body.contains(".equal_columns(") && body.contains("-tabs\")");
+                if thumb || track || indicator || chips {
                     wrong.push(format!("{path}: fn {name}"));
                 }
             }

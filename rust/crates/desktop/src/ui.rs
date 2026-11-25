@@ -400,38 +400,6 @@ pub fn standard(points: f32) -> f32 {
     if z < 1.0 { points / z } else { points }
 }
 
-/// The Settings section list's selection (a vertical navigation list, not a segmented
-/// selector: strips of picks are `Segmented`, and `segmented::tests` keeps any other caller
-/// out). The selected row's fill and
-/// border, a child placed before the label and pinned to the row's edges, so it takes no part
-/// in the layout. It flies as a matched element, which Rune paints over the whole window for
-/// the length of the glide, so it must stay a translucent fill. `id` names the strip (and is the thumb's key): on a new pick the thumb glides from the
-/// old part to the new one on `motion::base()`, whatever their widths, while the labels only
-/// change colour. Instant under reduced motion. The part itself must not be wrapped in
-/// `motion::colors`, which lands every change inside it; put that on the label instead.
-///
-/// Every part of the strip carries the slot, on or off, so the parts' other children keep their
-/// places in the tree and nothing remounts (and fades) when the pick moves.
-pub fn seg_thumb(on: bool, id: &str, fill: Color, border: Color, radius: f32) -> rune::El {
-    if !on {
-        return rune::el()
-            .key(format!("{id}-slot"))
-            .absolute(0.0, 0.0)
-            .transition(crate::motion::cut())
-            .a11y_hidden();
-    }
-    crate::motion::glides(
-        rune::el()
-            .key(id.to_string())
-            .pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0))
-            .radius(radius)
-            .fill(fill)
-            .border(1.0, border)
-            .a11y_hidden(),
-        id,
-    )
-}
-
 /// A corner radius on the house grid, scaled by the Personalize radius choice. Block, the
 /// default, maps every corner to 4 points (outer) or 2 (inner); Soft (1.0) is exact.
 pub fn r(points: f32) -> f32 {
