@@ -54,6 +54,7 @@ struct Disk {
     related: HashMap<u64, Dated<Vec<u64>>>,
     health: HashMap<u64, Dated<Option<ModHealth>>>,
     fps: Option<Dated<FpsAnswer>>,
+    rising: Option<Dated<Vec<u64>>>,
 }
 
 impl Disk {
@@ -65,7 +66,8 @@ impl Disk {
         let fps = self.fps.as_ref().map(|d| {
             json!({ "at": d.at, "gpu": d.value.gpu, "cpu": d.value.cpu, "height": d.value.height, "configs": d.value.configs })
         });
-        json!({ "related": related, "health": health, "fps": fps })
+        let rising = self.rising.as_ref().map(|d| json!({ "at": d.at, "value": d.value }));
+        json!({ "related": related, "health": health, "fps": fps, "rising": rising })
     }
 
     /// Read back entry by entry: an entry that does not parse is dropped, the rest survive.
@@ -96,6 +98,11 @@ impl Disk {
                 },
             });
         }
+        if let Some(e) = v.get("rising").filter(|e| !e.is_null())
+            && let (Some(at), Some(list)) = (at(e), e.get("value").and_then(Value::as_array))
+        {
+            disk.rising = Some(Dated { at, value: list.iter().filter_map(Value::as_u64).collect() });
+        }
         disk
     }
 }
@@ -104,12 +111,14 @@ enum Ask {
     Related(u64),
     Health(Vec<u64>),
     Fps,
+    Rising,
 }
 
 enum Answer {
     Related(u64, Vec<u64>),
     Health(Vec<u64>, Vec<ModHealth>, Option<u32>),
     Fps(Option<FpsAnswer>),
+    Rising(Vec<u64>),
 }
 
 #[derive(Default)]
@@ -119,6 +128,8 @@ pub struct Insights {
     /// Mod id to its health; `None` once asked and nothing was published.
     health: HashMap<u64, Dated<Option<ModHealth>>>,
     fps: Option<Dated<FpsAnswer>>,
+    /// Mods whose installs grew most among players who share, best first.
+    rising: Option<Dated<Vec<u64>>>,
     /// Requests already made this run, so each is asked once.
     asked: HashSet<String>,
     queue: VecDeque<Ask>,
@@ -290,6 +301,13 @@ pub fn fps_for<'a>(s: &'a State, config_id: &str, version: &str) -> Option<&'a F
         .find(|e| e.config == code.as_str() && e.version == version)
 }
 
+/// Mods rising by real installs among players who share, best first, for Browse's Rising row
+/// to blend with like velocity. Empty until the server answered with some.
+#[allow(dead_code)] // Read by the Rising row once Browse blends it in.
+pub fn rising(s: &State) -> &[u64] {
+    s.insights.rising.as_ref().map(|d| d.value.as_slice()).unwrap_or(&[])
+}
+
 /// Any frame rate to show at all: the sort switch appears only then.
 pub fn has_fps(s: &State) -> bool {
     s.insights.fps.as_ref().is_some_and(|d| !d.value.configs.is_empty())
@@ -349,6 +367,7 @@ pub fn poll(st: &mut State) -> bool {
             i.related = disk.related.into_iter().filter(|(_, d)| fresh(d, at)).collect();
             i.health = disk.health.into_iter().filter(|(_, d)| fresh(d, at)).collect();
             i.fps = disk.fps.filter(|d| fresh(d, at));
+            i.rising = disk.rising.filter(|d| fresh(d, at));
             i.generation += 1;
             i.fingerprint = 0;
             resolve_cards(st);
@@ -390,7 +409,7 @@ pub fn poll(st: &mut State) -> bool {
 /// Consent went off: drop every answer here and on disk at once.
 fn forget(st: &mut State) -> bool {
     let i = &mut st.insights;
-    let had = !i.related.is_empty() || !i.health.is_empty() || i.fps.is_some() || i.loaded;
+    let had = !i.related.is_empty() || !i.health.is_empty() || i.fps.is_some() || i.rising.is_some() || i.loaded;
     if !had {
         return false;
     }
@@ -459,6 +478,12 @@ fn plan(st: &mut State) {
     {
         queue.push_back(Ask::Fps);
     }
+    if matches!(st.screen, crate::model::Screen::Browse)
+        && !st.insights.rising.as_ref().is_some_and(|d| fresh(d, at))
+        && !st.insights.asked.contains("g")
+    {
+        queue.push_back(Ask::Rising);
+    }
     for id in enabled_mods(st).into_iter().take(FOR_YOU_SOURCES) {
         if !fresh_related(st, id) && !st.insights.asked.contains(&format!("r:{id}")) {
             queue.push_back(Ask::Related(id));
@@ -488,6 +513,13 @@ fn start(st: &mut State, ask: Ask) {
                 let list = pd::health(&mods, VERSION).map_err(|e| e.to_string())?;
                 let build = read_build(root.as_deref());
                 Ok(Answer::Health(ids, list, build))
+            });
+        }
+        Ask::Rising => {
+            st.insights.asked.insert("g".to_string());
+            st.insights.job.start(wake, move || {
+                let list = pd::rising(VERSION).map_err(|e| e.to_string())?;
+                Ok(Answer::Rising(list.into_iter().map(ModId::get).collect()))
             });
         }
         Ask::Fps => {
@@ -534,6 +566,9 @@ fn take(st: &mut State, answer: Answer) {
                 i.health.insert(id, Dated { at, value: by_id.remove(&id) });
             }
         }
+        Answer::Rising(list) => {
+            i.rising = Some(Dated { at, value: list });
+        }
         Answer::Fps(answer) => {
             if let Some(answer) = answer {
                 i.fps = Some(Dated { at, value: answer });
@@ -545,7 +580,12 @@ fn take(st: &mut State, answer: Answer) {
 
 /// Write the answers on a worker.
 fn save(st: &State) {
-    let disk = Disk { related: st.insights.related.clone(), health: st.insights.health.clone(), fps: st.insights.fps.clone() };
+    let disk = Disk {
+        related: st.insights.related.clone(),
+        health: st.insights.health.clone(),
+        fps: st.insights.fps.clone(),
+        rising: st.insights.rising.clone(),
+    };
     let _ = std::thread::Builder::new().name("sigil-given-save".into()).spawn(move || {
         let path = path();
         if let Some(parent) = path.parent() {
@@ -733,6 +773,7 @@ mod tests {
         assert!(chips(&st, 42, 0).is_empty());
         assert!(fps_for(&st, "optilock", "3").is_none());
         assert!(!has_fps(&st));
+        assert!(rising(&st).is_empty());
         assert!(related_weights(&st, &[42]).is_empty());
     }
 
@@ -789,6 +830,17 @@ mod tests {
         assert_eq!(fps_for(&st, "opti-lock", "v3.1").map(|e| e.fps), Some(120));
         assert!(fps_for(&st, "opti-lock", "v4").is_none());
         assert!(has_fps(&st));
+    }
+
+    #[test]
+    fn answers_survive_the_disk_and_drop_what_does_not_parse() {
+        let mut disk = Disk::default();
+        disk.rising = Some(Dated { at: 5, value: vec![600, 700] });
+        disk.related.insert(1, Dated { at: 5, value: vec![2] });
+        let back = Disk::from_json(&disk.to_json().to_string());
+        assert_eq!(back.rising.map(|d| d.value), Some(vec![600, 700]));
+        assert_eq!(back.related.get(&1).map(|d| d.value.clone()), Some(vec![2]));
+        assert!(Disk::from_json("not json").rising.is_none());
     }
 
     #[test]

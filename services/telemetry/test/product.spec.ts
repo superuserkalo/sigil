@@ -304,7 +304,7 @@ describe("the distinct-contributor floor", () => {
     await closeAll();
     expect((await env.DB.prepare("SELECT COUNT(*) AS n FROM product_contrib WHERE epoch <= ?1").bind(epochOf(E0)).first<{ n: number }>())?.n).toBe(0);
     const columns = await env.DB.prepare("SELECT name FROM pragma_table_info('product_totals')").all<{ name: string }>();
-    expect(columns.results.map((c) => c.name)).toEqual(["epoch", "kind", "key", "mod_a", "mod_b", "installs", "buckets", "days", "created_at", "median", "low"]);
+    expect(columns.results.map((c) => c.name)).toEqual(["epoch", "kind", "key", "mod_a", "mod_b", "installs", "buckets", "days", "created_at", "median", "low", "weeks"]);
     const totals = JSON.stringify(await env.DB.prepare("SELECT * FROM product_totals").all());
     expect(totals).not.toMatch(/[0-9a-f]{16}/);
     const eventColumns = await env.DB.prepare("SELECT name FROM pragma_table_info('product_events')").all<{ name: string }>();

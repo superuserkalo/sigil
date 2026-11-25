@@ -562,3 +562,10 @@ fn reports_from_before_the_creators_update_are_dropped() {
     assert!(h.chips(Some(6100), &have(&[]), 2_000).is_empty());
     assert_eq!(h.chips(Some(6100), &have(&[]), 0).len(), 2);
 }
+
+#[test]
+fn rising_reads_mod_ids_only() {
+    let server = Server::start(r#"{"mods":[{"modId":600,"recent":12},{"modId":0},{"modId":"x"},{"modId":700,"recent":8}]}"#);
+    assert_eq!(rising_at(&server.base, "0.1.38").unwrap(), vec![id(600), id(700)]);
+    assert!(server.heads()[0].starts_with("GET /v1/product/rising "));
+}

@@ -1034,6 +1034,7 @@ fn related_at(base: &str, mod_id: ModId, version: &str) -> Result<Vec<ModId>> {
 
 pub const HEALTH_PATH: &str = "/v1/product/health";
 pub const FPS_PATH: &str = "/v1/product/fps";
+pub const RISING_PATH: &str = "/v1/product/rising";
 /// Mods one health request may ask about (the Worker's own limit).
 pub const MAX_HEALTH_MODS: usize = 40;
 
@@ -1219,6 +1220,22 @@ fn fps_at(base: &str, gpu: &ModelName, cpu: Option<&ModelName>, height: u16, ver
                 .filter(|e| e.fps > 0 && e.installs >= HEALTH_MIN_REPORTS && Code::new(&e.config).is_some())
                 .collect()
         })
+        .unwrap_or_default())
+}
+
+/// Mods whose installs grew most in the newest closed period among players who share, best
+/// first, from `GET /v1/product/rising`. Sends nothing but the request.
+pub fn rising(version: &str) -> Result<Vec<ModId>> {
+    rising_at(telemetry::ENDPOINT, version)
+}
+
+fn rising_at(base: &str, version: &str) -> Result<Vec<ModId>> {
+    let version = telemetry::app_version(version);
+    let value = read_json(&telemetry::get(&telemetry::endpoint_at(base, RISING_PATH), &version, TIMEOUT)?)?;
+    Ok(value
+        .get("mods")
+        .and_then(Value::as_array)
+        .map(|list| list.iter().filter_map(|item| item.get("modId").and_then(Value::as_u64).and_then(ModId::new)).take(50).collect())
         .unwrap_or_default())
 }
 

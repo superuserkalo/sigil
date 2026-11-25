@@ -271,6 +271,10 @@ the Worker returns something that passed the floor, nothing of it appears in the
   moved, gone, turned off after a crash or a crash suspect; a game update clears it) and "Often
   conflicts with" a mod you have (30% of installs that had both on). The tooltip says how many
   reports it rests on.
+- Rising by real installs: `GET /v1/product/rising`, once a day while Browse is open, sends
+  nothing but the request. The Worker answers with up to 50 mod ids whose installs among players
+  who share grew most in the newest closed 30-day period (counts by week of the period, above
+  the floor).
 - Frame rates on the Performance page: `GET /v1/product/fps?gpu=<model>&cpu=<model>&height=<px>`,
   your GPU and CPU model names (reduced as above) and screen height, once a day while the page is
   open. The Worker groups PCs by GPU model and a CPU tier (high, mid, low) and the screen height by

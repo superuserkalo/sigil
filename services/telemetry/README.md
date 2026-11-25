@@ -21,6 +21,7 @@ party: usage events go to Analytics Engine, everything else to D1.
 | GET | `/v1/product/related?mod=<id>` | none | Nothing. Co-installed mods above the floor. |
 | GET | `/v1/product/health?mods=<id,id,...>` | none | Nothing. Mod health above the floor, at most 40 mods. |
 | GET | `/v1/product/fps?gpu=<model>&cpu=<model>&height=<px>` | none | Nothing. Frame rates per config on that hardware class. |
+| GET | `/v1/product/rising` | none | Nothing. Up to 50 mods whose installs grew most in the newest closed period. |
 | GET | `/v1/product/admin/search-gaps` | none | Nothing. Owner only, needs `PRODUCT_ADMIN_KEY`. |
 
 Every request needs `x-sigil-client: 1` and a semver `x-sigil-version`, otherwise 400. The limiter
@@ -175,6 +176,13 @@ leaves the Worker. The routes are rate limited like every other route.
   epoch writes the median average and the median 1% low of the eligible installs (`median`,
   `low`) and deletes the per-install values with the rest of the epoch.
 
+- `GET /v1/product/rising`: `{mods: [{modId, recent}]}`, at most 50. Kind `install_day` (from
+  `mod_action` installed; the contribution's day is the install day). Closing an epoch keeps, per mod
+  that met the floor over the epoch, five counts of eligible installs by day of the epoch (`weeks`:
+  days 0-6, 7-13, 14-15, 16-22, 23-29). The route reads the newest closed epoch only and ranks by
+  `((late + 1) / (early + 1)) * late / (late + 10)`, where early is the first two weeks and late the
+  last two, with at least 5 late installs. Empty until a closed epoch has data.
+
 ### Search gaps (owner only)
 
 Browse searches that found nothing (`search_zero`) or at most 5 mods (`search_few`), above the
@@ -192,7 +200,7 @@ curl -s https://sigil-telemetry.gantchevkaloyan.workers.dev/v1/product/admin/sea
 ### Deploying migration 0004
 
 ```bash
-npx wrangler d1 migrations apply sigil --remote   # 0004_product_uses.sql: four columns, one index
+npx wrangler d1 migrations apply sigil --remote   # 0004_product_uses.sql: five columns, one index
 npx wrangler secret put PRODUCT_ADMIN_KEY         # only for the search gaps route
 npx wrangler deploy
 ```

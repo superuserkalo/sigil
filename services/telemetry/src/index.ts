@@ -1,7 +1,7 @@
 /**
  * Sigil's opt-in telemetry Worker.
  *
- * Eleven endpoints, one cron job, no UI:
+ * Twelve endpoints, one cron job, no UI:
  *
  *   POST /v1/events       usage events, one Analytics Engine point per event
  *   POST /v1/crash        scrubbed crash report (panic, unclean exit or native), deduplicated
@@ -14,6 +14,7 @@
  *   GET  /v1/product/related co-installed mods that pass the distinct-contributor floor
  *   GET  /v1/product/health  mod health (install failures, broken on a game build, conflicts)
  *   GET  /v1/product/fps     frame rates per performance config on the caller's hardware class
+ *   GET  /v1/product/rising  mods whose installs grew most in the newest closed period
  *   GET  /v1/product/admin/search-gaps  the owner's searches that found nothing; owner key only
  *
  * The app is the only intended client and nothing here is fetched by the desktop app on its own:
@@ -33,7 +34,7 @@ import { isEventName } from "./events";
 import { crashFingerprint } from "./fingerprint";
 import { sha256Hex } from "./hash";
 import { allowRequest } from "./limiter";
-import { contribute, cpuTier, fpsContext, fpsFor, MAX_HEALTH_MODS, modHealth, related, resolutionBucket, searchGaps } from "./aggregates";
+import { contribute, cpuTier, fpsContext, fpsFor, MAX_HEALTH_MODS, modHealth, related, resolutionBucket, rising, searchGaps } from "./aggregates";
 import { scheduledJob } from "./cron";
 import {
   adminAllowed,
@@ -89,6 +90,7 @@ const ROUTES: Readonly<Record<string, Route>> = {
   "/v1/product/related": { method: "GET", run: handleRelated },
   "/v1/product/health": { method: "GET", run: handleHealth },
   "/v1/product/fps": { method: "GET", run: handleFps },
+  "/v1/product/rising": { method: "GET", run: handleRising },
   "/v1/product/admin/search-gaps": { method: "GET", run: handleSearchGaps },
 };
 
@@ -429,6 +431,13 @@ async function handleFps(_request: Request, env: Env, url: URL): Promise<Respons
   if (query === null) return errorResponse(400, "bad_hardware");
   const configs = await fpsFor(env.DB, secrets.bucket, query.gpu, cpuTier(query.cpu), resolutionBucket(query.height));
   return jsonResponse(200, { configs });
+}
+
+/** Rising mods by real installs (`aggregates.ts` `rising`): ids and late install counts only. */
+async function handleRising(_request: Request, env: Env): Promise<Response> {
+  const secrets = productSecrets(env);
+  if (secrets === null) return errorResponse(503, "not_configured");
+  return jsonResponse(200, { mods: await rising(env.DB, secrets.bucket) });
 }
 
 /**

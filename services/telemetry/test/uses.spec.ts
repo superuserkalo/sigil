@@ -19,6 +19,8 @@ import {
   median,
   modHealth,
   resolutionBucket,
+  rising,
+  weekOf,
   searchGaps,
   type KeyContext,
 } from "../src/aggregates";
@@ -278,5 +280,51 @@ describe("the new routes without their secrets", () => {
     const response = await worker.fetch(new Request("http://telemetry.test/v1/product/health?mods=100"), env);
     expect(response.status).toBe(400);
     expect(INSTALL_ID).toMatch(/-/);
+  });
+});
+
+describe("rising by real installs", () => {
+  const installed = (mod: number) => rec({ type: "mod_action", mod_id: mod, action: "installed" });
+
+  /** `installs` installs of `mod`, each first sending on `day` of the epoch at `base` and once more. */
+  async function installsOn(base: number, mod: number, installs: number, day: (n: number) => number, net = 0): Promise<void> {
+    for (let n = 0; n < installs; n += 1) {
+      const hash = await installHash(crypto.randomUUID(), SALT);
+      const network = `10.${60 + net + (n % 6)}.0.${n + 1}`;
+      const first = day(n);
+      await contribute(env.DB, KEY, network, hash, [installed(mod)], base + first * DAY + 3_600_000);
+      await contribute(env.DB, KEY, network, hash, [], base + Math.min(29, first + 1) * DAY + 3_600_000);
+    }
+  }
+
+  it("is empty until a closed epoch has data", async () => {
+    const response = await get("/v1/product/rising");
+    expect(response.status).toBe(200);
+    expect(await readJson(response)).toEqual({ mods: [] });
+    // The open epoch alone is never read.
+    await installsOn(epochOf(Date.now()) * EPOCH_MS, 500, 12, (n) => n % 3);
+    await closeEpochs(env.DB, Date.now());
+    expect(await rising(env.DB, KEY)).toEqual([]);
+  });
+
+  it("ranks mods whose installs grew late in the newest closed epoch, behind the floor", async () => {
+    // 600 grows: 2 early, 12 late. 700 is steady: 8 early, 8 late. 800 is late but under the floor.
+    await installsOn(RECENT, 600, 14, (n) => (n < 2 ? n : 16 + (n % 12)));
+    await installsOn(RECENT, 700, 16, (n) => (n < 8 ? n % 14 : 16 + (n % 12)), 10);
+    await installsOn(RECENT, 800, 9, (n) => 20 + (n % 8), 20);
+    await closeEpochs(env.DB, Date.now());
+    const response = await get("/v1/product/rising");
+    const text = await response.text();
+    expect(text).not.toMatch(HEX_ID);
+    expect(JSON.parse(text)).toEqual({ mods: [{ modId: 600, recent: 12 }, { modId: 700, recent: 8 }] });
+    const weeks = await env.DB.prepare("SELECT weeks FROM product_totals WHERE kind = 'install_day' AND key = '600'").first<{ weeks: string }>();
+    expect(weeks?.weeks).toBe("2,0,0,7,5");
+    expect(weekOf(13)).toBe(1);
+    expect(weekOf(16)).toBe(3);
+  });
+
+  it("answers 503 without its secrets", async () => {
+    const response = await get("/v1/product/rising", { PRODUCT_BUCKET_KEY: undefined });
+    expect(response.status).toBe(503);
   });
 });
