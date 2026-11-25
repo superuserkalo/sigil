@@ -33,11 +33,12 @@ pub const ADVANCE: Duration = Duration::from_secs(7);
 /// No input for this long and the billboard stops until the next one.
 pub const IDLE: Duration = Duration::from_secs(120);
 /// The original upload behind a GameBanana thumbnail: `.../530-90_a.jpg` is `.../a.jpg`. The
-/// billboard draws it once it is decoded; the thumbnail stands in until then.
+/// billboard draws it once it is decoded; the thumbnail stands in until then. The key carries
+/// [`crate::data::BILLBOARD_MARK`], so the fetch worker scales it to the banner on decode.
 pub fn large_of(url: &str) -> String {
     for size in ["/530-90_", "/220-90_", "/100-90_"] {
         if let Some(at) = url.rfind(size) {
-            return format!("{}/{}", &url[..at], &url[at + size.len()..]);
+            return format!("{}/{}{}", &url[..at], &url[at + size.len()..], crate::data::BILLBOARD_MARK);
         }
     }
     url.to_string()
@@ -635,6 +636,8 @@ fn row_placeholder(u: &Ui, width: f32, n: usize, i: usize) -> El {
 /// banner wants), fading into the page at the bottom and the left, with the title and the
 /// actions on that fade. The picture is the mod's full-size upload, so it stays sharp.
 fn billboard(s: &State, u: &Ui, picks: &[Slide], width: f32) -> El {
+    // A store, no work: the fetch worker scales the original upload to this width.
+    crate::data::set_billboard_points(width);
     let h = billboard_height(width);
     let (title_font, title_lines, desc_lines, pad) = if width >= 960.0 {
         (BILLBOARD, 2usize, 2usize, 32.0)
@@ -1415,8 +1418,8 @@ mod tests {
     /// The billboard asks for the original upload behind a thumbnail.
     #[test]
     fn the_large_image_is_the_thumbnail_without_its_size() {
-        assert_eq!(large_of("https://images.gamebanana.com/img/ss/mods/530-90_a.jpg"), "https://images.gamebanana.com/img/ss/mods/a.jpg");
-        assert_eq!(large_of("https://images.gamebanana.com/img/ss/mods/220-90_b.png"), "https://images.gamebanana.com/img/ss/mods/b.png");
+        assert_eq!(large_of("https://images.gamebanana.com/img/ss/mods/530-90_a.jpg"), "https://images.gamebanana.com/img/ss/mods/a.jpg#sigil-billboard");
+        assert_eq!(large_of("https://images.gamebanana.com/img/ss/mods/220-90_b.png"), "https://images.gamebanana.com/img/ss/mods/b.png#sigil-billboard");
         assert_eq!(large_of("https://images.example/t1.jpg"), "https://images.example/t1.jpg");
     }
 

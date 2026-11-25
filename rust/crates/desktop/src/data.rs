@@ -765,6 +765,84 @@ fn regrow_card_thumbs(state: &mut State) {
     state.thumb_crew.add(held, wake, false);
 }
 
+/// The billboard's picture is GameBanana's original upload (often 1920 to 3840 pixels wide). Its
+/// image key carries this mark, so the billboard's scaled copy is its own cache entry and never
+/// stands in for the full picture the gallery or the lightbox shows. The fetch drops it, so the
+/// disk cache is shared.
+pub const BILLBOARD_MARK: &str = "#sigil-billboard";
+
+/// The billboard's width in points, as `f32` bits; 0 before the landing lays out.
+static BILLBOARD_POINTS: AtomicU32 = AtomicU32::new(0);
+/// The billboard width in pixels the held billboard pictures were scaled for.
+static BILLBOARD_SCALED_FOR: AtomicU32 = AtomicU32::new(0);
+
+pub fn set_billboard_points(width: f32) {
+    if width.is_finite() && width > 0.0 {
+        BILLBOARD_POINTS.store(width.to_bits(), Ordering::Relaxed);
+    }
+}
+
+/// The billboard in device pixels, (width, height): the page width by the banner height (at
+/// most 420 pt), at the window's pixels per point (2 on a Retina or 200% screen; a window moved
+/// to a sharper screen regrows its copy). The width rounds up to 64 so a small resize keeps the
+/// copy. `None` before the landing has laid out.
+fn billboard_px() -> Option<(u32, u32)> {
+    let points = f32::from_bits(BILLBOARD_POINTS.load(Ordering::Relaxed));
+    if points <= 0.0 {
+        return None;
+    }
+    let scale = f32::from_bits(PIXEL_SCALE.load(Ordering::Relaxed)).max(1.0);
+    let height = crate::screens::browse::top::billboard_height(points);
+    let width = ((points * scale / 64.0).ceil() as u32 * 64).max(128);
+    Some((width, (height * scale).ceil() as u32))
+}
+
+/// The size a `w` by `h` picture is scaled to so it still covers a `box_w` by `box_h` banner
+/// (the billboard draws it to fill, cropping the rest), or `None` when it is no more than
+/// about 15% over that and a second copy is not worth the work.
+pub(crate) fn billboard_fit(w: u32, h: u32, box_w: u32, box_h: u32) -> Option<(u32, u32)> {
+    if w == 0 || h == 0 || box_w == 0 || box_h == 0 {
+        return None;
+    }
+    let scale = (box_w as f64 / w as f64).max(box_h as f64 / h as f64);
+    if scale * 1.15 >= 1.0 {
+        return None;
+    }
+    let width = ((w as f64 * scale).ceil() as u32).clamp(1, w);
+    let height = ((h as f64 * scale).ceil() as u32).clamp(1, h);
+    Some((width, height))
+}
+
+/// Decode and scale the billboard's original upload on the fetch worker to what the banner
+/// shows, so the image cache keeps (with its mips, and again on the GPU) a banner's worth of
+/// pixels, not the full upload. Anything that cannot be read stays encoded.
+fn shrink_billboard(bytes: Vec<u8>) -> ThumbBytes {
+    let Some((box_w, box_h)) = billboard_px() else {
+        return ThumbBytes::Encoded(bytes);
+    };
+    let Ok(image) = image::load_from_memory(&bytes) else {
+        return ThumbBytes::Encoded(bytes);
+    };
+    let Some((width, height)) = billboard_fit(image.width(), image.height(), box_w, box_h) else {
+        return ThumbBytes::Encoded(bytes);
+    };
+    let scaled = image::imageops::resize(&image.to_rgba8(), width, height, image::imageops::FilterType::Triangle);
+    ThumbBytes::Rgba(width, height, scaled.into_raw())
+}
+
+/// The billboard grew (a wider window, a sharper screen): fetch its held pictures again at the
+/// new size. The disk cache answers and each one replaces the softer copy as it arrives.
+fn regrow_billboard(state: &mut State) {
+    let Some((target, _)) = billboard_px() else { return };
+    let before = BILLBOARD_SCALED_FOR.swap(target, Ordering::Relaxed);
+    if before == 0 || target <= before {
+        return;
+    }
+    let held: Vec<String> = state.thumbnails.keys().filter(|key| key.ends_with(BILLBOARD_MARK)).cloned().collect();
+    let wake = state.wake.clone();
+    state.thumb_crew.add(held, wake, false);
+}
+
 /// A fetched image, as the bytes or already scaled to the size it draws at.
 pub enum ThumbBytes {
     Encoded(Vec<u8>),
@@ -896,8 +974,11 @@ impl ThumbCrew {
                             },
                             Err(_) => break,
                         };
-                        let bytes = fetch_thumb_bytes(&next).map(|bytes| {
-                            if shrink {
+                        let billboard = next.strip_suffix(BILLBOARD_MARK);
+                        let bytes = fetch_thumb_bytes(billboard.unwrap_or(&next)).map(|bytes| {
+                            if billboard.is_some() {
+                                shrink_billboard(bytes)
+                            } else if shrink {
                                 shrink_card_thumb(&next, bytes)
                             } else {
                                 ThumbBytes::Encoded(bytes)
@@ -1439,6 +1520,7 @@ pub fn apply_browse_page(state: &mut State, result: Result<BrowsePageView, Strin
 pub fn drain_thumbnails(state: &mut State) -> bool {
     let mut changed = false;
     regrow_card_thumbs(state);
+    regrow_billboard(state);
     if let Some(cache) = state.images.as_ref() {
         let pending = std::mem::take(&mut state.pending_thumbs);
         for (key, bytes) in pending {
@@ -4538,6 +4620,32 @@ pub fn use_subscription_for_agent(state: &mut State, provider: &str) {
 #[cfg(test)]
 mod thumb_tests {
     use super::*;
+
+    /// The billboard keeps a banner's worth of pixels: a 4K upload under a 1200 pt banner at 2x
+    /// (2432 by 840 px) becomes 2432 by 1368, still covering it; at 1x a 1080p upload becomes
+    /// 1216 by 684. A picture already about the banner's size is left alone.
+    #[test]
+    fn the_billboard_picture_is_scaled_to_cover_the_banner() {
+        assert_eq!(billboard_fit(3840, 2160, 2432, 840), Some((2432, 1368)));
+        assert_eq!(billboard_fit(1920, 1080, 1216, 420), Some((1216, 684)));
+        // A tall picture: its width sets the cover.
+        assert_eq!(billboard_fit(2000, 4000, 1216, 420), Some((1216, 2432)));
+        // Smaller than the banner, or within 15% of it: no second copy.
+        assert_eq!(billboard_fit(1920, 1080, 2432, 840), None);
+        assert_eq!(billboard_fit(1300, 731, 1216, 420), None);
+        assert_eq!(billboard_fit(0, 10, 100, 100), None);
+        for (w, h, bw, bh) in [(3840u32, 2160u32, 2432u32, 840u32), (5000, 1000, 1216, 420), (1000, 5000, 640, 420)] {
+            if let Some((sw, sh)) = billboard_fit(w, h, bw, bh) {
+                assert!(sw >= bw && sh >= bh, "{w}x{h} scaled to {sw}x{sh} no longer covers {bw}x{bh}");
+            }
+        }
+    }
+
+    #[test]
+    fn the_billboard_key_fetches_the_plain_upload() {
+        let key = crate::screens::browse::top::large_of("https://images.gamebanana.com/img/ss/mods/530-90_a.jpg");
+        assert_eq!(key.strip_suffix(BILLBOARD_MARK), Some("https://images.gamebanana.com/img/ss/mods/a.jpg"));
+    }
 
     #[test]
     fn a_failed_image_is_not_asked_for_again_until_it_rests() {
