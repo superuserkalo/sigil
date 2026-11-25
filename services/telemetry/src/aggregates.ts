@@ -4,7 +4,7 @@
  *
  * An install id is a UUID the app makes, so one person could send many made-up ids. The rule:
  *
- * 1. Epochs. Time is cut into 30-day epochs (`EPOCH_MS`). Each request gets a network bucket:
+ * 1. Epochs. Time is cut into weekly epochs (`EPOCH_DAYS`, the one setting for the period). Each request gets a network bucket:
  *    HMAC-SHA256 under the Worker secret `PRODUCT_BUCKET_KEY` of the epoch number and the caller's
  *    network prefix (IPv4 /24, IPv6 /48), cut to 16 hex characters. A network's bucket changes
  *    every epoch, so it cannot be linked across epochs. The address and the prefix are never
@@ -29,7 +29,10 @@ import { toHex } from "./hash";
 import { secretOk, type ProductRecord } from "./product";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
-export const EPOCH_MS = 30 * DAY_MS;
+/** The one setting for the aggregate period (owner decision 2026-11-25: weekly). The bucket key,
+ * the contribution epoch, closing and grace all follow it. */
+export const EPOCH_DAYS = 7;
+export const EPOCH_MS = EPOCH_DAYS * DAY_MS;
 /** Late requests for an epoch still land in it for this long before it closes. */
 export const GRACE_MS = 2 * DAY_MS;
 export const FLOOR = { installs: 10, buckets: 6, days: 3 } as const;
@@ -57,12 +60,12 @@ export const PER_INSTALL_CAP: Readonly<Record<string, number>> = {
   search_few: 50,
   install_day: 64,
 };
-/** Rising: a mod needs this many installs in the last two weeks of the epoch to rank at all. */
+/** Rising: a mod needs this many installs in the newest closed week to rank at all. */
 export const RISING_MIN_LATE = 5;
 export const MAX_RISING = 50;
-/** Health and conflicts read only the closed epochs this recent (about 90 days), so a mod that
- * was fixed stops carrying old reports. */
-export const RECENT_EPOCHS = 3;
+/** Health and related mods read only the closed epochs this recent (the last 8 weeks), so a mod
+ * that was fixed stops carrying old reports. */
+export const RECENT_EPOCHS = 8;
 /** A Browse search with at most this many results counts as a search gap. */
 export const FEW_RESULTS = 5;
 /** Install failure reasons that point at the mod, not at the player's PC or network. */
@@ -389,7 +392,6 @@ export async function closeEpochs(db: D1Database, now: number): Promise<number[]
         .bind(epoch, kind, MIN_DAYS_SEEN, INSTALLS_PER_BUCKET, now, FLOOR.installs, FLOOR.buckets, FLOOR.days)
         .run();
       if (kind === "fps") await fillMedians(db, epoch);
-      if (kind === "install_day") await fillWeeks(db, epoch);
       budget = await deleteChunks(db, epoch, kind, budget);
       if (budget <= 0) return closed;
     }
@@ -458,50 +460,6 @@ async function fillMedians(db: D1Database, epoch: number): Promise<void> {
   );
 }
 
-/** The bucket of a day of an epoch: days 0-6, 7-13, 14-15, 16-22, 23-29. The first two and the
- * last two are whole weeks, so Rising compares like with like. */
-export function weekOf(dayIndex: number): number {
-  if (dayIndex < 7) return 0;
-  if (dayIndex < 14) return 1;
-  if (dayIndex < 16) return 2;
-  if (dayIndex < 23) return 3;
-  return 4;
-}
-
-/**
- * Install counts by week for the `install_day` keys of an epoch that met the floor: eligible
- * installs only, five whole numbers per mod. No install hash, bucket or day leaves the
- * contribution table, which is deleted right after.
- */
-async function fillWeeks(db: D1Database, epoch: number): Promise<void> {
-  const { results } = await db
-    .prepare(
-      `${ELIGIBLE}
-       SELECT c.key AS key, c.day AS day
-       FROM product_contrib c JOIN eligible e ON e.install_hash = c.install_hash
-       WHERE c.epoch = ?1 AND c.kind = 'install_day'
-         AND c.key IN (SELECT key FROM product_totals WHERE epoch = ?1 AND kind = 'install_day' AND weeks IS NULL)`,
-    )
-    .bind(epoch, null, MIN_DAYS_SEEN, INSTALLS_PER_BUCKET)
-    .all<{ key: string; day: string }>();
-  const start = epoch * EPOCH_MS;
-  const byKey = new Map<string, number[]>();
-  for (const row of results) {
-    const at = Date.parse(`${row.day}T00:00:00Z`);
-    if (!Number.isFinite(at)) continue;
-    const index = Math.max(0, Math.min(29, Math.floor((at - start) / DAY_MS)));
-    const weeks = byKey.get(row.key) ?? [0, 0, 0, 0, 0];
-    weeks[weekOf(index)] = (weeks[weekOf(index)] ?? 0) + 1;
-    byKey.set(row.key, weeks);
-  }
-  if (byKey.size === 0) return;
-  await db.batch(
-    [...byKey].map(([key, weeks]) =>
-      db.prepare("UPDATE product_totals SET weeks = ?3 WHERE epoch = ?1 AND kind = 'install_day' AND key = ?2").bind(epoch, key, weeks.join(",")),
-    ),
-  );
-}
-
 /** Delete one kind of an epoch's contributions, `DELETE_CHUNK` rows at a time. */
 async function deleteChunks(db: D1Database, epoch: number, kind: string, budget: number): Promise<number> {
   let left = budget;
@@ -545,32 +503,37 @@ export async function publishedKeys(
   return results;
 }
 
-/** Mods used with `mod`, from closed epochs that met the floor, ranked by a damped cosine score. */
+/** Mods used with `mod`, from the recent closed epochs that met the floor (the last 8 weeks),
+ * ranked by a damped cosine score. */
 export async function related(
   db: D1Database,
   secret: string | undefined,
   mod: number,
+  now: number = Date.now(),
 ): Promise<{ modId: number; installs: number }[]> {
   if (!hasBucketKey(secret)) return [];
   const { results } = await db
     .prepare(
       `SELECT CASE WHEN mod_a = ?1 THEN mod_b ELSE mod_a END AS other, SUM(installs) AS installs
        FROM product_totals
-       WHERE kind = 'pair' AND (mod_a = ?1 OR mod_b = ?1) AND ${MEETS_FLOOR}
+       WHERE kind = 'pair' AND (mod_a = ?1 OR mod_b = ?1) AND epoch >= ?2 AND ${MEETS_FLOOR}
        GROUP BY other
        LIMIT 90`,
     )
-    .bind(mod)
+    .bind(mod, recentFrom(now))
     .all<{ other: number; installs: number }>();
   if (results.length === 0) return [];
 
   // Per-mod totals over every closed epoch, for the cosine denominator. D1 allows 100 bound
-  // values; 90 candidates and the mod itself stay under it.
+  // values; 90 candidates, the mod itself and the epoch stay under it.
   const ids = [mod, ...results.map((row) => row.other)];
-  const marks = ids.map((_, n) => `?${n + 1}`).join(",");
+  const marks = ids.map((_, n) => `?${n + 2}`).join(",");
   const totals = await db
-    .prepare(`SELECT mod_a AS mod, SUM(installs) AS installs FROM product_totals WHERE kind = 'mod' AND mod_a IN (${marks}) GROUP BY mod_a`)
-    .bind(...ids)
+    .prepare(
+      `SELECT mod_a AS mod, SUM(installs) AS installs FROM product_totals
+       WHERE kind = 'mod' AND mod_a IN (${marks}) AND epoch >= ?1 GROUP BY mod_a`,
+    )
+    .bind(recentFrom(now), ...ids)
     .all<{ mod: number; installs: number }>();
   const total = new Map(totals.results.map((row) => [row.mod, row.installs]));
   const base = Math.max(1, total.get(mod) ?? 1);
@@ -754,29 +717,35 @@ export async function searchGaps(
 }
 
 /**
- * Rising: mods whose installs grew within the newest closed epoch that has any, ranked by the
- * installs of its last two weeks against its first two, damped so a handful does not lead:
- * ((late + 1) / (early + 1)) * late / (late + 10). Only mods that met the floor over the epoch
- * and have at least `RISING_MIN_LATE` late installs. The open epoch is never read.
+ * Rising: mods whose installs grew from one closed week to the next. Per mod, the newest closed
+ * epoch that has any `install_day` totals must have met the floor for that mod; the week before
+ * counts when it met the floor too, else as 0. Ranked by a damped ratio,
+ * ((late + 1) / (early + 1)) * late / (late + 10), with at least `RISING_MIN_LATE` late installs.
+ * The open epoch is never read.
  */
 export async function rising(db: D1Database, secret: string | undefined): Promise<{ modId: number; recent: number }[]> {
   if (!hasBucketKey(secret)) return [];
   const newest = await db
-    .prepare("SELECT MAX(epoch) AS epoch FROM product_totals WHERE kind = 'install_day' AND weeks IS NOT NULL")
+    .prepare("SELECT MAX(epoch) AS epoch FROM product_totals WHERE kind = 'install_day'")
     .first<{ epoch: number | null }>();
-  if (newest?.epoch === null || newest?.epoch === undefined) return [];
+  const last = newest?.epoch;
+  if (last === null || last === undefined) return [];
   const { results } = await db
-    .prepare(`SELECT mod_a, weeks FROM product_totals WHERE kind = 'install_day' AND epoch = ?1 AND weeks IS NOT NULL AND ${MEETS_FLOOR}`)
-    .bind(newest.epoch)
-    .all<{ mod_a: number; weeks: string }>();
+    .prepare(
+      `SELECT mod_a, epoch, installs FROM product_totals
+       WHERE kind = 'install_day' AND epoch IN (?1, ?2) AND ${MEETS_FLOOR}`,
+    )
+    .bind(last, last - 1)
+    .all<{ mod_a: number; epoch: number; installs: number }>();
+  const early = new Map(results.filter((row) => row.epoch === last - 1).map((row) => [row.mod_a, row.installs]));
   return results
+    .filter((row) => row.epoch === last && Number.isSafeInteger(row.mod_a))
     .map((row) => {
-      const w = row.weeks.split(",").map(Number);
-      const early = (w[0] ?? 0) + (w[1] ?? 0);
-      const late = (w[3] ?? 0) + (w[4] ?? 0);
-      return { modId: row.mod_a, recent: late, score: ((late + 1) / (early + 1)) * (late / (late + 10)) };
+      const late = row.installs;
+      const before = early.get(row.mod_a) ?? 0;
+      return { modId: row.mod_a, recent: late, score: ((late + 1) / (before + 1)) * (late / (late + 10)) };
     })
-    .filter((row) => row.recent >= RISING_MIN_LATE && Number.isSafeInteger(row.modId))
+    .filter((row) => row.recent >= RISING_MIN_LATE)
     .sort((a, b) => b.score - a.score || b.recent - a.recent || a.modId - b.modId)
     .slice(0, MAX_RISING)
     .map(({ modId, recent }) => ({ modId, recent }));

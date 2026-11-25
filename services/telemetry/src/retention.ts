@@ -11,7 +11,7 @@
  *   to that install id or extended by it.
  * - `product_totals` (counts above the floor) are kept indefinitely.
  * - `product_contrib`, the only table with a network marker, keeps its short life: its epoch, and
- *   the 75-day hard backstop below.
+ *   the 21-day hard backstop below.
  */
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -26,11 +26,11 @@ const UNLINK_BUDGET = 50;
 export const UNLINKED_PREFIX = "u:";
 /**
  * The hard limit for `product_contrib`, the only table that links a network bucket to an install:
- * an epoch (30 days), its grace (2 days) and a backlog for a closing that keeps failing. Rows
+ * an epoch (7 days), its grace (2 days) and a backlog for a closing that keeps failing. Rows
  * older than this go whether or not their epoch was closed; their totals are lost, the link is not
  * kept.
  */
-export const CONTRIB_BACKSTOP_MS = 75 * DAY_MS;
+export const CONTRIB_BACKSTOP_MS = 21 * DAY_MS;
 
 export type RetentionResult = {
   readonly diagnostics: number;

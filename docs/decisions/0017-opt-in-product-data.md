@@ -73,7 +73,8 @@ The limits below are what keeps this honest. They are part of the decision, not 
 ## Amendment 2026-11-25: counting distinct contributors
 
 An install id is a random id the app makes, so one person can send many made-up ids. Aggregates
-therefore count distinct contributors in 30-day epochs (`services/telemetry/src/aggregates.ts`):
+therefore count distinct contributors in weekly epochs (7 days, one setting, `EPOCH_DAYS`; owner
+decision 2026-11-25, was 30 days) (`services/telemetry/src/aggregates.ts`):
 
 - Network bucket. Each request gets a bucket: a keyed hash (HMAC-SHA256 under the Worker secret
   `PRODUCT_BUCKET_KEY`) of the epoch number and the caller's network prefix (an IPv4 /24 or an
@@ -82,9 +83,9 @@ therefore count distinct contributors in 30-day epochs (`services/telemetry/src/
   (`PRODUCT_SALT` for the install id hash, `PRODUCT_BUCKET_KEY`), each at least 32 characters, the
   product routes answer 503 and store nothing (fail closed); there is no unsalted fallback.
 - Open-epoch contributions (`product_contrib`) are the only place a bucket sits next to an install
-  hash. They live only until their epoch closes (30 days plus 2 days of grace) and go at once with
-  "Delete my data". A backstop in the daily retention deletes any such row older than 75 days
-  whether or not its epoch closed, so the network marker lives 75 days at most; a closing that
+  hash. They live only until their epoch closes (7 days plus 2 days of grace) and go at once with
+  "Delete my data". A backstop in the daily retention deletes any such row older than 21 days
+  whether or not its epoch closed, so the network marker lives about 9 days and 21 days at most; a closing that
   keeps failing loses those totals instead of keeping the link, and shows as an error in the
   Worker log. A bucket admits at most 3 installs per epoch, counted from that table, so a
   deleted install frees its slot and nothing grows forever.
@@ -115,7 +116,7 @@ raises the cost of poisoning; it does not make it impossible.
   you turn on Help build Sigil".
 - Sigil holds data that describes one install's taste and hardware, for as long as the install
   shares. Long retention means a breach of the Worker's database would expose more history. That
-  is why the network marker stays short (one epoch, 75 days at most), no IP address or user agent
+  is why the network marker stays short (one week and its grace, 21 days at most), no IP address or user agent
   is ever stored, the install id is only kept as a salted hash, inactive installs are unlinked
   after 24 months, and "Delete my data" is on the Privacy page next to the switch and works at
   any time while the rows are still linked.

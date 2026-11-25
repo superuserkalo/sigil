@@ -20,7 +20,6 @@ import {
   modHealth,
   resolutionBucket,
   rising,
-  weekOf,
   searchGaps,
   type KeyContext,
 } from "../src/aggregates";
@@ -165,7 +164,7 @@ describe("mod health", () => {
   });
 
   it("forgets reports older than the recent epochs", async () => {
-    const old = (epochOf(Date.now()) - 6) * EPOCH_MS;
+    const old = (epochOf(Date.now()) - 12) * EPOCH_MS;
     await seed(old, 10, SIX_NETWORKS, () => [SET, FAIL]);
     await closeEpochs(env.DB, Date.now());
     expect(await modHealth(env.DB, KEY, [100], old + 2 * EPOCH_MS + 3 * DAY)).toHaveLength(1);
@@ -293,7 +292,7 @@ describe("rising by real installs", () => {
       const network = `10.${60 + net + (n % 6)}.0.${n + 1}`;
       const first = day(n);
       await contribute(env.DB, KEY, network, hash, [installed(mod)], base + first * DAY + 3_600_000);
-      await contribute(env.DB, KEY, network, hash, [], base + Math.min(29, first + 1) * DAY + 3_600_000);
+      await contribute(env.DB, KEY, network, hash, [], base + Math.min(6, first + 1) * DAY + 3_600_000);
     }
   }
 
@@ -307,20 +306,37 @@ describe("rising by real installs", () => {
     expect(await rising(env.DB, KEY)).toEqual([]);
   });
 
-  it("ranks mods whose installs grew late in the newest closed epoch, behind the floor", async () => {
-    // 600 grows: 2 early, 12 late. 700 is steady: 8 early, 8 late. 800 is late but under the floor.
-    await installsOn(RECENT, 600, 14, (n) => (n < 2 ? n : 16 + (n % 12)));
-    await installsOn(RECENT, 700, 16, (n) => (n < 8 ? n % 14 : 16 + (n % 12)), 10);
-    await installsOn(RECENT, 800, 9, (n) => 20 + (n % 8), 20);
+  it("ranks the newest closed week against the week before, behind the floor", async () => {
+    const week = (epochOf(Date.now()) - 2) * EPOCH_MS;
+    const before = week - EPOCH_MS;
+    // 600 grows: 3 installs the week before (below the floor, so 0), 14 in the newest week.
+    await installsOn(before, 600, 3, (n) => n % 3);
+    await installsOn(week, 600, 14, (n) => n % 3);
+    // 700 is steady: 12 then 12. 800 is under the floor in the newest week.
+    await installsOn(before, 700, 12, (n) => n % 3, 10);
+    await installsOn(week, 700, 12, (n) => n % 3, 10);
+    await installsOn(week, 800, 9, (n) => n % 3, 20);
     await closeEpochs(env.DB, Date.now());
     const response = await get("/v1/product/rising");
     const text = await response.text();
     expect(text).not.toMatch(HEX_ID);
-    expect(JSON.parse(text)).toEqual({ mods: [{ modId: 600, recent: 12 }, { modId: 700, recent: 8 }] });
-    const weeks = await env.DB.prepare("SELECT weeks FROM product_totals WHERE kind = 'install_day' AND key = '600'").first<{ weeks: string }>();
-    expect(weeks?.weeks).toBe("2,0,0,7,5");
-    expect(weekOf(13)).toBe(1);
-    expect(weekOf(16)).toBe(3);
+    expect(JSON.parse(text)).toEqual({ mods: [{ modId: 600, recent: 14 }, { modId: 700, recent: 12 }] });
+  });
+
+  it("publishes nothing from one network over many weeks", async () => {
+    for (let k = 1; k <= 6; k += 1) {
+      const base = (epochOf(Date.now()) - k) * EPOCH_MS;
+      for (let n = 0; n < 30; n += 1) {
+        const hash = await installHash(crypto.randomUUID(), SALT);
+        for (const day of [n % 3, (n % 3) + 1]) {
+          await contribute(env.DB, KEY, `198.51.100.${n + 1}`, hash, [installed(900), SET, FAIL], base + day * DAY + 3_600_000);
+        }
+      }
+    }
+    await closeEpochs(env.DB, Date.now());
+    expect(await rising(env.DB, KEY)).toEqual([]);
+    expect(await modHealth(env.DB, KEY, [100, 900], Date.now())).toEqual([]);
+    expect((await env.DB.prepare("SELECT COUNT(*) AS n FROM product_totals").first<{ n: number }>())?.n).toBe(0);
   });
 
   it("answers 503 without its secrets", async () => {

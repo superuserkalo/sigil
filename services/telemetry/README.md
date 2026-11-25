@@ -21,7 +21,7 @@ party: usage events go to Analytics Engine, everything else to D1.
 | GET | `/v1/product/related?mod=<id>` | none | Nothing. Co-installed mods above the floor. |
 | GET | `/v1/product/health?mods=<id,id,...>` | none | Nothing. Mod health above the floor, at most 40 mods. |
 | GET | `/v1/product/fps?gpu=<model>&cpu=<model>&height=<px>` | none | Nothing. Frame rates per config on that hardware class. |
-| GET | `/v1/product/rising` | none | Nothing. Up to 50 mods whose installs grew most in the newest closed period. |
+| GET | `/v1/product/rising` | none | Nothing. Up to 50 mods whose installs grew most from one closed week to the next. |
 | GET | `/v1/product/admin/search-gaps` | none | Nothing. Owner only, needs `PRODUCT_ADMIN_KEY`. |
 
 Every request needs `x-sigil-client: 1` and a semver `x-sigil-version`, otherwise 400. The limiter
@@ -131,8 +131,8 @@ The owner deploys. Nothing here writes to a game install.
    `docs/architecture.md`, then point the desktop app at it once the client exists.
 
 The cron trigger runs at 03:17 UTC daily: retention first (diagnostics older than 30 days, crashes
-older than 90, product contributions older than 75 days), then it unlinks the raw product records
-of installs that sent nothing for 24 months, then it closes finished 30-day product epochs. Raw
+older than 90, product contributions older than 21 days), then it unlinks the raw product records
+of installs that sent nothing for 24 months, then it closes finished weekly product epochs (7 days, `EPOCH_DAYS`). Raw
 product records and product totals are otherwise kept (ADR 0017). Analytics Engine
 retention is Cloudflare's own; query it with the SQL API.
 
@@ -162,8 +162,8 @@ eligible installs, 6 network buckets, 3 days). No install hash, bucket or single
 leaves the Worker. The routes are rate limited like every other route.
 
 - `GET /v1/product/related?mod=<id>`: `{mods: [{modId, installs}]}`, at most 20, damped cosine.
-- `GET /v1/product/health?mods=<id,...>`: per mod, from the last 3 closed epochs only (about 90
-  days, so a fixed mod stops carrying old reports): `install` (`failed` installs whose reason
+- `GET /v1/product/health?mods=<id,...>`: per mod, from the last 8 closed weekly epochs only (so a
+  fixed mod stops carrying old reports): `install` (`failed` installs whose reason
   points at the mod, `attempts` from the same epochs, `reasons`), `broken` per game build
   (`reports`: the strongest of moved, gone, skeleton, turned off after a crash and crash suspect;
   `users`: installs that had the mod on at that build) and `conflicts` (`reports` of overlap or
@@ -177,11 +177,10 @@ leaves the Worker. The routes are rate limited like every other route.
   `low`) and deletes the per-install values with the rest of the epoch.
 
 - `GET /v1/product/rising`: `{mods: [{modId, recent}]}`, at most 50. Kind `install_day` (from
-  `mod_action` installed; the contribution's day is the install day). Closing an epoch keeps, per mod
-  that met the floor over the epoch, five counts of eligible installs by day of the epoch (`weeks`:
-  days 0-6, 7-13, 14-15, 16-22, 23-29). The route reads the newest closed epoch only and ranks by
-  `((late + 1) / (early + 1)) * late / (late + 10)`, where early is the first two weeks and late the
-  last two, with at least 5 late installs. Empty until a closed epoch has data.
+  `mod_action` installed), one key per mod. The route reads the newest closed week: a mod must meet
+  the floor there (`late`); the week before counts when it met the floor too (`early`), else 0.
+  Ranked by `((late + 1) / (early + 1)) * late / (late + 10)`, at least 5 late installs. Empty
+  until a closed week has data. The `weeks` column from 0004 is no longer written.
 
 ### Search gaps (owner only)
 
@@ -195,6 +194,19 @@ curl -s https://sigil-telemetry.gantchevkaloyan.workers.dev/v1/product/admin/sea
   -H 'x-sigil-client: 1' -H 'x-sigil-version: 0.1.0' \
   -H "authorization: Bearer $PRODUCT_ADMIN_KEY"
 # {"zero":[{"term":"kelvin hat","installs":14}],"few":[{"term":"yamato sword","installs":11}]}
+```
+
+### Weekly epochs (migration 0005)
+
+Epochs are 7 days (`EPOCH_DAYS` in `src/aggregates.ts`, the one setting). Contributions live their
+week plus 2 days of grace, 21 days at most. Health and related mods read the last 8 closed weeks.
+`0005_weekly_epochs.sql` deletes any contribution or total numbered under the old 30-day epochs
+(epoch below 1500); the tables were empty when the change landed, so it is a guard. Apply it after
+deploying the weekly code:
+
+```bash
+npx wrangler deploy
+npx wrangler d1 migrations apply sigil --remote   # 0005_weekly_epochs.sql
 ```
 
 ### Deploying migration 0004

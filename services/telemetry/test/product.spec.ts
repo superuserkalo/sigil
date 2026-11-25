@@ -175,7 +175,8 @@ const SET = { type: "enabled_set", mods: [{ mod_id: 100, slot: 1 }, { mod_id: 20
 const KEY = (env as typeof env & { readonly PRODUCT_BUCKET_KEY: string }).PRODUCT_BUCKET_KEY;
 const DAY = 24 * 60 * 60 * 1000;
 /** The start of a fixed epoch, so tests do not depend on today's date. */
-const E0 = (epochOf(Date.UTC(2026, 0, 1)) + 1) * EPOCH_MS;
+/** The start of a recent fixed epoch, so the readers' last 8 weeks still see it. */
+const E0 = (epochOf(Date.now()) - 5) * EPOCH_MS;
 
 function records(): ProductRecord[] {
   return [SET, { type: "browse_query", sort: null, filters: [], search: "haze", results: 3 }].map((raw) => parseRecord(raw) as ProductRecord);
@@ -232,8 +233,8 @@ describe("the distinct-contributor floor", () => {
     expect(await publishedKeys(env.DB, KEY, "search", 10)).toEqual([{ key: "haze", installs: 10 }]);
   });
 
-  it("publishes nothing for fifty made-up ids on one network over three epochs", async () => {
-    for (const epoch of [0, 1, 2]) await sendEpoch(epoch, 50, (n) => `198.51.100.${n + 1}`);
+  it("publishes nothing for fifty made-up ids on one network over many weeks", async () => {
+    for (const epoch of [0, 1, 2, 3, 4]) await sendEpoch(epoch, 50, (n) => `198.51.100.${n + 1}`);
     await closeAll();
     expect(await relatedTo(100)).toEqual({ mods: [] });
     expect(await publishedKeys(env.DB, KEY, "search", 10)).toEqual([]);
@@ -409,11 +410,11 @@ describe("the daily job", () => {
     expect((await env.DB.prepare("SELECT COUNT(*) AS n FROM diagnostics").first<{ n: number }>())?.n).toBe(0);
   });
 
-  it("deletes contributions older than 75 days even when closing keeps failing", async () => {
+  it("deletes contributions older than 21 days even when closing keeps failing", async () => {
     const now = Date.now();
     for (const [age, key] of [
-      [76, "old"],
-      [74, "recent"],
+      [22, "old"],
+      [20, "recent"],
     ] as const) {
       await env.DB.prepare(
         `INSERT INTO product_contrib (epoch, kind, key, install_hash, bucket, day, created_at) VALUES (?1, 'search', ?2, 'h', 'b', 'd', ?3)`,

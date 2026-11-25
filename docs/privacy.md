@@ -227,12 +227,12 @@ address and no user agent.
 | Table | Holds | Kept |
 | --- | --- | --- |
 | `product_events` | One row per record: salted SHA-256 of the product data id, record type, Sigil version, OS, OS build, game build, the record's fields | While you keep sharing, until you press Delete my data. After 24 months with nothing new from you, the id hash is replaced by a random value (see below) |
-| `product_contrib` | Working rows for the current 30-day period: the salted id hash, the aggregate key, the day, and a network marker | Until the period closes (about 32 days), never more than 75 days, or until Delete my data |
+| `product_contrib` | Working rows for the current weekly period: the salted id hash, the aggregate key, the day, and a network marker | Until the period closes (about 9 days: the week and 2 days of grace), never more than 21 days, or until Delete my data |
 | `product_totals` | Counts only, per period and key: installs, networks, days. No id, no network marker. Only keys that met the floor | Kept indefinitely |
 
 Sigil keeps this data as long as possible, on purpose: a longer history makes the suggestions and
 the mod health warnings better. The flip side is that a breach of the Worker's database would
-expose more history, which is why the network marker below lives 75 days at most and Delete my
+expose more history, which is why the network marker below lives 21 days at most and Delete my
 data works at any time. When an install has sent nothing for 24 months, the daily job replaces the
 id hash on all of its records with one fresh random value made for that install and stored
 nowhere else: the records stay, but they can no longer be tied to your id, and nothing new is
@@ -240,14 +240,14 @@ added to them. After that, Delete my data can no longer find them.
 
 The network marker is how Sigil counts distinct contributors without storing addresses: a keyed
 hash (HMAC-SHA256 under a secret only the Worker holds) of your network prefix (the first three
-parts of an IPv4 address, the first three groups of an IPv6 address) and the 30-day period. It
-changes every period, is kept only in `product_contrib`, and lives 75 days at most. Your IP address
+parts of an IPv4 address, the first three groups of an IPv6 address) and the weekly period. It
+changes every week, is kept only in `product_contrib`, about 9 days and 21 days at most. Your IP address
 itself is never stored.
 
 ### What is shown to other players, and when
 
 Nothing from a single install. A mod pair ("players who use this also use"), a mod health finding,
-a frame rate for a hardware class or a search term is used only when, within one 30-day period, at
+a frame rate for a hardware class or a search term is used only when, within one weekly period, at
 least 10 installs that sent data on at least 2 days, from at least 6 different networks, on at
 least 3 different days, share it. A network counts at most 3 installs per period. Keys below that
 floor are discarded when the period closes. The current period is never shown.
@@ -266,15 +266,15 @@ the Worker returns something that passed the floor, nothing of it appears in the
 - Mod health chips on Browse, the details and Installed: `GET /v1/product/health?mods=<ids>`, the
   GameBanana ids on screen and installed, 40 at a time. A chip shows only when it rests on at least
   10 installs and a clear share of them: "Often fails to install" (25% of reported installs failed
-  for a reason that points at the mod, over about the last 90 days), "Reported broken on the
+  for a reason that points at the mod, over the last 8 weeks), "Reported broken on the
   current game build" (20% of installs that used the mod on your exact game build reported it
   moved, gone, turned off after a crash or a crash suspect; a game update clears it) and "Often
   conflicts with" a mod you have (30% of installs that had both on). The tooltip says how many
   reports it rests on.
 - Rising by real installs: `GET /v1/product/rising`, once a day while Browse is open, sends
   nothing but the request. The Worker answers with up to 50 mod ids whose installs among players
-  who share grew most in the newest closed 30-day period (counts by week of the period, above
-  the floor).
+  who share grew most from one closed week to the next (installs in the newest closed week, above
+  the floor, against the week before).
 - Frame rates on the Performance page: `GET /v1/product/fps?gpu=<model>&cpu=<model>&height=<px>`,
   your GPU and CPU model names (reduced as above) and screen height, once a day while the page is
   open. The Worker groups PCs by GPU model and a CPU tier (high, mid, low) and the screen height by
