@@ -1430,6 +1430,17 @@ mod tests {
     }
 
     #[test]
+    /// A star is only ever drawn from the loaded list: a press on a mod the list has not been
+    /// read for must never be taken for "not saved" (it used to remove the saved mod).
+    fn a_saved_mod_shows_its_star_once_the_list_is_read() {
+        let mut st = State::default();
+        assert!(st.browse_view.favorites.is_none(), "unread at start");
+        assert!(!is_favorite(&st, "Mod", 7));
+        ensure_favorites(&mut st);
+        assert!(st.browse_view.favorites.is_some(), "the poll reads it before a star is drawn");
+    }
+
+    #[test]
     fn favorites_round_trip_through_json() {
         let favorite = Favorite {
             id: 83198,

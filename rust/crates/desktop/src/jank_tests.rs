@@ -702,7 +702,7 @@ fn row_paging_slides_the_page_only() {
     let _globals = crate::ui::test_globals();
     let mut rt = runtime("browse-dashboard", (1280.0, 800.0));
     // The page, its tiles and the row's own arrows (the back arrow appears once off page 1).
-    let moving = |k: &str| k.contains("-page-") || k == "top-row-0-prev" || k == "top-row-0-next" || ["top-0-", "top-hover-0-", "top-thumb-0-", "top-install-0-", "top-star-0-", "top-show-0-"].iter().any(|p| k.starts_with(p));
+    let moving = |k: &str| k.contains("-page-") || k == "top-row-0-prev" || k == "top-row-0-next" || ["top-0-", "top-art-0-", "top-hover-0-", "top-thumb-0-", "top-install-0-", "top-star-0-", "top-show-0-", "top-less-0-"].iter().any(|p| k.starts_with(p));
     let still = |rt: &Runtime<State>| -> Vec<(String, [i32; 4])> { rects(rt).into_iter().filter(|(k, _)| !moving(k)).collect() };
     let before = still(&rt);
     apply(&mut rt, Step::Press("top-row-0-next"), "row next");

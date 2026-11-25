@@ -452,6 +452,12 @@ pub fn poll(st: &mut State, tx: &mut Tx) -> bool {
     // Every cover the landing shows (spotlight and shelves, current and next page), through
     // the shared gate: hidden or mature art is never fetched. Asked again whenever what the
     // landing shows changes, an image is evicted or the queue is cleared.
+    // The saved list is read once, before anything draws a star: left unread, every star showed
+    // empty and the first press on a saved mod removed it.
+    if st.browse_view.favorites.is_none() {
+        super::ensure_favorites(st);
+        changed = true;
+    }
     changed |= super::foryou::refresh(st);
     super::shelf::queue_covers(st);
     changed |= super::top::tick(st, tx);

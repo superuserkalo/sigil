@@ -10,7 +10,7 @@
 
 use super::*;
 use crate::screens::browse::grid::{image_fill, nsfw_tag, pixels_for, veiled};
-use crate::ui::{BILLBOARD, RANK, SECTION};
+use crate::ui::{BILLBOARD, SECTION};
 
 /// Ink on a white control drawn over art: the billboard's near black, `#0c0c0e`.
 pub const INK_ON_WHITE: Color = Color { r: 0.0036, g: 0.0036, b: 0.0044, a: 1.0 };
@@ -22,6 +22,8 @@ pub const GAP: f32 = 8.0;
 pub const PEEK: f32 = 40.0;
 /// One pager bar on the billboard.
 const SEG: f32 = 32.0;
+/// The words under a row tile's picture: a title line and a line of who and likes.
+pub const TILE_TEXT: f32 = 52.0;
 /// Tiles a row holds at most.
 pub const MAX_ROW: usize = 20;
 /// Billboard picks at most.
@@ -503,14 +505,9 @@ fn step_to(st: &mut State, index: usize, dir: i8) {
 
 // --- the view ------------------------------------------------------------------------------
 
+/// A wide banner, 21:9 of the page, within sensible limits.
 pub fn billboard_height(width: f32) -> f32 {
-    if width >= 960.0 {
-        288.0
-    } else if width >= 720.0 {
-        248.0
-    } else {
-        200.0
-    }
+    (width * 9.0 / 21.0).round().clamp(220.0, 420.0)
 }
 
 /// The landing top: billboard and strip, then the rows. Placeholders at their final size
@@ -567,8 +564,8 @@ fn row_placeholder(u: &Ui, width: f32, n: usize, i: usize) -> El {
         .gap(8.0)
         .child(row().h(24.0).center_y().child(bar(u, 120.0, 10.0)))
         .child(
-            row().w_full().h(th).gap(GAP).clip_rounded(0.0).children((0..=n).map(|_| {
-                el().size(tw, th)
+            row().w_full().h(th + TILE_TEXT).gap(GAP).clip_rounded(0.0).children((0..=n).map(|_| {
+                el().size(tw, th + TILE_TEXT)
                     .min_w(tw)
                     .radius(r)
                     .fill(u.well)
@@ -578,36 +575,29 @@ fn row_placeholder(u: &Ui, width: f32, n: usize, i: usize) -> El {
         )
 }
 
-/// The billboard: blurred backdrop, sharp art at the right, scrim, text and actions, arrows.
+/// The billboard: the pick's picture fills the whole banner (cropped from the top, as a wide
+/// banner wants), fading into the page at the bottom and the left, with the title and the
+/// actions on that fade. The picture is the mod's full-size upload, so it stays sharp.
 fn billboard(s: &State, u: &Ui, picks: &[Slide], width: f32) -> El {
     let h = billboard_height(width);
-    let (title_font, title_h, desc_lines, inset) = if width >= 960.0 {
-        (BILLBOARD, 64.0, 2usize, 32.0)
+    let (title_font, title_lines, desc_lines, pad) = if width >= 960.0 {
+        (BILLBOARD, 2usize, 2usize, 32.0)
     } else if width >= 720.0 {
-        (BILLBOARD_S, 56.0, 1, 24.0)
+        (BILLBOARD_S, 2, 1, 24.0)
     } else {
-        (crate::ui::PAGE_TITLE, 24.0, 0, 24.0)
+        (crate::ui::PAGE_TITLE, 1, 0, 20.0)
     };
     let count = picks.len();
     let at = s.browse_view.shelves.spot % count;
     let p = &picks[at];
     let id = p.card.id;
     let r = crate::ui::r(8.0);
-    // The sharp art is the original upload once it is decoded, else the thumbnail.
+    // The full-size upload once it is decoded, else the thumbnail.
     let decoded = |url: Option<&String>| pixels_for(s, url).filter(|px| px.size().0 > 0);
     let pixels = decoded(p.image.as_ref()).or_else(|| decoded(p.small.as_ref()));
-    // The art keeps its own shape, so nothing is cropped or stretched: full height, as wide as
-    // its aspect asks, within limits. The text column does not depend on it.
-    let aspect = pixels.map_or(16.0 / 9.0, |px| {
-        let (w, h) = px.size();
-        w as f32 / h.max(1) as f32
-    });
-    let aw = (h * aspect).clamp(h * 0.75, width * 0.60).floor();
-    // The art melts into the dark side over a wide band that starts fully opaque, so where the
-    // picture begins cannot be seen.
-    let feather = (aw * 0.55).clamp(220.0, 420.0).floor();
     let dir = s.browse_view.shelves.spot_dir;
-    let motion = crate::motion::paged(dir);
+    let base = u.bg;
+    let opened = super::store::clone_card(&p.card);
     let mut b = el()
         .key("bb-billboard")
         .w_full()
@@ -615,13 +605,20 @@ fn billboard(s: &State, u: &Ui, picks: &[Slide], width: f32) -> El {
         .radius(r)
         .clip_rounded(r)
         .fill(u.well)
-        .hover_group()
+        .border(1.0, u.hair)
+        .cursor(rune::Cursor::Pointer)
+        .focusable(true)
+        .role("group")
+        .label(p.card.name.clone())
+        .on_press(move |st: &mut State| show_details(st, Details::from_card(&opened)))
         .on_hover_change(|st: &mut State, over: bool, tx: &mut Tx| {
-            // The view does not read this: pausing never commits. The bar keeps its place
-            // and the poll goes on from there once the pointer has left.
+            // The view does not read this: the poll empties the bar when the pointer arrives
+            // and starts it over when it left.
             tx.live_only();
             st.browse_view.shelves.hovered = over;
-            // The poll empties the bar when the pointer arrives and starts it over when it left.
+            if over {
+                st.browse_view.shelves.due = None;
+            }
             tx.wake_after(Duration::ZERO);
         })
         .on_window_focus(|st: &mut State, focused: bool, tx: &mut Tx| {
@@ -650,151 +647,111 @@ fn billboard(s: &State, u: &Ui, picks: &[Slide], width: f32) -> El {
             true
         });
     if let Some(px) = pixels {
-        b = b
-            .child(
-                el().key(format!("bb-back-{id}"))
-                    .absolute(0.0, 0.0)
-                    .w_full()
-                    .h_full()
-                    .pixels_fit(px, SurfaceFit::Fill)
-                    .blur(32.0)
-                    .transition(motion)
-                    .a11y_hidden(),
-            )
-            .child(
-                el().key(format!("bb-art-{id}"))
-                    .pin(None, Some(0.0), Some(0.0), Some(0.0))
-                    .w(aw)
-                    .transition(motion)
-                    .a11y_hidden()
-                    .child(el().absolute(0.0, 0.0).w_full().h_full().pixels_fit(px, SurfaceFit::Fill))
-                    // The feather into the scrim, drawn with the art so it moves with it.
-                    .child(
-                        el().absolute(0.0, 0.0)
-                            .w(feather)
-                            .h_full()
-                            .linear_gradient(
-                                std::f32::consts::FRAC_PI_2,
-                                [
-                                    (0.0, INK_ON_WHITE.alpha(1.0)),
-                                    (0.18, INK_ON_WHITE.alpha(0.94)),
-                                    (0.45, INK_ON_WHITE.alpha(0.66)),
-                                    (0.75, INK_ON_WHITE.alpha(0.26)),
-                                    (1.0, INK_ON_WHITE.alpha(0.0)),
-                                ],
-                            ),
-                    ),
-            );
+        // Wider than it is tall by more than the banner: keep the top of the picture, where
+        // a mod's subject usually is.
+        let (pw, ph) = px.size();
+        let scale = (width / pw.max(1) as f32).max(h / ph.max(1) as f32);
+        let (dw, dh) = ((pw as f32 * scale).ceil(), (ph as f32 * scale).ceil());
+        b = b.child(
+            el().key(format!("bb-art-{id}"))
+                .absolute(((width - dw) / 2.0).floor(), 0.0)
+                .size(dw, dh)
+                .pixels_fit(px, SurfaceFit::Fill)
+                .transition(crate::motion::paged(dir))
+                .a11y_hidden(),
+        );
     }
-    // The scrim is the same in every theme: text on art is always white.
-    let edge = ((width - aw + feather * 0.15) / width).clamp(0.0, 1.0);
-    let fade = ((width - aw + feather) / width).clamp(edge, 1.0);
+    // Two fades into the page colour: up from the bottom, where the text sits, and in from
+    // the left. They follow the theme, so the text is the theme's own ink.
     b = b
         .child(
             el().absolute(0.0, 0.0)
                 .w_full()
                 .h_full()
                 .linear_gradient(
-                    std::f32::consts::FRAC_PI_2,
-                    [(0.0, INK_ON_WHITE.alpha(0.94)), (edge, INK_ON_WHITE.alpha(0.94)), (fade, INK_ON_WHITE.alpha(0.0)), (1.0, INK_ON_WHITE.alpha(0.0))],
+                    std::f32::consts::PI,
+                    [(0.0, base.alpha(0.0)), (0.30, base.alpha(0.0)), (0.62, base.alpha(0.72)), (0.86, base.alpha(0.96)), (1.0, base.alpha(1.0))],
                 )
-                // Over the art, which slides in with its own paint order.
                 .paint_order(2)
                 .a11y_hidden(),
         )
         .child(
-            el().pin(Some(0.0), None, Some(0.0), Some(0.0))
-                .h(96.0)
-                .gradient(Color::BLACK.alpha(0.0), Color::BLACK.alpha(0.55))
+            el().absolute(0.0, 0.0)
+                .w_full()
+                .h_full()
+                .linear_gradient(std::f32::consts::FRAC_PI_2, [(0.0, base.alpha(0.80)), (0.35, base.alpha(0.28)), (0.65, base.alpha(0.0)), (1.0, base.alpha(0.0))])
                 .paint_order(2)
                 .a11y_hidden(),
         );
 
-    // Text and actions in fixed slots, so stepping picks moves nothing.
-    let white = |a: f32| Color::WHITE.alpha(a);
-    let mut meta = row().h(20.0).gap(8.0).center_y().min_w(0.0);
+    let author = if p.card.author.is_empty() { "-".to_string() } else { p.card.author.clone() };
     let category = if p.card.category.is_empty() { "-".to_string() } else { p.card.category.clone() };
-    meta = meta
-        .child(text(category).font(BODY).color(white(0.7)).truncate().min_w(0.0).shrink())
-        .child(text("·").font(BODY).color(white(0.5)))
-        .child(text(if p.card.author.is_empty() { "-".to_string() } else { p.card.author.clone() }).font(BODY).color(white(0.7)).truncate().min_w(0.0).shrink());
-    if p.card.likes > 0 {
-        meta = meta
-            .child(text("·").font(BODY).color(white(0.5)))
-            .child(icon(&icons::THUMBS_UP, 12.0).color(white(0.7)).a11y_hidden())
-            .child(text(card_count(p.card.likes)).font(crate::ui::BODY_NUM).color(white(0.7)));
-    }
     let state = super::quick::button(s, id);
     let saved = is_favorite(s, "Mod", id);
     let favorite = Favorite::from_card(&p.card);
-    let dark_button = |key: String| {
+    let glass = |key: String| {
         row().key(key)
             .h(32.0)
             .gap(6.0)
             .center()
-            .radius(crate::ui::r(8.0))
-            .fill(Color::BLACK.alpha(0.45))
-            .border(1.0, white(0.18))
-            .hover(white(0.10))
+            .radius(crate::ui::r(4.0))
+            .fill(base.alpha(0.72))
+            .border(1.0, u.hair_strong)
+            .hover(u.hover)
             .focusable(true)
             .cursor(rune::Cursor::Pointer)
     };
     let opened = super::store::clone_card(&p.card);
+    let mut facts = row().h(24.0).gap(10.0).center_y().min_w(0.0).child(
+        row().h(22.0).px(8.0).center().radius(crate::ui::r(4.0)).fill(base.alpha(0.72)).border(1.0, u.hair_strong).child(
+            text(category).font(SMALL).color(u.prose).truncate().min_w(0.0),
+        ),
+    );
+    if p.card.likes > 0 {
+        facts = facts
+            .child(icon(&icons::THUMBS_UP, 12.0).color(u.muted).a11y_hidden())
+            .child(text(card_count(p.card.likes)).font(crate::ui::BODY_NUM).color(u.prose));
+    }
     let actions = row()
         .key("bb-actions")
         .h(32.0)
         .gap(8.0)
         .center_y()
-        .child(super::quick::button_on_art(u, &state, format!("bb-install-{id}"), id, &p.card.name, 32.0, 120.0))
+        .child(super::quick::button_on_art(u, &state, format!("bb-install-{id}"), id, &p.card.name, 32.0, 132.0))
         .child(
-            dark_button("bb-details".into())
+            glass("bb-details".into())
                 .px(12.0)
                 .role("button")
                 .label(format!("{} {}", super::tree::tr("Details"), p.card.name))
                 .on_press(move |st: &mut State| show_details(st, Details::from_card(&opened)))
-                .child(icon(&icons::INFO, 14.0).color(Color::WHITE).a11y_hidden())
-                .child(text(super::tree::tr("Details")).font(LABEL).color(Color::WHITE).a11y_hidden()),
+                .child(icon(&icons::INFO, 14.0).color(u.ink).a11y_hidden())
+                .child(text(super::tree::tr("Details")).font(LABEL).color(u.ink).a11y_hidden()),
         )
         .child(
-            dark_button("bb-star".into())
+            glass("bb-star".into())
                 .w(32.0)
                 .role("button")
                 .label(if saved { "Remove from favorites" } else { "Save to favorites" })
                 .on_press(move |st: &mut State| toggle_favorite(st, favorite.clone()))
-                .child(icon(if saved { &STAR_FILLED } else { &STAR }, 16.0).color(Color::WHITE).a11y_hidden()),
+                .child(icon(if saved { &STAR_FILLED } else { &STAR }, 16.0).color(if saved { u.amber } else { u.ink }).a11y_hidden()),
         );
-    let text_w = (width * 0.42).clamp(200.0, 440.0);
+    let text_w = (width * 0.6).clamp(220.0, 640.0);
     let mut column = col()
         .key("bb-text")
         .paint_order(3)
-        .pin(Some(inset), None, None, Some(inset))
+        .pin(Some(pad), None, None, Some(pad))
         .w(text_w)
-        // The eyebrow sits on the title, whatever its line count; the block keeps one height.
-        .child(
-            col().w_full().h(16.0 + 8.0 + title_h).gap(8.0).justify_end()
-                .child(row().h(16.0).child(text(p.eyebrow.clone()).font(LABEL).color(white(0.7)).truncate().min_w(0.0)))
-                .child(text(p.card.name.clone()).font(title_font).color(Color::WHITE).wrap().max_lines(if title_h > 30.0 { 2 } else { 1 }).min_w(0.0)),
-        )
-        .child(meta.mt(8.0).w_full());
-    if desc_lines > 0 {
-        column = column.child(
-            el().w_full().h(20.0 * desc_lines as f32).mt(4.0).child(
-                text(p.description.clone()).font(SMALL).color(white(0.6)).wrap().max_lines(desc_lines).min_w(0.0),
-            ),
-        );
+        .child(row().h(16.0).child(text(p.eyebrow.to_uppercase()).font(super::MICRO_CAPS).color(u.accent).truncate().min_w(0.0)))
+        .child(text(p.card.name.clone()).font(title_font).color(u.ink).wrap().max_lines(title_lines).min_w(0.0).mt(8.0))
+        .child(row().h(20.0).mt(6.0).child(text(author).font(BODY).color(u.prose).truncate().min_w(0.0)));
+    if desc_lines > 0 && !p.description.trim().is_empty() {
+        column = column.child(text(p.description.clone()).font(BODY).color(u.muted).wrap().max_lines(desc_lines).min_w(0.0).mt(6.0));
     }
-    column = column.child(actions.mt(16.0));
-    let opened = super::store::clone_card(&p.card);
-    b = b
-        .focusable(true)
-        .role("group")
-        .label(p.card.name.clone())
-        .cursor(rune::Cursor::Pointer)
-        .on_press(move |st: &mut State| show_details(st, Details::from_card(&opened)))
-        .child(column);
+    column = column.child(facts.mt(12.0)).child(actions.mt(16.0));
+    b = b.child(column);
     if count > 1 {
-        // The pager sits in its own corner, clear of the text: one bar per pick, the current
-        // one filling as its turn runs, then the two step buttons. Always shown.
+        // The pager sits on the fade in the bottom right corner, clear of the text and of the
+        // picture's subject: one bar per pick, the current one filling as its turn runs.
         let running = s.browse_view.shelves.running;
         let bars = picks.iter().enumerate().map(|(i, pick)| {
             let on = i == at;
@@ -817,12 +774,12 @@ fn billboard(s: &State, u: &Ui, picks: &[Slide], width: f32) -> El {
                         .h(3.0)
                         .radius(1.5)
                         .clip_rounded(1.5)
-                        .fill(white(if on { 0.38 } else { 0.28 }))
-                        .child(el().key(format!("bb-fill-{i}")).h(3.0).w(filled).fill(Color::WHITE)),
+                        .fill(u.hair_strong)
+                        .child(el().key(format!("bb-fill-{i}")).h(3.0).w(filled).fill(u.ink)),
                 )
         });
         let arrow = |forward: bool| {
-            dark_button(if forward { "bb-next".into() } else { "bb-prev".into() })
+            glass(if forward { "bb-next".into() } else { "bb-prev".into() })
                 .w(32.0)
                 .role("button")
                 .label(if forward { "Next pick" } else { "Previous pick" })
@@ -831,19 +788,14 @@ fn billboard(s: &State, u: &Ui, picks: &[Slide], width: f32) -> El {
                     let next = if forward { (at + 1) % count } else { (at + count - 1) % count };
                     step_to(st, next, if forward { 1 } else { -1 });
                 })
-                .child(icon(if forward { &icons::CHEVRON_RIGHT } else { &icons::CHEVRON_LEFT }, 16.0).color(Color::WHITE).a11y_hidden())
+                .child(icon(if forward { &icons::CHEVRON_RIGHT } else { &icons::CHEVRON_LEFT }, 16.0).color(u.ink).a11y_hidden())
         };
         b = b.child(
             row().key("bb-pager")
-                .pin(None, None, Some(inset), Some(inset))
-                .h(40.0)
-                .px(8.0)
+                .pin(None, None, Some(pad), Some(pad))
+                .h(32.0)
                 .gap(6.0)
                 .center_y()
-                // Its own dark plate, so the bars read on any art.
-                .radius(crate::ui::r(8.0))
-                .fill(Color::BLACK.alpha(0.84))
-                .border(1.0, white(0.14))
                 .paint_order(3)
                 .children(bars)
                 .child(el().w(6.0))
@@ -922,7 +874,7 @@ fn row_view(s: &State, u: &Ui, r: &Row, width: f32, n: usize) -> El {
     let viewport = el()
         .key(format!("top-row-{slot}"))
         .w_full()
-        .h(th)
+        .h(th + TILE_TEXT)
         .child(
             el().absolute(0.0, 0.0)
                 .w_full()
@@ -994,23 +946,139 @@ fn tile(s: &State, u: &Ui, slot: usize, card: &BrowseCard, tw: f32, th: f32, ran
     let url = card.thumbnail_url.as_ref();
     let loaded = pixels_for(s, url).is_some();
     let failed = url.is_some_and(|u| s.thumb_crew.failed(u));
-    // The title starts after the numeral: one digit, or the wider "10".
-    let left = match rank {
-        Some(10..) => 84.0,
-        Some(_) => 60.0,
-        None => 10.0,
-    };
     // The tile opens with its own card: a mod in these rows is usually not on the catalog page
     // loaded below, so it cannot be looked up there by id.
     let opened = std::rc::Rc::new(super::store::clone_card(card));
     let open_tile = opened.clone();
-    let mut b = el()
+    let white = |a: f32| Color::WHITE.alpha(a);
+
+    // The picture: nothing written on it at rest but a rank or an NSFW tag.
+    let mut art = el().key(format!("top-art-{slot}-{id}")).size(tw, th).fill(u.well).clip_rounded(0.0);
+    if loaded {
+        art = art.child(image_fill(s, format!("top-thumb-{slot}-{id}"), url, [0.0; 4], veil));
+        if veil {
+            art = art.child(el().absolute(0.0, 0.0).w_full().h_full().fill(Color::BLACK.alpha(0.35)).a11y_hidden());
+        }
+    } else {
+        // Pending or failed: a finished graphite box with a glyph, never a hole.
+        art = art.child(el().absolute(0.0, 0.0).w_full().h_full().center().child(icon(&icons::PACKAGE, 24.0).color(if failed { u.muted } else { u.faint }).a11y_hidden()));
+    }
+    if let Some(rank) = rank {
+        art = art.child(
+            row().pin(Some(8.0), Some(8.0), None, None)
+                .h(24.0)
+                .min_w(24.0)
+                .px(7.0)
+                .center()
+                .radius(crate::ui::r(4.0))
+                .fill(Color::BLACK.alpha(0.78))
+                .border(1.0, white(0.16))
+                .child(text(rank.to_string()).font(crate::ui::BODY_NUM).color(Color::WHITE).a11y_hidden()),
+        );
+    }
+    // On hover: Install and the star along the picture's lower edge. The text below stays.
+    let mut hover = row()
+        .key(format!("top-hover-{slot}-{id}"))
+        .pin(Some(0.0), None, Some(0.0), Some(0.0))
+        .h(44.0)
+        .px(8.0)
+        .gap(6.0)
+        .center_y()
+        .linear_gradient(std::f32::consts::PI, [(0.0, Color::BLACK.alpha(0.0)), (1.0, Color::BLACK.alpha(0.78))])
+        .group_opacity(0.0, 1.0);
+    if veil {
+        // A deliberate veil: the tag over the eye, as on the catalog's cards.
+        art = art.child(
+            col().absolute(0.0, 0.0)
+                .w_full()
+                .h_full()
+                .center()
+                .gap(8.0)
+                .group_opacity(1.0, 0.0)
+                .child(nsfw_tag(u))
+                .child(icon(&icons::EYE, 20.0).color(white(0.8)).a11y_hidden()),
+        );
+        hover = hover.child(spacer()).child(
+            row().key(format!("top-show-{slot}-{id}"))
+                .h(28.0)
+                .px(12.0)
+                .gap(6.0)
+                .center()
+                .radius(crate::ui::r(4.0))
+                .fill(Color::BLACK.alpha(0.55))
+                .border(1.0, white(0.18))
+                .hover(white(0.10))
+                .focusable(true)
+                .role("button")
+                .label("Show NSFW preview")
+                .cursor(rune::Cursor::Pointer)
+                .on_press(move |st: &mut State| crate::screens::settings::nsfw::revealed(st, id))
+                .child(icon(&icons::EYE, 14.0).color(Color::WHITE).a11y_hidden())
+                .child(text(super::tree::tr("Show")).font(LABEL).color(Color::WHITE).a11y_hidden()),
+        ).child(spacer());
+    } else {
+        if card.nsfw && crate::screens::settings::nsfw::always_tag() {
+            art = art.child(row().pin(None, Some(8.0), Some(8.0), None).child(nsfw_tag(u)));
+        }
+        let state = super::quick::button(s, id);
+        let saved = is_favorite(s, &card.model, id);
+        let favorite = Favorite::from_card(card);
+        let small = |key: String, label: &'static str| {
+            el().key(key)
+                .size(28.0, 28.0)
+                .center()
+                .radius(crate::ui::r(4.0))
+                .fill(Color::BLACK.alpha(0.55))
+                .border(1.0, white(0.18))
+                .hover(white(0.10))
+                .focusable(true)
+                .role("button")
+                .label(label)
+                .cursor(rune::Cursor::Pointer)
+        };
+        if card.model.eq_ignore_ascii_case("mod") {
+            hover = hover.child(super::quick::button_on_art(u, &state, format!("top-install-{slot}-{id}"), id, &card.name, 28.0, 0.0).grow(1.0).min_w(0.0));
+        } else {
+            hover = hover.child(spacer());
+        }
+        if why.is_some() {
+            hover = hover.child(
+                small(format!("top-less-{slot}-{id}"), "Not interested")
+                    .help(super::tree::tr("Not interested: show fewer like this"))
+                    .on_press(move |st: &mut State| super::foryou::dismiss(st, id))
+                    .child(icon(&icons::X, 14.0).color(Color::WHITE).a11y_hidden()),
+            );
+        }
+        hover = hover.child(
+            small(format!("top-star-{slot}-{id}"), if saved { "Remove from favorites" } else { "Save to favorites" })
+                .on_press(move |st: &mut State| toggle_favorite(st, favorite.clone()))
+                .child(icon(if saved { &STAR_FILLED } else { &STAR }, 14.0).color(Color::WHITE).a11y_hidden()),
+        );
+    }
+    art = art.child(hover);
+
+    // Under the picture, on the card: the title, then who made it (or why it is here) and likes.
+    let sub = why.unwrap_or_else(|| if card.author.is_empty() { "-".to_string() } else { card.author.clone() });
+    let words = col()
+        .w(tw)
+        .h(TILE_TEXT)
+        .px(10.0)
+        .justify_center()
+        .gap(2.0)
+        .child(text(card.name.clone()).font(BODY_MED).color(u.ink).truncate().min_w(0.0))
+        .child(
+            row().h(16.0).gap(6.0).center_y().min_w(0.0)
+                .child(text(sub).font(SMALL).color(u.muted).truncate().min_w(0.0).grow(1.0))
+                .child(icon(&icons::THUMBS_UP, 12.0).color(u.muted).a11y_hidden())
+                .child(text(card_count(card.likes)).font(crate::ui::SMALL_NUM).color(u.muted)),
+        );
+    col()
         .key(format!("top-{slot}-{id}"))
-        .size(tw, th)
+        .size(tw, th + TILE_TEXT)
         .min_w(tw)
         .radius(r)
         .clip_rounded(r)
-        .fill(u.well)
+        .fill(u.raised)
         .hover_group()
         .focusable(true)
         .role("button")
@@ -1022,7 +1090,7 @@ fn tile(s: &State, u: &Ui, slot: usize, card: &BrowseCard, tw: f32, th: f32, ran
             st.browse_view.menu = None;
         })
         .on_hover_change(move |st: &mut State, over: bool, tx: &mut Tx| {
-            // Only a mature tile that reveals on hover draws differently; otherwise the hover
+            // Only an NSFW tile that reveals on hover draws differently; otherwise the hover
             // is for the details prefetch and never commits.
             if !(card_nsfw_reveals(st, id)) {
                 tx.live_only();
@@ -1034,184 +1102,11 @@ fn tile(s: &State, u: &Ui, slot: usize, card: &BrowseCard, tw: f32, th: f32, ran
                 st.browse_view.hovered = None;
                 st.browse_view.hover_since = None;
             }
-        });
-    let title = |color: Color, lines: usize| {
-        let t = text(card.name.clone()).font(BODY_MED).color(color).min_w(0.0);
-        if lines == 1 { t.truncate() } else { t.wrap().max_lines(lines) }
-    };
-    // At rest: the title and, under it, the creator and likes, on the bottom gradient.
-    let rest_text = |ink: Color, quiet: Color| {
-        col()
-            .pin(Some(left), None, Some(10.0), Some(8.0))
-            .group_opacity(1.0, 0.0)
-            .child(title(ink, 1))
-            .child(
-                row().h(16.0).gap(4.0).center_y().min_w(0.0)
-                    .child(text(why.clone().unwrap_or_else(|| if card.author.is_empty() { "-".to_string() } else { card.author.clone() })).font(SMALL).color(quiet).truncate().min_w(0.0).shrink())
-                    .child(text("·").font(SMALL).color(quiet))
-                    .child(icon(&icons::THUMBS_UP, 12.0).color(quiet).a11y_hidden())
-                    .child(text(card_count(card.likes)).font(crate::ui::SMALL_NUM).color(quiet)),
-            )
-    };
-    if loaded {
-        b = b.child(image_fill(s, format!("top-thumb-{slot}-{id}"), url, [r; 4], veil));
-        if veil {
-            b = b.child(el().absolute(0.0, 0.0).w_full().h_full().fill(Color::BLACK.alpha(0.35)).a11y_hidden());
-        }
-        b = b
-            .child(
-                el().pin(Some(0.0), None, Some(0.0), Some(0.0))
-                    .h(96.0)
-                    .linear_gradient(std::f32::consts::PI, [(0.0, Color::BLACK.alpha(0.0)), (0.35, Color::BLACK.alpha(0.66)), (1.0, Color::BLACK.alpha(0.94))])
-                    .group_opacity(1.0, 0.0)
-                    .a11y_hidden(),
-            )
-            // A flat band under the two text lines, so busy art never shows through them.
-            .child(el().pin(Some(0.0), None, Some(0.0), Some(0.0)).h(48.0).fill(Color::BLACK.alpha(0.40)).group_opacity(1.0, 0.0).a11y_hidden())
-            .child(rest_text(Color::WHITE, Color::WHITE.alpha(0.72)));
-    } else {
-        // Pending or failed: a finished graphite tile with the title, never a hole.
-        b = b
-            .child(
-                el().absolute(0.0, 0.0)
-                    .w_full()
-                    .h(th - 24.0)
-                    .center()
-                    .child(icon(&icons::PACKAGE, 24.0).color(if failed { u.muted } else { u.faint }).a11y_hidden()),
-            )
-            .child(rest_text(u.prose, u.muted));
-    }
-    if let Some(rank) = rank.filter(|_| loaded || !failed) {
-        b = b
-            .child(
-                el().pin(Some(0.0), None, None, Some(0.0))
-                    .size(160.0, 96.0)
-                    .radial_gradient([0.0, 1.0], [160.0, 96.0], [(0.0, Color::BLACK.alpha(0.8)), (1.0, Color::BLACK.alpha(0.0))])
-                    .group_opacity(1.0, 0.0)
-                    .a11y_hidden(),
-            )
-            .child(
-                text(rank.to_string())
-                    .font(RANK)
-                    .color(Color::WHITE)
-                    .pin(Some(8.0), None, None, Some(0.0))
-                    // Out of the way of Install and the star on hover.
-                    .group_opacity(1.0, 0.0)
-                    .a11y_hidden(),
-            );
-    }
-    // Hover layer: scrim, title, byline and likes, then Install and the star. A veiled tile
-    // offers Show instead of Install.
-    let white = |a: f32| Color::WHITE.alpha(a);
-    let author = if card.author.is_empty() { "-".to_string() } else { card.author.clone() };
-    let mut hover = col()
-        .key(format!("top-hover-{slot}-{id}"))
-        .absolute(0.0, 0.0)
-        .w_full()
-        .h_full()
-        .padding(10.0)
-        .gap(2.0)
-        .fill(Color::BLACK.alpha(0.62))
-        .group_opacity(0.0, 1.0)
-        // The layer covers the tile, so it opens the details itself: a press anywhere on the
-        // tile that is not Install or the star goes to the mod.
-        .cursor(rune::Cursor::Pointer)
-        .on_press(move |st: &mut State| show_details(st, Details::from_card(&opened)))
-        .child(title(Color::WHITE, 2))
-        .child(
-            row().gap(4.0).center_y().min_w(0.0)
-                .child(text(author).font(SMALL).color(white(0.7)).truncate().min_w(0.0).shrink())
-                .child(text("·").font(SMALL).color(white(0.5)))
-                .child(icon(&icons::THUMBS_UP, 12.0).color(white(0.7)).a11y_hidden())
-                .child(text(card_count(card.likes)).font(crate::ui::SMALL_NUM).color(white(0.7))),
-        )
-        .child(spacer());
-    if veil {
-        hover = hover.child(row().w_full().center().child(nsfw_tag(u))).child(el().h(6.0)).child(
-            row().w_full().center().child(
-                row().key(format!("top-show-{slot}-{id}"))
-                    .h(28.0)
-                    .px(12.0)
-                    .gap(6.0)
-                    .center()
-                    .radius(crate::ui::r(4.0))
-                    .fill(Color::BLACK.alpha(0.45))
-                    .border(1.0, white(0.18))
-                    .hover(white(0.10))
-                    .focusable(true)
-                    .role("button")
-                    .label("Show NSFW preview")
-                    .cursor(rune::Cursor::Pointer)
-                    .on_press(move |st: &mut State| crate::screens::settings::nsfw::revealed(st, id))
-                    .child(icon(&icons::EYE, 14.0).color(Color::WHITE).a11y_hidden())
-                    .child(text(super::tree::tr("Show")).font(LABEL).color(Color::WHITE).a11y_hidden()),
-            ),
-        );
-    } else {
-        let state = super::quick::button(s, id);
-        let saved = is_favorite(s, &card.model, id);
-        let favorite = Favorite::from_card(card);
-        let mut actions = row().w_full().h(28.0).gap(6.0).center_y();
-        if card.model.eq_ignore_ascii_case("mod") {
-            actions = actions.child(super::quick::button_on_art(u, &state, format!("top-install-{slot}-{id}"), id, &card.name, 28.0, 0.0).grow(1.0).min_w(0.0));
-        } else {
-            actions = actions.child(spacer());
-        }
-        if why.is_some() {
-            actions = actions.child(
-                el().key(format!("top-less-{slot}-{id}"))
-                    .size(28.0, 28.0)
-                    .center()
-                    .radius(crate::ui::r(4.0))
-                    .fill(Color::BLACK.alpha(0.45))
-                    .border(1.0, white(0.18))
-                    .hover(white(0.10))
-                    .focusable(true)
-                    .role("button")
-                    .label("Not interested")
-                    .help(super::tree::tr("Not interested: show fewer like this"))
-                    .cursor(rune::Cursor::Pointer)
-                    .on_press(move |st: &mut State| super::foryou::dismiss(st, id))
-                    .child(icon(&icons::X, 14.0).color(Color::WHITE).a11y_hidden()),
-            );
-        }
-        actions = actions.child(
-            el().key(format!("top-star-{slot}-{id}"))
-                .size(28.0, 28.0)
-                .center()
-                .radius(crate::ui::r(4.0))
-                .fill(Color::BLACK.alpha(0.45))
-                .border(1.0, white(0.18))
-                .hover(white(0.10))
-                .focusable(true)
-                .role("button")
-                .label(if saved { "Remove from favorites" } else { "Save to favorites" })
-                .cursor(rune::Cursor::Pointer)
-                .on_press(move |st: &mut State| toggle_favorite(st, favorite.clone()))
-                .child(icon(if saved { &STAR_FILLED } else { &STAR }, 14.0).color(Color::WHITE).a11y_hidden()),
-        );
-        hover = hover.child(actions);
-    }
-    b = b.child(hover);
-    if veil {
-        // A deliberate veil: the tag and an eye at rest, never an empty box.
-        // The tag sits over the eye in the middle, as on the catalog's cards, clear of the
-        // title; on hover the layer above shows the same tag over its Show button.
-        b = b.child(
-            col().absolute(0.0, 0.0)
-                .w_full()
-                .h(th - 40.0)
-                .center()
-                .gap(8.0)
-                .group_opacity(1.0, 0.0)
-                .child(nsfw_tag(u))
-                .child(icon(&icons::EYE, 20.0).color(white(0.8)).a11y_hidden()),
-        );
-    } else if card.nsfw && crate::screens::settings::nsfw::always_tag() {
-        b = b.child(row().pin(Some(8.0), Some(8.0), None, None).child(nsfw_tag(u)));
-    }
-    // The two rings: quiet at rest, stronger on hover.
-    b.child(el().absolute(0.0, 0.0).w_full().h_full().radius(r).border(1.0, u.hair).group_opacity(1.0, 0.0).a11y_hidden())
+        })
+        .child(art)
+        .child(words)
+        // The two rings: quiet at rest, stronger on hover.
+        .child(el().absolute(0.0, 0.0).w_full().h_full().radius(r).border(1.0, u.hair).group_opacity(1.0, 0.0).a11y_hidden())
         .child(el().absolute(0.0, 0.0).w_full().h_full().radius(r).border(1.0, u.hair_strong).group_opacity(0.0, 1.0).a11y_hidden())
 }
 
