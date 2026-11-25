@@ -34,7 +34,7 @@
 
   /* H1 then H2: the step is clear but small, as on cursor.com (their 26 to 22). The H1 is sized
      so the home headline holds one line at desktop widths. */
-  --size-display: clamp(2rem, 1.25rem + 2.1vw, 2.75rem);    /* 32 to 44 */
+  --size-display: clamp(1.875rem, 1.3rem + 1.6vw, 2.375rem); /* 30 to 38 */
   --size-heading: clamp(1.625rem, 1.3rem + 0.9vw, 2.125rem); /* 26 to 34 */
   --size-lead: clamp(1.25rem, 1.1rem + 0.5vw, 1.5rem);      /* 20 to 24 */
   --size-body: 1.0625rem;  /* 17 */
@@ -165,22 +165,21 @@ pre code { background: none; padding: 0; overflow-wrap: normal; font-size: var(-
 .cta {
   display: flex;
   flex-wrap: wrap;
-  align-items: center;
+  align-items: flex-start;
   gap: 16px 32px;
   margin-top: 32px;
 }
-/* One button for the visitor's system, plain links for the other two. */
-.dl { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 20px; }
-.dl__alt { font-size: var(--size-fine); color: var(--muted); }
-.dl__alt a {
-  color: var(--ink);
+.cta > .textlink { min-height: 48px; display: inline-flex; align-items: center; }
+/* One button for the visitor's system, and a link to every download under it. */
+.dl { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; }
+.dl__all {
+  font-size: var(--size-fine);
+  color: var(--muted);
   text-decoration: underline;
   text-decoration-color: var(--line-strong);
-  text-underline-offset: 4px;
-  display: inline-block;
-  padding: 6px 0;
+  text-underline-offset: 3px;
 }
-.dl__alt a:hover { text-decoration-color: var(--ink); }
+.dl__all:hover { color: var(--ink); text-decoration-color: var(--ink); }
 
 /* Top bar */
 .bar {
@@ -410,7 +409,7 @@ pre code { background: none; padding: 0; overflow-wrap: normal; font-size: var(-
 }
 .getit__line { margin-top: 8px; color: var(--muted); }
 .getit__act { display: flex; flex-direction: column; align-items: stretch; gap: 14px; text-align: center; }
-.getit__act .dl { flex-direction: column; align-items: stretch; gap: 10px; }
+.getit__act .dl { align-items: stretch; }
 .getit__act .btn { min-width: 240px; }
 .getit__act .textlink { font-size: var(--size-fine); font-weight: 400; color: var(--muted); }
 .getit__act .textlink:hover { color: var(--ink); }
@@ -464,9 +463,9 @@ pre code { background: none; padding: 0; overflow-wrap: normal; font-size: var(-
   .btn { min-height: 48px; }
   .btn--small { min-height: 44px; }
   .cta { gap: 4px 32px; }
-  .cta .dl { width: 100%; gap: 4px 20px; }
+  .cta .dl { width: 100%; }
   .cta .btn:not(.btn--small) { width: 100%; }
-  .dl__alt a { padding: 12px 2px; }
+  .dl__all { padding: 10px 2px; }
   .cta .textlink { min-height: 44px; display: inline-flex; align-items: center; }
   .crumbs a { min-height: 44px; display: inline-flex; align-items: center; }
   .foot__row a { min-height: 44px; line-height: 1.3; }

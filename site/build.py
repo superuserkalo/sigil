@@ -300,19 +300,18 @@ def dl_link(position, label="Download for Windows", cls="btn"):
 
 
 def dl_choice(position):
-    """One button for the visitor's system and plain links for the other two. Without script
-    the button is Windows; every download is a real link either way."""
+    """One button: Windows as served, swapped by site.js to macOS or Linux when the visitor is on
+    one of those. Under it, a link to every download, so each is reachable without script."""
     os_id, name, kind, href = DOWNLOADS[0]
+    others = " ".join(
+        f'data-href-{o}="{h}" data-name-{o}="{n}" data-kind-{o}="{esc(k)}"' for o, n, k, h in DOWNLOADS[1:]
+    )
     main = (
-        f'<a class="btn" href="{href}" {dl_attrs(os_id, name, kind, position)} data-dl-main '
+        f'<a class="btn" href="{href}" {dl_attrs(os_id, name, kind, position)} data-dl-main {others} '
         f'aria-label="Download Sigil for {name} ({esc(kind)})">Download for {name}</a>'
     )
-    alts = [
-        f'<a href="{h}" {dl_attrs(o, n, k, position)} aria-label="Download Sigil for {n} ({esc(k)})">{n}</a>'
-        for o, n, k, h in DOWNLOADS[1:]
-    ]
     return (f'<div class="dl" data-dl>{main}'
-            f'<span class="dl__alt">Also for {alts[0]} and {alts[1]}</span></div>')
+            f'<a class="dl__all" href="{RELEASES}/latest">All downloads</a></div>')
 
 
 def dl_markdown():
