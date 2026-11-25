@@ -361,10 +361,10 @@ def header(pages):
 
 
 def footer(pages):
-    def col(title, links):
+    def row(title, links):
         lis = "".join(f'<li><a href="{href}">{esc(text)}</a></li>' for href, text in links)
         cid = "foot-" + re.sub(r"[^a-z]+", "-", title.lower()).strip("-")
-        return f'<div class="foot__col"><h2 class="foot__head" id="{cid}">{title}</h2><ul aria-labelledby="{cid}">{lis}</ul></div>'
+        return f'<div class="foot__row"><h2 class="foot__head" id="{cid}">{title}</h2><ul aria-labelledby="{cid}">{lis}</ul></div>'
 
     feats = [("/" + p["slug"], p["nav"]) for p in pages if p.get("group") in GROUPS]
     help_links = [("/" + p["slug"], p["nav"]) for p in pages if p.get("group") in ("Guides", "Help")]
@@ -372,15 +372,15 @@ def footer(pages):
                (PRIVACY_NOTES, "Privacy notes"), (LICENCE, "MIT licence"), (ISSUES, "Report a bug")]
     return f"""<footer class="foot">
   <div class="wrap">
-    <div class="foot__top">
-      <a class="foot__brand" href="/" aria-label="Sigil home"><img src="/img/mark.png" width="24" height="24" alt=""><span>Sigil</span></a>
-      <div class="foot__cols">
-        {col("Features", feats)}
-        {col("Guides and help", help_links)}
-        {col("Project", project)}
-      </div>
+    <div class="foot__rows">
+      {row("Features", feats)}
+      {row("Guides and help", help_links)}
+      {row("Project", project)}
     </div>
-    <p class="foot__fine">{DISCLAIMER}</p>
+    <div class="foot__base">
+      <a class="foot__brand" href="/" aria-label="Sigil home"><img src="/img/mark.png" width="20" height="20" alt=""><span>Sigil</span></a>
+      <p class="foot__fine">{DISCLAIMER}</p>
+    </div>
   </div>
 </footer>
 </body>
@@ -388,12 +388,15 @@ def footer(pages):
 """
 
 
-def cta_block(position, heading_tag="h2", heading="Download Sigil", hid="get-sigil"):
+def cta_block(position, heading_tag="h2", heading="Download Sigil", hid="get-sigil", link=None):
+    href, text = link or (GITHUB, "View the source on GitHub")
     return f"""<section class="getit" aria-labelledby="{hid}">
-  <{heading_tag} id="{hid}" class="heading">{heading}</{heading_tag}>
-  <div class="cta">{dl_link(position)}<a class="textlink" href="{GITHUB}">View the source on GitHub</a></div>
-  <p class="note">{PLATFORM_LINE}</p>
-  <p class="note">{SMARTSCREEN_LINE}</p>
+  <div class="getit__main">
+    <{heading_tag} id="{hid}" class="heading">{heading}</{heading_tag}>
+    <p class="getit__line">{PLATFORM_LINE}</p>
+  </div>
+  <div class="getit__act">{dl_link(position)}<a class="textlink" href="{href}">{text}</a></div>
+  <p class="note getit__note">{SMARTSCREEN_LINE}</p>
 </section>"""
 
 
@@ -532,10 +535,7 @@ def build_home(pages):
 
   <section class="final" id="download" aria-labelledby="download-title">
     <div class="wrap">
-      <h2 id="download-title" class="display">Get Sigil for Windows.</h2>
-      <div class="cta">{dl_link("footer")}<a class="textlink" href="{RELEASES}">Release notes</a></div>
-      <p class="note">{PLATFORM_LINE}</p>
-      <p class="note">{SMARTSCREEN_LINE}</p>
+      {cta_block("footer", "h2", "Get Sigil for Windows.", "download-title", (RELEASES, "Release notes"))}
     </div>
   </section>
 </main>
