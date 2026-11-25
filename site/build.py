@@ -514,12 +514,12 @@ def build_home(pages):
       <div class="cta">{dl_choice("hero")}<a class="textlink" href="{GITHUB}">View on GitHub</a></div>
     </div>
     <div class="stage">
-      <div class="wrap">
+      <div class="wrap"><div class="stage__card">
         <picture>
           <source media="(max-width: 640px)" srcset="/img/hero-phone.webp" width="1000" height="833">
           <img class="shot shot--hero" src="/img/hero.webp" srcset="/img/hero-1200.webp 1200w, /img/hero.webp 2400w" sizes="(max-width: 1264px) calc(100vw - 64px), 1200px" width="2400" height="1450" alt="{esc(HOME["hero_alt"])}" fetchpriority="high">
         </picture>
-      </div>
+      </div></div>
     </div>
   </section>
 """)

@@ -29,11 +29,8 @@
   --accent-hover: oklch(0.86 0 0);
   --accent-ink: oklch(0.17 0 0);
   --focus: oklch(0.96 0 0);
-  /* The showcase backdrop: graphite warmed by a low ember, the app's own palette. */
-  --stage-top: oklch(0.205 0.003 60);
-  --stage-low: oklch(0.165 0.008 45);
-  --ember: oklch(0.6 0.15 48);
-  --grid: rgb(255 255 255 / 0.045);
+  /* The showcase panel: the app's orange, dimmed to sit behind a screenshot. */
+  --stage: oklch(0.47 0.105 50);
 
   /* H1 then H2: the step is clear but small, as on cursor.com (their 26 to 22). The H1 is sized
      so the home headline holds one line at desktop widths. */
@@ -285,45 +282,19 @@ pre code { background: none; padding: 0; overflow-wrap: normal; font-size: var(-
   color: var(--muted);
 }
 
-/* The product shot floats on a backdrop of its own: graphite falling off to near black, a low
-   ember glow behind the window, a square grid that fades out, and a little grain. */
-.stage {
-  position: relative;
-  isolation: isolate;
+/* The product shot sits on one flat panel of the brand's ember, as an inset card: no grid, no
+   glow, no grain. */
+.stage { margin-top: clamp(40px, 5vw, 64px); }
+.stage__card {
+  padding: clamp(16px, 5vw, 72px) clamp(12px, 5vw, 72px) 0;
+  background: var(--stage);
   overflow: hidden;
-  margin-top: clamp(48px, 5vw, 72px);
-  padding: clamp(28px, 6vw, 96px) 0 clamp(28px, 7vw, 112px);
-  border-block: 1px solid var(--line);
-  background:
-    radial-gradient(60% 50% at 50% 110%, color-mix(in oklch, var(--ember) 50%, transparent), transparent 72%),
-    radial-gradient(45% 40% at 88% -6%, color-mix(in oklch, var(--ember) 9%, transparent), transparent 70%),
-    linear-gradient(180deg, var(--stage-top), var(--stage-low));
 }
-.stage::before, .stage::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  z-index: -1;
-  pointer-events: none;
-}
-.stage::before {
-  background-image:
-    linear-gradient(var(--grid) 1px, transparent 1px),
-    linear-gradient(90deg, var(--grid) 1px, transparent 1px);
-  background-size: 56px 56px;
-  background-position: center top;
-  -webkit-mask-image: radial-gradient(75% 70% at 50% 35%, #000 30%, transparent 85%);
-  mask-image: radial-gradient(75% 70% at 50% 35%, #000 30%, transparent 85%);
-}
-.stage::after {
-  opacity: 0.07;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 0.6 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
-}
+.stage__card picture { display: block; }
 .shot--hero {
-  box-shadow:
-    0 0 0 1px rgb(0 0 0 / 0.5),
-    0 30px 60px -20px rgb(0 0 0 / 0.7),
-    0 60px 120px -40px color-mix(in oklch, var(--ember) 35%, transparent);
+  display: block;
+  border-bottom: 0;
+  box-shadow: 0 24px 60px -12px rgb(0 0 0 / 0.55);
 }
 .shot {
   width: 100%;
@@ -497,7 +468,6 @@ pre code { background: none; padding: 0; overflow-wrap: normal; font-size: var(-
   .cta .btn:not(.btn--small) { width: 100%; }
   .dl__alt a { padding: 12px 2px; }
   .cta .textlink { min-height: 44px; display: inline-flex; align-items: center; }
-  .stage { padding: 24px 0 32px; }
   .crumbs a { min-height: 44px; display: inline-flex; align-items: center; }
   .foot__row a { min-height: 44px; line-height: 1.3; }
 }
