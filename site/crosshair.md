@@ -36,8 +36,6 @@ A profile can include a crosshair, so switching profiles can switch your reticle
 
 A free, open-source mod manager for Deadlock.
 
-On Windows you may see “Windows protected your PC” because the installer is not code signed yet. Choose More info, then Run anyway.
-
 ## Related pages
 
 - [Autoexec](https://sigilmods.app/autoexec): autoexec.cfg, commands and launch options

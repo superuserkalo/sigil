@@ -38,8 +38,6 @@ Deadlock never runs a program shipped inside a mod, so a mod has no reason to in
 
 A free, open-source mod manager for Deadlock.
 
-On Windows you may see “Windows protected your PC” because the installer is not code signed yet. Choose More info, then Run anyway.
-
 ## Related pages
 
 - [Questions and answers](https://sigilmods.app/faq): Cost, safety, updates, data and more

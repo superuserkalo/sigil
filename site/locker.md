@@ -37,8 +37,6 @@ Profiles can keep the Locker's shuffle settings, so a saved setup brings back th
 
 A free, open-source mod manager for Deadlock.
 
-On Windows you may see “Windows protected your PC” because the installer is not code signed yet. Choose More info, then Run anyway.
-
 ## Related pages
 
 - [Installed mods](https://sigilmods.app/installed): On and off, load order and overlaps

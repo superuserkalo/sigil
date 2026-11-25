@@ -30,8 +30,6 @@ Sigil does not host mods. Every mod comes from GameBanana and belongs to its cre
 
 A free, open-source mod manager for Deadlock.
 
-On Windows you may see “Windows protected your PC” because the installer is not code signed yet. Choose More info, then Run anyway.
-
 ## Related pages
 
 - [Questions and answers](https://sigilmods.app/faq): Cost, safety, updates, data and more

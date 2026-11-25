@@ -55,8 +55,6 @@ When an update resets `gameinfo.gi`, a banner offers to fix it again.
 
 A free, open-source mod manager for Deadlock.
 
-On Windows you may see “Windows protected your PC” because the installer is not code signed yet. Choose More info, then Run anyway.
-
 ## Related pages
 
 - [Mods not working after an update](https://sigilmods.app/deadlock-mods-not-working-after-update): gameinfo.gi resets and moved game files

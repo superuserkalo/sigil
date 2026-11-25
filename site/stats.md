@@ -41,8 +41,6 @@ Nothing is fetched until you turn Player stats on, and the reads carry only the 
 
 A free, open-source mod manager for Deadlock.
 
-On Windows you may see “Windows protected your PC” because the installer is not code signed yet. Choose More info, then Run anyway.
-
 ## Related pages
 
 - [Performance](https://sigilmods.app/performance): Community configs, on and off

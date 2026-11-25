@@ -36,8 +36,6 @@ The game reads `autoexec.cfg` when it starts, so changes apply from the next lau
 
 A free, open-source mod manager for Deadlock.
 
-On Windows you may see “Windows protected your PC” because the installer is not code signed yet. Choose More info, then Run anyway.
-
 ## Related pages
 
 - [Crosshair](https://sigilmods.app/crosshair): Edit at true scale, share and import

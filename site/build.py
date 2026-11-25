@@ -51,7 +51,7 @@ DISCLAIMER = (
     "Corporation. Mods come from GameBanana and belong to their creators."
 )
 SUMMARY = (
-    "Sigil is a free, open-source Deadlock mod manager for Windows, Linux and macOS. It browses "
+    "Sigil is a free, open-source Deadlock mod manager. It browses "
     "and installs mods from GameBanana, searches the catalog on your PC, keeps load order and "
     "overlapping mods in view, fixes gameinfo.gi after game updates, and launches the game modded "
     "or vanilla. It also has a Locker for skins per hero, a crosshair editor with a community "
@@ -62,9 +62,9 @@ SUMMARY = (
 GROUPS = ["Mods", "Play", "Customise", "Insight"]
 
 HOME = {
-    "title": "Sigil: a free, open-source mod manager for Deadlock",
+    "title": "Sigil: free Deadlock mod manager",
     "description": (
-        "Sigil is a free, open-source Deadlock mod manager for Windows, Linux and macOS. Browse "
+        "Sigil is a free, open-source Deadlock mod manager. Browse "
         "GameBanana, keep load order straight and launch modded or vanilla."
     ),
     "h1": "Install Deadlock mods and keep them working.",
@@ -593,7 +593,7 @@ def build_home(pages):
     md.append("## Questions\n")
     md.extend(f"### {q}\n\n{absolute_md(a)}\n" for q, a, _ in front_faq)
     md.append(f"[All questions and answers]({SITE}/faq)\n")
-    md.append(f"## Get Sigil\n\n{dl_markdown()}\n\n{PLATFORM_LINE}\n\n{SMARTSCREEN_LINE}\n")
+    md.append(f"## Get Sigil\n\n{dl_markdown()}\n\n{PLATFORM_LINE}\n")
     md.append(f"---\n\n{DISCLAIMER}\n")
     text = "\n".join(md)
     (ROOT / "index.md").write_text(text)
@@ -658,7 +658,7 @@ def build_page(page, pages):
     (ROOT / f"{slug}.html").write_text("".join(out))
 
     md = [f"# {page['h1']}\n", f"> {page['description']}\n", absolute_md(body_md.strip()) + "\n",
-          f"## Download Sigil\n\n{dl_markdown()}\n\n{PLATFORM_LINE}\n\n{SMARTSCREEN_LINE}\n",
+          f"## Download Sigil\n\n{dl_markdown()}\n\n{PLATFORM_LINE}\n",
           "## Related pages\n\n" + "\n".join(f"- [{p['nav']}]({SITE}/{p['slug']}): {p['line']}" for p in related) + "\n",
           f"---\n\n{DISCLAIMER}\n"]
     text = "\n".join(md)

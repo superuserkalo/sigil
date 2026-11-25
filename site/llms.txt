@@ -1,6 +1,6 @@
 # Sigil
 
-> Sigil is a free, open-source Deadlock mod manager for Windows, Linux and macOS. It browses and installs mods from GameBanana, searches the catalog on your PC, keeps load order and overlapping mods in view, fixes gameinfo.gi after game updates, and launches the game modded or vanilla. It also has a Locker for skins per hero, a crosshair editor with a community library, profiles you can share, an autoexec editor, performance configs and match stats. Nothing about the player leaves the PC without their yes.
+> Sigil is a free, open-source Deadlock mod manager. It browses and installs mods from GameBanana, searches the catalog on your PC, keeps load order and overlapping mods in view, fixes gameinfo.gi after game updates, and launches the game modded or vanilla. It also has a Locker for skins per hero, a crosshair editor with a community library, profiles you can share, an autoexec editor, performance configs and match stats. Nothing about the player leaves the PC without their yes.
 
 Every page below has a Markdown twin at the same address with .md added. The downloads are a Windows installer, a Linux AppImage and a macOS disk image from GitHub releases; the app is MIT licensed.
 

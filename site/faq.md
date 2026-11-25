@@ -62,8 +62,6 @@ Every error message in Sigil has Send feedback, which shows the scrubbed details
 
 A free, open-source mod manager for Deadlock.
 
-On Windows you may see “Windows protected your PC” because the installer is not code signed yet. Choose More info, then Run anyway.
-
 ## Related pages
 
 - [Privacy and safety](https://sigilmods.app/privacy): What it sends, and how it checks mods

@@ -5,7 +5,7 @@ Source: https://sigilmods.app/
 
 # Sigil: a free, open-source Deadlock mod manager
 
-> Sigil is a free, open-source Deadlock mod manager for Windows, Linux and macOS. It browses and installs mods from GameBanana, searches the catalog on your PC, keeps load order and overlapping mods in view, fixes gameinfo.gi after game updates, and launches the game modded or vanilla. It also has a Locker for skins per hero, a crosshair editor with a community library, profiles you can share, an autoexec editor, performance configs and match stats. Nothing about the player leaves the PC without their yes.
+> Sigil is a free, open-source Deadlock mod manager. It browses and installs mods from GameBanana, searches the catalog on your PC, keeps load order and overlapping mods in view, fixes gameinfo.gi after game updates, and launches the game modded or vanilla. It also has a Locker for skins per hero, a crosshair editor with a community library, profiles you can share, an autoexec editor, performance configs and match stats. Nothing about the player leaves the PC without their yes.
 
 Install Deadlock mods and keep them working. Sigil is a free open-source Deadlock mod manager.
 
@@ -128,8 +128,6 @@ It talks to GameBanana for mods and, if you allow it, to GitHub for app updates.
 
 A free, open-source mod manager for Deadlock.
 
-On Windows you may see “Windows protected your PC” because the installer is not code signed yet. Choose More info, then Run anyway.
-
 ---
 
 Sigil is a fan project and is not affiliated with Valve. Deadlock is a trademark of Valve Corporation. Mods come from GameBanana and belong to their creators.
@@ -174,8 +172,6 @@ Mods on GameBanana belong to their creators. Opening a mod shows its pictures, d
 - [Download Sigil for macOS (disk image, .dmg)](https://github.com/superuserkalo/sigil/releases/latest/download/Sigil-macos.dmg)
 
 A free, open-source mod manager for Deadlock.
-
-On Windows you may see “Windows protected your PC” because the installer is not code signed yet. Choose More info, then Run anyway.
 
 ## Related pages
 
@@ -228,8 +224,6 @@ Installed checks for newer files when you open it and shows an update chip on ea
 
 A free, open-source mod manager for Deadlock.
 
-On Windows you may see “Windows protected your PC” because the installer is not code signed yet. Choose More info, then Run anyway.
-
 ## Related pages
 
 - [Launching](https://sigilmods.app/launch): Modded or vanilla, with checks first
@@ -272,8 +266,6 @@ A profile can keep its mods in its own addons folder instead of the normal one. 
 - [Download Sigil for macOS (disk image, .dmg)](https://github.com/superuserkalo/sigil/releases/latest/download/Sigil-macos.dmg)
 
 A free, open-source mod manager for Deadlock.
-
-On Windows you may see “Windows protected your PC” because the installer is not code signed yet. Choose More info, then Run anyway.
 
 ## Related pages
 
@@ -324,8 +316,6 @@ Launching and restoring on a Windows install is the newest part of Sigil; if som
 
 A free, open-source mod manager for Deadlock.
 
-On Windows you may see “Windows protected your PC” because the installer is not code signed yet. Choose More info, then Run anyway.
-
 ## Related pages
 
 - [Installed mods](https://sigilmods.app/installed): On and off, load order and overlaps
@@ -374,8 +364,6 @@ A game update resets `gameinfo.gi`, which also removes a config's changes. Sigil
 - [Download Sigil for macOS (disk image, .dmg)](https://github.com/superuserkalo/sigil/releases/latest/download/Sigil-macos.dmg)
 
 A free, open-source mod manager for Deadlock.
-
-On Windows you may see “Windows protected your PC” because the installer is not code signed yet. Choose More info, then Run anyway.
 
 ## Related pages
 
@@ -427,8 +415,6 @@ Profiles can keep the Locker's shuffle settings, so a saved setup brings back th
 
 A free, open-source mod manager for Deadlock.
 
-On Windows you may see “Windows protected your PC” because the installer is not code signed yet. Choose More info, then Run anyway.
-
 ## Related pages
 
 - [Installed mods](https://sigilmods.app/installed): On and off, load order and overlaps
@@ -478,8 +464,6 @@ A profile can include a crosshair, so switching profiles can switch your reticle
 
 A free, open-source mod manager for Deadlock.
 
-On Windows you may see “Windows protected your PC” because the installer is not code signed yet. Choose More info, then Run anyway.
-
 ## Related pages
 
 - [Autoexec](https://sigilmods.app/autoexec): autoexec.cfg, commands and launch options
@@ -528,8 +512,6 @@ The game reads `autoexec.cfg` when it starts, so changes apply from the next lau
 - [Download Sigil for macOS (disk image, .dmg)](https://github.com/superuserkalo/sigil/releases/latest/download/Sigil-macos.dmg)
 
 A free, open-source mod manager for Deadlock.
-
-On Windows you may see “Windows protected your PC” because the installer is not code signed yet. Choose More info, then Run anyway.
 
 ## Related pages
 
@@ -585,8 +567,6 @@ Nothing is fetched until you turn Player stats on, and the reads carry only the 
 
 A free, open-source mod manager for Deadlock.
 
-On Windows you may see “Windows protected your PC” because the installer is not code signed yet. Choose More info, then Run anyway.
-
 ## Related pages
 
 - [Performance](https://sigilmods.app/performance): Community configs, on and off
@@ -637,8 +617,6 @@ Deadlock never runs a program shipped inside a mod, so a mod has no reason to in
 - [Download Sigil for macOS (disk image, .dmg)](https://github.com/superuserkalo/sigil/releases/latest/download/Sigil-macos.dmg)
 
 A free, open-source mod manager for Deadlock.
-
-On Windows you may see “Windows protected your PC” because the installer is not code signed yet. Choose More info, then Run anyway.
 
 ## Related pages
 
@@ -708,8 +686,6 @@ When an update resets `gameinfo.gi`, a banner offers to fix it again.
 
 A free, open-source mod manager for Deadlock.
 
-On Windows you may see “Windows protected your PC” because the installer is not code signed yet. Choose More info, then Run anyway.
-
 ## Related pages
 
 - [Mods not working after an update](https://sigilmods.app/deadlock-mods-not-working-after-update): gameinfo.gi resets and moved game files
@@ -772,8 +748,6 @@ Installed shows an update chip on each mod with a newer file. The compatibility 
 - [Download Sigil for macOS (disk image, .dmg)](https://github.com/superuserkalo/sigil/releases/latest/download/Sigil-macos.dmg)
 
 A free, open-source mod manager for Deadlock.
-
-On Windows you may see “Windows protected your PC” because the installer is not code signed yet. Choose More info, then Run anyway.
 
 ## Related pages
 
@@ -850,8 +824,6 @@ Every error message in Sigil has Send feedback, which shows the scrubbed details
 
 A free, open-source mod manager for Deadlock.
 
-On Windows you may see “Windows protected your PC” because the installer is not code signed yet. Choose More info, then Run anyway.
-
 ## Related pages
 
 - [Privacy and safety](https://sigilmods.app/privacy): What it sends, and how it checks mods
@@ -894,8 +866,6 @@ Sigil does not host mods. Every mod comes from GameBanana and belongs to its cre
 - [Download Sigil for macOS (disk image, .dmg)](https://github.com/superuserkalo/sigil/releases/latest/download/Sigil-macos.dmg)
 
 A free, open-source mod manager for Deadlock.
-
-On Windows you may see “Windows protected your PC” because the installer is not code signed yet. Choose More info, then Run anyway.
 
 ## Related pages
 

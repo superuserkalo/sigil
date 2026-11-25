@@ -36,8 +36,6 @@ A game update resets `gameinfo.gi`, which also removes a config's changes. Sigil
 
 A free, open-source mod manager for Deadlock.
 
-On Windows you may see “Windows protected your PC” because the installer is not code signed yet. Choose More info, then Run anyway.
-
 ## Related pages
 
 - [Launching](https://sigilmods.app/launch): Modded or vanilla, with checks first

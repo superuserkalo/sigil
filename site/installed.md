@@ -38,8 +38,6 @@ Installed checks for newer files when you open it and shows an update chip on ea
 
 A free, open-source mod manager for Deadlock.
 
-On Windows you may see “Windows protected your PC” because the installer is not code signed yet. Choose More info, then Run anyway.
-
 ## Related pages
 
 - [Launching](https://sigilmods.app/launch): Modded or vanilla, with checks first
