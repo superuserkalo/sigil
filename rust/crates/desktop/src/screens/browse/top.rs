@@ -1024,18 +1024,25 @@ pub(crate) fn tile(s: &State, u: &Ui, slot: usize, card: &BrowseCard, tw: f32, t
         // Pending or failed: a finished graphite box with a glyph, never a hole.
         art = art.child(el().absolute(0.0, 0.0).w_full().h_full().center().child(icon(&icons::PACKAGE, 24.0).color(if failed { u.muted } else { u.faint }).a11y_hidden()));
     }
-    if let Some(rank) = rank {
-        art = art.child(
-            row().pin(Some(8.0), Some(8.0), None, None)
-                .h(24.0)
-                .min_w(24.0)
-                .px(7.0)
-                .center()
-                .radius(crate::ui::r(4.0))
-                .fill(Color::BLACK.alpha(0.78))
-                .border(1.0, white(0.16))
-                .child(text(rank.to_string()).font(crate::ui::BODY_NUM).color(Color::WHITE).a11y_hidden()),
-        );
+    // The rank is a large numeral in the picture's lower left corner over a soft shadow, and
+    // steps aside on hover for Install and the star.
+    if let Some(rank) = rank.filter(|_| loaded || !failed) {
+        art = art
+            .child(
+                el().pin(Some(0.0), None, None, Some(0.0))
+                    .size(160.0, 96.0)
+                    .radial_gradient([0.0, 1.0], [160.0, 96.0], [(0.0, Color::BLACK.alpha(0.8)), (1.0, Color::BLACK.alpha(0.0))])
+                    .group_opacity(1.0, 0.0)
+                    .a11y_hidden(),
+            )
+            .child(
+                text(rank.to_string())
+                    .font(crate::ui::RANK)
+                    .color(Color::WHITE)
+                    .pin(Some(8.0), None, None, Some(0.0))
+                    .group_opacity(1.0, 0.0)
+                    .a11y_hidden(),
+            );
     }
     // On hover: Install and the star along the picture's lower edge. The text below stays.
     let mut hover = row()
@@ -1116,7 +1123,7 @@ pub(crate) fn tile(s: &State, u: &Ui, slot: usize, card: &BrowseCard, tw: f32, t
                 .child(icon(if saved { &STAR_FILLED } else { &STAR }, 14.0).color(Color::WHITE).a11y_hidden()),
         );
     }
-    // Help build Sigil: a health chip on the picture, top right (the rank badge holds the top
+    // Help build Sigil: a health chip on the picture, top right (the rank numeral holds the lower
     // left), under the NSFW tag when that shows. At rest only: the hover layer has the actions.
     if !veil && let Some(chip) = crate::insights::chip(s, id, card.updated_ts) {
         let top = if card.nsfw && crate::screens::settings::nsfw::always_tag() { 36.0 } else { 8.0 };
