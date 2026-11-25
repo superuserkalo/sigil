@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { aliasTable } from "../src/catalog/aliases";
-import { search, tokenMatch, withinOneEdit } from "../src/catalog/match";
+import { normalize, search, tokenMatch, withinOneEdit } from "../src/catalog/match";
 import { buildIndex, type JudgmentRows } from "../src/catalog/publish";
 
 type Fixture = { id: number; title: string; cat?: string; sub?: string; author?: string; description?: string; terms?: string[] };
@@ -67,12 +66,11 @@ describe("local matcher over public text", () => {
     expect(top("counterstrike", 5)).toContain(2);
   });
 
-  it("uses hero nicknames, synonyms and a few German words", () => {
+  it("covers short forms and spelling variants by prefix and one edit, with no alias table", () => {
     expect(top("mcg")[0]).toBe(6);
     expect(top("geist")[0]).toBe(5);
-    expect(top("recolor venator")[0]).toBe(9);
-    expect(top("gasmaske", 2)).toContain(7);
-    expect(top("katze")[0]).toBe(6);
+    expect(top("recolour venator")[0]).toBe(9);
+    expect(top("vindict pink")[0]).toBe(11);
   });
 
   it("requires every word, and falls back to any word when nothing has all", () => {
@@ -96,8 +94,13 @@ describe("local matcher over public text", () => {
     expect(tokenMatch("ve", "venator")).toBe(0);
   });
 
-  it("ships the alias table", () => {
-    expect(aliasTable().mcg).toBe("mcginnis");
-    expect(PLAIN.aliases.geist).toBe("lady geist");
+  it("ships no alias table and maps no word to another", () => {
+    expect(Object.keys(PLAIN).sort()).toEqual(["built", "mods", "strings", "v"]);
+    // Without a hand-made list a German word finds only mods that use it.
+    expect(top("katze")).toEqual([]);
+  });
+
+  it("normalises case, accents and punctuation", () => {
+    expect(normalize("  Mo & Krill: Café-Noir!! ")).toBe("mo and krill cafe noir");
   });
 });

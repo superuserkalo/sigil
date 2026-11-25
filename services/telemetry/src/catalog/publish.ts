@@ -6,10 +6,11 @@
  * PUBLISH_VERSION).
  */
 
-import { aliasTable, normalize } from "./aliases";
+import { normalize } from "./match";
 import type { Stored } from "./judgments";
 
-export const PUBLISH_VERSION = 2;
+/** 3: the alias table left the index (no hand-made alias list of any kind). */
+export const PUBLISH_VERSION = 3;
 
 /**
  * Thresholds. A Noul at 0.7 reads as yes (TypeSafe docs); a Choice acts on the chosen option's
@@ -66,7 +67,6 @@ export type CatalogIndex = {
   v: number;
   built: number;
   strings: string[];
-  aliases: Record<string, string>;
   mods: IndexMod[];
 };
 
@@ -93,7 +93,7 @@ export function keptTerms(row: Stored | undefined): string[] {
     .map((term) => term.term);
 }
 
-/** The whole index: one shared string table, the alias table, per mod the title and packed fields. */
+/** The whole index: one shared string table, per mod the title and packed fields. */
 export function buildIndex(mods: readonly ModMeta[], rows: ReadonlyMap<number, JudgmentRows>, now: number, terms = false): CatalogIndex {
   const strings: string[] = [];
   const ids = new Map<string, number>();
@@ -126,9 +126,7 @@ export function buildIndex(mods: readonly ModMeta[], rows: ReadonlyMap<number, J
     if (meta.stale === true) record.st = 1;
     out.push(record);
   }
-  const aliases = aliasTable();
-  for (const target of new Set(Object.values(aliases))) intern(target);
-  return { v: PUBLISH_VERSION, built: now, strings, aliases, mods: out };
+  return { v: PUBLISH_VERSION, built: now, strings, mods: out };
 }
 
 /** Matcher order of field strength, by class. */

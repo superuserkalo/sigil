@@ -12,7 +12,7 @@
  */
 
 import type { ListedMod, ModText } from "./gamebanana";
-import { normalize } from "./aliases";
+import { normalize } from "./match";
 
 /** 131k context, JSON schema output. $0.27 / M input, $0.85 / M output. */
 export const EXPAND_MODEL = "@cf/meta/llama-4-scout-17b-16e-instruct";

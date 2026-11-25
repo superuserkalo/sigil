@@ -2,7 +2,7 @@
  * Public read routes over the catalog enrichment. No player data is involved: no consent gate, no
  * secret needed, and they never fail because enrichment is behind (an empty index is an answer).
  *
- *   GET /v1/catalog/tags              the whole index: string table, alias table, per-mod ids
+ *   GET /v1/catalog/tags              the whole index: string table, per-mod ids
  *   GET /v1/catalog/tags?since=<ms>   mods enriched after <ms>, with their own string table
  *   GET /v1/catalog/mod/<id>          per-mod detail: the file pre-selection hint (flagged)
  */
@@ -28,7 +28,7 @@ function notModified(request: Request, etag: string, maxAge: number): Response |
   return tags.includes(`"${etag}"`) || tags.includes("*") ? new Response(null, { status: 304, headers: cacheHeaders(etag, maxAge) }) : null;
 }
 
-const EMPTY: CatalogIndex = { v: PUBLISH_VERSION, built: 0, strings: [], aliases: {}, mods: [] };
+const EMPTY: CatalogIndex = { v: PUBLISH_VERSION, built: 0, strings: [], mods: [] };
 
 export async function handleTags(request: Request, env: Env, url: URL, respond: Respond): Promise<Response> {
   const sinceText = url.searchParams.get("since");
@@ -64,7 +64,7 @@ export function delta(index: CatalogIndex, since: number): CatalogIndex {
         return remap(Math.floor(packed / PACK)) * PACK + (packed % PACK);
       }),
     }));
-  return { v: index.v, built: index.built, strings, aliases: index.aliases, mods };
+  return { v: index.v, built: index.built, strings, mods };
 }
 
 export async function handleModDetail(request: Request, env: Env, id: number, respond: Respond): Promise<Response> {

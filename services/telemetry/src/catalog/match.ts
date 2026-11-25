@@ -5,8 +5,8 @@
  *
  * 1. Normalise the query (lower case, accents and punctuation dropped) and split it into words.
  *    Stop words (the, a, of, mod...) are scored but not required.
- * 2. Each word becomes a unit with alternatives from the shipped alias table (hero nicknames, tag
- *    synonyms, a few German words); two- and three-word phrases are looked up first.
+ * 2. Each word is a unit. There is no alias or synonym table of any kind: misspellings and
+ *    short forms are covered by the tolerance below, outside names by the flagged verified terms.
  * 3. A unit matches a token exactly (1.0), as a prefix of at least 3 letters (0.8), or one edit
  *    away for words of 4 letters or more (0.7). A unit also matches a multi-word term written
  *    without spaces ("counterstrike").
@@ -18,8 +18,19 @@
  * 6. Every non-stop unit must match somewhere. When no mod passes, any match counts instead.
  */
 
-import { normalize } from "./aliases";
 import { PACK, type CatalogIndex } from "./publish";
+
+/** Lower case, accents dropped, punctuation to spaces, spaces collapsed. Shared with the index builder. */
+export function normalize(text: string): string {
+  return text
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/&/g, " and ")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim()
+    .replace(/\s+/g, " ");
+}
 
 export const WEIGHTS = { title: 3, term: 2.5, hero: 2, category: 1.5, author: 1.5, description: 1 } as const;
 /** By field class (`publish.ts` CLS): description word, category, author, hero, verified term. */
@@ -27,11 +38,9 @@ const CLASS_WEIGHT = [WEIGHTS.description, WEIGHTS.category, WEIGHTS.author, WEI
 const STOP = new Set(["the", "a", "an", "of", "for", "and", "mod", "mods", "with", "der", "die", "das", "und", "fur"]);
 
 type Field = { readonly tokens: readonly string[]; readonly joined: string; readonly weight: number; readonly key: string };
-/** Stands for a match spread over several single-word fields: never the title, never partial. */
-const SPREAD: Field = { tokens: [], joined: "", weight: 1, key: "~spread" };
 type Prepared = { readonly mods: readonly { readonly id: number; readonly title: string; readonly fields: readonly Field[] }[]; readonly idf: ReadonlyMap<string, number> };
 
-type Unit = { readonly word: string; readonly alts: readonly (readonly string[])[]; readonly required: boolean };
+type Unit = { readonly word: string; readonly required: boolean };
 
 export type Hit = { readonly id: number; readonly score: number };
 
@@ -98,50 +107,22 @@ export function tokenMatch(query: string, token: string): number {
   return 0;
 }
 
-function units(query: string, aliases: Readonly<Record<string, string>>): Unit[] {
-  const words = normalize(query).split(" ").filter(Boolean);
-  const out: Unit[] = [];
-  let at = 0;
-  while (at < words.length) {
-    let taken = false;
-    for (const size of [3, 2]) {
-      const phrase = words.slice(at, at + size).join(" ");
-      const target = size <= words.length - at ? aliases[phrase] : undefined;
-      if (target !== undefined) {
-        // A known phrase stays one unit per word, each also allowed to be the canonical phrase.
-        for (const word of words.slice(at, at + size)) out.push({ word, alts: [[word], target.split(" ")], required: !STOP.has(word) });
-        at += size;
-        taken = true;
-        break;
-      }
-    }
-    if (taken) continue;
-    const word = words[at] ?? "";
-    const target = aliases[word];
-    out.push({ word, alts: target === undefined ? [[word]] : [[word], target.split(" ")], required: !STOP.has(word) });
-    at += 1;
-  }
-  return out;
+function units(query: string): Unit[] {
+  return normalize(query)
+    .split(" ")
+    .filter(Boolean)
+    .map((word) => ({ word, required: !STOP.has(word) }));
 }
 
 function unitQuality(unit: Unit, field: Field): number {
-  let best = 0;
-  for (const alt of unit.alts) {
-    let quality = 1;
-    for (const word of alt) {
-      let wordBest = word.length >= 4 && field.tokens.length > 1 ? tokenMatch(word, field.joined) : 0;
-      for (const token of field.tokens) wordBest = Math.max(wordBest, tokenMatch(word, token));
-      quality = Math.min(quality, wordBest);
-      if (quality === 0) break;
-    }
-    best = Math.max(best, quality);
-  }
+  let best = unit.word.length >= 4 && field.tokens.length > 1 ? tokenMatch(unit.word, field.joined) : 0;
+  for (const token of field.tokens) best = Math.max(best, tokenMatch(unit.word, token));
   return best;
 }
 
 export function search(index: CatalogIndex, query: string, limit = 20): Hit[] {
   const ready = prepare(index);
-  const list = units(query, index.aliases);
+  const list = units(query);
   if (list.length === 0) return [];
   const whole = normalize(query);
   const required = list.filter((unit) => unit.required);
@@ -156,30 +137,6 @@ export function search(index: CatalogIndex, query: string, limit = 20): Hit[] {
       const perField = new Map<Field, number>();
       const best: { field: Field | null; value: number; quality: number }[] = list.map(() => ({ field: null, value: 0, quality: 0 }));
       list.forEach((unit, u) => {
-        // A multi-word alternative ("gasmaske" to "gas mask") may also be spread over single-word
-        // fields: each word must match somewhere; it scores the mean of its words' best fields.
-        for (const alt of unit.alts) {
-          if (alt.length < 2) continue;
-          let sum = 0;
-          let found = true;
-          for (const word of alt) {
-            let wordBest = 0;
-            for (const field of mod.fields) {
-              let quality = 0;
-              for (const token of field.tokens) quality = Math.max(quality, tokenMatch(word, token));
-              if (quality === 0) continue;
-              const idf = field.key.length > 0 ? (ready.idf.get(field.key) ?? 1) : 1;
-              wordBest = Math.max(wordBest, field.weight * quality * idf);
-            }
-            if (wordBest === 0) {
-              found = false;
-              break;
-            }
-            sum += wordBest;
-          }
-          const slot = best[u];
-          if (found && slot !== undefined && sum / alt.length > slot.value) best[u] = { field: SPREAD, value: sum / alt.length, quality: 1 };
-        }
         for (const field of mod.fields) {
           const quality = unitQuality(unit, field);
           if (quality === 0) continue;
@@ -195,7 +152,7 @@ export function search(index: CatalogIndex, query: string, limit = 20): Hit[] {
         const slot = best[u];
         if (slot === undefined || slot.field === null) return;
         const field = slot.field;
-        const wholeTerm = unit.alts.some((alt) => alt.length >= field.tokens.length || withinOneEdit(alt.join(""), field.joined));
+        const wholeTerm = field.tokens.length <= 1 || withinOneEdit(unit.word, field.joined);
         const partial = field.key.length > 0 && field.tokens.length > 1 && (perField.get(field) ?? 0) < field.tokens.length && !wholeTerm ? 0.6 : 1;
         total += slot.value * partial;
         covered += 1;

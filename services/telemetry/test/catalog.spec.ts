@@ -5,7 +5,7 @@ import { buildAndStoreIndex, loadIndex, runEnrichment, RUN_SUBREQUESTS, DEFAULT_
 import { parseExpansion, withoutHeroNames, type AiRunner } from "../src/catalog/expand";
 import { decodeEntities, htmlToText } from "../src/catalog/gamebanana";
 import { JUDGMENTS } from "../src/catalog/judgments";
-import { descriptionWords, keptTerms, modDetail, PACK, T } from "../src/catalog/publish";
+import { descriptionWords, keptTerms, modDetail, PACK, PUBLISH_VERSION, T } from "../src/catalog/publish";
 import { assertPublicOnly, BODY_KEYS, STATE_KEYS, TYPESAFE_URL, type SystemOneBody } from "../src/catalog/typesafe";
 import type { Net } from "../src/catalog/net";
 import { call, clearTables, readJson } from "./helpers";
@@ -107,7 +107,8 @@ const fakeAi = (calls: { ai: number; input?: string }): AiRunner => ({
 const newCalls = (): Calls => ({ gb: [], typesafe: [], headers: [] });
 
 function testEnv(extra: Record<string, unknown> = {}): Env {
-  return { ...env, CATALOG_INDEX: "1", TYPESAFE_API_KEY: KEY, AI: undefined, ...extra } as unknown as Env;
+  // The model flags start off here whatever wrangler.jsonc ships, so each test says what it turns on.
+  return { ...env, CATALOG_INDEX: "1", CATALOG_EXPANSION: "0", CATALOG_FILE_LABELS: "0", TYPESAFE_API_KEY: KEY, AI: undefined, ...extra } as unknown as Env;
 }
 
 const ON = { CATALOG_EXPANSION: "1", CATALOG_FILE_LABELS: "1" };
@@ -124,7 +125,7 @@ beforeEach(async () => {
 describe("the index from public text", () => {
   it("indexes title, description words, category, hero subcategory and author with no model at all", async () => {
     const calls = newCalls();
-    const report = await runEnrichment({ ...env, CATALOG_INDEX: "1", TYPESAFE_API_KEY: undefined } as unknown as Env, NOW, fakeNet([{ id: 1, updated: 1795000000, title: "GIGN Vindicta" }], calls));
+    const report = await runEnrichment({ ...env, CATALOG_INDEX: "1", CATALOG_EXPANSION: "0", TYPESAFE_API_KEY: undefined } as unknown as Env, NOW, fakeNet([{ id: 1, updated: 1795000000, title: "GIGN Vindicta" }], calls));
     expect(report.refreshed).toBe(1);
     expect(calls.typesafe).toEqual([]);
     await buildAndStoreIndex(env.DB, NOW);
@@ -359,14 +360,16 @@ describe("routes", () => {
     expect(response.headers.get("cache-control")).toBe("public, max-age=10800");
     const etag = response.headers.get("etag") ?? "";
     expect(etag).toMatch(/^"[0-9a-f]{32}"$/);
-    const index = await readJson<{ aliases: Record<string, string>; mods: { i: number; ti: string }[] }>(response);
+    const index = await readJson<{ v: number; mods: { i: number; ti: string }[] }>(response);
     expect(index.mods[0]?.ti).toBe("CS 1.6 Vindicta skin");
-    expect(index.aliases.vindi).toBe("vindicta");
+    expect(index.v).toBe(PUBLISH_VERSION);
+    expect(index).not.toHaveProperty("aliases");
     expect((await call("/v1/catalog/tags", { method: "GET", headers: { "if-none-match": etag } })).status).toBe(304);
     const empty = await call(`/v1/catalog/tags?since=${1795000000 * 1000 + 1}`, { method: "GET" });
     expect((await readJson<{ mods: unknown[] }>(empty)).mods).toEqual([]);
     const delta = await readJson<{ strings: string[]; mods: { x: number[] }[] }>(await call("/v1/catalog/tags?since=0", { method: "GET" }));
     expect(delta.mods.length).toBe(1);
+    expect(delta).not.toHaveProperty("aliases");
     expect(Math.max(...(delta.mods[0]?.x ?? [0]).map((packed) => Math.floor(packed / PACK)))).toBeLessThan(delta.strings.length);
     expect((await call("/v1/catalog/tags?since=abc", { method: "GET" })).status).toBe(400);
   });
