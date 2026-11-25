@@ -4,7 +4,9 @@ Status: accepted (Worker deployed 2026-11-25 with migration 0006 applied; the de
 the index and matches Browse search locally, `deadlock_core::catalog_index`). Term expansion is on
 under the $1 daily cap as its live check; file labels are off.
 Date: 2026-11-25, narrowed the same day after a product review; the curated alias list removed the
-same day (index version 3)
+same day (index version 3); likes, content rating and added time, alias checks, publish-time term
+cleanup and a judging-aware backfill cursor added the same day after a search review (still
+version 3, migration 0008)
 
 ## Context
 
@@ -22,12 +24,29 @@ on the PC.
   public text: per mod the title, up to 60 description words (stop words dropped), the category
   and subcategory, the hero (GameBanana's hero subcategory under Skins, an exact lookup in code),
   and the author. One shared string table; per mod the title and field ids packed as
-  `stringId * 8 + class` (0 description word, 1 category, 2 author, 3 hero, 4 verified term).
+  `stringId * 8 + class` (0 description word, 1 category, 2 author, 3 hero, 4 verified term,
+  5 verified generic visual term).
+- Per mod facts from the same list pages (no extra request): `l` GameBanana's like count
+  (integer), `n: 1` when the page has content ratings (omitted otherwise), `a` the added time in
+  seconds. Added as new keys under version 3: the shipped app accepts only 3 and ignores keys it
+  does not know. Stored in `catalog_mods` (migration 0008: `likes`, `rated`, `facts_at`;
+  `added_at` existed). Likes are kept out of the content hash, so a likes-only change never asks
+  a model; it counts as an index change, which is still published at most hourly.
+- Each mod's `u` is its newest change in ms: its text (page time), its facts (`facts_at`, also
+  set when the Worker first sees the mod) or its verified terms (`enriched_at`). `?since=` reads
+  `u`, so a delta carries likes, newly seen mods and new terms, not only text edits.
 - There is no alias, nickname or synonym list of any kind, hand-made or generated. A curated
   table (hero nicknames, mod-kind and style synonyms, German words) shipped briefly and was
   removed on 2026-11-25: it had to be kept up by hand, went stale when heroes were added, and
   added no hits in the recall eval (23 of 40 with and without it). The index carries `v`,
   `built`, `strings` and `mods` only; dropping the table bumped `PUBLISH_VERSION` to 3.
+- `INDEX_BUILD` (in `publish.ts`, stored in the index meta, never sent) is bumped whenever what
+  the index publishes changes. The stored index was only rebuilt on a version change or a mod
+  change, so a publish-logic change could wait; a new build number rebuilds on the next run. This
+  is why the live index showed no class 5: it was built at 10:20 UTC, before class 5 was added
+  (10:34 UTC), and nothing forced a rebuild. Build 2 carries class 5, the cleanup below and the
+  facts. A change seen inside the hourly window is remembered (`index_dirty`) and published by the
+  first run after it.
 - `GET /v1/catalog/tags` serves it gzipped from D1 with an ETag and
   `Cache-Control: public, max-age=10800`; `?since=<ms>` returns only mods whose text changed
   after that time, with their own string table. No consent gate: the request carries no id and
@@ -58,9 +77,8 @@ cases as tests and adds the owner's adjustments after looking at live data (2026
 - Generated terms (class 4, and class 5 below) shorter than 3 characters are ignored ("hd").
 - Class 4 terms (reference, character, franchise, alias and theme) count fully at 2.5. Class 5 is
   reserved for the generic visual terms ("model", "gun", "physics") and counts 0.5, less than a
-  description word. The Worker packs every kept term as class 4 today, so until `publish.ts`
-  packs visual terms as 5 they count fully; the app needs no change when it does. Classes 6 and
-  7 are ignored.
+  description word. The Worker packs visual terms as 5 (index build 2; a test pins it). A visual
+  term that is also a description word keeps class 0. Classes 6 and 7 are ignored.
 - Title matches always outrank other matches: results sort by how many query words the title
   matches, then by score, then by likes when the card is known, then by id.
 - Accent folding covers Latin-1 and Latin Extended-A letters and full-width ASCII (the app has
@@ -91,6 +109,15 @@ cases as tests and adds the owner's adjustments after looking at live data (2026
   per mod (title, categories, author, text, files) tells real changes from page bumps. Withdrawn,
   trashed, withheld or private pages, and mods unseen for 14 days, leave the index. The index is
   rebuilt at most hourly. None of this calls a model.
+- The backfill cursor moves to the next page once every mod on it has its text and, while a model
+  step runs, none of them still waits for its judgments (not reached because a run cap stopped
+  the loop, or failed this run). Before, the cursor moved once the texts were read, so with 20
+  mods judged a run most of each 50-mod page waited a whole lap (about 8.7 hours). A 50-mod page
+  now takes three runs. A mod whose judging fails (generator error, a rejected request, a bad
+  answer) counts a failure on its content hash (`judge_failures`); at 3 its missing judgments are
+  written as judged-as-failed for that hash (`{ na: 1, failed: 1 }`, nothing published) and the
+  cursor moves on. A new content hash or judgment version tries again. The daily spend cap does
+  not hold the cursor: the free text upkeep keeps walking.
 - At most 45 outside calls a run (under the free plan's 50), a lease so runs never overlap, every
   run logs mods read, unchanged, withdrawn, judged and failed. `CATALOG_INDEX = "1"` (a Worker
   var) turns the upkeep on; anything else is the off switch.
@@ -103,6 +130,19 @@ cases as tests and adds the owner's adjustments after looking at live data (2026
   them (CS gives counter-strike, cs, cs 1.6, gign), plain visual words and themes. TypeSafe Jev
   (`jev-1.14.0`, pinned) checks each proposed term with a Noul; references are kept at 0.7, visual
   and theme terms at 0.75. The Deadlock hero a skin replaces is removed in code first.
+- Aliases are checked on their own (terms judgment version 5): one more Noul per alias in the same
+  request, "is `terms[i]` a name players would commonly type for `terms[j]`", by path, within the
+  same caps. An alias is published only when its reference passes (0.7) and its own check passes
+  (0.7). Before, an alias inherited its reference's answer, which let "cc2", "tpc" and "nm"
+  through. Re-checking is targeted: a version 4 row with no alias stays current
+  (`Judgment.accepts`), a version 4 row with an alias is stale and is asked again when its mod is
+  next on a listed page (the backfill reaches every mod within a lap). Until then its aliases are
+  not published (no own check stored); its other terms are.
+- Publish-time cleanup (`publish.ts`): a generated term equal to any Deadlock hero name is dropped,
+  with the hero list taken from the data (every distinct Skins subcategory in `catalog_mods`), not
+  only the mod's own hero ("paige" and "mina" on a Hololive icon pack). Generated terms shorter
+  than 3 characters are dropped (and not asked about). Thresholds and filters live here, so a
+  change needs no new inference, only an `INDEX_BUILD` bump.
 - File labels (`CATALOG_FILE_LABELS = "1"`): for a mod with several files, a Jev Choice for the main
   file and a label per file (main, variant, add-on, old version, source). Served by
   `GET /v1/catalog/mod/<id>` as a pre-selection hint only: the app always shows the file picker.
@@ -138,6 +178,8 @@ the whole catalog once and about a cent a day after.
 
 The real catalog's index (2,547 mods) is 756 KB, 292 KB gzipped; scaled to 7,000 mods about
 710 KB gzipped. Full downloads with an ETag are fine at this size; deltas exist for growth.
+Measured on the live index of 2026-11-25 (2,606 mods): 833 KB, 323 KB gzipped before the facts;
+with `l`, `n`, `a` and the hero and short-term cleanup about 889 KB, 344 KB gzipped (+6%).
 
 ## Rejected alternatives
 
@@ -149,7 +191,8 @@ The real catalog's index (2,547 mods) is 756 KB, 292 KB gzipped; scaled to 7,000
 - Generated hero nicknames (the generator proposes, Jev checks, per hero from the data):
   considered as the self-maintaining replacement and not built, by the owner's call. Prefix and
   one-edit matching already cover most short forms.
-- Removed after review (2026-11-25), not built: an NSFW hint, cover and banner picks with a
+- Removed after review (2026-11-25), not built: a model-made NSFW hint (GameBanana's own
+  content-rating flag is published as `n` instead), cover and banner picks with a
   subject box, terms from the cover picture, a model guess at the hero (the subcategory lookup
   stays), facts such as "requires another mod" and "work in progress", update-note classes,
   comment health, duplicate detection, patch-note line classes, a learning loop from search gaps,
