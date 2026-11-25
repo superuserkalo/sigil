@@ -103,5 +103,11 @@ export async function clearTables(): Promise<void> {
     env.DB.prepare("DELETE FROM product_events"),
     env.DB.prepare("DELETE FROM product_contrib"),
     env.DB.prepare("DELETE FROM product_totals"),
+    // Sigil's seeded crosshairs stay; their counts and flags go back to the migration's.
+    env.DB.prepare("DELETE FROM crosshairs WHERE official = 0"),
+    env.DB.prepare("UPDATE crosshairs SET uses = 0, reports = 0, hidden = 0"),
+    env.DB.prepare("DELETE FROM crosshair_uses"),
+    env.DB.prepare("DELETE FROM crosshair_reports"),
+    env.DB.prepare("DELETE FROM crosshair_publishes"),
   ]);
 }

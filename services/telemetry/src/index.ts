@@ -18,6 +18,8 @@
  *   GET  /v1/product/admin/search-gaps  the owner's searches that found nothing; owner key only
  *   GET  /v1/catalog/tags   public catalog search index (ADR 0018), cacheable
  *   GET  /v1/catalog/mod/<id>    per-mod detail: the file pre-selection hint
+ *   /v1/crosshairs...       community crosshair library (ADR 0019): publish, list, delete, use,
+ *                           report, and owner-only moderation (`crosshairs/routes.ts`)
  *
  * The app is the only intended client and nothing here is fetched by the desktop app on its own:
  * every request is behind a Settings > Privacy switch (docs/decisions/0014-opt-in-telemetry.md,
@@ -40,6 +42,7 @@ import { contribute, cpuTier, fpsContext, fpsFor, MAX_HEALTH_MODS, modHealth, re
 import { scheduledJob } from "./cron";
 import { runEnrichment } from "./catalog/enrich";
 import { handleModDetail, handleTags } from "./catalog/routes";
+import { crosshairRoute } from "./crosshairs/routes";
 import {
   adminAllowed,
   installHash,
@@ -99,8 +102,9 @@ const ROUTES: Readonly<Record<string, Route>> = {
   "/v1/catalog/tags": { method: "GET", run: (request, env, url) => handleTags(request, env, url, jsonResponse) },
 };
 
-/** Routes with an id in the path. */
-function prefixRoute(path: string): Route | undefined {
+/** Routes with an id in the path, and the crosshair routes (one path takes two methods). */
+function prefixRoute(path: string, method: string): Route | undefined {
+  if (path === "/v1/crosshairs" || path.startsWith("/v1/crosshairs/")) return crosshairRoute(path, method, jsonResponse);
   const mod = /^\/v1\/catalog\/mod\/(\d{1,10})$/.exec(path);
   if (mod !== null) return { method: "GET", run: (request, env) => handleModDetail(request, env, Number(mod[1]), jsonResponse) };
   return undefined;
@@ -179,7 +183,7 @@ export default {
 
 async function dispatch(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url);
-  const route = ROUTES[url.pathname] ?? prefixRoute(url.pathname);
+  const route = ROUTES[url.pathname] ?? prefixRoute(url.pathname, request.method);
   if (route === undefined) return errorResponse(404, "not_found");
   if (request.method !== route.method) {
     return jsonResponse(405, { error: "method_not_allowed" }, { allow: route.method });

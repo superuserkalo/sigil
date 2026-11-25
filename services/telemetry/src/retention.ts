@@ -10,9 +10,13 @@
  *   install, made here and stored nowhere else): the history stays, but it can no longer be tied
  *   to that install id or extended by it.
  * - `product_totals` (counts above the floor) are kept indefinitely.
- * - `product_contrib`, the only table with a network marker, keeps its short life: its epoch, and
- *   the 21-day hard backstop below.
+ * - `product_contrib`, the only product table with a network marker, keeps its short life: its
+ *   epoch, and the 21-day hard backstop below.
+ * - `crosshair_uses`, `crosshair_reports` and `crosshair_publishes` (ADR 0019), the community
+ *   crosshair dedupe and limit rows, are deleted 2 days after they were written.
  */
+
+import { CROSSHAIR_DEDUPE_MS } from "./crosshairs/routes";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -47,6 +51,10 @@ export async function runRetention(db: D1Database, now: number): Promise<Retenti
     db.prepare("DELETE FROM crashes WHERE created_at < ?1").bind(now - CRASH_RETENTION_MS),
     // The backstop: never depends on closing.
     db.prepare("DELETE FROM product_contrib WHERE created_at < ?1").bind(now - CONTRIB_BACKSTOP_MS),
+    // Community crosshairs (ADR 0019): the dedupe and limit rows with a network bucket, 2 days.
+    db.prepare("DELETE FROM crosshair_uses WHERE created_at < ?1").bind(now - CROSSHAIR_DEDUPE_MS),
+    db.prepare("DELETE FROM crosshair_reports WHERE created_at < ?1").bind(now - CROSSHAIR_DEDUPE_MS),
+    db.prepare("DELETE FROM crosshair_publishes WHERE created_at < ?1").bind(now - CROSSHAIR_DEDUPE_MS),
   ]);
 
   return {
