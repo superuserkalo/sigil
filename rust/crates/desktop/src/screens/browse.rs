@@ -620,6 +620,8 @@ pub struct Filters {
     pub favorites: bool,
     /// Show the mods picked for this player (`foryou`) instead of the catalog.
     pub for_you: bool,
+    /// Show the mods gaining fastest (`foryou::rising`) instead of the catalog.
+    pub rising: bool,
 }
 
 impl Filters {
@@ -638,6 +640,7 @@ impl Filters {
             self.exclude,
             self.favorites,
             self.for_you,
+            self.rising,
         ]
         .iter()
         .filter(|on| **on)
@@ -926,6 +929,7 @@ pub fn query_key(s: &State, query: &BrowseQuery) -> u64 {
     query.hash(&mut hasher);
     f.favorites.hash(&mut hasher);
     f.for_you.hash(&mut hasher);
+    f.rising.hash(&mut hasher);
     (f.owned == Owned::Installed).hash(&mut hasher);
     s.browse_view.tab.hash(&mut hasher);
     hasher.finish()
@@ -946,6 +950,9 @@ pub fn local_page(st: &mut State, key: u64) -> Option<BrowsePageView> {
     } else if f.for_you {
         // The whole ranking, best first, of which the landing's row shows the head.
         st.browse_view.shelves.for_you.all.iter().map(store::clone_card).collect()
+    } else if f.rising {
+        // The whole Rising list, fastest first, of which the landing's row shows the head.
+        st.browse_view.shelves.for_you.rising.iter().map(store::clone_card).collect()
     } else if f.owned == Owned::Installed {
         st.installed
             .library
@@ -1232,7 +1239,7 @@ fn shown_indices(s: &State) -> Vec<usize> {
     let v = &s.browse_view;
     let f = &v.filters;
     let typed = s.browse_query.text.trim().to_lowercase();
-    let local = f.favorites || f.for_you || f.owned == Owned::Installed;
+    let local = f.favorites || f.for_you || f.rising || f.owned == Owned::Installed;
     let query = if local || typed != v.applied_search.to_lowercase() {
         typed
     } else {

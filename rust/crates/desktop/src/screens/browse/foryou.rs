@@ -489,7 +489,7 @@ pub fn rising(candidates: &[BrowseCard], memory: &Memory, server: &[u64], owned:
     let mut picks = Vec::new();
     let mut per_hero: HashMap<String, u32> = HashMap::new();
     let mut per_author: HashMap<String, u32> = HashMap::new();
-    while picks.len() < KEEP && !scored.is_empty() {
+    while picks.len() < KEEP_ALL && !scored.is_empty() {
         let (mut best, mut best_score) = (0, f64::MIN);
         for (i, (score, c)) in scored.iter().enumerate() {
             let h = per_hero.get(&leaf(&c.category)).copied().unwrap_or(0);

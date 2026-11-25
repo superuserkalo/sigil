@@ -356,6 +356,7 @@ pub fn browse_query(st: &mut State, results: usize) {
         (f.exclude, "exclude"),
         (f.favorites, "favorites"),
         (f.for_you, "for_you"),
+        (f.rising, "rising"),
         (f.date_from > 0 || f.date_to > 0, "date_range"),
     ] {
         if on {

@@ -120,6 +120,7 @@ pub(crate) fn apply_persisted(st: &mut State, saved: persist::Persisted) -> bool
         exclude: saved.exclude,
         favorites: false,
         for_you: false,
+        rising: false,
     };
     st.browse_view.date_from_text = TextEdit::new(if saved.date_from > 0 {
         date_input(saved.date_from)

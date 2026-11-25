@@ -268,7 +268,7 @@ pub fn overlay(s: &State, u: &Ui) -> Option<El> {
                 .as_ref()
                 .is_some_and(|pick| pick.name.eq_ignore_ascii_case("Skins"));
             let hero_usable = s.browse_view.tab != Tab::Collections
-                && !(f.favorites || f.for_you || f.owned == Owned::Installed)
+                && !(f.favorites || f.for_you || f.rising || f.owned == Owned::Installed)
                 && !(s.browse_view.tab == Tab::Mods && hero_skins);
             let hero_row = row()
                 .w_full()
@@ -295,7 +295,7 @@ pub fn overlay(s: &State, u: &Ui) -> Option<El> {
                     }),
             );
             let collecting = s.browse_view.tab == Tab::Collections;
-            let local = f.favorites || f.for_you || f.owned == Owned::Installed;
+            let local = f.favorites || f.for_you || f.rising || f.owned == Owned::Installed;
             let pickers = !collecting && !local;
             items = items.child(menu_rule(u)).child(usable_row(
                 picker_row(
@@ -1431,7 +1431,7 @@ pub(crate) fn tail_row(s: &State, u: &Ui) -> El {
     }
     if !more_to_load(s) {
         let f = &s.browse_view.filters;
-        let end = if f.favorites || f.for_you || f.owned == Owned::Installed {
+        let end = if f.favorites || f.for_you || f.rising || f.owned == Owned::Installed {
             ""
         } else if f.active() > 0 || !s.browse_view.applied_search.is_empty() {
             "That is every match."

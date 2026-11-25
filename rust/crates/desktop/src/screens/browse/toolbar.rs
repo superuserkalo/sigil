@@ -258,7 +258,7 @@ pub(crate) fn line(s: &State, u: &Ui) -> El {
     let f = &s.browse_view.filters;
     let open = s.browse_view.menu;
     let collecting = s.browse_view.tab == Tab::Collections;
-    let local = f.favorites || f.for_you || f.owned == Owned::Installed;
+    let local = f.favorites || f.for_you || f.rising || f.owned == Owned::Installed;
 
     // Tier D with the search open: the field takes the whole line.
     if t == Tier::D && s.browse_view.search_open {
@@ -413,6 +413,9 @@ fn chips(s: &State, u: &Ui) -> Vec<El> {
     }
     if f.for_you {
         out.push(clearing("for-you", super::tree::tr("For you").to_string(), |f| f.for_you = false));
+    }
+    if f.rising {
+        out.push(clearing("rising", super::tree::tr("Rising").to_string(), |f| f.rising = false));
     }
     out
 }
