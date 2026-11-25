@@ -14,6 +14,8 @@ export default defineConfig(async () => {
     plugins: [
       cloudflareTest({
         wrangler: { configPath: "./wrangler.jsonc" },
+        // Never reach Workers AI from a test: the catalog tests pass their own fake binding.
+        remoteBindings: false,
         miniflare: {
           // Test-only product secrets: the real ones are Worker secrets, never in the repo.
           bindings: {

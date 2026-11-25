@@ -5,6 +5,7 @@
 import { closeEpochs, epochOf, GRACE_MS } from "./aggregates";
 import { runRetention, unlinkInactive } from "./retention";
 import { scrub } from "./scrub";
+import { runEnrichment } from "./catalog/enrich";
 
 /**
  * The daily job: retention first, then unlinking inactive installs, then closing product epochs. Each step has its own try, so an
@@ -15,6 +16,7 @@ export async function scheduledJob(
   now: number,
   cron: string,
   close: (db: D1Database, now: number) => Promise<number[]> = closeEpochs,
+  enrich: (env: Env, now: number) => Promise<unknown> = runEnrichment,
 ): Promise<void> {
   try {
     const result = await runRetention(env.DB, now);
@@ -45,6 +47,13 @@ export async function scheduledJob(
     if ((overdue?.n ?? 0) > 0) logLine({ event: "error", what: "product_epochs_overdue", cron, rows: overdue?.n ?? 0 });
   } catch (error) {
     logLine({ event: "epochs_check_error", cron, message: describeError(error) });
+  }
+  // Catalog enrichment (ADR 0018) last, in its own try: a GameBanana, Workers AI or TypeSafe
+  // failure never touches the steps above.
+  try {
+    await enrich(env, now);
+  } catch (error) {
+    logLine({ event: "enrich_error", cron, message: describeError(error) });
   }
 }
 

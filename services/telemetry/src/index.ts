@@ -16,6 +16,9 @@
  *   GET  /v1/product/fps     frame rates per performance config on the caller's hardware class
  *   GET  /v1/product/rising  mods whose installs grew most in the newest closed period
  *   GET  /v1/product/admin/search-gaps  the owner's searches that found nothing; owner key only
+ *   GET  /v1/catalog/tags   public catalog tags and search index (ADR 0018), cacheable
+ *   GET  /v1/catalog/mod/<id>    per-mod detail: files, update notes, health counts
+ *   GET  /v1/catalog/patch/<id>  one official patch's line classes, or `latest`
  *
  * The app is the only intended client and nothing here is fetched by the desktop app on its own:
  * every request is behind a Settings > Privacy switch (docs/decisions/0014-opt-in-telemetry.md,
@@ -36,6 +39,8 @@ import { sha256Hex } from "./hash";
 import { allowRequest } from "./limiter";
 import { contribute, cpuTier, fpsContext, fpsFor, MAX_HEALTH_MODS, modHealth, related, resolutionBucket, rising, searchGaps } from "./aggregates";
 import { scheduledJob } from "./cron";
+import { runEnrichment } from "./catalog/enrich";
+import { handleModDetail, handlePatch, handleTags } from "./catalog/routes";
 import {
   adminAllowed,
   installHash,
@@ -92,7 +97,20 @@ const ROUTES: Readonly<Record<string, Route>> = {
   "/v1/product/fps": { method: "GET", run: handleFps },
   "/v1/product/rising": { method: "GET", run: handleRising },
   "/v1/product/admin/search-gaps": { method: "GET", run: handleSearchGaps },
+  "/v1/catalog/tags": { method: "GET", run: (request, env, url) => handleTags(request, env, url, jsonResponse) },
 };
+
+/** Routes with an id in the path. */
+function prefixRoute(path: string): Route | undefined {
+  const mod = /^\/v1\/catalog\/mod\/(\d{1,10})$/.exec(path);
+  if (mod !== null) return { method: "GET", run: (request, env) => handleModDetail(request, env, Number(mod[1]), jsonResponse) };
+  const patch = /^\/v1\/catalog\/patch\/(\d{1,24}|latest)$/.exec(path);
+  if (patch !== null) return { method: "GET", run: (request, env) => handlePatch(request, env, patch[1] ?? "latest", jsonResponse) };
+  return undefined;
+}
+
+/** The frequent trigger that only runs catalog enrichment (wrangler.jsonc). */
+export const ENRICH_CRON = "*/10 * * * *";
 
 type ProductSecrets = { readonly PRODUCT_SALT?: string; readonly PRODUCT_BUCKET_KEY?: string; readonly PRODUCT_ADMIN_KEY?: string };
 
@@ -150,13 +168,21 @@ export default {
   },
 
   async scheduled(controller: ScheduledController, env: Env): Promise<void> {
+    if (controller.cron === ENRICH_CRON) {
+      try {
+        await runEnrichment(env, Date.now());
+      } catch (error) {
+        logLine({ event: "enrich_error", message: describeError(error) });
+      }
+      return;
+    }
     await scheduledJob(env, Date.now(), controller.cron);
   },
 } satisfies ExportedHandler<Env>;
 
 async function dispatch(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url);
-  const route = ROUTES[url.pathname];
+  const route = ROUTES[url.pathname] ?? prefixRoute(url.pathname);
   if (route === undefined) return errorResponse(404, "not_found");
   if (request.method !== route.method) {
     return jsonResponse(405, { error: "method_not_allowed" }, { allow: route.method });
