@@ -1,7 +1,8 @@
 # 0018 Local catalog search index, with optional term expansion checked by TypeSafe Jev
 
-Status: accepted (Worker deployed 2026-11-25 with migration 0006 applied; the app does not fetch
-the index yet). Term expansion is on under the $1 daily cap as its live check; file labels are off.
+Status: accepted (Worker deployed 2026-11-25 with migration 0006 applied; the desktop app downloads
+the index and matches Browse search locally, `deadlock_core::catalog_index`). Term expansion is on
+under the $1 daily cap as its live check; file labels are off.
 Date: 2026-11-25, narrowed the same day after a product review; the curated alias list removed the
 same day (index version 3)
 
@@ -50,6 +51,37 @@ Rust app ports:
 5. Per unit, the mod scores its best field. Exact title equality adds 1000; every unit found in
    the title adds 30. Ties break by mod id.
 6. Every non-stop unit must match somewhere; when no mod passes, any match counts instead.
+
+The Rust port (`rust/crates/deadlock-core/src/catalog_index/matcher.rs`) runs the reference's
+cases as tests and adds the owner's adjustments after looking at live data (2026-11-25):
+
+- Generated terms (class 4, and class 5 below) shorter than 3 characters are ignored ("hd").
+- Class 4 terms (reference, character, franchise, alias and theme) count fully at 2.5. Class 5 is
+  reserved for the generic visual terms ("model", "gun", "physics") and counts 0.5, less than a
+  description word. The Worker packs every kept term as class 4 today, so until `publish.ts`
+  packs visual terms as 5 they count fully; the app needs no change when it does. Classes 6 and
+  7 are ignored.
+- Title matches always outrank other matches: results sort by how many query words the title
+  matches, then by score, then by likes when the card is known, then by id.
+- Accent folding covers Latin-1 and Latin Extended-A letters and full-width ASCII (the app has
+  no Unicode normalisation table); the index strings arrive already normalised by the Worker.
+
+### In the app (built 2026-11-25)
+
+- Download: `GET /v1/catalog/tags` with `If-None-Match`, at start when the saved copy is older
+  than three hours and at most every three hours after (15 minutes after a network failure),
+  through the proxy and never in offline mode. Full downloads only: a `?since=` delta cannot
+  say which mods left the index, and the whole index is about 300 KB on the wire.
+- The body is untrusted: at most 8 MB on the wire (by its length header) and 40 MB decoded,
+  lists capped while they parse (mods, strings, fields per mod), strings at most 512 bytes,
+  version 3 only. A body that fails is dropped and the saved file stays; a corrupt saved file
+  reads as no index. Field ids outside the string table are dropped, as the reference skips them.
+- Browse: with an index, text typed in the Mods section is matched on every keystroke. Cards
+  come from the saved catalog copy, earlier reads, or one `Mod/Multi` request by id for up to
+  50 missing matches once typing pauses (ids only). Results keep match order and every grid
+  filter. GameBanana's title search still answers with no index, in Sounds, WiPs and the mixed
+  feed, with the Featured filter (a row read by id does not carry it), and offline or after a
+  failed card read when no match has a known card.
 
 ### Upkeep (kept)
 
@@ -127,5 +159,5 @@ The real catalog's index (2,547 mods) is 756 KB, 292 KB gzipped; scaled to 7,000
 
 - Cloudflare Workers AI and TypeSafe become processors of public catalog content only when the
   owner turns a flag on (privacy page).
-- The app can download one public index by default and search offline. It does not call the
-  routes yet.
+- The app downloads one public index by default and searches it on the PC, offline too for the
+  cards it has seen. It does not call `/v1/catalog/mod/<id>`.

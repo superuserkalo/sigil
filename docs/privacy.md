@@ -20,7 +20,7 @@ below and is not repeated in each one. Sigil itself stores no IP address and no 
 | [Help build Sigil](#help-build-sigil-product-data) | Product data: GameBanana mod ids and actions, mod health, Browse use, top heroes, performance, app use | Off until you choose Share |
 | [Model provider](#model-provider) | Your prompts, the files the agent reads, the model's answers | Only when you chat |
 | [Community crosshairs](#community-crosshairs) | A crosshair's name and settings when you publish one; nothing to browse or apply | Only when you publish |
-| [Catalog search index](#catalog-search-index) | Nothing from you: the app downloads a public index of GameBanana's catalog and searches it locally | On once built (not called yet) |
+| [Catalog search index](#catalog-search-index) | Nothing from you: the app downloads a public index of GameBanana's catalog and searches it locally | On |
 | [Steam](#steam) | Patch note requests | On |
 | [GameBanana](#gamebanana) | Catalog and update requests, the mods you open and install | On |
 | [deadlock-api](#deadlock-api) | Account ids for Stats, crosshair values, match ids and salts | Partly on, see below |
@@ -289,11 +289,24 @@ Crosshairs that three networks report are hidden until the owner reviews them.
 Sigil's Worker builds a public search index of the GameBanana catalog so the app can search
 offline and tolerate typos. See `docs/decisions/0018-typesafe-catalog-tags.md`.
 
+Sigil downloads a public search index of GameBanana mods from its own server; the request
+carries nothing about the player.
+
 - What it holds: GameBanana's own public text per mod (title, description words, category, hero
-  subcategory, author) and a small alias table. Nothing from you or about you.
-- Search stays on your PC. When the app uses the index, it downloads it and matches what you type
-  locally (`services/telemetry/src/catalog/match.ts` is the reference). What you type is never
-  sent for this.
+  subcategory, author) and, when the owner turns term expansion on, verified search terms
+  proposed from that text. Nothing from you or about you.
+- The download: `GET /v1/catalog/tags` on Sigil's Worker, at start when the saved copy is older
+  than three hours and at most every three hours after, with the saved ETag so an unchanged
+  index is not sent again. Only the usual `x-sigil-client` and version headers and the
+  `Sigil` user agent go with it. It goes through the proxy you set and never runs in offline
+  mode. It is saved under `catalog-index/` in the app data directory.
+- Search stays on your PC. Browse matches what you type against the saved index as you type
+  (`rust/crates/deadlock-core/src/catalog_index/matcher.rs`, ported from
+  `services/telemetry/src/catalog/match.ts`). What you type is never sent for this. To show the
+  matches as cards, the app reads the cards it does not have yet from GameBanana by mod id
+  (`Mod/Multi`, one request for up to 50 ids, after typing pauses): the request carries ids,
+  never the text. With no index yet, outside the Mods section, or with the Featured filter on,
+  Browse uses GameBanana's title search as before (see GameBanana).
 - Two optional steps are built but off (`CATALOG_EXPANSION`, `CATALOG_FILE_LABELS`). If the owner
   turns one on, the Worker sends public mod page content only (titles, categories, descriptions,
   file names, sizes and notes, and search terms proposed from those) to Cloudflare Workers AI (the
@@ -307,10 +320,10 @@ offline and tolerate typos. See `docs/decisions/0018-typesafe-catalog-tags.md`.
 - What the Worker stores: per mod the public text it read, a hash of it and the time
   (`catalog_mods`), the optional judgments with their probabilities (`mod_tags`), and its run
   state and spend tally (`enrich_state`). No player data.
-- Status: the routes exist (`GET /v1/catalog/tags`, `/v1/catalog/mod/<id>`) but the app does not
-  call them yet. The owner approved (2026-11-25) that the app downloads the index by default once
-  that is built; it needs no consent because the request carries no id and no product data, only
-  the usual `x-sigil-client` and version headers, and the answer is the same for everyone.
+- Status: the app downloads `GET /v1/catalog/tags` by default (owner approved 2026-11-25). It
+  needs no consent because the request carries no id and no product data, only the usual
+  `x-sigil-client` and version headers, and the answer is the same for everyone. The app does
+  not call `/v1/catalog/mod/<id>`.
 
 ## Model provider
 
@@ -353,7 +366,10 @@ GameBanana hosts most mods. Sigil talks to `gamebanana.com/apiv11` and the image
 hosts those answers name (`images.gamebanana.com`, `files.gamebanana.com`,
 `filecacheN.gamebanana.com`, and `gamebanana.com/dl/<id>` redirects).
 
-- Browse and search use anonymous GETs. Search text you type is sent as GameBanana's name filter.
+- Browse and search use anonymous GETs. When the catalog search index is on your PC, search in
+  the Mods section is matched locally and only the result ids are sent (`Mod/Multi`) to read
+  their cards. Otherwise (no index yet, Sounds, WiPs, the mixed feed, the Featured filter) the
+  search text you type is sent as GameBanana's name filter.
   Categories, hero filters, sort order, collections, dashboard rails and a submission's posts,
   updates and requirements are read when you open or scroll them.
 - A bounded local copy of the catalog (`browse/mirror/`) is refreshed while Browse is open. It

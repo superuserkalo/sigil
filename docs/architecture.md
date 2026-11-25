@@ -288,7 +288,7 @@ Enforced in code:
    on the player's Apply or Reset, behind Windows' admin prompt, and reads them back after.
 5. **Secrets.** Decrypted keys exist only in main. The agent host receives provider auth through a
    narrow handshake, not the transcript. Tool output and logs are scrubbed for known key shapes.
-6. **Network allowlist.** Provider endpoints, `api.steampowered.com` (patch feed and Valve's relay list), `api.deadlock-api.com`, GameBanana, the GitHub update check and signed update download, Deadworks for Servers, the local Discord IPC socket, and Sigil's own telemetry Worker (opt-in, off by default). No other
+6. **Network allowlist.** Provider endpoints, `api.steampowered.com` (patch feed and Valve's relay list), `api.deadlock-api.com`, GameBanana, the GitHub update check and signed update download, Deadworks for Servers, the local Discord IPC socket, and Sigil's own telemetry Worker (opt-in, off by default, except the public catalog search index: Sigil downloads a public search index of GameBanana mods from its own server; the request carries nothing about the player). No other
    outbound calls from tools without a documented allowlist entry.
    - `gamebanana.com/apiv11`, `images.gamebanana.com` and `files.gamebanana.com`: Browse.
      Anonymous GETs, no key, no user data: `Game/20948/Subfeed?_nPage=N&_csvModelInclusions=Mod|Sound|Wip`
