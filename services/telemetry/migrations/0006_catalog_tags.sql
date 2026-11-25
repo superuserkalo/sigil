@@ -1,63 +1,48 @@
--- Catalog enrichment (ADR 0018). Public GameBanana and Steam content only: no player data, no
--- install hash, no bucket. Nothing here joins to the product tables.
+-- Catalog search index (ADR 0018). Public GameBanana content only: no player data, no install
+-- hash, no bucket. Nothing here joins to the product tables.
 
--- What the enrichment last saw of each public mod page: enough to tell when it changed and to find
--- duplicate candidates in code. Titles and the description excerpt are public page text.
+-- What the upkeep job last read of each public mod page: the text the index is built from, a hash
+-- of it, and the hash the optional judgments were made on.
 CREATE TABLE catalog_mods (
   mod_id INTEGER PRIMARY KEY,
   mod_updated INTEGER NOT NULL,
   added_at INTEGER NOT NULL DEFAULT 0,
   title TEXT NOT NULL,
-  title_norm TEXT NOT NULL,
   category TEXT NOT NULL DEFAULT '',
   subcategory TEXT NOT NULL DEFAULT '',
-  submitter_id INTEGER NOT NULL DEFAULT 0,
-  desc_excerpt TEXT NOT NULL DEFAULT '',
-  desc_sig TEXT NOT NULL DEFAULT '',
-  gb_rated INTEGER NOT NULL DEFAULT 0,
-  post_count INTEGER NOT NULL DEFAULT 0,
-  -- SHA-256 of the public text, files and screenshot URLs: a page bump with the same content costs
-  -- no model call.
+  author TEXT NOT NULL DEFAULT '',
+  -- Public summary and description as plain text, at most 1,500 characters.
+  description TEXT NOT NULL DEFAULT '',
+  -- Public file names, sizes and notes (JSON), at most 8, for the flagged file labels.
+  files TEXT NOT NULL DEFAULT '[]',
+  -- SHA-256 of title, categories, author, text and files: a page bump with the same content costs
+  -- nothing.
   content_hash TEXT NOT NULL DEFAULT '',
   -- The content hash the stored judgments were made on, written in the same batch as they are.
   judged_hash TEXT NOT NULL DEFAULT '',
+  -- The page timestamp the text above was read for.
+  text_updated INTEGER NOT NULL DEFAULT 0,
   -- 1 when GameBanana withdrew, trashed or hid the page: dropped from the index.
   withdrawn INTEGER NOT NULL DEFAULT 0,
   seen_at INTEGER NOT NULL
 );
-CREATE INDEX catalog_mods_title ON catalog_mods (title_norm);
-CREATE INDEX catalog_mods_desc ON catalog_mods (desc_sig);
 
--- One row per mod and named judgment. `data` is JSON with each answer's probability (and the
--- subject box as four fractions for the cover judgment). `source` says what the answer was made
--- from (`u:<mod_updated>` or `p:<post count>`); a different source, version or model re-runs it.
+-- One row per mod and flagged judgment (`terms`, `files`). `data` is JSON with each answer's
+-- probability; `hash` is the content hash it was made on. A different version, model or hash
+-- re-runs it.
 CREATE TABLE mod_tags (
   mod_id INTEGER NOT NULL,
   judgment TEXT NOT NULL,
   version INTEGER NOT NULL,
-  source TEXT NOT NULL,
   model TEXT NOT NULL,
   data TEXT NOT NULL,
-  enriched_at INTEGER NOT NULL,
-  -- The page content hash this answer was made on ('' for learned terms and failure notes).
   hash TEXT NOT NULL DEFAULT '',
+  enriched_at INTEGER NOT NULL,
   PRIMARY KEY (mod_id, judgment)
 );
-CREATE INDEX mod_tags_enriched ON mod_tags (enriched_at);
 
--- One row per official patch note, published shape kept with the raw line answers.
-CREATE TABLE patch_tags (
-  patch_id TEXT PRIMARY KEY,
-  version INTEGER NOT NULL,
-  model TEXT NOT NULL,
-  title TEXT NOT NULL,
-  posted_at INTEGER NOT NULL,
-  data TEXT NOT NULL,
-  enriched_at INTEGER NOT NULL
-);
-
--- Small key-value state: list cursor, cached hero names, running token and dollar totals, the
--- built tag index and its ETag, and a lease so two runs never overlap.
+-- Small key-value state: list cursor, the spend tallies, the built index (gzipped, in chunks) and
+-- its ETag, and a lease so two runs never overlap.
 CREATE TABLE enrich_state (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL,

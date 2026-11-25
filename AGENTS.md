@@ -87,12 +87,12 @@ These are product constraints, not preferences.
   mod health, Browse use with scrubbed search text, top heroes and rank tier, performance and
   hardware class, app use; asked in onboarding, off by default, switchable and deletable at any
   time (`docs/decisions/0017-opt-in-product-data.md`). Only the desktop app records it; the CLI and
-  the agent host never do. Catalog tags (2026-11-25, owner approved): the Worker, not the app,
-  calls TypeSafe (`api.typesafe.ai`, the Jev model) and Cloudflare Workers AI with public
-  GameBanana and Steam patch note content only, plus search-gap terms that already passed the
-  product floor; the key is a Worker secret and never ships in the app. The app downloads the
-  public tag index by default once built, and matches searches locally: typed text never leaves
-  the PC (`docs/decisions/0018-typesafe-catalog-tags.md`).
+  the agent host never do. Catalog search index (2026-11-25, owner approved): the
+  Worker, not the app, reads public GameBanana text and builds an index the app downloads by
+  default and matches locally: typed text never leaves the PC. Two optional steps, off by default,
+  send public GameBanana content only to Cloudflare Workers AI and TypeSafe (`api.typesafe.ai`);
+  the key is a Worker secret and never ships in the app
+  (`docs/decisions/0018-typesafe-catalog-tags.md`).
 - Preserve MIT attribution for Rune, TinyAgent, Grimoire and every bundled community tool. See
   `THIRD_PARTY_NOTICES.md`. CSDK 12 has no license and is never redistributed.
 - No em dashes in code, UI strings, comments or docs. Use a colon, period or parentheses.

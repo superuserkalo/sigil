@@ -1,7 +1,7 @@
 /**
  * A small curated supplement to the generated search terms: hero nicknames, mod-kind and style
- * synonyms, and a few German words for common queries. Outside franchises and characters are NOT
- * listed here: they come from document expansion (Workers AI) checked by Jev, see ADR 0018.
+ * synonyms, and a few German words for common queries. Outside franchises and characters are not
+ * listed here (see ADR 0018).
  *
  * Every entry maps what a player may type to a canonical term that the index already uses.
  */
@@ -77,7 +77,6 @@ export const TAG_SYNONYMS: Readonly<Record<string, readonly string[]>> = {
   colourful: ["colorful", "vibrant", "rainbow"],
   dark: ["black", "edgy", "gothic"],
   variants: ["variant", "options", "colours", "colors"],
-  nsfw: ["lewd", "18+"],
 };
 
 /** Common German query words, cheap to ship, mapped to the English the terms use. */
@@ -122,7 +121,7 @@ export const GERMAN: Readonly<Record<string, string>> = {
 };
 
 /** Flat alias table, alias to canonical term, in the shape the catalog output ships. */
-export function aliasTable(heroes: readonly string[]): Record<string, string> {
+export function aliasTable(heroes: readonly string[] = []): Record<string, string> {
   const table: Record<string, string> = {};
   const known = new Set(heroes.map(normalize));
   for (const [hero, nicknames] of Object.entries(HERO_NICKNAMES)) {

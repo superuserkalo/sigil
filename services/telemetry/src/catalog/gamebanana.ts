@@ -13,13 +13,7 @@ export const GB_GAME_ID = 20948;
 export const GB_USER_AGENT = "Sigil (mod catalog tags; github.com/superuserkalo/sigil)";
 /** Pause before each GameBanana call. */
 export const GB_DELAY_MS = 1200;
-export const LIST_PERPAGE = 20;
-
-export type Shot = {
-  readonly full: string;
-  /** The 530-wide variant, with its size, when GameBanana made one. */
-  readonly small: { readonly url: string; readonly width: number; readonly height: number } | null;
-};
+export const LIST_PERPAGE = 50;
 
 export type ListedMod = {
   readonly id: number;
@@ -29,10 +23,7 @@ export type ListedMod = {
   readonly added: number;
   readonly category: string;
   readonly subcategory: string;
-  readonly submitterId: number;
-  /** GameBanana's own content-rating flag. */
-  readonly rated: boolean;
-  readonly postCount: number;
+  readonly author: string;
 };
 
 export type ModFile = {
@@ -40,34 +31,20 @@ export type ModFile = {
   readonly name: string;
   readonly size: number;
   readonly note: string;
-  readonly added: number;
 };
 
-export type Profile = {
+/** The public text of one mod page, read in batches of up to 50 through `Mod/Multi`. */
+export type ModText = {
+  readonly id: number;
   readonly summary: string;
   readonly text: string;
-  /** Links in the description to other GameBanana mods: id and link text. */
-  readonly links: readonly { readonly id: number; readonly label: string }[];
   readonly files: readonly ModFile[];
-  readonly shots: readonly Shot[];
-  readonly updatesCount: number;
-};
-
-export type ModUpdate = {
-  readonly title: string;
-  readonly text: string;
-  readonly changes: readonly string[];
-  readonly added: number;
-};
-
-export type ModComment = {
-  /** GameBanana's member id, used only to count distinct commenters; never stored or sent. */
-  readonly poster: number;
-  readonly added: number;
-  readonly text: string;
 };
 
 type Json = Record<string, unknown>;
+
+/** Ids per `Mod/Multi` request. */
+export const MULTI_IDS = 50;
 
 export class GameBanana {
   private calls = 0;
@@ -91,26 +68,6 @@ export class GameBanana {
     return response.json();
   }
 
-  /** Bytes of a public screenshot, capped. Same politeness as the API. */
-  async image(url: string, maxBytes: number): Promise<Uint8Array | null> {
-    if (!url.startsWith("https://images.gamebanana.com/")) return null;
-    if (!this.budget.take()) throw new BudgetSpent("subrequest budget spent");
-    if (this.calls > 0) await this.net.sleep(GB_DELAY_MS);
-    this.calls += 1;
-    const response = await this.net.fetch(url, { headers: { "user-agent": GB_USER_AGENT } });
-    if (!response.ok) {
-      await response.body?.cancel();
-      throw new RemoteError("gamebanana", response.status);
-    }
-    const length = Number(response.headers.get("content-length") ?? "0");
-    if (length > maxBytes) {
-      await response.body?.cancel();
-      return null;
-    }
-    const bytes = new Uint8Array(await response.arrayBuffer());
-    return bytes.byteLength > maxBytes ? null : bytes;
-  }
-
   async listMods(sort: "Generic_LatestUpdated" | "Generic_Newest", page: number): Promise<ListedMod[]> {
     const url =
       `${GB_API}/Mod/Index?_nPage=${page}&_nPerpage=${LIST_PERPAGE}&_sSort=${sort}` +
@@ -118,35 +75,25 @@ export class GameBanana {
     return parseList(await this.get(url));
   }
 
-  /** Null when the page is gone, trashed, withheld or private. */
-  async profile(id: number): Promise<Profile | null> {
-    try {
-      const body = await this.get(`${GB_API}/Mod/${id}/ProfilePage`);
-      if (isObject(body) && (body._bIsTrashed === true || body._bIsWithheld === true || body._bIsPrivate === true)) return null;
-      return parseProfile(body);
-    } catch (error) {
-      if (error instanceof RemoteError && (error.status === 404 || error.status === 410)) return null;
-      throw error;
+  /**
+   * Public text and files of up to 50 mods in one request. A mod that is missing from the answer,
+   * or trashed, withheld or private, is in `gone`.
+   */
+  async texts(ids: readonly number[]): Promise<{ texts: ModText[]; gone: number[] }> {
+    const chunk = ids.slice(0, MULTI_IDS);
+    if (chunk.length === 0) return { texts: [], gone: [] };
+    const url =
+      `${GB_API}/Mod/Multi?_csvRowIds=${chunk.join(",")}` +
+      "&_csvProperties=_idRow,_sDescription,_sText,_aFiles,_bIsTrashed,_bIsWithheld,_bIsPrivate";
+    const rows = asArray(await this.get(url));
+    const texts: ModText[] = [];
+    for (const row of rows) {
+      const id = num(row, "_idRow");
+      if (!chunk.includes(id) || row._bIsTrashed === true || row._bIsWithheld === true || row._bIsPrivate === true) continue;
+      texts.push(parseText(id, row));
     }
-  }
-
-  async updates(id: number, perpage: number): Promise<ModUpdate[]> {
-    return parseUpdates(await this.get(`${GB_API}/Mod/${id}/Updates?_nPerpage=${perpage}&_nPage=1`));
-  }
-
-  async comments(id: number, perpage: number): Promise<ModComment[]> {
-    return parseComments(await this.get(`${GB_API}/Mod/${id}/Posts?_nPerpage=${perpage}&_nPage=1`));
-  }
-
-  /** Hero names: the children of the "Skins" root category, read at run time. */
-  async heroes(): Promise<string[]> {
-    const roots = asArray(await this.get(`${GB_API}/Mod/Categories?_idGameRow=${GB_GAME_ID}&_sSort=a_to_z&_bShowEmpty=true`));
-    const skins = roots.find((root) => str(root, "_sName").toLowerCase() === "skins");
-    if (skins === undefined) return [];
-    const children = asArray(
-      await this.get(`${GB_API}/Mod/Categories?_idCategoryRow=${num(skins, "_idRow")}&_sSort=a_to_z&_bShowEmpty=true`),
-    );
-    return children.map((child) => decodeEntities(str(child, "_sName")).trim()).filter((name) => name.length > 0);
+    const seen = new Set(texts.map((text) => text.id));
+    return { texts, gone: chunk.filter((id) => !seen.has(id)) };
   }
 }
 
@@ -156,121 +103,36 @@ export function parseList(body: unknown): ListedMod[] {
     .filter((record) => str(record, "_sModelName") === "Mod" || str(record, "_sModelName") === "")
     .map((record) => ({
       id: num(record, "_idRow"),
-      title: decodeEntities(str(record, "_sName")).trim(),
+      title: decodeEntities(str(record, "_sName")).trim().slice(0, 200),
       updated: Math.max(num(record, "_tsDateAdded"), num(record, "_tsDateModified"), num(record, "_tsDateUpdated")),
       added: num(record, "_tsDateAdded"),
-      category: decodeEntities(str(obj(record, "_aRootCategory"), "_sName")),
-      subcategory: decodeEntities(str(obj(record, "_aSubCategory"), "_sName")),
-      submitterId: num(obj(record, "_aSubmitter"), "_idRow"),
-      rated: record._bHasContentRatings === true,
-      postCount: num(record, "_nPostCount"),
+      category: decodeEntities(str(obj(record, "_aRootCategory"), "_sName")).slice(0, 80),
+      subcategory: decodeEntities(str(obj(record, "_aSubCategory"), "_sName")).slice(0, 80),
+      author: decodeEntities(str(obj(record, "_aSubmitter"), "_sName")).trim().slice(0, 60),
     }))
     .filter((mod) => mod.id > 0 && mod.title.length > 0);
 }
 
-export function parseProfile(body: unknown): Profile {
-  const value = isObject(body) ? body : {};
-  const html = str(value, "_sText");
+export function parseText(id: number, value: Json): ModText {
   return {
-    summary: decodeEntities(str(value, "_sDescription")).trim(),
-    text: htmlToText(html),
-    links: modLinks(html),
+    id,
+    summary: decodeEntities(str(value, "_sDescription")).trim().slice(0, 300),
+    text: htmlToText(str(value, "_sText")).slice(0, 4000),
     files: asArray(value._aFiles)
       .filter((file) => file._bIsArchived !== true)
       .map((file) => ({
         id: num(file, "_idRow"),
-        name: str(file, "_sFile"),
+        name: str(file, "_sFile").slice(0, 120),
         size: num(file, "_nFilesize"),
-        note: decodeEntities(str(file, "_sDescription")).trim(),
-        added: num(file, "_tsDateAdded"),
+        note: decodeEntities(str(file, "_sDescription")).trim().slice(0, 200),
       }))
-      .filter((file) => file.id > 0),
-    shots: shotsOf(obj(value, "_aPreviewMedia")),
-    updatesCount: num(value, "_nUpdatesCount"),
+      .filter((file) => file.id > 0)
+      .slice(0, 20),
   };
-}
-
-export function parseUpdates(body: unknown): ModUpdate[] {
-  return asArray(isObject(body) ? body._aRecords : body).map((record) => ({
-    title: decodeEntities(str(record, "_sName") || str(record, "_sTitle")).trim(),
-    text: htmlToText(str(record, "_sText")),
-    changes: asArray(record._aChangeLog)
-      .map((line) => decodeEntities(`${str(line, "cat")}: ${str(line, "text")}`).trim())
-      .filter((line) => line.length > 2),
-    added: num(record, "_tsDateAdded"),
-  }));
-}
-
-export function parseComments(body: unknown): ModComment[] {
-  return asArray(isObject(body) ? body._aRecords : body)
-    .map((record) => ({
-      poster: num(obj(record, "_aPoster"), "_idRow"),
-      added: num(record, "_tsDateAdded"),
-      text: htmlToText(str(record, "_sText")),
-    }))
-    .filter((comment) => comment.text.length > 0);
-}
-
-function shotsOf(media: Json): Shot[] {
-  return asArray(media._aImages)
-    .filter((image) => str(image, "_sType") === "screenshot" || str(image, "_sType") === "")
-    .map((image) => {
-      const base = str(image, "_sBaseUrl").replace(/\/+$/, "");
-      const file = str(image, "_sFile");
-      const small = str(image, "_sFile530");
-      return {
-        full: `${base}/${file}`,
-        small:
-          small.length > 0
-            ? { url: `${base}/${small}`, width: num(image, "_wFile530"), height: num(image, "_hFile530") }
-            : null,
-      };
-    })
-    .filter((shot) => !shot.full.endsWith("/"));
 }
 
 /** Untrusted HTML is cut to this many characters before any scanning. */
 export const MAX_HTML = 20_000;
-
-/**
- * Links to other GameBanana mods, by a linear scan (no backtracking regex over untrusted HTML).
- * Each `<a` opens a window of at most 600 characters to its `</a>`.
- */
-export function modLinks(raw: string): { id: number; label: string }[] {
-  const html = raw.slice(0, MAX_HTML);
-  const lower = html.toLowerCase();
-  const links: { id: number; label: string }[] = [];
-  let at = 0;
-  // Remembered positions keep a run of unclosed "<a" linear.
-  let tagEnd = -1;
-  let close = -1;
-  while (links.length < 8) {
-    const open = lower.indexOf("<a", at);
-    if (open < 0) break;
-    at = open + 2;
-    if (tagEnd <= open) tagEnd = lower.indexOf(">", open);
-    if (tagEnd < 0) break;
-    if (tagEnd - open > 600) continue;
-    if (close <= tagEnd) close = lower.indexOf("</a>", tagEnd);
-    if (close < 0) break;
-    if (close - tagEnd > 600) continue;
-    const tag = lower.slice(open, tagEnd);
-    const marker = tag.indexOf("gamebanana.com/mods/");
-    if (marker < 0) continue;
-    let digits = "";
-    for (let i = marker + 20; i < tag.length && digits.length < 10; i += 1) {
-      const char = tag[i] ?? "";
-      if (char < "0" || char > "9") break;
-      digits += char;
-    }
-    const id = Number(digits);
-    if (!(id > 0)) continue;
-    const label = htmlToText(html.slice(tagEnd + 1, close)).slice(0, 80) || `mod ${id}`;
-    if (!links.some((link) => link.id === id)) links.push({ id, label });
-    at = close + 4;
-  }
-  return links;
-}
 
 const BREAK_TAGS = new Set(["br", "p", "li", "div", "h1", "h2", "h3", "h4", "h5", "h6"]);
 

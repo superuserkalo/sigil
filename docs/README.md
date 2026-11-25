@@ -70,7 +70,7 @@ Every doc starts with a status line. Values: `active`, `draft`, `planned`, `supe
 | `decisions/0012-signed-self-update.md` | accepted | Self-update from signed GitHub releases; swap, rollback and the key. |
 | `decisions/0016-relay-region-picker.md` | accepted | Relay region picker: Valve's relay list, Windows Firewall rules on the player's Apply. |
 | `decisions/0017-opt-in-product-data.md` | accepted | Help build Sigil: opt-in product data, the distinct-contributor floor and the aggregates the Worker keeps (the app reads none of them back; its related mods, mod health chips and frame rate expectations were removed 2026-11-25). |
-| `decisions/0018-typesafe-catalog-tags.md` | accepted | Catalog tags: the Worker judges public GameBanana pages with TypeSafe Jev (kind, hero, style, facets, cover, facts, files, updates, comment health, duplicates, patch lines), expands search terms with Workers AI checked by Jev, and serves an index the app matches locally (Worker built and tested; migration 0006 not applied, not deployed, the app does not fetch it yet). |
+| `decisions/0018-typesafe-catalog-tags.md` | accepted | Local catalog search: the Worker builds a public index from GameBanana's own text (title, description words, category, hero, author) plus an alias table, and the app matches typed text on the PC. Term expansion (Workers AI checked by TypeSafe Jev) and file labels are built but off pending a live check (Worker built and tested; migration 0006 not applied, not deployed, the app does not fetch it yet). |
 | `runbooks/development.md` | active | Local setup and verification. |
 
 ## Updating docs

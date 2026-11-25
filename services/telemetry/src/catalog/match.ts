@@ -10,23 +10,25 @@
  * 3. A unit matches a token exactly (1.0), as a prefix of at least 3 letters (0.8), or one edit
  *    away for words of 4 letters or more (0.7). A unit also matches a multi-word term written
  *    without spaces ("counterstrike").
- * 4. Fields and weights: title 3, reference from the page text 2.5, tag (hero, kind, style,
- *    fact) 2, reference from the cover picture 2, learned 2, visual 1.5, theme 1. Each field is weighted by idf = ln(1 + (N - df + 0.5) / (df + 0.5)).
- *    A multi-word term hit by only some of its words counts at 0.6.
+ * 4. Fields and weights: title 3, verified search term 2.5 (only with the flagged expansion), hero
+ *    (GameBanana's hero subcategory) 2, category 1.5, author 1.5, description word 1. Each field is weighted by idf = ln(1 + (N - df + 0.5) / (df + 0.5)).
+ *    A multi-word field hit by only some of its words counts at 0.6.
  * 5. A mod scores, per unit, its best field. Exact title equality adds 1000; every unit found in
- *    the title adds 30, so title matches lead, then references, then tags.
+ *    the title adds 30, so title matches lead.
  * 6. Every non-stop unit must match somewhere. When no mod passes, any match counts instead.
  */
 
 import { normalize } from "./aliases";
 import { PACK, type CatalogIndex } from "./publish";
 
-export const WEIGHTS = { title: 3, reference: 2.5, tag: 2, visual: 1.5, theme: 1, picture: 2, learned: 2 } as const;
-/** By term class (`publish.ts` CLS): text reference, tag, visual, theme, picture reference, learned. */
-const CLASS_WEIGHT = [WEIGHTS.reference, WEIGHTS.tag, WEIGHTS.visual, WEIGHTS.theme, WEIGHTS.picture, WEIGHTS.learned];
+export const WEIGHTS = { title: 3, term: 2.5, hero: 2, category: 1.5, author: 1.5, description: 1 } as const;
+/** By field class (`publish.ts` CLS): description word, category, author, hero, verified term. */
+const CLASS_WEIGHT = [WEIGHTS.description, WEIGHTS.category, WEIGHTS.author, WEIGHTS.hero, WEIGHTS.term];
 const STOP = new Set(["the", "a", "an", "of", "for", "and", "mod", "mods", "with", "der", "die", "das", "und", "fur"]);
 
 type Field = { readonly tokens: readonly string[]; readonly joined: string; readonly weight: number; readonly key: string };
+/** Stands for a match spread over several single-word fields: never the title, never partial. */
+const SPREAD: Field = { tokens: [], joined: "", weight: 1, key: "~spread" };
 type Prepared = { readonly mods: readonly { readonly id: number; readonly title: string; readonly fields: readonly Field[] }[]; readonly idf: ReadonlyMap<string, number> };
 
 type Unit = { readonly word: string; readonly alts: readonly (readonly string[])[]; readonly required: boolean };
@@ -154,6 +156,30 @@ export function search(index: CatalogIndex, query: string, limit = 20): Hit[] {
       const perField = new Map<Field, number>();
       const best: { field: Field | null; value: number; quality: number }[] = list.map(() => ({ field: null, value: 0, quality: 0 }));
       list.forEach((unit, u) => {
+        // A multi-word alternative ("gasmaske" to "gas mask") may also be spread over single-word
+        // fields: each word must match somewhere; it scores the mean of its words' best fields.
+        for (const alt of unit.alts) {
+          if (alt.length < 2) continue;
+          let sum = 0;
+          let found = true;
+          for (const word of alt) {
+            let wordBest = 0;
+            for (const field of mod.fields) {
+              let quality = 0;
+              for (const token of field.tokens) quality = Math.max(quality, tokenMatch(word, token));
+              if (quality === 0) continue;
+              const idf = field.key.length > 0 ? (ready.idf.get(field.key) ?? 1) : 1;
+              wordBest = Math.max(wordBest, field.weight * quality * idf);
+            }
+            if (wordBest === 0) {
+              found = false;
+              break;
+            }
+            sum += wordBest;
+          }
+          const slot = best[u];
+          if (found && slot !== undefined && sum / alt.length > slot.value) best[u] = { field: SPREAD, value: sum / alt.length, quality: 1 };
+        }
         for (const field of mod.fields) {
           const quality = unitQuality(unit, field);
           if (quality === 0) continue;

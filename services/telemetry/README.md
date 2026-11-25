@@ -9,8 +9,8 @@ party: usage events go to Analytics Engine, everything else to D1.
 
 ## Endpoints
 
-The catalog routes (`/v1/catalog/...`) are public read routes over the catalog enrichment and are
-described under [Catalog tags](#catalog-tags-adr-0018-migration-0006).
+The catalog routes (`/v1/catalog/...`) are public read routes over the catalog search index and
+are described under [Catalog search index](#catalog-search-index-adr-0018-migration-0006).
 
 | Method | Path | Body limit | What it stores |
 | --- | --- | --- | --- |
@@ -223,43 +223,38 @@ npx wrangler deploy
 Contributions sent before 0004 keep counting: the new kinds start from the deploy, and a
 benchmark sent before it has no frame rate row.
 
-### Catalog tags (ADR 0018, migration 0006)
+### Catalog search index (ADR 0018, migration 0006)
 
-Public catalog enrichment. Code in `src/catalog/`; the decision, the questions and the matcher
-algorithm are in `docs/decisions/0018-typesafe-catalog-tags.md`.
+A public search index of GameBanana's Deadlock catalog, which the app downloads and matches
+locally. Code in `src/catalog/`; the decision and the matcher algorithm are in
+`docs/decisions/0018-typesafe-catalog-tags.md`.
 
-- Runs every 10 minutes (`*/10 * * * *`, enrichment only) and as the last, separately wrapped step
-  of the daily job. Each run makes at most 45 outside calls (`RUN_SUBREQUESTS`), enriches at most
-  `ENRICH_RUN_MODS` mods (default 6) and stops when the day's spend reaches `ENRICH_DAILY_USD`
-  (default 25) or a single run would pass 25 dollars. It logs `enrich_run` with mods sent, mods
-  unchanged (same content hash, no model call), failed and withdrawn, tokens and dollars, and
-  `enrich_spend` with the running totals.
-- Reads GameBanana's Deadlock mod list (newest updates, newest uploads, then a backfill cursor),
-  each changed mod's public page, update notes, recent comments and up to four screenshots.
-  Workers AI (`@cf/meta/llama-4-scout-17b-16e-instruct`) proposes search terms from the text and,
-  separately, the cover; Jev (`jev-1.14.0`, pinned) answers every stale judgment in one request
-  per mod and checks each proposed term. One official patch note is classified per run. Once a
-  day, up to three floor-passed search-gap terms are judged against candidate mods.
-- Fails closed: without `TYPESAFE_API_KEY` nothing is fetched or sent; without the `AI` binding the
-  term step is skipped. Routes still answer with what is stored.
+- Upkeep runs every 10 minutes (`*/10 * * * *`, upkeep only) and as the last, separately wrapped
+  step of the daily job, while the var `CATALOG_INDEX` is `"1"` (the off switch is any other
+  value). Each run makes at most 45 outside calls (`RUN_SUBREQUESTS`): GameBanana's newest updates,
+  newest uploads and one backfill page, then the public text of changed mods through `Mod/Multi`
+  (50 ids a request). A content hash per mod skips page bumps; withdrawn pages leave the index.
+  It logs `enrich_run` with mods read, unchanged, withdrawn, judged and failed. No model is called.
+- Optional, off by default: `CATALOG_EXPANSION = "1"` (Workers AI proposes search terms, Jev
+  checks them) and `CATALOG_FILE_LABELS = "1"` (Jev's main-file hint). Both need the secret
+  `TYPESAFE_API_KEY`; expansion also the `AI` binding. Caps: `ENRICH_RUN_MODS` (default 20) mods a
+  run, `ENRICH_DAILY_USD` (default 1) a day; `enrich_spend` logs the running totals.
 - Public routes, no secret, rate limited like the rest: `GET /v1/catalog/tags` (ETag,
-  `Cache-Control: public, max-age=10800`, `?since=<ms>` for a delta with its own string table),
-  `GET /v1/catalog/mod/<id>`, `GET /v1/catalog/patch/<id>` or `latest`.
-- `INDEX_EMBEDDINGS = "1"` (a Worker var) adds int8 256-dimension document embeddings to the index.
-  Off by default; the app has no use for them yet.
+  `Cache-Control: public, max-age=10800`, `?since=<ms>` for a delta with its own string table) and
+  `GET /v1/catalog/mod/<id>` (the file hint, when that flag ran).
 
 Deploy (the owner runs these; nothing was applied or deployed by the change that added this):
 
 ```bash
 cd services/telemetry
 npx wrangler d1 migrations apply sigil --remote   # applies 0006_catalog_tags.sql (and 0005 if not yet)
-npx wrangler secret list                          # TYPESAFE_API_KEY must be listed (it is)
-npx wrangler deploy                               # adds the 10-minute trigger and the AI binding
-npx wrangler tail --format=json | grep enrich_    # watch the first runs, spend and counts
+npx wrangler deploy                               # adds the 10-minute trigger, CATALOG_INDEX and the AI binding
+npx wrangler tail --format=json | grep enrich_    # watch the first runs
 ```
 
-To calibrate thresholds on live answers, run the eval in `.scratch/typesafe/` (local only) with
-`TYPESAFE_API_KEY` in the environment; see `.scratch/typesafe/eval.md`.
+The first full pass reads the catalog in about 51 text requests plus the list pages, so it fills
+within a few hours of runs. Turning on a flag later: `wrangler deploy` with the var added to
+`wrangler.jsonc`, after the live check in `.scratch/typesafe/eval.md` (local).
 
 ## What the apply step (desktop side) still has to do
 

@@ -1,59 +1,43 @@
 /**
- * The scheduled enrichment run: bounded work, resumable, stops on the first remote error.
+ * Catalog upkeep for the search index: bounded work per run, resumable, stops on the first remote
+ * error.
  *
- * Each run walks GameBanana's Deadlock mod list (newest updates and newest uploads first, then a
- * cursor page that backfills the rest of the catalog), picks the mods whose page changed or whose
- * judgments are out of date, reads each one's public page, asks Workers AI for candidate search
- * terms, and sends Jev one request per mod with every stale judgment's questions over one shared
- * state. Then it may classify one official patch note, and rebuilds the published tag index.
+ * Each run reads GameBanana's Deadlock mod list (newest updates and newest uploads first, then a
+ * cursor page that walks the rest of the catalog), reads the public text of the mods whose page
+ * timestamp moved (50 per request through `Mod/Multi`), keeps a content hash per mod, marks
+ * withdrawn pages, and rebuilds the index at most hourly. No model is needed for any of that.
  *
- * Fail closed: without `TYPESAFE_API_KEY` nothing is fetched or sent; without the `AI` binding the
- * search-term judgment is skipped and the rest runs.
+ * Two optional model steps, each behind a flag and off by default, run only for mods whose
+ * content hash changed: term expansion (Workers AI proposes, Jev verifies) and file labels (Jev).
+ * Without `TYPESAFE_API_KEY` they never run; without the `AI` binding expansion never runs.
  */
 
 import { aiBinding, expand, withoutHeroNames, type Expansion } from "./expand";
-import { GameBanana, type ListedMod, type ModComment, type ModUpdate, type Profile } from "./gamebanana";
-import { loadShot } from "./images";
-import {
-  COMMENT_WINDOW_DAYS,
-  JUDGMENTS,
-  MAX_COMMENTS,
-  MAX_FILES,
-  MAX_OTHERS,
-  MAX_SHOTS,
-  MAX_UPDATES,
-  SEP,
-  type Judgment,
-  type ModInput,
-  type Other,
-  type Part,
-  type Stored,
-} from "./judgments";
+import { GameBanana, MULTI_IDS, type ListedMod, type ModFile, type ModText } from "./gamebanana";
+import { JUDGMENTS, MAX_FILES, SEP, type Judgment, type ModInput, type Stored } from "./judgments";
 import { Budget, BudgetSpent, liveNet, RemoteError, type Net } from "./net";
-import { fetchPatches, PATCH_CHUNK, PATCH_VERSION, patchRequest, readPatch, type PatchLine } from "./patches";
-import { buildIndex, PUBLISH_VERSION, type JudgmentRows, type ModMeta } from "./publish";
-import { askJev, JEV_MODEL, RejectedRequest, typesafeKey, USD_PER_TOKEN, type Asset, type Question, type SystemOneBody } from "./typesafe";
-import { normalize } from "./aliases";
-import { embeddingsOn, embedText, EMBED_MODEL } from "./embed";
-import { LEARN_INTERVAL_MS, learnFromGaps } from "./learn";
-import type { CatalogIndex } from "./publish";
+import { buildIndex, PUBLISH_VERSION, type CatalogIndex, type JudgmentRows, type ModMeta } from "./publish";
+import { askJev, JEV_MODEL, RejectedRequest, typesafeKey, USD_PER_TOKEN, type Question, type SystemOneBody } from "./typesafe";
 import { sha256Hex } from "../hash";
 
-/** Subrequests per run: under the Workers free-plan limit of 50, with room to spare. */
+/** Outside calls per run: under the Workers free-plan limit of 50, with room to spare. */
 export const RUN_SUBREQUESTS = 45;
-/** A run that would spend more than this stops and logs an error, so a bug cannot run away. */
-export const MAX_RUN_USD = 25;
-/** Image tokens per screenshot, for the estimate before a call (the real count comes back). */
-export const IMAGE_TOKEN_GUESS = 1600;
-export const HEALTH_MIN_AGE_MS = 3 * 24 * 60 * 60 * 1000;
-export const HEROES_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 export const INDEX_MIN_AGE_MS = 60 * 60 * 1000;
 export const LEASE_MS = 10 * 60 * 1000;
-/** Defaults for the two caps; override with the Worker vars ENRICH_RUN_MODS and ENRICH_DAILY_USD. */
-export const DEFAULT_RUN_MODS = 6;
-export const DEFAULT_DAILY_USD = 25;
-/** A mod not seen in the listing for this long (withdrawn or deleted) leaves the index. */
+/** Defaults for the caps; override with the Worker vars ENRICH_RUN_MODS and ENRICH_DAILY_USD. */
+export const DEFAULT_RUN_MODS = 20;
+export const DEFAULT_DAILY_USD = 1;
+/** A mod not seen in the listing for this long leaves the index. */
 export const UNSEEN_MS = 14 * 24 * 60 * 60 * 1000;
+const DESCRIPTION_CHARS = 1500;
+
+export type Flags = { readonly expansion: boolean; readonly fileLabels: boolean };
+
+/** `CATALOG_EXPANSION = "1"` and `CATALOG_FILE_LABELS = "1"` (Worker vars). Both off by default. */
+export function flags(env: Env): Flags {
+  const vars = env as Env & { readonly CATALOG_EXPANSION?: string; readonly CATALOG_FILE_LABELS?: string };
+  return { expansion: vars.CATALOG_EXPANSION === "1", fileLabels: vars.CATALOG_FILE_LABELS === "1" };
+}
 
 function config(env: Env): { runMods: number; dailyUsd: number } {
   const vars = env as Env & { readonly ENRICH_RUN_MODS?: string; readonly ENRICH_DAILY_USD?: string };
@@ -65,32 +49,25 @@ function config(env: Env): { runMods: number; dailyUsd: number } {
   };
 }
 
-/** Dollars spent so far today (UTC), from the running tally. */
-async function spentToday(db: D1Database, now: number): Promise<number> {
-  const day = new Date(now).toISOString().slice(0, 10);
-  const row = await getState(db, "spend_day");
-  const parsed = row === null ? null : (JSON.parse(row.value) as { day: string; usd: number });
-  return parsed !== null && parsed.day === day ? parsed.usd : 0;
-}
-const DESCRIPTION_CHARS = 2000;
-
 export type RunReport = {
   skipped?: string;
-  /** Mods sent to Jev. */
-  mods: number;
-  /** Mods whose page bump changed nothing in the content hash: no model call. */
+  /** Mods whose public text was read this run. */
+  refreshed: number;
+  /** Of those, mods whose content hash did not change. */
   unchanged: number;
-  failed: number;
   withdrawn: number;
-  judgments: number;
+  /** Mods sent to Jev. */
+  judged: number;
+  failed: number;
   tokens: number;
   usd: number;
-  patches: number;
   stopped?: string;
   indexBuilt: boolean;
 };
 
-type TagRow = { judgment: string; version: number; source: string; model: string; data: string; enriched_at: number; hash: string };
+type TagRow = { judgment: string; version: number; model: string; hash: string };
+
+type ModRow = { mod_id: number; title: string; category: string; subcategory: string; author: string; description: string; files: string; content_hash: string; judged_hash: string };
 
 // ---------------------------------------------------------------------------------------------
 // Small state helpers
@@ -108,21 +85,18 @@ export async function setState(db: D1Database, key: string, value: string, now: 
     .run();
 }
 
-function sourceFor(judgment: Judgment, mod: ListedMod): string {
-  return judgment.name === "health" ? `p:${mod.postCount}` : `u:${mod.updated}`;
+async function spentToday(db: D1Database, now: number): Promise<number> {
+  const day = new Date(now).toISOString().slice(0, 10);
+  const row = await getState(db, "spend_day");
+  const parsed = row === null ? null : (JSON.parse(row.value) as { day: string; usd: number });
+  return parsed !== null && parsed.day === day ? parsed.usd : 0;
 }
 
-/** Which judgments need (re)running for this mod, given its stored rows. */
-export function staleJudgments(mod: ListedMod, rows: readonly TagRow[], now: number, aiReady: boolean): Judgment[] {
-  return JUDGMENTS.filter((judgment) => {
-    if (judgment.name === "terms" && !aiReady) return false;
+/** The enabled judgments a mod needs (re)run: missing, older version or model, or made on other content. */
+export function staleJudgments(enabled: readonly Judgment[], rows: readonly TagRow[], contentHash: string): Judgment[] {
+  return enabled.filter((judgment) => {
     const row = rows.find((candidate) => candidate.judgment === judgment.name);
-    if (row === undefined) return true;
-    if (row.version !== judgment.version || row.model !== JEV_MODEL) return true;
-    if (row.source === sourceFor(judgment, mod)) return false;
-    // Comments move often: refresh health at most every few days.
-    if (judgment.name === "health") return now - row.enriched_at >= HEALTH_MIN_AGE_MS;
-    return true;
+    return row === undefined || row.version !== judgment.version || row.model !== JEV_MODEL || row.hash !== contentHash;
   });
 }
 
@@ -130,82 +104,27 @@ export function staleJudgments(mod: ListedMod, rows: readonly TagRow[], now: num
 // The run
 // ---------------------------------------------------------------------------------------------
 
+/** The Worker var `CATALOG_INDEX = "1"` (set in wrangler.jsonc) turns the upkeep on; anything else is the off switch. */
+export function indexOn(env: Env): boolean {
+  return (env as Env & { readonly CATALOG_INDEX?: string }).CATALOG_INDEX === "1";
+}
+
 export async function runEnrichment(env: Env, now: number, net: Net = liveNet, subrequests = RUN_SUBREQUESTS): Promise<RunReport> {
-  const report: RunReport = { mods: 0, unchanged: 0, failed: 0, withdrawn: 0, judgments: 0, tokens: 0, usd: 0, patches: 0, indexBuilt: false };
-  const key = typesafeKey(env);
-  if (key === null) {
-    log({ event: "enrich_skipped", reason: "no_typesafe_key" });
-    return { ...report, skipped: "no_typesafe_key" };
-  }
+  const report: RunReport = { refreshed: 0, unchanged: 0, withdrawn: 0, judged: 0, failed: 0, tokens: 0, usd: 0, indexBuilt: false };
+  if (!indexOn(env)) return { ...report, skipped: "off" };
   const lease = await getState(env.DB, "lease");
   if (lease !== null && Number(lease.value) > now) return { ...report, skipped: "lease_held" };
   await setState(env.DB, "lease", String(now + LEASE_MS), now);
 
-  const caps = config(env);
-  const dayStart = await spentToday(env.DB, now);
-  if (dayStart >= caps.dailyUsd) {
-    log({ event: "error", what: "enrich_daily_cap", usd: dayStart });
-    await setState(env.DB, "lease", "0", now);
-    return { ...report, skipped: "daily_cap" };
-  }
   const budget = new Budget(subrequests);
   const gb = new GameBanana(net, budget);
-  const ai = aiBinding(env);
   let changed = false;
   try {
-    const heroes = await heroNames(env.DB, gb, now);
     const listed = await candidates(env.DB, gb);
-    for (const mod of listed) {
-      await rememberMod(env.DB, mod, now);
-    }
-    for (const mod of listed) {
-      const rows = await tagRows(env.DB, mod.id);
-      if (await gaveUp(env.DB, mod)) continue;
-      const stale = staleJudgments(mod, rows, now, ai !== null);
-      if (stale.length === 0) continue;
-      if (budget.remaining < 4 + MAX_SHOTS) {
-        report.stopped = "budget";
-        break;
-      }
-      if (report.mods + report.unchanged + report.failed >= caps.runMods) {
-        report.stopped = "run_mods";
-        break;
-      }
-      if (dayStart + report.usd >= caps.dailyUsd) {
-        report.stopped = "daily_cap";
-        log({ event: "error", what: "enrich_daily_cap", usd: dayStart + report.usd });
-        break;
-      }
-      let done: Outcome;
-      try {
-        done = await enrichMod(env, net, budget, gb, key, ai, mod, stale, heroes, now, report);
-      } catch (error) {
-        // A remote refusing or the budget ending stops the run; anything else is this mod's
-        // problem (a hostile or broken page): record it and go on to the next mod.
-        if (error instanceof RemoteError || error instanceof BudgetSpent) throw error;
-        log({ event: "enrich_mod_error", mod: mod.id, message: error instanceof Error ? `${error.name}: ${error.message}`.slice(0, 200) : "unknown" });
-        await noteFailure(env.DB, mod, now);
-        report.failed += 1;
-        continue;
-      }
-      if (done === "stop") break;
-      if (done === "stored") changed = true;
-    }
-    await advanceCursor(env.DB, listed, now, ai !== null);
-    if (report.stopped === undefined && budget.remaining >= 3) {
-      if (await enrichPatches(env, net, budget, key, heroes, now, report)) changed = true;
-    }
-    if (report.stopped === undefined && budget.remaining >= 2) {
-      const last = await getState(env.DB, "learn_at");
-      if (last === null || now - Number(last.value) >= LEARN_INTERVAL_MS) {
-        await setState(env.DB, "learn_at", String(now), now);
-        const bucket = (env as Env & { readonly PRODUCT_BUCKET_KEY?: string }).PRODUCT_BUCKET_KEY;
-        const learned = await learnFromGaps(env.DB, net, budget, key, bucket, await loadIndex(env.DB), now);
-        report.tokens += learned.tokens;
-        report.usd += learned.tokens * USD_PER_TOKEN;
-        if (learned.added > 0) changed = true;
-      }
-    }
+    for (const mod of listed) await rememberMod(env.DB, mod, now);
+    changed = (await refreshTexts(env.DB, gb, budget, listed, report)) || changed;
+    await advanceCursor(env.DB, listed, now);
+    changed = (await judge(env, net, budget, listed, now, report)) || changed;
   } catch (error) {
     report.stopped = error instanceof BudgetSpent ? "budget" : error instanceof RemoteError ? `${error.host}_${error.status}` : "error";
     log({ event: "enrich_error", what: report.stopped, message: error instanceof Error ? error.message.slice(0, 200) : "unknown" });
@@ -214,20 +133,22 @@ export async function runEnrichment(env: Env, now: number, net: Net = liveNet, s
     await setState(env.DB, "lease", "0", now);
   }
   try {
-    report.indexBuilt = await maybeBuildIndex(env.DB, now, changed, false, indexOptions(env));
+    report.indexBuilt = await maybeBuildIndex(env.DB, now, changed, false, flags(env));
   } catch (error) {
     log({ event: "enrich_index_error", message: error instanceof Error ? error.message.slice(0, 200) : "unknown" });
   }
-  log({ event: "enrich_run", mods: report.mods, unchanged: report.unchanged, failed: report.failed, withdrawn: report.withdrawn, judgments: report.judgments, tokens: report.tokens, usd: Math.round(report.usd * 10000) / 10000, patches: report.patches, stopped: report.stopped ?? "" });
+  log({
+    event: "enrich_run",
+    refreshed: report.refreshed,
+    unchanged: report.unchanged,
+    withdrawn: report.withdrawn,
+    judged: report.judged,
+    failed: report.failed,
+    tokens: report.tokens,
+    usd: Math.round(report.usd * 10000) / 10000,
+    stopped: report.stopped ?? "",
+  });
   return report;
-}
-
-async function heroNames(db: D1Database, gb: GameBanana, now: number): Promise<string[]> {
-  const cached = await getState(db, "heroes");
-  if (cached !== null && now - cached.updatedAt < HEROES_MAX_AGE_MS) return JSON.parse(cached.value) as string[];
-  const heroes = await gb.heroes();
-  if (heroes.length > 0) await setState(db, "heroes", JSON.stringify(heroes), now);
-  return heroes.length > 0 ? heroes : cached === null ? [] : (JSON.parse(cached.value) as string[]);
 }
 
 /** Newest updates, newest uploads, then the backfill cursor page. Deduplicated, in that order. */
@@ -243,335 +164,212 @@ async function candidates(db: D1Database, gb: GameBanana): Promise<ListedMod[]> 
       out.push(mod);
     }
   }
-  await setState(db, "cursor_page_size", String(lists[2]?.length ?? 0), 0);
+  await setState(db, "cursor_page", JSON.stringify((lists[2] ?? []).map((mod) => mod.id)), 0);
   return out;
 }
 
-/** Move to the next backfill page once nothing on the current one is stale; wrap at the end. */
-async function advanceCursor(db: D1Database, listed: readonly ListedMod[], now: number, aiReady: boolean): Promise<void> {
+/** Next backfill page once every mod on the current one has its text for its current timestamp. */
+async function advanceCursor(db: D1Database, listed: readonly ListedMod[], now: number): Promise<void> {
   const cursor = Number((await getState(db, "cursor"))?.value ?? "2");
-  const size = Number((await getState(db, "cursor_page_size"))?.value ?? "0");
-  const page = listed.slice(-size);
-  for (const mod of page) {
-    if (staleJudgments(mod, await tagRows(db, mod.id), now, aiReady).length > 0 && !(await gaveUp(db, mod))) return;
+  const page = JSON.parse((await getState(db, "cursor_page"))?.value ?? "[]") as number[];
+  for (const id of page) {
+    const mod = listed.find((candidate) => candidate.id === id);
+    const row = await db.prepare("SELECT text_updated, withdrawn FROM catalog_mods WHERE mod_id = ?1").bind(id).first<{ text_updated: number; withdrawn: number }>();
+    if (mod !== undefined && row !== null && row.withdrawn === 0 && row.text_updated !== mod.updated) return;
   }
-  await setState(db, "cursor", String(size < 20 ? 2 : Math.max(2, cursor) + 1), now);
-}
-
-async function tagRows(db: D1Database, modId: number): Promise<TagRow[]> {
-  const { results } = await db.prepare("SELECT judgment, version, source, model, data, enriched_at, hash FROM mod_tags WHERE mod_id = ?1").bind(modId).all<TagRow>();
-  return results;
+  await setState(db, "cursor", String(page.length < 50 ? 2 : Math.max(2, cursor) + 1), now);
 }
 
 async function rememberMod(db: D1Database, mod: ListedMod, now: number): Promise<void> {
   await db
     .prepare(
-      `INSERT INTO catalog_mods (mod_id, mod_updated, added_at, title, title_norm, category, subcategory, submitter_id, gb_rated, post_count, seen_at)
-       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
-       ON CONFLICT(mod_id) DO UPDATE SET mod_updated = excluded.mod_updated, title = excluded.title, title_norm = excluded.title_norm,
-         category = excluded.category, subcategory = excluded.subcategory, gb_rated = excluded.gb_rated,
-         post_count = excluded.post_count, seen_at = excluded.seen_at`,
+      `INSERT INTO catalog_mods (mod_id, mod_updated, added_at, title, category, subcategory, author, seen_at)
+       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+       ON CONFLICT(mod_id) DO UPDATE SET mod_updated = excluded.mod_updated, title = excluded.title, category = excluded.category,
+         subcategory = excluded.subcategory, author = excluded.author, seen_at = excluded.seen_at`,
     )
-    .bind(mod.id, mod.updated, mod.added, mod.title, normalize(mod.title), mod.category, mod.subcategory, mod.submitterId, mod.rated ? 1 : 0, mod.postCount, now)
+    .bind(mod.id, mod.updated, mod.added, mod.title, mod.category, mod.subcategory, mod.author, now)
     .run();
 }
 
-/** Two content rejections for the same page version: skip it until the page changes. */
-async function gaveUp(db: D1Database, mod: ListedMod): Promise<boolean> {
-  const row = await db.prepare("SELECT source, data FROM mod_tags WHERE mod_id = ?1 AND judgment = '_failed'").bind(mod.id).first<{ source: string; data: string }>();
-  return row !== null && row.source === `u:${mod.updated}` && (JSON.parse(row.data) as { attempts: number }).attempts >= 2;
-}
-
-async function noteFailure(db: D1Database, mod: ListedMod, now: number): Promise<void> {
-  const row = await db.prepare("SELECT source, data FROM mod_tags WHERE mod_id = ?1 AND judgment = '_failed'").bind(mod.id).first<{ source: string; data: string }>();
-  const attempts = row !== null && row.source === `u:${mod.updated}` ? (JSON.parse(row.data) as { attempts: number }).attempts + 1 : 1;
-  await storeRow(db, mod.id, "_failed", 0, `u:${mod.updated}`, "", { attempts }, now);
-}
-
-function rowStatement(db: D1Database, modId: number, judgment: string, version: number, source: string, model: string, data: Stored, now: number, hash = ""): D1PreparedStatement {
-  return db
-    .prepare(
-      `INSERT INTO mod_tags (mod_id, judgment, version, source, model, data, enriched_at, hash) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
-       ON CONFLICT(mod_id, judgment) DO UPDATE SET version = excluded.version, source = excluded.source, model = excluded.model,
-         data = excluded.data, enriched_at = excluded.enriched_at, hash = excluded.hash`,
-    )
-    .bind(modId, judgment, version, source, model, JSON.stringify(data), now, hash);
-}
-
-async function storeRow(db: D1Database, modId: number, judgment: string, version: number, source: string, model: string, data: Stored, now: number, hash = ""): Promise<void> {
-  await rowStatement(db, modId, judgment, version, source, model, data, now, hash).run();
-}
-
-/** Duplicate candidates found in code: same normalised title, or the same long description by another author. */
-async function duplicateCandidates(db: D1Database, mod: ListedMod, descSig: string): Promise<Other[]> {
-  const { results } = await db
-    .prepare(
-      `SELECT mod_id, title, category, desc_excerpt FROM catalog_mods
-       WHERE mod_id != ?1 AND desc_excerpt != '' AND (title_norm = ?2 OR (?3 != '' AND desc_sig = ?3 AND submitter_id != ?4))
-       ORDER BY added_at ASC LIMIT ?5`,
-    )
-    .bind(mod.id, normalize(mod.title), descSig, mod.submitterId, MAX_OTHERS)
-    .all<{ mod_id: number; title: string; category: string; desc_excerpt: string }>();
-  return results.map((row) => ({ id: row.mod_id, title: row.title, category: row.category, description: row.desc_excerpt }));
-}
-
-/** The public content a judgment reads: title, categories, text, files and screenshot URLs. */
-export async function contentHash(mod: ListedMod, profile: Profile): Promise<string> {
-  const parts = [
-    mod.title,
-    mod.category,
-    mod.subcategory,
-    profile.summary,
-    profile.text,
-    profile.files.map((file) => `${file.id}:${file.name}:${file.size}:${file.note}`).join("|"),
-    profile.shots.map((shot) => shot.full).join("|"),
-    String(profile.updatesCount),
-  ];
+/** The public content the index and the judgments read: title, categories, author, text and files. */
+export async function contentHash(mod: ListedMod, text: ModText): Promise<string> {
+  const parts = [mod.title, mod.category, mod.subcategory, mod.author, text.summary, text.text, text.files.map((file) => `${file.id}:${file.name}:${file.size}:${file.note}`).join("|")];
   return (await sha256Hex(parts.join("\n"))).slice(0, 32);
 }
 
-async function descriptionSignature(profile: Profile): Promise<string> {
-  const text = normalize(profile.text);
-  return text.length >= 80 ? (await sha256Hex(text)).slice(0, 24) : "";
+/** Reads the public text of mods whose page moved, 50 per request. True when the index changed. */
+async function refreshTexts(db: D1Database, gb: GameBanana, budget: Budget, listed: readonly ListedMod[], report: RunReport): Promise<boolean> {
+  const due: ListedMod[] = [];
+  for (const mod of listed) {
+    const row = await db.prepare("SELECT text_updated FROM catalog_mods WHERE mod_id = ?1").bind(mod.id).first<{ text_updated: number }>();
+    if (row === null || row.text_updated !== mod.updated) due.push(mod);
+  }
+  let changed = false;
+  for (let at = 0; at < due.length; at += MULTI_IDS) {
+    const chunk = due.slice(at, at + MULTI_IDS);
+    if (chunk.length === 0 || budget.remaining < 1) break;
+    const { texts, gone } = await gb.texts(chunk.map((mod) => mod.id));
+    for (const id of gone) {
+      await db.prepare("UPDATE catalog_mods SET withdrawn = 1, text_updated = mod_updated WHERE mod_id = ?1").bind(id).run();
+      report.withdrawn += 1;
+      changed = true;
+    }
+    for (const text of texts) {
+      const mod = chunk.find((candidate) => candidate.id === text.id);
+      if (mod === undefined) continue;
+      const hash = await contentHash(mod, text);
+      const known = await db.prepare("SELECT content_hash FROM catalog_mods WHERE mod_id = ?1").bind(mod.id).first<{ content_hash: string }>();
+      report.refreshed += 1;
+      if (known?.content_hash === hash) report.unchanged += 1;
+      else changed = true;
+      await db
+        .prepare("UPDATE catalog_mods SET description = ?2, files = ?3, content_hash = ?4, text_updated = ?5, withdrawn = 0 WHERE mod_id = ?1")
+        .bind(mod.id, [text.summary, text.text].filter((part) => part.length > 0).join("\n").slice(0, DESCRIPTION_CHARS), JSON.stringify(text.files.slice(0, MAX_FILES)), hash, mod.updated)
+        .run();
+    }
+  }
+  return changed;
 }
 
-type Outcome = "stored" | "skipped" | "stop";
+// ---------------------------------------------------------------------------------------------
+// The flagged model steps
+// ---------------------------------------------------------------------------------------------
 
-async function enrichMod(
+async function judge(env: Env, net: Net, budgetLeft: Budget, listed: readonly ListedMod[], now: number, report: RunReport): Promise<boolean> {
+  const enabled = JUDGMENTS.filter((judgment) => (judgment.name === "terms" ? flags(env).expansion : flags(env).fileLabels));
+  if (enabled.length === 0) return false;
+  const key = typesafeKey(env);
+  if (key === null) {
+    log({ event: "enrich_models_skipped", reason: "no_typesafe_key" });
+    return false;
+  }
+  const caps = config(env);
+  const dayStart = await spentToday(env.DB, now);
+  const ai = aiBinding(env);
+  let changed = false;
+  for (const listedMod of listed) {
+    if (report.judged + report.failed >= caps.runMods) {
+      report.stopped = "run_mods";
+      break;
+    }
+    if (dayStart + report.usd >= caps.dailyUsd) {
+      report.stopped = "daily_cap";
+      log({ event: "error", what: "enrich_daily_cap", usd: dayStart + report.usd });
+      break;
+    }
+    if (budgetLeft.remaining < 3) {
+      report.stopped = "budget";
+      break;
+    }
+    const row = await env.DB.prepare(
+      "SELECT mod_id, title, category, subcategory, author, description, files, content_hash, judged_hash FROM catalog_mods WHERE mod_id = ?1 AND withdrawn = 0 AND content_hash != ''",
+    )
+      .bind(listedMod.id)
+      .first<ModRow>();
+    if (row === null) continue;
+    const { results: rows } = await env.DB.prepare("SELECT judgment, version, model, hash FROM mod_tags WHERE mod_id = ?1").bind(row.mod_id).all<TagRow>();
+    const stale = staleJudgments(enabled, rows, row.content_hash).filter((judgment) => judgment.name !== "terms" || ai !== null);
+    if (stale.length === 0) continue;
+    try {
+      if (await judgeMod(env, net, budgetLeft, key, ai, listedMod, row, stale, now, report)) changed = true;
+    } catch (error) {
+      // A remote refusing or the budget ending stops the run; anything else is this mod's problem.
+      if (error instanceof RemoteError || error instanceof BudgetSpent) throw error;
+      log({ event: "enrich_mod_error", mod: row.mod_id, message: error instanceof Error ? `${error.name}: ${error.message}`.slice(0, 200) : "unknown" });
+      report.failed += 1;
+    }
+  }
+  return changed;
+}
+
+async function judgeMod(
   env: Env,
   net: Net,
   budget: Budget,
-  gb: GameBanana,
   key: string,
   ai: ReturnType<typeof aiBinding>,
   mod: ListedMod,
-  staleIn: readonly Judgment[],
-  heroes: readonly string[],
+  row: ModRow,
+  stale: readonly Judgment[],
   now: number,
   report: RunReport,
-): Promise<Outcome> {
-  let stale = [...staleIn];
-  const needs = new Set<Part>(stale.flatMap((judgment) => judgment.needs));
-  const profile = await gb.profile(mod.id);
-  if (profile === null) {
-    await env.DB.prepare("UPDATE catalog_mods SET withdrawn = 1 WHERE mod_id = ?1").bind(mod.id).run();
-    report.withdrawn += 1;
-    return "stored";
-  }
-  const hash = await contentHash(mod, profile);
-  await env.DB.prepare("UPDATE catalog_mods SET content_hash = ?2, withdrawn = 0 WHERE mod_id = ?1").bind(mod.id, hash).run();
-  // Same content under a new timestamp (a like, a file scan, a re-save): a judgment that was made on
-  // exactly this content (its row carries the hash, written in the same batch as the judgment)
-  // only moves to the new source, and nothing is spent. A row made on other content never moves.
-  {
-    const rows = await tagRows(env.DB, mod.id);
-    const onlyMoved = stale.filter((judgment) => {
-      const row = rows.find((candidate) => candidate.judgment === judgment.name);
-      return row !== undefined && row.hash === hash && row.version === judgment.version && row.model === JEV_MODEL && judgment.name !== "health";
-    });
-    for (const judgment of onlyMoved) {
-      await env.DB.prepare("UPDATE mod_tags SET source = ?3 WHERE mod_id = ?1 AND judgment = ?2").bind(mod.id, judgment.name, sourceFor(judgment, mod)).run();
-    }
-    stale = stale.filter((judgment) => !onlyMoved.includes(judgment));
-    if (stale.length === 0) {
-      report.unchanged += 1;
-      return "skipped";
-    }
-  }
-  // Every judgment row of this run, written together at the end in one batch with the mod's
-  // judged hash, so a run that fails midway leaves nothing half-current.
-  const writes: D1PreparedStatement[] = [];
-  const descSig = await descriptionSignature(profile);
-  await env.DB.prepare("UPDATE catalog_mods SET desc_excerpt = ?2, desc_sig = ?3 WHERE mod_id = ?1")
-    .bind(mod.id, [profile.summary, profile.text].join("\n").trim().slice(0, 600), descSig)
-    .run();
-  const updates: ModUpdate[] = needs.has("updates") && profile.updatesCount > 0 ? (await gb.updates(mod.id, MAX_UPDATES)).slice(0, MAX_UPDATES) : [];
-  const cutoff = now / 1000 - COMMENT_WINDOW_DAYS * 86400;
-  const comments: ModComment[] =
-    needs.has("comments") && mod.postCount > 0 ? (await gb.comments(mod.id, MAX_COMMENTS)).filter((comment) => comment.added >= cutoff).slice(0, MAX_COMMENTS) : [];
-  const shots: { index: number; picture: Awaited<ReturnType<typeof loadShot>> & object }[] = [];
-  if (needs.has("screenshots") || stale.some((judgment) => judgment.name === "terms")) {
-    for (const [index, shot] of profile.shots.slice(0, MAX_SHOTS).entries()) {
-      if (budget.remaining < 3) break;
-      const picture = await loadShot(gb, shot);
-      if (picture !== null) shots.push({ index, picture });
-    }
-  }
-  const others = needs.has("others") ? await duplicateCandidates(env.DB, mod, descSig) : [];
-
+): Promise<boolean> {
+  const text: ModText = { id: row.mod_id, summary: "", text: row.description, files: JSON.parse(row.files || "[]") as ModFile[] };
   let expansion: Expansion | null = null;
-  // One generator call for the text and one for the cover picture: two subrequests.
-  if (ai !== null && stale.some((judgment) => judgment.name === "terms") && budget.remaining >= 3 && budget.take() && budget.take()) {
+  if (ai !== null && stale.some((judgment) => judgment.name === "terms") && budget.take()) {
     try {
-      expansion = await expand(ai, mod, profile, shots[0]?.picture ?? null);
+      expansion = await expand(ai, mod, text);
       if (expansion !== null) {
         report.usd += expansion.usd;
-        expansion = { ...expansion, terms: withoutHeroNames(expansion.terms, heroes) };
+        // The hero a skin replaces is not an outside reference.
+        expansion = { ...expansion, terms: withoutHeroNames(expansion.terms, mod.category.toLowerCase() === "skins" ? [mod.subcategory] : []) };
       }
     } catch (error) {
       log({ event: "expand_error", message: error instanceof Error ? error.message.slice(0, 200) : "unknown" });
     }
   }
-
-  const input: ModInput = { mod, profile, updates, comments, shots, others, heroes, expansion, now };
+  const input: ModInput = { mod, text, expansion };
   const applicable = stale.filter((judgment) => judgment.applies(input));
-  // A judgment with nothing to judge is recorded as such, so it is not retried until the page changes.
+  // Every row of this run is written in one batch at the end, with the hash it was made on and the
+  // mod's judged hash, so a run that fails midway leaves nothing half-current.
+  const writes: D1PreparedStatement[] = [];
   for (const judgment of stale) {
     if (applicable.includes(judgment) || (judgment.name === "terms" && expansion === null)) continue;
-    writes.push(rowStatement(env.DB, mod.id, judgment.name, judgment.version, sourceFor(judgment, mod), JEV_MODEL, { na: 1 }, now, hash));
+    writes.push(rowStatement(env.DB, row.mod_id, judgment, { na: 1 }, now, row.content_hash));
   }
-  const commit = async (): Promise<void> => {
-    writes.push(env.DB.prepare("UPDATE catalog_mods SET judged_hash = ?2 WHERE mod_id = ?1").bind(mod.id, hash));
-    await env.DB.batch(writes);
-  };
-  if (applicable.length === 0) {
-    await commit();
-    return "stored";
-  }
-
-  let usedInput: ModInput = input;
-  let body = modRequest(input, applicable, true);
-  let asked = applicable;
-  const estimate = (JSON.stringify(body).length - shots.reduce((sum, shot) => sum + shot.picture.base64.length, 0)) / 4 + shots.length * IMAGE_TOKEN_GUESS;
-  if (report.usd + estimate * USD_PER_TOKEN > MAX_RUN_USD) {
-    report.stopped = "cost_cap";
-    log({ event: "error", what: "enrich_cost_cap", usd: report.usd });
-    return "stop";
-  }
-  let result;
-  try {
-    result = await askJev(net, budget, key, body);
-  } catch (error) {
-    if (!(error instanceof RejectedRequest)) throw error;
-    if (shots.length === 0) {
-      await noteFailure(env.DB, mod, now);
-      return "skipped";
-    }
-    // Retry once on text alone, without the judgments that only read pictures.
-    asked = applicable.filter((judgment) => judgment.name !== "cover");
-    usedInput = { ...input, shots: [] };
-    body = modRequest(usedInput, asked, false);
+  if (applicable.length > 0) {
+    let result;
     try {
-      result = await askJev(net, budget, key, body);
-    } catch (retryError) {
-      if (!(retryError instanceof RejectedRequest)) throw retryError;
-      await noteFailure(env.DB, mod, now);
-      return "skipped";
+      result = await askJev(net, budget, key, modRequest(input, applicable));
+    } catch (error) {
+      if (!(error instanceof RejectedRequest)) throw error;
+      report.failed += 1;
+      return false;
+    }
+    report.tokens += result.inputTokens;
+    report.usd += result.inputTokens * USD_PER_TOKEN;
+    report.judged += 1;
+    for (const judgment of applicable) {
+      const data = judgment.read((id) => result.answers[`${judgment.name}${SEP}${id}`], input);
+      if (data !== null) writes.push(rowStatement(env.DB, row.mod_id, judgment, data, now, row.content_hash));
     }
   }
-  report.tokens += result.inputTokens;
-  report.usd += result.inputTokens * USD_PER_TOKEN;
-  report.mods += 1;
-  for (const judgment of asked) {
-    const read = (id: string) => result.answers[`${judgment.name}${SEP}${id}`];
-    const data = judgment.read(read, usedInput);
-    if (data === null) continue;
-    writes.push(rowStatement(env.DB, mod.id, judgment.name, judgment.version, sourceFor(judgment, mod), JEV_MODEL, data, now, hash));
-    report.judgments += 1;
-    if (judgment.name === "terms" && ai !== null && embeddingsOn(env) && budget.take()) {
-      const kept = (data.terms as { term: string; p: number }[]).filter((term) => term.p >= 0.7).map((term) => term.term);
-      try {
-        const vector = await embedText(ai, [mod.title, ...kept].join(", "));
-        if (vector !== null) writes.push(rowStatement(env.DB, mod.id, "embed", 1, sourceFor(judgment, mod), EMBED_MODEL, { v: vector }, now, hash));
-      } catch (error) {
-        log({ event: "embed_error", message: error instanceof Error ? error.message.slice(0, 200) : "unknown" });
-      }
-    }
-  }
-  await commit();
-  return "stored";
+  if (writes.length === 0) return false;
+  writes.push(env.DB.prepare("UPDATE catalog_mods SET judged_hash = ?2 WHERE mod_id = ?1").bind(row.mod_id, row.content_hash));
+  await env.DB.batch(writes);
+  return true;
 }
 
-/**
- * One request for one mod: the shared state holds only the parts the asked judgments need. Every
- * field here is public mod page content (see the rule in `typesafe.ts`).
- */
-export function modRequest(input: ModInput, judgments: readonly Judgment[], withImages: boolean): SystemOneBody {
-  const needs = new Set<Part>(judgments.flatMap((judgment) => judgment.needs));
+function rowStatement(db: D1Database, modId: number, judgment: Judgment, data: Stored, now: number, hash: string): D1PreparedStatement {
+  return db
+    .prepare(
+      `INSERT INTO mod_tags (mod_id, judgment, version, model, data, hash, enriched_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+       ON CONFLICT(mod_id, judgment) DO UPDATE SET version = excluded.version, model = excluded.model, data = excluded.data,
+         hash = excluded.hash, enriched_at = excluded.enriched_at`,
+    )
+    .bind(modId, judgment.name, judgment.version, JEV_MODEL, JSON.stringify(data), hash, now);
+}
+
+/** One request for one mod. Every state field is public mod page content (see `typesafe.ts`). */
+export function modRequest(input: ModInput, judgments: readonly Judgment[]): SystemOneBody {
   const state: Record<string, unknown> = {
     title: input.mod.title,
     category: input.mod.category,
     subcategory: input.mod.subcategory,
+    description: [input.text.summary, input.text.text].filter((part) => part.length > 0).join("\n").slice(0, DESCRIPTION_CHARS),
   };
-  if (needs.has("text") || needs.has("files")) {
-    state.description = [input.profile.summary, input.profile.text].filter((part) => part.length > 0).join("\n").slice(0, DESCRIPTION_CHARS);
-    if (input.profile.links.length > 0) state.links = input.profile.links.map((link) => ({ label: link.label }));
-  }
-  if (needs.has("files") && input.profile.files.length > 0) {
-    state.files = input.profile.files.slice(0, MAX_FILES).map((file) => ({ name: file.name, size_mb: Math.round(file.size / 104857.6) / 10, note: file.note }));
-  }
-  const assets: Record<string, Asset> = {};
-  if (withImages && input.shots.length > 0 && (needs.has("screenshots") || needs.has("text"))) {
-    state.screenshots = input.shots.map((shot, at) => {
-      const ref = `img-${crypto.randomUUID()}-${at}`;
-      assets[ref] = { type: "image", format: shot.picture.format, data_base64: shot.picture.base64 };
-      return ref;
-    });
-  }
-  if (needs.has("updates") && input.updates.length > 0) {
-    state.updates = input.updates.map((update) => ({
-      title: update.title,
-      changes: update.changes.slice(0, 12),
-      text: update.text.slice(0, 400),
-      age_days: Math.max(0, Math.round((input.now / 1000 - update.added) / 86400)),
-    }));
-  }
-  if (needs.has("comments") && input.comments.length > 0) {
-    // Commenters become c1, c2... in order of appearance: no name or member id is sent.
-    const alias = new Map<number, string>();
-    state.comments = input.comments.map((comment) => {
-      if (!alias.has(comment.poster)) alias.set(comment.poster, `c${alias.size + 1}`);
-      return { commenter: alias.get(comment.poster), age_days: Math.max(0, Math.round((input.now / 1000 - comment.added) / 86400)), text: comment.text.slice(0, 300) };
-    });
-  }
-  if (needs.has("others") && input.others.length > 0) {
-    state.others = input.others.map((other) => ({ title: other.title, category: other.category, description: other.description.slice(0, 600) }));
+  if (judgments.some((judgment) => judgment.name === "files")) {
+    state.files = input.text.files.slice(0, MAX_FILES).map((file) => ({ name: file.name, size_mb: Math.round(file.size / 104857.6) / 10, note: file.note }));
   }
   if (input.expansion !== null && judgments.some((judgment) => judgment.name === "terms")) {
     state.terms = input.expansion.terms.map((term) => term.term);
   }
   const questions: Record<string, Question> = {};
   for (const judgment of judgments) {
-    for (const [id, question] of Object.entries(judgment.ask(withImages ? input : { ...input, shots: [] }))) questions[`${judgment.name}${SEP}${id}`] = question;
+    for (const [id, question] of Object.entries(judgment.ask(input))) questions[`${judgment.name}${SEP}${id}`] = question;
   }
-  return Object.keys(assets).length > 0 ? { model: JEV_MODEL, state, questions, assets } : { model: JEV_MODEL, state, questions };
-}
-
-// ---------------------------------------------------------------------------------------------
-// Patch notes
-// ---------------------------------------------------------------------------------------------
-
-type PatchProgress = { lines: PatchLine[]; next: number; total: number };
-
-async function enrichPatches(env: Env, net: Net, budget: Budget, key: string, heroes: readonly string[], now: number, report: RunReport): Promise<boolean> {
-  const patches = await fetchPatches(net, budget);
-  for (const item of patches) {
-    const row = await env.DB.prepare("SELECT version, model, data FROM patch_tags WHERE patch_id = ?1").bind(item.id).first<{ version: number; model: string; data: string }>();
-    let progress: PatchProgress = { lines: [], next: 0, total: item.lines.length };
-    if (row !== null && row.version === PATCH_VERSION && row.model === JEV_MODEL) {
-      progress = JSON.parse(row.data) as PatchProgress;
-      if (progress.next >= progress.total) continue;
-    }
-    let stored = false;
-    while (progress.next < item.lines.length && budget.remaining >= 1) {
-      const body = patchRequest(item, progress.next);
-      const result = await askJev(net, budget, key, body);
-      report.tokens += result.inputTokens;
-      report.usd += result.inputTokens * USD_PER_TOKEN;
-      progress = { lines: [...progress.lines, ...readPatch((id) => result.answers[id], item, progress.next, heroes)], next: progress.next + PATCH_CHUNK, total: item.lines.length };
-      await env.DB.prepare(
-        `INSERT INTO patch_tags (patch_id, version, model, title, posted_at, data, enriched_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
-         ON CONFLICT(patch_id) DO UPDATE SET version = excluded.version, model = excluded.model, title = excluded.title, data = excluded.data, enriched_at = excluded.enriched_at`,
-      )
-        .bind(item.id, PATCH_VERSION, JEV_MODEL, item.title, item.date, JSON.stringify(progress), now)
-        .run();
-      stored = true;
-    }
-    if (stored) report.patches += 1;
-    // One patch per run.
-    return stored;
-  }
-  return false;
+  return { model: JEV_MODEL, state, questions };
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -588,15 +386,7 @@ async function addSpend(db: D1Database, report: RunReport, now: number): Promise
   log({ event: "enrich_spend", tokens_total: next.tokens, usd_total: next.usd });
 }
 
-export type IndexOptions = { readonly embeddings?: boolean; readonly learned?: boolean };
-
-/** `INDEX_EMBEDDINGS = "1"` and `LEARNED_TERMS_PUBLISH = "1"` (Worker vars), both off by default. */
-export function indexOptions(env: Env): IndexOptions {
-  const vars = env as Env & { readonly LEARNED_TERMS_PUBLISH?: string };
-  return { embeddings: embeddingsOn(env), learned: vars.LEARNED_TERMS_PUBLISH === "1" };
-}
-
-export async function maybeBuildIndex(db: D1Database, now: number, changed: boolean, force = false, options: IndexOptions = {}): Promise<boolean> {
+export async function maybeBuildIndex(db: D1Database, now: number, changed: boolean, force = false, options: Partial<Flags> = {}): Promise<boolean> {
   const meta = await getState(db, "index_meta");
   const parsed = meta === null ? null : (JSON.parse(meta.value) as { v: number; built: number });
   const outdated = parsed === null || parsed.v !== PUBLISH_VERSION;
@@ -608,28 +398,33 @@ export async function maybeBuildIndex(db: D1Database, now: number, changed: bool
 /** D1 rows top out at 2 MB: the gzipped index is stored in chunks well under that. */
 export const INDEX_CHUNK = 900_000;
 
-export async function buildAndStoreIndex(db: D1Database, now: number, options: IndexOptions = {}): Promise<void> {
+export async function buildAndStoreIndex(db: D1Database, now: number, options: Partial<Flags> = {}): Promise<void> {
   const mods = await db
     .prepare(
-      `SELECT c.mod_id, c.title, c.subcategory, c.content_hash != c.judged_hash AS stale, MAX(t.enriched_at) AS enriched_at
-       FROM catalog_mods c JOIN mod_tags t ON t.mod_id = c.mod_id AND t.judgment != '_failed'
-       WHERE c.withdrawn = 0 AND c.seen_at >= ?1
-       GROUP BY c.mod_id ORDER BY c.mod_id`,
+      `SELECT mod_id, title, category, subcategory, author, description, content_hash != judged_hash AS stale, text_updated
+       FROM catalog_mods WHERE withdrawn = 0 AND content_hash != '' AND seen_at >= ?1 ORDER BY mod_id`,
     )
     .bind(now - UNSEEN_MS)
-    .all<{ mod_id: number; title: string; subcategory: string; stale: number; enriched_at: number }>();
+    .all<{ mod_id: number; title: string; category: string; subcategory: string; author: string; description: string; stale: number; text_updated: number }>();
   const rows = new Map<number, Record<string, Stored>>();
-  const tags = await db.prepare("SELECT mod_id, judgment, data FROM mod_tags WHERE judgment != '_failed'").all<{ mod_id: number; judgment: string; data: string }>();
-  for (const tag of tags.results) {
-    const data = JSON.parse(tag.data) as Stored;
-    if (data.na === 1) continue;
-    const entry = rows.get(tag.mod_id) ?? {};
-    entry[tag.judgment] = data;
-    rows.set(tag.mod_id, entry);
+  if (options.expansion === true) {
+    const tags = await db.prepare("SELECT mod_id, judgment, data FROM mod_tags WHERE judgment = 'terms'").all<{ mod_id: number; judgment: string; data: string }>();
+    for (const tag of tags.results) {
+      const data = JSON.parse(tag.data) as Stored;
+      if (data.na !== 1) rows.set(tag.mod_id, { terms: data });
+    }
   }
-  const heroes = JSON.parse((await getState(db, "heroes"))?.value ?? "[]") as string[];
-  const metas: ModMeta[] = mods.results.map((row) => ({ id: row.mod_id, title: row.title, subcategory: row.subcategory, enrichedAt: row.enriched_at, stale: row.stale === 1 }));
-  const index = buildIndex(metas, rows as ReadonlyMap<number, JudgmentRows>, heroes, now, options.embeddings === true, options.learned === true);
+  const metas: ModMeta[] = mods.results.map((row) => ({
+    id: row.mod_id,
+    title: row.title,
+    category: row.category,
+    subcategory: row.subcategory,
+    author: row.author,
+    description: row.description,
+    enrichedAt: row.text_updated * 1000,
+    stale: options.expansion === true && rows.has(row.mod_id) && row.stale === 1,
+  }));
+  const index = buildIndex(metas, rows as ReadonlyMap<number, JudgmentRows>, now, options.expansion === true);
   const json = JSON.stringify(index);
   const etag = (await sha256Hex(json)).slice(0, 32);
   const packed = await gzipBase64(json);

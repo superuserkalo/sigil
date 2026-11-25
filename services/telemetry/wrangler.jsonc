@@ -42,12 +42,18 @@
     }
   ],
   // Retention: diagnostics older than 30 days and crashes older than 90 days are deleted daily.
-  // The 10-minute trigger runs only catalog enrichment (bounded work per run, ADR 0018).
+  // The 10-minute trigger runs only the catalog index upkeep (bounded work per run, ADR 0018).
   "triggers": {
     "crons": ["17 3 * * *", "*/10 * * * *"]
   },
-  // Workers AI proposes search terms for public mod pages; Jev checks them (ADR 0018). Without the
-  // binding that step is skipped.
+  // CATALOG_INDEX turns the catalog index upkeep on ("1") or off. The two model steps stay off
+  // unless CATALOG_EXPANSION or CATALOG_FILE_LABELS is "1"; the daily model spend cap is
+  // ENRICH_DAILY_USD (default 1).
+  "vars": {
+    "CATALOG_INDEX": "1"
+  },
+  // Workers AI proposes search terms for public mod pages when CATALOG_EXPANSION is "1" (off by
+  // default); Jev checks them (ADR 0018). Without the binding that step is skipped.
   "ai": {
     "binding": "AI",
     "remote": true

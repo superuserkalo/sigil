@@ -16,9 +16,8 @@
  *   GET  /v1/product/fps     frame rates per performance config on the caller's hardware class
  *   GET  /v1/product/rising  mods whose installs grew most in the newest closed period
  *   GET  /v1/product/admin/search-gaps  the owner's searches that found nothing; owner key only
- *   GET  /v1/catalog/tags   public catalog tags and search index (ADR 0018), cacheable
- *   GET  /v1/catalog/mod/<id>    per-mod detail: files, update notes, health counts
- *   GET  /v1/catalog/patch/<id>  one official patch's line classes, or `latest`
+ *   GET  /v1/catalog/tags   public catalog search index (ADR 0018), cacheable
+ *   GET  /v1/catalog/mod/<id>    per-mod detail: the file pre-selection hint
  *
  * The app is the only intended client and nothing here is fetched by the desktop app on its own:
  * every request is behind a Settings > Privacy switch (docs/decisions/0014-opt-in-telemetry.md,
@@ -40,7 +39,7 @@ import { allowRequest } from "./limiter";
 import { contribute, cpuTier, fpsContext, fpsFor, MAX_HEALTH_MODS, modHealth, related, resolutionBucket, rising, searchGaps } from "./aggregates";
 import { scheduledJob } from "./cron";
 import { runEnrichment } from "./catalog/enrich";
-import { handleModDetail, handlePatch, handleTags } from "./catalog/routes";
+import { handleModDetail, handleTags } from "./catalog/routes";
 import {
   adminAllowed,
   installHash,
@@ -104,8 +103,6 @@ const ROUTES: Readonly<Record<string, Route>> = {
 function prefixRoute(path: string): Route | undefined {
   const mod = /^\/v1\/catalog\/mod\/(\d{1,10})$/.exec(path);
   if (mod !== null) return { method: "GET", run: (request, env) => handleModDetail(request, env, Number(mod[1]), jsonResponse) };
-  const patch = /^\/v1\/catalog\/patch\/(\d{1,24}|latest)$/.exec(path);
-  if (patch !== null) return { method: "GET", run: (request, env) => handlePatch(request, env, patch[1] ?? "latest", jsonResponse) };
   return undefined;
 }
 

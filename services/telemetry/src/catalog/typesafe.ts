@@ -1,15 +1,12 @@
 /**
  * The one place this Worker talks to TypeSafe (Jev, `POST /v1/systemone`).
  *
- * HARD RULE: only public catalog content may be sent: GameBanana mod titles, descriptions,
- * category names, file names and notes, update notes, public comment text (never the commenter's
- * name), public screenshots, and the official Steam patch notes. The one exception is the learning
- * job's search term, which must already have passed the product floor (`LEARN_STATE_KEYS`).
- * Never anything else a player sent:
- * no install hash, no bucket, no search text, nothing from the product, crash, diagnostics or hash
- * tables. `assertPublicOnly` enforces this by shape: every object key anywhere in the state must be
- * on `STATE_KEYS`, and the body may hold only `model`, `state`, `questions` and `assets`. A body that
- * fails the check is never sent. Tests pin both lists.
+ * HARD RULE: only public catalog content may be sent: GameBanana mod titles, categories,
+ * descriptions, file names, sizes and notes, and search terms a generator proposed from those.
+ * Never anything a player sent: no install hash, no bucket, no search text, nothing from the
+ * product, crash, diagnostics or hash tables. `assertPublicOnly` enforces this by shape: the body
+ * may hold only `model`, `state` and `questions`, and every object key anywhere in the state must be
+ * on `STATE_KEYS`. A body that fails the check is never sent. Tests pin both lists.
  *
  * The key is the Worker secret `TYPESAFE_API_KEY`, read from `env` only. Without it nothing is sent.
  */
@@ -23,67 +20,32 @@ export const JEV_MODEL = "jev-1.14.0";
 export const USD_PER_TOKEN = 0.042 / 1_000_000;
 
 /** Top-level fields a request body may carry. */
-export const BODY_KEYS: ReadonlySet<string> = new Set(["model", "state", "questions", "assets"]);
+export const BODY_KEYS: ReadonlySet<string> = new Set(["model", "state", "questions"]);
 
 /** Every object key allowed anywhere inside `state`. All are public catalog fields. */
-export const STATE_KEYS: ReadonlySet<string> = new Set([
-  // A mod page.
-  "title",
-  "category",
-  "subcategory",
-  "description",
-  "links",
-  "label",
-  "files",
-  "name",
-  "size_mb",
-  "note",
-  "screenshots",
-  "updates",
-  "changes",
-  "text",
-  "age_days",
-  "comments",
-  "commenter",
-  "others",
-  "terms",
-  // A patch note.
-  "lines",
-]);
+export const STATE_KEYS: ReadonlySet<string> = new Set(["title", "category", "subcategory", "description", "files", "name", "size_mb", "note", "terms"]);
 
 export type Question =
   | { readonly type: "noul"; readonly instructions: unknown; readonly criteria?: { readonly true: unknown; readonly false: unknown } }
   | { readonly type: "choice"; readonly instructions: unknown; readonly criteria: Readonly<Record<string, unknown>> }
-  | { readonly type: "score"; readonly instructions: unknown; readonly criteria: readonly unknown[] }
-  | { readonly type: "box"; readonly instructions: unknown };
-
-export type Asset = { readonly type: "image"; readonly format: "png" | "jpg"; readonly data_base64: string };
+  | { readonly type: "score"; readonly instructions: unknown; readonly criteria: readonly unknown[] };
 
 export type SystemOneBody = {
   readonly model: string;
   readonly state: unknown;
   readonly questions: Readonly<Record<string, Question>>;
-  readonly assets?: Readonly<Record<string, Asset>>;
 };
 
 export type Answer =
   | { readonly type: "noul"; readonly noul: number }
   | { readonly type: "choice"; readonly choice: string; readonly confidence: number; readonly probabilities: Record<string, number> }
-  | { readonly type: "score"; readonly score: number; readonly confidence: number; readonly probabilities: Record<string, number> }
-  | { readonly type: "box"; readonly box: { top: number; bottom: number; left: number; right: number }; readonly confidence: number | null };
+  | { readonly type: "score"; readonly score: number; readonly confidence: number; readonly probabilities: Record<string, number> };
 
 export type SystemOneResult = {
   readonly model: string;
   readonly answers: Readonly<Record<string, Answer>>;
   readonly inputTokens: number;
 };
-
-/**
- * The learning job's state (`learn.ts`): a search term that already passed the product floor
- * (shared by at least 10 installs from 6 networks on 3 days, scrubbed, ADR 0017) and public mod
- * candidates. Nothing else a player sent is ever allowed in.
- */
-export const LEARN_STATE_KEYS: ReadonlySet<string> = new Set(["query", "candidates", "title", "category", "description"]);
 
 /** Throws when the body has a field outside the allowlists. */
 export function assertPublicOnly(body: SystemOneBody, stateKeys: ReadonlySet<string> = STATE_KEYS): void {
@@ -103,10 +65,6 @@ export function assertPublicOnly(body: SystemOneBody, stateKeys: ReadonlySet<str
     }
   };
   walk(body.state, "state");
-  for (const [ref, asset] of Object.entries(body.assets ?? {})) {
-    const keys = Object.keys(asset).sort().join(",");
-    if (keys !== "data_base64,format,type" || asset.type !== "image") throw new Error(`typesafe asset not allowed: ${ref}`);
-  }
 }
 
 /** The key, when the owner set it. Fail closed: no key, no call. */
@@ -134,8 +92,6 @@ export async function askJev(
     authorization: `Bearer ${key}`,
     "content-type": "application/json",
   };
-  const usesImages = body.assets !== undefined || Object.values(body.questions).some((question) => question.type === "box");
-  if (usesImages) headers["typesafe-danger-zone-images"] = "true";
   const response = await net.fetch(TYPESAFE_URL, { method: "POST", headers, body: JSON.stringify(body) });
   if (response.status === 400 || response.status === 413 || response.status === 422) {
     await response.body?.cancel();

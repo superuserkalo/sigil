@@ -19,7 +19,7 @@ below and is not repeated in each one. Sigil itself stores no IP address and no 
 | [Sigil telemetry](#sigil-telemetry) | Usage events, crash reports, diagnostics you send, mod hash lookups | Off until you agree |
 | [Help build Sigil](#help-build-sigil-product-data) | Product data: GameBanana mod ids and actions, mod health, Browse use, top heroes, performance, app use | Off until you choose Share |
 | [Model provider](#model-provider) | Your prompts, the files the agent reads, the model's answers | Only when you chat |
-| [Catalog tags](#catalog-tags-typesafe-and-workers-ai) | Nothing from you: the Worker tags public GameBanana pages and Steam patch notes; the app downloads the index | On once built (not called yet) |
+| [Catalog search index](#catalog-search-index) | Nothing from you: the app downloads a public index of GameBanana's catalog and searches it locally | On once built (not called yet) |
 | [Steam](#steam) | Patch note requests | On |
 | [GameBanana](#gamebanana) | Catalog and update requests, the mods you open and install | On |
 | [deadlock-api](#deadlock-api) | Account ids for Stats, crosshair values, match ids and salts | Partly on, see below |
@@ -270,45 +270,33 @@ that already closed are anonymous counts with nothing pointing to you, so they s
 be one of the installs in a count from an earlier period. If the request fails, nothing changes on
 your PC and you can press again.
 
-## Catalog tags (TypeSafe and Workers AI)
+## Catalog search index
 
-Sigil's Worker (not the app) enriches the public GameBanana catalog so Browse and search can be
-smarter offline: what each mod is (kind, hero, franchise or character it references, style),
-which cover picture works as a card or a wide banner, facts from the page (needs another mod, has
-variants, special install steps), which download is the main one, what the latest update did,
-what public comments say about it working, likely re-uploads, and which heroes and systems an
-official patch changes. See `docs/decisions/0018-typesafe-catalog-tags.md`.
+Sigil's Worker builds a public search index of the GameBanana catalog so the app can search
+offline and tolerate typos. See `docs/decisions/0018-typesafe-catalog-tags.md`.
 
-- What is sent, and to whom. The Worker sends public catalog content only: mod titles,
-  descriptions, category names, file names, sizes and notes, update notes, public screenshots,
-  public comment text (commenters become `c1`, `c2`; no name or member id is sent) and the official
-  Steam patch notes. Two processors receive it: TypeSafe (`api.typesafe.ai`, the Jev model), which
-  returns typed judgments with probabilities, and Cloudflare Workers AI (the same company that
-  already runs the Worker), which proposes search terms from a page's text and cover picture.
-  TypeSafe states it does not train on customer requests and lists its data processing agreement,
-  privacy policy and zero data retention option on its [Models page](https://docs.typesafe.ai/models.md#data-handling)
-  and [Legal page](https://docs.typesafe.ai/legal.md).
-- What is never sent. Nothing from the product, crash, diagnostics or hash tables: no install
-  hash, no network marker, no search text you typed, no hardware, nothing about you. An allowlist
-  in `services/telemetry/src/catalog/typesafe.ts` refuses any request field outside it, and tests
-  check that a player's search text stored in the product tables never appears in a request.
-- One exception, from data that already passed the floor. Once a day the Worker reads the
-  search-gap aggregate (search terms with no result or no click that at least 10 installs from 6
-  networks on 3 days shared in one closed week, already scrubbed on your PC and on the Worker, see
-  Help build Sigil above). Up to three such terms a day go to TypeSafe with public mod candidates,
-  so that a term players keep typing gets added to the mods it fits. No term below the floor, and
-  no raw product row, is ever read for this.
+- What it holds: GameBanana's own public text per mod (title, description words, category, hero
+  subcategory, author) and a small alias table. Nothing from you or about you.
 - Search stays on your PC. When the app uses the index, it downloads it and matches what you type
-  locally (`services/telemetry/src/catalog/match.ts` is the reference). Your typed text is never
+  locally (`services/telemetry/src/catalog/match.ts` is the reference). What you type is never
   sent for this.
-- What the Worker stores: per mod, the answers with their probabilities and when they were made
-  (`mod_tags`), what it last saw of the public page (`catalog_mods`), per patch the line classes
-  (`patch_tags`), and its own run state and spend tally (`enrich_state`). No player data.
-- Status: the routes exist (`GET /v1/catalog/tags`, `/v1/catalog/mod/<id>`,
-  `/v1/catalog/patch/<id>`) but the app does not call them yet. The owner approved (2026-11-25)
-  that the app will download the index by default once that is built; it needs no consent because
-  the request carries no id and no product data, only the usual `x-sigil-client` and version
-  headers, and the answer is the same for everyone.
+- Two optional steps are built but off (`CATALOG_EXPANSION`, `CATALOG_FILE_LABELS`). If the owner
+  turns one on, the Worker sends public mod page content only (titles, categories, descriptions,
+  file names, sizes and notes, and search terms proposed from those) to Cloudflare Workers AI (the
+  company that already runs the Worker) and to TypeSafe (`api.typesafe.ai`, the Jev model).
+  TypeSafe states it does not train on customer requests and lists its data processing
+  agreement, privacy policy and zero data retention option on its
+  [Models page](https://docs.typesafe.ai/models.md#data-handling) and
+  [Legal page](https://docs.typesafe.ai/legal.md). Nothing from the product, crash, diagnostics
+  or hash tables is ever sent: an allowlist in `services/telemetry/src/catalog/typesafe.ts` refuses
+  any other field, and tests check that a player's search text stored on the Worker never appears.
+- What the Worker stores: per mod the public text it read, a hash of it and the time
+  (`catalog_mods`), the optional judgments with their probabilities (`mod_tags`), and its run
+  state and spend tally (`enrich_state`). No player data.
+- Status: the routes exist (`GET /v1/catalog/tags`, `/v1/catalog/mod/<id>`) but the app does not
+  call them yet. The owner approved (2026-11-25) that the app downloads the index by default once
+  that is built; it needs no consent because the request carries no id and no product data, only
+  the usual `x-sigil-client` and version headers, and the answer is the same for everyone.
 
 ## Model provider
 

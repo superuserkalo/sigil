@@ -4,13 +4,11 @@
  *
  *   GET /v1/catalog/tags              the whole index: string table, alias table, per-mod ids
  *   GET /v1/catalog/tags?since=<ms>   mods enriched after <ms>, with their own string table
- *   GET /v1/catalog/mod/<id>          per-mod detail: files, update notes, health counts, facts
- *   GET /v1/catalog/patch/<id>        one official patch's line classes; `latest` for the newest
+ *   GET /v1/catalog/mod/<id>          per-mod detail: the file pre-selection hint (flagged)
  */
 
 import { getState, loadIndex } from "./enrich";
 import { modDetail, PACK, PUBLISH_VERSION, type CatalogIndex, type JudgmentRows } from "./publish";
-import { publishPatch, type PatchLine } from "./patches";
 import type { Stored } from "./judgments";
 
 /** A few hours: the index changes at most hourly. */
@@ -65,14 +63,12 @@ export function delta(index: CatalogIndex, since: number): CatalogIndex {
       x: mod.x.map((packed) => {
         return remap(Math.floor(packed / PACK)) * PACK + (packed % PACK);
       }),
-      ...(mod.f === undefined ? {} : { f: mod.f.map((old) => remap(old)) }),
-      ...(mod.ch === undefined ? {} : { ch: mod.ch.map((old) => remap(old)) }),
     }));
   return { v: index.v, built: index.built, strings, aliases: index.aliases, mods };
 }
 
 export async function handleModDetail(request: Request, env: Env, id: number, respond: Respond): Promise<Response> {
-  const { results } = await env.DB.prepare("SELECT judgment, data, enriched_at FROM mod_tags WHERE mod_id = ?1 AND judgment != '_failed'")
+  const { results } = await env.DB.prepare("SELECT judgment, data, enriched_at FROM mod_tags WHERE mod_id = ?1")
     .bind(id)
     .all<{ judgment: string; data: string; enriched_at: number }>();
   const judged: Record<string, Stored> = {};
@@ -87,22 +83,3 @@ export async function handleModDetail(request: Request, env: Env, id: number, re
   if (cached !== null) return cached;
   return respond(200, modDetail(id, judged as JudgmentRows), cacheHeaders(etag, DETAIL_MAX_AGE));
 }
-
-export async function handlePatch(request: Request, env: Env, id: string, respond: Respond): Promise<Response> {
-  const row =
-    id === "latest"
-      ? await env.DB.prepare("SELECT patch_id, title, posted_at, data, enriched_at FROM patch_tags ORDER BY posted_at DESC LIMIT 1").first<PatchRow>()
-      : await env.DB.prepare("SELECT patch_id, title, posted_at, data, enriched_at FROM patch_tags WHERE patch_id = ?1").bind(id).first<PatchRow>();
-  if (row === null) return respond(404, { error: "unknown_patch" });
-  const etag = `p${row.patch_id}-${row.enriched_at}`;
-  const cached = notModified(request, etag, DETAIL_MAX_AGE);
-  if (cached !== null) return cached;
-  const progress = JSON.parse(row.data) as { lines: PatchLine[]; next: number; total: number };
-  return respond(
-    200,
-    { ...publishPatch(row.patch_id, row.title, row.posted_at, progress.lines), complete: progress.next >= progress.total },
-    cacheHeaders(etag, DETAIL_MAX_AGE),
-  );
-}
-
-type PatchRow = { patch_id: string; title: string; posted_at: number; data: string; enriched_at: number };

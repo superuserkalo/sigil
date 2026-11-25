@@ -22,6 +22,8 @@ export default defineConfig(async () => {
             TEST_MIGRATIONS: migrations,
             PRODUCT_SALT: "test-only-product-salt-0123456789abcdef",
             PRODUCT_BUCKET_KEY: "test-only-bucket-key-0123456789abcdef",
+            // The catalog upkeep would reach GameBanana; the catalog tests turn it on with a fake network.
+            CATALOG_INDEX: "0",
           },
         },
       }),

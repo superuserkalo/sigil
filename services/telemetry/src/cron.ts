@@ -48,7 +48,7 @@ export async function scheduledJob(
   } catch (error) {
     logLine({ event: "epochs_check_error", cron, message: describeError(error) });
   }
-  // Catalog enrichment (ADR 0018) last, in its own try: a GameBanana, Workers AI or TypeSafe
+  // Catalog index upkeep (ADR 0018) last, in its own try: a GameBanana, Workers AI or TypeSafe
   // failure never touches the steps above.
   try {
     await enrich(env, now);
