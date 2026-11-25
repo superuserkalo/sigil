@@ -231,8 +231,8 @@ address and no user agent.
 | `product_contrib` | Working rows for the current weekly period: the salted id hash, the aggregate key, the day, and a network marker | Until the period closes (about 9 days: the week and 2 days of grace), never more than 21 days, or until Delete my data |
 | `product_totals` | Counts only, per period and key: installs, networks, days. No id, no network marker. Only keys that met the floor | Kept indefinitely |
 
-Sigil keeps this data as long as possible, on purpose: a longer history makes the suggestions and
-the mod health warnings better. The flip side is that a breach of the Worker's database would
+Sigil keeps this data as long as possible, on purpose: a longer history makes the counts more
+useful for deciding what Sigil fixes and builds. The flip side is that a breach of the Worker's database would
 expose more history, which is why the network marker below lives 21 days at most and Delete my
 data works at any time. When an install has sent nothing for 24 months, the daily job replaces the
 id hash on all of its records with one fresh random value made for that install and stored
@@ -247,40 +247,19 @@ itself is never stored.
 
 ### What is shown to other players, and when
 
-Nothing from a single install. A mod pair ("players who use this also use"), a mod health finding,
+Nothing from a single install. A mod pair, a mod health finding,
 a frame rate for a hardware class or a search term is used only when, within one weekly period, at
 least 10 installs that sent data on at least 2 days, from at least 6 different networks, on at
 least 3 different days, share it. A network counts at most 3 installs per period. Keys below that
 floor are discarded when the period closes. The current period is never shown.
 
-### What you get back for sharing
+### What the app reads back
 
-Sharing and getting the results go together: the app asks the Worker for any of these only while
-Help build Sigil is on (`rust/crates/desktop/src/insights.rs`), and turning it off deletes the
-answers it kept (`<data>/telemetry/product/given.json`) at once. Each request runs on a worker
-thread, carries no product data id and stores nothing on the Worker; answers are kept a day. Until
-the Worker returns something that passed the floor, nothing of it appears in the app.
-
-- "Players who use this also use": `GET /v1/product/related?mod=<id>`, the mod id of a details
-  page you open (once per mod a day) and of up to eight of your enabled mods (for For you, where
-  such picks say "Players with your mods also use").
-- Mod health chips on Browse, the details and Installed: `GET /v1/product/health?mods=<ids>`, the
-  GameBanana ids on screen and installed, 40 at a time. A chip shows only when it rests on at least
-  10 installs and a clear share of them: "Often fails to install" (25% of reported installs failed
-  for a reason that points at the mod, over the last 8 weeks), "Reported broken on the
-  current game build" (20% of installs that used the mod on your exact game build reported it
-  moved, gone, turned off after a crash or a crash suspect; a game update clears it) and "Often
-  conflicts with" a mod you have (30% of installs that had both on). The tooltip says how many
-  reports it rests on.
-- Rising by real installs: `GET /v1/product/rising`, once a day while Browse is open, sends
-  nothing but the request. The Worker answers with up to 50 mod ids whose installs among players
-  who share grew most from one closed week to the next (installs in the newest closed week, above
-  the floor, against the week before).
-- Frame rates on the Performance page: `GET /v1/product/fps?gpu=<model>&cpu=<model>&height=<px>`,
-  your GPU and CPU model names (reduced as above) and screen height, once a day while the page is
-  open. The Worker groups PCs by GPU model and a CPU tier (high, mid, low) and the screen height by
-  bucket (720p, 1080p, 1440p, 2160p), and answers with the median and 1% low other players
-  measured per config and version.
+The app does not ask the Worker for related mods, mod health chips, an install-based Rising or
+frame rates for a hardware class. Those were removed from the app on 2026-11-25. The Worker's
+read routes (`/v1/product/related`, `/health`, `/fps`, `/rising`) still exist and answer only with
+keys that passed the floor above; Sigil does not call them. Floor-passed search gaps may still
+shape the public catalog tags (see Catalog tags below).
 
 ### Delete my data
 
@@ -583,8 +562,7 @@ agent host's model provider calls, subscription sign-in or publish; see Known ga
 
 - Help build Sigil: migration `0004_product_uses.sql` (the health, frame rate and search gap
   kinds) is written and tested but not applied, and the routes that read it are not deployed
-  until it is. A related mod the app has not seen in Browse or its saved catalog is left out of
-  "Players who use this also use". The monitor refresh rate is not read (sent as 0).
+  until it is. The monitor refresh rate is not read (sent as 0).
 - Offline mode does not cover the agent host's provider calls (`rust/crates/agent-host`,
   `apps/agent-host`), subscription sign-in (`desktop/src/signin.rs`) or publish
   (`desktop/src/publish.rs`).

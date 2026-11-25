@@ -64,9 +64,9 @@ The limits below are what keeps this honest. They are part of the decision, not 
   clears the local queue.
 - Every event type is an allowlisted, typed record on the app and on the Worker. There is no
   free-form payload. A field not in the schema is dropped, not stored.
-- What comes back to the player for sharing: "players who use this also use", mod health
-  warnings ("often breaks after a patch", "conflicts with a mod you have"), and frame rate
-  expectations for their hardware class.
+- What comes back to the player for sharing: nothing in the app today. Related mods, mod health
+  chips and frame rate expectations per hardware class were built (2026-11-24) and removed from
+  the app after a product review (2026-11-25); see Consequences.
 - `docs/privacy.md` lists every field before the first build that sends one, and the
   onboarding step links to it.
 
@@ -101,7 +101,7 @@ decision 2026-11-25, was 30 days) (`services/telemetry/src/aggregates.ts`):
   least 6 buckets on at least 3 days. Its strength is the sum over epochs that met the floor;
   other epochs add nothing. The open epoch is never shown. One network therefore can never
   qualify a key, in one epoch or by waiting.
-- "Players who use this also use" ranks by a damped score (cosine similarity over that strength,
+- The related mods route (`/v1/product/related`) ranks by a damped score (cosine similarity over that strength,
   times support / (support + 10)) and lists at most 20.
 - "Delete my data" removes the install's raw events and its open-epoch contributions and gives a
   new id. Closed-epoch totals are anonymous counts with nothing that points to an install, so they
@@ -121,12 +121,15 @@ raises the cost of poisoning; it does not make it impossible.
   after 24 months, and "Delete my data" is on the Privacy page next to the switch and works at
   any time while the rows are still linked.
 - Not built yet: the monitor refresh rate (sent as 0).
-- Built 2026-11-24 (migration 0004, `services/telemetry/src/aggregates.ts`,
-  `rust/crates/desktop/src/insights.rs`): "players who use this also use" on details and in For
-  you, mod health chips, frame rates per hardware class (GPU model and CPU tier, median and 1%
-  low per config and version, stored only as medians of a key that met the floor) and the
-  owner-only search gaps route behind `PRODUCT_ADMIN_KEY`. Every new aggregate is a kind of the
-  same epoch machinery with the same floor. The app asks only while sharing is on.
+- Built 2026-11-24 (migration 0004, `services/telemetry/src/aggregates.ts`): the Worker's
+  related mods, mod health, frame rates per hardware class (GPU model and CPU tier, median and 1%
+  low per config and version, stored only as medians of a key that met the floor) and Rising
+  routes, and the owner-only search gaps route behind `PRODUCT_ADMIN_KEY`. Every new aggregate is
+  a kind of the same epoch machinery with the same floor.
+- Removed from the app 2026-11-25 after a product review: "players who use this also use" on
+  details and in For you, mod health chips on Browse, the details and Installed, frame rates on
+  PCs like yours on the Performance page, and the install-based lift of Rising. The app no longer
+  calls those Worker routes; they stay on the Worker for now. Recording is unchanged.
 - Search text is the riskiest field (free text). It is scrubbed on the device and again on the
   Worker, and can be dropped without touching the rest.
 - Floor-passed search aggregates (the search-gap terms above) can feed catalog associations

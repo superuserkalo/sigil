@@ -361,8 +361,8 @@ The last step of the first-run setup asks whether to share product data, with Sh
 If you set Sigil up before this existed, it asks once in a dialog. With Share, Sigil sends which
 GameBanana mods you install, turn on, open or hide, which ones break or clash, your Browse filters
 and short search text, your ten most played heroes in rough hours and your rank tier, benchmark
-frame rates with your GPU and CPU model, and which pages you use. It is for suggestions, mod health
-warnings and frame rate expectations. It never sends your Steam id, your files or paths, local
+frame rates with your GPU and CPU model, and which pages you use. It helps decide what Sigil fixes and
+builds next. It never sends your Steam id, your files or paths, local
 mods, your keys, your IP address or anything from the agent. Settings > Privacy > Help build Sigil
 turns it on or off at any time, What Sigil shared lists the last records sent, and Delete my data
 removes them from Sigil's server and starts a new id. Sigil keeps what you share until you
