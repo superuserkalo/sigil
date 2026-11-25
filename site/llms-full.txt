@@ -1,0 +1,835 @@
+# Sigil: the whole site as Markdown
+
+Source: https://SITE_ORIGIN/
+
+
+# Sigil: a free Deadlock mod manager for Windows
+
+> Sigil is a free, open-source Deadlock mod manager for Windows 10 and 11 (64-bit). It browses and installs mods from GameBanana, searches the catalog on your PC, keeps load order and overlapping mods in view, fixes gameinfo.gi after game updates, and launches the game modded or vanilla. It also has a Locker for skins per hero, a crosshair editor with a community library, profiles you can share, an autoexec editor, performance configs and match stats. Nothing about the player leaves the PC without their yes.
+
+Install Deadlock mods and keep them working. Sigil is a free, open-source Deadlock mod manager for Windows.
+
+[Download Sigil for Windows (installer, .exe)](https://github.com/superuserkalo/sigil/releases/latest/download/Sigil-Setup.exe)
+
+Windows 10 and 11, 64-bit. Free and open source. No administrator rights needed. Windows may show “Windows protected your PC” because the installer is not code signed yet. Choose More info, then Run anyway.
+
+Source code: https://github.com/superuserkalo/sigil
+
+## Find the mod you mean
+
+Browse GameBanana inside Sigil and install with one press. Search runs on your PC, forgives typos and knows what a mod is based on, so a series name finds skins whose title never mentions it. What you type is not sent anywhere.
+
+[More about browsing and search](https://SITE_ORIGIN/browse)
+
+## See what is on and which mod wins
+
+New installs land switched off until you turn them on. Sigil keeps the load order in view, flags mods that replace the same files and shows which one the game will use.
+
+[More about managing installed mods](https://SITE_ORIGIN/installed)
+
+## Launch modded or vanilla
+
+Launch modded checks your mods first and fixes gameinfo.gi when a game update reset it. Launch vanilla puts your mods aside for a clean game and brings them back afterwards.
+
+[More about launching](https://SITE_ORIGIN/launch)
+
+## Tune your crosshair at true scale
+
+Set lines, gap, dot and colour over a game scene, then apply it to your autoexec with a backup kept. The community library has crosshairs other players shared.
+
+[More about the crosshair editor](https://SITE_ORIGIN/crosshair)
+
+## Everything Sigil does
+
+### Mods
+
+- [Browse and search](https://SITE_ORIGIN/browse): Find and install mods from GameBanana
+- [Installed mods](https://SITE_ORIGIN/installed): On and off, load order and overlaps
+- [Profiles and packs](https://SITE_ORIGIN/profiles): Save a setup, switch, share as a code
+
+### Play
+
+- [Launching](https://SITE_ORIGIN/launch): Modded or vanilla, with checks first
+- [Performance](https://SITE_ORIGIN/performance): Community configs, on and off
+
+### Customise
+
+- [Locker](https://SITE_ORIGIN/locker): Skins per hero, equip and shuffle
+- [Crosshair](https://SITE_ORIGIN/crosshair): Edit at true scale, share and import
+- [Autoexec](https://SITE_ORIGIN/autoexec): autoexec.cfg, commands and launch options
+
+### Insight
+
+- [Stats](https://SITE_ORIGIN/stats): Rank, heroes, matches and items
+- [Privacy and safety](https://SITE_ORIGIN/privacy): What it sends, and how it checks mods
+
+### Guides
+
+- [How to install Deadlock mods](https://SITE_ORIGIN/how-to-install-deadlock-mods): The addons folder, VPK names and gameinfo.gi
+- [Mods not working after an update](https://SITE_ORIGIN/deadlock-mods-not-working-after-update): gameinfo.gi resets and moved game files
+- [Questions and answers](https://SITE_ORIGIN/faq): Cost, safety, updates, data and more
+
+## How it keeps your game working
+
+### Checks before it installs
+
+Sigil lists the files in an archive before writing them, and says so when a mod contains programs or scripts.
+
+### Waits for the game
+
+While Deadlock runs, turning off or deleting a mod waits until the game closes.
+
+### Keeps a way back
+
+Deleted mods go to Sigil's trash with Undo, and gameinfo.gi is backed up before every fix.
+
+### Asks before it shares
+
+Nothing about you leaves your PC without your yes. No account, and no third-party analytics in the app.
+
+## Questions
+
+### Is Sigil free?
+
+Yes. Sigil is free and open source under the MIT licence, and the code is on GitHub.
+
+### Is it safe? Can mods get me banned?
+
+Sigil puts mod files in the game's addons folder, the same place a manual install does, and edits gameinfo.gi so the game reads that folder, keeping a backup first. It cannot speak for how Valve treats mods. Launch vanilla starts the game with your mods set aside.
+
+### Where do the mods come from?
+
+From GameBanana. Sigil browses and downloads them from there, and every mod belongs to its creator.
+
+### My mods stopped working after a Deadlock update. What now?
+
+A game update or a Steam file check resets gameinfo.gi, so the game stops loading your mods. Sigil shows a banner with a Fix button. Mods made for an older build may also need an update from their creator; the guide [Deadlock mods not working after an update](https://SITE_ORIGIN/deadlock-mods-not-working-after-update) explains both cases.
+
+### Does it work on Mac, Linux or Steam Deck?
+
+The download on this site is for Windows 10 and 11, 64-bit. There is no Mac, Linux or Steam Deck release here.
+
+### Why does Windows warn me when I run the installer?
+
+The installer is not code signed yet, so Windows may show "Windows protected your PC". Choose More info, then Run anyway.
+
+### What does Sigil send over the internet?
+
+It talks to GameBanana for mods and, if you allow it, to GitHub for app updates. Usage events, crash reports and product data are each off until you agree, and there is no third-party analytics. The [privacy page](https://SITE_ORIGIN/privacy) lists every host.
+
+[All questions and answers](https://SITE_ORIGIN/faq)
+
+## Get Sigil for Windows
+
+[Download Sigil for Windows (installer, .exe)](https://github.com/superuserkalo/sigil/releases/latest/download/Sigil-Setup.exe)
+
+Windows 10 and 11, 64-bit. Free and open source. No administrator rights needed.
+
+Windows may show “Windows protected your PC” because the installer is not code signed yet. Choose More info, then Run anyway.
+
+---
+
+Sigil is a fan project and is not affiliated with Valve. Deadlock is a trademark of Valve Corporation. Mods come from GameBanana and belong to their creators.
+
+
+# Browse and install Deadlock mods from GameBanana
+
+> Browse GameBanana's Deadlock mods inside Sigil, search on your own PC with typo tolerance, and install into a free slot with the mod switched off.
+
+Sigil reads GameBanana's Deadlock catalog live, so you can find a mod, read its page and install it without a browser or an unzip step.
+
+![Sigil's Browse page with a trending banner, a top ten for the week and a row of rising mods.](https://SITE_ORIGIN/img/hero-1200.webp)
+
+## Finding a mod
+
+The landing page shows the week's top mods, trending rails, a Browse by hero rail and featured picks. Tabs split mods, sounds and work in progress. On the left you can pick a category, a subcategory or a hero; a hero pick also finds that hero's sounds and HUD work.
+
+Filters cover NSFW content, outdated mods, whether a mod is already installed and featured mods. Sort by newest, recently updated, most liked, most viewed, most downloaded or name, and limit results to a date window. Active filters show as chips you can remove one at a time. Favorites are saved on your PC, and mods or creators you hide stay out of the way until you bring them back.
+
+## Search that runs on your PC
+
+Sigil downloads a public index of the catalog and matches your search on your own computer. It forgives typos, copes with words written together or apart and knows what many mods are based on, so typing a game or series name finds skins whose title never mentions it. What you type is not sent anywhere.
+
+![A search for "chainsaw man" finding the skin "Asa Mitaka over Paige", whose title does not name the series.](https://SITE_ORIGIN/img/search.webp)
+
+You can also paste a GameBanana link or id into the search to open that mod, or paste several links at once to queue them.
+
+## Installing
+
+1. Press Install on a card, or open the mod and choose a file.
+2. Sigil downloads the archive, lists the mod files inside and checks what it is about to write. If the mod contains programs or scripts, the review says so before anything is installed.
+3. Choose the file or variant you want and confirm. Sigil puts it in the first free slot.
+
+New installs land switched off by default, so nothing changes in your game until you turn the mod on in Installed. You can change that in Settings, Mods. A mod you already have shows Update or Replace instead, and an update keeps its slot and your on or off choice.
+
+Mods on GameBanana belong to their creators. Opening a mod shows its pictures, description, files, changelog and a link to the creator's page.
+
+## Download Sigil
+
+[Download Sigil for Windows (installer, .exe)](https://github.com/superuserkalo/sigil/releases/latest/download/Sigil-Setup.exe)
+
+Windows 10 and 11, 64-bit. Free and open source. No administrator rights needed.
+
+Windows may show “Windows protected your PC” because the installer is not code signed yet. Choose More info, then Run anyway.
+
+## Related pages
+
+- [Installed mods](https://SITE_ORIGIN/installed): On and off, load order and overlaps
+- [Profiles and packs](https://SITE_ORIGIN/profiles): Save a setup, switch, share as a code
+- [How to install Deadlock mods](https://SITE_ORIGIN/how-to-install-deadlock-mods): The addons folder, VPK names and gameinfo.gi
+
+---
+
+Sigil is a fan project and is not affiliated with Valve. Deadlock is a trademark of Valve Corporation. Mods come from GameBanana and belong to their creators.
+
+
+# Manage installed Deadlock mods, load order and conflicts
+
+> See every Deadlock mod in your addons folder, switch them on and off, set the load order, find mods that replace the same files and check mods after a game update.
+
+Installed is the list of every mod in your game's addons folder, including mods you put there by hand or with another tool.
+
+![The Installed list: six enabled mods with slot numbers, on and off switches and a note that five mods overlap.](https://SITE_ORIGIN/img/installed.webp)
+
+## On, off and load order
+
+Switch a mod on or off from its card. Search by name, author or slot, filter by on or off, source, hero, category or tag, and choose cards, small cards or a list. Select several mods to switch them together, delete them or tag them.
+
+Deadlock loads mods from numbered files, and a lower number wins when two mods replace the same file. Drag a card to reorder, or use Load first, earlier and later from its menu. Sigil checks the whole move and puts everything back if a rename fails. The game reads at most 99 mods per folder; Sigil adds extra folders for slots 100 to 990 and mounts them for you.
+
+## Overlaps
+
+Overlap shows every pair of mods that touch the same files and which one wins. Swap two slots, turn one off, or ignore a pair you are happy with. Cards carry a quiet mark when they share files with another mod, and the sidebar counts the overlaps.
+
+## While the game is running
+
+Deadlock holds its mod files open while it runs. Turning a mod off or deleting it then asks whether to do it when Deadlock closes. Waiting changes show a clock mark, and they run in order once the game exits. Turning a mod on never waits: it loads on the next start.
+
+![A dialog asking to delete a mod when Deadlock closes, because the game has the files open.](https://SITE_ORIGIN/img/pending.webp)
+
+## After a game update
+
+Updates move and change game files, and mods made for an older build can stop working without an error. The compatibility review lists mods that ship paths the game moved or removed, stale hero models or game data, and offers Repair per mod, Fix all and Revert. You can also turn off every mod with outdated data in one step.
+
+## Updates, backups and the trash
+
+Installed checks for newer files when you open it and shows an update chip on each mod that has one. Update all can take every mod, only enabled ones or only disabled ones. The copy an update replaces is kept under Backups, and deleted mods go to Sigil's trash with Undo.
+
+## Download Sigil
+
+[Download Sigil for Windows (installer, .exe)](https://github.com/superuserkalo/sigil/releases/latest/download/Sigil-Setup.exe)
+
+Windows 10 and 11, 64-bit. Free and open source. No administrator rights needed.
+
+Windows may show “Windows protected your PC” because the installer is not code signed yet. Choose More info, then Run anyway.
+
+## Related pages
+
+- [Launching](https://SITE_ORIGIN/launch): Modded or vanilla, with checks first
+- [Profiles and packs](https://SITE_ORIGIN/profiles): Save a setup, switch, share as a code
+- [Mods not working after an update](https://SITE_ORIGIN/deadlock-mods-not-working-after-update): gameinfo.gi resets and moved game files
+
+---
+
+Sigil is a fan project and is not affiliated with Valve. Deadlock is a trademark of Valve Corporation. Mods come from GameBanana and belong to their creators.
+
+
+# Deadlock mod profiles and shareable mod packs
+
+> Save a whole Deadlock mod setup as a profile, switch to it in one step, and share it with friends as a code or a file that Sigil imports for them.
+
+A profile is a saved set of switched-on mods. It can also carry autoexec lines, a crosshair, mod favourites and the Locker's shuffle settings. Save what you have now, then switch back to it in one step.
+
+![Importing a shared profile: a list of its mods marked installed, to download or unavailable, and two autoexec lines.](https://SITE_ORIGIN/img/profiles.webp)
+
+## Saving and switching
+
+Save the current setup as a profile and give it a name: one for ranked with only interface mods, one with every skin on, one for trying new things. The titlebar has a quick switch between saved profiles. Profiles can be renamed and updated with what is on now, and Undo after applying a profile puts the earlier setup back.
+
+Sigil takes snapshot recovery points before applies, updates and imports, so a change you regret can be rolled back.
+
+## Sharing as a code or a file
+
+Share a profile as a code you can paste in chat, or as a file. When a friend imports it, Sigil looks up each mod and shows what will happen: already installed, to download, needs a different file, or no longer available on GameBanana. Missing mods download through the normal install path, and only the profile's mods are switched on. An import can replace one of your profiles or merge into it.
+
+You can also paste many GameBanana links at once into Browse, skip NSFW or duplicate ones, and save the result as a profile. That is the quickest way to turn a list someone posted into a setup you can switch to.
+
+## A separate addons folder
+
+A profile can keep its mods in its own addons folder instead of the normal one. Sigil mounts that folder for the profile and leaves your other mods untouched, which is handy for trying a setup without affecting the rest. The game reads at most 99 mods from one folder, so an isolated profile holds up to 99.
+
+## Download Sigil
+
+[Download Sigil for Windows (installer, .exe)](https://github.com/superuserkalo/sigil/releases/latest/download/Sigil-Setup.exe)
+
+Windows 10 and 11, 64-bit. Free and open source. No administrator rights needed.
+
+Windows may show “Windows protected your PC” because the installer is not code signed yet. Choose More info, then Run anyway.
+
+## Related pages
+
+- [Installed mods](https://SITE_ORIGIN/installed): On and off, load order and overlaps
+- [Crosshair](https://SITE_ORIGIN/crosshair): Edit at true scale, share and import
+- [Autoexec](https://SITE_ORIGIN/autoexec): autoexec.cfg, commands and launch options
+
+---
+
+Sigil is a fan project and is not affiliated with Valve. Deadlock is a trademark of Valve Corporation. Mods come from GameBanana and belong to their creators.
+
+
+# Launch Deadlock with or without mods
+
+> Launch Deadlock modded or vanilla from Sigil. It checks your mods first, fixes gameinfo.gi after updates, and puts mods aside for a vanilla game.
+
+Sigil has two buttons at the foot of the sidebar: Launch modded and Launch vanilla. Both start Deadlock through Steam.
+
+![The Before you launch checklist: mods will not load, two mods replace the same files, and mods to check after the update.](https://SITE_ORIGIN/img/launch.webp)
+
+## Launch modded
+
+Before a modded start, Sigil checks that your enabled mods still have their files, that `gameinfo.gi` still tells the game to load the addons folder, which mods overlap and which mods need a look after a game update. Anything that needs attention appears in a short checklist with a button to fix it, and you can still choose Launch anyway.
+
+Sigil also writes the Steam launch options you saved on the Autoexec page, and can ask about map mods first.
+
+## Launch vanilla
+
+Launch vanilla moves your mods aside, starts the game without them and puts them back afterwards. Use it to check whether a problem comes from a mod, or to play without mods for a while. The Game page shows whether mods are currently set aside.
+
+## The gameinfo.gi fix
+
+Deadlock only reads the addons folder when `game/citadel/gameinfo.gi` lists it in its search paths. Every game update and every Steam file verification puts Valve's own file back, and your mods quietly stop loading. When that happens Sigil shows a banner on every page with a Fix button. The fix adds back the line that loads mods, keeps a copy of the file first and leaves alone the search paths another tool added.
+
+![A banner over the Installed page: mods are off because a game update or a Steam file check reset gameinfo.gi, with a Fix button.](https://SITE_ORIGIN/img/gameinfo-banner.webp)
+
+## When the game will not start
+
+Stop game closes a running Deadlock. If the game crashes, Sigil reads the crash dump and the console log around it and, when it can, names the mod file that was loading and offers to switch it off. Installed, More, Find a broken mod halves your enabled mods across launches until it finds the one that breaks the game. If the game still fails with every mod off, verify Deadlock's files in Steam, start it once, and let Sigil fix `gameinfo.gi` again.
+
+Launching and restoring on a Windows install is the newest part of Sigil; if something goes wrong, use Send feedback on the error so it can be fixed.
+
+## Download Sigil
+
+[Download Sigil for Windows (installer, .exe)](https://github.com/superuserkalo/sigil/releases/latest/download/Sigil-Setup.exe)
+
+Windows 10 and 11, 64-bit. Free and open source. No administrator rights needed.
+
+Windows may show “Windows protected your PC” because the installer is not code signed yet. Choose More info, then Run anyway.
+
+## Related pages
+
+- [Installed mods](https://SITE_ORIGIN/installed): On and off, load order and overlaps
+- [Performance](https://SITE_ORIGIN/performance): Community configs, on and off
+- [Mods not working after an update](https://SITE_ORIGIN/deadlock-mods-not-working-after-update): gameinfo.gi resets and moved game files
+
+---
+
+Sigil is a fan project and is not affiliated with Valve. Deadlock is a trademark of Valve Corporation. Mods come from GameBanana and belong to their creators.
+
+
+# Deadlock performance configs for more FPS
+
+> Apply community Deadlock performance configs to gameinfo.gi from Sigil, keep your own overrides, and put the stock values back when you turn a config off.
+
+Many players run community configs that change engine settings in `gameinfo.gi` to trade looks for frames. Sigil's Performance page applies them for you and takes them off again cleanly.
+
+![The Performance page with OptiLock FPS on, a scale from Light to Potato, and community configs grouped by how much they change.](https://SITE_ORIGIN/img/performance.webp)
+
+## Choosing a config
+
+Configs are grouped by how much they change, from Light (a small gain, the game looks almost the same) through Balanced and Max FPS to Potato (for low-end PCs, expect the game to look rough). Each entry shows its author, version, date and how many settings it changes. Pick a config and a version, then apply it. The active config shows at the top with Details and Turn off.
+
+## Your changes stay yours
+
+Your own edits and the author's optional switches are kept as separate overrides, so a new version of a config does not wipe what you changed. Turning a config off puts the stock values back, and you can restore from a backup as well.
+
+## More sources
+
+You can add presets from a public GitHub repository. Sigil reads the repository at a fixed commit and keeps a copy, so a preset never changes under you, and lets you choose a gameinfo file, a video settings file or both. GameBanana configs are available too, with a file review before anything is written. Hide the built-in presets if you only want your own.
+
+## The convar editor
+
+The editor searches the game's console variables, edits values and keeps a history per config. Video settings can be adopted from the game, forgotten or restored. Settings files that arrive inside a mod are shown in a review with what each would change, and nothing is copied into the game until you apply it. Import and export move a config as a file or as text.
+
+## Benchmark
+
+Performance, Benchmark is an early feature that runs the same replay section in the game and measures how it draws: average FPS, 1% and 0.1% lows and frame times, compared against vanilla or another run. It has been tested on recorded data so far, not yet with a real game, so treat its results as a preview.
+
+A game update resets `gameinfo.gi`, which also removes a config's changes. Sigil notices the reset and offers to fix the file again.
+
+## Download Sigil
+
+[Download Sigil for Windows (installer, .exe)](https://github.com/superuserkalo/sigil/releases/latest/download/Sigil-Setup.exe)
+
+Windows 10 and 11, 64-bit. Free and open source. No administrator rights needed.
+
+Windows may show “Windows protected your PC” because the installer is not code signed yet. Choose More info, then Run anyway.
+
+## Related pages
+
+- [Launching](https://SITE_ORIGIN/launch): Modded or vanilla, with checks first
+- [Autoexec](https://SITE_ORIGIN/autoexec): autoexec.cfg, commands and launch options
+- [Stats](https://SITE_ORIGIN/stats): Rank, heroes, matches and items
+
+---
+
+Sigil is a fan project and is not affiliated with Valve. Deadlock is a trademark of Valve Corporation. Mods come from GameBanana and belong to their creators.
+
+
+# Deadlock skins for every hero in one Locker
+
+> Sigil's Locker lists every Deadlock hero with the skins and mods you have for them. Equip a skin, keep several and shuffle them on launch.
+
+The Locker is the view of your mods by hero. Each hero shows the skins and other mods you have for them, in load order, so you can see at a glance who is changed and how.
+
+![The Locker list: heroes with their mods, Haze expanded with three skins and one of them equipped.](https://SITE_ORIGIN/img/locker.webp)
+
+## Equip a skin
+
+Open a hero and press Equip on a skin. Equip switches that hero's other skins off, so only one model is in play. If you turn on several skins per hero in the Locker's options, Equip adds the skin instead of replacing the others, and the hero can shuffle between them each time you launch. The shuffle can be set per hero and per skin, with a Shuffle now button and a pool of skins to draw from.
+
+Star the heroes you play most to keep them at the top, switch between a grid and a list, and search by hero name. When you install a second skin for a hero who already has one on, Sigil asks whether to keep both or only the new one.
+
+## More than skins
+
+Each hero page also has sections for weapons and voice, ability sounds, the hero's own game sounds and the game's art. General covers everything that is not tied to one hero: soul containers, spirit urns, patrons, the Hideout, icons, HUD, effects, animations, maps, the announcer and killstreak music.
+
+Other Locker tools:
+
+- **In-game card** puts your own image on a hero's card art, built as a normal mod that arrives switched off.
+- **Game sounds** plays the game's own sound events and can replace one with your audio, also built as a mod.
+- **Game art** previews the game's textures and can replace a hero or ability icon.
+- **Cursors** imports a cursor pack from a folder or archive, applies it and puts the stock cursors back.
+
+## 3D preview
+
+A 3D view of the hero with a mod on, with a before and after split, is in the app as an early feature. It has been checked on stand-ins so far and not yet against a real game install, so treat it as a preview of what is coming.
+
+Profiles can keep the Locker's shuffle settings, so a saved setup brings back the same skin rotation.
+
+## Download Sigil
+
+[Download Sigil for Windows (installer, .exe)](https://github.com/superuserkalo/sigil/releases/latest/download/Sigil-Setup.exe)
+
+Windows 10 and 11, 64-bit. Free and open source. No administrator rights needed.
+
+Windows may show “Windows protected your PC” because the installer is not code signed yet. Choose More info, then Run anyway.
+
+## Related pages
+
+- [Installed mods](https://SITE_ORIGIN/installed): On and off, load order and overlaps
+- [Profiles and packs](https://SITE_ORIGIN/profiles): Save a setup, switch, share as a code
+- [Browse and search](https://SITE_ORIGIN/browse): Find and install mods from GameBanana
+
+---
+
+Sigil is a fan project and is not affiliated with Valve. Deadlock is a trademark of Valve Corporation. Mods come from GameBanana and belong to their creators.
+
+
+# Deadlock crosshair editor and community crosshairs
+
+> Edit your Deadlock crosshair at true scale over a game scene, share it as a code, import a console line and pick crosshairs other players published.
+
+The Crosshair page draws your reticle at true scale over a game scene while you edit it, so what you see is what you get in a match.
+
+![The Crosshair editor: a cyan crosshair over a street scene, sliders for gap, length and thickness, and community crosshairs below.](https://SITE_ORIGIN/img/crosshair.webp)
+
+## Editing
+
+Set the lines, gap, dot, colour, outline colour and thickness, and the preview updates as you move each slider. Switch the preview between 1080p, 1440p and 4K, zoom in, or pick a plain background. Presets can be saved, renamed and applied, and Pin window keeps the crosshair window above other windows while you compare.
+
+## Getting it into the game
+
+Apply writes the crosshair's console commands into a marked block in `autoexec.cfg` and keeps a backup of the file first. Remove from autoexec clears that block again. Apply to hero settings writes it into the settings Deadlock keeps itself, and Import from game reads the crosshair already there. Copy commands puts the console lines on your clipboard if you would rather paste them yourself.
+
+## Sharing and importing
+
+Copy code gives you a share code for the current crosshair. Import takes a share code, a single console line or a whole pasted config, so a crosshair a friend posted in chat is one paste away.
+
+## The community library
+
+Community, beside Presets under the stage, lists crosshairs other players published and the ones Sigil ships, sorted by Most used or Newest, with how often each was applied. Pressing one loads it into the editor like a preset; nothing reaches the game until you press Apply. Right-click a crosshair to report it, and it disappears from your list at once.
+
+![The Publish to the library dialog with a name field and a short note on what becomes public.](https://SITE_ORIGIN/img/publish.webp)
+
+To share your own, load one of your saved presets and press the upload button beside Rename and Delete. Its name and settings become public for everyone using Sigil. Names are 2 to 32 characters and you can publish up to 3 a day. Remove from library takes it down again from the same PC. The library needs a connection; without one, your presets still work.
+
+A profile can include a crosshair, so switching profiles can switch your reticle too.
+
+## Download Sigil
+
+[Download Sigil for Windows (installer, .exe)](https://github.com/superuserkalo/sigil/releases/latest/download/Sigil-Setup.exe)
+
+Windows 10 and 11, 64-bit. Free and open source. No administrator rights needed.
+
+Windows may show “Windows protected your PC” because the installer is not code signed yet. Choose More info, then Run anyway.
+
+## Related pages
+
+- [Autoexec](https://SITE_ORIGIN/autoexec): autoexec.cfg, commands and launch options
+- [Profiles and packs](https://SITE_ORIGIN/profiles): Save a setup, switch, share as a code
+- [Locker](https://SITE_ORIGIN/locker): Skins per hero, equip and shuffle
+
+---
+
+Sigil is a fan project and is not affiliated with Valve. Deadlock is a trademark of Valve Corporation. Mods come from GameBanana and belong to their creators.
+
+
+# Deadlock autoexec editor and console commands
+
+> Edit Deadlock's autoexec.cfg with a searchable command library, keep Sigil's lines apart from yours, and save Steam launch options that apply at launch.
+
+Deadlock runs the console commands in `game/citadel/cfg/autoexec.cfg` when it starts. Sigil's Autoexec page edits that file directly, with a command library so you do not have to remember exact names.
+
+![The Autoexec page: your commands, a launch options field, and premade commands for matchmaking regions.](https://SITE_ORIGIN/img/autoexec.webp)
+
+## Your commands and Sigil's
+
+Your own lines are shown as a list you can add to, change and remove. Sigil's own blocks, such as the crosshair it applies, are marked in the file and kept separate from yours, so editing one never overwrites the other. If the file does not exist yet, saving a command creates it.
+
+Save keeps a backup of the file first. You can open the file in your chosen editor from the page, or from Game, Edit, if you would rather type it yourself.
+
+## The command library
+
+The library on the right lists premade commands by category, such as matchmaking, with a search over every console variable the game knows. Each entry says what it does in plain words, and one press adds it to your file. A premade command that replaces another one says so, for example the matchmaking region settings, which all set the same variable.
+
+## Launch options
+
+Steam launch options are saved separately on the same page. Sigil writes them into Steam right before a modded launch, so they apply without you opening Steam's game properties.
+
+## Profiles and sharing
+
+A profile can carry autoexec lines, so switching to it can also switch commands such as a frame cap or the frame rate display. When you import a profile someone shared, Sigil shows the autoexec lines it would add and lets you leave them out.
+
+## Good to know
+
+The game reads `autoexec.cfg` when it starts, so changes apply from the next launch. Your crosshair from the Crosshair page lands in its own marked block in the same file, and Remove from autoexec there clears only that block.
+
+## Download Sigil
+
+[Download Sigil for Windows (installer, .exe)](https://github.com/superuserkalo/sigil/releases/latest/download/Sigil-Setup.exe)
+
+Windows 10 and 11, 64-bit. Free and open source. No administrator rights needed.
+
+Windows may show “Windows protected your PC” because the installer is not code signed yet. Choose More info, then Run anyway.
+
+## Related pages
+
+- [Crosshair](https://SITE_ORIGIN/crosshair): Edit at true scale, share and import
+- [Performance](https://SITE_ORIGIN/performance): Community configs, on and off
+- [Profiles and packs](https://SITE_ORIGIN/profiles): Save a setup, switch, share as a code
+
+---
+
+Sigil is a fan project and is not affiliated with Valve. Deadlock is a trademark of Valve Corporation. Mods come from GameBanana and belong to their creators.
+
+
+# Deadlock match stats, rank and hero records
+
+> Read your Deadlock rank, win rate, hero records, match details and item stats in Sigil, from deadlock-api, after you turn player stats on.
+
+Stats reads your Deadlock matches from deadlock-api, a community service, and shows them inside Sigil.
+
+![The Stats overview for a sample player: rank, win rate, recent form, and what stands out over the last 20 matches.](https://SITE_ORIGIN/img/stats.webp)
+
+## Getting started
+
+Open the player panel on Stats and paste your Steam profile link, SteamID or Deadlock account id, or pick a Steam account Sigil found on your PC. Player stats must be on in Settings, Privacy, because the reads go to deadlock-api with that account id. You can add tracked players by hand and switch the primary account between them.
+
+## What you can see
+
+- **Overview**: rank, win rate, recent matches and heroes, plus a short list of what stands out over your last 20 matches, such as a hero that is costing you or one that carries you.
+- **Heroes**: your record on each hero.
+- **Matches**: the recent list, with Street Brawl and abandoned games marked. Street Brawl games never count as ranked or towards win rate.
+- **Match detail**: both teams, builds, souls over time, damage and healing, and who abandoned.
+- **Items** and **Item meta**: your item win rates and buy times, and everyone's best items.
+- **Party**: how the lineups a party can queue have done, from pair and trio records.
+- **Leaderboard**: by region and season, with your place marked.
+- **Fun run**: a random hero, lane, item build and ability order from one code, to share and race.
+
+![A match detail view: souls over time for both teams and a scoreboard with each player's build.](https://SITE_ORIGIN/img/stats-board.webp)
+
+Filters scope every section to ranked or all matches and to a season or date range. Statlocker links open in your browser.
+
+## Live match
+
+While Deadlock runs, Stats, Live match can read the game's console log to show the queue, when a match is found and the match clock. An optional live bridge adds both teams' numbers through a small HUD mod. This part has only been checked on recorded data so far, so treat it as an early feature.
+
+## Privacy
+
+Nothing is fetched until you turn Player stats on, and the reads carry only the account id you chose. Settings, Privacy lists every host Sigil talks to.
+
+## Download Sigil
+
+[Download Sigil for Windows (installer, .exe)](https://github.com/superuserkalo/sigil/releases/latest/download/Sigil-Setup.exe)
+
+Windows 10 and 11, 64-bit. Free and open source. No administrator rights needed.
+
+Windows may show “Windows protected your PC” because the installer is not code signed yet. Choose More info, then Run anyway.
+
+## Related pages
+
+- [Performance](https://SITE_ORIGIN/performance): Community configs, on and off
+- [Privacy and safety](https://SITE_ORIGIN/privacy): What it sends, and how it checks mods
+- [Launching](https://SITE_ORIGIN/launch): Modded or vanilla, with checks first
+
+---
+
+Sigil is a fan project and is not affiliated with Valve. Deadlock is a trademark of Valve Corporation. Mods come from GameBanana and belong to their creators.
+
+
+# Privacy and mod safety in Sigil
+
+> What Sigil sends and when, the switches that keep it off until you agree, and how it checks mods for programs and scripts before they run.
+
+Sigil has no account and no third-party analytics. It talks only to the services a feature needs, and everything that would send data about you is off until you agree.
+
+![Settings, Privacy: one switch per kind of data, with What Sigil sends, What Sigil shared and Delete my data.](https://SITE_ORIGIN/img/privacy.webp)
+
+## What Sigil talks to
+
+- GameBanana, for browsing, mod pages, files and updates.
+- GitHub, for Sigil updates, performance configs and the contributor list.
+- Steam, for the official Deadlock patch notes and Valve's relay list.
+- deadlock-api, for Stats when Player stats is on, match data sharing you turn on, and crosshair values.
+- Sigil's own service, for the community crosshair library, the search index and the opt-ins below.
+- A model provider, only when you chat with the built-in agent, using your own key.
+
+Offline mode in Settings, Network stops Sigil's own catalog, download and service requests.
+
+## Switches, all off until you agree
+
+Settings, Privacy has one switch per kind: match data sharing, player stats, usage events, crash reports and unknown-mod lookup. Usage events carry no mod names, search text or file names. Crash reports and diagnostics have your user name, paths, keys, emails and Steam ids removed on your PC before sending, and diagnostics are only sent when you press Send after a preview.
+
+Help build Sigil is asked once during setup with Share and Not now. With Share, Sigil sends which GameBanana mods you install or turn on, your Browse filters and short search text, your most played heroes and rank tier, benchmark frame rates with your GPU and CPU model, and which pages you use. It never sends your Steam id, files or paths, local mods, keys or IP address. What Sigil shared lists the last records sent, and Delete my data removes them. The [privacy notes](https://github.com/superuserkalo/sigil/blob/main/docs/privacy.md) list every field.
+
+## Mod safety
+
+Before an install, Sigil lists the files in the archive and checks what it is about to write. A mod that contains programs, loose scripts or script code that reaches the network is flagged. Such a mod waits switched off until you review it, and Installed, More, Mod safety lists every flagged mod with its reasons and files. Sigil never switches off a mod you approved without asking.
+
+![A mod safety note: 3 of 214 files are worth a look, including a program and a script that reaches the network.](https://SITE_ORIGIN/img/safety.webp)
+
+Deadlock never runs a program shipped inside a mod, so a mod has no reason to include one. The warning is a prompt to look, not a block.
+
+## Download Sigil
+
+[Download Sigil for Windows (installer, .exe)](https://github.com/superuserkalo/sigil/releases/latest/download/Sigil-Setup.exe)
+
+Windows 10 and 11, 64-bit. Free and open source. No administrator rights needed.
+
+Windows may show “Windows protected your PC” because the installer is not code signed yet. Choose More info, then Run anyway.
+
+## Related pages
+
+- [Questions and answers](https://SITE_ORIGIN/faq): Cost, safety, updates, data and more
+- [Installed mods](https://SITE_ORIGIN/installed): On and off, load order and overlaps
+- [Browse and search](https://SITE_ORIGIN/browse): Find and install mods from GameBanana
+
+---
+
+Sigil is a fan project and is not affiliated with Valve. Deadlock is a trademark of Valve Corporation. Mods come from GameBanana and belong to their creators.
+
+
+# How to install Deadlock mods
+
+> Install Deadlock mods by hand: the addons folder, pakNN_dir.vpk names, the gameinfo.gi line that makes the game load them, and the one-click way with Sigil.
+
+Deadlock loads mods from VPK files in one folder of the game, but only when its `gameinfo.gi` file tells it to look there. This guide shows the manual way step by step, then how Sigil does the same for you. You do not need Sigil to follow it.
+
+## Before you start
+
+Find Deadlock's install folder. In Steam, right-click Deadlock in your library and choose Manage, then Browse local files. Everything below happens inside the `game/citadel` folder there. The game's internal name is `citadel`.
+
+A mod you download from GameBanana usually comes as an archive with one or more `.vpk` files inside. Those are what the game reads.
+
+## Install a mod by hand
+
+1. Close Deadlock.
+2. Open `game/citadel` and create a folder named `addons` if it is not there yet.
+3. Copy the mod's `.vpk` file into `addons` and rename it to `pakNN_dir.vpk`, where NN is a two digit number from 01 to 99, for example `pak01_dir.vpk`. Each mod needs its own number.
+4. Open `game/citadel/gameinfo.gi` in a text editor. Find the `SearchPaths` block and add the line `Game citadel/addons` directly above the line `Game citadel`. Save the file.
+5. Start Deadlock. The mod's files now replace the game's own.
+
+The `SearchPaths` part should end up like this, with any other lines in it left as they were:
+
+```
+SearchPaths
+{
+    Game citadel/addons
+    Game citadel
+    Game core
+}
+```
+
+## Rules that trip people up
+
+- **Names must be exact.** The game loads `pak01_dir.vpk` through `pak99_dir.vpk`. Other names, such as `pak1_dir.vpk`, `pak00_dir.vpk`, `pak100_dir.vpk` or the mod's own name, are ignored without an error.
+- **No subfolders.** A VPK inside a folder within `addons` is ignored.
+- **Lower number wins.** When two mods replace the same file, the one with the lower number is used. Put the mod you care about most first.
+- **Big mods come in chunks.** A mod split into a `_dir` file and numbered chunks must keep the whole set together under the same number.
+- **At most 99.** The game loads at most 99 VPKs from the folder.
+- **Only edit SearchPaths.** Changing other parts of `gameinfo.gi` can block matchmaking.
+- **Updates undo step 4.** Every game update and every Steam "Verify integrity of game files" puts Valve's `gameinfo.gi` back. Your mods stay on disk but stop loading until you add the line again. See [Deadlock mods not working after an update](https://SITE_ORIGIN/deadlock-mods-not-working-after-update).
+
+## The same thing with Sigil
+
+Sigil does each of these steps for you. The first time it starts, it finds the game and offers to add the `gameinfo.gi` line, keeping a backup of the file first. In Browse, Install downloads the mod from GameBanana, shows the files it is about to write and puts it in the first free slot with the right name. It switches mods on and off by renaming, changes the load order when you drag a card, and adds extra folders when you go past 99 mods.
+
+![Sigil's Installed list: each mod in its numbered slot, 01 to 07, with an on and off switch.](https://SITE_ORIGIN/img/installed.webp)
+
+When an update resets `gameinfo.gi`, a banner offers to fix it again.
+
+## Download Sigil
+
+[Download Sigil for Windows (installer, .exe)](https://github.com/superuserkalo/sigil/releases/latest/download/Sigil-Setup.exe)
+
+Windows 10 and 11, 64-bit. Free and open source. No administrator rights needed.
+
+Windows may show “Windows protected your PC” because the installer is not code signed yet. Choose More info, then Run anyway.
+
+## Related pages
+
+- [Mods not working after an update](https://SITE_ORIGIN/deadlock-mods-not-working-after-update): gameinfo.gi resets and moved game files
+- [Browse and search](https://SITE_ORIGIN/browse): Find and install mods from GameBanana
+- [Installed mods](https://SITE_ORIGIN/installed): On and off, load order and overlaps
+
+---
+
+Sigil is a fan project and is not affiliated with Valve. Deadlock is a trademark of Valve Corporation. Mods come from GameBanana and belong to their creators.
+
+
+# Deadlock mods not working after an update
+
+> Why Deadlock mods stop loading after a game update or a Steam file check, how to fix gameinfo.gi by hand, and what to do when a mod's files moved.
+
+If your mods worked yesterday and the game looks stock today, a Deadlock update is the usual cause. There are two different problems, and they need different fixes.
+
+## Problem 1: the game no longer loads the addons folder
+
+Deadlock only reads mods when `game/citadel/gameinfo.gi` lists `citadel/addons` in its `SearchPaths`, above `Game citadel`. Valve's own copy of the file does not have that line. Every game update, and every time you use Steam's "Verify integrity of game files", the file is put back to Valve's version. Your mods are still on disk, but the game skips all of them, with no error.
+
+This is the most common cause, and it affects every mod at once.
+
+### Fix it by hand
+
+1. Close Deadlock.
+2. Open `game/citadel/gameinfo.gi` in a text editor.
+3. In the `SearchPaths` block, add `Game citadel/addons` directly above `Game citadel`.
+4. Save, and start the game.
+
+Only change the `SearchPaths` block. Editing other parts of the file can block matchmaking. You will need to do this again after the next update.
+
+### Fix it with Sigil
+
+When Sigil sees the reset it shows a banner on every page with a Fix button. The fix adds the line back, copies the old file aside first so it can be undone, and keeps search paths another tool added. Launch modded also checks the file before it starts the game.
+
+![The Fix gameinfo.gi dialog: Sigil adds back the line that tells Deadlock to load mods, and copies the current file aside first.](https://SITE_ORIGIN/img/gameinfo-fix.webp)
+
+## Problem 2: some mods broke because game files changed
+
+If only some mods stopped working, the update probably changed the files they replace. A mod replaces game files by exact path, so when the game moves a file, the mod's copy no longer matches and the game quietly uses its own. For example, Abrams' model moved from `models/heroes_staging/atlas_detective_v2/` to `models/heroes_wip/abrams/`, and skins made for the old path stopped working.
+
+Updates can also change animations, skeletons and cameras, which can break older skins, and change interface layouts, which can make an outdated HUD mod crash the game at launch.
+
+### What to do
+
+- Check the mod's GameBanana page for an update made for the new build, and install it.
+- If the game crashes at launch, turn off HUD and interface mods first.
+- Turn mods off in halves to find the one that breaks the game.
+- Fixing an old mod yourself means moving its files to the new paths, then recompiling and repacking it. The GameTracking-Deadlock file history shows what moved.
+
+### With Sigil
+
+Installed shows an update chip on each mod with a newer file. The compatibility review lists mods that use paths the game moved or removed, stale hero models or game data, with Repair, Fix all and Revert, and can turn off every mod with outdated data in one step. Find a broken mod halves your enabled mods across launches until it finds the culprit, and Launch vanilla starts a clean game to compare.
+
+## Download Sigil
+
+[Download Sigil for Windows (installer, .exe)](https://github.com/superuserkalo/sigil/releases/latest/download/Sigil-Setup.exe)
+
+Windows 10 and 11, 64-bit. Free and open source. No administrator rights needed.
+
+Windows may show “Windows protected your PC” because the installer is not code signed yet. Choose More info, then Run anyway.
+
+## Related pages
+
+- [How to install Deadlock mods](https://SITE_ORIGIN/how-to-install-deadlock-mods): The addons folder, VPK names and gameinfo.gi
+- [Launching](https://SITE_ORIGIN/launch): Modded or vanilla, with checks first
+- [Installed mods](https://SITE_ORIGIN/installed): On and off, load order and overlaps
+
+---
+
+Sigil is a fan project and is not affiliated with Valve. Deadlock is a trademark of Valve Corporation. Mods come from GameBanana and belong to their creators.
+
+
+# Sigil questions and answers
+
+> Answers about Sigil, the free Deadlock mod manager: cost, safety, where mods come from, updates, Windows warnings, data it sends, files, uninstalling and bugs.
+
+## Is Sigil free?
+
+Yes. Sigil is free and open source under the MIT licence, and the code is on GitHub.
+
+## Is it safe? Can mods get me banned?
+
+Sigil puts mod files in the game's addons folder, the same place a manual install does, and edits gameinfo.gi so the game reads that folder, keeping a backup first. It cannot speak for how Valve treats mods. Launch vanilla starts the game with your mods set aside.
+
+## Where do the mods come from?
+
+From GameBanana. Sigil browses and downloads them from there, and every mod belongs to its creator.
+
+## My mods stopped working after a Deadlock update. What now?
+
+A game update or a Steam file check resets gameinfo.gi, so the game stops loading your mods. Sigil shows a banner with a Fix button. Mods made for an older build may also need an update from their creator; the guide [Deadlock mods not working after an update](https://SITE_ORIGIN/deadlock-mods-not-working-after-update) explains both cases.
+
+## Does it work on Mac, Linux or Steam Deck?
+
+The download on this site is for Windows 10 and 11, 64-bit. There is no Mac, Linux or Steam Deck release here.
+
+## Why does Windows warn me when I run the installer?
+
+The installer is not code signed yet, so Windows may show "Windows protected your PC". Choose More info, then Run anyway.
+
+## What does Sigil send over the internet?
+
+It talks to GameBanana for mods and, if you allow it, to GitHub for app updates. Usage events, crash reports and product data are each off until you agree, and there is no third-party analytics. The [privacy page](https://SITE_ORIGIN/privacy) lists every host.
+
+## Do I need an account?
+
+No. Sigil has no account and no sign-in. Your favourites, profiles and settings are kept on your PC.
+
+## Can I use it with mods I installed by hand or with another manager?
+
+Yes. Installed lists every mod in the game's addons folder, however it got there, and the gameinfo.gi fix keeps search paths another tool added. Installed, More, Analyze the addons folder shows leftovers, doubled slots and files it cannot match to a mod.
+
+## Where are my mods, settings and backups?
+
+Mods live in the game's own folder, game/citadel/addons, plus sigil-addons2 to sigil-addons10 next to it once you have more than 99. Sigil's settings, backups, trash and the mods Launch vanilla set aside are in %APPDATA%\DeadlockAgentHarness.
+
+## How does Sigil update itself?
+
+If you allow update checks, Sigil looks at its GitHub releases and shows a banner when a new version is out. Install downloads it and Restart to update puts it in place. If the new version fails to start, Sigil goes back to the one that worked.
+
+## How do I uninstall it?
+
+Open Windows Settings, then Apps, then Installed apps, and uninstall Sigil. Your mods stay in the game's addons folder and Sigil's settings folder is left in place. If you used Launch vanilla, check that the Game page shows the vanilla stash as empty first, so your mods are back where the game expects them.
+
+## Where do I report a bug?
+
+Every error message in Sigil has Send feedback, which shows the scrubbed details and can send them with a reference code or open a GitHub issue. You can also open an issue on [GitHub](https://github.com/superuserkalo/sigil/issues) directly.
+
+## Download Sigil
+
+[Download Sigil for Windows (installer, .exe)](https://github.com/superuserkalo/sigil/releases/latest/download/Sigil-Setup.exe)
+
+Windows 10 and 11, 64-bit. Free and open source. No administrator rights needed.
+
+Windows may show “Windows protected your PC” because the installer is not code signed yet. Choose More info, then Run anyway.
+
+## Related pages
+
+- [Privacy and safety](https://SITE_ORIGIN/privacy): What it sends, and how it checks mods
+- [Mods not working after an update](https://SITE_ORIGIN/deadlock-mods-not-working-after-update): gameinfo.gi resets and moved game files
+- [How to install Deadlock mods](https://SITE_ORIGIN/how-to-install-deadlock-mods): The addons folder, VPK names and gameinfo.gi
+
+---
+
+Sigil is a fan project and is not affiliated with Valve. Deadlock is a trademark of Valve Corporation. Mods come from GameBanana and belong to their creators.

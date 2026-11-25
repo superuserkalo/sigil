@@ -1,0 +1,38 @@
+# Sigil
+
+> Sigil is a free, open-source Deadlock mod manager for Windows 10 and 11 (64-bit). It browses and installs mods from GameBanana, searches the catalog on your PC, keeps load order and overlapping mods in view, fixes gameinfo.gi after game updates, and launches the game modded or vanilla. It also has a Locker for skins per hero, a crosshair editor with a community library, profiles you can share, an autoexec editor, performance configs and match stats. Nothing about the player leaves the PC without their yes.
+
+Every page below has a Markdown twin at the same address with .md added. The download is a Windows installer from GitHub releases; the app is MIT licensed.
+
+## Pages
+
+- [Home](https://SITE_ORIGIN/index.md): What Sigil is, the main features, safety notes and the download
+- [Browse and search](https://SITE_ORIGIN/browse.md): Find and install mods from GameBanana
+- [Installed mods](https://SITE_ORIGIN/installed.md): On and off, load order and overlaps
+- [Profiles and packs](https://SITE_ORIGIN/profiles.md): Save a setup, switch, share as a code
+- [Launching](https://SITE_ORIGIN/launch.md): Modded or vanilla, with checks first
+- [Performance](https://SITE_ORIGIN/performance.md): Community configs, on and off
+- [Locker](https://SITE_ORIGIN/locker.md): Skins per hero, equip and shuffle
+- [Crosshair](https://SITE_ORIGIN/crosshair.md): Edit at true scale, share and import
+- [Autoexec](https://SITE_ORIGIN/autoexec.md): autoexec.cfg, commands and launch options
+- [Stats](https://SITE_ORIGIN/stats.md): Rank, heroes, matches and items
+- [Privacy and safety](https://SITE_ORIGIN/privacy.md): What it sends, and how it checks mods
+
+## Guides and help
+
+- [How to install Deadlock mods](https://SITE_ORIGIN/how-to-install-deadlock-mods.md): The addons folder, VPK names and gameinfo.gi
+- [Mods not working after an update](https://SITE_ORIGIN/deadlock-mods-not-working-after-update.md): gameinfo.gi resets and moved game files
+- [Questions and answers](https://SITE_ORIGIN/faq.md): Cost, safety, updates, data and more
+
+## Project
+
+- [Download for Windows](https://github.com/superuserkalo/sigil/releases/latest/download/Sigil-Setup.exe): Latest installer, Sigil-Setup.exe, Windows 10 and 11, 64-bit
+- [Source code](https://github.com/superuserkalo/sigil): The GitHub repository
+- [Release notes](https://github.com/superuserkalo/sigil/releases): Every release with its changes
+- [Player guide](https://github.com/superuserkalo/sigil/blob/main/docs/user-guide.md): The full player guide for every page of the app
+- [Privacy notes](https://github.com/superuserkalo/sigil/blob/main/docs/privacy.md): Every host Sigil contacts and every field it can send
+- [Licence](https://github.com/superuserkalo/sigil/blob/main/LICENSE): MIT
+
+## Optional
+
+- [Whole site as one Markdown file](https://SITE_ORIGIN/llms-full.txt): Every page above in one file
