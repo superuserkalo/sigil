@@ -50,7 +50,9 @@
   // unless CATALOG_EXPANSION or CATALOG_FILE_LABELS is "1"; the daily model spend cap is
   // ENRICH_DAILY_USD (default 1).
   "vars": {
-    "CATALOG_INDEX": "1"
+    "CATALOG_INDEX": "1",
+    // On since 2026-11-25 as the live check of Jev's verification, under the $1 daily cap.
+    "CATALOG_EXPANSION": "1"
   },
   // Workers AI proposes search terms for public mod pages when CATALOG_EXPANSION is "1" (off by
   // default); Jev checks them (ADR 0018). Without the binding that step is skipped.
