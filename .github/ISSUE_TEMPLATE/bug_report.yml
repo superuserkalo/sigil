@@ -1,0 +1,61 @@
+name: Bug report
+description: Something in Sigil does not work as it should.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. Check the [questions and answers](https://sigilmods.app/faq) first: a reset `gameinfo.gi` after a Deadlock update is the most common cause of mods not loading.
+        For a security problem, do not use this form. Follow the [security policy](https://github.com/superuserkalo/sigil/blob/main/SECURITY.md).
+  - type: input
+    id: version
+    attributes:
+      label: Sigil version
+      description: Settings > About and updates shows it.
+      placeholder: "0.1.42"
+    validations:
+      required: true
+  - type: dropdown
+    id: windows
+    attributes:
+      label: Windows version
+      options:
+        - Windows 11
+        - Windows 10
+        - Other (say which below)
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you expected, and what happened instead. Paste the exact error text if there was one.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: The steps someone else can follow to see the same thing.
+      placeholder: |
+        1. Open Browse
+        2. Install ...
+        3. ...
+    validations:
+      required: true
+  - type: input
+    id: mod
+    attributes:
+      label: GameBanana link of the mod involved
+      description: Leave empty if no particular mod is involved.
+      placeholder: https://gamebanana.com/mods/...
+  - type: input
+    id: reference
+    attributes:
+      label: Feedback reference code
+      description: If you used Send feedback or Send diagnostics in Sigil, the reference code it showed.
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else
+      description: Screenshots, whether it happened before an update, other mod managers you use.

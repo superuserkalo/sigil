@@ -1,0 +1,11 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Questions and answers
+    url: https://sigilmods.app/faq
+    about: Cost, safety, updates, the Windows warning, uninstalling and mods that stopped working.
+  - name: Report a security problem
+    url: https://github.com/superuserkalo/sigil/blob/main/SECURITY.md
+    about: Please do not post security details in a public issue. Read the security policy first.
+  - name: A problem with a specific mod
+    url: https://gamebanana.com/games/20948
+    about: Questions about what a mod looks like or does in game belong on that mod's GameBanana page.

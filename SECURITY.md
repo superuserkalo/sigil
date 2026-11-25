@@ -1,50 +1,69 @@
-# Security
+# Security policy
 
 Status: active.
-Updated: 2026-11-16
+Updated: 2026-11-25
 
-This is a local-first desktop tool that runs model-generated code and can install files into a game
-directory. Treat every boundary here as security relevant.
+Sigil is a desktop app that downloads archives from the internet, writes into a game folder,
+updates itself and talks to a small server of its own. Reports about any of that are welcome.
 
-## Trust boundaries
+## Supported versions
 
-- **Model output is untrusted.** Tool arguments, generated scripts and fetched pages are data.
-- **Mod metadata is untrusted.** GameBanana descriptions, wiki pages and READMEs can contain
-  prompt injection attempts. They never authorize a privileged action.
-- **The UI is untrusted for secrets.** There is no web renderer. The Rust app keeps keys in the OS
-  keychain and never sends them to the UI or the agent journal.
-- **The agent host is a crash boundary, not a sandbox.** It can write the mod workspace and run the
-  Rust CLI tools there. It cannot write the game install.
-- **The game install is a privileged target.** Only main-process handlers write to it, behind an
-  approval gate, after payload validation.
+Fixes go into the latest release only. Sigil updates itself from signed GitHub releases, so a fix
+reaches players as a new version; there are no back-ported patch releases. Check that you can
+reproduce a problem on the [latest release](https://github.com/superuserkalo/sigil/releases/latest)
+before reporting it.
 
-## Non-negotiable controls
+## Reporting a vulnerability
 
-1. Payload validation before deploy. No compiled-only rule, no deploy.
-2. Deny `scripts/*.vdata_c`, `*.vnmskel_c`, executables, source assets and tool caches.
-3. Addon slot names restricted to `pak01_dir.vpk` through `pak99_dir.vpk`.
-4. `gameinfo.gi` edits limited to the `SearchPaths` block, with a backup and a restore path.
-5. BYOK keys never enter the transcript, tool output, logs, crash reports or commits.
-6. No telemetry, analytics or heartbeat.
-7. Network access from tools limited to model providers, `api.steampowered.com`, GameBanana and the
-   GitHub update check. Local OpenAI-compatible endpoints are loopback or user-configured.
-   GameBanana publish confirmation fetches the public submission page to verify the recorded URL.
-8. External binaries resolved from settings with pinned version and hash when bundled.
+Please do not post details of a vulnerability in a public issue, discussion or pull request.
 
-## Known risks
+- If the repository's **Security** tab offers **Report a vulnerability**, use it. That opens a
+  private advisory only the maintainer can see.
+- Otherwise, open an issue that says only that you have a security report, with no details, and the
+  maintainer will reply with a private way to send it.
 
-- A malicious mod could ship an approved payload that the validator does not model, such as a
-  crafted compiled file. Validation is path-and-type based, not a binary safety proof. Users still
-  decide what to install and run.
-- Running community binaries can execute arbitrary code. Prefer documented sources and pinned
-  hashes.
-- Model providers receive prompts and tool output. Do not put secrets or personal data in a
-  conversation.
-- The agent host has no general shell tool. Tools call `dah-rs` with argument arrays rooted at the
-  workspace. Any future shell tool needs a workspace boundary and an executable allowlist before it
-  ships.
+Include the Sigil version, what an attacker controls (a mod archive, a link, a network position),
+what they can achieve, and the steps or a proof of concept. Do not publish a working exploit before
+a fix is released. You will get an answer as soon as the maintainer can; this is a one-person
+project, so give it a few days.
 
-## Reporting
+## In scope
 
-Open a private security advisory on the repository. Do not publish a working payload that bypasses
-validation before a fix is available.
+- **Mod archive handling.** Downloading, extracting (ZIP, 7z, RAR) and installing mods from
+  GameBanana, a pasted link, a profile or pack import, a server join or a 1-click link: path
+  traversal, links, writing outside the addons folders, decompression bombs, or a mod running code
+  through Sigil.
+- **The updater.** The release manifest's Ed25519 signature check, the download and its size and
+  SHA-256 checks, unpacking, and the swap and rollback of `Sigil.exe`
+  (`rust/crates/desktop/src/updater.rs`, `docs/runbooks/releasing.md`).
+- **Sigil's Worker** (`services/telemetry`): the opt-in telemetry, crash and diagnostics routes, the
+  mod hash lookup, the catalog search index and the community crosshair library. That includes
+  ways to read or delete someone else's data, bypass the limits, or get personal data past the
+  scrubbing.
+- **Game folder writes.** `gameinfo.gi` edits, the vanilla stash, autoexec and launch options, and
+  anything that lets an input write where it should not.
+- **Local listeners and handlers.** The `sigil://` link handler, the opt-in DeadlockForge loopback
+  listener, and the map download server and UPnP mapping used when hosting a server.
+- **Secrets.** Model keys, the proxy password and GameBanana tokens leaking into logs, crash
+  reports, diagnostics or the agent transcript.
+
+Out of scope: what a mod does inside the game once installed (report that to its creator on
+GameBanana), Deadlock or Steam themselves, and reports that need an attacker who already controls
+the player's Windows account.
+
+## How Sigil is meant to behave
+
+- Mod content is untrusted. Sigil lists an archive's files before writing them, flags programs and
+  scripts, and installs mods only as `pakNN_dir.vpk` files in the addons folders. The check is based on
+  paths and file types; it is not a proof that a compiled file is harmless.
+- `gameinfo.gi` edits are limited to the `SearchPaths` lines Sigil manages, plus the tagged lines of
+  a Performance config or a server join, each with a backup.
+- An update is installed only when its manifest carries a valid signature by a key compiled into
+  Sigil, and its file matches the signed size and hash. A failed start rolls back.
+- Nothing about the player leaves the PC without their yes: usage events, crash reports, match data
+  sharing and product data are opt-ins, off by default. There is no third-party analytics and no
+  heartbeat. Every host is listed in [docs/privacy.md](docs/privacy.md).
+- Model keys stay in the OS keychain and never enter the agent transcript, tool output or logs.
+  Agent tools never write to the game install, and the agent host has no general shell tool.
+- Mod descriptions, GameBanana metadata and other fetched text are data, never instructions to the
+  agent.
