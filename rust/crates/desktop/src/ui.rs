@@ -355,8 +355,8 @@ pub fn zoom() -> f32 {
 }
 
 /// Density scales the space between things (gaps, rows, type); edge insets have a floor.
-/// A page gutter or the sidebar's inner inset never draws under this many points.
-pub const GUTTER_MIN: f32 = 12.0;
+/// Page gutters and the sidebar's inner inset never draw under 12 points: the zoom's clamp
+/// (`MIN_ZOOM`) keeps them there, which `inset_tests` holds.
 /// A panel, card, dialog or menu's inner padding never draws under these.
 pub const INSET_X_MIN: f32 = 8.0;
 pub const INSET_Y_MIN: f32 = 6.0;
@@ -369,11 +369,6 @@ pub fn floored(points: f32, min: f32) -> f32 {
     let z = zoom();
     let target = points.min(min);
     if points * z >= target - 0.001 { points } else { target / z }
-}
-
-/// A page gutter or the sidebar's inner inset (floor [`GUTTER_MIN`]).
-pub fn gutter(points: f32) -> f32 {
-    floored(points, GUTTER_MIN)
 }
 
 /// A panel, card, dialog or menu's left and right padding (floor [`INSET_X_MIN`]).
@@ -2020,6 +2015,9 @@ mod look_tests {
 mod inset_tests {
     use super::*;
 
+    /// The floor under page gutters and the sidebar's icon inset.
+    const GUTTER_MIN: f32 = 12.0;
+
     #[test]
     fn standard_and_spacious_keep_every_inset_as_written() {
         let _g = test_globals();
@@ -2028,7 +2026,6 @@ mod inset_tests {
             for p in [2.0, 4.0, 6.0, 8.0, 12.0, 16.0, 24.0] {
                 assert_eq!(inset_x(p), p);
                 assert_eq!(inset_y(p), p);
-                assert_eq!(gutter(p), p);
                 assert_eq!(standard(p), p);
             }
         }
