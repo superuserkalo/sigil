@@ -436,7 +436,7 @@ pub fn format_count(value: u64) -> String {
 }
 
 /// One slot in `game/citadel/addons`, as `list_installed` reports it.
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 pub struct AddonRow {
     pub slot: u16,
     pub file: String,
@@ -484,6 +484,7 @@ impl AddonRow {
 
 /// A game path shipped by more than one enabled slot. `winner` is the lowest
 /// slot, which the game loads first.
+#[derive(PartialEq)]
 pub struct ConflictRow {
     pub path: String,
     pub slots: Vec<u16>,
@@ -522,7 +523,7 @@ impl ConflictRow {
 
 /// The whole installed inventory plus the conflict pass. `scanned` separates
 /// "not read yet" from a real empty folder.
-#[derive(Default)]
+#[derive(Default, PartialEq)]
 pub struct AddonLibrary {
     pub addons: Vec<AddonRow>,
     pub conflicts: Vec<ConflictRow>,

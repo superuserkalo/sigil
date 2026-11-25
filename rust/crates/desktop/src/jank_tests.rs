@@ -990,3 +990,180 @@ fn sidebar_brand_keeps_its_size_and_leaves_the_rail() {
     assert!(brand(&rt).iter().any(|b| b.0 == "brand-lockup" && !b.1 && (b.3 - 1.0).abs() < 0.01), "expanded again: {:?}", brand(&rt));
     assert!(wrong.is_empty(), "the sidebar brand jumps:\n{}", wrong.join("\n"));
 }
+
+/// A game folder with `mods` real VPK files, for a toggle that renames a real file and reads
+/// the addon folder back: each mod ships `files` files of its own, and every tenth also ships
+/// one shared file (an overlap, as real libraries have); every fifth slot is off.
+fn real_game(name: &str, mods: u16, files: usize) -> std::path::PathBuf {
+    use deadlock_core::addons::{DISABLED_SUFFIX, slot_path};
+    let root = std::env::temp_dir().join(format!("sigil-jank-{name}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    let addons = deadlock_core::deploy::addons_dir(&root);
+    std::fs::create_dir_all(&addons).expect("addons folder");
+    let packs = root.join("packs");
+    for slot in 1..=mods {
+        let staging = root.join("staging").join(slot.to_string());
+        let folder = staging.join("models").join("heroes_wip").join(format!("hero{slot}")).join("materials");
+        std::fs::create_dir_all(&folder).expect("staging");
+        for f in 0..files {
+            std::fs::write(folder.join(format!("part{f}.vmat_c")), format!("{slot}-{f}")).expect("staging file");
+        }
+        if slot % 10 == 0 {
+            let shared = staging.join("models").join("shared");
+            std::fs::create_dir_all(&shared).expect("staging");
+            std::fs::write(shared.join("common.vmat_c"), slot.to_string()).expect("staging file");
+        }
+        let vpk = deadlock_core::vpk_write::pack_vpk_single(&deadlock_core::vpk_write::PackOptions::new(staging, packs.clone(), format!("m{slot}")))
+            .expect("pack");
+        let suffix = if slot % 5 == 0 { format!("_dir.vpk{DISABLED_SUFFIX}") } else { "_dir.vpk".to_string() };
+        let path = slot_path(&addons, slot, &suffix);
+        std::fs::create_dir_all(path.parent().expect("folder")).expect("slot folder");
+        std::fs::rename(vpk.dir_path, path).expect("move");
+    }
+    let _ = std::fs::remove_dir_all(root.join("staging"));
+    root
+}
+
+/// The 300-mod stress library over a real game folder: the rows come from disk, and the library
+/// and notes entries take the sizes on disk so cards keep their names, art and marks.
+fn real_stress(name: &str, mods: u16, files: usize) -> (Runtime<State>, std::path::PathBuf) {
+    let root = real_game(name, mods, files);
+    let mut s = crate::data::init_state();
+    crate::bench_scenes::installed_stress_of(&mut s, mods);
+    s.demo = false;
+    s.game_root = Some(root.clone());
+    crate::data::scan_addons_now(&mut s);
+    let sizes: std::collections::HashMap<u16, u64> = s.addons.addons.iter().map(|a| (a.slot, a.size_bytes)).collect();
+    for m in &mut s.installed.library.mods {
+        if let Some(size) = sizes.get(&m.slot) {
+            m.size_bytes = *size;
+        }
+    }
+    for e in &mut s.installed.notes.extras.mods {
+        if let Some(size) = sizes.get(&e.slot) {
+            e.size_bytes = *size;
+        }
+    }
+    s.prefs.reduce_motion = false;
+    let mut rt = Runtime::new(s, app::view, (1280.0, 800.0), Env::new(true, 1.0));
+    rt.check_live_only(false);
+    settle(&mut rt);
+    (rt, root)
+}
+
+/// The first switch inside the window, its key and centre.
+fn visible_toggle(rt: &Runtime<State>) -> (String, f32, f32) {
+    rt.elements()
+        .into_iter()
+        .filter(|e| !e.exiting && e.key.as_deref().is_some_and(|k| k.starts_with("toggle-") && k[7..].chars().all(|c| c.is_ascii_digit())))
+        .map(|e| (e.key.unwrap_or_default(), e.rect[0] + e.rect[2] / 2.0, e.rect[1] + e.rect[3] / 2.0))
+        .find(|(_, x, y)| *x > 0.0 && *y > 120.0 && *x < 1280.0 && *y < 780.0)
+        .expect("a switch on screen")
+}
+
+/// What the app's poll does with the addon scan worker, for a runtime that runs only the view.
+fn take_addon_scan(rt: &mut Runtime<State>) -> bool {
+    rt.update_if(|s, _tx| crate::data::take_addon_scan(s))
+}
+
+/// One toggle over real files at 300 mods, timed from the press to the switch drawn flipped,
+/// then on until the background read has landed. A measurement: run it by name with
+/// `--ignored --nocapture`.
+#[test]
+#[ignore]
+fn measure_real_toggle_at_300_mods() {
+    let _globals = crate::ui::test_globals();
+    let (mut rt, root) = real_stress("measure", 300, 150);
+    let mut flips = Vec::new();
+    let mut presses = Vec::new();
+    let mut commits = Vec::new();
+    for _ in 0..20 {
+        let (key, x, y) = visible_toggle(&rt);
+        let slot: u16 = key.trim_start_matches("toggle-").parse().expect("slot");
+        rt.pointer_move(x, y);
+        settle(&mut rt);
+        let before = rt.state.addons.addons.iter().find(|a| a.slot == slot).map(|a| a.enabled);
+        let c0 = rt.stats.commits;
+        let start = std::time::Instant::now();
+        rt.pointer_down(x, y);
+        rt.frame(1.0 / 60.0);
+        let c_down = rt.stats.commits - c0;
+        rt.pointer_up(x, y);
+        rt.frame(1.0 / 60.0);
+        presses.push(start.elapsed().as_secs_f64() * 1000.0);
+        let c_up = rt.stats.commits - c0 - c_down;
+        let flipped = rt.state.addons.addons.iter().find(|a| a.slot == slot).map(|a| a.enabled) != before;
+        // The background read, as the app's poll takes it.
+        let wait = std::time::Instant::now();
+        while wait.elapsed() < std::time::Duration::from_secs(10) {
+            take_addon_scan(&mut rt);
+            rt.frame(1.0 / 60.0);
+            if !rt.state.addon_job.is_running() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        take_addon_scan(&mut rt);
+        rt.frame(1.0 / 60.0);
+        let c_land = rt.stats.commits - c0 - c_down - c_up;
+        settle(&mut rt);
+        flips.push(flipped);
+        commits.push((c_down, c_up, c_land, rt.stats.commits - c0 - c_down - c_up - c_land));
+    }
+    let _ = std::fs::remove_dir_all(&root);
+    presses.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    eprintln!(
+        "jank: real toggle at 300 mods: press to drawn median {:.2} ms, p90 {:.2} ms; flipped at the press {:?}; commits per toggle (down, up, worker landed, after) {:?}",
+        presses[presses.len() / 2],
+        presses[presses.len() * 9 / 10],
+        &flips[..3],
+        &commits[..6]
+    );
+}
+
+/// One toggle at 300 mods is one commit: the switch flips in the press's own commit (the row is
+/// set from the rename), the press takes no focus commit of its own, and the read of every
+/// enabled mod's directory runs on the scan worker and commits nothing when it comes back the
+/// same. Before: a focus commit on the press, the folder read on the UI thread inside the
+/// press, then the worker's second read committing again.
+#[test]
+fn one_toggle_at_300_mods_is_one_commit() {
+    let _globals = crate::ui::test_globals();
+    let (mut rt, root) = real_stress("guard", 300, 8);
+    // A mod with no overlap, so the read that lands has nothing new to show.
+    let (key, x, y) = rt
+        .elements()
+        .into_iter()
+        .filter(|e| !e.exiting && e.key.as_deref().is_some_and(|k| k.starts_with("toggle-") && k[7..].parse::<u16>().is_ok_and(|n| n % 10 != 0)))
+        .map(|e| (e.key.unwrap_or_default(), e.rect[0] + e.rect[2] / 2.0, e.rect[1] + e.rect[3] / 2.0))
+        .find(|(_, x, y)| *x > 0.0 && *y > 120.0 && *x < 1280.0 && *y < 780.0)
+        .expect("a switch on screen");
+    let slot: u16 = key[7..].parse().expect("slot");
+    let on = |rt: &Runtime<State>| rt.state.addons.addons.iter().find(|a| a.slot == slot).map(|a| a.enabled);
+    assert_eq!(on(&rt), Some(true));
+    rt.pointer_move(x, y);
+    settle(&mut rt);
+    let before = rt.stats.commits;
+    rt.pointer_down(x, y);
+    rt.frame(1.0 / 60.0);
+    assert_eq!(rt.stats.commits, before, "pressing the switch committed before it was released");
+    rt.pointer_up(x, y);
+    rt.frame(1.0 / 60.0);
+    assert_eq!(rt.stats.commits - before, 1, "the toggle's press");
+    assert_eq!(on(&rt), Some(false), "the switch flips in the press's own commit");
+    let off = deadlock_core::addons::slot_path(&deadlock_core::deploy::addons_dir(&root), slot, "_dir.vpk.disabled");
+    assert!(off.is_file(), "the rename happened");
+    // The worker's read of the folder lands and shows nothing new.
+    assert!(rt.state.addon_job.is_running(), "the folder is read again on the worker");
+    let wait = std::time::Instant::now();
+    let mut changed = false;
+    while rt.state.addon_job.is_running() && wait.elapsed() < std::time::Duration::from_secs(30) {
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        changed |= take_addon_scan(&mut rt);
+    }
+    assert!(!rt.state.addon_job.is_running(), "the folder read never finished");
+    assert!(!changed, "the folder read came back different from the flipped row");
+    settle(&mut rt);
+    let _ = std::fs::remove_dir_all(&root);
+    assert_eq!(rt.stats.commits - before, 1, "one toggle, one commit");
+}

@@ -76,6 +76,9 @@ pub struct State {
     pub tool_started: HashMap<String, Instant>,
     pub addons: AddonLibrary,
     pub addon_job: Job<AddonLibrary>,
+    /// The addon folder changed while `addon_job` was reading it: its result is out of date, so
+    /// it is dropped and the folder read again (`data::take_addon_scan`).
+    pub addon_rescan: bool,
     pub installed_query: TextEdit,
     pub installed: screens::installed::View,
     pub browse: BrowseState,
@@ -188,6 +191,7 @@ impl Default for State {
             tool_started: HashMap::new(),
             addons: AddonLibrary::default(),
             addon_job: Job::default(),
+            addon_rescan: false,
             installed_query: TextEdit::new(""),
             installed: screens::installed::View::default(),
             browse: BrowseState::default(),
@@ -2199,17 +2203,7 @@ pub fn poll(s: &mut State, t: f64, _tx: &mut Tx) -> bool {
         s.apply_agent_event(event);
         changed = true;
     }
-    if let Some(result) = s.addon_job.try_take() {
-        match result {
-            Ok(library) => crate::data::apply_addon_library(s, library),
-            Err(error) => {
-                s.addons.scanned = true;
-                s.addons.error = Some(error.clone());
-                s.status = error;
-            }
-        }
-        changed = true;
-    }
+    changed |= crate::data::take_addon_scan(s);
     if let Some(result) = s.browse_job.try_take() {
         crate::data::apply_browse_page(s, result);
         changed = true;

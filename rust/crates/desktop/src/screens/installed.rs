@@ -547,7 +547,8 @@ pub fn view(s: &State, u: &Ui) -> El {
         list_sections::body(s, u, &shown, |members| {
             let groups = layout::groups_in(s, &idx, members);
             let refs: Vec<&layout::Group> = groups.iter().collect();
-            cards_block(s, u, &idx, &refs)
+            let first = refs.first().and_then(|g| g.addons.first()).map(|a| a.slot).unwrap_or(0);
+            cards_block(s, u, &idx, &refs, format!("installed-rows-{first:02}"))
         })
     } else {
         let mut list = col().w_full().gap(24.0);
@@ -1278,13 +1279,20 @@ fn section(s: &State, u: &Ui, idx: &std::rc::Rc<index::Index>, which: Section, c
     if collapsed {
         return c;
     }
-    c.child(cards_block(s, u, idx, cards))
+    // One key per section, whatever it holds: keyed by its first mod, a switch that moved the
+    // first mod across made the whole list new (laid out again from scratch over several
+    // commits).
+    let block = match which {
+        Section::Enabled => "installed-rows-on",
+        Section::Disabled => "installed-rows-off",
+    };
+    c.child(cards_block(s, u, idx, cards, block.to_string()))
 }
 
 /// A set of cards drawn the page's way: the grid, or the list rows. Only the rows near the
 /// viewport are built (`virtual_rows`): a library of hundreds of mods built every card on
 /// every commit, 17 to 19 ms of view at 300 mods on an M-series Mac.
-fn cards_block(s: &State, u: &Ui, idx: &std::rc::Rc<index::Index>, cards: &[&layout::Group]) -> El {
+fn cards_block(s: &State, u: &Ui, idx: &std::rc::Rc<index::Index>, cards: &[&layout::Group], block: String) -> El {
     let _ = u;
     // What the row builders keep: each card's group key and slots, in order. Rows look their
     // mods up by slot when they build, so they never hold on to the state they were made from.
@@ -1295,7 +1303,6 @@ fn cards_block(s: &State, u: &Ui, idx: &std::rc::Rc<index::Index>, cards: &[&lay
             .collect(),
     );
     let first = entries.first().and_then(|e| e.slots.first()).copied().unwrap_or(0);
-    let block = format!("installed-rows-{first:02}");
     let growth = rune::GrowthSpec { spring: rune::GROWTH, edge: rune::edge::NO_MASK };
     let (keys, build, idx) = (entries.clone(), entries.clone(), idx.clone());
     if s.installed.layout.is_cards() {
@@ -1316,10 +1323,10 @@ fn cards_block(s: &State, u: &Ui, idx: &std::rc::Rc<index::Index>, cards: &[&lay
         col().key(block).w_full().growth(growth).virtual_rows(
             rows,
             card_h + GRID_GAP,
-            move |_s: &State, i| -> std::borrow::Cow<'_, str> {
-                let slot = keys.get(i * cols).and_then(|e| e.slots.first()).copied().unwrap_or(0);
-                std::borrow::Cow::Owned(format!("installed-row-{slot:02}"))
-            },
+            // Rows keep their place, not their first mod: keyed by the first mod, a switch that
+            // moved one card to the other section gave every row below it a new key, and the
+            // list mounted them again over several commits.
+            move |_s: &State, i| -> std::borrow::Cow<'_, str> { std::borrow::Cow::Owned(format!("installed-row-{i}")) },
             move |s: &State, i| {
                 let u = Ui::new();
                 let mut grid = el().w_full().equal_columns(cols).gap(GRID_GAP);
@@ -1585,6 +1592,10 @@ fn card_view(s: &State, u: &Ui, idx: &index::Index, card: &layout::Group, pitch:
     let switch = u
         .toggle(addon.enabled)
         .key(format!("toggle-{slot:02}"))
+        // A press flips it and leaves focus where it was (as a web switch that prevents the
+        // default on mousedown). Taking focus was a commit of its own: a second full rebuild of
+        // the library per toggle. Tab still reaches it.
+        .keeps_text_selection()
         .label(format!(
             "{} {name}",
             if addon.enabled { "Turn off" } else { "Turn on" }
@@ -3963,6 +3974,8 @@ pub(super) fn apply_switch(
     match deadlock_core::addons::set_many(game_root, wanted, true) {
         Ok(report) => {
             crate::screens::settings::product::switched(st, report.done.iter().map(|done| done.slot), &wanted);
+            // The rows follow the renames now; the overlaps are read again on the worker.
+            crate::data::addons_switched(st, &report.done);
             if !report.done.is_empty() {
                 st.installed.last_undo = Some(Undo::Toggle(report.done));
                 st.installed.undo_fresh = true;
@@ -3973,9 +3986,11 @@ pub(super) fn apply_switch(
                 format!("{line} {} could not be switched.", report.failed.len())
             };
         }
-        Err(error) => st.status = error.to_string(),
+        Err(error) => {
+            st.status = error.to_string();
+            rescan(st);
+        }
     }
-    rescan(st);
     warn_at_cap(st);
 }
 
@@ -4023,9 +4038,11 @@ pub(super) fn toggle_one(st: &mut State, slot: u16, enable: bool) {
         Ok(result) => {
             crate::screens::settings::product::toggled(st, result.slot, enable);
             st.status = format!("Slot {:02} turned {}.", result.slot, if enable { "on" } else { "off" });
+            // One rename: the row follows it now, and the overlap read of every enabled mod
+            // runs on the scan worker, so the switch flips in the press's own commit.
+            crate::data::addons_switched(st, std::slice::from_ref(&result));
             st.installed.last_undo = Some(Undo::Toggle(vec![result]));
             st.installed.undo_fresh = true;
-            rescan(st);
             warn_at_cap(st);
         }
         Err(error) if !enable && deadlock_core::error::mentions_in_use(&error.to_string()) => {

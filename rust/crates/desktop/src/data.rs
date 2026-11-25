@@ -1189,9 +1189,11 @@ fn scan_addons(game_root: &Path) -> Result<AddonLibrary, String> {
     Ok(map_addon_library(report))
 }
 
-/// Kick one read-only addon and conflict scan on a worker.
+/// Kick one read-only addon and conflict scan on a worker. While one runs, the folder may have
+/// changed since it began: that read is dropped when it lands and a fresh one starts.
 pub fn start_addon_scan(state: &mut State) {
     if state.addon_job.is_running() {
+        state.addon_rescan = true;
         return;
     }
     let Some(game_root) = state.game_root.clone() else {
@@ -1203,15 +1205,73 @@ pub fn start_addon_scan(state: &mut State) {
     state.addon_job.start(wake, move || scan_addons(&game_root));
 }
 
+/// Take a finished addon scan. True when what the view shows changed: a read that comes back
+/// the same as the rows already shown (a switch sets its row from the rename at once) commits
+/// nothing, so a toggle is one commit.
+pub fn take_addon_scan(state: &mut State) -> bool {
+    let Some(result) = state.addon_job.try_take() else {
+        return false;
+    };
+    if std::mem::take(&mut state.addon_rescan) {
+        // Started before the last change to the folder: read it again.
+        start_addon_scan(state);
+        return !state.addon_job.is_running();
+    }
+    match result {
+        Ok(library) if library == state.addons => false,
+        Ok(library) => {
+            apply_addon_library(state, library);
+            true
+        }
+        Err(error) => {
+            state.addons.scanned = true;
+            state.addons.error = Some(error.clone());
+            state.status = error;
+            true
+        }
+    }
+}
+
+/// After switches renamed slot files: set each row from its rename at once, then read the
+/// folder again on the worker for the overlaps (which reads every enabled mod's directory).
+pub fn addons_switched(state: &mut State, results: &[addons::AddonToggleResult]) {
+    for result in results {
+        if let Some(row) = state.addons.addons.iter_mut().find(|row| row.slot == result.slot) {
+            row.enabled = !result.to.ends_with(addons::DISABLED_SUFFIX);
+            row.file = result.to.clone();
+        }
+    }
+    crate::screens::locker::sync::addons_changed(state);
+    start_addon_scan(state);
+}
+
 /// The synchronous form for a headless scene, before `setup` has a waker.
 pub fn scan_addons_now(state: &mut State) {
-    let Some(game_root) = state.game_root.clone() else {
-        state.addons = missing_install_library();
-        return;
-    };
-    match scan_addons(&game_root) {
-        Ok(library) => apply_addon_library(state, library),
-        Err(error) => {
+    let read = read_addons(state.game_root.as_deref());
+    apply_addon_read(state, read);
+}
+
+/// The addon folder read off the UI thread, for [`apply_addon_read`].
+pub enum AddonRead {
+    NoInstall,
+    Read(Result<AddonLibrary, String>),
+}
+
+/// Read the addon folder and its overlaps: every mod's directory, so never on the UI thread
+/// outside a headless scene.
+pub fn read_addons(game_root: Option<&Path>) -> AddonRead {
+    match game_root {
+        Some(root) => AddonRead::Read(scan_addons(root)),
+        None => AddonRead::NoInstall,
+    }
+}
+
+/// What [`scan_addons_now`] does with its read.
+pub fn apply_addon_read(state: &mut State, read: AddonRead) {
+    match read {
+        AddonRead::NoInstall => state.addons = missing_install_library(),
+        AddonRead::Read(Ok(library)) => apply_addon_library(state, library),
+        AddonRead::Read(Err(error)) => {
             state.addons = AddonLibrary {
                 scanned: true,
                 error: Some(error.clone()),
@@ -4191,8 +4251,7 @@ fn toggle_addon(state: &mut State, slot: u16, enable: bool, offer_undo: bool) {
                 notice
             };
             notify::push(state, notice);
-            scan_addons_now(state);
-            start_addon_scan(state);
+            addons_switched(state, std::slice::from_ref(&result));
         }
         Err(error) => {
             state.status = error.to_string();

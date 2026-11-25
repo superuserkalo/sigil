@@ -553,6 +553,8 @@ pub fn list_row(s: &State, u: &Ui, idx: &super::index::Index, card: &Group) -> E
             let is_variants = card.is_variants();
             u.toggle(addon.enabled)
                 .key(format!("toggle-{slot:02}"))
+                // No focus on press: that was a second commit per toggle (`installed::card_view`).
+                .keeps_text_selection()
                 .label(format!(
                     "{} {name}",
                     if addon.enabled { "Turn off" } else { "Turn on" }
