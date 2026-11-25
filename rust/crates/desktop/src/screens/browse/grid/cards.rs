@@ -142,10 +142,6 @@ pub(crate) fn card_el(s: &State, u: &Ui, card: &BrowseCard) -> El {
         // Settings > Mods > Always show the NSFW tag.
         tags = tags.child(nsfw_tag(u));
     }
-    // Help build Sigil: a health chip only when strong reports came back.
-    if !veil && let Some(chip) = crate::insights::chip(s, id, card.updated_ts) {
-        tags = tags.child(crate::insights::chip_el(s, u, format!("card-health-{id}"), &chip, true, Some(150.0)));
-    }
 
     let byline = row()
         .w_full()

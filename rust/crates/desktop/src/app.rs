@@ -123,8 +123,6 @@ pub struct State {
     pub signin: crate::signin::Flow,
     pub settings: screens::settings::View,
     pub performance: screens::performance::View,
-    /// What Help build Sigil gives back: related mods, health chips, frame rates (`insights`).
-    pub insights: crate::insights::Insights,
     pub servers: screens::servers::View,
     /// Toasts (`crate::notify`). `status` above feeds it: a line written there becomes a toast.
     pub notices: crate::notify::Notices<State>,
@@ -234,7 +232,6 @@ impl Default for State {
             signin: crate::signin::Flow::default(),
             settings: screens::settings::View::default(),
             performance: screens::performance::View::default(),
-            insights: crate::insights::Insights::default(),
             servers: screens::servers::View::default(),
             notices: crate::notify::Notices::default(),
             gameinfo: crate::banner::Banner::default(),
@@ -3070,9 +3067,6 @@ pub fn scenes() -> &'static [(&'static str, fn(&mut State))] {
         ("product-onboarding", screens::settings::product::scene_onboarding),
         ("product-question", screens::settings::product::scene_question),
         ("product-privacy", screens::settings::product::scene_privacy),
-        ("details-related", crate::insights::scene_details_related),
-        ("health-chips", crate::insights::scene_health_chips),
-        ("performance-expected", crate::insights::scene_performance_expected),
         ("w4b-onboarding-mods", screens::w4b_scenes::onboarding_mods),
         ("w4b-feature-tip", screens::w4b_scenes::feature_tip),
         ("w4b-tour", screens::w4b_scenes::tour),

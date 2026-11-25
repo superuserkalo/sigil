@@ -1720,17 +1720,6 @@ pub(super) fn warning_buttons(s: &State, u: &Ui, addon: &AddonRow, on_image: boo
     if let Some(badge) = overlap::badge(s, u, addon.slot, on_image) {
         buttons.push(badge);
     }
-    // Help build Sigil: what players who share reported about this mod, when it is strong.
-    if let Some(chip) = meta_for(s, addon).and_then(|meta| meta.gamebanana_id).and_then(|id| crate::insights::chip(s, id, 0)) {
-        let (label, tip) = crate::insights::chip_words(s, &chip);
-        let warns = crate::insights::chip_warns(&chip);
-        buttons.push(
-            mark_box(u, el().key(format!("installed-health-{:02}", addon.slot)), on_image)
-                .help(format!("{label}. {tip}"))
-                .label(format!("{label}. {tip}"))
-                .child(icon(&icons::TRIANGLE_ALERT, 14.0).color(if warns { u.amber } else { mark_ink(u, on_image) }).a11y_hidden()),
-        );
-    }
     let scan = s
         .installed
         .tools

@@ -580,8 +580,6 @@ const SENT: [&str; 6] = [
     "Performance: configs you apply, benchmark frame rates, your GPU and CPU model, RAM rounded and screen size.",
     "App use: pages you open, theme, language, launches, how long Sigil stays open, and the Sigil, system and game version.",
 ];
-/// One line on the setup step and on the Privacy page: sharing is what turns the benefits on.
-pub const GIVES: &str = "Sharing is what turns on mods other players use with yours, mod health warnings and frame rates on PCs like yours. Without it, Sigil asks its server nothing.";
 const NEVER: &str = "Never sent: your Steam id or name, friends, matches, chat, file names or paths, local mods, mod files, keys, your IP address, or anything from the AI agent. Sent with a random id the server keeps only as a hash, and kept until you delete it with Delete my data in Settings. After two years with nothing new it is cut loose from your id.";
 
 /// The window height, noted by the view each frame (a store, no work), so the list in
@@ -617,7 +615,6 @@ pub fn consent_body(u: &Ui) -> El {
         .w_full()
         .gap(12.0)
         .child(text(tr(INTRO).to_string()).font(BODY).color(u.muted).wrap().w_full())
-        .child(text(tr(GIVES).to_string()).font(BODY).color(u.prose).wrap().w_full())
         .child(u.scroll_area(
             col()
                 .key("product-sent-list")
@@ -691,7 +688,7 @@ pub fn privacy_section(s: &State, u: &Ui) -> El {
                 u,
                 "settings-product",
                 "Share product data",
-                "Mods, Browse, play, performance and app use, to Sigil's own server, kept until you delete it. Sharing also turns on related mods, mod health warnings and frame rates on PCs like yours.",
+                "Mods, Browse, play, performance and app use, to Sigil's own server, kept until you delete it. Off unless you turn it on.",
                 on,
                 |st| {
                     let share = !pd::allowed(&st.settings.telemetry.consent);

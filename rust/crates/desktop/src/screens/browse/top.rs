@@ -995,8 +995,6 @@ fn reason_text(reason: &super::foryou::Reason) -> String {
         Reason::Author(author) => fill(super::tree::tr("More from {}"), &[author]),
         Reason::Category(category) => fill(super::tree::tr("More {}"), &[category]),
         Reason::Rising => super::tree::tr("Rising fast").to_string(),
-        Reason::Explore => super::tree::tr("Something different").to_string(),
-        Reason::AlsoUsed => super::tree::tr("Players with your mods also use").to_string(),
     }
 }
 
@@ -1121,17 +1119,6 @@ pub(crate) fn tile(s: &State, u: &Ui, slot: usize, card: &BrowseCard, tw: f32, t
             small(format!("top-star-{slot}-{id}"), if saved { "Remove from favorites" } else { "Save to favorites" })
                 .on_press(move |st: &mut State| toggle_favorite(st, favorite.clone()))
                 .child(icon(if saved { &STAR_FILLED } else { &STAR }, 14.0).color(Color::WHITE).a11y_hidden()),
-        );
-    }
-    // Help build Sigil: a health chip on the picture, top right (the rank numeral holds the lower
-    // left), under the NSFW tag when that shows. At rest only: the hover layer has the actions.
-    if !veil && let Some(chip) = crate::insights::chip(s, id, card.updated_ts) {
-        let top = if card.nsfw && crate::screens::settings::nsfw::always_tag() { 36.0 } else { 8.0 };
-        art = art.child(
-            row()
-                .pin(None, Some(top), Some(8.0), None)
-                .group_opacity(1.0, 0.0)
-                .child(crate::insights::chip_el(s, u, format!("top-health-{slot}-{id}"), &chip, true, Some((tw - 56.0).max(40.0)))),
         );
     }
     art = art.child(hover);

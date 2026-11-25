@@ -356,7 +356,6 @@ pub fn poll(st: &mut State, tx: &mut Tx) -> bool {
     changed |= extra::poll(st, tx);
     changed |= personalize::poll(st);
     changed |= telemetry::poll(st);
-    changed |= crate::insights::poll(st);
     changed |= diag_w4::poll(st);
     changed |= crate::shell_tips::poll(st, tx);
     changed

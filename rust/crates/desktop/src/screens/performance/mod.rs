@@ -693,12 +693,8 @@ fn list_page(s: &State, u: &Ui) -> El {
     if let Some(hide) = custom::hide_choice(s, u) {
         page = page.child(hide);
     }
-    page = page.child(toolbar(s, u, catalog));
-    if let Some(sort) = sort_switch(s, u) {
-        page = page.child(sort);
-    }
-    let list = if s.insights.sort_fps && crate::insights::has_fps(s) { by_fps(s, u, catalog) } else { groups(s, u, catalog) };
-    page.child(list)
+    page.child(toolbar(s, u, catalog))
+        .child(groups(s, u, catalog))
         .child(hosted_section(s, u))
         .child(
             text(tr("GitHub configs come from OptimizationLock and OptiLock, shared by their authors under GPL-3.0. GameBanana configs stay on their pages."))
@@ -1090,8 +1086,8 @@ fn config_row(s: &State, u: &Ui, config: &Config, is_on: bool) -> El {
                 .child(name.h(20.0))
                 .child(text(meta).font(SMALL).color(u.muted).truncate()),
         )
-        .child({
-            let note = text(if error {
+        .child(
+            text(if error {
                 tr("Could not update from GitHub. Showing the last saved version.")
             } else {
                 config.def.note
@@ -1099,18 +1095,10 @@ fn config_row(s: &State, u: &Ui, config: &Config, is_on: bool) -> El {
             .font(BODY)
             // Quieter than the name, so the name leads the row.
             .color(if error { u.amber } else { u.muted })
+            .grow(1.0)
             .min_w(0.0)
-            .truncate();
-            // Help build Sigil: what other players measured on PCs like this one, only with data.
-            match expected_line(s, config) {
-                Some(line) => col()
-                    .grow(1.0)
-                    .min_w(0.0)
-                    .child(note.h(20.0))
-                    .child(text(line).font(SMALL_NUM).color(u.prose).truncate().min_w(0.0)),
-                None => col().grow(1.0).min_w(0.0).child(note),
-            }
-        })
+            .truncate(),
+        )
         .child(
             text(fill(tr("{} settings"), &[&config.setting_count(&options).to_string()]))
                 .font(SMALL_NUM)
@@ -1120,64 +1108,6 @@ fn config_row(s: &State, u: &Ui, config: &Config, is_on: bool) -> El {
         )
         .child(state)
         .child(chevron)
-}
-
-/// "On PCs like yours: about 140 fps (from 23 players)", when players who share measured it.
-pub(super) fn expected_line(s: &State, config: &Config) -> Option<String> {
-    let e = crate::insights::fps_for(s, config.id(), &config.version)?;
-    Some(fill(tr("On PCs like yours: about {} fps (from {} players)"), &[&e.fps.to_string(), &e.installs.to_string()]))
-}
-
-/// The sort switch over the list, only when there are expected frame rates to sort by.
-fn sort_switch(s: &State, u: &Ui) -> Option<El> {
-    if !crate::insights::has_fps(s) {
-        return None;
-    }
-    let by_fps = s.insights.sort_fps;
-    let option = |key: &'static str, label: &str, on: bool, fps: bool| {
-        row()
-            .key(key)
-            .h(28.0)
-            .px(10.0)
-            .center()
-            .radius(crate::ui::r(4.0))
-            .fill(if on { u.hover } else { Color::TRANSPARENT })
-            .border(1.0, if on { u.hair_strong } else { u.hair })
-            .focusable(true)
-            .role("radio")
-            .checked(on)
-            .label(tr(label).to_string())
-            .cursor(rune::Cursor::Pointer)
-            .on_press(move |st: &mut State| st.insights.sort_fps = fps)
-            .child(text(tr(label).to_string()).font(LABEL).color(if on { u.ink } else { u.muted }).a11y_hidden())
-    };
-    Some(
-        row()
-            .key("perf-sort")
-            .gap(6.0)
-            .center_y()
-            .child(text(tr("Sort")).font(SMALL).color(u.muted))
-            .child(option("perf-sort-tier", "By tier", !by_fps, false))
-            .child(option("perf-sort-fps", "By frame rate on PCs like yours", by_fps, true)),
-    )
-}
-
-/// The list as one block sorted by expected frame rate, best first; configs nobody measured on
-/// PCs like this one follow in their usual order.
-fn by_fps(s: &State, u: &Ui, catalog: &Catalog) -> El {
-    let on = applied_id(s);
-    let mut configs: Vec<&Config> = catalog
-        .configs
-        .iter()
-        .filter(|c| s.performance.tier.is_none_or(|wanted| wanted == c.def.tier))
-        .filter(|c| !custom::hides_builtins(s) || custom::is_custom(c.id()))
-        .collect();
-    configs.sort_by_key(|c| (std::cmp::Reverse(crate::insights::fps_for(s, c.id(), &c.version).map(|e| e.fps).unwrap_or(0)), c.def.tier));
-    let mut rows = col().key("perf-by-fps").w_full();
-    for config in configs {
-        rows = rows.child(config_row(s, u, config, on.as_deref() == Some(config.id())));
-    }
-    rows
 }
 
 /// A small squared tag beside a name: "Recommended", "Testing".

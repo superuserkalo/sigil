@@ -26,7 +26,6 @@ const DE: &[(&str, &str)] = &[
     ("Featured", "Empfohlen"),
     ("Featured in {}", "Empfohlen in {}"),
     ("Rising fast", "Steigt schnell"),
-    ("Something different", "Mal etwas anderes"),
     ("Not interested: show fewer like this", "Kein Interesse: weniger davon zeigen"),
     ("Not interested", "Kein Interesse"),
     ("Because you play {}", "Weil du {} spielst"),
