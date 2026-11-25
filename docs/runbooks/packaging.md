@@ -41,8 +41,8 @@ the target, the host, the timestamp and the itemised exclusions. On macOS it als
 `Sigil.app` with an `Info.plist`, the notices and the Locker art under `Resources`.
 
 Output: `.scratch/package/<target>-<version>/` plus a zip beside it. The Windows
-script packs the Locker art into `.scratch/locker-art`, builds it into the executable
-(`SIGIL_ART_DIR`, read by `rust/crates/desktop/build.rs`) and zips `Sigil.exe` alone into
+script builds the Locker art in `rust/crates/desktop/assets/locker` into the executable
+(`rust/crates/desktop/build.rs`) and zips `Sigil.exe` alone into
 `.scratch/package/Sigil-<version>-windows-x64.zip`. The first launch of a build unpacks its art
 once to `<app data>/art/<build id>` (`rust/crates/desktop/src/art.rs`); the notices are in
 Settings. See
@@ -66,7 +66,7 @@ name the download links rely on (`docs/runbooks/releasing.md`).
 
 ### Linux
 
-`scripts/package-linux.sh` runs on Linux x86_64. It packs the same Locker art, builds one
+`scripts/package-linux.sh` runs on Linux x86_64. It builds one
 `dah-desktop` binary, then wraps it with linuxdeploy (pinned tag and SHA-256) into
 `.scratch/package/Sigil-<version>-x86_64.AppImage` and builds
 `.scratch/package/sigil_<version>_amd64.deb`. It also writes the unsigned
@@ -78,8 +78,7 @@ macOS cannot link this build: Wayland, ALSA, OpenSSL and UnRAR's C++ need Linux 
 libraries. Use the `linux-build` workflow (`.github/workflows/linux-build.yml`) on a manual
 dispatch or a push to `main`, which builds on `ubuntu-22.04` and uploads the AppImage, the `.deb`
 and the manifest entry as the `Sigil-linux-x86_64` artifact. Nothing is published and no release
-is created. The workflow needs `cwebp` (installed by `--deps`), Rune and TinyAgent vendored, and
-the Grimoire art checkout for `pack-locker-art.sh`; it does all three itself.
+is created. The workflow needs Rune and TinyAgent vendored and does both itself.
 
 Build on the oldest glibc you want to support: the AppImage runs on that glibc or newer. The
 workflow pins Ubuntu 22.04 (glibc 2.35) on purpose; a newer runner raises the floor for every

@@ -28,23 +28,18 @@ jobs:
         with:
           node-version: 24
 
-      - name: Vendor Rune, TinyAgent and the Grimoire art
+      - name: Vendor Rune and TinyAgent
         shell: bash
         run: |
           ./scripts/vendor-rune.sh
           ./scripts/vendor-tinyagent.sh
-          ./scripts/vendor-grimoire.sh
 
-      - name: Install cwebp
-        shell: bash
-        run: choco install webp --no-progress -y
 
       - name: Build
         shell: bash
         run: |
-          # The Locker art is built into Sigil.exe (rust/crates/desktop/build.rs).
-          ./scripts/pack-locker-art.sh .scratch/locker-art
-          SIGIL_ART_DIR="$PWD/.scratch/locker-art" cargo build --manifest-path rust/Cargo.toml --release \
+          # The Locker art in rust/crates/desktop/assets/locker is built into Sigil.exe (build.rs).
+          cargo build --manifest-path rust/Cargo.toml --release \
             -p dah-desktop
 
       - name: Stage bundle and manifest

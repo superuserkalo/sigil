@@ -44,12 +44,11 @@ jobs:
         with:
           workspaces: rust
 
-      - name: Vendor Rune, TinyAgent and the Grimoire art
+      - name: Vendor Rune and TinyAgent
         run: |
           set -euo pipefail
           ./scripts/vendor-rune.sh
           ./scripts/vendor-tinyagent.sh
-          ./scripts/vendor-grimoire.sh
 
       - name: Build the AppImage and the .deb
         run: ./scripts/package-linux.sh --deps

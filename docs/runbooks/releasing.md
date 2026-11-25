@@ -96,9 +96,8 @@ edit after signing (even whitespace) needs a new signature.
 ## Steps
 
 The release is made on the maintainer's machine (macOS) with `cargo-xwin`, `makensis`
-(`brew install makensis`), `cwebp`, Node 24 and an authenticated `gh`. `vendor/rune` and
-`vendor/grimoire` must be present (`scripts/vendor-rune.sh`, `scripts/vendor-grimoire.sh`): the
-packaging script packs the Locker art from Grimoire into `Sigil.exe`.
+(`brew install makensis`), Node 24 and an authenticated `gh`. `vendor/rune` must be present
+(`scripts/vendor-rune.sh`). The Locker art in the repository is built into `Sigil.exe`.
 
 1. Write the player-facing notes in `.scratch/package/release-<version>/notes.md`. The release body
    is what Settings > About and updates shows as "What's new": short lines, plain Markdown.

@@ -50,7 +50,7 @@ fi
 if LC_ALL=C grep -aq "heroes/Abrams_Render.webp" "$dir/Sigil.exe"; then
   echo "art: built in"
 else
-  echo "art: MISSING from Sigil.exe (set SIGIL_ART_DIR or run scripts/pack-locker-art.sh)" >&2
+  echo "art: MISSING from Sigil.exe (rust/crates/desktop/assets/locker is empty or SIGIL_ART_DIR points nowhere)" >&2
   exit 1
 fi
 if LC_ALL=C grep -aqF "# Third party notices" "$dir/Sigil.exe"; then

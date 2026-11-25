@@ -1,9 +1,8 @@
 //! Embeds the packed Locker art so Sigil ships as one executable.
 //!
-//! `SIGIL_ART_DIR` names a folder written by `scripts/pack-locker-art.sh` (heroes/, names/,
-//! hero_portraits/, global-bg.webp, the launch art). Without it the build looks at
-//! `.scratch/locker-art` in the repository. When neither exists the table is empty and the app
-//! falls back to the art it finds on disk (the Grimoire checkout during development).
+//! The art lives in `assets/locker` in this crate (heroes/, names/, hero_portraits/,
+//! global-bg.webp, the launch art). `SIGIL_ART_DIR` names another folder with the same layout.
+//! When the folder is missing the table is empty and the app shows its placeholders.
 
 use std::env;
 use std::fmt::Write as _;
@@ -14,7 +13,7 @@ use std::path::{Path, PathBuf};
 fn main() {
     println!("cargo:rerun-if-env-changed=SIGIL_ART_DIR");
     let manifest = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").expect("manifest dir"));
-    let default = manifest.join("../../../.scratch/locker-art");
+    let default = manifest.join("assets/locker");
     let root = env::var_os("SIGIL_ART_DIR").map(PathBuf::from).unwrap_or(default);
     println!("cargo:rerun-if-changed={}", root.display());
 

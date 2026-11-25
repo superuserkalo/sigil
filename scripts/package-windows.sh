@@ -20,12 +20,9 @@ if ! command -v cargo-xwin >/dev/null 2>&1; then
   exit 1
 fi
 
-echo "== art =="
-# Packed once, then built into the executable by rust/crates/desktop/build.rs.
-art="$root/.scratch/locker-art"
-rm -rf "$art"
-"$root/scripts/pack-locker-art.sh" "$art"
-export SIGIL_ART_DIR="$art"
+# The Locker art in rust/crates/desktop/assets/locker is built into the executable by
+# rust/crates/desktop/build.rs.
+unset SIGIL_ART_DIR
 
 echo "== build windows =="
 export RUSTFLAGS="${RUSTFLAGS:-} -C target-feature=+crt-static"

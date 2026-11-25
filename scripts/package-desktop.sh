@@ -86,7 +86,7 @@ if [[ "$host" == *darwin* && -z "$target" ]]; then
 PLIST
   cp THIRD_PARTY_NOTICES.md "$app/Contents/Resources/" 2>/dev/null || true
   cp rust/crates/desktop/assets/brand/Sigil.icns "$app/Contents/Resources/Sigil.icns"
-  "$root/scripts/pack-locker-art.sh" "$app/Contents/Resources/locker"
+  cp -R rust/crates/desktop/assets/locker "$app/Contents/Resources/locker"
 
   # The update zip: Sigil.app at the top, for the in-app updater. Its entry goes into the
   # unsigned release manifest; sign it with scripts/sign-release.sh (docs/runbooks/releasing.md).

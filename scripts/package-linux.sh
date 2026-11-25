@@ -30,7 +30,7 @@ fi
 
 if [ "${1:-}" = "--deps" ]; then
   # Headers for the -sys crates (Wayland, xkbcommon, ALSA, fontconfig, OpenSSL), the C++ compiler
-  # for UnRAR, cwebp for the Locker art, and what linuxdeploy needs to inspect the binary.
+  # for UnRAR, and what linuxdeploy needs to inspect the binary.
   sudo apt-get update
   sudo apt-get install -y --no-install-recommends \
     build-essential pkg-config libwayland-dev libxkbcommon-dev libasound2-dev \
@@ -56,11 +56,8 @@ linuxdeploy_sha="c20cd71e3a4e3b80c3483cef793cda3f4e990aca14014d23c544ca3ce1270b4
 
 sha256() { sha256sum "$1" | cut -d' ' -f1; }
 
-echo "== art =="
-art="$root/.scratch/locker-art"
-rm -rf "$art"
-"$root/scripts/pack-locker-art.sh" "$art"
-export SIGIL_ART_DIR="$art"
+# The Locker art in rust/crates/desktop/assets/locker is built into the executable.
+unset SIGIL_ART_DIR
 
 echo "== build linux =="
 cargo build --manifest-path rust/Cargo.toml --release --target "$target" -p dah-desktop

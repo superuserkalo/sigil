@@ -83,9 +83,8 @@ cd sigil
 cargo run --manifest-path rust/Cargo.toml -p dah-desktop    # or: pnpm rust:app
 ```
 
-The Locker's hero art comes from the Grimoire project and is optional for a development build:
-`./scripts/vendor-grimoire.sh` then `./scripts/pack-locker-art.sh .scratch/locker-art` (needs
-`cwebp`) builds it in.
+The Locker's hero art is in `rust/crates/desktop/assets/locker` and is built into the app, so a
+development build shows it with no extra step.
 
 Tests:
 

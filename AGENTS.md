@@ -39,8 +39,9 @@ vendor/                   local Rune, TinyAgent and Grimoire checkouts, gitignor
 ```
 
 `pnpm vendor` clones Grimoire and grimoire-social into `vendor/`; Grimoire is a domain reference
-and the source of the Locker art (`scripts/pack-locker-art.sh`). Do not edit those checkouts in
-place without recording the patch.
+only: nothing is built from that checkout. The Locker art is Sigil's own copy in
+`rust/crates/desktop/assets/locker`. Do not edit the vendored checkouts in place without recording
+the patch.
 
 ## Commands
 

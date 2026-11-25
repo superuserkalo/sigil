@@ -33,9 +33,9 @@ for redistribution.
   reuses its code or assets.
 - Companion: `grimoire-social` is also MIT by the same author. Its wire types are consumed only if a
   Grimoire component is reused.
-- Locker art: packaged builds ship the hero renders, name plates and portraits from
-  `vendor/grimoire/public`, recompressed to WebP by `scripts/pack-locker-art.sh`. This follows
-  Grimoire's own distribution of the same files. The characters and their art belong to Valve
+- Locker art: the hero renders, name plates and portraits in `rust/crates/desktop/assets/locker`
+  were taken from Grimoire's `public` folder and recompressed to WebP; Sigil keeps and ships its
+  own copy. This follows Grimoire's own distribution of the same files. The characters and their art belong to Valve
   Corporation; Sigil is not affiliated with or endorsed by Valve.
 - Locker: the hero roster, codenames and face positions in `rust/crates/deadlock-core/src/locker.rs`
   are ported from `electron/main/services/heroCodenames.ts` and `src/lib/lockerUtils.ts`; the
@@ -78,7 +78,7 @@ for redistribution.
   (`settings/editor.rs`, from `externalEditor.ts`); the welcome steps (`settings/onboarding.rs`,
   from `WelcomeModal.tsx`); the Preferences and Support behaviours.
 - Personalize: packaged builds ship `public/locker/launch-modded-bg.webp` and
-  `public/locker/launch-vanilla-bg.jpg` (copied by `scripts/pack-locker-art.sh`) as the default art
+  `public/locker/launch-vanilla-bg.jpg` (Sigil's copies are in `rust/crates/desktop/assets/locker`) as the default art
   behind the sidebar launch buttons, and `public/sidebar/preview-volume-bg.jpg` as the default art
   behind the status bar volume control. The two-corner ambient glow and its seven presets (`GLOWS` in
   `rust/crates/desktop/src/ui/personalize.rs`) follow `src/lib/backgroundGradient.ts`; the art

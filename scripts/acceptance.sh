@@ -29,7 +29,7 @@ project="$workspace/mods/acceptance"
 export DAH_GAME_DIR="$game"
 export DAH_DATA_DIR="$base/data"
 export DAH_WORKSPACE_DIR="$workspace"
-export DAH_LOCKER_ASSETS="$root/vendor/grimoire/public/locker"
+export DAH_LOCKER_ASSETS="$root/rust/crates/desktop/assets/locker"
 
 pass=0
 fail=0

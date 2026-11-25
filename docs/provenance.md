@@ -53,10 +53,11 @@ Those are data and protocol facts, not copied source files.
 
 ## Assets and data
 
-- Grimoire's `public/locker` hero renders, name art and portraits are not stored in
-  this repository. Packages ship them recompressed to WebP (`scripts/pack-locker-art.sh`),
-  as Grimoire distributes the same files. Decided by the owner on 2026-11-16 so the
-  Locker shows art on a fresh install.
+- The Locker's hero renders, name art and portraits are stored in
+  `rust/crates/desktop/assets/locker` (WebP) and built into the app. They were taken from
+  Grimoire's `public/locker`, as Grimoire distributes the same files; the characters and their art
+  belong to Valve. Stored in the repository since 2026-11-25 by the owner's decision, so the build
+  no longer needs a Grimoire checkout.
 - Game paths come from the user's own Deadlock install.
 - API data comes from `api.deadlock-api.com`, Steam news, and GameBanana under
   their terms.

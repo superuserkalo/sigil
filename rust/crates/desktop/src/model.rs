@@ -1070,13 +1070,13 @@ pub fn default_providers() -> Vec<Provider> {
             name: "Anthropic".to_string(),
             kind: "BYOK".to_string(),
             state: ProviderState::NotConfigured,
-            detail: "Set a key with `pnpm dah auth set anthropic`.".to_string(),
+            detail: "Add an Anthropic key in Settings.".to_string(),
         },
         Provider {
             name: "OpenAI".to_string(),
             kind: "BYOK".to_string(),
             state: ProviderState::NotConfigured,
-            detail: "Set a key with `pnpm dah auth set openai`.".to_string(),
+            detail: "Add an OpenAI key in Settings.".to_string(),
         },
         Provider {
             name: "Local OpenAI compatible".to_string(),
@@ -1542,7 +1542,7 @@ pub fn demo_providers() -> Vec<Provider> {
             name: "OpenAI".to_string(),
             kind: "BYOK".to_string(),
             state: ProviderState::NotConfigured,
-            detail: "Set a key with `pnpm dah auth set openai`.".to_string(),
+            detail: "Add an OpenAI key in Settings.".to_string(),
         },
     ]
 }

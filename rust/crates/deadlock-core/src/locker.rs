@@ -48,9 +48,8 @@
 //!
 //! # Packaged art
 //!
-//! A packaged build ships the art beside the executable, packed from the
-//! Grimoire checkout by `scripts/pack-locker-art.sh`, as Grimoire distributes
-//! the same files. The repository itself holds no hero art; the notice is in
+//! The art is in `rust/crates/desktop/assets/locker` and is built into the
+//! executable (`rust/crates/desktop/build.rs`). Where it came from is recorded in
 //! `THIRD_PARTY_NOTICES.md`.
 
 use std::collections::{BTreeMap, BTreeSet};

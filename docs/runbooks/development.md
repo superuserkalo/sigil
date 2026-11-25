@@ -12,7 +12,7 @@ Updated: 2026-11-25
 - Linux: the system packages the app links (Wayland, ALSA, OpenSSL and friends).
   `scripts/package-linux.sh --deps` installs them on Debian and Ubuntu.
 - Optional: Deadlock through Steam for real game checks. Tests never need it.
-- Optional: `cwebp` for the Locker art, `cargo-xwin` and `makensis` for Windows builds, Windows
+- Optional: `cargo-xwin` and `makensis` for Windows builds, Windows
   with community CSDK 12 for the agent's compile step.
 
 ## First run
@@ -25,12 +25,7 @@ cargo run --manifest-path rust/Cargo.toml -p dah-desktop    # or: pnpm rust:app
 Rune is pinned pre-release. The workspace repeats its `[patch.crates-io]` entries in
 `rust/Cargo.toml`; a plain git dependency fails on the patched text stack.
 
-The Locker's hero art is optional in development. To build it in:
-
-```bash
-./scripts/vendor-grimoire.sh                                # or: pnpm vendor
-./scripts/pack-locker-art.sh .scratch/locker-art            # rust/crates/desktop/build.rs picks it up
-```
+The Locker's hero art is in `rust/crates/desktop/assets/locker` and is always built in.
 
 Without it the build embeds no art and the app falls back to art it finds on disk.
 
