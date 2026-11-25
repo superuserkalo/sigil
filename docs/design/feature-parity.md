@@ -20,9 +20,9 @@ How to read the tables:
   or niche). Items that conflict with Sigil's rules are marked "won't" with the reason.
 
 Deferred as one package, "Sigil accounts" (owner 2026-11-20): Grimoire Social sign-in, cloud
-backup, DMM's Discover publishing, the community library, announcements and feature flags. They
-come later on Sigil's own backend (the telemetry Worker is the likely start), not on Grimoire's or
-DMM's. Rows marked "won't" for style or rules are closed by the owner and are not raised again.
+backup, DMM's Discover publishing, announcements and feature flags. They come later on Sigil's
+own backend (the telemetry Worker is the likely start), not on Grimoire's or DMM's. The community
+crosshair library left the package: it is built on the Worker without accounts (ADR 0019). Rows marked "won't" for style or rules are closed by the owner and are not raised again.
 The relay region picker was decided (owner, 2026-11-20: build it, off by default) and is built.
 
 Two architectural differences drive many rows:
@@ -43,7 +43,7 @@ Two architectural differences drive many rows:
 | Mod details | 22 | 0 | 0 | 0 |
 | Installed | 44 | 0 | 0 | 0 |
 | Locker | 19 | 1 | 0 | 0 |
-| Crosshair | 9 | 0 | 0 | 1 |
+| Crosshair | 10 | 0 | 0 | 0 |
 | Autoexec | 5 | 0 | 0 | 0 |
 | Performance | 8 | 0 | 0 | 0 |
 | Stats | 12 | 0 | 0 | 0 |
@@ -53,7 +53,7 @@ Two architectural differences drive many rows:
 | Overlap | 7 | 0 | 0 | 0 |
 | Downloads | 11 | 0 | 0 | 0 |
 | Global shell | 26 | 1 | 1 | 1 |
-| **Total** | 234 | 2 | 1 | 3 |
+| **Total** | 235 | 2 | 1 | 2 |
 
 Counted from the rows below on 2026-11-21 after 0.1.22. Deferred rows wait for Sigil accounts; the
 two partial rows are Locker Recolor (briefs only) and i18n; the missing row is GameBanana Remote
@@ -245,7 +245,7 @@ Endpoints, verified with curl against the live API on 2026-11-17 (Deadlock game 
 | Pin window always on top | G | Always on top | has (Crosshair "Pin window" calls `shell::set_always_on_top`; shell state, survives a recreated window) | - | - |
 | Custom colour and outline colour | G | RGB sliders, outline colour | has (Color group: Red, Green, Blue, outline colour and its RGB) | - | - |
 | Remove from autoexec | G | Clear the active crosshair | has (backup, toast with Undo) | - | - |
-| Community library | D | Needs D's backend | deferred: Sigil accounts (see below) | - | - |
+| Community library | D | Browse, apply and share crosshairs | has (ADR 0019 on Sigil's own Worker, no accounts: Presets and Community switch under the stage, the library as live mini reticle tiles with name, by Sigil and use count, Most used and Newest, Load more, fetched only when Community opens and cached 5 minutes, loading, offline and empty states; a tile only loads into the editor and an unchanged Apply counts one use; Publish on a saved preset with the Worker's name rules checked first and every error code mapped, the delete token kept owner-only for Remove from library; right-click Report hides the tile at once; every row checked against the crosshair ranges before it shows) | - | - |
 
 ## Autoexec
 

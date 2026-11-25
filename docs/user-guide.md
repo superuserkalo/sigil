@@ -200,6 +200,15 @@ backup. Remove from autoexec clears the block. Import from game reads the crossh
 in its own hero settings. Apply to hero settings writes it there. Copy commands puts the console
 lines on your clipboard. Pin window keeps the crosshair window above other windows.
 
+Community, beside Presets under the stage, lists the community crosshair library: crosshairs other
+players published and the ones Sigil ships (marked by Sigil), sorted by Most used or Newest, with
+how often each was applied. It needs a connection; without one the presets still work. Pressing a
+crosshair loads it into the editor like a preset, and nothing reaches the game until you press
+Apply. Right-click one to Report it: it disappears from your list at once. To share your own, load
+one of your saved presets and press the upload button beside Rename and Delete. Its name and
+settings become public for everyone using Sigil (2 to 32 letters, digits, spaces or `. - _ ' ! +`,
+up to 3 a day). Remove from library takes it down again from the same PC.
+
 The Autoexec page edits `autoexec.cfg` directly. Sigil's own blocks are marked and its lines are
 kept separate from yours. The command library is searchable by category and inserts a command with
 one press. Save keeps a backup first. You can open the file in your chosen editor. Game > Edit

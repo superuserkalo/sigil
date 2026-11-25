@@ -1,7 +1,7 @@
 # 0019 Community crosshair library
 
-Status: accepted (Worker routes built and tested with migration 0007; not deployed, migration not
-applied remotely, the app does not call it yet)
+Status: accepted (Worker routes live with migration 0007 and its 21 seeds; the desktop app calls
+them from the Crosshair page through `deadlock_core::crosshair_library`)
 Date: 2026-11-25
 
 ## Context

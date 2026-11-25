@@ -71,7 +71,7 @@ Every doc starts with a status line. Values: `active`, `draft`, `planned`, `supe
 | `decisions/0016-relay-region-picker.md` | accepted | Relay region picker: Valve's relay list, Windows Firewall rules on the player's Apply. |
 | `decisions/0017-opt-in-product-data.md` | accepted | Help build Sigil: opt-in product data, the distinct-contributor floor and the aggregates the Worker keeps (the app reads none of them back; its related mods, mod health chips and frame rate expectations were removed 2026-11-25). |
 | `decisions/0018-typesafe-catalog-tags.md` | accepted | Local catalog search: the Worker builds a public index from GameBanana's own text (title, description words, category, hero, author), and the app downloads it and matches Browse search on the PC (`deadlock_core::catalog_index`). Term expansion (Workers AI checked by TypeSafe Jev) is on under a $1 daily cap; file labels are off. Deployed 2026-11-25. |
-| `decisions/0019-community-crosshairs.md` | accepted | Community crosshair library on the Worker: publish, browse, apply, report; no accounts, delete tokens, strict config validation, a short blocklist, per-network limits and 21 official seeds (Worker routes and migration 0007 built and tested; not deployed, the app does not call it yet). |
+| `decisions/0019-community-crosshairs.md` | accepted | Community crosshair library on the Worker: publish, browse, apply, report; no accounts, delete tokens, strict config validation, a short blocklist, per-network limits and 21 official seeds (Worker live with the 21 seeds; the desktop Crosshair page browses, applies, publishes, removes and reports through it). |
 | `runbooks/development.md` | active | Local setup and verification. |
 
 ## Updating docs

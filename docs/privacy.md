@@ -282,10 +282,16 @@ keeps two keyed hashes of your network (not your address): a daily one, deleted 
 counts an apply once per day and caps publishes, reports and applies per day; and, when you report
 a crosshair, a hash of your network and that crosshair, kept up to 90 days so one network counts
 once per crosshair, which cannot be matched to your reports of other crosshairs (see
-`docs/decisions/0019-community-crosshairs.md`). To remove a crosshair you published, use Delete in
-the library on the same PC: the app keeps the delete token the Worker gave it, and the row is
-gone at once. If you lose that token (a new PC, cleared app data), ask the owner to remove it.
-Crosshairs that five networks report are hidden until the owner reviews them.
+`docs/decisions/0019-community-crosshairs.md`). The list is fetched only when you open Community
+on the Crosshair page, kept 5 minutes, and pressing a crosshair there only loads it into the
+editor. When you then Apply it unchanged, Sigil counts one use for it; nothing else is sent. To
+remove a crosshair you published, load that saved preset and press Remove from library on the same
+PC: the app keeps the delete token the Worker gave it in `crosshair-library.json` in its data
+folder (readable only by you on macOS and Linux, never logged and never part of telemetry or
+product data), and the row is gone at once. If you lose that token (a new PC, cleared app data),
+ask the owner to remove it. The same file lists the crosshairs you reported, so they stay hidden
+from your list. Crosshairs that five networks report are hidden until the owner reviews them.
+Offline mode and the proxy in Settings apply to every library request.
 
 ## Catalog search index
 
