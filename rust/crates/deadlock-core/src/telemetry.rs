@@ -128,7 +128,7 @@ const CONSENT_FILE: &str = "consent.json";
 const INSTALL_ID_FILE: &str = "install-id";
 const QUEUE_FILE: &str = "queue.json";
 const CRASH_DIR: &str = "crashes";
-const CLIENT_HEADER: &str = "1";
+pub(crate) const CLIENT_HEADER: &str = "1";
 
 /// The player's answer to the first-start prompt and the three switches in Settings > Privacy.
 ///

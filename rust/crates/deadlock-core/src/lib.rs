@@ -62,6 +62,7 @@ pub mod release;
 pub mod remote_install;
 pub mod review;
 pub mod servers;
+pub mod catalog_index;
 pub mod catalog_mirror;
 pub mod character;
 pub mod cleanup;

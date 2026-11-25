@@ -23,7 +23,7 @@ pub fn set_offline(offline: bool) {
 #[cfg(test)]
 thread_local! {
     /// Lets a test go offline on its own thread without touching the process flag.
-    static TEST_OFFLINE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    pub(crate) static TEST_OFFLINE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 /// True when network access is switched off for this process.

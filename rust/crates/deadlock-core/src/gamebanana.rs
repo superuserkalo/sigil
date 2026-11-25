@@ -558,6 +558,119 @@ pub fn parse_browse(body: &str, page: usize, perpage: usize) -> Result<BrowsePag
     parse_records(body, page, perpage, Record::is_listed)
 }
 
+/// The properties `Mod/Multi` returns for a card. `Mod/Multi` names the deepest category
+/// `_aCategory` (list endpoints say `_aSubCategory`) and reports mature content as `_bIsNsfw`.
+const MULTI_PROPERTIES: &str = "_idRow,_sName,_sProfileUrl,_sModelName,_tsDateAdded,_tsDateModified,\
+_tsDateUpdated,_bIsNsfw,_sVersion,_nLikeCount,_nViewCount,_nPostCount,_bIsObsolete,_aSubmitter,\
+_aRootCategory,_aCategory,_aPreviewMedia,_bIsTrashed,_bIsWithheld,_bIsPrivate";
+
+/// Ids one `Mod/Multi` request carries.
+pub const MULTI_MAX_IDS: usize = 50;
+
+/// The `Mod/Multi` URL for a batch of ids.
+pub fn multi_url(ids: &[u64]) -> String {
+    let ids: Vec<String> = ids.iter().take(MULTI_MAX_IDS).map(u64::to_string).collect();
+    format!(
+        "{GAMEBANANA_API_BASE}/Mod/Multi?_csvRowIds={}&_csvProperties={}",
+        ids.join(","),
+        MULTI_PROPERTIES.replace(',', "%2C")
+    )
+}
+
+/// Card rows for up to [`MULTI_MAX_IDS`] mods in one request, in GameBanana's order. Trashed,
+/// withheld and private mods are left out. GameBanana refuses the whole batch when one id no
+/// longer exists, so that id is dropped and the rest asked again, eight times at most.
+pub fn fetch_mods_by_id(ids: &[u64]) -> Result<Vec<BrowseMod>> {
+    let mut ids: Vec<u64> = ids.iter().copied().filter(|id| *id > 0).take(MULTI_MAX_IDS).collect();
+    for _ in 0..8 {
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let body = get_multi_body(&multi_url(&ids))?;
+        // Rows come as a list; only an error object names a gone record.
+        if body.trim_start().starts_with('{')
+            && let Some(gone) = missing_record(&body)
+        {
+            ids.retain(|id| *id != gone);
+            continue;
+        }
+        return parse_multi(&body);
+    }
+    Err(Error::Network("GameBanana refused the batch of mods".to_string()))
+}
+
+/// One `Mod/Multi` read. GameBanana answers a gone id with HTTP 400 and a body naming it, so
+/// the body is read whatever the status.
+fn get_multi_body(url: &str) -> Result<String> {
+    let mut response = api_agent()
+        .get(url)
+        .config()
+        .http_status_as_error(false)
+        .build()
+        .header("User-Agent", GAMEBANANA_USER_AGENT)
+        .header("Accept", "application/json")
+        .call()
+        .map_err(|error| Error::Network(format!("GameBanana request for mods by id failed: {error}")))?;
+    let status = response.status().as_u16();
+    let body = response
+        .body_mut()
+        .with_config()
+        .limit(8 * 1024 * 1024)
+        .read_to_string()
+        .map_err(|error| Error::Network(format!("GameBanana response for mods by id could not be read: {error}")))?;
+    if (200..300).contains(&status) || (status == 400 && missing_record(&body).is_some()) {
+        return Ok(body);
+    }
+    Err(Error::Network(format!("GameBanana returned HTTP {status} for mods by id. {}", snippet(&body))))
+}
+
+/// The id in GameBanana's "Record Mod.123 doesn't exist" answer.
+pub(crate) fn missing_record(text: &str) -> Option<u64> {
+    let rest = text.split("Record Mod.").nth(1)?;
+    let digits: String = rest.chars().take_while(char::is_ascii_digit).collect();
+    digits.parse().ok()
+}
+
+/// A `Mod/Multi` body as card rows.
+pub fn parse_multi(body: &str) -> Result<Vec<BrowseMod>> {
+    let value: Value = serde_json::from_str(body).map_err(|error| {
+        Error::Network(format!("GameBanana response was not valid JSON ({error}). {}", snippet(body)))
+    })?;
+    if let Some(message) = api_error_message(&value) {
+        return Err(Error::Network(format!("GameBanana rejected the request: {message}")));
+    }
+    let Value::Array(rows) = value else {
+        return Err(Error::Network(format!("GameBanana response was not a list. {}", snippet(body))));
+    };
+    let mut out = Vec::with_capacity(rows.len());
+    for mut row in rows {
+        let Some(object) = row.as_object_mut() else { continue };
+        let hidden = ["_bIsTrashed", "_bIsWithheld", "_bIsPrivate"]
+            .iter()
+            .any(|key| object.get(*key).and_then(Value::as_bool).unwrap_or(false));
+        if hidden {
+            continue;
+        }
+        if !object.contains_key("_aSubCategory")
+            && let Some(category) = object.remove("_aCategory")
+        {
+            object.insert("_aSubCategory".to_string(), category);
+        }
+        if !object.contains_key("_sModelName") {
+            object.insert("_sModelName".to_string(), Value::String("Mod".to_string()));
+        }
+        let Ok(record) = serde_json::from_value::<Record>(row) else { continue };
+        if record.id == 0 || !record.is_mod() {
+            continue;
+        }
+        let mut row = record.into_browse_mod();
+        // A Multi row carries no `_bHasFiles`; a listed mod has files.
+        row.has_files = true;
+        out.push(row);
+    }
+    Ok(out)
+}
+
 /// One category in the browse tree. A category carries its children: heroes under Skins, a
 /// hero's styles under the hero, the NPC kinds under Model Replacement.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
