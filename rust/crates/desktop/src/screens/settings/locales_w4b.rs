@@ -27,6 +27,7 @@ pub const DE: &[(&str, &str)] = &[
     ("Hide until next launch", "Bis zum nächsten Start ausblenden"),
     ("Log source", "Protokollquelle"),
     ("What Copy logs and Ask Sigil read.", "Was „Protokolle kopieren“ und „Sigil fragen“ lesen."),
+    ("What Copy logs reads.", "Was „Protokolle kopieren“ liest."),
     ("Combined", "Kombiniert"),
     ("Sigil log", "Sigil-Protokoll"),
     ("Copy logs", "Protokolle kopieren"),

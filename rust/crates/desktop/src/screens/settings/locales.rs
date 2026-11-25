@@ -238,7 +238,7 @@ pub const DE: &[(&str, &str)] = &[
     ("Memory report copied.", "Speicherbericht kopiert."),
     ("Beyond the app heap is the graphics driver, the window and system libraries. Copy the report to send it with a bug report.", "Was über den App-Heap hinausgeht, sind Grafiktreiber, Fenster und Systembibliotheken. Kopiere den Bericht für eine Fehlermeldung."),
     ("App heap", "App-Heap"),
-    ("A Deadlock mod manager with an agent inside. Free software under the MIT license.", "Ein Mod-Manager für Deadlock mit eingebautem Agenten. Freie Software unter der MIT-Lizenz."),
+    ("A Deadlock mod manager. Free software under the MIT license.", "Ein Mod-Manager für Deadlock. Freie Software unter der MIT-Lizenz."),
     ("Deadlock and its art belong to Valve. Sigil is not affiliated with or endorsed by Valve.", "Deadlock und seine Grafiken gehören Valve. Sigil ist weder mit Valve verbunden noch von Valve unterstützt."),
     ("Deadlock folder", "Deadlock-Ordner"),
     ("Not found", "Nicht gefunden"),

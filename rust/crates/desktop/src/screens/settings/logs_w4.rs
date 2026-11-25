@@ -128,6 +128,10 @@ pub fn agent_prompt(logs: &str) -> String {
 /// Put the logs in the agent's composer and open the agent. The agent page turns on if it was
 /// off; nothing is sent until Send.
 pub fn ask_agent(st: &mut State) {
+    // A build without the agent has nothing to hand the logs to.
+    if !crate::prefs::AGENT {
+        return;
+    }
     let source = Source::from_id(&options::get().log_source);
     let logs = gather(st, source);
     if !st.prefs.flag("agent") {
@@ -142,12 +146,13 @@ pub fn ask_agent(st: &mut State) {
 pub fn rows(_s: &State, u: &Ui) -> Vec<El> {
     let o = options::get();
     let source = Source::from_id(&o.log_source);
-    vec![
+    let source_line = if crate::prefs::AGENT { "What Copy logs and Ask Sigil read." } else { "What Copy logs reads." };
+    let mut rows = vec![
         setting_row(
             u,
             "settings-log-source",
             "Log source",
-            detail(u, "What Copy logs and Ask Sigil read."),
+            detail(u, source_line),
             segmented(
                 u,
                 "settings-log-source-pick",
@@ -170,7 +175,10 @@ pub fn rows(_s: &State, u: &Ui) -> Vec<El> {
                 },
             ),
         ),
-        setting_row(
+    ];
+    // Ask Sigil hands the logs to the agent, which only a build with the agent has.
+    if crate::prefs::AGENT {
+        rows.push(setting_row(
             u,
             "settings-log-ask",
             "Ask Sigil for help",
@@ -179,8 +187,9 @@ pub fn rows(_s: &State, u: &Ui) -> Vec<El> {
                 button(u, "settings-log-ask-run", "Ask Sigil", ActionKind::Secondary)
                     .on_press(|st: &mut State| st.settings.confirm = Some(Confirm::AskAgent)),
             ]),
-        ),
-    ]
+        ));
+    }
+    rows
 }
 
 /// "Include the full log" for the report section.

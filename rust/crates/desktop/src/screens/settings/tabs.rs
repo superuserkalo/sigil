@@ -20,7 +20,7 @@ use super::{
 use crate::app::State;
 use crate::icons;
 use crate::model::Screen;
-use crate::prefs::{self, Channel, DateFormat, FLAGS};
+use crate::prefs::{self, Channel, DateFormat};
 use crate::ui::{ActionKind, BODY, BODY_MED, MONO, SMALL, Ui};
 
 // --- general ---------------------------------------------------------------------
@@ -1213,7 +1213,7 @@ pub fn diagnostic_report(st: &State) -> String {
 
 pub fn experimental(s: &State, u: &Ui) -> El {
     let mut rows = Vec::new();
-    for flag in FLAGS.iter() {
+    for flag in prefs::experimental_flags() {
         let id = flag.id;
         rows.push(setting_row(
             u,

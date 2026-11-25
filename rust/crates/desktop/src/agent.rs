@@ -295,6 +295,12 @@ impl AgentLink {
     }
 
     /// A link with no process, used as the default before `setup` runs.
+    /// Whether a host process was started for this link.
+    #[cfg(test)]
+    pub fn has_process(&self) -> bool {
+        self.child.is_some()
+    }
+
     pub fn disconnected() -> AgentLink {
         let provider = env_value("DAH_AGENT_PROVIDER").unwrap_or_else(|| "openai".to_string());
         let model = env_value("DAH_AGENT_MODEL");

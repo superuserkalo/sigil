@@ -39,8 +39,7 @@ reset the file, a banner offers to fix it.
 The sidebar holds the pages: Browse, Installed, Locker, Crosshair, Autoexec, Performance, Stats,
 Overlap, Profiles, Servers, Game and Downloads. Launch modded, Launch vanilla and Settings sit at the
 foot. Pages you do not use can be turned off in Settings > General > Pages, including a Mods only
-mode. The agent that builds mods from a prompt is experimental and appears only when you turn on
-Settings > Experimental > Agent.
+mode. A mod agent is planned but not part of this release ([ROADMAP.md](../ROADMAP.md)).
 
 The top bar has search for the current page. The status bar shows whether the game was found,
 whether the mod catalog is syncing, downloads, an app update, the active profile and the preview
@@ -364,15 +363,13 @@ Sigil has no account and no third-party analytics. It contacts only the services
 - Steam, for the official Deadlock patch notes and Valve's relay list.
 - deadlock-api, for Stats, match data sharing you turn on, crosshair values and relay match counts.
 - Deadworks, when you use Servers.
-- A model provider, only when you chat with the agent, using your own key.
 - A mod source you added, only for that source.
 - Discord, over the app on your PC, when Rich Presence is on.
 - Sigil's own service: the public catalog search index and the community crosshair library (neither
   sends anything about you; publishing a crosshair makes its name and settings public), plus the
   opt-ins below once you agree.
 
-Settings > Network > Offline mode stops Sigil's own catalog, download and service requests. Chatting
-with the agent still uses your model provider, because that is your own connection. Settings >
+Settings > Network > Offline mode stops Sigil's own catalog, download and service requests. Settings >
 Privacy has one switch per kind: match data sharing (sends match salts to deadlock-api), player
 stats, usage events, crash reports and unknown-mod lookup. Each is off until you agree. Usage
 events carry no mod names, search text or file names. Crash reports and diagnostics have your user
@@ -389,7 +386,7 @@ GameBanana mods you install, turn on, open or hide, which ones break or clash, y
 and short search text, your ten most played heroes in rough hours and your rank tier, benchmark
 frame rates with your GPU and CPU model, and which pages you use. It helps decide what Sigil fixes and
 builds next. It never sends your Steam id, your files or paths, local
-mods, your keys, your IP address or anything from the agent. Settings > Privacy > Help build Sigil
+mods, your keys or your IP address. Settings > Privacy > Help build Sigil
 turns it on or off at any time, What Sigil shared lists the last records sent, and Delete my data
 removes them from Sigil's server and starts a new id. Sigil keeps what you share until you
 delete it; if Sigil hears nothing from you for two years, your records are cut loose from your id. `docs/privacy.md` lists every field.
@@ -402,8 +399,6 @@ in. Settings > Logs and support has the same tools plus:
 
 - **Diagnostic report**: a summary of your setup, with an option to include the full log.
 - **Crash dumps**: refresh, read details, show the newest file and attach a crash to a report.
-- **Ask Sigil for help**: puts the masked logs into Sigil's own agent, and nothing is sent until
-  you press Send.
 - **Open an issue**: opens Sigil's GitHub issue page.
 
 Tell us what you were doing, what you expected and what happened. A screenshot or the crash's

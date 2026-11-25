@@ -7,6 +7,9 @@ This tree is tracked. A fresh clone should be enough for an agent or a contribut
 product, the domain and the boundaries without reading the whole codebase. Sigil 0.1.42 is the
 release these docs describe.
 
+The public plan (what comes next, the mod agent, what is not planned) is
+[`ROADMAP.md`](../ROADMAP.md) at the repository root.
+
 ## Read order
 
 1. `CONTEXT.md` at the repo root: the vocabulary.

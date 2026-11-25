@@ -36,6 +36,10 @@ pub const DE: &[(&str, &str)] = &[
         "Never sent: your Steam id or name, friends, matches, chat, file names or paths, local mods, mod files, keys, your IP address, or anything from the AI agent. Sent with a random id the server keeps only as a hash, and kept until you delete it with Delete my data in Settings. After two years with nothing new it is cut loose from your id.",
         "Nie gesendet: deine Steam-ID oder dein Name, Freunde, Matches, Chat, Dateinamen oder Pfade, lokale Mods, Mod-Dateien, Schlüssel, deine IP-Adresse oder irgendetwas vom KI-Agenten. Gesendet mit einer zufälligen ID, die der Server nur als Hash speichert, und aufbewahrt, bis du es mit Meine Daten löschen in den Einstellungen löschst. Nach zwei Jahren ohne Neues wird es von deiner ID getrennt.",
     ),
+    (
+        "Never sent: your Steam id or name, friends, matches, chat, file names or paths, local mods, mod files, keys or your IP address. Sent with a random id the server keeps only as a hash, and kept until you delete it with Delete my data in Settings. After two years with nothing new it is cut loose from your id.",
+        "Nie gesendet: deine Steam-ID oder dein Name, Freunde, Matches, Chat, Dateinamen oder Pfade, lokale Mods, Mod-Dateien, Schlüssel oder deine IP-Adresse. Gesendet mit einer zufälligen ID, die der Server nur als Hash speichert, und aufbewahrt, bis du es mit Meine Daten löschen in den Einstellungen löschst. Nach zwei Jahren ohne Neues wird es von deiner ID getrennt.",
+    ),
     ("Not now", "Jetzt nicht"),
     ("Share", "Teilen"),
     ("Share product data", "Produktdaten teilen"),

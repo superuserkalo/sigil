@@ -18,7 +18,7 @@ below and is not repeated in each one. Sigil itself stores no IP address and no 
 | --- | --- | --- |
 | [Sigil telemetry](#sigil-telemetry) | Usage events, crash reports, diagnostics you send, mod hash lookups | Off until you agree |
 | [Help build Sigil](#help-build-sigil-product-data) | Product data: GameBanana mod ids and actions, mod health, Browse use, top heroes, performance, app use | Off until you choose Share |
-| [Model provider](#model-provider) | Your prompts, the files the agent reads, the model's answers | Only when you chat |
+| [Model provider](#model-provider) | Your prompts, the files the agent reads, the model's answers | Only when you chat, in a build with the agent (not in releases) |
 | [Community crosshairs](#community-crosshairs) | A crosshair's name and settings when you publish one; nothing to browse or apply | Only when you publish |
 | [Catalog search index](#catalog-search-index) | Nothing from you: the app downloads a public index of GameBanana's catalog and searches it locally | On |
 | [Steam](#steam) | Patch note requests | On |
@@ -335,6 +335,9 @@ carries nothing about the player.
   not call `/v1/catalog/mod/<id>`.
 
 ## Model provider
+
+Release builds leave the mod agent out (`ROADMAP.md`), so they never contact a model provider. This
+section applies to a developer build with the agent (`--features agent`).
 
 Sigil is bring your own key. Provider requests go from the app or its agent host straight to the
 provider you configured: OpenAI, Anthropic, or an OpenAI-compatible endpoint such as a local model

@@ -30,7 +30,7 @@ pub mod onboarding;
 pub mod options;
 pub mod pages;
 pub mod personalize;
-mod search;
+pub(crate) mod search;
 pub mod sharing;
 pub mod smalls;
 pub mod locales_smalls;
@@ -121,6 +121,11 @@ const GROUPS: [(&str, &[Tab]); 3] = [
 ];
 
 impl Tab {
+    /// Whether this build shows the category: Models and sign-in serves only the agent.
+    pub fn shown(self) -> bool {
+        self != Tab::Models || crate::prefs::AGENT
+    }
+
     pub fn label(self) -> &'static str {
         match self {
             Tab::Game => "Game",
@@ -306,6 +311,7 @@ pub fn close(st: &mut State) {
 }
 
 fn select(st: &mut State, tab: Tab) {
+    let tab = if tab.shown() { tab } else { Tab::General };
     st.settings.tab = tab;
     st.settings.hit = None;
     st.settings.select_open = None;
@@ -465,7 +471,8 @@ pub fn modal(s: &State, u: &Ui, window: (f32, f32)) -> Option<El> {
     } else if let Some(only) = diag_w4::scene_content(s, u) {
         only
     } else {
-        match s.settings.tab {
+        // A category this build does not show (a stored or linked Models) opens General.
+        match if s.settings.tab.shown() { s.settings.tab } else { Tab::General } {
             Tab::Game => game(s, u),
             Tab::Backups => col()
                 .w_full()
@@ -725,7 +732,7 @@ fn list(s: &State, u: &Ui) -> El {
                 .center_y()
                 .child(text(tr(group)).font(SECTION).color(u.muted)),
         );
-        for &tab in *tabs {
+        for &tab in tabs.iter().filter(|tab| tab.shown()) {
             items = items.child(list_item(s, u, tab));
         }
     }
@@ -2225,14 +2232,19 @@ const HOSTS: [(&str, &str); 8] = [
         "Rich Presence, through the Discord app's local connection. No network.",
     ),
     (
-        "Your model provider",
+        MODEL_PROVIDER,
         "The agent, with your own key or account, only when you use it.",
     ),
 ];
 
+/// The privacy list's row for the agent's model provider.
+const MODEL_PROVIDER: &str = "Your model provider";
+
 fn privacy(s: &State, u: &Ui) -> El {
     let mut hosts = Vec::new();
-    for (index, (host, purpose)) in HOSTS.iter().enumerate() {
+    // The model provider is reached only by the agent, which this build may not have.
+    let hosts_shown = HOSTS.iter().filter(|(host, _)| crate::prefs::AGENT || *host != MODEL_PROVIDER);
+    for (index, (host, purpose)) in hosts_shown.enumerate() {
         hosts.push(
             row()
                 .key(format!("settings-host-{index}"))
@@ -2560,27 +2572,28 @@ fn storage(s: &State, u: &Ui) -> El {
     let workspace_shown = tidy(&workspace);
     let size_or = |bytes: Option<u64>| bytes.map(size_label).unwrap_or_else(|| "Not measured".into());
 
-    let folders = section(
-        u,
-        "Folders",
-        vec![
-            setting_row(
-                u,
-                "settings-data-folder",
-                "Data folder",
-                path_detail(u, &tidy(&s.paths.data)),
-                button(u, "settings-data-reveal", "Reveal", ActionKind::Secondary)
-                    .on_press(move |st: &mut State| crate::data::reveal_path(st, data.clone())),
+    let mut folder_rows = vec![
+        setting_row(
+            u,
+            "settings-data-folder",
+            "Data folder",
+            path_detail(u, &tidy(&s.paths.data)),
+            button(u, "settings-data-reveal", "Reveal", ActionKind::Secondary)
+                .on_press(move |st: &mut State| crate::data::reveal_path(st, data.clone())),
+        ),
+        setting_row(
+            u,
+            "settings-workspace-folder",
+            "Mod workspace",
+            path_detail(u, &workspace_shown),
+            button(u, "settings-workspace-reveal", "Reveal", ActionKind::Secondary).on_press(
+                move |st: &mut State| crate::data::reveal_path(st, workspace.clone()),
             ),
-            setting_row(
-                u,
-                "settings-workspace-folder",
-                "Mod workspace",
-                path_detail(u, &workspace_shown),
-                button(u, "settings-workspace-reveal", "Reveal", ActionKind::Secondary).on_press(
-                    move |st: &mut State| crate::data::reveal_path(st, workspace.clone()),
-                ),
-            ),
+        ),
+    ];
+    // The agent's sessions exist only in a build that has the agent.
+    if crate::prefs::AGENT {
+        folder_rows.push(
             setting_row(
                 u,
                 "settings-sessions-folder",
@@ -2589,8 +2602,9 @@ fn storage(s: &State, u: &Ui) -> El {
                 button(u, "settings-sessions-reveal", "Reveal", ActionKind::Secondary)
                     .on_press(move |st: &mut State| crate::data::reveal_path(st, sessions.clone())),
             ),
-        ],
-    );
+        );
+    }
+    let folders = section(u, "Folders", folder_rows);
 
     let caches = section(
         u,
@@ -2633,29 +2647,41 @@ fn storage(s: &State, u: &Ui) -> El {
         ],
     );
 
-    let maintenance = section(
-        u,
-        "Maintenance",
-        vec![
-            setting_row(
-                u,
-                "settings-rescan",
-                "Rescan",
-                detail(u, "Find the game again and reread your addon slots."),
-                button(u, "settings-rescan-run", "Rescan", ActionKind::Secondary).on_press(
-                    |st: &mut State| {
-                        crate::data::rescan_game(st);
-                        let line = if st.game_detected {
-                            "Rescanned the game folder."
-                        } else {
-                            "No Deadlock install found."
-                        };
-                        say(st, line, !st.game_detected);
-                    },
-                ),
+    let mut maintenance_rows = vec![
+        setting_row(
+            u,
+            "settings-rescan",
+            "Rescan",
+            detail(u, "Find the game again and reread your addon slots."),
+            button(u, "settings-rescan-run", "Rescan", ActionKind::Secondary).on_press(
+                |st: &mut State| {
+                    crate::data::rescan_game(st);
+                    let line = if st.game_detected {
+                        "Rescanned the game folder."
+                    } else {
+                        "No Deadlock install found."
+                    };
+                    say(st, line, !st.game_detected);
+                },
             ),
-            leftover_row(s, u),
-            agent_row(s, u),
+        ),
+        leftover_row(s, u),
+        setting_row(
+            u,
+            "settings-reset",
+            "Reset settings",
+            detail(u, "Every setting on these pages goes back to its default."),
+            button(u, "settings-reset-run", "Reset", ActionKind::Danger)
+                .on_press(|st: &mut State| st.settings.confirm = Some(Confirm::Reset)),
+        ),
+    ];
+    // The agent host and its Toolchain page exist only in a build that has the agent.
+    if crate::prefs::AGENT {
+        maintenance_rows.insert(2, agent_row(s, u));
+    }
+    if s.prefs.page_on(Screen::Toolchain) {
+        maintenance_rows.insert(
+            if crate::prefs::AGENT { 3 } else { 2 },
             setting_row(
                 u,
                 "settings-toolchain",
@@ -2668,16 +2694,9 @@ fn storage(s: &State, u: &Ui) -> El {
                     },
                 ),
             ),
-            setting_row(
-                u,
-                "settings-reset",
-                "Reset settings",
-                detail(u, "Every setting on these pages goes back to its default."),
-                button(u, "settings-reset-run", "Reset", ActionKind::Danger)
-                    .on_press(|st: &mut State| st.settings.confirm = Some(Confirm::Reset)),
-            ),
-        ],
-    );
+        );
+    }
+    let maintenance = section(u, "Maintenance", maintenance_rows);
 
     col()
         .w_full()
@@ -3028,7 +3047,7 @@ fn about(s: &State, u: &Ui) -> El {
                 .gap(6.0)
                 .child(text(format!("Sigil {VERSION}")).font(H1).color(u.ink))
                 .child(
-                    text(tr("A Deadlock mod manager with an agent inside. Free software under the MIT license."))
+                    text(tr("A Deadlock mod manager. Free software under the MIT license."))
                         .font(BODY)
                         .color(u.muted)
                         .wrap(),

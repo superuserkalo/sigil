@@ -61,8 +61,9 @@ product data. Both are off until you say yes.
   match data sharing and "Help build Sigil" product data are each off until you agree, and Offline
   mode stops Sigil's own requests. [docs/privacy.md](docs/privacy.md) lists every host and field.
 
-An agent that builds mods from a prompt (bring your own model key) is in the app behind Settings >
-Experimental > Agent. It is off by default and still experimental.
+A mod agent that helps build mods with your own model key is in the code but left out of release
+builds until it is verified; [ROADMAP.md](ROADMAP.md) has what comes next and how developers can try
+it.
 
 ## Requirements
 

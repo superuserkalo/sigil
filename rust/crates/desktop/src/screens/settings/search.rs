@@ -17,6 +17,15 @@ pub struct Entry {
     pub words: &'static str,
 }
 
+/// Titles that exist only in a build with the agent (outside Models and sign-in, which hides as
+/// a whole).
+const AGENT_TITLES: [&str; 2] = ["Agent", "Ask Sigil for help"];
+
+/// Whether this build shows the row an entry names.
+pub fn shown(entry: &Entry) -> bool {
+    entry.tab.shown() && (crate::prefs::AGENT || !AGENT_TITLES.contains(&entry.title))
+}
+
 const fn e(tab: Tab, title: &'static str, line: &'static str, words: &'static str) -> Entry {
     Entry { tab, title, line, words }
 }
@@ -181,6 +190,7 @@ pub fn matches(query: &str) -> Vec<&'static Entry> {
     }
     INDEX
         .iter()
+        .filter(|entry| shown(entry))
         .filter(|entry| {
             let hay = format!(
                 "{} {} {} {} {} {} {}",

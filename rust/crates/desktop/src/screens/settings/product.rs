@@ -580,6 +580,8 @@ const SENT: [&str; 6] = [
     "Performance: configs you apply, benchmark frame rates, your GPU and CPU model, RAM rounded and screen size.",
     "App use: pages you open, theme, language, launches, how long Sigil stays open, and the Sigil, system and game version.",
 ];
+/// [`NEVER`] for a build without the agent, which has no agent to name.
+const NEVER_NO_AGENT: &str = "Never sent: your Steam id or name, friends, matches, chat, file names or paths, local mods, mod files, keys or your IP address. Sent with a random id the server keeps only as a hash, and kept until you delete it with Delete my data in Settings. After two years with nothing new it is cut loose from your id.";
 const NEVER: &str = "Never sent: your Steam id or name, friends, matches, chat, file names or paths, local mods, mod files, keys, your IP address, or anything from the AI agent. Sent with a random id the server keeps only as a hash, and kept until you delete it with Delete my data in Settings. After two years with nothing new it is cut loose from your id.";
 
 /// The window height, noted by the view each frame (a store, no work), so the list in
@@ -630,7 +632,7 @@ pub fn consent_body_reserving(u: &Ui, reserve: f32) -> El {
                 .scroll(rune::ScrollSpec { stick_bottom: false })
                 .child(list),
         ))
-        .child(text(tr(NEVER).to_string()).font(SMALL).color(u.faint).wrap().w_full())
+        .child(text(tr(if crate::prefs::AGENT { NEVER } else { NEVER_NO_AGENT }).to_string()).font(SMALL).color(u.faint).wrap().w_full())
         .child(
             row().child(
                 u.action(tr("What Sigil sends"), ActionKind::Ghost)

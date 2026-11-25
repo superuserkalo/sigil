@@ -1,6 +1,6 @@
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
-//! Sigil: a Deadlock mod manager with an agent inside, native on Rune.
+//! Sigil: a Deadlock mod manager, native on Rune.
 //!
 //! `cargo run -p dah-desktop` opens the window. Headless scenes render with
 //! `cargo run -p dah-desktop -- --snap out.png --scene index`. The same executable is the dah
@@ -25,6 +25,8 @@ mod jank_tests;
 mod scroll_bar_tests;
 #[cfg(test)]
 mod toast_tests;
+#[cfg(test)]
+mod agent_gate_tests;
 mod memory;
 mod model;
 mod motion;
@@ -51,6 +53,19 @@ use rune::AppSpec;
 /// around the system allocator.
 #[global_allocator]
 static ALLOCATOR: procwatch::alloc::Counting = procwatch::alloc::Counting::system();
+
+/// Every named scene this build offers (`--scene NAME`). Scenes of the agent and the pages under
+/// it are listed only in a build that has the agent (`prefs::AGENT`).
+fn all_scenes() -> &'static [(&'static str, fn(&mut State))] {
+    let all: Vec<(&'static str, fn(&mut State))> = [app::scenes(), &deeplink::SCENES[..], &screens::settings::personalize::SCENES[..], screens::w4a_scenes::SCENES, screens::upstream_scenes::SCENES, screens::explorer::SCENES, screens::project_tools::SCENES, screens::dmm_next_scenes::SCENES, screens::w4c_scenes::SCENES, screens::servers::host::scenes::SCENES, screens::servers::regions::scenes::SCENES, screens::performance::benchmark::scenes::SCENES, &viewer::SCENES[..], &viewer::PARITY_SCENES[..], &bench_scenes::SCENES[..]]
+        .concat();
+    Box::leak(
+        all.into_iter()
+            .filter(|(name, _)| prefs::AGENT || !app::AGENT_SCENES.contains(name))
+            .collect::<Vec<_>>()
+            .into_boxed_slice(),
+    )
+}
 
 fn main() -> std::process::ExitCode {
     // The data folder's one-time move from its old name comes before anything reads or writes
@@ -93,12 +108,7 @@ fn main() -> std::process::ExitCode {
     screens::settings::crash::begin();
     deeplink::startup();
     brand::install_app_icon();
-    let scenes: &'static [(&'static str, fn(&mut State))] =
-        Box::leak(
-            [app::scenes(), &deeplink::SCENES[..], &screens::settings::personalize::SCENES[..], screens::w4a_scenes::SCENES, screens::upstream_scenes::SCENES, screens::explorer::SCENES, screens::project_tools::SCENES, screens::dmm_next_scenes::SCENES, screens::w4c_scenes::SCENES, screens::servers::host::scenes::SCENES, screens::servers::regions::scenes::SCENES, screens::performance::benchmark::scenes::SCENES, &viewer::SCENES[..], &viewer::PARITY_SCENES[..], &bench_scenes::SCENES[..]]
-                .concat()
-                .into_boxed_slice(),
-        );
+    let scenes = all_scenes();
     // Settings > Appearance > Transparent sidebar: a see-through window only when the setting
     // is on at launch and the system can show glass (`glass.rs`).
     let glass = glass::launch(prefs::Prefs::load().transparent_sidebar);

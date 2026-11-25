@@ -13,7 +13,6 @@ Sigil has no account and no third-party analytics. It talks only to the services
 - Steam, for the official Deadlock patch notes and Valve's relay list.
 - deadlock-api, for Stats when Player stats is on, match data sharing you turn on, and crosshair values.
 - Sigil's own service, for the community crosshair library, the search index and the opt-ins below.
-- A model provider, only when you chat with the built-in agent, using your own key.
 
 Offline mode in Settings, Network stops Sigil's own catalog, download and service requests.
 

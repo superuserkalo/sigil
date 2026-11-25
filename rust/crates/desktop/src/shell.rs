@@ -614,7 +614,10 @@ pub fn shortcuts_dialog(s: &State, u: &Ui) -> Option<El> {
         col().grow(1.0).min_w(0.0).gap(16.0),
     ];
     for (index, (title, rows)) in groups.into_iter().enumerate() {
-        let group = shortcut_group(u, title, rows);
+        // A build without the agent has no Agent shortcut.
+        let rows: Vec<(&str, &str)> =
+            rows.iter().copied().filter(|(action, _)| crate::prefs::AGENT || *action != "Agent").collect();
+        let group = shortcut_group(u, title, &rows);
         // Pages fill the first column; Window the second; Installed and Lists share the third.
         let column = match index {
             1 => 1,

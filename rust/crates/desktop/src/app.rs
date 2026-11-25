@@ -328,6 +328,10 @@ impl State {
             screens::settings::open(self);
             return;
         }
+        // A build without the agent has no route to it: a shortcut or a link does nothing.
+        if !crate::prefs::AGENT && under_agent(screen) {
+            return;
+        }
         // A page turned off in Settings has no route: a shortcut or a link lands on Browse.
         let screen = if self.prefs.page_on(screen) { screen } else { Screen::Browse };
         // The mouse buttons walk this history; `shell::back` and `shell::forward` move it
@@ -533,7 +537,7 @@ impl State {
     /// Start the host the first time anything needs it.
     pub fn ensure_host(&mut self) {
         // Experimental and off by default: no host process unless the Agent flag is on.
-        if !self.host_started && (self.demo || self.prefs.flag("agent")) {
+        if !self.host_started && crate::prefs::AGENT && (self.demo || self.prefs.flag("agent")) {
             self.start_host();
         }
     }
@@ -550,6 +554,11 @@ impl State {
         // A headless render must not spawn the sidecar: its state would depend on
         // a local binary and the snapshot would not be reproducible.
         if rune::is_headless() {
+            self.agent = AgentLink::disconnected();
+            return;
+        }
+        // A build without the agent never starts its process.
+        if !crate::prefs::AGENT {
             self.agent = AgentLink::disconnected();
             return;
         }
@@ -2831,6 +2840,33 @@ pub fn scene_local_projects(s: &mut State) {
 pub fn scene_local_patches(s: &mut State) {
     s.screen = Screen::Patches;
 }
+
+/// Scenes that show the agent or a page under it (`under_agent`), or Models and sign-in. A build
+/// without the agent does not list them (`main::all_scenes`).
+pub const AGENT_SCENES: &[&str] = &[
+    "agent",
+    "demo-agent",
+    "agent-approval",
+    "toolchain",
+    "character",
+    "projects",
+    "index",
+    "patches",
+    "impact",
+    "release",
+    "release-verified",
+    "release-approval",
+    "release-confirm",
+    "settings-models",
+    "local",
+    "local-projects",
+    "local-patches",
+    "local-release",
+    "index-files",
+    "index-files-compare",
+    "project-tools",
+    "project-tools-install",
+];
 
 pub fn scenes() -> &'static [(&'static str, fn(&mut State))] {
     &[

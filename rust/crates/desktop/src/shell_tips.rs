@@ -296,7 +296,7 @@ pub fn view(s: &State, u: &Ui, in_settings: bool) -> Option<El> {
 // --- the experimental tour ------------------------------------------------------------------
 
 /// One stop: a title, what it does, and the switch it is about (None for the intro and end).
-struct Stop {
+pub struct Stop {
     title: &'static str,
     body: &'static str,
     flag: Option<&'static str>,
@@ -325,6 +325,11 @@ const TOUR: [Stop; 4] = [
     },
 ];
 
+/// The tour's stops in this build: the Agent's stop only when the build has the agent.
+pub fn tour_stops() -> Vec<&'static Stop> {
+    TOUR.iter().filter(|stop| crate::prefs::AGENT || stop.flag != Some(crate::prefs::AGENT_FLAG)).collect()
+}
+
 pub fn open_tour(st: &mut State) {
     st.shell.tips.tour = Some(0);
     options::edit_quiet(|o| o.tour_seen = true);
@@ -339,12 +344,13 @@ pub fn on_experimental(st: &mut State) {
 
 pub fn tour(s: &State, u: &Ui) -> Option<El> {
     let at = s.shell.tips.tour?;
-    let stop = TOUR.get(at)?;
-    let last = at + 1 == TOUR.len();
+    let stops = tour_stops();
+    let stop = *stops.get(at)?;
+    let last = at + 1 == stops.len();
     let mut body = col()
         .w_full()
         .gap(10.0)
-        .child(text(fill(tr("Step {} of {}"), &[&(at + 1).to_string(), &TOUR.len().to_string()])).font(SMALL).color(u.muted))
+        .child(text(fill(tr("Step {} of {}"), &[&(at + 1).to_string(), &stops.len().to_string()])).font(SMALL).color(u.muted))
         .child(text(tr(stop.title)).font(H1).color(u.ink))
         .child(text(tr(stop.body)).font(BODY).color(u.muted).wrap());
     if let Some(flag) = stop.flag {

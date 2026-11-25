@@ -19,6 +19,14 @@ use crate::ui::Theme;
 
 pub const FILE_NAME: &str = "settings.json";
 
+/// Whether this build carries the mod agent: the Agent page and the pages under it, Models and
+/// sign-in, the agent's rows in Settings and its host process. Off unless built with the cargo
+/// feature `agent` (ROADMAP.md). Off, the stored `agent` switch is kept but reads false.
+pub const AGENT: bool = cfg!(feature = "agent");
+
+/// The flag id of the Agent switch in Settings > Experimental.
+pub const AGENT_FLAG: &str = "agent";
+
 /// The interface sizes offered, as a page zoom.
 pub const ZOOMS: [f32; 4] = [0.9, 1.0, 1.1, 1.25];
 
@@ -330,6 +338,11 @@ pub const VIEW_FLAGS: [Flag; 1] = [Flag {
     default: false,
 }];
 
+/// The experimental switches this build offers: `FLAGS` without the Agent unless the build has it.
+pub fn experimental_flags() -> impl Iterator<Item = &'static Flag> {
+    FLAGS.iter().filter(|f| AGENT || f.id != AGENT_FLAG)
+}
+
 fn flag_default(id: &str) -> Option<bool> {
     FLAGS
         .iter()
@@ -592,6 +605,11 @@ impl Prefs {
 
     /// A flag: the user's choice, else its default.
     pub fn flag(&self, id: &str) -> bool {
+        // A build without the agent reads its switch as off; the stored value stays for a build
+        // that has it.
+        if id == AGENT_FLAG && !AGENT {
+            return false;
+        }
         self.flags
             .get(id)
             .copied()
@@ -601,6 +619,11 @@ impl Prefs {
     /// Is this page shown? Pages outside `PAGES` always are, and "Mods only" hides every
     /// page that is in it.
     pub fn page_on(&self, screen: Screen) -> bool {
+        // The Agent and the pages under it exist only while its switch is on (and only in a
+        // build that has it).
+        if crate::app::under_agent(screen) {
+            return self.flag(AGENT_FLAG);
+        }
         // Custom maps is an experimental flag, not a page switch: off until turned on.
         if screen == Screen::Maps {
             return self.flag("custom_maps") && !self.flag(MODS_ONLY);
@@ -613,6 +636,9 @@ impl Prefs {
 
     /// Flip a flag, dropping the entry when it matches the default.
     pub fn toggle_flag(&mut self, id: &str) {
+        if id == AGENT_FLAG && !AGENT {
+            return;
+        }
         let on = !self.flag(id);
         let default = flag_default(id).unwrap_or(false);
         if on == default {

@@ -4,6 +4,11 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[features]
+# The mod agent (Agent page, Models and sign-in, the agent host process). Off in release builds:
+# it is not verified end to end yet (ROADMAP.md). `cargo run -p dah-desktop --features agent`.
+agent = []
+
 [dependencies]
 rune = { path = "../../../vendor/rune/crates/rune", features = ["tooling", "native-file-dialog"] }
 deadlock-core = { path = "../deadlock-core" }
