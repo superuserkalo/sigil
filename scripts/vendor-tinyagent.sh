@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# TinyAgent is not published to npm. Pin a revision, vendor it, and build the
-# TypeScript package so the agent host can depend on it without a registry.
+# TinyAgent is not published to npm. Pin a revision and vendor it: its TypeScript implementation
+# is the reference that the Rust port in rust/crates/tinyagent is kept in sync with. Nothing builds
+# or links it.
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
@@ -28,10 +29,3 @@ if [[ ! -d "$DEST/.git" ]]; then
   echo "tinyagent vendored at $REV"
 fi
 
-cd "$DEST/tinyagents/typescript"
-
-if [[ ! -f dist/sdk.js ]]; then
-  npm install --ignore-scripts --no-audit --no-fund
-  npm run build
-  echo "tinyagent TypeScript SDK built"
-fi

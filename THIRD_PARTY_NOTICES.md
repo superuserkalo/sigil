@@ -152,14 +152,9 @@ for redistribution.
 **TinyAgent**
 - Source: https://github.com/superuserkalo/tinyagent
 - License: MIT, Copyright (c) 2026 superuserkalo
-- Use: agent host. Durable sessions, pause and resume, hooks and provider access. Vendored at a
-  pinned revision by `scripts/vendor-tinyagent.sh`. The Rust implementation is not the host yet.
-
-**Pi Durable, Pi AI, Pi Schema, Chord**
-- Source: https://github.com/earendil-works/pi
-- License: MIT
-- Use: legacy agent host in `packages/harness` during the TinyAgent port. Not a target dependency.
-  Remove this entry when the package is deleted.
+- Use: agent host. Durable sessions, pause and resume, hooks and provider access. Ported to Rust
+  in `rust/crates/tinyagent` and run as `Sigil agent-host`; the TypeScript implementation is
+  vendored at a pinned revision by `scripts/vendor-tinyagent.sh` as the reference the port follows.
 
 ## Deadlock tooling
 
@@ -241,5 +236,5 @@ for redistribution.
 
 ## Test and build dependencies
 
-Development dependencies (TypeScript, tsx, Node types) keep their own licenses as declared in
-`node_modules`. They are not shipped in the app runtime.
+Development dependencies (the Worker's TypeScript, Wrangler and Vitest in `services/telemetry`)
+keep their own licenses as declared in its `node_modules`. They are not shipped in the app runtime.
