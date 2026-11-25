@@ -1,60 +1,67 @@
-# Deadlock Agent Harness
+# Sigil (Deadlock Agent Harness)
 
-Desktop workbench where an AI coding agent builds, packs, validates and installs Deadlock mods.
-The desktop UI is native Rust with Rune. The agent host is TinyAgent. Model access is BYOK.
+Sigil is a desktop mod manager for Deadlock: Browse and install from GameBanana, Installed with load
+order and overlaps, launch modded or vanilla with the `gameinfo.gi` fix, Locker, Crosshair,
+Profiles, Autoexec, Performance, Stats and Servers. The desktop UI is native Rust with Rune. An
+experimental agent workbench (TinyAgent, BYOK models) sits behind Settings > Experimental > Agent.
+"Deadlock Agent Harness" is the original project name; it survives in crate names and the data
+folder (`DeadlockAgentHarness`).
 
-Status: pre-alpha. The native Rust core, Rune app and CLI are in progress. The TinyAgent host, game
-discovery, VPK indexing and payload validation exist. Nothing writes to a game install yet.
+Status: released for Windows 10 and 11 x64 (0.1.42 on 2026-11-25), with a per-user installer and
+signed self-updates. The app writes to the game install on the player's actions (install, toggle,
+load order, `gameinfo.gi`, autoexec, launch). Agent tools still never do. Rows not yet verified on a
+real Windows install are listed in `docs/runbooks/windows.md`.
 
 ## Read first
 
 1. `CONTEXT.md` for the product vocabulary. Use those words in code, docs and UI.
 2. `docs/architecture.md` for boundaries, tool catalog, safety model and roadmap.
 3. `docs/research/deadlock-modding.md` for how mods actually load. This is the domain ground truth.
-4. `docs/research/pi-durable.md` for the runtime this is built on.
+4. `docs/decisions/0007-tinyagent-host.md` for the agent runtime (`docs/research/pi-durable.md` is
+   the superseded Pi Durable record).
 5. `docs/decisions/` before changing a boundary that is hard to reverse.
 
 ## Repository layout
 
 ```text
-apps/cli/                 dah command: doctor, models, auth, chat, index, find, extract
-rust/crates/deadlock-core  Rust domain core: discovery, VPK, catalog, project, patches, impact
-rust/crates/dah-rs        native Rust CLI
+rust/crates/desktop       the Sigil app (Rune); also runs as `Sigil cli` and `Sigil agent-host`
+rust/crates/deadlock-core Rust domain core: discovery, VPK, installs, load order, launch, catalog,
+                          crosshair, stats, servers, telemetry client
+rust/crates/sigil-viewer  3D viewer (wgpu)
+rust/crates/dah-rs        native Rust CLI (folded into the app as `cli`)
 rust/crates/tinyagent     Rust TinyAgent v2 port
-rust/crates/agent-host    Rust TinyAgent JSONL host (dah-agent)
-rust/crates/desktop       native Rune desktop workbench
-packages/harness/         legacy Pi Durable session, BYOK catalog, credential store
-packages/deadlock-tools/  game discovery, VPK payload rules, agent tools (during the port)
+rust/crates/agent-host    Rust TinyAgent JSONL host (dah-agent; folded in as `agent-host`)
+services/telemetry/       Sigil's Cloudflare Worker: opt-in telemetry, catalog index, crosshairs
+site/                     the sigilmods.app website (static, deployed on Vercel)
+apps/, packages/          legacy TypeScript CLI, agent host and Pi Durable harness, reference only
 docs/                     tracked project docs (architecture, decisions, research, runbooks)
-scripts/                  test dispatch, Grimoire and Rune vendoring
-vendor/                   local Rune and Grimoire checkouts, gitignored
+scripts/                  vendoring, packaging, installer, release signing, legacy test dispatch
+vendor/                   local Rune, TinyAgent and Grimoire checkouts, gitignored
 .scratch/                 local specs, issues, worktrees, throwaway output, gitignored
 ```
 
-The desktop app is not checked in yet. `pnpm vendor` clones Grimoire and grimoire-social side by
-side into `vendor/` so their workspace link resolves. Treat those checkouts as upstream until the
-fork is created; do not edit them in place without recording the patch.
+`pnpm vendor` clones Grimoire and grimoire-social into `vendor/`; Grimoire is a domain reference
+and the source of the Locker art (`scripts/pack-locker-art.sh`). Do not edit those checkouts in
+place without recording the patch.
 
 ## Commands
 
 ```bash
-pnpm install
-pnpm typecheck                 # every workspace package
-pnpm test                      # typecheck then node --test over packages/*/test
-pnpm dah doctor                # game install, gameinfo, addon slots, providers
-pnpm dah models                # configured providers and available models
-pnpm dah auth set anthropic   # prompts for a key, stores it outside the repo
-pnpm dah chat "recolor ..."    # one agent run in the local workspace
-pnpm vendor                    # clone Grimoire and grimoire-social into vendor/
-pnpm vendor:rune               # clone the pinned Rune revision into vendor/rune
+pnpm vendor:rune               # clone the pinned Rune revision into vendor/rune (needed to build)
+pnpm vendor                    # clone Grimoire and grimoire-social into vendor/ (Locker art)
 pnpm rust:check                # cargo check the Rust workspace
-pnpm rust:app                  # run the Rune desktop workbench
+pnpm rust:app                  # run the Rune desktop app
 pnpm rust:dah -- doctor        # run the native CLI
-pnpm rust:agent               # run the Rust TinyAgent host
+pnpm rust:agent                # run the Rust TinyAgent host
+(cd rust && cargo test -p dah-desktop -p deadlock-core)   # the tests that matter for the app
+(cd services/telemetry && npm test)                       # the Worker tests (vitest)
+scripts/package-windows.sh     # Windows x64 Sigil.exe and zip via cargo-xwin
+scripts/package-installer.sh <Sigil.exe> <version> <out>  # Sigil-Setup.exe via NSIS
+pnpm test                      # legacy TypeScript packages only (what CI runs)
 ```
 
-Node 24 or newer. pnpm 10. Rust 1.99.1 for the native workspace. The repo has no TypeScript build
-step yet: it runs through `tsx` or Node type stripping.
+Rust 1.99.1 (pinned in `rust/rust-toolchain.toml`). Node 24 and pnpm 10 for the scripts, the Worker
+and the legacy TypeScript packages, which run through `tsx` or Node type stripping.
 
 ## Hard rules
 
@@ -70,8 +77,9 @@ These are product constraints, not preferences.
   "don't ask again" and one-click actions are fine.
 - The desktop UI is native Rust with Rune. Do not introduce an Electron renderer or a browser web
   view as the app shell. See `docs/decisions/0006-native-rust-rune-desktop.md`.
-- TinyAgent remains the agent host in a Node sidecar until the Rust implementation reaches protocol
-  v2 with durable sessions, pause and resume. The UI never runs agent tools in its render loop.
+- TinyAgent is the agent host and runs as its own child process: the Rust protocol v2 host
+  (`Sigil agent-host`), not a Node sidecar (ADR 0007, ADR 0010). The UI never runs agent tools in
+  its render loop.
 - BYOK keys live in the Rust app and never enter the UI transcript, tool output, logs or a commit.
   The CLI store is `chmod 600`; the desktop store uses the OS keychain.
 - Nothing leaves the machine without the player's yes (for product data: the Share answer or the
@@ -103,7 +111,7 @@ These are product constraints, not preferences.
 
 ## Agent runtime
 
-`rust/crates/agent-host` runs TinyAgent v2 as a local sidecar (`dah-agent`):
+`rust/crates/agent-host` runs TinyAgent v2 as a local child process (`dah-agent`):
 
 - One durable session per mod project. The root session is the general workbench. Sessions are
   JSONL journals under the app data directory.

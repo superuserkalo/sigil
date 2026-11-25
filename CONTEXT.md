@@ -1,11 +1,12 @@
-# Deadlock Agent Harness
+# Sigil (Deadlock Agent Harness)
 
-A workbench where an agent turns a mod idea into a validated, installable Deadlock mod.
+A Deadlock mod manager, with an experimental workbench where an agent turns a mod idea into a
+validated, installable mod. The terms below are the domain and workbench vocabulary.
 
 ## Language
 
 **Mod**:
-A VPK placed in the game's addon folder that replaces game files by exact path. Cosmetic only.
+A VPK placed in the game's addon folder that replaces game files by exact path.
 _Avoid_: addon, package, asset pack
 
 **Addon**:
@@ -13,11 +14,14 @@ The game-side container concept and folder (`citadel/addons`). An addon slot is 
 _Avoid_: mod, when the file or slot is what is meant
 
 **Addon slot**:
-One numbered file `pak01_dir.vpk` through `pak99_dir.vpk`. Lower numbers win when mods collide.
+One numbered file `pak01_dir.vpk` through `pak99_dir.vpk` in a folder. Sigil adds
+`citadel/sigil-addons2` to `sigil-addons10` for slots 100 to 990. Lower numbers win when mods
+collide.
 _Avoid_: load order entry, index
 
 **Payload**:
-The exact set of paths and bytes that go inside a mod VPK. Only compiled `_c` files belong here.
+The exact set of paths and bytes that go inside a mod VPK. Normally only compiled `_c` files; the
+validator flags anything else, and the app shows that check rather than enforcing a rule (ADR 0011).
 _Avoid_: contents, package
 
 **Staging folder**:
@@ -116,5 +120,6 @@ Copying a validated VPK into a chosen addon slot, with approval.
 _Avoid_: install, publish
 
 **Publish**:
-Preparing and uploading a release to a mod host such as GameBanana, with approval.
+Preparing a release and handing it to GameBanana's submission page in the browser, with approval.
+Sigil records and verifies the submission URL; it never uploads or touches the account (ADR 0008).
 _Avoid_: deploy, share
