@@ -63,6 +63,7 @@ Set lines, gap, dot and colour over a game scene, then apply it to your autoexec
 - [How to install Deadlock mods](https://sigilmods.vercel.app/how-to-install-deadlock-mods): The addons folder, VPK names and gameinfo.gi
 - [Mods not working after an update](https://sigilmods.vercel.app/deadlock-mods-not-working-after-update): gameinfo.gi resets and moved game files
 - [Questions and answers](https://sigilmods.vercel.app/faq): Cost, safety, updates, data and more
+- [Contact and support](https://sigilmods.vercel.app/contact): Report a bug, ask a question, suggest a change
 
 ## How it keeps your game working
 
