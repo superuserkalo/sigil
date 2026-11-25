@@ -10,6 +10,10 @@
 //! `deadlock_core::crosshair::builtin_presets` and the player's own, saved as JSON in the app
 //! data directory. A preset only loads into the editor; writing to the game stays the Apply
 //! step with its confirm. Import reads a pasted share code or console commands.
+//!
+//! A two-way switch beside them opens the Community shelf (`crosshair_community.rs`): the
+//! community crosshair library as the same tiles, loaded the same way, plus Publish and Remove
+//! from library for the player's own saved presets.
 
 use std::time::{Duration, Instant};
 
@@ -28,6 +32,8 @@ use crate::screens::settings::i18n::fill;
 mod de;
 #[path = "crosshair_game.rs"]
 pub mod game;
+#[path = "crosshair_community.rs"]
+pub mod community;
 
 /// The UI text in the player's language: this page's German table first, then Sigil's.
 fn tr(text: &str) -> &str {
@@ -135,6 +141,12 @@ pub enum PresetDialog {
     Delete(String),
     /// Paste a share code or console commands.
     Import { input: TextEdit, error: Option<String> },
+    /// Publish the saved preset with this id to the community library.
+    Publish {
+        preset: String,
+        name: TextEdit,
+        error: Option<String>,
+    },
 }
 
 /// The decoded scene captures and their thumbnails.
@@ -181,6 +193,10 @@ pub struct View {
     /// What the game has now: the crosshair last applied or read from the game. Apply is
     /// disabled while the editor matches it. None when Sigil does not know.
     pub applied: Option<Crosshair>,
+    /// Presets or Community under the stage.
+    pub shelf: community::Shelf,
+    /// The community library: its cached pages, jobs and local store.
+    pub community: community::Community,
 }
 
 impl Default for View {
@@ -209,6 +225,8 @@ impl Default for View {
             confirm_remove: false,
             console_open: false,
             applied: None,
+            shelf: community::Shelf::default(),
+            community: community::Community::default(),
         }
     }
 }
@@ -226,8 +244,10 @@ const SANDBOX_THUMB: &[u8] = include_bytes!("../../assets/crosshair/sandbox-thum
 /// with `FIT_MARGIN` to spare, so 1x is always true scale.
 const STAGE_MIN: f32 = 220.0;
 const COLUMN_W: f32 = 320.0;
-/// The presets block under the stage: header 24, gap 8, strip 88.
-const PRESETS_H: f32 = 120.0;
+/// The presets block under the stage: header 32 (the Presets and Community switch), gap 8,
+/// strip 104 (a community tile's art, name and uses line).
+const PRESETS_H: f32 = 144.0;
+const STRIP_H: f32 = 104.0;
 const ZOOM_STEPS: [f32; 6] = [0.5, 0.75, 1.0, 1.5, 2.0, 3.0];
 const ZOOM_ONE: usize = 2;
 /// The reticle is scaled to fit the stage up to this zoom and clipped beyond it.
@@ -323,6 +343,7 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
         changed = true;
     }
     changed |= poll_hero_write(s);
+    changed |= community::poll(s);
     if let Some((_, at)) = s.crosshair.copied
         && at.elapsed() >= COPIED_FOR
     {
@@ -526,7 +547,7 @@ fn stage_w() -> f32 {
 /// The stage's height: the window less the chrome, the toolbar and the presets strip.
 fn stage_h() -> f32 {
     let (_, h) = crate::ui::window();
-    // Titlebar 32, status bar 24, page top 12, toolbar 32, gap 16, gap 16, presets 120,
+    // Titlebar 32, status bar 24, page top 12, toolbar 32, gap 16, gap 16, presets 144,
     // bottom 16.
     (h - 32.0 - 24.0 - 12.0 - 32.0 - 16.0 - 16.0 - PRESETS_H - 16.0).max(STAGE_MIN)
 }
@@ -1116,6 +1137,8 @@ fn toggle_hero_settings(st: &mut State) {
 /// After a crosshair is applied with the switch on, the hero settings get it too.
 pub fn after_apply(st: &mut State) {
     st.crosshair.applied = Some(st.crosshair.settings.clone());
+    // An unchanged library crosshair counts one use, fire and forget.
+    community::after_apply(st);
     if crate::screens::settings::options::get().crosshair_hero_settings {
         start_hero_write(st, true);
     }
@@ -1599,6 +1622,11 @@ fn console_popover(s: &State, u: &Ui) -> El {
 
 /// The console popover, mounted at the root without a dimming layer. A press outside closes it.
 pub fn overlay(s: &State, u: &Ui) -> Option<El> {
+    if s.screen == Screen::Crosshair
+        && let Some(menu) = community::menu(s, u)
+    {
+        return Some(menu);
+    }
     (s.crosshair.console_open && s.screen == Screen::Crosshair).then(|| {
         u.popover_layer(
             "crosshair-console-layer",
@@ -1612,6 +1640,9 @@ pub fn overlay(s: &State, u: &Ui) -> Option<El> {
 pub fn dialog(s: &State, u: &Ui) -> Option<El> {
     if s.crosshair.confirm_remove {
         return Some(remove_dialog(u));
+    }
+    if let Some(d) = community::report_dialog(s, u) {
+        return Some(d);
     }
     if !s.crosshair.pending {
         if let Some(d) = preset_dialog(s, u) {
@@ -1754,6 +1785,7 @@ fn load_builtin(st: &mut State, id: &'static str) {
     };
     st.crosshair.source = preset.name.to_string();
     st.crosshair.chosen = Some(Chosen::Builtin(id));
+    st.crosshair.community.loaded = None;
     st.crosshair.log = None;
     st.crosshair.tone = Tone::Quiet;
 }
@@ -1765,6 +1797,7 @@ fn load_saved(st: &mut State, id: &str) {
     st.crosshair.settings = preset.settings.clone();
     st.crosshair.source = preset.name.clone();
     st.crosshair.chosen = Some(Chosen::Saved(id.to_string()));
+    st.crosshair.community.loaded = None;
     st.crosshair.log = None;
     st.crosshair.tone = Tone::Quiet;
 }
@@ -1810,6 +1843,7 @@ fn presets_section(s: &State, u: &Ui) -> El {
                 }
             },
         ))
+        .child(community::publish_control(s, u))
         .child(
             u.icon_action(&icons::PLUS, tr("Save current"), ActionKind::Ghost)
                 .h(24.0)
@@ -1847,30 +1881,56 @@ fn presets_section(s: &State, u: &Ui) -> El {
     for preset in &v.presets {
         let id = preset.id.clone();
         let on = preset.settings == v.settings;
+        let mark = community::published(s, &id).map(|_| community::published_mark(u));
         grid = grid.child(
-            tile(u, format!("crosshair-saved-{id}"), &preset.name, &preset.settings, on)
+            tile_with(u, format!("crosshair-saved-{id}"), &preset.name, &preset.settings, on, mark)
                 .on_press(move |st: &mut State| load_saved(st, &id)),
         );
     }
+
+    let community = v.shelf == community::Shelf::Community;
+    let (trailing, strip, strip_key) = if community {
+        (community::sort_control(s, u), community::strip(s, u), "crosshair-community-strip")
+    } else {
+        (trailing, grid, "crosshair-presets-strip")
+    };
+    let switch = segmented(
+        u,
+        "crosshair-shelf",
+        "Presets or community",
+        &[tr("Presets"), tr("Community")],
+        usize::from(community),
+        false,
+        |st: &mut State, index| {
+            if index == 0 {
+                st.crosshair.shelf = community::Shelf::Presets;
+                st.crosshair.community.menu = None;
+            } else {
+                community::open(st);
+            }
+        },
+    )
+    .w(208.0);
 
     col()
         .key("crosshair-presets-block")
         .w_full()
         .h(PRESETS_H)
         .gap(8.0)
-        .child(u.section_head(tr("Presets"), None, Some(trailing)))
+        .child(row().w_full().h(32.0).gap(8.0).center_y().child(switch).child(spacer()).child(trailing))
         .child(
-            u.scroll_area_x(el().key("crosshair-presets-strip")
+            // One strip that scrolls sideways and never wraps, a fixed height.
+            u.scroll_area_x(el().key(strip_key)
                 .w_full()
-                .h(88.0)
+                .h(STRIP_H)
                 .scroll_x()
-                .child(grid)),
+                .child(strip.transition(crate::motion::page_enter()))),
         )
 }
 
-/// One preset: the reticle on the stage's dark ground, fitted to the tile, and its name.
-fn tile(u: &Ui, key: String, name: &str, c: &Crosshair, on: bool) -> El {
-    let art = el()
+/// A tile's art: the reticle on the stage's dark ground, fitted to the tile, ringed when on.
+fn tile_art(u: &Ui, c: &Crosshair, on: bool) -> El {
+    el()
         .size(TILE, TILE)
         .radius(crate::ui::r(4.0))
         .clip_rounded(crate::ui::r(4.0))
@@ -1883,7 +1943,17 @@ fn tile(u: &Ui, key: String, name: &str, c: &Crosshair, on: bool) -> El {
                 .border(1.0, if on { u.ink } else { u.hair })
                 .hover(Color::WHITE.alpha(0.05))
                 .a11y_hidden(),
-        );
+        )
+}
+
+/// One preset: its art and its name.
+fn tile(u: &Ui, key: String, name: &str, c: &Crosshair, on: bool) -> El {
+    tile_with(u, key, name, c, on, None)
+}
+
+/// A preset tile with an optional mark over the art's corner.
+fn tile_with(u: &Ui, key: String, name: &str, c: &Crosshair, on: bool, mark: Option<El>) -> El {
+    let art = tile_art(u, c, on).children(mark);
     // The tile is wider than its art so names like "Cross and dot" fit on one line.
     col()
         .key(key)
@@ -1947,7 +2017,9 @@ fn close_preset_dialog(st: &mut State) {
 
 fn set_dialog_error(st: &mut State, message: String) {
     match st.crosshair.preset_dialog.as_mut() {
-        Some(PresetDialog::Name { error, .. }) | Some(PresetDialog::Import { error, .. }) => {
+        Some(PresetDialog::Name { error, .. })
+        | Some(PresetDialog::Import { error, .. })
+        | Some(PresetDialog::Publish { error, .. }) => {
             *error = Some(message)
         }
         _ => {}
@@ -2067,7 +2139,7 @@ fn preset_dialog(s: &State, u: &Ui) -> Option<El> {
                 .find(|preset| &preset.id == id)
                 .map(|preset| preset.name.clone())
                 .unwrap_or_default();
-            Some(delete_dialog(u, &name))
+            Some(delete_dialog(u, &name, community::published(s, id).is_some()))
         }
         PresetDialog::Import { input, error } => Some(import_dialog(
             s,
@@ -2075,6 +2147,9 @@ fn preset_dialog(s: &State, u: &Ui) -> Option<El> {
             input,
             error.as_deref(),
         )),
+        PresetDialog::Publish { name, error, .. } => {
+            Some(community::publish_dialog(s, u, name, error.as_deref()))
+        }
     }
 }
 
@@ -2173,7 +2248,7 @@ fn name_dialog(u: &Ui, renaming: bool, name: &TextEdit, error: Option<&str>) -> 
     )
 }
 
-fn delete_dialog(u: &Ui, name: &str) -> El {
+fn delete_dialog(u: &Ui, name: &str, published: bool) -> El {
     let confirm = u
         .action("Delete", ActionKind::Danger)
         .key("crosshair-preset-delete-confirm")
@@ -2192,6 +2267,12 @@ fn delete_dialog(u: &Ui, name: &str) -> El {
                     .color(u.muted)
                     .wrap(),
             )
+            .children(published.then(|| {
+                text(tr("It stays in the community library. Use Remove from library first to take it down."))
+                    .font(BODY)
+                    .color(u.muted)
+                    .wrap()
+            }))
             .child(buttons(u, None, confirm)),
     )
 }

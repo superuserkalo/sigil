@@ -85,6 +85,53 @@ pub const DE: &[(&str, &str)] = &[
     ("The Crosshair page is off, so the game keeps the crosshair you set in game.", "Die Fadenkreuz-Seite ist aus, daher behält das Spiel das Fadenkreuz, das du im Spiel eingestellt hast."),
     ("Could not take the crosshair out of autoexec", "Das Fadenkreuz konnte nicht aus autoexec entfernt werden"),
     ("autoexec.cfg still sets the crosshair Sigil wrote, so the game resets your in-game crosshair at every start.", "autoexec.cfg setzt noch das Fadenkreuz, das Sigil geschrieben hat, daher setzt das Spiel dein im Spiel eingestelltes Fadenkreuz bei jedem Start zurück."),
+    ("1 use", "1 Nutzung"),
+    ("{} uses", "{} Nutzungen"),
+    ("by Sigil", "von Sigil"),
+    ("Community", "Community"),
+    ("Could not remove it from the library", "Konnte nicht aus der Bibliothek entfernt werden"),
+    ("Could not save the library file.", "Die Bibliotheksdatei konnte nicht gespeichert werden."),
+    ("Everyone using Sigil can find it under Community.", "Alle, die Sigil nutzen, finden es unter Community."),
+    ("Everyone using Sigil will see this crosshair and its name. You can remove it from the library later.", "Alle, die Sigil nutzen, sehen dieses Fadenkreuz und seinen Namen. Du kannst es später wieder aus der Bibliothek entfernen."),
+    ("It stays in the community library. Use Remove from library first to take it down.", "Es bleibt in der Community-Bibliothek. Nutze zuerst Aus Bibliothek entfernen, um es herauszunehmen."),
+    ("Load into the editor", "In den Editor laden"),
+    ("Load more", "Mehr laden"),
+    ("Loading", "Wird geladen"),
+    ("Loading the library", "Bibliothek wird geladen"),
+    ("Most used", "Meistgenutzt"),
+    ("Name", "Name"),
+    ("Newest", "Neueste"),
+    ("No crosshairs in the library yet.", "Noch keine Fadenkreuze in der Bibliothek."),
+    ("Publish", "Veröffentlichen"),
+    ("Publish to the library", "In der Bibliothek veröffentlichen"),
+    ("Published to the library", "In der Bibliothek veröffentlicht"),
+    ("Published, but Sigil could not keep the removal key", "Veröffentlicht, aber Sigil konnte den Schlüssel zum Entfernen nicht speichern"),
+    ("Publishing", "Wird veröffentlicht"),
+    ("Remove from library", "Aus Bibliothek entfernen"),
+    ("Removed from the library", "Aus der Bibliothek entfernt"),
+    ("Removing", "Wird entfernt"),
+    ("Report", "Melden"),
+    ("Report this crosshair?", "Dieses Fadenkreuz melden?"),
+    ("Thanks", "Danke"),
+    ("That preset no longer exists.", "Diese Vorlage gibt es nicht mehr."),
+    ("The crosshair is hidden from your list.", "Das Fadenkreuz ist in deiner Liste ausgeblendet."),
+    ("The crosshair library needs a connection. Your presets still work.", "Die Fadenkreuz-Bibliothek braucht eine Verbindung. Deine Vorlagen funktionieren weiter."),
+    ("This crosshair is already in the library", "Dieses Fadenkreuz ist schon in der Bibliothek"),
+    ("Try again", "Erneut versuchen"),
+    ("{} is hidden from your list at once. Crosshairs that several players report are taken down for review.", "{} wird sofort aus deiner Liste ausgeblendet. Fadenkreuze, die mehrere Spieler melden, werden zur Prüfung herausgenommen."),
+    ("The crosshair library needs a connection.", "Die Fadenkreuz-Bibliothek braucht eine Verbindung."),
+    ("This crosshair is already in the library.", "Dieses Fadenkreuz ist schon in der Bibliothek."),
+    ("You can publish 3 crosshairs a day. Try again tomorrow.", "Du kannst 3 Fadenkreuze am Tag veröffentlichen. Versuch es morgen wieder."),
+    ("The library took all it can for today. Try again tomorrow.", "Die Bibliothek nimmt heute nichts mehr an. Versuch es morgen wieder."),
+    ("That name is not allowed. Pick another one.", "Dieser Name ist nicht erlaubt. Wähle einen anderen."),
+    ("Use 2 to 32 letters, digits, spaces or . - _ ' ! +", "Nutze 2 bis 32 Buchstaben, Ziffern, Leerzeichen oder . - _ ' ! +"),
+    ("The library refused one of this crosshair's settings.", "Die Bibliothek hat eine Einstellung dieses Fadenkreuzes abgelehnt."),
+    ("Too many requests. Wait a minute and try again.", "Zu viele Anfragen. Warte eine Minute und versuch es erneut."),
+    ("The library is full right now.", "Die Bibliothek ist gerade voll."),
+    ("That crosshair is no longer in the library.", "Dieses Fadenkreuz ist nicht mehr in der Bibliothek."),
+    ("The library did not accept the removal key for this crosshair.", "Die Bibliothek hat den Schlüssel zum Entfernen für dieses Fadenkreuz nicht angenommen."),
+    ("You reported 5 crosshairs today. Try again tomorrow.", "Du hast heute 5 Fadenkreuze gemeldet. Versuch es morgen wieder."),
+    ("The crosshair library is not answering. Try again later.", "Die Fadenkreuz-Bibliothek antwortet nicht. Versuch es später erneut."),
 ];
 
 pub fn get(text: &str) -> Option<&'static str> {
@@ -139,10 +186,23 @@ mod tests {
     #[test]
     fn every_routed_string_has_german() {
         let extra = ["Copying", "Copied", "Copy code", "Unpin the window", "Keep the window above other windows"];
+        // The library's messages come from deadlock-core and go through `tr` as values.
+        use deadlock_core::crosshair_library::{LibraryError as E, name_rule};
+        let library: Vec<String> = [
+            E::Offline, E::Duplicate(String::new()), E::PublishLimit, E::DailyLimit, E::BlockedName, E::BadName,
+            E::BadConfig(String::new()), E::RateLimited, E::LibraryFull, E::NotFound, E::WrongToken,
+            E::ReportLimit, E::NotConfigured, E::Failed(String::new()),
+        ]
+        .iter()
+        .map(E::message)
+        .chain([name_rule().to_string()])
+        .collect();
         let mut missing: Vec<String> = routed(include_str!("crosshair.rs"))
             .into_iter()
             .chain(routed(include_str!("crosshair_game.rs")))
+            .chain(routed(include_str!("crosshair_community.rs")))
             .chain(extra.iter().map(|text| text.to_string()))
+            .chain(library)
             .filter(|text| get(text).is_none())
             .collect();
         missing.sort();

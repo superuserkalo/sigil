@@ -2938,6 +2938,8 @@ pub fn scenes() -> &'static [(&'static str, fn(&mut State))] {
         ("crosshair-pinned", screens::crosshair::scene_pinned),
         ("crosshair-colour", screens::crosshair::scene_colour),
         ("crosshair-remove", screens::crosshair::scene_remove),
+        ("crosshair-community", screens::crosshair::community::scene_community),
+        ("crosshair-publish", screens::crosshair::community::scene_publish),
         ("stats", scene_stats),
         ("stats-profile", screens::stats::scene_profile),
         ("stats-drill", screens::stats::scene_drill),
