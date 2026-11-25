@@ -434,7 +434,9 @@ def faq_ld(items, pid):
 
 def faq_html(items, level=3):
     return "".join(
-        f'<div class="qa"><h{level}>{esc(q)}</h{level}><p>{inline(a)}</p></div>' for q, a, _ in items
+        f'<details class="qa"><summary><h{level}>{esc(q)}</h{level}>'
+        f'<span class="qa__mark" aria-hidden="true"></span></summary><p>{inline(a)}</p></details>'
+        for q, a, _ in items
     )
 
 
