@@ -169,7 +169,7 @@ fn month_year(ts: i64) -> String {
 }
 
 fn day(ts: i64) -> String {
-    super::store::date_input(ts)
+    crate::prefs::show_unix_date(ts)
 }
 
 fn stat(u: &Ui, label: &str, value: String) -> El {
@@ -441,7 +441,7 @@ mod tests {
     #[test]
     fn dates_read_in_utc() {
         assert_eq!(month_year(1_726_000_000), "Sep 2024");
-        assert_eq!(day(1_763_000_000), "2025-11-13");
+        assert_eq!(day(1_763_000_000), "13.11.2025");
     }
 
     #[test]

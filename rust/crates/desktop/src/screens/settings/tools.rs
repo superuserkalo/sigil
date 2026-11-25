@@ -209,7 +209,7 @@ pub fn backups_section(s: &State, u: &Ui) -> El {
         rows.push(setting_row(
             u,
             &format!("settings-snapshot-{index}"),
-            &snap.manifest.created_at.replace('T', " ").chars().take(16).collect::<String>(),
+            &crate::prefs::show_stamp(&snap.manifest.created_at),
             detail(
                 u,
                 &fill(

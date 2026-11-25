@@ -1472,7 +1472,7 @@ pub fn files_menu(s: &State, u: &Ui) -> Option<El> {
         let file_id = file.id;
         let mut detail = crate::model::format_size(file.size_bytes);
         if file.added_ts > 0 {
-            detail = format!("{detail} · {}", gamebanana::calendar_date(file.added_ts));
+            detail = format!("{detail} · {}", crate::prefs::show_local_date(file.added_ts));
         }
         items = items.child(
             row()

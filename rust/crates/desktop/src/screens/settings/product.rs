@@ -561,7 +561,7 @@ fn open_log(st: &mut State) {
                 .shared_log()
                 .iter()
                 .rev()
-                .map(|s| format!("{}  {}", s.when(), serde_json::to_string(&s.record).unwrap_or_default()))
+                .map(|s| format!("{}  {}", crate::prefs::show_stamp(&s.when()), serde_json::to_string(&s.record).unwrap_or_default()))
                 .collect()
         })
         .unwrap_or_default();

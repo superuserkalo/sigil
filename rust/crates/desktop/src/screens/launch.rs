@@ -505,11 +505,7 @@ fn game_panel(s: &State, u: &Ui, read: Option<&Read>, process: &GameProcess, run
                 None => line_text(
                     fill(
                         tr("Since {}. Restore before you change mods."),
-                        &[&format!(
-                            "{} {}",
-                            stash.created_at.chars().take(10).collect::<String>(),
-                            stash.created_at.chars().skip(11).take(5).collect::<String>()
-                        )],
+                        &[&crate::prefs::show_stamp(&stash.created_at)],
                     ),
                     u.muted,
                 ),

@@ -41,9 +41,11 @@ fn clock(secs: u64) -> String {
     format!("{}:{:02}", secs / 60, secs % 60)
 }
 
-/// "21 Nov, 18:02" from an RFC 3339 time.
+/// "21.11.2026 18:02" (the chosen date format, local time) from an RFC 3339 time.
 fn when(at: &str) -> String {
-    deadlock_core::benchmark::local_when(at)
+    deadlock_core::benchmark::local_unix(at)
+        .map(crate::prefs::show_local_stamp)
+        .unwrap_or_else(|| crate::prefs::show_stamp(at))
 }
 
 fn line(words: impl Into<String>, color: Color) -> El {

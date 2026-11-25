@@ -4552,39 +4552,18 @@ fn variant_slots<'a>(s: &'a State, id: u64) -> Vec<&'a AddonRow> {
 /// Slots with an update, in load order, not already queued or running.
 /// The notes and lists store (`mod_extras`), for the launch's random lists.
 /// When a slot's file was installed: the newest journal entry for the slot at this size, else
-/// the library entry's date. "Nov 17", with the year when it is not this year.
+/// the library entry's date, in the chosen date format.
 pub fn install_date(s: &State, addon: &AddonRow) -> Option<String> {
     // C16: slot and size, then size alone for a moved mod; a repaired file maps back first.
     let (bytes, _) = deadlock_core::compat_repair::original_of(&s.installed.updates.aliases, addon.size_bytes, None);
     let journal = deadlock_core::library_facts::install_date(&s.installed.updates.journal, addon.slot, bytes);
     let stamp = journal.or_else(|| meta_for(s, addon).map(|meta| meta.recorded_at.clone()))?;
-    short_date(&stamp, this_year())
+    short_date(&stamp)
 }
 
-fn this_year() -> i64 {
-    let secs = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0);
-    // Days to a civil year (Howard Hinnant's days_from_civil, inverted for the year only).
-    let days = secs.div_euclid(86_400) + 719_468;
-    let era = days.div_euclid(146_097);
-    let doe = days - era * 146_097;
-    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let month = if mp < 10 { mp + 3 } else { mp - 9 };
-    yoe + era * 400 + i64::from(month <= 2)
-}
-
-/// "Nov 17" from an RFC 3339 stamp, or "Nov 17, 2025" in another year.
-pub fn short_date(stamp: &str, year_now: i64) -> Option<String> {
-    let year: i64 = stamp.get(0..4)?.parse().ok()?;
-    let month: usize = stamp.get(5..7)?.parse().ok()?;
-    let day: u32 = stamp.get(8..10)?.parse().ok()?;
-    const MONTHS: [&str; 12] = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-    let name = tr(MONTHS.get(month.checked_sub(1)?)?);
-    Some(if year == year_now { format!("{name} {day}") } else { format!("{name} {day}, {year}") })
+/// The date of an RFC 3339 stamp in the chosen format (Settings > General > Dates).
+pub fn short_date(stamp: &str) -> Option<String> {
+    crate::prefs::show_stamp_date(stamp)
 }
 
 /// The picture a slot shows (its own image, else its GameBanana preview), for other pages:
@@ -5090,14 +5069,14 @@ fn trash_dialog(s: &State, u: &Ui) -> El {
             format!(
                 "{}  ·  {}",
                 crate::model::format_size(manifest.bytes),
-                manifest.trashed_at.get(..10).unwrap_or("")
+                crate::prefs::show_stamp_date(&manifest.trashed_at).unwrap_or_default()
             )
         } else {
             format!(
                 "Slot {:02}  ·  {}  ·  {}",
                 manifest.slot,
                 crate::model::format_size(manifest.bytes),
-                manifest.trashed_at.get(..10).unwrap_or("")
+                crate::prefs::show_stamp_date(&manifest.trashed_at).unwrap_or_default()
             )
         };
         let dir = entry.dir.clone();
@@ -5500,12 +5479,12 @@ mod w4a_tests {
     use super::*;
 
     #[test]
-    fn install_dates_read_short_with_the_year_only_when_it_differs() {
-        assert_eq!(short_date("2026-11-17T21:04:11Z", 2026).as_deref(), Some("Nov 17"));
-        assert_eq!(short_date("2025-03-02T09:00:00Z", 2026).as_deref(), Some("Mar 2, 2025"));
-        assert_eq!(short_date("", 2026), None);
-        assert_eq!(short_date("2026-13-01", 2026), None);
-        assert!(this_year() >= 2026);
+    fn install_dates_read_in_the_chosen_format() {
+        // The chosen date format; the default is day.month.year.
+        assert_eq!(short_date("2026-11-17T21:04:11Z").as_deref(), Some("17.11.2026"));
+        assert_eq!(short_date("2025-03-02T09:00:00Z").as_deref(), Some("02.03.2025"));
+        assert_eq!(short_date(""), None);
+        assert_eq!(short_date("2026-13-01"), None);
     }
 
     #[test]

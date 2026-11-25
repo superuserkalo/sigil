@@ -2996,27 +2996,9 @@ pub(crate) fn friendly(error: &str) -> String {
     trimmed.split(". ").next().unwrap_or(trimmed).trim_end_matches('.').to_string()
 }
 
-/// `2026-11-17T10:22:01.000Z` as `Nov 17`, with the year when it is not this year.
+/// `2026-11-17T10:22:01.000Z` as its date in the chosen format (Settings > General > Dates).
 pub fn short_date(iso: &str) -> String {
-    const MONTHS: [&str; 12] = [
-        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
-    ];
-    let year = iso.get(0..4).unwrap_or("");
-    let month = iso.get(5..7).and_then(|m| m.parse::<usize>().ok()).unwrap_or(0);
-    let day = iso.get(8..10).and_then(|d| d.parse::<u32>().ok()).unwrap_or(0);
-    if month == 0 || month > 12 || day == 0 {
-        return iso.to_string();
-    }
-    let this_year = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|age| 1970 + age.as_secs() / 31_556_952)
-        .unwrap_or(0)
-        .to_string();
-    if year == this_year {
-        format!("{} {day}", MONTHS[month - 1])
-    } else {
-        format!("{} {day}, {year}", MONTHS[month - 1])
-    }
+    crate::prefs::show_stamp_date(iso).unwrap_or_else(|| iso.to_string())
 }
 
 // ---------------------------------------------------------------------------

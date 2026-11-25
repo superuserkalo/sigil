@@ -399,8 +399,8 @@ pub fn details_dialog(s: &State, u: &Ui) -> Option<El> {
     if !l.version.is_empty() {
         facts.push(version_label(&l.version));
     }
-    if let Some(date) = l.updated_at.get(..10) {
-        facts.push(fill(tr("Updated {}"), &[date]));
+    if let Some(date) = crate::prefs::show_stamp_date(&l.updated_at) {
+        facts.push(fill(tr("Updated {}"), &[&date]));
     }
     c = c.child(text(facts.join(" · ")).font(SMALL).color(u.muted).wrap().w_full());
     if !l.tags.is_empty() {
@@ -466,8 +466,8 @@ pub fn details_dialog(s: &State, u: &Ui) -> Option<El> {
             Some(Ok(list)) => {
                 for (index, release) in list.iter().take(30).enumerate() {
                     let mut head = vec![if release.version.is_empty() { release.id.clone() } else { version_label(&release.version) }];
-                    if let Some(date) = release.published_at.get(..10) {
-                        head.push(date.to_string());
+                    if let Some(date) = crate::prefs::show_stamp_date(&release.published_at) {
+                        head.push(date);
                     }
                     if release.id == l.release_id {
                         head.push(tr("current").to_string());

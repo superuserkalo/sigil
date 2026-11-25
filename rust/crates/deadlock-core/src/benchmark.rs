@@ -336,6 +336,11 @@ pub fn now_rfc3339() -> String {
 }
 
 /// A stored time as the player reads it, in local time: `21 Nov, 18:02`.
+/// The Unix second of an RFC 3339 time, for callers that format it themselves.
+pub fn local_unix(at: &str) -> Option<i64> {
+    chrono::DateTime::parse_from_rfc3339(at).ok().map(|t| t.timestamp())
+}
+
 pub fn local_when(at: &str) -> String {
     chrono::DateTime::parse_from_rfc3339(at)
         .map(|t| t.with_timezone(&chrono::Local).format("%-d %b, %H:%M").to_string())

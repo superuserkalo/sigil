@@ -30,11 +30,7 @@ pub fn init_state() -> State {
     state.prefs = crate::prefs::Prefs::load();
     crate::prefs::apply_game_dir(&state.prefs);
     crate::ui::set_look(state.prefs.theme, state.prefs.accent_color());
-    state.screen = if state.prefs.page_on(state.prefs.startup) {
-        state.prefs.startup
-    } else {
-        crate::model::Screen::Browse
-    };
+    state.screen = state.prefs.opening_page();
     state.paths.data = data_dir().display().to_string();
     let game_root = apply_game_status(&mut state);
     crate::banner::check_now(&mut state);
@@ -717,8 +713,9 @@ fn review_warnings(check: &project::ProjectCheck) -> Vec<String> {
     warnings
 }
 
+/// A stamp's date (in the chosen format) and time; text that is not a stamp stays as it is.
 fn short_stamp(value: &str) -> String {
-    value.chars().take(16).collect::<String>().replace('T', " ")
+    crate::prefs::show_stamp(value)
 }
 
 // Library reads. Addon inventory, conflicts, the GameBanana page and the review
@@ -3349,7 +3346,7 @@ fn crash_advisory(
             .file_name()
             .map(|name| name.to_string_lossy().into_owned())
             .unwrap_or_default(),
-        when: deadlock_core::launch::clock_label(at_secs),
+        when: crate::prefs::show_local_stamp(at_secs),
         at_secs,
         exception: info.exception.map(game_session::exception_label),
         comment: info.comment,

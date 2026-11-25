@@ -737,8 +737,9 @@ fn scan_queue(st: &mut State) {
     crate::data::start_review_scan(st);
 }
 
+/// A stamp's date (in the chosen format) and time; text that is not a stamp stays as it is.
 fn short_stamp(value: &str) -> String {
-    value.chars().take(16).collect::<String>().replace('T', " ")
+    crate::prefs::show_stamp(value)
 }
 
 fn open_approval(st: &mut State) {

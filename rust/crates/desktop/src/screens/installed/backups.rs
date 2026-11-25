@@ -46,13 +46,9 @@ fn close(st: &mut State) {
     st.installed.backups = None;
 }
 
-/// "2026-11-18 14:05" from an RFC 3339 stamp.
+/// "18.11.2026 14:05" (in the chosen date format) from an RFC 3339 stamp.
 pub fn when(stamp: &str) -> String {
-    let date = stamp.get(..10).unwrap_or(stamp);
-    match stamp.get(11..16) {
-        Some(time) if stamp.as_bytes().get(10) == Some(&b'T') => format!("{date} {time}"),
-        _ => date.to_string(),
-    }
+    crate::prefs::show_stamp(stamp)
 }
 
 fn restore(st: &mut State, index: usize) {
@@ -231,8 +227,8 @@ mod tests {
 
     #[test]
     fn stamps_read_as_date_and_minute() {
-        assert_eq!(when("2026-11-18T14:05:33.120Z"), "2026-11-18 14:05");
-        assert_eq!(when("2026-11-18"), "2026-11-18");
+        assert_eq!(when("2026-11-18T14:05:33.120Z"), "18.11.2026 14:05");
+        assert_eq!(when("2026-11-18"), "18.11.2026");
         assert_eq!(when("bad"), "bad");
     }
 }

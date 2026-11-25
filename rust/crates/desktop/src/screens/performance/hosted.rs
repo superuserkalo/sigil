@@ -688,7 +688,7 @@ fn file_size(bytes: u64) -> String {
 }
 
 fn calendar(ts: i64) -> String {
-    deadlock_core::gamebanana::calendar_date(ts)
+    crate::prefs::show_local_date(ts)
 }
 
 /// A stand-in page and review for the headless scenes.

@@ -84,7 +84,7 @@ pub fn hidden_line(meta: Option<&HiddenMeta>, kind: &str) -> String {
     let Some(meta) = meta.filter(|meta| meta.hidden_at > 0) else {
         return tr(kind).to_string();
     };
-    let date = super::store::date_input(meta.hidden_at);
+    let date = crate::prefs::show_unix_date(meta.hidden_at);
     match &meta.from {
         Some((_, name)) if !name.is_empty() => fill(tr("Hidden {} from {}"), &[&date, name]),
         _ => fill(tr("Hidden {}"), &[&date]),
@@ -432,9 +432,9 @@ mod tests {
         let old = HiddenMeta::default();
         assert_eq!(hidden_line(Some(&old), "Hidden mod"), "Hidden mod", "no date kept: the kind");
         let meta = HiddenMeta { hidden_at: 1_763_683_200, ..HiddenMeta::default() };
-        assert_eq!(hidden_line(Some(&meta), "Creator"), "Hidden 2025-11-21");
+        assert_eq!(hidden_line(Some(&meta), "Creator"), "Hidden 21.11.2025");
         let from = HiddenMeta { from: Some((9, "Josuke Shiv".into())), ..meta };
-        assert_eq!(hidden_line(Some(&from), "Creator"), "Hidden 2025-11-21 from Josuke Shiv");
+        assert_eq!(hidden_line(Some(&from), "Creator"), "Hidden 21.11.2025 from Josuke Shiv");
     }
 
     #[test]

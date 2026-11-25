@@ -1547,6 +1547,17 @@ pub fn relative_age(ts: i64, now: i64) -> String {
 
 /// A calendar date in the local time zone, for example `Nov 16, 2026`. Empty
 /// when the feed gave no date.
+/// The local date and time (year, month, day, hour, minute) of a Unix second, for callers that
+/// format it themselves (the app's date setting). `None` for 0 or an out-of-range time.
+pub fn local_parts(ts: i64) -> Option<(i64, u32, u32, u32, u32)> {
+    use chrono::{Datelike, TimeZone, Timelike};
+    if ts <= 0 {
+        return None;
+    }
+    let value = chrono::Local.timestamp_opt(ts, 0).single()?;
+    Some((i64::from(value.year()), value.month(), value.day(), value.hour(), value.minute()))
+}
+
 pub fn calendar_date(ts: i64) -> String {
     use chrono::TimeZone;
     if ts <= 0 {

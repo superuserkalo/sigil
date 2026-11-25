@@ -86,7 +86,7 @@ pub(crate) fn file_card(s: &State, u: &Ui, d: &Details, file: &ModFile, _only: b
     let mut meta = vec![crate::model::format_size(file.size_bytes)];
     let downloads = crate::screens::settings::i18n::fill(super::super::tree::tr(if file.downloads == 1 { "{} download" } else { "{} downloads" }), &[&group_digits(file.downloads)]);
     // The date has its own column before the button, so it is never what truncates.
-    let date = if file.added_ts > 0 { gamebanana::calendar_date(file.added_ts) } else { String::new() };
+    let date = if file.added_ts > 0 { crate::prefs::show_local_date(file.added_ts) } else { String::new() };
     if lead != file.name {
         meta.push(file.name.clone());
     }
@@ -426,7 +426,7 @@ pub(crate) fn update_card(u: &Ui, d: &Details, update: &ModUpdate) -> El {
                 .center_y()
                 .child(icon(&CLOCK, 12.0).color(u.faint).a11y_hidden())
                 .child(
-                    text(gamebanana::calendar_date(update.added_ts))
+                    text(crate::prefs::show_local_date(update.added_ts))
                         .font(SMALL)
                         .color(u.faint),
                 ),
@@ -568,7 +568,7 @@ pub(crate) fn comments_section(s: &State, u: &Ui, d: &Details, profile: &ModProf
                                     )
                                     .child(icon(&CLOCK, 12.0).color(u.faint).a11y_hidden())
                                     .child(
-                                        text(gamebanana::calendar_date(comment.added_ts))
+                                        text(crate::prefs::show_local_date(comment.added_ts))
                                             .font(SMALL)
                                             .color(u.faint),
                                     ),

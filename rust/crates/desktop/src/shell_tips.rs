@@ -783,7 +783,7 @@ pub fn season_line(today: i64) -> String {
 
 fn date(days: i64) -> String {
     let (y, m, d) = crate::screens::settings::log::civil_date(days);
-    format!("{y}-{m:02}-{d:02}")
+    crate::prefs::show_date(y, m, d)
 }
 
 /// Turn this year's season off (DMM's dismiss), or bring it back.

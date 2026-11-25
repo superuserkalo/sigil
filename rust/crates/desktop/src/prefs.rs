@@ -30,15 +30,14 @@ pub const AGENT_FLAG: &str = "agent";
 /// The interface sizes offered, as a page zoom.
 pub const ZOOMS: [f32; 4] = [0.9, 1.0, 1.1, 1.25];
 
-/// Screens Sigil can open on.
-pub const STARTUP_SCREENS: [Screen; 6] = [
-    Screen::Browse,
-    Screen::Installed,
-    Screen::Downloads,
-    Screen::Locker,
-    Screen::Stats,
-    Screen::Agent,
-];
+/// A stored "Open on" page: any page the sidebar can show. One that is switched off now is kept
+/// as stored ([`Prefs::opening_page`] falls back to Browse until the player picks another).
+fn startup_from_key(id: &str) -> Option<Screen> {
+    crate::app::PLACES
+        .into_iter()
+        .chain([Screen::Maps, Screen::Agent])
+        .find(|screen| screen.key() == id)
+}
 
 /// What happens to Sigil once Steam has been asked to start the game.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
@@ -174,20 +173,23 @@ pub fn parse_hex(s: &str) -> Option<Color> {
     rune::color::hex(&format!("#{body}"))
 }
 
-/// How absolute dates read.
+/// How absolute dates read. The default is the European day.month.year.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum DateFormat {
     #[default]
+    DayDots,
     Iso,
     DayFirst,
     MonthFirst,
 }
 
 impl DateFormat {
-    pub const ALL: [DateFormat; 3] = [DateFormat::Iso, DateFormat::DayFirst, DateFormat::MonthFirst];
+    pub const ALL: [DateFormat; 4] =
+        [DateFormat::DayDots, DateFormat::Iso, DateFormat::DayFirst, DateFormat::MonthFirst];
 
     pub fn id(self) -> &'static str {
         match self {
+            DateFormat::DayDots => "dmy-dots",
             DateFormat::Iso => "iso",
             DateFormat::DayFirst => "dmy",
             DateFormat::MonthFirst => "mdy",
@@ -196,6 +198,7 @@ impl DateFormat {
 
     pub fn label(self) -> &'static str {
         match self {
+            DateFormat::DayDots => "17.11.2026",
             DateFormat::Iso => "2026-11-17",
             DateFormat::DayFirst => "17/11/2026",
             DateFormat::MonthFirst => "11/17/2026",
@@ -205,11 +208,96 @@ impl DateFormat {
     /// Format a civil date.
     pub fn format(self, y: i64, m: u32, d: u32) -> String {
         match self {
+            DateFormat::DayDots => format!("{d:02}.{m:02}.{y:04}"),
             DateFormat::Iso => format!("{y:04}-{m:02}-{d:02}"),
             DateFormat::DayFirst => format!("{d:02}/{m:02}/{y:04}"),
             DateFormat::MonthFirst => format!("{m:02}/{d:02}/{y:04}"),
         }
     }
+}
+
+/// The chosen date format for code that has no `State` at hand (rows built on a worker, core
+/// helpers). [`Prefs::load`] and [`edit`] keep it in step with the settings.
+/// Unit tests keep it per thread, so a test that loads real settings does not change another's.
+#[cfg(not(test))]
+static DATE_FORMAT: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+#[cfg(test)]
+thread_local! {
+    static DATE_FORMAT: std::cell::Cell<u8> = const { std::cell::Cell::new(0) };
+}
+
+pub fn set_date_format(format: DateFormat) {
+    let index = DateFormat::ALL.iter().position(|f| *f == format).unwrap_or(0) as u8;
+    #[cfg(not(test))]
+    DATE_FORMAT.store(index, std::sync::atomic::Ordering::Relaxed);
+    #[cfg(test)]
+    DATE_FORMAT.with(|f| f.set(index));
+}
+
+pub fn date_format() -> DateFormat {
+    #[cfg(not(test))]
+    let index = DATE_FORMAT.load(std::sync::atomic::Ordering::Relaxed);
+    #[cfg(test)]
+    let index = DATE_FORMAT.with(|f| f.get());
+    DateFormat::ALL[usize::from(index) % DateFormat::ALL.len()]
+}
+
+/// A civil date in the chosen format.
+pub fn show_date(y: i64, m: u32, d: u32) -> String {
+    date_format().format(y, m, d)
+}
+
+/// The date of a Unix second (UTC) in the chosen format.
+pub fn show_unix_date(secs: i64) -> String {
+    let (y, m, d) = civil_from_days(secs.div_euclid(86_400));
+    show_date(y, m, d)
+}
+
+/// The date of an RFC 3339 or ISO stamp (`2026-11-17T10:22:01Z`, `2026-11-17 10:22`,
+/// `2026-11-17`) in the chosen format. `None` when it does not start with a date.
+pub fn show_stamp_date(stamp: &str) -> Option<String> {
+    let y: i64 = stamp.get(0..4)?.parse().ok()?;
+    let m: u32 = stamp.get(5..7)?.parse().ok()?;
+    let d: u32 = stamp.get(8..10)?.parse().ok()?;
+    let dashes = stamp.get(4..5) == Some("-") && stamp.get(7..8) == Some("-");
+    (dashes && (1..=12).contains(&m) && (1..=31).contains(&d)).then(|| show_date(y, m, d))
+}
+
+/// The local calendar day of a Unix second in the chosen format; empty for 0.
+pub fn show_local_date(ts: i64) -> String {
+    deadlock_core::gamebanana::local_parts(ts).map(|(y, m, d, _, _)| show_date(y, m, d)).unwrap_or_default()
+}
+
+/// The local date (chosen format) and time of a Unix second; empty for 0.
+pub fn show_local_stamp(ts: i64) -> String {
+    deadlock_core::gamebanana::local_parts(ts)
+        .map(|(y, m, d, h, min)| format!("{} {h:02}:{min:02}", show_date(y, m, d)))
+        .unwrap_or_default()
+}
+
+/// [`show_stamp_date`] with the stamp's hours and minutes after it, as written (UTC for `Z`
+/// stamps). A stamp that is not a date comes back as it is.
+pub fn show_stamp(stamp: &str) -> String {
+    let Some(date) = show_stamp_date(stamp) else {
+        return stamp.to_string();
+    };
+    match stamp.get(11..16).filter(|t| t.as_bytes().get(2) == Some(&b':')) {
+        Some(time) => format!("{date} {time}"),
+        None => date,
+    }
+}
+
+/// Days since 1970-01-01 to a civil date (Howard Hinnant's civil_from_days).
+fn civil_from_days(z: i64) -> (i64, u32, u32) {
+    let z = z + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = (doy - (153 * mp + 2) / 5 + 1) as u32;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 } as u32;
+    (yoe + era * 400 + i64::from(m <= 2), m, d)
 }
 
 /// Which releases the update check reads.
@@ -432,7 +520,7 @@ impl Default for Prefs {
             allow_share_codes: true,
             check_updates: false,
             language: Lang::System,
-            date_format: DateFormat::Iso,
+            date_format: DateFormat::DayDots,
             start_minimized: false,
             log_level: Level::Info,
             discord: false,
@@ -471,10 +559,12 @@ impl Prefs {
         if rune::is_headless() {
             return Prefs::default();
         }
-        match fs::read_to_string(path()) {
+        let prefs = match fs::read_to_string(path()) {
             Ok(text) => Prefs::from_json(&text),
             Err(_) => Prefs::default(),
-        }
+        };
+        set_date_format(prefs.date_format);
+        prefs
     }
 
     pub fn from_json(text: &str) -> Prefs {
@@ -516,7 +606,7 @@ impl Prefs {
                 .filter(|z| ZOOMS.iter().any(|known| (known - z).abs() < 0.001))
                 .unwrap_or(d.zoom),
             startup: s("startup")
-                .and_then(|id| STARTUP_SCREENS.into_iter().find(|screen| screen.key() == id))
+                .and_then(startup_from_key)
                 .unwrap_or(d.startup),
             on_launch: s("on_launch")
                 .and_then(|id| OnLaunch::ALL.into_iter().find(|o| o.id() == id))
@@ -600,6 +690,16 @@ impl Prefs {
                 .map(|a| a.iter().filter_map(Value::as_str).map(str::to_string).collect())
                 .unwrap_or_default(),
             personal,
+        }
+    }
+
+    /// The page Sigil opens on: the stored choice while the sidebar shows it, else Browse. The
+    /// stored value is not rewritten, so a page switched back on is the start page again.
+    pub fn opening_page(&self) -> Screen {
+        if crate::app::sidebar_pages(self).contains(&self.startup) {
+            self.startup
+        } else {
+            Screen::Browse
         }
     }
 
@@ -743,6 +843,7 @@ impl Prefs {
 /// Change a setting, save, and report a failed write in the status line.
 pub fn edit(st: &mut crate::app::State, change: impl FnOnce(&mut Prefs)) {
     change(&mut st.prefs);
+    set_date_format(st.prefs.date_format);
     if let Err(error) = st.prefs.save() {
         st.settings.message = Some((
             crate::screens::settings::i18n::fill(
@@ -786,6 +887,30 @@ fn personal_radius_is_unset(personal: Option<&Value>) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dates_default_to_day_month_year_and_a_stored_choice_stays() {
+        assert_eq!(Prefs::default().date_format, DateFormat::DayDots);
+        assert_eq!(Prefs::from_json("{}").date_format, DateFormat::DayDots);
+        assert_eq!(DateFormat::DayDots.format(2026, 11, 7), "07.11.2026");
+        for format in DateFormat::ALL {
+            let text = format!(r#"{{"schema":1,"date_format":"{}"}}"#, format.id());
+            assert_eq!(Prefs::from_json(&text).date_format, format, "{text}");
+            let mut p = Prefs::default();
+            p.date_format = format;
+            assert_eq!(Prefs::from_json(&p.to_json()).date_format, format);
+        }
+    }
+
+    #[test]
+    fn stamps_read_in_the_chosen_format() {
+        assert_eq!(show_stamp_date("2026-11-07T10:22:01.000Z").as_deref(), Some("07.11.2026"));
+        assert_eq!(show_stamp("2026-11-07T10:22:01Z"), "07.11.2026 10:22");
+        assert_eq!(show_stamp("2026-11-07"), "07.11.2026");
+        assert_eq!(show_stamp("not a date"), "not a date");
+        assert_eq!(show_unix_date(1_762_473_600), "07.11.2025");
+        assert_eq!(DateFormat::Iso.format(2026, 11, 7), "2026-11-07");
+    }
 
     /// A settings file the 0.1.42 app wrote into `DeadlockAgentHarness` loads from `Sigil` after
     /// the start's move (`deadlock_core::app_data`), with the player's choices intact.

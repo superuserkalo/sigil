@@ -1442,7 +1442,7 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
 /// The primary places, in Grimoire's order, then Game (the game's state, the crash report, the
 /// vanilla stash and Restore) and Downloads (the queue). Everything else is reached from inside
 /// a place. "Launch" stays on the two sidebar buttons only.
-const PLACES: [Screen; 12] = [
+pub const PLACES: [Screen; 12] = [
     Screen::Browse,
     Screen::Installed,
     Screen::Locker,
@@ -1456,6 +1456,28 @@ const PLACES: [Screen; 12] = [
     Screen::Launch,
     Screen::Downloads,
 ];
+
+/// The pages the sidebar shows, in its order: every place the player has not switched off
+/// (Settings > General > Pages, Mods only), Maps under Browse when Custom maps is on, and the
+/// Agent last when this build has it and its switch is on. "Open on" offers exactly these.
+pub fn sidebar_pages(prefs: &crate::prefs::Prefs) -> Vec<Screen> {
+    let mut pages = Vec::new();
+    for screen in PLACES {
+        // Settings > General > Pages turns a page off; it leaves the sidebar and its route.
+        if !prefs.page_on(screen) {
+            continue;
+        }
+        pages.push(screen);
+        // Settings > Experimental > Custom maps adds Maps under Browse (DMM's Maps page).
+        if screen == Screen::Browse && prefs.page_on(Screen::Maps) {
+            pages.push(Screen::Maps);
+        }
+    }
+    if prefs.flag("agent") {
+        pages.push(Screen::Agent);
+    }
+    pages
+}
 
 /// Screens that live under the Agent place, so it stays selected while one is open.
 pub fn under_agent(screen: Screen) -> bool {
@@ -1527,19 +1549,12 @@ fn sidebar(s: &State, u: &Ui, insets: rune::ChromeInsets) -> El {
     let on_glass = glass.map(|g| u.on_glass(&g));
     let u = on_glass.as_ref().unwrap_or(u);
     let mut nav = col().key("nav").w_full().px(8.0).gap(2.0);
-    for screen in PLACES {
-        // Settings > General > Pages turns a page off; it leaves the sidebar and its route.
-        if !s.prefs.page_on(screen) {
-            continue;
+    for screen in sidebar_pages(&s.prefs) {
+        // The Agent sits apart from the pages.
+        if screen == Screen::Agent {
+            nav = nav.child(el().h(12.0));
         }
         nav = nav.child(nav_item(s, u, screen));
-        // Settings > Experimental > Custom maps adds Maps under Browse (DMM's Maps page).
-        if screen == Screen::Browse && s.prefs.page_on(Screen::Maps) {
-            nav = nav.child(nav_item(s, u, Screen::Maps));
-        }
-    }
-    if s.prefs.flag("agent") {
-        nav = nav.child(el().h(12.0)).child(nav_item(s, u, Screen::Agent));
     }
     let collapsed = s.shell.w4.collapsed;
 

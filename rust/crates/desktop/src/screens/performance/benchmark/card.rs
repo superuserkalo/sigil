@@ -182,7 +182,7 @@ pub fn png(run: &RunRecord, frames: &[(Side, Vec<f64>)]) -> Result<Vec<u8>, Stri
     // Head.
     let w = c.text(SEMIBOLD, 22.0, x0, 74.0, "Sigil", EMBER, 1.0);
     c.text(REGULAR, 22.0, x0 + w + 10.0, 74.0, tr("Benchmark"), MUTED, 1.0);
-    let date = run.spec.created_at.get(..10).unwrap_or("").to_string();
+    let date = crate::prefs::show_stamp_date(&run.spec.created_at).unwrap_or_default();
     let dw = c.measure(REGULAR, 18.0, &date);
     c.text(REGULAR, 18.0, W as f32 - x0 - dw, 74.0, &date, FAINT, 1.0);
     let mut sub = vec![run_label(run)];

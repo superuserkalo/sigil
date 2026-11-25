@@ -25,17 +25,18 @@ use crate::ui::{ActionKind, BODY, BODY_MED, MONO, SMALL, Ui};
 
 // --- general ---------------------------------------------------------------------
 
+/// "Open on": exactly the pages the sidebar shows, in its order (`app::sidebar_pages`).
+pub fn startup_choices(prefs: &prefs::Prefs) -> Vec<(Screen, &'static str)> {
+    crate::app::sidebar_pages(prefs).into_iter().map(|screen| (screen, screen.title())).collect()
+}
+
 pub fn general(s: &State, u: &Ui) -> El {
     let langs: Vec<(Lang, &str)> = Lang::ALL
         .iter()
         .map(|l| (*l, if *l == Lang::System { "System" } else { l.native() }))
         .collect();
     let dates: Vec<(DateFormat, &str)> = DateFormat::ALL.iter().map(|f| (*f, f.label())).collect();
-    let startup: Vec<(Screen, &str)> = prefs::STARTUP_SCREENS
-        .iter()
-        .filter(|screen| s.prefs.page_on(**screen))
-        .map(|screen| (*screen, screen.title()))
-        .collect();
+    let startup = startup_choices(&s.prefs);
     let launch: Vec<(prefs::OnLaunch, &str)> =
         prefs::OnLaunch::ALL.iter().map(|o| (*o, o.label())).collect();
     let autostart_on = s.settings.autostart_on.unwrap_or(false);
@@ -84,7 +85,7 @@ pub fn general(s: &State, u: &Ui) -> El {
                     "settings-startup",
                     "Open on",
                     detail(u, "The page Sigil shows when it starts."),
-                    super::segmented_w(u, "settings-startup-pick", &startup, s.prefs.startup, |st, screen| {
+                    super::segmented_w(u, "settings-startup-pick", &startup, s.prefs.opening_page(), |st, screen| {
                         prefs::edit(st, |p| p.startup = screen)
                     }, super::CONTROL_W),
                 ),
@@ -1437,6 +1438,57 @@ pub fn background(st: &mut State, tx: &mut Tx) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use crate::model::Screen;
+    use crate::prefs::Prefs;
+
+    fn screens(p: &Prefs) -> Vec<Screen> {
+        super::startup_choices(p).into_iter().map(|(screen, _)| screen).collect()
+    }
+
+    #[test]
+    fn open_on_offers_exactly_the_sidebar_pages() {
+        let configs = [
+            ("default", r#"{"schema":1}"#),
+            ("Locker off", r#"{"schema":1,"flags":{"page_locker":false}}"#),
+            ("Mods only", r#"{"schema":1,"flags":{"mods_only":true}}"#),
+            ("Custom maps on", r#"{"schema":1,"flags":{"custom_maps":true}}"#),
+            ("Agent switch stored on", r#"{"schema":1,"flags":{"agent":true}}"#),
+        ];
+        for (what, text) in configs {
+            let p = Prefs::from_json(text);
+            assert!(screens(&p) == crate::app::sidebar_pages(&p), "{what}");
+        }
+        let default = screens(&Prefs::from_json("{}"));
+        assert!(default.first() == Some(&Screen::Browse));
+        assert!(default.contains(&Screen::Launch) && default.contains(&Screen::Downloads), "Game and Downloads are offered");
+        assert!(!default.contains(&Screen::Maps), "Maps is experimental and off");
+        let locker_off = screens(&Prefs::from_json(r#"{"flags":{"page_locker":false}}"#));
+        assert!(!locker_off.contains(&Screen::Locker));
+        let mods_only = screens(&Prefs::from_json(r#"{"flags":{"mods_only":true}}"#));
+        for page in [Screen::Locker, Screen::Crosshair, Screen::Autoexec, Screen::Performance, Screen::Stats, Screen::Servers] {
+            assert!(!mods_only.contains(&page), "Mods only offers {}", page.key());
+        }
+        let maps = screens(&Prefs::from_json(r#"{"flags":{"custom_maps":true}}"#));
+        assert!(maps.get(1) == Some(&Screen::Maps), "Maps sits under Browse");
+        let agent = screens(&Prefs::from_json(r#"{"flags":{"agent":true}}"#));
+        assert_eq!(agent.contains(&Screen::Agent), crate::prefs::AGENT);
+    }
+
+    #[test]
+    fn a_start_page_switched_off_opens_browse_and_stays_stored() {
+        let p = Prefs::from_json(r#"{"schema":1,"startup":"locker","flags":{"page_locker":false}}"#);
+        assert!(p.startup == Screen::Locker, "the stored choice is read as it is");
+        assert!(p.opening_page() == Screen::Browse);
+        assert!(p.to_json().contains(r#""startup": "locker""#), "not rewritten until the player picks");
+        // Switched back on, it is the start page again.
+        let p = Prefs::from_json(r#"{"schema":1,"startup":"locker"}"#);
+        assert!(p.opening_page() == Screen::Locker);
+        // Pages added later are kept too.
+        let p = Prefs::from_json(r#"{"schema":1,"startup":"downloads"}"#);
+        assert!(p.opening_page() == Screen::Downloads);
+        let p = Prefs::from_json(r#"{"schema":1,"startup":"launch"}"#);
+        assert!(p.opening_page() == Screen::Launch);
+    }
     #[test]
     fn the_proxy_kind_swaps_only_the_scheme() {
         use super::{ProxyScheme, proxy_scheme, with_scheme};

@@ -48,12 +48,7 @@ pub fn row_from_record(record: &deadlock_core::character::CharacterTaskRecord) -
         provider: record.request.provider.as_str().to_string(),
         stage: record.task.stage.clone(),
         status: record.task.status.as_str().to_string(),
-        created: record
-            .created_at
-            .chars()
-            .take(16)
-            .collect::<String>()
-            .replace('T', " "),
+        created: crate::prefs::show_stamp(&record.created_at),
         error: record.task.error.clone(),
         model_bytes: record.asset.as_ref().map(|asset| asset.bytes).unwrap_or(0),
         imported: record.asset.is_some(),

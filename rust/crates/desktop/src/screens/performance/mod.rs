@@ -1121,27 +1121,9 @@ fn chip(u: &Ui, label: &str) -> El {
         .child(text(label.to_string()).font(crate::ui::MICRO).color(u.muted))
 }
 
+/// A `2026-11-07` config date in the chosen date format.
 fn short_date(date: &str) -> String {
-    let mut parts = date.split('-');
-    let (Some(year), Some(month), Some(day)) = (parts.next(), parts.next(), parts.next()) else {
-        return date.to_string();
-    };
-    let month = match month {
-        "01" => "Jan",
-        "02" => "Feb",
-        "03" => "Mar",
-        "04" => "Apr",
-        "05" => "May",
-        "06" => "Jun",
-        "07" => "Jul",
-        "08" => "Aug",
-        "09" => "Sep",
-        "10" => "Oct",
-        "11" => "Nov",
-        "12" => "Dec",
-        _ => return date.to_string(),
-    };
-    format!("{month} {}, {year}", day.trim_start_matches('0'))
+    crate::prefs::show_stamp_date(date).unwrap_or_else(|| date.to_string())
 }
 
 /// The button that opens the convar editor.

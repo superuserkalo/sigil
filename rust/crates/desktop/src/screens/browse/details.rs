@@ -367,7 +367,7 @@ pub(crate) fn details_actions(s: &State, u: &Ui, d: &Details) -> El {
             .child({
                 let updated = if profile.updated_ts > 0 { profile.updated_ts } else { d.updated_ts };
                 text(if updated > 0 {
-                    crate::screens::settings::i18n::fill(super::tree::tr("Updated {}"), &[&gamebanana::calendar_date(updated)])
+                    crate::screens::settings::i18n::fill(super::tree::tr("Updated {}"), &[&crate::prefs::show_local_date(updated)])
                 } else {
                     String::new()
                 })
@@ -462,7 +462,7 @@ pub(crate) fn details_reading(s: &State, u: &Ui, d: &Details) -> El {
         }
         if added > 0 {
             about = about.child(
-                text(crate::screens::settings::i18n::fill(super::tree::tr("Added {}"), &[&gamebanana::calendar_date(added)]))
+                text(crate::screens::settings::i18n::fill(super::tree::tr("Added {}"), &[&crate::prefs::show_local_date(added)]))
                     .font(SMALL)
                     .color(u.muted),
             );
@@ -496,9 +496,9 @@ pub(crate) fn notices(u: &Ui, _d: &Details, profile: &ModProfile) -> Vec<El> {
             lines.push(notice.notes.clone());
         }
         let by = match (&notice.by, notice.at) {
-            (Some(by), Some(at)) => Some(fill(tr("Withheld by {} on {}."), &[by, &super::store::date_input(at)])),
+            (Some(by), Some(at)) => Some(fill(tr("Withheld by {} on {}."), &[by, &crate::prefs::show_unix_date(at)])),
             (Some(by), None) => Some(fill(tr("Withheld by {}."), &[by])),
-            (None, Some(at)) => Some(fill(tr("Withheld on {}."), &[&super::store::date_input(at)])),
+            (None, Some(at)) => Some(fill(tr("Withheld on {}."), &[&crate::prefs::show_unix_date(at)])),
             (None, None) => None,
         };
         lines.extend(by);
