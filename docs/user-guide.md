@@ -15,19 +15,19 @@ crosshair and console settings, reads your match history, and can start the game
    checked on a Linux desktop yet.
 2. Unzip it where you keep apps and start Sigil. On Windows and macOS there is no separate
    installer and no browser window inside the app.
-3. The first time you start, a short setup asks six things:
+3. The first time you start, a short setup asks three things:
    - **Find Deadlock.** Sigil looks for the game and shows the folder it found. Use Choose if it
      picked the wrong one.
    - **Let the game load mods.** Deadlock only reads the addons folder when `gameinfo.gi` points at
      it. Press the fix. Sigil keeps a backup of the file first.
-   - **Your connection.** Choose whether to use a proxy, or work offline.
-   - **Mods you already have.** Sigil counts what is in the addons folder and offers to open
-     Installed.
-   - **Your autoexec.** Create `autoexec.cfg` if you do not have one.
-   - **Updates and privacy.** Choose whether Sigil may check for updates, and what optional
-     information you are willing to share. Everything is off until you agree.
+   - **Updates and privacy.** Choose whether Sigil may check for updates, and answer Help build
+     Sigil with Share or Not now. Everything is off until you agree.
 
 You can skip setup. To see it again, open Settings > General > Setup and tips > Run setup.
+
+The rest lives where you use it: a proxy and offline mode in Settings > Network, mods already in
+the addons folder in Installed, and `autoexec.cfg` on the Autoexec page (saving a command there
+creates the file).
 
 On later starts Sigil checks the game folder, `gameinfo.gi` and your mods. If a Deadlock update
 reset the file, a banner offers to fix it.
@@ -357,7 +357,7 @@ the third-party notices.
 
 ### Help build Sigil
 
-The last step of the first-run setup asks whether to share product data, with Share and Not now.
+The privacy step of the first-run setup asks whether to share product data, with Share and Not now.
 If you set Sigil up before this existed, it asks once in a dialog. With Share, Sigil sends which
 GameBanana mods you install, turn on, open or hide, which ones break or clash, your Browse filters
 and short search text, your ten most played heroes in rough hours and your rank tier, benchmark

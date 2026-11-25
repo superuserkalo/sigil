@@ -1,6 +1,11 @@
-//! First run: a short setup over the window (Grimoire's welcome steps, MIT): find the game,
-//! make gameinfo.gi load mods, an autoexec.cfg, and the update check. Skip finishes it too.
-//! Settings > General can show it again, and reset the page tips.
+//! First run: a short setup over the window (Grimoire's welcome steps, MIT). Three steps before
+//! the first install: find the game, make gameinfo.gi load mods, and one privacy step with the
+//! choices that must be asked (the update check and Help build Sigil, both off by default).
+//! Skip finishes it too. Settings > General can show it again, and reset the page tips.
+//!
+//! Everything else lives in Settings and its pages: the proxy and offline mode in Settings >
+//! Network, mods already in the addons folder in Installed, and autoexec.cfg in Autoexec (saving
+//! a command there creates the file).
 //!
 //! Tips: the first visit to a page shows one line about it as a notification, once. They can
 //! be turned off and shown again from Settings.
@@ -21,18 +26,18 @@ pub enum Step {
     #[default]
     Game,
     Gameinfo,
-    /// Wave 4 (DMM's setup): a proxy or offline before Sigil goes online.
-    Network,
-    /// Wave 4 (DMM's setup): mods already in the addons folder.
-    Mods,
-    Autoexec,
+    /// The update check and "Help build Sigil" (ADR 0017): opt-in product data, answered with
+    /// Share or Not now, which also finishes the setup.
     Privacy,
-    /// "Help build Sigil" (ADR 0017): opt-in product data, Share or Not now.
-    Share,
 }
 
+/// Height the privacy step adds above the Help build Sigil list (the intro, the update switch,
+/// the rule and the heading), so the list scrolls instead of pushing the buttons off a short
+/// window.
+const PRIVACY_EXTRA_H: f32 = 150.0;
+
 impl Step {
-    const ALL: [Step; 7] = [Step::Game, Step::Gameinfo, Step::Network, Step::Mods, Step::Autoexec, Step::Privacy, Step::Share];
+    pub const ALL: [Step; 3] = [Step::Game, Step::Gameinfo, Step::Privacy];
 
     fn index(self) -> usize {
         Step::ALL.iter().position(|s| *s == self).unwrap_or(0)
@@ -50,11 +55,7 @@ impl Step {
         match self {
             Step::Game => "Find Deadlock",
             Step::Gameinfo => "Let the game load mods",
-            Step::Network => "Your connection",
-            Step::Mods => "Mods you already have",
-            Step::Autoexec => "Your autoexec",
             Step::Privacy => "Updates and privacy",
-            Step::Share => super::product::TITLE,
         }
     }
 }
@@ -63,15 +64,13 @@ impl Step {
 pub fn on_startup(st: &mut State) {
     if !options::get().onboarded && !st.demo && !rune::is_headless() {
         st.settings.extra.onboarding = Some(Step::Game);
-        st.settings.proxy_edit = rune::TextEdit::new(st.prefs.proxy.clone().unwrap_or_default());
     }
 }
 
 fn finish(st: &mut State) {
     options::edit(st, |o| o.onboarded = true);
     st.settings.extra.onboarding = None;
-    let next = st.settings.extra.after_onboarding.take().unwrap_or(Screen::Browse);
-    st.go(next);
+    st.go(Screen::Browse);
 }
 
 fn gameinfo_state(st: &State) -> (bool, bool) {
@@ -94,20 +93,6 @@ fn fix_gameinfo(st: &mut State) {
     let Some(root) = st.game_root.clone() else { return };
     match deploy::repair_gameinfo(&deploy::gameinfo_path(&root), true) {
         Ok(_) => crate::data::rescan_game(st),
-        Err(e) => st.settings.extra.onboarding_error = Some(e.to_string()),
-    }
-}
-
-fn create_autoexec(st: &mut State) {
-    if st.demo {
-        return;
-    }
-    let Some(root) = st.game_root.clone() else { return };
-    if deadlock_core::autoexec_path(&root).is_file() {
-        return;
-    }
-    match deadlock_core::write_autoexec(&root, "// Sigil: commands here run when Deadlock starts.\n", true) {
-        Ok(_) => st.autoexec.loaded = false,
         Err(e) => st.settings.extra.onboarding_error = Some(e.to_string()),
     }
 }
@@ -182,122 +167,6 @@ fn step_body(s: &State, u: &Ui, step: Step) -> El {
                     ok || !present,
                 )))
         }
-        Step::Network => {
-            let typed = s.settings.proxy_edit.text.trim().to_string();
-            let valid = typed.is_empty() || deadlock_core::net::validate_proxy(&typed).is_ok();
-            col()
-                .w_full()
-                .gap(12.0)
-                .child(line("Sigil reads GameBanana and downloads mods. Behind a proxy or a firewall, set the proxy here; HTTP, HTTPS and SOCKS5 work. You can change it later in Settings > Network."))
-                .child(
-                    row()
-                        .w_full()
-                        .gap(8.0)
-                        .center_y()
-                        .child(
-                            super::field(
-                                rune::text_input(&s.settings.proxy_edit, MONO)
-                                    .key("onboarding-proxy")
-                                    .label(tr("Proxy address"))
-                                    .single_line()
-                                    .grow(1.0)
-                                    .color(u.ink)
-                                    .placeholder("socks5://127.0.0.1:1080", u.faint)
-                                    .caret(u.accent, u.accent.alpha(0.22))
-                                    .on_edit(|st: &mut State| &mut st.settings.proxy_edit),
-                                u,
-                            )
-                            .grow(1.0)
-                            .min_w(0.0),
-                        )
-                        .child(super::disabled(
-                            button(u, "onboarding-proxy-save", "Save", ActionKind::Secondary).on_press(|st: &mut State| {
-                                let typed = st.settings.proxy_edit.text.trim().to_string();
-                                let value = (!typed.is_empty()).then_some(typed);
-                                match deadlock_core::net::set_proxy(value.clone()) {
-                                    Ok(()) => crate::prefs::edit(st, |p| p.proxy = value),
-                                    Err(error) => {
-                                        let error = tr(&error).to_string();
-                                        say(st, error, true)
-                                    }
-                                }
-                            }),
-                            !valid || typed == s.prefs.proxy.clone().unwrap_or_default(),
-                        )),
-                )
-                .child(status(
-                    s.prefs.proxy.is_none() || valid,
-                    match &s.prefs.proxy {
-                        Some(proxy) => fill(tr("Using {} for Browse and mod downloads."), &[proxy]),
-                        None => tr("Browse and mod downloads connect directly.").to_string(),
-                    },
-                ))
-                .child(
-                    row()
-                        .w_full()
-                        .gap(12.0)
-                        .center_y()
-                        .child(text(tr("Offline mode")).font(BODY_MED).color(u.ink).grow(1.0))
-                        .child(
-                            u.toggle(s.prefs.offline)
-                                .key("onboarding-offline")
-                                .label(tr("Offline mode"))
-                                .cursor(rune::Cursor::Pointer)
-                                .on_press(|st: &mut State| {
-                                    crate::prefs::edit(st, |p| p.offline = !p.offline);
-                                    super::apply_offline(st.prefs.offline);
-                                }),
-                        ),
-                )
-        }
-        Step::Mods => {
-            let count = s.addons.addons.len();
-            col()
-                .w_full()
-                .gap(12.0)
-                .child(line("Mods already in the addons folder stay where they are. Installed lists them; mods Sigil does not know yet can be named there by looking them up."))
-                .child(status(
-                    s.addons.scanned,
-                    if !s.addons.scanned {
-                        tr("Looking in the addons folder").to_string()
-                    } else if count == 0 {
-                        tr("No mods in the addons folder yet").to_string()
-                    } else {
-                        fill(tr("{} mods found in the addons folder"), &[&count.to_string()])
-                    },
-                ))
-                .child(
-                    row()
-                        .w_full()
-                        .gap(12.0)
-                        .center_y()
-                        .child(text(tr("Open Installed when done")).font(BODY_MED).color(u.ink).grow(1.0))
-                        .child(super::disabled(
-                            u.toggle(s.settings.extra.after_onboarding == Some(Screen::Installed))
-                                .key("onboarding-mods-open")
-                                .label(tr("Open Installed when done"))
-                                .cursor(rune::Cursor::Pointer)
-                                .on_press(|st: &mut State| {
-                                    let next = &mut st.settings.extra.after_onboarding;
-                                    *next = if next.is_some() { None } else { Some(Screen::Installed) };
-                                }),
-                            count == 0,
-                        )),
-                )
-        }
-        Step::Autoexec => {
-            let exists = s.game_root.as_ref().is_some_and(|r| deadlock_core::autoexec_path(r).is_file());
-            col()
-                .w_full()
-                .gap(12.0)
-                .child(line("autoexec.cfg holds console commands the game runs at start: crosshairs, binds, settings. Optional."))
-                .child(status(exists, if exists { tr("autoexec.cfg is there").to_string() } else { tr("No autoexec.cfg yet").to_string() }))
-                .child(row().child(super::disabled(
-                    button(u, "onboarding-autoexec", "Create", ActionKind::Secondary).on_press(create_autoexec),
-                    exists || s.game_root.is_none(),
-                )))
-        }
-        Step::Share => super::product::consent_body(u),
         Step::Privacy => col()
             .w_full()
             .gap(12.0)
@@ -316,15 +185,9 @@ fn step_body(s: &State, u: &Ui, step: Step) -> El {
                             .on_press(|st: &mut State| crate::prefs::edit(st, |p| p.check_updates = !p.check_updates)),
                     ),
             )
-            .child(
-                row().child(
-                    u.action(tr("What Sigil sends"), ActionKind::Ghost)
-                        .key("onboarding-privacy-doc")
-                        .role("link")
-                        .cursor(rune::Cursor::Pointer)
-                        .on_press_tx(|st: &mut State, tx: &mut Tx| super::tabs::open_url(st, tx, super::telemetry::PRIVACY_DOC)),
-                ),
-            ),
+            .child(el().w_full().h(1.0).fill(u.hair))
+            .child(text(tr(super::product::TITLE).to_string()).font(BODY_MED).color(u.ink))
+            .child(super::product::consent_body_reserving(u, PRIVACY_EXTRA_H)),
     }
 }
 
@@ -381,11 +244,9 @@ pub fn overlay(s: &State, u: &Ui) -> Option<El> {
             st.settings.extra.onboarding_error = None;
         }));
     }
-    buttons = buttons.child(if step == Step::Share {
+    buttons = buttons.child(if last {
         // The answer finishes the setup: "Not now" and "Share" weigh the same.
         super::product::answer_buttons(u, finish)
-    } else if last {
-        button(u, "onboarding-done", "Get started", ActionKind::Primary).on_press(finish)
     } else {
         super::disabled(
             button(u, "onboarding-next", "Next", ActionKind::Primary).on_press(move |st: &mut State| {
@@ -474,12 +335,11 @@ pub fn rows(_s: &State, u: &Ui) -> El {
                 u,
                 "settings-setup-again",
                 "Setup",
-                super::detail(u, "Walk through finding the game, gameinfo.gi and your autoexec again."),
+                super::detail(u, "Walk through finding the game, gameinfo.gi and the privacy choices again."),
                 button(u, "settings-setup-run", "Run setup", ActionKind::Secondary).on_press(|st: &mut State| {
                     options::edit(st, |o| o.onboarded = false);
                     super::close(st);
                     st.settings.extra.onboarding = Some(Step::Game);
-                    st.settings.proxy_edit = rune::TextEdit::new(st.prefs.proxy.clone().unwrap_or_default());
                 }),
             ),
         ])
@@ -494,11 +354,31 @@ mod tests {
     #[test]
     fn steps_walk_forward_and_back() {
         assert_eq!(Step::Game.next(), Some(Step::Gameinfo));
-        assert_eq!(Step::Privacy.next(), Some(Step::Share));
-        assert_eq!(Step::Share.next(), None);
+        assert_eq!(Step::Gameinfo.next(), Some(Step::Privacy));
+        assert_eq!(Step::Privacy.next(), None);
         assert_eq!(Step::Game.back(), None);
-        assert_eq!(Step::Gameinfo.next(), Some(Step::Network));
-        assert_eq!(Step::Autoexec.back(), Some(Step::Mods));
+        assert_eq!(Step::Gameinfo.back(), Some(Step::Game));
+        assert_eq!(Step::Privacy.back(), Some(Step::Gameinfo));
+    }
+
+    /// Three steps before the first install, and the last one asks Help build Sigil.
+    #[test]
+    fn setup_is_three_steps_ending_on_privacy() {
+        assert_eq!(Step::ALL, [Step::Game, Step::Gameinfo, Step::Privacy]);
+        assert_eq!(Step::default(), Step::Game);
+        let source = include_str!("onboarding.rs");
+        let privacy = &source[source.find("Step::Privacy => col()").expect("privacy body")..];
+        let privacy = &privacy[..privacy.find("\n    }\n}").expect("end of body")];
+        assert!(privacy.contains("product::consent_body_reserving"), "the privacy step asks Help build Sigil");
+        assert!(privacy.contains("onboarding-updates"), "the privacy step holds the update check");
+        assert!(source.contains("super::product::answer_buttons(u, finish)"), "Share or Not now finishes the setup");
+    }
+
+    /// The consent switches the setup asks are off until the player turns them on.
+    #[test]
+    fn consent_switches_start_off() {
+        assert!(!crate::prefs::Prefs::default().check_updates);
+        assert!(!deadlock_core::telemetry::Consent::default().product);
     }
 
     #[test]

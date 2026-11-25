@@ -359,7 +359,7 @@ pub const DE: &[(&str, &str)] = &[
     ("Tips will show again.", "Tipps werden wieder gezeigt."),
     ("Updates and privacy", "Updates und Datenschutz"),
     ("Usually Steam/steamapps/common/Deadlock", "Meist Steam/steamapps/common/Deadlock"),
-    ("Walk through finding the game, gameinfo.gi and your autoexec again.", "Noch einmal durch Spielsuche, gameinfo.gi und deine Autoexec gehen."),
+    ("Walk through finding the game, gameinfo.gi and the privacy choices again.", "Noch einmal durch Spielsuche, gameinfo.gi und die Datenschutz-Fragen gehen."),
     ("Welcome to Sigil", "Willkommen bei Sigil"),
     ("Your autoexec", "Deine Autoexec"),
     ("gameinfo.gi is set up", "gameinfo.gi ist eingerichtet"),

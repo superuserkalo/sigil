@@ -2,7 +2,7 @@
 //! (`deadlock_core::product_data`) owns the schema, the scrubbers, the consent gate, the queue,
 //! the log and every send; this file asks, records and shows.
 //!
-//! - Asking: a step in the first-run setup (`onboarding.rs`), and once as a dialog for installs
+//! - Asking: the privacy step of the first-run setup (`onboarding.rs`), and once as a dialog for installs
 //!   that finished setup before this existed. "Share" and "Not now" are equal buttons.
 //! - Settings > Privacy: the switch, "What Sigil shared" (the local log) and "Delete my data".
 //! - Recording: [`record`] is one push onto the core's in-memory list. Persisting runs on a short
@@ -592,14 +592,21 @@ pub fn note_window(height: f32) {
 
 /// Height left for the list of what is sent: the window minus the card's other parts (title,
 /// intro, the never-sent note, the link, the buttons and the setup's step line).
-fn list_max_h() -> f32 {
+/// `reserve` is what the caller adds around the body on top of that.
+fn list_max_h(reserve: f32) -> f32 {
     let window = f32::from_bits(WINDOW_H.load(Ordering::Relaxed));
     let window = if window > 0.0 { window } else { 800.0 };
-    (window - 500.0).clamp(120.0, 600.0)
+    (window - 500.0 - reserve).clamp(120.0, 600.0)
 }
 
-/// What is sent and what never is, for the setup step and the dialog.
+/// What is sent and what never is, for the dialog.
 pub fn consent_body(u: &Ui) -> El {
+    consent_body_reserving(u, 0.0)
+}
+
+/// [`consent_body`] inside a card that shows `reserve` points more above it (the setup's
+/// privacy step).
+pub fn consent_body_reserving(u: &Ui, reserve: f32) -> El {
     let item = |line: &str| {
         row()
             .w_full()
@@ -619,7 +626,7 @@ pub fn consent_body(u: &Ui) -> El {
             col()
                 .key("product-sent-list")
                 .w_full()
-                .max_h(list_max_h())
+                .max_h(list_max_h(reserve))
                 .scroll(rune::ScrollSpec { stick_bottom: false })
                 .child(list),
         ))
@@ -767,10 +774,10 @@ pub fn log_dialog(s: &State, u: &Ui) -> Option<El> {
     )
 }
 
-/// Scene: the setup's Help build Sigil step.
+/// Scene: the setup's privacy step, with Help build Sigil.
 pub fn scene_onboarding(st: &mut State) {
     crate::app::scene_demo_installed(st);
-    st.settings.extra.onboarding = Some(super::onboarding::Step::Share);
+    st.settings.extra.onboarding = Some(super::onboarding::Step::Privacy);
 }
 
 /// Scene: the one-time question for an install that finished setup before it existed.

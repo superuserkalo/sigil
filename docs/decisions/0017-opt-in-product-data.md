@@ -20,7 +20,7 @@ The limits below are what keeps this honest. They are part of the decision, not 
 ## Decision
 
 - One consent, "Help build Sigil", separate from crash reports and from the blind usage events.
-  Off by default. Asked as its own step in onboarding (first run, and once for players who
+  Off by default. Asked on the privacy step of onboarding (first run, and once for players who
   installed before this existed), with "Share" and "Not now" as equal buttons and a plain list
   of what is sent and what never is. A switch in Settings > Privacy turns it on or off at any
   time. Saying no changes nothing else in the app.

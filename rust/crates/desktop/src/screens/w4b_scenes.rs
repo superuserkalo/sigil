@@ -211,16 +211,11 @@ pub fn crosshair_hero(s: &mut State) {
     s.crosshair.w4_plan = Some(Ok((2, 2)));
 }
 
-/// The first-run setup on its new Network step (proxy and offline), then the Mods step.
-pub fn onboarding_network(s: &mut State) {
+/// The first-run setup on its first step, finding the game. The proxy and offline mode it once
+/// asked live in Settings > Network (`settings-network` scene).
+pub fn onboarding_game(s: &mut State) {
     crate::app::scene_demo_installed(s);
-    s.settings.extra.onboarding = Some(crate::screens::settings::onboarding::Step::Network);
-    s.settings.proxy_edit = rune::TextEdit::new("socks5://127.0.0.1:1080");
-}
-
-pub fn onboarding_mods(s: &mut State) {
-    crate::app::scene_demo_installed(s);
-    s.settings.extra.onboarding = Some(crate::screens::settings::onboarding::Step::Mods);
+    s.settings.extra.onboarding = Some(crate::screens::settings::onboarding::Step::Game);
 }
 
 /// A feature tip over the sidebar's collapse button.
