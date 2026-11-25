@@ -8,6 +8,9 @@ use rune::{Color, El, Family, Icon, TextStyle, col, el, icon, oklch, row, rule, 
 use crate::model::{Compat, ToneKey};
 
 pub mod personalize;
+pub mod segmented;
+
+pub use segmented::{Part as SegPart, Segmented, Size as SegSize, Width as SegWidth};
 
 pub const SIDEBAR_W: f32 = 216.0;
 pub const RAIL_W: f32 = 304.0;
@@ -402,9 +405,12 @@ pub fn standard(points: f32) -> f32 {
     if z < 1.0 { points / z } else { points }
 }
 
-/// The selection thumb of a segmented control or tab strip: the selected part's fill and
-/// border, a child placed before the label and pinned to the part's edges, so it takes no part
-/// in the layout. `id` names the strip (and is the thumb's key): on a new pick the thumb glides from the
+/// The Settings section list's selection (a vertical navigation list, not a segmented
+/// selector: strips of picks are `Segmented`, and `segmented::tests` keeps any other caller
+/// out). The selected row's fill and
+/// border, a child placed before the label and pinned to the row's edges, so it takes no part
+/// in the layout. It flies as a matched element, which Rune paints over the whole window for
+/// the length of the glide, so it must stay a translucent fill. `id` names the strip (and is the thumb's key): on a new pick the thumb glides from the
 /// old part to the new one on `motion::base()`, whatever their widths, while the labels only
 /// change colour. Instant under reduced motion. The part itself must not be wrapped in
 /// `motion::colors`, which lands every change inside it; put that on the label instead.

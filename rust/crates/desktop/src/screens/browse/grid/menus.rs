@@ -26,7 +26,7 @@ pub fn overlay(s: &State, u: &Ui) -> Option<El> {
         FilterMenu::Sub => (Align::Start, 288.0),
         FilterMenu::Date => (Align::Start, 320.0),
         FilterMenu::More => (Align::Start, 320.0),
-        FilterMenu::View => (Align::End, 280.0),
+        FilterMenu::View => (Align::End, 300.0),
         FilterMenu::Tools => (Align::End, 260.0),
         FilterMenu::Section => (Align::Start, 160.0),
         FilterMenu::Category => (Align::Start, 248.0),
@@ -335,33 +335,31 @@ pub fn overlay(s: &State, u: &Ui) -> Option<El> {
             let mut owned = Vec::new();
             for o in Owned::ALL {
                 owned.push(
-                    segment(u, &format!("menu-owned-{o:?}"), super::super::tree::tr(o.short()), f.owned == o)
-                        .on_press_tx(move |st: &mut State, tx: &mut Tx| set_filters(st, Some(tx), move |f| f.owned = o)),
+                    seg_part(&format!("menu-owned-{o:?}"), super::super::tree::tr(o.short()), f.owned == o)
+                        .with(move |e| e.on_press_tx(move |st: &mut State, tx: &mut Tx| set_filters(st, Some(tx), move |f| f.owned = o))),
                 );
             }
             let mut mature = Vec::new();
             for m in MatureView::ALL {
                 mature.push(
-                    segment(u, &format!("menu-mature-{m:?}"), super::super::tree::tr(m.short()), f.mature == m)
-                        .on_press_tx(move |st: &mut State, tx: &mut Tx| set_filters(st, Some(tx), move |f| f.mature = m)),
+                    seg_part(&format!("menu-mature-{m:?}"), super::super::tree::tr(m.short()), f.mature == m)
+                        .with(move |e| e.on_press_tx(move |st: &mut State, tx: &mut Tx| set_filters(st, Some(tx), move |f| f.mature = m))),
                 );
             }
             let mut matching = Vec::new();
             for exclude in [false, true] {
                 matching.push(
-                    segment(
-                        u,
-                        if exclude { "menu-exclude" } else { "menu-include" },
+                    seg_part(if exclude { "menu-exclude" } else { "menu-include" },
                         super::super::tree::tr(if exclude { "Exclude" } else { "Include" }),
                         f.exclude == exclude,
                     )
-                    .on_press_tx(move |st: &mut State, tx: &mut Tx| set_filters(st, Some(tx), move |f| f.exclude = exclude)),
+                    .with(move |e| e.on_press_tx(move |st: &mut State, tx: &mut Tx| set_filters(st, Some(tx), move |f| f.exclude = exclude))),
                 );
             }
             items = items
-                .child(segmented(u, super::super::tree::tr("Installed"), Owned::ALL.iter().position(|o| *o == f.owned), owned))
-                .child(segmented(u, super::super::tree::tr("NSFW"), MatureView::ALL.iter().position(|m| *m == f.mature), mature))
-                .child(segmented(u, super::super::tree::tr("Match"), Some(usize::from(f.exclude)), matching))
+                .child(seg_row(u, super::super::tree::tr("Installed"), owned))
+                .child(seg_row(u, super::super::tree::tr("NSFW"), mature))
+                .child(seg_row(u, super::super::tree::tr("Match"), matching))
                 .child(menu_rule(u))
                 .child(
                     toggle_row(u, "menu-featured", super::super::tree::tr("Featured only"), "", f.featured)
@@ -505,26 +503,26 @@ pub fn overlay(s: &State, u: &Ui) -> Option<El> {
             let mut layouts = Vec::new();
             for layout in Layout::ALL {
                 layouts.push(
-                    segment(u, &format!("menu-layout-{}", layout.id()), super::super::tree::tr(layout.label()), s.browse_view.layout == layout)
-                        .on_press(move |st: &mut State| {
+                    seg_part(&format!("menu-layout-{}", layout.id()), super::super::tree::tr(layout.label()), s.browse_view.layout == layout)
+                        .with(move |e| e.on_press(move |st: &mut State| {
                             st.browse_view.layout = layout;
                             save_browse_state(st);
-                        }),
+                        })),
                 );
             }
             let mut sizes = Vec::new();
             for size in CardSize::ALL {
                 sizes.push(
-                    segment(u, &format!("menu-size-{}", size.id()), super::super::tree::tr(size.label()), s.browse_view.card_size == size)
-                        .on_press(move |st: &mut State| {
+                    seg_part(&format!("menu-size-{}", size.id()), super::super::tree::tr(size.label()), s.browse_view.card_size == size)
+                        .with(move |e| e.on_press(move |st: &mut State| {
                             st.browse_view.card_size = size;
                             save_browse_state(st);
-                        }),
+                        })),
                 );
             }
             items = items
-                .child(segmented(u, super::super::tree::tr("Layout"), Layout::ALL.iter().position(|l| *l == s.browse_view.layout), layouts))
-                .child(segmented(u, super::super::tree::tr("Cards"), CardSize::ALL.iter().position(|c| *c == s.browse_view.card_size), sizes))
+                .child(seg_row(u, super::super::tree::tr("Layout"), layouts))
+                .child(seg_row(u, super::super::tree::tr("Cards"), sizes))
                 .child(menu_rule(u))
                 .child(
                     toggle_row(u, "menu-paged", super::super::tree::tr("Numbered pages"), "", s.browse_view.paged).on_press(|st: &mut State| {
@@ -776,58 +774,14 @@ pub(crate) fn toggle_row(u: &Ui, key: &str, label: &str, detail: &str, on: bool)
     r.child(u.toggle_mark(on))
 }
 
-/// One segment of a segmented choice. The selected look is the box's thumb, which slides
-/// under the segments; a segment carries its label colour only.
-pub(crate) fn segment(u: &Ui, key: &str, label: &str, on: bool) -> El {
-    crate::motion::colors(row())
-        .key(key.to_string())
-        .h_full()
-        .min_w(0.0)
-        .px(6.0)
-        .center()
-        .radius(crate::ui::r(4.0))
-        .hover(if on { Color::TRANSPARENT } else { u.hover })
-        .focusable(true)
-        .role("radio")
-        .checked(on)
-        .label(label.to_string())
-        .cursor(rune::Cursor::Pointer)
-        .child(text(label.to_string()).font(LABEL).color(if on { u.ink } else { u.muted }).truncate().min_w(0.0).a11y_hidden())
+/// One part of a menu row's segmented choice.
+pub(crate) fn seg_part(key: &str, label: &str, on: bool) -> crate::ui::SegPart {
+    crate::ui::SegPart::new(key.to_string(), label.to_string()).on(on)
 }
 
-/// A labelled row of segments, 28 high, inside a menu: equal columns, and a thumb under the
-/// selected one that slides to a new pick on `base` (it is placed by its grid cell, so it
-/// takes no part in the row's layout).
-pub(crate) fn segmented(u: &Ui, label: &str, selected: Option<usize>, segments: Vec<El>) -> El {
-    let n = segments.len().max(1);
-    let mut cells = row()
-        .key(format!("menu-seg-{label}"))
-        .h(28.0)
-        .grow(1.0)
-        .min_w(0.0)
-        .padding(2.0)
-        .gap(2.0)
-        .equal_columns(n)
-        .radius(crate::ui::r(8.0))
-        .fill(u.well)
-        .border(1.0, u.hair)
-        .role("radiogroup")
-        .label(label.to_string());
-    if let Some(at) = selected {
-        cells = cells.child(crate::motion::slides(
-            el().key(format!("menu-seg-{label}-thumb"))
-                .grid_cell(at)
-                .h(22.0)
-                .radius(crate::ui::r(4.0))
-                .fill(u.selected)
-                .border(1.0, u.hair_strong)
-                .a11y_hidden(),
-            crate::motion::base(),
-        ));
-    }
-    for (index, segment) in segments.into_iter().enumerate() {
-        cells = cells.child(segment.grid_cell(index).h(22.0));
-    }
+/// A labelled menu row holding the shared segmented selector at 28 points, its parts in
+/// equal columns.
+pub(crate) fn seg_row(u: &Ui, label: &str, parts: Vec<crate::ui::SegPart>) -> El {
     row()
         .w_full()
         .h(36.0)
@@ -835,7 +789,14 @@ pub(crate) fn segmented(u: &Ui, label: &str, selected: Option<usize>, segments: 
         .gap(8.0)
         .center_y()
         .child(text(label.to_string()).font(BODY).color(u.prose).w(72.0))
-        .child(cells)
+        .child(
+            crate::ui::Segmented::new(format!("menu-seg-{label}"), label.to_string())
+                .size(crate::ui::SegSize::M)
+                .width(crate::ui::SegWidth::Fill)
+                .parts(parts)
+                .build(u)
+                .grow(1.0),
+        )
 }
 
 /// A row that does not apply here, greyed in place.

@@ -491,16 +491,12 @@ pub fn sort_control(st: &State, u: &Ui) -> El {
         Sort::Used => 0,
         Sort::New => 1,
     };
-    super::segmented(
-        u,
-        "crosshair-community-sort",
-        "Sort the library",
-        &[tr("Most used"), tr("Newest")],
-        selected,
-        false,
-        |st: &mut State, index| set_sort(st, if index == 0 { Sort::Used } else { Sort::New }),
-    )
-    .w(196.0)
+    crate::ui::Segmented::new("crosshair-community-sort", "Sort the library")
+        .width(crate::ui::SegWidth::Even(196.0))
+        .choices(&[tr("Most used"), tr("Newest")], selected, |st: &mut State, index| {
+            set_sort(st, if index == 0 { Sort::Used } else { Sort::New })
+        })
+        .build(u)
 }
 
 /// "by Sigil, 12 uses" or "12 uses".

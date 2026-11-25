@@ -264,36 +264,21 @@ fn rate_hand(st: &mut State) {
 pub fn party_mode(s: &State, u: &Ui) -> El {
     let hand = s.stats.w4.hand;
     let pill = |key: &str, label: &str, on: bool, set: bool| {
-        row()
-            .key(key.to_string())
-            .h(28.0)
-            .px(10.0)
-            .center_y()
-            .radius(crate::ui::r(4.0))
-            .child(crate::ui::seg_thumb(on, "stats-party-mode-thumb", u.selected, Color::TRANSPARENT, crate::ui::r(4.0)))
-            .hover(u.hover)
-            .focusable(true)
-            .role("radio")
-            .checked(on)
-            .label(tr(label).to_string())
-            .cursor(rune::Cursor::Pointer)
-            .on_press(move |st: &mut State| {
+        crate::ui::SegPart::new(key, tr(label)).on(on).with(move |e| {
+            e.on_press(move |st: &mut State| {
                 st.stats.w4.hand = set;
                 if set {
                     start_names(st);
                 }
             })
-            .child(text(tr(label).to_string()).font(SMALL).color(if on { u.ink } else { u.muted }).a11y_hidden())
+        })
     };
-    row()
-        .key("stats-party-mode")
+    crate::ui::Segmented::new("stats-party-mode", tr("Party heroes"))
+        .size(crate::ui::SegSize::M)
+        .part(pill("stats-party-mode-auto", "Most played heroes", !hand, false))
+        .part(pill("stats-party-mode-hand", "Pick heroes by hand", hand, true))
+        .build(u)
         .self_start()
-        .gap(2.0)
-        .padding(2.0)
-        .radius(crate::ui::r(4.0))
-        .border(1.0, u.hair)
-        .child(pill("stats-party-mode-auto", "Most played heroes", !hand, false))
-        .child(pill("stats-party-mode-hand", "Pick heroes by hand", hand, true))
 }
 
 /// DMM's planner: a row per player with up to three heroes, Add player, a hero grid for the
@@ -494,38 +479,23 @@ pub fn meta_section(s: &State, u: &Ui) -> El {
     // DMM's "best items this patch", or the filter's window.
     let patch = s.stats.w4.meta_patch;
     let pick = |key: &str, label: &str, on: bool, set: bool| {
-        row()
-            .key(key.to_string())
-            .h(28.0)
-            .px(10.0)
-            .center_y()
-            .radius(crate::ui::r(4.0))
-            .child(crate::ui::seg_thumb(on, "stats-item-meta-window-thumb", u.selected, Color::TRANSPARENT, crate::ui::r(4.0)))
-            .hover(u.hover)
-            .focusable(true)
-            .role("radio")
-            .checked(on)
-            .label(tr(label).to_string())
-            .cursor(rune::Cursor::Pointer)
-            .on_press(move |st: &mut State| {
+        crate::ui::SegPart::new(key, tr(label)).on(on).with(move |e| {
+            e.on_press(move |st: &mut State| {
                 if st.stats.w4.meta_patch != set {
                     st.stats.w4.meta_patch = set;
                     st.stats.w4.meta = Fetched::Idle;
                     st.stats.w4.meta_since = None;
                 }
             })
-            .child(text(tr(label).to_string()).font(SMALL).color(if on { u.ink } else { u.muted }).a11y_hidden())
+        })
     };
     section = section.child(
-        row()
-            .key("stats-item-meta-window")
-            .self_start()
-            .gap(2.0)
-            .padding(2.0)
-            .radius(crate::ui::r(4.0))
-            .border(1.0, u.hair)
-            .child(pick("stats-item-meta-patch", "This patch", patch, true))
-            .child(pick("stats-item-meta-filter", "The filter's window", !patch, false)),
+        crate::ui::Segmented::new("stats-item-meta-window", tr("Item window"))
+            .size(crate::ui::SegSize::M)
+            .part(pick("stats-item-meta-patch", "This patch", patch, true))
+            .part(pick("stats-item-meta-filter", "The filter's window", !patch, false))
+            .build(u)
+            .self_start(),
     );
     section = match m {
         Fetched::Idle => section.child(

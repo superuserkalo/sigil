@@ -1024,51 +1024,20 @@ fn segmented_in<T: Copy + PartialEq + 'static>(
     if choices.len() >= 5 || est > 300.0 {
         return select_choice(u, key, choices, current, pick, width.unwrap_or(200.0));
     }
-    let mut r = row()
-        .key(key.to_string())
-        .h(28.0)
-        .padding(2.0)
-        .gap(2.0)
-        .radius(crate::ui::r(4.0))
-        .fill(u.well)
-        .border(1.0, u.hair)
-        .role("radiogroup");
+    // The shared segmented selector, at the settings rows' 28 points.
+    let mut strip = crate::ui::Segmented::new(key, key).size(crate::ui::SegSize::M);
     if let Some(w) = width {
-        r = r.w(w);
+        strip = strip.width(crate::ui::SegWidth::Even(w));
     }
     for (index, (value, label)) in choices.iter().enumerate() {
-        let on = *value == current;
         let value = *value;
-        let mut seg = row();
-        if width.is_some() {
-            seg = seg.grow(1.0).min_w(0.0);
-        }
-        // One thumb per control glides to the new pick on `base`; the labels ease colour.
-        let thumb = format!("{key}-thumb");
-        r = r.child(
-            seg
-                .key(format!("{key}-{index}"))
-                .h_full()
-                .px(10.0)
-                .center()
-                .radius(crate::ui::r(4.0))
-                .child(crate::ui::seg_thumb(on, &thumb, u.raised, u.hair_strong, crate::ui::r(4.0)))
-                .hover(if on { Color::TRANSPARENT } else { u.hover })
-                .focusable(true)
-                .role("radio")
-                .checked(on)
-                .label(tr(label).to_string())
-                .cursor(rune::Cursor::Pointer)
-                .on_press(move |st: &mut State| pick(st, value))
-                .child(crate::motion::colors(
-                    text(tr(label).to_string())
-                        .font(LABEL)
-                        .color(if on { u.ink } else { u.muted })
-                        .a11y_hidden(),
-                )),
+        strip = strip.part(
+            crate::ui::SegPart::new(format!("{key}-{index}"), tr(label))
+                .on(value == current)
+                .with(move |e| e.on_press(move |st: &mut State| pick(st, value))),
         );
     }
-    r
+    strip.build(u)
 }
 
 thread_local! {

@@ -452,25 +452,22 @@ fn video_section(s: &State, u: &Ui, config: &Config, options: &Options) -> El {
         .filter(|record| record.config == config.id());
     let mut trailing = row().gap(8.0).center_y();
     if config.videos.len() > 1 {
-        let segments = config
+        let segments: Vec<crate::ui::SegPart> = config
             .videos
             .iter()
             .map(|variant| {
                 let id = config.id().to_string();
                 let file = variant.file.clone();
-                subpage::segment(u, &variant.label, variant.file == set.file)
-                    .key(format!(
+                crate::ui::SegPart::new(format!(
                         "perf-video-{}",
                         variant.label.to_lowercase().replace(' ', "-")
-                    ))
-                    .cursor(rune::Cursor::Pointer)
-                    .on_press(move |st: &mut State| {
+                    ), &variant.label).on(variant.file == set.file).with(move |e| e.on_press(move |st: &mut State| {
                         let file = file.clone();
                         edit(st, &id, move |options| options.video = Some(file))
-                    })
+                    }))
             })
             .collect();
-        trailing = trailing.child(subpage::segmented(u, segments));
+        trailing = trailing.child(crate::ui::Segmented::new("perf-video", tr("Video")).parts(segments).build(u));
     }
 
     let mut grid = row().w_full().gap(32.0).items_start();

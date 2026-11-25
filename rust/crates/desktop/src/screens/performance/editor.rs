@@ -21,7 +21,7 @@ use rune::{
 use crate::app::State;
 use crate::icons;
 use crate::screens::settings::i18n::fill;
-use crate::ui::{ActionKind, BODY, BODY_MED, DISPLAY, H1, MONO, SMALL, Ui};
+use crate::ui::{ActionKind, BODY, DISPLAY, H1, MONO, SMALL, Ui};
 
 use super::{
     applied_id, author_value, config, edits_for, options_for, page, pending, tr,
@@ -323,11 +323,11 @@ pub fn view(s: &State, u: &Ui) -> El {
         .on_edit(rune::edit_access(|st: &mut State| {
             &mut st.performance.editor.as_mut().expect("editor").search
         }));
-    let tabs = row()
-        .gap(4.0)
-        .center_y()
-        .child(tab(u, editor, Tab::Settings, tr("Settings")))
-        .child(tab(u, editor, Tab::History, tr("History")));
+    let tabs = crate::ui::Segmented::new("perf-editor-tabs", tr("Editor"))
+        .tabs()
+        .part(tab(editor, Tab::Settings, tr("Settings")))
+        .part(tab(editor, Tab::History, tr("History")))
+        .build(u);
     out = out.child(
         row()
             .w_full()
@@ -363,32 +363,14 @@ fn current_config(st: &State) -> Option<Config> {
     config(st, id).cloned()
 }
 
-fn tab(u: &Ui, editor: &Editor, tab: Tab, label: &str) -> El {
-    let on = editor.tab == tab;
-    row()
-        .key(format!("perf-editor-tab-{label}"))
-        .h(28.0)
-        .px(10.0)
-        .center()
-        .radius(crate::ui::r(6.0))
-        .child(crate::ui::seg_thumb(on, "perf-editor-tabs-thumb", u.selected, rune::Color::TRANSPARENT, crate::ui::r(6.0)))
-        .hover(u.hover)
-        .focusable(true)
-        .role("tab")
-        .checked(on)
-        .label(label.to_string())
-        .cursor(rune::Cursor::Pointer)
-        .on_press(move |st: &mut State| {
+fn tab(editor: &Editor, tab: Tab, label: &str) -> crate::ui::SegPart {
+    crate::ui::SegPart::new(format!("perf-editor-tab-{label}"), label).on(editor.tab == tab).with(move |e| {
+        e.on_press(move |st: &mut State| {
             if let Some(editor) = st.performance.editor.as_mut() {
                 editor.tab = tab;
             }
         })
-        .child(
-            text(label.to_string())
-                .font(BODY_MED)
-                .color(if on { u.ink } else { u.muted })
-                .a11y_hidden(),
-        )
+    })
 }
 
 /// One row of the settings table.

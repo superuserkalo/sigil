@@ -10,19 +10,11 @@
 use super::*;
 use crate::ui::SMALL_NUM;
 
-/// The section tabs' width: container padding 2, six segments of `TAB_PX` each side of their
-/// label, gap 2. The labels are names (All, Mods, WiPs...) and stay English in every language.
-/// `tabs_width_holds_the_labels` checks it against the font.
-pub(crate) const TABS_W: f32 = 352.0;
-/// The same in German, where "Sammlungen" and "Karten" are longer.
-pub(crate) const TABS_W_DE: f32 = 376.0;
-
-/// The tabs' width in the current language.
+/// The section tabs' width, measured from their labels in the current language (the
+/// shared segmented selector's natural width).
 pub(crate) fn tabs_w() -> f32 {
-    use crate::screens::settings::i18n::{self, Lang};
-    if i18n::current() == Lang::German { TABS_W_DE } else { TABS_W }
+    sections(None).natural_width()
 }
-const TAB_PX: f32 = 10.0;
 const FILTERS_W: f32 = 92.0;
 const FILTERS_ICON_W: f32 = 48.0;
 const SORT_W: f32 = 128.0;
@@ -124,47 +116,26 @@ fn usable(e: El, on: bool) -> El {
     if on { e } else { e.disabled(true).opacity(0.4) }
 }
 
+/// The section tabs as the shared segmented selector, without handlers or a pick: what
+/// `tabs_w` measures and `tabs` builds.
+fn sections(current: Option<Tab>) -> crate::ui::Segmented {
+    crate::ui::Segmented::new("browse-sections", super::tree::tr("Sections")).parts(Tab::ALL.into_iter().map(|tab| {
+        crate::ui::SegPart::new(format!("browse-tab-{}", tab.id()), super::tree::tr(tab.label())).on(Some(tab) == current)
+    }))
+}
+
 /// The segmented tabs, for tier A and B.
 fn tabs(s: &State, u: &Ui) -> El {
     let current = s.browse_view.tab;
-    let mut r = row()
-        .key("browse-sections")
-        .w(tabs_w())
-        .h(32.0)
-        .padding(2.0)
-        .gap(2.0)
-        .radius(crate::ui::r(8.0))
-        .fill(u.well)
-        .border(1.0, u.hair)
-        .role("radiogroup");
+    let mut strip = crate::ui::Segmented::new("browse-sections", super::tree::tr("Sections"));
     for tab in Tab::ALL {
-        let on = tab == current;
-        // The selection is one thumb that glides from the old tab to the new on `base`; the
-        // tabs keep their boxes and only their text colour eases.
-        r = r.child(
-            row()
-                .key(format!("browse-tab-{}", tab.id()))
-                .h_full()
-                .px(TAB_PX)
-                .center()
-                .radius(crate::ui::r(4.0))
-                .child(crate::ui::seg_thumb(on, "browse-sections-thumb", u.selected, u.hair_strong, crate::ui::r(4.0)))
-                .hover(if on { Color::TRANSPARENT } else { u.hover })
-                .focusable(true)
-                .role("radio")
-                .label(super::tree::tr(tab.label()))
-                .checked(on)
-                .cursor(rune::Cursor::Pointer)
-                .on_press_tx(move |st: &mut State, tx: &mut Tx| set_tab(st, Some(tx), tab))
-                .child(crate::motion::colors(
-                    text(super::tree::tr(tab.label()))
-                        .font(LABEL)
-                        .color(if on { u.ink } else { u.muted })
-                        .a11y_hidden(),
-                )),
+        strip = strip.part(
+            crate::ui::SegPart::new(format!("browse-tab-{}", tab.id()), super::tree::tr(tab.label()))
+                .on(tab == current)
+                .with(move |e| e.on_press_tx(move |st: &mut State, tx: &mut Tx| set_tab(st, Some(tx), tab))),
         );
     }
-    r
+    strip.build(u)
 }
 
 /// A fixed-width 32 point dropdown trigger: an optional icon, the label truncating, a chevron.
@@ -531,22 +502,4 @@ mod tests {
         }
     }
 
-    #[test]
-    fn tabs_width_holds_the_labels() {
-        // English and German: the tab names are measured in both.
-        for german in [false, true] {
-            let labels: f32 = Tab::ALL
-                .iter()
-                .map(|tab| {
-                    let label = if german { super::super::tree::german(tab.label()) } else { tab.label() };
-                    rune::text::measure(label, &[], LABEL, None).0 + 2.0 * TAB_PX
-                })
-                .sum();
-            // Container padding 2 each side, five gaps of 2, a 2 point border.
-            let need = labels + 4.0 + 10.0 + 2.0;
-            let have = if german { TABS_W_DE } else { TABS_W };
-            assert!(need <= have, "tabs need {need} (german {german})");
-            assert!(have - need < 24.0, "tab width wastes {} points (german {german})", have - need);
-        }
-    }
 }

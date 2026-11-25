@@ -278,7 +278,8 @@ fn pill(u: &Ui, key: String, label: &str, on: bool) -> El {
         .px(9.0)
         .center_y()
         .radius(crate::ui::r(6.0))
-        .child(crate::ui::seg_thumb(on, "convars-group-thumb", u.selected, rune::Color::TRANSPARENT, crate::ui::r(6.0)))
+        // A wrapping filter chip, not a segmented selector: the pick is its own fill.
+        .fill(if on { u.selected } else { rune::Color::TRANSPARENT })
         .hover(u.hover)
         .focusable(true)
         .role("radio")

@@ -802,51 +802,16 @@ fn tabs(s: &State, u: &Ui) -> El {
         (Tab::Host, "servers-tab-host", host_tr("Host")),
         (Tab::Regions, "servers-tab-regions", host_tr("Regions")),
     ];
-    let mut bar = row()
-        .key("servers-tabs")
-        .role("tablist")
-        .h(32.0)
-        .padding(2.0)
-        .gap(2.0)
-        .center_y()
-        .radius(crate::ui::r(4.0))
-        .fill(u.well)
-        .border(1.0, u.hair);
+    let mut bar = crate::ui::Segmented::new("servers-tabs", tr("Servers")).tabs();
     for (tab, key, label) in items {
-        let on = s.servers.tab == tab;
-        bar = bar.child(
-            segment(u, "servers-tabs", key, label, on, "tab").on_press(move |st: &mut State| {
+        bar = bar.part(crate::ui::SegPart::new(key, label).on(s.servers.tab == tab).with(move |e| {
+            e.on_press(move |st: &mut State| {
                 st.servers.tab = tab;
                 st.servers.menu = None;
-            }),
-        );
+            })
+        }));
     }
-    bar
-}
-
-/// One 28 point segment of the strip `strip`: `BODY_MED`, the selected one raised by a thumb
-/// that glides from the old segment to the new on `base`.
-fn segment(u: &Ui, strip: &str, key: &str, label: &str, on: bool, role: &'static str) -> El {
-    row()
-        .key(key.to_string())
-        .h(28.0)
-        .px(10.0)
-        .gap(6.0)
-        .center_y()
-        .radius(crate::ui::r(4.0))
-        .child(crate::ui::seg_thumb(on, &format!("{strip}-thumb"), u.raised, u.hair_strong, crate::ui::r(4.0)))
-        .hover(if on { Color::TRANSPARENT } else { u.hover })
-        .focusable(true)
-        .role(role)
-        .checked(on)
-        .label(label.to_string())
-        .cursor(rune::Cursor::Pointer)
-        .child(crate::motion::colors(
-            text(label.to_string())
-                .font(BODY_MED)
-                .color(if on { u.ink } else { u.muted })
-                .a11y_hidden(),
-        ))
+    bar.build(u)
 }
 
 /// The filter row, 32 high with 28 controls: scope, three toggle chips, the Filters menu,
@@ -854,15 +819,7 @@ fn segment(u: &Ui, strip: &str, key: &str, label: &str, on: bool, role: &'static
 fn filters(s: &State, u: &Ui) -> El {
     let f = &s.servers.filters;
     let joinable = f.has_players && f.has_space && f.password == PasswordFilter::Open;
-    let mut scope = row()
-        .key("servers-scope")
-        .h(32.0)
-        .padding(2.0)
-        .gap(2.0)
-        .center_y()
-        .radius(crate::ui::r(4.0))
-        .fill(u.well)
-        .border(1.0, u.hair);
+    let mut scope = crate::ui::Segmented::new("servers-scope", tr("Show"));
     for (key, label, count, value) in [
         ("servers-scope-all", tr("All"), None, Scope::All),
         (
@@ -873,18 +830,19 @@ fn filters(s: &State, u: &Ui) -> El {
         ),
         ("servers-scope-recent", tr("Recent"), Some(s.servers.saved.recent.len()), Scope::Recent),
     ] {
-        let mut seg = segment(u, "servers-scope", key, label, s.servers.scope == value, "radio").on_press(
-            move |st: &mut State| {
+        let mut part = crate::ui::SegPart::new(key, label).on(s.servers.scope == value).with(move |e| {
+            e.on_press(move |st: &mut State| {
                 st.servers.scope = value;
                 st.servers.selected = None;
                 pin_order(st);
-            },
-        );
+            })
+        });
         if let Some(n) = count {
-            seg = seg.child(text(n.to_string()).font(SMALL_NUM).color(u.faint).a11y_hidden());
+            part = part.count(n);
         }
-        scope = scope.child(seg);
+        scope = scope.part(part);
     }
+    let scope = scope.build(u);
     // Password, Mode, Region and Map live in the Filters menu; its count says how many.
     let hidden = [
         f.password != PasswordFilter::All,
@@ -991,41 +949,15 @@ fn toggle_chip(u: &Ui, key: &str, label: &str, on: bool, press: impl Fn(&mut Sta
 }
 
 fn password_segment(u: &Ui, current: PasswordFilter) -> El {
-    let mut segment = row()
-        .key("servers-password-filter")
-        .h(28.0)
-        .px(2.0)
-        .py(2.0)
-        .gap(2.0)
-        .center_y()
-        .radius(crate::ui::r(4.0))
-        .fill(u.well)
-        .border(1.0, u.hair);
+    let mut segment = crate::ui::Segmented::new("servers-password-filter", "Password").size(crate::ui::SegSize::M);
     for option in PasswordFilter::ALL {
-        let on = current == option;
-        segment = segment.child(
-            row()
-                .key(format!("servers-password-{}", option.id()))
-                .h(22.0)
-                .px(8.0)
-                .center_y()
-                .radius(crate::ui::r(4.0))
-                .child(crate::ui::seg_thumb(on, "servers-password-thumb", u.selected, Color::TRANSPARENT, crate::ui::r(4.0)))
-                .focusable(true)
-                .role("button")
-                .checked(on)
-                .label(option.label().to_string())
-                .cursor(rune::Cursor::Pointer)
-                .on_press(move |st: &mut State| st.servers.filters.password = option)
-                .child(
-                    text(option.label().to_string())
-                        .font(SMALL)
-                        .color(if on { u.ink } else { u.muted })
-                        .a11y_hidden(),
-                ),
+        segment = segment.part(
+            crate::ui::SegPart::new(format!("servers-password-{}", option.id()), option.label())
+                .on(current == option)
+                .with(move |e| e.on_press(move |st: &mut State| st.servers.filters.password = option)),
         );
     }
-    segment
+    segment.build(u)
 }
 
 

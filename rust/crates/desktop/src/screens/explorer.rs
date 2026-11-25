@@ -25,7 +25,6 @@ use rune::{Color, El, Key, KeyEvent, Pixels, ScrollSpec, SurfaceFit, TextEdit, T
 use crate::app::State;
 use crate::icons;
 use crate::jobs::Job;
-use crate::screens::subpage;
 use crate::ui::{ActionKind, BODY, BODY_MED, MONO, SMALL, Ui};
 
 #[path = "explorer_de.rs"]
@@ -426,35 +425,23 @@ pub fn poll(st: &mut State) -> bool {
 
 /// The tab strip above the Game index body.
 pub fn tabs(s: &State, u: &Ui) -> El {
-    row().w_full().child(subpage::segmented(
-        u,
-        vec![
-            subpage::segment_in(u, "explorer-tabs", tr("Paths"), s.explorer.tab == Tab::Paths)
-                .key("index-tab-paths")
-                .cursor(rune::Cursor::Pointer)
-                .on_press(|st: &mut State| st.explorer.tab = Tab::Paths),
-            subpage::segment_in(u, "explorer-tabs", tr("Files"), s.explorer.tab == Tab::Files)
-                .key("index-tab-files")
-                .cursor(rune::Cursor::Pointer)
-                .on_press(open_tab),
-        ],
-    ))
+    row().w_full().child(crate::ui::Segmented::new("explorer-tabs", tr("Index")).tabs().parts(vec![
+            crate::ui::SegPart::new("index-tab-paths", tr("Paths")).on(s.explorer.tab == Tab::Paths).with(move |e| e.on_press(|st: &mut State| st.explorer.tab = Tab::Paths)),
+            crate::ui::SegPart::new("index-tab-files", tr("Files")).on(s.explorer.tab == Tab::Files).with(move |e| e.on_press(open_tab)),
+        ]).build(u))
 }
 
 pub fn view(s: &State, u: &Ui) -> El {
     let ex = &s.explorer;
-    let modes = subpage::segmented(
-        u,
+    let modes = crate::ui::Segmented::new("explorer-mode", tr("Mode")).parts(
         [(Mode::Browse, tr("Browse")), (Mode::Search, tr("Search contents")), (Mode::Compare, tr("Compare"))]
             .into_iter()
             .map(|(mode, label)| {
-                subpage::segment_in(u, "explorer-mode", label, ex.mode == mode)
-                    .key(format!("explorer-mode-{mode:?}"))
-                    .cursor(rune::Cursor::Pointer)
-                    .on_press(move |st: &mut State| st.explorer.mode = mode)
+                crate::ui::SegPart::new(format!("explorer-mode-{mode:?}"), label).on(ex.mode == mode).with(move |e| e.on_press(move |st: &mut State| st.explorer.mode = mode))
             })
-            .collect(),
-    );
+            .collect::<Vec<_>>(),
+    )
+    .build(u);
     let mut body = col().w_full().gap(12.0).child(source_bar(s, u)).child(row().w_full().child(modes));
     if let Some(error) = &ex.error {
         body = body.child(text(error.clone()).font(SMALL).color(u.rose).wrap());
@@ -501,17 +488,17 @@ fn source_label(s: &State, path: &Path) -> String {
 
 fn source_bar(s: &State, u: &Ui) -> El {
     let ex = &s.explorer;
-    let mut chips = row().w_full().gap(6.0).wrap();
+    let mut sources = crate::ui::Segmented::new("explorer-sources", tr("Sources"));
     for (i, src) in ex.sources.iter().enumerate() {
         let on = ex.source_path.as_deref() == Some(src.path.as_path());
         let path = src.path.clone();
-        chips = chips.child(
-            subpage::segment_in(u, "explorer-sources", &src.label, on)
-                .key(format!("explorer-source-{i}"))
-                .border(1.0, u.hair)
-                .cursor(rune::Cursor::Pointer)
-                .on_press(move |st: &mut State| open_source(st, path.clone())),
+        sources = sources.part(
+            crate::ui::SegPart::new(format!("explorer-source-{i}"), &src.label).on(on).with(move |e| e.on_press(move |st: &mut State| open_source(st, path.clone()))),
         );
+    }
+    let mut chips = row().w_full().gap(6.0).wrap();
+    if !ex.sources.is_empty() {
+        chips = chips.child(sources.build(u));
     }
     chips = chips.child(
         u.icon_action(&icons::FOLDER_OPEN, tr("Open a VPK"), ActionKind::Ghost)
@@ -829,11 +816,9 @@ fn search_pane(s: &State, u: &Ui) -> El {
     }
     let case = ex.case_sensitive;
     controls = controls.child(
-        subpage::segment(u, tr("Match case"), case)
-            .key("explorer-case")
-            .border(1.0, u.hair)
-            .cursor(rune::Cursor::Pointer)
-            .on_press(|st: &mut State| st.explorer.case_sensitive = !st.explorer.case_sensitive),
+        crate::ui::Segmented::new("explorer-case-strip", tr("Match case"))
+            .part(crate::ui::SegPart::new("explorer-case", tr("Match case")).on(case).with(move |e| e.on_press(|st: &mut State| st.explorer.case_sensitive = !st.explorer.case_sensitive)))
+            .build(u),
     );
 
     let (hits, status) = match (&ex.control, &ex.report) {
@@ -890,19 +875,15 @@ fn search_pane(s: &State, u: &Ui) -> El {
 
 fn compare_pane(s: &State, u: &Ui, listing: &Listing) -> El {
     let ex = &s.explorer;
-    let mut picks = row().w_full().gap(6.0).wrap();
+    let mut picks = crate::ui::Segmented::new("explorer-rights", tr("Compare with"));
     for (i, src) in ex.sources.iter().enumerate() {
         if ex.source_path.as_deref() == Some(src.path.as_path()) {
             continue;
         }
         let on = ex.right_path.as_deref() == Some(src.path.as_path());
         let path = src.path.clone();
-        picks = picks.child(
-            subpage::segment_in(u, "explorer-rights", &src.label, on)
-                .key(format!("explorer-right-{i}"))
-                .border(1.0, u.hair)
-                .cursor(rune::Cursor::Pointer)
-                .on_press(move |st: &mut State| open_right(st, path.clone())),
+        picks = picks.part(
+            crate::ui::SegPart::new(format!("explorer-right-{i}"), &src.label).on(on).with(move |e| e.on_press(move |st: &mut State| open_right(st, path.clone()))),
         );
     }
     let mut pane = u
@@ -911,7 +892,7 @@ fn compare_pane(s: &State, u: &Ui, listing: &Listing) -> El {
         .inset(8.0, 8.0)
         .gap(8.0)
         .child(text(fill(tr("Compare {} with"), &[&listing.label])).font(BODY_MED).color(u.ink))
-        .child(picks);
+        .child(picks.build(u));
     let Some(diff) = &ex.diff else {
         let line = if ex.right_job.is_running() { tr("Comparing...") } else { tr("Pick the second source.") };
         return pane.child(text(line).font(SMALL).color(u.faint));

@@ -661,37 +661,19 @@ fn loading_rows(u: &Ui) -> El {
     c
 }
 
-/// Premade or All convars, as one segmented box.
+/// Premade or All convars, as the shared segmented selector across the column.
 fn right_tabs(s: &State, u: &Ui) -> El {
-    let seg = |key: &str, label: &str, on: bool, value: bool| {
-        row()
-            .key(key.to_string())
-            .grow(1.0)
-            .h(28.0)
-            .center()
-            .radius(crate::ui::r(4.0))
-            .child(crate::ui::seg_thumb(on, "autoexec-right-tabs-thumb", u.raised, u.hair_strong, crate::ui::r(4.0)))
-            .hover(if on { u.raised } else { u.hover })
-            .focusable(true)
-            .role("tab")
-            .checked(on)
-            .label(label.to_string())
-            .cursor(rune::Cursor::Pointer)
-            .on_press(move |st: &mut State| st.autoexec.all_convars = value)
-            .child(text(label.to_string()).font(BODY_MED).color(if on { u.ink } else { u.muted }).a11y_hidden())
+    let part = |key: &str, label: &str, on: bool, value: bool| {
+        crate::ui::SegPart::new(key, label)
+            .on(on)
+            .with(move |e| e.on_press(move |st: &mut State| st.autoexec.all_convars = value))
     };
-    row()
-        .key("autoexec-right-tabs")
-        .role("tablist")
-        .w_full()
-        .h(32.0)
-        .padding(2.0)
-        .gap(2.0)
-        .radius(crate::ui::r(4.0))
-        .fill(u.well)
-        .border(1.0, u.hair)
-        .child(seg("autoexec-right-premade", tr("Premade"), !s.autoexec.all_convars, false))
-        .child(seg("autoexec-right-convars", tr("All convars"), s.autoexec.all_convars, true))
+    crate::ui::Segmented::new("autoexec-right-tabs", tr("Convars"))
+        .tabs()
+        .width(crate::ui::SegWidth::Fill)
+        .part(part("autoexec-right-premade", tr("Premade"), !s.autoexec.all_convars, false))
+        .part(part("autoexec-right-convars", tr("All convars"), s.autoexec.all_convars, true))
+        .build(u)
 }
 
 /// Mounted at the root so the save and clear confirms overlay the shell.

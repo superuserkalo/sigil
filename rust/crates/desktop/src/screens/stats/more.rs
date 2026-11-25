@@ -358,22 +358,13 @@ fn refilter(st: &mut State) {
 // --- views -------------------------------------------------------------------------------
 
 /// One choice inside a filter group: a short word on screen, the full name for assistive tech.
-/// `strip` names the group, whose selection glides between its choices.
-fn pill(u: &Ui, strip: &str, key: String, label: &str, full: &str, on: bool) -> El {
-    row()
-        .key(key)
-        .h(24.0)
-        .px(10.0)
-        .center_y()
-        .radius(crate::ui::r(2.0))
-        .child(crate::ui::seg_thumb(on, &format!("{strip}-thumb"), u.selected, rune::Color::TRANSPARENT, crate::ui::r(2.0)))
-        .hover(u.hover)
-        .focusable(true)
-        .role("radio")
-        .checked(on)
-        .label(tr(full).to_string())
-        .cursor(rune::Cursor::Pointer)
-        .child(text(tr(label).to_string()).font(SMALL).color(if on { u.ink } else { u.muted }).a11y_hidden())
+fn pill(key: String, label: &str, full: &str, on: bool) -> crate::ui::SegPart {
+    crate::ui::SegPart::new(key, tr(label)).name(tr(full)).on(on)
+}
+
+/// A filter group: the shared segmented selector at 28 points.
+fn strip(key: &str, name: &str, parts: Vec<crate::ui::SegPart>, u: &Ui) -> El {
+    crate::ui::Segmented::new(key, tr(name)).size(crate::ui::SegSize::M).parts(parts).build(u)
 }
 
 fn group(u: &Ui) -> El {
@@ -383,29 +374,31 @@ fn group(u: &Ui) -> El {
 /// The filter row over the tabs it scopes: one line of three groups.
 pub(super) fn filter_bar(s: &State, u: &Ui) -> El {
     let m = &s.stats.more;
-    let mut modes = group(u);
+    let mut modes = Vec::new();
     for (label, full, value) in [
         ("All", "Ranked and unranked", None),
         ("Ranked", "Ranked", Some(true)),
         ("Unranked", "Unranked", Some(false)),
     ] {
-        modes = modes.child(
-            pill(u, "stats-filter-mode", format!("stats-filter-mode-{full}"), label, full, m.ranked == value).on_press(move |st: &mut State| {
+        modes.push(pill(format!("stats-filter-mode-{full}"), label, full, m.ranked == value).with(move |e| {
+            e.on_press(move |st: &mut State| {
                 st.stats.more.ranked = value;
                 refilter(st);
-            }),
-        );
+            })
+        }));
     }
-    let mut since = group(u);
+    let modes = strip("stats-filter-mode", "Mode", modes, u);
+    let mut since = Vec::new();
     for ((full, days), label) in SINCE.into_iter().zip(["All time", "7 d", "30 d", "90 d"]) {
-        since = since.child(
-            pill(u, "stats-filter-days", format!("stats-filter-days-{days}"), label, full, m.season.is_none() && m.days == days).on_press(move |st: &mut State| {
+        since.push(pill(format!("stats-filter-days-{days}"), label, full, m.season.is_none() && m.days == days).with(move |e| {
+            e.on_press(move |st: &mut State| {
                 st.stats.more.days = days;
                 st.stats.more.season = None;
                 refilter(st);
-            }),
-        );
+            })
+        }));
     }
+    let since = strip("stats-filter-days", "Window", since, u);
     // One Season segment opens the list of ranked seasons (`season_menu`).
     let season_name = m.season.and_then(|picked| {
         s.stats
@@ -448,17 +441,18 @@ pub(super) fn filter_bar(s: &State, u: &Ui) -> El {
             )
             .child(icon(&crate::icons::CHEVRON_DOWN, 12.0).color(u.muted).a11y_hidden()),
     );
-    let mut brawl = group(u);
+    let mut brawl = Vec::new();
     for (label, full, value) in [
         ("With", "With Street Brawl", Brawl::Show),
         ("Without", "Without Street Brawl", Brawl::Hide),
         ("Only", "Street Brawl only", Brawl::Only),
     ] {
-        brawl = brawl.child(
-            pill(u, "stats-filter-brawl", format!("stats-filter-brawl-{full}"), label, full, m.brawl == value)
-                .on_press(move |st: &mut State| st.stats.more.brawl = value),
+        brawl.push(
+            pill(format!("stats-filter-brawl-{full}"), label, full, m.brawl == value)
+                .with(move |e| e.on_press(move |st: &mut State| st.stats.more.brawl = value)),
         );
     }
+    let brawl = strip("stats-filter-brawl", "Street Brawl", brawl, u);
     row()
         .key("stats-filter")
         .w_full()

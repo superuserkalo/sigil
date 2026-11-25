@@ -156,40 +156,18 @@ pub fn picker(s: &State, u: &Ui) -> Option<El> {
         return None;
     }
     let current = s.browse_view.sources.url.clone();
-    let mut r = row()
-        .key("browse-store")
-        .h(32.0)
-        .padding(2.0)
-        .gap(2.0)
-        .radius(crate::ui::r(8.0))
-        .fill(u.well)
-        .border(1.0, u.hair)
-        .role("radiogroup")
-        .label(tr("Mod source"));
+    let mut r = crate::ui::Segmented::new("browse-store", tr("Mod source"));
     let choices = std::iter::once((None, "GameBanana".to_string()))
         .chain(sources.into_iter().map(|(url, name)| (Some(url), name)));
     for (index, (url, name)) in choices.enumerate() {
         let on = url == current;
-        r = r.child(
-            row()
-                .key(format!("browse-store-{index}"))
-                .h_full()
-                .px(12.0)
-                .max_w(180.0)
-                .center()
-                .radius(crate::ui::r(6.0))
-                .child(crate::ui::seg_thumb(on, "browse-store-thumb", u.raised, u.hair_strong, crate::ui::r(6.0)))
-                .hover(if on { u.raised } else { u.hover })
-                .focusable(true)
-                .role("radio")
-                .label(name.clone())
-                .checked(on)
-                .cursor(rune::Cursor::Pointer)
-                .on_press(move |st: &mut State| pick(st, url.clone()))
-                .child(text(name).font(LABEL).color(if on { u.ink } else { u.muted }).truncate().a11y_hidden()),
+        r = r.part(
+            crate::ui::SegPart::new(format!("browse-store-{index}"), name)
+                .on(on)
+                .with(move |e| e.on_press(move |st: &mut State| pick(st, url.clone()))),
         );
     }
-    Some(r)
+    Some(r.build(u))
 }
 
 // --- the page -------------------------------------------------------------------------------

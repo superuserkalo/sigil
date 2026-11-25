@@ -142,19 +142,10 @@ pub(super) fn map_section(s: &State, u: &Ui) -> El {
         );
     };
     let layer = v.layer;
-    let switch = crate::screens::subpage::segmented(
-        u,
-        vec![
-            crate::screens::subpage::segment(u, tr("Deaths"), layer == Layer::Deaths)
-                .key("stats-layer-deaths")
-                .cursor(rune::Cursor::Pointer)
-                .on_press(|st: &mut State| st.stats.layer = Layer::Deaths),
-            crate::screens::subpage::segment(u, tr("Kills"), layer == Layer::Kills)
-                .key("stats-layer-kills")
-                .cursor(rune::Cursor::Pointer)
-                .on_press(|st: &mut State| st.stats.layer = Layer::Kills),
-        ],
-    );
+    let switch = crate::ui::Segmented::new("stats-layer", tr("Layer")).parts(vec![
+            crate::ui::SegPart::new("stats-layer-deaths", tr("Deaths")).on(layer == Layer::Deaths).with(move |e| e.on_press(|st: &mut State| st.stats.layer = Layer::Deaths)),
+            crate::ui::SegPart::new("stats-layer-kills", tr("Kills")).on(layer == Layer::Kills).with(move |e| e.on_press(|st: &mut State| st.stats.layer = Layer::Kills)),
+        ]).build(u);
     section = section.child(
         row()
             .w_full()

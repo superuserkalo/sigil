@@ -23,10 +23,7 @@ pub(super) fn leaderboard_section(s: &State, u: &Ui, snap: &StatsSnapshot) -> El
     for name in REGIONS {
         let chosen = region == name;
         segments.push(
-            crate::screens::subpage::segment(u, tr(name), chosen)
-                .key(format!("stats-region-{name}"))
-                .cursor(rune::Cursor::Pointer)
-                .on_press(move |st: &mut State| crate::data::start_leaderboard_load(st, name)),
+            crate::ui::SegPart::new(format!("stats-region-{name}"), tr(name)).on(chosen).with(move |e| e.on_press(move |st: &mut State| crate::data::start_leaderboard_load(st, name))),
         );
     }
 
@@ -56,7 +53,7 @@ pub(super) fn leaderboard_section(s: &State, u: &Ui, snap: &StatsSnapshot) -> El
                     .min_w(0.0),
             )
             .child(spacer())
-            .child(crate::screens::subpage::segmented(u, segments)),
+            .child(crate::ui::Segmented::new("stats-region", tr("Region")).parts(segments).build(u)),
     );
 
     section = match &s.stats.leaderboard {

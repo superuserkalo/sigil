@@ -6,6 +6,7 @@ use std::collections::HashMap;
 use std::sync::OnceLock;
 
 pub const DE: &[(&str, &str)] = &[
+    ("Convars", "Convars"),
     ("Add a command", "Befehl hinzufügen"),
     ("Set on the Crosshair page", "Auf der Fadenkreuz-Seite festgelegt"),
     ("More", "Mehr"),

@@ -864,15 +864,12 @@ fn view_bar(s: &State, u: &Ui) -> El {
 
     bar()
         .key("crosshair-view")
-        .child(segmented(
-            u,
-            "crosshair-resolution",
-            "Resolution",
-            &labels,
-            selected,
-            true,
-            |st: &mut State, index| st.crosshair.resolution = RESOLUTIONS[index].0,
-        ))
+        .child(
+            crate::ui::Segmented::new("crosshair-resolution", "Resolution")
+                .size(crate::ui::SegSize::M)
+                .choices(&labels, selected, |st: &mut State, index| st.crosshair.resolution = RESOLUTIONS[index].0)
+                .build(u),
+        )
         .child(el().w(1.0).h(20.0).mx(4.0).fill(Color::WHITE.alpha(0.10)))
         .child(step(&icons::MINUS, "Zoom out", at_min, -1))
         .child(
@@ -915,86 +912,10 @@ fn zoom_label(zoom: f32) -> String {
 fn picker(u: &Ui, group: Group) -> El {
     let labels: Vec<&str> = Group::ALL.iter().map(|g| g.label()).collect();
     let selected = Group::ALL.iter().position(|g| *g == group).unwrap_or(0);
-    segmented(
-        u,
-        "crosshair-groups",
-        "Crosshair options",
-        &labels,
-        selected,
-        false,
-        |st: &mut State, index| st.crosshair.group = Group::ALL[index],
-    )
-    .w_full()
-}
-
-/// A segmented control built from cards in equal columns. The highlight shares the selected
-/// cell and carries the spring, so a new pick moves it across instead of swapping fills.
-fn segmented(
-    u: &Ui,
-    key: &str,
-    name: &str,
-    labels: &[&str],
-    selected: usize,
-    compact: bool,
-    pick: fn(&mut State, usize),
-) -> El {
-    let (h, pad, radius) = if compact { (28.0, 0.0, 4.0) } else { (28.0, 2.0, 4.0) };
-    let mut grid = row()
-        .key(key.to_string())
-        .equal_columns(labels.len().max(1))
-        .gap(2.0)
-        .role("radiogroup")
-        .label(name.to_string());
-    if !compact {
-        grid = grid
-            .padding(pad)
-            .radius(crate::ui::r(4.0))
-            .fill(u.well)
-            .border(1.0, u.hair);
-    }
-    grid = grid.child(crate::motion::slides(
-        el().key(format!("{key}-indicator"))
-            .grid_cell(selected)
-            .h(h)
-            .radius(radius)
-            .fill(if compact {
-                Color::WHITE.alpha(0.14)
-            } else {
-                Color::WHITE.alpha(0.075)
-            })
-            .border(1.0, if compact { Color::TRANSPARENT } else { u.hair_strong })
-            .a11y_hidden(),
-        crate::motion::base(),
-    ));
-    for (index, label) in labels.iter().enumerate() {
-        let on = index == selected;
-        let mut cell = crate::motion::colors(row())
-            .key(format!("{key}-{index}"))
-            .grid_cell(index)
-            .h(h)
-            .px(if compact { 10.0 } else { 12.0 })
-            .center()
-            .radius(radius)
-            .focusable(true)
-            .role("radio")
-            .checked(on)
-            .label(label.to_string())
-            .child(
-                text(label.to_string())
-                    .font(LABEL)
-                    .color(if on { u.ink } else { u.muted })
-                    .truncate()
-                    .a11y_hidden(),
-            );
-        if !on {
-            cell = cell
-                .hover(Color::WHITE.alpha(0.04))
-                .cursor(rune::Cursor::Pointer)
-                .on_press(move |st: &mut State| pick(st, index));
-        }
-        grid = grid.child(cell);
-    }
-    grid
+    crate::ui::Segmented::new("crosshair-groups", "Crosshair options")
+        .width(crate::ui::SegWidth::Fill)
+        .choices(&labels, selected, |st: &mut State, index| st.crosshair.group = Group::ALL[index])
+        .build(u)
 }
 
 // --- groups -----------------------------------------------------------------------------
@@ -1895,23 +1816,17 @@ fn presets_section(s: &State, u: &Ui) -> El {
     } else {
         (trailing, grid, "crosshair-presets-strip")
     };
-    let switch = segmented(
-        u,
-        "crosshair-shelf",
-        "Presets or community",
-        &[tr("Presets"), tr("Community")],
-        usize::from(community),
-        false,
-        |st: &mut State, index| {
+    let switch = crate::ui::Segmented::new("crosshair-shelf", "Presets or community")
+        .width(crate::ui::SegWidth::Even(208.0))
+        .choices(&[tr("Presets"), tr("Community")], usize::from(community), |st: &mut State, index| {
             if index == 0 {
                 st.crosshair.shelf = community::Shelf::Presets;
                 st.crosshair.community.menu = None;
             } else {
                 community::open(st);
             }
-        },
-    )
-    .w(208.0);
+        })
+        .build(u);
 
     col()
         .key("crosshair-presets-block")

@@ -1,7 +1,7 @@
 //! Shared pieces for the pages reached from the Agent screen: a back link, the page frame, a
 //! segmented filter, list rows and one-line tool status.
 
-use rune::{Color, El, ScrollSpec, col, el, icon, row, text};
+use rune::{El, ScrollSpec, col, el, icon, row, text};
 
 use crate::app::State;
 use crate::icons;
@@ -75,65 +75,6 @@ pub fn fixed_page(key: &str, head: El, body: El) -> El {
         .gap(16.0)
         .child(head)
         .child(body.grow(1.0).min_h(0.0))
-}
-
-/// A segmented control: a hairline group of 32 point options. The caller attaches handlers.
-pub fn segmented(u: &Ui, items: Vec<El>) -> El {
-    let mut r = row()
-        .h(32.0)
-        .padding(2.0)
-        .gap(2.0)
-        .center_y()
-        .radius(crate::ui::r(8.0))
-        .border(1.0, u.hair);
-    for item in items {
-        r = r.child(item);
-    }
-    r
-}
-
-/// One option inside `segmented` that stands alone (a toggle such as Match case): its own
-/// fill eases on and off.
-pub fn segment(u: &Ui, label: &str, on: bool) -> El {
-    crate::motion::colors(row())
-        .h(26.0)
-        .px(10.0)
-        .center()
-        .radius(crate::ui::r(6.0))
-        .fill(if on { u.selected } else { Color::TRANSPARENT })
-        .hover(u.hover)
-        .focusable(true)
-        .role("button")
-        .label(label.to_string())
-        .checked(on)
-        .child(
-            text(label.to_string())
-                .font(BODY)
-                .color(if on { u.ink } else { u.muted })
-                .a11y_hidden(),
-        )
-}
-
-/// One choice of the strip `strip` (one pick among its siblings): the selection is a thumb that
-/// glides from the old choice to the new on `motion::base()`, and the labels ease their colour.
-pub fn segment_in(u: &Ui, strip: &str, label: &str, on: bool) -> El {
-    row()
-        .h(26.0)
-        .px(10.0)
-        .center()
-        .radius(crate::ui::r(6.0))
-        .child(crate::ui::seg_thumb(on, &format!("{strip}-thumb"), u.selected, Color::TRANSPARENT, crate::ui::r(6.0)))
-        .hover(if on { Color::TRANSPARENT } else { u.hover })
-        .focusable(true)
-        .role("button")
-        .label(label.to_string())
-        .checked(on)
-        .child(crate::motion::colors(
-            text(label.to_string())
-                .font(BODY)
-                .color(if on { u.ink } else { u.muted })
-                .a11y_hidden(),
-        ))
 }
 
 /// A section title with an optional count, 32 points tall, matching Installed's group heads.

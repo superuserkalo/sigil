@@ -13,7 +13,6 @@ use super::{Page, Pick, Shared, Tab, tr};
 use crate::app::State;
 use crate::icons;
 use crate::screens::settings::i18n::fill;
-use crate::screens::subpage;
 use crate::ui::{ActionKind, BODY, BODY_MED, H1, H2, MONO, PAGE_TOP, PAGE_X, SMALL, Ui};
 
 const BIG: TextStyle = TextStyle::new(56.0, 600.0).lh(60.0).tracking(-1.2).features("'tnum' 1");
@@ -133,17 +132,10 @@ fn tabs(s: &State, u: &Ui) -> El {
     let page = &s.performance.benchmark;
     let count = page.runs.len();
     let items = vec![
-        subpage::segment_in(u, "bench-tabs", tr("New run"), page.tab == Tab::Setup)
-            .key("bench-tab-setup")
-            .cursor(rune::Cursor::Pointer)
-            .on_press(|st: &mut State| st.performance.benchmark.tab = Tab::Setup),
-        subpage::segment_in(u, "bench-tabs", tr("History"), page.tab == Tab::History)
-            .key("bench-tab-history")
-            .cursor(rune::Cursor::Pointer)
-            .on_press(|st: &mut State| st.performance.benchmark.tab = Tab::History)
-            .child(text(count.to_string()).font(SMALL).color(u.muted).pl(6.0).a11y_hidden()),
+        crate::ui::SegPart::new("bench-tab-setup", tr("New run")).on(page.tab == Tab::Setup).with(move |e| e.on_press(|st: &mut State| st.performance.benchmark.tab = Tab::Setup)),
+        crate::ui::SegPart::new("bench-tab-history", tr("History")).count(count).on(page.tab == Tab::History).with(move |e| e.on_press(|st: &mut State| st.performance.benchmark.tab = Tab::History)),
     ];
-    row().w_full().child(subpage::segmented(u, items).role("radiogroup").label(tr("Benchmark view")))
+    row().w_full().child(crate::ui::Segmented::new("bench-tabs", tr("Benchmark view")).tabs().parts(items).build(u))
 }
 
 // --- setup ------------------------------------------------------------------------------------
@@ -338,26 +330,20 @@ fn one_mod(s: &State, u: &Ui) -> El {
 
 fn options(s: &State, u: &Ui) -> El {
     let page = &s.performance.benchmark;
-    let lengths: Vec<El> = Length::ALL
+    let lengths: Vec<crate::ui::SegPart> = Length::ALL
         .iter()
         .map(|l| {
             let l = *l;
-            subpage::segment_in(u, "bench-length", tr(l.label()), page.length == l)
-                .key(format!("bench-length-{l:?}"))
-                .cursor(rune::Cursor::Pointer)
-                .on_press(move |st: &mut State| st.performance.benchmark.length = l)
+            crate::ui::SegPart::new(format!("bench-length-{l:?}"), tr(l.label())).on(page.length == l).with(move |e| e.on_press(move |st: &mut State| st.performance.benchmark.length = l))
         })
         .collect();
     let n = super::passes(page);
-    let passes: Vec<El> = (1..=deadlock_core::benchmark::MAX_PASSES)
+    let passes: Vec<crate::ui::SegPart> = (1..=deadlock_core::benchmark::MAX_PASSES)
         .map(|p| {
-            subpage::segment_in(u, "bench-passes", &p.to_string(), n == p)
-                .key(format!("bench-passes-{p}"))
-                .cursor(rune::Cursor::Pointer)
-                .on_press(move |st: &mut State| st.performance.benchmark.passes = p)
+            crate::ui::SegPart::new(format!("bench-passes-{p}"), &p.to_string()).on(n == p).with(move |e| e.on_press(move |st: &mut State| st.performance.benchmark.passes = p))
         })
         .collect();
-    let displays: Vec<El> = Display::ALL
+    let displays: Vec<crate::ui::SegPart> = Display::ALL
         .iter()
         .map(|d| {
             let d = *d;
@@ -365,10 +351,7 @@ fn options(s: &State, u: &Ui) -> El {
                 Display::Game => tr("Game settings").to_string(),
                 Display::Fixed { height, .. } => format!("{height}p"),
             };
-            subpage::segment_in(u, "bench-display", &label, page.display == d)
-                .key(format!("bench-display-{}", match d { Display::Game => 0, Display::Fixed { height, .. } => height }))
-                .cursor(rune::Cursor::Pointer)
-                .on_press(move |st: &mut State| st.performance.benchmark.display = d)
+            crate::ui::SegPart::new(format!("bench-display-{}", match d { Display::Game => 0, Display::Fixed { height, .. } => height }), &label).on(page.display == d).with(move |e| e.on_press(move |st: &mut State| st.performance.benchmark.display = d))
         })
         .collect();
     let warm = !page.no_warmup;
@@ -397,12 +380,12 @@ fn options(s: &State, u: &Ui) -> El {
         .gap(20.0)
         .child(pair(
             "bench-options-a",
-            group("Section", subpage::segmented(u, lengths).role("radiogroup").label(tr("Section"))),
-            group("Window", subpage::segmented(u, displays).role("radiogroup").label(tr("Window"))),
+            group("Section", crate::ui::Segmented::new("bench-length", tr("Section")).parts(lengths).build(u)),
+            group("Window", crate::ui::Segmented::new("bench-display", tr("Window")).parts(displays).build(u)),
         ))
         .child(pair(
             "bench-options-b",
-            group(if page.pick == Pick::Cost { "Base passes" } else { "Passes per side" }, subpage::segmented(u, passes).role("radiogroup").label(tr("Passes"))),
+            group(if page.pick == Pick::Cost { "Base passes" } else { "Passes per side" }, crate::ui::Segmented::new("bench-passes", tr("Passes")).parts(passes).build(u)),
             warmup,
         ))
 }

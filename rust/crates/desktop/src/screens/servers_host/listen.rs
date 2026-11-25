@@ -165,47 +165,22 @@ fn line(_: &Ui, words: String, color: rune::Color) -> El {
     text(words).font(SMALL).color(color).wrap().w_full()
 }
 
-/// One segment of the map choice: 28 high, `MONO`, the chosen one raised.
-fn map_chip(u: &Ui, key: String, name: String, on: bool) -> El {
-    let label = name.clone();
-    row()
-        .key(key)
-        .h(28.0)
-        .px(8.0)
-        .center_y()
-        .radius(crate::ui::r(4.0))
-        .child(crate::ui::seg_thumb(on, "host-map-thumb", u.raised, u.hair_strong, crate::ui::r(4.0)))
-        .hover(if on { u.raised } else { u.hover })
-        .focusable(true)
-        .role("radio")
-        .checked(on)
-        .label(label.clone())
-        .cursor(rune::Cursor::Pointer)
-        .child(text(label).font(MONO).color(if on { u.ink } else { u.muted }).a11y_hidden())
-        .on_press(move |st: &mut State| {
-            st.servers.host.listen_map = name.clone();
-            st.servers.host.listen_invite = None;
-        })
-}
-
 /// The card, now a plain section. `key` keeps the Host page and the Maps page copies apart.
 pub fn card(s: &State, u: &Ui, key: &str) -> El {
     let host = &s.servers.host;
     let map = host.listen_map.clone();
-    let mut chips = row()
-        .h(32.0)
-        .padding(2.0)
-        .gap(2.0)
-        .center_y()
-        .radius(crate::ui::r(4.0))
-        .fill(u.well)
-        .border(1.0, u.hair)
-        .role("radiogroup")
-        .label(tr("Map"));
+    let mut chips = crate::ui::Segmented::new(format!("{key}-maps"), tr("Map"));
     for name in choices(s) {
         let on = name == map;
-        chips = chips.child(map_chip(u, format!("{key}-map-{name}"), name, on));
+        let pick = name.clone();
+        chips = chips.part(crate::ui::SegPart::new(format!("{key}-map-{name}"), name).on(on).with(move |e| {
+            e.on_press(move |st: &mut State| {
+                st.servers.host.listen_map = pick.clone();
+                st.servers.host.listen_invite = None;
+            })
+        }));
     }
+    let chips = chips.build(u);
     // Launch map itself refuses while Deadlock runs and says why.
     let launch = u
         .icon_action(&icons::PLAY, tr("Launch"), ActionKind::Secondary)

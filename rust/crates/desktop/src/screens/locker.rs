@@ -531,22 +531,11 @@ fn grid_page(s: &State, u: &Ui, v: &View) -> El {
         ))
 }
 
-/// Grid or list, as a two part segmented control.
+/// Grid or list, as the shared segmented selector with icon parts.
 fn view_toggle(u: &Ui, list: bool) -> El {
-    let segment = |glyph: &'static rune::Icon, label: &'static str, on: bool, value: bool| {
-        row()
-            .key(format!("locker-view-{label}"))
-            .size(28.0, 26.0)
-            .center()
-            .radius(crate::ui::r(4.0))
-            .child(crate::ui::seg_thumb(on, "locker-view-thumb", u.selected, Color::TRANSPARENT, crate::ui::r(4.0)))
-            .hover(u.hover)
-            .focusable(true)
-            .role("radio")
-            .checked(on)
-            .label(label)
-            .cursor(rune::Cursor::Pointer)
-            .on_press(move |st: &mut State| {
+    let part = |glyph: &'static rune::Icon, label: &'static str, on: bool, value: bool| {
+        crate::ui::SegPart::new(format!("locker-view-{label}"), label).glyph(glyph).on(on).with(move |e| {
+            e.on_press(move |st: &mut State| {
                 st.locker.list_view = value;
                 if value && crate::screens::settings::options::locker_expanded() {
                     st.locker.expanded = st
@@ -557,20 +546,12 @@ fn view_toggle(u: &Ui, list: bool) -> El {
                         .collect();
                 }
             })
-            .child(rune::icon(glyph, 14.0).color(if on { u.ink } else { u.muted }).a11y_hidden())
+        })
     };
-    row()
-        .key("locker-view")
-        .h(32.0)
-        .padding(2.0)
-        .gap(2.0)
-        .center_y()
-        .radius(crate::ui::r(4.0))
-        .border(1.0, u.hair)
-        .role("radiogroup")
-        .label("View")
-        .child(segment(&icons::LAYOUT_GRID, "Grid", !list, false))
-        .child(segment(&icons::LIST, "List", list, true))
+    crate::ui::Segmented::new("locker-view", "View")
+        .part(part(&icons::LAYOUT_GRID, "Grid", !list, false))
+        .part(part(&icons::LIST, "List", list, true))
+        .build(u)
 }
 
 fn retry(u: &Ui) -> El {
@@ -580,46 +561,23 @@ fn retry(u: &Ui) -> El {
         .on_press(|st: &mut State| crate::data::start_locker_load(st))
 }
 
-/// All, Modded or Starred, as a three part segmented control.
+/// All, Modded or Starred, as the shared segmented selector.
 fn filter(u: &Ui, modded_only: bool, starred_only: bool) -> El {
-    let segment = |label: &'static str, on: bool, modded: bool, starred: bool| {
-        row()
-            .key(format!("locker-filter-{}", label.to_lowercase()))
-            .h(26.0)
-            .px(10.0)
-            .center()
-            .radius(crate::ui::r(4.0))
-            .child(crate::ui::seg_thumb(on, "locker-filter-thumb", u.selected, Color::TRANSPARENT, crate::ui::r(4.0)))
-            .hover(u.hover)
-            .focusable(true)
-            .role("radio")
-            .checked(on)
-            .label(label)
-            .cursor(rune::Cursor::Pointer)
-            .on_press(move |st: &mut State| {
-                st.locker.modded_only = modded;
-                st.locker.starred_only = starred;
+    let part = |label: &'static str, on: bool, modded: bool, starred: bool| {
+        crate::ui::SegPart::new(format!("locker-filter-{}", label.to_lowercase()), crate::screens::settings::i18n::tr(label))
+            .on(on)
+            .with(move |e| {
+                e.on_press(move |st: &mut State| {
+                    st.locker.modded_only = modded;
+                    st.locker.starred_only = starred;
+                })
             })
-            .child(
-                text(label)
-                    .font(BODY_MED)
-                    .color(if on { u.ink } else { u.muted })
-                    .a11y_hidden(),
-            )
     };
-    row()
-        .key("locker-filter")
-        .h(32.0)
-        .padding(2.0)
-        .gap(2.0)
-        .center_y()
-        .radius(crate::ui::r(4.0))
-        .border(1.0, u.hair)
-        .role("radiogroup")
-        .label("Show heroes")
-        .child(segment(crate::screens::settings::i18n::tr("All"), !modded_only && !starred_only, false, false))
-        .child(segment(crate::screens::settings::i18n::tr("Modded"), modded_only, true, false))
-        .child(segment(crate::screens::settings::i18n::tr("Starred"), starred_only, false, true))
+    crate::ui::Segmented::new("locker-filter", "Show heroes")
+        .part(part("All", !modded_only && !starred_only, false, false))
+        .part(part("Modded", modded_only, true, false))
+        .part(part("Starred", starred_only, false, true))
+        .build(u)
 }
 
 pub(super) fn pixels_for(s: &State, path: Option<&str>) -> Option<Pixels> {

@@ -10,14 +10,14 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use rune::{Color, El, Key, KeyEvent, col, el, row, spacer, text};
+use rune::{El, Key, KeyEvent, col, el, row, spacer, text};
 
 use super::prepare::{self, Ask, DIALOG_KEY, Owner};
 use crate::app::State;
 use crate::icons;
 use crate::jobs::Job;
 use crate::screens::settings::i18n::{fill, tr};
-use crate::ui::{ActionKind, BODY_MED, H2, SMALL, Ui};
+use crate::ui::{ActionKind, H2, SMALL, Ui};
 
 /// The open dialog.
 pub struct Dialog {
@@ -186,28 +186,15 @@ pub fn view(s: &State, u: &Ui) -> Option<El> {
     );
     let mut body = col().w_full().grow(1.0).min_h(0.0).gap(12.0).child(head);
     if d.heroes.len() > 1 {
-        let mut tabs = row().gap(4.0).role("tablist").label(tr("Hero"));
+        let mut tabs = crate::ui::Segmented::new("viewer-dialog-heroes", tr("Hero")).tabs();
         for (i, hero) in d.heroes.iter().enumerate() {
-            let on = i == d.hero;
-            tabs = tabs.child(
-                row()
-                    .key(format!("viewer-dialog-hero-{i}"))
-                    .h(30.0)
-                    .px(12.0)
-                    .center()
-                    .radius(crate::ui::r(8.0))
-                    .fill(if on { u.selected } else { Color::TRANSPARENT })
-                    .border(1.0, if on { u.hair_strong } else { u.hair })
-                    .hover(u.hover)
-                    .focusable(true)
-                    .role("tab")
-                    .checked(on)
-                    .label(hero.clone())
-                    .cursor(rune::Cursor::Pointer)
-                    .on_press(move |st: &mut State| pick(st, i))
-                    .child(text(hero.clone()).font(BODY_MED).color(if on { u.ink } else { u.muted }).a11y_hidden()),
+            tabs = tabs.part(
+                crate::ui::SegPart::new(format!("viewer-dialog-hero-{i}"), hero.clone())
+                    .on(i == d.hero)
+                    .with(move |e| e.on_press(move |st: &mut State| pick(st, i))),
             );
         }
+        let tabs = tabs.build(u);
         body = body.child(row().w_full().gap(10.0).center_y().child(text(tr("Changes")).font(SMALL).color(u.faint)).child(tabs).child(spacer()));
     }
     body = body.child(el().w_full().grow(1.0).min_h(0.0).child(super::view(s, u, DIALOG_KEY)));

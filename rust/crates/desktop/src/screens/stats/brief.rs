@@ -145,19 +145,10 @@ const AXIS_W: f32 = 96.0;
 
 pub(super) fn progress(s: &State, u: &Ui, snap: &StatsSnapshot, d: &Derived) -> El {
     let chart = s.stats.chart;
-    let switch = crate::screens::subpage::segmented(
-        u,
-        vec![
-            crate::screens::subpage::segment(u, tr("Rank"), chart == Chart::Rank)
-                .key("stats-chart-rank")
-                .cursor(rune::Cursor::Pointer)
-                .on_press(|st: &mut State| st.stats.chart = Chart::Rank),
-            crate::screens::subpage::segment(u, tr("Win rate"), chart == Chart::WinRate)
-                .key("stats-chart-win")
-                .cursor(rune::Cursor::Pointer)
-                .on_press(|st: &mut State| st.stats.chart = Chart::WinRate),
-        ],
-    );
+    let switch = crate::ui::Segmented::new("stats-chart", tr("Chart")).parts(vec![
+            crate::ui::SegPart::new("stats-chart-rank", tr("Rank")).on(chart == Chart::Rank).with(move |e| e.on_press(|st: &mut State| st.stats.chart = Chart::Rank)),
+            crate::ui::SegPart::new("stats-chart-win", tr("Win rate")).on(chart == Chart::WinRate).with(move |e| e.on_press(|st: &mut State| st.stats.chart = Chart::WinRate)),
+        ]).build(u);
     let season = insight::season_start(&d.trajectory);
     let (body, caption) = match chart {
         Chart::Rank => (

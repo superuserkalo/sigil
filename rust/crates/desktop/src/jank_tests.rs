@@ -624,7 +624,7 @@ fn overlays_and_selections_move() {
     let cases: &[(&str, &[Step], Step, &str, f32)] = &[
         ("demo-installed", &[], Step::Press("installed-more-03"), "installed-menu", 800.0),
         ("demo-installed", &[], Step::Press("nav-settings"), "settings-panel", 800.0),
-        ("crosshair", &[], Step::Press("crosshair-groups-1"), "crosshair-groups-indicator", 1400.0),
+        ("crosshair", &[], Step::Press("crosshair-groups-1"), "crosshair-groups-thumb", 1400.0),
         ("browse-view-menu", &[], Step::Press("menu-size-large"), "menu-seg-Cards-thumb", 800.0),
         ("demo-installed", &[], Step::Press("nav-browse"), "page-browse", 800.0),
         // The Stats tab underline flies to the pressed tab on `base`; the tabs stay put.
@@ -1166,4 +1166,63 @@ fn one_toggle_at_300_mods_is_one_commit() {
     settle(&mut rt);
     let _ = std::fs::remove_dir_all(&root);
     assert_eq!(rt.stats.commits - before, 1, "one toggle, one commit");
+}
+
+/// A pick in a segmented selector (`ui::Segmented`): the selection box slides under labels
+/// that never disappear. On every frame of the glide each part's label and count keeps its key,
+/// stays at full opacity and is the topmost element at its own centre (nothing, the box
+/// included, paints over it), and the press costs one commit. The box used to be a matched
+/// flight, which Rune paints above the whole window: Installed's opaque box hid All, Enabled
+/// and Disabled with their counts until it landed.
+#[test]
+fn segmented_labels_stay_over_the_sliding_box() {
+    let _globals = crate::ui::test_globals();
+    let cases: &[(&str, &str, &[&str], f32)] = &[
+        (
+            "demo-installed",
+            "installed-show-Enabled",
+            &[
+                "installed-show-All-label",
+                "installed-show-All-count",
+                "installed-show-Enabled-label",
+                "installed-show-Enabled-count",
+                "installed-show-Disabled-label",
+                "installed-show-Disabled-count",
+            ],
+            800.0,
+        ),
+        ("browse", "browse-tab-sounds", &["browse-tab-all-label", "browse-tab-mods-label", "browse-tab-sounds-label"], 800.0),
+        ("crosshair", "crosshair-groups-1", &["crosshair-groups-0-label", "crosshair-groups-1-label", "crosshair-groups-2-label"], 1400.0),
+    ];
+    let mut wrong = Vec::new();
+    for &(scene_name, press, labels, height) in cases {
+        let mut rt = runtime(scene_name, (1280.0, height));
+        settle(&mut rt);
+        let before = rt.stats.commits;
+        apply(&mut rt, Step::Press(press), scene_name);
+        for n in 0..40 {
+            rt.frame(1.0 / 60.0);
+            let elements = rt.elements();
+            for &label in labels {
+                let Some(e) = elements.iter().find(|e| !e.exiting && e.key.as_deref() == Some(label)) else {
+                    wrong.push(format!("{scene_name} frame {n}: {label} is gone"));
+                    continue;
+                };
+                if e.opacity < 0.999 {
+                    wrong.push(format!("{scene_name} frame {n}: {label} at opacity {}", e.opacity));
+                }
+                let (x, y) = (e.rect[0] + e.rect[2] / 2.0, e.rect[1] + e.rect[3] / 2.0);
+                let top = rt.element_at(x, y).and_then(|p| p.key().map(str::to_string));
+                if top.as_deref() != Some(label) {
+                    wrong.push(format!("{scene_name} frame {n}: {top:?} paints over {label}"));
+                }
+            }
+        }
+        let commits = rt.stats.commits - before;
+        if commits != 1 {
+            wrong.push(format!("{scene_name}: the press cost {commits} commits"));
+        }
+    }
+    wrong.truncate(12);
+    assert!(wrong.is_empty(), "segmented labels are covered or remounted:\n{}", wrong.join("\n"));
 }

@@ -87,41 +87,27 @@ fn toolbar(s: &State, u: &Ui) -> El {
         });
 
     let mut heroes = vec![
-        subpage::segment_in(u, "index-heroes", "All heroes", s.hero_filter.is_none())
-            .cursor(rune::Cursor::Pointer)
-            .on_press(|st: &mut State| st.hero_filter = None),
+        crate::ui::SegPart::new(format!("index-heroes-{}", "All heroes"), "All heroes").on(s.hero_filter.is_none()).with(move |e| e.on_press(|st: &mut State| st.hero_filter = None)),
     ];
     for hero in HEROES {
         heroes.push(
-            subpage::segment_in(u, "index-heroes", hero, s.hero_filter.as_deref() == Some(hero))
-                .cursor(rune::Cursor::Pointer)
-                .on_press(move |st: &mut State| st.hero_filter = Some(hero.to_string())),
+            crate::ui::SegPart::new(format!("index-heroes-{}", hero), hero).on(s.hero_filter.as_deref() == Some(hero)).with(move |e| e.on_press(move |st: &mut State| st.hero_filter = Some(hero.to_string()))),
         );
     }
 
     let mut types = vec![
-        subpage::segment_in(u, "index-types", "All types", s.type_filter.is_none())
-            .cursor(rune::Cursor::Pointer)
-            .on_press(|st: &mut State| st.type_filter = None),
+        crate::ui::SegPart::new(format!("index-types-{}", "All types"), "All types").on(s.type_filter.is_none()).with(move |e| e.on_press(|st: &mut State| st.type_filter = None)),
     ];
     for kind in TYPES {
         types.push(
-            subpage::segment_in(u, "index-types", &capital(kind), s.type_filter.as_deref() == Some(kind))
-                .cursor(rune::Cursor::Pointer)
-                .on_press(move |st: &mut State| st.type_filter = Some(kind.to_string())),
+            crate::ui::SegPart::new(format!("index-types-{}", &capital(kind)), &capital(kind)).on(s.type_filter.as_deref() == Some(kind)).with(move |e| e.on_press(move |st: &mut State| st.type_filter = Some(kind.to_string()))),
         );
     }
 
     let vpks = vec![
-        subpage::segment_in(u, "index-vpks", "All VPKs", s.vpk_filter.is_none())
-            .cursor(rune::Cursor::Pointer)
-            .on_press(|st: &mut State| st.vpk_filter = None),
-        subpage::segment_in(u, "index-vpks", "pak01", s.vpk_filter.as_deref() == Some("pak01"))
-            .cursor(rune::Cursor::Pointer)
-            .on_press(|st: &mut State| st.vpk_filter = Some("pak01".to_string())),
-        subpage::segment_in(u, "index-vpks", "Maps", s.vpk_filter.as_deref() == Some("maps"))
-            .cursor(rune::Cursor::Pointer)
-            .on_press(|st: &mut State| st.vpk_filter = Some("maps".to_string())),
+        crate::ui::SegPart::new(format!("index-vpks-{}", "All VPKs"), "All VPKs").on(s.vpk_filter.is_none()).with(move |e| e.on_press(|st: &mut State| st.vpk_filter = None)),
+        crate::ui::SegPart::new(format!("index-vpks-{}", "pak01"), "pak01").on(s.vpk_filter.as_deref() == Some("pak01")).with(move |e| e.on_press(|st: &mut State| st.vpk_filter = Some("pak01".to_string()))),
+        crate::ui::SegPart::new(format!("index-vpks-{}", "Maps"), "Maps").on(s.vpk_filter.as_deref() == Some("maps")).with(move |e| e.on_press(|st: &mut State| st.vpk_filter = Some("maps".to_string()))),
     ];
 
     col()
@@ -134,15 +120,15 @@ fn toolbar(s: &State, u: &Ui) -> El {
                 .gap(8.0)
                 .center_y()
                 .child(u.search_shell(field))
-                .child(subpage::segmented(u, heroes)),
+                .child(crate::ui::Segmented::new("index-heroes", "Heroes").parts(heroes).build(u)),
         )
         .child(
             row()
                 .w_full()
                 .gap(8.0)
                 .center_y()
-                .child(subpage::segmented(u, types))
-                .child(subpage::segmented(u, vpks)),
+                .child(crate::ui::Segmented::new("index-types", "Types").parts(types).build(u))
+                .child(crate::ui::Segmented::new("index-vpks", "VPKs").parts(vpks).build(u)),
         )
 }
 

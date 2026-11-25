@@ -98,13 +98,10 @@ fn list_bar(s: &State, u: &Ui) -> El {
     if regions.history.as_ref().is_some_and(|h| !h.is_empty()) {
         sorts.push((Sort::Matches, tr("My matches")));
     }
-    let items = sorts
+    let items: Vec<crate::ui::SegPart> = sorts
         .into_iter()
         .map(|(sort, label)| {
-            crate::screens::subpage::segment(u, label, regions.sort == sort)
-                .key(format!("regions-sort-{sort:?}"))
-                .cursor(rune::Cursor::Pointer)
-                .on_press(move |st: &mut State| super::set_sort(st, sort))
+            crate::ui::SegPart::new(format!("regions-sort-{sort:?}"), label).on(regions.sort == sort).with(move |e| e.on_press(move |st: &mut State| super::set_sort(st, sort)))
         })
         .collect();
     let on = options::get().relay_regions.health_bar;
@@ -116,7 +113,7 @@ fn list_bar(s: &State, u: &Ui) -> El {
         .flex_wrap()
         .child(u.search_shell(search))
         .child(text(tr("Sort")).font(SMALL).color(u.faint))
-        .child(crate::screens::subpage::segmented(u, items))
+        .child(crate::ui::Segmented::new("regions-sort", tr("Sort")).parts(items).build(u))
         .child(spacer());
     if regions.windows {
         bar = bar.child(text(tr("Shift-click ticks a range")).font(SMALL_NUM).color(u.faint));

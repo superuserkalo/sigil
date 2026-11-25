@@ -671,13 +671,7 @@ fn drop_veil(u: &Ui) -> El {
 
 // --- toolbar and status row ------------------------------------------------------
 
-/// The scope control's width, fixed per language so a count change never moves the line.
-fn scope_w() -> f32 {
-    use crate::screens::settings::i18n::{self, Lang};
-    if i18n::current() == Lang::German { 268.0 } else { 236.0 }
-}
-
-/// All, Enabled, Disabled with their counts: one segmented control at a fixed width.
+/// All, Enabled, Disabled with their counts, as the shared segmented selector.
 fn scope(s: &State, u: &Ui) -> El {
     let v = &s.installed;
     let on = s.addons.addons.iter().filter(|a| a.enabled).count();
@@ -711,46 +705,20 @@ fn scope(s: &State, u: &Ui) -> El {
             .child(spacer())
             .child(icon(&icons::CHEVRON_DOWN, 12.0).color(u.muted).a11y_hidden());
     }
-    let mut seg = row()
-        .key("installed-show")
-        .w(scope_w())
-        .h(32.0)
-        .padding(2.0)
-        .gap(2.0)
-        .radius(crate::ui::r(8.0))
-        .fill(u.well)
-        .border(1.0, u.hair)
-        .role("radiogroup");
+    let mut strip = crate::ui::Segmented::new("installed-show", tr("Show"));
     for (show, word, count) in [
         (Show::All, tr("All"), s.addons.addons.len()),
         (Show::Enabled, tr("Enabled"), on),
         (Show::Disabled, tr("Disabled"), off),
     ] {
-        let active = v.show == show;
-        seg = seg.child(
-            row()
-                .key(format!("installed-show-{show:?}"))
-                .h(28.0)
-                .grow(1.0)
-                .min_w(0.0)
-                .px(10.0)
-                .gap(6.0)
-                .center()
-                .radius(crate::ui::r(6.0))
-                // One thumb glides to the new scope on `base`; the segments keep their boxes.
-                .child(crate::ui::seg_thumb(active, "installed-show-thumb", u.raised, u.hair_strong, crate::ui::r(6.0)))
-                .hover(if active { Color::TRANSPARENT } else { u.hover })
-                .focusable(true)
-                .role("radio")
-                .checked(active)
-                .label(format!("{word} {count}"))
-                .cursor(rune::Cursor::Pointer)
-                .on_press(move |st: &mut State| st.installed.show = show)
-                .child(text(word).font(BODY_MED).color(if active { u.ink } else { u.muted }).a11y_hidden())
-                .child(text(count.to_string()).font(SMALL_NUM).color(u.faint).a11y_hidden()),
+        strip = strip.part(
+            crate::ui::SegPart::new(format!("installed-show-{show:?}"), word)
+                .count(count)
+                .on(v.show == show)
+                .with(move |e| e.on_press(move |st: &mut State| st.installed.show = show)),
         );
     }
-    seg
+    strip.build(u)
 }
 
 /// How many filter rows are not at "Any". Search text is not counted.
