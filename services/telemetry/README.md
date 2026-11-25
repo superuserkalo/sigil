@@ -26,6 +26,10 @@ are described under [Catalog search index](#catalog-search-index-adr-0018-migrat
 | GET | `/v1/product/fps?gpu=<model>&cpu=<model>&height=<px>` | none | Nothing. Frame rates per config on that hardware class. |
 | GET | `/v1/product/rising` | none | Nothing. Up to 50 mods whose installs grew most from one closed week to the next. |
 | GET | `/v1/product/admin/search-gaps` | none | Nothing. Owner only, needs `PRODUCT_ADMIN_KEY`. |
+| POST | `/v1/crosshairs` | 2 KiB | Publishes a community crosshair (ADR 0019): name, canonical config, token hash. |
+| GET | `/v1/crosshairs?sort=used\|new&cursor=` | none | Nothing. 60 visible crosshairs per page, cacheable 5 minutes. |
+| POST | `/v1/crosshairs/<id>/delete`, `/use`, `/report` | 256 B | Delete by token; use and report dedupe rows (2 days). |
+| GET, POST | `/v1/crosshairs/admin/...` | 2 KiB | Owner only: flagged list, remove, restore, upsert official. |
 
 Every request needs `x-sigil-client: 1` and a semver `x-sigil-version`, otherwise 400. The limiter
 allows 60 requests per 60 seconds per Cloudflare location, keyed by a salted hash of

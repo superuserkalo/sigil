@@ -19,6 +19,7 @@ below and is not repeated in each one. Sigil itself stores no IP address and no 
 | [Sigil telemetry](#sigil-telemetry) | Usage events, crash reports, diagnostics you send, mod hash lookups | Off until you agree |
 | [Help build Sigil](#help-build-sigil-product-data) | Product data: GameBanana mod ids and actions, mod health, Browse use, top heroes, performance, app use | Off until you choose Share |
 | [Model provider](#model-provider) | Your prompts, the files the agent reads, the model's answers | Only when you chat |
+| [Community crosshairs](#community-crosshairs) | A crosshair's name and settings when you publish one; nothing to browse or apply | Only when you publish |
 | [Catalog search index](#catalog-search-index) | Nothing from you: the app downloads a public index of GameBanana's catalog and searches it locally | On once built (not called yet) |
 | [Steam](#steam) | Patch note requests | On |
 | [GameBanana](#gamebanana) | Catalog and update requests, the mods you open and install | On |
@@ -269,6 +270,19 @@ queue and its What Sigil shared log, and a new id is made if you share again. To
 that already closed are anonymous counts with nothing pointing to you, so they stay: you may still
 be one of the installs in a count from an earlier period. If the request fails, nothing changes on
 your PC and you can press again.
+
+## Community crosshairs
+
+Publishing a crosshair to the community library is your own action, one crosshair at a time, and
+only then does Sigil send its name and its settings to Sigil's Worker. Both become public: anyone
+using Sigil can see the name, the settings, how often it was applied and the day it was published.
+Nothing else is attached: no account, no install id, no player or Steam id, and the Worker stores
+no address. Browsing, applying and reporting send no data about you (an apply or a report counts
+once per network per day using a daily network hash that the Worker deletes after 2 days, see
+`docs/decisions/0019-community-crosshairs.md`). To remove a crosshair you published, use Delete in
+the library on the same PC: the app keeps the delete token the Worker gave it, and the row is
+gone at once. If you lose that token (a new PC, cleared app data), ask the owner to remove it.
+Crosshairs that three networks report are hidden until the owner reviews them.
 
 ## Catalog search index
 
