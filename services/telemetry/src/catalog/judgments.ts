@@ -458,7 +458,7 @@ const dupes: Judgment = {
  */
 const terms: Judgment = {
   name: "terms",
-  version: 2,
+  version: 3,
   needs: ["text", "screenshots"],
   applies: (input) => input.expansion !== null && input.expansion.terms.length > 0,
   ask: (input) => {
