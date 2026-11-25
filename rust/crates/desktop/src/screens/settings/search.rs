@@ -21,9 +21,14 @@ pub struct Entry {
 /// a whole).
 const AGENT_TITLES: [&str; 2] = ["Agent", "Ask Sigil for help"];
 
+/// Titles that exist only in a build with the translations (`prefs::LANGUAGES`).
+const LANGUAGE_TITLES: [&str; 1] = ["Language"];
+
 /// Whether this build shows the row an entry names.
 pub fn shown(entry: &Entry) -> bool {
-    entry.tab.shown() && (crate::prefs::AGENT || !AGENT_TITLES.contains(&entry.title))
+    entry.tab.shown()
+        && (crate::prefs::AGENT || !AGENT_TITLES.contains(&entry.title))
+        && (crate::prefs::LANGUAGES || !LANGUAGE_TITLES.contains(&entry.title))
 }
 
 const fn e(tab: Tab, title: &'static str, line: &'static str, words: &'static str) -> Entry {
@@ -223,7 +228,16 @@ pub fn results(s: &State, u: &Ui) -> El {
     let found = matches(&s.settings.search.text);
     if found.is_empty() {
         return u
-            .empty_state("", tr("No settings match"), tr("Try another word, like proxy, Discord or language."), None);
+            .empty_state(
+                "",
+                tr("No settings match"),
+                tr(if crate::prefs::LANGUAGES {
+                    "Try another word, like proxy, Discord or language."
+                } else {
+                    "Try another word, like proxy, Discord or theme."
+                }),
+                None,
+            );
     }
     // Grouped by tab, in the nav's order; each group under its own header with a count.
     let mut list = col().key("settings-search-results").w_full().gap(24.0);

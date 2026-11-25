@@ -392,6 +392,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(not(feature = "languages"), ignore = "translations are parked: --features languages")]
     fn every_string_has_german() {
         let body = include_str!("tree.rs").split("#[cfg(test)]").next().unwrap();
         for (at, _) in body.match_indices("tr(\"") {

@@ -420,6 +420,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(not(feature = "languages"), ignore = "translations are parked: --features languages")]
     fn table_is_clean() {
         let mut seen = std::collections::HashSet::new();
         for (en, de) in DE.iter().chain(super::super::live_de::DE).chain(super::super::roll_de::DE) {

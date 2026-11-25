@@ -94,6 +94,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(not(feature = "languages"), ignore = "translations are parked: --features languages")]
     fn the_table_has_no_duplicates_and_keeps_holes() {
         let others = others();
         let mut seen = HashSet::new();
@@ -108,6 +109,7 @@ mod tests {
     /// Every UI literal in the smalls files has German here or in another table: a literal that
     /// starts with a capital and has a lowercase letter.
     #[test]
+    #[cfg_attr(not(feature = "languages"), ignore = "translations are parked: --features languages")]
     fn every_string_of_the_round_is_translated() {
         let sources = [include_str!("smalls.rs"), include_str!("../maps.rs")];
         let mut table = others();
@@ -132,6 +134,7 @@ mod tests {
 
     /// The new flag, page and art labels other files hand to `tr`.
     #[test]
+    #[cfg_attr(not(feature = "languages"), ignore = "translations are parked: --features languages")]
     fn labels_from_other_files_are_here() {
         let table: HashSet<&str> = super::DE.iter().map(|(en, _)| *en).collect();
         let flag = crate::prefs::FLAGS.iter().find(|f| f.id == crate::screens::maps::FLAG).expect("flag");

@@ -5,7 +5,8 @@ order and overlaps, launch modded or vanilla with the `gameinfo.gi` fix, Locker,
 Profiles, Autoexec, Performance, Stats and Servers. The desktop UI is native Rust with Rune. An
 agent workbench (TinyAgent, BYOK models) is built only with the desktop crate's `agent` cargo
 feature (`prefs::AGENT`), off in release builds; with it, it sits behind Settings > Experimental >
-Agent. `ROADMAP.md` is the public plan.
+Agent. The German translation is built only with the `languages` feature (`prefs::LANGUAGES`);
+release builds are English only. `ROADMAP.md` is the public plan.
 "Deadlock Agent Harness" is the original project name; it survives in crate names and developer
 variables (`DAH_*`). The data folder is `Sigil` since 0.1.43, moved once from `DeadlockAgentHarness`
 (`deadlock_core::app_data`).

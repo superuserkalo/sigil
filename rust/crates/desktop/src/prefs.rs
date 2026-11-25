@@ -24,6 +24,11 @@ pub const FILE_NAME: &str = "settings.json";
 /// feature `agent` (ROADMAP.md). Off, the stored `agent` switch is kept but reads false.
 pub const AGENT: bool = cfg!(feature = "agent");
 
+/// Whether this build carries the translations: German and the language choice in Settings and
+/// its search entry. Off unless built with the cargo feature `languages` (ROADMAP.md). Off, the
+/// app is English everywhere; a stored language choice is kept in the settings file but ignored.
+pub const LANGUAGES: bool = cfg!(feature = "languages");
+
 /// The flag id of the Agent switch in Settings > Experimental.
 pub const AGENT_FLAG: &str = "agent";
 

@@ -857,6 +857,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(not(feature = "languages"), ignore = "translations are parked: --features languages")]
     fn german_keeps_the_holes() {
         let mut seen = std::collections::HashSet::new();
         for (en, de) in DE {

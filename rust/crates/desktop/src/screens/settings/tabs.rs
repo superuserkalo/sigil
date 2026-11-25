@@ -48,10 +48,18 @@ pub fn general(s: &State, u: &Ui) -> El {
         _ => tr("English is the source; other languages fall back to it.").to_string(),
     };
 
-    col()
-        .w_full()
-        .gap(LIST_GAP)
-        .child(section(
+    let dates_row = setting_row(
+        u,
+        "settings-date-format",
+        "Dates",
+        detail(u, ""),
+        super::segmented_w(u, "settings-date-pick", &dates, s.prefs.date_format, |st, f| {
+            prefs::edit(st, |p| p.date_format = f)
+        }, super::CONTROL_W),
+    );
+    // The language choice only in a build with the translations (`prefs::LANGUAGES`).
+    let first = if prefs::LANGUAGES {
+        section(
             u,
             "Language and dates",
             vec![
@@ -65,17 +73,17 @@ pub fn general(s: &State, u: &Ui) -> El {
                         i18n::set(lang);
                     }, super::CONTROL_W),
                 ),
-                setting_row(
-                    u,
-                    "settings-date-format",
-                    "Dates",
-                    detail(u, ""),
-                    super::segmented_w(u, "settings-date-pick", &dates, s.prefs.date_format, |st, f| {
-                        prefs::edit(st, |p| p.date_format = f)
-                    }, super::CONTROL_W),
-                ),
+                dates_row,
             ],
-        ))
+        )
+    } else {
+        section(u, "Dates", vec![dates_row])
+    };
+
+    col()
+        .w_full()
+        .gap(LIST_GAP)
+        .child(first)
         .child(section(
             u,
             "Starting Sigil",

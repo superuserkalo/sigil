@@ -63,6 +63,10 @@ const KIND_LABELS: [&str; 34] = [
 /// German mod-kind words to the English word, from the category labels in the index and the
 /// kinds above, translated by the app's own German tables (`tree.rs` first, then Settings).
 pub(crate) fn kind_words(index: &CatalogIndex) -> Vec<(String, String)> {
+    // German search words need the translations (`prefs::LANGUAGES`).
+    if !crate::prefs::LANGUAGES {
+        return Vec::new();
+    }
     let mut english: Vec<String> = KIND_LABELS.iter().map(|w| w.to_string()).collect();
     for m in &index.mods {
         for category in index.strings_of(m, ci::matcher::CLS_CATEGORY) {
@@ -709,6 +713,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(not(feature = "languages"), ignore = "translations are parked: --features languages")]
     fn german_kind_words_come_from_the_apps_own_labels() {
         let words = kind_words(&index());
         for (de, en) in [("fadenkreuz", "crosshair"), ("karte", "map"), ("karten", "maps")] {

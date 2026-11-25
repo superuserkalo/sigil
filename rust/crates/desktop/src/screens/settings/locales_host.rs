@@ -436,6 +436,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(not(feature = "languages"), ignore = "translations are parked: --features languages")]
     fn the_table_has_no_duplicates_and_keeps_holes() {
         let others = others();
         let mut seen = HashSet::new();
@@ -458,6 +459,7 @@ mod tests {
     /// `i18n::every_routed_string_is_translated`: a literal that starts with a capital and has a
     /// lowercase letter.
     #[test]
+    #[cfg_attr(not(feature = "languages"), ignore = "translations are parked: --features languages")]
     fn every_string_on_the_host_tab_is_translated() {
         let sources = [
             include_str!("../servers_host/mod.rs"),

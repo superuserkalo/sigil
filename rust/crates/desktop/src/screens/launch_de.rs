@@ -55,6 +55,7 @@ pub(super) fn get(text: &str) -> Option<&'static str> {
 #[cfg(test)]
 mod tests {
     #[test]
+    #[cfg_attr(not(feature = "languages"), ignore = "translations are parked: --features languages")]
     fn every_entry_keeps_its_holes_and_is_used() {
         let source = [include_str!("launch_progress.rs"), include_str!("launch.rs"), include_str!("downloads.rs")].concat();
         for (en, de) in super::DE {

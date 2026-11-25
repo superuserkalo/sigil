@@ -118,6 +118,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[cfg_attr(not(feature = "languages"), ignore = "translations are parked: --features languages")]
     fn every_routed_string_has_german() {
         let mut missing: Vec<String> = routed(include_str!("autoexec.rs"))
             .into_iter()
@@ -135,6 +136,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(not(feature = "languages"), ignore = "translations are parked: --features languages")]
     fn table_is_clean() {
         let mut seen = std::collections::HashSet::new();
         for (en, de) in DE {

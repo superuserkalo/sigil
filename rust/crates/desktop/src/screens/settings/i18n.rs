@@ -10,6 +10,10 @@
 //! `every_routed_string_is_translated` test reads the routed source files and fails on a UI
 //! literal a table is missing.
 //!
+//! Translations are parked: a build without the cargo feature `languages` (`prefs::LANGUAGES`)
+//! is English everywhere and its tests do not ask for German entries. Build with
+//! `--features languages` to see German and run the parity tests.
+//!
 //! Adding a locale: add a `Lang` variant (id, native name, table), a table in `locales.rs`,
 //! and the variant to `Lang::ALL`. Nothing else changes.
 
@@ -123,7 +127,13 @@ pub fn set(lang: Lang) {
     CURRENT.store(index(forced().unwrap_or(lang).resolve()), Ordering::Relaxed);
 }
 
+/// The language every `tr` call reads. English in a build without the `languages` feature
+/// (`prefs::LANGUAGES`), whatever the settings file or `SIGIL_SNAP_LANG` say: the stored choice
+/// is kept for a build that has the feature.
 pub fn current() -> Lang {
+    if !crate::prefs::LANGUAGES {
+        return Lang::English;
+    }
     if let Some(lang) = forced() {
         return lang;
     }
@@ -147,6 +157,13 @@ fn lookup(lang: Lang, english: &'static str) -> &'static str {
 #[cfg(test)]
 pub(crate) fn german_strings() -> Vec<&'static str> {
     maps()[index(Lang::German) as usize].values().copied().collect()
+}
+
+/// Every German string that differs from its English, for the test that keeps German off the
+/// screen in a build without the translations.
+#[cfg(test)]
+pub(crate) fn german_only() -> Vec<&'static str> {
+    maps()[index(Lang::German) as usize].iter().filter(|(en, de)| en != de).map(|(_, de)| *de).collect()
 }
 
 /// The German for `english`, when a table has it. Browse search reads it for mod-kind words.
@@ -182,6 +199,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[cfg_attr(not(feature = "languages"), ignore = "translations are parked: --features languages")]
     fn lookup_falls_back_to_the_english() {
         assert_eq!(lookup(Lang::German, "Settings"), "Einstellungen");
         assert_eq!(lookup(Lang::German, "a string no table has"), "a string no table has");
@@ -212,6 +230,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(not(feature = "languages"), ignore = "translations are parked: --features languages")]
     fn tables_have_no_duplicates_and_keep_holes() {
         let mut seen = std::collections::HashSet::new();
         for (en, de) in locales::DE
@@ -232,6 +251,7 @@ mod tests {
     /// literal that starts with a capital letter and reads as words; ids, keys, paths, hosts
     /// and format strings with named holes are not UI text.
     #[test]
+    #[cfg_attr(not(feature = "languages"), ignore = "translations are parked: --features languages")]
     fn every_routed_string_is_translated() {
         let sources = [
             include_str!("../settings.rs"),

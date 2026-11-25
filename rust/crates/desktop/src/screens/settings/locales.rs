@@ -38,6 +38,7 @@ pub const DE: &[(&str, &str)] = &[
     ("Close settings", "Einstellungen schließen"),
     ("No settings match", "Keine passende Einstellung"),
     ("Try another word, like proxy, Discord or language.", "Versuch ein anderes Wort, etwa Proxy, Discord oder Sprache."),
+    ("Try another word, like proxy, Discord or theme.", "Versuch ein anderes Wort, etwa Proxy, Discord oder Design."),
     ("Dark", "Dunkel"),
     ("Light", "Hell"),
     ("Black", "Schwarz"),

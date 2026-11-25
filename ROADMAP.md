@@ -32,6 +32,25 @@ Settings > Experimental > Agent.
 cd rust && cargo run -p dah-desktop --features agent
 ```
 
+## Later: translations
+
+Sigil is in English. A German translation of the whole app exists in the code, with a language
+choice in Settings > General, but it is parked: release builds leave it out because nobody can keep
+it current as the app changes every week. It returns when someone can.
+
+What exists in the code today: every string the app shows routed through one lookup, German tables
+for every page, the language choice in Settings, and tests that fail when a string has no German
+entry. Release builds are English everywhere and ignore a language stored in the settings file
+(the stored choice is kept).
+
+How a developer can turn it on: build Sigil with the feature, then pick the language in
+Settings > General. The translation tests run only in that build.
+
+```bash
+cd rust && cargo run -p dah-desktop --features languages
+cd rust && cargo test -p dah-desktop --features languages
+```
+
 ## Not planned
 
 - Third-party analytics. Sigil's own opt-in reports are described in [docs/privacy.md](docs/privacy.md).

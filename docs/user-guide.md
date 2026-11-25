@@ -40,6 +40,7 @@ The sidebar holds the pages: Browse, Installed, Locker, Crosshair, Autoexec, Per
 Overlap, Profiles, Servers, Game and Downloads. Launch modded, Launch vanilla and Settings sit at the
 foot. Pages you do not use can be turned off in Settings > General > Pages, including a Mods only
 mode. A mod agent is planned but not part of this release ([ROADMAP.md](../ROADMAP.md)).
+Sigil is in English only for now ([ROADMAP.md](../ROADMAP.md)).
 Settings > General also sets how dates read (day.month.year, such as 17.11.2026, unless you pick
 another format) and Open on, the page Sigil starts on, which offers the pages the sidebar shows.
 If the chosen page is switched off later, Sigil starts on Browse until you pick another.

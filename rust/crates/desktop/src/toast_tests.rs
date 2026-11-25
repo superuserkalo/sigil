@@ -212,6 +212,7 @@ fn every_raised_toast_fits_in_english_and_german() {
 }
 
 #[test]
+#[cfg_attr(not(feature = "languages"), ignore = "translations are parked: --features languages")]
 fn the_longest_german_strings_fit_as_title_and_detail() {
     let mut german = crate::screens::settings::i18n::german_strings();
     german.sort_by_key(|s| std::cmp::Reverse(s.chars().count()));

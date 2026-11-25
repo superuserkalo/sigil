@@ -705,7 +705,8 @@ Phase 0.5, native port (complete):
 - Done: the Rune app spawns `dah-agent` and streams turns, tool events and approvals.
 - Done: validate, pack, versioned release, deploy plan/apply, migration, watch and publish prepare.
 - Done (2026-11-17): Settings parity with Grimoire and Deadlock Mod Manager
-  (`docs/design/settings-parity.md`): search across categories, German UI strings, rotating
+  (`docs/design/settings-parity.md`): search across categories, German UI strings (parked since 0.1.43 behind the desktop
+  crate's `languages` cargo feature; release builds are English only), rotating
   redacted log, offline mode and proxy in the core HTTP paths, start with the computer, Discord
   Rich Presence (waits for the application id), opt-in match data sharing, Steam and GameBanana
   links, experimental flags. Not verified on Windows or Linux yet: the login entry, the named

@@ -129,6 +129,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(not(feature = "languages"), ignore = "translations are parked: --features languages")]
     fn the_table_has_no_duplicates_and_keeps_holes() {
         let others = others();
         let mut seen = HashSet::new();
@@ -143,6 +144,7 @@ mod tests {
     /// Every UI literal in the round's new files has German here or in another table: a
     /// literal that starts with a capital and has a lowercase letter.
     #[test]
+    #[cfg_attr(not(feature = "languages"), ignore = "translations are parked: --features languages")]
     fn every_string_of_the_round_is_translated() {
         let sources = [include_str!("../browse/hidden.rs"), include_str!("../installed/safety_review.rs"), include_str!("../browse/sources.rs")];
         let mut table = others();

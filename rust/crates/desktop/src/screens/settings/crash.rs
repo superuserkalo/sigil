@@ -629,6 +629,7 @@ mod tests {
     /// Every UI literal above the scenes has German in one of the tables (read from source, so
     /// this file needs no entry in `i18n`'s routed list).
     #[test]
+    #[cfg_attr(not(feature = "languages"), ignore = "translations are parked: --features languages")]
     fn every_string_is_translated() {
         let tables = [
             include_str!("locales.rs"),

@@ -98,6 +98,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(not(feature = "languages"), ignore = "translations are parked: --features languages")]
     fn every_string_of_help_build_sigil_has_german() {
         let mut missing: Vec<String> = ui_literals(include_str!("product.rs"))
             .into_iter()
@@ -109,6 +110,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(not(feature = "languages"), ignore = "translations are parked: --features languages")]
     fn the_table_has_no_duplicates_keeps_holes_and_no_em_dash() {
         let mut seen = HashSet::new();
         for (en, de) in super::DE {
@@ -164,6 +166,7 @@ mod tests {
 
     /// A key here that another table also has would make one of them win at random.
     #[test]
+    #[cfg_attr(not(feature = "languages"), ignore = "translations are parked: --features languages")]
     fn keys_are_not_in_another_table() {
         let ours: HashSet<&str> = super::DE.iter().map(|(en, _)| *en).collect();
         for (en, de) in super::DE {

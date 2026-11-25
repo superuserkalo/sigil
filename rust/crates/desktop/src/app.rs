@@ -2859,6 +2859,12 @@ pub fn scene_local_patches(s: &mut State) {
 
 /// Scenes that show the agent or a page under it (`under_agent`), or Models and sign-in. A build
 /// without the agent does not list them (`main::all_scenes`).
+/// A scene that shows the app in German (`settings-german`, `browse-card-stress-de`): listed only
+/// in a build with the translations (`prefs::LANGUAGES`).
+pub fn is_german_scene(name: &str) -> bool {
+    name.contains("german") || name.ends_with("-de")
+}
+
 pub const AGENT_SCENES: &[&str] = &[
     "agent",
     "demo-agent",

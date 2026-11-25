@@ -214,6 +214,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(not(feature = "languages"), ignore = "translations are parked: --features languages")]
     fn the_table_has_no_duplicates_and_keeps_holes() {
         let others = others();
         let mut seen = HashSet::new();
@@ -228,6 +229,7 @@ mod tests {
     /// Every UI literal in the Regions files has German here or in another table, and so does
     /// every region name and preset error the core hands the page.
     #[test]
+    #[cfg_attr(not(feature = "languages"), ignore = "translations are parked: --features languages")]
     fn every_string_on_the_regions_tab_is_translated() {
         let sources = [include_str!("../servers_regions/mod.rs"), include_str!("../servers_regions/view.rs")];
         let mut table = others();

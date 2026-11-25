@@ -1065,6 +1065,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(not(feature = "languages"), ignore = "translations are parked: --features languages")]
     fn german_strings_have_no_em_dash() {
         for (en, de) in de::DE {
             assert!(!en.contains('\u{2014}') && !de.contains('\u{2014}'));

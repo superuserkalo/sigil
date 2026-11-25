@@ -35,7 +35,6 @@ VIAddVersionKey "LegalCopyright" "Sigil contributors"
 !insertmacro MUI_UNPAGE_CONFIRM
 !insertmacro MUI_UNPAGE_INSTFILES
 !insertmacro MUI_LANGUAGE "English"
-!insertmacro MUI_LANGUAGE "German"
 
 !define UNINSTALL_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\Sigil"
 

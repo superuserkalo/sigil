@@ -1287,6 +1287,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(not(feature = "languages"), ignore = "translations are parked: --features languages")]
     fn every_string_has_german() {
         let source = include_str!("packs.rs");
         let code = source.split("#[cfg(test)]").next().unwrap();

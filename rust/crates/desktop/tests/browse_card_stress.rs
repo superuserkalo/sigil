@@ -69,7 +69,9 @@ fn check(scene: &str, width: u32) {
 
 #[test]
 fn every_card_keeps_its_counts_and_actions() {
-    for scene in ["browse-card-stress", "browse-card-stress-de"] {
+    // The German cards only in a build with the translations (the `languages` feature).
+    let scenes: &[&str] = if cfg!(feature = "languages") { &["browse-card-stress", "browse-card-stress-de"] } else { &["browse-card-stress"] };
+    for &scene in scenes {
         for width in [1040, 1360, 1920] {
             check(scene, width);
         }
