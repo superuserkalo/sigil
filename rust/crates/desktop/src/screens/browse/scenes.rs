@@ -981,3 +981,34 @@ pub fn scene_long_filters(s: &mut State) {
         page.key = key;
     }
 }
+
+/// A search the local catalog index answers: "chainsaw man" is in no title, only in the
+/// verified franchise term of the Asa Mitaka skin. Cards come from the stored page, as the
+/// saved card rows would.
+pub fn scene_search_local(s: &mut State) {
+    use deadlock_core::catalog_index::{CachedCard, CatalogIndex, IndexMod, PACK, SUPPORTED_VERSION};
+    scene_with(s, |_| {});
+    let Ok(page) = gamebanana::parse_browse(FIXTURE_SUBFEED, 1, PAGE_SIZE) else {
+        return;
+    };
+    let strings = vec!["chainsaw man".to_string(), "skins".to_string()];
+    let mods = page
+        .mods
+        .iter()
+        .map(|row| IndexMod {
+            id: row.id,
+            title: row.name.clone(),
+            updated: 1,
+            // Asa Mitaka is from Chainsaw Man: a verified reference term (class 4).
+            fields: if row.id == 733250 { vec![PACK + 1, 4] } else { vec![PACK + 1] },
+        })
+        .collect();
+    let index = CatalogIndex { version: SUPPORTED_VERSION, built: 1, strings, mods };
+    s.browse_view.search.ready = Some(super::search::Ready::new(index));
+    for row in page.mods {
+        s.browse_view.search.cards.insert(row.id, CachedCard { fetched: 1, row });
+    }
+    s.browse_query = TextEdit::new("chainsaw man");
+    s.browse_view.applied_search = "chainsaw man".into();
+    super::search::show(s, 1);
+}

@@ -1341,6 +1341,10 @@ pub fn start_browse_fetch(state: &mut State, page: usize) {
         state.browse.page = Some(view);
         return;
     }
+    // A search the local catalog index answers: matched on the PC, cards read by id.
+    if crate::screens::browse::search::show(state, page) {
+        return;
+    }
     // Offline, and for a custom dated window the server cannot filter, the saved copy is the
     // fastest and only answer. Live reads still win when they can answer.
     let wants_mirror = state.prefs.offline
@@ -1446,6 +1450,13 @@ fn browse_view_now(state: &mut State, view: BrowsePageView) {
 /// catalog already shows (the feed shifts while it is read).
 pub fn apply_browse_page(state: &mut State, result: Result<BrowsePageView, String>) {
     state.browse.loading = false;
+    // A GameBanana read that started before the local index answered says nothing new.
+    if crate::screens::browse::search::active(state) {
+        let page = state.browse.page.as_ref().map(|page| page.page).unwrap_or(1);
+        if crate::screens::browse::search::show(state, page) {
+            return;
+        }
+    }
     let query = crate::screens::browse::current_query(state);
     let key = crate::screens::browse::query_key(state, &query);
     // A read for filters that changed while it ran says nothing about the new ones.

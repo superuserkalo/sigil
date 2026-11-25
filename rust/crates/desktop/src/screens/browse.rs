@@ -58,6 +58,7 @@ pub mod w4;
 pub mod paste;
 pub mod replace;
 pub mod scenes;
+pub mod search;
 pub mod store;
 pub mod shelf;
 pub mod top;
@@ -446,6 +447,8 @@ pub struct View {
     pub w4: w4::W4,
     /// Wave 4: the bulk paste dialog (Grimoire).
     pub paste: paste::Paste,
+    /// Search over the local catalog index (`search.rs`).
+    pub search: search::LocalSearch,
 }
 
 /// One page of collections.

@@ -64,7 +64,7 @@ pub(crate) fn grid_page(s: &State, u: &Ui) -> El {
                     .on_press_tx(refresh),
             ),
         )
-    } else if shown.is_empty() && stale {
+    } else if shown.is_empty() && (stale || super::search::waiting(s)) {
         loading_grid(u, cols)
     } else if shown.is_empty() {
         let mut action = row().gap(8.0);

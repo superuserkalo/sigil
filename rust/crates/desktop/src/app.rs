@@ -2850,6 +2850,7 @@ pub fn scenes() -> &'static [(&'static str, fn(&mut State))] {
         ("browse-details", screens::browse::scene_details),
         ("browse-docked", screens::browse::scene_docked),
         ("browse-filters", screens::browse::scene_filters),
+        ("browse-search-local", screens::browse::scene_search_local),
         ("browse-hero-menu", screens::browse::scene_hero_menu),
         ("browse-sort-menu", screens::browse::scene_sort_menu),
         ("browse-more-menu", screens::browse::scene_more_menu),

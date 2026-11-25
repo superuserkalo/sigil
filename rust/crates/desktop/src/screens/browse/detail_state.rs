@@ -270,6 +270,7 @@ pub(crate) fn start_details_fetch(st: &mut State) {
 pub fn poll(st: &mut State, tx: &mut Tx) -> bool {
     let copied = super::w4::poll_copy(st, tx);
     let mut changed = poll_search(st, tx) | copied;
+    changed |= super::search::poll(st, tx);
     // One-press installs: queue rows, the install worker, Installed and Update states.
     changed |= super::quick::poll(st);
     if st.screen == Screen::Browse {
@@ -477,12 +478,16 @@ pub fn poll(st: &mut State, tx: &mut Tx) -> bool {
 }
 
 /// The titlebar search reads GameBanana once typing pauses. A pasted id or link opens that
-/// submission instead.
+/// submission instead. With a local index the text is matched at once, on the PC (`search`).
 pub(crate) fn poll_search(st: &mut State, tx: &mut Tx) -> bool {
     let typed = st.browse_query.text.trim().to_string();
     if typed == st.browse_view.applied_search {
         st.browse_view.search_edited = None;
         return false;
+    }
+    if !st.demo && super::search::instant(st) {
+        super::search::apply_typed(st, tx);
+        return true;
     }
     let Some(edited) = st.browse_view.search_edited else {
         st.browse_view.search_edited = Some(Instant::now());
