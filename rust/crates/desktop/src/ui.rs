@@ -778,6 +778,13 @@ impl Default for Ui {
 /// the content overflows, so the bar appearing never changes the content's width.
 pub const SCROLL_GUTTER: f32 = 12.0;
 
+/// The scroll bar thumb: its width at rest, least length, and the overlay ink's alpha at rest
+/// and under the pointer or while dragged.
+pub const SCROLL_THUMB_W: f32 = 8.0;
+pub const SCROLL_THUMB_MIN: f32 = 32.0;
+pub const SCROLL_THUMB_REST: f32 = 0.28;
+pub const SCROLL_THUMB_HOVER: f32 = 0.45;
+
 /// Rune's launch flags with scroll bars always shown while content overflows, unless the
 /// command line already chose (`--scroll-bars when-scrolling`).
 #[cfg_attr(target_os = "macos", allow(dead_code))]
@@ -810,13 +817,14 @@ impl Ui {
         k
     }
 
-    /// Sigil's scroll bar: a graphite thumb (`hair_strong` at rest, `muted` under the pointer or
-    /// while dragged), 6 points wide and 10 under the pointer, 24 long at least. Under Reduce
-    /// motion it keeps its width under the pointer and only changes colour. Its ends are the
-    /// kit's rounded ones: the kit draws the thumb as a pill and offers no corner of its own.
+    /// Sigil's scroll bar: a neutral thumb that reads on every graphite surface without
+    /// shouting (the overlay ink at 28 percent at rest, 45 under the pointer or while dragged),
+    /// 8 points wide and 10 under the pointer, square ended like the rest of the app, 32 long at
+    /// least so it stays grabbable in long lists. The track draws nothing. Under Reduce motion
+    /// it keeps its width under the pointer and only changes colour.
     pub fn scroll_bar_style(&self) -> rune_kit::ScrollBarStyle {
-        let (rest, hover) = (self.hair_strong, self.muted);
-        let hover_width = if crate::motion::reduced() { 6.0 } else { 10.0 };
+        let (rest, hover) = (self.over.alpha(SCROLL_THUMB_REST), self.over.alpha(SCROLL_THUMB_HOVER));
+        let hover_width = if crate::motion::reduced() { SCROLL_THUMB_W } else { 10.0 };
         if let Some((r, h, w, style)) = SCROLL_BAR.with(std::cell::Cell::get)
             && r == rest
             && h == hover
@@ -827,9 +835,10 @@ impl Ui {
         let style = rune_kit::ScrollBarStyle::from_kit(&self.kit())
             .thumb(rest)
             .thumb_hover(hover)
-            .width(6.0)
+            .width(SCROLL_THUMB_W)
             .hover_width(hover_width)
-            .min_thumb(24.0);
+            .corner(0.0)
+            .min_thumb(SCROLL_THUMB_MIN);
         SCROLL_BAR.with(|c| c.set(Some((rest, hover, hover_width, style))));
         style
     }

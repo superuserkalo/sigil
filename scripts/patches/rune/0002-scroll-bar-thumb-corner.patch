@@ -1,0 +1,70 @@
+diff --git a/crates/rune-kit/src/scroll_bar.rs b/crates/rune-kit/src/scroll_bar.rs
+index 6d0e9e3..83908e1 100644
+--- a/crates/rune-kit/src/scroll_bar.rs
++++ b/crates/rune-kit/src/scroll_bar.rs
+@@ -68,6 +68,8 @@ pub struct ScrollBarStyle {
+     width: f32,
+     hover_width: f32,
+     track: Track,
++    /// The thumb's corner radius, or None for a pill (half its width).
++    corner: Option<f32>,
+ }
+ 
+ /// Where the thumb runs and when it shows.
+@@ -216,14 +218,14 @@ impl ScrollBarStyle {
+     /// The kit's thumb: `border_base` and 6 points wide at rest, `border_strong` and 10 points
+     /// under the pointer.
+     pub fn from_kit(k: &Kit) -> Self {
+-        Self { thumb: k.c.border_base, thumb_hover: k.c.border_strong, width: THUMB, hover_width: THUMB_HOVER, track: KIT_TRACK }
++        Self { thumb: k.c.border_base, thumb_hover: k.c.border_strong, width: THUMB, hover_width: THUMB_HOVER, track: KIT_TRACK, corner: None }
+     }
+ 
+     /// `@opencode/ui`'s ScrollView thumb: always an overlay, hidden at rest and shown while the
+     /// pointer is over the area or it scrolls; a 4 point `border_muted` pill that turns
+     /// `border_strong` under the pointer or while dragged.
+     pub fn scroll_view(k: &Kit) -> Self {
+-        Self { thumb: k.c.border_muted, thumb_hover: k.c.border_strong, width: 4.0, hover_width: 4.0, track: SCROLL_VIEW_TRACK }
++        Self { thumb: k.c.border_muted, thumb_hover: k.c.border_strong, width: 4.0, hover_width: 4.0, track: SCROLL_VIEW_TRACK, corner: None }
+     }
+ 
+     /// `@opencode/ui`'s `scrollbar.css`, the scroll bar of every plain `overflow: auto` box in
+@@ -234,7 +236,7 @@ impl ScrollBarStyle {
+     /// is over the thumb or drags it. It shows and hides at once. Pass `border_muted` and
+     /// `border_strong`.
+     pub fn native(thumb: Color, thumb_hover: Color) -> Self {
+-        Self { thumb, thumb_hover, width: 4.0, hover_width: 4.0, track: NATIVE_TRACK }
++        Self { thumb, thumb_hover, width: 4.0, hover_width: 4.0, track: NATIVE_TRACK, corner: None }
+     }
+ 
+     /// `@opencode/ui`'s MenuScroll thumb, for menus, popovers and dialog lists such as the
+@@ -242,7 +244,7 @@ impl ScrollBarStyle {
+     /// scrolls (and 800 ms after) or the thumb is held or under the pointer, and `thumb_hover`
+     /// under the pointer or held. Pass `border_muted` and `border_strong`.
+     pub fn menu_scroll(thumb: Color, thumb_hover: Color) -> Self {
+-        Self { thumb, thumb_hover, width: 4.0, hover_width: 4.0, track: MENU_SCROLL_TRACK }
++        Self { thumb, thumb_hover, width: 4.0, hover_width: 4.0, track: MENU_SCROLL_TRACK, corner: None }
+     }
+ 
+     /// A [`Self::native`] bar over the viewport's own end edge, in room its content leaves there,
+@@ -303,6 +305,12 @@ impl ScrollBarStyle {
+         self
+     }
+ 
++    /// The thumb's corner radius in points (0 for square ends), in place of the pill's.
++    pub fn corner(mut self, r: f32) -> Self {
++        self.corner = Some(r.max(0.0));
++        self
++    }
++
+     /// The thumb's width at rest, in points.
+     pub fn width(mut self, w: f32) -> Self {
+         self.width = w.max(1.0);
+@@ -787,7 +795,7 @@ fn attach(style: ScrollBarStyle, area: &str, key: &str, outer: El, viewport: El)
+     let on_drag = move |d: &mut rune::Drag, tx: &mut rune::Tx| drag.drag(&target, jumps, d, tx);
+     let slot = el().key("thumb-slot").absolute(0.0, 0.0).live_rect(bar.slot.smooth(style.track.tint)).child(
+         el().key("thumb").absolute(0.0, 0.0).live_rect(bar.thumb.smooth(style.track.tint))
+-            .radius(style.widest() / 2.0).live_fill(bar.fill.smooth(style.track.tint)),
++            .radius(style.corner.unwrap_or(style.widest() / 2.0)).live_fill(bar.fill.smooth(style.track.tint)),
+     );
+     let track = el().key("scroll-bar").absolute(0.0, 0.0).live_rect(&bar.track)
+         .live_opacity(bar.opacity.smooth(style.track.enter).rest(style.track.leave)).a11y_hidden();
