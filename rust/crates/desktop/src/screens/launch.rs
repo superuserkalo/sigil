@@ -1,27 +1,25 @@
-//! Launch: modded, vanilla, the running game and the way back.
+//! The launch area's state: the process monitor, the launch dialogs (Before you launch and Stop
+//! Deadlock), the gameinfo.gi fix, the last crash and the background read behind them.
 //!
-//! `deadlock_core::launch` owns the stash and restore. This screen is the app action surface:
-//! every launch and every stash sits behind a confirm dialog, a vanilla launch says what it
-//! moves aside, and the running state comes from the monitor thread that watches the process
-//! table (see [`Monitor`]).
-//!
-//! The page is called Game: the game's state, the vanilla stash and a crash advisory for the last
-//! session (the newest dump that the launch marker has not seen, with the mod that most likely
-//! caused it, from `deadlock_core::impact`). The download queue has its own page
-//! (`screens::downloads::page`); the sidebar's buttons are the launch controls.
+//! `deadlock_core::launch` owns the stash and restore. The launch controls are the sidebar's
+//! buttons (`app::sidebar`): while Deadlock runs the modded one becomes Stop Deadlock, behind the
+//! same confirm. Mods a vanilla launch set aside come back by themselves (`launch_restore`). The
+//! last crash (the newest dump the launch marker has not seen, with the mod that most likely
+//! caused it, from `deadlock_core::impact`) sits in Settings > Logs and support ([`last_crash`]).
+//! The download queue has its own page (`screens::downloads::page`).
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use deadlock_core::impact::{Change, Suspect};
-use deadlock_core::launch::{GameProcess, LaunchMarker};
+use deadlock_core::launch::GameProcess;
 use rune::{Color, El, Key, KeyEvent, col, icon, row, spacer, text};
 
 use crate::app::State;
 use crate::icons;
 use crate::model::Screen;
-use crate::ui::{ActionKind, BODY, BODY_MED, H1, MONO, PAGE_TOP, PAGE_X, SMALL, SMALL_NUM, Ui};
+use crate::ui::{ActionKind, BODY, BODY_MED, H1, MONO, SMALL, SMALL_NUM, Ui};
 use crate::screens::launch_progress::tr;
 use crate::screens::settings::i18n::fill;
 
@@ -34,11 +32,7 @@ pub struct Read {
     pub stash: Option<deadlock_core::launch::StashStatus>,
     pub gameinfo_present: bool,
     pub gameinfo_addons: bool,
-    pub addon_files: usize,
-    pub enabled: usize,
-    /// The last launch Sigil asked Steam for.
-    pub marker: Option<LaunchMarker>,
-    /// A crash after that launch that the player has not read yet.
+    /// A crash after the last launch that the player has not dismissed yet.
     pub crash: Option<Crash>,
 }
 
@@ -63,6 +57,8 @@ pub struct Crash {
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Dialog {
     None,
+    /// The launch steps' work tags (`data::launch_work`): a modded launch, setting the mods
+    /// aside for a vanilla one, and putting them back. No dialog opens on them.
     Modded,
     Vanilla,
     Restore,
@@ -99,6 +95,10 @@ pub struct View {
     pub step: crate::jobs::Job<crate::screens::launch_progress::Apply>,
     /// The missing-files check a modded launch press starts (`installed::checks`).
     pub precheck: crate::jobs::Job<crate::screens::launch_progress::Apply>,
+    /// Puts mods a vanilla launch set aside back by itself (`launch_restore`).
+    pub restore: crate::screens::launch_restore::AutoRestore,
+    /// The crash the "Deadlock crashed" toast already named, so a later read does not repeat it.
+    pub crash_told: Option<i64>,
 }
 
 impl Default for View {
@@ -119,6 +119,8 @@ impl Default for View {
             crash_details: false,
             step: crate::jobs::Job::default(),
             precheck: crate::jobs::Job::default(),
+            restore: Default::default(),
+            crash_told: None,
         }
     }
 }
@@ -128,7 +130,7 @@ impl Default for View {
 // ---------------------------------------------------------------------------
 
 /// Watches the process table on a thread of its own, so the running row and Stop game do not
-/// depend on the Launch page being opened and re-read. One check every two seconds; the UI is
+/// depend on the launch read being redone. One check every two seconds; the UI is
 /// woken only when the answer changes.
 pub struct Monitor {
     shared: Arc<Mutex<GameProcess>>,
@@ -226,113 +228,11 @@ impl Drop for Monitor {
 }
 
 // ---------------------------------------------------------------------------
-// The page
+// Rows shared by the crash card and the checklist
 // ---------------------------------------------------------------------------
 
-pub fn view(s: &State, u: &Ui) -> El {
-    let v = &s.launch;
-    let read = v.read.as_ref();
-    let process = v.monitor.snapshot();
-    let running = process.running || s.settings.game_running;
-
-    // One toolbar line: the title, then the last result in the room after it. The result
-    // never pushes the page, and Recheck sits on the Game section, on the column's edge.
-    let head = col()
-        .key("launch-head")
-        .w_full()
-        // The toolbar ends on the panel's right edge, so Recheck sits over what it rereads.
-        .max_w(COLUMN_W + 2.0 * PAGE_X)
-        .px(PAGE_X)
-        .pt(PAGE_TOP)
-        .child(u.page_toolbar(
-            u.page_title(tr("Game")),
-            vec![status_line(u, v.last.as_deref())],
-            None,
-            vec![u
-                .icon_button(&icons::REFRESH_CW, tr("Recheck"))
-                .key("launch-recheck")
-                .cursor(rune::Cursor::Pointer)
-                .on_press(|st: &mut State| crate::data::start_launch_read(st))],
-        ));
-
-    let body = if !s.game_detected {
-        u.empty_state(
-            "",
-            tr("Deadlock was not found"),
-            tr("Set the game folder in Settings to launch from here."),
-            Some(
-                u.action(tr("Open Settings"), ActionKind::Secondary)
-                    .cursor(rune::Cursor::Pointer)
-                    .on_press(|st: &mut State| st.go(Screen::Settings)),
-            ),
-        )
-    } else if let Some(error) = &v.error {
-        u.empty_state(
-            "",
-            tr("Launch status could not be read"),
-            error,
-            Some(crate::notify::feedback::button(u, "launch-error-feedback", tr("Launch status could not be read"), error)),
-        )
-    } else {
-        // The page title already says Game; Recheck sits on the toolbar line.
-        let mut game = col().w_full().gap(24.0).child(game_panel(s, u, read, &process, running));
-        if let Some(crash) = read.and_then(|read| read.crash.as_ref()) {
-            game = game.child(crash_card(s, u, crash));
-        }
-        // One column: the game and its crash take the content width up to the reading
-        // measure. The download queue has its own page (`screens::downloads::page`).
-        game.max_w(COLUMN_W)
-    };
-
-    col()
-        .key("launch-root")
-        .w_full()
-        .h_full()
-        .min_h(0.0)
-        .child(head)
-        .child(
-            u.scroll_area(col()
-                .key("launch-scroll")
-                .w_full()
-                .grow(1.0)
-                .min_h(0.0)
-                .scroll(rune::ScrollSpec {
-                    stick_bottom: false,
-                })
-                .child(
-                    col()
-                        .key("launch-page")
-                        .w_full()
-                        .px(PAGE_X)
-                        .pt(16.0)
-                        .pb(32.0)
-                        .child(body),
-                )),
-        )
-}
-
-/// The Game page's one column.
-const COLUMN_W: f32 = 880.0;
-/// One Game panel row, a crash suspect row and a download row: all the same 56 points.
+/// A crash suspect row and a checklist row: the same 56 points.
 const PANEL_ROW_H: f32 = 56.0;
-
-/// The last result on the toolbar line after the title (the shared `status_line`, cut with a
-/// tooltip). Empty when there is none, so a result never pushes the page.
-fn status_line(u: &Ui, last: Option<&str>) -> El {
-    let mut line = row().key("launch-status").pl(8.0).h(24.0).gap(8.0).center_y().min_w(0.0).shrink();
-    if let Some(message) = last {
-        let bad = is_bad(message);
-        line = line.role(if bad { "alert" } else { "status" }).child(u.status_line(
-            if bad { &icons::TRIANGLE_ALERT } else { &icons::CHECK },
-            message,
-            if bad { crate::ui::Tone::Warn } else { crate::ui::Tone::Ok },
-        ));
-        if bad {
-            line = line.child(crate::notify::feedback::button(u, "launch-last-feedback", message, ""));
-        }
-    }
-    line
-}
 
 /// One fixed 56 point row: icon, title over one line, controls on the right.
 fn panel_row(u: &Ui, key: &str, glyph: &'static rune::Icon, tint: Color, title: &str, line: El, trailing: Option<El>, last: bool) -> El {
@@ -366,179 +266,18 @@ fn line_text(s: impl Into<String>, color: Color) -> El {
     text(s.clone()).font(SMALL_NUM).color(color).truncate().help_when_truncated(s)
 }
 
-/// The Game panel: three rows, always all three, at fixed heights. A state change swaps what a
-/// row says, never how tall it is or where it sits.
-fn game_panel(s: &State, u: &Ui, read: Option<&Read>, process: &GameProcess, running: bool) -> El {
-    let v = &s.launch;
-    let pending = read.and_then(|read| read.stash.as_ref());
-    let stashed = pending.is_some();
-    // A launch under way (its overlay may be hidden) keeps both buttons off, with the reason.
-    let launching = crate::screens::launch_progress::busy_line(s);
-    let ready = !stashed && !v.busy && !running && launching.is_none();
-
-    // Row 1: the game.
-    let game = if running {
-        let since = read
-            .and_then(|read| read.marker.as_ref())
-            .filter(|marker| marker.open())
-            .map(started_line)
-            .unwrap_or_else(|| tr("Running now.").to_string());
-        let detail = if process.count() > 1 {
-            fill(tr("{} {}"), &[&since, &process.count_label()])
-        } else {
-            since
-        };
-        panel_row(
-            u,
-            "launch-running",
-            &icons::PLAY,
-            u.teal,
-            tr("Deadlock is running"),
-            line_text(detail, u.muted),
-            Some(
-                row().min_w(LAUNCH_PAIR_W).gap(8.0).center_y().child(spacer()).child(
-                    u.action_m(tr("Stop game"), ActionKind::Secondary)
-                        .key("launch-stop")
-                        .cursor(rune::Cursor::Pointer)
-                        .on_press(|st: &mut State| st.launch.dialog = Dialog::StopGame),
-                ),
-            ),
-            false,
-        )
-    } else {
-        let vanilla_help = if stashed {
-            tr("Restore the mods set aside first.")
-        } else {
-            tr("Moves your mods aside, then starts the game. Restore them here afterwards.")
-        };
-        // Launch modded is the page's one solid action; vanilla stays the quiet alternative.
-        let button = |label: &str, key: &str, kind: ActionKind| {
-            u.action_m(label, kind)
-                .key(key.to_string())
-                .disabled(!ready)
-                .opacity(if ready { 1.0 } else { 0.45 })
-                .cursor(if ready { rune::Cursor::Pointer } else { rune::Cursor::Default })
-        };
-        let pair = row()
-            .min_w(LAUNCH_PAIR_W)
-            .gap(8.0)
-            .center_y()
-            .child(spacer())
-            .child(
-                button(tr("Launch vanilla"), "launch-go-vanilla", ActionKind::Secondary)
-                    .help(launching.clone().unwrap_or_else(|| vanilla_help.to_string()))
-                    .on_press(move |st: &mut State| {
-                        if ready {
-                            st.launch.dialog = Dialog::Vanilla;
-                        }
-                    }),
-            )
-            .child(button(tr("Launch modded"), "launch-go-modded", ActionKind::Primary).help(launching.clone().unwrap_or_default()).on_press(move |st: &mut State| {
-                if ready {
-                    press_launch(st, false);
-                }
-            }));
-        panel_row(
-            u,
-            "launch-game",
-            &icons::PLAY,
-            u.muted,
-            if stashed { tr("Restore mods to launch") } else { tr("Ready to launch") },
-            line_text(tr("Deadlock is not running"), u.muted),
-            Some(pair),
-            false,
-        )
-    };
-
-    // Row 2: the mods and gameinfo.gi.
-    let broken = read.is_some_and(|read| !read.gameinfo_present || !read.gameinfo_addons);
-    let mods_title = match read {
-        Some(read) => fill(
-            if read.addon_files == 1 { tr("{} of {} mod on") } else { tr("{} of {} mods on") },
-            &[&read.enabled.to_string(), &read.addon_files.to_string()],
-        ),
-        None => tr("Your enabled mods").to_string(),
-    };
-    let mods = if broken {
-        panel_row(
-            u,
-            "launch-mods",
-            &icons::TRIANGLE_ALERT,
-            u.amber,
-            &mods_title,
-            line_text(tr("gameinfo.gi does not load mods"), u.prose),
-            Some(
-                u.action_m(tr("Fix mods"), ActionKind::Secondary)
-                    .key("launch-fix-gameinfo")
-                    .cursor(rune::Cursor::Pointer)
-                    .on_press(fix_gameinfo),
-            ),
-            false,
-        )
-    } else {
-        panel_row(
-            u,
-            "launch-mods",
-            &icons::CHECK,
-            u.teal,
-            &mods_title,
-            line_text(if read.is_some() { tr("gameinfo.gi loads mods") } else { tr("Not read yet") }, u.muted),
-            None,
-            false,
-        )
-    };
-
-    // Row 3: the vanilla stash.
-    let stash = match pending {
-        Some(stash) => {
-            let title = fill(
-                if stash.present == 1 { tr("{} file set aside") } else { tr("{} files set aside") },
-                &[&stash.present.to_string()],
-            );
-            let line = match &stash.problem {
-                Some(problem) => row()
-                    .gap(6.0)
-                    .center_y()
-                    .min_w(0.0)
-                    .child(icon(&icons::TRIANGLE_ALERT, 12.0).color(u.rose).a11y_hidden())
-                    .child(line_text(problem.clone(), u.prose).shrink().min_w(0.0)),
-                None => line_text(
-                    fill(
-                        tr("Since {}. Restore before you change mods."),
-                        &[&crate::prefs::show_stamp(&stash.created_at)],
-                    ),
-                    u.muted,
-                ),
-            };
-            panel_row(
-                u,
-                "launch-stash",
-                &icons::BOX,
-                u.amber,
-                &title,
-                line,
-                Some(
-                    u.icon_action_m(&icons::ROTATE_CCW, tr("Restore mods"), ActionKind::Secondary)
-                        .key("launch-restore")
-                        .disabled(v.busy)
-                        .cursor(rune::Cursor::Pointer)
-                        .on_press(|st: &mut State| {
-                            if !st.launch.busy {
-                                st.launch.dialog = Dialog::Restore;
-                            }
-                        }),
-                ),
-                true,
-            )
-        }
-        None => panel_row(u, "launch-no-stash", &icons::BOX, u.faint, tr("Vanilla stash"), line_text(tr("Empty"), u.muted), None, true),
-    };
-
-    u.panel().key("launch-game-panel").w_full().radius(crate::ui::r(8.0)).child(game).child(mods).child(stash)
+/// Settings > Logs and support: the last game crash with the mod it probably was, Show dump and
+/// the evidence. None while there is no crash the player has not dismissed.
+pub fn last_crash(s: &State, u: &Ui) -> Option<El> {
+    let crash = s.launch.read.as_ref()?.crash.as_ref()?;
+    Some(crash_card(s, u, crash))
 }
 
-/// Room for the two launch buttons, so swapping them for Stop game moves nothing.
-const LAUNCH_PAIR_W: f32 = 232.0;
+/// Whether Deadlock is up for the sidebar's Stop Deadlock: the process monitor once it has read
+/// the process list (a launch said it started before that), and no launch is still under way.
+pub fn game_up(s: &State) -> bool {
+    s.launch.progress.is_none() && crate::screens::installed::waiting::game_running(s)
+}
 
 /// The crash advisory: the suspect and its fix first, then the dump, then the evidence behind
 /// a disclosure. Fixed 120 points while Details is closed.
@@ -709,16 +448,6 @@ fn dismiss_crash(st: &mut State, at_secs: i64) {
     }
 }
 
-/// `Started 12 min ago, modded.` The mode is left out when the game was started outside Sigil.
-fn started_line(marker: &LaunchMarker) -> String {
-    let since = deadlock_core::launch::since_label(marker.started_secs, now_secs());
-    match marker.mode.as_str() {
-        deadlock_core::launch::MODE_MODDED => fill(tr("Started {}, modded."), &[&since]),
-        deadlock_core::launch::MODE_VANILLA => fill(tr("Started {}, vanilla."), &[&since]),
-        _ => fill(tr("Started {}."), &[&since]),
-    }
-}
-
 fn now_secs() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -726,77 +455,20 @@ fn now_secs() -> i64 {
         .unwrap_or(0)
 }
 
-/// The sidebar's running line: shows only while Deadlock is up, with the way to stop it.
-///
-/// The shell mounts it with
-/// `.children(screens::launch::sidebar_state(s, u).into_iter().collect::<Vec<_>>())`
-/// in `app.rs`'s `sidebar`, above the launch buttons. Until that line is added the function is
-/// reachable but unused, so it stays allowed here rather than deleted.
-#[allow(dead_code)]
-pub fn sidebar_state(s: &State, u: &Ui) -> Option<El> {
-    let process = s.launch.monitor.snapshot();
-    if !process.running && !s.settings.game_running {
-        return None;
-    }
-    Some(
-        row()
-            .key("sidebar-running")
-            .w_full()
-            .h(30.0)
-            .px(12.0)
-            .gap(8.0)
-            .center_y()
-            .radius(crate::ui::r(8.0))
-            .hover(u.hover)
-            .focusable(true)
-            .role("button")
-            .label(tr("Deadlock is running. Stop game"))
-            .cursor(rune::Cursor::Pointer)
-            .on_press(|st: &mut State| {
-                st.go(Screen::Launch);
-                st.launch.dialog = Dialog::StopGame;
-            })
-            .child(
-                icon(&icons::PLAY, 12.0)
-                    .color(u.teal)
-                    .a11y_hidden(),
-            )
-            .child(
-                text(tr("Running"))
-                    .font(SMALL)
-                    .color(u.muted)
-                    .grow(1.0),
-            )
-            .child(
-                icon(&icons::SQUARE_STOP, 12.0)
-                    .color(u.faint)
-                    .a11y_hidden(),
-            ),
-    )
-}
-
 /// Mounted at the root so the launch confirmation overlays the shell. The overlap and
 /// downloads dialogs ride on the same hook.
 pub fn dialog(s: &State, u: &Ui) -> Option<El> {
     match s.launch.dialog {
         Dialog::None => conflicts::dialog(s, u).or_else(|| downloads::dialog(s, u)),
-        Dialog::Modded | Dialog::Vanilla | Dialog::Restore => Some(confirm(u, s, s.launch.dialog)),
+        // Tags for the launch steps' work (`data::launch_work`); no dialog opens on them.
+        Dialog::Modded | Dialog::Vanilla | Dialog::Restore => None,
         Dialog::Checklist => Some(checklist(u, s)),
         Dialog::StopGame => Some(stop_confirm(u, s)),
     }
 }
 
-/// Pressing Launch: the checklist first when something is off, then the plain confirm.
-fn press_launch(st: &mut State, vanilla: bool) {
-    st.launch.dialog = if vanilla || checklist_issues(st).is_empty() {
-        Dialog::Modded
-    } else {
-        Dialog::Checklist
-    };
-}
-
 /// What a player should know before starting the game. Every entry has a page that fixes it.
-struct Issue {
+pub struct Issue {
     title: &'static str,
     detail: &'static str,
     fix: Fix,
@@ -808,7 +480,9 @@ enum Fix {
     Updates,
 }
 
-fn checklist_issues(s: &State) -> Vec<Issue> {
+/// What the Before you launch checklist would list now. The sidebar's modded launch opens it when
+/// this is not empty.
+pub fn checklist_issues(s: &State) -> Vec<Issue> {
     let mut issues = Vec::new();
     let gameinfo_off = match &s.gameinfo.state {
         crate::banner::Gameinfo::NotListed { .. } | crate::banner::Gameinfo::Missing { .. } => true,
@@ -935,7 +609,11 @@ fn checklist(u: &Ui, s: &State) -> El {
                     u.icon_action(&icons::PLAY, tr("Launch anyway"), ActionKind::Primary)
                         .key("launch-check-anyway")
                         .cursor(rune::Cursor::Pointer)
-                        .on_press(|st: &mut State| st.launch.dialog = Dialog::Modded),
+                        // The press is the approval: the sidebar's modded launch, as it was asked for.
+                        .on_press(|st: &mut State| {
+                            st.launch.dialog = Dialog::None;
+                            crate::screens::launch_progress::begin(st, false, false);
+                        }),
                 ),
         )
 }
@@ -1024,7 +702,7 @@ pub fn stop_game_for_cancel(st: &mut State) -> bool {
     stop_game_now(st, false)
 }
 
-/// GAME WRITE, from a Fix press on the Launch page or its checklist: repair `gameinfo.gi` with
+/// GAME WRITE, from a Fix press in the Before you launch checklist or the launch gate: repair `gameinfo.gi` with
 /// `game_apply::apply_gameinfo_repair`, which keeps the mounts the player or another tool added
 /// (from the newest backup), with `deploy::repair_gameinfo` as the fallback when it errors. The
 /// toast offers Undo from the backup either one made.
@@ -1076,106 +754,6 @@ pub fn fix_gameinfo(st: &mut State) {
     notify::push(st, notice);
 }
 
-fn is_bad(message: &str) -> bool {
-    let lower = message.to_lowercase();
-    ["not ", "could not", "failed", "refus", "error"]
-        .iter()
-        .any(|word| lower.contains(word))
-}
-
-fn confirm(u: &Ui, s: &State, dialog: Dialog) -> El {
-    let (title, line, action) = match dialog {
-        Dialog::Modded => (
-            tr("Launch Deadlock"),
-            tr("Steam starts the game with the mods that are on."),
-            tr("Launch"),
-        ),
-        Dialog::Vanilla => (
-            tr("Launch vanilla"),
-            tr("Your mods are moved aside, then Steam starts the game. Restore them here afterwards."),
-            tr("Launch vanilla"),
-        ),
-        Dialog::Restore => (
-            tr("Restore mods"),
-            tr("Mods move back into the addon folder. A file already there is kept, not overwritten."),
-            tr("Restore"),
-        ),
-        _ => (tr("Launch"), tr("Nothing is pending."), tr("Close")),
-    };
-    let mods = match (dialog, s.launch.read.as_ref()) {
-        (Dialog::Restore, Some(read)) => read
-            .stash
-            .as_ref()
-            .map(|stash| {
-                if stash.present == 1 {
-                    fill(tr("{} file to restore"), &["1"])
-                } else {
-                    fill(
-                        tr("{} files to restore"),
-                        &[&stash.present.to_string()],
-                    )
-                }
-            })
-            .unwrap_or_else(|| tr("Nothing to restore").to_string()),
-        (Dialog::Vanilla, Some(read)) => fill(
-            tr("{} files move aside"),
-            &[&read.addon_files.to_string()],
-        ),
-        (_, Some(read)) => fill(
-            tr("{} of {} on"),
-            &[&read.enabled.to_string(), &read.addon_files.to_string()],
-        ),
-        (_, None) => tr("Not read yet").to_string(),
-    };
-    let close = |st: &mut State| st.launch.dialog = Dialog::None;
-    u.dialog_shell()
-        .key("launch-confirm")
-        .role("dialog")
-        .label(title)
-        .w(480.0)
-        .padding(24.0)
-        .gap(16.0)
-        .modal(true, close)
-        .on_key(move |st: &mut State, ev: &KeyEvent, _| {
-            if ev.key == Key::Escape {
-                close(st);
-                true
-            } else {
-                false
-            }
-        })
-        .child(
-            col()
-                .w_full()
-                .gap(6.0)
-                .child(text(title).font(H1).color(u.ink))
-                .child(text(line).font(BODY).color(u.prose).max_w(432.0).wrap()),
-        )
-        .child(col().w_full().child(u.kv(tr("Mods"), &mods, u.ink)))
-        .child(
-            row()
-                .w_full()
-                .gap(8.0)
-                .child(spacer())
-                .child(
-                    u.action(tr("Cancel"), ActionKind::Ghost)
-                        .cursor(rune::Cursor::Pointer)
-                        .on_press(close),
-                )
-                .child(
-                    u.action(action, ActionKind::Primary)
-                        .cursor(rune::Cursor::Pointer)
-                        .on_press(move |st: &mut State| match dialog {
-                            // A launch runs through the progress overlay, which writes the
-                            // launch options into Steam first.
-                            Dialog::Modded => crate::screens::launch_progress::begin(st, false, true),
-                            Dialog::Vanilla => crate::screens::launch_progress::begin(st, true, true),
-                            other => crate::data::run_launch(st, other),
-                        }),
-                ),
-        )
-}
-
 // ---------------------------------------------------------------------------
 // Fixtures
 // ---------------------------------------------------------------------------
@@ -1185,40 +763,12 @@ pub fn stage_queue(st: &mut State) {
     st.launch.downloads.stage_demo();
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn labels_read_like_a_sentence() {
-        assert!(is_bad("Mods were not restored"));
-        assert!(!is_bad("Steam has the launch request"));
-    }
-}
-
 // ---------------------------------------------------------------------------
 // Fixtures
 // ---------------------------------------------------------------------------
 
-fn demo_read(running: bool, crash: Option<Crash>) -> Read {
-    let now = now_secs();
-    Read {
-        stash: None,
-        gameinfo_present: true,
-        gameinfo_addons: true,
-        addon_files: 6,
-        enabled: 5,
-        marker: running.then(|| LaunchMarker {
-            schema: deadlock_core::launch::LAUNCH_STATE_SCHEMA,
-            mode: deadlock_core::launch::MODE_MODDED.to_string(),
-            started_at: String::new(),
-            started_secs: now - 12 * 60,
-            exited_at: None,
-            exit_secs: None,
-            acknowledged_secs: None,
-        }),
-        crash,
-    }
+fn demo_read(crash: Option<Crash>) -> Read {
+    Read { stash: None, gameinfo_present: true, gameinfo_addons: true, crash }
 }
 
 fn demo_crash() -> Crash {
@@ -1269,56 +819,52 @@ fn demo_crash() -> Crash {
 
 fn scene_base(st: &mut State) {
     st.load_demo();
-    st.screen = Screen::Launch;
+    st.screen = Screen::Installed;
     st.launch.loaded = true;
 }
 
-/// `launch`: the page with nothing running.
+/// Installed with the launch read done and nothing running.
 pub fn scene_page(st: &mut State) {
     scene_base(st);
-    st.launch.read = Some(demo_read(false, None));
+    st.launch.read = Some(demo_read(None));
 }
 
-/// `launch-running`: the running row and Stop game.
+/// `sidebar-running`: Deadlock is up, so the sidebar's modded launch reads Stop Deadlock and
+/// vanilla is off.
 pub fn scene_running(st: &mut State) {
     scene_base(st);
-    st.launch.read = Some(demo_read(true, None));
+    st.launch.read = Some(demo_read(None));
     st.settings.game_running = true;
 }
 
-/// `launch-crash`: the crash advisory with a likely culprit.
+/// `settings-last-crash`: Settings > Logs and support with the last crash and its likely culprit.
 pub fn scene_crash(st: &mut State) {
-    scene_base(st);
-    st.launch.read = Some(demo_read(false, Some(demo_crash())));
+    crate::screens::settings::scene_tab(st, crate::screens::settings::Tab::Logs);
+    st.launch.loaded = true;
+    st.launch.read = Some(demo_read(Some(demo_crash())));
 }
 
-/// `launch-checklist`: the overlay before a launch with a stale gameinfo.gi and overlaps.
+/// `launch-checklist`: the dialog before a modded launch with a stale gameinfo.gi and overlaps.
 pub fn scene_checklist(st: &mut State) {
     scene_base(st);
-    st.launch.read = Some(demo_read(false, None));
+    st.launch.read = Some(demo_read(None));
     st.gameinfo.state = crate::banner::Gameinfo::NotListed {
         path: std::path::PathBuf::from("~/Steam/steamapps/common/Deadlock/game/citadel/gameinfo.gi"),
     };
     st.launch.dialog = Dialog::Checklist;
 }
 
-/// `launch-stop`: the confirm that closes the game.
+/// `launch-stop`: the confirm that closes the game, from the sidebar's Stop Deadlock.
 pub fn scene_stop(st: &mut State) {
     scene_running(st);
     st.launch.dialog = Dialog::StopGame;
-}
-
-/// `launch-vanilla`: the vanilla confirm.
-pub fn scene_vanilla(st: &mut State) {
-    scene_page(st);
-    st.launch.dialog = Dialog::Vanilla;
 }
 
 /// `launch-downloads`: the queue with one row of every state.
 pub fn scene_downloads(st: &mut State) {
     scene_base(st);
     st.screen = Screen::Downloads;
-    st.launch.read = Some(demo_read(false, None));
+    st.launch.read = Some(demo_read(None));
     stage_queue(st);
 }
 
@@ -1367,4 +913,87 @@ pub fn scene_progress(st: &mut State) {
 pub fn scene_progress_waiting(st: &mut State) {
     crate::app::scene_demo_installed(st);
     crate::screens::launch_progress::stage(st, false, 3);
+}
+
+#[cfg(test)]
+mod tests {
+    use rune::{Env, Runtime};
+
+    use super::*;
+
+    fn render(st: State) -> Runtime<State> {
+        let mut rt = Runtime::new(st, crate::app::view, (1280.0, 800.0), Env::new(true, 1.0));
+        rt.check_live_only(false);
+        for _ in 0..6 {
+            rt.frame(1.0 / 60.0);
+        }
+        rt
+    }
+
+    fn press(rt: &mut Runtime<State>, key: &str) {
+        let e = rt.elements().into_iter().find(|e| !e.exiting && e.key.as_deref() == Some(key)).unwrap_or_else(|| panic!("no {key}"));
+        let (x, y) = (e.rect[0] + e.rect[2] / 2.0, e.rect[1] + e.rect[3] / 2.0);
+        rt.pointer_move(x, y);
+        rt.frame(1.0 / 60.0);
+        rt.pointer_down(x, y);
+        rt.frame(1.0 / 60.0);
+        rt.pointer_up(x, y);
+        rt.frame(1.0 / 60.0);
+    }
+
+    fn has(rt: &Runtime<State>, key: &str) -> bool {
+        rt.elements().iter().any(|e| !e.exiting && e.key.as_deref() == Some(key))
+    }
+
+    #[test]
+    fn while_the_game_runs_the_sidebar_offers_stop_deadlock() {
+        let _globals = crate::ui::test_globals();
+        let mut st = State::default();
+        scene_running(&mut st);
+        let mut rt = render(st);
+        assert!(has(&rt, "launch-stop") && !has(&rt, "launch-modded"), "Launch modded became Stop Deadlock");
+        let vanilla = rt.elements().into_iter().find(|e| e.key.as_deref() == Some("launch-vanilla")).expect("vanilla");
+        assert!(vanilla.help.as_deref().is_some_and(|h| h.contains("already running")), "vanilla is off: {:?}", vanilla.help);
+        press(&mut rt, "launch-stop");
+        assert!(rt.state.launch.dialog == Dialog::StopGame, "the same confirm the Game page had");
+        assert!(has(&rt, "launch-stop-confirm"));
+
+        // Not running: the launch buttons as always.
+        let mut st = State::default();
+        scene_page(&mut st);
+        let rt = render(st);
+        assert!(has(&rt, "launch-modded") && !has(&rt, "launch-stop"));
+    }
+
+    #[test]
+    fn the_sidebar_launch_opens_before_you_launch_when_something_needs_a_look() {
+        let _globals = crate::ui::test_globals();
+        let mut st = State::default();
+        scene_page(&mut st);
+        st.gameinfo.state = crate::banner::Gameinfo::NotListed {
+            path: std::path::PathBuf::from("~/Steam/steamapps/common/Deadlock/game/citadel/gameinfo.gi"),
+        };
+        let mut rt = render(st);
+        press(&mut rt, "launch-modded");
+        assert!(rt.state.launch.dialog == Dialog::Checklist);
+        assert!(rt.state.launch.progress.is_none(), "nothing starts before the answer");
+        rt.frame(1.0 / 60.0);
+        assert!(has(&rt, "launch-checklist"));
+        // Launch anyway starts the sidebar's modded launch.
+        press(&mut rt, "launch-check-anyway");
+        assert!(rt.state.launch.dialog == Dialog::None);
+        assert!(rt.state.launch.progress.as_ref().is_some_and(|p| !p.vanilla), "the launch started");
+    }
+
+    #[test]
+    fn a_crash_from_the_launch_read_is_one_toast_that_opens_settings() {
+        let mut st = State::default();
+        scene_page(&mut st);
+        let read = || Ok(demo_read(Some(demo_crash())));
+        crate::data::apply_launch(&mut st, read());
+        crate::data::apply_launch(&mut st, read());
+        let toasts: Vec<_> = st.notices.visible().filter(|t| t.notice.title == "Deadlock crashed").collect();
+        assert_eq!(toasts.len(), 1, "said once");
+        assert_eq!(toasts[0].notice.action_label(), Some("Details"));
+    }
 }

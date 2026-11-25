@@ -16,6 +16,7 @@ pub mod launch_crash;
 pub mod launch_extras;
 pub mod launch_gate;
 pub mod launch_progress;
+pub mod launch_restore;
 pub mod locker;
 pub mod maps;
 pub mod patches;

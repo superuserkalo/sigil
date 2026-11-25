@@ -418,7 +418,6 @@ pub fn presence_activity(s: &State) -> Activity {
             Screen::Conflicts => "Sorting out mod overlap",
             Screen::Profiles => "Managing profiles",
             Screen::Servers => "Browsing servers",
-            Screen::Launch => "Getting ready to play",
             Screen::Downloads => "Downloading mods",
             _ => "Building a mod",
         }
@@ -1100,6 +1099,9 @@ pub fn logs(s: &State, u: &Ui) -> El {
             .chain(super::logs_w4::rows(s, u))
             .collect(),
         ))
+        // The last game crash, with the mod it probably was, Show dump and the evidence (it sat on
+        // the Game page until 0.1.43).
+        .children(crate::screens::launch::last_crash(s, u))
         .child(section(
             u,
             "Game crashes",
@@ -1468,7 +1470,8 @@ mod tests {
         }
         let default = screens(&Prefs::from_json("{}"));
         assert!(default.first() == Some(&Screen::Browse));
-        assert!(default.contains(&Screen::Launch) && default.contains(&Screen::Downloads), "Game and Downloads are offered");
+        assert!(default.contains(&Screen::Downloads), "Downloads is offered");
+        assert!(!default.iter().any(|screen| screen.key() == "launch"), "the Game page is gone");
         assert!(!default.contains(&Screen::Maps), "Maps is experimental and off");
         let locker_off = screens(&Prefs::from_json(r#"{"flags":{"page_locker":false}}"#));
         assert!(!locker_off.contains(&Screen::Locker));
@@ -1494,8 +1497,9 @@ mod tests {
         // Pages added later are kept too.
         let p = Prefs::from_json(r#"{"schema":1,"startup":"downloads"}"#);
         assert!(p.opening_page() == Screen::Downloads);
+        // The Game page is gone (0.1.43): a stored "Open on: Game" opens Browse.
         let p = Prefs::from_json(r#"{"schema":1,"startup":"launch"}"#);
-        assert!(p.opening_page() == Screen::Launch);
+        assert!(p.opening_page() == Screen::Browse);
     }
     #[test]
     fn the_proxy_kind_swaps_only_the_scheme() {

@@ -97,12 +97,21 @@ worker thread, so the window stays responsive. While a launch step is writing ga
 changes (toggles, deletes, load order) are refused with a short message instead of racing it.
 While Deadlock runs, turning off or deleting a mod waits until the game closes.
 
+While Deadlock runs, the sidebar's Launch modded reads Stop Deadlock (same confirm as before) and
+Launch vanilla is off. Since 0.1.43 there is no Restore button: mods a vanilla launch set aside go
+back by themselves, on a worker, when the launch monitor sees Deadlock close after it ran, and at
+Sigil's start when a stash exists and the game is not running (so closing Sigil during a vanilla
+session is covered). It never runs while the game runs, a launch is under way or a launch step
+writes game files; while it runs, mod changes and launches wait. A file already in the addon
+folder is kept, never overwritten. A failure is a warning toast with Try again and a banner on
+Installed until a restore works. A modded launch still puts a stash back as its first step.
+
 ## Data
 
 `%APPDATA%\Sigil` holds settings, backups, the trash, caches, the agent workspace
 and sessions, and the vanilla stash. Builds up to 0.1.42 used `%APPDATA%\DeadlockAgentHarness`;
-0.1.43 renames that folder to `Sigil` on its first start (see `docs/runbooks/development.md`). A pending stash means `game/citadel/addons` is empty; restore
-it (Game page) before deleting the folder. Uninstalling Sigil leaves this folder in place.
+0.1.43 renames that folder to `Sigil` on its first start (see `docs/runbooks/development.md`). A pending stash means `game/citadel/addons` is empty; start Sigil
+with the game closed (the mods come back by themselves) before deleting the folder. Uninstalling Sigil leaves this folder in place.
 
 ## Not verified on a real Windows PC by the maintainer
 
@@ -112,7 +121,8 @@ Players run every release on Windows and report problems, but none of these has 
   replacing `Sigil.exe` inside `%LOCALAPPDATA%\Programs\Sigil`.
 - The self-update swap and rollback of a running `Sigil.exe`.
 - Launch modded, Launch vanilla and the stash restore on a real install, including the worker-thread
-  launch steps.
+  launch steps, Stop Deadlock from the sidebar, and the automatic restore (after the game closes,
+  at start, and its failure banner with Try again).
 - Relay region blocking (Windows Firewall rules) and hosting a Deadworks server.
 - The 3D viewer, the live match bridge and the benchmark against a real game.
 - 7z and RAR archives from GameBanana on Windows paths (tested on macOS).

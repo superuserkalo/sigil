@@ -1,4 +1,5 @@
-//! German for the Launch page, the launch progress overlay and Stop game. `launch_progress::tr`
+//! German for the launch dialogs, the launch progress overlay, Stop Deadlock and the automatic
+//! restore. `launch_progress::tr`
 //! looks a string up here first, then in Sigil's shared tables, so these strings stay out of the
 //! settings files.
 
@@ -18,28 +19,19 @@ pub const DE: &[(&str, &str)] = &[
     ("Deadlock was closed.", "Deadlock wurde geschlossen."),
     ("Stopping Deadlock failed: {}", "Deadlock ließ sich nicht beenden: {}"),
     ("The launch could not be cancelled", "Der Start ließ sich nicht abbrechen"),
-    ("Ready to launch", "Bereit zum Start"),
-    ("Deadlock is not running", "Deadlock läuft nicht"),
-    ("Restore mods to launch", "Mods zurücklegen, um zu starten"),
-    ("Restore the mods set aside first.", "Lege zuerst die beiseitegelegten Mods zurück."),
-    (
-        "Moves your mods aside, then starts the game. Restore them here afterwards.",
-        "Legt deine Mods beiseite und startet dann das Spiel. Lege sie danach hier zurück.",
-    ),
-    ("{} of {} mod on", "{} von {} Mod an"),
-    ("{} of {} mods on", "{} von {} Mods an"),
-    ("gameinfo.gi does not load mods", "gameinfo.gi lädt keine Mods"),
-    ("gameinfo.gi loads mods", "gameinfo.gi lädt Mods"),
-    ("{} file set aside", "{} Datei beiseitegelegt"),
-    ("{} files set aside", "{} Dateien beiseitegelegt"),
-    ("Vanilla stash", "Beiseitegelegt"),
-    ("Empty", "Leer"),
     ("Last crash", "Letzter Absturz"),
     ("Already off", "Schon aus"),
     ("Nothing queued", "Nichts in der Warteschlange"),
     ("Slow · {}", "Langsam · {}"),
     ("GameBanana link or mod id", "GameBanana-Link oder Mod-ID"),
     ("No installed mod is named in the report.", "Der Bericht nennt keinen installierten Mod."),
+    ("Your mods are back", "Deine Mods sind zurück"),
+    ("Your mods are still set aside", "Deine Mods liegen noch beiseite"),
+    ("Your mods come back when the game closes.", "Deine Mods kommen zurück, sobald das Spiel geschlossen ist."),
+    (
+        "Your mods are still set aside from a vanilla launch. The game starts without them.",
+        "Deine Mods liegen seit einem Vanilla-Start noch beiseite. Das Spiel startet ohne sie.",
+    ),
 ];
 
 
@@ -57,7 +49,7 @@ mod tests {
     #[test]
     #[cfg_attr(not(feature = "languages"), ignore = "translations are parked: --features languages")]
     fn every_entry_keeps_its_holes_and_is_used() {
-        let source = [include_str!("launch_progress.rs"), include_str!("launch.rs"), include_str!("downloads.rs")].concat();
+        let source = [include_str!("launch_progress.rs"), include_str!("launch.rs"), include_str!("launch_restore.rs"), include_str!("downloads.rs"), include_str!("../app.rs")].concat();
         for (en, de) in super::DE {
             assert_eq!(en.matches("{}").count(), de.matches("{}").count(), "{en}");
             assert!(source.contains(&format!("\"{en}\"")), "unused: {en}");

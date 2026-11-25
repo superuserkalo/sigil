@@ -160,7 +160,7 @@ fn hovering_browse_cards_neither_commits_nor_moves() {
 fn core_scenes_come_to_rest() {
     let _globals = crate::ui::test_globals();
     // The glass sidebar last: its scene preview is per thread.
-    for name in ["demo-installed", "installed-list", "browse-card-stress", "locker", "stats", "launch-page", "performance", "glass-sidebar"] {
+    for name in ["demo-installed", "installed-list", "browse-card-stress", "locker", "stats", "sidebar-running", "performance", "glass-sidebar"] {
         let mut rt = runtime(name, (1280.0, 800.0));
         let mut awake = 0;
         for _ in 0..120 {
@@ -184,7 +184,6 @@ fn core_scenes_stay_inside_their_node_budget() {
         ("browse-card-stress", 700),
         ("locker", 400),
         ("stats", 400),
-        ("launch-page", 500),
         ("performance", 600),
     ];
     let mut over = Vec::new();

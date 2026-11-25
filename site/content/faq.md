@@ -55,7 +55,7 @@ If you allow update checks, Sigil looks at its GitHub releases and shows a banne
 
 ## How do I uninstall it?
 
-Open Windows Settings, then Apps, then Installed apps, and uninstall Sigil. Your mods stay in the game's addons folder and Sigil's settings folder is left in place. If you used Launch vanilla, check that the Game page shows the vanilla stash as empty first, so your mods are back where the game expects them.
+Open Windows Settings, then Apps, then Installed apps, and uninstall Sigil. Your mods stay in the game's addons folder and Sigil's settings folder is left in place. If you used Launch vanilla, start Sigil once with the game closed first: it puts the mods it set aside back where the game expects them.
 
 ## Where do I report a bug?
 

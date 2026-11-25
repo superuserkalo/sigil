@@ -91,7 +91,7 @@ pub fn page_event(screen: crate::model::Screen) -> Option<&'static str> {
         Screen::Profiles => "page:profiles",
         // The Worker knows one name for the old Launch page, which held both; a separate
         // name for each needs the Worker's list to change first.
-        Screen::Launch | Screen::Downloads => "page:downloads",
+        Screen::Downloads => "page:downloads",
         Screen::Locker => "page:locker",
         Screen::Crosshair => "page:crosshair",
         Screen::Autoexec => "page:autoexec",
@@ -458,7 +458,7 @@ mod tests {
     #[test]
     fn every_page_event_is_one_the_worker_knows() {
         use crate::model::Screen;
-        for screen in [Screen::Browse, Screen::Installed, Screen::Locker, Screen::Stats, Screen::Settings, Screen::Launch] {
+        for screen in [Screen::Browse, Screen::Installed, Screen::Locker, Screen::Stats, Screen::Settings, Screen::Downloads] {
             let name = page_event(screen).unwrap();
             assert!(telemetry::EVENTS.contains(&name), "{name}");
         }

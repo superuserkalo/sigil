@@ -8,7 +8,8 @@
 //!   dialog with what happened, the exact text that would go, Send report, Don't send and "Always
 //!   send crash reports". Telemetry off or never answered still asks: the press is the consent for
 //!   this one report (ADR 0014). The same crash declined in the last day is not asked again.
-//! - Deadlock's own crashes are the Launch page's crash advisory, not this.
+//! - Deadlock's own crashes are the last crash card in Settings > Logs and support
+//!   (`screens::launch::last_crash`), not this.
 
 use std::path::PathBuf;
 use std::sync::Mutex;

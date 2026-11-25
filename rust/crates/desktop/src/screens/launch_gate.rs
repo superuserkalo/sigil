@@ -1,4 +1,4 @@
-//! The gate every launch passes, modded or vanilla, from the sidebar or the Launch page.
+//! The gate every launch passes, modded or vanilla, from the sidebar.
 //!
 //! When the player presses Launch, `gameinfo.gi` is read fresh from disk
 //! (`deadlock_core::deploy::launch_blocker`). A file that would crash the game (mod folders

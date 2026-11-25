@@ -294,7 +294,7 @@ Sigil also writes the Steam launch options you saved on the Autoexec page, and c
 
 ## Launch vanilla
 
-Launch vanilla moves your mods aside, starts the game without them and puts them back afterwards. Use it to check whether a problem comes from a mod, or to play without mods for a while. The Game page shows whether mods are currently set aside.
+Launch vanilla moves your mods aside and starts the game without them. Use it to check whether a problem comes from a mod, or to play without mods for a while. Your mods come back by themselves when Deadlock closes, or the next time Sigil starts if you closed it meanwhile, so there is no Restore button to remember. A file that is already in the addons folder is kept, never overwritten. If they cannot be put back, Sigil says so with Try again and shows a banner on Installed until it works.
 
 ## The gameinfo.gi fix
 
@@ -304,7 +304,7 @@ Deadlock only reads the addons folder when `game/citadel/gameinfo.gi` lists it i
 
 ## When the game will not start
 
-Stop game closes a running Deadlock. If the game crashes, Sigil reads the crash dump and the console log around it and, when it can, names the mod file that was loading and offers to switch it off. Installed, More, Find a broken mod halves your enabled mods across launches until it finds the one that breaks the game. If the game still fails with every mod off, verify Deadlock's files in Steam, start it once, and let Sigil fix `gameinfo.gi` again.
+While Deadlock runs, Launch modded becomes Stop Deadlock, which closes the game after you confirm. If the game crashes, Sigil reads the crash dump and the console log around it and, when it can, names the mod file that was loading. The last crash, with Turn off for that mod and Show dump, is in Settings, Logs and support. Installed, More, Find a broken mod halves your enabled mods across launches until it finds the one that breaks the game. If the game still fails with every mod off, verify Deadlock's files in Steam, start it once, and let Sigil fix `gameinfo.gi` again.
 
 Launching and restoring on a Windows install is the newest part of Sigil; if something goes wrong, use Send feedback on the error so it can be fixed.
 
@@ -810,7 +810,7 @@ If you allow update checks, Sigil looks at its GitHub releases and shows a banne
 
 ## How do I uninstall it?
 
-Open Windows Settings, then Apps, then Installed apps, and uninstall Sigil. Your mods stay in the game's addons folder and Sigil's settings folder is left in place. If you used Launch vanilla, check that the Game page shows the vanilla stash as empty first, so your mods are back where the game expects them.
+Open Windows Settings, then Apps, then Installed apps, and uninstall Sigil. Your mods stay in the game's addons folder and Sigil's settings folder is left in place. If you used Launch vanilla, start Sigil once with the game closed first: it puts the mods it set aside back where the game expects them.
 
 ## Where do I report a bug?
 

@@ -12,7 +12,6 @@ pub const SCENES: &[Scene] = &[
     ("w4a-toasts-info", toasts_info),
     ("w4a-feedback", feedback),
     ("w4a-feedback-sent", feedback_sent),
-    ("w4a-error-box", error_box),
     ("w4a-locker-after-delete", locker_after_delete),
     ("w4a-order-search", order_search),
     ("w4a-order-place", order_place),
@@ -104,15 +103,6 @@ pub fn feedback(s: &mut State) {
 pub fn feedback_sent(s: &mut State) {
     crate::app::scene_demo_installed(s);
     notify::feedback::stage_scene(s, true);
-}
-
-/// An inline error box with Send feedback, on the Launch page.
-pub fn error_box(s: &mut State) {
-    crate::app::scene_demo_installed(s);
-    s.screen = crate::model::Screen::Launch;
-    s.game_detected = true;
-    s.launch.loaded = true;
-    s.launch.last = Some("Mods were not restored: the stash folder could not be read.".to_string());
 }
 
 /// The Locker after a mod left the addon folder: Haze's list no longer shows Haze Neon (slot

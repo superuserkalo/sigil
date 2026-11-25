@@ -3203,19 +3203,6 @@ pub fn read_launch(data: &Path) -> Result<crate::screens::launch::Read, String> 
         ),
         Err(error) => return Err(format!("Game discovery failed: {error}")),
     };
-    let (addon_files, enabled) = match &install {
-        Some(install) => {
-            let report = addons::read_conflict_report(&install.game_root).ok();
-            match report {
-                Some(report) => (
-                    report.addons.len(),
-                    report.addons.iter().filter(|addon| addon.enabled).count(),
-                ),
-                None => (0, 0),
-            }
-        }
-        None => (0, 0),
-    };
     // The launch marker tells a crash from this session apart from an old dump. It is closed
     // when the game is gone, and opened when the game was started outside Sigil.
     let process = deadlock_core::launch::read_game_process();
@@ -3249,9 +3236,6 @@ pub fn read_launch(data: &Path) -> Result<crate::screens::launch::Read, String> 
         stash: deadlock_core::launch::stash_status(data),
         gameinfo_present,
         gameinfo_addons,
-        addon_files,
-        enabled,
-        marker,
         crash,
     })
 }
@@ -3401,9 +3385,30 @@ pub fn queue_install(state: &mut State, target: &str) {
     start_launch_read(state);
 }
 
-pub fn launch_now(state: &mut State) {
-    let data = data_dir();
-    apply_launch(state, read_launch(&data));
+/// A crash the launch read found that no toast named yet: one toast, with an action that opens
+/// Settings > Logs and support, where the last crash card sits. The crash check's own toast
+/// (`settings::watch`) has the same title, so a crash it already raised is not said twice.
+fn tell_crash(state: &mut State) {
+    use crate::screens::launch_progress::tr;
+    let Some(crash) = state.launch.read.as_ref().and_then(|read| read.crash.as_ref()) else { return };
+    if state.launch.crash_told == Some(crash.at_secs) {
+        return;
+    }
+    state.launch.crash_told = Some(crash.at_secs);
+    let title = tr("Deadlock crashed");
+    if state.notices.visible().any(|toast| toast.notice.title == title) {
+        return;
+    }
+    let detail = match &crash.suspect {
+        Some(suspect) => crate::screens::settings::i18n::fill(tr("Probably {}"), &[&suspect.name]),
+        None => tr("No installed mod is named in the report.").to_string(),
+    };
+    crate::notify::push(
+        state,
+        crate::notify::Notice::warning(title).detail(detail).action(tr("Details"), |st: &mut State| {
+            crate::screens::settings::extra::open_on(st, crate::screens::settings::Tab::Logs);
+        }),
+    );
 }
 
 pub fn apply_launch(state: &mut State, result: Result<crate::screens::launch::Read, String>) {
@@ -3418,6 +3423,7 @@ pub fn apply_launch(state: &mut State, result: Result<crate::screens::launch::Re
             state.launch.loaded = true;
             state.launch.error = None;
             crate::screens::settings::product::crash_suspect(state);
+            tell_crash(state);
             if stashed {
                 state.status =
                     "A vanilla stash is pending. Restore it before editing addons.".to_string();
@@ -3431,16 +3437,8 @@ pub fn apply_launch(state: &mut State, result: Result<crate::screens::launch::Re
     }
 }
 
-/// A Launch page action (modded, vanilla or putting a stash back), all at once. The launch
-/// steps run the same work through [`launch_work`] on a worker.
-pub fn run_launch(state: &mut State, dialog: crate::screens::launch::Dialog) {
-    if let Some(work) = launch_work(state, dialog) {
-        let apply = work();
-        apply(state);
-    }
-}
-
-/// A Launch page action's file and Steam work for a worker, and what it then changes in the
+/// A launch step's file and Steam work for a worker (a modded launch, setting the mods aside for
+/// a vanilla one, or putting them back), and what it then changes in the
 /// state. `None` when it stops before any work (no install for a vanilla stash).
 pub fn launch_work(state: &mut State, dialog: crate::screens::launch::Dialog) -> Option<crate::screens::launch_progress::Work> {
     use crate::screens::launch::Dialog;

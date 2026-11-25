@@ -37,7 +37,7 @@ reset the file, a banner offers to fix it.
 ## The window
 
 The sidebar holds the pages: Browse, Installed, Locker, Crosshair, Autoexec, Performance, Stats,
-Overlap, Profiles, Servers, Game and Downloads. Launch modded, Launch vanilla and Settings sit at the
+Overlap, Profiles, Servers and Downloads. Launch modded, Launch vanilla and Settings sit at the
 foot. Pages you do not use can be turned off in Settings > General > Pages, including a Mods only
 mode. A mod agent is planned but not part of this release ([ROADMAP.md](../ROADMAP.md)).
 Sigil is in English only for now ([ROADMAP.md](../ROADMAP.md)).
@@ -318,21 +318,30 @@ Windows PC yet.
 
 ## Launch and fixing a game that won't start
 
-Launch modded and Launch vanilla sit at the foot of the sidebar; the Game page shows the game's
-state, the vanilla stash and the crash card. The launch steps run in the background, so the window
-stays responsive, and mod changes wait for a moment while a step is moving files. Modded applies your mods, fixes `gameinfo.gi` if needed,
-checks overlaps and updates, and can ask about map mods first. Vanilla moves your mods aside, starts
-the game without them and puts them back later. A checklist above the buttons shows anything that
-needs a fix.
+Launch modded and Launch vanilla sit at the foot of the sidebar. The launch steps run in the
+background, so the window stays responsive, and mod changes wait for a moment while a step is moving
+files. Modded applies your mods, fixes `gameinfo.gi` if needed, checks overlaps and updates, and can
+ask about map mods first. When something needs a look (mods that will not load, two mods replacing
+the same files, mods to check after a game update), Before you launch lists it with a button to fix
+each one, and Launch anyway starts the game as it is.
 
-Before a modded launch Sigil checks that enabled mods still have files. Stop game closes a running
-Deadlock. If the game crashes, Sigil reads the crash dump and the console around it and names the
-mod file that was loading, when it can. It may offer to switch that mod off. If a Deadlock update
-resets `gameinfo.gi`, a banner on every page offers Fix, which keeps mounts another tool added.
+Vanilla moves your mods aside and starts the game without them. They come back by themselves: when
+Deadlock closes, or the next time Sigil starts if it was closed meanwhile. A short note says "Your
+mods are back". If they cannot be put back (for example a file with the same name is already in the
+addon folder), a warning offers Try again and Installed shows a banner until it works. A file that
+is already in the addon folder is kept, never overwritten. There is no Restore button.
+
+While Deadlock runs, Launch modded becomes Stop Deadlock, which closes the game after you confirm,
+and Launch vanilla is off. Before a modded launch Sigil checks that enabled mods still have files.
+If the game crashes, Sigil reads the crash dump and the console around it and names the mod file
+that was loading, when it can. A note says the game crashed; Details opens Settings > Logs and
+support, where the last crash card shows the mod it probably was (with Turn off), Show dump and the
+evidence. If a Deadlock update resets `gameinfo.gi`, a banner on every page offers Fix, which keeps
+mounts another tool added.
 
 If the game will not start:
 
-1. Read the banner or the Launch checklist and fix what it names.
+1. Read the banner or the Before you launch checklist and fix what it names.
 2. Open Installed > More > Analyze the addons folder. Remove leftovers, reinstall missing files and
    clear read-only files.
 3. Run Installed > More > Mod safety > Check installed mods, and turn off anything you do not

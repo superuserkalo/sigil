@@ -170,4 +170,5 @@ Removing the program leaves the data directory:
 - Linux `.deb`: `sudo apt remove sigil`, same data directory
 
 It holds sessions, the workspace, cached patch notes and the vanilla stash. A pending vanilla stash
-means the game's addon folder is empty: restore before deleting the data directory.
+means the game's addon folder is empty: start Sigil with the game closed so the mods go back
+by themselves before deleting the data directory.

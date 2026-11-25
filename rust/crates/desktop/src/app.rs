@@ -429,11 +429,6 @@ impl State {
                     crate::data::request_locker_grid(self);
                 }
             }
-            Screen::Launch => {
-                if !self.launch.loaded && !self.launch_job.is_running() {
-                    crate::data::start_launch_read(self);
-                }
-            }
             Screen::Downloads => {
                 // The queue's worker; the launch read also starts it, and the monitor.
                 crate::data::start_launch_read(self);
@@ -498,7 +493,7 @@ impl State {
             let opened = spawn("xdg-open", &[target]);
             let mode = if vanilla { deadlock_core::launch::MODE_VANILLA } else { deadlock_core::launch::MODE_MODDED };
             // The marker starts a new session: a crash dump from before it is an old one,
-            // and the Launch page must not show it as the last session's crash.
+            // and Settings must not show it as the last session's crash.
             if opened.is_ok() && !demo {
                 let _ = deadlock_core::launch::record_launch(&data, mode);
             }
@@ -1230,7 +1225,6 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
         Screen::Crosshair => screens::crosshair::view(s, &u),
         Screen::Stats => screens::stats::view(s, &u),
         Screen::Locker => screens::locker::view(s, &u),
-        Screen::Launch => screens::launch::view(s, &u),
         Screen::Downloads => screens::downloads::page(s, &u),
         Screen::Agent => screens::workbench::view(s, &u),
         Screen::Projects => screens::projects::view(s, &u),
@@ -1262,6 +1256,12 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
         main = main.child(banner);
     }
     if let Some(banner) = crate::banner::view(s, &u) {
+        main = main.child(banner);
+    }
+    // Mods a vanilla launch set aside could not be put back: Installed says so until they are.
+    if s.screen == Screen::Installed
+        && let Some(banner) = screens::launch_restore::banner(s, &u)
+    {
         main = main.child(banner);
     }
     let mut root = crate::motion::root(row().key("root"))
@@ -1440,10 +1440,10 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
     root
 }
 
-/// The primary places, in Grimoire's order, then Game (the game's state, the crash report, the
-/// vanilla stash and Restore) and Downloads (the queue). Everything else is reached from inside
-/// a place. "Launch" stays on the two sidebar buttons only.
-pub const PLACES: [Screen; 12] = [
+/// The primary places, in Grimoire's order, then Downloads (the queue). Everything else is reached
+/// from inside a place. Launching is the two sidebar buttons (Stop Deadlock while the game runs);
+/// the last crash is in Settings > Logs and support.
+pub const PLACES: [Screen; 11] = [
     Screen::Browse,
     Screen::Installed,
     Screen::Locker,
@@ -1454,7 +1454,6 @@ pub const PLACES: [Screen; 12] = [
     Screen::Conflicts,
     Screen::Profiles,
     Screen::Servers,
-    Screen::Launch,
     Screen::Downloads,
 ];
 
@@ -1571,7 +1570,7 @@ fn sidebar(s: &State, u: &Ui, insets: rune::ChromeInsets) -> El {
             .pb(8.0)
             .gap(4.0)
             .border_sides([1.0, 0.0, 0.0, 0.0], u.hair)
-            .child(launch_lock(s, compact_launch(s, u, false)))
+            .child(if screens::launch::game_up(s) { compact_stop(u) } else { launch_lock(s, compact_launch(s, u, false)) })
             .child(if s.prefs.single_launch { el() } else { launch_lock(s, compact_launch(s, u, true)) })
             .child(el().h(4.0))
             .children(crate::shell_tips::season_mark(s, u))
@@ -1595,9 +1594,10 @@ fn sidebar(s: &State, u: &Ui, insets: rune::ChromeInsets) -> El {
             .pb(8.0)
             .gap(4.0)
             .border_sides([1.0, 0.0, 0.0, 0.0], u.hair)
-            // The game is up: a line that stops it, on the Launch page.
-            .children(screens::launch::sidebar_state(s, u))
-            .child(if s.prefs.single_launch {
+            .child(if s.prefs.single_launch && screens::launch::game_up(s) {
+                // The game is up: the one launch button stops it.
+                stop_deadlock(u)
+            } else if s.prefs.single_launch {
                 // Personalize's art for the one button too, from the surface it will use.
                 screens::settings::personalize::launch_art(
                     s,
@@ -1606,7 +1606,9 @@ fn sidebar(s: &State, u: &Ui, insets: rune::ChromeInsets) -> El {
                     s.settings.launch_vanilla_pick,
                 )
             } else {
-                screens::settings::personalize::launch_art(s, u, launch_lock(s, launch_modded(u)), false)
+                // The game is up: the modded launch becomes Stop Deadlock, behind the same confirm.
+                let button = if screens::launch::game_up(s) { stop_deadlock(u) } else { launch_lock(s, launch_modded(u)) };
+                screens::settings::personalize::launch_art(s, u, button, false)
             })
             .child(if s.prefs.single_launch {
                 el()
@@ -1836,10 +1838,65 @@ fn launch_modded(u: &Ui) -> El {
 /// A launch button while a launch runs or the game is up: off, dimmed in place (same size, no
 /// layout change), the reason in its tooltip.
 pub fn launch_lock(s: &State, button: El) -> El {
-    match screens::launch_progress::busy_line(s) {
+    // The game being up (as the sidebar's Stop Deadlock reads it) keeps them off too, before the
+    // process monitor has read the process list.
+    let why = screens::launch_progress::busy_line(s).or_else(|| {
+        screens::launch::game_up(s).then(|| format!("{}. {}", tr("Deadlock is already running"), tr("Close the game first, then launch again.")))
+    });
+    match why {
         Some(why) => button.disabled(true).opacity(0.45).cursor(rune::Cursor::Default).help(why),
         None => button,
     }
+}
+
+/// The modded launch while Deadlock runs: Stop Deadlock, behind the confirm the Game page had
+/// (`launch::Dialog::StopGame`, which closes the game on a worker).
+fn stop_deadlock(u: &Ui) -> El {
+    row()
+        .key("launch-stop")
+        .w_full()
+        .h(crate::ui::CONTROL_L)
+        .px(10.0)
+        .gap(10.0)
+        .center_y()
+        .radius(crate::ui::r(8.0))
+        .fill(u.rose.alpha(0.12))
+        .border(1.0, u.rose.alpha(0.32))
+        .hover(u.rose.alpha(0.08))
+        .press(Color::BLACK.alpha(0.08))
+        .focusable(true)
+        .role("button")
+        .label(tr("Stop Deadlock"))
+        .help(tr("The game closes now. A match in progress is lost."))
+        .cursor(rune::Cursor::Pointer)
+        .on_press(open_stop)
+        .child(rune::icon(&icons::SQUARE_STOP, 16.0).color(u.rose).a11y_hidden())
+        .child(text(tr("Stop Deadlock")).font(BODY_MED).color(u.ink).grow(1.0))
+}
+
+/// Stop Deadlock with its icon only, for the collapsed sidebar.
+fn compact_stop(u: &Ui) -> El {
+    row()
+        .key("launch-stop")
+        .w_full()
+        .h(crate::ui::CONTROL_L)
+        .center()
+        .radius(crate::ui::r(8.0))
+        .fill(u.rose.alpha(0.12))
+        .border(1.0, u.rose.alpha(0.32))
+        .hover(u.rose.alpha(0.08))
+        .focusable(true)
+        .role("button")
+        .label(tr("Stop Deadlock"))
+        .help(tr("Stop Deadlock"))
+        .help_side(rune::Side::Right)
+        .cursor(rune::Cursor::Pointer)
+        .on_press(open_stop)
+        .child(rune::icon(&icons::SQUARE_STOP, 16.0).color(u.rose).a11y_hidden())
+}
+
+fn open_stop(st: &mut State) {
+    st.launch.dialog = screens::launch::Dialog::StopGame;
 }
 
 /// The single launch button in the sidebar (Settings, General).
@@ -1849,6 +1906,13 @@ pub fn launch_from_settings(st: &mut State, tx: &mut Tx, vanilla: bool) {
 
 /// The sidebar launches at once unless "Ask before launching" is on in Settings.
 fn ask_or_launch(st: &mut State, tx: &mut Tx, vanilla: bool) {
+    // Before a modded launch, Before you launch lists what needs a look (gameinfo.gi, overlaps,
+    // mods to check after an update); its Launch anyway is the approval. A launch under way or a
+    // running game keeps the buttons off, so the checklist never opens over one.
+    if !vanilla && screens::launch_progress::busy(st).is_none() && !screens::launch::checklist_issues(st).is_empty() {
+        st.launch.dialog = screens::launch::Dialog::Checklist;
+        return;
+    }
     if st.prefs.confirm_launch {
         st.launch_vanilla = vanilla;
         st.launch_dialog = true;
@@ -2232,6 +2296,7 @@ pub fn poll(s: &mut State, t: f64, _tx: &mut Tx) -> bool {
     changed |= screens::crosshair::poll(s, _tx);
     changed |= screens::settings::poll(s, _tx);
     changed |= screens::launch_progress::poll(s, _tx);
+    changed |= screens::launch_restore::poll(s);
     changed |= screens::downloads::poll(s);
     changed |= crate::statusbar::poll(s);
     changed |= screens::launch_extras::poll(s);
@@ -2533,13 +2598,6 @@ pub fn scene_locker(s: &mut State) {
     s.screen = Screen::Locker;
     if rune::is_headless() {
         crate::data::locker_now(s);
-    }
-}
-
-pub fn scene_launch(s: &mut State) {
-    s.screen = Screen::Launch;
-    if rune::is_headless() {
-        crate::data::launch_now(s);
     }
 }
 
@@ -3031,16 +3089,13 @@ pub fn scenes() -> &'static [(&'static str, fn(&mut State))] {
         ("locker-shuffle", screens::locker::scene_shuffle),
         ("locker-applied", screens::locker::scene_applied),
         ("locker-global", screens::locker::scene_global),
-        ("launch", scene_launch),
-        ("launch-page", screens::launch::scene_page),
-        // The Game page (once Launch); `launch-page` stays as its old name.
-        ("game-page", screens::launch::scene_page),
-        ("launch-running", screens::launch::scene_running),
-        ("launch-crash", screens::launch::scene_crash),
+        // The sidebar while Deadlock runs: Stop Deadlock, vanilla off.
+        ("sidebar-running", screens::launch::scene_running),
+        ("settings-last-crash", screens::launch::scene_crash),
+        ("installed-restore-failed", screens::launch_restore::scene_failed),
         ("launch-checklist", screens::launch::scene_checklist),
         ("launch-gate", screens::launch_gate::scene),
         ("launch-stop", screens::launch::scene_stop),
-        ("launch-vanilla", screens::launch::scene_vanilla),
         ("launch-downloads", screens::launch::scene_downloads),
         // The Downloads page; `launch-downloads` stays as its old name.
         ("downloads-page", screens::launch::scene_downloads),

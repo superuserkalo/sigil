@@ -71,7 +71,8 @@ pub fn convars_failed(s: &mut State) {
     crate::screens::autoexec_convars::stage_failed(s);
 }
 
-/// The crash card naming the HUD layout the game was loading, its console lines and the HUD check.
+/// The last crash card (Settings > Logs and support) naming the HUD layout the game was loading,
+/// its console lines and the HUD check.
 pub fn launch_crash(s: &mut State) {
     crate::screens::launch::scene_crash(s);
 }

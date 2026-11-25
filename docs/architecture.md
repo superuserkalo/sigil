@@ -12,7 +12,7 @@ This document is the map. The executable rules live in code, especially the payl
 ## Product shape
 
 Sigil is first a mod manager for players: Browse, Installed, Overlap, Profiles, Locker, Crosshair,
-Autoexec, Performance, Stats, Servers and the Game page, released for Windows. The app writes to
+Autoexec, Performance, Stats, Servers and Downloads, released for Windows. The app writes to
 the game install on the player's own actions. The agent workbench described below is a part of the
 same app behind Settings > Experimental > Agent, off by default.
 
@@ -605,7 +605,10 @@ state:
 
 - Browse (GameBanana catalog, local search), Installed (addon slots on disk), Locker (mods by
   hero), Crosshair, Autoexec, Performance, Stats (deadlock-api and local demos), Overlap (shared
-  paths), Profiles, Servers (Deadworks), Game (launch, vanilla stash, crashes) and Downloads.
+  paths), Profiles, Servers (Deadworks) and Downloads. Launching is the sidebar's two buttons
+  (Stop Deadlock while the game runs); mods a vanilla launch set aside come back by themselves
+  (`screens::launch_restore`); the last game crash is in Settings > Logs and support. The Game
+  page that held these was removed in 0.1.43.
   Settings > General > Pages turns the optional ones off; Maps appears under Browse with the
   Custom maps flag.
 - Behind Settings > Experimental > Agent: Agent, with Projects, Game Index, Patches, Impact,

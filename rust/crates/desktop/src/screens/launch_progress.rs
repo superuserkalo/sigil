@@ -180,6 +180,10 @@ pub fn busy(st: &State) -> Option<(&'static str, &'static str)> {
     // A step still on its worker after a Cancel is still writing: the next launch waits for it.
     if st.launch.progress.is_some() || st.launch.step.is_running() {
         Some(("Deadlock is already starting", "Wait for it, or stop the launch first."))
+    } else if crate::screens::launch_restore::running(st) {
+        // Mods a vanilla launch set aside are moving back (`launch_restore`); a launch would
+        // plan around a stash that is half gone.
+        Some(("Putting your mods back", "Wait a moment, then try again."))
     } else if st.launch.monitor.running() {
         Some(("Deadlock is already running", "Close the game first, then launch again."))
     } else {

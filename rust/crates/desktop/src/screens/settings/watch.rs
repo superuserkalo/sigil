@@ -71,6 +71,14 @@ pub fn refuse_while_running(st: &mut State) -> bool {
         );
         return true;
     }
+    // Mods a vanilla launch set aside are moving back into the addon folder (`launch_restore`).
+    if crate::screens::launch_restore::running(st) {
+        notify::push(
+            st,
+            Notice::warning(tr("Putting your mods back")).detail(tr("Wait a moment, then try again.")),
+        );
+        return true;
+    }
     if !changes_blocked() {
         return false;
     }
