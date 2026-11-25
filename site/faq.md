@@ -1,6 +1,6 @@
 # Sigil questions and answers
 
-> Answers about Sigil, the free Deadlock mod manager: cost, safety, where mods come from, updates, Windows warnings, data it sends, files, uninstalling and bugs.
+> Answers about Sigil, the free Deadlock mod manager: cost, safety, where mods come from, updates, platforms, Windows warnings, data it sends, files, uninstalling and bugs.
 
 ## Is Sigil free?
 
@@ -18,9 +18,9 @@ From GameBanana. Sigil browses and downloads them from there, and every mod belo
 
 A game update or a Steam file check resets gameinfo.gi, so the game stops loading your mods. Sigil shows a banner with a Fix button. Mods made for an older build may also need an update from their creator; the guide [Deadlock mods not working after an update](https://sigilmods.app/deadlock-mods-not-working-after-update) explains both cases.
 
-## Does it work on Mac, Linux or Steam Deck?
+## Does it work on Linux, Mac or Steam Deck?
 
-The download on this site is for Windows 10 and 11, 64-bit. There is no Mac, Linux or Steam Deck release here.
+There are downloads for Windows (an installer for Windows 10 and 11, 64-bit), Linux (an AppImage for x86_64) and macOS (a disk image). Windows is where Sigil has been used most; the Linux and macOS builds are newer, so please report anything that does not work. Deadlock itself runs on Windows, and on Linux through Proton. There is no separate Steam Deck build.
 
 ## Why does Windows warn me when I run the installer?
 
@@ -56,11 +56,13 @@ Every error message in Sigil has Send feedback, which shows the scrubbed details
 
 ## Download Sigil
 
-[Download Sigil for Windows (installer, .exe)](https://github.com/superuserkalo/sigil/releases/latest/download/Sigil-Setup.exe)
+- [Download Sigil for Windows (installer, .exe)](https://github.com/superuserkalo/sigil/releases/latest/download/Sigil-Setup.exe)
+- [Download Sigil for Linux (AppImage, x86_64)](https://github.com/superuserkalo/sigil/releases/latest/download/Sigil-linux-x86_64.AppImage)
+- [Download Sigil for macOS (disk image, .dmg)](https://github.com/superuserkalo/sigil/releases/latest/download/Sigil-macos.dmg)
 
-Windows 10 and 11, 64-bit. Free and open source. No administrator rights needed.
+Free and open source, for Windows, Linux and macOS. The Windows installer needs no administrator rights.
 
-Windows may show “Windows protected your PC” because the installer is not code signed yet. Choose More info, then Run anyway.
+On Windows you may see “Windows protected your PC” because the installer is not code signed yet. Choose More info, then Run anyway.
 
 ## Related pages
 

@@ -1,4 +1,4 @@
-// Sigil site: the Features menu and the download event. The page works without this file.
+// Sigil site: the Features menu, the download for the visitor's system and the download event. The page works without this file.
 (function () {
   document.documentElement.classList.add("js");
 
@@ -9,10 +9,53 @@
     if (!link) return;
     try {
       if (typeof window.va === "function") {
-        window.va("event", { name: "download", data: { position: link.getAttribute("data-download") } });
+        window.va("event", { name: "download", data: {
+          position: link.getAttribute("data-download"),
+          os: link.getAttribute("data-os") || "windows"
+        } });
       }
     } catch (_) { /* analytics must never block the download */ }
   });
+
+  // Offer the visitor's own system first. The HTML defaults to Windows and lists all three, so
+  // this only reorders. Phones and anything unknown keep the Windows default.
+  var os = (function () {
+    var ua = navigator.userAgent || "";
+    var p = (navigator.userAgentData && navigator.userAgentData.platform) || navigator.platform || "";
+    if (/android|iphone|ipad|ipod/i.test(ua)) return "windows";
+    var s = p || ua;
+    if (/mac/i.test(s)) return "macos";
+    if (/linux|x11|cros/i.test(s)) return "linux";
+    return "windows";
+  })();
+  var ORDER = ["windows", "linux", "macos"];
+  function info(a) {
+    return { os: a.getAttribute("data-os"), name: a.getAttribute("data-os-name"),
+             kind: a.getAttribute("data-os-kind"), href: a.getAttribute("href") };
+  }
+  function apply(a, d) {
+    a.setAttribute("href", d.href);
+    a.setAttribute("data-os", d.os);
+    a.setAttribute("data-os-name", d.name);
+    a.setAttribute("data-os-kind", d.kind);
+    a.setAttribute("aria-label", "Download Sigil for " + d.name + " (" + d.kind + ")");
+  }
+  if (os !== "windows") {
+    var found = null;
+    Array.prototype.forEach.call(document.querySelectorAll("[data-dl]"), function (group) {
+      var links = Array.prototype.slice.call(group.querySelectorAll("a[data-os]"));
+      var all = links.map(info).sort(function (x, y) { return ORDER.indexOf(x.os) - ORDER.indexOf(y.os); });
+      var mine = all.filter(function (d) { return d.os === os; })[0];
+      if (!mine) return;
+      found = mine;
+      var rest = all.filter(function (d) { return d !== mine; });
+      apply(links[0], mine);
+      links[0].textContent = "Download for " + mine.name;
+      rest.forEach(function (d, i) { apply(links[i + 1], d); links[i + 1].textContent = d.name; });
+    });
+    var nav = document.querySelector(".bar a[data-dl-main]");
+    if (nav && found) apply(nav, found);
+  }
 
   var menu = document.querySelector("[data-menu]");
   if (!menu) return;

@@ -1,7 +1,7 @@
 ---
 slug: faq
 title: Sigil FAQ: questions about the Deadlock mod manager
-description: Answers about Sigil, the free Deadlock mod manager: cost, safety, where mods come from, updates, Windows warnings, data it sends, files, uninstalling and bugs.
+description: Answers about Sigil, the free Deadlock mod manager: cost, safety, where mods come from, updates, platforms, Windows warnings, data it sends, files, uninstalling and bugs.
 h1: Sigil questions and answers
 nav: Questions and answers
 line: Cost, safety, updates, data and more
@@ -25,9 +25,9 @@ From GameBanana. Sigil browses and downloads them from there, and every mod belo
 
 A game update or a Steam file check resets gameinfo.gi, so the game stops loading your mods. Sigil shows a banner with a Fix button. Mods made for an older build may also need an update from their creator; the guide [Deadlock mods not working after an update](/deadlock-mods-not-working-after-update) explains both cases.
 
-## Does it work on Mac, Linux or Steam Deck? {front}
+## Does it work on Linux, Mac or Steam Deck? {front}
 
-The download on this site is for Windows 10 and 11, 64-bit. There is no Mac, Linux or Steam Deck release here.
+There are downloads for Windows (an installer for Windows 10 and 11, 64-bit), Linux (an AppImage for x86_64) and macOS (a disk image). Windows is where Sigil has been used most; the Linux and macOS builds are newer, so please report anything that does not work. Deadlock itself runs on Windows, and on Linux through Proton. There is no separate Steam Deck build.
 
 ## Why does Windows warn me when I run the installer? {front}
 

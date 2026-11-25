@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Sigil: a free mod manager for Deadlock on Windows</title>
-<meta name="description" content="Sigil is a free, open-source Deadlock mod manager for Windows 10 and 11. Browse GameBanana, keep load order straight and launch modded or vanilla.">
+<title>Sigil: a free, open-source mod manager for Deadlock</title>
+<meta name="description" content="Sigil is a free, open-source Deadlock mod manager for Windows, Linux and macOS. Browse GameBanana, keep load order straight and launch modded or vanilla.">
 <link rel="canonical" href="https://sigilmods.app/">
 <link rel="alternate" type="text/markdown" href="/index.md" title="This page as Markdown">
 <meta name="theme-color" content="#161616">
@@ -14,16 +14,16 @@
 <link rel="apple-touch-icon" href="/apple-touch-icon.png">
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="Sigil">
-<meta property="og:title" content="Sigil: a free mod manager for Deadlock on Windows">
-<meta property="og:description" content="Sigil is a free, open-source Deadlock mod manager for Windows 10 and 11. Browse GameBanana, keep load order straight and launch modded or vanilla.">
+<meta property="og:title" content="Sigil: a free, open-source mod manager for Deadlock">
+<meta property="og:description" content="Sigil is a free, open-source Deadlock mod manager for Windows, Linux and macOS. Browse GameBanana, keep load order straight and launch modded or vanilla.">
 <meta property="og:url" content="https://sigilmods.app/">
 <meta property="og:image" content="https://sigilmods.app/img/og.jpg">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
 <meta property="og:image:alt" content="Sigil, a Deadlock mod manager: the headline beside the app's Browse page.">
 <meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:title" content="Sigil: a free mod manager for Deadlock on Windows">
-<meta name="twitter:description" content="Sigil is a free, open-source Deadlock mod manager for Windows 10 and 11. Browse GameBanana, keep load order straight and launch modded or vanilla.">
+<meta name="twitter:title" content="Sigil: a free, open-source mod manager for Deadlock">
+<meta name="twitter:description" content="Sigil is a free, open-source Deadlock mod manager for Windows, Linux and macOS. Browse GameBanana, keep load order straight and launch modded or vanilla.">
 <meta name="twitter:image" content="https://sigilmods.app/img/og.jpg">
 <meta name="twitter:image:alt" content="Sigil, a Deadlock mod manager: the headline beside the app's Browse page.">
 <link rel="preload" href="/fonts/Inter-Regular.woff" as="font" type="font/woff" crossorigin>
@@ -44,11 +44,10 @@
       "@type": "SoftwareApplication",
       "@id": "https://sigilmods.app/#app",
       "name": "Sigil",
-      "description": "Sigil is a free, open-source Deadlock mod manager for Windows 10 and 11 (64-bit). It browses and installs mods from GameBanana, searches the catalog on your PC, keeps load order and overlapping mods in view, fixes gameinfo.gi after game updates, and launches the game modded or vanilla. It also has a Locker for skins per hero, a crosshair editor with a community library, profiles you can share, an autoexec editor, performance configs and match stats. Nothing about the player leaves the PC without their yes.",
+      "description": "Sigil is a free, open-source Deadlock mod manager for Windows, Linux and macOS. It browses and installs mods from GameBanana, searches the catalog on your PC, keeps load order and overlapping mods in view, fixes gameinfo.gi after game updates, and launches the game modded or vanilla. It also has a Locker for skins per hero, a crosshair editor with a community library, profiles you can share, an autoexec editor, performance configs and match stats. Nothing about the player leaves the PC without their yes.",
       "applicationCategory": "UtilitiesApplication",
       "applicationSubCategory": "Mod manager for Deadlock",
-      "operatingSystem": "Windows 10, Windows 11",
-      "processorRequirements": "x64",
+      "operatingSystem": "Windows 10, Windows 11, Linux, macOS",
       "url": "https://sigilmods.app/",
       "image": "https://sigilmods.app/img/og.jpg",
       "screenshot": "https://sigilmods.app/img/hero.webp",
@@ -104,10 +103,10 @@
         },
         {
           "@type": "Question",
-          "name": "Does it work on Mac, Linux or Steam Deck?",
+          "name": "Does it work on Linux, Mac or Steam Deck?",
           "acceptedAnswer": {
             "@type": "Answer",
-            "text": "The download on this site is for Windows 10 and 11, 64-bit. There is no Mac, Linux or Steam Deck release here."
+            "text": "There are downloads for Windows (an installer for Windows 10 and 11, 64-bit), Linux (an AppImage for x86_64) and macOS (a disk image). Windows is where Sigil has been used most; the Linux and macOS builds are newer, so please report anything that does not work. Deadlock itself runs on Windows, and on Linux through Proton. There is no separate Steam Deck build."
           }
         },
         {
@@ -154,17 +153,15 @@
       <a class="nav__link" href="https://github.com/superuserkalo/sigil/releases">Release notes</a>
       <a class="nav__link" href="https://github.com/superuserkalo/sigil">GitHub</a>
     </nav>
-    <a class="btn btn--small" href="https://github.com/superuserkalo/sigil/releases/latest/download/Sigil-Setup.exe" data-download="nav" aria-label="Download Sigil for Windows (installer, .exe)">Download</a>
+    <a class="btn btn--small" href="https://github.com/superuserkalo/sigil/releases/latest/download/Sigil-Setup.exe" data-download="nav" data-os="windows" data-os-name="Windows" data-os-kind="installer, .exe" data-dl-main aria-label="Download Sigil for Windows (installer, .exe)">Download</a>
   </div>
 </header>
 <main id="main">
   <section class="hero" id="top" aria-labelledby="hero-title">
     <div class="wrap hero__text">
       <h1 id="hero-title" class="display">Install Deadlock mods and keep them working.</h1>
-      <p class="display display--muted">Sigil is a free, open-source Deadlock mod manager for Windows.</p>
-      <div class="cta"><a class="btn" href="https://github.com/superuserkalo/sigil/releases/latest/download/Sigil-Setup.exe" data-download="hero" aria-label="Download for Windows: Sigil installer (.exe)">Download for Windows</a><a class="textlink" href="https://github.com/superuserkalo/sigil">View on GitHub</a></div>
-      <p class="note">Windows 10 and 11, 64-bit. Free and open source. No administrator rights needed.</p>
-      <p class="note">Windows may show “Windows protected your PC” because the installer is not code signed yet. Choose More info, then Run anyway.</p>
+      <p class="lede">Sigil is a free open-source Deadlock mod manager.</p>
+      <div class="cta"><div class="dl" data-dl><a class="btn" href="https://github.com/superuserkalo/sigil/releases/latest/download/Sigil-Setup.exe" data-download="hero" data-os="windows" data-os-name="Windows" data-os-kind="installer, .exe" data-dl-main aria-label="Download Sigil for Windows (installer, .exe)">Download for Windows</a><span class="dl__alt">Also for <a href="https://github.com/superuserkalo/sigil/releases/latest/download/Sigil-linux-x86_64.AppImage" data-download="hero" data-os="linux" data-os-name="Linux" data-os-kind="AppImage, x86_64" aria-label="Download Sigil for Linux (AppImage, x86_64)">Linux</a> and <a href="https://github.com/superuserkalo/sigil/releases/latest/download/Sigil-macos.dmg" data-download="hero" data-os="macos" data-os-name="macOS" data-os-kind="disk image, .dmg" aria-label="Download Sigil for macOS (disk image, .dmg)">macOS</a></span></div><a class="textlink" href="https://github.com/superuserkalo/sigil">View on GitHub</a></div>
     </div>
     <div class="stage">
       <div class="wrap">
@@ -175,11 +172,23 @@
       </div>
     </div>
   </section>
-  <section class="row" id="search" aria-labelledby="search-title">
+  <section class="row" id="load-order" aria-labelledby="load-order-title">
     <div class="wrap row__in">
       <div class="row__text">
-        <h2 id="search-title" class="heading">Find the mod you mean</h2>
-        <p>Browse GameBanana inside Sigil and install with one press. Search runs on your PC, forgives typos and knows what a mod is based on, so a series name finds skins whose title never mentions it. A mod search is matched on your PC and not sent to a server.</p>
+        <h2 id="load-order-title" class="heading">See what is on and which wins</h2>
+        <p>Every mod in your addons folder sits in one list, including the ones you put there by hand. Drag a card to set the load order, and Overlap shows each pair of mods that replace the same files and which one the game will use. After a game update, Sigil lists the mods that ship paths the game moved and offers a repair for each.</p>
+        <p><a class="textlink" href="/installed">More about load order and overlaps</a></p>
+      </div>
+      <figure class="row__media">
+        <img class="shot" src="/img/installed.webp" width="1400" height="609" loading="lazy" decoding="async" alt="The Installed list: six enabled mods with their slot numbers, on and off switches, and a note that five mods overlap.">
+      </figure>
+    </div>
+  </section>
+  <section class="row row--flip" id="browse" aria-labelledby="browse-title">
+    <div class="wrap row__in">
+      <div class="row__text">
+        <h2 id="browse-title" class="heading">Browse and install from GameBanana</h2>
+        <p>Browse GameBanana inside Sigil and install with one press. Search runs on your PC, forgives typos and knows what a mod is based on, so a series name finds skins whose title never mentions it. Sigil lists the files in an archive before it writes them, and new installs land switched off until you turn them on.</p>
         <p><a class="textlink" href="/browse">More about browsing and search</a></p>
       </div>
       <figure class="row__media">
@@ -187,39 +196,27 @@
       </figure>
     </div>
   </section>
-  <section class="row row--flip" id="load-order" aria-labelledby="load-order-title">
+  <section class="row" id="performance" aria-labelledby="performance-title">
     <div class="wrap row__in">
       <div class="row__text">
-        <h2 id="load-order-title" class="heading">See what is on and which mod wins</h2>
-        <p>New installs land switched off until you turn them on. Sigil keeps the load order in view, flags mods that replace the same files and shows which one the game will use.</p>
-        <p><a class="textlink" href="/installed">More about managing installed mods</a></p>
+        <h2 id="performance-title" class="heading">Trade looks for frames, and back</h2>
+        <p>Apply community performance configs, grouped from Light to Potato, and turn one off to get the stock values back. Your own edits stay separate, so a new version of a config keeps them, and the convar editor covers everything else. When a game update resets gameinfo.gi, Sigil notices and offers to fix it again.</p>
+        <p><a class="textlink" href="/performance">More about performance configs</a></p>
       </div>
       <figure class="row__media">
-        <img class="shot" src="/img/installed.webp" width="1400" height="609" loading="lazy" decoding="async" alt="The Installed list: six enabled mods with their slot numbers, on and off switches, and a note that five mods overlap.">
+        <img class="shot" src="/img/performance.webp" width="1600" height="980" loading="lazy" decoding="async" alt="The Performance page with OptiLock FPS on, a scale from Light to Potato, and community configs grouped by how much they change.">
       </figure>
     </div>
   </section>
-  <section class="row" id="launching" aria-labelledby="launching-title">
+  <section class="row row--flip" id="stats" aria-labelledby="stats-title">
     <div class="wrap row__in">
       <div class="row__text">
-        <h2 id="launching-title" class="heading">Launch modded or vanilla</h2>
-        <p>Launch modded checks your mods first and fixes gameinfo.gi when a game update reset it. Launch vanilla puts your mods aside for a clean game and brings them back afterwards.</p>
-        <p><a class="textlink" href="/launch">More about launching</a></p>
+        <h2 id="stats-title" class="heading">Your rank, heroes and matches</h2>
+        <p>Turn on Player stats and Sigil reads your matches from deadlock-api: rank, win rate, your record on each hero, match details with builds and souls over time, item win rates and the leaderboard. Filters scope it to ranked games and a season. Nothing is fetched until you switch it on.</p>
+        <p><a class="textlink" href="/stats">More about match stats</a></p>
       </div>
       <figure class="row__media">
-        <img class="shot" src="/img/launch.webp" width="1400" height="1046" loading="lazy" decoding="async" alt="The Before you launch checklist: mods will not load, two mods replace the same files, and mods to check after the update, each with a fix button.">
-      </figure>
-    </div>
-  </section>
-  <section class="row row--flip" id="crosshair-editor" aria-labelledby="crosshair-editor-title">
-    <div class="wrap row__in">
-      <div class="row__text">
-        <h2 id="crosshair-editor-title" class="heading">Tune your crosshair at true scale</h2>
-        <p>Set lines, gap, dot and colour over a game scene, then apply it to your autoexec with a backup kept. The community library has crosshairs other players shared.</p>
-        <p><a class="textlink" href="/crosshair">More about the crosshair editor</a></p>
-      </div>
-      <figure class="row__media">
-        <img class="shot" src="/img/crosshair.webp" width="1400" height="1016" loading="lazy" decoding="async" alt="The Crosshair editor: a cyan crosshair over a street scene, sliders for gap, length and thickness, and community crosshairs below.">
+        <img class="shot" src="/img/stats.webp" width="1400" height="725" loading="lazy" decoding="async" alt="The Stats overview for a sample player: rank, win rate, recent form, and what stands out over the last 20 matches.">
       </figure>
     </div>
   </section>
@@ -240,7 +237,7 @@
   <section class="faq" id="faq" aria-labelledby="faq-title">
     <div class="wrap faq__in">
       <h2 id="faq-title" class="heading">Questions</h2>
-      <div class="faq__list"><details class="qa"><summary><h3>Is Sigil free?</h3><span class="qa__mark" aria-hidden="true"></span></summary><p>Yes. Sigil is free and open source under the MIT licence, and the code is on GitHub.</p></details><details class="qa"><summary><h3>Is it safe? Can mods get me banned?</h3><span class="qa__mark" aria-hidden="true"></span></summary><p>Sigil puts mod files in the game&#x27;s addons folder, the same place a manual install does, and edits gameinfo.gi so the game reads that folder, keeping a backup first. It cannot speak for how Valve treats mods. Launch vanilla starts the game with your mods set aside.</p></details><details class="qa"><summary><h3>Where do the mods come from?</h3><span class="qa__mark" aria-hidden="true"></span></summary><p>From GameBanana. Sigil browses and downloads them from there, and every mod belongs to its creator.</p></details><details class="qa"><summary><h3>My mods stopped working after a Deadlock update. What now?</h3><span class="qa__mark" aria-hidden="true"></span></summary><p>A game update or a Steam file check resets gameinfo.gi, so the game stops loading your mods. Sigil shows a banner with a Fix button. Mods made for an older build may also need an update from their creator; the guide <a href="/deadlock-mods-not-working-after-update">Deadlock mods not working after an update</a> explains both cases.</p></details><details class="qa"><summary><h3>Does it work on Mac, Linux or Steam Deck?</h3><span class="qa__mark" aria-hidden="true"></span></summary><p>The download on this site is for Windows 10 and 11, 64-bit. There is no Mac, Linux or Steam Deck release here.</p></details><details class="qa"><summary><h3>Why does Windows warn me when I run the installer?</h3><span class="qa__mark" aria-hidden="true"></span></summary><p>The installer is not code signed yet, so Windows may show &quot;Windows protected your PC&quot;. Choose More info, then Run anyway.</p></details><details class="qa"><summary><h3>What does Sigil send over the internet?</h3><span class="qa__mark" aria-hidden="true"></span></summary><p>It talks to GameBanana for mods and, if you allow it, to GitHub for app updates. Usage events, crash reports and product data are each off until you agree, and there is no third-party analytics. The <a href="/privacy">privacy page</a> lists every host.</p></details>
+      <div class="faq__list"><details class="qa"><summary><h3>Is Sigil free?</h3><span class="qa__mark" aria-hidden="true"></span></summary><p>Yes. Sigil is free and open source under the MIT licence, and the code is on GitHub.</p></details><details class="qa"><summary><h3>Is it safe? Can mods get me banned?</h3><span class="qa__mark" aria-hidden="true"></span></summary><p>Sigil puts mod files in the game&#x27;s addons folder, the same place a manual install does, and edits gameinfo.gi so the game reads that folder, keeping a backup first. It cannot speak for how Valve treats mods. Launch vanilla starts the game with your mods set aside.</p></details><details class="qa"><summary><h3>Where do the mods come from?</h3><span class="qa__mark" aria-hidden="true"></span></summary><p>From GameBanana. Sigil browses and downloads them from there, and every mod belongs to its creator.</p></details><details class="qa"><summary><h3>My mods stopped working after a Deadlock update. What now?</h3><span class="qa__mark" aria-hidden="true"></span></summary><p>A game update or a Steam file check resets gameinfo.gi, so the game stops loading your mods. Sigil shows a banner with a Fix button. Mods made for an older build may also need an update from their creator; the guide <a href="/deadlock-mods-not-working-after-update">Deadlock mods not working after an update</a> explains both cases.</p></details><details class="qa"><summary><h3>Does it work on Linux, Mac or Steam Deck?</h3><span class="qa__mark" aria-hidden="true"></span></summary><p>There are downloads for Windows (an installer for Windows 10 and 11, 64-bit), Linux (an AppImage for x86_64) and macOS (a disk image). Windows is where Sigil has been used most; the Linux and macOS builds are newer, so please report anything that does not work. Deadlock itself runs on Windows, and on Linux through Proton. There is no separate Steam Deck build.</p></details><details class="qa"><summary><h3>Why does Windows warn me when I run the installer?</h3><span class="qa__mark" aria-hidden="true"></span></summary><p>The installer is not code signed yet, so Windows may show &quot;Windows protected your PC&quot;. Choose More info, then Run anyway.</p></details><details class="qa"><summary><h3>What does Sigil send over the internet?</h3><span class="qa__mark" aria-hidden="true"></span></summary><p>It talks to GameBanana for mods and, if you allow it, to GitHub for app updates. Usage events, crash reports and product data are each off until you agree, and there is no third-party analytics. The <a href="/privacy">privacy page</a> lists every host.</p></details>
         <p><a class="textlink" href="/faq">All questions and answers</a></p>
       </div>
     </div>
@@ -250,11 +247,11 @@
     <div class="wrap">
       <section class="getit" aria-labelledby="download-title">
   <div class="getit__main">
-    <h2 id="download-title" class="heading">Get Sigil for Windows.</h2>
-    <p class="getit__line">Windows 10 and 11, 64-bit. Free and open source. No administrator rights needed.</p>
+    <h2 id="download-title" class="heading">Get Sigil.</h2>
+    <p class="getit__line">Free and open source, for Windows, Linux and macOS. The Windows installer needs no administrator rights.</p>
   </div>
-  <div class="getit__act"><a class="btn" href="https://github.com/superuserkalo/sigil/releases/latest/download/Sigil-Setup.exe" data-download="footer" aria-label="Download for Windows: Sigil installer (.exe)">Download for Windows</a><a class="textlink" href="https://github.com/superuserkalo/sigil/releases">Release notes</a></div>
-  <p class="note getit__note">Windows may show “Windows protected your PC” because the installer is not code signed yet. Choose More info, then Run anyway.</p>
+  <div class="getit__act"><div class="dl" data-dl><a class="btn" href="https://github.com/superuserkalo/sigil/releases/latest/download/Sigil-Setup.exe" data-download="footer" data-os="windows" data-os-name="Windows" data-os-kind="installer, .exe" data-dl-main aria-label="Download Sigil for Windows (installer, .exe)">Download for Windows</a><span class="dl__alt">Also for <a href="https://github.com/superuserkalo/sigil/releases/latest/download/Sigil-linux-x86_64.AppImage" data-download="footer" data-os="linux" data-os-name="Linux" data-os-kind="AppImage, x86_64" aria-label="Download Sigil for Linux (AppImage, x86_64)">Linux</a> and <a href="https://github.com/superuserkalo/sigil/releases/latest/download/Sigil-macos.dmg" data-download="footer" data-os="macos" data-os-name="macOS" data-os-kind="disk image, .dmg" aria-label="Download Sigil for macOS (disk image, .dmg)">macOS</a></span></div><a class="textlink" href="https://github.com/superuserkalo/sigil/releases">Release notes</a></div>
+  <p class="note getit__note">On Windows you may see “Windows protected your PC” because the installer is not code signed yet. Choose More info, then Run anyway.</p>
 </section>
     </div>
   </section>

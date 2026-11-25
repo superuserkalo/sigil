@@ -1,38 +1,38 @@
-# Sigil: a free Deadlock mod manager for Windows
+# Sigil: a free, open-source Deadlock mod manager
 
-> Sigil is a free, open-source Deadlock mod manager for Windows 10 and 11 (64-bit). It browses and installs mods from GameBanana, searches the catalog on your PC, keeps load order and overlapping mods in view, fixes gameinfo.gi after game updates, and launches the game modded or vanilla. It also has a Locker for skins per hero, a crosshair editor with a community library, profiles you can share, an autoexec editor, performance configs and match stats. Nothing about the player leaves the PC without their yes.
+> Sigil is a free, open-source Deadlock mod manager for Windows, Linux and macOS. It browses and installs mods from GameBanana, searches the catalog on your PC, keeps load order and overlapping mods in view, fixes gameinfo.gi after game updates, and launches the game modded or vanilla. It also has a Locker for skins per hero, a crosshair editor with a community library, profiles you can share, an autoexec editor, performance configs and match stats. Nothing about the player leaves the PC without their yes.
 
-Install Deadlock mods and keep them working. Sigil is a free, open-source Deadlock mod manager for Windows.
+Install Deadlock mods and keep them working. Sigil is a free open-source Deadlock mod manager.
 
-[Download Sigil for Windows (installer, .exe)](https://github.com/superuserkalo/sigil/releases/latest/download/Sigil-Setup.exe)
-
-Windows 10 and 11, 64-bit. Free and open source. No administrator rights needed. Windows may show “Windows protected your PC” because the installer is not code signed yet. Choose More info, then Run anyway.
+- [Download Sigil for Windows (installer, .exe)](https://github.com/superuserkalo/sigil/releases/latest/download/Sigil-Setup.exe)
+- [Download Sigil for Linux (AppImage, x86_64)](https://github.com/superuserkalo/sigil/releases/latest/download/Sigil-linux-x86_64.AppImage)
+- [Download Sigil for macOS (disk image, .dmg)](https://github.com/superuserkalo/sigil/releases/latest/download/Sigil-macos.dmg)
 
 Source code: https://github.com/superuserkalo/sigil
 
-## Find the mod you mean
+## See what is on and which wins
 
-Browse GameBanana inside Sigil and install with one press. Search runs on your PC, forgives typos and knows what a mod is based on, so a series name finds skins whose title never mentions it. A mod search is matched on your PC and not sent to a server.
+Every mod in your addons folder sits in one list, including the ones you put there by hand. Drag a card to set the load order, and Overlap shows each pair of mods that replace the same files and which one the game will use. After a game update, Sigil lists the mods that ship paths the game moved and offers a repair for each.
+
+[More about load order and overlaps](https://sigilmods.app/installed)
+
+## Browse and install from GameBanana
+
+Browse GameBanana inside Sigil and install with one press. Search runs on your PC, forgives typos and knows what a mod is based on, so a series name finds skins whose title never mentions it. Sigil lists the files in an archive before it writes them, and new installs land switched off until you turn them on.
 
 [More about browsing and search](https://sigilmods.app/browse)
 
-## See what is on and which mod wins
+## Trade looks for frames, and back
 
-New installs land switched off until you turn them on. Sigil keeps the load order in view, flags mods that replace the same files and shows which one the game will use.
+Apply community performance configs, grouped from Light to Potato, and turn one off to get the stock values back. Your own edits stay separate, so a new version of a config keeps them, and the convar editor covers everything else. When a game update resets gameinfo.gi, Sigil notices and offers to fix it again.
 
-[More about managing installed mods](https://sigilmods.app/installed)
+[More about performance configs](https://sigilmods.app/performance)
 
-## Launch modded or vanilla
+## Your rank, heroes and matches
 
-Launch modded checks your mods first and fixes gameinfo.gi when a game update reset it. Launch vanilla puts your mods aside for a clean game and brings them back afterwards.
+Turn on Player stats and Sigil reads your matches from deadlock-api: rank, win rate, your record on each hero, match details with builds and souls over time, item win rates and the leaderboard. Filters scope it to ranked games and a season. Nothing is fetched until you switch it on.
 
-[More about launching](https://sigilmods.app/launch)
-
-## Tune your crosshair at true scale
-
-Set lines, gap, dot and colour over a game scene, then apply it to your autoexec with a backup kept. The community library has crosshairs other players shared.
-
-[More about the crosshair editor](https://sigilmods.app/crosshair)
+[More about match stats](https://sigilmods.app/stats)
 
 ## Everything Sigil does
 
@@ -101,9 +101,9 @@ From GameBanana. Sigil browses and downloads them from there, and every mod belo
 
 A game update or a Steam file check resets gameinfo.gi, so the game stops loading your mods. Sigil shows a banner with a Fix button. Mods made for an older build may also need an update from their creator; the guide [Deadlock mods not working after an update](https://sigilmods.app/deadlock-mods-not-working-after-update) explains both cases.
 
-### Does it work on Mac, Linux or Steam Deck?
+### Does it work on Linux, Mac or Steam Deck?
 
-The download on this site is for Windows 10 and 11, 64-bit. There is no Mac, Linux or Steam Deck release here.
+There are downloads for Windows (an installer for Windows 10 and 11, 64-bit), Linux (an AppImage for x86_64) and macOS (a disk image). Windows is where Sigil has been used most; the Linux and macOS builds are newer, so please report anything that does not work. Deadlock itself runs on Windows, and on Linux through Proton. There is no separate Steam Deck build.
 
 ### Why does Windows warn me when I run the installer?
 
@@ -115,13 +115,15 @@ It talks to GameBanana for mods and, if you allow it, to GitHub for app updates.
 
 [All questions and answers](https://sigilmods.app/faq)
 
-## Get Sigil for Windows
+## Get Sigil
 
-[Download Sigil for Windows (installer, .exe)](https://github.com/superuserkalo/sigil/releases/latest/download/Sigil-Setup.exe)
+- [Download Sigil for Windows (installer, .exe)](https://github.com/superuserkalo/sigil/releases/latest/download/Sigil-Setup.exe)
+- [Download Sigil for Linux (AppImage, x86_64)](https://github.com/superuserkalo/sigil/releases/latest/download/Sigil-linux-x86_64.AppImage)
+- [Download Sigil for macOS (disk image, .dmg)](https://github.com/superuserkalo/sigil/releases/latest/download/Sigil-macos.dmg)
 
-Windows 10 and 11, 64-bit. Free and open source. No administrator rights needed.
+Free and open source, for Windows, Linux and macOS. The Windows installer needs no administrator rights.
 
-Windows may show “Windows protected your PC” because the installer is not code signed yet. Choose More info, then Run anyway.
+On Windows you may see “Windows protected your PC” because the installer is not code signed yet. Choose More info, then Run anyway.
 
 ---
 

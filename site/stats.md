@@ -35,11 +35,13 @@ Nothing is fetched until you turn Player stats on, and the reads carry only the 
 
 ## Download Sigil
 
-[Download Sigil for Windows (installer, .exe)](https://github.com/superuserkalo/sigil/releases/latest/download/Sigil-Setup.exe)
+- [Download Sigil for Windows (installer, .exe)](https://github.com/superuserkalo/sigil/releases/latest/download/Sigil-Setup.exe)
+- [Download Sigil for Linux (AppImage, x86_64)](https://github.com/superuserkalo/sigil/releases/latest/download/Sigil-linux-x86_64.AppImage)
+- [Download Sigil for macOS (disk image, .dmg)](https://github.com/superuserkalo/sigil/releases/latest/download/Sigil-macos.dmg)
 
-Windows 10 and 11, 64-bit. Free and open source. No administrator rights needed.
+Free and open source, for Windows, Linux and macOS. The Windows installer needs no administrator rights.
 
-Windows may show “Windows protected your PC” because the installer is not code signed yet. Choose More info, then Run anyway.
+On Windows you may see “Windows protected your PC” because the installer is not code signed yet. Choose More info, then Run anyway.
 
 ## Related pages
 
