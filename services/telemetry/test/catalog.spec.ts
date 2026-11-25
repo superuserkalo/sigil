@@ -612,3 +612,47 @@ describe("learning from search gaps", () => {
     expect(JSON.stringify(body.questions)).not.toContain("gas mask");
   });
 });
+
+describe("learned terms and stale tags", () => {
+  it("never publishes a gap word that is not already public vocabulary", async () => {
+    const ai = { ai: 0 };
+    await runEnrichment(testEnv({ AI: fakeAi(ai) }), NOW, fakeNet([{ id: 1, updated: 1795000000, title: "GIGN Vindicta" }], newCalls()));
+    await buildAndStoreIndex(env.DB, NOW);
+    await env.DB.batch([
+      env.DB.prepare("INSERT INTO product_totals (epoch, kind, key, installs, buckets, days, created_at) VALUES (1, 'search_zero', 'gign soldier', 12, 7, 4, 0)"),
+      env.DB.prepare("INSERT INTO product_totals (epoch, kind, key, installs, buckets, days, created_at) VALUES (1, 'search_zero', 'gign zorblax', 12, 7, 4, 0)"),
+      env.DB.prepare("INSERT INTO product_totals (epoch, kind, key, installs, buckets, days, created_at) VALUES (1, 'search_zero', 'gign 123456', 12, 7, 4, 0)"),
+      env.DB.prepare("UPDATE enrich_state SET value = '0' WHERE key = 'learn_at'"),
+    ]);
+    const calls = newCalls();
+    await runEnrichment(testEnv({ AI: fakeAi(ai) }), NOW + 25 * 3600_000, fakeNet([], calls));
+    const sent = JSON.stringify(calls.typesafe);
+    expect(sent).not.toContain("zorblax");
+    expect(sent).not.toContain("123456");
+    // Off by default: nothing learned reaches the index; on, only the vocabulary term does.
+    await buildAndStoreIndex(env.DB, NOW + 26 * 3600_000);
+    const off = await loadIndex(env.DB);
+    expect(JSON.stringify(off)).not.toContain("gign soldier");
+    await buildAndStoreIndex(env.DB, NOW + 27 * 3600_000, { learned: true });
+    const on = JSON.stringify(await loadIndex(env.DB));
+    expect(on).toContain("gign soldier");
+    expect(on).not.toContain("zorblax");
+  });
+
+  it("retries a mod whose enrichment failed midway and marks its old tags stale", async () => {
+    await runEnrichment(testEnv(), NOW, fakeNet([{ id: 1, updated: 1795000000 }], newCalls()));
+    const edited = { profiles: { 1: { ...PROFILE, _sText: "Now NSFW." } } };
+    const failing = await runEnrichment(testEnv(), NOW + 1000, fakeNet([{ id: 1, updated: 1795000900 }], newCalls(), { ...edited, typesafeStatus: 503 }));
+    expect(failing.stopped).toBe("typesafe_503");
+    await buildAndStoreIndex(env.DB, NOW + 2000);
+    expect((await loadIndex(env.DB))?.mods[0]?.st).toBe(1);
+    // The old rows were not moved to the new page version.
+    const kind = await env.DB.prepare("SELECT source FROM mod_tags WHERE mod_id = 1 AND judgment = 'kind'").first<{ source: string }>();
+    expect(kind?.source).toBe("u:1795000000");
+    const calls = newCalls();
+    const retry = await runEnrichment(testEnv(), NOW + 3000, fakeNet([{ id: 1, updated: 1795000900 }], calls, edited));
+    expect(retry.mods).toBe(1);
+    await buildAndStoreIndex(env.DB, NOW + 4000);
+    expect((await loadIndex(env.DB))?.mods[0]?.st).toBeUndefined();
+  });
+});

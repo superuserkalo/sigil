@@ -90,7 +90,7 @@ export type RunReport = {
   indexBuilt: boolean;
 };
 
-type TagRow = { judgment: string; version: number; source: string; model: string; data: string; enriched_at: number };
+type TagRow = { judgment: string; version: number; source: string; model: string; data: string; enriched_at: number; hash: string };
 
 // ---------------------------------------------------------------------------------------------
 // Small state helpers
@@ -214,7 +214,7 @@ export async function runEnrichment(env: Env, now: number, net: Net = liveNet, s
     await setState(env.DB, "lease", "0", now);
   }
   try {
-    report.indexBuilt = await maybeBuildIndex(env.DB, now, changed, false, embeddingsOn(env));
+    report.indexBuilt = await maybeBuildIndex(env.DB, now, changed, false, indexOptions(env));
   } catch (error) {
     log({ event: "enrich_index_error", message: error instanceof Error ? error.message.slice(0, 200) : "unknown" });
   }
@@ -259,7 +259,7 @@ async function advanceCursor(db: D1Database, listed: readonly ListedMod[], now: 
 }
 
 async function tagRows(db: D1Database, modId: number): Promise<TagRow[]> {
-  const { results } = await db.prepare("SELECT judgment, version, source, model, data, enriched_at FROM mod_tags WHERE mod_id = ?1").bind(modId).all<TagRow>();
+  const { results } = await db.prepare("SELECT judgment, version, source, model, data, enriched_at, hash FROM mod_tags WHERE mod_id = ?1").bind(modId).all<TagRow>();
   return results;
 }
 
@@ -288,15 +288,18 @@ async function noteFailure(db: D1Database, mod: ListedMod, now: number): Promise
   await storeRow(db, mod.id, "_failed", 0, `u:${mod.updated}`, "", { attempts }, now);
 }
 
-async function storeRow(db: D1Database, modId: number, judgment: string, version: number, source: string, model: string, data: Stored, now: number): Promise<void> {
-  await db
+function rowStatement(db: D1Database, modId: number, judgment: string, version: number, source: string, model: string, data: Stored, now: number, hash = ""): D1PreparedStatement {
+  return db
     .prepare(
-      `INSERT INTO mod_tags (mod_id, judgment, version, source, model, data, enriched_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+      `INSERT INTO mod_tags (mod_id, judgment, version, source, model, data, enriched_at, hash) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
        ON CONFLICT(mod_id, judgment) DO UPDATE SET version = excluded.version, source = excluded.source, model = excluded.model,
-         data = excluded.data, enriched_at = excluded.enriched_at`,
+         data = excluded.data, enriched_at = excluded.enriched_at, hash = excluded.hash`,
     )
-    .bind(modId, judgment, version, source, model, JSON.stringify(data), now)
-    .run();
+    .bind(modId, judgment, version, source, model, JSON.stringify(data), now, hash);
+}
+
+async function storeRow(db: D1Database, modId: number, judgment: string, version: number, source: string, model: string, data: Stored, now: number, hash = ""): Promise<void> {
+  await rowStatement(db, modId, judgment, version, source, model, data, now, hash).run();
 }
 
 /** Duplicate candidates found in code: same normalised title, or the same long description by another author. */
@@ -356,15 +359,15 @@ async function enrichMod(
     return "stored";
   }
   const hash = await contentHash(mod, profile);
-  const known = await env.DB.prepare("SELECT content_hash FROM catalog_mods WHERE mod_id = ?1").bind(mod.id).first<{ content_hash: string }>();
   await env.DB.prepare("UPDATE catalog_mods SET content_hash = ?2, withdrawn = 0 WHERE mod_id = ?1").bind(mod.id, hash).run();
-  // Same content under a new timestamp (a like, a file scan, a re-save): move the judgments that
-  // only went stale by timestamp to the new source, and spend nothing.
-  if (known !== null && known.content_hash === hash) {
+  // Same content under a new timestamp (a like, a file scan, a re-save): a judgment that was made on
+  // exactly this content (its row carries the hash, written in the same batch as the judgment)
+  // only moves to the new source, and nothing is spent. A row made on other content never moves.
+  {
     const rows = await tagRows(env.DB, mod.id);
     const onlyMoved = stale.filter((judgment) => {
       const row = rows.find((candidate) => candidate.judgment === judgment.name);
-      return row !== undefined && row.version === judgment.version && row.model === JEV_MODEL && judgment.name !== "health";
+      return row !== undefined && row.hash === hash && row.version === judgment.version && row.model === JEV_MODEL && judgment.name !== "health";
     });
     for (const judgment of onlyMoved) {
       await env.DB.prepare("UPDATE mod_tags SET source = ?3 WHERE mod_id = ?1 AND judgment = ?2").bind(mod.id, judgment.name, sourceFor(judgment, mod)).run();
@@ -375,6 +378,9 @@ async function enrichMod(
       return "skipped";
     }
   }
+  // Every judgment row of this run, written together at the end in one batch with the mod's
+  // judged hash, so a run that fails midway leaves nothing half-current.
+  const writes: D1PreparedStatement[] = [];
   const descSig = await descriptionSignature(profile);
   await env.DB.prepare("UPDATE catalog_mods SET desc_excerpt = ?2, desc_sig = ?3 WHERE mod_id = ?1")
     .bind(mod.id, [profile.summary, profile.text].join("\n").trim().slice(0, 600), descSig)
@@ -409,9 +415,16 @@ async function enrichMod(
   // A judgment with nothing to judge is recorded as such, so it is not retried until the page changes.
   for (const judgment of stale) {
     if (applicable.includes(judgment) || (judgment.name === "terms" && expansion === null)) continue;
-    await storeRow(env.DB, mod.id, judgment.name, judgment.version, sourceFor(judgment, mod), JEV_MODEL, { na: 1 }, now);
+    writes.push(rowStatement(env.DB, mod.id, judgment.name, judgment.version, sourceFor(judgment, mod), JEV_MODEL, { na: 1 }, now, hash));
   }
-  if (applicable.length === 0) return "stored";
+  const commit = async (): Promise<void> => {
+    writes.push(env.DB.prepare("UPDATE catalog_mods SET judged_hash = ?2 WHERE mod_id = ?1").bind(mod.id, hash));
+    await env.DB.batch(writes);
+  };
+  if (applicable.length === 0) {
+    await commit();
+    return "stored";
+  }
 
   let usedInput: ModInput = input;
   let body = modRequest(input, applicable, true);
@@ -450,18 +463,19 @@ async function enrichMod(
     const read = (id: string) => result.answers[`${judgment.name}${SEP}${id}`];
     const data = judgment.read(read, usedInput);
     if (data === null) continue;
-    await storeRow(env.DB, mod.id, judgment.name, judgment.version, sourceFor(judgment, mod), JEV_MODEL, data, now);
+    writes.push(rowStatement(env.DB, mod.id, judgment.name, judgment.version, sourceFor(judgment, mod), JEV_MODEL, data, now, hash));
     report.judgments += 1;
     if (judgment.name === "terms" && ai !== null && embeddingsOn(env) && budget.take()) {
       const kept = (data.terms as { term: string; p: number }[]).filter((term) => term.p >= 0.7).map((term) => term.term);
       try {
         const vector = await embedText(ai, [mod.title, ...kept].join(", "));
-        if (vector !== null) await storeRow(env.DB, mod.id, "embed", 1, sourceFor(judgment, mod), EMBED_MODEL, { v: vector }, now);
+        if (vector !== null) writes.push(rowStatement(env.DB, mod.id, "embed", 1, sourceFor(judgment, mod), EMBED_MODEL, { v: vector }, now, hash));
       } catch (error) {
         log({ event: "embed_error", message: error instanceof Error ? error.message.slice(0, 200) : "unknown" });
       }
     }
   }
+  await commit();
   return "stored";
 }
 
@@ -571,28 +585,36 @@ async function addSpend(db: D1Database, report: RunReport, now: number): Promise
   log({ event: "enrich_spend", tokens_total: next.tokens, usd_total: next.usd });
 }
 
-export async function maybeBuildIndex(db: D1Database, now: number, changed: boolean, force = false, embeddings = false): Promise<boolean> {
+export type IndexOptions = { readonly embeddings?: boolean; readonly learned?: boolean };
+
+/** `INDEX_EMBEDDINGS = "1"` and `LEARNED_TERMS_PUBLISH = "1"` (Worker vars), both off by default. */
+export function indexOptions(env: Env): IndexOptions {
+  const vars = env as Env & { readonly LEARNED_TERMS_PUBLISH?: string };
+  return { embeddings: embeddingsOn(env), learned: vars.LEARNED_TERMS_PUBLISH === "1" };
+}
+
+export async function maybeBuildIndex(db: D1Database, now: number, changed: boolean, force = false, options: IndexOptions = {}): Promise<boolean> {
   const meta = await getState(db, "index_meta");
   const parsed = meta === null ? null : (JSON.parse(meta.value) as { v: number; built: number });
   const outdated = parsed === null || parsed.v !== PUBLISH_VERSION;
   if (!force && !outdated && !(changed && now - parsed.built >= INDEX_MIN_AGE_MS)) return false;
-  await buildAndStoreIndex(db, now, embeddings);
+  await buildAndStoreIndex(db, now, options);
   return true;
 }
 
 /** D1 rows top out at 2 MB: the gzipped index is stored in chunks well under that. */
 export const INDEX_CHUNK = 900_000;
 
-export async function buildAndStoreIndex(db: D1Database, now: number, embeddings = false): Promise<void> {
+export async function buildAndStoreIndex(db: D1Database, now: number, options: IndexOptions = {}): Promise<void> {
   const mods = await db
     .prepare(
-      `SELECT c.mod_id, c.title, c.subcategory, MAX(t.enriched_at) AS enriched_at
+      `SELECT c.mod_id, c.title, c.subcategory, c.content_hash != c.judged_hash AS stale, MAX(t.enriched_at) AS enriched_at
        FROM catalog_mods c JOIN mod_tags t ON t.mod_id = c.mod_id AND t.judgment != '_failed'
        WHERE c.withdrawn = 0 AND c.seen_at >= ?1
        GROUP BY c.mod_id ORDER BY c.mod_id`,
     )
     .bind(now - UNSEEN_MS)
-    .all<{ mod_id: number; title: string; subcategory: string; enriched_at: number }>();
+    .all<{ mod_id: number; title: string; subcategory: string; stale: number; enriched_at: number }>();
   const rows = new Map<number, Record<string, Stored>>();
   const tags = await db.prepare("SELECT mod_id, judgment, data FROM mod_tags WHERE judgment != '_failed'").all<{ mod_id: number; judgment: string; data: string }>();
   for (const tag of tags.results) {
@@ -603,8 +625,8 @@ export async function buildAndStoreIndex(db: D1Database, now: number, embeddings
     rows.set(tag.mod_id, entry);
   }
   const heroes = JSON.parse((await getState(db, "heroes"))?.value ?? "[]") as string[];
-  const metas: ModMeta[] = mods.results.map((row) => ({ id: row.mod_id, title: row.title, subcategory: row.subcategory, enrichedAt: row.enriched_at }));
-  const index = buildIndex(metas, rows as ReadonlyMap<number, JudgmentRows>, heroes, now, embeddings);
+  const metas: ModMeta[] = mods.results.map((row) => ({ id: row.mod_id, title: row.title, subcategory: row.subcategory, enrichedAt: row.enriched_at, stale: row.stale === 1 }));
+  const index = buildIndex(metas, rows as ReadonlyMap<number, JudgmentRows>, heroes, now, options.embeddings === true, options.learned === true);
   const json = JSON.stringify(index);
   const etag = (await sha256Hex(json)).slice(0, 32);
   const packed = await gzipBase64(json);

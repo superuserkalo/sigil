@@ -48,7 +48,14 @@ export const PACK = 8;
 
 export type JudgmentRows = Readonly<Record<string, Stored>>;
 
-export type ModMeta = { readonly id: number; readonly title: string; readonly subcategory: string; readonly enrichedAt: number };
+export type ModMeta = {
+  readonly id: number;
+  readonly title: string;
+  readonly subcategory: string;
+  readonly enrichedAt: number;
+  /** The page changed after its judgments were made and they have not been redone yet. */
+  readonly stale?: boolean;
+};
 
 const FACT_TERMS: Record<string, string> = {
   variants: "variants",
@@ -208,6 +215,8 @@ export type IndexMod = {
   ch?: number[];
   /** Optional document embedding, int8, base64 (behind the index embeddings flag). */
   e?: string;
+  /** 1 when the page changed since these tags were made: show them as old, not current. */
+  st?: 1;
 };
 
 export type CatalogIndex = {
@@ -225,6 +234,7 @@ export function buildIndex(
   heroes: readonly string[],
   now: number,
   embeddings = false,
+  learned = false,
 ): CatalogIndex {
   const strings: string[] = [];
   const ids = new Map<string, number>();
@@ -249,6 +259,7 @@ export function buildIndex(
       if (known === undefined || cls < known) terms.set(id, cls);
     };
     const record: IndexMod = { i: meta.id, ti: meta.title, u: meta.enrichedAt, x: [] };
+    if (meta.stale === true) record.st = 1;
     const kind = publishedKind(judged.kind);
     if (kind !== null) {
       record.k = kind;
@@ -262,7 +273,8 @@ export function buildIndex(
     for (const id of publishedStyles(judged.style)) add(id, CLS.tag);
     for (const fact of publishedFacts(judged.facts)) if (FACT_TERMS[fact] !== undefined) add(FACT_TERMS[fact] ?? fact, CLS.tag);
     for (const term of keptTerms(judged.terms)) add(term.term, term.cls);
-    for (const term of learnedTerms(judged.learned)) add(term, CLS.learned);
+    // Learned associations stay out of the public index until the owner sets LEARNED_TERMS_PUBLISH.
+    if (learned) for (const term of learnedTerms(judged.learned)) add(term, CLS.learned);
     const named = facets(judged.terms);
     if (named.franchises.length > 0) record.f = named.franchises.map(intern);
     if (named.characters.length > 0) record.ch = named.characters.map(intern);

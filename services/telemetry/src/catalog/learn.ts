@@ -7,6 +7,7 @@
  */
 
 import { searchGaps } from "../aggregates";
+import { normalize } from "./aliases";
 import { search } from "./match";
 import { Budget, type Net } from "./net";
 import type { CatalogIndex } from "./publish";
@@ -26,6 +27,31 @@ const LEVELS = [
   "A reasonable match: related to what the search names.",
   "Exactly what the search names: the same franchise, character, item or style.",
 ];
+
+/**
+ * A gap term may only ever become an association between words the public catalog already uses.
+ * It is dropped (never sent, never stored) when it looks like personal data or has any word that
+ * no public title, verified facet or verified alias contains.
+ */
+export function piiShaped(term: string): boolean {
+  return /\d{5,}/.test(term) || term.includes("@") || /:\/\/|www\.|\.[a-z]{2,}\b/.test(term) || term.length > 40 || term.split(/\s+/).length > 4;
+}
+
+export function publicVocabulary(index: CatalogIndex): Set<string> {
+  const words = new Set<string>();
+  const addWords = (text: string) => {
+    for (const word of normalize(text).split(" ")) if (word.length > 0) words.add(word);
+  };
+  for (const mod of index.mods) addWords(mod.ti);
+  for (const text of index.strings) addWords(text);
+  return words;
+}
+
+export function allowedLearnedTerm(term: string, vocabulary: ReadonlySet<string>): boolean {
+  if (piiShaped(term)) return false;
+  const words = normalize(term).split(" ").filter((word) => word.length > 0);
+  return words.length > 0 && words.every((word) => vocabulary.has(word));
+}
 
 export type Candidate = { readonly id: number; readonly title: string; readonly category: string; readonly description: string };
 
@@ -61,7 +87,11 @@ export async function learnFromGaps(
   const gaps = await searchGaps(db, bucketKey, 50);
   const seenRow = await db.prepare("SELECT value FROM enrich_state WHERE key = 'learned_queries'").first<{ value: string }>();
   const seen = JSON.parse(seenRow?.value ?? "{}") as Record<string, number>;
-  const terms = [...gaps.zero, ...gaps.few].map((gap) => gap.term).filter((term, at, all) => all.indexOf(term) === at);
+  const vocabulary = publicVocabulary(index);
+  const terms = [...gaps.zero, ...gaps.few]
+    .map((gap) => gap.term)
+    .filter((term, at, all) => all.indexOf(term) === at)
+    .filter((term) => allowedLearnedTerm(term, vocabulary));
   for (const query of terms) {
     if (out.queries >= LEARN_QUERIES_PER_RUN || budget.remaining < 1) break;
     if (now - (seen[query] ?? 0) < LEARN_REPEAT_MS) continue;

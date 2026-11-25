@@ -9,6 +9,9 @@ party: usage events go to Analytics Engine, everything else to D1.
 
 ## Endpoints
 
+The catalog routes (`/v1/catalog/...`) are public read routes over the catalog enrichment and are
+described under [Catalog tags](#catalog-tags-adr-0018-migration-0006).
+
 | Method | Path | Body limit | What it stores |
 | --- | --- | --- | --- |
 | POST | `/v1/events` | 32 KiB | One Analytics Engine point per allowlisted event. Unknown names are dropped, never stored. |
@@ -219,6 +222,44 @@ npx wrangler deploy
 
 Contributions sent before 0004 keep counting: the new kinds start from the deploy, and a
 benchmark sent before it has no frame rate row.
+
+### Catalog tags (ADR 0018, migration 0006)
+
+Public catalog enrichment. Code in `src/catalog/`; the decision, the questions and the matcher
+algorithm are in `docs/decisions/0018-typesafe-catalog-tags.md`.
+
+- Runs every 10 minutes (`*/10 * * * *`, enrichment only) and as the last, separately wrapped step
+  of the daily job. Each run makes at most 45 outside calls (`RUN_SUBREQUESTS`), enriches at most
+  `ENRICH_RUN_MODS` mods (default 6) and stops when the day's spend reaches `ENRICH_DAILY_USD`
+  (default 25) or a single run would pass 25 dollars. It logs `enrich_run` with mods sent, mods
+  unchanged (same content hash, no model call), failed and withdrawn, tokens and dollars, and
+  `enrich_spend` with the running totals.
+- Reads GameBanana's Deadlock mod list (newest updates, newest uploads, then a backfill cursor),
+  each changed mod's public page, update notes, recent comments and up to four screenshots.
+  Workers AI (`@cf/meta/llama-4-scout-17b-16e-instruct`) proposes search terms from the text and,
+  separately, the cover; Jev (`jev-1.14.0`, pinned) answers every stale judgment in one request
+  per mod and checks each proposed term. One official patch note is classified per run. Once a
+  day, up to three floor-passed search-gap terms are judged against candidate mods.
+- Fails closed: without `TYPESAFE_API_KEY` nothing is fetched or sent; without the `AI` binding the
+  term step is skipped. Routes still answer with what is stored.
+- Public routes, no secret, rate limited like the rest: `GET /v1/catalog/tags` (ETag,
+  `Cache-Control: public, max-age=10800`, `?since=<ms>` for a delta with its own string table),
+  `GET /v1/catalog/mod/<id>`, `GET /v1/catalog/patch/<id>` or `latest`.
+- `INDEX_EMBEDDINGS = "1"` (a Worker var) adds int8 256-dimension document embeddings to the index.
+  Off by default; the app has no use for them yet.
+
+Deploy (the owner runs these; nothing was applied or deployed by the change that added this):
+
+```bash
+cd services/telemetry
+npx wrangler d1 migrations apply sigil --remote   # applies 0006_catalog_tags.sql (and 0005 if not yet)
+npx wrangler secret list                          # TYPESAFE_API_KEY must be listed (it is)
+npx wrangler deploy                               # adds the 10-minute trigger and the AI binding
+npx wrangler tail --format=json | grep enrich_    # watch the first runs, spend and counts
+```
+
+To calibrate thresholds on live answers, run the eval in `.scratch/typesafe/` (local only) with
+`TYPESAFE_API_KEY` in the environment; see `.scratch/typesafe/eval.md`.
 
 ## What the apply step (desktop side) still has to do
 
