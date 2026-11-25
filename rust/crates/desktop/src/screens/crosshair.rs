@@ -15,6 +15,7 @@
 //! community crosshair library as the same tiles, loaded the same way, plus Publish and Remove
 //! from library for the player's own saved presets.
 
+use crate::ui::Inset;
 use std::time::{Duration, Instant};
 
 use deadlock_core::crosshair::{Crosshair, Import, Preset};
@@ -1584,7 +1585,7 @@ fn console_popover(s: &State, u: &Ui) -> El {
         .label(tr("Console commands"))
         .w(COLUMN_W)
         .h(200.0)
-        .padding(8.0)
+        .inset(8.0, 8.0)
         .gap(8.0)
         .radius(crate::ui::r(8.0))
         .fill(u.raised.mix(u.over, 0.04).alpha(1.0))
@@ -1605,7 +1606,7 @@ fn console_popover(s: &State, u: &Ui) -> El {
                 .w_full()
                 .grow(1.0)
                 .min_h(0.0)
-                .padding(8.0)
+                .inset(8.0, 8.0)
                 .radius(crate::ui::r(4.0))
                 .fill(u.well)
                 .scroll(ScrollSpec { stick_bottom: false })

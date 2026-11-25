@@ -11,6 +11,7 @@
 //! The premade catalog above the editor is Grimoire's (MIT), ported in
 //! `deadlock-core/data/autoexec-presets.json`.
 
+use crate::ui::Inset;
 use std::path::PathBuf;
 
 use deadlock_core::autoexec::{
@@ -854,7 +855,7 @@ fn popover_layer(s: &State, u: &Ui) -> El {
     } else if let Some(notice) = crate::screens::autoexec_flags::notice(s, u) {
         layer = layer.child(
             shell("autoexec-flags-popover", 560.0)
-                .padding(8.0)
+                .inset(8.0, 8.0)
                 .anchored("autoexec-flags-chip", rune::Side::Bottom, rune::Align::Start, 4.0)
                 .transition(crate::motion::pop(false))
                 .child(notice),

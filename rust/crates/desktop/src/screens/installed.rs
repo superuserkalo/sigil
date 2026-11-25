@@ -38,6 +38,7 @@ pub mod update_match;
 pub mod waiting;
 pub mod wave_scenes;
 
+use crate::ui::Inset;
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::PathBuf;
 
@@ -1581,7 +1582,7 @@ fn card_view(s: &State, u: &Ui, idx: &index::Index, card: &layout::Group, pitch:
             .absolute(0.0, 0.0)
             .w_full()
             .h_full()
-            .padding(6.0)
+            .inset(6.0, 6.0)
             .child(top.child(el().w(6.0)).child(more))
             .child(spacer())
             .child(bottom.pl(2.0).pb(2.0)),

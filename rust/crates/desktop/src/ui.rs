@@ -336,6 +336,72 @@ pub fn zoom_for(interface: f32) -> f32 {
     if k.is_finite() { k.clamp(MIN_ZOOM, MAX_ZOOM) } else { 1.0 }
 }
 
+/// The zoom this frame draws at (`zoom_for`), as f32 bits. The view sets it before it builds,
+/// so the inset floors below read the zoom the tree will be drawn with.
+static ZOOM: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(1.0f32.to_bits());
+
+/// Set by the view each frame, with the zoom it hands Rune.
+pub fn set_zoom(zoom: f32) {
+    let zoom = if zoom.is_finite() && zoom > 0.0 { zoom } else { 1.0 };
+    ZOOM.store(zoom.to_bits(), std::sync::atomic::Ordering::Relaxed);
+}
+
+/// The zoom this frame draws at: 1 at Standard and 100%.
+pub fn zoom() -> f32 {
+    f32::from_bits(ZOOM.load(std::sync::atomic::Ordering::Relaxed))
+}
+
+/// Density scales the space between things (gaps, rows, type); edge insets have a floor.
+/// A page gutter or the sidebar's inner inset never draws under this many points.
+pub const GUTTER_MIN: f32 = 12.0;
+/// A panel, card, dialog or menu's inner padding never draws under these.
+pub const INSET_X_MIN: f32 = 8.0;
+pub const INSET_Y_MIN: f32 = 6.0;
+
+/// `points` of inset in layout points, raised so that it draws at least `min` points on
+/// screen (or `points` itself, when that is smaller) whatever the zoom. Where the zoom keeps
+/// it above the floor (Standard, Spacious) it is `points` exactly, so those densities draw as
+/// they always have.
+pub fn floored(points: f32, min: f32) -> f32 {
+    let z = zoom();
+    let target = points.min(min);
+    if points * z >= target - 0.001 { points } else { target / z }
+}
+
+/// A page gutter or the sidebar's inner inset (floor [`GUTTER_MIN`]).
+pub fn gutter(points: f32) -> f32 {
+    floored(points, GUTTER_MIN)
+}
+
+/// A panel, card, dialog or menu's left and right padding (floor [`INSET_X_MIN`]).
+pub fn inset_x(points: f32) -> f32 {
+    floored(points, INSET_X_MIN)
+}
+
+/// A panel, card, dialog or menu's top and bottom padding (floor [`INSET_Y_MIN`]).
+pub fn inset_y(points: f32) -> f32 {
+    floored(points, INSET_Y_MIN)
+}
+
+/// Inner padding for a panel, card, dialog or menu, with the density floors: `.inset(8.0, 8.0)`
+/// in place of `.padding(8.0)`.
+pub trait Inset {
+    fn inset(self, x: f32, y: f32) -> Self;
+}
+
+impl Inset for El {
+    fn inset(self, x: f32, y: f32) -> El {
+        self.px(inset_x(x)).py(inset_y(y))
+    }
+}
+
+/// An inset that keeps its Standard size on screen when the zoom is under 1 (the sidebar's
+/// logo row, the status bar): Compact tightens what is inside them, not their edges.
+pub fn standard(points: f32) -> f32 {
+    let z = zoom();
+    if z < 1.0 { points / z } else { points }
+}
+
 /// The selection thumb of a segmented control or tab strip: the selected part's fill and
 /// border, a child placed before the label and pinned to the part's edges, so it takes no part
 /// in the layout. `id` names the strip (and is the thumb's key): on a new pick the thumb glides from the
@@ -1334,7 +1400,7 @@ impl Ui {
             .ink(self.ink)
             .ring(1.0, self.hair_strong)
             .radius(r(8.0))
-            .padding(8.0, 4.0)
+            .padding(inset_x(8.0), 4.0)
             .font(LABEL)
             .max_width(Some(240.0))
             .gap(4.0)
@@ -1932,5 +1998,49 @@ mod look_tests {
         assert_eq!(r(8.0), 4.0);
         set_personal(None, 1.0);
         assert!(same(&Ui::new(), &Ui::themed(Theme::Dark, None)));
+    }
+}
+
+#[cfg(test)]
+mod inset_tests {
+    use super::*;
+
+    #[test]
+    fn standard_and_spacious_keep_every_inset_as_written() {
+        let _g = test_globals();
+        for z in [1.0, 1.1, 1.25] {
+            set_zoom(z);
+            for p in [2.0, 4.0, 6.0, 8.0, 12.0, 16.0, 24.0] {
+                assert_eq!(inset_x(p), p);
+                assert_eq!(inset_y(p), p);
+                assert_eq!(gutter(p), p);
+                assert_eq!(standard(p), p);
+            }
+        }
+        set_zoom(1.0);
+    }
+
+    #[test]
+    fn compact_insets_stop_at_their_floors() {
+        let _g = test_globals();
+        for z in [MIN_ZOOM, 0.95] {
+            set_zoom(z);
+            assert!(inset_x(8.0) * z >= INSET_X_MIN - 0.001);
+            assert!(inset_y(6.0) * z >= INSET_Y_MIN - 0.001);
+            // An inset already under its floor at Standard keeps its Standard size, no more.
+            assert!((inset_x(6.0) * z - 6.0).abs() < 0.001);
+            // Larger insets still scale with the density.
+            assert_eq!(inset_x(16.0), 16.0);
+            assert!((standard(16.0) * z - 16.0).abs() < 0.001);
+        }
+        set_zoom(1.0);
+    }
+
+    #[test]
+    fn page_and_sidebar_gutters_clear_the_floor_at_the_smallest_zoom() {
+        // The page gutter and the sidebar's icon inset (the nav's 8 plus a row's 10) scale with
+        // the zoom; the zoom's clamp keeps them over the 12 point floor.
+        assert!(PAGE_X * MIN_ZOOM >= GUTTER_MIN);
+        assert!((8.0 + 10.0) * MIN_ZOOM >= GUTTER_MIN);
     }
 }

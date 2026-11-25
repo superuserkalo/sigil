@@ -16,6 +16,7 @@
 //! Recordings and pictures go to `Pictures/Sigil`, or where the player says when "Ask where to
 //! save" is on (Deadlock Mod Manager's save dialog).
 
+use crate::ui::Inset;
 use std::path::PathBuf;
 
 use rune::{Color, Drag, El, KeyEvent, Key, Phase, Side, SurfaceFit, Tx, col, el, icon, row, text};
@@ -484,7 +485,7 @@ pub fn popover(s: &State, u: &Ui) -> Option<El> {
             .role("menu")
             .label(tr("Controls").to_string())
             .w(260.0)
-            .padding(6.0)
+            .inset(6.0, 6.0)
             .fill(shade("#121214").alpha(0.97))
             .radius(crate::ui::r(10.0))
             .border(1.0, Color::WHITE.alpha(0.1))

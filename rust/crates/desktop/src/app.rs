@@ -1191,6 +1191,7 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
     // Zoom from the shortcuts, times the density chosen in Appearance (100% by default), kept
     // inside the range where page and panel insets stay readable (`ui::zoom_for`).
     let zoom = crate::ui::zoom_for(s.prefs.zoom);
+    crate::ui::set_zoom(zoom);
     cx.zoom(zoom);
     // Thumbnails decode at the pixels a card covers: the screen scale times the zoom.
     crate::data::set_pixel_scale(cx.env().scale * zoom);
@@ -1650,7 +1651,7 @@ fn sidebar(s: &State, u: &Ui, insets: rune::ChromeInsets) -> El {
             col()
                 .key("brand")
                 .w_full()
-                .pt(RAIL_TOP)
+                .pt(crate::ui::standard(RAIL_TOP))
                 .items_center()
                 .clip_rounded(0.0)
                 .window_drag()
@@ -1661,12 +1662,12 @@ fn sidebar(s: &State, u: &Ui, insets: rune::ChromeInsets) -> El {
                 .w_full()
                 // Under the traffic lights on macOS; elsewhere the row's own 12 point inset
                 // above the mark.
-                .h(if lights_row { TITLEBAR_H } else { BRAND_H })
+                .h(if lights_row { TITLEBAR_H } else { crate::ui::standard(BRAND_H) })
                 // The 24 point mark is centred on the nav icon axis (14 to 38, centre 26) and
                 // the wordmark starts on the label edge (44); the collapse button mirrors the
                 // icon axis on the right.
-                .pl(14.0)
-                .pr(12.0)
+                .pl(crate::ui::standard(14.0))
+                .pr(crate::ui::standard(12.0))
                 .center_y()
                 .clip_rounded(0.0)
                 .window_drag()

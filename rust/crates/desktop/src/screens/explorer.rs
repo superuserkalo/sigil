@@ -9,6 +9,7 @@
 //! - Sigil: every read runs on a worker through `deadlock_core::explorer`. The writes are export
 //!   and Save, both into a mod project; nothing here touches the game install.
 
+use crate::ui::Inset;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -638,7 +639,7 @@ fn tree(s: &State, u: &Ui, listing: &Listing) -> El {
         );
     u.panel()
         .w_full()
-        .padding(8.0)
+        .inset(8.0, 8.0)
         .gap(6.0)
         .child(crumbs(s, u))
         .child(if ex.folder.is_empty() { el() } else { actions })
@@ -879,7 +880,7 @@ fn search_pane(s: &State, u: &Ui) -> El {
     }
     u.panel()
         .w_full()
-        .padding(8.0)
+        .inset(8.0, 8.0)
         .gap(8.0)
         .child(u.search_shell(field))
         .child(controls)
@@ -907,7 +908,7 @@ fn compare_pane(s: &State, u: &Ui, listing: &Listing) -> El {
     let mut pane = u
         .panel()
         .w_full()
-        .padding(8.0)
+        .inset(8.0, 8.0)
         .gap(8.0)
         .child(text(fill(tr("Compare {} with"), &[&listing.label])).font(BODY_MED).color(u.ink))
         .child(picks);
