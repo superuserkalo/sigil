@@ -149,8 +149,7 @@ pub(crate) fn german_strings() -> Vec<&'static str> {
     maps()[index(Lang::German) as usize].values().copied().collect()
 }
 
-/// The German for `english`, when a table has it.
-#[cfg(test)]
+/// The German for `english`, when a table has it. Browse search reads it for mod-kind words.
 pub(crate) fn german_of(english: &str) -> Option<&'static str> {
     maps()[index(Lang::German) as usize].get(english).copied()
 }

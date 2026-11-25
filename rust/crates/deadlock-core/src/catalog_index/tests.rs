@@ -97,6 +97,7 @@ fn build(fixtures: &[Fixture], with_terms: bool) -> CatalogIndex {
             title: f.title.to_string(),
             updated: 1,
             fields: fields.iter().map(|(id, cls)| id * PACK + u32::from(*cls)).collect(),
+            ..IndexMod::default()
         });
     }
     CatalogIndex {
@@ -144,7 +145,7 @@ fn fixtures() -> Vec<Fixture> {
 }
 
 fn top_in(index: &CatalogIndex, query: &str, n: usize) -> Vec<u64> {
-    Matcher::new(index).search(query, n, |_| None).iter().map(|hit| hit.id).collect()
+    Matcher::new(index).search(query, n).hits.iter().map(|hit| hit.id).collect()
 }
 
 fn top(query: &str, n: usize) -> Vec<u64> {
@@ -194,9 +195,18 @@ fn covers_short_forms_and_spelling_variants_with_no_alias_table() {
 }
 
 #[test]
-fn requires_every_word_and_falls_back_to_any_word() {
-    assert_eq!(top("gas mask abrams", 3), vec![7]);
-    assert!(!top("gas mask unicorn", 3).is_empty());
+fn requires_every_word_then_offers_the_closest_matches_or_nothing() {
+    let index = build(&fixtures(), false);
+    let matcher = Matcher::new(&index);
+    let found = matcher.search("gas mask abrams", 3);
+    assert_eq!((found.hits.iter().map(|h| h.id).collect::<Vec<_>>(), found.closest), (vec![7], false));
+    // Most of the query is there: the closest match, flagged as such.
+    let found = matcher.search("plague doctor abrams unicorn", 3);
+    assert_eq!((found.hits.iter().map(|h| h.id).collect::<Vec<_>>(), found.closest), (vec![7], true));
+    // Less than half of it: nothing, so the grid shows its empty state.
+    let found = matcher.search("gas mask unicorn", 3);
+    assert!(found.hits.is_empty() && !found.closest);
+    assert!(matcher.search("breaking bad walter", 3).hits.is_empty());
 }
 
 #[test]
@@ -274,7 +284,7 @@ fn visual_terms_count_for_little_and_references_fully() {
         ],
         true,
     );
-    let hits = Matcher::new(&index).search("rifle", 5, |_| None);
+    let hits = Matcher::new(&index).search("rifle", 5).hits;
     let score = |id| hits.iter().find(|hit| hit.id == id).map(|hit| hit.score).unwrap();
     assert_eq!(hits[0].id, 2);
     assert!(score(1) < score(3), "a visual term counts less than a description word");
@@ -295,20 +305,112 @@ fn title_matches_always_outrank_generated_term_matches() {
 }
 
 #[test]
-fn ties_break_by_likes_when_the_card_is_known() {
-    let index = build(
+fn likes_from_the_index_lift_a_score_and_their_absence_changes_nothing() {
+    let mut index = build(
         &[one(1, "Red Haze", "Plain.", vec![]), one(2, "Red Haze", "Plain.", vec![]), one(3, "Red Haze", "Plain.", vec![])],
         true,
     );
+    let ids = |index: &CatalogIndex| top_in(index, "red haze", 5);
+    assert_eq!(ids(&index), vec![1, 2, 3]);
+    index.mods[1].likes = Some(90);
+    index.mods[2].likes = Some(10);
+    assert_eq!(ids(&index), vec![2, 3, 1]);
+    // The lift is gentle: a better match still wins over a liked one.
+    let mut index = build(&[one(1, "Red Haze jacket", "Plain.", vec![]), one(2, "Haze", "A red one.", vec![])], true);
+    index.mods[1].likes = Some(500);
+    assert_eq!(top_in(&index, "red haze jacket", 5), vec![1]);
+}
+
+#[test]
+fn joins_and_splits_compound_words() {
+    let index = build(
+        &[
+            one(1, "Kris from Deltarune", "Plain.", vec![]),
+            one(2, "Delta squad armor", "Plain.", vec![]),
+            one(3, "Better hit sound", "Plain.", vec![]),
+            one(4, "Rat King flag", "Plain.", vec![]),
+            one(5, "Counter Strike AWP", "Plain.", vec![]),
+        ],
+        true,
+    );
+    // Two typed words that are one on the page, and the other way round.
+    assert_eq!(top_in(&index, "delta rune", 5), vec![1]);
+    assert_eq!(top_in(&index, "hitsound", 5), vec![3]);
+    assert_eq!(top_in(&index, "ratking", 5), vec![4]);
+    assert_eq!(top_in(&index, "counterstrike", 5), vec![5]);
+}
+
+#[test]
+fn non_latin_text_matches_the_raw_title() {
+    let index = build(
+        &[
+            one(1, "Русская озвучка Haze", "Plain.", vec![]),
+            one(2, "初音ミク over Ivy", "Plain.", vec![]),
+            one(3, "Haze recolor", "Plain.", vec![]),
+        ],
+        true,
+    );
+    assert_eq!(top_in(&index, "озвучка", 5), vec![1]);
+    assert_eq!(top_in(&index, "РУССКАЯ ОЗВУЧКА", 5), vec![1]);
+    assert_eq!(top_in(&index, "初音ミク", 5), vec![2]);
+    assert_eq!(top_in(&index, "初音ミク ivy", 5), vec![2]);
+    assert!(top_in(&index, "灭霸", 5).is_empty());
+    assert!(matcher::is_foreign("хейз") && matcher::is_foreign("胡桃") && !matcher::is_foreign("cafe") && !matcher::is_foreign("café"));
+}
+
+#[test]
+fn rating_words_filter_on_the_flag_only_when_the_index_has_it() {
+    let mut index = build(
+        &[
+            one(1, "Lewd Haze", "Plain.", vec![]),
+            one(2, "Bunny Haze", "Plain.", vec![]),
+            one(3, "Bunny Ivy", "Plain.", vec![]),
+        ],
+        true,
+    );
+    // Without the key the words are text.
+    assert_eq!(top_in(&index, "lewd", 5), vec![1]);
+    assert!(!Matcher::new(&index).search("nsfw haze", 5).rated_only);
+    index.mods[1].rated = Some(true);
+    index.mods[2].rated = Some(true);
+    index.mods[2].likes = Some(40);
     let matcher = Matcher::new(&index);
-    let ids = |hits: Vec<Hit>| hits.iter().map(|hit| hit.id).collect::<Vec<_>>();
-    assert_eq!(ids(matcher.search("red haze", 5, |_| None)), vec![1, 2, 3]);
-    let likes = |id: u64| match id {
-        2 => Some(90),
-        3 => Some(10),
-        _ => None,
-    };
-    assert_eq!(ids(matcher.search("red haze", 5, likes)), vec![2, 3, 1]);
+    assert!(matcher.has_ratings());
+    let found = matcher.search("nsfw haze", 5);
+    assert!(found.rated_only);
+    assert_eq!(found.hits.iter().map(|h| h.id).collect::<Vec<_>>(), vec![2]);
+    // Alone, the word lists every rated mod, most liked first.
+    assert_eq!(top_in(&index, "nsfw", 5), vec![3, 2]);
+    assert_eq!(top_in(&index, "18 bunny", 5), vec![3, 2]);
+}
+
+#[test]
+fn kind_words_in_the_ui_language_map_to_the_english_word() {
+    let index = build(
+        &[
+            Fixture { cat: Some("Maps"), ..one(1, "Street test", "A map.", vec![]) },
+            one(2, "Pink crosshair", "Plain.", vec![]),
+            one(3, "Haze recolor", "Plain.", vec![]),
+        ],
+        true,
+    );
+    let mut matcher = Matcher::new(&index);
+    assert!(matcher.search("fadenkreuz", 5).hits.is_empty());
+    matcher.set_kind_words([("Fadenkreuz".to_string(), "Crosshair".to_string()), ("Karte".to_string(), "Map".to_string())]);
+    let ids = |q: &str| matcher.search(q, 5).hits.iter().map(|h| h.id).collect::<Vec<_>>();
+    assert_eq!(ids("fadenkreuz"), vec![2]);
+    assert_eq!(ids("karte"), vec![1]);
+}
+
+#[test]
+fn reads_the_optional_likes_rating_and_added_keys() {
+    let body = br#"{"v":3,"built":5,"strings":["haze"],"mods":[
+        {"i":7,"ti":"Haze","u":1,"x":[0],"l":12,"n":1,"a":1790000000},
+        {"i":8,"ti":"Other","x":[]}]}"#;
+    let index = parse(body).unwrap();
+    assert_eq!((index.mods[0].likes, index.mods[0].rated, index.mods[0].added), (Some(12), Some(true), Some(1_790_000_000)));
+    assert_eq!((index.mods[1].likes, index.mods[1].rated, index.mods[1].added), (None, None, None));
+    assert!(parse(br#"{"v":3,"built":5,"strings":[],"mods":[{"i":7,"ti":"x","x":[],"l":-1}]}"#).is_err());
 }
 
 #[test]
@@ -326,6 +428,7 @@ fn matches_a_2500_mod_index_in_a_few_milliseconds() {
                 .map(|k| ((i * 37 + k * 101) % 9_000) * PACK)
                 .chain([(base + (i % 10)) * PACK + 4])
                 .collect(),
+            ..IndexMod::default()
         })
         .collect();
     let index = CatalogIndex {
@@ -338,7 +441,7 @@ fn matches_a_2500_mod_index_in_a_few_milliseconds() {
     let start = std::time::Instant::now();
     let runs = 20;
     for _ in 0..runs {
-        assert!(!matcher.search("counter strik gold", 500, |_| None).is_empty());
+        assert!(!matcher.search("gold skin numbe", 500).hits.is_empty());
     }
     let each = start.elapsed() / runs;
     eprintln!("[catalog_index] one query over 2,500 mods: {each:?}");
@@ -555,7 +658,7 @@ fn real_index_queries() {
     eprintln!("prepared {} mods in {:?}", matcher.len(), start.elapsed());
     for query in ["overwatch", "counter strike", "gojo", "gas mask", "zenless zone zero", "mei", "peaky blinders", "hd"] {
         let start = std::time::Instant::now();
-        let hits = matcher.search(query, 500, |_| None);
+        let hits = matcher.search(query, 500).hits;
         let took = start.elapsed();
         let titles: Vec<String> = hits
             .iter()

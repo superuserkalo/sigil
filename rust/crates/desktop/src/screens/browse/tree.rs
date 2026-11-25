@@ -113,6 +113,7 @@ const DE: &[(&str, &str)] = &[
     ("No installed GameBanana mods", "Keine installierten GameBanana-Mods"),
     ("Mods you install from Browse show up here.", "Mods, die du über Entdecken installierst, erscheinen hier."),
     ("Nothing matches", "Keine Treffer"),
+    ("No mod matches every word. These are the closest matches.", "Kein Mod passt zu jedem Wort. Das sind die nächsten Treffer."),
     ("Try fewer filters or another search.", "Versuche weniger Filter oder eine andere Suche."),
     ("Nothing to show", "Nichts anzuzeigen"),
     ("Loading", "Lädt"),
@@ -162,6 +163,12 @@ const DE: &[(&str, &str)] = &[
 #[cfg(test)]
 pub fn german(text: &str) -> &str {
     DE.iter().find(|(en, _)| *en == text).map(|(_, de)| *de).unwrap_or(text)
+}
+
+/// This file's German for `text`, whatever the current language: Browse search maps the
+/// German mod-kind words back to English with it.
+pub fn german_label(text: &str) -> Option<&'static str> {
+    DE.iter().find(|(en, _)| *en == text).map(|(_, de)| *de)
 }
 
 /// `tr` with this file's German strings first.

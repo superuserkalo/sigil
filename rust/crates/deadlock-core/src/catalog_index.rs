@@ -33,8 +33,10 @@ use crate::util::write_atomic;
 pub mod matcher;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod eval;
 
-pub use matcher::{Hit, Matcher, normalize};
+pub use matcher::{Found, Hit, Matcher, normalize};
 
 /// The index route on Sigil's Worker.
 pub const PATH: &str = "/v1/catalog/tags";
@@ -57,7 +59,7 @@ pub const MAX_STRING_BYTES: usize = 512;
 pub const MAX_CARDS: usize = 6_000;
 
 /// One mod in the index.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct IndexMod {
     pub id: u64,
     pub title: String,
@@ -65,6 +67,13 @@ pub struct IndexMod {
     pub updated: u64,
     /// `stringId * PACK + class`, only ids inside the string table.
     pub fields: Vec<u32>,
+    /// GameBanana likes (`l`), when the server sends them.
+    pub likes: Option<u64>,
+    /// The page has content ratings (`n`: 1). None when the server sends no rating key for
+    /// this mod; `Some(false)` is not sent today but reads the same as unrated.
+    pub rated: Option<bool>,
+    /// When the mod was added to GameBanana (`a`), unix seconds.
+    pub added: Option<u64>,
 }
 
 /// The parsed, validated index.
@@ -131,6 +140,13 @@ struct RawMod {
     #[serde(default)]
     u: u64,
     x: Capped<u64, MAX_FIELDS_PER_MOD>,
+    /// Optional keys added with the version unchanged: likes, content rating, added time.
+    #[serde(default)]
+    l: Option<u64>,
+    #[serde(default)]
+    n: Option<u8>,
+    #[serde(default)]
+    a: Option<u64>,
 }
 
 /// Parse and check an index body. Any failure rejects the whole body: wrong types, a version
@@ -173,6 +189,9 @@ pub fn parse(body: &[u8]) -> Result<CatalogIndex> {
             title: m.ti,
             updated: m.u,
             fields,
+            likes: m.l,
+            rated: m.n.map(|flag| flag == 1),
+            added: m.a,
         });
     }
     Ok(CatalogIndex {

@@ -1001,6 +1001,7 @@ pub fn scene_search_local(s: &mut State) {
             updated: 1,
             // Asa Mitaka is from Chainsaw Man: a verified reference term (class 4).
             fields: if row.id == 733250 { vec![PACK + 1, 4] } else { vec![PACK + 1] },
+            ..IndexMod::default()
         })
         .collect();
     let index = CatalogIndex { version: SUPPORTED_VERSION, built: 1, strings, mods };

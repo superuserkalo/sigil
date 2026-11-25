@@ -1234,6 +1234,128 @@ fn in_sub(card: &BrowseCard, sub: &str) -> bool {
             || catalog_mirror::fold(&card.name).contains(&sub))
 }
 
+/// The per-card filters GameBanana cannot apply (hidden, installed, mature, outdated, exclude,
+/// dates, sub category, hero), read once from the state so a whole list can be checked. The
+/// grid applies it to the loaded cards; local search applies it to every match before paging.
+pub(crate) struct CardFilter<'a> {
+    s: &'a State,
+    installed: HashSet<u64>,
+    hide_mature: bool,
+    sub_ids: Vec<u64>,
+    sub_complete: bool,
+    hero_ids: Vec<u64>,
+    window_start: i64,
+    window_end: i64,
+}
+
+impl<'a> CardFilter<'a> {
+    pub(crate) fn new(s: &'a State) -> CardFilter<'a> {
+        let f = &s.browse_view.filters;
+        let installed = if f.owned == Owned::NotInstalled {
+            installed_ids(s)
+        } else {
+            HashSet::new()
+        };
+        // A pick holds the categories under it: Haze holds its styles (`tree.rs`).
+        let sub_ids = f.sub.as_ref().map(|pick| tree::subtree(s, f.section, pick.id)).unwrap_or_default();
+        let sub_complete = f.sub.as_ref().is_none_or(|pick| tree::subtree_complete(s, f.section, pick.id));
+        let hero_ids = f.hero.as_deref().map(|hero| tree::hero_ids(s, f.section, hero)).unwrap_or_default();
+        let window_start = if f.date_from > 0 {
+            f.date_from
+        } else {
+            f.period.cutoff(gamebanana::now_unix()).unwrap_or(0)
+        };
+        CardFilter {
+            s,
+            installed,
+            hide_mature: s.prefs.mature == crate::prefs::Mature::Hide || f.mature == MatureView::Hide,
+            sub_ids,
+            sub_complete,
+            hero_ids,
+            window_start,
+            window_end: f.date_to,
+        }
+    }
+
+    /// The installed ids, filled only while the Not installed filter is on.
+    pub(crate) fn installed(&self) -> &HashSet<u64> {
+        &self.installed
+    }
+
+    /// Mature mods are hidden (Settings or the grid's Mature filter).
+    pub(crate) fn hide_mature(&self) -> bool {
+        self.hide_mature
+    }
+
+    /// The date window, unix seconds, 0 for open.
+    pub(crate) fn window(&self) -> (i64, i64) {
+        (self.window_start, self.window_end)
+    }
+
+    fn in_sub(&self, card: &BrowseCard, name: &str) -> bool {
+        let f = &self.s.browse_view.filters;
+        if card.sub_category_id > 0 && !self.sub_ids.is_empty() {
+            // Until the third level is read, the server's filter stands for an included pick.
+            self.sub_ids.contains(&card.sub_category_id) || (!self.sub_complete && !f.exclude)
+        } else {
+            in_sub(card, name)
+        }
+    }
+
+    pub(crate) fn mentions_hero(&self, card: &BrowseCard, hero: &str) -> bool {
+        (card.sub_category_id > 0 && self.hero_ids.contains(&card.sub_category_id)) || mentions_hero(card, hero)
+    }
+
+    pub(crate) fn keeps(&self, card: &BrowseCard) -> bool {
+        let s = self.s;
+        let f = &s.browse_view.filters;
+        if !content_allowed(s, card.id, false, &card.author) {
+            return false;
+        }
+        if card.nsfw && self.hide_mature && f.mature != MatureView::Only {
+            return false;
+        }
+        if f.mature == MatureView::Only && !card.nsfw {
+            return false;
+        }
+        if f.hide_outdated && outdated(card) {
+            return false;
+        }
+        if f.owned == Owned::NotInstalled && card.model == "Mod" && self.installed.contains(&card.id) {
+            return false;
+        }
+        let stamp = match f.date_field {
+            DateField::Added => card.added_ts,
+            DateField::Updated => card.updated_ts,
+        };
+        if self.window_start > 0 && stamp > 0 && stamp < self.window_start {
+            return false;
+        }
+        if self.window_end > 0 && stamp > self.window_end {
+            return false;
+        }
+        if f.exclude {
+            if f.category.as_ref().is_some_and(|pick| in_category(card, &pick.name)) {
+                return false;
+            }
+            if f.sub.as_ref().is_some_and(|pick| self.in_sub(card, &pick.name)) {
+                return false;
+            }
+            if f.hero.as_ref().is_some_and(|hero| self.mentions_hero(card, hero)) {
+                return false;
+            }
+        } else {
+            if f.sub.as_ref().is_some_and(|pick| !self.in_sub(card, &pick.name)) {
+                return false;
+            }
+            if f.hero.as_ref().is_some_and(|hero| !self.mentions_hero(card, hero)) {
+                return false;
+            }
+        }
+        true
+    }
+}
+
 /// Indices into the catalog of the cards the grid shows: hidden mods and creators left out,
 /// and the filters GameBanana cannot apply (installed, mature, outdated, exclude, dates)
 /// applied here. The typed search filters the loaded cards at once while the server search
@@ -1248,37 +1370,7 @@ fn shown_indices(s: &State) -> Vec<usize> {
     } else {
         String::new()
     };
-    let installed = if f.owned == Owned::NotInstalled {
-        installed_ids(s)
-    } else {
-        HashSet::new()
-    };
-    let hide_mature = s.prefs.mature == crate::prefs::Mature::Hide || f.mature == MatureView::Hide;
-    // A pick holds the categories under it: Haze holds its styles (`tree.rs`).
-    let sub_ids = f.sub.as_ref().map(|pick| tree::subtree(s, f.section, pick.id)).unwrap_or_default();
-    let sub_complete = f.sub.as_ref().is_none_or(|pick| tree::subtree_complete(s, f.section, pick.id));
-    let hero_ids = f.hero.as_deref().map(|hero| tree::hero_ids(s, f.section, hero)).unwrap_or_default();
-    let in_sub = |card: &BrowseCard, name: &str| {
-        if card.sub_category_id > 0 && !sub_ids.is_empty() {
-            // Until the third level is read, the server's filter stands for an included pick.
-            sub_ids.contains(&card.sub_category_id) || (!sub_complete && !f.exclude)
-        } else {
-            in_sub(card, name)
-        }
-    };
-    let mentions_hero = |card: &BrowseCard, hero: &str| {
-        (card.sub_category_id > 0 && hero_ids.contains(&card.sub_category_id)) || mentions_hero(card, hero)
-    };
-    let window_start = if f.date_from > 0 {
-        f.date_from
-    } else {
-        f.period.cutoff(gamebanana::now_unix()).unwrap_or(0)
-    };
-    let window_end = f.date_to;
-    let stamp = |card: &BrowseCard| match f.date_field {
-        DateField::Added => card.added_ts,
-        DateField::Updated => card.updated_ts,
-    };
+    let filter = CardFilter::new(s);
     s.browse
         .page
         .as_ref()
@@ -1286,62 +1378,7 @@ fn shown_indices(s: &State) -> Vec<usize> {
             page.mods
                 .iter()
                 .enumerate()
-                .filter(|(_, card)| {
-                    if !content_allowed(s, card.id, false, &card.author) {
-                        return false;
-                    }
-                    if card.nsfw && hide_mature && f.mature != MatureView::Only {
-                        return false;
-                    }
-                    if f.mature == MatureView::Only && !card.nsfw {
-                        return false;
-                    }
-                    if f.hide_outdated && outdated(card) {
-                        return false;
-                    }
-                    if f.owned == Owned::NotInstalled
-                        && card.model == "Mod"
-                        && installed.contains(&card.id)
-                    {
-                        return false;
-                    }
-                    if window_start > 0 && stamp(card) > 0 && stamp(card) < window_start {
-                        return false;
-                    }
-                    if window_end > 0 && stamp(card) > window_end {
-                        return false;
-                    }
-                    if f.exclude {
-                        if f
-                            .category
-                            .as_ref()
-                            .is_some_and(|pick| in_category(card, &pick.name))
-                        {
-                            return false;
-                        }
-                        if f.sub
-                            .as_ref()
-                            .is_some_and(|pick| in_sub(card, &pick.name))
-                        {
-                            return false;
-                        }
-                        if f.hero.as_ref().is_some_and(|hero| mentions_hero(card, hero)) {
-                            return false;
-                        }
-                    } else {
-                        if f
-                            .sub
-                            .as_ref()
-                            .is_some_and(|pick| !in_sub(card, &pick.name))
-                        {
-                            return false;
-                        }
-                        if f.hero.as_ref().is_some_and(|hero| !mentions_hero(card, hero)) {
-                            return false;
-                        }
-                    }
-                    matches_query(card, &query)
-                })
+                .filter(|(_, card)| filter.keeps(card) && matches_query(card, &query))
                 .map(|(index, _)| index)
                 .collect()
         })

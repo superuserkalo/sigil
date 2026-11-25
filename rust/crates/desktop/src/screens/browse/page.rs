@@ -126,6 +126,16 @@ pub(crate) fn grid_page(s: &State, u: &Ui) -> El {
         {
             c = c.child(bar);
         }
+        // Local search found no mod with every word: one plain line says these are the
+        // closest matches.
+        if super::search::closest(s) {
+            c = c.child(
+                text(super::tree::tr("No mod matches every word. These are the closest matches."))
+                    .key("browse-closest")
+                    .font(SMALL)
+                    .color(u.muted),
+            );
+        }
         let list = if s.browse_view.layout == Layout::List {
             list_view(s, u, shown.clone())
         } else {
@@ -357,7 +367,10 @@ pub(crate) fn result_line(s: &State, shown: usize, stale: bool) -> String {
         || f.mature != MatureView::Setting
         || f.hide_outdated
         || f.exclude;
-    let total = if page.complete || client_side || f.owned == Owned::Installed {
+    // Local search filters every match before paging, so its total is already honest.
+    let total = if super::search::active(s) {
+        page.total.max(shown)
+    } else if page.complete || client_side || f.owned == Owned::Installed {
         shown
     } else {
         page.total.max(shown)

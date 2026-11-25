@@ -4,8 +4,10 @@
 //! it is typed: no request per keystroke, and the text goes nowhere. The index holds ids and
 //! titles only, so the cards (picture, likes, author) come from the saved catalog, from rows
 //! fetched earlier, or, once typing pauses, from one `Mod/Multi` request by id for the top
-//! matches that are still missing (ids only, never the text). Results show in match order;
-//! every grid filter still applies.
+//! matches that are still missing (ids only, never the text). Results show in relevance order
+//! unless an explicit sort the index can answer is picked; every grid filter applies to the
+//! whole matched set before paging. When no mod matches every word, the closest matches show
+//! under one plain line that says so.
 //!
 //! GameBanana's own title search stays the answer when there is no index yet, outside the
 //! Mods section (the index covers mods only), with the Featured filter (a row read by id does
@@ -28,20 +30,59 @@ const MAX_HITS: usize = 1_000;
 /// Wait before asking the Worker again after a network failure.
 const RETRY_AFTER: Duration = Duration::from_secs(15 * 60);
 
-/// A loaded index, ready to match.
+/// A loaded index, ready to match. Built on a worker (start-up read or refresh), never on the
+/// UI thread: the token table, the id lookup and the kind words are all made here once.
 pub struct Ready {
     pub index: Arc<CatalogIndex>,
     pub matcher: Arc<Matcher>,
+    /// Mod id to its place in `index.mods`.
+    pub by_id: HashMap<u64, usize>,
 }
 
 impl Ready {
     pub fn new(index: CatalogIndex) -> Ready {
-        let matcher = Arc::new(Matcher::new(&index));
+        let mut matcher = Matcher::new(&index);
+        matcher.set_kind_words(kind_words(&index));
+        let by_id = index.mods.iter().enumerate().map(|(at, m)| (m.id, at)).collect();
         Ready {
             index: Arc::new(index),
-            matcher,
+            matcher: Arc::new(matcher),
+            by_id,
         }
     }
+}
+
+/// Mod kinds a player may type in the app's own UI language. The index has English words
+/// only, so each German label the app already shows for a kind maps back to its English word.
+const KIND_LABELS: [&str; 34] = [
+    "Crosshair", "Crosshairs", "Map", "Maps", "Sound", "Sounds", "Skin", "Skins", "Cursor", "Cursors", "Model", "Models",
+    "Icon", "Icons", "Font", "Fonts", "Music", "Voice", "Voices", "Animation", "Animations", "Hero", "Heroes", "Weapon",
+    "Weapons", "Item", "Items", "Ability", "Abilities", "Announcer", "Hideout", "Other", "Portrait", "Portraits",
+];
+
+/// German mod-kind words to the English word, from the category labels in the index and the
+/// kinds above, translated by the app's own German tables (`tree.rs` first, then Settings).
+pub(crate) fn kind_words(index: &CatalogIndex) -> Vec<(String, String)> {
+    let mut english: Vec<String> = KIND_LABELS.iter().map(|w| w.to_string()).collect();
+    for m in &index.mods {
+        for category in index.strings_of(m, ci::matcher::CLS_CATEGORY) {
+            let mut label: String = category.to_string();
+            if let Some(first) = label.get(..1) {
+                label = first.to_uppercase() + &label[1..];
+            }
+            if !english.contains(&label) {
+                english.push(label);
+            }
+        }
+    }
+    english
+        .into_iter()
+        .filter_map(|en| {
+            let de = super::tree::german_label(&en).or_else(|| crate::screens::settings::i18n::german_of(&en))?;
+            let (from, to) = (ci::normalize(de), ci::normalize(&en));
+            (!from.is_empty() && !from.contains(' ') && from != to).then_some((from, to))
+        })
+        .collect()
 }
 
 /// What the start-up read found on disk.
@@ -82,6 +123,9 @@ pub struct LocalSearch {
     pub settle: Option<Instant>,
     /// The shown page has matches whose cards are not read yet.
     pub missing: bool,
+    /// No mod matches every word of the applied search: the grid shows the closest matches
+    /// and says so in one line.
+    pub closest: bool,
 }
 
 fn now_ms() -> u64 {
@@ -117,7 +161,8 @@ fn eligible(s: &State) -> bool {
 
 /// Text local search answers: words to match, and not a pasted id or link.
 fn usable(text: &str) -> bool {
-    !ci::normalize(text).is_empty() && pasted_submission(text).is_none()
+    let words = !ci::normalize(text).is_empty() || text.split_whitespace().any(ci::matcher::is_foreign);
+    words && pasted_submission(text).is_none()
 }
 
 /// True when the typed text should be matched locally at once, without the typing pause.
@@ -149,42 +194,111 @@ fn known_cards(s: &State, ids: &[u64]) -> HashMap<u64, BrowseCard> {
     out
 }
 
-/// The matches for the applied search, best first, with the category pick applied from the
-/// index itself so the count is right before the cards arrive.
-fn hits(s: &State, text: &str) -> Vec<u64> {
+/// The matches for the applied search, after every filter the grid applies, so the count and
+/// the pages are honest. A filter a card is needed for (outdated, a hidden creator) waits for
+/// the card; the index answers the rest (category, creator, hero, rating, added date).
+struct Matched {
+    ids: Vec<u64>,
+    closest: bool,
+    /// The cards known for the matches.
+    known: HashMap<u64, BrowseCard>,
+}
+
+fn matched(s: &State, text: &str) -> Matched {
     let Some(ready) = s.browse_view.search.ready.as_ref() else {
-        return Vec::new();
+        return Matched { ids: Vec::new(), closest: false, known: HashMap::new() };
     };
-    // Likes break ties when the card is known.
-    let likes: HashMap<u64, u64> = s
-        .browse_view
-        .search
-        .cards
-        .iter()
-        .map(|(id, card)| (*id, card.row.likes))
-        .collect();
-    let found = ready.matcher.search(text, MAX_HITS, |id| likes.get(&id).copied());
+    let found = ready.matcher.search(text, MAX_HITS);
+    let all: Vec<u64> = found.hits.iter().map(|hit| hit.id).collect();
+    let known = known_cards(s, &all);
     let f = &s.browse_view.filters;
+    let filter = CardFilter::new(s);
     let category = f.category.as_ref().map(|pick| ci::normalize(&pick.name));
-    let by_id: HashMap<u64, &ci::IndexMod> = if category.is_some() {
-        ready.index.mods.iter().map(|m| (m.id, m)).collect()
-    } else {
-        HashMap::new()
+    let creator = f.creator.as_ref().map(|pick| ci::normalize(&pick.name));
+    let hero = f.hero.as_deref().map(ci::normalize).filter(|h| !h.is_empty());
+    let rated_known = ready.matcher.has_ratings();
+    let (window_start, window_end) = filter.window();
+    let keep = |id: u64| -> bool {
+        if s.browse_view.search.gone.contains(&id) {
+            return false;
+        }
+        let entry = ready.by_id.get(&id).map(|&at| &ready.index.mods[at]);
+        if let Some(category) = category.as_deref() {
+            let inside = entry.is_some_and(|m| ready.index.strings_of(m, ci::matcher::CLS_CATEGORY).any(|c| c == category));
+            if inside == f.exclude {
+                return false;
+            }
+        }
+        if let Some(card) = known.get(&id) {
+            let category_ok = f.exclude || f.category.as_ref().is_none_or(|pick| in_category(card, &pick.name));
+            let creator_ok = f.creator.as_ref().is_none_or(|pick| card.author_id == pick.id);
+            let rated = card.nsfw || entry.is_some_and(|m| m.rated == Some(true));
+            let mature_ok = !(rated && filter.hide_mature() && f.mature != MatureView::Only);
+            return category_ok && creator_ok && mature_ok && filter.keeps(card);
+        }
+        // No card yet: what the index and the id can answer.
+        if mod_hidden(s, id) {
+            return false;
+        }
+        if f.owned == Owned::NotInstalled && filter.installed().contains(&id) {
+            return false;
+        }
+        let Some(m) = entry else { return true };
+        if let Some(creator) = creator.as_deref()
+            && !ready.index.strings_of(m, ci::matcher::CLS_AUTHOR).any(|a| a == creator)
+        {
+            return false;
+        }
+        if rated_known {
+            let rated = m.rated == Some(true);
+            if rated && filter.hide_mature() && f.mature != MatureView::Only {
+                return false;
+            }
+            if f.mature == MatureView::Only && !rated {
+                return false;
+            }
+        }
+        if let (DateField::Added, Some(added)) = (f.date_field, m.added) {
+            let added = added as i64;
+            if (window_start > 0 && added < window_start) || (window_end > 0 && added > window_end) {
+                return false;
+            }
+        }
+        if let Some(hero) = hero.as_deref() {
+            let mentions = ready.index.strings_of(m, ci::matcher::CLS_HERO).any(|h| h == hero)
+                || ci::normalize(&m.title).contains(hero);
+            if mentions == f.exclude {
+                return false;
+            }
+        }
+        true
     };
-    found
-        .into_iter()
-        .map(|hit| hit.id)
-        .filter(|id| !s.browse_view.search.gone.contains(id))
-        .filter(|id| {
-            let Some(category) = category.as_deref() else {
-                return true;
-            };
-            let inside = by_id
-                .get(id)
-                .is_some_and(|m| ready.index.strings_of(m, ci::matcher::CLS_CATEGORY).any(|c| c == category));
-            inside != f.exclude
-        })
-        .collect()
+    let mut ids: Vec<u64> = found.hits.iter().map(|hit| hit.id).filter(|id| keep(*id)).collect();
+    order(s, ready, &known, &mut ids);
+    Matched {
+        closest: found.closest && !ids.is_empty(),
+        ids,
+        known,
+    }
+}
+
+/// With the default sort the matches stay in relevance order. An explicit sort the index or
+/// the cards can answer (most liked, newest, name) re-sorts the whole matched set, as it does
+/// without a search; the others keep relevance order.
+fn order(s: &State, ready: &Ready, known: &HashMap<u64, BrowseCard>, ids: &mut [u64]) {
+    let entry = |id: &u64| ready.by_id.get(id).map(|&at| &ready.index.mods[at]);
+    match s.browse_view.filters.order {
+        Some(BrowseOrder::MostLiked) => ids.sort_by_cached_key(|id| {
+            let likes = entry(id).and_then(|m| m.likes).or_else(|| known.get(id).map(|c| c.likes)).unwrap_or(0);
+            std::cmp::Reverse(likes)
+        }),
+        Some(BrowseOrder::Newest) => ids.sort_by_cached_key(|id| {
+            let added = entry(id).and_then(|m| m.added).map(|a| a as i64).or_else(|| known.get(id).map(|c| c.added_ts)).unwrap_or(0);
+            std::cmp::Reverse(added)
+        }),
+        Some(BrowseOrder::AToZ) => ids.sort_by_cached_key(|id| entry(id).map(|m| m.title.to_lowercase()).unwrap_or_default()),
+        _ => {}
+    }
 }
 
 /// The grid page for the applied search, matched locally, or None when GameBanana's title
@@ -195,11 +309,13 @@ pub fn local_page(st: &mut State, page: usize) -> Option<BrowsePageView> {
         return None;
     }
     let text = st.browse_view.applied_search.trim().to_string();
-    let hits = hits(st, &text);
+    let found = matched(st, &text);
+    st.browse_view.search.closest = found.closest;
+    let known = found.known;
+    let hits = found.ids;
     let per = PAGE_SIZE;
     let mut page = page.max(1);
     let paged = st.browse_view.paged;
-    let known = known_cards(st, &hits);
     let missing_in = |range: std::ops::Range<usize>| -> Vec<u64> {
         hits[range.start.min(hits.len())..range.end.min(hits.len())]
             .iter()
@@ -225,16 +341,10 @@ pub fn local_page(st: &mut State, page: usize) -> Option<BrowsePageView> {
     if !missing.is_empty() && st.browse_view.search.settle.is_none() && !failed_recently {
         start_cards(st, &missing);
     }
-    let f = &st.browse_view.filters;
+    // The filters already ran over the whole matched set.
     let mods: Vec<BrowseCard> = hits[window.start.min(hits.len())..window.end.min(hits.len())]
         .iter()
         .filter_map(|id| known.get(id))
-        .filter(|card| {
-            // The server applies these to a title search; here they apply to the cards.
-            let category_ok = f.exclude || f.category.as_ref().is_none_or(|pick| in_category(card, &pick.name));
-            let creator_ok = f.creator.as_ref().is_none_or(|pick| card.author_id == pick.id);
-            category_ok && creator_ok
-        })
         .map(clone_card)
         .collect();
     let key = query_key(st, &current_query(st));
@@ -247,6 +357,11 @@ pub fn local_page(st: &mut State, page: usize) -> Option<BrowsePageView> {
         page_count: hits.len().div_ceil(per).max(1),
         mods,
     })
+}
+
+/// True while the grid shows the closest local matches because no mod matches every word.
+pub(crate) fn closest(s: &State) -> bool {
+    active(s) && s.browse_view.search.closest
 }
 
 /// True while the grid waits for the cards of local matches: the grid shows its loading
@@ -479,9 +594,9 @@ mod tests {
             built: 1,
             strings,
             mods: vec![
-                IndexMod { id: 1, title: "Mei as Kelvin".into(), updated: 1, fields: fields(&[4, 2 * PACK]) },
-                IndexMod { id: 2, title: "Kelvin winter coat".into(), updated: 1, fields: fields(&[2 * PACK]) },
-                IndexMod { id: 3, title: "Haze recolor".into(), updated: 1, fields: fields(&[]) },
+                IndexMod { id: 1, title: "Mei as Kelvin".into(), updated: 1, fields: fields(&[4, 2 * PACK]), likes: Some(5), ..IndexMod::default() },
+                IndexMod { id: 2, title: "Kelvin winter coat".into(), updated: 1, fields: fields(&[2 * PACK]), likes: Some(50), ..IndexMod::default() },
+                IndexMod { id: 3, title: "Haze recolor".into(), updated: 1, fields: fields(&[]), likes: Some(1), ..IndexMod::default() },
             ],
         }
     }
@@ -515,7 +630,7 @@ mod tests {
             s
         }));
         assert_eq!(search(&mut st, "overwatch"), Some(vec![1]));
-        // Title words first, in match order; the tie between equal titles breaks by likes.
+        // Title words first, in match order; likes lift an equal match.
         assert_eq!(search(&mut st, "kelvin"), Some(vec![2, 1]));
         assert_eq!(search(&mut st, "ice"), Some(vec![2, 1]));
         // Nothing matches: an empty local page, so the grid says so.
@@ -535,9 +650,9 @@ mod tests {
         st.browse_view.filters.category = Some(Pick { id: 1, name: "HUD".into() });
         assert_eq!(search(&mut st, "kelvin"), Some(vec![]));
         st.browse_view.filters.category = None;
-        // Hidden mods leave the shown cards through the grid's own filter.
+        // Hidden mods leave the matches before paging, and the grid's own filter agrees.
         st.browse_view.hidden_mods.insert(2);
-        assert_eq!(search(&mut st, "kelvin"), Some(vec![2, 1]));
+        assert_eq!(search(&mut st, "kelvin"), Some(vec![1]));
         st.browse.page = local_page(&mut st, 1);
         let shown: Vec<u64> = shown_indices(&st)
             .into_iter()
@@ -591,5 +706,74 @@ mod tests {
         };
         assert_eq!(page.total, 2);
         assert_eq!(page.mods.iter().map(|c| c.id).collect::<Vec<_>>(), vec![2]);
+    }
+
+    #[test]
+    fn german_kind_words_come_from_the_apps_own_labels() {
+        let words = kind_words(&index());
+        for (de, en) in [("fadenkreuz", "crosshair"), ("karte", "map"), ("karten", "maps")] {
+            assert!(words.iter().any(|(a, b)| a == de && b == en), "{de} -> {en} in {words:?}");
+        }
+        // A label that reads the same in both languages maps nothing.
+        assert!(!words.iter().any(|(a, _)| a == "skins"));
+    }
+
+    #[test]
+    fn non_latin_text_is_matched_locally() {
+        let mut st = state(true);
+        st.browse_query = TextEdit::new("хейз");
+        assert!(instant(&st));
+        assert_eq!(search(&mut st, "хейз"), Some(vec![]));
+    }
+
+    #[test]
+    fn closest_matches_are_flagged_and_an_answerless_search_is_empty() {
+        let mut st = state(true);
+        assert!(search(&mut st, "mei kelvin coat ice").is_some_and(|ids| !ids.is_empty()));
+        assert!(closest(&st));
+        assert_eq!(search(&mut st, "kelvin"), Some(vec![2, 1]));
+        assert!(!closest(&st));
+        assert_eq!(search(&mut st, "breaking bad"), Some(vec![]));
+        assert!(!closest(&st));
+    }
+
+    #[test]
+    fn filters_apply_to_every_match_before_paging() {
+        let mut st = state(true);
+        // Mod 1 is rated in the index and its card is not read yet.
+        let mut index = index();
+        index.mods[0].rated = Some(true);
+        st.browse_view.search.ready = Some(Ready::new(index));
+        st.browse_view.search.cards.remove(&1);
+        st.prefs.mature = crate::prefs::Mature::Hide;
+        st.browse_query = TextEdit::new("kelvin");
+        st.browse_view.applied_search = "kelvin".into();
+        let page = local_page(&mut st, 1).unwrap();
+        assert_eq!((page.total, page.mods.iter().map(|c| c.id).collect::<Vec<_>>()), (1, vec![2]));
+        // "nsfw" asks for rated mods; hidden stays hidden.
+        assert_eq!(local_page_for(&mut st, "nsfw").total, 0);
+        st.prefs.mature = crate::prefs::Mature::Show;
+        assert_eq!(local_page_for(&mut st, "nsfw").total, 1);
+    }
+
+    fn local_page_for(st: &mut State, text: &str) -> BrowsePageView {
+        st.browse_query = TextEdit::new(text);
+        st.browse_view.applied_search = text.to_string();
+        local_page(st, 1).unwrap()
+    }
+
+    #[test]
+    fn an_explicit_sort_reorders_local_matches_and_the_default_keeps_relevance() {
+        let mut st = state(true);
+        assert_eq!(search(&mut st, "kelvin ice"), Some(vec![2, 1]));
+        st.browse_view.filters.order = Some(BrowseOrder::AToZ);
+        assert_eq!(search(&mut st, "kelvin ice"), Some(vec![2, 1]));
+        st.browse_view.filters.order = Some(BrowseOrder::MostLiked);
+        assert_eq!(search(&mut st, "kelvin"), Some(vec![2, 1]));
+        st.browse_view.filters.order = Some(BrowseOrder::AToZ);
+        assert_eq!(search(&mut st, "kelvin"), Some(vec![2, 1]));
+        st.browse_view.filters.order = Some(BrowseOrder::Newest);
+        st.browse_view.search.cards.get_mut(&1).unwrap().row.added_ts = 1_800_000_000;
+        assert_eq!(search(&mut st, "kelvin"), Some(vec![1, 2]));
     }
 }
