@@ -480,8 +480,18 @@ enum Fix {
     Updates,
 }
 
-/// What the Before you launch checklist would list now. The sidebar's modded launch opens it when
-/// this is not empty.
+impl Issue {
+    /// True for a problem that makes the launch pointless as it stands (gameinfo.gi will not load
+    /// mods). Overlaps and mods to look at after an update are worth listing but are normal in a
+    /// modded game, so they never stop a launch by themselves.
+    pub fn stops_launch(&self) -> bool {
+        matches!(self.fix, Fix::Gameinfo)
+    }
+}
+
+/// What the Before you launch checklist would list now. The sidebar's modded launch opens it only
+/// when one of these stops the launch ([`Issue::stops_launch`]) and Sigil is not set to repair
+/// gameinfo.gi as part of the launch.
 pub fn checklist_issues(s: &State) -> Vec<Issue> {
     let mut issues = Vec::new();
     let gameinfo_off = match &s.gameinfo.state {

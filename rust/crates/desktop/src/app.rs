@@ -1906,10 +1906,14 @@ pub fn launch_from_settings(st: &mut State, tx: &mut Tx, vanilla: bool) {
 
 /// The sidebar launches at once unless "Ask before launching" is on in Settings.
 fn ask_or_launch(st: &mut State, tx: &mut Tx, vanilla: bool) {
-    // Before a modded launch, Before you launch lists what needs a look (gameinfo.gi, overlaps,
-    // mods to check after an update); its Launch anyway is the approval. A launch under way or a
-    // running game keeps the buttons off, so the checklist never opens over one.
-    if !vanilla && screens::launch_progress::busy(st).is_none() && !screens::launch::checklist_issues(st).is_empty() {
+    // Before a modded launch, Before you launch opens when gameinfo.gi would make the game skip
+    // every mod and the launch is not set to repair it. Overlaps and mods to check after an update
+    // are listed in it too, but are normal in a modded game and never open it by themselves: a
+    // dialog on every launch would only teach the player to click through it. A launch under way
+    // or a running game keeps the buttons off, so the checklist never opens over one.
+    let stops = screens::launch::checklist_issues(st).iter().any(|issue| issue.stops_launch());
+    let repairs = screens::settings::options::get().repair_before_launch;
+    if !vanilla && screens::launch_progress::busy(st).is_none() && stops && !repairs {
         st.launch.dialog = screens::launch::Dialog::Checklist;
         return;
     }
