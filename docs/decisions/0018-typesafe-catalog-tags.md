@@ -52,37 +52,55 @@ on the PC.
   after that time, with their own string table. No consent gate: the request carries no id and
   no product data and the answer is the same for everyone. Rate limited like the other routes.
 
-### Local matching (kept)
+### Local matching (kept, rescored 2026-11-25)
 
-The app matches typed text on the PC; nothing typed leaves it. `match.ts` is the reference the
-Rust app ports:
+The app matches typed text on the PC; nothing typed leaves it. The first port followed the
+Worker's `match.ts` (every word required, else any word; title-word count first). An independent
+review measured it on 316 player-style queries and found two real faults: a search that should
+find nothing showed up to hundreds of loosely related mods, and non-Latin text found nothing. The
+matcher (`rust/crates/deadlock-core/src/catalog_index/matcher.rs`) now follows the review's
+prototype instead:
 
-1. Normalise (lower case, accents and punctuation dropped) and split into words. Stop words (the,
-   a, of, mod, and a few German ones) are scored but not required.
-2. Each word is a unit. No word is rewritten into another: misspellings and short forms are
-   covered by the tolerance in step 3, outside names by the flagged verified terms.
-3. A unit matches a token exactly (1.0), as a prefix of at least 3 letters (0.8), or one edit away
-   (insert, delete, substitute or swap neighbours) for words of 4 letters or more (0.7). A unit
-   also matches a multi-word field written without spaces (`counterstrike`).
-4. Field weights: title 3, verified term 2.5, hero 2, category 1.5, author 1.5, description word 1,
-   each times idf = ln(1 + (N - df + 0.5) / (df + 0.5)). A multi-word field hit by only some of
-   its words, by a unit that is not the whole field, counts 0.6.
-5. Per unit, the mod scores its best field. Exact title equality adds 1000; every unit found in
-   the title adds 30. Ties break by mod id.
-6. Every non-stop unit must match somewhere; when no mod passes, any match counts instead.
+1. Normalise (lower case, accents and punctuation dropped) and split into words.
+2. Each mod has one token table: every word of its title and fields with the best field weight
+   it carries (title 3, verified term 2.5, hero 2, category and author 1.5, description word 1,
+   generic visual term 0.5). Adjacent title words are also indexed joined ("deltarune" from
+   "Delta Rune", skipping "and"), and so is every multi-word field. Generated terms (classes 4
+   and 5) shorter than 3 characters are ignored; classes 6 and 7 are ignored.
+3. Each token has an idf, ln(1 + (N - df + 0.5) / (df + 0.5)), across all fields. A query word
+   matches a token exactly (1.0), as a prefix of 3 or more letters (0.8), one edit away (a swap
+   of neighbours included) for words of 4 or more letters (0.7), or two edits away for words of 8
+   or more against a non-description token of 7 or more (0.5). The word scores idf times the best
+   weight times quality.
+4. Coverage is the matched share of the query's idf mass. Stop words weigh 0.15; a word the index
+   never saw weighs the most an idf can, so a query that is mostly unknown words covers little.
+5. Mods with full coverage are the answer. With none, the closest matches (covering at least half
+   and within 0.15 of the best) are returned and the grid says so in one line. With nothing
+   covering half, there is no answer and the grid shows its empty state.
+6. Compounds: two typed words also try their joined form ("counter strike" finds
+   "counterstrike"), and an unknown word of 6 or more letters may be two known words
+   ("hitsound", "healthbar").
+7. A word with non-Latin letters (Cyrillic, CJK, Arabic and so on) is matched as a lower-case
+   substring of the raw title. Such queries are answered locally, never by GameBanana's title
+   search, when an index is on disk.
+8. German words for mod kinds ("fadenkreuz", "karte") map to the English word through the app's
+   own German labels (`browse::search::kind_words`).
+9. Results sort by coverage tier, then score, then id. Exact title equality adds 1000.
 
-The Rust port (`rust/crates/deadlock-core/src/catalog_index/matcher.rs`) runs the reference's
-cases as tests and adds the owner's adjustments after looking at live data (2026-11-25):
+Optional per-mod keys, read when present with the index version unchanged: `l` likes (a score is
+multiplied by `1 + 0.12 * log10(1 + likes)`), `n` (1 when the page has content ratings) and `a`
+the added time in seconds. When some mod carries `n`, the words "nsfw", "lewd", "18", "adult" and
+"r18" filter on it instead of matching text; the player's NSFW setting still applies.
 
-- Generated terms (class 4, and class 5 below) shorter than 3 characters are ignored ("hd").
-- Class 4 terms (reference, character, franchise, alias and theme) count fully at 2.5. Class 5 is
-  reserved for the generic visual terms ("model", "gun", "physics") and counts 0.5, less than a
-  description word. The Worker packs visual terms as 5 (index build 2; a test pins it). A visual
-  term that is also a description word keeps class 0. Classes 6 and 7 are ignored.
-- Title matches always outrank other matches: results sort by how many query words the title
-  matches, then by score, then by likes when the card is known, then by id.
-- Accent folding covers Latin-1 and Latin Extended-A letters and full-width ASCII (the app has
-  no Unicode normalisation table); the index strings arrive already normalised by the Worker.
+Generated terms shorter than 3 characters are ignored. Class 5 holds the generic visual terms
+("model", "gun", "physics") and counts 0.5, less than a description word; the Worker packs them
+as 5 (index build 2). Classes 6 and 7 are ignored.
+
+Accent folding covers Latin-1 and Latin Extended-A letters and full-width ASCII (the app has no
+Unicode normalisation table); the index strings arrive already normalised by the Worker.
+
+The review's evaluation runs as an ignored test (`catalog_index::eval::search_eval`, data in
+`.scratch/search-review`, too large to check in) with floors per query type.
 
 ### In the app (built 2026-11-25)
 
@@ -96,10 +114,15 @@ cases as tests and adds the owner's adjustments after looking at live data (2026
   reads as no index. Field ids outside the string table are dropped, as the reference skips them.
 - Browse: with an index, text typed in the Mods section is matched on every keystroke. Cards
   come from the saved catalog copy, earlier reads, or one `Mod/Multi` request by id for up to
-  50 missing matches once typing pauses (ids only). Results keep match order and every grid
-  filter. GameBanana's title search still answers with no index, in Sounds, WiPs and the mixed
-  feed, with the Featured filter (a row read by id does not carry it), and offline or after a
-  failed card read when no match has a known card.
+  50 missing matches once typing pauses (ids only). The grid filters (category, creator, hero,
+  NSFW, dates, outdated, not installed, hidden) apply to the whole matched set before paging, so
+  the count and the pages are honest; a filter that needs the card (outdated, a hidden creator)
+  waits for it, the index answers the rest. With the default sort results keep relevance order;
+  Most liked, Newest and Name re-sort the matched set, other sorts keep relevance order. The
+  token table is built on a worker when the index loads, never per keystroke. GameBanana's title
+  search still answers with no index, in Sounds, WiPs and the mixed feed, with the Featured
+  filter (a row read by id does not carry it), and offline or after a failed card read when no
+  match has a known card.
 
 ### Upkeep (kept)
 
