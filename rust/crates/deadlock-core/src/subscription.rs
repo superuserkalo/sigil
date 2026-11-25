@@ -339,7 +339,7 @@ pub fn refresh_at(provider: Provider, token_url: &str, tokens: &TokenSet) -> Res
 pub fn access_token(provider: Provider) -> Result<TokenSet> {
     let tokens = load(provider)?.ok_or_else(|| {
         Error::msg(format!(
-            "Not signed in to {}. Run `dah auth subscription login {}`, or use the Settings screen.",
+            "Not signed in to {}. Run `Sigil cli auth subscription login {}`, or use the Settings screen.",
             provider.label(),
             provider.id()
         ))
@@ -500,27 +500,10 @@ pub fn request_config(
 // Store
 // ---------------------------------------------------------------------------
 
+/// Sigil's data folder (`crate::app_data`): `SIGIL_DATA_DIR`, then `DAH_DATA_DIR`, else the
+/// platform folder, moved once from its old name.
 pub fn data_dir() -> Result<PathBuf> {
-    if let Some(configured) = std::env::var_os("DAH_DATA_DIR")
-        && !configured.is_empty()
-    {
-        return Ok(PathBuf::from(configured));
-    }
-    let home = std::env::var_os("HOME").map(PathBuf::from);
-    if cfg!(target_os = "macos") {
-        Ok(home
-            .map(|home| home.join("Library/Application Support/DeadlockAgentHarness"))
-            .unwrap_or_else(|| PathBuf::from(".dah")))
-    } else if cfg!(target_os = "windows") {
-        Ok(std::env::var_os("APPDATA")
-            .map(|appdata| PathBuf::from(appdata).join("DeadlockAgentHarness"))
-            .unwrap_or_else(|| PathBuf::from(".dah")))
-    } else {
-        Ok(std::env::var_os("XDG_DATA_HOME")
-            .map(|xdg| PathBuf::from(xdg).join("DeadlockAgentHarness"))
-            .or_else(|| home.map(|home| home.join(".local/share/DeadlockAgentHarness")))
-            .unwrap_or_else(|| PathBuf::from(".dah")))
-    }
+    Ok(crate::app_data::data_dir())
 }
 
 pub fn auth_dir() -> Result<PathBuf> {

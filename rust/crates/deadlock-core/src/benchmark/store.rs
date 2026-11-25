@@ -209,7 +209,8 @@ pub fn list_runs(data_dir: &Path) -> Vec<RunRecord> {
     let mut runs: Vec<RunRecord> = entries
         .flatten()
         .filter_map(|e| fs::read_to_string(e.path().join("run.json")).ok())
-        .filter_map(|t| serde_json::from_str::<RunRecord>(&t).ok())
+        // A demo kept in the data folder before its rename (`crate::app_data`) names the old one.
+        .filter_map(|t| crate::app_data::parse_in_data::<RunRecord>(&t, data_dir).ok())
         .filter(|r| r.schema == RUN_SCHEMA)
         .collect();
     runs.sort_by(|a, b| b.spec.id.cmp(&a.spec.id));
@@ -223,7 +224,7 @@ pub fn add_note(data_dir: &Path, id: &str, text: &str, at: &str) -> Result<RunRe
         return Err(Error::msg("A note needs some text."));
     }
     let path = run_dir(data_dir, id)?.join("run.json");
-    let mut run: RunRecord = serde_json::from_str(&fs::read_to_string(&path)?)?;
+    let mut run: RunRecord = crate::app_data::parse_in_data(&fs::read_to_string(&path)?, data_dir)?;
     run.notes.push(RunNote { at: at.to_string(), text: text.chars().take(500).collect() });
     save_run(data_dir, &run)?;
     Ok(run)

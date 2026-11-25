@@ -37,7 +37,7 @@ pub struct PlanArgs {
 }
 
 pub struct ApplyArgs {
-    /// Plan id printed by `dah install plan`.
+    /// Plan id printed by `Sigil cli install plan`.
     pub plan_id: String,
     /// Write the payload into the game addons folder.
     pub approve: bool,
@@ -96,7 +96,7 @@ pub fn plan(args: &PlanArgs) -> Result<()> {
     println!("{}", format_install_plan(&plan));
     println!();
     println!(
-        "Nothing was written to the game install. Re-run with `dah install apply {} --approve`.",
+        "Nothing was written to the game install. Re-run with `Sigil cli install apply {} --approve`.",
         plan.id
     );
 
@@ -194,7 +194,7 @@ pub fn apply(args: &ApplyArgs) -> Result<()> {
         }
     );
     println!("  Journal: {}", journal_path(&workspace).display());
-    println!("Run `dah install list` to confirm the file is still in place.");
+    println!("Run `Sigil cli install list` to confirm the file is still in place.");
 
     Ok(())
 }
@@ -244,7 +244,7 @@ pub fn cache_prune(args: &PruneArgs) -> Result<()> {
     println!("{}", format_cache_prune(&report));
     println!();
     println!(
-        "An unapplied plan whose archive was pruned cannot be applied. Run `dah install plan` again for it."
+        "An unapplied plan whose archive was pruned cannot be applied. Run `Sigil cli install plan` again for it."
     );
 
     Ok(())

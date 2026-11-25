@@ -34,7 +34,7 @@ pub fn list(json_output: bool, workspace: Option<PathBuf>) -> Result<()> {
     println!("Profiles: {} in {}", profiles.len(), directory.display());
 
     if profiles.is_empty() {
-        println!("No saved profiles. Run `dah profiles save <name>` to capture the current slots.");
+        println!("No saved profiles. Run `Sigil cli profiles save <name>` to capture the current slots.");
         return Ok(());
     }
 

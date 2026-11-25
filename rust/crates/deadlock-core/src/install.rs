@@ -96,7 +96,7 @@ pub const GAMEBANANA_DOWNLOAD_HOSTS: [&str; 3] =
     ["gamebanana.com", "www.gamebanana.com", "files.gamebanana.com"];
 
 const GAMEBANANA_PROFILE_URL: &str = "https://gamebanana.com/apiv11/Mod";
-const GAMEBANANA_USER_AGENT: &str = "dah/0.0.0";
+const GAMEBANANA_USER_AGENT: &str = concat!("Sigil/", env!("CARGO_PKG_VERSION"));
 const API_TIMEOUT_SECONDS: u64 = 30;
 const BODY_SNIPPET_CHARS: usize = 200;
 const READ_BUFFER_BYTES: usize = 64 * 1024;
@@ -2585,7 +2585,7 @@ fn prepare_archive(request: &InstallRequest, options: &PlanOptions) -> Result<Pr
                         }) =>
                 {
                     warnings.push(format!(
-                        "Reused the cached download {} because its size matches the GameBanana file record. Run `dah install cache prune` to force a fresh download.",
+                        "Reused the cached download {} because its size matches the GameBanana file record. Run `Sigil cli install cache prune` to force a fresh download.",
                         path.display()
                     ));
                     DownloadReport {
@@ -3781,7 +3781,7 @@ pub fn plan_path(workspace: &Path, id: &str) -> Result<PathBuf> {
             .all(|character| character.is_ascii_alphanumeric() || matches!(character, '-' | '_'))
     {
         return Err(Error::msg(format!(
-            "Plan id {id:?} is not a plan file name. Use the id printed by `dah install plan`."
+            "Plan id {id:?} is not a plan file name. Use the id printed by `Sigil cli install plan`."
         )));
     }
 
@@ -3799,7 +3799,7 @@ pub fn load_plan(workspace: &Path, id: &str) -> Result<InstallPlan> {
     let text = fs::read_to_string(&path).map_err(|error| {
         if error.kind() == std::io::ErrorKind::NotFound {
             Error::msg(format!(
-                "No install plan {id}. Run `dah install plan <URL|ID>` first. Plans live in {}.",
+                "No install plan {id}. Run `Sigil cli install plan <URL|ID>` first. Plans live in {}.",
                 plans_dir(workspace).display()
             ))
         } else {
@@ -3807,7 +3807,8 @@ pub fn load_plan(workspace: &Path, id: &str) -> Result<InstallPlan> {
         }
     })?;
 
-    serde_json::from_str(&text).map_err(|error| {
+    // A plan from before the data folder's rename (`crate::app_data`) names the old folder.
+    crate::app_data::parse_in_workspace(&text, workspace).map_err(|error| {
         Error::msg(format!(
             "Install plan {} is not valid JSON: {error}",
             path.display()
@@ -3832,7 +3833,9 @@ pub fn read_journal(workspace: &Path) -> Result<Vec<InstallJournalEntry>> {
             continue;
         }
 
-        let entry: InstallJournalEntry = serde_json::from_str(line).map_err(|error| {
+        // Backups recorded before the data folder's rename name the old folder.
+        let entry: InstallJournalEntry =
+            crate::app_data::parse_in_workspace(line, workspace).map_err(|error| {
             Error::msg(format!(
                 "{} line {} is not a valid install record: {error}",
                 path.display(),
@@ -4106,7 +4109,7 @@ pub fn format_install_plan(plan: &InstallPlan) -> String {
     }
 
     lines.push(format!(
-        "Next: `dah install apply {} --approve` writes into the game addons folder.",
+        "Next: `Sigil cli install apply {} --approve` writes into the game addons folder.",
         plan.id
     ));
 
@@ -4115,7 +4118,7 @@ pub fn format_install_plan(plan: &InstallPlan) -> String {
 
 pub fn format_install_status(status: &[InstalledModStatus]) -> String {
     if status.is_empty() {
-        return "No installs recorded. Run `dah install plan <URL|ID>` first.".to_string();
+        return "No installs recorded. Run `Sigil cli install plan <URL|ID>` first.".to_string();
     }
 
     let mut lines = vec![format!("{} install record(s)", status.len())];

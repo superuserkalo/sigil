@@ -111,7 +111,8 @@ impl Record {
         Some(Record {
             slot: u16::try_from(v.get("slot")?.as_u64()?).ok()?,
             file: v.get("file")?.as_str()?.to_string(),
-            backup: PathBuf::from(v.get("backup")?.as_str()?),
+            // Rebased: a record from before the data folder's rename names the old folder.
+            backup: deadlock_core::app_data::rebase(Path::new(v.get("backup")?.as_str()?)),
             new_sha256: v.get("newSha256")?.as_str()?.to_string(),
             old_size: v.get("oldSize")?.as_u64()?,
             new_size: v.get("newSize")?.as_u64()?,

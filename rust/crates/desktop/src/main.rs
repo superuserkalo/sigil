@@ -53,8 +53,17 @@ use rune::AppSpec;
 static ALLOCATOR: procwatch::alloc::Counting = procwatch::alloc::Counting::system();
 
 fn main() -> std::process::ExitCode {
-    // The built-in art, unpacked once per build, before any thread starts.
-    art::install();
+    // The data folder's one-time move from its old name comes before anything reads or writes
+    // it (`data::start_data_folder`). Windows claims the single instance first: its claim uses a
+    // named pipe, not the data folder, so a launch that hands over to a running Sigil (or waits
+    // for one quitting after an update) never moves the folder under it. Windows may set
+    // variables once threads exist; elsewhere the art's variable must come before any thread.
+    let claim_first = cfg!(target_os = "windows") && !helpers::is_helper_launch() && !rune::is_headless();
+    if !claim_first {
+        data::start_data_folder();
+        // The built-in art, unpacked once per build, before any thread starts.
+        art::install();
+    }
     // A helper subcommand runs before any window or Rune state exists.
     if let Some(code) = helpers::dispatch() {
         return code;
@@ -71,6 +80,10 @@ fn main() -> std::process::ExitCode {
     if !rune::is_headless() && !single_instance::claim() {
         eprintln!("Sigil is already running: handed this launch to it");
         return std::process::ExitCode::SUCCESS;
+    }
+    if claim_first {
+        data::start_data_folder();
+        art::install();
     }
     // Updates: install a staged one, or roll back a version that never drew a frame.
     if let Some(code) = updater::on_start() {

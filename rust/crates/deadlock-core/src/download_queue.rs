@@ -602,6 +602,11 @@ pub fn load_queue(data_dir: &Path) -> Queue {
         return Queue::default();
     }
     for item in &mut queue.items {
+        // An archive finished before the data folder's rename (`crate::app_data`) names the old
+        // folder (the workspace's downloads sit inside the data folder).
+        if let Some(path) = &item.path {
+            item.path = Some(crate::app_data::rebase_onto(path, data_dir));
+        }
         if item.state == State::Running {
             item.state = State::Paused;
             item.interrupted = true;
@@ -806,7 +811,7 @@ fn open(
         }
         let mut request = agent
             .get(&current.to_string())
-            .header("User-Agent", "dah/0.0.0")
+            .header("User-Agent", concat!("Sigil/", env!("CARGO_PKG_VERSION")))
             .header("Accept", "application/octet-stream, */*");
         if from > 0 {
             request = request.header("Range", &format!("bytes={from}-"));
@@ -1026,7 +1031,7 @@ fn final_url(agent: &ureq::Agent, url: &str, policy: &DownloadPolicy) -> Result<
         }
         let response = agent
             .get(&current.to_string())
-            .header("User-Agent", "dah/0.0.0")
+            .header("User-Agent", concat!("Sigil/", env!("CARGO_PKG_VERSION")))
             .header("Accept", "application/octet-stream, */*")
             .header("Range", "bytes=0-0")
             .call()

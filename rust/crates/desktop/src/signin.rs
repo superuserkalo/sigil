@@ -53,7 +53,7 @@ pub fn start(st: &mut State, provider: &str) {
     }
     let Some(binary) = dah_binary() else {
         st.signin.message = Some((
-            "Sigil is missing a file it needs (dah). Reinstall the app.".to_string(),
+            "Sigil is missing a part it needs (its command line). Reinstall the app.".to_string(),
             true,
         ));
         return;
@@ -61,7 +61,7 @@ pub fn start(st: &mut State, provider: &str) {
     let spawned = binary
         .command()
         .args(["auth", "login", provider, "--json"])
-        .env("DAH_DATA_DIR", &st.paths.data)
+        .env(deadlock_core::app_data::ENV, &st.paths.data)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

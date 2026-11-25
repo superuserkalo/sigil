@@ -148,7 +148,7 @@ fn low_disk(s: &mut State) {
         ..fresh_setup()
     }));
     s.servers.host.server_dir = Some(PathBuf::from(
-        r"C:\Users\ember\AppData\Roaming\DeadlockAgentHarness\server",
+        r"C:\Users\ember\AppData\Roaming\Sigil\server",
     ));
 }
 

@@ -37,7 +37,7 @@ pub fn show(json_output: bool) -> Result<()> {
     match text {
         None => {
             println!("autoexec.cfg: missing at {}", path.display());
-            println!("Write one with `dah autoexec set --file <path> --approve`.");
+            println!("Write one with `Sigil cli autoexec set --file <path> --approve`.");
         }
         Some(text) => {
             println!(

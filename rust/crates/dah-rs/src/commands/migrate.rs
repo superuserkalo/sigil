@@ -81,7 +81,7 @@ pub fn run(args: &MigrateArgs) -> Result<()> {
 
     if args.apply {
         println!(
-            "Applied. project.json and matching staging files now use the new paths; run `dah mod baseline` to record the new CRCs."
+            "Applied. project.json and matching staging files now use the new paths; run `Sigil cli mod baseline` to record the new CRCs."
         );
     } else {
         println!("Dry run: project.json was not changed. Re-run with `--apply` to update it.");

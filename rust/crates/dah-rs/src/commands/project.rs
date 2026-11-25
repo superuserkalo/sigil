@@ -65,7 +65,7 @@ pub fn new_project(args: &NewArgs) -> Result<()> {
     );
     println!("  Manifest: {}", project_dir.join("project.json").display());
     println!("  Version:  {}", manifest.version);
-    println!("Add target game paths to the manifest, then run `dah mod baseline`.");
+    println!("Add target game paths to the manifest, then run `Sigil cli mod baseline`.");
 
     Ok(())
 }
@@ -137,7 +137,7 @@ pub fn baseline(args: &ProjectArgs) -> Result<()> {
         println!("WARNING target not found in the game files: {target}");
     }
 
-    println!("Run `dah mod check` after a game update to see what moved.");
+    println!("Run `Sigil cli mod check` after a game update to see what moved.");
 
     Ok(())
 }

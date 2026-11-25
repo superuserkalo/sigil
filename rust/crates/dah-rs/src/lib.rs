@@ -21,15 +21,15 @@ use crate::error::CliError;
     version,
     about = "Deadlock modding workbench CLI",
     long_about = "Inspect the Deadlock install, index game paths, extract files and manage mod projects.\n\n\
-Mod flow: `dah mod validate`, `dah mod pack`, `dah mod release`, `dah mod deploy`, `dah publish prepare`.\n\
+Mod flow: `Sigil cli mod validate`, `Sigil cli mod pack`, `Sigil cli mod release`, `Sigil cli mod deploy`, `Sigil cli publish prepare`.\n\
 Deploy writes to the game install only with --approve; publish prepare never uploads.\n\n\
-Browse: `dah browse` lists Deadlock mods from GameBanana. Read only, no key or account.\n\n\
-Addons: `dah addons list` and `dah addons conflicts` read `game/citadel/addons` and never write.\n\
-         `dah addons enable|disable <slot> --approve` renames one slot file.\n\n\
-Profiles: `dah profiles save` captures the enabled slots, `dah profiles apply --approve` renames them back.\n\
-Autoexec: `dah autoexec show` reads `game/citadel/cfg/autoexec.cfg`, `set` and `clear` write with --approve.\n\n\
-Data directory: DAH_DATA_DIR, else the platform data directory.\n\
-Workspace: --workspace, else DAH_WORKSPACE_DIR, else <data>/workspace.",
+Browse: `Sigil cli browse` lists Deadlock mods from GameBanana. Read only, no key or account.\n\n\
+Addons: `Sigil cli addons list` and `Sigil cli addons conflicts` read `game/citadel/addons` and never write.\n\
+         `Sigil cli addons enable|disable <slot> --approve` renames one slot file.\n\n\
+Profiles: `Sigil cli profiles save` captures the enabled slots, `Sigil cli profiles apply --approve` renames them back.\n\
+Autoexec: `Sigil cli autoexec show` reads `game/citadel/cfg/autoexec.cfg`, `set` and `clear` write with --approve.\n\n\
+Data directory: SIGIL_DATA_DIR (or DAH_DATA_DIR), else the platform data directory's Sigil folder.\n\
+Workspace: --workspace, else SIGIL_WORKSPACE_DIR (or DAH_WORKSPACE_DIR), else <data>/workspace.",
     disable_help_subcommand = true,
     propagate_version = true
 )]
@@ -81,7 +81,7 @@ enum Command {
     },
     /// Copy exact game paths out of a game VPK into the workspace.
     Extract {
-        /// Exact game paths from `dah find`.
+        /// Exact game paths from `Sigil cli find`.
         #[arg(value_name = "PATH", required = true, num_args = 1..)]
         paths: Vec<String>,
         /// Catalog source to read: citadel, core or maps/<name>.
@@ -552,7 +552,7 @@ enum DemoCommand {
     },
     /// Show the merged summary, coverage and provenance for one match.
     Show {
-        /// Match id, as printed by `dah demo list`.
+        /// Match id, as printed by `Sigil cli demo list`.
         #[arg(value_name = "ID")]
         id: String,
         /// Workspace directory. Defaults to DAH_WORKSPACE_DIR or <data>/workspace.
@@ -564,7 +564,7 @@ enum DemoCommand {
     },
     /// Show heatmap cells from real position samples, or why they are absent.
     Heatmap {
-        /// Match id, as printed by `dah demo list`.
+        /// Match id, as printed by `Sigil cli demo list`.
         #[arg(value_name = "ID")]
         id: String,
         /// Workspace directory. Defaults to DAH_WORKSPACE_DIR or <data>/workspace.
@@ -576,7 +576,7 @@ enum DemoCommand {
     },
     /// Print the verified review prompt, or lint a review before storing it.
     Review {
-        /// Match id, as printed by `dah demo list`.
+        /// Match id, as printed by `Sigil cli demo list`.
         #[arg(value_name = "ID")]
         id: String,
         /// OpenAI-compatible model name. Needs --base-url.
@@ -984,7 +984,7 @@ enum InstallCommand {
     },
     /// Apply a stored install plan with approval.
     Apply {
-        /// Plan id printed by `dah install plan`.
+        /// Plan id printed by `Sigil cli install plan`.
         #[arg(value_name = "PLAN_ID")]
         plan_id: String,
         /// Write the payload into the game addons folder.
@@ -1380,6 +1380,11 @@ where
 {
     let cli = Cli::parse_from(args);
     let json_output = cli.wants_json();
+    // Move the data folder from its old name before any command reads it. Started by the app,
+    // `SIGIL_DATA_DIR` is set and this does nothing. The line goes to stderr: stdout is JSON.
+    if let Some(line) = deadlock_core::app_data::init().log_line() {
+        eprintln!("sigil: {line}");
+    }
 
     match run(&cli) {
         Ok(code) => code,

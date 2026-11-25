@@ -34,7 +34,8 @@ session released before exit.
 | `DAH_AGENT_PROVIDER` | no | `openai` (default), `anthropic` or `chat`. |
 | `DAH_AGENT_API_KEY` | for openai and anthropic | Provider key. Falls back to `OPENAI_API_KEY` or `ANTHROPIC_API_KEY`. `chat` may run without one. |
 | `DAH_AGENT_BASE_URL` | no | API root for a gateway or local server. The adapter appends its path. |
-| `DAH_DATA_DIR` | no | Base data directory. Default: the OS application data directory plus `DeadlockAgentHarness` (or `deadlock-agent-harness` on Linux). |
+| `SIGIL_DATA_DIR` | no | Base data directory (`DAH_DATA_DIR` still works when it is unset). Default: the OS application data directory plus `Sigil`, moved once from the old `DeadlockAgentHarness` or `deadlock-agent-harness`. |
+| `SIGIL_WORKSPACE_DIR` | no | Same as `DAH_WORKSPACE_DIR`, which is still read when it is unset. |
 | `DAH_WORKSPACE_DIR` | no | Mod workspace and the `dah-rs` working directory. Default: `<data>/workspace`. |
 | `DAH_RS_BIN` | no | `dah-rs` binary. Default: a sibling of this executable, then `rust/target/debug/dah-rs` (or `dah`, the current crate binary name) above the workspace, then `dah-rs` on `PATH`. |
 

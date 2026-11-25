@@ -69,7 +69,7 @@ pub fn vanilla(approve: bool, json_output: bool) -> Result<()> {
 
     print_launch(&result);
     println!("Addons stashed at: {}", stash_dir.display());
-    println!("Restore after the game exits with `dah launch restore --approve`.");
+    println!("Restore after the game exits with `Sigil cli launch restore --approve`.");
 
     Ok(())
 }
@@ -246,7 +246,7 @@ fn print_status(data_dir: &Path, status: Option<&StashStatus>) {
                 );
             }
 
-            println!("Restore with `dah launch restore --approve`.");
+            println!("Restore with `Sigil cli launch restore --approve`.");
         }
     }
 }

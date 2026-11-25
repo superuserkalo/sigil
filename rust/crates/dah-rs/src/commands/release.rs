@@ -71,7 +71,7 @@ pub fn release(args: &ReleaseArgs) -> Result<()> {
         return Err(CliError::new(
             "no_baseline",
             format!(
-                "{} does not exist. Run `dah mod baseline` before releasing so the release records which game files it was built against.",
+                "{} does not exist. Run `Sigil cli mod baseline` before releasing so the release records which game files it was built against.",
                 baseline_path.display()
             ),
         ));
@@ -83,7 +83,7 @@ pub fn release(args: &ReleaseArgs) -> Result<()> {
         return Err(CliError::new(
             "release_exists",
             format!(
-                "{} already holds a release for version {}. Bump the version with `dah mod version <VERSION>` or remove that folder first.",
+                "{} already holds a release for version {}. Bump the version with `Sigil cli mod version <VERSION>` or remove that folder first.",
                 release_dir.display(),
                 project.version
             ),
@@ -173,7 +173,7 @@ pub fn release(args: &ReleaseArgs) -> Result<()> {
         println!("WARNING {warning}");
     }
     println!("  History:  project.json records release {}", project.version);
-    println!("Next: `dah mod deploy` to plan an install for the game.");
+    println!("Next: `Sigil cli mod deploy` to plan an install for the game.");
 
     Ok(())
 }
@@ -186,7 +186,7 @@ pub fn deploy(args: &DeployArgs) -> Result<()> {
         CliError::new(
             "no_release",
             format!(
-                "Project {} has no release yet. Run `dah mod release` first.",
+                "Project {} has no release yet. Run `Sigil cli mod release` first.",
                 project.slug
             ),
         )
@@ -197,7 +197,7 @@ pub fn deploy(args: &DeployArgs) -> Result<()> {
         return Err(CliError::new(
             "release_incomplete",
             format!(
-                "Release {} is recorded but {} is missing. Run `dah mod release` again.",
+                "Release {} is recorded but {} is missing. Run `Sigil cli mod release` again.",
                 manifest.version,
                 release_dir.display()
             ),
@@ -209,7 +209,7 @@ pub fn deploy(args: &DeployArgs) -> Result<()> {
         return Err(CliError::new(
             "release_incomplete",
             format!(
-                "Release {} is missing its VPK at {}. Run `dah mod release` again.",
+                "Release {} is missing its VPK at {}. Run `Sigil cli mod release` again.",
                 manifest.version,
                 vpk_path.display()
             ),
@@ -287,7 +287,7 @@ pub fn deploy(args: &DeployArgs) -> Result<()> {
     if result.gameinfo_repaired {
         println!("  gameinfo.gi: addons SearchPaths line repaired");
     }
-    println!("Run `dah doctor` to confirm the addon slot and gameinfo.gi.");
+    println!("Run `Sigil cli doctor` to confirm the addon slot and gameinfo.gi.");
 
     Ok(())
 }

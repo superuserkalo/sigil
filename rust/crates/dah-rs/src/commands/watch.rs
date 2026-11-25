@@ -127,7 +127,7 @@ fn watch_once(args: &WatchArgs) -> Result<WatchSummary> {
         return Err(CliError::new(
             "no_projects",
             format!(
-                "No mod projects found under {} or {}. Run `dah mod new <slug>` first.",
+                "No mod projects found under {} or {}. Run `Sigil cli mod new <slug>` first.",
                 lossy(workspace),
                 workspace.join("mods").display()
             ),
@@ -256,7 +256,7 @@ fn watch_once(args: &WatchArgs) -> Result<WatchSummary> {
             patch.published_at.chars().take(10).collect::<String>()
         );
     } else {
-        println!("  Patch:  no cached patch notes (run `dah patches`)");
+        println!("  Patch:  no cached patch notes (run `Sigil cli patches`)");
     }
     if let Some(error) = &patch_error {
         println!("  Patch:  WARNING {error}");

@@ -103,7 +103,7 @@ pub fn run_list(args: &ListArgs) -> Result<()> {
     );
 
     if list.matches.is_empty() {
-        println!("No imported matches. Run `dah demo import <file.dem>`.");
+        println!("No imported matches. Run `Sigil cli demo import <file.dem>`.");
         if list.skipped > 0 {
             println!(
                 "{} folder(s) under matches/ had no readable meta.json or summary.json.",
@@ -271,7 +271,7 @@ fn print_import(result: &ImportResult) {
     }
     if !summary.heatmap.available {
         println!(
-            "  Heatmap: absent. A heatmap is only drawn from real position samples. Run `dah demo backends`."
+            "  Heatmap: absent. A heatmap is only drawn from real position samples. Run `Sigil cli demo backends`."
         );
     }
     if !summary.disagreements.is_empty() {
@@ -503,7 +503,7 @@ fn format_heatmap(summary: &MatchSummaryDoc) -> String {
             CoverageState::Absent => "absent",
         };
         lines.push(format!("  Position coverage: {position_label}"));
-        lines.push("  Run `dah demo backends` to see which extractor is available.".to_string());
+        lines.push("  Run `Sigil cli demo backends` to see which extractor is available.".to_string());
         return lines.join("\n");
     }
 
@@ -682,7 +682,7 @@ pub struct ReviewArgs {
     pub json: bool,
 }
 
-/// `dah demo review <id>`: build the verified prompt, or lint a review and
+/// `Sigil cli demo review <id>`: build the verified prompt, or lint a review and
 /// store it only when every number is supported by the summary.
 pub fn run_review(args: &ReviewArgs) -> Result<()> {
     let workspace = paths::workspace_root(args.workspace.as_deref())?;

@@ -323,7 +323,7 @@ pub fn run_leaderboard(args: &LeaderboardArgs) -> Result<()> {
     println!();
     println!(
         "Steam names are not unique, so an entry can list several possible account ids. \
-         Pass the id you want to `dah stats player`."
+         Pass the id you want to `Sigil cli stats player`."
     );
 
     Ok(())
@@ -334,7 +334,7 @@ fn ensure_account(account_id: u64) -> Result<()> {
         return Err(CliError::new(
             "invalid_account",
             "Account id must be a SteamID3 greater than zero. A leaderboard entry shows candidate \
-             ids, and `dah stats leaderboard` prints them.",
+             ids, and `Sigil cli stats leaderboard` prints them.",
         ));
     }
     Ok(())

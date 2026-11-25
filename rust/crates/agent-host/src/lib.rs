@@ -91,6 +91,11 @@ pub enum CliLaunch {
 
 /// Run the host until stdin closes or a shutdown command arrives.
 pub fn run(launch: CliLaunch) -> std::process::ExitCode {
+    // Move the data folder from its old name before the sessions or workspace are touched.
+    // Started by the app, `SIGIL_DATA_DIR` is set and this does nothing.
+    if let Some(line) = deadlock_core::app_data::init().log_line() {
+        log(&line);
+    }
     let runtime = match tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()

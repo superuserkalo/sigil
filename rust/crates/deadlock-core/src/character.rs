@@ -61,7 +61,7 @@ pub const MESHY_API_KEY_ENV: &str = "MESHY_API_KEY";
 /// Environment variable overriding the API root, for a local scripted server.
 pub const MESHY_BASE_URL_ENV: &str = "MESHY_API_BASE_URL";
 /// Identifies this client to the provider without naming a user.
-pub const MESHY_USER_AGENT: &str = "dah/0.0.0";
+pub const MESHY_USER_AGENT: &str = concat!("Sigil/", env!("CARGO_PKG_VERSION"));
 /// Meshy caps a prompt or texture prompt at 800 characters.
 pub const MESHY_PROMPT_LIMIT: usize = 800;
 /// Meshy accepts at most 380,000 triangles for automatic rigging.
@@ -3616,7 +3616,7 @@ pub fn import_character(workspace: &Path, slug: &str) -> Result<CharacterImport>
 
     if record.task.status != CharacterStatus::Succeeded {
         return Err(Error::msg(format!(
-            "Task {} is {}. Run `dah character status --refresh --slug {slug}` until it succeeds.",
+            "Task {} is {}. Run `Sigil cli character status --refresh --slug {slug}` until it succeeds.",
             record.task.id, record.task.status
         )));
     }
@@ -3624,7 +3624,7 @@ pub fn import_character(workspace: &Path, slug: &str) -> Result<CharacterImport>
     let path = model_path(workspace, slug);
     if !path.is_file() {
         return Err(Error::msg(format!(
-            "{} does not exist. Run `dah character status --refresh --slug {slug}` to download or \
+            "{} does not exist. Run `Sigil cli character status --refresh --slug {slug}` to download or \
              generate the mesh.",
             path.display()
         )));
@@ -3724,7 +3724,7 @@ pub fn read_character_import(workspace: &Path, slug: &str) -> Result<CharacterIm
     let text = fs::read_to_string(&path).map_err(|error| {
         if error.kind() == std::io::ErrorKind::NotFound {
             Error::msg(format!(
-                "{} does not exist. Run `dah character import {slug}` first.",
+                "{} does not exist. Run `Sigil cli character import {slug}` first.",
                 path.display()
             ))
         } else {
@@ -3743,7 +3743,7 @@ pub fn read_source2_plan(workspace: &Path, slug: &str) -> Result<Source2Plan> {
     let text = fs::read_to_string(&path).map_err(|error| {
         if error.kind() == std::io::ErrorKind::NotFound {
             Error::msg(format!(
-                "{} does not exist. Run `dah character create` or refresh until source2_map runs.",
+                "{} does not exist. Run `Sigil cli character create` or refresh until source2_map runs.",
                 path.display()
             ))
         } else {
@@ -3759,7 +3759,7 @@ pub fn read_task_record(workspace: &Path, slug: &str) -> Result<CharacterTaskRec
     let path = task_path(workspace, slug);
     read_task_record_at(&path).map_err(|error| {
         Error::msg(format!(
-            "Character task {} could not be read: {error}. Run `dah character create` first.",
+            "Character task {} could not be read: {error}. Run `Sigil cli character create` first.",
             path.display()
         ))
     })

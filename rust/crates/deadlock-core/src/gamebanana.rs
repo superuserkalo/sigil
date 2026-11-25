@@ -18,7 +18,7 @@ pub const GAMEBANANA_API_BASE: &str = "https://gamebanana.com/apiv11";
 /// GameBanana caps a subfeed page at 50 records.
 pub const GAMEBANANA_MAX_PERPAGE: usize = 50;
 /// Identifies this client without naming a user or an account.
-pub const GAMEBANANA_USER_AGENT: &str = "dah/0.0.0";
+pub const GAMEBANANA_USER_AGENT: &str = concat!("Sigil/", env!("CARGO_PKG_VERSION"));
 
 const REQUEST_TIMEOUT_SECONDS: u64 = 30;
 const BODY_SNIPPET_CHARS: usize = 240;

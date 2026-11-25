@@ -151,7 +151,7 @@ pub fn status(args: &StatusArgs) -> Result<()> {
                 );
             }
             None => println!(
-                "{}: signed out. Run `dah auth login {}`.",
+                "{}: signed out. Run `Sigil cli auth login {}`.",
                 provider.id(),
                 provider.id()
             ),
@@ -386,7 +386,7 @@ pub struct UseArgs {
     pub json: bool,
 }
 
-/// `dah auth use <provider> --model <id>`: point the host at the login.
+/// `Sigil cli auth use <provider> --model <id>`: point the host at the login.
 pub fn use_for_agent(args: &UseArgs) -> Result<()> {
     let provider = provider(&args.provider)?;
     let tokens = subscription::load(provider)
@@ -395,7 +395,7 @@ pub fn use_for_agent(args: &UseArgs) -> Result<()> {
         return Err(CliError::new(
             "auth_missing",
             format!(
-                "No {} login yet. Run `dah auth login {}` first.",
+                "No {} login yet. Run `Sigil cli auth login {}` first.",
                 provider.id(),
                 provider.id()
             ),

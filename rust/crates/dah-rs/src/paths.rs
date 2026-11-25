@@ -17,7 +17,7 @@ pub fn resolve_paths(workspace_override: Option<&Path>) -> Result<CliPaths> {
     let data_dir = data_dir()?;
     let workspace_dir = match workspace_override {
         Some(path) => absolute(path)?,
-        None => match env_value("DAH_WORKSPACE_DIR") {
+        None => match env_value("SIGIL_WORKSPACE_DIR").or_else(|| env_value("DAH_WORKSPACE_DIR")) {
             Some(value) => absolute(Path::new(&value))?,
             None => data_dir.join("workspace"),
         },
@@ -29,29 +29,22 @@ pub fn resolve_paths(workspace_override: Option<&Path>) -> Result<CliPaths> {
     })
 }
 
-/// The data directory follows the platform convention and `DAH_DATA_DIR`.
+/// The data directory: `SIGIL_DATA_DIR`, then `DAH_DATA_DIR`, else Sigil's platform folder
+/// (`deadlock_core::app_data`, which moves the old `DeadlockAgentHarness` folder once).
 pub fn data_dir() -> Result<PathBuf> {
-    if let Some(value) = env_value("DAH_DATA_DIR") {
-        return absolute(Path::new(&value));
+    if let Some(value) = deadlock_core::app_data::override_dir() {
+        return absolute(&value);
     }
-
-    let base = dirs::data_dir().ok_or_else(|| {
-        CliError::new(
+    if deadlock_core::app_data::platform_base().is_none() {
+        return Err(CliError::new(
             "data_dir",
-            "Could not resolve the platform data directory. Set DAH_DATA_DIR.",
-        )
-    })?;
-
-    let leaf = if cfg!(target_os = "linux") {
-        "deadlock-agent-harness"
-    } else {
-        "DeadlockAgentHarness"
-    };
-
-    Ok(base.join(leaf))
+            "Could not resolve the platform data directory. Set SIGIL_DATA_DIR.",
+        ));
+    }
+    Ok(deadlock_core::app_data::data_dir())
 }
 
-/// Resolve the parent workspace for `dah mod new`.
+/// Resolve the parent workspace for `Sigil cli mod new`.
 pub fn workspace_root(workspace_override: Option<&Path>) -> Result<PathBuf> {
     resolve_paths(workspace_override).map(|paths| paths.workspace_dir)
 }
@@ -89,7 +82,7 @@ fn resolve_project_in(workspace: &Path) -> Result<PathBuf> {
         0 => Err(CliError::new(
             "no_project",
             format!(
-                "No mod project found under {}. Run `dah mod new <slug>` first, or pass --workspace with the project directory.",
+                "No mod project found under {}. Run `Sigil cli mod new <slug>` first, or pass --workspace with the project directory.",
                 workspace.display()
             ),
         )),

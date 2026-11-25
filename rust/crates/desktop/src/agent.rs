@@ -200,7 +200,7 @@ impl AgentLink {
         if model.is_none() {
             return AgentLink::config_error(
                 link,
-                "DAH_AGENT_MODEL is not set. Set the exact model id for the configured provider, or run `dah auth use <provider> --model <id>`.",
+                "DAH_AGENT_MODEL is not set. Set the exact model id for the configured provider, or run `Sigil cli auth use <provider> --model <id>`.",
             );
         }
         if !matches!(
@@ -218,7 +218,7 @@ impl AgentLink {
             return AgentLink::config_error(
                 link,
                 &format!(
-                    "No {} login yet. Run `dah auth login {}` in a terminal, then restart the app.",
+                    "No {} login yet. Run `Sigil cli auth login {}` in a terminal, then restart the app.",
                     provider, provider
                 ),
             );
@@ -483,7 +483,7 @@ impl AgentLink {
                 self.status = AgentStatus::Stopped;
                 if self.error.is_none() {
                     self.error = Some(
-                        "The dah-agent reader stopped without an exit envelope. Restart the host."
+                        "The agent host reader stopped without an exit envelope. Restart the host."
                             .to_string(),
                     );
                 }
@@ -555,10 +555,10 @@ impl AgentLink {
                 if !expected && self.error.is_none() {
                     self.error = Some(match code {
                         Some(code) => format!(
-                            "The dah-agent process exited with code {code}. Restart it from Settings."
+                            "The agent host exited with code {code}. Restart it from Settings."
                         ),
                         None => {
-                            "The dah-agent process exited. Restart it from Settings.".to_string()
+                            "The agent host exited. Restart it from Settings.".to_string()
                         }
                     });
                 }

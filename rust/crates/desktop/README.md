@@ -50,10 +50,11 @@ install. The default launch and the `empty` scene use only real data or explicit
 
 Paths:
 
-- `DAH_DATA_DIR` overrides the data directory. The default is
-  `~/Library/Application Support/deadlock-harness` on macOS, `%APPDATA%\deadlock-harness` on
-  Windows, and `$XDG_DATA_HOME/deadlock-harness` (or `~/.local/share/deadlock-harness`) on Linux.
-- `DAH_WORKSPACE` points at a project workspace.
+- `SIGIL_DATA_DIR` (or the older `DAH_DATA_DIR`) overrides the data directory. The default is
+  `~/Library/Application Support/Sigil` on macOS, `%APPDATA%\Sigil` on Windows, and
+  `$XDG_DATA_HOME/Sigil` (or `~/.local/share/Sigil`) on Linux. The app sets `SIGIL_DATA_DIR` for
+  the CLI and agent host it starts.
+- `SIGIL_WORKSPACE_DIR` (or `DAH_WORKSPACE_DIR`, `DAH_WORKSPACE`) points at a project workspace.
 
 The Game Index and Impact screens do not load the whole catalog yet. Filling 150,000 VPK entries
 or running a baseline check on the render thread would stall the window; both need the background

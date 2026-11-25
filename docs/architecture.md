@@ -587,7 +587,8 @@ logs/                 redacted app and tool logs
 ```
 
 CLI data directory follows the OS convention (`~/Library/Application Support` on macOS,
-`%APPDATA%` on Windows, `~/.local/share` on Linux), overridable with `DAH_DATA_DIR`.
+`%APPDATA%` on Windows, `~/.local/share` on Linux) plus a `Sigil` folder, overridable with
+`SIGIL_DATA_DIR` (or the older `DAH_DATA_DIR`).
 
 A mod workspace is deliberately a normal directory. Users can open it in an editor, version it, or
 hand it to another agent.

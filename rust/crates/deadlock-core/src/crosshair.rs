@@ -374,7 +374,7 @@ fn share_api_get(url: &str, query: Vec<(&'static str, String)>) -> Result<String
         .new_agent();
     let mut request = agent
         .get(url)
-        .header("User-Agent", "dah/0.0.0")
+        .header("User-Agent", concat!("Sigil/", env!("CARGO_PKG_VERSION")))
         .header("Accept", "application/json");
     for (name, value) in query {
         request = request.query(name, value);

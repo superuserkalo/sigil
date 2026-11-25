@@ -592,8 +592,23 @@ pub fn extras_path(data_dir: &Path) -> PathBuf {
 /// Read the store. A missing file is an empty store.
 pub fn read_extras(path: &Path) -> Result<Extras> {
     match fs::read_to_string(path) {
-        Ok(text) => serde_json::from_str(&text)
-            .map_err(|error| Error::msg(format!("{} is not a Sigil extras file: {error}", path.display()))),
+        Ok(text) => {
+            let mut extras: Extras = serde_json::from_str(&text)
+                .map_err(|error| Error::msg(format!("{} is not a Sigil extras file: {error}", path.display())))?;
+            // Pictures copied in before the data folder's rename (`crate::app_data`) name the
+            // old folder; the store sits directly in the data folder.
+            if let Some(data_dir) = path.parent() {
+                for entry in &mut extras.mods {
+                    if let Some(image) = &entry.image {
+                        entry.image = Some(crate::app_data::rebase_onto(image, data_dir));
+                    }
+                    for picture in &mut entry.gallery {
+                        *picture = crate::app_data::rebase_onto(picture, data_dir);
+                    }
+                }
+            }
+            Ok(extras)
+        }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Extras::default()),
         Err(error) => Err(error.into()),
     }

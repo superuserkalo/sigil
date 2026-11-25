@@ -4,6 +4,7 @@
 pub mod util;
 
 pub mod addon_checks;
+pub mod app_data;
 pub mod addons;
 pub mod autoexec;
 pub mod benchmark;

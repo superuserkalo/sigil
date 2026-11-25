@@ -49,30 +49,47 @@ pub fn init_state() -> State {
     state
 }
 
-/// The app data directory. `DAH_DATA_DIR` overrides the platform default.
+/// The app data directory (`deadlock_core::app_data`): `SIGIL_DATA_DIR`, then `DAH_DATA_DIR`,
+/// else the platform folder named `Sigil`, moved once from its old name at start.
 pub fn data_dir() -> PathBuf {
-    if let Some(dir) = std::env::var_os("DAH_DATA_DIR") {
-        return PathBuf::from(dir);
+    deadlock_core::app_data::data_dir()
+}
+
+/// Whether the player or a developer named the data folder (`SIGIL_DATA_DIR`, `DAH_DATA_DIR`)
+/// before Sigil set it for its children. Set once in [`start_data_folder`].
+static NAMED_FROM_OUTSIDE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Called from `main` before anything touches the data folder: move it from its old name once
+/// (`deadlock_core::app_data`), then name the folder in `SIGIL_DATA_DIR` so the CLI and agent
+/// host this process starts use the same one and never move it under the running app. Headless
+/// runs (snapshots, scripts) move nothing.
+pub fn start_data_folder() {
+    use deadlock_core::app_data;
+    NAMED_FROM_OUTSIDE.store(app_data::override_dir().is_some(), std::sync::atomic::Ordering::Relaxed);
+    let outcome = if rune::is_headless() { app_data::Outcome::Current } else { app_data::init() };
+    let dir = data_dir();
+    if !NAMED_FROM_OUTSIDE.load(std::sync::atomic::Ordering::Relaxed) {
+        // SAFETY: before any thread on macOS and Linux; Windows (where `main` may call this after
+        // the single-instance claim started its listener) sets variables safely from any thread.
+        unsafe { std::env::set_var(app_data::ENV, &dir) };
     }
-    let home = std::env::var_os("HOME").map(PathBuf::from);
-    if cfg!(target_os = "macos") {
-        home.map(|h| h.join("Library/Application Support/DeadlockAgentHarness"))
-            .unwrap_or_else(|| PathBuf::from(".dah"))
-    } else if cfg!(target_os = "windows") {
-        std::env::var_os("APPDATA")
-            .map(|h| PathBuf::from(h).join("DeadlockAgentHarness"))
-            .unwrap_or_else(|| PathBuf::from(".dah"))
-    } else {
-        std::env::var_os("XDG_DATA_HOME")
-            .map(|h| PathBuf::from(h).join("DeadlockAgentHarness"))
-            .or_else(|| home.map(|h| h.join(".local/share/DeadlockAgentHarness")))
-            .unwrap_or_else(|| PathBuf::from(".dah"))
+    if let Some(line) = outcome.log_line() {
+        crate::screens::settings::log::info(line);
     }
 }
 
+/// Whether `SIGIL_DATA_DIR` came from outside rather than from [`start_data_folder`]. A process
+/// that starts another version of Sigil (the updater) drops the variable when it is Sigil's own,
+/// so that version decides about the folder itself.
+pub fn data_dir_named_from_outside() -> bool {
+    NAMED_FROM_OUTSIDE.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 pub fn workspace_dir() -> PathBuf {
-    if let Some(dir) =
-        std::env::var_os("DAH_WORKSPACE_DIR").or_else(|| std::env::var_os("DAH_WORKSPACE"))
+    if let Some(dir) = ["SIGIL_WORKSPACE_DIR", "DAH_WORKSPACE_DIR", "DAH_WORKSPACE"]
+        .iter()
+        .filter_map(std::env::var_os)
+        .find(|dir| !dir.is_empty())
     {
         return PathBuf::from(dir);
     }
@@ -4639,7 +4656,7 @@ pub fn start_subscription_login(state: &mut State, provider: &str) {
     let mut command = binary.command();
     command
         .args(["auth", "login", provider.id()])
-        .env("DAH_DATA_DIR", &state.paths.data)
+        .env(deadlock_core::app_data::ENV, &state.paths.data)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null());

@@ -79,7 +79,7 @@ pub fn validate(args: &ValidateArgs) -> Result<bool> {
     println!("{}", domain::format_payload_issues(&staged.issues));
 
     if ok {
-        println!("Run `dah mod pack` to build the VPK.");
+        println!("Run `Sigil cli mod pack` to build the VPK.");
     } else {
         println!("Fix the errors above before packing.");
     }
@@ -153,7 +153,7 @@ pub fn pack(args: &PackArgs) -> Result<i32> {
         println!("WARNING {warning}");
     }
 
-    println!("Next: `dah mod release` records this build as a release.");
+    println!("Next: `Sigil cli mod release` records this build as a release.");
 
     Ok(0)
 }

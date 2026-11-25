@@ -19,7 +19,7 @@ Players get the installer from
 `https://github.com/superuserkalo/sigil/releases/latest/download/Sigil-Setup.exe`, or the zip from
 `.../latest/download/Sigil-windows-x64.zip`. The zip's `Sigil.exe` runs from anywhere: the Desktop,
 Downloads, or straight from the zip. Neither needs administrator rights. The first launch of a build
-writes its art once to `%APPDATA%\DeadlockAgentHarness\art\<build id>` and removes the art of older
+writes its art once to `%APPDATA%\Sigil\art\<build id>` and removes the art of older
 builds.
 
 The CLI and the agent host are folded into `Sigil.exe`. With the experimental Agent page on, the app
@@ -87,7 +87,7 @@ set DAH_AGENT_API_KEY=<key>
 
 or a local OpenAI-compatible server (`DAH_AGENT_PROVIDER=chat`, `DAH_AGENT_BASE_URL`,
 `DAH_AGENT_MODEL`). Subscription sign-in (Codex, Grok) lives in Settings > Models and stores its
-token in `%APPDATA%\DeadlockAgentHarness\auth`; it has not been run on Windows here.
+token in `%APPDATA%\Sigil\auth`; it has not been run on Windows here.
 
 ## Launching
 
@@ -99,8 +99,9 @@ While Deadlock runs, turning off or deleting a mod waits until the game closes.
 
 ## Data
 
-`%APPDATA%\DeadlockAgentHarness` holds settings, backups, the trash, caches, the agent workspace
-and sessions, and the vanilla stash. A pending stash means `game/citadel/addons` is empty; restore
+`%APPDATA%\Sigil` holds settings, backups, the trash, caches, the agent workspace
+and sessions, and the vanilla stash. Builds up to 0.1.42 used `%APPDATA%\DeadlockAgentHarness`;
+0.1.43 renames that folder to `Sigil` on its first start (see `docs/runbooks/development.md`). A pending stash means `game/citadel/addons` is empty; restore
 it (Game page) before deleting the folder. Uninstalling Sigil leaves this folder in place.
 
 ## Not verified on a real Windows PC by the maintainer

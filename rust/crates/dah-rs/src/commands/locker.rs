@@ -91,7 +91,7 @@ pub fn list(args: &ListArgs) -> Result<()> {
         );
     }
     println!();
-    println!("A recolor brief records targets and a palette. Run `dah locker recolor <hero> --palette ember`.");
+    println!("A recolor brief records targets and a palette. Run `Sigil cli locker recolor <hero> --palette ember`.");
     Ok(())
 }
 
@@ -109,7 +109,7 @@ pub fn recolor(args: &RecolorArgs) -> Result<()> {
             CliError::new(
                 "locker_hero",
                 format!(
-                    "No hero matches {:?}. Run `dah locker list` for the codenames.",
+                    "No hero matches {:?}. Run `Sigil cli locker list` for the codenames.",
                     args.hero
                 ),
             )

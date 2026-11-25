@@ -31,7 +31,7 @@ pub const UPDATE_CACHE_SCHEMA: u32 = 1;
 pub const CHECK_INTERVAL_SECONDS: i64 = 6 * 60 * 60;
 
 const API_BASE: &str = "https://gamebanana.com/apiv11/Mod";
-const USER_AGENT: &str = "dah/0.0.0";
+const USER_AGENT: &str = concat!("Sigil/", env!("CARGO_PKG_VERSION"));
 const TIMEOUT_SECONDS: u64 = 20;
 
 /// One file on a GameBanana mod page.

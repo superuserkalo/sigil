@@ -256,7 +256,7 @@ pub fn status(args: &StatusArgs) -> Result<()> {
             return Err(CliError::new(
                 "character_not_found",
                 format!(
-                    "No character task {slug} under {}. Run `dah character create` first.",
+                    "No character task {slug} under {}. Run `Sigil cli character create` first.",
                     character::characters_dir(&workspace).display()
                 ),
             ));
@@ -280,7 +280,7 @@ pub fn status(args: &StatusArgs) -> Result<()> {
             "No character tasks under {}.",
             character::characters_dir(&workspace).display()
         );
-        println!("Run `dah character create --reference image.png` to start one.");
+        println!("Run `Sigil cli character create --reference image.png` to start one.");
         return Ok(());
     }
 
@@ -721,7 +721,7 @@ pub struct ScaffoldArgs {
     pub json: bool,
 }
 
-/// `dah character backends`: what this machine can run, and how to set it up.
+/// `Sigil cli character backends`: what this machine can run, and how to set it up.
 pub fn backends(args: &BackendsArgs) -> Result<()> {
     let options = character::backend_options();
 
@@ -751,11 +751,11 @@ pub fn backends(args: &BackendsArgs) -> Result<()> {
     }
     println!();
     println!("An LLM cannot emit a production mesh as tokens, but it can write and iterate Blender code.");
-    println!("Run `dah character scaffold <slug>` to give it a real script contract.");
+    println!("Run `Sigil cli character scaffold <slug>` to give it a real script contract.");
     Ok(())
 }
 
-/// `dah character scaffold <slug>`: write a Blender script an LLM can edit.
+/// `Sigil cli character scaffold <slug>`: write a Blender script an LLM can edit.
 pub fn scaffold(args: &ScaffoldArgs) -> Result<()> {
     let workspace = paths::workspace_root(args.workspace.as_deref())?;
     let path = character::scaffold_mesh_script(&workspace, &args.slug, args.force)
@@ -771,7 +771,7 @@ pub fn scaffold(args: &ScaffoldArgs) -> Result<()> {
                 "edit mesh.py",
                 "set DAH_MESHGEN_COMMAND to the Blender binary",
                 "set DAH_MESHGEN_ARGS to a JSON array with --background --factory-startup --python <mesh.py>",
-                "run `dah character create \"<prompt>\" --provider local`",
+                "run `Sigil cli character create \"<prompt>\" --provider local`",
             ],
         }));
         return Ok(());
@@ -793,7 +793,7 @@ pub fn scaffold(args: &ScaffoldArgs) -> Result<()> {
         "     DAH_MESHGEN_COMMAND=<blender> DAH_MESHGEN_ARGS='[\"--background\",\"--factory-startup\",\"--python\",\"{}\"]'",
         path.display()
     );
-    println!("  3. Run `dah character create \"<prompt>\" --provider local`.");
+    println!("  3. Run `Sigil cli character create \"<prompt>\" --provider local`.");
     println!("     The script gets DAH_CHARACTER_DIR, DAH_STAGE_DIR and DAH_PROMPT.");
     println!();
     println!("An LLM or coding agent can edit mesh.py, look at turnaround.png, and iterate.");

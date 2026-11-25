@@ -72,6 +72,11 @@ fn resolve(variable: &str, subcommand: &'static str) -> Result<Helper, String> {
     })
 }
 
+/// Whether this process was started as a helper subcommand (`cli`, `agent-host`, `notices`).
+pub fn is_helper_launch() -> bool {
+    env::args_os().nth(1).is_some_and(|first| first == CLI || first == AGENT_HOST || first == NOTICES)
+}
+
 /// Run a helper subcommand when this process was started as one. `None` means a normal launch,
 /// which opens the window. Nothing here runs before the check, so the window path pays one
 /// argument comparison.
@@ -81,7 +86,7 @@ pub fn dispatch() -> Option<std::process::ExitCode> {
     let first = args.next()?;
     if first == CLI {
         attach_console();
-        let rest = std::iter::once(OsString::from("dah")).chain(args);
+        let rest = std::iter::once(OsString::from("Sigil cli")).chain(args);
         let code = dah_rs::run_from(rest);
         return Some(std::process::ExitCode::from(code.clamp(0, 255) as u8));
     }

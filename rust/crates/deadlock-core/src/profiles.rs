@@ -2449,7 +2449,7 @@ fn read_profile_file(path: &Path) -> Result<Profile> {
     let text = fs::read_to_string(path).map_err(|error| {
         if error.kind() == std::io::ErrorKind::NotFound {
             Error::msg(format!(
-                "Profile {} does not exist. Save it with `dah profiles save <name>` first.",
+                "Profile {} does not exist. Save it with `Sigil cli profiles save <name>` first.",
                 path.display()
             ))
         } else {

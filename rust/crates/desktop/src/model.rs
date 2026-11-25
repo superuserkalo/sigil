@@ -1057,7 +1057,7 @@ pub struct Paths {
 
 pub fn empty_paths() -> Paths {
     Paths {
-        data: "~/Library/Application Support/DeadlockAgentHarness".to_string(),
+        data: "~/Library/Application Support/Sigil".to_string(),
         workspace: "Not selected".to_string(),
         staging: "Not created".to_string(),
         game: "Not detected".to_string(),
@@ -1089,7 +1089,7 @@ pub fn default_providers() -> Vec<Provider> {
 
 pub fn welcome_messages() -> Vec<Message> {
     vec![Message::assistant(
-        "The agent is ready. Open a project to give it context, or use Game Index to find exact game paths.\n\nPrompts run through the local dah-agent host. Each tool call is listed in the timeline; nothing writes to the game install.",
+        "The agent is ready. Open a project to give it context, or use Game Index to find exact game paths.\n\nPrompts run through the local agent host. Each tool call is listed in the timeline; nothing writes to the game install.",
         "now",
         None,
     )]
@@ -1549,7 +1549,7 @@ pub fn demo_providers() -> Vec<Provider> {
 
 pub fn demo_paths() -> Paths {
     Paths {
-        data: "~/Library/Application Support/DeadlockAgentHarness".to_string(),
+        data: "~/Library/Application Support/Sigil".to_string(),
         workspace: "~/Deadlock Mods/ashfall-recolor".to_string(),
         staging: ".dah/staging/ashfall-012".to_string(),
         game: "~/Library/Application Support/Steam/steamapps/common/Deadlock".to_string(),

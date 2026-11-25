@@ -1767,7 +1767,7 @@ pub fn backend_status() -> DemoBackendStatus {
         notes: vec![
             "The container import is useful for match metadata, duration, map and provenance."
                 .to_string(),
-            "Run `dah demo backends --json` for machine-readable status.".to_string(),
+            "Run `Sigil cli demo backends --json` for machine-readable status.".to_string(),
         ],
     }
 }
@@ -4108,7 +4108,7 @@ pub fn read_summary(workspace: &Path, match_id: &str) -> Result<MatchSummaryDoc>
     let path = match_dir(workspace, match_id)?.join(MATCH_SUMMARY_FILE_NAME);
     read_json(&path).map_err(|error| {
         Error::msg(format!(
-            "Could not read {}: {error}. Run `dah demo import` for this match first.",
+            "Could not read {}: {error}. Run `Sigil cli demo import` for this match first.",
             path.display()
         ))
     })
@@ -4119,7 +4119,7 @@ pub fn read_provenance(workspace: &Path, match_id: &str) -> Result<Provenance> {
     let path = match_dir(workspace, match_id)?.join(MATCH_PROVENANCE_FILE_NAME);
     read_json(&path).map_err(|error| {
         Error::msg(format!(
-            "Could not read {}: {error}. Run `dah demo import` for this match first.",
+            "Could not read {}: {error}. Run `Sigil cli demo import` for this match first.",
             path.display()
         ))
     })
@@ -4130,7 +4130,7 @@ pub fn read_meta(workspace: &Path, match_id: &str) -> Result<MatchMeta> {
     let path = match_dir(workspace, match_id)?.join(MATCH_META_FILE_NAME);
     read_json(&path).map_err(|error| {
         Error::msg(format!(
-            "Could not read {}: {error}. Run `dah demo import` for this match first.",
+            "Could not read {}: {error}. Run `Sigil cli demo import` for this match first.",
             path.display()
         ))
     })

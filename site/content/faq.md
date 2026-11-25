@@ -47,7 +47,7 @@ Yes. Installed lists every mod in the game's addons folder, however it got there
 
 ## Where are my mods, settings and backups?
 
-Mods live in the game's own folder, game/citadel/addons, plus sigil-addons2 to sigil-addons10 next to it once you have more than 99. Sigil's settings, backups, trash and the mods Launch vanilla set aside are in %APPDATA%\DeadlockAgentHarness.
+Mods live in the game's own folder, game/citadel/addons, plus sigil-addons2 to sigil-addons10 next to it once you have more than 99. Sigil's settings, backups, trash and the mods Launch vanilla set aside are in %APPDATA%\Sigil.
 
 ## How does Sigil update itself?
 

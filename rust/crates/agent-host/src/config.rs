@@ -99,7 +99,9 @@ impl Config {
 
         let data_dir = data_dir()?;
         let session_dir = data_dir.join("agent-sessions");
-        let workspace_dir = match non_empty(env::var("DAH_WORKSPACE_DIR").ok()) {
+        let workspace_dir = match non_empty(env::var("SIGIL_WORKSPACE_DIR").ok())
+            .or_else(|| non_empty(env::var("DAH_WORKSPACE_DIR").ok()))
+        {
             Some(value) => expand_home(&value),
             None => data_dir.join("workspace"),
         };
@@ -133,24 +135,18 @@ impl Config {
     }
 }
 
-/// Matches the data leaf the native CLI uses, so both processes share one
-/// directory.
-fn app_data_leaf() -> &'static str {
-    if cfg!(target_os = "linux") {
-        "deadlock-agent-harness"
-    } else {
-        "DeadlockAgentHarness"
-    }
-}
-
+/// Sigil's data folder, shared with the app and the CLI (`deadlock_core::app_data`):
+/// `SIGIL_DATA_DIR`, then `DAH_DATA_DIR`, else the platform folder named `Sigil`.
 fn data_dir() -> Result<PathBuf, String> {
-    if let Some(configured) = non_empty(env::var("DAH_DATA_DIR").ok()) {
-        return Ok(expand_home(&configured));
+    if let Some(configured) = deadlock_core::app_data::override_dir() {
+        return Ok(expand_home(configured.to_string_lossy().trim()));
     }
-    let base = dirs::data_dir().ok_or_else(|| {
-        "Could not locate the OS application data directory. Set DAH_DATA_DIR.".to_string()
-    })?;
-    Ok(base.join(app_data_leaf()))
+    if deadlock_core::app_data::platform_base().is_none() {
+        return Err(
+            "Could not locate the OS application data directory. Set SIGIL_DATA_DIR.".to_string(),
+        );
+    }
+    Ok(deadlock_core::app_data::data_dir())
 }
 
 fn non_empty(value: Option<String>) -> Option<String> {

@@ -59,7 +59,13 @@ pub fn marker_path(data_dir: &Path) -> PathBuf {
 
 pub fn read_marker(data_dir: &Path) -> Option<Marker> {
     let text = fs::read_to_string(marker_path(data_dir)).ok()?;
-    serde_json::from_str::<Marker>(&text).ok().filter(|m| m.schema == MARKER_SCHEMA)
+    let mut marker = serde_json::from_str::<Marker>(&text).ok().filter(|m| m.schema == MARKER_SCHEMA)?;
+    // The copy of video.txt sits in the data folder: a marker from before its rename
+    // (`crate::app_data`) names the old one.
+    if let Some((_, copy)) = &mut marker.video_backup {
+        *copy = crate::app_data::rebase_onto(copy, data_dir);
+    }
+    Some(marker)
 }
 
 fn save_marker(data_dir: &Path, marker: &Marker) -> Result<()> {

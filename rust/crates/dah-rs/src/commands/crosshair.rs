@@ -36,7 +36,7 @@ pub struct ImportArgs {
     pub json: bool,
 }
 
-/// `dah crosshair show`: the editor defaults and the commands they emit.
+/// `Sigil cli crosshair show`: the editor defaults and the commands they emit.
 pub fn show(args: &ShowArgs) -> Result<()> {
     let _ = &args.workspace;
     let crosshair = Crosshair::default();
@@ -62,7 +62,7 @@ pub fn show(args: &ShowArgs) -> Result<()> {
     Ok(())
 }
 
-/// `dah crosshair import`: read the player's in-game crosshair.
+/// `Sigil cli crosshair import`: read the player's in-game crosshair.
 pub fn import(paths: &CliPaths, args: &ImportArgs) -> Result<()> {
     let _ = &args.workspace;
     let game_root = game_root(paths)?;
@@ -104,7 +104,7 @@ pub fn import(paths: &CliPaths, args: &ImportArgs) -> Result<()> {
     Ok(())
 }
 
-/// `dah crosshair apply <file|--defaults>`: write the managed block.
+/// `Sigil cli crosshair apply <file|--defaults>`: write the managed block.
 pub fn apply(paths: &CliPaths, args: &ApplyArgs) -> Result<()> {
     let game_root = game_root(paths)?;
     let existing = autoexec::read_autoexec(&game_root)
@@ -148,7 +148,7 @@ pub fn apply(paths: &CliPaths, args: &ApplyArgs) -> Result<()> {
     Ok(())
 }
 
-/// `dah crosshair clear`: remove the managed block.
+/// `Sigil cli crosshair clear`: remove the managed block.
 pub fn clear(paths: &CliPaths, args: &ClearArgs) -> Result<()> {
     let game_root = game_root(paths)?;
     let existing = autoexec::read_autoexec(&game_root)

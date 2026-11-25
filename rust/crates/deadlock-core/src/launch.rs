@@ -195,7 +195,7 @@ pub fn stash_vanilla(game_root: &Path, data_dir: &Path, approve: bool) -> Result
 
     if manifest_path.is_file() {
         return Err(Error::msg(format!(
-            "A vanilla stash already exists: {}. Restore it with `dah launch restore --approve` before stashing again. Nothing was moved.",
+            "A vanilla stash already exists: {}. Restore it with `Sigil cli launch restore --approve` before stashing again. Nothing was moved.",
             manifest_path.display()
         )));
     }
@@ -246,7 +246,7 @@ pub fn stash_vanilla(game_root: &Path, data_dir: &Path, approve: bool) -> Result
                 format!("Nothing was moved. {error}")
             } else {
                 format!(
-                    "Some files could not be moved back. Run `dah launch restore --approve` to finish. {error}"
+                    "Some files could not be moved back. Run `Sigil cli launch restore --approve` to finish. {error}"
                 )
             };
 
@@ -477,7 +477,7 @@ pub fn launch_vanilla(game_root: &Path, data_dir: &Path, approve: bool) -> Resul
             stash_dir: Some(stash.stash_dir),
         }),
         Err(error) => Err(Error::msg(format!(
-            "{error} Addons are stashed at {}. Run `dah launch restore --approve` to move them back.",
+            "{error} Addons are stashed at {}. Run `Sigil cli launch restore --approve` to move them back.",
             stash.stash_dir.display()
         ))),
     }
@@ -649,12 +649,17 @@ fn read_manifest(data_dir: &Path) -> Result<StashManifest> {
         }
     })?;
 
-    serde_json::from_str(&text).map_err(|error| {
+    let mut manifest: StashManifest = serde_json::from_str(&text).map_err(|error| {
         Error::msg(format!(
             "{} is not a valid stash manifest: {error}",
             path.display()
         ))
-    })
+    })?;
+    // A stash written before the data folder's rename (`crate::app_data`) names the old folder.
+    for file in &mut manifest.files {
+        file.to = crate::app_data::rebase_onto(&file.to, data_dir);
+    }
+    Ok(manifest)
 }
 
 /// Resolve `(file name, stash path, manifest entry)` for every recorded file.

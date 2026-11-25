@@ -57,7 +57,7 @@ macOS or the distro on Linux), using `scripts/installer/sigil.nsi` and the app i
   Sigil's own updater can later replace `Sigil.exe`;
 - adds Start menu and desktop shortcuts and an entry in Windows Settings > Apps, with an uninstaller
   that removes the program, the updater's `Sigil.exe.old` and `assets.old`, and the shortcuts;
-- writes nothing to the game and leaves Sigil's data folder (`%APPDATA%\DeadlockAgentHarness`)
+- writes nothing to the game and leaves Sigil's data folder (`%APPDATA%\Sigil`)
   alone on uninstall;
 - has English and German pages, and is not code signed, so SmartScreen warns on first run.
 
@@ -162,11 +162,11 @@ the updater says the copy was not installed from a release and points at the rel
 
 Removing the program leaves the data directory:
 
-- macOS: delete `Sigil.app`, data in `~/Library/Application Support/DeadlockAgentHarness`
+- macOS: delete `Sigil.app`, data in `~/Library/Application Support/Sigil`
 - Windows: uninstall Sigil from Settings > Apps (installer), or delete `Sigil.exe` (zip); data in
-  `%APPDATA%\DeadlockAgentHarness`
+  `%APPDATA%\Sigil`
 - Linux AppImage: delete the `.AppImage` file (and a hidden `.AppImage.old` beside it if an update
-  left one), data in `$XDG_DATA_HOME/DeadlockAgentHarness` (`~/.local/share/DeadlockAgentHarness`)
+  left one), data in `$XDG_DATA_HOME/Sigil` (`~/.local/share/Sigil`)
 - Linux `.deb`: `sudo apt remove sigil`, same data directory
 
 It holds sessions, the workspace, cached patch notes and the vanilla stash. A pending vanilla stash

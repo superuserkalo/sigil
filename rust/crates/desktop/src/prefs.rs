@@ -694,7 +694,7 @@ impl Prefs {
     pub fn save(&self) -> Result<(), String> {
         // Unit tests drive real handlers (a settings switch saves): never into the player's own
         // settings unless a test points the data folder somewhere.
-        if rune::is_headless() || (cfg!(test) && std::env::var_os("DAH_DATA_DIR").is_none()) {
+        if rune::is_headless() || (cfg!(test) && deadlock_core::app_data::override_dir().is_none()) {
             return Ok(());
         }
         let path = path();
@@ -760,6 +760,27 @@ fn personal_radius_is_unset(personal: Option<&Value>) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A settings file the 0.1.42 app wrote into `DeadlockAgentHarness` loads from `Sigil` after
+    /// the start's move (`deadlock_core::app_data`), with the player's choices intact.
+    #[test]
+    fn settings_survive_the_data_folder_move() {
+        use deadlock_core::app_data;
+        let base = std::env::temp_dir().join(format!("sigil-prefs-move-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&base);
+        let old = base.join("DeadlockAgentHarness");
+        fs::create_dir_all(&old).unwrap();
+        let mut prefs = Prefs::default();
+        prefs.theme = Theme::Midnight;
+        prefs.startup = Screen::Installed;
+        fs::write(old.join(FILE_NAME), prefs.to_json()).unwrap();
+        let (data, outcome) = app_data::migrate_in(&base, &|_| true);
+        assert!(matches!(outcome, app_data::Outcome::Moved { .. }));
+        let loaded = Prefs::from_json(&fs::read_to_string(data.join(FILE_NAME)).unwrap());
+        assert!(loaded.theme == Theme::Midnight);
+        assert!(loaded.startup == Screen::Installed);
+        let _ = fs::remove_dir_all(&base);
+    }
 
     #[test]
     fn the_graphite_default_keeps_real_choices() {

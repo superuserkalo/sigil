@@ -4,8 +4,9 @@ Sigil is a desktop mod manager for Deadlock: Browse and install from GameBanana,
 order and overlaps, launch modded or vanilla with the `gameinfo.gi` fix, Locker, Crosshair,
 Profiles, Autoexec, Performance, Stats and Servers. The desktop UI is native Rust with Rune. An
 experimental agent workbench (TinyAgent, BYOK models) sits behind Settings > Experimental > Agent.
-"Deadlock Agent Harness" is the original project name; it survives in crate names and the data
-folder (`DeadlockAgentHarness`).
+"Deadlock Agent Harness" is the original project name; it survives in crate names and developer
+variables (`DAH_*`). The data folder is `Sigil` since 0.1.43, moved once from `DeadlockAgentHarness`
+(`deadlock_core::app_data`).
 
 Status: released for Windows 10 and 11 x64 (0.1.42 on 2026-11-25), with a per-user installer and
 signed self-updates. The app writes to the game install on the player's actions (install, toggle,

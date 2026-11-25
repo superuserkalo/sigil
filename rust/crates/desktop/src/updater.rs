@@ -1113,7 +1113,9 @@ fn read_pending(dir: &Path, platform: &str) -> Option<Staged> {
     }
     Some(Staged {
         version: value.get("version")?.as_str()?.to_string(),
-        tree: PathBuf::from(value.get("tree")?.as_str()?),
+        // Written by a build that kept its data under the old folder name: map it onto the
+        // folder in use (`deadlock_core::app_data`).
+        tree: deadlock_core::app_data::rebase_onto(Path::new(value.get("tree")?.as_str()?), dir.parent().unwrap_or(dir)),
         assets: value.get("assets").and_then(|v| v.as_bool()).unwrap_or(false),
     })
 }
@@ -1182,12 +1184,27 @@ pub fn decide(applied: Option<&Applied>, pending: Option<&Staged>, current: &str
     }
 }
 
+/// The first build whose data folder is named `Sigil` (`deadlock_core::app_data`).
+pub const FIRST_SIGIL_FOLDER: &str = "0.1.43";
+
+/// Whether a build reads its data only from the old folder name (`DeadlockAgentHarness`).
+pub fn needs_old_folder_name(version: &str) -> bool {
+    match (parse_version(version), parse_version(FIRST_SIGIL_FOLDER)) {
+        (Some(v), Some(first)) => v < first,
+        _ => false,
+    }
+}
+
 /// Start the installed copy at `layout` and let it wait for this process to exit.
 fn launch(layout: &Layout) -> Result<(), String> {
     use std::process::{Command, Stdio};
     let pid = std::process::id().to_string();
     let args: Vec<std::ffi::OsString> = std::env::args_os().skip(1).collect();
     let error = |e: std::io::Error| format!("Could not start the new version: {e}");
+    // The data folder variable Sigil set for its own children stays out of another version's
+    // start: that version decides about the folder itself (a rolled-back build reads only the
+    // old name). One named from outside (a developer's) is kept.
+    let own_data_var = !crate::data::data_dir_named_from_outside();
     match layout.kind {
         Kind::MacBundle => {
             let status = Command::new("/usr/bin/open")
@@ -1204,18 +1221,27 @@ fn launch(layout: &Layout) -> Result<(), String> {
             }
             Ok(())
         }
-        Kind::AppImage => Command::new(&layout.target)
-            .args(&args)
-            .env(RELAUNCH_AFTER, &pid)
-            .current_dir(&layout.dir)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .map(drop)
-            .map_err(error),
+        Kind::AppImage => {
+            let mut command = Command::new(&layout.target);
+            if own_data_var {
+                command.env_remove(deadlock_core::app_data::ENV);
+            }
+            command
+                .args(&args)
+                .env(RELAUNCH_AFTER, &pid)
+                .current_dir(&layout.dir)
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+                .map(drop)
+                .map_err(error)
+        }
         Kind::Windows => {
             let mut command = Command::new(&layout.target);
+            if own_data_var {
+                command.env_remove(deadlock_core::app_data::ENV);
+            }
             command
                 .args(&args)
                 .env(RELAUNCH_AFTER, &pid)
@@ -1293,8 +1319,21 @@ pub fn start_with(
                     );
                     let _ = fs::remove_file(dir.join("applied.json"));
                     let _ = fs::remove_dir_all(dir.join("staged"));
-                    if relaunch && launch(layout).is_ok() {
-                        return Some(std::process::ExitCode::SUCCESS);
+                    if relaunch {
+                        // A build from before the data folder's rename reads only the old name:
+                        // give the folder its old name back so that build finds the player's
+                        // settings, and the next newer build moves it again.
+                        let data = dir.parent().unwrap_or(dir);
+                        let renamed = (needs_old_folder_name(&a.from)
+                            && !crate::data::data_dir_named_from_outside())
+                        .then(|| deadlock_core::app_data::undo_for_older_build(data))
+                        .flatten();
+                        if launch(layout).is_ok() {
+                            return Some(std::process::ExitCode::SUCCESS);
+                        }
+                        if let Some(old) = renamed {
+                            deadlock_core::app_data::redo_after_failed_rollback(&old, data);
+                        }
                     }
                     None
                 }
@@ -2096,6 +2135,69 @@ mod tests {
         assert_eq!(read(install_dir.join("assets/locker/a.png")), "old art");
         assert!(read_applied(&data).is_none());
         assert!(data.join("rolled-back.json").exists());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    /// 0.1.42 keeps its data in `DeadlockAgentHarness`; 0.1.43 is the first build that moves it to
+    /// `Sigil` (`deadlock_core::app_data`). The update across that line: 0.1.42 stages and swaps,
+    /// the new executable starts with the old folder present, moves it before `on_start` reads
+    /// `updates/`, and finds its records under the new name.
+    #[test]
+    fn the_update_that_renames_the_data_folder() {
+        use deadlock_core::app_data;
+        let root = temp("rename-update");
+        let install_dir = root.join("install");
+        fs::create_dir_all(&install_dir).unwrap();
+        windows_install(&install_dir);
+        let layout = windows_layout(&install_dir);
+        let base = root.join("AppData").join("Roaming");
+        let old_updates = base.join("DeadlockAgentHarness").join("updates");
+        let tree = old_updates.join("staged").join("0.1.43").join("tree");
+        windows_tree(&tree);
+        fs::write(base.join("DeadlockAgentHarness").join("settings.json"), "{}").unwrap();
+        let staged = Staged { version: "0.1.43".into(), tree, assets: true };
+
+        // 0.1.42's Restart to update: swap, record applied.json in the old folder.
+        let applied = install(&layout, &staged, "0.1.42").unwrap();
+        write_json(&old_updates.join("applied.json"), &applied_json(&applied)).unwrap();
+        assert_eq!(read(install_dir.join("Sigil.exe")), "new exe");
+
+        // 0.1.43 starts: the move runs first (main, before updater::on_start).
+        let (data, outcome) = app_data::migrate_in(&base, &|_| true);
+        assert!(matches!(outcome, app_data::Outcome::Moved { .. }));
+        assert_eq!(data, base.join("Sigil"));
+        let updates = data.join("updates");
+        assert!(data.join("settings.json").is_file());
+        // The first launch is counted from the moved record, then confirmed once it draws.
+        assert!(start_with(&layout, &updates, "0.1.43", "windows-x86_64", false).is_none());
+        assert_eq!(read_applied(&updates).unwrap().launches, 1);
+        confirm_started(&updates, "0.1.43");
+        start_with(&layout, &updates, "0.1.43", "windows-x86_64", false);
+        assert!(!install_dir.join("Sigil.exe.old").exists());
+        assert_eq!(read(install_dir.join("Sigil.exe")), "new exe");
+
+        // A staged update recorded under the old name is found under the new one.
+        let old_tree = base.join("DeadlockAgentHarness").join("updates").join("staged").join("0.1.44").join("tree");
+        let pending = Staged { version: "0.1.44".into(), tree: old_tree, assets: false };
+        write_json(&updates.join("pending.json"), &pending_json(&pending, "windows-x86_64")).unwrap();
+        let read_back = read_pending(&updates, "windows-x86_64").unwrap();
+        assert_eq!(read_back.tree, updates.join("staged").join("0.1.44").join("tree"));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn a_rollback_to_a_build_before_the_rename_gives_the_folder_its_old_name() {
+        assert!(needs_old_folder_name("0.1.42"));
+        assert!(needs_old_folder_name("0.1.9"));
+        assert!(!needs_old_folder_name("0.1.43"));
+        assert!(!needs_old_folder_name("0.2.0"));
+        assert!(!needs_old_folder_name("not a version"));
+        let root = temp("rename-rollback");
+        let data = root.join("Sigil");
+        fs::create_dir_all(data.join("updates")).unwrap();
+        let old = deadlock_core::app_data::undo_for_older_build(&data).unwrap();
+        assert!(old.join("updates").is_dir());
+        assert_eq!(old.file_name().unwrap(), "DeadlockAgentHarness");
         let _ = fs::remove_dir_all(root);
     }
 

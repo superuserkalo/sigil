@@ -57,13 +57,22 @@ Scenes are registered in `rust/crates/desktop/src/app.rs` and the `*_scenes.rs` 
 
 The app and the CLI share one data directory:
 
-- macOS: `~/Library/Application Support/DeadlockAgentHarness`
-- Windows: `%APPDATA%\DeadlockAgentHarness`
-- Linux: `$XDG_DATA_HOME/DeadlockAgentHarness`, defaulting to `~/.local/share/DeadlockAgentHarness`
+- macOS: `~/Library/Application Support/Sigil`
+- Windows: `%APPDATA%\Sigil`
+- Linux: `$XDG_DATA_HOME/Sigil`, defaulting to `~/.local/share/Sigil`
+
+Builds up to 0.1.42 named it `DeadlockAgentHarness` (and the standalone CLI used
+`deadlock-agent-harness` on Linux). The first start of 0.1.43 or later renames the old folder to
+`Sigil` in place (`deadlock_core::app_data`): one rename, never a copy. If the rename fails (another
+Sigil holds the folder, a file is open), that run keeps using the old folder and the next start tries
+again. If both folders exist, `Sigil` wins and the old one is left untouched. The app, `Sigil cli`
+and `Sigil agent-host` each run the move before they touch the folder; tests and headless runs never
+move it.
 
 It holds settings, backups, the trash, caches, the vanilla stash, `auth/` sign-in tokens, the agent
 workspace and `agent-sessions/`. Model keys and the proxy password are in the OS keychain. Override
-the folders with `DAH_DATA_DIR` and `DAH_WORKSPACE_DIR`. Use a separate data directory when running
+the folders with `SIGIL_DATA_DIR` and `SIGIL_WORKSPACE_DIR`; the older `DAH_DATA_DIR` and
+`DAH_WORKSPACE_DIR` still work when the new names are unset. An override skips the move. Use a separate data directory when running
 the CLI or a second app beside your usual one: one process owns the TinyAgent session directory.
 
 ## The CLI
@@ -129,7 +138,7 @@ compiled, or a lower-numbered mod ships the same path. Check Overlap, or inspect
 **The build fails in `vendor/rune`.** Run `./scripts/vendor-rune.sh` again; the pinned revision
 may have changed.
 
-**The storage is locked.** Another Sigil owns the data directory. Close it or set `DAH_DATA_DIR`.
+**The storage is locked.** Another Sigil owns the data directory. Close it or set `SIGIL_DATA_DIR`.
 
 **A test wrote outside the repo.** It should not. Tests use `.scratch/` and clean up after
 themselves.

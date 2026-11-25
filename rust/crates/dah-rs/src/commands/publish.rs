@@ -28,7 +28,7 @@ pub fn prepare(args: &PrepareArgs) -> Result<()> {
         CliError::new(
             "no_release",
             format!(
-                "Project {} has no release to publish. Run `dah mod release` first.",
+                "Project {} has no release to publish. Run `Sigil cli mod release` first.",
                 project.slug
             ),
         )
@@ -40,7 +40,7 @@ pub fn prepare(args: &PrepareArgs) -> Result<()> {
         return Err(CliError::new(
             "release_incomplete",
             format!(
-                "Release {} is missing its VPK at {}. Run `dah mod release` again.",
+                "Release {} is missing its VPK at {}. Run `Sigil cli mod release` again.",
                 manifest.version,
                 vpk_path.display()
             ),
@@ -80,7 +80,7 @@ pub fn prepare(args: &PrepareArgs) -> Result<()> {
             return Err(CliError::new(
                 "release_incomplete",
                 format!(
-                    "Release {} lists {name} but {} is missing. Run `dah mod release` again.",
+                    "Release {} lists {name} but {} is missing. Run `Sigil cli mod release` again.",
                     manifest.version,
                     source.display()
                 ),
@@ -208,7 +208,7 @@ fn render_readme(
         format!("# {name} {}", manifest.version),
         String::new(),
         format!(
-            "A Deadlock cosmetic mod built with the Deadlock Agent Harness. It ships {} file(s) for {} target game path(s) as {}.",
+            "A Deadlock cosmetic mod built with Sigil. It ships {} file(s) for {} target game path(s) as {}.",
             manifest.entries, targets, manifest.vpk_file
         ),
         String::new(),
@@ -404,7 +404,7 @@ pub fn upload(args: &UploadArgs) -> Result<()> {
         CliError::new(
             "no_release",
             format!(
-                "Project {} has no release to publish. Run `dah mod release` first.",
+                "Project {} has no release to publish. Run `Sigil cli mod release` first.",
                 project.slug
             ),
         )
@@ -416,7 +416,7 @@ pub fn upload(args: &UploadArgs) -> Result<()> {
         return Err(CliError::new(
             "publish_not_prepared",
             format!(
-                "{} has no metadata.json. Run `dah publish prepare` first.",
+                "{} has no metadata.json. Run `Sigil cli publish prepare` first.",
                 folder.display()
             ),
         ));
@@ -434,14 +434,14 @@ pub fn upload(args: &UploadArgs) -> Result<()> {
         .ok_or_else(|| {
             CliError::new(
                 "publish_archive",
-                "metadata.json has no archive. Run `dah publish prepare` again.",
+                "metadata.json has no archive. Run `Sigil cli publish prepare` again.",
             )
         })?;
     let archive_path = folder.join(archive_file);
     if !archive_path.is_file() {
         return Err(CliError::new(
             "publish_archive",
-            format!("Archive {} is missing. Run `dah publish prepare` again.", archive_path.display()),
+            format!("Archive {} is missing. Run `Sigil cli publish prepare` again.", archive_path.display()),
         ));
     }
     let sha256 = sha256_file(&archive_path)?;
@@ -551,7 +551,7 @@ pub fn confirm(args: &ConfirmArgs) -> Result<()> {
         CliError::new(
             "no_release",
             format!(
-                "Project {} has no release. Run `dah mod release` first.",
+                "Project {} has no release. Run `Sigil cli mod release` first.",
                 project.slug
             ),
         )
@@ -560,7 +560,7 @@ pub fn confirm(args: &ConfirmArgs) -> Result<()> {
     let mut record = read_upload_record(&folder)?.ok_or_else(|| {
         CliError::new(
             "publish_state",
-            "No upload record. Run `dah publish upload --approve` first.",
+            "No upload record. Run `Sigil cli publish upload --approve` first.",
         )
     })?;
 
@@ -589,7 +589,7 @@ pub fn confirm(args: &ConfirmArgs) -> Result<()> {
         return Err(CliError::new(
             "publish_archive",
             format!(
-                "Archive hash changed: expected {expected}, found {sha256}. Re-run `dah publish prepare` and upload again."
+                "Archive hash changed: expected {expected}, found {sha256}. Re-run `Sigil cli publish prepare` and upload again."
             ),
         ));
     }
@@ -619,7 +619,7 @@ pub fn confirm(args: &ConfirmArgs) -> Result<()> {
         false
     } else {
         let mut response = deadlock_core::net::get(&url)
-            .header("User-Agent", "dah/0.0.0")
+            .header("User-Agent", concat!("Sigil/", env!("CARGO_PKG_VERSION")))
             .call()
             .map_err(|error| {
                 CliError::new("publish_verify", format!("Could not fetch {url}: {error}"))
@@ -692,7 +692,7 @@ pub fn status(args: &StatusArgs) -> Result<()> {
     let record = read_upload_record(&folder)?.ok_or_else(|| {
         CliError::new(
             "publish_state",
-            format!("No upload record for {}. Run `dah publish upload` first.", folder.display()),
+            format!("No upload record for {}. Run `Sigil cli publish upload` first.", folder.display()),
         )
     })?;
 

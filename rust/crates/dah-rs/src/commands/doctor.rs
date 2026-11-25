@@ -18,7 +18,7 @@ pub fn run(paths: &CliPaths, json_output: bool) -> Result<()> {
         return Ok(());
     }
 
-    println!("Deadlock Agent Harness");
+    println!("Sigil");
     println!("  Data dir:  {}", lossy(&paths.data_dir));
     println!("  Workspace: {}", lossy(&paths.workspace_dir));
 

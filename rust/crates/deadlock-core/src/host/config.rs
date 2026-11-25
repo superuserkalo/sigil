@@ -85,7 +85,15 @@ pub fn settings_path(data_dir: &Path) -> PathBuf {
 pub fn load_settings(data_dir: &Path) -> Result<HostSettings> {
     let path = settings_path(data_dir);
     match fs::read_to_string(&path) {
-        Ok(text) => Ok(serde_json::from_str(&text)?),
+        Ok(text) => {
+            let mut settings: HostSettings = serde_json::from_str(&text)?;
+            // The default folders sit in the data folder: a save from before its rename
+            // (`crate::app_data`) names the old one.
+            for dir in [&mut settings.server_dir, &mut settings.steamcmd_dir].into_iter().flatten() {
+                *dir = crate::app_data::rebase_onto(dir, data_dir);
+            }
+            Ok(settings)
+        }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(HostSettings::default()),
         Err(error) => Err(error.into()),
     }

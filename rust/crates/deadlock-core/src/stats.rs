@@ -53,7 +53,7 @@ use cache::{Age, ResponseCache};
 /// Public API root. The OpenAPI document lists this exact server.
 pub const STATS_API_BASE: &str = "https://api.deadlock-api.com";
 /// Identifies this client without naming a user or an account.
-pub const STATS_USER_AGENT: &str = "dah/0.0.0";
+pub const STATS_USER_AGENT: &str = concat!("Sigil/", env!("CARGO_PKG_VERSION"));
 /// Optional API key variable. The statistics endpoints work without it.
 pub const STATS_API_KEY_ENV: &str = "DEADLOCK_API_KEY";
 /// Regions the leaderboard endpoint accepts.

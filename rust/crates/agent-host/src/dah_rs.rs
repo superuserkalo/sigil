@@ -83,7 +83,7 @@ impl DahRsCli {
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
-            .env("DAH_DATA_DIR", &self.data_dir)
+            .env(deadlock_core::app_data::ENV, &self.data_dir)
             .env("DAH_WORKSPACE_DIR", &self.workspace)
             .kill_on_drop(true);
         for name in SECRET_ENV {
