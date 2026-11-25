@@ -388,3 +388,8 @@ pub static CHEVRON_UP: Icon = Icon {
     view: 24.0,
     body: r#"<g fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="m18 15-6-6-6 6"/></g>"#,
 };
+pub static CHEVRONS_UP_DOWN: Icon = Icon {
+    name: "sigil-chevrons-up-down",
+    view: 24.0,
+    body: r#"<g fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="m7 15 5 5 5-5"/><path d="m7 9 5-5 5 5"/></g>"#,
+};

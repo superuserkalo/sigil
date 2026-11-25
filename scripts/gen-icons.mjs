@@ -11,7 +11,7 @@ chevron-left triangle-alert download upload external-link ellipsis trash-2 squar
 history eye heart thumbs-up panel-left square-stop paperclip shield key-round log-in user message-square
 folder file terminal layout-grid list sliders-horizontal filter rotate-ccw circle-check circle-x loader
 git-compare zap box globe info lock power gauge pin pin-off keyboard volume-2 volume-1 volume-x database gamepad-2
-panel-left-close panel-left-open chevron-up`.split(/\s+/).filter(Boolean);
+panel-left-close panel-left-open chevron-up chevrons-up-down`.split(/\s+/).filter(Boolean);
 
 const attrs = (o) => Object.entries(o).filter(([k]) => k !== 'key')
   .map(([k, v]) => `${k.replace(/[A-Z]/g, (c) => '-' + c.toLowerCase())}="${v}"`).join(' ');

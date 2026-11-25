@@ -3196,6 +3196,11 @@ pub fn scenes() -> &'static [(&'static str, fn(&mut State))] {
         ("profiles-snapshots", scene_profiles_snapshots),
         ("profiles-snapshot-restore", scene_profiles_snapshot_restore),
         ("profiles-titlebar", scene_profiles_titlebar),
+        ("profiles-statusbar-long", screens::profiles::scene_statusbar_long),
+        ("profiles-statusbar-long-collapsed", |s: &mut State| {
+            screens::profiles::scene_statusbar_long(s);
+            s.shell.w4.collapsed = true;
+        }),
         ("performance-on", scene_performance_on),
         ("performance-apply", scene_performance_apply),
         ("performance-detail", scene_performance_detail),

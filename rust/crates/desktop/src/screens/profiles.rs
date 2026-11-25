@@ -3045,12 +3045,20 @@ pub fn switcher(s: &State, u: &Ui, place: SwitcherPlace) -> El {
             }
         });
     let chip = match place {
-        // The status bar's part: the bar's own look (24 high, 14 point icon, small words).
+        // The status bar's one boxed control: a 20 point field (2 clear of the bar's top
+        // hairline and bottom edge) with the secondary button's fill and a hairline, so it
+        // reads as pressable beside the borderless volume and shortcut parts. The chevrons say
+        // a menu opens (upward, above the bar).
         SwitcherPlace::StatusBar => chip
-            .h(crate::statusbar::BAR_H)
-            .px(8.0)
+            .h(crate::statusbar::BAR_H - 4.0)
+            .pl(6.0)
+            .pr(4.0)
             .gap(6.0)
             .center_y()
+            .radius(crate::ui::r(4.0))
+            .fill(u.over.alpha(0.035))
+            .border(1.0, u.hair)
+            .expanded(s.profiles.titlebar_open && has_profiles)
             .help(tr("Switch profile"))
             .help_above()
             .child(icon(&icons::USER, 14.0).color(u.muted).a11y_hidden())
@@ -3063,7 +3071,7 @@ pub fn switcher(s: &State, u: &Ui, place: SwitcherPlace) -> El {
                     .truncate()
                     .a11y_hidden(),
             )
-            .child(icon(&icons::CHEVRON_UP, 12.0).color(u.faint).a11y_hidden()),
+            .child(icon(&icons::CHEVRONS_UP_DOWN, 12.0).color(u.muted).a11y_hidden()),
         // On the nav grid: the icon on the icon column, the name on the label edge.
         SwitcherPlace::Sidebar => chip
             .w_full()
@@ -3352,6 +3360,16 @@ pub fn scene_titlebar(st: &mut State) {
     fixture_load(st);
     st.screen = crate::model::Screen::Browse;
     st.profiles.titlebar_open = true;
+}
+
+/// The status bar's profile switcher with a long active profile name, on Browse: the name
+/// cuts with an ellipsis and the chevrons stay in the box.
+pub fn scene_statusbar_long(st: &mut State) {
+    fixture_load(st);
+    st.screen = crate::model::Screen::Browse;
+    if let Some(row) = st.profiles.rows.iter_mut().find(|row| row.slug == "ranked") {
+        row.name = "Ranked night with the full competitive skin set".to_string();
+    }
 }
 
 /// The apply confirm for a profile with missing mods.
