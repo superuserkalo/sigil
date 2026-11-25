@@ -1,6 +1,6 @@
 # Stats tracker case study: Leetify, Blitz.gg and Scope.gg
 
-Status: active. Researched 2026-11-16.
+Status: historical. The 2026-11-16 case study behind the Stats page. Not maintained; the code wins where they differ. Original status: active. Researched 2026-11-16.
 Updated: 2026-11-16
 
 This note records what the best public match trackers show, why it works, and what the Deadlock

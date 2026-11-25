@@ -523,6 +523,9 @@ second open of each (it should come from the cache at once).
 `rust/crates/sigil-viewer` draws the files above on its own wgpu device (wgpu `~30.0.1`, the
 version and per-platform backend Rune links: Metal, D3D12 with FXC, Vulkan). It never reads a VPK
 and never touches the UI.
+It renders off screen because Rune has no mesh, index buffer, depth or camera path: its renderer
+draws instanced quads, text, images and rounded rects (the 2026-11-17 study that led here, once
+`locker-3d.md`, has been removed).
 
 ```rust
 let mut v = sigil_viewer::Viewer::new()?;              // Err(ViewerError::NoGpu) without an adapter

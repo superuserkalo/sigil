@@ -1,7 +1,7 @@
 # Subscription sign-in (BYOS)
 
 Status: active. Implemented 2026-11-16. The browser flow is not run on this machine.
-Updated: 2026-11-16
+Updated: 2026-11-25
 
 Bring your own subscription means the user signs in with an account they already
 pay for, and the app calls the same first-party endpoint that account's own CLI
@@ -98,10 +98,10 @@ header shape are covered by tests, and the host starts against a fixture token.
    - PKCE S256, `state`, loopback callback, authorize URL.
    - Token exchange and refresh, form encoded.
    - Token set: access, refresh, expiry, account id, id token. Debug is redacted.
-   - Store under the app data directory with owner-only permissions, or the OS
-     keychain in the desktop app.
+   - Store under the app data directory (`<data>/auth/<provider>.json`) with
+     owner-only permissions, in the CLI and the desktop app alike.
    - `account_id` from the id token claim used by the provider.
-2. `dah auth subscription login codex|grok`, `status`, `logout`.
+2. `dah auth login codex|grok`, `status`, `logout`.
    - Login prints the URL when a browser cannot be opened, and accepts a pasted
      code as a fallback for a blocked loopback.
    - Logout removes the local login and asks the provider to revoke it.
@@ -111,7 +111,8 @@ header shape are covered by tests, and the host starts against a fixture token.
      endpoint and headers. No token on the command line.
 4. Desktop
    - Settings shows the connected account, expiry and a sign-out action. The
-     token lives in the OS keychain. The sidecar receives a short-lived access
+     token lives in the same file store (`<data>/auth`); the OS keychain holds only
+     the proxy password. The agent host receives a short-lived access
      token through its environment, never a refresh token.
 
 ## Tests

@@ -1,6 +1,6 @@
 # Character generation from a reference image
 
-Status: active. Provider docs read 2026-11-16. In-game compile not verified.
+Status: active. Provider docs read 2026-11-16. In-game compile not verified. In the app this page sits under Agent, behind Settings > Experimental > Agent (off by default).
 Updated: 2026-11-16
 
 This document covers the hosted image-to-3D backend, what it returns, and why a

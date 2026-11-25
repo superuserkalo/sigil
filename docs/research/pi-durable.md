@@ -1,6 +1,6 @@
 # Pi Durable
 
-Status: superseded by `docs/decisions/0007-tinyagent-host.md`. Kept as history. Pinned to `1.5.2`, which the package marks experimental.
+Status: historical. The 2026-11-16 notes on the legacy Pi Durable runtime (`packages/harness` only). Not maintained; the code wins where they differ. Original status: superseded by `docs/decisions/0007-tinyagent-host.md`. Kept as history. Pinned to `1.5.2`, which the package marks experimental.
 Updated: 2026-11-16
 
 Pi Durable is the durable agent harness from Earendil, shipped alongside Pi 1.0. It is MIT

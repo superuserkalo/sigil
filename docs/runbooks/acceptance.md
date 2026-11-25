@@ -1,6 +1,6 @@
 # Tier 5 acceptance
 
-Status: active. This is the evidence record, not a promise.
+Status: historical. The 2026-11-16 CLI acceptance run; `scripts/acceptance.sh` still exists but this result has not been refreshed. Not maintained; the code wins where they differ. Original status: active. This is the evidence record, not a promise.
 Updated: 2026-11-16
 
 `scripts/acceptance.sh` runs the release loop against a disposable fake install under

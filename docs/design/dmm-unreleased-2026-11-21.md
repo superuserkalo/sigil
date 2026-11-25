@@ -1,6 +1,6 @@
 # Deadlock Mod Manager: unreleased and planned work against Sigil
 
-Status: research snapshot, 2026-11-21; status column rechecked against `rust/crates` after 0.1.22
+Status: historical. A snapshot of unreleased Deadlock Mod Manager work on 2026-11-21. Not maintained; the code wins where they differ. Original status: research snapshot, 2026-11-21; status column rechecked against `rust/crates` after 0.1.22
 (2026-11-21). Companion to `upstream-gaps-2026-11-21.md`, which covers both reference apps; this
 doc covers only Deadlock Mod Manager (DMM, GPL-3.0) and every source of work it has not released
 yet. Behaviour only: no DMM code or text is copied, only short feature names. A row marked "has,

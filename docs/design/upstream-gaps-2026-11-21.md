@@ -1,6 +1,6 @@
 # Upstream gaps: the newest Grimoire and Deadlock Mod Manager against Sigil
 
-Status: research snapshot, 2026-11-21; status column rechecked against `rust/crates` after 0.1.22
+Status: historical. A snapshot of upstream gaps on 2026-11-21. Not maintained; the code wins where they differ. Original status: research snapshot, 2026-11-21; status column rechecked against `rust/crates` after 0.1.22
 (2026-11-21). Fresh upstream clones are in `.scratch/upstream/grimoire` and `.scratch/upstream/dmm`
 (gitignored). Grimoire (G) is MIT, so its code and copy may be ported. Deadlock Mod Manager (D) is
 GPL-3.0: behaviour only, never its code or text. A row marked "has, real game unverified" is built

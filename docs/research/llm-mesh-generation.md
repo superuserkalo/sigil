@@ -1,6 +1,6 @@
 # Can an LLM produce the mesh?
 
-Status: active. Researched 2026-11-16.
+Status: historical. The 2026-11-16 research for character generation. Not maintained; the code wins where they differ. Original status: active. Researched 2026-11-16.
 Updated: 2026-11-16
 
 Short answer: a general chat model cannot emit a production triangle mesh as

@@ -1,8 +1,8 @@
 # Privacy and network activity
 
-Status: draft. Describes the behavior of the code in this repository. The telemetry Worker is in
-`services/telemetry/` with tests; its deployment is the owner's step. The desktop app has the
-Settings > Privacy switches and sends only what they allow.
+Status: active. Describes the behavior of the code in this repository at 0.1.42. The telemetry
+Worker in `services/telemetry/` is deployed. The desktop app has the Settings > Privacy switches and
+sends only what they allow.
 Updated: 2026-11-25
 
 This page lists every service Sigil contacts, what each one receives, and how to turn it off.

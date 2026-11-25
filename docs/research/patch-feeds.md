@@ -60,7 +60,8 @@ requests hit a browser challenge. Do not scrape it in the app. Link to it.
 
 ## What the app does with the feed
 
-- Fetch on demand, not on a timer. No telemetry and no background heartbeat.
+- Fetch on demand, not on a timer: when a page that shows patch notes opens with an empty cache
+  (Stats fetches it itself then) or on refresh. No telemetry and no background heartbeat.
 - Cache the last response under `<workspace>/.dah/patches.json`.
 - Mark items whose `gid` was not in the previous cache as new.
 - Show title, date, author and a plain-text excerpt. Link out for the full post.

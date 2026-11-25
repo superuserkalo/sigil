@@ -92,6 +92,21 @@ does for each shape.
 | a mod with several files | newest, picker in the mod view | file choice dialog | one-press Install asks GameBanana first; several files open the details' file menu |
 | archive that will not open | deleted | kept | deleted when downloaded (never a player's own file), so Install again re-downloads |
 
+Rules carried over from the first install pipeline note (2026-11-16, since removed):
+
+- The download allowlist is HTTPS on `gamebanana.com` and every subdomain of it, not a fixed host
+  list: a live `gamebanana.com/dl/<id>` redirected to `filecache52.gamebanana.com`, which a fixed
+  list would have refused. `http://`, other ports, `notgamebanana.com` and
+  `gamebanana.com.evil.test` are refused, with tests. Redirects are followed by hand, at most five
+  hops, each checked again. A whole request has a 300 s budget.
+- A plan is written first and nothing reaches the game until apply. Apply refuses when the slot,
+  the artifact's file list or the addons folder changed since planning, backs up every file it
+  replaces, writes through a temporary file and a rename, removes leftover chunks of the slot, and
+  appends one line to the install journal.
+- A loose tree's game path prefix is detected deepest first (`game/citadel/`, `citadel/`, `game/`,
+  none); files outside it are listed and never installed. Lower slots win a shared path, so the
+  plan reports overlaps with lower slots as conflicts.
+
 ## Files on disk
 
 | Behaviour | Grimoire | DMM | Sigil |

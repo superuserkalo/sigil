@@ -1,6 +1,6 @@
 # Feature parity: Grimoire and Deadlock Mod Manager
 
-Status: audit 2026-11-17, updated the same day; upstream round 2026-11-21 (mod safety review list, sources in Browse, GameBanana notices, hidden lists, Locker shuffle in profiles, Hide party size, Street Brawl in Stats; Summary recounted, Recolor marked partial); statuses rechecked against `rust/crates` after 0.1.22 (2026-11-21); live match view built 2026-11-20; smalls round 2026-11-19 (custom maps page, update progress, package manager note); wave 3 rows updated 2026-11-18; wave 4 (UI B) rows updated 2026-11-18. Browse and mod details are built, including a
+Status: historical. A record of the Grimoire and Deadlock Mod Manager parity audit as of 2026-11-21 (Sigil 0.1.22). Not maintained; the code wins where they differ. Original status: audit 2026-11-17, updated the same day; upstream round 2026-11-21 (mod safety review list, sources in Browse, GameBanana notices, hidden lists, Locker shuffle in profiles, Hide party size, Street Brawl in Stats; Summary recounted, Recolor marked partial); statuses rechecked against `rust/crates` after 0.1.22 (2026-11-21); live match view built 2026-11-20; smalls round 2026-11-19 (custom maps page, update progress, package manager note); wave 3 rows updated 2026-11-18; wave 4 (UI B) rows updated 2026-11-18. Browse and mod details are built, including a
 bounded local catalog mirror (JSONL, no new crate, no SQLite), the inline sound player and the
 multi-VPK picker. The Installed page has its first round. The global shell has its round: drop
 anywhere, zoom chords, the shortcuts sheet, What's new after an update, the tray, density, and a
@@ -22,7 +22,11 @@ How to read the tables:
 Deferred as one package, "Sigil accounts" (owner 2026-11-20): Grimoire Social sign-in, cloud
 backup, DMM's Discover publishing, announcements and feature flags. They come later on Sigil's
 own backend (the telemetry Worker is the likely start), not on Grimoire's or DMM's. The community
-crosshair library left the package: it is built on the Worker without accounts (ADR 0019). Rows marked "won't" for style or rules are closed by the owner and are not raised again.
+crosshair library left the package: it is built on the Worker without accounts (ADR 0019).
+A community profile gallery (Grimoire Social parity) would need a Sigil-owned HTTPS API on the
+Worker with D1: Steam OpenID sign-in, profiles holding the existing share-code payload, likes,
+reports and account deletion, the session token in the OS keychain, and an ADR for the new stored
+identity before it is built. Cloud backup of profiles needs the same sign-in. Rows marked "won't" for style or rules are closed by the owner and are not raised again.
 The relay region picker was decided (owner, 2026-11-20: build it, off by default) and is built.
 
 Two architectural differences drive many rows:

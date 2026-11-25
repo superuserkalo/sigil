@@ -1,10 +1,10 @@
 # Deadlock player stats: API, derived metrics and visualizations
 
 Status: active. Researched and verified 2026-11-16 against the live API.
-Updated: 2026-11-17
+Updated: 2026-11-25
 
 This document records the public data source, the endpoints the workbench uses, the formulas behind
-every derived number, what the API does not expose, and the chart choices for the future Stats
+every derived number, what the API does not expose, and the chart choices for the Stats
 screen. The companion case study is `docs/research/stats-case-study.md`.
 
 ## Data source
@@ -393,7 +393,8 @@ generator is a local script (`.scratch/ui-hill/stats2/make-fixture.py`).
   script does not copy that folder yet, so a packaged build shows letters.
 - Item icons are not drawn, for the same reason: `assets-bucket.deadlock-api.com` is not on the
   network allowlist.
-- The live match view is designed but not built: `docs/design/stats-live.md`.
+- The live match view is built (`screens/stats/live.rs`, `deadlock_core::live_match`,
+  `deadlock_core::live_bridge`; `docs/design/stats-live.md`) and not yet checked in a real match.
 
 
 ## CLI surface

@@ -1,8 +1,8 @@
 # Sigil player guide
 
-Status: active, 2026-11-21. Describes Sigil 0.1.22. Parts that have only been checked on stand-ins
-(the 3D viewer, the live match bridge, relay region blocking and hosting a server) are marked as
-new and not yet checked with a real game.
+Status: active, 2026-11-25. Describes Sigil 0.1.42. Parts that have only been checked on stand-ins
+(the 3D viewer, the live match bridge, the benchmark, relay region blocking and hosting a server)
+are marked as new and not yet checked with a real game.
 
 Sigil is a desktop app for playing Deadlock with mods. It finds your game, installs and organises
 mods, shows what they replace, helps you switch whole setups, previews hero skins in 3D, edits your
@@ -10,11 +10,13 @@ crosshair and console settings, reads your match history, and can start the game
 
 ## Install and first run
 
-1. Download the build for your computer from Sigil's GitHub releases page. Windows and macOS builds
-   are the main ones. A Linux AppImage and a Debian package are also built, but they have not been
-   checked on a Linux desktop yet.
-2. Unzip it where you keep apps and start Sigil. On Windows and macOS there is no separate
-   installer and no browser window inside the app.
+1. Download `Sigil-Setup.exe` from [sigilmods.app](https://sigilmods.app) or the
+   [latest release](https://github.com/superuserkalo/sigil/releases/latest). Sigil is released for
+   Windows 10 and 11, 64-bit.
+2. Run the installer. It installs for your user only, needs no administrator rights, and adds Start
+   menu and desktop shortcuts. Windows may show "Windows protected your PC" because the installer is
+   not code signed yet: choose More info, then Run anyway. If you prefer no installer,
+   `Sigil-windows-x64.zip` on the same page holds the same `Sigil.exe`, which runs from any folder.
 3. The first time you start, a short setup asks three things:
    - **Find Deadlock.** Sigil looks for the game and shows the folder it found. Use Choose if it
      picked the wrong one.
@@ -34,9 +36,11 @@ reset the file, a banner offers to fix it.
 
 ## The window
 
-The sidebar holds the pages: Installed, Browse, Overlap, Profiles, Locker, Crosshair, Autoexec,
-Performance, Stats, Servers and Launch. Settings and the agent workbench sit at the foot. Pages you
-do not use can be turned off in Settings > General > Pages, including a Mods only mode.
+The sidebar holds the pages: Browse, Installed, Locker, Crosshair, Autoexec, Performance, Stats,
+Overlap, Profiles, Servers, Game and Downloads. Launch modded, Launch vanilla and Settings sit at the
+foot. Pages you do not use can be turned off in Settings > General > Pages, including a Mods only
+mode. The agent that builds mods from a prompt is experimental and appears only when you turn on
+Settings > Experimental > Agent.
 
 The top bar has search for the current page. The status bar shows whether the game was found,
 whether the mod catalog is syncing, downloads, an app update, the active profile and the preview
@@ -52,11 +56,19 @@ default) makes all of it change at once; the system's reduce motion setting does
 ## Browse
 
 Browse reads GameBanana live. The tabs are Mods, Sounds, WiPs and All. Pick a category, a
-subcategory or a hero on the left, or search by name. A hero pick also finds that hero's sounds
+subcategory or a hero on the left, or search. A hero pick also finds that hero's sounds
 and HUD work. Filters cover NSFW content, outdated mods, whether a mod is installed, featured
 mods and a category match mode. You can sort by newest, updated, most liked, viewed, downloaded,
 discussed, latest comment or A to Z, and limit the results to a date window. Active filters appear
 as removable chips.
+
+Search for mods runs on your PC. Sigil downloads a public index of the catalog in the background
+and matches what you type against it as you type: it forgives typos, copes with words written
+together or apart ("hitsound", "delta rune"), and knows what many mods are based on, so a game or
+series name finds skins whose title never mentions it. Typing "nsfw" filters by content rating;
+your NSFW setting still applies. When no mod matches every word, Sigil shows the closest matches
+and says so. Sort and every filter apply to the whole result. Until the index has downloaded, and
+in the Sounds and WiPs tabs, search uses GameBanana's own title search instead.
 
 The landing page has a top-this-week strip, trending rails, a Browse by hero rail and featured
 picks. Favorites are saved on this computer. Hidden mods and creators are kept in Hidden items,
@@ -72,8 +84,9 @@ To install:
 2. Sigil downloads the archive, lists the mod files inside and checks what it is about to write.
    If the mod runs scripts or programs, the review says so.
 3. Choose the file or variant you want, then confirm. Sigil puts it in the first free slot.
-4. If Settings > Mods > New mods start turned off is on, the mod arrives switched off. Otherwise it
-   lands on, unless the safety check asks first.
+4. New mods arrive switched off, so nothing changes in your game until you turn them on in
+   Installed. Settings > Mods > New mods start turned off (on by default) changes that; even then a
+   mod the safety check asks about stays off until you review it.
 5. If the install adds a second skin for a hero who already has one switched on, Sigil asks whether
    to keep both or only the new one.
 
@@ -302,7 +315,9 @@ Windows PC yet.
 
 ## Launch and fixing a game that won't start
 
-Launch has Launch modded and Launch vanilla. Modded applies your mods, fixes `gameinfo.gi` if needed,
+Launch modded and Launch vanilla sit at the foot of the sidebar; the Game page shows the game's
+state, the vanilla stash and the crash card. The launch steps run in the background, so the window
+stays responsive, and mod changes wait for a moment while a step is moving files. Modded applies your mods, fixes `gameinfo.gi` if needed,
 checks overlaps and updates, and can ask about map mods first. Vanilla moves your mods aside, starts
 the game without them and puts them back later. A checklist above the buttons shows anything that
 needs a fix.
@@ -335,7 +350,7 @@ closes, and every switch or delete is refused while the game runs.
 Sigil checks GitHub releases. When an update is out, a banner appears over every page with Install
 or View update. The download shows bytes and a percentage. Restart to update installs the signed
 update, and a failed start rolls back to the version that worked. Settings > About and updates has
-Check now, the current version, release notes and the release channel (stable or nightly). Going
+Check now, the current version, release notes and the release channel (Stable or Preview). Going
 back explains how to return to an earlier release. If Sigil was installed by winget, Scoop,
 Chocolatey, Homebrew, Nix, Snap, Flatpak or a system package, the page says updates come from that
 manager and turns the built-in installer off. What's new shows once after an update.
@@ -352,7 +367,9 @@ Sigil has no account and no third-party analytics. It contacts only the services
 - A model provider, only when you chat with the agent, using your own key.
 - A mod source you added, only for that source.
 - Discord, over the app on your PC, when Rich Presence is on.
-- Sigil's own telemetry service, only for the opt-ins you agree to.
+- Sigil's own service: the public catalog search index and the community crosshair library (neither
+  sends anything about you; publishing a crosshair makes its name and settings public), plus the
+  opt-ins below once you agree.
 
 Settings > Network > Offline mode stops Sigil's own catalog, download and service requests. Chatting
 with the agent still uses your model provider, because that is your own connection. Settings >

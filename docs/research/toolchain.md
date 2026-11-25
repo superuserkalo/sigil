@@ -1,6 +1,6 @@
 # Decompile and compile toolchain
 
-Status: active. Backend code exists; no real game asset has been round-tripped on Windows yet.
+Status: active. Backend code exists; no real game asset has been round-tripped on Windows yet. In the app this page sits under Agent, behind Settings > Experimental > Agent (off by default).
 Updated: 2026-11-16
 
 This document explains the two external tools the harness drives, what the Rust backend does

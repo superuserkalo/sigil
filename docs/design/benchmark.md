@@ -24,7 +24,9 @@ for approach; Deadlock Mod Manager's `feature/perf-video-tracking` and `feature/
   - **Any two runs**: one profile against another, one Performance config against another, before
     and after a driver update or a game patch. Every run records the profile, the config, the
     video settings, the driver and the game build, so the comparison says what changed.
-- History per replay, a shareable result card (PNG), and exports (JSON, CSV). All local.
+- History per replay, a shareable result card (PNG), and exports (JSON, CSV). All local, except
+  that with "Help build Sigil" product data on, a finished run sends its average and 1% low FPS,
+  map, resolution and preset with the hardware class (ADR 0017, `docs/privacy.md`).
 
 ## The repeatable scene
 

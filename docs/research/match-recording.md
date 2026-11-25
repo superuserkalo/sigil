@@ -1,6 +1,6 @@
 # Local match recording and AI review
 
-Status: active. Researched 2026-11-16.
+Status: historical. The 2026-11-16 plan behind `deadlock_core::demo` and `deadlock_core::review`; its LLM review contract section is still the spec of what the model gets. Not maintained; the code wins where they differ. Original status: active. Researched 2026-11-16.
 Updated: 2026-11-16
 
 Idea: when the public API lacks a stat, record the user's own matches locally, build a private

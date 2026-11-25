@@ -2,7 +2,7 @@
 
 Status: active. Verified against the packaged art set, a fixture catalog with real
 Deadlock folder names, and fixture addon VPKs. Not yet verified on a live Windows install.
-Updated: 2026-11-17
+Updated: 2026-11-25
 
 The Locker is the hero surface, ported from Grimoire's Locker: a General tile and one
 card per playable hero, a hero page with that hero's mods and recolor, and a General
@@ -12,8 +12,9 @@ copied into this repository.
 
 The page also carries the owner's round 3 additions: starred heroes and search, a list
 view, one skin per hero with a per-hero order, launch shuffle, ability sounds, custom
-card art, an applied changes review and the Global priority folder. The 3D viewer is a
-design document only (`docs/design/locker-3d.md`): Rune has no mesh path.
+card art, an applied changes review and the Global priority folder. The 3D preview shipped in
+0.1.16 to 0.1.18 on its own renderer (`rust/crates/sigil-viewer`, `docs/design/3d-viewer.md`).
+Recolor is still briefs only (`deadlock_core::recolor`).
 
 ## Where heroes come from
 
@@ -173,6 +174,7 @@ brief never writes the game install and never claims an asset exists.
 - The art set is Grimoire's, packed beside the executable by
   `scripts/pack-locker-art.sh` under its MIT licence. No render or name image is
   stored in this repository.
-- The 3D viewer is not built; `docs/design/locker-3d.md` records what it needs.
+- The 3D viewer is built (`docs/design/3d-viewer.md`) but not yet checked against a real game
+  install.
 - The Global folder mounts and accepts hand-placed VPKs. Marking an installed mod Global
   and moving its files is not built yet.

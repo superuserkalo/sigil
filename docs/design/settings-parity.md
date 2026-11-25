@@ -1,10 +1,10 @@
 # Settings parity: Grimoire and Deadlock Mod Manager
 
-Status: audit done 2026-11-17; upstream round 2026-11-21 (rows G77, G80, G83, G86, D32, D152); statuses rechecked after 0.1.22 (2026-11-21); bookkeeping 2026-11-20 (3D preview, Hideout, signed updates and the tray hooks covered); smalls round 2026-11-19 (rows G47, G99, G100, D129, D194 built); parity round built 2026-11-17; wave 3 rows updated 2026-11-18 (pages, preview volume, map mods, fix before launch, Remote Install backlogged); wave 4 UI B rows updated 2026-11-18 (SOCKS5, checklist, catalog, logs, AI help, launch options, vanilla, update marks, channel notes, seasons). Every settings item in both apps, from their source, with what Sigil does about it.
+Status: historical. A record of the settings parity audit as of 2026-11-21 (Sigil 0.1.22). Not maintained; the code wins where they differ. Original status: audit done 2026-11-17; upstream round 2026-11-21 (rows G77, G80, G83, G86, D32, D152); statuses rechecked after 0.1.22 (2026-11-21); bookkeeping 2026-11-20 (3D preview, Hideout, signed updates and the tray hooks covered); smalls round 2026-11-19 (rows G47, G99, G100, D129, D194 built); parity round built 2026-11-17; wave 3 rows updated 2026-11-18 (pages, preview volume, map mods, fix before launch, Remote Install backlogged); wave 4 UI B rows updated 2026-11-18 (SOCKS5, checklist, catalog, logs, AI help, launch options, vanilla, update marks, channel notes, seasons). Every settings item in both apps, from their source, with what Sigil does about it.
 
 Sources: Grimoire (`vendor/grimoire`, MIT) `src/pages/Settings.tsx`, `src/components/settings/**`, `electron/main/services/settings.ts`; Deadlock Mod Manager (`vendor/dmm`, GPL-3.0, behaviour only) `apps/desktop/src/pages/settings.tsx`, `apps/desktop/src/components/settings/*.tsx`, `plugins/themes`.
 
-Status words: **Had it** (Sigil had it before this round), **Built now**, **Built, hook pending** (the setting works and persists; a page owned elsewhere still has to read it), **Elsewhere in Sigil** (a page outside Settings owns it), **Needs a backend** (see `settings-social.md`), **Declined (rule)** (conflicts with AGENTS.md hard rules or the house style, reason given), **On hold (owner)** (the owner set it aside), **Not built yet** (buildable, reason given).
+Status words: **Had it** (Sigil had it before this round), **Built now**, **Built, hook pending** (the setting works and persists; a page owned elsewhere still has to read it), **Elsewhere in Sigil** (a page outside Settings owns it), **Needs a backend** (see "Sigil accounts" in `feature-parity.md`), **Declined (rule)** (conflicts with AGENTS.md hard rules or the house style, reason given), **On hold (owner)** (the owner set it aside), **Not built yet** (buildable, reason given).
 
 ## Counts
 
@@ -122,7 +122,7 @@ Grouped by task, thirteen categories in three groups, a search field over all of
 | 84 | Mod safety | Allow script mods | Trust all | Built now | Mods > Preferences > Allow script mods: off by default, warning dialog; gameplay data and skeletons become review warnings, programs and archives stay refused |
 | 85 | Mod safety | Review card | Per-mod trust | Built now | Browse install panel lists each script file as a warning before Install |
 | 86 | Mod safety | Scan status | Status | Elsewhere in Sigil | Installed: "N mods need attention" and the Mod safety list with Review, Allowed and Disallow (2026-11-21) |
-| 87 | Social | Sign in with Steam | Grimoire Social login | Needs a backend | Needs a Sigil community service; settings-social.md |
+| 87 | Social | Sign in with Steam | Grimoire Social login | Needs a backend | Needs a Sigil community service; "Sigil accounts" in feature-parity.md |
 | 88 | Social | Cancel login | Cancel | Needs a backend | With 87 |
 | 89 | Social | Account status | Avatar, name | Needs a backend | With 87; Integrations shows the local Steam account |
 | 90 | Social | Session only warning | Keychain notice | Needs a backend | With 87 |

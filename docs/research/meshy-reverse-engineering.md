@@ -1,6 +1,6 @@
 # Meshy reverse engineering: their process, our pipeline
 
-Status: active. Static analysis of the shipped web bundle on 2026-11-16. No
+Status: historical. The 2026-11-16 study; `deadlock_core::character` still cites its evidence ids. Not maintained; the code wins where they differ. Original status: active. Static analysis of the shipped web bundle on 2026-11-16. No
 Meshy account, key or credit was used. Nothing here executes their client.
 
 Updated: 2026-11-16

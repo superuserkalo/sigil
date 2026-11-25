@@ -1,6 +1,6 @@
 # Grimoire unreleased and planned work against Sigil
 
-Status: research snapshot, 2026-11-21; status column rechecked against `rust/crates` after 0.1.22
+Status: historical. A snapshot of unreleased Grimoire work on 2026-11-21. Not maintained; the code wins where they differ. Original status: research snapshot, 2026-11-21; status column rechecked against `rust/crates` after 0.1.22
 (2026-11-21). Companion to `upstream-gaps-2026-11-21.md`, which covers what Grimoire and Deadlock
 Mod Manager already ship. This doc covers only what Grimoire has not released yet: open PRs,
 unmerged branches, closed-but-unmerged PRs, unreleased commits on `main`, open issues, plan docs,

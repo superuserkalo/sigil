@@ -1,6 +1,6 @@
 # fx and libfx
 
-Status: active. Evaluated 2026-11-16 against fx CLI 0.0.9 and libfx 0.0.17.
+Status: historical. The 2026-11-16 evaluation behind ADR 0004; Pi Durable, its conclusion, was itself superseded by ADR 0007, and no code runs or links fx. Not maintained; the code wins where they differ. Original status: active. Evaluated 2026-11-16 against fx CLI 0.0.9 and libfx 0.0.17.
 Updated: 2026-11-16
 
 This note records why the embedded runtime is Pi Durable rather than fx. It is not a dismissal of

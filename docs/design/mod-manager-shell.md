@@ -1,6 +1,6 @@
 # Mod-manager shell
 
-Status: draft. Product direction for the native Rune app, Sigil.
+Status: historical. The 2026-11-16 sidebar draft; the app's order is `PLACES` in `rust/crates/desktop/src/app.rs` and the Agent page sits behind Settings > Experimental. Not maintained; the code wins where they differ. Original status: draft. Product direction for the native Rune app, Sigil.
 Updated: 2026-11-16
 
 The app is Sigil: a Deadlock mod manager with an agent inside it. The mod-manager surfaces are

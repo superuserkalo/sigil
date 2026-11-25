@@ -1,8 +1,8 @@
 # Releasing Sigil
 
-Status: active. The signing flow and the updater are tested locally against a fake release.
-0.1.1 is the first published release; its Windows swap is the first run on Windows.
-Updated: 2026-11-17
+Status: active. Describes how 0.1.42 was released (2026-11-25): built, signed and published from
+the maintainer's Mac, Windows only, with the installer and the stable-name assets.
+Updated: 2026-11-25
 
 Sigil updates itself from GitHub releases of `superuserkalo/sigil`. A release is trusted only when
 its manifest carries a valid Ed25519 signature by the key compiled into Sigil. CI builds and
@@ -37,13 +37,22 @@ node scripts/release-sign.mjs pubkey            # prints the public key and key 
 
 ## What a release carries
 
-| Asset | Made by |
-| --- | --- |
-| `Sigil-<version>-windows-x64.zip` | the `build-windows` workflow on a tag, or `scripts/package-windows.sh` |
-| `Sigil-<version>-macos-arm64.zip` | `scripts/package-desktop.sh` on a Mac (`Sigil.app` at the top) |
-| `Sigil-<version>-x86_64.AppImage` | the `linux-build` workflow, or `scripts/package-linux.sh` on Linux |
-| `sigil-update.json` | the same scripts (`release-sign.mjs manifest`), unsigned |
-| `sigil-update.json.sig` | `scripts/sign-release.sh`, on the maintainer's machine only |
+| Asset | Made by | Read by |
+| --- | --- | --- |
+| `Sigil-<version>-windows-x64.zip` | `scripts/package-windows.sh` (cargo-xwin) | the updater, through the signed manifest |
+| `Sigil-windows-x64.zip` | a copy of the versioned zip | the stable "latest" link |
+| `Sigil-Setup.exe` | `scripts/package-installer.sh` (NSIS, `scripts/installer/sigil.nsi`) | the website and README download link |
+| `sigil-update.json` | `scripts/release-sign.mjs manifest`, run by the packaging script | the updater |
+| `sigil-update.json.sig` | `scripts/sign-release.sh`, on the maintainer's machine only | the updater |
+
+The two stable names exist because the website and the README link to
+`releases/latest/download/Sigil-Setup.exe` and `releases/latest/download/Sigil-windows-x64.zip`.
+Every release must carry both, or those links break the moment it becomes the latest. The updater
+never reads them; it downloads the versioned zip the signed manifest names.
+
+`scripts/package-desktop.sh` (macOS) and the `linux-build` workflow (AppImage) can add
+`Sigil-<version>-macos-arm64.zip` and `Sigil-<version>-x86_64.AppImage`; recent releases are
+Windows only. See "Adding macOS or Linux" below.
 
 The manifest:
 
@@ -86,55 +95,75 @@ edit after signing (even whitespace) needs a new signature.
 
 ## Steps
 
-1. Bump `version` in `rust/Cargo.toml` (`[workspace.package]`). Pre-releases use
-   `x.y.z-preview.N`; Sigil orders them before `x.y.z`.
-2. Commit, then tag `v<version>` and push the tag. The `build-windows` workflow builds the zip,
-   writes the unsigned `sigil-update.json`, and attaches both to a draft release (marked
-   pre-release when the tag has a `-`). Nothing is public yet.
-3. On a Mac, build the macOS update zip and add its entry to the same manifest:
+The release is made on the maintainer's machine (macOS) with `cargo-xwin`, `makensis`
+(`brew install makensis`), `cwebp`, Node 24 and an authenticated `gh`. `vendor/rune` and
+`vendor/grimoire` must be present (`scripts/vendor-rune.sh`, `scripts/vendor-grimoire.sh`): the
+packaging script packs the Locker art from Grimoire into `Sigil.exe`.
+
+1. Write the player-facing notes in `.scratch/package/release-<version>/notes.md`. The release body
+   is what Settings > About and updates shows as "What's new": short lines, plain Markdown.
+2. Bump `version` in `rust/Cargo.toml` (`[workspace.package]`), refresh the lock file
+   (`cd rust && cargo update --workspace --offline`) and commit `chore(release): <version>`.
+   Pre-releases use `x.y.z-preview.N`; Sigil orders them before `x.y.z`.
+3. From a clean checkout of that commit, run the tests: `cd rust && cargo test --workspace`.
+4. Build and check the Windows zip and its unsigned manifest:
 
    ```bash
-   gh release download v<version> -p sigil-update.json -p 'Sigil-*-windows-x64.zip' \
-     -D .scratch/package/release-<version>
-   scripts/package-desktop.sh            # adds macos-<arch> to .scratch/package/release-<version>/sigil-update.json
-   mv .scratch/package/Sigil-<version>-macos-*.zip .scratch/package/release-<version>/
+   scripts/package-windows.sh        # .scratch/package/Sigil-<version>-windows-x64.zip
+                                     # .scratch/package/release-<version>/sigil-update.json
+   scripts/verify-windows.sh .scratch/package/Sigil-<version>-windows-x64.zip
    ```
 
-   Skip this step for a Windows-only release.
-4. Add Linux from the `linux-build` workflow's `Sigil-linux-x86_64` artifact (manual dispatch or a
-   push to `main`; nothing is published there). Download the artifact, then add its entry:
+5. Sign. This checks the zip's size and SHA-256 against the manifest, signs, and verifies the result
+   with the public key compiled into Sigil:
 
    ```bash
-   gh run download -n Sigil-linux-x86_64 -D .scratch/package/linux
-   mv .scratch/package/linux/Sigil-<version>-x86_64.AppImage .scratch/package/release-<version>/
-   node scripts/release-sign.mjs manifest .scratch/package/release-<version>/sigil-update.json \
-     --version <version> --platform linux-x86_64 \
-     --zip .scratch/package/release-<version>/Sigil-<version>-x86_64.AppImage
+   cd .scratch/package
+   ../../scripts/sign-release.sh release-<version>/sigil-update.json .
    ```
 
-   This writes `extra_platforms.linux-x86_64`; `platforms` is untouched. Skip this step for a
-   release without Linux.
-5. Sign. This checks each listed zip and AppImage's size and SHA-256 against the manifest, signs,
-   and verifies the result with the public key compiled into Sigil:
+6. Push the release commit to `main`.
+7. Make the stable-name assets:
 
    ```bash
-   scripts/sign-release.sh .scratch/package/release-<version>/sigil-update.json
+   cp Sigil-<version>-windows-x64.zip Sigil-windows-x64.zip
+   ../../scripts/package-installer.sh Sigil-<version>-windows-x64/Sigil.exe <version> "$PWD/Sigil-Setup.exe"
    ```
 
-6. Upload and publish:
+8. Publish. `gh release create` makes the tag at the release commit and publishes at once:
 
    ```bash
-   cd .scratch/package/release-<version>
-   gh release upload v<version> sigil-update.json sigil-update.json.sig \
-     Sigil-*-macos-*.zip Sigil-*-x86_64.AppImage --clobber
-   gh release edit v<version> --draft=false --notes-file notes.md
+   gh release create v<version> Sigil-<version>-windows-x64.zip Sigil-windows-x64.zip \
+     Sigil-Setup.exe release-<version>/sigil-update.json release-<version>/sigil-update.json.sig \
+     --repo superuserkalo/sigil --target <release commit> --title "Sigil <version>" \
+     --notes-file release-<version>/notes.md
    ```
 
-   The release body is what Settings > About and updates shows as "What's new". Write it for
-   players: short lines, plain Markdown.
+9. Check that `gh api repos/superuserkalo/sigil/releases/latest --jq .tag_name` prints
+   `v<version>` and that both stable links download.
+
+The new tag also starts the `build-windows` workflow. It sees that the release exists and keeps its
+own build as a workflow artifact only, so it never replaces a zip the signed manifest names by hash.
+Pushing a tag with no release first is the older path: the workflow then attaches its zip and an
+unsigned manifest to a draft release, which still needs the signature, the installer and the
+stable-name assets added by hand before it is published.
 
 A release without `sigil-update.json.sig` still shows up in the update check, with "Download it
 from the release page" instead of a download.
+
+### Adding macOS or Linux
+
+Before step 5, add the other platforms to the same manifest, then sign once:
+
+```bash
+scripts/package-desktop.sh            # on a Mac: adds macos-<arch> to release-<version>/sigil-update.json
+gh run download -n Sigil-linux-x86_64 -D .scratch/package/linux   # from the linux-build workflow
+node scripts/release-sign.mjs manifest .scratch/package/release-<version>/sigil-update.json \
+  --version <version> --platform linux-x86_64 \
+  --zip .scratch/package/release-<version>/Sigil-<version>-x86_64.AppImage
+```
+
+Linux goes under `extra_platforms` (see above), and both files are uploaded with the release.
 
 ## What the updater does
 
@@ -171,9 +200,14 @@ it. The tests in `updater.rs` use it that way.
 
 ## Not verified yet
 
+Nothing in this repository records these as checked:
+
+- The installer on real Windows: SmartScreen on `Sigil-Setup.exe`, the per-user install into
+  `%LOCALAPPDATA%\Programs\Sigil`, the shortcuts, uninstall from Windows Settings, and the updater
+  replacing `Sigil.exe` inside that folder.
 - The swap and rollback on real Windows (renaming the running `Sigil.exe`, a locked `assets`
   file, SmartScreen on the relaunched exe). The plan is tested on temp folders on macOS.
-- The `build-windows` workflow's release step, `choco install webp` and the 7-Zip archive.
+- The `build-windows` workflow's draft-release step, `choco install webp` and the 7-Zip archive.
 - A real GitHub release download (the redirect to GitHub's asset host).
 - macOS swap of a real `/Applications/Sigil.app`, and Gatekeeper on the swapped bundle.
 - The Linux AppImage swap and rollback on a real desktop (renaming the running AppImage, the

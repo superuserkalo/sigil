@@ -2,7 +2,7 @@
 
 Status: active. What is original here, what is a dependency, and what is a
 reference.
-Updated: 2026-11-16
+Updated: 2026-11-25
 
 This is not a Grimoire fork. The desktop, the domain core, the CLI and the agent
 host in `rust/` are a native Rust implementation written for this project. No
@@ -21,7 +21,10 @@ work, and some of it is read or studied rather than copied.
 - `rust/crates/dah-rs`: the `dah` CLI over that core.
 - `rust/crates/agent-host`: the TinyAgent v2 JSONL host, tools and approvals.
 - `rust/crates/desktop`: the native Rune workbench, every screen and the shell.
-- The docs, acceptance script and packaging scripts.
+- `rust/crates/sigil-viewer`: the 3D viewer.
+- `services/telemetry`: Sigil's Cloudflare Worker.
+- `site/`: the sigilmods.app website.
+- The docs, acceptance script, packaging, installer and release scripts.
 
 ## Dependencies
 
@@ -29,6 +32,7 @@ work, and some of it is read or studied rather than copied.
 | --- | --- | --- |
 | Rune | MIT | Native GPU UI framework, vendored at a pinned revision |
 | TinyAgent | MIT | Agent runtime, vendored at a pinned revision |
+| vpkmerge-core | MIT | Linked for compatibility repairs at a pinned revision (ADR 0013) |
 | Rust crates | permissive | see `Cargo.lock` and `THIRD_PARTY_NOTICES.md` |
 
 ## Reference only, no code compiled
@@ -39,7 +43,8 @@ work, and some of it is read or studied rather than copied.
 | fx | Apache-2.0 | Codex and Grok OAuth clients, endpoints, scopes, headers and current model hints |
 | DeadlockTools | MIT | AnimGraph 2 references for compiled hero models |
 | DeadPacker | MIT | Compile, pack, copy and launch loop ideas |
-| ValveResourceFormat / VPKEdit / vpkmerge | MIT | Optional external tools, resolved from settings, never downloaded |
+| ValveResourceFormat / VPKEdit | MIT | Optional external tools, resolved from settings, never downloaded |
+| Deadlock Mod Manager | GPL-3.0 | Behaviour studied for feature parity only. Its code is never copied into Sigil, which is MIT |
 | CSDK 12 | none stated | Local Windows compiler, never bundled or redistributed |
 
 Rewritten in Rust from the reference: the Grimoire crosshair convar names and

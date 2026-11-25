@@ -1,14 +1,22 @@
 # Architecture
 
-Status: draft. Boundaries below are proposals until recorded in `docs/decisions/`.
-Updated: 2026-11-17
+Status: active in part. The processes, agent runtime, tool catalog, game index, safety model,
+network allowlist, data layout and desktop app sections are maintained. The capability ladder,
+build pipeline, CLI list and roadmap are a record of the agent workbench plan as of 2026-11-17.
+Boundaries change only through `docs/decisions/`.
+Updated: 2026-11-25
 
-This document is the map. The executable rules live in code, especially
-`packages/deadlock-tools/src/validate.ts` and the approval hooks in the agent host.
+This document is the map. The executable rules live in code, especially the payload validator
+(`rust/crates/deadlock-core/src/payload.rs`) and the approval hooks in the agent host.
 
 ## Product shape
 
-The user runs a desktop app, opens a mod project, and talks to an agent. The agent reads the game,
+Sigil is first a mod manager for players: Browse, Installed, Overlap, Profiles, Locker, Crosshair,
+Autoexec, Performance, Stats, Servers and the Game page, released for Windows. The app writes to
+the game install on the player's own actions. The agent workbench described below is a part of the
+same app behind Settings > Experimental > Agent, off by default.
+
+In the workbench, the user opens a mod project and talks to an agent. The agent reads the game,
 extracts what it needs, edits files, builds, packs, validates, and asks for approval before touching
 the game install or publishing anything. A CLI exposes the same runtime without the UI.
 
@@ -19,8 +27,9 @@ Three promises shape every boundary:
 2. An agent tool never writes to the game install. It can write the mod workspace and produce a
    plan or a validated artifact. A main-process action, behind an approval gate, performs the
    deploy.
-3. A payload that violates the community rules cannot be deployed, regardless of what the prompt
-   says. Validation is code.
+3. An agent-built payload is validated in code before it can be deployed, regardless of what the
+   prompt says. ADR 0011 turned the old cosmetic and compiled-only rules into checks the app shows
+   rather than repository rules.
 
 ## Mod capability ladder
 
@@ -51,7 +60,7 @@ whole loop and shows up in game. Each later tier reuses that loop.
 +------------------------------+--------------------------------+
                                | local IPC (JSON)
 +------------------------------v--------------------------------+
-| Agent host (Node utility process)                              |
+| Agent host (`Sigil agent-host`, a child process)               |
 | TinyAgent host, tools, JSONL sessions                            |
 +------------------------------+--------------------------------+
                                | ExecutionEnv
@@ -75,7 +84,8 @@ security boundary for game writes is the Rust app plus the approval gate.
 
 ## Agent runtime
 
-The agent host is TinyAgent TypeScript v2, vendored at a pinned revision (MIT). It provides:
+The agent host is TinyAgent v2 (MIT): the Rust port in `rust/crates/tinyagent`, with the TypeScript
+implementation vendored at a pinned revision as the reference. It provides:
 
 - Durable sessions as an ordered journal of JSON records with fenced appends.
 - Resume after a crash. A recorded tool call reruns only when it is marked idempotent; otherwise the
@@ -300,8 +310,10 @@ Enforced in code:
      `Collection/<id>/Items` when a collection opens, `<Model>/<id>/ProfilePage`, `Posts` and
      `Updates` when a submission is opened (plus later `Posts` and `Updates` pages on Load more),
      `Mod/<id>?_csvProperties=_aRequirements` for the requirements panel, and preview images,
-     hero portraits and avatars. `<Model>` is `Mod`, `Sound` or `Wip`. The search text the player
-     types goes to GameBanana as the name filter. Images are cached under the app data directory
+     hero portraits and avatars. `<Model>` is `Mod`, `Sound` or `Wip`. Search in the Mods section
+     is matched on the PC against the catalog search index (ADR 0018) and sends no search text;
+     GameBanana's name filter carries the typed text only as the fallback (no index yet, the
+     Sounds and WiPs tabs, the Featured filter, or a failed card read). Images are cached under the app data directory
      (`cache/images`). A sound's sample downloads only when the player presses Play, into memory
      for the preview player; nothing is written to disk. Favorites (`browse/favorites.json`) and
      hidden items, ignored updates, filters and view options (`browse/state.json`) stay local.
@@ -552,8 +564,8 @@ Enforced in code:
    train a shared model. A likeness mod records the rights basis and needs a named approval before
    publish. See `docs/decisions/0005-reference-images-and-likeness.md`.
 
-Cosmetic-only policy is both an ethical rule and a compatibility rule: gameplay data goes stale
-after updates and can break other players' mods.
+ADR 0011 dropped cosmetic-only as a repository rule. The validator still flags gameplay data, because
+it goes stale after updates and can break other players' mods.
 
 ## Data layout
 
@@ -561,7 +573,8 @@ Desktop userData:
 
 ```text
 agent-sessions/       TinyAgent session journals, one per conversation
-credentials.json      safeStorage-wrapped provider credentials
+auth/                 subscription sign-in tokens, owner-only files
+(keychain)            provider keys and the proxy password, in the OS keychain
 settings.json         model choice, toolchain paths, workspace root, UI settings
 mods/<slug>/          mod workspace, git-friendly
   project.json        manifest: name, target paths, slot preference
@@ -586,21 +599,20 @@ The desktop app is native Rust with Rune. It carries its own design language on 
 with GPU rendering, springs and headless snapshots. The shell is not Grimoire and has no browser
 renderer.
 
-Screens and responsibilities. Sidebar order follows `docs/design/mod-manager-shell.md`, and a screen
-ships only when core can back it with real data or a gated action:
+Screens and responsibilities. The sidebar order is `PLACES` in `rust/crates/desktop/src/app.rs`,
+and a screen ships only when core can back it with real data or an action, with no "coming soon"
+state:
 
-- Library: Installed (addon slots on disk), Browse (GameBanana feed), Conflicts (shared paths),
-  Updates (project baselines against the patch feed).
-- Modding: Profiles (captured slot sets), Autoexec (the config file behind approval), Stats (the
-  public API plus local demos), Locker (hero renders and asset paths), Launch (modded, vanilla,
-  restore).
-- Workbench: Agent, Projects, Game Index, Patches, Impact, Release.
-- Foundry: Toolchain (external decompile and compile tools), Character (reference to mesh, stopped
-  at a verified artifact).
-- Settings: BYOK provider status, local model endpoint, toolchain paths, workspace location.
+- Browse (GameBanana catalog, local search), Installed (addon slots on disk), Locker (mods by
+  hero), Crosshair, Autoexec, Performance, Stats (deadlock-api and local demos), Overlap (shared
+  paths), Profiles, Servers (Deadworks), Game (launch, vanilla stash, crashes) and Downloads.
+  Settings > General > Pages turns the optional ones off; Maps appears under Browse with the
+  Custom maps flag.
+- Behind Settings > Experimental > Agent: Agent, with Projects, Game Index, Patches, Impact,
+  Release, Toolchain and Character under it.
+- Settings at the foot, beside the Launch modded and Launch vanilla buttons.
 
-The default surface is Installed, because this is a mod manager first. The agent is one screen inside
-the same shell, not the product shell.
+The agent is one place inside the same shell, not the product shell.
 
 The Rust app owns credentials, settings, file dialogs, mod workspace access, game install writes and
 approval decisions. It talks to the TinyAgent agent host over local IPC. It never loads the
@@ -616,8 +628,9 @@ patched text stack.
 
 ## CLI
 
-`dah` is the headless surface. The Rust CLI is `rust/crates/dah-rs`; the TypeScript CLI remains
-during the port.
+`dah` is the headless surface: `rust/crates/dah-rs`, shipped inside the app as `Sigil cli`. The
+TypeScript CLI in `apps/cli` is a legacy prototype. The list below is the 2026-11-17 plan; `Sigil
+cli --help` is the source of truth.
 
 ```text
 dah doctor                 game install, gameinfo, slots, providers
@@ -661,7 +674,7 @@ The CLI is useful for CI, scripted batch work, and testing the runtime without t
 - **Process death during a run.** Reopen the session journal and resume. A call marked idempotent
   reruns with the same execution id. Any other interrupted call is reported to the model as
   uncertain. A model request that was cut off is retried.
-- **Agent host crash loop.** The sidecar supervisor stops restarting after repeated crashes. The UI
+- **Agent host crash loop.** The host supervisor stops restarting after repeated crashes. The UI
   reports it and keeps the journal.
 - **Game update.** Hero paths move and `gameinfo.gi` resets. Detection: compare the project's target
   paths with the current VPK index. Repair: add the SearchPaths line back, then migrate paths.
@@ -671,6 +684,9 @@ The CLI is useful for CI, scripted batch work, and testing the runtime without t
 - **Corrupt or huge VPK.** Validate before deploy. Refuse > 2 GB without a chunk plan.
 
 ## Roadmap
+
+A record of the agent workbench phases as of 2026-11-17, not updated since. Sigil's player-facing
+releases (0.1.1 to 0.1.42) are in the GitHub release notes.
 
 Phase 0, scaffold (complete):
 

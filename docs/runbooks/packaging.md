@@ -1,7 +1,9 @@
 # Packaging the workbench
 
-Status: draft. Verified on macOS only. Windows and Linux are not verified.
-Updated: 2026-11-21
+Status: active. Windows is the released platform: `Sigil.exe` in a zip and a per-user NSIS
+installer, both built on macOS. The checklist below says what has been run where. macOS and Linux
+packages build but are not released.
+Updated: 2026-11-25
 
 The desktop app is one Rust executable. The `dah` CLI and the TinyAgent host are folded into it as
 subcommands: `dah-desktop cli ...` (`Sigil.exe cli ...` on Windows) and `dah-desktop agent-host`.
@@ -14,6 +16,8 @@ carries one binary and its art.
 | Artifact | Built from | Purpose |
 | --- | --- | --- |
 | `dah-desktop` (`Sigil.exe`) | `rust/crates/desktop`, linking `rust/crates/dah-rs` and `rust/crates/agent-host` as libraries | Native Rune workbench; `cli` runs the CLI, `agent-host` the TinyAgent v2 JSONL host |
+| `Sigil-<version>-windows-x64.zip` | `scripts/package-windows.sh` | `Sigil.exe` alone; the update asset and the no-installer download |
+| `Sigil-Setup.exe` | `scripts/package-installer.sh` and `scripts/installer/sigil.nsi` | Per-user Windows installer (below) |
 | `Sigil-<version>-x86_64.AppImage` | `scripts/package-linux.sh` | Linux workbench; updates itself from the signed manifest |
 | `sigil_<version>_amd64.deb` | `scripts/package-linux.sh` | Debian/Ubuntu install (`/usr/lib/sigil/sigil`); updated by hand |
 | `THIRD_PARTY_NOTICES.md` | repo root | MIT attribution for Rune, TinyAgent, Grimoire and tools |
@@ -27,6 +31,7 @@ stores, downloaded mods.
 ```bash
 scripts/package-desktop.sh                 # host target
 scripts/package-windows.sh                 # Windows x64 via cargo-xwin
+scripts/package-installer.sh <Sigil.exe> <version> <out>/Sigil-Setup.exe   # NSIS installer
 scripts/package-linux.sh --deps            # Linux x64: install the build packages first (sudo)
 scripts/package-linux.sh                   # Linux x64: AppImage, .deb, unsigned manifest entry
 ```
@@ -42,6 +47,22 @@ script packs the Locker art into `.scratch/locker-art`, builds it into the execu
 once to `<app data>/art/<build id>` (`rust/crates/desktop/src/art.rs`); the notices are in
 Settings. See
 `docs/runbooks/windows.md`.
+
+### Windows installer
+
+`scripts/package-installer.sh` wraps a packaged `Sigil.exe` with NSIS (`makensis`, from Homebrew on
+macOS or the distro on Linux), using `scripts/installer/sigil.nsi` and the app icon. The installer:
+
+- installs per user, with no administrator prompt, into `%LOCALAPPDATA%\Programs\Sigil`, where
+  Sigil's own updater can later replace `Sigil.exe`;
+- adds Start menu and desktop shortcuts and an entry in Windows Settings > Apps, with an uninstaller
+  that removes the program, the updater's `Sigil.exe.old` and `assets.old`, and the shortcuts;
+- writes nothing to the game and leaves Sigil's data folder (`%APPDATA%\DeadlockAgentHarness`)
+  alone on uninstall;
+- has English and German pages, and is not code signed, so SmartScreen warns on first run.
+
+It prints the output path, size and SHA-256. The release uploads it as `Sigil-Setup.exe`, a stable
+name the download links rely on (`docs/runbooks/releasing.md`).
 
 ### Linux
 
@@ -86,12 +107,13 @@ One process owns a session directory. Do not point two hosts at the same journal
 
 ## Verification checklist
 
-Run these on the machine that will use the build. The list is the honest state, not a claim:
+Run these on the machine that will use the build. The list is the honest state, not a claim. "Not
+verified" means no check is recorded here, not that it is known to fail:
 
 | Step | macOS | Windows | Linux |
 | --- | --- | --- | --- |
-| Desktop opens, sidebar renders | verified | not verified | not verified (no local Linux host; CI only runs `cli --help`) |
-| Agent sidecar connects, provider set | verified headless and local SSE mock | not verified | not verified |
+| Desktop opens, sidebar renders | verified | in use by players since the first releases (0.1.21 fixed a Windows-only shader failure they reported); no maintainer check recorded | not verified (no local Linux host; CI only runs `cli --help`) |
+| Agent host connects, provider set | verified headless and local SSE mock | not verified | not verified |
 | `cli` and `agent-host` subcommands of the one executable, host tool calls run `<exe> cli` | verified: `cli doctor`, and `agent-host` with a mock chat server running `game_status` | not verified (bundle builds and passes `verify-windows.sh`) | `cli --help` runs in the workflow; `agent-host` not verified |
 | Game discovery finds the install | not verified, no install on this machine | not verified | not verified |
 | Addon scan, profiles, autoexec | verified against a fake install tree | not verified | not verified |
@@ -102,7 +124,8 @@ Run these on the machine that will use the build. The list is the honest state, 
 | Real `.dem` import | container parser tested on synthetic files | not verified against a live demo | not verified |
 | Browse install pipeline | local HTTP fixture | not verified against GameBanana | not verified |
 | AppImage starts, desktop entry and `sigil://` handler register | n/a | n/a | not verified |
-| Self-update: swap and rollback on a real AppImage | n/a | not verified on real Windows | not verified; the plan is tested on temp folders on macOS |
+| `Sigil-Setup.exe` installs per user, shortcuts work, uninstall removes the program | n/a | not verified (built and published with 0.1.42) | n/a |
+| Self-update: swap and rollback on a real AppImage | n/a | Windows swap: not verified (see `releasing.md`) | not verified; the plan is tested on temp folders on macOS |
 | `.deb` installs, `/usr/bin/sigil` links, Settings points at the release page | n/a | n/a | not verified |
 
 A build that fails a row above is not a release. Mark the row, do not skip it.
@@ -110,11 +133,12 @@ A build that fails a row above is not a release. Mark the row, do not skip it.
 ## Signing and updates
 
 No code-signing identity is configured. macOS will warn on an unsigned bundle and SmartScreen on
-the exe. Linux has no code signing; the AppImage is trusted the same way as the other builds, by
+the exe and the installer. Linux has no code signing; the AppImage is trusted the same way as the other builds, by
 the update manifest's Ed25519 signature.
 
 Every packaging script also writes an unsigned
-`.scratch/package/release-<version>/sigil-update.json`: the Windows zip with `assets: true`, on a
+`.scratch/package/release-<version>/sigil-update.json`: the Windows zip (no `assets` flag; the art
+is inside `Sigil.exe`), on a
 Mac `Sigil-<version>-macos-<arch>.zip` with `Sigil.app` at the top, and on Linux the AppImage
 itself (no zip) under `extra_platforms.linux-x86_64`. Sign the merged manifest with
 `scripts/sign-release.sh` before publishing.
@@ -140,7 +164,8 @@ the updater says the copy was not installed from a release and points at the rel
 Removing the program leaves the data directory:
 
 - macOS: delete `Sigil.app`, data in `~/Library/Application Support/DeadlockAgentHarness`
-- Windows: delete `Sigil.exe`, data in `%APPDATA%\DeadlockAgentHarness`
+- Windows: uninstall Sigil from Settings > Apps (installer), or delete `Sigil.exe` (zip); data in
+  `%APPDATA%\DeadlockAgentHarness`
 - Linux AppImage: delete the `.AppImage` file (and a hidden `.AppImage.old` beside it if an update
   left one), data in `$XDG_DATA_HOME/DeadlockAgentHarness` (`~/.local/share/DeadlockAgentHarness`)
 - Linux `.deb`: `sudo apt remove sigil`, same data directory

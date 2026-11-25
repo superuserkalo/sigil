@@ -1,8 +1,8 @@
 # Crosshair
 
 Status: active. Verified against the vendored Grimoire tree and a live
-`machine_convars.vcfg` fixture.
-Updated: 2026-11-16
+`machine_convars.vcfg` fixture. The community library is ADR 0019.
+Updated: 2026-11-25
 
 The crosshair is a set of `citadel_crosshair_*` convars the game reads at launch
 and after a change in the in-game editor. The workbench edits them locally and
@@ -50,9 +50,11 @@ draws them directly. The unit tests assert the centre symmetry.
 
 ## Where the values come from
 
-- `machine_convars.vcfg` in `game/citadel/cfg` is where the game persists the
-  in-game editor. `parse_machine_convars` reads it; a file with no crosshair
-  convars returns `None`, which is different from "uses the defaults".
+- Import from game reads the crosshair the game keeps in its hero settings
+  (`citadel_hero_settings.lst`) first, and falls back to `machine_convars.vcfg`
+  in `game/citadel/cfg` (`screens/crosshair_game.rs`). `parse_machine_convars`
+  reads the latter; a file with no crosshair convars returns `None`, which is
+  different from "uses the defaults". Apply to hero settings writes the former.
 - The editor defaults are deliberately tighter than the values a fresh install
   registers. Both are in `crosshair.rs` and the difference is intentional.
 
@@ -74,8 +76,14 @@ autoexec.cfg
 
 ## Limits
 
-- No share codes. The community share code is a remote encode/decode service;
-  the local model is the source of truth here.
+- Share codes (`DL.` codes) are encoded and decoded by deadlock-api on a press
+  (`crosshair.rs`); pasted console lines are parsed locally. The local model stays
+  the source of truth.
+- The community library (publish, browse, apply, report) lives on Sigil's Worker
+  (`deadlock_core::crosshair_library`, `screens/crosshair_community.rs`,
+  `docs/decisions/0019-community-crosshairs.md`).
+- Turning the Crosshair page off in Settings > General > Pages removes the
+  managed block from `autoexec.cfg`.
 - The preview is a 2D HUD match, not a 3D viewmodel render.
 - The game must be closed when the autoexec is written, or the client may
   overwrite the file on exit. The app states this and keeps a backup.
