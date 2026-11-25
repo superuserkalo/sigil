@@ -4,7 +4,7 @@
 
 Sigil reads GameBanana's Deadlock catalog live, so you can find a mod, read its page and install it without a browser or an unzip step.
 
-![Sigil's Browse page with a trending banner, a top ten for the week and a row of rising mods.](https://SITE_ORIGIN/img/hero-1200.webp)
+![Sigil's Browse page with a trending banner, a top ten for the week and a row of rising mods.](https://sigilmods.vercel.app/img/hero-1200.webp)
 
 ## Finding a mod
 
@@ -16,7 +16,7 @@ Filters cover NSFW content, outdated mods, whether a mod is already installed an
 
 Sigil downloads a public index of the catalog and matches your search on your own computer. It forgives typos, copes with words written together or apart and knows what many mods are based on, so typing a game or series name finds skins whose title never mentions it. What you type is not sent anywhere.
 
-![A search for "chainsaw man" finding the skin "Asa Mitaka over Paige", whose title does not name the series.](https://SITE_ORIGIN/img/search.webp)
+![A search for "chainsaw man" finding the skin "Asa Mitaka over Paige", whose title does not name the series.](https://sigilmods.vercel.app/img/search.webp)
 
 You can also paste a GameBanana link or id into the search to open that mod, or paste several links at once to queue them.
 
@@ -40,9 +40,9 @@ Windows may show “Windows protected your PC” because the installer is not co
 
 ## Related pages
 
-- [Installed mods](https://SITE_ORIGIN/installed): On and off, load order and overlaps
-- [Profiles and packs](https://SITE_ORIGIN/profiles): Save a setup, switch, share as a code
-- [How to install Deadlock mods](https://SITE_ORIGIN/how-to-install-deadlock-mods): The addons folder, VPK names and gameinfo.gi
+- [Installed mods](https://sigilmods.vercel.app/installed): On and off, load order and overlaps
+- [Profiles and packs](https://sigilmods.vercel.app/profiles): Save a setup, switch, share as a code
+- [How to install Deadlock mods](https://sigilmods.vercel.app/how-to-install-deadlock-mods): The addons folder, VPK names and gameinfo.gi
 
 ---
 

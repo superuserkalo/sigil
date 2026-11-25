@@ -4,7 +4,7 @@
 
 Deadlock runs the console commands in `game/citadel/cfg/autoexec.cfg` when it starts. Sigil's Autoexec page edits that file directly, with a command library so you do not have to remember exact names.
 
-![The Autoexec page: your commands, a launch options field, and premade commands for matchmaking regions.](https://SITE_ORIGIN/img/autoexec.webp)
+![The Autoexec page: your commands, a launch options field, and premade commands for matchmaking regions.](https://sigilmods.vercel.app/img/autoexec.webp)
 
 ## Your commands and Sigil's
 
@@ -38,9 +38,9 @@ Windows may show “Windows protected your PC” because the installer is not co
 
 ## Related pages
 
-- [Crosshair](https://SITE_ORIGIN/crosshair): Edit at true scale, share and import
-- [Performance](https://SITE_ORIGIN/performance): Community configs, on and off
-- [Profiles and packs](https://SITE_ORIGIN/profiles): Save a setup, switch, share as a code
+- [Crosshair](https://sigilmods.vercel.app/crosshair): Edit at true scale, share and import
+- [Performance](https://sigilmods.vercel.app/performance): Community configs, on and off
+- [Profiles and packs](https://sigilmods.vercel.app/profiles): Save a setup, switch, share as a code
 
 ---
 

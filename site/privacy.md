@@ -4,7 +4,7 @@
 
 Sigil has no account and no third-party analytics. It talks only to the services a feature needs, and everything that would send data about you is off until you agree.
 
-![Settings, Privacy: one switch per kind of data, with What Sigil sends, What Sigil shared and Delete my data.](https://SITE_ORIGIN/img/privacy.webp)
+![Settings, Privacy: one switch per kind of data, with What Sigil sends, What Sigil shared and Delete my data.](https://sigilmods.vercel.app/img/privacy.webp)
 
 ## What Sigil talks to
 
@@ -27,7 +27,7 @@ Help build Sigil is asked once during setup with Share and Not now. With Share, 
 
 Before an install, Sigil lists the files in the archive and checks what it is about to write. A mod that contains programs, loose scripts or script code that reaches the network is flagged. Such a mod waits switched off until you review it, and Installed, More, Mod safety lists every flagged mod with its reasons and files. Sigil never switches off a mod you approved without asking.
 
-![A mod safety note: 3 of 214 files are worth a look, including a program and a script that reaches the network.](https://SITE_ORIGIN/img/safety.webp)
+![A mod safety note: 3 of 214 files are worth a look, including a program and a script that reaches the network.](https://sigilmods.vercel.app/img/safety.webp)
 
 Deadlock never runs a program shipped inside a mod, so a mod has no reason to include one. The warning is a prompt to look, not a block.
 
@@ -41,9 +41,9 @@ Windows may show “Windows protected your PC” because the installer is not co
 
 ## Related pages
 
-- [Questions and answers](https://SITE_ORIGIN/faq): Cost, safety, updates, data and more
-- [Installed mods](https://SITE_ORIGIN/installed): On and off, load order and overlaps
-- [Browse and search](https://SITE_ORIGIN/browse): Find and install mods from GameBanana
+- [Questions and answers](https://sigilmods.vercel.app/faq): Cost, safety, updates, data and more
+- [Installed mods](https://sigilmods.vercel.app/installed): On and off, load order and overlaps
+- [Browse and search](https://sigilmods.vercel.app/browse): Find and install mods from GameBanana
 
 ---
 

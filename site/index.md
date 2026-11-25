@@ -14,55 +14,55 @@ Source code: https://github.com/superuserkalo/sigil
 
 Browse GameBanana inside Sigil and install with one press. Search runs on your PC, forgives typos and knows what a mod is based on, so a series name finds skins whose title never mentions it. What you type is not sent anywhere.
 
-[More about browsing and search](https://SITE_ORIGIN/browse)
+[More about browsing and search](https://sigilmods.vercel.app/browse)
 
 ## See what is on and which mod wins
 
 New installs land switched off until you turn them on. Sigil keeps the load order in view, flags mods that replace the same files and shows which one the game will use.
 
-[More about managing installed mods](https://SITE_ORIGIN/installed)
+[More about managing installed mods](https://sigilmods.vercel.app/installed)
 
 ## Launch modded or vanilla
 
 Launch modded checks your mods first and fixes gameinfo.gi when a game update reset it. Launch vanilla puts your mods aside for a clean game and brings them back afterwards.
 
-[More about launching](https://SITE_ORIGIN/launch)
+[More about launching](https://sigilmods.vercel.app/launch)
 
 ## Tune your crosshair at true scale
 
 Set lines, gap, dot and colour over a game scene, then apply it to your autoexec with a backup kept. The community library has crosshairs other players shared.
 
-[More about the crosshair editor](https://SITE_ORIGIN/crosshair)
+[More about the crosshair editor](https://sigilmods.vercel.app/crosshair)
 
 ## Everything Sigil does
 
 ### Mods
 
-- [Browse and search](https://SITE_ORIGIN/browse): Find and install mods from GameBanana
-- [Installed mods](https://SITE_ORIGIN/installed): On and off, load order and overlaps
-- [Profiles and packs](https://SITE_ORIGIN/profiles): Save a setup, switch, share as a code
+- [Browse and search](https://sigilmods.vercel.app/browse): Find and install mods from GameBanana
+- [Installed mods](https://sigilmods.vercel.app/installed): On and off, load order and overlaps
+- [Profiles and packs](https://sigilmods.vercel.app/profiles): Save a setup, switch, share as a code
 
 ### Play
 
-- [Launching](https://SITE_ORIGIN/launch): Modded or vanilla, with checks first
-- [Performance](https://SITE_ORIGIN/performance): Community configs, on and off
+- [Launching](https://sigilmods.vercel.app/launch): Modded or vanilla, with checks first
+- [Performance](https://sigilmods.vercel.app/performance): Community configs, on and off
 
 ### Customise
 
-- [Locker](https://SITE_ORIGIN/locker): Skins per hero, equip and shuffle
-- [Crosshair](https://SITE_ORIGIN/crosshair): Edit at true scale, share and import
-- [Autoexec](https://SITE_ORIGIN/autoexec): autoexec.cfg, commands and launch options
+- [Locker](https://sigilmods.vercel.app/locker): Skins per hero, equip and shuffle
+- [Crosshair](https://sigilmods.vercel.app/crosshair): Edit at true scale, share and import
+- [Autoexec](https://sigilmods.vercel.app/autoexec): autoexec.cfg, commands and launch options
 
 ### Insight
 
-- [Stats](https://SITE_ORIGIN/stats): Rank, heroes, matches and items
-- [Privacy and safety](https://SITE_ORIGIN/privacy): What it sends, and how it checks mods
+- [Stats](https://sigilmods.vercel.app/stats): Rank, heroes, matches and items
+- [Privacy and safety](https://sigilmods.vercel.app/privacy): What it sends, and how it checks mods
 
 ### Guides
 
-- [How to install Deadlock mods](https://SITE_ORIGIN/how-to-install-deadlock-mods): The addons folder, VPK names and gameinfo.gi
-- [Mods not working after an update](https://SITE_ORIGIN/deadlock-mods-not-working-after-update): gameinfo.gi resets and moved game files
-- [Questions and answers](https://SITE_ORIGIN/faq): Cost, safety, updates, data and more
+- [How to install Deadlock mods](https://sigilmods.vercel.app/how-to-install-deadlock-mods): The addons folder, VPK names and gameinfo.gi
+- [Mods not working after an update](https://sigilmods.vercel.app/deadlock-mods-not-working-after-update): gameinfo.gi resets and moved game files
+- [Questions and answers](https://sigilmods.vercel.app/faq): Cost, safety, updates, data and more
 
 ## How it keeps your game working
 
@@ -98,7 +98,7 @@ From GameBanana. Sigil browses and downloads them from there, and every mod belo
 
 ### My mods stopped working after a Deadlock update. What now?
 
-A game update or a Steam file check resets gameinfo.gi, so the game stops loading your mods. Sigil shows a banner with a Fix button. Mods made for an older build may also need an update from their creator; the guide [Deadlock mods not working after an update](https://SITE_ORIGIN/deadlock-mods-not-working-after-update) explains both cases.
+A game update or a Steam file check resets gameinfo.gi, so the game stops loading your mods. Sigil shows a banner with a Fix button. Mods made for an older build may also need an update from their creator; the guide [Deadlock mods not working after an update](https://sigilmods.vercel.app/deadlock-mods-not-working-after-update) explains both cases.
 
 ### Does it work on Mac, Linux or Steam Deck?
 
@@ -110,9 +110,9 @@ The installer is not code signed yet, so Windows may show "Windows protected you
 
 ### What does Sigil send over the internet?
 
-It talks to GameBanana for mods and, if you allow it, to GitHub for app updates. Usage events, crash reports and product data are each off until you agree, and there is no third-party analytics. The [privacy page](https://SITE_ORIGIN/privacy) lists every host.
+It talks to GameBanana for mods and, if you allow it, to GitHub for app updates. Usage events, crash reports and product data are each off until you agree, and there is no third-party analytics. The [privacy page](https://sigilmods.vercel.app/privacy) lists every host.
 
-[All questions and answers](https://SITE_ORIGIN/faq)
+[All questions and answers](https://sigilmods.vercel.app/faq)
 
 ## Get Sigil for Windows
 

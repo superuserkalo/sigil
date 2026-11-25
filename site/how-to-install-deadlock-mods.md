@@ -37,13 +37,13 @@ SearchPaths
 - **Big mods come in chunks.** A mod split into a `_dir` file and numbered chunks must keep the whole set together under the same number.
 - **At most 99.** The game loads at most 99 VPKs from the folder.
 - **Only edit SearchPaths.** Changing other parts of `gameinfo.gi` can block matchmaking.
-- **Updates undo step 4.** Every game update and every Steam "Verify integrity of game files" puts Valve's `gameinfo.gi` back. Your mods stay on disk but stop loading until you add the line again. See [Deadlock mods not working after an update](https://SITE_ORIGIN/deadlock-mods-not-working-after-update).
+- **Updates undo step 4.** Every game update and every Steam "Verify integrity of game files" puts Valve's `gameinfo.gi` back. Your mods stay on disk but stop loading until you add the line again. See [Deadlock mods not working after an update](https://sigilmods.vercel.app/deadlock-mods-not-working-after-update).
 
 ## The same thing with Sigil
 
 Sigil does each of these steps for you. The first time it starts, it finds the game and offers to add the `gameinfo.gi` line, keeping a backup of the file first. In Browse, Install downloads the mod from GameBanana, shows the files it is about to write and puts it in the first free slot with the right name. It switches mods on and off by renaming, changes the load order when you drag a card, and adds extra folders when you go past 99 mods.
 
-![Sigil's Installed list: each mod in its numbered slot, 01 to 07, with an on and off switch.](https://SITE_ORIGIN/img/installed.webp)
+![Sigil's Installed list: each mod in its numbered slot, 01 to 07, with an on and off switch.](https://sigilmods.vercel.app/img/installed.webp)
 
 When an update resets `gameinfo.gi`, a banner offers to fix it again.
 
@@ -57,9 +57,9 @@ Windows may show “Windows protected your PC” because the installer is not co
 
 ## Related pages
 
-- [Mods not working after an update](https://SITE_ORIGIN/deadlock-mods-not-working-after-update): gameinfo.gi resets and moved game files
-- [Browse and search](https://SITE_ORIGIN/browse): Find and install mods from GameBanana
-- [Installed mods](https://SITE_ORIGIN/installed): On and off, load order and overlaps
+- [Mods not working after an update](https://sigilmods.vercel.app/deadlock-mods-not-working-after-update): gameinfo.gi resets and moved game files
+- [Browse and search](https://sigilmods.vercel.app/browse): Find and install mods from GameBanana
+- [Installed mods](https://sigilmods.vercel.app/installed): On and off, load order and overlaps
 
 ---
 

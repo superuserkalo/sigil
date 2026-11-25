@@ -6,23 +6,23 @@ Every page below has a Markdown twin at the same address with .md added. The dow
 
 ## Pages
 
-- [Home](https://SITE_ORIGIN/index.md): What Sigil is, the main features, safety notes and the download
-- [Browse and search](https://SITE_ORIGIN/browse.md): Find and install mods from GameBanana
-- [Installed mods](https://SITE_ORIGIN/installed.md): On and off, load order and overlaps
-- [Profiles and packs](https://SITE_ORIGIN/profiles.md): Save a setup, switch, share as a code
-- [Launching](https://SITE_ORIGIN/launch.md): Modded or vanilla, with checks first
-- [Performance](https://SITE_ORIGIN/performance.md): Community configs, on and off
-- [Locker](https://SITE_ORIGIN/locker.md): Skins per hero, equip and shuffle
-- [Crosshair](https://SITE_ORIGIN/crosshair.md): Edit at true scale, share and import
-- [Autoexec](https://SITE_ORIGIN/autoexec.md): autoexec.cfg, commands and launch options
-- [Stats](https://SITE_ORIGIN/stats.md): Rank, heroes, matches and items
-- [Privacy and safety](https://SITE_ORIGIN/privacy.md): What it sends, and how it checks mods
+- [Home](https://sigilmods.vercel.app/index.md): What Sigil is, the main features, safety notes and the download
+- [Browse and search](https://sigilmods.vercel.app/browse.md): Find and install mods from GameBanana
+- [Installed mods](https://sigilmods.vercel.app/installed.md): On and off, load order and overlaps
+- [Profiles and packs](https://sigilmods.vercel.app/profiles.md): Save a setup, switch, share as a code
+- [Launching](https://sigilmods.vercel.app/launch.md): Modded or vanilla, with checks first
+- [Performance](https://sigilmods.vercel.app/performance.md): Community configs, on and off
+- [Locker](https://sigilmods.vercel.app/locker.md): Skins per hero, equip and shuffle
+- [Crosshair](https://sigilmods.vercel.app/crosshair.md): Edit at true scale, share and import
+- [Autoexec](https://sigilmods.vercel.app/autoexec.md): autoexec.cfg, commands and launch options
+- [Stats](https://sigilmods.vercel.app/stats.md): Rank, heroes, matches and items
+- [Privacy and safety](https://sigilmods.vercel.app/privacy.md): What it sends, and how it checks mods
 
 ## Guides and help
 
-- [How to install Deadlock mods](https://SITE_ORIGIN/how-to-install-deadlock-mods.md): The addons folder, VPK names and gameinfo.gi
-- [Mods not working after an update](https://SITE_ORIGIN/deadlock-mods-not-working-after-update.md): gameinfo.gi resets and moved game files
-- [Questions and answers](https://SITE_ORIGIN/faq.md): Cost, safety, updates, data and more
+- [How to install Deadlock mods](https://sigilmods.vercel.app/how-to-install-deadlock-mods.md): The addons folder, VPK names and gameinfo.gi
+- [Mods not working after an update](https://sigilmods.vercel.app/deadlock-mods-not-working-after-update.md): gameinfo.gi resets and moved game files
+- [Questions and answers](https://sigilmods.vercel.app/faq.md): Cost, safety, updates, data and more
 
 ## Project
 
@@ -35,4 +35,4 @@ Every page below has a Markdown twin at the same address with .md added. The dow
 
 ## Optional
 
-- [Whole site as one Markdown file](https://SITE_ORIGIN/llms-full.txt): Every page above in one file
+- [Whole site as one Markdown file](https://sigilmods.vercel.app/llms-full.txt): Every page above in one file

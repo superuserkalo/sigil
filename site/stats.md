@@ -4,7 +4,7 @@
 
 Stats reads your Deadlock matches from deadlock-api, a community service, and shows them inside Sigil.
 
-![The Stats overview for a sample player: rank, win rate, recent form, and what stands out over the last 20 matches.](https://SITE_ORIGIN/img/stats.webp)
+![The Stats overview for a sample player: rank, win rate, recent form, and what stands out over the last 20 matches.](https://sigilmods.vercel.app/img/stats.webp)
 
 ## Getting started
 
@@ -21,7 +21,7 @@ Open the player panel on Stats and paste your Steam profile link, SteamID or Dea
 - **Leaderboard**: by region and season, with your place marked.
 - **Fun run**: a random hero, lane, item build and ability order from one code, to share and race.
 
-![A match detail view: souls over time for both teams and a scoreboard with each player's build.](https://SITE_ORIGIN/img/stats-board.webp)
+![A match detail view: souls over time for both teams and a scoreboard with each player's build.](https://sigilmods.vercel.app/img/stats-board.webp)
 
 Filters scope every section to ranked or all matches and to a season or date range. Statlocker links open in your browser.
 
@@ -43,9 +43,9 @@ Windows may show “Windows protected your PC” because the installer is not co
 
 ## Related pages
 
-- [Performance](https://SITE_ORIGIN/performance): Community configs, on and off
-- [Privacy and safety](https://SITE_ORIGIN/privacy): What it sends, and how it checks mods
-- [Launching](https://SITE_ORIGIN/launch): Modded or vanilla, with checks first
+- [Performance](https://sigilmods.vercel.app/performance): Community configs, on and off
+- [Privacy and safety](https://sigilmods.vercel.app/privacy): What it sends, and how it checks mods
+- [Launching](https://sigilmods.vercel.app/launch): Modded or vanilla, with checks first
 
 ---
 

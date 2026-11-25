@@ -4,7 +4,7 @@
 
 A profile is a saved set of switched-on mods. It can also carry autoexec lines, a crosshair, mod favourites and the Locker's shuffle settings. Save what you have now, then switch back to it in one step.
 
-![Importing a shared profile: a list of its mods marked installed, to download or unavailable, and two autoexec lines.](https://SITE_ORIGIN/img/profiles.webp)
+![Importing a shared profile: a list of its mods marked installed, to download or unavailable, and two autoexec lines.](https://sigilmods.vercel.app/img/profiles.webp)
 
 ## Saving and switching
 
@@ -32,9 +32,9 @@ Windows may show “Windows protected your PC” because the installer is not co
 
 ## Related pages
 
-- [Installed mods](https://SITE_ORIGIN/installed): On and off, load order and overlaps
-- [Crosshair](https://SITE_ORIGIN/crosshair): Edit at true scale, share and import
-- [Autoexec](https://SITE_ORIGIN/autoexec): autoexec.cfg, commands and launch options
+- [Installed mods](https://sigilmods.vercel.app/installed): On and off, load order and overlaps
+- [Crosshair](https://sigilmods.vercel.app/crosshair): Edit at true scale, share and import
+- [Autoexec](https://sigilmods.vercel.app/autoexec): autoexec.cfg, commands and launch options
 
 ---
 

@@ -4,7 +4,7 @@
 
 Installed is the list of every mod in your game's addons folder, including mods you put there by hand or with another tool.
 
-![The Installed list: six enabled mods with slot numbers, on and off switches and a note that five mods overlap.](https://SITE_ORIGIN/img/installed.webp)
+![The Installed list: six enabled mods with slot numbers, on and off switches and a note that five mods overlap.](https://sigilmods.vercel.app/img/installed.webp)
 
 ## On, off and load order
 
@@ -20,7 +20,7 @@ Overlap shows every pair of mods that touch the same files and which one wins. S
 
 Deadlock holds its mod files open while it runs. Turning a mod off or deleting it then asks whether to do it when Deadlock closes. Waiting changes show a clock mark, and they run in order once the game exits. Turning a mod on never waits: it loads on the next start.
 
-![A dialog asking to delete a mod when Deadlock closes, because the game has the files open.](https://SITE_ORIGIN/img/pending.webp)
+![A dialog asking to delete a mod when Deadlock closes, because the game has the files open.](https://sigilmods.vercel.app/img/pending.webp)
 
 ## After a game update
 
@@ -40,9 +40,9 @@ Windows may show “Windows protected your PC” because the installer is not co
 
 ## Related pages
 
-- [Launching](https://SITE_ORIGIN/launch): Modded or vanilla, with checks first
-- [Profiles and packs](https://SITE_ORIGIN/profiles): Save a setup, switch, share as a code
-- [Mods not working after an update](https://SITE_ORIGIN/deadlock-mods-not-working-after-update): gameinfo.gi resets and moved game files
+- [Launching](https://sigilmods.vercel.app/launch): Modded or vanilla, with checks first
+- [Profiles and packs](https://sigilmods.vercel.app/profiles): Save a setup, switch, share as a code
+- [Mods not working after an update](https://sigilmods.vercel.app/deadlock-mods-not-working-after-update): gameinfo.gi resets and moved game files
 
 ---
 

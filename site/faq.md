@@ -16,7 +16,7 @@ From GameBanana. Sigil browses and downloads them from there, and every mod belo
 
 ## My mods stopped working after a Deadlock update. What now?
 
-A game update or a Steam file check resets gameinfo.gi, so the game stops loading your mods. Sigil shows a banner with a Fix button. Mods made for an older build may also need an update from their creator; the guide [Deadlock mods not working after an update](https://SITE_ORIGIN/deadlock-mods-not-working-after-update) explains both cases.
+A game update or a Steam file check resets gameinfo.gi, so the game stops loading your mods. Sigil shows a banner with a Fix button. Mods made for an older build may also need an update from their creator; the guide [Deadlock mods not working after an update](https://sigilmods.vercel.app/deadlock-mods-not-working-after-update) explains both cases.
 
 ## Does it work on Mac, Linux or Steam Deck?
 
@@ -28,7 +28,7 @@ The installer is not code signed yet, so Windows may show "Windows protected you
 
 ## What does Sigil send over the internet?
 
-It talks to GameBanana for mods and, if you allow it, to GitHub for app updates. Usage events, crash reports and product data are each off until you agree, and there is no third-party analytics. The [privacy page](https://SITE_ORIGIN/privacy) lists every host.
+It talks to GameBanana for mods and, if you allow it, to GitHub for app updates. Usage events, crash reports and product data are each off until you agree, and there is no third-party analytics. The [privacy page](https://sigilmods.vercel.app/privacy) lists every host.
 
 ## Do I need an account?
 
@@ -64,9 +64,9 @@ Windows may show “Windows protected your PC” because the installer is not co
 
 ## Related pages
 
-- [Privacy and safety](https://SITE_ORIGIN/privacy): What it sends, and how it checks mods
-- [Mods not working after an update](https://SITE_ORIGIN/deadlock-mods-not-working-after-update): gameinfo.gi resets and moved game files
-- [How to install Deadlock mods](https://SITE_ORIGIN/how-to-install-deadlock-mods): The addons folder, VPK names and gameinfo.gi
+- [Privacy and safety](https://sigilmods.vercel.app/privacy): What it sends, and how it checks mods
+- [Mods not working after an update](https://sigilmods.vercel.app/deadlock-mods-not-working-after-update): gameinfo.gi resets and moved game files
+- [How to install Deadlock mods](https://sigilmods.vercel.app/how-to-install-deadlock-mods): The addons folder, VPK names and gameinfo.gi
 
 ---
 
