@@ -1,7 +1,7 @@
 # 0018 Local catalog search index, with optional term expansion checked by TypeSafe Jev
 
-Status: accepted (Worker built and tested; migration 0006 not applied, not deployed; the app does
-not fetch the index yet). Term expansion and file labels are built but off, pending a live check.
+Status: accepted (Worker deployed 2026-11-25 with migration 0006 applied; the app does not fetch
+the index yet). Term expansion is on under the $1 daily cap as its live check; file labels are off.
 Date: 2026-11-25, narrowed the same day after a product review; the curated alias list removed the
 same day (index version 3)
 
