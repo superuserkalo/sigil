@@ -565,13 +565,6 @@ fn contributors_dialog(s: &State, u: &Ui) -> El {
         }
     }
     shell(u, "settings-contributors-dialog", tr("Contributors"))
-        .child(
-            text(tr("Sigil also stands on Grimoire, Rune, TinyAgent and the tools listed under Open source."))
-                .font(SMALL)
-                .color(u.muted)
-                .wrap()
-                .w_full(),
-        )
         .child(u.scroll_area(col().w_full().max_h(300.0).scroll(rune::ScrollSpec { stick_bottom: false }).child(list)))
         .child(
             row()

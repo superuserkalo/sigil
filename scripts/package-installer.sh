@@ -19,7 +19,7 @@ fi
 mkdir -p "$(dirname "$out")"
 out="$(cd "$(dirname "$out")" && pwd)/$(basename "$out")"
 
-makensis -V2 -DVERSION="$version" -DEXE="$exe" -DOUT="$out" \
+makensis -V2 -DVERSION="$version" -DEXE="$exe" -DNOTICES="$root/THIRD_PARTY_NOTICES.md" -DOUT="$out" \
   -DICON="$root/rust/crates/desktop/assets/brand/sigil.ico" "$root/scripts/installer/sigil.nsi"
 size="$(wc -c < "$out" | tr -d ' ')"
 printf 'installer: %s\nbytes:     %s\nsha256:    %s\n' "$out" "$size" "$(shasum -a 256 "$out" | cut -d' ' -f1)"

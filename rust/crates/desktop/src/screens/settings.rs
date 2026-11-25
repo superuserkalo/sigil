@@ -3018,65 +3018,7 @@ pub fn newer_than(a: &str, b: &str) -> bool {
 
 // --- about -----------------------------------------------------------------------
 
-const NOTICES: &str = include_str!("../../../../../THIRD_PARTY_NOTICES.md");
-
-/// `(name, license, source)` for every project the notices list.
-fn credits() -> Vec<(String, String, String)> {
-    let mut out: Vec<(String, String, String)> = Vec::new();
-    for line in NOTICES.lines() {
-        let line = line.trim();
-        if let Some(name) = line.strip_prefix("**").and_then(|l| l.strip_suffix("**")) {
-            out.push((name.to_string(), String::new(), String::new()));
-        } else if let Some(last) = out.last_mut() {
-            if let Some(license) = line.strip_prefix("- License: ") {
-                if last.1.is_empty() {
-                    last.1 = license.split(',').next().unwrap_or(license).to_string();
-                }
-            } else if let Some(source) = line.strip_prefix("- Source: ")
-                && last.2.is_empty()
-            {
-                last.2 = source.split_whitespace().next().unwrap_or("").to_string();
-            }
-        }
-    }
-    out.retain(|(_, license, _)| !license.is_empty());
-    out
-}
-
 fn about(s: &State, u: &Ui) -> El {
-    let mut rows = Vec::new();
-    for (index, (name, license, source)) in credits().into_iter().enumerate() {
-        let link = source.clone();
-        let mut r = row()
-            .key(format!("settings-credit-{index}"))
-            .w_full()
-            .h(32.0)
-            .gap(16.0)
-            .center_y()
-            .child(
-                text(name)
-                    .font(BODY)
-                    .color(u.prose)
-                    .grow(1.0)
-                    .min_w(0.0)
-                    .truncate(),
-            )
-            .child(text(capitalize(&license)).font(SMALL).color(u.muted).w(160.0).truncate());
-        r = r.child(if source.starts_with("https://") {
-            u.icon_button(&icons::EXTERNAL_LINK, tr("Open source page"))
-                .size(24.0, 24.0)
-                .key(format!("settings-credit-open-{index}"))
-                .cursor(rune::Cursor::Pointer)
-                .on_press_tx(move |st: &mut State, tx: &mut Tx| {
-                    if let Err(error) = tx.open_url(&link) {
-                        say(st, format!("{error}"), true);
-                    }
-                })
-        } else {
-            el().size(24.0, 24.0)
-        });
-        rows.push(r);
-    }
     col()
         .w_full()
         .gap(LIST_GAP)
@@ -3100,7 +3042,6 @@ fn about(s: &State, u: &Ui) -> El {
         )
         .child(section(u, "Updates", updates(s, u)))
         .child(section(u, "Memory", vec![memory_row(s, u)]))
-        .child(section(u, "Open source", rows))
         .child(section(u, "People", vec![extra::contributors_row(s, u)]))
 }
 
@@ -3499,12 +3440,4 @@ mod tests {
         assert!(!newer_than("0.2.9", "0.3"));
     }
 
-    #[test]
-    fn credits_come_from_the_notices() {
-        let credits = credits();
-        assert!(credits.iter().any(|(name, license, source)| name == "Rune"
-            && license == "MIT"
-            && source.starts_with("https://")));
-        assert!(credits.iter().any(|(name, _, _)| name == "Grimoire"));
-    }
 }

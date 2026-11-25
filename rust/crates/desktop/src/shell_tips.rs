@@ -302,7 +302,7 @@ struct Stop {
     flag: Option<&'static str>,
 }
 
-const TOUR: [Stop; 5] = [
+const TOUR: [Stop; 4] = [
     Stop {
         title: "Experimental features",
         body: "These work, but they are new or change how Sigil behaves. Each one is a switch you can turn off again here or in Settings > Experimental.",
@@ -312,11 +312,6 @@ const TOUR: [Stop; 5] = [
         title: "Agent",
         body: "An assistant that builds, packs and checks mods with you, using your own model key. It runs as a second Sigil process while it is on, and asks before anything leaves your workspace.",
         flag: Some("agent"),
-    },
-    Stop {
-        title: "Docked mod details",
-        body: "Opens a mod from Browse in a panel beside the grid instead of over it. Drag the panel's edge to make it wider.",
-        flag: Some("docked_details"),
     },
     Stop {
         title: "Imprint installed mods",

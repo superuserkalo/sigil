@@ -535,6 +535,14 @@ pub fn overlay(s: &State, u: &Ui) -> Option<El> {
                             crate::data::start_browse_fetch(st, 1);
                         }
                     }),
+                )
+                .child(
+                    toggle_row(u, "menu-docked", super::super::tree::tr("Details beside the grid"), "", s.browse_view.docked).on_press(
+                        |st: &mut State| {
+                            crate::prefs::edit(st, |p| p.toggle_flag("docked_details"));
+                            st.browse_view.docked = st.prefs.flag("docked_details");
+                        },
+                    ),
                 );
             if crate::screens::browse::toolbar::tier(s) == crate::screens::browse::toolbar::Tier::D {
                 items = items.child(menu_rule(u));

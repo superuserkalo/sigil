@@ -88,8 +88,18 @@ pub fn dispatch() -> Option<std::process::ExitCode> {
     if first == AGENT_HOST {
         return Some(dah_agent::run(dah_agent::CliLaunch::SelfCli));
     }
+    if first == NOTICES {
+        attach_console();
+        println!("{THIRD_PARTY_NOTICES}");
+        return Some(std::process::ExitCode::SUCCESS);
+    }
     None
 }
+
+/// `Sigil notices` prints the licences of the projects Sigil includes. The text is built into
+/// the executable so every copy carries it; the installer also writes it beside the program.
+const NOTICES: &str = "notices";
+const THIRD_PARTY_NOTICES: &str = include_str!("../../../../THIRD_PARTY_NOTICES.md");
 
 /// Windows: Sigil.exe is a GUI-subsystem program, so a terminal that runs `Sigil.exe cli doctor`
 /// gives it no console. Attach to the parent's console so the output shows. A parent that piped

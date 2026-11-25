@@ -333,7 +333,6 @@ pub const DE: &[(&str, &str)] = &[
     ("Open on GitHub", "Auf GitHub öffnen"),
     ("People", "Menschen"),
     ("People who built Sigil, from its GitHub repository.", "Menschen, die Sigil gebaut haben, aus seinem GitHub-Repository."),
-    ("Sigil also stands on Grimoire, Rune, TinyAgent and the tools listed under Open source.", "Sigil baut außerdem auf Grimoire, Rune, TinyAgent und den unter Open Source aufgeführten Werkzeugen auf."),
     // Setup and tips
     ("Back", "Zurück"),
     ("Create", "Erstellen"),

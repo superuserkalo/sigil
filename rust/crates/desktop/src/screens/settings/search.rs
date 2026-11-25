@@ -115,11 +115,9 @@ pub const INDEX: &[Entry] = &[
     e(Tab::Storage, "Reset settings", "Every setting back to its default.", "reset defaults"),
     // Experimental
     e(Tab::Experimental, "Agent", "The agent and its mod-building tools.", "experimental agent ai"),
-    e(Tab::Experimental, "Docked mod details", "Mod details beside the grid.", "experimental browse dock panel"),
     // About
     e(Tab::About, "Release channel", "Stable or preview builds.", "update channel nightly beta"),
     e(Tab::About, "Going back to an earlier version", "Channel notes and older releases.", "rollback downgrade older version nightly preview stable"),
-    e(Tab::About, "Open source", "The projects Sigil is built on.", "licenses credits notices"),
     // Parity round
     e(Tab::Game, "Steam folder", "A Steam folder Sigil reads first.", "custom steam path library"),
     e(Tab::Game, "Block changes while the game runs", "Installs and toggles wait until Deadlock closes.", "game running protect lock"),

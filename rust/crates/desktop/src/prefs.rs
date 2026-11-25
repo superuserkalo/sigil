@@ -240,17 +240,11 @@ pub struct Flag {
 
 /// Every experimental flag Sigil reads, shown in Settings > Experimental. A flag read by id
 /// that is not listed here or in `PAGES` is off.
-pub const FLAGS: [Flag; 3] = [
+pub const FLAGS: [Flag; 2] = [
     Flag {
         id: "agent",
         title: "Agent",
         line: "Shows the agent and its mod-building tools in the sidebar. Experimental: it runs a second Sigil process while on.",
-        default: false,
-    },
-    Flag {
-        id: "docked_details",
-        title: "Docked mod details",
-        line: "Opens a mod from Browse in a panel beside the grid instead of over it.",
         default: false,
     },
     Flag {
@@ -326,9 +320,20 @@ pub const PAGES: [(Screen, Flag); 6] = [
 pub const MODS_ONLY: &str = "mods_only";
 
 /// A flag's default, from either list. Unknown ids are off.
+/// Switches kept in the same `flags` map that are not experiments and so are not listed in
+/// Settings > Experimental: each has its own place in the app. `docked_details` is Browse's
+/// "Details beside the grid" in its View options.
+pub const VIEW_FLAGS: [Flag; 1] = [Flag {
+    id: "docked_details",
+    title: "Details beside the grid",
+    line: "Opens a mod from Browse in a panel beside the grid instead of over it.",
+    default: false,
+}];
+
 fn flag_default(id: &str) -> Option<bool> {
     FLAGS
         .iter()
+        .chain(VIEW_FLAGS.iter())
         .chain(PAGES.iter().map(|(_, flag)| flag))
         .find(|f| f.id == id)
         .map(|f| f.default)

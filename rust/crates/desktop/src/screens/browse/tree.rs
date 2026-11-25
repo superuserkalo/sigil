@@ -55,6 +55,7 @@ const DE: &[(&str, &str)] = &[
     ("Layout", "Layout"),
     ("Cards", "Karten"),
     ("Numbered pages", "Seitenzahlen"),
+    ("Details beside the grid", "Details neben dem Raster"),
     ("Paste mod links", "Mod-Links einfügen"),
     ("Hidden items", "Ausgeblendete Einträge"),
     ("Ignored updates", "Ignorierte Updates"),

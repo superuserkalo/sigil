@@ -1,5 +1,5 @@
 ; Sigil's Windows installer. Built on macOS or Linux with makensis by scripts/package-installer.sh:
-;   makensis -DVERSION=0.1.42 -DEXE=/path/Sigil.exe -DICON=/path/sigil.ico -DOUT=/path/Sigil-Setup.exe sigil.nsi
+;   makensis -DVERSION=0.1.42 -DEXE=/path/Sigil.exe -DNOTICES=/path/THIRD_PARTY_NOTICES.md -DICON=/path/sigil.ico -DOUT=/path/Sigil-Setup.exe sigil.nsi
 ;
 ; Per user, no administrator rights: Sigil goes into %LOCALAPPDATA%\Programs\Sigil, where its own
 ; updater can replace Sigil.exe later. The installer writes nothing to the game and never touches
@@ -43,6 +43,7 @@ Section "Sigil"
   SetOutPath "$INSTDIR"
   ; A running Sigil holds its file: the default Abort, Retry, Ignore prompt covers that.
   File "/oname=Sigil.exe" "${EXE}"
+  File "/oname=THIRD_PARTY_NOTICES.txt" "${NOTICES}"
   WriteUninstaller "$INSTDIR\Uninstall.exe"
   CreateShortcut "$SMPROGRAMS\Sigil.lnk" "$INSTDIR\Sigil.exe"
   CreateShortcut "$DESKTOP\Sigil.lnk" "$INSTDIR\Sigil.exe"
@@ -61,6 +62,7 @@ SectionEnd
 Section "Uninstall"
   Delete "$INSTDIR\Sigil.exe"
   ; What Sigil's own updater may have left beside it.
+  Delete "$INSTDIR\THIRD_PARTY_NOTICES.txt"
   Delete "$INSTDIR\Sigil.exe.old"
   RMDir /r "$INSTDIR\assets.old"
   Delete "$INSTDIR\Uninstall.exe"
