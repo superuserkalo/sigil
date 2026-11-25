@@ -48,7 +48,7 @@ Installed shows an update chip on each mod with a newer file. The compatibility 
 - [Download Sigil for Linux (AppImage, x86_64)](https://github.com/superuserkalo/sigil/releases/latest/download/Sigil-linux-x86_64.AppImage)
 - [Download Sigil for macOS (disk image, .dmg)](https://github.com/superuserkalo/sigil/releases/latest/download/Sigil-macos.dmg)
 
-Free and open source, for Windows, Linux and macOS. The Windows installer needs no administrator rights.
+A free, open-source mod manager for Deadlock.
 
 On Windows you may see “Windows protected your PC” because the installer is not code signed yet. Choose More info, then Run anyway.
 

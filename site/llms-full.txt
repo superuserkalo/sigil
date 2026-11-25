@@ -126,7 +126,7 @@ It talks to GameBanana for mods and, if you allow it, to GitHub for app updates.
 - [Download Sigil for Linux (AppImage, x86_64)](https://github.com/superuserkalo/sigil/releases/latest/download/Sigil-linux-x86_64.AppImage)
 - [Download Sigil for macOS (disk image, .dmg)](https://github.com/superuserkalo/sigil/releases/latest/download/Sigil-macos.dmg)
 
-Free and open source, for Windows, Linux and macOS. The Windows installer needs no administrator rights.
+A free, open-source mod manager for Deadlock.
 
 On Windows you may see “Windows protected your PC” because the installer is not code signed yet. Choose More info, then Run anyway.
 
@@ -173,7 +173,7 @@ Mods on GameBanana belong to their creators. Opening a mod shows its pictures, d
 - [Download Sigil for Linux (AppImage, x86_64)](https://github.com/superuserkalo/sigil/releases/latest/download/Sigil-linux-x86_64.AppImage)
 - [Download Sigil for macOS (disk image, .dmg)](https://github.com/superuserkalo/sigil/releases/latest/download/Sigil-macos.dmg)
 
-Free and open source, for Windows, Linux and macOS. The Windows installer needs no administrator rights.
+A free, open-source mod manager for Deadlock.
 
 On Windows you may see “Windows protected your PC” because the installer is not code signed yet. Choose More info, then Run anyway.
 
@@ -226,7 +226,7 @@ Installed checks for newer files when you open it and shows an update chip on ea
 - [Download Sigil for Linux (AppImage, x86_64)](https://github.com/superuserkalo/sigil/releases/latest/download/Sigil-linux-x86_64.AppImage)
 - [Download Sigil for macOS (disk image, .dmg)](https://github.com/superuserkalo/sigil/releases/latest/download/Sigil-macos.dmg)
 
-Free and open source, for Windows, Linux and macOS. The Windows installer needs no administrator rights.
+A free, open-source mod manager for Deadlock.
 
 On Windows you may see “Windows protected your PC” because the installer is not code signed yet. Choose More info, then Run anyway.
 
@@ -271,7 +271,7 @@ A profile can keep its mods in its own addons folder instead of the normal one. 
 - [Download Sigil for Linux (AppImage, x86_64)](https://github.com/superuserkalo/sigil/releases/latest/download/Sigil-linux-x86_64.AppImage)
 - [Download Sigil for macOS (disk image, .dmg)](https://github.com/superuserkalo/sigil/releases/latest/download/Sigil-macos.dmg)
 
-Free and open source, for Windows, Linux and macOS. The Windows installer needs no administrator rights.
+A free, open-source mod manager for Deadlock.
 
 On Windows you may see “Windows protected your PC” because the installer is not code signed yet. Choose More info, then Run anyway.
 
@@ -322,7 +322,7 @@ Launching and restoring on a Windows install is the newest part of Sigil; if som
 - [Download Sigil for Linux (AppImage, x86_64)](https://github.com/superuserkalo/sigil/releases/latest/download/Sigil-linux-x86_64.AppImage)
 - [Download Sigil for macOS (disk image, .dmg)](https://github.com/superuserkalo/sigil/releases/latest/download/Sigil-macos.dmg)
 
-Free and open source, for Windows, Linux and macOS. The Windows installer needs no administrator rights.
+A free, open-source mod manager for Deadlock.
 
 On Windows you may see “Windows protected your PC” because the installer is not code signed yet. Choose More info, then Run anyway.
 
@@ -373,7 +373,7 @@ A game update resets `gameinfo.gi`, which also removes a config's changes. Sigil
 - [Download Sigil for Linux (AppImage, x86_64)](https://github.com/superuserkalo/sigil/releases/latest/download/Sigil-linux-x86_64.AppImage)
 - [Download Sigil for macOS (disk image, .dmg)](https://github.com/superuserkalo/sigil/releases/latest/download/Sigil-macos.dmg)
 
-Free and open source, for Windows, Linux and macOS. The Windows installer needs no administrator rights.
+A free, open-source mod manager for Deadlock.
 
 On Windows you may see “Windows protected your PC” because the installer is not code signed yet. Choose More info, then Run anyway.
 
@@ -425,7 +425,7 @@ Profiles can keep the Locker's shuffle settings, so a saved setup brings back th
 - [Download Sigil for Linux (AppImage, x86_64)](https://github.com/superuserkalo/sigil/releases/latest/download/Sigil-linux-x86_64.AppImage)
 - [Download Sigil for macOS (disk image, .dmg)](https://github.com/superuserkalo/sigil/releases/latest/download/Sigil-macos.dmg)
 
-Free and open source, for Windows, Linux and macOS. The Windows installer needs no administrator rights.
+A free, open-source mod manager for Deadlock.
 
 On Windows you may see “Windows protected your PC” because the installer is not code signed yet. Choose More info, then Run anyway.
 
@@ -476,7 +476,7 @@ A profile can include a crosshair, so switching profiles can switch your reticle
 - [Download Sigil for Linux (AppImage, x86_64)](https://github.com/superuserkalo/sigil/releases/latest/download/Sigil-linux-x86_64.AppImage)
 - [Download Sigil for macOS (disk image, .dmg)](https://github.com/superuserkalo/sigil/releases/latest/download/Sigil-macos.dmg)
 
-Free and open source, for Windows, Linux and macOS. The Windows installer needs no administrator rights.
+A free, open-source mod manager for Deadlock.
 
 On Windows you may see “Windows protected your PC” because the installer is not code signed yet. Choose More info, then Run anyway.
 
@@ -527,7 +527,7 @@ The game reads `autoexec.cfg` when it starts, so changes apply from the next lau
 - [Download Sigil for Linux (AppImage, x86_64)](https://github.com/superuserkalo/sigil/releases/latest/download/Sigil-linux-x86_64.AppImage)
 - [Download Sigil for macOS (disk image, .dmg)](https://github.com/superuserkalo/sigil/releases/latest/download/Sigil-macos.dmg)
 
-Free and open source, for Windows, Linux and macOS. The Windows installer needs no administrator rights.
+A free, open-source mod manager for Deadlock.
 
 On Windows you may see “Windows protected your PC” because the installer is not code signed yet. Choose More info, then Run anyway.
 
@@ -583,7 +583,7 @@ Nothing is fetched until you turn Player stats on, and the reads carry only the 
 - [Download Sigil for Linux (AppImage, x86_64)](https://github.com/superuserkalo/sigil/releases/latest/download/Sigil-linux-x86_64.AppImage)
 - [Download Sigil for macOS (disk image, .dmg)](https://github.com/superuserkalo/sigil/releases/latest/download/Sigil-macos.dmg)
 
-Free and open source, for Windows, Linux and macOS. The Windows installer needs no administrator rights.
+A free, open-source mod manager for Deadlock.
 
 On Windows you may see “Windows protected your PC” because the installer is not code signed yet. Choose More info, then Run anyway.
 
@@ -636,7 +636,7 @@ Deadlock never runs a program shipped inside a mod, so a mod has no reason to in
 - [Download Sigil for Linux (AppImage, x86_64)](https://github.com/superuserkalo/sigil/releases/latest/download/Sigil-linux-x86_64.AppImage)
 - [Download Sigil for macOS (disk image, .dmg)](https://github.com/superuserkalo/sigil/releases/latest/download/Sigil-macos.dmg)
 
-Free and open source, for Windows, Linux and macOS. The Windows installer needs no administrator rights.
+A free, open-source mod manager for Deadlock.
 
 On Windows you may see “Windows protected your PC” because the installer is not code signed yet. Choose More info, then Run anyway.
 
@@ -706,7 +706,7 @@ When an update resets `gameinfo.gi`, a banner offers to fix it again.
 - [Download Sigil for Linux (AppImage, x86_64)](https://github.com/superuserkalo/sigil/releases/latest/download/Sigil-linux-x86_64.AppImage)
 - [Download Sigil for macOS (disk image, .dmg)](https://github.com/superuserkalo/sigil/releases/latest/download/Sigil-macos.dmg)
 
-Free and open source, for Windows, Linux and macOS. The Windows installer needs no administrator rights.
+A free, open-source mod manager for Deadlock.
 
 On Windows you may see “Windows protected your PC” because the installer is not code signed yet. Choose More info, then Run anyway.
 
@@ -771,7 +771,7 @@ Installed shows an update chip on each mod with a newer file. The compatibility 
 - [Download Sigil for Linux (AppImage, x86_64)](https://github.com/superuserkalo/sigil/releases/latest/download/Sigil-linux-x86_64.AppImage)
 - [Download Sigil for macOS (disk image, .dmg)](https://github.com/superuserkalo/sigil/releases/latest/download/Sigil-macos.dmg)
 
-Free and open source, for Windows, Linux and macOS. The Windows installer needs no administrator rights.
+A free, open-source mod manager for Deadlock.
 
 On Windows you may see “Windows protected your PC” because the installer is not code signed yet. Choose More info, then Run anyway.
 
@@ -848,7 +848,7 @@ Every error message in Sigil has Send feedback, which shows the scrubbed details
 - [Download Sigil for Linux (AppImage, x86_64)](https://github.com/superuserkalo/sigil/releases/latest/download/Sigil-linux-x86_64.AppImage)
 - [Download Sigil for macOS (disk image, .dmg)](https://github.com/superuserkalo/sigil/releases/latest/download/Sigil-macos.dmg)
 
-Free and open source, for Windows, Linux and macOS. The Windows installer needs no administrator rights.
+A free, open-source mod manager for Deadlock.
 
 On Windows you may see “Windows protected your PC” because the installer is not code signed yet. Choose More info, then Run anyway.
 
@@ -893,7 +893,7 @@ Sigil does not host mods. Every mod comes from GameBanana and belongs to its cre
 - [Download Sigil for Linux (AppImage, x86_64)](https://github.com/superuserkalo/sigil/releases/latest/download/Sigil-linux-x86_64.AppImage)
 - [Download Sigil for macOS (disk image, .dmg)](https://github.com/superuserkalo/sigil/releases/latest/download/Sigil-macos.dmg)
 
-Free and open source, for Windows, Linux and macOS. The Windows installer needs no administrator rights.
+A free, open-source mod manager for Deadlock.
 
 On Windows you may see “Windows protected your PC” because the installer is not code signed yet. Choose More info, then Run anyway.
 

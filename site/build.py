@@ -41,10 +41,7 @@ PRIVACY_NOTES = GITHUB + "/blob/main/docs/privacy.md"
 LICENCE = GITHUB + "/blob/main/LICENSE"
 ISSUES = GITHUB + "/issues"
 
-PLATFORM_LINE = (
-    "Free and open source, for Windows, Linux and macOS. The Windows installer needs no "
-    "administrator rights."
-)
+PLATFORM_LINE = "A free, open-source mod manager for Deadlock."
 SMARTSCREEN_LINE = (
     "On Windows you may see “Windows protected your PC” because the installer is not code "
     "signed yet. Choose More info, then Run anyway."
@@ -437,7 +434,6 @@ def cta_block(position, heading_tag="h2", heading="Download Sigil", hid="get-sig
     <p class="getit__line">{PLATFORM_LINE}</p>
   </div>
   <div class="getit__act">{dl_choice(position)}<a class="textlink" href="{href}">{text}</a></div>
-  <p class="note getit__note">{SMARTSCREEN_LINE}</p>
 </section>"""
 
 
