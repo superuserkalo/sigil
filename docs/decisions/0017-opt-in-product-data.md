@@ -129,5 +129,10 @@ raises the cost of poisoning; it does not make it impossible.
   same epoch machinery with the same floor. The app asks only while sharing is on.
 - Search text is the riskiest field (free text). It is scrubbed on the device and again on the
   Worker, and can be dropped without touching the rest.
+- Floor-passed search aggregates (the search-gap terms above) can feed catalog associations
+  (ADR 0018, 2026-11-25): a gap term is judged against public mod candidates and may link mods to
+  words that already exist in the public catalog vocabulary. A term with any word outside that
+  vocabulary, or with a personal-data shape, is dropped; nothing below the floor is read; and the
+  associations stay out of the public index until the owner sets `LEARNED_TERMS_PUBLISH`.
 - An opt-in that is off by default will be on for a minority of players. The data is a sample,
   not a census; aggregates must say how many installs they rest on.
