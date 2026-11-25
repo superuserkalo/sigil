@@ -11,7 +11,7 @@
  * search-term judgment is skipped and the rest runs.
  */
 
-import { aiBinding, expand, type Expansion } from "./expand";
+import { aiBinding, expand, withoutHeroNames, type Expansion } from "./expand";
 import { GameBanana, type ListedMod, type ModComment, type ModUpdate, type Profile } from "./gamebanana";
 import { loadShot } from "./images";
 import {
@@ -404,7 +404,10 @@ async function enrichMod(
   if (ai !== null && stale.some((judgment) => judgment.name === "terms") && budget.remaining >= 3 && budget.take() && budget.take()) {
     try {
       expansion = await expand(ai, mod, profile, shots[0]?.picture ?? null);
-      if (expansion !== null) report.usd += expansion.usd;
+      if (expansion !== null) {
+        report.usd += expansion.usd;
+        expansion = { ...expansion, terms: withoutHeroNames(expansion.terms, heroes) };
+      }
     } catch (error) {
       log({ event: "expand_error", message: error instanceof Error ? error.message.slice(0, 200) : "unknown" });
     }

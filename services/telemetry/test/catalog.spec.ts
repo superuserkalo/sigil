@@ -5,7 +5,7 @@ import { runEnrichment, buildAndStoreIndex, loadIndex, RUN_SUBREQUESTS } from ".
 import { decodeEntities, htmlToText, modLinks } from "../src/catalog/gamebanana";
 import { learnRequest } from "../src/catalog/learn";
 import { LEARN_STATE_KEYS } from "../src/catalog/typesafe";
-import { parseExpansion, type AiRunner } from "../src/catalog/expand";
+import { parseExpansion, withoutHeroNames, type AiRunner } from "../src/catalog/expand";
 import { imageSize } from "../src/catalog/images";
 import { JUDGMENTS } from "../src/catalog/judgments";
 import { lineHero, patchLines, publishPatch } from "../src/catalog/patches";
@@ -654,5 +654,27 @@ describe("learned terms and stale tags", () => {
     expect(retry.mods).toBe(1);
     await buildAndStoreIndex(env.DB, NOW + 4000);
     expect((await loadIndex(env.DB))?.mods[0]?.st).toBeUndefined();
+  });
+});
+
+describe("generated terms", () => {
+  it("drop Deadlock hero names and cut them off longer references", () => {
+    const terms = withoutHeroNames(
+      [
+        { term: "seven", cls: "reference", facet: "character", src: "text" },
+        { term: "seven bot", cls: "alias", facet: "character", src: "text", of: "seven" },
+        { term: "aston machan lady geist", cls: "reference", facet: "character", src: "text" },
+        { term: "machan", cls: "alias", facet: "character", src: "text", of: "aston machan lady geist" },
+        { term: "umamusume", cls: "reference", facet: "franchise", src: "text" },
+        { term: "lady geist", cls: "visual", facet: "visual", src: "picture" },
+      ],
+      ["Seven", "Lady Geist"],
+    );
+    expect(terms.map((term) => [term.term, term.of ?? ""])).toEqual([
+      ["aston machan", ""],
+      ["machan", "aston machan"],
+      ["umamusume", ""],
+      ["lady geist", ""],
+    ]);
   });
 });

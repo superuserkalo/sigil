@@ -175,3 +175,41 @@ export function parseExpansion(raw: unknown, src: TermSource = "text"): Term[] |
   for (const theme of Array.isArray(record.themes) ? record.themes.slice(0, MAX_THEMES) : []) add(theme, "theme", "theme");
   return out;
 }
+
+/**
+ * Deadlock's own hero names are not outside references: drop a term that is only a hero name, and
+ * cut a hero name off the end or start of a longer one ("aston machan lady geist" becomes
+ * "aston machan"). Other names of a dropped reference go with it.
+ */
+export function withoutHeroNames(terms: readonly Term[], heroes: readonly string[]): Term[] {
+  const names = heroes.map(normalize).filter((name) => name.length > 0);
+  const renamed = new Map<string, string | null>();
+  const out: Term[] = [];
+  for (const term of terms) {
+    if (term.cls === "alias") {
+      const parent = renamed.get(term.of ?? "");
+      if (parent === null) continue;
+      if (names.includes(term.term)) continue;
+      out.push(parent === undefined ? term : { ...term, of: parent });
+      continue;
+    }
+    if (term.cls !== "reference") {
+      out.push(term);
+      continue;
+    }
+    let text = term.term;
+    for (const name of names) {
+      if (text === name) text = "";
+      else if (text.endsWith(` ${name}`)) text = text.slice(0, -name.length - 1);
+      else if (text.startsWith(`${name} `)) text = text.slice(name.length + 1);
+    }
+    text = text.trim();
+    if (text.length < 2 || out.some((kept) => kept.term === text)) {
+      renamed.set(term.term, null);
+      continue;
+    }
+    renamed.set(term.term, text);
+    out.push({ ...term, term: text });
+  }
+  return out;
+}
