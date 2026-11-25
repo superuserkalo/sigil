@@ -94,8 +94,22 @@ pub fn missing_before_launch(st: &mut State) {
     if st.demo || rune::is_headless() || st.game_root.is_none() {
         return;
     }
+    // Reading every mod's directory for the chunks it names is slow with a big library: it runs
+    // on a worker beside the launch, and the warning comes when it lands.
     let dir = super::addons_folder(st);
-    let Ok(missing) = addon_checks::missing_files(&dir, &library()) else { return };
+    let wake = st.wake.clone();
+    st.launch.precheck.start(wake, move || {
+        let missing = addon_checks::missing_files(&dir, &library()).ok();
+        Ok(Box::new(move |st: &mut State| {
+            if let Some(missing) = missing {
+                warn_missing(st, &missing);
+            }
+        }) as crate::screens::launch_progress::Apply)
+    });
+}
+
+/// The warning for mods missing files, from a finished check.
+fn warn_missing(st: &mut State, missing: &[MissingFile]) {
     let enabled: Vec<u16> = st.addons.addons.iter().filter(|a| a.enabled).map(|a| a.slot).collect();
     let broken: Vec<&MissingFile> = missing
         .iter()

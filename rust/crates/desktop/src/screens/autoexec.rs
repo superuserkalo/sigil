@@ -1755,34 +1755,40 @@ fn write_launch_now(st: &mut State) {
 /// GAME-ADJACENT WRITE hook for the launch buttons: call it right before handing off to Steam.
 /// Writes the saved launch options into Steam's localconfig.vdf when they differ, skips while
 /// Steam runs, and never blocks the launch. Says what happened in a toast only when it matters.
-pub fn sync_launch_options(st: &mut State) {
+/// The launch's Launch options step: the checks here, then writing Steam's `localconfig.vdf`
+/// (which first looks for a running Steam) on the step's worker.
+pub fn launch_options_work(st: &mut State) -> Option<crate::screens::launch_progress::Work> {
     if simulated(st) {
-        return;
+        return None;
     }
     // Settings > Game > Vanilla launches without launch options (wave 4, DMM's Vanilla Mode).
     if crate::screens::settings::misc_w4::vanilla_without_options(st) {
-        return;
+        return None;
     }
     let root = st.game_root.clone();
-    match launch_options::sync_at_launch(&crate::data::data_dir(), root.as_deref()) {
-        Ok(LaunchSync::Written { .. }) => {
-            st.autoexec.launch.loaded = false;
-            crate::notify::push(
+    let data = crate::data::data_dir();
+    Some(Box::new(move || {
+        let result = launch_options::sync_at_launch(&data, root.as_deref()).map_err(|error| error.to_string());
+        Box::new(move |st: &mut State| match result {
+            Ok(LaunchSync::Written { .. }) => {
+                st.autoexec.launch.loaded = false;
+                crate::notify::push(
+                    st,
+                    crate::notify::Notice::info(tr("Launch options written to Steam")),
+                );
+            }
+            Ok(LaunchSync::SteamRunning) => crate::notify::push(
                 st,
-                crate::notify::Notice::info(tr("Launch options written to Steam")),
-            );
-        }
-        Ok(LaunchSync::SteamRunning) => crate::notify::push(
-            st,
-            crate::notify::Notice::warning(tr("Launch options not written"))
-                .detail(tr("Steam was already running. Quit Steam before launching from Sigil so they apply.")),
-        ),
-        Ok(_) => {}
-        Err(error) => crate::notify::push(
-            st,
-            crate::notify::Notice::warning(tr("Launch options not written")).detail(error.to_string()),
-        ),
-    }
+                crate::notify::Notice::warning(tr("Launch options not written"))
+                    .detail(tr("Steam was already running. Quit Steam before launching from Sigil so they apply.")),
+            ),
+            Ok(_) => {}
+            Err(error) => crate::notify::push(
+                st,
+                crate::notify::Notice::warning(tr("Launch options not written")).detail(error),
+            ),
+        }) as crate::screens::launch_progress::Apply
+    }))
 }
 
 fn launch_field(st: &mut State) -> &mut TextEdit {

@@ -2941,21 +2941,16 @@ fn plural_line(n: usize, one: &str, many: &str) -> String {
 }
 
 /// The launch handler's hook: apply the launch shuffle for the heroes the user picked.
-/// Silent when nothing shuffles, and a failure never blocks a launch. Returns whether a
-/// slot changed. Safe to call with the Locker never opened this session: it rebuilds the
-/// mod list from the installed VPKs.
-/// Called from the launch's Roll step (`screens::launch_extras::roll_before_launch`) while the
-/// Locker page is on.
-pub fn shuffle_before_launch(state: &mut State) -> bool {
-    let prefs = locker::read_prefs(&locker_prefs_path());
-    if prefs.shuffle.is_empty() {
-        return false;
-    }
-    let Some(game_root) = state.game_root.clone() else {
-        return false;
-    };
-    let mods = if state.locker.mods.is_empty() {
-        let addons: Vec<deadlock_core::addons::InstalledAddon> = state
+/// Silent when nothing shuffles, and a failure never blocks a launch. Safe with the Locker
+/// never opened this session: it rebuilds the mod list from the installed VPKs.
+/// Called from the launch's Roll step (`screens::launch_extras::roll_work`) while the Locker
+/// page is on. The returned work runs on the step's worker: it reads the shuffle choices, may
+/// read every installed VPK, renames, and reads the addon folder again when a slot changed.
+pub fn shuffle_work(state: &State) -> Option<Box<dyn FnOnce() -> Option<AddonRead> + Send>> {
+    let game_root = state.game_root.clone()?;
+    let prefs_path = locker_prefs_path();
+    let known = if state.locker.mods.is_empty() {
+        Err(state
             .addons
             .addons
             .iter()
@@ -2967,33 +2962,34 @@ pub fn shuffle_before_launch(state: &mut State) -> bool {
                 entry_count: addon.entry_count,
                 enabled: addon.enabled,
             })
-            .collect();
-        let addons_dir = deadlock_core::deploy::addons_dir(&game_root);
-        locker::discover_locker(
-            &empty_catalog(),
-            &addons,
-            Some(addons_dir.as_path()),
-            &locker::LockerAssetPaths::default(),
-        )
-        .mods
+            .collect::<Vec<_>>())
     } else {
-        locker_mods(state)
+        Ok(locker_mods(state))
     };
-    let seed = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|duration| duration.as_secs())
-        .unwrap_or(0);
-    // C14: the shuffle avoids the skin on now, and keeps to the pool when one is set.
-    let wanted = deadlock_core::locker_parts::shuffle_wanted(&mods, &prefs.shuffle, prefs.pool_slots(&mods).as_ref(), seed);
-    match deadlock_core::addons::set_many(&game_root, &wanted, true) {
-        Ok(report) if report.done.is_empty() => false,
-        Ok(_) => {
-            scan_addons_now(state);
-            start_addon_scan(state);
-            true
+    Some(Box::new(move || {
+        let prefs = locker::read_prefs(&prefs_path);
+        if prefs.shuffle.is_empty() {
+            return None;
         }
-        Err(_) => false,
-    }
+        let mods = match known {
+            Ok(mods) => mods,
+            Err(addons) => {
+                let addons_dir = deadlock_core::deploy::addons_dir(&game_root);
+                locker::discover_locker(&empty_catalog(), &addons, Some(addons_dir.as_path()), &locker::LockerAssetPaths::default()).mods
+            }
+        };
+        let seed = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|duration| duration.as_secs())
+            .unwrap_or(0);
+        // C14: the shuffle avoids the skin on now, and keeps to the pool when one is set.
+        let wanted = deadlock_core::locker_parts::shuffle_wanted(&mods, &prefs.shuffle, prefs.pool_slots(&mods).as_ref(), seed);
+        match deadlock_core::addons::set_many(&game_root, &wanted, true) {
+            Ok(report) if report.done.is_empty() => None,
+            Ok(_) => Some(read_addons(Some(&game_root))),
+            Err(_) => None,
+        }
+    }))
 }
 
 /// Copy the chosen card image into the app data folder and point the hero at it.
@@ -3348,12 +3344,9 @@ fn crash_advisory(
 
 /// Every launch Sigil hands to Steam opens a new session marker, whichever button started it.
 /// Without it the crash advisory keeps measuring from an older launch and shows that session's
-/// dump as the last one.
-pub fn mark_launch(state: &mut State, mode: &str) {
-    if state.demo || rune::is_headless() {
-        return;
-    }
-    let _ = deadlock_core::launch::record_launch(&data_dir(), mode);
+/// dump as the last one. The step's worker writes the marker
+/// (`deadlock_core::launch::record_launch`); this is the state that goes with it.
+pub fn mark_launch_state(state: &mut State) {
     state.settings.game_running = true;
     state.settings.last_game_check = None;
     if let Some(read) = state.launch.read.as_mut() {
@@ -3424,87 +3417,105 @@ pub fn apply_launch(state: &mut State, result: Result<crate::screens::launch::Re
     }
 }
 
+/// A Launch page action (modded, vanilla or putting a stash back), all at once. The launch
+/// steps run the same work through [`launch_work`] on a worker.
 pub fn run_launch(state: &mut State, dialog: crate::screens::launch::Dialog) {
+    if let Some(work) = launch_work(state, dialog) {
+        let apply = work();
+        apply(state);
+    }
+}
+
+/// A Launch page action's file and Steam work for a worker, and what it then changes in the
+/// state. `None` when it stops before any work (no install for a vanilla stash).
+pub fn launch_work(state: &mut State, dialog: crate::screens::launch::Dialog) -> Option<crate::screens::launch_progress::Work> {
     use crate::screens::launch::Dialog;
     state.launch.dialog = Dialog::None;
     let data = data_dir();
-    let result = match dialog {
-        Dialog::Modded => {
-            if let Some(game_root) = state.game_root.clone() {
-                let _ = deadlock_core::addons::sync_overflow_mount(&deadlock_core::deploy::addons_dir(&game_root));
-                let _ = deadlock_core::deploy::ensure_launch_search_paths(&game_root);
-            }
-            deadlock_core::launch::launch_modded(true)
-        }
-            .map(|launch| format!("Steam opener {} accepted {}.", launch.opener, launch.url)),
-        Dialog::Vanilla => {
-            let Some(game_root) = state.game_root.clone() else {
-                state.launch.last =
-                    Some("No Deadlock install was found. Nothing was stashed.".to_string());
-                return;
-            };
-            // A vanilla run keeps the addons line, so it needs the Mod and Write lines too.
-            let _ = deadlock_core::deploy::ensure_launch_search_paths(&game_root);
-            deadlock_core::launch::launch_vanilla(&game_root, &data, true).map(|launch| {
-                let files = launch
-                    .stash_dir
-                    .as_ref()
-                    .map(|dir| dir.display().to_string())
-                    .unwrap_or_else(|| "the stash".to_string());
-                format!(
-                    "Stashed addons into {files} and handed {} to Steam.",
-                    launch.url
-                )
-            })
-        }
-        Dialog::Restore => deadlock_core::launch::restore_vanilla(&data, true).map(|restore| {
-            format!(
-                "Restored {} file(s) into {}.",
-                restore.restored.len(),
-                restore.addons_dir.display()
-            )
-        }),
-        // The checklist and the stop confirm have their own dialogs; neither launches.
-        Dialog::Checklist | Dialog::StopGame | Dialog::None => Ok(String::new()),
-    };
-    match result {
-        Ok(message) => {
-            if rune::is_headless() {
-                state.launch.last = Some(format!(
-                    "Headless run: {message} Nothing was sent to the platform opener."
-                ));
-            } else {
-                // The launch marker makes the running row and the crash advisory work; the
-                // presence check is asked for at once so Discord switches to Deadlock now.
-                let mode = match dialog {
-                    Dialog::Modded => Some(deadlock_core::launch::MODE_MODDED),
-                    Dialog::Vanilla => Some(deadlock_core::launch::MODE_VANILLA),
-                    _ => None,
-                };
-                if let Some(mode) = mode {
-                    mark_launch(state, mode);
-                }
-                state.launch.last = Some(message);
-            }
-        }
-        Err(error) => {
-            let raw = error.to_string();
-            state.launch.last = Some(if dialog == Dialog::Vanilla {
-                // The raw error (paths, OS code) goes to the log; the toast says what to do.
-                crate::screens::settings::log::error(format!("Launch vanilla failed: {raw}"));
-                if let Some(notice) = crate::screens::launch_progress::vanilla_held_notice(&raw) {
-                    crate::notify::push(state, notice);
-                }
-                crate::screens::launch_progress::vanilla_failure(&raw)
-            } else {
-                raw
-            });
-        }
+    let game_root = state.game_root.clone();
+    if dialog == Dialog::Vanilla && game_root.is_none() {
+        state.launch.last = Some("No Deadlock install was found. Nothing was stashed.".to_string());
+        return None;
     }
-    state.launch.busy = false;
-    start_launch_read(state);
-    scan_addons_now(state);
-    crate::banner::recheck(state);
+    let headless = rune::is_headless();
+    let demo = state.demo;
+    Some(Box::new(move || {
+        let result: Result<String, String> = match dialog {
+            Dialog::Modded => {
+                if let Some(game_root) = game_root.as_deref() {
+                    let _ = deadlock_core::addons::sync_overflow_mount(&deadlock_core::deploy::addons_dir(game_root));
+                    let _ = deadlock_core::deploy::ensure_launch_search_paths(game_root);
+                }
+                deadlock_core::launch::launch_modded(true)
+            }
+            .map(|launch| format!("Steam opener {} accepted {}.", launch.opener, launch.url))
+            .map_err(|error| error.to_string()),
+            Dialog::Vanilla => {
+                let game_root = game_root.as_deref().expect("checked above");
+                // A vanilla run keeps the addons line, so it needs the Mod and Write lines too.
+                let _ = deadlock_core::deploy::ensure_launch_search_paths(game_root);
+                deadlock_core::launch::launch_vanilla(game_root, &data, true)
+                    .map(|launch| {
+                        let files = launch
+                            .stash_dir
+                            .as_ref()
+                            .map(|dir| dir.display().to_string())
+                            .unwrap_or_else(|| "the stash".to_string());
+                        format!("Stashed addons into {files} and handed {} to Steam.", launch.url)
+                    })
+                    .map_err(|error| error.to_string())
+            }
+            Dialog::Restore => deadlock_core::launch::restore_vanilla(&data, true)
+                .map(|restore| {
+                    format!("Restored {} file(s) into {}.", restore.restored.len(), restore.addons_dir.display())
+                })
+                .map_err(|error| error.to_string()),
+            // The checklist and the stop confirm have their own dialogs; neither launches.
+            Dialog::Checklist | Dialog::StopGame | Dialog::None => Ok(String::new()),
+        };
+        // The launch marker makes the running row and the crash advisory work; the presence
+        // check is asked for at once so Discord switches to Deadlock now.
+        let mode = match dialog {
+            Dialog::Modded => Some(deadlock_core::launch::MODE_MODDED),
+            Dialog::Vanilla => Some(deadlock_core::launch::MODE_VANILLA),
+            _ => None,
+        };
+        let marked = result.is_ok() && !headless && mode.is_some() && !demo;
+        if marked && let Some(mode) = mode {
+            let _ = deadlock_core::launch::record_launch(&data, mode);
+        }
+        let read = read_addons(game_root.as_deref());
+        Box::new(move |state: &mut State| {
+            match result {
+                Ok(message) => {
+                    if headless {
+                        state.launch.last = Some(format!("Headless run: {message} Nothing was sent to the platform opener."));
+                    } else {
+                        if marked {
+                            mark_launch_state(state);
+                        }
+                        state.launch.last = Some(message);
+                    }
+                }
+                Err(raw) => {
+                    state.launch.last = Some(if dialog == Dialog::Vanilla {
+                        // The raw error (paths, OS code) goes to the log; the toast says what to do.
+                        crate::screens::settings::log::error(format!("Launch vanilla failed: {raw}"));
+                        if let Some(notice) = crate::screens::launch_progress::vanilla_held_notice(&raw) {
+                            crate::notify::push(state, notice);
+                        }
+                        crate::screens::launch_progress::vanilla_failure(&raw)
+                    } else {
+                        raw
+                    });
+                }
+            }
+            state.launch.busy = false;
+            start_launch_read(state);
+            apply_addon_read(state, read);
+            crate::banner::recheck(state);
+        }) as crate::screens::launch_progress::Apply
+    }))
 }
 
 // --- toolchain -------------------------------------------------------------

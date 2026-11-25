@@ -451,65 +451,81 @@ impl State {
     /// Launch the game through Steam with the current addon folder. This is an
     /// app action behind the launch dialog, never an agent tool.
     /// `vanilla` is true when a vanilla run already set the mods aside and only Steam is left.
-    pub fn launch_modded(&mut self, vanilla: bool) {
+    /// Returns the launch step's work for its worker (`launch_progress`): the `gameinfo.gi`
+    /// lines, the extra folder block, starting Steam and the launch marker. `None` in a headless
+    /// run, which sends nothing to Steam.
+    pub fn launch_modded_work(&mut self, vanilla: bool) -> Option<screens::launch_progress::Work> {
         self.launch_dialog = false;
         if rune::is_headless() {
             self.status = "Headless run: the launch request was not sent to Steam.".to_string();
-            return;
+            return None;
         }
-        // Mods past slot 99 load through gameinfo.gi's extra folder block, which a game update
-        // or a vanilla launch takes out: mount the folders that hold mods before Steam starts.
-        // Last line of defence after the launch gate: never start the game without the Mod and
-        // Write lines (the build 10973 crash). Adds only those lines, with a backup.
-        if let Some(game_root) = self.game_root.clone() {
-            let _ = deadlock_core::deploy::ensure_launch_search_paths(&game_root);
-        }
-        if let Some(game_root) = self.game_root.clone()
-            && let Err(error) = deadlock_core::addons::sync_overflow_mount(&deadlock_core::deploy::addons_dir(&game_root))
-        {
-            crate::notify::push(
-                self,
-                crate::notify::Notice::warning(tr("Mods past slot 99 may not load"))
-                    .detail(format!("Adding their folders to gameinfo.gi failed: {error}")),
-            );
-        }
-        // Locker's "shuffle on launch" already ran in the launch's Roll step
-        // (`launch_extras::roll_before_launch`); running it here too shuffled twice.
-        let spawn = |program: &str, args: &[&str]| {
-            deadlock_core::util::hidden_command(program)
-                .args(args)
-                .spawn()
-                .map(|_| ())
-                .map_err(|error| error.to_string())
-        };
-        let target = "steam://rungameid/1422450";
-        #[cfg(target_os = "macos")]
-        let opened = spawn("open", &[target]);
-        #[cfg(target_os = "windows")]
-        let opened = spawn("cmd", &["/C", "start", "", target]);
-        #[cfg(all(unix, not(target_os = "macos")))]
-        let opened = spawn("xdg-open", &[target]);
-        match opened {
-            Ok(()) => {
-                self.settings.launched = true;
-                screens::settings::product::record(self, deadlock_core::product_data::Record::Launch { modded: !vanilla });
-                // The marker starts a new session: a crash dump from before it is an old one,
-                // and the Launch page must not show it as the last session's crash.
-                crate::data::mark_launch(
-                    self,
-                    if vanilla { deadlock_core::launch::MODE_VANILLA } else { deadlock_core::launch::MODE_MODDED },
-                );
-                let on = self.addons.enabled_count();
-                self.status = if vanilla {
-                    "Starting Deadlock without mods.".to_string()
-                } else {
-                    format!("Starting Deadlock with {on} mod{} on.", if on == 1 { "" } else { "s" })
-                };
-                // A game update can land with the launch; look at gameinfo.gi again.
-                crate::banner::recheck(self);
+        let game_root = self.game_root.clone();
+        let data = crate::data::data_dir();
+        let demo = self.demo;
+        Some(Box::new(move || {
+            // Mods past slot 99 load through gameinfo.gi's extra folder block, which a game
+            // update or a vanilla launch takes out: mount the folders that hold mods before Steam
+            // starts. Last line of defence after the launch gate: never start the game without
+            // the Mod and Write lines (the build 10973 crash). Adds only those lines, with a backup.
+            if let Some(game_root) = game_root.as_deref() {
+                let _ = deadlock_core::deploy::ensure_launch_search_paths(game_root);
             }
-            Err(error) => self.status = format!("Steam could not be opened: {error}"),
-        }
+            let overflow = game_root.as_deref().and_then(|game_root| {
+                deadlock_core::addons::sync_overflow_mount(&deadlock_core::deploy::addons_dir(game_root))
+                    .err()
+                    .map(|error| error.to_string())
+            });
+            // Locker's "shuffle on launch" already ran in the launch's Roll step
+            // (`launch_extras::roll_work`); running it here too shuffled twice.
+            let spawn = |program: &str, args: &[&str]| {
+                deadlock_core::util::hidden_command(program)
+                    .args(args)
+                    .spawn()
+                    .map(|_| ())
+                    .map_err(|error| error.to_string())
+            };
+            let target = "steam://rungameid/1422450";
+            #[cfg(target_os = "macos")]
+            let opened = spawn("open", &[target]);
+            #[cfg(target_os = "windows")]
+            let opened = spawn("cmd", &["/C", "start", "", target]);
+            #[cfg(all(unix, not(target_os = "macos")))]
+            let opened = spawn("xdg-open", &[target]);
+            let mode = if vanilla { deadlock_core::launch::MODE_VANILLA } else { deadlock_core::launch::MODE_MODDED };
+            // The marker starts a new session: a crash dump from before it is an old one,
+            // and the Launch page must not show it as the last session's crash.
+            if opened.is_ok() && !demo {
+                let _ = deadlock_core::launch::record_launch(&data, mode);
+            }
+            Box::new(move |st: &mut State| {
+                if let Some(error) = overflow {
+                    crate::notify::push(
+                        st,
+                        crate::notify::Notice::warning(tr("Mods past slot 99 may not load"))
+                            .detail(format!("Adding their folders to gameinfo.gi failed: {error}")),
+                    );
+                }
+                match opened {
+                    Ok(()) => {
+                        st.settings.launched = true;
+                        screens::settings::product::record(st, deadlock_core::product_data::Record::Launch { modded: !vanilla });
+                        if !demo {
+                            crate::data::mark_launch_state(st);
+                        }
+                        let on = st.addons.enabled_count();
+                        st.status = if vanilla {
+                            "Starting Deadlock without mods.".to_string()
+                        } else {
+                            format!("Starting Deadlock with {on} mod{} on.", if on == 1 { "" } else { "s" })
+                        };
+                        // A game update can land with the launch; look at gameinfo.gi again.
+                        crate::banner::recheck(st);
+                    }
+                    Err(error) => st.status = format!("Steam could not be opened: {error}"),
+                }
+            }) as screens::launch_progress::Apply
+        }))
     }
 
     /// Start the Rust host for the real scenes and the window. Demo scenes get a labelled

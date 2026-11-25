@@ -99,54 +99,84 @@ pub fn roll(
 
 /// The launch step: roll the random lists and the Locker's shuffle. A failure never blocks the
 /// launch; it becomes a line the toast shows.
-pub fn roll_before_launch(st: &mut State) {
+pub fn roll_work(st: &mut State) -> Option<crate::screens::launch_progress::Work> {
     if st.demo || rune::is_headless() {
-        return;
+        return None;
     }
-    if st.prefs.page_on(crate::model::Screen::Locker) {
-        crate::data::shuffle_before_launch(st);
-    }
-    let Some(game_root) = st.game_root.clone() else { return };
+    let shuffle = if st.prefs.page_on(crate::model::Screen::Locker) { crate::data::shuffle_work(st) } else { None };
+    let game_root = st.game_root.clone();
     let extras = st.installed.notes.extras.clone();
-    if !extras.lists.iter().any(|l| l.random_each_launch) {
-        return;
-    }
-    let disk: Vec<OnDisk> = st
+    let maps = all_map_slots(st);
+    let rows: Vec<OnDisk> = st
         .addons
         .addons
         .iter()
         .map(|a| OnDisk { slot: a.slot, size: a.size_bytes, enabled: a.enabled })
         .collect();
-    let seed = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_nanos() as u64)
-        .unwrap_or(0);
-    let (wanted, picks) = roll(&extras, &disk, &all_map_slots(st), seed);
-    if wanted.is_empty() {
-        return;
-    }
-    let on = wanted.values().filter(|v| **v).count();
-    match deadlock_core::addons::set_many(&game_root, &wanted, true) {
-        Ok(report) => {
-            crate::screens::settings::product::switched(st, report.done.iter().map(|done| done.slot), &wanted);
-            if !report.done.is_empty() {
-                st.installed.last_undo = Some(crate::screens::installed::Undo::Toggle(report.done));
-                st.installed.undo_fresh = true;
+    let path = crate::screens::installed::extras_path();
+    Some(Box::new(move || {
+        let shuffled = shuffle.and_then(|work| work());
+        let rolled = (|| {
+            let game_root = game_root?;
+            if !extras.lists.iter().any(|l| l.random_each_launch) {
+                return None;
             }
-            // Remember each list's pick so the next launch passes over it.
-            let path = crate::screens::installed::extras_path();
-            if mod_extras::edit_extras(&path, |x| mod_extras::record_picks(x, &picks)).is_ok() {
-                mod_extras::record_picks(&mut st.installed.notes.extras, &picks);
-            }
-            st.status = if on == 1 {
-                tr("Rolled 1 random mod for this launch.").to_string()
-            } else {
-                fill(tr("Rolled {} random mods for this launch."), &[&on.to_string()])
+            // The rows as the shuffle left them: read again when it switched a skin.
+            let disk = match &shuffled {
+                None => rows,
+                Some(crate::data::AddonRead::Read(Ok(library))) => library
+                    .addons
+                    .iter()
+                    .map(|a| OnDisk { slot: a.slot, size: a.size_bytes, enabled: a.enabled })
+                    .collect(),
+                Some(_) => Vec::new(),
             };
-        }
-        Err(error) => st.status = error.to_string(),
-    }
-    crate::data::scan_addons_now(st);
+            let seed = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos() as u64)
+                .unwrap_or(0);
+            let (wanted, picks) = roll(&extras, &disk, &maps, seed);
+            if wanted.is_empty() {
+                return None;
+            }
+            let switched = deadlock_core::addons::set_many(&game_root, &wanted, true)
+                .map(|report| {
+                    // Remember each list's pick so the next launch passes over it.
+                    let saved = mod_extras::edit_extras(&path, |x| mod_extras::record_picks(x, &picks)).is_ok();
+                    (report, saved)
+                })
+                .map_err(|error| error.to_string());
+            let read = crate::data::read_addons(Some(&game_root));
+            Some((wanted, picks, switched, read))
+        })();
+        Box::new(move |st: &mut State| {
+            if let Some(read) = shuffled {
+                crate::data::apply_addon_read(st, read);
+                crate::data::start_addon_scan(st);
+            }
+            let Some((wanted, picks, switched, read)) = rolled else { return };
+            let on = wanted.values().filter(|v| **v).count();
+            match switched {
+                Ok((report, saved)) => {
+                    crate::screens::settings::product::switched(st, report.done.iter().map(|done| done.slot), &wanted);
+                    if !report.done.is_empty() {
+                        st.installed.last_undo = Some(crate::screens::installed::Undo::Toggle(report.done));
+                        st.installed.undo_fresh = true;
+                    }
+                    if saved {
+                        mod_extras::record_picks(&mut st.installed.notes.extras, &picks);
+                    }
+                    st.status = if on == 1 {
+                        tr("Rolled 1 random mod for this launch.").to_string()
+                    } else {
+                        fill(tr("Rolled {} random mods for this launch."), &[&on.to_string()])
+                    };
+                }
+                Err(error) => st.status = error,
+            }
+            crate::data::apply_addon_read(st, read);
+        }) as crate::screens::launch_progress::Apply
+    }))
 }
 
 // --- map mods ---------------------------------------------------------------------------

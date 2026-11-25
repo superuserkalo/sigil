@@ -94,6 +94,11 @@ pub struct View {
     pub stop: crate::jobs::Job<deadlock_core::launch::StopReport>,
     /// The crash card's evidence is open (closed by default, so the card keeps one height).
     pub crash_details: bool,
+    /// The running launch step's file, process and Steam work (`launch_progress::Work`); poll
+    /// applies what it hands back on the UI thread.
+    pub step: crate::jobs::Job<crate::screens::launch_progress::Apply>,
+    /// The missing-files check a modded launch press starts (`installed::checks`).
+    pub precheck: crate::jobs::Job<crate::screens::launch_progress::Apply>,
 }
 
 impl Default for View {
@@ -112,6 +117,8 @@ impl Default for View {
             gate: None,
             stop: crate::jobs::Job::default(),
             crash_details: false,
+            step: crate::jobs::Job::default(),
+            precheck: crate::jobs::Job::default(),
         }
     }
 }

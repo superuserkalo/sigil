@@ -6,6 +6,10 @@ use std::collections::HashMap;
 use std::sync::OnceLock;
 
 pub const DE: &[(&str, &str)] = &[
+    (
+        "The launch stopped: Sigil could not start a background task.",
+        "Der Start wurde abgebrochen: Sigil konnte keine Hintergrundaufgabe starten.",
+    ),
     ("Deadlock did not close", "Deadlock wurde nicht geschlossen"),
     (
         "Deadlock is still running (process {}). Close it from Steam or the Task Manager.",

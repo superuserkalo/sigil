@@ -9,6 +9,12 @@
 //! launch going without the overlay. The wait gives up after three minutes with a note, since
 //! Steam may be updating the game. When closing the game for a Cancel fails, the overlay comes
 //! back with the error and Try again, instead of a launch that silently kept going (DMM 2.4.0).
+//!
+//! A step's file, process and Steam work runs on a worker ([`Work`]), never in poll: putting
+//! a stash back, repairing `gameinfo.gi`, renaming mods, writing Steam's launch options, starting
+//! Steam and reading the addon folder again all took the window with them while they ran. The
+//! step stays on screen until its worker hands back what to apply ([`Apply`]), then the next one
+//! starts, so the order and every check of a launch are as they were; only the thread moved.
 
 use std::time::{Duration, Instant};
 
@@ -51,6 +57,13 @@ pub fn stop_failure(result: &Result<deadlock_core::launch::StopReport, String>) 
         Err(error) => Some(fill(tr("Stopping Deadlock failed: {}"), &[error])),
     }
 }
+
+/// The state changes a launch step's worker hands back, made on the UI thread in the order the
+/// step made them before it ran off the UI thread.
+pub type Apply = Box<dyn FnOnce(&mut State) + Send>;
+
+/// A launch step's file, process and Steam work, run on a worker. Returns what to apply.
+pub type Work = Box<dyn FnOnce() -> Apply + Send>;
 
 /// How long the overlay waits for the game process.
 pub const WAIT_FOR_GAME: Duration = Duration::from_secs(180);
@@ -114,6 +127,8 @@ pub struct Progress {
     pub stopping: bool,
     /// Closing the game for a Cancel failed: why, shown on the overlay with Try again.
     pub cancel_error: Option<String>,
+    /// The step at `at` is running on its worker (`launch.step`).
+    pub running: bool,
 }
 
 /// The steps of a launch: from the sidebar (`page` false) or the Launch page.
@@ -162,7 +177,8 @@ pub fn begin(st: &mut State, vanilla: bool, page: bool) {
 /// Why a launch cannot start now, as a title and what to do: a launch is under way, or the
 /// game is already up. `None` when a launch may start.
 pub fn busy(st: &State) -> Option<(&'static str, &'static str)> {
-    if st.launch.progress.is_some() {
+    // A step still on its worker after a Cancel is still writing: the next launch waits for it.
+    if st.launch.progress.is_some() || st.launch.step.is_running() {
         Some(("Deadlock is already starting", "Wait for it, or stop the launch first."))
     } else if st.launch.monitor.running() {
         Some(("Deadlock is already running", "Close the game first, then launch again."))
@@ -189,6 +205,7 @@ pub fn stage_waiting(st: &mut State, vanilla: bool) {
         waiting_since: Some(Instant::now()),
         stopping: false,
         cancel_error: None,
+        running: false,
     });
 }
 
@@ -245,24 +262,50 @@ pub fn begin_checked(st: &mut State, vanilla: bool, page: bool) {
         waiting_since: None,
         stopping: false,
         cancel_error: None,
+        running: false,
     });
 }
 
-/// Run the next step, or follow the wait. One step a frame, so the overlay shows each one.
+/// Run the next step, or follow the wait. One step at a time, so the overlay shows each one;
+/// a step's work runs on a worker and the step holds until it lands.
 pub fn poll(st: &mut State, tx: &mut Tx) -> bool {
-    let stopped = take_stop(st);
+    let mut changed = take_stop(st);
+    if let Some(result) = st.launch.precheck.try_take() {
+        land(st, result);
+        changed = true;
+    }
+    let landed = st.launch.step.try_take();
     let Some(progress) = st.launch.progress.clone() else {
-        return stopped;
+        // A step that finishes after its launch was cancelled still reports what it did.
+        if let Some(result) = landed {
+            land(st, result);
+            return true;
+        }
+        return changed;
     };
+    if let Some(result) = landed {
+        land(st, result);
+        if progress.running
+            && let Some(step) = progress.steps.get(progress.at).copied()
+        {
+            finish(st, tx, step);
+        }
+        return true;
+    }
+    if progress.running {
+        // The worker wakes the window when it is done; this is the fallback.
+        tx.wake_after(Duration::from_millis(250));
+        return changed;
+    }
     if progress.stopping || progress.cancel_error.is_some() {
-        return stopped;
+        return changed;
     }
     let Some(step) = progress.steps.get(progress.at).copied() else {
         st.launch.progress = None;
         return true;
     };
     if step == Step::Waiting {
-        return wait(st, tx, &progress);
+        return wait(st, tx, &progress) || changed;
     }
     // The repair runs on a worker: start it, then hold this step until it is done.
     if step == Step::Repair {
@@ -274,7 +317,7 @@ pub fn poll(st: &mut State, tx: &mut Tx) -> bool {
             }
         } else if st.installed.repairs.work.is_running() {
             tx.wake_after(Duration::from_millis(250));
-            return false;
+            return changed;
         }
         st.launch_extras.repairing = false;
         if let Some(p) = st.launch.progress.as_mut() {
@@ -282,8 +325,37 @@ pub fn poll(st: &mut State, tx: &mut Tx) -> bool {
         }
         return true;
     }
-    run(st, step);
+    let Some(work) = work_for(st, step) else {
+        // Nothing to do off the UI thread (a headless or demo run, a step turned off).
+        finish(st, tx, step);
+        return true;
+    };
+    let wake = st.wake.clone();
+    st.launch.step.start(wake, move || Ok(work()));
+    if !st.launch.step.is_running() {
+        st.launch.progress = None;
+        st.status = tr("The launch stopped: Sigil could not start a background task.").to_string();
+        return true;
+    }
     if let Some(p) = st.launch.progress.as_mut() {
+        p.running = true;
+    }
+    tx.wake_after(Duration::from_millis(250));
+    changed
+}
+
+/// Apply what a step's worker handed back. A worker that died says so in the status line.
+fn land(st: &mut State, result: Result<Apply, String>) {
+    match result {
+        Ok(apply) => apply(st),
+        Err(error) => st.status = error,
+    }
+}
+
+/// A step is done: show the next one, and once Steam has the game, say what happened.
+fn finish(st: &mut State, tx: &mut Tx, step: Step) {
+    if let Some(p) = st.launch.progress.as_mut() {
+        p.running = false;
         p.at += 1;
         if p.steps.get(p.at) == Some(&Step::Waiting) {
             p.waiting_since = Some(Instant::now());
@@ -303,20 +375,30 @@ pub fn poll(st: &mut State, tx: &mut Tx) -> bool {
         }
     }
     tx.wake_after(Duration::from_millis(16));
-    true
 }
 
-fn run(st: &mut State, step: Step) {
+#[cfg(test)]
+thread_local! {
+    /// A test's stand-in for the steps' work, so a test can hold a step on a slow worker.
+    static FAKE_WORK: std::cell::RefCell<Option<Box<dyn Fn(Step) -> Option<Work>>>> = const { std::cell::RefCell::new(None) };
+}
+
+/// The step's work for its worker, after the checks that decide it on the UI thread. `None`
+/// when the step has nothing to do off the UI thread.
+fn work_for(st: &mut State, step: Step) -> Option<Work> {
+    #[cfg(test)]
+    if let Some(work) = FAKE_WORK.with_borrow(|fake| fake.as_ref().map(|fake| fake(step))) {
+        return work;
+    }
     match step {
-        Step::Restore => crate::data::run_launch(st, Dialog::Restore),
-        Step::Roll => crate::screens::launch_extras::roll_before_launch(st),
-        Step::Repair => {}
-        Step::LaunchOptions => crate::screens::autoexec::sync_launch_options(st),
-        Step::OpenSteam => st.launch_modded(false),
-        Step::VanillaStashed => st.launch_modded(true),
-        Step::PageModded => crate::data::run_launch(st, Dialog::Modded),
-        Step::Vanilla => crate::data::run_launch(st, Dialog::Vanilla),
-        Step::Waiting => {}
+        Step::Restore => crate::data::launch_work(st, Dialog::Restore),
+        Step::Roll => crate::screens::launch_extras::roll_work(st),
+        Step::Repair | Step::Waiting => None,
+        Step::LaunchOptions => crate::screens::autoexec::launch_options_work(st),
+        Step::OpenSteam => st.launch_modded_work(false),
+        Step::VanillaStashed => st.launch_modded_work(true),
+        Step::PageModded => crate::data::launch_work(st, Dialog::Modded),
+        Step::Vanilla => crate::data::launch_work(st, Dialog::Vanilla),
     }
 }
 
@@ -406,7 +488,9 @@ fn wait(st: &mut State, tx: &mut Tx, progress: &Progress) -> bool {
 /// Cancel: before Steam has the game nothing starts; after, the game closes once it is up.
 pub fn cancel(st: &mut State) {
     let Some(progress) = st.launch.progress.as_mut() else { return };
-    let handed = progress.steps[..progress.at.min(progress.steps.len())]
+    // A step on its worker runs to its end: one handing the game to Steam counts as done.
+    let started = progress.at + usize::from(progress.running);
+    let handed = progress.steps[..started.min(progress.steps.len())]
         .iter()
         .any(|step| step.hands_off());
     if !handed {
@@ -577,6 +661,7 @@ pub fn stage(st: &mut State, vanilla: bool, at: usize) {
         waiting_since: Some(Instant::now()),
         stopping: false,
         cancel_error: None,
+        running: false,
     });
 }
 
@@ -636,6 +721,83 @@ mod tests {
         apply_stop(&mut st, &Ok(StopReport { pids: vec![7], forced: false, remaining: Vec::new() }));
         assert!(st.launch.progress.is_none(), "a closed game ends the launch");
         assert!(stop_failure(&Err("denied".into())).unwrap().contains("denied"));
+    }
+
+    /// A press that starts a launch returns at once, and so does every poll while a step's work
+    /// runs on its worker: the window keeps drawing. A second press meanwhile starts nothing.
+    #[test]
+    fn launch_steps_run_on_a_worker_and_a_second_press_waits() {
+        use std::sync::{Arc, Mutex};
+        let ui = std::thread::current().id();
+        let calls = Arc::new(Mutex::new(Vec::<(Step, std::thread::ThreadId)>::new()));
+        let seen = calls.clone();
+        FAKE_WORK.with_borrow_mut(|fake| {
+            *fake = Some(Box::new(move |step| {
+                let seen = seen.clone();
+                Some(Box::new(move || {
+                    // A slow step: a big stash, an antivirus scan of every file it touches.
+                    std::thread::sleep(Duration::from_millis(300));
+                    seen.lock().unwrap().push((step, std::thread::current().id()));
+                    Box::new(move |st: &mut State| st.status = format!("{step:?} done")) as Apply
+                }) as Work)
+            }))
+        });
+        let mut st = State::default();
+        st.demo = true;
+        let mut tx = Tx::default();
+
+        let pressed = Instant::now();
+        begin(&mut st, false, false);
+        assert!(st.launch.progress.is_some(), "the press starts the launch");
+        // The steps the press planned depend on this machine's settings; hold them to one plan.
+        st.launch.progress.as_mut().unwrap().steps = plan(false, false, false, false);
+        poll(&mut st, &mut tx);
+        assert!(pressed.elapsed() < Duration::from_millis(150), "the press and its first poll waited for the step: {:?}", pressed.elapsed());
+        let progress = st.launch.progress.clone().expect("launching");
+        assert!(progress.running && progress.at == 0, "the first step runs on its worker");
+        assert!(st.status.is_empty(), "nothing applied before the worker is done");
+
+        // A second press while it runs: refused with the busy notice, nothing else starts.
+        let notices = st.notices.visible().count();
+        begin(&mut st, true, false);
+        assert_eq!(st.notices.visible().count(), notices + 1, "the second press says a launch is under way");
+        let again = st.launch.progress.clone().expect("the first launch is kept");
+        assert!(!again.vanilla && again.at == 0 && again.running);
+        let polled = Instant::now();
+        poll(&mut st, &mut tx);
+        assert!(polled.elapsed() < Duration::from_millis(50), "a poll waited for the step");
+
+        // The step lands: applied on this thread, then the next step starts.
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while st.launch.progress.as_ref().is_some_and(|p| p.at == 0) && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(10));
+            poll(&mut st, &mut tx);
+        }
+        assert_eq!(st.status, "Roll done");
+        // The next step starts on the next poll.
+        poll(&mut st, &mut tx);
+        let progress = st.launch.progress.clone().expect("still launching");
+        assert_eq!((progress.at, progress.steps[1]), (1, Step::LaunchOptions));
+        assert!(progress.running, "the next step started on its worker");
+        let ran = calls.lock().unwrap().clone();
+        assert_eq!(ran.len(), 1, "one step ran: {ran:?}");
+        assert!(ran[0].0 == Step::Roll && ran[0].1 != ui, "the step ran off the UI thread");
+
+        // Cancel before Steam has the game: the launch ends, but a step still on its worker
+        // finishes first and keeps the next launch out until it has.
+        cancel(&mut st);
+        assert!(st.launch.progress.is_none());
+        assert!(busy(&st).is_some(), "a step still running keeps the launch buttons off");
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while st.launch.step.is_running() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(10));
+            poll(&mut st, &mut tx);
+        }
+        poll(&mut st, &mut tx);
+        assert_eq!(st.status, "LaunchOptions done", "a cancelled step still reports what it did");
+        assert!(busy(&st).is_none());
+        assert_eq!(calls.lock().unwrap().len(), 2, "nothing ran after the cancel");
+        FAKE_WORK.with_borrow_mut(|fake| *fake = None);
     }
 
     #[test]
