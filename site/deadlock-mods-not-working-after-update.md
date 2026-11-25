@@ -23,7 +23,7 @@ Only change the `SearchPaths` block. Editing other parts of the file can block m
 
 When Sigil sees the reset it shows a banner on every page with a Fix button. The fix adds the line back, copies the old file aside first so it can be undone, and keeps search paths another tool added. Launch modded also checks the file before it starts the game.
 
-![The Fix gameinfo.gi dialog: Sigil adds back the line that tells Deadlock to load mods, and copies the current file aside first.](https://sigilmods.vercel.app/img/gameinfo-fix.webp)
+![The Fix gameinfo.gi dialog: Sigil adds back the line that tells Deadlock to load mods, and copies the current file aside first.](https://sigilmods.app/img/gameinfo-fix.webp)
 
 ## Problem 2: some mods broke because game files changed
 
@@ -52,9 +52,9 @@ Windows may show “Windows protected your PC” because the installer is not co
 
 ## Related pages
 
-- [How to install Deadlock mods](https://sigilmods.vercel.app/how-to-install-deadlock-mods): The addons folder, VPK names and gameinfo.gi
-- [Launching](https://sigilmods.vercel.app/launch): Modded or vanilla, with checks first
-- [Installed mods](https://sigilmods.vercel.app/installed): On and off, load order and overlaps
+- [How to install Deadlock mods](https://sigilmods.app/how-to-install-deadlock-mods): The addons folder, VPK names and gameinfo.gi
+- [Launching](https://sigilmods.app/launch): Modded or vanilla, with checks first
+- [Installed mods](https://sigilmods.app/installed): On and off, load order and overlaps
 
 ---
 

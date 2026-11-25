@@ -4,7 +4,7 @@
 
 Sigil has two buttons at the foot of the sidebar: Launch modded and Launch vanilla. Both start Deadlock through Steam.
 
-![The Before you launch checklist: mods will not load, two mods replace the same files, and mods to check after the update.](https://sigilmods.vercel.app/img/launch.webp)
+![The Before you launch checklist: mods will not load, two mods replace the same files, and mods to check after the update.](https://sigilmods.app/img/launch.webp)
 
 ## Launch modded
 
@@ -20,7 +20,7 @@ Launch vanilla moves your mods aside, starts the game without them and puts them
 
 Deadlock only reads the addons folder when `game/citadel/gameinfo.gi` lists it in its search paths. Every game update and every Steam file verification puts Valve's own file back, and your mods quietly stop loading. When that happens Sigil shows a banner on every page with a Fix button. The fix adds back the line that loads mods, keeps a copy of the file first and leaves alone the search paths another tool added.
 
-![A banner over the Installed page: mods are off because a game update or a Steam file check reset gameinfo.gi, with a Fix button.](https://sigilmods.vercel.app/img/gameinfo-banner.webp)
+![A banner over the Installed page: mods are off because a game update or a Steam file check reset gameinfo.gi, with a Fix button.](https://sigilmods.app/img/gameinfo-banner.webp)
 
 ## When the game will not start
 
@@ -38,9 +38,9 @@ Windows may show “Windows protected your PC” because the installer is not co
 
 ## Related pages
 
-- [Installed mods](https://sigilmods.vercel.app/installed): On and off, load order and overlaps
-- [Performance](https://sigilmods.vercel.app/performance): Community configs, on and off
-- [Mods not working after an update](https://sigilmods.vercel.app/deadlock-mods-not-working-after-update): gameinfo.gi resets and moved game files
+- [Installed mods](https://sigilmods.app/installed): On and off, load order and overlaps
+- [Performance](https://sigilmods.app/performance): Community configs, on and off
+- [Mods not working after an update](https://sigilmods.app/deadlock-mods-not-working-after-update): gameinfo.gi resets and moved game files
 
 ---
 

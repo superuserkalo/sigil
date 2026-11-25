@@ -20,7 +20,7 @@ from pathlib import Path
 
 # The one place the site's origin is written. Replace the placeholder at deploy and rebuild, or
 # replace the literal in the generated files.
-SITE = "https://sigilmods.vercel.app"
+SITE = "https://sigilmods.app"
 
 ROOT = Path(__file__).resolve().parent
 CONTENT = ROOT / "content"

@@ -12,7 +12,7 @@ Inside the app, Settings has a "Send diagnostics" action. It sends a scrubbed re
 
 ## Ask a question or suggest a change
 
-Questions and ideas go to the same issues page. Check the [questions and answers](https://sigilmods.vercel.app/faq) first: it covers cost, safety, updates, the Windows warning and uninstalling.
+Questions and ideas go to the same issues page. Check the [questions and answers](https://sigilmods.app/faq) first: it covers cost, safety, updates, the Windows warning and uninstalling.
 
 ## Security problems
 
@@ -32,9 +32,9 @@ Windows may show “Windows protected your PC” because the installer is not co
 
 ## Related pages
 
-- [Questions and answers](https://sigilmods.vercel.app/faq): Cost, safety, updates, data and more
-- [Privacy and safety](https://sigilmods.vercel.app/privacy): What it sends, and how it checks mods
-- [Mods not working after an update](https://sigilmods.vercel.app/deadlock-mods-not-working-after-update): gameinfo.gi resets and moved game files
+- [Questions and answers](https://sigilmods.app/faq): Cost, safety, updates, data and more
+- [Privacy and safety](https://sigilmods.app/privacy): What it sends, and how it checks mods
+- [Mods not working after an update](https://sigilmods.app/deadlock-mods-not-working-after-update): gameinfo.gi resets and moved game files
 
 ---
 

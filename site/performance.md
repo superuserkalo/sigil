@@ -4,7 +4,7 @@
 
 Many players run community configs that change engine settings in `gameinfo.gi` to trade looks for frames. Sigil's Performance page applies them for you and takes them off again cleanly.
 
-![The Performance page with OptiLock FPS on, a scale from Light to Potato, and community configs grouped by how much they change.](https://sigilmods.vercel.app/img/performance.webp)
+![The Performance page with OptiLock FPS on, a scale from Light to Potato, and community configs grouped by how much they change.](https://sigilmods.app/img/performance.webp)
 
 ## Choosing a config
 
@@ -38,9 +38,9 @@ Windows may show “Windows protected your PC” because the installer is not co
 
 ## Related pages
 
-- [Launching](https://sigilmods.vercel.app/launch): Modded or vanilla, with checks first
-- [Autoexec](https://sigilmods.vercel.app/autoexec): autoexec.cfg, commands and launch options
-- [Stats](https://sigilmods.vercel.app/stats): Rank, heroes, matches and items
+- [Launching](https://sigilmods.app/launch): Modded or vanilla, with checks first
+- [Autoexec](https://sigilmods.app/autoexec): autoexec.cfg, commands and launch options
+- [Stats](https://sigilmods.app/stats): Rank, heroes, matches and items
 
 ---
 

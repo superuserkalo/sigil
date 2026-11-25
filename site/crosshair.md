@@ -4,7 +4,7 @@
 
 The Crosshair page draws your reticle at true scale over a game scene while you edit it, so what you see is what you get in a match.
 
-![The Crosshair editor: a cyan crosshair over a street scene, sliders for gap, length and thickness, and community crosshairs below.](https://sigilmods.vercel.app/img/crosshair.webp)
+![The Crosshair editor: a cyan crosshair over a street scene, sliders for gap, length and thickness, and community crosshairs below.](https://sigilmods.app/img/crosshair.webp)
 
 ## Editing
 
@@ -22,7 +22,7 @@ Copy code gives you a share code for the current crosshair. Import takes a share
 
 Community, beside Presets under the stage, lists crosshairs other players published and the ones Sigil ships, sorted by Most used or Newest, with how often each was applied. Pressing one loads it into the editor like a preset; nothing reaches the game until you press Apply. Right-click a crosshair to report it, and it disappears from your list at once.
 
-![The Publish to the library dialog with a name field and a short note on what becomes public.](https://sigilmods.vercel.app/img/publish.webp)
+![The Publish to the library dialog with a name field and a short note on what becomes public.](https://sigilmods.app/img/publish.webp)
 
 To share your own, load one of your saved presets and press the upload button beside Rename and Delete. Its name and settings become public for everyone using Sigil. Names are 2 to 32 characters and you can publish up to 3 a day. Remove from library takes it down again from the same PC. The library needs a connection; without one, your presets still work.
 
@@ -38,9 +38,9 @@ Windows may show “Windows protected your PC” because the installer is not co
 
 ## Related pages
 
-- [Autoexec](https://sigilmods.vercel.app/autoexec): autoexec.cfg, commands and launch options
-- [Profiles and packs](https://sigilmods.vercel.app/profiles): Save a setup, switch, share as a code
-- [Locker](https://sigilmods.vercel.app/locker): Skins per hero, equip and shuffle
+- [Autoexec](https://sigilmods.app/autoexec): autoexec.cfg, commands and launch options
+- [Profiles and packs](https://sigilmods.app/profiles): Save a setup, switch, share as a code
+- [Locker](https://sigilmods.app/locker): Skins per hero, equip and shuffle
 
 ---
 

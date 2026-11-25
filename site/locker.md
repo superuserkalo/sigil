@@ -4,7 +4,7 @@
 
 The Locker is the view of your mods by hero. Each hero shows the skins and other mods you have for them, in load order, so you can see at a glance who is changed and how.
 
-![The Locker list: heroes with their mods, Haze expanded with three skins and one of them equipped.](https://sigilmods.vercel.app/img/locker.webp)
+![The Locker list: heroes with their mods, Haze expanded with three skins and one of them equipped.](https://sigilmods.app/img/locker.webp)
 
 ## Equip a skin
 
@@ -39,9 +39,9 @@ Windows may show “Windows protected your PC” because the installer is not co
 
 ## Related pages
 
-- [Installed mods](https://sigilmods.vercel.app/installed): On and off, load order and overlaps
-- [Profiles and packs](https://sigilmods.vercel.app/profiles): Save a setup, switch, share as a code
-- [Browse and search](https://sigilmods.vercel.app/browse): Find and install mods from GameBanana
+- [Installed mods](https://sigilmods.app/installed): On and off, load order and overlaps
+- [Profiles and packs](https://sigilmods.app/profiles): Save a setup, switch, share as a code
+- [Browse and search](https://sigilmods.app/browse): Find and install mods from GameBanana
 
 ---
 

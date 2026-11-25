@@ -4,6 +4,19 @@
   "routes": [
     {
       "src": "/(.*)",
+      "has": [
+        {
+          "type": "host",
+          "value": "sigilmods.vercel.app"
+        }
+      ],
+      "status": 308,
+      "headers": {
+        "Location": "https://sigilmods.app/$1"
+      }
+    },
+    {
+      "src": "/(.*)",
       "headers": {
         "X-Content-Type-Options": "nosniff",
         "Referrer-Policy": "strict-origin-when-cross-origin",

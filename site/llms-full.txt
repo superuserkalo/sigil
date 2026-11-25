@@ -1,6 +1,6 @@
 # Sigil: the whole site as Markdown
 
-Source: https://sigilmods.vercel.app/
+Source: https://sigilmods.app/
 
 
 # Sigil: a free Deadlock mod manager for Windows
@@ -19,56 +19,56 @@ Source code: https://github.com/superuserkalo/sigil
 
 Browse GameBanana inside Sigil and install with one press. Search runs on your PC, forgives typos and knows what a mod is based on, so a series name finds skins whose title never mentions it. What you type is not sent anywhere.
 
-[More about browsing and search](https://sigilmods.vercel.app/browse)
+[More about browsing and search](https://sigilmods.app/browse)
 
 ## See what is on and which mod wins
 
 New installs land switched off until you turn them on. Sigil keeps the load order in view, flags mods that replace the same files and shows which one the game will use.
 
-[More about managing installed mods](https://sigilmods.vercel.app/installed)
+[More about managing installed mods](https://sigilmods.app/installed)
 
 ## Launch modded or vanilla
 
 Launch modded checks your mods first and fixes gameinfo.gi when a game update reset it. Launch vanilla puts your mods aside for a clean game and brings them back afterwards.
 
-[More about launching](https://sigilmods.vercel.app/launch)
+[More about launching](https://sigilmods.app/launch)
 
 ## Tune your crosshair at true scale
 
 Set lines, gap, dot and colour over a game scene, then apply it to your autoexec with a backup kept. The community library has crosshairs other players shared.
 
-[More about the crosshair editor](https://sigilmods.vercel.app/crosshair)
+[More about the crosshair editor](https://sigilmods.app/crosshair)
 
 ## Everything Sigil does
 
 ### Mods
 
-- [Browse and search](https://sigilmods.vercel.app/browse): Find and install mods from GameBanana
-- [Installed mods](https://sigilmods.vercel.app/installed): On and off, load order and overlaps
-- [Profiles and packs](https://sigilmods.vercel.app/profiles): Save a setup, switch, share as a code
+- [Browse and search](https://sigilmods.app/browse): Find and install mods from GameBanana
+- [Installed mods](https://sigilmods.app/installed): On and off, load order and overlaps
+- [Profiles and packs](https://sigilmods.app/profiles): Save a setup, switch, share as a code
 
 ### Play
 
-- [Launching](https://sigilmods.vercel.app/launch): Modded or vanilla, with checks first
-- [Performance](https://sigilmods.vercel.app/performance): Community configs, on and off
+- [Launching](https://sigilmods.app/launch): Modded or vanilla, with checks first
+- [Performance](https://sigilmods.app/performance): Community configs, on and off
 
 ### Customise
 
-- [Locker](https://sigilmods.vercel.app/locker): Skins per hero, equip and shuffle
-- [Crosshair](https://sigilmods.vercel.app/crosshair): Edit at true scale, share and import
-- [Autoexec](https://sigilmods.vercel.app/autoexec): autoexec.cfg, commands and launch options
+- [Locker](https://sigilmods.app/locker): Skins per hero, equip and shuffle
+- [Crosshair](https://sigilmods.app/crosshair): Edit at true scale, share and import
+- [Autoexec](https://sigilmods.app/autoexec): autoexec.cfg, commands and launch options
 
 ### Insight
 
-- [Stats](https://sigilmods.vercel.app/stats): Rank, heroes, matches and items
-- [Privacy and safety](https://sigilmods.vercel.app/privacy): What it sends, and how it checks mods
+- [Stats](https://sigilmods.app/stats): Rank, heroes, matches and items
+- [Privacy and safety](https://sigilmods.app/privacy): What it sends, and how it checks mods
 
 ### Guides
 
-- [How to install Deadlock mods](https://sigilmods.vercel.app/how-to-install-deadlock-mods): The addons folder, VPK names and gameinfo.gi
-- [Mods not working after an update](https://sigilmods.vercel.app/deadlock-mods-not-working-after-update): gameinfo.gi resets and moved game files
-- [Questions and answers](https://sigilmods.vercel.app/faq): Cost, safety, updates, data and more
-- [Contact and support](https://sigilmods.vercel.app/contact): Report a bug, ask a question, suggest a change
+- [How to install Deadlock mods](https://sigilmods.app/how-to-install-deadlock-mods): The addons folder, VPK names and gameinfo.gi
+- [Mods not working after an update](https://sigilmods.app/deadlock-mods-not-working-after-update): gameinfo.gi resets and moved game files
+- [Questions and answers](https://sigilmods.app/faq): Cost, safety, updates, data and more
+- [Contact and support](https://sigilmods.app/contact): Report a bug, ask a question, suggest a change
 
 ## How it keeps your game working
 
@@ -104,7 +104,7 @@ From GameBanana. Sigil browses and downloads them from there, and every mod belo
 
 ### My mods stopped working after a Deadlock update. What now?
 
-A game update or a Steam file check resets gameinfo.gi, so the game stops loading your mods. Sigil shows a banner with a Fix button. Mods made for an older build may also need an update from their creator; the guide [Deadlock mods not working after an update](https://sigilmods.vercel.app/deadlock-mods-not-working-after-update) explains both cases.
+A game update or a Steam file check resets gameinfo.gi, so the game stops loading your mods. Sigil shows a banner with a Fix button. Mods made for an older build may also need an update from their creator; the guide [Deadlock mods not working after an update](https://sigilmods.app/deadlock-mods-not-working-after-update) explains both cases.
 
 ### Does it work on Mac, Linux or Steam Deck?
 
@@ -116,9 +116,9 @@ The installer is not code signed yet, so Windows may show "Windows protected you
 
 ### What does Sigil send over the internet?
 
-It talks to GameBanana for mods and, if you allow it, to GitHub for app updates. Usage events, crash reports and product data are each off until you agree, and there is no third-party analytics. The [privacy page](https://sigilmods.vercel.app/privacy) lists every host.
+It talks to GameBanana for mods and, if you allow it, to GitHub for app updates. Usage events, crash reports and product data are each off until you agree, and there is no third-party analytics. The [privacy page](https://sigilmods.app/privacy) lists every host.
 
-[All questions and answers](https://sigilmods.vercel.app/faq)
+[All questions and answers](https://sigilmods.app/faq)
 
 ## Get Sigil for Windows
 
@@ -139,7 +139,7 @@ Sigil is a fan project and is not affiliated with Valve. Deadlock is a trademark
 
 Sigil reads GameBanana's Deadlock catalog live, so you can find a mod, read its page and install it without a browser or an unzip step.
 
-![Sigil's Browse page with a trending banner, a top ten for the week and a row of rising mods.](https://sigilmods.vercel.app/img/hero-1200.webp)
+![Sigil's Browse page with a trending banner, a top ten for the week and a row of rising mods.](https://sigilmods.app/img/hero-1200.webp)
 
 ## Finding a mod
 
@@ -151,7 +151,7 @@ Filters cover NSFW content, outdated mods, whether a mod is already installed an
 
 Sigil downloads a public index of the catalog and matches your search on your own computer. It forgives typos, copes with words written together or apart and knows what many mods are based on, so typing a game or series name finds skins whose title never mentions it. What you type is not sent anywhere.
 
-![A search for "chainsaw man" finding the skin "Asa Mitaka over Paige", whose title does not name the series.](https://sigilmods.vercel.app/img/search.webp)
+![A search for "chainsaw man" finding the skin "Asa Mitaka over Paige", whose title does not name the series.](https://sigilmods.app/img/search.webp)
 
 You can also paste a GameBanana link or id into the search to open that mod, or paste several links at once to queue them.
 
@@ -175,9 +175,9 @@ Windows may show “Windows protected your PC” because the installer is not co
 
 ## Related pages
 
-- [Installed mods](https://sigilmods.vercel.app/installed): On and off, load order and overlaps
-- [Profiles and packs](https://sigilmods.vercel.app/profiles): Save a setup, switch, share as a code
-- [How to install Deadlock mods](https://sigilmods.vercel.app/how-to-install-deadlock-mods): The addons folder, VPK names and gameinfo.gi
+- [Installed mods](https://sigilmods.app/installed): On and off, load order and overlaps
+- [Profiles and packs](https://sigilmods.app/profiles): Save a setup, switch, share as a code
+- [How to install Deadlock mods](https://sigilmods.app/how-to-install-deadlock-mods): The addons folder, VPK names and gameinfo.gi
 
 ---
 
@@ -190,7 +190,7 @@ Sigil is a fan project and is not affiliated with Valve. Deadlock is a trademark
 
 Installed is the list of every mod in your game's addons folder, including mods you put there by hand or with another tool.
 
-![The Installed list: six enabled mods with slot numbers, on and off switches and a note that five mods overlap.](https://sigilmods.vercel.app/img/installed.webp)
+![The Installed list: six enabled mods with slot numbers, on and off switches and a note that five mods overlap.](https://sigilmods.app/img/installed.webp)
 
 ## On, off and load order
 
@@ -206,7 +206,7 @@ Overlap shows every pair of mods that touch the same files and which one wins. S
 
 Deadlock holds its mod files open while it runs. Turning a mod off or deleting it then asks whether to do it when Deadlock closes. Waiting changes show a clock mark, and they run in order once the game exits. Turning a mod on never waits: it loads on the next start.
 
-![A dialog asking to delete a mod when Deadlock closes, because the game has the files open.](https://sigilmods.vercel.app/img/pending.webp)
+![A dialog asking to delete a mod when Deadlock closes, because the game has the files open.](https://sigilmods.app/img/pending.webp)
 
 ## After a game update
 
@@ -226,9 +226,9 @@ Windows may show “Windows protected your PC” because the installer is not co
 
 ## Related pages
 
-- [Launching](https://sigilmods.vercel.app/launch): Modded or vanilla, with checks first
-- [Profiles and packs](https://sigilmods.vercel.app/profiles): Save a setup, switch, share as a code
-- [Mods not working after an update](https://sigilmods.vercel.app/deadlock-mods-not-working-after-update): gameinfo.gi resets and moved game files
+- [Launching](https://sigilmods.app/launch): Modded or vanilla, with checks first
+- [Profiles and packs](https://sigilmods.app/profiles): Save a setup, switch, share as a code
+- [Mods not working after an update](https://sigilmods.app/deadlock-mods-not-working-after-update): gameinfo.gi resets and moved game files
 
 ---
 
@@ -241,7 +241,7 @@ Sigil is a fan project and is not affiliated with Valve. Deadlock is a trademark
 
 A profile is a saved set of switched-on mods. It can also carry autoexec lines, a crosshair, mod favourites and the Locker's shuffle settings. Save what you have now, then switch back to it in one step.
 
-![Importing a shared profile: a list of its mods marked installed, to download or unavailable, and two autoexec lines.](https://sigilmods.vercel.app/img/profiles.webp)
+![Importing a shared profile: a list of its mods marked installed, to download or unavailable, and two autoexec lines.](https://sigilmods.app/img/profiles.webp)
 
 ## Saving and switching
 
@@ -269,9 +269,9 @@ Windows may show “Windows protected your PC” because the installer is not co
 
 ## Related pages
 
-- [Installed mods](https://sigilmods.vercel.app/installed): On and off, load order and overlaps
-- [Crosshair](https://sigilmods.vercel.app/crosshair): Edit at true scale, share and import
-- [Autoexec](https://sigilmods.vercel.app/autoexec): autoexec.cfg, commands and launch options
+- [Installed mods](https://sigilmods.app/installed): On and off, load order and overlaps
+- [Crosshair](https://sigilmods.app/crosshair): Edit at true scale, share and import
+- [Autoexec](https://sigilmods.app/autoexec): autoexec.cfg, commands and launch options
 
 ---
 
@@ -284,7 +284,7 @@ Sigil is a fan project and is not affiliated with Valve. Deadlock is a trademark
 
 Sigil has two buttons at the foot of the sidebar: Launch modded and Launch vanilla. Both start Deadlock through Steam.
 
-![The Before you launch checklist: mods will not load, two mods replace the same files, and mods to check after the update.](https://sigilmods.vercel.app/img/launch.webp)
+![The Before you launch checklist: mods will not load, two mods replace the same files, and mods to check after the update.](https://sigilmods.app/img/launch.webp)
 
 ## Launch modded
 
@@ -300,7 +300,7 @@ Launch vanilla moves your mods aside, starts the game without them and puts them
 
 Deadlock only reads the addons folder when `game/citadel/gameinfo.gi` lists it in its search paths. Every game update and every Steam file verification puts Valve's own file back, and your mods quietly stop loading. When that happens Sigil shows a banner on every page with a Fix button. The fix adds back the line that loads mods, keeps a copy of the file first and leaves alone the search paths another tool added.
 
-![A banner over the Installed page: mods are off because a game update or a Steam file check reset gameinfo.gi, with a Fix button.](https://sigilmods.vercel.app/img/gameinfo-banner.webp)
+![A banner over the Installed page: mods are off because a game update or a Steam file check reset gameinfo.gi, with a Fix button.](https://sigilmods.app/img/gameinfo-banner.webp)
 
 ## When the game will not start
 
@@ -318,9 +318,9 @@ Windows may show “Windows protected your PC” because the installer is not co
 
 ## Related pages
 
-- [Installed mods](https://sigilmods.vercel.app/installed): On and off, load order and overlaps
-- [Performance](https://sigilmods.vercel.app/performance): Community configs, on and off
-- [Mods not working after an update](https://sigilmods.vercel.app/deadlock-mods-not-working-after-update): gameinfo.gi resets and moved game files
+- [Installed mods](https://sigilmods.app/installed): On and off, load order and overlaps
+- [Performance](https://sigilmods.app/performance): Community configs, on and off
+- [Mods not working after an update](https://sigilmods.app/deadlock-mods-not-working-after-update): gameinfo.gi resets and moved game files
 
 ---
 
@@ -333,7 +333,7 @@ Sigil is a fan project and is not affiliated with Valve. Deadlock is a trademark
 
 Many players run community configs that change engine settings in `gameinfo.gi` to trade looks for frames. Sigil's Performance page applies them for you and takes them off again cleanly.
 
-![The Performance page with OptiLock FPS on, a scale from Light to Potato, and community configs grouped by how much they change.](https://sigilmods.vercel.app/img/performance.webp)
+![The Performance page with OptiLock FPS on, a scale from Light to Potato, and community configs grouped by how much they change.](https://sigilmods.app/img/performance.webp)
 
 ## Choosing a config
 
@@ -367,9 +367,9 @@ Windows may show “Windows protected your PC” because the installer is not co
 
 ## Related pages
 
-- [Launching](https://sigilmods.vercel.app/launch): Modded or vanilla, with checks first
-- [Autoexec](https://sigilmods.vercel.app/autoexec): autoexec.cfg, commands and launch options
-- [Stats](https://sigilmods.vercel.app/stats): Rank, heroes, matches and items
+- [Launching](https://sigilmods.app/launch): Modded or vanilla, with checks first
+- [Autoexec](https://sigilmods.app/autoexec): autoexec.cfg, commands and launch options
+- [Stats](https://sigilmods.app/stats): Rank, heroes, matches and items
 
 ---
 
@@ -382,7 +382,7 @@ Sigil is a fan project and is not affiliated with Valve. Deadlock is a trademark
 
 The Locker is the view of your mods by hero. Each hero shows the skins and other mods you have for them, in load order, so you can see at a glance who is changed and how.
 
-![The Locker list: heroes with their mods, Haze expanded with three skins and one of them equipped.](https://sigilmods.vercel.app/img/locker.webp)
+![The Locker list: heroes with their mods, Haze expanded with three skins and one of them equipped.](https://sigilmods.app/img/locker.webp)
 
 ## Equip a skin
 
@@ -417,9 +417,9 @@ Windows may show “Windows protected your PC” because the installer is not co
 
 ## Related pages
 
-- [Installed mods](https://sigilmods.vercel.app/installed): On and off, load order and overlaps
-- [Profiles and packs](https://sigilmods.vercel.app/profiles): Save a setup, switch, share as a code
-- [Browse and search](https://sigilmods.vercel.app/browse): Find and install mods from GameBanana
+- [Installed mods](https://sigilmods.app/installed): On and off, load order and overlaps
+- [Profiles and packs](https://sigilmods.app/profiles): Save a setup, switch, share as a code
+- [Browse and search](https://sigilmods.app/browse): Find and install mods from GameBanana
 
 ---
 
@@ -432,7 +432,7 @@ Sigil is a fan project and is not affiliated with Valve. Deadlock is a trademark
 
 The Crosshair page draws your reticle at true scale over a game scene while you edit it, so what you see is what you get in a match.
 
-![The Crosshair editor: a cyan crosshair over a street scene, sliders for gap, length and thickness, and community crosshairs below.](https://sigilmods.vercel.app/img/crosshair.webp)
+![The Crosshair editor: a cyan crosshair over a street scene, sliders for gap, length and thickness, and community crosshairs below.](https://sigilmods.app/img/crosshair.webp)
 
 ## Editing
 
@@ -450,7 +450,7 @@ Copy code gives you a share code for the current crosshair. Import takes a share
 
 Community, beside Presets under the stage, lists crosshairs other players published and the ones Sigil ships, sorted by Most used or Newest, with how often each was applied. Pressing one loads it into the editor like a preset; nothing reaches the game until you press Apply. Right-click a crosshair to report it, and it disappears from your list at once.
 
-![The Publish to the library dialog with a name field and a short note on what becomes public.](https://sigilmods.vercel.app/img/publish.webp)
+![The Publish to the library dialog with a name field and a short note on what becomes public.](https://sigilmods.app/img/publish.webp)
 
 To share your own, load one of your saved presets and press the upload button beside Rename and Delete. Its name and settings become public for everyone using Sigil. Names are 2 to 32 characters and you can publish up to 3 a day. Remove from library takes it down again from the same PC. The library needs a connection; without one, your presets still work.
 
@@ -466,9 +466,9 @@ Windows may show “Windows protected your PC” because the installer is not co
 
 ## Related pages
 
-- [Autoexec](https://sigilmods.vercel.app/autoexec): autoexec.cfg, commands and launch options
-- [Profiles and packs](https://sigilmods.vercel.app/profiles): Save a setup, switch, share as a code
-- [Locker](https://sigilmods.vercel.app/locker): Skins per hero, equip and shuffle
+- [Autoexec](https://sigilmods.app/autoexec): autoexec.cfg, commands and launch options
+- [Profiles and packs](https://sigilmods.app/profiles): Save a setup, switch, share as a code
+- [Locker](https://sigilmods.app/locker): Skins per hero, equip and shuffle
 
 ---
 
@@ -481,7 +481,7 @@ Sigil is a fan project and is not affiliated with Valve. Deadlock is a trademark
 
 Deadlock runs the console commands in `game/citadel/cfg/autoexec.cfg` when it starts. Sigil's Autoexec page edits that file directly, with a command library so you do not have to remember exact names.
 
-![The Autoexec page: your commands, a launch options field, and premade commands for matchmaking regions.](https://sigilmods.vercel.app/img/autoexec.webp)
+![The Autoexec page: your commands, a launch options field, and premade commands for matchmaking regions.](https://sigilmods.app/img/autoexec.webp)
 
 ## Your commands and Sigil's
 
@@ -515,9 +515,9 @@ Windows may show “Windows protected your PC” because the installer is not co
 
 ## Related pages
 
-- [Crosshair](https://sigilmods.vercel.app/crosshair): Edit at true scale, share and import
-- [Performance](https://sigilmods.vercel.app/performance): Community configs, on and off
-- [Profiles and packs](https://sigilmods.vercel.app/profiles): Save a setup, switch, share as a code
+- [Crosshair](https://sigilmods.app/crosshair): Edit at true scale, share and import
+- [Performance](https://sigilmods.app/performance): Community configs, on and off
+- [Profiles and packs](https://sigilmods.app/profiles): Save a setup, switch, share as a code
 
 ---
 
@@ -530,7 +530,7 @@ Sigil is a fan project and is not affiliated with Valve. Deadlock is a trademark
 
 Stats reads your Deadlock matches from deadlock-api, a community service, and shows them inside Sigil.
 
-![The Stats overview for a sample player: rank, win rate, recent form, and what stands out over the last 20 matches.](https://sigilmods.vercel.app/img/stats.webp)
+![The Stats overview for a sample player: rank, win rate, recent form, and what stands out over the last 20 matches.](https://sigilmods.app/img/stats.webp)
 
 ## Getting started
 
@@ -547,7 +547,7 @@ Open the player panel on Stats and paste your Steam profile link, SteamID or Dea
 - **Leaderboard**: by region and season, with your place marked.
 - **Fun run**: a random hero, lane, item build and ability order from one code, to share and race.
 
-![A match detail view: souls over time for both teams and a scoreboard with each player's build.](https://sigilmods.vercel.app/img/stats-board.webp)
+![A match detail view: souls over time for both teams and a scoreboard with each player's build.](https://sigilmods.app/img/stats-board.webp)
 
 Filters scope every section to ranked or all matches and to a season or date range. Statlocker links open in your browser.
 
@@ -569,9 +569,9 @@ Windows may show “Windows protected your PC” because the installer is not co
 
 ## Related pages
 
-- [Performance](https://sigilmods.vercel.app/performance): Community configs, on and off
-- [Privacy and safety](https://sigilmods.vercel.app/privacy): What it sends, and how it checks mods
-- [Launching](https://sigilmods.vercel.app/launch): Modded or vanilla, with checks first
+- [Performance](https://sigilmods.app/performance): Community configs, on and off
+- [Privacy and safety](https://sigilmods.app/privacy): What it sends, and how it checks mods
+- [Launching](https://sigilmods.app/launch): Modded or vanilla, with checks first
 
 ---
 
@@ -584,7 +584,7 @@ Sigil is a fan project and is not affiliated with Valve. Deadlock is a trademark
 
 Sigil has no account and no third-party analytics. It talks only to the services a feature needs, and everything that would send data about you is off until you agree.
 
-![Settings, Privacy: one switch per kind of data, with What Sigil sends, What Sigil shared and Delete my data.](https://sigilmods.vercel.app/img/privacy.webp)
+![Settings, Privacy: one switch per kind of data, with What Sigil sends, What Sigil shared and Delete my data.](https://sigilmods.app/img/privacy.webp)
 
 ## What Sigil talks to
 
@@ -607,7 +607,7 @@ Help build Sigil is asked once during setup with Share and Not now. With Share, 
 
 Before an install, Sigil lists the files in the archive and checks what it is about to write. A mod that contains programs, loose scripts or script code that reaches the network is flagged. Such a mod waits switched off until you review it, and Installed, More, Mod safety lists every flagged mod with its reasons and files. Sigil never switches off a mod you approved without asking.
 
-![A mod safety note: 3 of 214 files are worth a look, including a program and a script that reaches the network.](https://sigilmods.vercel.app/img/safety.webp)
+![A mod safety note: 3 of 214 files are worth a look, including a program and a script that reaches the network.](https://sigilmods.app/img/safety.webp)
 
 Deadlock never runs a program shipped inside a mod, so a mod has no reason to include one. The warning is a prompt to look, not a block.
 
@@ -621,9 +621,9 @@ Windows may show “Windows protected your PC” because the installer is not co
 
 ## Related pages
 
-- [Questions and answers](https://sigilmods.vercel.app/faq): Cost, safety, updates, data and more
-- [Installed mods](https://sigilmods.vercel.app/installed): On and off, load order and overlaps
-- [Browse and search](https://sigilmods.vercel.app/browse): Find and install mods from GameBanana
+- [Questions and answers](https://sigilmods.app/faq): Cost, safety, updates, data and more
+- [Installed mods](https://sigilmods.app/installed): On and off, load order and overlaps
+- [Browse and search](https://sigilmods.app/browse): Find and install mods from GameBanana
 
 ---
 
@@ -669,13 +669,13 @@ SearchPaths
 - **Big mods come in chunks.** A mod split into a `_dir` file and numbered chunks must keep the whole set together under the same number.
 - **At most 99.** The game loads at most 99 VPKs from the folder.
 - **Only edit SearchPaths.** Changing other parts of `gameinfo.gi` can block matchmaking.
-- **Updates undo step 4.** Every game update and every Steam "Verify integrity of game files" puts Valve's `gameinfo.gi` back. Your mods stay on disk but stop loading until you add the line again. See [Deadlock mods not working after an update](https://sigilmods.vercel.app/deadlock-mods-not-working-after-update).
+- **Updates undo step 4.** Every game update and every Steam "Verify integrity of game files" puts Valve's `gameinfo.gi` back. Your mods stay on disk but stop loading until you add the line again. See [Deadlock mods not working after an update](https://sigilmods.app/deadlock-mods-not-working-after-update).
 
 ## The same thing with Sigil
 
 Sigil does each of these steps for you. The first time it starts, it finds the game and offers to add the `gameinfo.gi` line, keeping a backup of the file first. In Browse, Install downloads the mod from GameBanana, shows the files it is about to write and puts it in the first free slot with the right name. It switches mods on and off by renaming, changes the load order when you drag a card, and adds extra folders when you go past 99 mods.
 
-![Sigil's Installed list: each mod in its numbered slot, 01 to 07, with an on and off switch.](https://sigilmods.vercel.app/img/installed.webp)
+![Sigil's Installed list: each mod in its numbered slot, 01 to 07, with an on and off switch.](https://sigilmods.app/img/installed.webp)
 
 When an update resets `gameinfo.gi`, a banner offers to fix it again.
 
@@ -689,9 +689,9 @@ Windows may show “Windows protected your PC” because the installer is not co
 
 ## Related pages
 
-- [Mods not working after an update](https://sigilmods.vercel.app/deadlock-mods-not-working-after-update): gameinfo.gi resets and moved game files
-- [Browse and search](https://sigilmods.vercel.app/browse): Find and install mods from GameBanana
-- [Installed mods](https://sigilmods.vercel.app/installed): On and off, load order and overlaps
+- [Mods not working after an update](https://sigilmods.app/deadlock-mods-not-working-after-update): gameinfo.gi resets and moved game files
+- [Browse and search](https://sigilmods.app/browse): Find and install mods from GameBanana
+- [Installed mods](https://sigilmods.app/installed): On and off, load order and overlaps
 
 ---
 
@@ -723,7 +723,7 @@ Only change the `SearchPaths` block. Editing other parts of the file can block m
 
 When Sigil sees the reset it shows a banner on every page with a Fix button. The fix adds the line back, copies the old file aside first so it can be undone, and keeps search paths another tool added. Launch modded also checks the file before it starts the game.
 
-![The Fix gameinfo.gi dialog: Sigil adds back the line that tells Deadlock to load mods, and copies the current file aside first.](https://sigilmods.vercel.app/img/gameinfo-fix.webp)
+![The Fix gameinfo.gi dialog: Sigil adds back the line that tells Deadlock to load mods, and copies the current file aside first.](https://sigilmods.app/img/gameinfo-fix.webp)
 
 ## Problem 2: some mods broke because game files changed
 
@@ -752,9 +752,9 @@ Windows may show “Windows protected your PC” because the installer is not co
 
 ## Related pages
 
-- [How to install Deadlock mods](https://sigilmods.vercel.app/how-to-install-deadlock-mods): The addons folder, VPK names and gameinfo.gi
-- [Launching](https://sigilmods.vercel.app/launch): Modded or vanilla, with checks first
-- [Installed mods](https://sigilmods.vercel.app/installed): On and off, load order and overlaps
+- [How to install Deadlock mods](https://sigilmods.app/how-to-install-deadlock-mods): The addons folder, VPK names and gameinfo.gi
+- [Launching](https://sigilmods.app/launch): Modded or vanilla, with checks first
+- [Installed mods](https://sigilmods.app/installed): On and off, load order and overlaps
 
 ---
 
@@ -779,7 +779,7 @@ From GameBanana. Sigil browses and downloads them from there, and every mod belo
 
 ## My mods stopped working after a Deadlock update. What now?
 
-A game update or a Steam file check resets gameinfo.gi, so the game stops loading your mods. Sigil shows a banner with a Fix button. Mods made for an older build may also need an update from their creator; the guide [Deadlock mods not working after an update](https://sigilmods.vercel.app/deadlock-mods-not-working-after-update) explains both cases.
+A game update or a Steam file check resets gameinfo.gi, so the game stops loading your mods. Sigil shows a banner with a Fix button. Mods made for an older build may also need an update from their creator; the guide [Deadlock mods not working after an update](https://sigilmods.app/deadlock-mods-not-working-after-update) explains both cases.
 
 ## Does it work on Mac, Linux or Steam Deck?
 
@@ -791,7 +791,7 @@ The installer is not code signed yet, so Windows may show "Windows protected you
 
 ## What does Sigil send over the internet?
 
-It talks to GameBanana for mods and, if you allow it, to GitHub for app updates. Usage events, crash reports and product data are each off until you agree, and there is no third-party analytics. The [privacy page](https://sigilmods.vercel.app/privacy) lists every host.
+It talks to GameBanana for mods and, if you allow it, to GitHub for app updates. Usage events, crash reports and product data are each off until you agree, and there is no third-party analytics. The [privacy page](https://sigilmods.app/privacy) lists every host.
 
 ## Do I need an account?
 
@@ -827,9 +827,9 @@ Windows may show “Windows protected your PC” because the installer is not co
 
 ## Related pages
 
-- [Privacy and safety](https://sigilmods.vercel.app/privacy): What it sends, and how it checks mods
-- [Mods not working after an update](https://sigilmods.vercel.app/deadlock-mods-not-working-after-update): gameinfo.gi resets and moved game files
-- [How to install Deadlock mods](https://sigilmods.vercel.app/how-to-install-deadlock-mods): The addons folder, VPK names and gameinfo.gi
+- [Privacy and safety](https://sigilmods.app/privacy): What it sends, and how it checks mods
+- [Mods not working after an update](https://sigilmods.app/deadlock-mods-not-working-after-update): gameinfo.gi resets and moved game files
+- [How to install Deadlock mods](https://sigilmods.app/how-to-install-deadlock-mods): The addons folder, VPK names and gameinfo.gi
 
 ---
 
@@ -850,7 +850,7 @@ Inside the app, Settings has a "Send diagnostics" action. It sends a scrubbed re
 
 ## Ask a question or suggest a change
 
-Questions and ideas go to the same issues page. Check the [questions and answers](https://sigilmods.vercel.app/faq) first: it covers cost, safety, updates, the Windows warning and uninstalling.
+Questions and ideas go to the same issues page. Check the [questions and answers](https://sigilmods.app/faq) first: it covers cost, safety, updates, the Windows warning and uninstalling.
 
 ## Security problems
 
@@ -870,9 +870,9 @@ Windows may show “Windows protected your PC” because the installer is not co
 
 ## Related pages
 
-- [Questions and answers](https://sigilmods.vercel.app/faq): Cost, safety, updates, data and more
-- [Privacy and safety](https://sigilmods.vercel.app/privacy): What it sends, and how it checks mods
-- [Mods not working after an update](https://sigilmods.vercel.app/deadlock-mods-not-working-after-update): gameinfo.gi resets and moved game files
+- [Questions and answers](https://sigilmods.app/faq): Cost, safety, updates, data and more
+- [Privacy and safety](https://sigilmods.app/privacy): What it sends, and how it checks mods
+- [Mods not working after an update](https://sigilmods.app/deadlock-mods-not-working-after-update): gameinfo.gi resets and moved game files
 
 ---
 
