@@ -1,23 +1,112 @@
 name: CI
 
+# Tests every pull request and every push to main: the Rust domain core, the desktop app and the
+# telemetry Worker. Nothing is built for release and nothing is published; linux-build.yml and
+# build-windows.yml do that.
+#
+# The desktop job is allowed to fail until it is verified on a GitHub runner: its integration
+# tests render real headless frames (`--snap`) through wgpu, and a runner has no GPU, only the
+# Mesa software Vulkan driver installed below. Drop `continue-on-error` once a run passes.
+# Free: GitHub-hosted runners cost nothing for a public repository.
+
 on:
   push:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  test:
-    runs-on: ubuntu-latest
+  rust:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
-      # The pnpm version comes from package.json's packageManager.
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Read the pinned toolchain
+        id: toolchain
+        run: echo "channel=$(sed -n 's/^channel = "\(.*\)"/\1/p' rust/rust-toolchain.toml)" >> "$GITHUB_OUTPUT"
+
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
+        with:
+          toolchain: ${{ steps.toolchain.outputs.channel }}
+
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          workspaces: rust
+
+      # The same packages scripts/package-linux.sh --deps installs for linux-build.yml.
+      - name: Install build packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential pkg-config libwayland-dev libxkbcommon-dev libasound2-dev \
+            libfontconfig1-dev libssl-dev libxcb1-dev webp file zip dpkg-dev desktop-file-utils
+
+      - name: Vendor Rune
+        run: ./scripts/vendor-rune.sh
+
+      - name: Test the domain core
+        run: cd rust && cargo test --locked -p deadlock-core
+
+  desktop:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+    # Not yet verified headless on a GitHub runner; see the note at the top.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Read the pinned toolchain
+        id: toolchain
+        run: echo "channel=$(sed -n 's/^channel = "\(.*\)"/\1/p' rust/rust-toolchain.toml)" >> "$GITHUB_OUTPUT"
+
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
+        with:
+          toolchain: ${{ steps.toolchain.outputs.channel }}
+
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          workspaces: rust
+
+      # The packages linux-build.yml installs, plus Mesa's software Vulkan driver (lavapipe) so
+      # wgpu finds an adapter on a runner with no GPU.
+      - name: Install build packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential pkg-config libwayland-dev libxkbcommon-dev libasound2-dev \
+            libfontconfig1-dev libssl-dev libxcb1-dev webp file zip dpkg-dev desktop-file-utils \
+            mesa-vulkan-drivers
+
+      - name: Vendor Rune
+        run: ./scripts/vendor-rune.sh
+
+      - name: Test the desktop app
+        run: cd rust && cargo test --locked -p dah-desktop
+
+  worker:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 24
-          cache: pnpm
-      # apps/agent-host depends on vendor/tinyagent/tinyagents/typescript by path, and vendor/
-      # is not checked in. Fetch and build it before pnpm resolves the workspace.
-      - run: ./scripts/vendor-tinyagent.sh
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm test
+          cache: npm
+          cache-dependency-path: services/telemetry/package-lock.json
+
+      - name: Test the telemetry Worker
+        run: cd services/telemetry && npm ci && npm test
