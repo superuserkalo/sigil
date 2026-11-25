@@ -20,6 +20,8 @@ pub const DE: &[(&str, &str)] = &[
     ("Console log (-condebug)", "Konsolenprotokoll (-condebug)"),
     ("Deadlock crashed", "Deadlock ist abgestürzt"),
     ("Deadlock is running", "Deadlock läuft"),
+    ("Deadlock is starting", "Deadlock startet"),
+    ("Wait a moment, then try again.", "Warte einen Moment und versuche es dann erneut."),
     ("Details", "Details"),
     ("Fix mods before launch", "Mods vor dem Start reparieren"),
     ("Installs, updates and toggles wait until Deadlock closes.", "Installationen, Updates und Umschalten warten, bis Deadlock geschlossen ist."),

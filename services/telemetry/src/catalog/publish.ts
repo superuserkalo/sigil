@@ -26,9 +26,11 @@ export const T = {
 
 /**
  * Field classes in the index, packed as `stringId * PACK + class`: a description word, a category
- * name, the author, the hero (from GameBanana's hero subcategory), a verified search term.
+ * name, the author, the hero (from GameBanana's hero subcategory), a verified search term, and a
+ * verified but generic descriptive term ("model", "gun"), which the matcher weighs below a
+ * description word.
  */
-export const CLS = { description: 0, category: 1, author: 2, hero: 3, term: 4 } as const;
+export const CLS = { description: 0, category: 1, author: 2, hero: 3, term: 4, visual: 5 } as const;
 export const PACK = 8;
 
 /** At most this many distinct description words per mod. */
@@ -82,6 +84,11 @@ export function descriptionWords(text: string): string[] {
 }
 
 export function keptTerms(row: Stored | undefined): string[] {
+  return keptTermsByClass(row).map((term) => term.term);
+}
+
+/** The kept terms with whether each is only descriptive (class `visual`). */
+export function keptTermsByClass(row: Stored | undefined): { term: string; visual: boolean }[] {
   const terms = Array.isArray(row?.terms) ? (row.terms as { term: string; cls: string; p: number }[]) : [];
   return terms
     .filter((term) => {
@@ -90,7 +97,7 @@ export function keptTerms(row: Stored | undefined): string[] {
       if (term.cls === "theme") return term.p >= T.termTheme;
       return false;
     })
-    .map((term) => term.term);
+    .map((term) => ({ term: term.term, visual: term.cls === "visual" }));
 }
 
 /** The whole index: one shared string table, per mod the title and packed fields. */
@@ -121,7 +128,7 @@ export function buildIndex(mods: readonly ModMeta[], rows: ReadonlyMap<number, J
     for (const part of [meta.category, meta.subcategory]) add(part, CLS.category);
     add(meta.author, CLS.author);
     if (meta.category.toLowerCase() === "skins" && meta.subcategory.length > 0) add(meta.subcategory, CLS.hero);
-    if (terms) for (const term of keptTerms(rows.get(meta.id)?.terms)) add(term, CLS.term);
+    if (terms) for (const term of keptTermsByClass(rows.get(meta.id)?.terms)) add(term.term, term.visual ? CLS.visual : CLS.term);
     const record: IndexMod = { i: meta.id, ti: meta.title, u: meta.enrichedAt, x: [...fields.entries()].map(([id, cls]) => id * PACK + cls) };
     if (meta.stale === true) record.st = 1;
     out.push(record);
@@ -130,7 +137,7 @@ export function buildIndex(mods: readonly ModMeta[], rows: ReadonlyMap<number, J
 }
 
 /** Matcher order of field strength, by class. */
-const CLASS_RANK: Readonly<Record<number, number>> = { 0: 0, 1: 2, 2: 1, 3: 3, 4: 4 };
+const CLASS_RANK: Readonly<Record<number, number>> = { 0: 0, 1: 2, 2: 1, 3: 3, 4: 4, 5: -1 };
 
 /** Per-mod detail: the file hint, when the flagged file labels ran. */
 export function modDetail(id: number, judged: JudgmentRows): Record<string, unknown> {

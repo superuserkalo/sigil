@@ -62,6 +62,15 @@ pub fn changes_blocked() -> bool {
 /// The guard other screens call before writing to the addons folder. Shows why and returns
 /// true when the change has to wait.
 pub fn refuse_while_running(st: &mut State) -> bool {
+    // A launch step on its worker is moving or renaming files in the game folder (the vanilla
+    // stash, the shuffle, the search paths): a change now would race it, whatever the setting.
+    if st.launch.step.is_running() {
+        notify::push(
+            st,
+            Notice::warning(tr("Deadlock is starting")).detail(tr("Wait a moment, then try again.")),
+        );
+        return true;
+    }
     if !changes_blocked() {
         return false;
     }

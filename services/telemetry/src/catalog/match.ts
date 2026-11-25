@@ -32,9 +32,9 @@ export function normalize(text: string): string {
     .replace(/\s+/g, " ");
 }
 
-export const WEIGHTS = { title: 3, term: 2.5, hero: 2, category: 1.5, author: 1.5, description: 1 } as const;
+export const WEIGHTS = { title: 3, term: 2.5, hero: 2, category: 1.5, author: 1.5, description: 1, visual: 0.5 } as const;
 /** By field class (`publish.ts` CLS): description word, category, author, hero, verified term. */
-const CLASS_WEIGHT = [WEIGHTS.description, WEIGHTS.category, WEIGHTS.author, WEIGHTS.hero, WEIGHTS.term];
+const CLASS_WEIGHT = [WEIGHTS.description, WEIGHTS.category, WEIGHTS.author, WEIGHTS.hero, WEIGHTS.term, WEIGHTS.visual];
 const STOP = new Set(["the", "a", "an", "of", "for", "and", "mod", "mods", "with", "der", "die", "das", "und", "fur"]);
 
 type Field = { readonly tokens: readonly string[]; readonly joined: string; readonly weight: number; readonly key: string };
