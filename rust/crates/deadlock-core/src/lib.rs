@@ -11,6 +11,7 @@ pub mod bisect;
 pub mod backups;
 pub mod creators;
 pub mod crosshair;
+pub mod crosshair_library;
 pub mod cursors;
 pub mod cursors_create;
 pub mod demo;

@@ -136,7 +136,7 @@ impl Drop for Server {
     }
 }
 
-fn read_request(stream: &mut std::net::TcpStream) -> Option<(String, String)> {
+pub(crate) fn read_request(stream: &mut std::net::TcpStream) -> Option<(String, String)> {
     stream
         .set_read_timeout(Some(Duration::from_secs(2)))
         .ok()?;
