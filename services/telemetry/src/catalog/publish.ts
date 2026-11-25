@@ -7,10 +7,23 @@
  */
 
 import { normalize } from "./match";
-import type { Stored } from "./judgments";
+import { MIN_TERM_CHARS, type Stored } from "./judgments";
 
-/** 3: the alias table left the index (no hand-made alias list of any kind). */
+/**
+ * The app-facing format version. 3: the alias table left the index (no hand-made alias list of any
+ * kind). The shipped app accepts only 3 and ignores keys it does not know, so new per-mod keys are
+ * added without a bump.
+ */
 export const PUBLISH_VERSION = 3;
+
+/**
+ * Internal build number, never sent to the app. Bump it whenever what `buildIndex` publishes
+ * changes (a threshold, a class, a filter): the stored index is otherwise rebuilt only when mod
+ * data changes, so a publish-logic change would wait for the next mod change to show.
+ * 2: visual terms as class 5, hero-name and short terms dropped, alias checks, likes, content
+ * rating and added time per mod.
+ */
+export const INDEX_BUILD = 2;
 
 /**
  * Thresholds. A Noul at 0.7 reads as yes (TypeSafe docs); a Choice acts on the chosen option's
@@ -18,6 +31,8 @@ export const PUBLISH_VERSION = 3;
  */
 export const T = {
   termReference: 0.7,
+  /** An alias's own check ("a name players commonly type for its reference"). */
+  termAlias: 0.7,
   termVisual: 0.75,
   termTheme: 0.75,
   fileMainP: 0.6,
@@ -49,7 +64,12 @@ export type ModMeta = {
   readonly subcategory: string;
   readonly author: string;
   readonly description: string;
+  /** When this record last changed (ms): its text, its facts or its terms. `?since=` reads it. */
   readonly enrichedAt: number;
+  readonly likes?: number;
+  readonly rated?: boolean;
+  /** GameBanana's added time, in seconds. */
+  readonly added?: number;
   /** The page changed after its judgments were made and they have not been redone yet. */
   readonly stale?: boolean;
 };
@@ -63,6 +83,12 @@ export type IndexMod = {
   x: number[];
   /** 1 when the page changed since its verified terms were made. */
   st?: 1;
+  /** GameBanana like count. */
+  l?: number;
+  /** 1 when the page has content ratings; omitted otherwise. */
+  n?: 1;
+  /** Added time, seconds. */
+  a?: number;
 };
 
 export type CatalogIndex = {
@@ -83,16 +109,24 @@ export function descriptionWords(text: string): string[] {
   return out;
 }
 
-export function keptTerms(row: Stored | undefined): string[] {
-  return keptTermsByClass(row).map((term) => term.term);
+export function keptTerms(row: Stored | undefined, heroes: ReadonlySet<string> = new Set()): string[] {
+  return keptTermsByClass(row, heroes).map((term) => term.term);
 }
 
-/** The kept terms with whether each is only descriptive (class `visual`). */
-export function keptTermsByClass(row: Stored | undefined): { term: string; visual: boolean }[] {
-  const terms = Array.isArray(row?.terms) ? (row.terms as { term: string; cls: string; p: number }[]) : [];
+/**
+ * The kept terms with whether each is only descriptive (class `visual`). A term is dropped when it
+ * is shorter than 3 characters, equals a Deadlock hero name (`heroes`, normalised), or is below its
+ * class threshold. An alias needs its reference's answer and its own check (`pa`); an alias stored
+ * before the check existed has no `pa` and is dropped until it is asked again.
+ */
+export function keptTermsByClass(row: Stored | undefined, heroes: ReadonlySet<string> = new Set()): { term: string; visual: boolean }[] {
+  const terms = Array.isArray(row?.terms) ? (row.terms as { term: string; cls: string; p: number; pa?: number }[]) : [];
   return terms
     .filter((term) => {
-      if (term.cls === "reference" || term.cls === "alias") return term.p >= T.termReference;
+      const text = normalize(String(term.term ?? ""));
+      if (text.length < MIN_TERM_CHARS || heroes.has(text)) return false;
+      if (term.cls === "reference") return term.p >= T.termReference;
+      if (term.cls === "alias") return term.p >= T.termReference && typeof term.pa === "number" && term.pa >= T.termAlias;
       if (term.cls === "visual") return term.p >= T.termVisual;
       if (term.cls === "theme") return term.p >= T.termTheme;
       return false;
@@ -100,8 +134,22 @@ export function keptTermsByClass(row: Stored | undefined): { term: string; visua
     .map((term) => ({ term: term.term, visual: term.cls === "visual" }));
 }
 
-/** The whole index: one shared string table, per mod the title and packed fields. */
-export function buildIndex(mods: readonly ModMeta[], rows: ReadonlyMap<number, JudgmentRows>, now: number, terms = false): CatalogIndex {
+/** Deadlock hero names from the data: the distinct subcategories under Skins, normalised. */
+export function heroNames(subcategories: Iterable<string>): Set<string> {
+  const out = new Set<string>();
+  for (const name of subcategories) {
+    const key = normalize(name);
+    if (key.length > 0) out.add(key);
+  }
+  return out;
+}
+
+/**
+ * The whole index: one shared string table, per mod the title, packed fields and facts. `heroes`
+ * defaults to the Skins subcategories of `mods`.
+ */
+export function buildIndex(mods: readonly ModMeta[], rows: ReadonlyMap<number, JudgmentRows>, now: number, terms = false, heroes?: ReadonlySet<string>): CatalogIndex {
+  const heroSet = heroes ?? heroNames(mods.filter((meta) => meta.category.toLowerCase() === "skins").map((meta) => meta.subcategory));
   const strings: string[] = [];
   const ids = new Map<string, number>();
   const intern = (text: string): number => {
@@ -128,9 +176,12 @@ export function buildIndex(mods: readonly ModMeta[], rows: ReadonlyMap<number, J
     for (const part of [meta.category, meta.subcategory]) add(part, CLS.category);
     add(meta.author, CLS.author);
     if (meta.category.toLowerCase() === "skins" && meta.subcategory.length > 0) add(meta.subcategory, CLS.hero);
-    if (terms) for (const term of keptTermsByClass(rows.get(meta.id)?.terms)) add(term.term, term.visual ? CLS.visual : CLS.term);
+    if (terms) for (const term of keptTermsByClass(rows.get(meta.id)?.terms, heroSet)) add(term.term, term.visual ? CLS.visual : CLS.term);
     const record: IndexMod = { i: meta.id, ti: meta.title, u: meta.enrichedAt, x: [...fields.entries()].map(([id, cls]) => id * PACK + cls) };
     if (meta.stale === true) record.st = 1;
+    if (meta.likes !== undefined) record.l = Math.max(0, Math.floor(meta.likes));
+    if (meta.rated === true) record.n = 1;
+    if (meta.added !== undefined && meta.added > 0) record.a = meta.added;
     out.push(record);
   }
   return { v: PUBLISH_VERSION, built: now, strings, mods: out };

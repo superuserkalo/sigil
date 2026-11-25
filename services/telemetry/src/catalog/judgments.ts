@@ -29,6 +29,11 @@ export type Stored = Record<string, unknown>;
 export type Judgment = {
   readonly name: "terms" | "files";
   readonly version: number;
+  /**
+   * A stored row made with an older version that is still good enough, so a version bump re-runs
+   * only the rows it affects. Absent: only the current version is current.
+   */
+  readonly accepts?: (version: number, data: Stored) => boolean;
   /** False when there is nothing to judge; nothing is asked then. */
   readonly applies: (input: ModInput) => boolean;
   readonly ask: (input: ModInput) => Record<string, Question>;
@@ -58,17 +63,37 @@ export function round(value: number): number {
   return Math.round(value * 1000) / 1000;
 }
 
-/** The generator proposes, Jev checks (the docs' cascade). Aliases share their reference's answer. */
+/** Generated terms shorter than this are never asked about and never published ("hd", "cs"). */
+export const MIN_TERM_CHARS = 3;
+
+function hasAlias(data: Stored): boolean {
+  return Array.isArray(data.terms) && (data.terms as { cls?: unknown }[]).some((term) => term.cls === "alias");
+}
+
+/**
+ * The generator proposes, Jev checks (the docs' cascade). Every reference, visual and theme term
+ * gets one Noul. Every alias gets its own Noul ("is it a name players commonly type for its
+ * reference"), asked in the same request, and is kept only when it and its reference both pass.
+ *
+ * Version 5 added the alias check. A version 4 row with no alias is unchanged by it and stays
+ * current; only rows that hold an alias are asked again.
+ */
 const terms: Judgment = {
   name: "terms",
-  version: 4,
+  version: 5,
+  accepts: (version, data) => version === 4 && !hasAlias(data),
   applies: (input) => input.expansion !== null && input.expansion.terms.length > 0,
   ask: (input) => {
     const out: Record<string, Question> = {};
-    (input.expansion?.terms ?? []).forEach((term, at) => {
-      if (term.cls === "alias") return;
+    const list = input.expansion?.terms ?? [];
+    list.forEach((term, at) => {
+      if (term.term.length < MIN_TERM_CHARS) return;
       const ref = `\`terms[${at}]\``;
-      if (term.facet === "visual") out[`t${at}`] = noul(`Does the title or description say the mod shows ${ref}?`);
+      if (term.cls === "alias") {
+        const parent = list.findIndex((other) => other.cls !== "alias" && other.term === term.of);
+        if (parent < 0 || (list[parent]?.term.length ?? 0) < MIN_TERM_CHARS) return;
+        out[`a${at}`] = noul(`Is ${ref} a name players would commonly type for \`terms[${parent}]\`?`);
+      } else if (term.facet === "visual") out[`t${at}`] = noul(`Does the title or description say the mod shows ${ref}?`);
       else if (term.facet === "theme") out[`t${at}`] = noul(`Does ${ref} describe this mod's theme or mood, judging by its title and description?`);
       else if (term.facet === "character") out[`t${at}`] = noul(`Does this mod depict the character ${ref}, judging by its title and description?`);
       else out[`t${at}`] = noul(`Is this mod based on, or does it clearly reference, ${ref}, judging by its title and description?`);
@@ -84,12 +109,14 @@ const terms: Judgment = {
     });
     return {
       model: expansion.model,
-      terms: expansion.terms.map((term) => ({
+      terms: expansion.terms.map((term, at) => ({
         term: term.term,
         cls: term.cls,
         facet: term.facet,
         ...(term.of === undefined ? {} : { of: term.of }),
+        // An alias keeps its reference's answer in `p` and its own check in `pa`.
         p: term.cls === "alias" ? (own.get(term.of ?? "") ?? 0) : (own.get(term.term) ?? 0),
+        ...(term.cls === "alias" ? { pa: yes(answer(`a${at}`)) ?? 0 } : {}),
       })),
     };
   },

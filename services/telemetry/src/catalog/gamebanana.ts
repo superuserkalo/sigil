@@ -24,6 +24,10 @@ export type ListedMod = {
   readonly category: string;
   readonly subcategory: string;
   readonly author: string;
+  /** `_nLikeCount`: changes often, so it never enters the content hash. */
+  readonly likes: number;
+  /** `_bHasContentRatings`: the page carries content ratings. */
+  readonly rated: boolean;
 };
 
 export type ModFile = {
@@ -109,6 +113,8 @@ export function parseList(body: unknown): ListedMod[] {
       category: decodeEntities(str(obj(record, "_aRootCategory"), "_sName")).slice(0, 80),
       subcategory: decodeEntities(str(obj(record, "_aSubCategory"), "_sName")).slice(0, 80),
       author: decodeEntities(str(obj(record, "_aSubmitter"), "_sName")).trim().slice(0, 60),
+      likes: Math.max(0, Math.floor(num(record, "_nLikeCount"))),
+      rated: record._bHasContentRatings === true,
     }))
     .filter((mod) => mod.id > 0 && mod.title.length > 0);
 }

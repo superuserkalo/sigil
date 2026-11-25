@@ -256,6 +256,16 @@ npx wrangler deploy                               # adds the 10-minute trigger, 
 npx wrangler tail --format=json | grep enrich_    # watch the first runs
 ```
 
+Migration 0008 (`0008_catalog_facts.sql`) adds likes, the content-rating flag, a facts change
+time and a judging failure count to `catalog_mods`; the index then carries `l`, `n` and `a` per
+mod (still version 3). Apply it before deploying the code that reads those columns:
+
+```bash
+cd services/telemetry
+npx wrangler d1 migrations apply sigil --remote   # 0008_catalog_facts.sql
+npx wrangler deploy                               # first run rebuilds the index once (INDEX_BUILD)
+```
+
 The first full pass reads the catalog in about 51 text requests plus the list pages, so it fills
 within a few hours of runs. Turning on a flag later: `wrangler deploy` with the var added to
 `wrangler.jsonc`, after the live check in `.scratch/typesafe/eval.md` (local).

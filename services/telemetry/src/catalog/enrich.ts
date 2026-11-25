@@ -16,7 +16,7 @@ import { aiBinding, expand, withoutHeroNames, type Expansion } from "./expand";
 import { GameBanana, MULTI_IDS, type ListedMod, type ModFile, type ModText } from "./gamebanana";
 import { JUDGMENTS, MAX_FILES, SEP, type Judgment, type ModInput, type Stored } from "./judgments";
 import { Budget, BudgetSpent, liveNet, RemoteError, type Net } from "./net";
-import { buildIndex, PUBLISH_VERSION, type CatalogIndex, type JudgmentRows, type ModMeta } from "./publish";
+import { buildIndex, heroNames, INDEX_BUILD, PUBLISH_VERSION, type CatalogIndex, type JudgmentRows, type ModMeta } from "./publish";
 import { askJev, JEV_MODEL, RejectedRequest, typesafeKey, USD_PER_TOKEN, type Question, type SystemOneBody } from "./typesafe";
 import { sha256Hex } from "../hash";
 
@@ -29,6 +29,8 @@ export const DEFAULT_RUN_MODS = 20;
 export const DEFAULT_DAILY_USD = 1;
 /** A mod not seen in the listing for this long leaves the index. */
 export const UNSEEN_MS = 14 * 24 * 60 * 60 * 1000;
+/** Failed judging attempts on one content hash before the mod is marked judged-as-failed. */
+export const MAX_JUDGE_FAILURES = 3;
 const DESCRIPTION_CHARS = 1500;
 
 export type Flags = { readonly expansion: boolean; readonly fileLabels: boolean };
@@ -65,9 +67,20 @@ export type RunReport = {
   indexBuilt: boolean;
 };
 
-type TagRow = { judgment: string; version: number; model: string; hash: string };
+type TagRow = { judgment: string; version: number; model: string; hash: string; data?: string };
 
-type ModRow = { mod_id: number; title: string; category: string; subcategory: string; author: string; description: string; files: string; content_hash: string; judged_hash: string };
+type ModRow = {
+  mod_id: number;
+  title: string;
+  category: string;
+  subcategory: string;
+  author: string;
+  description: string;
+  files: string;
+  content_hash: string;
+  judged_hash: string;
+  judge_failures: number;
+};
 
 // ---------------------------------------------------------------------------------------------
 // Small state helpers
@@ -92,12 +105,26 @@ async function spentToday(db: D1Database, now: number): Promise<number> {
   return parsed !== null && parsed.day === day ? parsed.usd : 0;
 }
 
-/** The enabled judgments a mod needs (re)run: missing, older version or model, or made on other content. */
+/**
+ * The enabled judgments a mod needs (re)run: missing, older version or model, or made on other
+ * content. An older version the judgment still accepts (see `Judgment.accepts`) counts as current.
+ */
 export function staleJudgments(enabled: readonly Judgment[], rows: readonly TagRow[], contentHash: string): Judgment[] {
   return enabled.filter((judgment) => {
     const row = rows.find((candidate) => candidate.judgment === judgment.name);
-    return row === undefined || row.version !== judgment.version || row.model !== JEV_MODEL || row.hash !== contentHash;
+    if (row === undefined || row.model !== JEV_MODEL || row.hash !== contentHash) return true;
+    if (row.version === judgment.version) return false;
+    return judgment.accepts === undefined || !judgment.accepts(row.version, parseStored(row.data));
   });
+}
+
+function parseStored(data: string | undefined): Stored {
+  try {
+    const value: unknown = JSON.parse(data ?? "{}");
+    return typeof value === "object" && value !== null ? (value as Stored) : {};
+  } catch {
+    return {};
+  }
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -121,10 +148,13 @@ export async function runEnrichment(env: Env, now: number, net: Net = liveNet, s
   let changed = false;
   try {
     const listed = await candidates(env.DB, gb);
-    for (const mod of listed) await rememberMod(env.DB, mod, now);
+    // A likes, rating or added-time change alone counts as a change: the index is still rebuilt at
+    // most hourly, and no model is asked (those facts are outside the content hash).
+    for (const mod of listed) if (await rememberMod(env.DB, mod, now)) changed = true;
     changed = (await refreshTexts(env.DB, gb, budget, listed, report)) || changed;
-    await advanceCursor(env.DB, listed, now);
-    changed = (await judge(env, net, budget, listed, now, report)) || changed;
+    const judged = await judge(env, net, budget, listed, now, report);
+    changed = judged.changed || changed;
+    await advanceCursor(env.DB, listed, judged.pending, now);
   } catch (error) {
     report.stopped = error instanceof BudgetSpent ? "budget" : error instanceof RemoteError ? `${error.host}_${error.status}` : "error";
     log({ event: "enrich_error", what: report.stopped, message: error instanceof Error ? error.message.slice(0, 200) : "unknown" });
@@ -168,11 +198,16 @@ async function candidates(db: D1Database, gb: GameBanana): Promise<ListedMod[]> 
   return out;
 }
 
-/** Next backfill page once every mod on the current one has its text for its current timestamp. */
-async function advanceCursor(db: D1Database, listed: readonly ListedMod[], now: number): Promise<void> {
+/**
+ * Next backfill page once every mod on the current one has its text for its current timestamp
+ * and, while the model steps run, none of them is still waiting to be judged (`pending`, from
+ * `judge`). A mod that keeps failing stops holding the page after `MAX_JUDGE_FAILURES` runs.
+ */
+async function advanceCursor(db: D1Database, listed: readonly ListedMod[], pending: ReadonlySet<number>, now: number): Promise<void> {
   const cursor = Number((await getState(db, "cursor"))?.value ?? "2");
   const page = JSON.parse((await getState(db, "cursor_page"))?.value ?? "[]") as number[];
   for (const id of page) {
+    if (pending.has(id)) return;
     const mod = listed.find((candidate) => candidate.id === id);
     const row = await db.prepare("SELECT text_updated, withdrawn FROM catalog_mods WHERE mod_id = ?1").bind(id).first<{ text_updated: number; withdrawn: number }>();
     if (mod !== undefined && row !== null && row.withdrawn === 0 && row.text_updated !== mod.updated) return;
@@ -180,16 +215,26 @@ async function advanceCursor(db: D1Database, listed: readonly ListedMod[], now: 
   await setState(db, "cursor", String(page.length < 50 ? 2 : Math.max(2, cursor) + 1), now);
 }
 
-async function rememberMod(db: D1Database, mod: ListedMod, now: number): Promise<void> {
+/** Stores what the list page says about a mod. True when its likes, rating flag or added time changed. */
+async function rememberMod(db: D1Database, mod: ListedMod, now: number): Promise<boolean> {
+  const known = await db
+    .prepare("SELECT likes, rated, added_at FROM catalog_mods WHERE mod_id = ?1")
+    .bind(mod.id)
+    .first<{ likes: number; rated: number; added_at: number }>();
+  const rated = mod.rated ? 1 : 0;
+  const factsChanged = known !== null && (known.likes !== mod.likes || known.rated !== rated || known.added_at !== mod.added);
   await db
     .prepare(
-      `INSERT INTO catalog_mods (mod_id, mod_updated, added_at, title, category, subcategory, author, seen_at)
-       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
-       ON CONFLICT(mod_id) DO UPDATE SET mod_updated = excluded.mod_updated, title = excluded.title, category = excluded.category,
-         subcategory = excluded.subcategory, author = excluded.author, seen_at = excluded.seen_at`,
+      `INSERT INTO catalog_mods (mod_id, mod_updated, added_at, title, category, subcategory, author, seen_at, likes, rated, facts_at)
+       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+       ON CONFLICT(mod_id) DO UPDATE SET mod_updated = excluded.mod_updated, added_at = excluded.added_at, title = excluded.title,
+         category = excluded.category, subcategory = excluded.subcategory, author = excluded.author, seen_at = excluded.seen_at,
+         likes = excluded.likes, rated = excluded.rated,
+         facts_at = CASE WHEN ?12 = 1 THEN excluded.facts_at ELSE catalog_mods.facts_at END`,
     )
-    .bind(mod.id, mod.updated, mod.added, mod.title, mod.category, mod.subcategory, mod.author, now)
+    .bind(mod.id, mod.updated, mod.added, mod.title, mod.category, mod.subcategory, mod.author, now, mod.likes, rated, now, factsChanged ? 1 : 0)
     .run();
+  return factsChanged;
 }
 
 /** The public content the index and the judgments read: title, categories, author, text and files. */
@@ -224,7 +269,10 @@ async function refreshTexts(db: D1Database, gb: GameBanana, budget: Budget, list
       if (known?.content_hash === hash) report.unchanged += 1;
       else changed = true;
       await db
-        .prepare("UPDATE catalog_mods SET description = ?2, files = ?3, content_hash = ?4, text_updated = ?5, withdrawn = 0 WHERE mod_id = ?1")
+        .prepare(
+          `UPDATE catalog_mods SET description = ?2, files = ?3, content_hash = ?4, text_updated = ?5, withdrawn = 0,
+             judge_failures = CASE WHEN content_hash = ?4 THEN judge_failures ELSE 0 END WHERE mod_id = ?1`,
+        )
         .bind(mod.id, [text.summary, text.text].filter((part) => part.length > 0).join("\n").slice(0, DESCRIPTION_CHARS), JSON.stringify(text.files.slice(0, MAX_FILES)), hash, mod.updated)
         .run();
     }
@@ -236,21 +284,31 @@ async function refreshTexts(db: D1Database, gb: GameBanana, budget: Budget, list
 // The flagged model steps
 // ---------------------------------------------------------------------------------------------
 
-async function judge(env: Env, net: Net, budgetLeft: Budget, listed: readonly ListedMod[], now: number, report: RunReport): Promise<boolean> {
+type JudgeResult = { changed: boolean; pending: Set<number> };
+
+/**
+ * Runs the enabled model steps for listed mods whose judgments are stale, up to the run caps.
+ * `pending` holds the listed mods still waiting: not reached because a run cap stopped the loop,
+ * or failed this run with fewer than `MAX_JUDGE_FAILURES` failures on their content hash. The
+ * daily spend cap does not hold the cursor: the free text upkeep keeps walking.
+ */
+async function judge(env: Env, net: Net, budgetLeft: Budget, listed: readonly ListedMod[], now: number, report: RunReport): Promise<JudgeResult> {
+  const result: JudgeResult = { changed: false, pending: new Set() };
   const enabled = JUDGMENTS.filter((judgment) => (judgment.name === "terms" ? flags(env).expansion : flags(env).fileLabels));
-  if (enabled.length === 0) return false;
+  if (enabled.length === 0) return result;
   const key = typesafeKey(env);
   if (key === null) {
     log({ event: "enrich_models_skipped", reason: "no_typesafe_key" });
-    return false;
+    return result;
   }
   const caps = config(env);
   const dayStart = await spentToday(env.DB, now);
   const ai = aiBinding(env);
-  let changed = false;
-  for (const listedMod of listed) {
-    if (report.judged + report.failed >= caps.runMods) {
-      report.stopped = "run_mods";
+  for (const [at, listedMod] of listed.entries()) {
+    if (report.judged + report.failed >= caps.runMods || budgetLeft.remaining < 3) {
+      report.stopped = report.judged + report.failed >= caps.runMods ? "run_mods" : "budget";
+      // Not looked at this run: the next one sees them first.
+      for (const rest of listed.slice(at)) result.pending.add(rest.id);
       break;
     }
     if (dayStart + report.usd >= caps.dailyUsd) {
@@ -258,29 +316,54 @@ async function judge(env: Env, net: Net, budgetLeft: Budget, listed: readonly Li
       log({ event: "error", what: "enrich_daily_cap", usd: dayStart + report.usd });
       break;
     }
-    if (budgetLeft.remaining < 3) {
-      report.stopped = "budget";
-      break;
-    }
     const row = await env.DB.prepare(
-      "SELECT mod_id, title, category, subcategory, author, description, files, content_hash, judged_hash FROM catalog_mods WHERE mod_id = ?1 AND withdrawn = 0 AND content_hash != ''",
+      "SELECT mod_id, title, category, subcategory, author, description, files, content_hash, judged_hash, judge_failures FROM catalog_mods WHERE mod_id = ?1 AND withdrawn = 0 AND content_hash != ''",
     )
       .bind(listedMod.id)
       .first<ModRow>();
     if (row === null) continue;
-    const { results: rows } = await env.DB.prepare("SELECT judgment, version, model, hash FROM mod_tags WHERE mod_id = ?1").bind(row.mod_id).all<TagRow>();
+    const { results: rows } = await env.DB.prepare("SELECT judgment, version, model, hash, data FROM mod_tags WHERE mod_id = ?1").bind(row.mod_id).all<TagRow>();
     const stale = staleJudgments(enabled, rows, row.content_hash).filter((judgment) => judgment.name !== "terms" || ai !== null);
     if (stale.length === 0) continue;
+    let outcome: Outcome;
     try {
-      if (await judgeMod(env, net, budgetLeft, key, ai, listedMod, row, stale, now, report)) changed = true;
+      outcome = await judgeMod(env, net, budgetLeft, key, ai, listedMod, row, stale, now, report);
     } catch (error) {
       // A remote refusing or the budget ending stops the run; anything else is this mod's problem.
       if (error instanceof RemoteError || error instanceof BudgetSpent) throw error;
       log({ event: "enrich_mod_error", mod: row.mod_id, message: error instanceof Error ? `${error.name}: ${error.message}`.slice(0, 200) : "unknown" });
-      report.failed += 1;
+      outcome = { done: false, wrote: false };
     }
+    if (outcome.wrote) result.changed = true;
+    if (outcome.done) continue;
+    report.failed += 1;
+    if (await recordFailure(env.DB, row, enabled, now)) result.changed = true;
+    else result.pending.add(row.mod_id);
   }
-  return changed;
+  return result;
+}
+
+/** `done`: every stale judgment got a row. `wrote`: something reached the database. */
+type Outcome = { done: boolean; wrote: boolean };
+
+/**
+ * Counts one failed attempt on the mod's current content hash. At `MAX_JUDGE_FAILURES` the
+ * judgments still missing are written as judged-as-failed for that hash (`{ na: 1, failed: 1 }`,
+ * nothing published), so the mod stops costing calls and stops holding the backfill cursor until
+ * its content or a judgment version changes. True when it was marked.
+ */
+async function recordFailure(db: D1Database, row: ModRow, enabled: readonly Judgment[], now: number): Promise<boolean> {
+  const counted = await db
+    .prepare("UPDATE catalog_mods SET judge_failures = judge_failures + 1 WHERE mod_id = ?1 RETURNING judge_failures")
+    .bind(row.mod_id)
+    .first<{ judge_failures: number }>();
+  if ((counted?.judge_failures ?? 0) < MAX_JUDGE_FAILURES) return false;
+  const { results: rows } = await db.prepare("SELECT judgment, version, model, hash, data FROM mod_tags WHERE mod_id = ?1").bind(row.mod_id).all<TagRow>();
+  const writes = staleJudgments(enabled, rows, row.content_hash).map((judgment) => rowStatement(db, row.mod_id, judgment, { na: 1, failed: 1 }, now, row.content_hash));
+  writes.push(db.prepare("UPDATE catalog_mods SET judged_hash = ?2, judge_failures = 0 WHERE mod_id = ?1").bind(row.mod_id, row.content_hash));
+  await db.batch(writes);
+  log({ event: "enrich_mod_given_up", mod: row.mod_id, failures: MAX_JUDGE_FAILURES });
+  return true;
 }
 
 async function judgeMod(
@@ -294,10 +377,12 @@ async function judgeMod(
   stale: readonly Judgment[],
   now: number,
   report: RunReport,
-): Promise<boolean> {
+): Promise<Outcome> {
   const text: ModText = { id: row.mod_id, summary: "", text: row.description, files: JSON.parse(row.files || "[]") as ModFile[] };
   let expansion: Expansion | null = null;
-  if (ai !== null && stale.some((judgment) => judgment.name === "terms") && budget.take()) {
+  if (ai !== null && stale.some((judgment) => judgment.name === "terms")) {
+    // Running out of calls is not the mod's fault: it stops the run instead of counting a failure.
+    if (!budget.take()) throw new BudgetSpent("subrequest budget spent");
     try {
       expansion = await expand(ai, mod, text);
       if (expansion !== null) {
@@ -311,11 +396,18 @@ async function judgeMod(
   }
   const input: ModInput = { mod, text, expansion };
   const applicable = stale.filter((judgment) => judgment.applies(input));
-  // Every row of this run is written in one batch at the end, with the hash it was made on and the
-  // mod's judged hash, so a run that fails midway leaves nothing half-current.
+  // Every row of this run is written in one batch at the end, with the hash it was made on. The
+  // mod's judged hash goes in the same batch only when every stale judgment got its row, so a run
+  // that fails midway leaves nothing half-current.
   const writes: D1PreparedStatement[] = [];
+  let missing = 0;
   for (const judgment of stale) {
-    if (applicable.includes(judgment) || (judgment.name === "terms" && expansion === null)) continue;
+    if (applicable.includes(judgment)) continue;
+    // No expansion (the generator failed or answered nothing usable): terms are still owed.
+    if (judgment.name === "terms" && expansion === null) {
+      missing += 1;
+      continue;
+    }
     writes.push(rowStatement(env.DB, row.mod_id, judgment, { na: 1 }, now, row.content_hash));
   }
   if (applicable.length > 0) {
@@ -324,8 +416,7 @@ async function judgeMod(
       result = await askJev(net, budget, key, modRequest(input, applicable));
     } catch (error) {
       if (!(error instanceof RejectedRequest)) throw error;
-      report.failed += 1;
-      return false;
+      return { done: false, wrote: false };
     }
     report.tokens += result.inputTokens;
     report.usd += result.inputTokens * USD_PER_TOKEN;
@@ -333,12 +424,13 @@ async function judgeMod(
     for (const judgment of applicable) {
       const data = judgment.read((id) => result.answers[`${judgment.name}${SEP}${id}`], input);
       if (data !== null) writes.push(rowStatement(env.DB, row.mod_id, judgment, data, now, row.content_hash));
+      else missing += 1;
     }
   }
-  if (writes.length === 0) return false;
-  writes.push(env.DB.prepare("UPDATE catalog_mods SET judged_hash = ?2 WHERE mod_id = ?1").bind(row.mod_id, row.content_hash));
-  await env.DB.batch(writes);
-  return true;
+  const done = missing === 0;
+  if (done) writes.push(env.DB.prepare("UPDATE catalog_mods SET judged_hash = ?2, judge_failures = 0 WHERE mod_id = ?1").bind(row.mod_id, row.content_hash));
+  if (writes.length > 0) await env.DB.batch(writes);
+  return { done, wrote: writes.length > 0 };
 }
 
 function rowStatement(db: D1Database, modId: number, judgment: Judgment, data: Stored, now: number, hash: string): D1PreparedStatement {
@@ -388,10 +480,18 @@ async function addSpend(db: D1Database, report: RunReport, now: number): Promise
 
 export async function maybeBuildIndex(db: D1Database, now: number, changed: boolean, force = false, options: Partial<Flags> = {}): Promise<boolean> {
   const meta = await getState(db, "index_meta");
-  const parsed = meta === null ? null : (JSON.parse(meta.value) as { v: number; built: number });
-  const outdated = parsed === null || parsed.v !== PUBLISH_VERSION;
-  if (!force && !outdated && !(changed && now - parsed.built >= INDEX_MIN_AGE_MS)) return false;
+  const parsed = meta === null ? null : (JSON.parse(meta.value) as { v: number; b?: number; built: number });
+  // A new app-facing version or a new internal build (publish logic changed) rebuilds at once.
+  const outdated = parsed === null || parsed.v !== PUBLISH_VERSION || parsed.b !== INDEX_BUILD;
+  // A change seen inside the hourly window is remembered, so it is published by the first run after
+  // the window even when that run sees no change of its own (a likes bump, then quiet).
+  const dirty = changed || (await getState(db, "index_dirty"))?.value === "1";
+  if (!force && !outdated && !(dirty && now - parsed.built >= INDEX_MIN_AGE_MS)) {
+    if (changed) await setState(db, "index_dirty", "1", now);
+    return false;
+  }
   await buildAndStoreIndex(db, now, options);
+  await setState(db, "index_dirty", "0", now);
   return true;
 }
 
@@ -401,19 +501,41 @@ export const INDEX_CHUNK = 900_000;
 export async function buildAndStoreIndex(db: D1Database, now: number, options: Partial<Flags> = {}): Promise<void> {
   const mods = await db
     .prepare(
-      `SELECT mod_id, title, category, subcategory, author, description, content_hash != judged_hash AS stale, text_updated
+      `SELECT mod_id, title, category, subcategory, author, description, content_hash != judged_hash AS stale, text_updated,
+         likes, rated, added_at, facts_at
        FROM catalog_mods WHERE withdrawn = 0 AND content_hash != '' AND seen_at >= ?1 ORDER BY mod_id`,
     )
     .bind(now - UNSEEN_MS)
-    .all<{ mod_id: number; title: string; category: string; subcategory: string; author: string; description: string; stale: number; text_updated: number }>();
+    .all<{
+      mod_id: number;
+      title: string;
+      category: string;
+      subcategory: string;
+      author: string;
+      description: string;
+      stale: number;
+      text_updated: number;
+      likes: number;
+      rated: number;
+      added_at: number;
+      facts_at: number;
+    }>();
   const rows = new Map<number, Record<string, Stored>>();
+  const termsAt = new Map<number, number>();
   if (options.expansion === true) {
-    const tags = await db.prepare("SELECT mod_id, judgment, data FROM mod_tags WHERE judgment = 'terms'").all<{ mod_id: number; judgment: string; data: string }>();
+    const tags = await db
+      .prepare("SELECT mod_id, judgment, data, enriched_at FROM mod_tags WHERE judgment = 'terms'")
+      .all<{ mod_id: number; judgment: string; data: string; enriched_at: number }>();
     for (const tag of tags.results) {
       const data = JSON.parse(tag.data) as Stored;
+      termsAt.set(tag.mod_id, tag.enriched_at);
       if (data.na !== 1) rows.set(tag.mod_id, { terms: data });
     }
   }
+  // Hero names from the data: every Skins subcategory GameBanana has, not only this mod's.
+  const { results: subs } = await db
+    .prepare("SELECT DISTINCT subcategory FROM catalog_mods WHERE lower(category) = 'skins' AND subcategory != ''")
+    .all<{ subcategory: string }>();
   const metas: ModMeta[] = mods.results.map((row) => ({
     id: row.mod_id,
     title: row.title,
@@ -421,16 +543,20 @@ export async function buildAndStoreIndex(db: D1Database, now: number, options: P
     subcategory: row.subcategory,
     author: row.author,
     description: row.description,
-    enrichedAt: row.text_updated * 1000,
+    // The record's newest change (text, facts or terms), so `?since=` deltas carry each of them.
+    enrichedAt: Math.max(row.text_updated * 1000, row.facts_at, termsAt.get(row.mod_id) ?? 0),
     stale: options.expansion === true && rows.has(row.mod_id) && row.stale === 1,
+    likes: row.likes,
+    rated: row.rated === 1,
+    added: row.added_at,
   }));
-  const index = buildIndex(metas, rows as ReadonlyMap<number, JudgmentRows>, now, options.expansion === true);
+  const index = buildIndex(metas, rows as ReadonlyMap<number, JudgmentRows>, now, options.expansion === true, heroNames(subs.map((sub) => sub.subcategory)));
   const json = JSON.stringify(index);
   const etag = (await sha256Hex(json)).slice(0, 32);
   const packed = await gzipBase64(json);
   const chunks = Math.max(1, Math.ceil(packed.length / INDEX_CHUNK));
   for (let at = 0; at < chunks; at += 1) await setState(db, `index:${at}`, packed.slice(at * INDEX_CHUNK, (at + 1) * INDEX_CHUNK), now);
-  await setState(db, "index_meta", JSON.stringify({ v: PUBLISH_VERSION, built: now, etag, chunks, mods: index.mods.length, bytes: json.length, gzip: Math.round((packed.length * 3) / 4) }), now);
+  await setState(db, "index_meta", JSON.stringify({ v: PUBLISH_VERSION, b: INDEX_BUILD, built: now, etag, chunks, mods: index.mods.length, bytes: json.length, gzip: Math.round((packed.length * 3) / 4) }), now);
 }
 
 /** The stored index, or null before the first build. */

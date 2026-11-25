@@ -1,11 +1,11 @@
 import { env } from "cloudflare:workers";
 import { beforeEach, describe, expect, it } from "vitest";
 import { scheduledJob } from "../src/cron";
-import { buildAndStoreIndex, loadIndex, runEnrichment, RUN_SUBREQUESTS, DEFAULT_DAILY_USD } from "../src/catalog/enrich";
+import { buildAndStoreIndex, getState, loadIndex, maybeBuildIndex, MAX_JUDGE_FAILURES, runEnrichment, RUN_SUBREQUESTS, DEFAULT_DAILY_USD, staleJudgments } from "../src/catalog/enrich";
 import { parseExpansion, withoutHeroNames, type AiRunner } from "../src/catalog/expand";
 import { decodeEntities, htmlToText } from "../src/catalog/gamebanana";
 import { JUDGMENTS } from "../src/catalog/judgments";
-import { descriptionWords, keptTerms, modDetail, PACK, PUBLISH_VERSION, T } from "../src/catalog/publish";
+import { buildIndex, CLS, descriptionWords, INDEX_BUILD, keptTerms, modDetail, PACK, PUBLISH_VERSION, T, type ModMeta } from "../src/catalog/publish";
 import { assertPublicOnly, BODY_KEYS, STATE_KEYS, TYPESAFE_URL, type SystemOneBody } from "../src/catalog/typesafe";
 import type { Net } from "../src/catalog/net";
 import { call, clearTables, readJson } from "./helpers";
@@ -16,7 +16,7 @@ const SENTINEL = "PLAYER-SECRET-SEARCH-TEXT";
 
 type Calls = { gb: string[]; typesafe: SystemOneBody[]; headers: Headers[] };
 
-type ModFixture = { id: number; updated: number; title?: string; sub?: string; cat?: string };
+type ModFixture = { id: number; updated: number; title?: string; sub?: string; cat?: string; likes?: number; rated?: boolean };
 
 function listBody(mods: ModFixture[]): unknown {
   return {
@@ -29,6 +29,8 @@ function listBody(mods: ModFixture[]): unknown {
       _aRootCategory: { _sName: mod.cat ?? "Skins" },
       _aSubCategory: { _sName: mod.sub ?? "Vindicta" },
       _aSubmitter: { _idRow: 77, _sName: "pyro shark" },
+      _nLikeCount: mod.likes ?? 0,
+      _bHasContentRatings: mod.rated ?? false,
     })),
   };
 }
@@ -58,7 +60,7 @@ function jevAnswer(body: SystemOneBody): unknown {
 function fakeNet(
   mods: ModFixture[],
   calls: Calls,
-  options: { gbStatus?: number; typesafeStatus?: number; texts?: Record<number, unknown> } = {},
+  options: { gbStatus?: number; typesafeStatus?: number; texts?: Record<number, unknown>; pages?: Record<number, ModFixture[]> } = {},
 ): Net {
   return {
     sleep: async () => {},
@@ -72,7 +74,10 @@ function fakeNet(
       }
       calls.gb.push(url);
       if (options.gbStatus !== undefined) return new Response("no", { status: options.gbStatus });
-      if (url.includes("/Mod/Index")) return Response.json(listBody(url.includes("_nPage=1&") ? mods : []));
+      if (url.includes("/Mod/Index")) {
+        const page = Number(/_nPage=(\d+)/.exec(url)?.[1] ?? "1");
+        return Response.json(listBody(options.pages?.[page] ?? (page === 1 ? mods : [])));
+      }
       if (url.includes("/Mod/Multi")) {
         const ids = (/_csvRowIds=([\d,]+)/.exec(url)?.[1] ?? "").split(",").map(Number);
         return Response.json(
@@ -365,7 +370,8 @@ describe("routes", () => {
     expect(index.v).toBe(PUBLISH_VERSION);
     expect(index).not.toHaveProperty("aliases");
     expect((await call("/v1/catalog/tags", { method: "GET", headers: { "if-none-match": etag } })).status).toBe(304);
-    const empty = await call(`/v1/catalog/tags?since=${1795000000 * 1000 + 1}`, { method: "GET" });
+    // A record's time is its newest change, including when this Worker first saw it (NOW).
+    const empty = await call(`/v1/catalog/tags?since=${NOW + 1}`, { method: "GET" });
     expect((await readJson<{ mods: unknown[] }>(empty)).mods).toEqual([]);
     const delta = await readJson<{ strings: string[]; mods: { x: number[] }[] }>(await call("/v1/catalog/tags?since=0", { method: "GET" }));
     expect(delta.mods.length).toBe(1);
@@ -389,18 +395,21 @@ describe("routes", () => {
 });
 
 describe("thresholds", () => {
-  it("terms need their class threshold; aliases follow their reference", () => {
+  it("terms need their class threshold; an alias needs its reference and its own check", () => {
     expect(
       keptTerms({
         terms: [
           { term: "counter strike", cls: "reference", p: T.termReference },
-          { term: "cs", cls: "alias", p: T.termReference },
+          { term: "csgo", cls: "alias", p: T.termReference, pa: T.termAlias },
+          { term: "cstrike", cls: "alias", p: T.termReference, pa: T.termAlias - 0.01 },
+          // Stored before aliases were checked: no `pa`, not published.
+          { term: "counterstrike", cls: "alias", p: 0.95 },
           { term: "gas mask", cls: "visual", p: T.termVisual - 0.01 },
           { term: "military", cls: "theme", p: 0.8 },
           { term: "made up", cls: "reference", p: 0.2 },
         ],
       }),
-    ).toEqual(["counter strike", "cs", "military"]);
+    ).toEqual(["counter strike", "csgo", "military"]);
   });
 
   it("file labels are a hint only above the threshold", () => {
@@ -452,5 +461,166 @@ describe("untrusted page content", () => {
       ["aston machan", ""],
       ["machan", "aston machan"],
     ]);
+  });
+});
+
+async function cursor(): Promise<number> {
+  return Number((await getState(env.DB, "cursor"))?.value ?? "2");
+}
+
+const page = (count: number, from = 1000, extra: Partial<ModFixture> = {}): ModFixture[] =>
+  Array.from({ length: count }, (_, at) => ({ id: from + at, updated: 1795000000 + at, ...extra }));
+
+describe("backfill cursor while the model steps run", () => {
+  it("holds a page until all of it is judged: 50 mods at 20 a run take three runs, then the cursor moves", async () => {
+    const ai = { ai: 0 };
+    const pages = { 1: [], 2: page(50) };
+    const judged: number[] = [];
+    for (const run of [0, 1, 2]) {
+      const report = await runEnrichment(testEnv({ CATALOG_EXPANSION: "1", AI: fakeAi(ai) }), NOW + run * 600_000, fakeNet([], newCalls(), { pages }));
+      judged.push(report.judged);
+      const left = await env.DB.prepare("SELECT COUNT(*) AS n FROM catalog_mods WHERE content_hash != judged_hash").first<{ n: number }>();
+      if (run < 2) {
+        expect(left?.n).toBeGreaterThan(0);
+        expect(await cursor()).toBe(2);
+      } else {
+        expect(left?.n).toBe(0);
+        expect(await cursor()).toBe(3);
+      }
+    }
+    expect(judged).toEqual([20, 20, 10]);
+  });
+
+  it("does not stall on a mod whose judging keeps failing", async () => {
+    const broken: AiRunner = {
+      run: async (model, input) => {
+        if (JSON.stringify(input).includes("Broken")) throw new Error("model down for this page");
+        return fakeAi({ ai: 0 }).run(model, input);
+      },
+    };
+    const mods = page(50);
+    mods[0] = { ...mods[0]!, title: "Broken page" };
+    const pages = { 1: [], 2: mods };
+    for (const run of [0, 1, 2]) {
+      expect(await cursor()).toBe(2);
+      const report = await runEnrichment(testEnv({ CATALOG_EXPANSION: "1", AI: broken }), NOW + run * 600_000, fakeNet([], newCalls(), { pages }));
+      expect(report.failed).toBe(1);
+    }
+    expect(MAX_JUDGE_FAILURES).toBe(3);
+    expect(await cursor()).toBe(3);
+    const row = await env.DB.prepare("SELECT data, hash FROM mod_tags WHERE mod_id = ?1 AND judgment = 'terms'").bind(mods[0]!.id).first<{ data: string; hash: string }>();
+    expect(JSON.parse(row?.data ?? "{}")).toEqual({ na: 1, failed: 1 });
+    const mod = await env.DB.prepare("SELECT content_hash, judged_hash, judge_failures FROM catalog_mods WHERE mod_id = ?1").bind(mods[0]!.id).first<{ content_hash: string; judged_hash: string; judge_failures: number }>();
+    expect(mod?.judged_hash).toBe(mod?.content_hash);
+    expect(mod?.judge_failures).toBe(0);
+    // Marked for that hash: the next run does not try it again.
+    const again = await runEnrichment(testEnv({ CATALOG_EXPANSION: "1", AI: broken }), NOW + 3 * 600_000, fakeNet([], newCalls(), { pages: { 1: mods } }));
+    expect(again.failed).toBe(0);
+  });
+});
+
+describe("per-mod facts", () => {
+  it("publishes likes, the content-rating flag and the added time without a version bump", async () => {
+    await runEnrichment(testEnv(), NOW, fakeNet([{ id: 1, updated: 1795000000, likes: 12, rated: true }, { id: 2, updated: 1795000000 }], newCalls()));
+    await buildAndStoreIndex(env.DB, NOW);
+    const index = await loadIndex(env.DB);
+    expect(index?.v).toBe(3);
+    expect(index?.mods.find((mod) => mod.i === 1)).toMatchObject({ l: 12, n: 1, a: 1795000000 - 100 });
+    const plain = index?.mods.find((mod) => mod.i === 2);
+    expect(plain?.l).toBe(0);
+    expect(plain).not.toHaveProperty("n");
+  });
+
+  it("a likes-only change asks no model, rebuilds at most hourly and reaches ?since= deltas", async () => {
+    const ai = { ai: 0 };
+    const calls = newCalls();
+    const on = testEnv({ CATALOG_EXPANSION: "1", AI: fakeAi(ai) });
+    const first = await runEnrichment(on, NOW, fakeNet([{ id: 1, updated: 1795000000, likes: 3 }], calls));
+    expect(first.indexBuilt).toBe(true);
+    expect(calls.typesafe.length).toBe(1);
+    const hash = await env.DB.prepare("SELECT content_hash FROM catalog_mods WHERE mod_id = 1").first<{ content_hash: string }>();
+    // Ten minutes later only the likes moved: no model, no rebuild inside the hour.
+    const liked = await runEnrichment(on, NOW + 600_000, fakeNet([{ id: 1, updated: 1795000000, likes: 9 }], calls));
+    expect(calls.typesafe.length).toBe(1);
+    expect(ai.ai).toBe(1);
+    expect(liked.indexBuilt).toBe(false);
+    expect((await env.DB.prepare("SELECT content_hash FROM catalog_mods WHERE mod_id = 1").first<{ content_hash: string }>())?.content_hash).toBe(hash?.content_hash);
+    expect((await loadIndex(env.DB))?.mods[0]?.l).toBe(3);
+    // The first run after the hour publishes it, though it sees no change of its own.
+    const later = await runEnrichment(on, NOW + 3_700_000, fakeNet([{ id: 1, updated: 1795000000, likes: 9 }], calls));
+    expect(later.indexBuilt).toBe(true);
+    expect(calls.typesafe.length).toBe(1);
+    expect((await loadIndex(env.DB))?.mods[0]?.l).toBe(9);
+    const delta = await readJson<{ mods: { i: number; l: number }[] }>(await call(`/v1/catalog/tags?since=${NOW + 1}`, { method: "GET" }));
+    expect(delta.mods).toEqual([expect.objectContaining({ i: 1, l: 9 })]);
+  });
+});
+
+describe("publish-time cleanup of generated terms", () => {
+  const meta = (id: number, sub: string, description = ""): ModMeta => ({ id, title: `Mod ${id}`, category: "Skins", subcategory: sub, author: "a", description, enrichedAt: 1 });
+
+  it("drops hero names from the data, short terms and unchecked aliases, and packs visual terms as class 5", () => {
+    const rows = new Map([
+      [
+        1,
+        {
+          terms: {
+            terms: [
+              { term: "hololive", cls: "reference", p: 0.9 },
+              // Another hero than the mod's own: from the Skins subcategories in the data.
+              { term: "paige", cls: "reference", p: 0.95 },
+              { term: "mina", cls: "alias", of: "hololive", p: 0.9, pa: 0.9 },
+              { term: "nm", cls: "alias", of: "hololive", p: 0.9, pa: 0.9 },
+              { term: "holo", cls: "alias", of: "hololive", p: 0.9, pa: 0.9 },
+              { term: "tpc", cls: "alias", of: "hololive", p: 0.9, pa: 0.1 },
+              { term: "gas mask", cls: "visual", p: 0.9 },
+            ],
+          },
+        },
+      ],
+    ]);
+    const index = buildIndex([meta(1, "Vindicta", "a skin"), meta(2, "Paige"), meta(3, "Mina")], rows, NOW, true);
+    const fields = new Map((index.mods[0]?.x ?? []).map((packed) => [index.strings[Math.floor(packed / PACK)], packed % PACK]));
+    expect(fields.get("hololive")).toBe(CLS.term);
+    expect(fields.get("holo")).toBe(CLS.term);
+    expect(fields.get("gas mask")).toBe(CLS.visual);
+    for (const gone of ["paige", "mina", "nm", "tpc"]) expect(fields.has(gone), gone).toBe(false);
+  });
+
+  it("rebuilds a stored index once when the publish logic changes, with no mod change", async () => {
+    await runEnrichment(testEnv(), NOW, fakeNet([{ id: 1, updated: 1795000000 }], newCalls()));
+    await env.DB.prepare("UPDATE enrich_state SET value = ?1 WHERE key = 'index_meta'").bind(JSON.stringify({ v: PUBLISH_VERSION, built: NOW, etag: "x", chunks: 1 })).run();
+    expect(await maybeBuildIndex(env.DB, NOW + 1000, false)).toBe(true);
+    expect(JSON.parse((await getState(env.DB, "index_meta"))?.value ?? "{}").b).toBe(INDEX_BUILD);
+    expect(await maybeBuildIndex(env.DB, NOW + 2000, false)).toBe(false);
+  });
+});
+
+describe("alias checks", () => {
+  it("asks one Noul per alias in the same request and stores its own answer", async () => {
+    const calls = newCalls();
+    await runEnrichment(testEnv({ CATALOG_EXPANSION: "1", AI: fakeAi({ ai: 0 }) }), NOW, fakeNet([{ id: 1, updated: 1795000000 }], calls));
+    expect(calls.typesafe.length).toBe(1);
+    const body = calls.typesafe[0]!;
+    const terms = (body.state as { terms: string[] }).terms;
+    const aliasQuestions = Object.entries(body.questions).filter(([id]) => /^terms__a\d+$/.test(id));
+    const asked = aliasQuestions.map(([id]) => terms[Number(id.replace("terms__a", ""))]);
+    // "cs" is under 3 characters: proposed, never asked. "gign" is asked.
+    expect(terms).toContain("cs");
+    expect(asked).not.toContain("cs");
+    expect(asked).toContain("gign");
+    for (const [, question] of aliasQuestions) expect(String(question.instructions)).toMatch(/^Is `terms\[\d+\]` a name players would commonly type for `terms\[0\]`\?$/);
+    const row = await env.DB.prepare("SELECT data, version FROM mod_tags WHERE mod_id = 1 AND judgment = 'terms'").first<{ data: string; version: number }>();
+    expect(row?.version).toBe(5);
+    const stored = JSON.parse(row?.data ?? "{}") as { terms: { term: string; cls: string; pa?: number }[] };
+    for (const term of stored.terms.filter((entry) => entry.cls === "alias")) expect(typeof term.pa).toBe("number");
+  });
+
+  it("re-checks only version 4 rows that hold an alias", () => {
+    const enabled = JUDGMENTS.filter((judgment) => judgment.name === "terms");
+    const row = (data: unknown) => [{ judgment: "terms", version: 4, model: "jev-1.14.0", hash: "h", data: JSON.stringify(data) }];
+    expect(staleJudgments(enabled, row({ terms: [{ term: "valorant", cls: "reference", p: 0.9 }] }), "h")).toEqual([]);
+    expect(staleJudgments(enabled, row({ na: 1 }), "h")).toEqual([]);
+    expect(staleJudgments(enabled, row({ terms: [{ term: "valorant", cls: "reference", p: 0.9 }, { term: "valo", cls: "alias", of: "valorant", p: 0.9 }] }), "h").length).toBe(1);
   });
 });
