@@ -6,12 +6,26 @@
 # assembled when the host is macOS; other hosts get a portable folder plus a
 # zip. Windows packaging is produced on Windows, because the sidecar is a native
 # binary and a cross build is unverified.
+#
+#   scripts/package-desktop.sh                          # host target
+#   scripts/package-desktop.sh universal-apple-darwin   # macOS arm64 + x86_64 in one binary (lipo)
+#   scripts/package-desktop.sh [target] --dmg <path>    # macOS: also write Sigil.app into a dmg
+#
+# On macOS the bundle is signed ad hoc (`codesign -s -`): no Developer ID, no notarization, so
+# Gatekeeper still blocks a downloaded copy until the player allows it (docs/runbooks/packaging.md).
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$root"
 
-target="${1:-}"
+target=""
+dmg=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --dmg) dmg="${2:?--dmg needs a path}"; shift 2 ;;
+    *) target="$1"; shift ;;
+  esac
+done
 version="$(sed -n 's/^version = "\(.*\)"/\1/p' rust/Cargo.toml | head -1)"
 version="${version:-0.0.0}"
 host="$(rustc -vV | sed -n 's/^host: //p')"
@@ -19,8 +33,20 @@ stamp="$(date -u +%Y%m%dT%H%M%SZ)"
 out="$root/.scratch/package/${target:-$host}-$version"
 
 echo "== build =="
-cargo build --manifest-path rust/Cargo.toml --release -p dah-desktop \
-  ${target:+--target "$target"}
+if [ "$target" = "universal-apple-darwin" ]; then
+  # One binary for Apple silicon and Intel: build each slice, then join them with lipo.
+  for slice in aarch64-apple-darwin x86_64-apple-darwin; do
+    cargo build --manifest-path rust/Cargo.toml --release -p dah-desktop --target "$slice"
+  done
+  mkdir -p "rust/target/$target/release"
+  lipo -create -output "rust/target/$target/release/dah-desktop" \
+    rust/target/aarch64-apple-darwin/release/dah-desktop \
+    rust/target/x86_64-apple-darwin/release/dah-desktop
+  lipo -info "rust/target/$target/release/dah-desktop"
+else
+  cargo build --manifest-path rust/Cargo.toml --release -p dah-desktop \
+    ${target:+--target "$target"}
+fi
 
 bindir="rust/target"
 if [ -n "$target" ]; then
@@ -52,7 +78,7 @@ Set DAH_AGENT_BIN or DAH_RS_BIN to use a standalone build instead. No CSDK,
 game file, VPK, key or log is included.
 TXT
 
-if [[ "$host" == *darwin* && -z "$target" ]]; then
+if [[ "$host" == *darwin* && ( -z "$target" || "$target" == *apple-darwin ) ]]; then
   echo "== app bundle =="
   app="$out/Sigil.app"
   mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
@@ -88,21 +114,55 @@ PLIST
   cp rust/crates/desktop/assets/brand/Sigil.icns "$app/Contents/Resources/Sigil.icns"
   cp -R rust/crates/desktop/assets/locker "$app/Contents/Resources/locker"
 
+  # Ad-hoc signature: Apple silicon refuses to run an unsigned binary, and the bundle seal covers
+  # Info.plist and Resources. It is not a Developer ID, so it does not satisfy Gatekeeper.
+  codesign --force --deep -s - "$app"
+  codesign --verify --deep --strict "$app"
+
   # The update zip: Sigil.app at the top, for the in-app updater. Its entry goes into the
   # unsigned release manifest; sign it with scripts/sign-release.sh (docs/runbooks/releasing.md).
-  case "$(uname -m)" in
-    arm64) arch="arm64"; platform="macos-aarch64" ;;
-    *) arch="x86_64"; platform="macos-x86_64" ;;
+  case "${target:-$host}" in
+    universal-apple-darwin) arch="universal"; platforms=(macos-aarch64 macos-x86_64) ;;
+    aarch64-*) arch="arm64"; platforms=(macos-aarch64) ;;
+    *) arch="x86_64"; platforms=(macos-x86_64) ;;
   esac
   update_zip="$root/.scratch/package/Sigil-$version-macos-$arch.zip"
   rm -f "$update_zip"
   (cd "$out" && zip -qry "$update_zip" Sigil.app)
   manifest="$root/.scratch/package/release-$version/sigil-update.json"
   mkdir -p "$(dirname "$manifest")"
-  node "$root/scripts/release-sign.mjs" manifest "$manifest" --version "$version" \
-    --platform "$platform" --zip "$update_zip"
+  for platform in "${platforms[@]}"; do
+    node "$root/scripts/release-sign.mjs" manifest "$manifest" --version "$version" \
+      --platform "$platform" --zip "$update_zip"
+  done
   echo "update zip: $update_zip"
   echo "manifest:   $manifest (unsigned)"
+
+  if [ -n "$dmg" ]; then
+    echo "== dmg =="
+    # Sigil.app beside an Applications link, compressed. hdiutil now and then reports a busy
+    # resource on CI runners, so it gets three tries.
+    stage="$root/.scratch/package/dmg-$version"
+    rm -rf "$stage"
+    mkdir -p "$stage" "$(dirname "$dmg")"
+    ditto "$app" "$stage/Sigil.app"
+    ln -s /Applications "$stage/Applications"
+    rm -f "$dmg"
+    for try in 1 2 3; do
+      if hdiutil create -volname "Sigil $version" -srcfolder "$stage" -ov -format UDZO "$dmg"; then
+        break
+      fi
+      [ "$try" -lt 3 ] || exit 1
+      sleep 5
+    done
+    rm -rf "$stage"
+    hdiutil verify "$dmg"
+    printf 'dmg: %s\n  bytes:  %s\n  sha256: %s\n' "$dmg" "$(wc -c < "$dmg" | tr -d ' ')" \
+      "$(shasum -a 256 "$dmg" | cut -d' ' -f1)"
+  fi
+elif [ -n "$dmg" ]; then
+  echo "--dmg needs a macOS host and a macOS target" >&2
+  exit 1
 fi
 
 echo "== manifest =="
