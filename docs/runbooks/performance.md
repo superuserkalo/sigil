@@ -247,6 +247,12 @@ Nothing here is measured on Windows yet; see "How to measure on Windows" below.
      confirm a build that never drew nor be rolled back for not drawing.
    The title bar guard (`win_frame.rs`) skips a minimized window and checks again when a window is
    made or comes back in sight.
+2. **Hidden in the tray frees the window and the GPU** (`App::release_gpu_when_closed`, Rune patch
+   0006). Minimize to tray and Close to tray drop the window, its device, surface and picture
+   atlases. The tray's Open makes a new window, CPU first. Rune now keeps the window's place and size
+   (and maximized or full screen) across the release, which it did not before. `on_window`'s hooks
+   (shell, Crosshair's pin, glass, the title bar guard) only store the handle or reapply to the new
+   window.
 
 ## Remaining opportunities
 

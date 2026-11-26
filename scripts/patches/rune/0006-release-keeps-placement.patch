@@ -1,0 +1,78 @@
+diff --git a/changelog/unreleased/2026-11-26-release-keeps-placement.md b/changelog/unreleased/2026-11-26-release-keeps-placement.md
+new file mode 100644
+index 0000000..f9e555f
+--- /dev/null
++++ b/changelog/unreleased/2026-11-26-release-keeps-placement.md
+@@ -0,0 +1 @@
++- A window given up with its GPU (`App::release_gpu_when_closed`, or a surface that could not be replaced) reopens where it was, at the size it had, and maximized or full screen if it was, instead of at the app's default size and place.
+diff --git a/crates/rune/src/window.rs b/crates/rune/src/window.rs
+index 7c58038..bf9d79b 100644
+--- a/crates/rune/src/window.rs
++++ b/crates/rune/src/window.rs
+@@ -506,6 +506,8 @@ struct Host<S: 'static> {
+     float_on_open: bool,
+     /// `App::open_inactive`: the first open leaves focus where it is.
+     open_inactive: bool,
++    /// How a released window reopens: maximized or full screen as it was left (`keep_placement`).
++    reopen_as: Option<crate::windows::OpenAs>,
+     /// `App::open_minimized`, until the first open takes it.
+     #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+     open_minimized: bool,
+@@ -671,6 +673,7 @@ impl<S: 'static> Host<S> {
+             float_on_open,
+             open_inactive,
+             open_minimized,
++            reopen_as: None,
+             open_as,
+             shared,
+             shortcuts,
+diff --git a/crates/rune/src/window/create.rs b/crates/rune/src/window/create.rs
+index d1fd541..d139c2b 100644
+--- a/crates/rune/src/window/create.rs
++++ b/crates/rune/src/window/create.rs
+@@ -28,7 +28,9 @@ impl<S: 'static> Host<S> {
+                 attrs = winit::platform::startup_notify::WindowAttributesExtStartupNotify::with_activation_token(attrs, token);
+             }
+         }
+-        let open_as = if !self.shown && self.options.resizable { self.open_as } else { crate::windows::OpenAs::Normal };
++        // A released window reopens as it was left (`keep_placement`).
++        let reopen_as = self.reopen_as.take().unwrap_or_default();
++        let open_as = if !self.options.resizable { crate::windows::OpenAs::Normal } else if !self.shown { self.open_as } else { reopen_as };
+         // Windows maximizes it once cloaked: maximizing shows a window.
+         #[cfg(not(target_os = "windows"))]
+         {
+diff --git a/crates/rune/src/window/lifecycle.rs b/crates/rune/src/window/lifecycle.rs
+index d6948f0..2efd9ae 100644
+--- a/crates/rune/src/window/lifecycle.rs
++++ b/crates/rune/src/window/lifecycle.rs
+@@ -465,6 +465,7 @@ impl<S: 'static> Host<S> {
+     /// that releases its GPU when closed. The next `open` makes a window, a device and a surface
+     /// (an app that sees `AppHandle::window_error` and the window gone can ask for one).
+     pub(super) fn release(&mut self) {
++        self.keep_placement();
+         self.win = None;
+         self.native_handle.native.ready.store(false, Ordering::Release);
+         self.native_handle.native.number.store(0, Ordering::Release);
+@@ -473,6 +474,22 @@ impl<S: 'static> Host<S> {
+         self.rt.images.invalidate();
+     }
+ 
++    /// Before a window is given up (`release`): the place and size it reopens at, and whether it
++    /// reopens maximized or full screen, as the user left it. A minimized window keeps what it
++    /// had (its rectangle is the system's minimized one), and a maximized or full screen one
++    /// keeps its last normal place and size, which leaving that state returns to.
++    fn keep_placement(&mut self) {
++        let Some(w) = &self.win else { return };
++        let window = &w.window;
++        if window.is_minimized() == Some(true) { return; }
++        let (maximized, full) = (window.is_maximized(), window.fullscreen().is_some());
++        self.reopen_as = Some(crate::windows::OpenAs::Normal.maximized(maximized).full_screen(full));
++        if maximized || full { return; }
++        if let Ok(p) = window.outer_position() { self.options.position = Some((p.x, p.y)); }
++        let size = window.inner_size();
++        if size.width > 0 && size.height > 0 && !self.rt.fit_height { self.options.physical_size = Some((size.width, size.height)); }
++    }
++
+     /// Creates the window, or records why it can't be and leaves the app windowless; a later
+     /// open tries again.
+     pub(super) fn create(&mut self, event_loop: &ActiveEventLoop, token: Option<String>, focus: bool) {

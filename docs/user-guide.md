@@ -54,7 +54,9 @@ forward buttons walk back and forward through pages, mod pages and creator pages
 Settings > General > Starting Sigil can start Sigil when you sign in, minimized, and Settings >
 General > Window can keep it in the system tray (Minimize to tray, Close to tray). A Sigil you have not opened yet holds very little memory:
 with the tray on it starts with no window at all, and without it the window waits minimized on the
-taskbar. Either way it loads no pictures and uses no graphics memory until you open it.
+taskbar. Either way it loads no pictures and uses no graphics memory until you open it. Hidden in
+the tray, Sigil also gives its window and graphics memory back; opening it from the tray brings
+the window back where you left it, as fast as a fresh start.
 
 Motion is short and only follows what you do: a new page fades in, menus and dialogs rise into
 place, selections slide, and shelves page with a short slide. Nothing moves at rest or while work

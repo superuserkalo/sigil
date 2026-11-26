@@ -130,6 +130,9 @@ fn main() -> std::process::ExitCode {
     .window_options(rune::WindowOptions { transparent: glass, ..Default::default() })
     // The tray owns the close only when "Close to tray" is on; otherwise on_close quits as before.
     .keep_running()
+    // Hidden in the tray, Sigil keeps no window, GPU device or picture atlas: the tray's Open makes
+    // the window again, CPU first like a launch, and on_window's hooks run again for it.
+    .release_gpu_when_closed()
     .on_close(screens::settings::tray::on_close)
     // The clean-exit marker goes here: nothing after `run` executes on a normal quit.
     .on_quit(screens::settings::crash::on_quit)
