@@ -3013,6 +3013,7 @@ pub fn scenes() -> &'static [(&'static str, fn(&mut State))] {
         ("browse-list", screens::browse::scene_list),
         ("browse-paged", screens::browse::scene_paged),
         ("browse-dashboard", screens::browse::scene_dashboard),
+        ("browse-today", screens::browse::scenes::scene_today),
         ("browse-top-loading", screens::browse::scenes::scene_top_loading),
         ("browse-top-failed", screens::browse::scenes::scene_top_failed),
         ("browse-top-hover", screens::browse::scenes::scene_top_hover),

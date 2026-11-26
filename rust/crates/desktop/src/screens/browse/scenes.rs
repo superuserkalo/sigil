@@ -235,6 +235,78 @@ pub fn scene_dashboard(s: &mut State) {
     }
 }
 
+/// The landing's four reads as GameBanana answered them on 2026-11-26 (trimmed to the fields the
+/// parser reads): the 200 newest mods, the all-time most liked, the featured mods and the top list.
+const TODAY_RECENT: &str = include_str!("../../../fixtures/browse/today-recent.json");
+const TODAY_LIKED: &str = include_str!("../../../fixtures/browse/today-liked.json");
+const TODAY_FEATURED: &str = include_str!("../../../fixtures/browse/today-featured.json");
+const TODAY_TOP: &str = include_str!("../../../fixtures/browse/today-top.json");
+/// When the reads above were made, unix seconds.
+const TODAY_CAPTURED: i64 = 1_795_666_381;
+/// Dragon Blood Silver under Skins: the billboard's slide in `browse-today`.
+const DRAGON_BLOOD_SILVER: u64 = 743956;
+
+/// The landing as it read on the capture day, for the site's screenshot: the real Top 10, Rising
+/// and featured billboard, held on Dragon Blood Silver. Every stamp is moved forward by the time
+/// since the capture, so the plan ranks the same mods on any later day. Pictures come from the
+/// disk cache or the network, as in `browse-dashboard`.
+pub fn scene_today(s: &mut State) {
+    scene_with(s, |_| {});
+    // A player who has opened every page: no "New" marks in the sidebar.
+    s.shell.w4.seen_pages.extend(crate::shell_w4::NEW_PAGES.iter().map(|screen| screen.key().to_string()));
+    let shift = gamebanana::now_unix() - TODAY_CAPTURED;
+    let read = |body: &str| -> Vec<BrowseCard> {
+        // Every row: the app reads these as several pages of 50.
+        let Ok(page) = gamebanana::parse_browse(body, 1, usize::MAX) else {
+            return Vec::new();
+        };
+        page.mods
+            .iter()
+            .map(|row| {
+                let mut card = card_from_browse(row);
+                if card.added_ts > 0 {
+                    card.added_ts += shift;
+                }
+                if card.updated_ts > 0 {
+                    card.updated_ts += shift;
+                }
+                card
+            })
+            .collect()
+    };
+    let feeds = super::shelf::Feeds {
+        recent: read(TODAY_RECENT),
+        liked: read(TODAY_LIKED),
+        featured: read(TODAY_FEATURED),
+    };
+    let now = gamebanana::now_unix();
+    let fresh: Vec<BrowseCard> = feeds.recent.iter().chain(feeds.liked.iter()).map(clone_card).collect();
+    s.browse_view.shelves.for_you.rising = super::foryou::rising(&fresh, &super::foryou::Memory::default(), &HashSet::new(), now);
+    s.browse_view.shelves.feeds = Some(feeds);
+    s.browse_view.top = gamebanana::parse_top_subs(TODAY_TOP).ok();
+    s.browse_view.w4.featured.clear();
+    // Hold the billboard on the slide the site shows.
+    let p = super::top::plan(s, super::top::per_page(1000.0), now);
+    let spot = p.billboard.iter().position(|slide| slide.card.id == DRAGON_BLOOD_SILVER).unwrap_or(0);
+    let mut urls: Vec<String> = Vec::new();
+    if let Some(slide) = p.billboard.get(spot) {
+        urls.extend(slide.small.clone());
+        urls.extend(slide.image.clone());
+    }
+    for row in &p.rows {
+        urls.extend(row.cards.iter().filter_map(|c| c.thumbnail_url.clone()));
+    }
+    s.browse_view.shelves.spot = spot;
+    if rune::is_headless() {
+        for url in urls {
+            let source = url.strip_suffix(crate::data::BILLBOARD_MARK).unwrap_or(&url);
+            if let Some(bytes) = crate::data::fetch_thumb_bytes(source) {
+                s.pending_thumbs.push((url, bytes));
+            }
+        }
+    }
+}
+
 /// The landing with its plan known and no image landed yet: every tile shows its title and a
 /// glyph on the plain fill, the billboard its text and actions.
 pub fn scene_top_loading(s: &mut State) {
