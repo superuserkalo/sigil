@@ -1314,6 +1314,7 @@ pub fn start_with(
         StartAction::CountLaunch => {
             let mut a = applied?;
             a.launches += 1;
+            AWAITING_FIRST_FRAME.store(true, std::sync::atomic::Ordering::Relaxed);
             let _ = write_json(&dir.join("applied.json"), &applied_json(&a));
             None
         }
@@ -1404,6 +1405,23 @@ pub fn prune_staged(dir: &Path, current: &str) -> usize {
     removed
 }
 
+/// This launch is the first of a new version, which counts as good once it draws a frame
+/// (`StartAction::CountLaunch`).
+static AWAITING_FIRST_FRAME: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Whether this launch must draw a frame before the update it runs is kept: a launch started
+/// minimized then opens a window rather than none (`first_show`).
+pub fn awaiting_first_frame() -> bool {
+    AWAITING_FIRST_FRAME.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Whether a launch has started OK: its first poll was a second or more ago, a later poll
+/// came, and a frame was drawn. A launch with no window yet (`first_show::Start::Windowless`)
+/// polls without drawing, and must not count as started.
+fn started_ok(polls: u32, since_first_poll: Duration, drew_frame: bool) -> bool {
+    polls >= 2 && since_first_poll >= Duration::from_secs(1) && drew_frame
+}
+
 /// The new version drew its first frame: record it, so the next start keeps it.
 fn confirm_started(dir: &Path, current: &str) {
     if let Some(mut a) = read_applied(dir)
@@ -1483,8 +1501,8 @@ pub fn poll(st: &mut State, tx: &mut Tx) -> bool {
         }
     }
     let up = &mut st.settings.updater;
-    // "Started OK": the first poll comes before the first frame; a later one, a second on,
-    // comes after it.
+    // "Started OK": the first poll comes before the first frame; a later one, a second on and
+    // after a drawn frame (`started_ok`).
     if !up.confirmed && !headless {
         up.polls += 1;
         match up.first_poll {
@@ -1492,13 +1510,15 @@ pub fn poll(st: &mut State, tx: &mut Tx) -> bool {
                 up.first_poll = Some(Instant::now());
                 tx.wake_after(Duration::from_millis(1200));
             }
-            Some(at) if up.polls >= 2 && at.elapsed() >= Duration::from_secs(1) => {
+            Some(at) if started_ok(up.polls, at.elapsed(), crate::first_show::drew_frame()) => {
                 up.confirmed = true;
                 // A development build shares the data folder; only an installed copy confirms.
                 if current_layout().is_ok() {
                     confirm_started(&updates_dir(), VERSION);
                 }
             }
+            // A first frame slower than the wake: look again while an update waits on it.
+            Some(_) if awaiting_first_frame() => tx.wake_after(Duration::from_millis(500)),
             Some(_) => {}
         }
     }
@@ -1711,6 +1731,16 @@ mod tests {
     use ring::signature::{Ed25519KeyPair, KeyPair};
     use std::io::{BufRead, BufReader};
     use std::net::TcpListener;
+
+    #[test]
+    fn a_launch_that_never_drew_has_not_started() {
+        let second = Duration::from_secs(1);
+        assert!(started_ok(2, second, true));
+        // Polls alone (a window that does not exist yet, `first_show::Start::Windowless`).
+        assert!(!started_ok(40, second * 60, false));
+        assert!(!started_ok(1, second, true), "the first poll comes before the first frame");
+        assert!(!started_ok(5, Duration::from_millis(400), true));
+    }
 
     // A throwaway key made with `scripts/release-sign.mjs keygen` and a manifest it signed with
     // `release-sign.mjs sign`: proves Node's signer and this verifier agree.

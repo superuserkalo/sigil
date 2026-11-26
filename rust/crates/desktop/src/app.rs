@@ -2244,7 +2244,10 @@ pub fn setup(s: &mut State, waker: Waker) {
     // minimized, or a screen not shown, decodes nothing (`memory.rs`).
     s.images = Some(ImageCache::new(waker).decode_when_drawn(true));
     crate::brand::load(s);
-    preload_thumbnails(s);
+    // Held until the window first shows (`first_show`); `drain_thumbnails` hands them over then.
+    if crate::first_show::pictures_allowed() {
+        preload_thumbnails(s);
+    }
     if !s.demo && !rune::is_headless() {
         crate::data::prune_image_cache_later();
     }

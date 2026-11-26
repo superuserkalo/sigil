@@ -1669,6 +1669,16 @@ pub fn apply_browse_page(state: &mut State, result: Result<BrowsePageView, Strin
 /// Load the queued thumbnails into the image cache. Called from `poll` on the UI
 /// thread; decode still happens on Rune's image workers.
 pub fn drain_thumbnails(state: &mut State) -> bool {
+    drain_thumbnails_when(state, crate::first_show::pictures_allowed())
+}
+
+/// `drain_thumbnails`, with `allowed` false for a start the player has not seen yet: it decodes
+/// nothing, and fetched pictures (the header's, the cards', the billboard's) wait here until the
+/// window first shows (`first_show`).
+fn drain_thumbnails_when(state: &mut State, allowed: bool) -> bool {
+    if !allowed {
+        return false;
+    }
     let mut changed = false;
     regrow_card_thumbs(state);
     regrow_billboard(state);
@@ -4769,6 +4779,22 @@ mod thumb_tests {
             assert!(error.contains("over the decode limit"), "{error}");
             assert!(!image.pixels().is_ready());
         }
+    }
+
+    /// A start the player has not seen holds every picture back: the header's images stay queued
+    /// and nothing reaches the image cache until the gate opens (`first_show`).
+    #[test]
+    fn an_unseen_start_hands_no_picture_to_the_cache() {
+        let mut st = State { images: Some(rune::ImageCache::new(std::sync::Arc::new(|| {})).decode_when_drawn(true)), ..State::default() };
+        crate::brand::load(&mut st);
+        let queued = st.pending_thumbs.len();
+        assert!(queued > 0);
+        assert!(!drain_thumbnails_when(&mut st, false));
+        assert_eq!(st.pending_thumbs.len(), queued, "held, not dropped");
+        assert!(st.thumbnails.is_empty());
+        assert!(drain_thumbnails_when(&mut st, true));
+        assert!(st.pending_thumbs.is_empty());
+        assert_eq!(st.thumbnails.len(), queued);
     }
 
     #[test]

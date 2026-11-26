@@ -14,6 +14,7 @@ mod brand;
 mod banner;
 mod data;
 mod deeplink;
+mod first_show;
 mod forge;
 mod glass;
 mod helpers;
@@ -115,7 +116,8 @@ fn main() -> std::process::ExitCode {
     let scenes = all_scenes();
     // Settings > Appearance > Transparent sidebar: a see-through window only when the setting
     // is on at launch and the system can show glass (`glass.rs`).
-    let glass = glass::launch(prefs::Prefs::load().transparent_sidebar);
+    let prefs = prefs::Prefs::load();
+    let glass = glass::launch(prefs.transparent_sidebar);
     let sigil = rune::App::new(AppSpec::<State> {
         scenes,
         setup: Some(app::setup),
@@ -136,15 +138,46 @@ fn main() -> std::process::ExitCode {
         shell::remember_window(window);
         screens::crosshair::remember_window(window);
         glass::on_window(window);
+        win_frame::rearm();
     })
-    // Once: whether the GPU surface really composites the glass's see-through pixels.
-    .on_frame_drawn(|rt| glass::frame_drawn(rt.transparent))
+    // Once: whether the GPU surface really composites the glass's see-through pixels. And for a
+    // start the player never saw: the first frames hold pictures back (`first_show`).
+    .on_frame_drawn(|rt| {
+        glass::frame_drawn(rt.transparent);
+        first_show::frame_drawn();
+    })
+    .on_visibility(|_, visible, _| {
+        first_show::visible(visible);
+        if visible {
+            win_frame::rearm();
+        }
+    })
     .on_open_url(deeplink::on_open_url);
     // Scroll bars stay up whenever content overflows on Windows and Linux, where Rune would
     // otherwise fade them out at rest; macOS follows its own "Show scroll bars" setting.
     #[cfg(not(target_os = "macos"))]
     let sigil = sigil.args(ui::scroll_bars_shown(args));
     screens::settings::tray::install(sigil.handle());
+    // Started minimized at sign-in: no window with the tray up, else (Windows) one minimized from
+    // the start, with no GPU and no pictures until it shows (`first_show`).
+    let start = first_show::begin(first_show::Facts {
+        minimized: prefs.start_minimized
+            && screens::settings::autostart::started_minimized()
+            && !rune::is_headless(),
+        tray: screens::settings::tray::active(),
+        glass,
+        update_unconfirmed: updater::awaiting_first_frame(),
+        windows: cfg!(target_os = "windows"),
+    });
+    let sigil = match start {
+        first_show::Start::Windowless => sigil.windowless(),
+        first_show::Start::Minimized => sigil.open_minimized(true),
+        first_show::Start::Shown | first_show::Start::MinimizeAfterShow => sigil,
+    };
+    {
+        let handle = sigil.handle();
+        first_show::set_waker(move || handle.wake());
+    }
     single_instance::attach(sigil.handle());
     {
         let handle = sigil.handle();

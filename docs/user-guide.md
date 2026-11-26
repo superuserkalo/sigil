@@ -51,6 +51,11 @@ volume. Cmd or Ctrl+B collapses the sidebar. Cmd or Ctrl+comma opens Settings. C
 minus and 0 change the interface size. Alt+Enter or F11 switches full screen. The mouse back and
 forward buttons walk back and forward through pages, mod pages and creator pages.
 
+Settings > General > Starting Sigil can start Sigil when you sign in, minimized, and Settings >
+General > Window can keep it in the system tray (Minimize to tray, Close to tray). A Sigil you have not opened yet holds very little memory:
+with the tray on it starts with no window at all, and without it the window waits minimized on the
+taskbar. Either way it loads no pictures and uses no graphics memory until you open it.
+
 Motion is short and only follows what you do: a new page fades in, menus and dialogs rise into
 place, selections slide, and shelves page with a short slide. Nothing moves at rest or while work
 runs, and nothing in the page moves out of the way. Settings > Appearance > Reduce motion (off by

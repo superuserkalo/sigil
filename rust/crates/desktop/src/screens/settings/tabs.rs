@@ -1376,7 +1376,8 @@ pub fn background(st: &mut State, tx: &mut Tx) -> bool {
     if !st.settings.started {
         st.settings.started = true;
         st.settings.session_start = discord::now();
-        if st.prefs.start_minimized && super::autostart::started_minimized() && !rune::is_headless() {
+        // Where the window could not open minimized or stay unmade (`first_show`).
+        if crate::first_show::start() == crate::first_show::Start::MinimizeAfterShow {
             tx.minimize();
         }
     }

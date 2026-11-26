@@ -8,11 +8,23 @@
 //! it in the log with the Windows build. Where Rune's frame works the gap is at most a border and
 //! nothing changes.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
 /// Seconds after start when the guard looks: after the first frame, and once more after the
 /// GPU hand-over.
 const CHECKS: [f64; 2] = [1.0, 5.0];
+
+/// A window was made (a start with no window opens one later, and a window hidden to the tray is
+/// made again) or came back in sight: the checks start over (`rearm`).
+static REARM: AtomicBool = AtomicBool::new(false);
+
+/// From `App::on_window` and `App::on_visibility`: check again from now. A minimized window is
+/// not checked (its frame is the system's minimized frame), so a check that found none waits for
+/// this.
+pub fn rearm() {
+    REARM.store(true, Ordering::Relaxed);
+}
 
 pub struct Guard {
     started: Instant,
@@ -32,15 +44,22 @@ impl Guard {
         if rune::is_headless() || !cfg!(windows) {
             return;
         }
+        if REARM.swap(false, Ordering::Relaxed) {
+            *self = Self::default();
+        }
         let Some(&due) = CHECKS.get(self.done) else { return };
         let elapsed = self.started.elapsed().as_secs_f64();
         if elapsed < due {
             tx.wake_after(std::time::Duration::from_secs_f64(due - elapsed));
             return;
         }
-        self.done += 1;
+        // No window in sight to check (none made yet, or minimized): wait for `rearm`.
         #[cfg(windows)]
-        imp::check();
+        if !imp::check() {
+            self.done = CHECKS.len();
+            return;
+        }
+        self.done += 1;
     }
 }
 
@@ -51,21 +70,31 @@ mod imp {
     use windows_sys::Win32::System::Threading::GetCurrentThreadId;
     use windows_sys::Win32::UI::HiDpi::GetDpiForWindow;
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        EnumThreadWindows, GWL_STYLE, GetClientRect, GetWindowLongPtrW, GetWindowRect, IsWindowVisible,
+        EnumThreadWindows, GWL_STYLE, GetClientRect, GetWindowLongPtrW, GetWindowRect, IsIconic, IsWindowVisible,
         SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOOWNERZORDER, SWP_NOSIZE, SWP_NOZORDER,
         SetWindowLongPtrW, SetWindowPos, WS_CAPTION, WS_CHILD,
     };
 
-    pub fn check() {
-        // SAFETY: the callback only reads and restyles windows of this thread.
-        unsafe { EnumThreadWindows(GetCurrentThreadId(), Some(visit), 0) };
+    /// Whether a window in sight was there to check.
+    pub fn check() -> bool {
+        let mut seen = 0isize;
+        // SAFETY: the callback only reads and restyles windows of this thread, and writes `seen`,
+        // which outlives the call.
+        unsafe { EnumThreadWindows(GetCurrentThreadId(), Some(visit), (&raw mut seen) as LPARAM) };
+        seen != 0
     }
 
-    unsafe extern "system" fn visit(hwnd: HWND, _: LPARAM) -> BOOL {
-        // SAFETY: `hwnd` is a live window of this thread, handed to us by EnumThreadWindows.
+    unsafe extern "system" fn visit(hwnd: HWND, seen: LPARAM) -> BOOL {
+        // SAFETY: `hwnd` is a live window of this thread, handed to us by EnumThreadWindows, and
+        // `seen` is `check`'s counter.
         unsafe {
             let style = GetWindowLongPtrW(hwnd, GWL_STYLE) as u32;
-            if IsWindowVisible(hwnd) == 0 || style & WS_CHILD != 0 || style & WS_CAPTION != WS_CAPTION {
+            // A minimized window's rectangles are the system's minimized frame, not Sigil's.
+            if IsWindowVisible(hwnd) == 0 || IsIconic(hwnd) != 0 || style & WS_CHILD != 0 {
+                return 1;
+            }
+            *(seen as *mut isize) += 1;
+            if style & WS_CAPTION != WS_CAPTION {
                 return 1;
             }
             let mut outer = RECT { left: 0, top: 0, right: 0, bottom: 0 };

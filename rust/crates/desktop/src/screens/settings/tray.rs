@@ -51,7 +51,8 @@ pub fn on_close(st: &mut State, tx: &mut Tx) {
     tx.quit();
 }
 
-fn active() -> bool {
+/// Whether the tray icon is up.
+pub fn active() -> bool {
     TRAY.lock().map(|t| t.is_some()).unwrap_or(false)
 }
 

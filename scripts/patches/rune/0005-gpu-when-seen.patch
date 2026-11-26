@@ -1,0 +1,234 @@
+diff --git a/changelog/unreleased/2026-11-26-gpu-when-seen.md b/changelog/unreleased/2026-11-26-gpu-when-seen.md
+new file mode 100644
+index 0000000..697706b
+--- /dev/null
++++ b/changelog/unreleased/2026-11-26-gpu-when-seen.md
+@@ -0,0 +1 @@
++- Windows: a CPU-first window makes its GPU only once it is in sight. Minimized, hidden or covered whole, it stays on the CPU renderer with no device (a failed try's retry waits too) and starts the GPU on the first idle turn it shows again. `App::open_minimized` shows the window's first open minimized and inactive, as a login item started minimized does: its first frame is painted on the CPU while it is hidden and copied whole when the window is restored, and no GPU is made until then. A translucent window, and one that opens maximized or full screen, opens as before.
+diff --git a/crates/rune/src/app.rs b/crates/rune/src/app.rs
+index fe03f60..d0bfdb0 100644
+--- a/crates/rune/src/app.rs
++++ b/crates/rune/src/app.rs
+@@ -99,6 +99,8 @@ pub struct App<S: 'static> {
+     pub(crate) float_on_open: bool,
+     /// `App::open_inactive`: the first open leaves focus where it is.
+     pub(crate) open_inactive: bool,
++    /// `App::open_minimized`: the first open shows the window minimized.
++    pub(crate) open_minimized: bool,
+     /// `App::maximized`, `App::full_screen`: how the window's first open shows it.
+     pub(crate) open_as: crate::windows::OpenAs,
+     pub(crate) modifier_keys: bool,
+@@ -158,6 +160,7 @@ impl<S: 'static> App<S> {
+             late_font_urls: Vec::new(),
+             float_on_open: false,
+             open_inactive: false,
++            open_minimized: false,
+             open_as: crate::windows::OpenAs::Normal,
+             modifier_keys: false,
+             tab_visits_controls: false,
+@@ -235,6 +238,17 @@ impl<S: 'static> App<S> {
+         self
+     }
+ 
++    /// Windows: the window's first open shows it minimized and inactive, as a login item started
++    /// minimized does, with no GPU until it is in sight. Its first frame is painted on the CPU
++    /// while the window is hidden and copied to it whole when the window is restored; the GPU
++    /// starts on the first idle turn the window is in sight, as at any launch. A window that
++    /// needs the GPU from its first frame (a translucent window), one that opens maximized or full
++    /// screen, and every other platform open as usual: the app can minimize it (`Tx::minimize`).
++    pub fn open_minimized(mut self, on: bool) -> Self {
++        self.open_minimized = on;
++        self
++    }
++
+     /// Open the window maximized, as a window saved maximized reopens. The size it opens at
+     /// stays what restoring it returns to.
+     pub fn maximized(mut self, maximized: bool) -> Self {
+diff --git a/crates/rune/src/window.rs b/crates/rune/src/window.rs
+index 6324374..7c58038 100644
+--- a/crates/rune/src/window.rs
++++ b/crates/rune/src/window.rs
+@@ -506,6 +506,9 @@ struct Host<S: 'static> {
+     float_on_open: bool,
+     /// `App::open_inactive`: the first open leaves focus where it is.
+     open_inactive: bool,
++    /// `App::open_minimized`, until the first open takes it.
++    #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
++    open_minimized: bool,
+     /// `App::maximized`, `App::full_screen`.
+     open_as: crate::windows::OpenAs,
+     shared: Arc<Shared<S>>,
+@@ -584,6 +587,7 @@ impl<S: 'static> Host<S> {
+         // `RUNE_OPEN_INACTIVE`: a tool's launch (an accessibility probe, a capture) leaves the user's
+         // focus and keyboard where they are, as `App::open_inactive` does.
+         let (open_inactive, open_as) = (app.open_inactive || std::env::var_os("RUNE_OPEN_INACTIVE").is_some(), app.open_as);
++        let open_minimized = app.open_minimized;
+         let app_stats = app.dev_stats;
+         let (playground, attach_playground) = (app.playground.take(), app.attach_playground);
+         let (mut spec, state, shared) = app.into_parts(args.scene.as_deref());
+@@ -666,6 +670,7 @@ impl<S: 'static> Host<S> {
+             open_at_start: open,
+             float_on_open,
+             open_inactive,
++            open_minimized,
+             open_as,
+             shared,
+             shortcuts,
+diff --git a/crates/rune/src/window/cpu_frame.rs b/crates/rune/src/window/cpu_frame.rs
+index 68c3097..1340e48 100644
+--- a/crates/rune/src/window/cpu_frame.rs
++++ b/crates/rune/src/window/cpu_frame.rs
+@@ -36,6 +36,9 @@ pub(super) struct Cpu {
+     shown: Shown,
+     /// Until the first frame is painted: the window shows with it, then, activating when `true`.
+     show: Option<bool>,
++    /// `App::open_minimized`: the window shows minimized and inactive at its first frame instead,
++    /// which waits in the buffer until the window is restored.
++    minimized: bool,
+ }
+ 
+ /// What a CPU window has of its buffer. GDI draws nothing into a hidden window, so the first
+@@ -263,6 +266,8 @@ impl<S: 'static> Host<S> {
+         let display = window.current_monitor().map_or((0, 0), |m| (m.size().width, m.size().height));
+         let Some((prefault, capacity, painter)) = self.cpu_side(size, display) else { return Err("no memory for the window's frame buffer".into()) };
+         let half = HalfRounding::of_vendor(crate::gpu::pick::display_vendor().unwrap_or(0));
++        // Only the first open, and only a plain one: a maximized or full screen open has shown.
++        let minimized = std::mem::take(&mut self.open_minimized) && open_as == crate::windows::OpenAs::Normal;
+         crate::marks::mark("cpu.side");
+         let config = wgpu::SurfaceConfiguration {
+             usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_DST,
+@@ -287,7 +292,7 @@ impl<S: 'static> Host<S> {
+         *self.native_handle.native.window.lock().unwrap() = Arc::downgrade(&window);
+         self.native_handle.native.number.store(native_window_number(&window).unwrap_or(0), Ordering::Release);
+         let native = {
+-            let mode = SurfaceMode::Cpu { cpu: Cpu { buffer: Buffer::Touching(prefault, capacity), painter, half, shown: Shown::Nothing, show: Some(focus) }, job: GpuJob::Waiting { tries: 0, retry_at: None } };
++            let mode = SurfaceMode::Cpu { cpu: Cpu { buffer: Buffer::Touching(prefault, capacity), painter, half, shown: Shown::Nothing, show: Some(focus), minimized }, job: GpuJob::Waiting { tries: 0, retry_at: None } };
+             Native { cloak, frame, mode, a11y_start, ..Default::default() }
+         };
+         self.win = Some(Win {
+@@ -401,6 +406,7 @@ impl<S: 'static> Host<S> {
+         let update_ms = now.elapsed().as_secs_f64() * 1000.0;
+         sync_platform(l, rt, &mut self.secure_input, &mut self.ime_allowed, &self.clipboard);
+         let (width, height) = (l.config.width, l.config.height);
++        let minimized = l.minimized();
+         let mut quiet_now = false;
+         if let SurfaceMode::Cpu { job: GpuJob::Building { latest, animating: moving, ready, .. }, .. } = &mut l.native.mode {
+             *latest.lock().unwrap_or_else(|e| e.into_inner()) = warm_instances(&rt.instances);
+@@ -437,7 +443,15 @@ impl<S: 'static> Host<S> {
+                         }
+                         Shown::Waiting | Shown::Nothing => Shown::Waiting,
+                     };
+-                    if let Some(focus) = cpu.show.take() {
++                    if cpu.show.is_some() && std::mem::take(&mut cpu.minimized) {
++                        // `App::open_minimized`: on the taskbar, minimized and inactive. GDI draws
++                        // nothing into a minimized window, so the frame stays in the buffer
++                        // (`Shown::Waiting`) and the first frame drawn once it is restored copies
++                        // it whole (below). The GPU waits for that too (`gpu_owed`).
++                        cpu.show = None;
++                        show_minimized(&l.window);
++                        crate::marks::mark("window.minimized");
++                    } else if let Some(focus) = cpu.show.take() {
+                         // The window shows with its first frame, before the frame's hooks run
+                         // (`App::on_frame_drawn`). GDI draws nothing into a hidden window, and DWM
+                         // composes a window that just showed with whatever its surface holds (white):
+@@ -452,8 +466,10 @@ impl<S: 'static> Host<S> {
+                         copy_first(cpu, &l.window, (width, height));
+                         l.native.cloak.lift(&l.window);
+                         crate::marks::mark("window.shown");
+-                    } else if l.window.is_visible() == Some(true) {
+-                        // A frame after the show that came before the first copy.
++                    } else if l.window.is_visible() == Some(true) && !minimized {
++                        // A frame after the show that came before the first copy. A minimized
++                        // window shows none of it (`App::open_minimized`): the first frame after
++                        // the restore copies it.
+                         copy_first(cpu, &l.window, (width, height));
+                     }
+                     Ok(())
+@@ -506,8 +522,10 @@ impl<S: 'static> Host<S> {
+         }
+     }
+ 
+-    /// The first idle turn after the window's first CPU frame: the GPU starts on its thread
+-    /// (`RUNE_CPU_FIRST=only`: not until a frame needs it, for checking the CPU window alone).
++    /// The first idle turn after the window's first CPU frame with the window in sight: the GPU
++    /// starts on its thread (`RUNE_CPU_FIRST=only`: not until a frame needs it, for checking the
++    /// CPU window alone). A window minimized, hidden or covered whole stays on the CPU, with no
++    /// device, until it shows again: a login item started minimized makes no GPU.
+     pub(super) fn cpu_idle(&mut self) {
+         if self.gpu_owed() { self.start_gpu(true); }
+     }
+@@ -516,7 +534,8 @@ impl<S: 'static> Host<S> {
+     pub(super) fn gpu_owed(&self) -> bool {
+         if std::env::var_os("RUNE_CPU_FIRST").is_some_and(|v| v == "only") { return false; }
+         let now = Instant::now();
+-        self.win.as_ref().is_some_and(|w| matches!(w.native.mode, SurfaceMode::Cpu { job: GpuJob::Waiting { retry_at, .. }, .. } if retry_at.is_none_or(|at| at <= now)) && w.first_frame.ready())
++        self.win.as_ref().is_some_and(|w| matches!(w.native.mode, SurfaceMode::Cpu { job: GpuJob::Waiting { retry_at, .. }, .. } if retry_at.is_none_or(|at| at <= now))
++            && w.first_frame.ready() && self.life.in_sight(w.minimized()))
+     }
+ 
+     /// Starts making the GPU for this window on a thread (`below`: at below-normal priority, as
+@@ -741,7 +760,8 @@ impl<S: 'static> Host<S> {
+                 self.fail_gpu(format!("the GPU didn't finish the hand-over frame in {} s", FINISH_LIMIT.as_secs()), tries);
+             }
+             SurfaceMode::Cpu { job: GpuJob::Waiting { retry_at: Some(at), .. }, .. } => {
+-                if now >= *at && w.first_frame.ready() { self.start_gpu(true); }
++                // Out of sight, the retry waits for the window to show (`gpu_owed`).
++                if now >= *at && w.first_frame.ready() && self.life.in_sight(w.minimized()) { self.start_gpu(true); }
+             }
+             SurfaceMode::Cpu { job: GpuJob::Waiting { retry_at: None, .. } | GpuJob::Failed, .. }
+             | SurfaceMode::Gpu | SurfaceMode::Handed { .. } | SurfaceMode::Rebinding { .. } => {}
+@@ -764,6 +784,14 @@ impl Win {
+     }
+ }
+ 
++/// Shows a hidden window minimized without activating it (`App::open_minimized`).
++fn show_minimized(window: &Window) {
++    use windows_sys::Win32::UI::WindowsAndMessaging::{SW_SHOWMINNOACTIVE, ShowWindow};
++    let Some(hwnd) = crate::platform::win32::hwnd(window) else { return };
++    // SAFETY: a window this thread owns.
++    unsafe { ShowWindow(hwnd, SW_SHOWMINNOACTIVE); }
++}
++
+ /// Runs the GPU thread at normal priority (`RAISE_AFTER`).
+ fn raise_priority(thread: &std::thread::JoinHandle<()>) {
+     use std::os::windows::io::AsRawHandle;
+diff --git a/crates/rune/src/window/life.rs b/crates/rune/src/window/life.rs
+index b4f1cd4..a50d2c8 100644
+--- a/crates/rune/src/window/life.rs
++++ b/crates/rune/src/window/life.rs
+@@ -27,6 +27,11 @@ impl Life {
+ 
+     pub(crate) fn covered(self) -> bool { matches!(self, Life::Shown { sight: Sight::Covered(_) }) }
+ 
++    /// Shown, uncovered and not `minimized`: what a window's GPU waits for before it is made
++    /// (Windows' CPU-first windows, `cpu_frame::gpu_owed`).
++    #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
++    pub(crate) fn in_sight(self, minimized: bool) -> bool { self.uncovered() && !minimized }
++
+     /// Shown, and `cover` says none of it shows.
+     #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+     pub(crate) fn covered_by(self, cover: Cover) -> bool { matches!(self, Life::Shown { sight } if sight.has(cover)) }
+diff --git a/crates/rune/src/window/life_tests.rs b/crates/rune/src/window/life_tests.rs
+index a7bb53e..e43013f 100644
+--- a/crates/rune/src/window/life_tests.rs
++++ b/crates/rune/src/window/life_tests.rs
+@@ -37,3 +37,19 @@ fn a_hidden_window_closes_alike_whether_or_not_it_kept_its_window() {
+     assert!(!Life::Unopened.closes(false, false), "nothing to close");
+     assert!(Life::Unopened.closes(false, true) && !Life::Unopened.closes(true, true));
+ }
++
++#[test]
++fn only_a_shown_uncovered_window_that_is_not_minimized_is_in_sight() {
++    // A login item started minimized, a window hidden to the tray and one covered whole by a
++    // game make no GPU until they show (`cpu_frame::gpu_owed`).
++    assert!(!Life::Unopened.in_sight(false));
++    assert!(!Life::Hidden { at: 1 }.in_sight(false));
++    assert!(!Life::Finished.in_sight(false));
++    let mut life = Life::Unopened;
++    assert!(life.show() && life.in_sight(false));
++    assert!(!life.in_sight(true), "minimized");
++    life.cover(Cover::Windows, true);
++    assert!(!life.in_sight(false), "covered whole");
++    life.cover(Cover::Windows, false);
++    assert!(life.in_sight(false), "back in sight");
++}

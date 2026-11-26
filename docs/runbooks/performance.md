@@ -221,6 +221,33 @@ are in the memory profile's section 8; Settings > About > Memory now shows commi
 process's GPU memory (DXGI) and the picture figures, and its copied report holds the GPU
 allocator report.
 
+## Memory, second batch (2026-11-26)
+
+The route to a lower floor (`.scratch/mem-research/report.md`, local). Each step ships alone.
+Nothing here is measured on Windows yet; see "How to measure on Windows" below.
+
+1. **A start the player never sees** (`first_show.rs`, Rune patch 0005). Windows starting Sigil at
+   sign-in with Start minimized used to show the window, draw it, make the D3D12 device on the first
+   idle turn, then minimize it, and decode pictures meanwhile (257 MB commit, 60 MB VRAM measured on
+   0.1.42). Now:
+   - with the tray up, Sigil starts with no window (`App::windowless`); the tray's Open makes it,
+     CPU first like a launch;
+   - without the tray, on Windows, the window opens minimized on the taskbar
+     (`App::open_minimized`): Rune paints its first frame on the CPU while the window is hidden
+     and copies it when the window is restored;
+   - in both, Rune makes a CPU-first window's GPU only once the window is in sight: minimized,
+     hidden or covered whole, it stays on the CPU with no device, and a failed try's retry waits
+     too (`Life::in_sight`, `cpu_frame::gpu_owed`);
+   - pictures wait behind a gate (`first_show::Gate`): until the window has drawn a frame in
+     sight, `drain_thumbnails` hands nothing to the image cache, so nothing is decoded;
+   - with the transparent sidebar on and no tray (a see-through window needs the GPU from its
+     first frame), and on macOS and Linux without a tray, the window shows and minimizes as before;
+   - an update counts as started only once a frame was drawn (`updater::started_ok`), and the
+     first launch of a new version always opens a window, so a windowless start can neither
+     confirm a build that never drew nor be rolled back for not drawing.
+   The title bar guard (`win_frame.rs`) skips a minimized window and checks again when a window is
+   made or comes back in sight.
+
 ## Remaining opportunities
 
 - The toggle commit itself (see above): fewer mounted cards needs a configurable overscan in Rune.
