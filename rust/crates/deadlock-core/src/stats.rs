@@ -27,6 +27,7 @@
 
 pub mod art;
 pub mod board;
+pub mod bracket;
 pub mod cache;
 pub mod filters;
 pub mod hero_detail;

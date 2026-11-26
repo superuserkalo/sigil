@@ -29,6 +29,7 @@ use crate::jobs::Job;
 use crate::ui::{ActionKind, BODY, BODY_MED, H1, LABEL, PAGE_TOP, PAGE_X, SMALL, Ui};
 
 mod board;
+mod bracket;
 mod hero_page;
 mod match_views;
 pub mod lookup;
@@ -271,6 +272,8 @@ pub struct View {
     /// The Heroes table's sort and its least matches.
     pub hero_sort: heroes::HeroSort,
     pub hero_min: u64,
+    /// The subject's rank tier against the matches at that rank (`bracket.rs`).
+    pub bracket: bracket::Bracket,
     /// The match page's view, and the player its Build view shows.
     pub match_view: match_views::MatchView,
     pub build_player: Option<u64>,
@@ -357,6 +360,7 @@ impl Default for View {
             hero_sort: heroes::HeroSort::default(),
             hero_min: 0,
             hero_page: hero_page::HeroPage::default(),
+            bracket: bracket::Bracket::default(),
             match_view: match_views::MatchView::default(),
             build_player: None,
             steam_job: Job::default(),
@@ -513,6 +517,7 @@ pub fn poll(state: &mut State) -> bool {
     }
     changed |= board::poll(state);
     changed |= hero_page::poll(state);
+    changed |= bracket::poll(state);
     changed |= nav::poll(state);
     changed |= lookup::poll(state);
     changed |= pictures::poll(state);
@@ -667,7 +672,9 @@ pub fn load_fixture(s: &mut State) {
     s.stats.age = Age::default();
     s.stats.heat = Some(bucket(&captured.heatmap, HEAT_CELLS, HEAT_CELLS));
     s.stats.objectives = captured.objectives;
+    let badge = captured.snapshot.rank.badge;
     set_snapshot(&mut s.stats, captured.snapshot);
+    bracket::load_fixture(s, badge);
 }
 
 /// The full profile from the fixture.

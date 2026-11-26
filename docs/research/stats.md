@@ -321,9 +321,16 @@ page; nothing is fetched before it. Typing an id or a link is the fallback.
 3. **Form.** The newest 20 decided results as beads, newest right, with the current streak.
 4. **Recent matches and Heroes**, side by side: eight newest matches (a row opens the match page)
    and the six most played heroes (a row shows Matches on that hero).
-5. **What stands out**, at most three rows, on your own page only (the "Next" advice makes no sense
+5. **At your rank.** Six rulers (kills, deaths, assists, KDA, souls a minute, last hits): the
+   player's average over the newest 20 normal matches placed among single matches at their rank
+   tier, from one `/v1/analytics/player-stats/metrics?min_average_badge=&max_average_badge=` read
+   per tier, kept 24 hours (`deadlock_core::stats::bracket`). The percentile is read between the
+   API's 1st to 99th percentile points; a value shared by many matches (0 denies) gets the middle
+   of its run. Every line says "of matches at <tier>": the distribution is of matches, not players.
+   Deaths read "fewer than". Nothing shows for an unranked player.
+6. **What stands out**, at most three rows, on your own page only (the "Next" advice makes no sense
    on someone else's page). Rules below.
-6. **Progress.** Rank as a step line over the ranked matches in the window, or the rolling 20 match
+7. **Progress.** Rank as a step line over the ranked matches in the window, or the rolling 20 match
    win rate.
 
 ### Matches
@@ -483,7 +490,6 @@ generator is a local script (`.scratch/ui-hill/stats2/make-fixture.py`).
   script does not copy that folder yet, so a packaged build shows letters.
 - The live match view is built (`screens/stats/live.rs`, `deadlock_core::live_match`,
   `deadlock_core::live_bridge`; `docs/design/stats-live.md`) and not yet checked in a real match.
-- Bracket percentiles are planned (spec slice 7).
 
 ## CLI surface
 

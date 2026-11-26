@@ -6,6 +6,13 @@ use std::collections::HashMap;
 use std::sync::OnceLock;
 
 pub const DE: &[(&str, &str)] = &[
+    ("Loading the matches at your rank", "Lade die Matches auf deinem Rang"),
+    ("beats {} of matches at {}", "besser als {} der Matches auf {}"),
+    ("fewer than {} of matches at {}", "weniger als {} der Matches auf {}"),
+    ("median {}", "Median {}"),
+    ("your last {} against single matches at {}, last 30 days", "deine letzten {} gegen einzelne Matches auf {}, letzte 30 Tage"),
+    ("At your rank", "Auf deinem Rang"),
+    ("Assists", "Assists"),
     ("Banned", "Gesperrt"),
     ("Every purchase and where the souls came from:", "Jeder Kauf und woher die Seelen kamen:"),
     ("Lane {}", "Lane {}"),
@@ -549,7 +556,8 @@ pub fn routed(source: &str) -> Vec<String> {
 mod tests {
     use super::*;
 
-    const SOURCES: [&str; 19] = [
+    const SOURCES: [&str; 20] = [
+        include_str!("bracket.rs"),
         include_str!("match_views.rs"),
         include_str!("hero_page.rs"),
         include_str!("nav.rs"),

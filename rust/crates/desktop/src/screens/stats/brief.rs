@@ -456,6 +456,9 @@ pub(super) fn overview(s: &State, u: &Ui, snap: &StatsSnapshot, d: &Derived) -> 
             .child(recent_matches(s, u, snap))
             .child(top_heroes(s, u, snap)),
     );
+    if let Some(bracket) = super::bracket::section(s, u, snap) {
+        c = c.child(bracket.mt(16.0));
+    }
     if !super::nav::visiting(s) {
         c = c.child(insights(s, u, snap, d).mt(16.0));
     }
