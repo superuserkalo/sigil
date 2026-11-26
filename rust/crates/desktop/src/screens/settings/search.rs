@@ -24,11 +24,15 @@ const AGENT_TITLES: [&str; 2] = ["Agent", "Ask Sigil for help"];
 /// Titles that exist only in a build with the translations (`prefs::LANGUAGES`).
 const LANGUAGE_TITLES: [&str; 1] = ["Language"];
 
+/// Titles that exist only on Windows (`hardware::supported`).
+const WINDOWS_TITLES: [&str; 1] = ["Hardware acceleration"];
+
 /// Whether this build shows the row an entry names.
 pub fn shown(entry: &Entry) -> bool {
     entry.tab.shown()
         && (crate::prefs::AGENT || !AGENT_TITLES.contains(&entry.title))
         && (crate::prefs::LANGUAGES || !LANGUAGE_TITLES.contains(&entry.title))
+        && (crate::hardware::supported() || !WINDOWS_TITLES.contains(&entry.title))
 }
 
 const fn e(tab: Tab, title: &'static str, line: &'static str, words: &'static str) -> Entry {
@@ -76,6 +80,7 @@ pub const INDEX: &[Entry] = &[
     e(Tab::Appearance, "Reduce motion", "Menus, drawers and selections change at once.", "animation motion fade slide accessibility"),
     e(Tab::Appearance, "Transparent sidebar", "The desktop shows through the sidebar, blurred.", "sidebar background glass blur frosted mica acrylic vibrancy see-through"),
     e(Tab::Appearance, "Status bar", "A quiet line under every page.", "bottom bar footer downloads volume catalog profile"),
+    e(Tab::Appearance, "Hardware acceleration", "Draw with the graphics card, or with the processor only.", "gpu graphics card cpu software rendering memory vram ram performance d3d directx"),
     // Integrations
     e(Tab::Integrations, "Discord Rich Presence", "Shows what you do in Sigil on Discord.", "discord rpc status activity"),
     e(Tab::Integrations, "Show what you are doing", "Off shows only that you use Sigil.", "discord details privacy"),

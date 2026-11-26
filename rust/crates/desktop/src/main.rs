@@ -18,6 +18,7 @@ mod deeplink;
 mod first_show;
 mod forge;
 mod glass;
+mod hardware;
 mod helpers;
 mod icons;
 mod jobs;
@@ -118,7 +119,10 @@ fn main() -> std::process::ExitCode {
     // Settings > Appearance > Transparent sidebar: a see-through window only when the setting
     // is on at launch and the system can show glass (`glass.rs`).
     let prefs = prefs::Prefs::load();
-    let glass = glass::launch(prefs.transparent_sidebar);
+    // Settings > Appearance > Hardware acceleration: off, Rune draws on the CPU only, and the
+    // see-through sidebar (which needs the GPU) stays off (`hardware.rs`).
+    let hardware = hardware::begin(prefs.hardware_acceleration);
+    let glass = glass::launch(prefs.transparent_sidebar && hardware);
     let sigil = rune::App::new(AppSpec::<State> {
         scenes,
         setup: Some(app::setup),
@@ -129,6 +133,7 @@ fn main() -> std::process::ExitCode {
     })
     .titlebar(rune::Titlebar::new(ui::TITLEBAR_H))
     .window_options(rune::WindowOptions { transparent: glass, ..Default::default() })
+    .hardware_acceleration(hardware)
     // The tray owns the close only when "Close to tray" is on; otherwise on_close quits as before.
     .keep_running()
     // Hidden in the tray, Sigil keeps no window, GPU device or picture atlas: the tray's Open makes

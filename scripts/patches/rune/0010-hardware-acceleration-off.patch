@@ -1,0 +1,520 @@
+diff --git a/changelog/unreleased/2026-11-26-cpu-only.md b/changelog/unreleased/2026-11-26-cpu-only.md
+new file mode 100644
+index 0000000..d2ee7f2
+--- /dev/null
++++ b/changelog/unreleased/2026-11-26-cpu-only.md
+@@ -0,0 +1 @@
++- Windows: `App::hardware_acceleration(false)` draws the app's window on the CPU only, with no GPU device, swap chain or GPU atlas copies. What only the GPU draws degrades instead of starting one (`cpu_boot::Scene::strict`): a blurred layer draws nothing, a turned layer draws unturned, a backdrop blur inside a layer, an effect slot and a native surface are left out, linear blending blends in sRGB. The window is opaque. A window also stays on the CPU, strict, when DXGI lists no hardware adapter (instead of WARP) and after the GPU failed its tries (frames that needed it used to stop). `ImageCache::file_fit_blurred` and `load_fit_blurred` decode a picture blurred on the image worker, so no sharp pixel of it is ever handed on.
+diff --git a/crates/rune/src/app.rs b/crates/rune/src/app.rs
+index f92abb0..1e66c90 100644
+--- a/crates/rune/src/app.rs
++++ b/crates/rune/src/app.rs
+@@ -101,6 +101,8 @@ pub struct App<S: 'static> {
+     pub(crate) open_inactive: bool,
+     /// `App::open_minimized`: the first open shows the window minimized.
+     pub(crate) open_minimized: bool,
++    /// `App::hardware_acceleration`: false draws on the CPU only.
++    pub(crate) hardware_acceleration: bool,
+     /// `App::maximized`, `App::full_screen`: how the window's first open shows it.
+     pub(crate) open_as: crate::windows::OpenAs,
+     pub(crate) modifier_keys: bool,
+@@ -161,6 +163,7 @@ impl<S: 'static> App<S> {
+             float_on_open: false,
+             open_inactive: false,
+             open_minimized: false,
++            hardware_acceleration: true,
+             open_as: crate::windows::OpenAs::Normal,
+             modifier_keys: false,
+             tab_visits_controls: false,
+@@ -249,6 +252,20 @@ impl<S: 'static> App<S> {
+         self
+     }
+ 
++    /// Windows: `false` draws the window on the CPU only, as a browser's "Use hardware
++    /// acceleration" off does: no GPU device, swap chain or GPU copy of an atlas is ever made for
++    /// it, and what only the GPU draws degrades instead of starting one. A blurred layer
++    /// (`El::blur`) draws nothing, so content meant to be obscured never shows sharp; a turned
++    /// layer draws unturned; a backdrop blur inside a layer, a compositor's effect slot, a native
++    /// surface (video) and a glyph only the GPU can draw are left out; linear blending blends in
++    /// sRGB. The window is opaque (`WindowOptions::transparent` is ignored). Windows also fall
++    /// back to this on their own when DXGI lists no hardware adapter, or when the GPU failed its
++    /// tries. Set it before `run`; it applies to the app's main window. Elsewhere it does nothing.
++    pub fn hardware_acceleration(mut self, on: bool) -> Self {
++        self.hardware_acceleration = on;
++        self
++    }
++
+     /// Open the window maximized, as a window saved maximized reopens. The size it opens at
+     /// stays what restoring it returns to.
+     pub fn maximized(mut self, maximized: bool) -> Self {
+diff --git a/crates/rune/src/gpu/pick.rs b/crates/rune/src/gpu/pick.rs
+index af608e5..0633e71 100644
+--- a/crates/rune/src/gpu/pick.rs
++++ b/crates/rune/src/gpu/pick.rs
+@@ -241,6 +241,22 @@ pub(crate) fn power_rank(device: wgpu::DeviceType) -> u8 {
+     }
+ }
+ 
++/// Whether DXGI lists a hardware adapter (one not flagged software: WARP and the Basic Render
++/// Driver are). Asked once and kept; it makes no device and loads no driver. True where it
++/// can't be asked, so only a clear no keeps a window off the GPU.
++#[cfg(target_os = "windows")]
++pub(crate) fn hardware_adapter() -> bool {
++    static HARDWARE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
++    *HARDWARE.get_or_init(|| {
++        use windows::Win32::Graphics::Dxgi::{CreateDXGIFactory1, DXGI_ADAPTER_FLAG_SOFTWARE, IDXGIFactory1};
++        // SAFETY: a DXGI factory and its adapters, asked for their descriptions only.
++        let Ok(factory) = (unsafe { CreateDXGIFactory1::<IDXGIFactory1>() }) else { return true };
++        (0..).map_while(|i| unsafe { factory.EnumAdapters1(i) }.ok())
++            .filter_map(|a| unsafe { a.GetDesc1() }.ok())
++            .any(|d| d.Flags & DXGI_ADAPTER_FLAG_SOFTWARE.0 as u32 == 0)
++    })
++}
++
+ /// The PCI vendor of the GPU driving the primary display, which `pick` chooses for a window:
+ /// known before any GPU is made, for the CPU renderer that draws until then. Read once, at
+ /// launch (`find_display_vendor_soon`): enumerating the display devices takes ~1,500 µs.
+diff --git a/crates/rune/src/image.rs b/crates/rune/src/image.rs
+index 600d3a3..7946b2e 100644
+--- a/crates/rune/src/image.rs
++++ b/crates/rune/src/image.rs
+@@ -209,6 +209,9 @@ enum Input {
+     Url(String, u32),
+     /// `ImageCache::file_fit` and `load_fit`: `Encoded` or `File`, scaled to the box on decode.
+     Fitted(Box<Input>, Fit),
++    /// `ImageCache::file_fit_blurred` and `load_fit_blurred`: as `Fitted`, then blurred by the
++    /// sigma (device pixels).
++    Blurred(Box<Input>, Fit, f32),
+     /// A decoder that panics, standing in for a codec bug.
+     #[cfg(test)]
+     Panic,
+@@ -228,6 +231,7 @@ impl Input {
+             Input::File(path, px) => Input::File(path.clone(), *px),
+             Input::Url(url, px) => Input::Url(url.clone(), *px),
+             Input::Fitted(input, fit) => Input::Fitted(Box::new(input.reloadable()?), *fit),
++            Input::Blurred(input, fit, sigma) => Input::Blurred(Box::new(input.reloadable()?), *fit, *sigma),
+             _ => return None,
+         })
+     }
+@@ -243,7 +247,7 @@ impl Input {
+                 Err(e) => return Some(Err(e)),
+             },
+             Input::Url(url, px) => return match from_url::file_path(url) { Ok(path) => Input::File(path, *px).probe(), Err(e) => Some(Err(e)) },
+-            Input::Fitted(input, fit) => {
++            Input::Fitted(input, fit) | Input::Blurred(input, fit, _) => {
+                 let size = input.probe()?;
+                 return Some(size.map(|[w, h]| fit.target(w, h).map_or([w, h], |(w, h)| [w, h])));
+             }
+@@ -265,6 +269,15 @@ impl Input {
+                 }
+                 other => other.decode(),
+             },
++            Input::Blurred(input, fit, sigma) => match *input {
++                Input::Encoded(bytes) => decode_blurred(&bytes, fit, sigma),
++                #[cfg(not(target_arch = "wasm32"))]
++                Input::File(path, _) => {
++                    let bytes = std::fs::read(&path).map_err(|e| ImageError(format!("{}: {e}", path.display())))?;
++                    decode_blurred(&bytes, fit, sigma)
++                }
++                _ => Err(ImageError("only encoded bytes and files decode blurred".into())),
++            },
+             Input::Encoded(bytes) => decode(&bytes),
+             Input::Rgba(w, h, bytes) => mip_chain(w, h, &bytes),
+             Input::Svg(bytes, px) => svg_rgba(&bytes, px).and_then(|(w, h, bytes)| mip_chain(w, h, &bytes)),
+@@ -422,6 +435,37 @@ impl ImageCache {
+         self.request(*hash.finalize().as_bytes(), Input::Fitted(Box::new(Input::Encoded(bytes)), fit))
+     }
+ 
++    /// An image file decoded to `fit` as [`ImageCache::file_fit`] does, then blurred by `sigma`
++    /// device pixels before any pixel reaches an atlas: for a picture that must not show sharp
++    /// (a mature preview) on a window that can't blur a layer (`App::hardware_acceleration(false)`).
++    /// An animation decodes its first frame only; a format that decodes only whole (AVIF, ICNS)
++    /// is refused rather than shown sharp. The decode limits apply as for any image.
++    pub fn file_fit_blurred(&self, path: impl AsRef<std::path::Path>, fit: Fit, sigma: f32) -> Image {
++        let path = path.as_ref().to_path_buf();
++        let mut hash = blake3::Hasher::new();
++        hash.update(b"rune-file-fit-blurred\0");
++        hash.update(path.as_os_str().as_encoded_bytes());
++        hash.update(&[0]);
++        fit.hash(&mut hash);
++        hash.update(&sigma.to_le_bytes());
++        #[cfg(target_arch = "wasm32")]
++        let input = Input::Url(path.to_string_lossy().into_owned(), 0);
++        #[cfg(not(target_arch = "wasm32"))]
++        let input = Input::Blurred(Box::new(Input::File(path, 0)), fit, sigma);
++        self.request(*hash.finalize().as_bytes(), input)
++    }
++
++    /// Encoded bytes decoded blurred, as [`ImageCache::file_fit_blurred`].
++    pub fn load_fit_blurred(&self, bytes: impl Into<Arc<[u8]>>, fit: Fit, sigma: f32) -> Image {
++        let bytes = bytes.into();
++        let mut hash = blake3::Hasher::new();
++        hash.update(b"rune-encoded-fit-blurred\0");
++        fit.hash(&mut hash);
++        hash.update(&sigma.to_le_bytes());
++        hash.update(&bytes);
++        self.request(*hash.finalize().as_bytes(), Input::Blurred(Box::new(Input::Encoded(bytes)), fit, sigma))
++    }
++
+     /// PNG (APNG animates), JPEG, GIF and WebP (both animate), BMP, ICO, AVIF (with the `avif`
+     /// feature; its first frame), modern ICNS containing a PNG representation, or SVG (plain or
+     /// gzipped SVGZ, recognised by its content). An SVG rasterizes at twice its own size; use
+@@ -932,6 +976,28 @@ fn decode_fitted(bytes: &[u8], fit: Fit) -> Result<Decoded, ImageError> {
+     mip_chain(image.width(), image.height(), image.as_raw())
+ }
+ 
++/// `decode_fitted`, then a Gaussian blur of `sigma` device pixels, still on the worker: no sharp
++/// pixel of the picture is ever handed on. An animation gives its first frame; AVIF and ICNS,
++/// which decode only whole, are refused.
++fn decode_blurred(bytes: &[u8], fit: Fit, sigma: f32) -> Result<Decoded, ImageError> {
++    let image = if is_svg(bytes) {
++        let (Fit::Cover(w, h) | Fit::Contain(w, h)) = fit;
++        let (w, h, rgba) = svg_rgba(bytes, w.max(h).clamp(1, 4096))?;
++        image::RgbaImage::from_raw(w, h, rgba).ok_or_else(|| ImageError("an SVG rendered to the wrong size".into()))?
++    } else if avif::is_avif(bytes) || bytes.starts_with(b"icns") {
++        return Err(ImageError("this format can't be decoded blurred".into()));
++    } else {
++        let mut image = decode_rgba(bytes)?;
++        if let Some((w, h)) = fit.target(image.width(), image.height()) {
++            image = image::imageops::resize(&image, w, h, image::imageops::FilterType::Triangle);
++        }
++        image
++    };
++    let sigma = if sigma.is_finite() { sigma.clamp(0.5, 64.0) } else { 0.5 };
++    let image = image::imageops::fast_blur(&image, sigma);
++    mip_chain(image.width(), image.height(), image.as_raw())
++}
++
+ /// The size in an image's header, upright (EXIF orientation applied), refused over the decode
+ /// limit. Reads no pixels.
+ #[cfg(not(target_arch = "wasm32"))]
+diff --git a/crates/rune/src/image/memory_tests.rs b/crates/rune/src/image/memory_tests.rs
+index c3fa856..95dcd5c 100644
+--- a/crates/rune/src/image/memory_tests.rs
++++ b/crates/rune/src/image/memory_tests.rs
+@@ -176,3 +176,32 @@ fn an_animated_image_over_the_decode_limit_is_refused_from_its_header() {
+     let fitted = cache.load_fit(bytes, crate::image::Fit::Cover(256, 0)).wait().unwrap_err().0.clone();
+     assert!(fitted.contains("over the decode limit"), "{fitted}");
+ }
++
++/// A picture decoded blurred (`ImageCache::load_fit_blurred`) has no sharp pixel at any time:
++/// a hard black to white edge comes out as a ramp, at its fitted size.
++#[test]
++fn a_blurred_decode_hands_on_no_sharp_pixel() {
++    let mut picture = image::RgbaImage::from_pixel(128, 32, image::Rgba([0, 0, 0, 255]));
++    for y in 0..32 {
++        for x in 64..128 {
++            picture.put_pixel(x, y, image::Rgba([255, 255, 255, 255]));
++        }
++    }
++    let mut out = std::io::Cursor::new(Vec::new());
++    picture.write_to(&mut out, image::ImageFormat::Png).unwrap();
++    let bytes = out.into_inner();
++    let red_at = |image: &crate::image::Image, x: usize| {
++        let mips = image.pixels().mips().expect("decoded");
++        let top = &mips.mips[0];
++        assert_eq!((top.width, top.height), (64, 16), "fitted as `load_fit` would");
++        top.pixels[(8 * 64 + x) * 4]
++    };
++    let cache = ImageCache::new(Arc::new(|| {}));
++    let blurred = cache.load_fit_blurred(bytes.clone(), crate::image::Fit::Cover(64, 0), 3.0);
++    assert_eq!(blurred.wait(), Ok([64, 16]));
++    let (left, right) = (red_at(&blurred, 31), red_at(&blurred, 32));
++    assert!(left > 20 && left < 235 && right > 20 && right < 235, "the edge is a ramp: {left} {right}");
++    let sharp = cache.load_fit(bytes, crate::image::Fit::Cover(64, 0));
++    assert_eq!(sharp.wait(), Ok([64, 16]));
++    assert!(red_at(&sharp, 28) < 20 && red_at(&sharp, 35) > 235, "unblurred, the same picture keeps its edge");
++}
+diff --git a/crates/rune/src/render/cpu_boot.rs b/crates/rune/src/render/cpu_boot.rs
+index 7a7920b..9454041 100644
+--- a/crates/rune/src/render/cpu_boot.rs
++++ b/crates/rune/src/render/cpu_boot.rs
+@@ -67,6 +67,8 @@ pub struct Scene<'a> {
+     atlas_resets: u64,
+     /// How the GPU that takes over rounds into half floats (layers, blur levels).
+     half: HalfRounding,
++    /// No GPU will take over (`Scene::strict`): what only it draws degrades.
++    strict: bool,
+ }
+ 
+ /// How a GPU stores a float into an `Rgba16Float` target. Vendors differ, and a layer's pixels
+@@ -107,6 +109,7 @@ struct Flags {
+     lcd: bool,
+     smoothing: Option<FontSmoothing>,
+     half: HalfRounding,
++    strict: bool,
+ }
+ 
+ /// An image atlas page: RGBA8 texels, `width * 4` bytes a row.
+@@ -126,7 +129,7 @@ impl<'a> Scene<'a> {
+         let glyph_pages = (0..atlas.page_count()).filter_map(|p| atlas.page_data(p)).collect();
+         images.cpu_reading();
+         let images = images.pages.iter().map(|p| Image { width: p.width, data: &p.data, dirty: p.dirty }).collect();
+-        Scene { instances, glyph_pages, outlines: Some(&atlas.outlines), images, size, clear, lcd: atlas.lcd, srgb_blend: true, native_surfaces: false, compositor: false, smoothing: None, atlas_resets: atlas.resets(), half: HalfRounding::default() }
++        Scene { instances, glyph_pages, outlines: Some(&atlas.outlines), images, size, clear, lcd: atlas.lcd, srgb_blend: true, native_surfaces: false, compositor: false, smoothing: None, atlas_resets: atlas.resets(), half: HalfRounding::default(), strict: false }
+     }
+ 
+     /// Whether the frame blends in sRGB encoding (`Runtime::srgb_blend`). Linear blending needs
+@@ -158,7 +161,7 @@ impl<'a> Scene<'a> {
+ 
+     /// The scene-wide switches, which a frame that only recolours keeps.
+     fn flags(&self) -> Flags {
+-        Flags { srgb_blend: self.srgb_blend, native_surfaces: self.native_surfaces, compositor: self.compositor, lcd: self.lcd, smoothing: self.smoothing, half: self.half }
++        Flags { srgb_blend: self.srgb_blend, native_surfaces: self.native_surfaces, compositor: self.compositor, lcd: self.lcd, smoothing: self.smoothing, half: self.half, strict: self.strict }
+     }
+ 
+     /// How the GPU that will take over rounds half floats (`HalfRounding::of_vendor`).
+@@ -167,6 +170,17 @@ impl<'a> Scene<'a> {
+         self
+     }
+ 
++    /// No GPU will draw this window (`App::hardware_acceleration(false)`, or the GPU failed every
++    /// try): `paint` draws every frame, degrading what only the GPU draws instead of refusing it.
++    /// A blurred layer draws nothing (what a blur obscures never shows sharp); a turned layer
++    /// draws unturned; a backdrop blur inside a layer, an effect slot and a native surface draw
++    /// nothing; linear blending and Slug's text are drawn as sRGB blending and Windfoil's
++    /// coverage are. Only a target that doesn't fit the scene is still refused.
++    pub fn strict(mut self, on: bool) -> Self {
++        self.strict = on;
++        self
++    }
++
+     /// The text's font smoothing (`Runtime::font_smoothing`): Slug's coverage has no CPU form.
+     pub fn font_smoothing(mut self, mode: FontSmoothing) -> Self {
+         self.smoothing = Some(mode);
+@@ -175,6 +189,7 @@ impl<'a> Scene<'a> {
+ 
+     /// The first thing in this frame only the GPU can draw, or None when `paint` draws all of it.
+     pub fn needs_gpu(&self) -> Option<NeedsGpu> {
++        if self.strict { return None; }
+         if !self.srgb_blend { return Some(NeedsGpu::LinearBlend); }
+         if self.native_surfaces { return Some(NeedsGpu::NativeSurface); }
+         if self.smoothing == Some(FontSmoothing::Slug) { return Some(NeedsGpu::SlugText); }
+@@ -298,3 +313,7 @@ fn check_target(scene: &Scene<'_>, target: &Target<'_>) -> Result<(), NeedsGpu>
+ fn ns(d: std::time::Duration) -> u64 {
+     u64::try_from(d.as_nanos()).unwrap_or(u64::MAX)
+ }
++
++#[cfg(test)]
++#[path = "cpu_boot/strict_tests.rs"]
++mod strict_tests;
+diff --git a/crates/rune/src/render/cpu_boot/bin.rs b/crates/rune/src/render/cpu_boot/bin.rs
+index 52afca5..44a2163 100644
+--- a/crates/rune/src/render/cpu_boot/bin.rs
++++ b/crates/rune/src/render/cpu_boot/bin.rs
+@@ -64,7 +64,7 @@ pub(super) struct Layer {
+ /// `Renderer::prepare_layers`' planning walk, for the layers this painter draws (no blur, no
+ /// turn): each scope's bounds from what it holds, cut to its clip and its ancestors', and whether
+ /// it draws at all, straight into its parent or into a target of its own.
+-fn plan_layers(instances: &[Instance], viewport: (u32, u32)) -> (Vec<Layer>, HashMap<u32, u32>) {
++fn plan_layers(instances: &[Instance], viewport: (u32, u32), strict: bool) -> (Vec<Layer>, HashMap<u32, u32>) {
+     struct Open { at: usize, edges: [f32; 4], clip: [f32; 4], limit: [f32; 4], cache: bool }
+     let mut plans: Vec<Layer> = Vec::new();
+     let mut scope = HashMap::new();
+@@ -75,7 +75,10 @@ fn plan_layers(instances: &[Instance], viewport: (u32, u32)) -> (Vec<Layer>, Has
+             let parent = open.last().map(|o| o.at);
+             let limit = open.last().map_or(NO_CLIP, |p| [p.clip[0].max(p.limit[0]), p.clip[1].max(p.limit[1]), p.clip[2].min(p.limit[2]), p.clip[3].min(p.limit[3])]);
+             let opacity = i.fill[3].clamp(0.0, 1.0);
+-            let hidden = opacity == 0.0 || parent.is_some_and(|p| plans[p].show == Show::Hidden);
++            // Strict (`Scene::strict`): a blurred layer draws nothing, so what it obscures never
++            // shows sharp.
++            let blurred = strict && i.params[2] != 0.0;
++            let hidden = opacity == 0.0 || blurred || parent.is_some_and(|p| plans[p].show == Show::Hidden);
+             let cache = i.params[3] == 1.0;
+             let additive = i.params[0] == 1.0;
+             let additive_parent = parent.is_some_and(|p| plans[p].additive);
+@@ -135,7 +138,7 @@ impl Bins {
+         let (cols, rows) = (w.div_ceil(TILE_W), h.div_ceil(TILE_H));
+         let tiles = (cols * rows) as usize;
+         let mut bounds: Vec<[i32; 4]> = scene.instances.iter().map(|i| pixel_bounds(i, w as i32, h as i32)).collect();
+-        let (layers, scope) = plan_layers(scene.instances, (w, h));
++        let (layers, scope) = plan_layers(scene.instances, (w, h), scene.strict);
+         // Within a layer drawn to its own target, nothing reaches past the layer's bounds, and
+         // nothing there can stand in for what's under the layer.
+         let mut within = vec![TOP; scene.instances.len()];
+diff --git a/crates/rune/src/render/cpu_boot/raster.rs b/crates/rune/src/render/cpu_boot/raster.rs
+index b84570c..5b5e63a 100644
+--- a/crates/rune/src/render/cpu_boot/raster.rs
++++ b/crates/rune/src/render/cpu_boot/raster.rs
+@@ -466,6 +466,9 @@ impl Painter<'_, '_> {
+             1 => self.shadow(i, r, &clip),
+             11 => self.shaded(i, 11, r, &clip, Some(Solid { edges: [i.rect[0], i.rect[1], i.rect[0] + i.rect[2], i.rect[1] + i.rect[3]], radii: i.radii, inset: i.params[2].max(0.5) })),
+             kind @ (3 | 5 | 6 | 10) => self.shaded(i, kind, r, &clip, None),
++            // A backdrop blur inside a layer reads that layer's target, which only the GPU has:
++            // strict, it draws nothing.
++            13 if self.scene.strict && self.depth > 0 => {}
+             13 => self.backdrop(i, r, &clip),
+             _ => {}
+         }
+diff --git a/crates/rune/src/render/cpu_boot/record.rs b/crates/rune/src/render/cpu_boot/record.rs
+index faf139b..43860e3 100644
+--- a/crates/rune/src/render/cpu_boot/record.rs
++++ b/crates/rune/src/render/cpu_boot/record.rs
+@@ -76,6 +76,7 @@ impl Recording {
+             smoothing: None,
+             atlas_resets: 0,
+             half: super::HalfRounding::default(),
++            strict: false,
+         }
+     }
+ 
+diff --git a/crates/rune/src/render/cpu_boot/strict_tests.rs b/crates/rune/src/render/cpu_boot/strict_tests.rs
+new file mode 100644
+index 0000000..bef05a9
+--- /dev/null
++++ b/crates/rune/src/render/cpu_boot/strict_tests.rs
+@@ -0,0 +1,46 @@
++//! A strict scene (`Scene::strict`, `App::hardware_acceleration(false)`) paints every frame on
++//! the CPU: what only the GPU draws degrades instead of being refused.
++
++use super::*;
++use bytemuck::Zeroable;
++
++use crate::render::{Instance, KIND_RECT, LayerSpec, NO_CLIP};
++
++fn rect(bounds: [f32; 4]) -> Instance {
++    Instance { rect: bounds, fill: [1.0; 4], clip: NO_CLIP, params: [0.0, KIND_RECT, 0.0, 1.0], ..Instance::zeroed() }
++}
++
++fn layer(bounds: [f32; 4], blur: f32) -> Vec<Instance> {
++    vec![Instance::begin_layer(bounds, NO_CLIP, LayerSpec { blur, ..Default::default() }), rect(bounds), Instance::end_layer()]
++}
++
++/// The pixel at (16, 16) of a 32 by 32 frame cleared to black, as B, G, R.
++fn centre(instances: &[Instance], strict: bool) -> Result<[u8; 3], NeedsGpu> {
++    let atlas = crate::text::TextSystem::default().atlas;
++    let images = crate::pixels::ImageAtlas::default();
++    let scene = Scene::new(instances, &atlas, &images, (32, 32), [0.0, 0.0, 0.0, 1.0]).strict(strict);
++    let mut buf = vec![0u8; 32 * 32 * 4];
++    paint(&scene, &mut Target::new(&mut buf, 32, 32), 1)?;
++    let at = (16 * 32 + 16) * 4;
++    Ok([buf[at], buf[at + 1], buf[at + 2]])
++}
++
++#[test]
++fn a_strict_scene_draws_a_blurred_layer_as_nothing_rather_than_ask_for_the_gpu() {
++    let blurred = layer([8.0, 8.0, 16.0, 16.0], 4.0);
++    assert_eq!(centre(&blurred, false), Err(NeedsGpu::LayerBlur), "a window that can hand over asks for the GPU");
++    assert_eq!(centre(&blurred, true), Ok([0, 0, 0]), "strict: what the blur obscures never shows sharp");
++    let plain = layer([8.0, 8.0, 16.0, 16.0], 0.0);
++    assert_eq!(centre(&plain, true), Ok([255, 255, 255]), "an unblurred layer still draws");
++}
++
++#[test]
++fn a_strict_scene_paints_what_only_the_gpu_draws_instead_of_refusing_it() {
++    let plain = vec![rect([0.0, 0.0, 32.0, 32.0])];
++    let atlas = crate::text::TextSystem::default().atlas;
++    let images = crate::pixels::ImageAtlas::default();
++    for strict in [false, true] {
++        let scene = Scene::new(&plain, &atlas, &images, (32, 32), [0.0; 4]).srgb_blend(false).native_surfaces(true).strict(strict);
++        assert_eq!(scene.needs_gpu().is_none(), strict);
++    }
++}
+diff --git a/crates/rune/src/window.rs b/crates/rune/src/window.rs
+index bf9d79b..cfa7358 100644
+--- a/crates/rune/src/window.rs
++++ b/crates/rune/src/window.rs
+@@ -508,6 +508,10 @@ struct Host<S: 'static> {
+     open_inactive: bool,
+     /// How a released window reopens: maximized or full screen as it was left (`keep_placement`).
+     reopen_as: Option<crate::windows::OpenAs>,
++    /// `App::hardware_acceleration(false)`: CPU-first windows never start a GPU and degrade what
++    /// only it draws (`cpu_frame`).
++    #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
++    cpu_only: bool,
+     /// `App::open_minimized`, until the first open takes it.
+     #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+     open_minimized: bool,
+@@ -555,7 +559,10 @@ struct Host<S: 'static> {
+ 
+ impl<S: 'static> Host<S> {
+     fn new(window_spec: WindowSpec<S>, native_handle: WindowHandle, args: Args, proxy: EventLoopProxy<WakeEvent>, slot: usize, gpu_pool: Rc<RefCell<Weak<Gpu>>>, wayland: bool) -> Self {
+-        let WindowSpec { mut app, options, key: _, on_created } = window_spec;
++        let WindowSpec { mut app, mut options, key: _, on_created } = window_spec;
++        // CPU only: a DIB can't composite see-through pixels, so the window is opaque.
++        let cpu_only = cfg!(target_os = "windows") && !app.hardware_acceleration;
++        if cpu_only { options.transparent = false; }
+         let mut args = app.resolve_args(args);
+         let on_window = app.on_window.take();
+         let on_ready = app.on_ready.take();
+@@ -673,6 +680,7 @@ impl<S: 'static> Host<S> {
+             float_on_open,
+             open_inactive,
+             open_minimized,
++            cpu_only,
+             reopen_as: None,
+             open_as,
+             shared,
+diff --git a/crates/rune/src/window/cpu_frame.rs b/crates/rune/src/window/cpu_frame.rs
+index 1340e48..0958ef2 100644
+--- a/crates/rune/src/window/cpu_frame.rs
++++ b/crates/rune/src/window/cpu_frame.rs
+@@ -232,6 +232,8 @@ fn painter_threads() -> usize {
+ /// a new window's swap chain is ready in a few milliseconds), unless turned off
+ /// (`RUNE_CPU_FIRST=0`).
+ pub(super) fn opens_on_cpu<S: 'static>(host: &Host<S>) -> bool {
++    // `App::hardware_acceleration(false)`: always, and the window stays there.
++    if host.cpu_only { return true; }
+     !host.options.transparent && host.gpu.is_none()
+         && host.gpu_pool.borrow().upgrade().is_none_or(|gpu| gpu.is_lost())
+         && std::env::var_os("RUNE_CPU_FIRST").is_none_or(|v| v != "0")
+@@ -407,6 +409,9 @@ impl<S: 'static> Host<S> {
+         sync_platform(l, rt, &mut self.secure_input, &mut self.ime_allowed, &self.clipboard);
+         let (width, height) = (l.config.width, l.config.height);
+         let minimized = l.minimized();
++        // Strict: no GPU will come (`App::hardware_acceleration(false)`, or it failed every try),
++        // so what only the GPU draws degrades rather than holding the frame (`Scene::strict`).
++        let strict = self.cpu_only || matches!(l.native.mode, SurfaceMode::Cpu { job: GpuJob::Failed, .. });
+         let mut quiet_now = false;
+         if let SurfaceMode::Cpu { job: GpuJob::Building { latest, animating: moving, ready, .. }, .. } = &mut l.native.mode {
+             *latest.lock().unwrap_or_else(|e| e.into_inner()) = warm_instances(&rt.instances);
+@@ -424,7 +429,8 @@ impl<S: 'static> Host<S> {
+                 .native_surfaces(!rt.surfaces.is_empty())
+                 .compositor(self.comp.is_some())
+                 .half_rounding(cpu.half)
+-                .font_smoothing(rt.font_smoothing());
++                .font_smoothing(rt.font_smoothing())
++                .strict(strict);
+             let Cpu { buffer, painter, shown, .. } = &mut *cpu;
+             let Some(dib) = ready(buffer, painter, (width, height)) else {
+                 eprintln!("rune: no memory for a {width} x {height} frame buffer");
+@@ -478,6 +484,14 @@ impl<S: 'static> Host<S> {
+             }
+         };
+         if let Err(why) = &painted {
++            // Strict, only a target the frame doesn't fit is refused: the window keeps its last
++            // frame and the next one tries again. No GPU starts.
++            if strict {
++                let _ = why;
++                crate::marks::mark("cpu_only.frame_refused");
++                if let Some(l) = self.win.as_mut() { l.backoff_step(BackoffEvent::At(Instant::now() + TIMER_FRAME)); }
++                return;
++            }
+             // The frame needs what only the GPU draws (a native surface, a compositor's scene):
+             // the GPU starts now if it hasn't, and the window keeps its last frame until then.
+             if !matches!(self.win.as_ref().map(|w| &w.native.mode), Some(SurfaceMode::HandingOver { .. })) {
+@@ -532,7 +546,7 @@ impl<S: 'static> Host<S> {
+ 
+     /// Whether the GPU is due to start now (`cpu_idle`).
+     pub(super) fn gpu_owed(&self) -> bool {
+-        if std::env::var_os("RUNE_CPU_FIRST").is_some_and(|v| v == "only") { return false; }
++        if self.cpu_only || std::env::var_os("RUNE_CPU_FIRST").is_some_and(|v| v == "only") { return false; }
+         let now = Instant::now();
+         self.win.as_ref().is_some_and(|w| matches!(w.native.mode, SurfaceMode::Cpu { job: GpuJob::Waiting { retry_at, .. }, .. } if retry_at.is_none_or(|at| at <= now))
+             && w.first_frame.ready() && self.life.in_sight(w.minimized()))
+@@ -544,6 +558,15 @@ impl<S: 'static> Host<S> {
+         let Some(w) = self.win.as_mut() else { return };
+         let SurfaceMode::Cpu { job, .. } = &mut w.native.mode else { return };
+         let GpuJob::Waiting { tries, retry_at } = *job else { return };
++        // No hardware adapter (a VM, a session with only Microsoft's Basic Render Driver): WARP
++        // would draw the same frames in software and hold every GPU resource in process memory,
++        // so the window stays on the CPU for good, strict (`draw_cpu`).
++        if !crate::gpu::pick::hardware_adapter() {
++            crate::marks::mark("gpu.window.no_hardware");
++            eprintln!("rune: no hardware graphics adapter: the window draws on the CPU");
++            *job = GpuJob::Failed;
++            return;
++        }
+         if retry_at.is_some() { crate::marks::mark("gpu.window.retry"); }
+         let Some(hwnd) = crate::platform::win32::hwnd(&w.window) else { *job = GpuJob::Failed; return };
+         let slot = Arc::new(Mutex::new(None));

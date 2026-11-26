@@ -1998,6 +1998,11 @@ fn appearance(s: &State, u: &Ui) -> El {
             |st| prefs::edit(st, |p| p.reduce_motion = !p.reduce_motion),
         ),
         glass_row(s, u),
+    ];
+    if crate::hardware::supported() {
+        interface.extend(hardware_rows(s, u));
+    }
+    interface.extend([
         toggle_row(
             u,
             "settings-browse-auto-advance",
@@ -2014,7 +2019,7 @@ fn appearance(s: &State, u: &Ui) -> El {
             s.prefs.status_bar,
             |st| prefs::edit(st, |p| p.status_bar = !p.status_bar),
         ),
-    ];
+    ]);
     interface.extend(personalize::interface_rows(s, u));
     let mut c = col().w_full().gap(LIST_GAP).child(theme);
     if let Some(builder) = personalize::builder_view(s, u) {
@@ -2033,6 +2038,9 @@ fn glass_row(s: &State, u: &Ui) -> El {
     const TITLE: &str = "Transparent sidebar";
     let press = |st: &mut State| prefs::edit(st, |p| p.transparent_sidebar = !p.transparent_sidebar);
     let on = s.prefs.transparent_sidebar;
+    if crate::hardware::cpu_only() {
+        return setting_row(u, KEY, TITLE, detail(u, "Needs hardware acceleration, which is off."), status_word(u, "Off", false));
+    }
     match crate::glass::row_state(on) {
         Row::Ready => toggle_row(u, KEY, TITLE, "Frosted glass: the desktop shows through the sidebar, blurred.", on, press),
         Row::Restart => toggle_row(u, KEY, TITLE, "Applies after restart.", on, press),
@@ -2049,6 +2057,33 @@ fn glass_row(s: &State, u: &Ui) -> El {
             setting_row(u, KEY, TITLE, detail(u, line), status_word(u, "Not available", false))
         }
     }
+}
+
+/// Settings > Appearance > Hardware acceleration (Windows): the switch, and once it differs from
+/// how this launch draws, a line that it takes effect after a restart, with Restart.
+fn hardware_rows(s: &State, u: &Ui) -> Vec<El> {
+    const KEY: &str = "settings-hardware-acceleration";
+    let on = s.prefs.hardware_acceleration;
+    let press = |st: &mut State| prefs::edit(st, |p| p.hardware_acceleration = !p.hardware_acceleration);
+    let line = if on {
+        "Sigil draws with the graphics card. Off, the processor draws it and Sigil holds no graphics memory; the 3D viewer still uses the graphics card while it is open."
+    } else {
+        "The processor draws Sigil and it holds no graphics memory. The transparent sidebar is off, and hidden mature pictures are blurred as they load. The 3D viewer still uses the graphics card while it is open."
+    };
+    let mut rows = vec![toggle_row(u, KEY, "Hardware acceleration", line, on, press)];
+    if on != crate::hardware::launched_on() {
+        rows.push(setting_row(
+            u,
+            "settings-hardware-restart",
+            "Takes effect after restarting Sigil",
+            detail(u, "Your mods, settings and downloads stay."),
+            button(u, "settings-hardware-restart-button", "Restart", ActionKind::Secondary).on_press_tx(|st: &mut State, tx: &mut Tx| {
+                st.agent.shutdown();
+                tx.relaunch();
+            }),
+        ));
+    }
+    rows
 }
 
 /// The width a column of row controls shares (segmented and select), so their left edges
@@ -3476,6 +3511,18 @@ pub fn scene_tab(s: &mut State, tab: Tab) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The switch alone while it matches how this launch draws; once flipped, a line that it
+    /// takes effect after a restart, with Restart.
+    #[test]
+    fn hardware_acceleration_asks_for_a_restart_only_once_flipped() {
+        let u = crate::ui::Ui::new();
+        let mut st = State::default();
+        st.prefs.hardware_acceleration = crate::hardware::launched_on();
+        assert_eq!(hardware_rows(&st, &u).len(), 1);
+        st.prefs.hardware_acceleration = !st.prefs.hardware_acceleration;
+        assert_eq!(hardware_rows(&st, &u).len(), 2);
+    }
 
     #[test]
     fn versions_compare_numerically() {

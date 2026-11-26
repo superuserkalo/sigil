@@ -281,9 +281,29 @@ pub(crate) fn lightbox(s: &State, u: &Ui, d: &Details, index: usize) -> El {
     let mut picture = el()
         .key(format!("lightbox-image-{index}"))
         .clip_rounded(0.0);
+    // Hardware acceleration off: no layer blurs, so a veiled picture shows the copy of its card
+    // picture decoded blurred, or nothing until that is ready (`hardware::want_blurred`).
+    let blurred = if veil && crate::hardware::cpu_only() {
+        image.and_then(|image| match crate::hardware::blurred(&image.url) {
+            crate::hardware::Blurred::Missing => {
+                crate::hardware::want_blurred(&image.url);
+                None
+            }
+            crate::hardware::Blurred::Failed => None,
+            crate::hardware::Blurred::Copy(pixels) => {
+                if !pixels.is_ready() {
+                    pixels.prefetch();
+                }
+                Some(pixels).filter(|p| p.is_ready())
+            }
+        })
+    } else {
+        None
+    };
+    let pixels = if veil && crate::hardware::cpu_only() { blurred.as_ref() } else { pixels };
     if let Some(pixels) = pixels {
         picture = picture.pixels_fit(pixels, SurfaceFit::Fill);
-        if veil {
+        if veil && !crate::hardware::cpu_only() {
             picture = picture.blur(crate::screens::settings::nsfw::lightbox_blur());
         }
     } else {

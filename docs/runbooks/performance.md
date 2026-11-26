@@ -310,8 +310,58 @@ Nothing here is measured on Windows yet; see "How to measure on Windows" below.
    code 2 (`helpers.rs`). The benchmark card draws with Rune's own Inter bytes
    (`rune::text::embedded_fonts`, Rune patch 0009) instead of embedding the three faces again
    (1,248,684 B). `cargo tree` confirms none of the agent stack is in the default graph.
+   Measured on the Windows exe (`cargo xwin build --profile fastrel`, no LTO, same sources): with
+   the `agent` feature 104,840,192 B, without it 98,588,672 B, so the agent stack was 6.25 MB;
+   with Inter, about 7.5 MB in all. These are file-backed pages: they shrink the download and the
+   "Working set (memory)" column by what of them was touched, not the private memory columns.
    `panic`, `opt-level`, the TLS and HTTP stacks, the compression features and Rune's `tooling`
    feature are unchanged.
+6. **Hardware acceleration** (Settings > Appearance, Windows only; `hardware.rs`, Rune patch
+   0010). On by default (`hardware::DEFAULT`, one constant to flip once CPU frame times are
+   measured on Windows). Off, from the next launch (the row offers Restart), Rune draws every
+   frame on the CPU (`App::hardware_acceleration(false)`): no D3D12 device, swap chain, upload
+   heap or GPU atlas copy exists. What only the GPU drew degrades in the CPU painter
+   (`Scene::strict`) rather than starting one: a blurred layer draws nothing (so nothing meant to
+   be obscured shows sharp), a turned layer draws unturned, a backdrop blur inside a layer and
+   native surfaces are left out. Sigil replaces what it used those for: the transparent sidebar
+   is off, a hidden mature picture is decoded once more, blurred on Rune's image worker
+   (`ImageCache::file_fit_blurred`, with the same decode limits), the Personalize background
+   shows unblurred, and a mature pack's art shows its icon. The 3D viewer keeps its own GPU
+   device while a view is open. Rune also stays on the CPU, strict, when DXGI lists no hardware
+   adapter (VMs, Microsoft's Basic Render Driver: before, WARP drew the same frames and kept
+   every GPU resource in process memory) and after the GPU failed its three tries (frames that
+   needed it used to stop there). Not measured: frame times of a long Browse scroll on the CPU,
+   which is why the default stays on.
+
+Each of these is written down as unmeasured on Windows. The time to first frame is unchanged by
+construction (the first frame was already painted on the CPU), but that too wants a `ready_ms`
+check.
+
+### How to measure on Windows
+
+Use a release build (`scripts/package-windows.sh`) on the PC the 0.1.42 profile came from, or any
+Windows 10 or 11 PC with a discrete GPU, at 1080p. In Task Manager > Details, right-click the
+column header > Select columns, and add "Commit size", "Memory (active private working set)",
+"Working set (memory)" and "Dedicated GPU memory". Read the numbers for `Sigil.exe` after the wait
+each row gives. `.scratch/memory-profile/` (local) has `sampler.py` and `vmmap.py`, which log the
+same counters every second; they are optional.
+
+Time to first frame: set `RUNE_READY_DIR=%TEMP%\sigil-ready` before starting Sigil; the file
+`Sigil.exe.<pid>` in it holds `ready_ms`. Take the median of 5 cold starts before and after a
+change; a move of more than 5% fails.
+
+| # | What to do | Pass |
+| --- | --- | --- |
+| 1a | Settings > General: Start with your computer and Start minimized on, Minimize to tray on. Sign out and in (or run `Sigil.exe --minimized`). Wait 60 s. | No Sigil window; tray icon present; commit at most 40 MB; Dedicated GPU memory 0; no `d3d12.dll` in Resource Monitor's modules for Sigil |
+| 1b | The same with Minimize to tray and Close to tray off. | A Sigil button on the taskbar, nothing on screen; same numbers. Click the button: the window shows at once with its content (no white or black flash), pictures fade in, and Dedicated GPU memory rises after a moment |
+| 1c | First launch after an update, started minimized with the tray on. | A minimized window rather than none; the next launch keeps the update (no rollback) |
+| 2 | Visit every page, then hide to the tray (Close with Close to tray on). Wait 40 s. Then open from the tray. | Hidden: Dedicated GPU memory 0, commit at most 60 MB. Reopened: same place, size and maximized state as before; opens as fast as a cold start |
+| 3 | Locker > a hero > 3D view on. Minimize Sigil for 40 s, then restore. | Dedicated GPU memory falls by the viewer's share while minimized; the view loads the same hero again on restore |
+| 4 | Browse idle 90 s after a fresh start, before and after this batch. | Commit lower than before by a few MB (the search index alone was 2.2 MB smaller on macOS) |
+| 5 | Settings > Appearance > Hardware acceleration off, Restart. Browse idle 90 s. Then scroll Browse 150 wheel notches. | Idle: private working set at most 75 MB, commit at most 90 MB, Dedicated GPU memory 0. After scrolling: private working set at most 95 MB. Scrolling looks as smooth as with acceleration on (for a number: a build with `--features rune/frame-profile` and `RUNE_FRAME_LOG=frames.jsonl`, 95th percentile frame under 16 ms at 1080p and 1440p on a 6-core CPU). Mature cards show blurred, never sharp; the transparent sidebar row says it needs hardware acceleration |
+| 6 | `Sigil.exe agent-host` in a terminal. File size of `Sigil.exe`. | Prints that this build has no agent host and exits; the exe is several MB smaller than 0.1.44's |
+
+A failure in any row is a bug to report with the row number and the four Task Manager numbers.
 
 ## Remaining opportunities
 
@@ -321,8 +371,9 @@ Nothing here is measured on Windows yet; see "How to measure on Windows" below.
 
 - Send the traffic-lights fix upstream to Rune, then drop the local patch. Measure real time to
   first presented frame with `RUNE_READY_DIR` (`ready_ms`).
-- Memory, next batch: make the GPU only when the window is first shown (started minimized),
-  release it when minimized, and the binary diet (duplicate HTTP, TLS and codec stacks).
+- Memory: dropping the main window's D3D12 device while it is minimized (step 3 above says what
+  it needs and why it waits for a Windows machine). The duplicate codec stacks, `opt-level = "s"`
+  for dependencies and `panic = "abort"` remain owner calls.
 - Size: `rust/crates/tinyagent` pulls reqwest with default features (native-tls, HTTP/2) next to
   ureq's rustls; moving reqwest onto rustls and HTTP/1 would drop one TLS stack and h2. It changes
   the provider transport, so it needs its own decision and a provider test.

@@ -16,6 +16,28 @@ pub(crate) fn pixels_for<'a>(s: &'a State, url: Option<&String>) -> Option<&'a r
 /// popping in over an empty slot.
 pub(crate) fn image_fill(s: &State, key: String, url: Option<&String>, radii: [f32; 4], blur: bool) -> El {
     let base = el().absolute(0.0, 0.0).w_full().h_full().corners(radii);
+    // Hardware acceleration off: no layer blurs, so a hidden picture draws its copy decoded
+    // blurred, asked for the first time it is drawn (`hardware::want_blurred`).
+    if blur && crate::hardware::cpu_only() {
+        let ready = url.and_then(|url| match crate::hardware::blurred(url) {
+            crate::hardware::Blurred::Missing => {
+                crate::hardware::want_blurred(url);
+                None
+            }
+            crate::hardware::Blurred::Failed => None,
+            crate::hardware::Blurred::Copy(pixels) => {
+                let ready = pixels.is_ready();
+                if !ready {
+                    pixels.prefetch();
+                }
+                ready.then_some(pixels)
+            }
+        });
+        return match ready {
+            Some(pixels) => base.key(key).pixels_fit(&pixels, SurfaceFit::Fill).transition(crate::motion::image_in()).a11y_hidden(),
+            None => base.key(format!("{key}-missing")).fill(Color::WHITE.alpha(0.045)).a11y_hidden(),
+        };
+    }
     let ready = pixels_for(s, url).filter(|pixels| {
         let ready = pixels.is_ready();
         if !ready {

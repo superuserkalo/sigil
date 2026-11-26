@@ -1697,6 +1697,26 @@ fn drain_thumbnails_when(state: &mut State, allowed: bool) -> bool {
             changed = true;
         }
     }
+    changed |= drain_blurred(state);
+    changed
+}
+
+/// Hardware acceleration off: the hidden mature pictures views drew this frame, each decoded
+/// once more, blurred, from the file the fetch left in the disk cache (`hardware::want_blurred`).
+/// A picture not in the disk cache stays a placeholder: the decode fails, nothing sharp shows.
+fn drain_blurred(state: &mut State) -> bool {
+    let wanted = crate::hardware::take_wanted();
+    let Some(cache) = state.images.as_ref() else { return false };
+    let mut changed = false;
+    for url in wanted {
+        if crate::hardware::has_blurred(&url) {
+            continue;
+        }
+        let sigma = crate::screens::settings::nsfw::card_blur().max(4.0);
+        let image = cache.file_fit_blurred(thumb_cache_path(&url), thumb_fit(&url, true), sigma);
+        crate::hardware::keep_blurred(url, image);
+        changed = true;
+    }
     changed
 }
 

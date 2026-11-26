@@ -230,7 +230,9 @@ pub fn backdrop(s: &State, u: &Ui, _window: (f32, f32)) -> Option<El> {
             .key("personal-bg-image")
             .pin(Some(-bleed), Some(-bleed), Some(-bleed), Some(-bleed))
             .pixels_fit(px, SurfaceFit::Fill)
-            .blur(blur)
+            // Hardware acceleration off: no layer blurs (a blurred layer would draw nothing), so
+            // the background shows sharp.
+            .blur(if crate::hardware::cpu_only() { 0.0 } else { blur })
             .opacity(p.background.opacity);
         layer = layer.child(
             el().key("personal-bg")
@@ -1451,7 +1453,7 @@ fn coverage_picture(s: &State, u: &Ui) -> El {
                 .child(
                     el().pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0))
                         .pixels_fit(px, SurfaceFit::Fill)
-                        .blur(p.blur * 0.25)
+                        .blur(if crate::hardware::cpu_only() { 0.0 } else { p.blur * 0.25 })
                         .opacity(if p.on { p.opacity.max(0.15) } else { 0.15 }),
                 ),
         );

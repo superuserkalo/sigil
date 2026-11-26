@@ -58,6 +58,14 @@ taskbar. Either way it loads no pictures and uses no graphics memory until you o
 the tray, Sigil also gives its window and graphics memory back; opening it from the tray brings
 the window back where you left it, as fast as a fresh start.
 
+On Windows, Settings > Appearance > Hardware acceleration (on by default) chooses who draws Sigil.
+On, the graphics card does. Off, the processor does, and Sigil uses no graphics memory at all,
+which leaves all of it to the game. Off also turns the transparent sidebar off, shows hidden mature
+pictures blurred as they load, and shows a Personalize background unblurred. The 3D viewer still
+uses the graphics card while it is open. The switch takes effect after restarting Sigil, and the
+row offers Restart. Sigil also draws with the processor by itself when Windows reports no graphics
+card it can use.
+
 Motion is short and only follows what you do: a new page fades in, menus and dialogs rise into
 place, selections slide, and shelves page with a short slide. Nothing moves at rest or while work
 runs, and nothing in the page moves out of the way. Settings > Appearance > Reduce motion (off by

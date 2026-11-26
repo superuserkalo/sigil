@@ -959,6 +959,10 @@ fn art(s: &State, u: &Ui, facts: Option<&Facts>, key: String) -> El {
     match facts.and_then(|f| f.thumbnail.as_ref()).and_then(|url| s.thumbnails.get(url)).filter(|_| !hide) {
         Some(px) => {
             let image = el().key(key).pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0)).pixels_fit(px, SurfaceFit::Fill).a11y_hidden();
+            // Hardware acceleration off: no layer blurs, so a mature pack's art is left out.
+            if nsfw && s.prefs.mature == Mature::Blur && crate::hardware::cpu_only() {
+                return frame.center().child(icon(&icons::PACKAGE, 14.0).color(u.faint).a11y_hidden()).a11y_hidden();
+            }
             let image = if nsfw && s.prefs.mature == Mature::Blur { image.blur(crate::screens::settings::nsfw::card_blur()) } else { image };
             frame.child(image).a11y_hidden()
         }

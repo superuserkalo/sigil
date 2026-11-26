@@ -488,6 +488,9 @@ pub struct Prefs {
     pub channel: Channel,
     pub custom_accents: Vec<String>,
     pub transparent_sidebar: bool,
+    /// Settings > Appearance > Hardware acceleration (Windows): off draws on the CPU only, from
+    /// the next launch (`hardware.rs`).
+    pub hardware_acceleration: bool,
     /// Settings > Appearance > Reduce motion: menus, drawers and selections change at once.
     /// Off by default; the system setting reduces motion either way.
     pub reduce_motion: bool,
@@ -540,6 +543,7 @@ impl Default for Prefs {
             channel: Channel::Stable,
             custom_accents: Vec::new(),
             transparent_sidebar: false,
+            hardware_acceleration: crate::hardware::DEFAULT,
             reduce_motion: false,
             browse_auto_advance: true,
             status_bar: true,
@@ -665,6 +669,7 @@ impl Prefs {
                 })
                 .unwrap_or_default(),
             transparent_sidebar: b("transparent_sidebar", d.transparent_sidebar),
+            hardware_acceleration: b("hardware_acceleration", d.hardware_acceleration),
             reduce_motion: b("reduce_motion", d.reduce_motion),
             browse_auto_advance: b("browse_auto_advance", d.browse_auto_advance),
             status_bar: b("status_bar", d.status_bar),
@@ -801,6 +806,7 @@ impl Prefs {
         map.insert("channel".into(), json!(self.channel.id()));
         map.insert("custom_accents".into(), json!(self.custom_accents));
         map.insert("transparent_sidebar".into(), json!(self.transparent_sidebar));
+        map.insert("hardware_acceleration".into(), json!(self.hardware_acceleration));
         map.insert("reduce_motion".into(), json!(self.reduce_motion));
         map.insert("browse_auto_advance".into(), json!(self.browse_auto_advance));
         map.insert("status_bar".into(), json!(self.status_bar));
@@ -1001,6 +1007,7 @@ mod tests {
             channel: Channel::Preview,
             custom_accents: vec!["#12ab34".into(), "#abc".into()],
             transparent_sidebar: true,
+            hardware_acceleration: !crate::hardware::DEFAULT,
             reduce_motion: true,
             browse_auto_advance: false,
             status_bar: false,
