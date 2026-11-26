@@ -6,6 +6,8 @@ use std::collections::HashMap;
 use std::sync::OnceLock;
 
 pub const DE: &[(&str, &str)] = &[
+    ("{} min ago", "vor {} Min."),
+    ("{} h ago", "vor {} Std."),
     ("Last together", "Zuletzt zusammen"),
     ("No squad found. deadlock-api only knows a squad when the Steam friends list is public.", "Kein Squad gefunden. deadlock-api kennt ein Squad nur, wenn die Steam-Freundesliste öffentlich ist."),
     ("Opponents", "Gegner"),

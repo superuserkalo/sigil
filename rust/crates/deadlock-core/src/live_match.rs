@@ -590,6 +590,69 @@ pub fn stamp_ago(ago: i64) -> String {
 
 // --- following the log ------------------------------------------------------------------
 
+/// Lines read from console.log, by kind: enough to see in one screenshot where the chain stops
+/// (no lines at all, lines but no lobby, a lobby but no bridge).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct LineCounts {
+    pub lines: u64,
+    pub lobby: u64,
+    pub bridge: u64,
+}
+
+impl LineCounts {
+    pub fn add(&mut self, text: &str) {
+        for line in text.lines() {
+            self.lines += 1;
+            if line.contains("Lobby ") && line.contains(" for Match ") {
+                self.lobby += 1;
+            }
+            if line.contains(BRIDGE_TAG) || line.contains(ROSTER_TAG) {
+                self.bridge += 1;
+            }
+        }
+    }
+}
+
+/// Why the live view cannot read the game, while the game runs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LogOff {
+    /// No console.log at all.
+    Missing,
+    /// Steam's launch options for Deadlock lack `-condebug`.
+    NoCondebug,
+    /// A console.log exists but the game has not written it this session: it is left from an
+    /// earlier session that ran with `-condebug`.
+    Stale,
+}
+
+/// Seconds the game gets after it shows up to write its first console line.
+pub const LOG_GRACE_SECONDS: u64 = 45;
+
+/// Decide whether the console log is off while the game runs. `game_since` is when the
+/// running game was first seen; `launch_condebug` is whether the launch options hold
+/// `-condebug`, `None` when they were not read. A log file merely existing is not enough: an
+/// old one stays behind when `-condebug` is removed.
+pub fn console_log_off(
+    found: bool,
+    modified: Option<SystemTime>,
+    game_since: Option<SystemTime>,
+    now: SystemTime,
+    launch_condebug: Option<bool>,
+) -> Option<LogOff> {
+    if !found {
+        return Some(LogOff::Missing);
+    }
+    if launch_condebug == Some(false) {
+        return Some(LogOff::NoCondebug);
+    }
+    let (Some(modified), Some(since)) = (modified, game_since) else {
+        return None;
+    };
+    let settled = now.duration_since(since).map(|d| d.as_secs() >= LOG_GRACE_SECONDS).unwrap_or(false);
+    let before = modified.checked_add(std::time::Duration::from_secs(5)).is_some_and(|m| m < since);
+    (settled && before).then_some(LogOff::Stale)
+}
+
 /// Follows console.log by offset: the first poll reads up to [`REPLAY_BYTES`] from the end
 /// (so opening Sigil in the middle of a match still finds its lobby), later polls only what was
 /// appended. A log that shrank or was created again (the game restarted) starts over.
@@ -600,6 +663,8 @@ pub struct LiveTail {
     pub found: bool,
     /// When the log last changed.
     pub modified: Option<SystemTime>,
+    /// What has been read since Sigil started following the log, for the diagnostics line.
+    pub counts: LineCounts,
     path: Option<PathBuf>,
     created: Option<SystemTime>,
     offset: u64,
@@ -664,6 +729,7 @@ impl LiveTail {
             return changed;
         }
         let text = String::from_utf8_lossy(&bytes[from..end]);
+        self.counts.add(&text);
         changed | fold_text(&mut self.state, &text, now)
     }
 }
@@ -673,6 +739,25 @@ mod tests {
     use super::*;
 
     const CREATED: &str = "11/20 20:03:37 Lobby 174072581626958477 for Match 96996563 created";
+
+    #[test]
+    fn a_stale_log_counts_as_off_once_the_game_had_time_to_write() {
+        use std::time::{Duration, UNIX_EPOCH};
+        let at = |s: u64| UNIX_EPOCH + Duration::from_secs(s);
+        assert_eq!(console_log_off(false, None, None, at(0), None), Some(LogOff::Missing));
+        assert_eq!(console_log_off(true, Some(at(900)), Some(at(1000)), at(1010), None), None, "grace");
+        assert_eq!(console_log_off(true, Some(at(900)), Some(at(1000)), at(1100), None), Some(LogOff::Stale));
+        assert_eq!(console_log_off(true, Some(at(1050)), Some(at(1000)), at(1100), None), None, "written this session");
+        assert_eq!(console_log_off(true, Some(at(1050)), Some(at(1000)), at(1100), Some(false)), Some(LogOff::NoCondebug));
+        assert_eq!(console_log_off(true, Some(at(900)), None, at(1100), Some(true)), None, "no game start known");
+    }
+
+    #[test]
+    fn line_counts_tell_lobby_and_bridge_lines_apart() {
+        let mut counts = LineCounts::default();
+        counts.add(&format!("{CREATED}\nsomething else\n10/28 12:10:02 [PanoramaScript] [SIGIL-LIVE] {{}}\n10/28 12:10:02 [SIGIL-LIVE-ROSTER] {{}}"));
+        assert_eq!(counts, LineCounts { lines: 4, lobby: 1, bridge: 2 });
+    }
     const DESTROYED: &str = "11/20 20:35:54 Lobby 174072581626958477 for Match 96996563 destroyed";
     const QUEUED: &str = "11/20 20:01:21 [GCClient] Send msg 9010 (k_EMsgClientToGCStartMatchmaking), 263 bytes";
     const STARTED: &str = "11/20 20:05:00 OnGameStateChanged: GameInProgress (7)";

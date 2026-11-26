@@ -96,11 +96,12 @@ camp and rune timers. The top bar does not show them, so the script does not rea
 
 ## The panel
 
-At the top of Stats while Deadlock runs, and for two hours after the last match when it does not:
+The Live tab of Stats (the tab carries a green mark while a match is in progress), while Deadlock
+runs, and for two hours after the last match when it does not:
 
 | State | Shows |
 | --- | --- |
-| Console log off | "Add -condebug to the launch options" |
+| Console log off | "Add -condebug to the launch options", with the reason: no `console.log`, launch options without `-condebug`, or a log left from an earlier session (`live_match::console_log_off`) |
 | Hideout or menus | "No match running" |
 | Searching | the queue time |
 | Match found | loading in, the match id |
@@ -112,8 +113,21 @@ At the top of Stats while Deadlock runs, and for two hours after the last match 
 Earlier match ids of the session are listed under the panel. Bridge warnings (off, outdated,
 incompatible, shadowed) sit in the panel with their one action.
 
-Scenes: `stats-live-idle`, `-console`, `-bridge`, `-waiting`, `-ended`, `-confirm`, `-condebug`, and
-`settings-live`.
+A player the bridge roster names is a link to their Stats page.
+
+**Console log off, decided properly (2026-11-26).** The log merely existing used to count as on,
+so a `console.log` left from an earlier session with `-condebug` hid the hint forever. Now the log
+is off when it is missing, when the Steam launch options were read and lack `-condebug`, or when
+its last write is older than the moment Sigil first saw the running game and that game has had 45
+seconds to write.
+
+**Diagnostics.** Under the panel, collapsed by default, one line says where the chain stops: game
+running, `console.log` found and its state, `-condebug` in the launch options (or "not read"),
+the last write, lines read, lobby lines and bridge lines since Sigil started following the log,
+and the bridge's state. It is the screenshot to send after a Windows test.
+
+Scenes: `stats-live-idle`, `-console`, `-bridge`, `-waiting`, `-ended`, `-confirm`, `-condebug`,
+`-stale` (all on the Live tab with the diagnostics open), and `settings-live`.
 
 ## Network and budget
 
@@ -132,5 +146,9 @@ renderer or watch its traffic.
 2. Launch with `-condebug`, play a bot match: `console.log` gets `[SIGIL-LIVE]` lines, the panel
    fills both teams, the clock follows the top bar, the top bar itself looks unchanged.
 3. Check the roster line names accounts (the avatar property is a guess from DMM's script).
-4. After a game update: Sigil asks (or, with the switch on, rebuilds by itself once the game is
+4. Send a screenshot of the Live tab with Diagnostics open, and `console.log`. Zero lobby lines
+   means the console lane does not see the game; lobby lines but zero bridge lines means the
+   bridge script does not run (the container swap in `live_bridge::pick_container` is the likeliest
+   cause).
+5. After a game update: Sigil asks (or, with the switch on, rebuilds by itself once the game is
    closed), and the rebuilt bridge reports again.

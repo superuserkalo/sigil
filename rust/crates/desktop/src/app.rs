@@ -3095,6 +3095,7 @@ pub fn scenes() -> &'static [(&'static str, fn(&mut State))] {
         ("stats-live-ended", screens::stats::live::scene_ended),
         ("stats-live-confirm", screens::stats::live::scene_confirm),
         ("stats-live-condebug", screens::stats::live::scene_condebug),
+        ("stats-live-stale", screens::stats::live::scene_stale),
         ("settings-live", screens::stats::live::scene_settings),
         ("locker", scene_locker),
         ("locker-hero", screens::locker::scene_hero),

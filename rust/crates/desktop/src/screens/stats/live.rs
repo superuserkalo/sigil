@@ -20,7 +20,7 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use deadlock_core::live_bridge::{self, BridgeCheck, BridgeState};
-use deadlock_core::live_match::{Board, FinishedMatch, LivePlayer, LiveState, LiveTail, MatchPhase, Team};
+use deadlock_core::live_match::{Board, FinishedMatch, LivePlayer, LiveState, LiveTail, LogOff, MatchPhase, Team};
 use rune::{Color, El, Key, KeyEvent, Shape, SurfaceFit, canvas, col, el, row, spacer, text};
 
 use crate::app::State;
@@ -79,6 +79,11 @@ pub struct Live {
     auto_rebuild: bool,
     /// The last rebuild try after an update, so a refused one waits a minute before the next.
     tried_at: Option<Instant>,
+    /// When the running game was first seen this session: a console.log older than this was
+    /// not written by it.
+    pub game_since: Option<std::time::SystemTime>,
+    /// The diagnostics line is open.
+    pub diagnostics: bool,
 }
 
 /// A game update the live bridge has to follow.
@@ -101,6 +106,86 @@ pub(super) fn running(s: &State) -> bool {
     s.stats.live.scene_running.unwrap_or_else(crate::screens::settings::watch::game_is_running)
 }
 
+/// Whether the game can be followed: `None` when the log is being written, else why not.
+/// A console.log merely existing is not enough (an old one stays behind after -condebug is
+/// removed), so the launch options and the log's age against the game's start count too.
+pub(super) fn log_off(s: &State) -> Option<LogOff> {
+    let tail = s.stats.live.tail.as_ref()?;
+    let options = s.settings.launch_options.text.trim();
+    let condebug = (!options.is_empty()).then(|| deadlock_core::game_session::has_condebug(options));
+    deadlock_core::live_match::console_log_off(tail.found, tail.modified, s.stats.live.game_since, std::time::SystemTime::now(), condebug)
+}
+
+/// One line that says where the chain from game to board stops. Collapsed by default.
+pub(super) fn diagnostics(s: &State, u: &Ui) -> El {
+    let live = &s.stats.live;
+    let open = live.diagnostics;
+    let mut c = col().key("stats-live-diagnostics").w_full().gap(6.0).child(
+        row()
+            .key("stats-live-diagnostics-toggle")
+            .h(28.0)
+            .gap(6.0)
+            .center_y()
+            .focusable(true)
+            .role("button")
+            .expanded(open)
+            .label(tr("Diagnostics"))
+            .cursor(rune::Cursor::Pointer)
+            .on_press(|st: &mut State| st.stats.live.diagnostics = !st.stats.live.diagnostics)
+            .child(text(tr("Diagnostics")).font(SMALL).color(u.muted))
+            .child(rune::icon(if open { &crate::icons::CHEVRON_UP } else { &crate::icons::CHEVRON_DOWN }, 12.0).color(u.muted).a11y_hidden()),
+    );
+    if !open {
+        return c;
+    }
+    let yes_no = |v: bool| if v { tr("yes") } else { tr("no") };
+    let tail = live.tail.as_ref();
+    let options = s.settings.launch_options.text.trim();
+    let condebug = if options.is_empty() { tr("not read").to_string() } else { yes_no(deadlock_core::game_session::has_condebug(options)).to_string() };
+    let last = tail
+        .and_then(|t| t.modified)
+        .and_then(|m| m.elapsed().ok())
+        .map(|age| match age.as_secs() {
+            s if s < 120 => fill(tr("{} s ago"), &[&s.to_string()]),
+            s if s < 7200 => fill(tr("{} min ago"), &[&(s / 60).to_string()]),
+            s => fill(tr("{} h ago"), &[&(s / 3600).to_string()]),
+        })
+        .unwrap_or_else(|| "-".to_string());
+    let counts = tail.map(|t| t.counts).unwrap_or_default();
+    let bridge = match live.check.as_ref().map(|c| c.state) {
+        None => tr("not checked"),
+        Some(BridgeState::NotInstalled) => tr("not installed"),
+        Some(BridgeState::Off) => tr("off"),
+        Some(BridgeState::Current) => tr("current"),
+        Some(BridgeState::Outdated) => tr("outdated"),
+        Some(BridgeState::Incompatible) => tr("incompatible"),
+        Some(BridgeState::Unknown) => tr("unknown"),
+    };
+    let state = match log_off(s) {
+        None if tail.is_some() => tr("reading"),
+        None => tr("not read yet"),
+        Some(LogOff::Missing) => tr("missing"),
+        Some(LogOff::NoCondebug) => tr("no -condebug"),
+        Some(LogOff::Stale) => tr("stale"),
+    };
+    let parts = [
+        (tr("Game running"), yes_no(running(s)).to_string()),
+        (tr("console.log"), format!("{} ({state})", yes_no(tail.is_some_and(|t| t.found)))),
+        (tr("-condebug in launch options"), condebug),
+        (tr("Last write"), last),
+        (tr("Lines read"), counts.lines.to_string()),
+        (tr("Lobby lines"), counts.lobby.to_string()),
+        (tr("Bridge lines"), counts.bridge.to_string()),
+        (tr("Bridge"), bridge.to_string()),
+    ];
+    let mut line = row().w_full().gap(16.0).flex_wrap();
+    for (label, value) in parts {
+        line = line.child(row().gap(6.0).center_y().child(text(label).font(SMALL).color(u.muted)).child(text(value).font(TNUM_SMALL).color(u.prose)));
+    }
+    c = c.child(line);
+    c
+}
+
 /// A match is in progress in the log (for the tab's green mark).
 pub(super) fn in_match(s: &State) -> bool {
     s.stats
@@ -113,14 +198,15 @@ pub(super) fn in_match(s: &State) -> bool {
 
 /// The Live tab: the panel, or what to do to see one.
 pub(super) fn tab(s: &State, u: &Ui) -> El {
-    panel(s, u).unwrap_or_else(|| {
+    let body = panel(s, u).unwrap_or_else(|| {
         // Starts at the same y as every other tab's first section.
         col()
             .w_full()
             .gap(4.0)
             .child(super::shared::section_head(u, tr("No match running"), ""))
             .child(text(tr("Start Deadlock and this tab follows the match you are in.")).font(BODY).color(u.prose))
-    })
+    });
+    col().w_full().gap(16.0).child(body).child(diagnostics(s, u))
 }
 
 /// The game watcher runs its process check while this is true: Stats is open with the view on.
@@ -159,6 +245,11 @@ pub fn poll(st: &mut State) -> bool {
     }
     if st.demo || rune::is_headless() || !wants_watch(st) {
         return changed;
+    }
+    match (running(st), st.stats.live.game_since) {
+        (true, None) => st.stats.live.game_since = Some(std::time::SystemTime::now()),
+        (false, Some(_)) => st.stats.live.game_since = None,
+        _ => {}
     }
     let Some(root) = st.game_root.clone() else { return changed };
     let live = &st.stats.live;
@@ -591,9 +682,14 @@ pub fn panel(s: &State, u: &Ui) -> Option<El> {
         return None;
     }
     let mut body = col().w_full().gap(14.0);
-    if game && tail.is_some_and(|t| !t.found) {
+    if let Some(off) = log_off(s).filter(|_| game) {
+        let why = match off {
+            LogOff::Missing => tr("Live match reads the game's console.log, which Deadlock writes only with -condebug."),
+            LogOff::NoCondebug => tr("Deadlock's launch options in Steam lack -condebug, so the game does not write console.log."),
+            LogOff::Stale => tr("console.log is left from an earlier session: the game has not written it since it started. Deadlock writes it only with -condebug."),
+        };
         body = body
-            .child(headline(u, tr("Console log is off"), tr("Live match reads the game's console.log, which Deadlock writes only with -condebug.")))
+            .child(headline(u, tr("Console log is off"), why))
             .child(
                 row().gap(8.0).child(
                     u.action(tr("Add -condebug to the launch options"), ActionKind::Secondary)
@@ -921,6 +1017,17 @@ fn team_table(s: &State, u: &Ui, title: &str, players: &[LivePlayer], key: &str)
         if player.dead {
             name = name.child(text(tr("Respawning")).font(SMALL).color(u.rose));
         }
+        // A player the roster named is a link to their page.
+        if let Some(id) = player.account_id.filter(|id| *id > 0) {
+            name = name
+                .radius(crate::ui::r(2.0))
+                .hover(u.hover)
+                .focusable(true)
+                .role("link")
+                .label(fill(tr("Open the stats for {}"), &[&player.name]))
+                .cursor(rune::Cursor::Pointer)
+                .on_press_tx(move |st: &mut State, tx: &mut rune::Tx| super::nav::open_player(st, tx, u64::from(id)));
+        }
         let mut line = row()
             .key(format!("stats-live-{key}-{index}"))
             .w_full()
@@ -1088,8 +1195,20 @@ fn stamped(ago: i64, line: &str) -> String {
 
 fn fold_scene(s: &mut State, lines: &[String], bridge: Option<BridgeState>) {
     let mut state = LiveState::default();
-    deadlock_core::live_match::fold_text_now(&mut state, &lines.join("\n"));
-    s.stats.live.tail = Some(LiveTail::with_state(state));
+    let text = lines.join("\n");
+    deadlock_core::live_match::fold_text_now(&mut state, &text);
+    let mut tail = LiveTail::with_state(state);
+    tail.counts.add(&text);
+    tail.modified = Some(std::time::SystemTime::now() - Duration::from_secs(2));
+    s.stats.live.tail = Some(tail);
+    // The scenes show the Live tab itself, with the diagnostics open.
+    s.stats.tab = super::Tab::Live;
+    s.stats.live.diagnostics = true;
+    if let Some((place, _)) = s.stats.nav.stack.last_mut()
+        && let super::nav::Place::Player { tab, .. } = place
+    {
+        *tab = super::Tab::Live;
+    }
     s.stats.live.scene_running = Some(true);
     s.stats.live.check = bridge.map(|state| BridgeCheck {
         state,
@@ -1220,11 +1339,22 @@ pub fn scene_confirm(s: &mut State) {
     s.stats.live.confirm = true;
 }
 
-/// The game runs without -condebug.
+/// The game runs without -condebug: no console.log at all.
 pub fn scene_condebug(s: &mut State) {
     super::load_fixture(s);
+    fold_scene(s, &[], Some(BridgeState::NotInstalled));
     s.stats.live.tail = Some(LiveTail::default());
-    s.stats.live.scene_running = Some(true);
+}
+
+/// The game runs, and the console.log on disk is from an earlier session.
+pub fn scene_stale(s: &mut State) {
+    super::load_fixture(s);
+    fold_scene(s, &[stamped(4000, "[Client] Map: \"dl_hideout\"")], Some(BridgeState::NotInstalled));
+    let now = std::time::SystemTime::now();
+    if let Some(tail) = s.stats.live.tail.as_mut() {
+        tail.modified = Some(now - Duration::from_secs(3 * 3600));
+    }
+    s.stats.live.game_since = Some(now - Duration::from_secs(120));
 }
 
 /// Settings > Game with the Live match rows, the bridge installed and current.
@@ -1238,4 +1368,30 @@ pub fn scene_settings(s: &mut State) {
         note: None,
     });
     options::edit(s, |o| o.live_bridge = true);
+}
+
+#[cfg(test)]
+mod scene_tests {
+    use super::*;
+
+    /// The live scenes show the Live tab itself (they once rendered Overview with a green dot).
+    #[test]
+    fn live_scenes_open_the_live_tab() {
+        for scene in [scene_idle, scene_console, scene_bridge, scene_waiting, scene_ended, scene_condebug, scene_stale] {
+            let mut s = State::default();
+            scene(&mut s);
+            assert_eq!(s.stats.tab, super::super::Tab::Live);
+            assert_eq!(s.stats.nav.top().map(|p| matches!(p, super::super::nav::Place::Player { tab: super::super::Tab::Live, .. })), Some(true));
+        }
+    }
+
+    #[test]
+    fn a_stale_log_shows_the_condebug_hint() {
+        let mut s = State::default();
+        scene_stale(&mut s);
+        assert_eq!(log_off(&s), Some(LogOff::Stale));
+        let mut s = State::default();
+        scene_bridge(&mut s);
+        assert_eq!(log_off(&s), None);
+    }
 }
