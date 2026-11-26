@@ -39,23 +39,81 @@ fn main() {
     let out = PathBuf::from(env::var_os("OUT_DIR").expect("out dir"));
     fs::write(out.join("embedded_art.rs"), table).expect("write art table");
 
-    // Windows: the app icon as resource 1, linked into Sigil.exe (`brand::install_app_icon`).
+    // Windows: the app icon as resource 1 (`brand::install_app_icon`) and the application
+    // manifest (`WINDOWS_MANIFEST`), linked into Sigil.exe.
     if env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
         let ico = manifest.join("assets/brand/sigil.ico");
         println!("cargo:rerun-if-changed={}", ico.display());
         let res = out.join("sigil-icon.res");
         let bytes = fs::read(&ico).expect("read sigil.ico");
-        fs::write(&res, icon_res(&bytes)).expect("write sigil-icon.res");
+        let version = env::var("CARGO_PKG_VERSION").expect("package version");
+        fs::write(&res, icon_res(&bytes, &windows_manifest(&version))).expect("write sigil-icon.res");
         println!("cargo:rustc-link-arg-bins={}", res.display());
     }
 }
 
-/// A compiled resource file (`.res`) holding an `.ico` as icon group 1: each image an `RT_ICON`
-/// (ids 1..n) and the directory an `RT_GROUP_ICON`. Linkers (link.exe, lld-link) take a `.res`
-/// as input, so no resource compiler is needed.
-fn icon_res(ico: &[u8]) -> Vec<u8> {
+/// The application manifest. Without one Windows treats Sigil.exe as a legacy program (the
+/// compatibility shims load for it) and gives it the old NT heap. It declares:
+/// - the Segment Heap, which commits less for an allocation-heavy process;
+/// - per-monitor (v2) DPI awareness, falling back to per-monitor: what winit already asks for
+///   at run time (`SetProcessDpiAwarenessContext`), so the two agree and winit's call becomes a
+///   no-op;
+/// - UTF-8 as the ANSI code page, so C libraries that take narrow paths read Rust's UTF-8;
+/// - long path awareness (paths past 260 characters, where the system allows them);
+/// - the Windows versions it is tested on (10 and 11) and those the toolchain supports;
+/// - Common Controls 6 (themed native dialogs) and `asInvoker` (no installer detection).
+fn windows_manifest(version: &str) -> String {
+    let mut parts = version.split(['.', '-', '+']).map(|p| p.parse::<u16>().unwrap_or(0));
+    let mut next = || parts.next().unwrap_or(0);
+    let four = format!("{}.{}.{}.0", next(), next(), next());
+    format!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0" xmlns:asmv3="urn:schemas-microsoft-com:asm.v3">
+  <assemblyIdentity type="win32" name="Sigil" version="{four}" processorArchitecture="*"/>
+  <dependency>
+    <dependentAssembly>
+      <assemblyIdentity type="win32" name="Microsoft.Windows.Common-Controls" version="6.0.0.0" processorArchitecture="*" publicKeyToken="6595b64144ccf1df" language="*"/>
+    </dependentAssembly>
+  </dependency>
+  <compatibility xmlns="urn:schemas-microsoft-com:compatibility.v1">
+    <application>
+      <supportedOS Id="{{8e0f7a12-bfb3-4fe8-b9a5-48fd50a15a9a}}"/>
+      <supportedOS Id="{{1f676c76-80e1-4239-95bb-83d0f6d0da78}}"/>
+      <supportedOS Id="{{4a2f28e3-53b9-4441-ba9c-d69d4a4a6e38}}"/>
+      <supportedOS Id="{{35138b9a-5d96-4fbd-8e2d-a2440225f93a}}"/>
+    </application>
+  </compatibility>
+  <asmv3:application>
+    <asmv3:windowsSettings>
+      <dpiAware xmlns="http://schemas.microsoft.com/SMI/2005/WindowsSettings">true/pm</dpiAware>
+      <dpiAwareness xmlns="http://schemas.microsoft.com/SMI/2016/WindowsSettings">PerMonitorV2, PerMonitor</dpiAwareness>
+      <longPathAware xmlns="http://schemas.microsoft.com/SMI/2016/WindowsSettings">true</longPathAware>
+      <activeCodePage xmlns="http://schemas.microsoft.com/SMI/2019/WindowsSettings">UTF-8</activeCodePage>
+      <heapType xmlns="http://schemas.microsoft.com/SMI/2020/WindowsSettings">SegmentHeap</heapType>
+    </asmv3:windowsSettings>
+  </asmv3:application>
+  <trustInfo xmlns="urn:schemas-microsoft-com:asm.v3">
+    <security>
+      <requestedPrivileges>
+        <requestedExecutionLevel level="asInvoker" uiAccess="false"/>
+      </requestedPrivileges>
+    </security>
+  </trustInfo>
+</assembly>
+"#
+    )
+}
+
+/// A compiled resource file (`.res`) holding an `.ico` as icon group 1 (each image an `RT_ICON`,
+/// ids 1..n, and the directory an `RT_GROUP_ICON`) and `manifest` as the process's application
+/// manifest (`RT_MANIFEST` 1). Linkers (link.exe, lld-link) take a `.res` as input, so no
+/// resource compiler is needed.
+fn icon_res(ico: &[u8], manifest: &str) -> Vec<u8> {
     const RT_ICON: u16 = 3;
     const RT_GROUP_ICON: u16 = 14;
+    const RT_MANIFEST: u16 = 24;
+    /// `CREATEPROCESS_MANIFEST_RESOURCE_ID`: the manifest the loader reads for an executable.
+    const PROCESS_MANIFEST: u16 = 1;
     let u16_at = |at: usize| u16::from_le_bytes([ico[at], ico[at + 1]]);
     let u32_at = |at: usize| u32::from_le_bytes(ico[at..at + 4].try_into().unwrap());
     assert!(u16_at(0) == 0 && u16_at(2) == 1, "sigil.ico is not an icon file");
@@ -100,6 +158,8 @@ fn icon_res(ico: &[u8]) -> Vec<u8> {
         group.extend_from_slice(&id.to_le_bytes());
     }
     entry(&mut out, RT_GROUP_ICON, 1, 0x1030, &group);
+    // MOVEABLE | PURE, as rc.exe writes a manifest.
+    entry(&mut out, RT_MANIFEST, PROCESS_MANIFEST, 0x0030, manifest.as_bytes());
     out
 }
 
