@@ -6,6 +6,32 @@ use std::collections::HashMap;
 use std::sync::OnceLock;
 
 pub const DE: &[(&str, &str)] = &[
+    ("All matches on this hero", "Alle Matches mit diesem Helden"),
+    ("Any", "Alle"),
+    ("Least matches", "Mindestzahl Matches"),
+    ("Loading", "Lädt"),
+    ("Loading matchups", "Lade Matchups"),
+    ("No enemy hero has two matches against this hero yet.", "Noch kein gegnerischer Held hat zwei Matches gegen diesen Helden."),
+    ("No hero record for this player yet.", "Noch keine Heldenwerte für diesen Spieler."),
+    ("No item has three matches on this hero yet.", "Noch kein Item hat drei Matches mit diesem Helden."),
+    ("No match on this hero in the loaded history.", "Kein Match mit diesem Helden im geladenen Verlauf."),
+    ("Open {}", "{} öffnen"),
+    ("as {}", "als {}"),
+    ("few", "wenige"),
+    ("{} accuracy", "{} Treffsicherheit"),
+    ("{} deaths a match", "{} Tode pro Match"),
+    ("{} in the loaded history", "{} im geladenen Verlauf"),
+    ("{} matches or more", "ab {} Matches"),
+    ("{} under the floor", "{} unter der Grenze"),
+    ("{} win on it at your rank", "{} Siege damit auf deinem Rang"),
+    ("Matchups", "Matchups"),
+    ("against each enemy hero", "gegen jeden gegnerischen Helden"),
+    ("bought most on this hero", "am häufigsten mit diesem Helden gekauft"),
+    ("Enemy hero", "Gegnerischer Held"),
+    ("Soul gap", "Seelenabstand"),
+    ("Against the rank", "Gegen den Rang"),
+    ("Accuracy", "Treffsicherheit"),
+    ("Last played", "Zuletzt gespielt"),
     ("{} min ago", "vor {} Min."),
     ("{} h ago", "vor {} Std."),
     ("Last together", "Zuletzt zusammen"),
@@ -497,7 +523,8 @@ pub fn routed(source: &str) -> Vec<String> {
 mod tests {
     use super::*;
 
-    const SOURCES: [&str; 17] = [
+    const SOURCES: [&str; 18] = [
+        include_str!("hero_page.rs"),
         include_str!("nav.rs"),
         include_str!("lookup.rs"),
         include_str!("shared.rs"),

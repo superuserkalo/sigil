@@ -35,6 +35,8 @@ pub enum Place {
     Player { account_id: u64, tab: Tab },
     /// `as_account` is the player whose page opened it: "your team" is their team.
     Match { match_id: u64, as_account: u64 },
+    /// One player on one hero.
+    Hero { account_id: u64, hero_id: u32 },
 }
 
 impl Place {
@@ -43,6 +45,7 @@ impl Place {
         match self {
             Place::Player { account_id, .. } => account_id,
             Place::Match { as_account, .. } => as_account,
+            Place::Hero { account_id, .. } => account_id,
         }
     }
 }
@@ -99,6 +102,14 @@ impl Nav {
         self.pending.is_some()
     }
 
+    /// The hero page is open: (player, hero).
+    pub fn hero_open(&self) -> Option<(u64, u32)> {
+        match self.top() {
+            Some(Place::Hero { account_id, hero_id }) => Some((account_id, hero_id)),
+            _ => None,
+        }
+    }
+
     /// The match page is open.
     pub fn match_open(&self) -> Option<(u64, u64)> {
         match self.top() {
@@ -152,6 +163,13 @@ pub fn open_match(st: &mut State, tx: &mut Tx, match_id: u64) {
     } else {
         push(st, Place::Match { match_id, as_account });
     }
+    tx.scroll_to_y(SCROLL, 0.0);
+}
+
+/// Open the page player's record on one hero.
+pub fn open_hero(st: &mut State, tx: &mut Tx, hero_id: u32) {
+    let Some(account_id) = st.stats.snapshot.as_ref().map(|snap| snap.account_id) else { return };
+    push(st, Place::Hero { account_id, hero_id });
     tx.scroll_to_y(SCROLL, 0.0);
 }
 
@@ -235,7 +253,8 @@ pub fn on_key(st: &mut State, ev: &KeyEvent, tx: &mut Tx) -> bool {
         return false;
     }
     let alt_left = ev.key == Key::Left && ev.mods.alt && !ev.mods.cmd && !ev.mods.ctrl;
-    let escape = ev.key == Key::Escape && st.stats.nav.match_open().is_some() && st.stats.menu.is_none();
+    let page = st.stats.nav.match_open().is_some() || st.stats.nav.hero_open().is_some();
+    let escape = ev.key == Key::Escape && page && st.stats.menu.is_none();
     if alt_left || escape { back(st, tx) } else { false }
 }
 
@@ -250,6 +269,7 @@ fn arrive(st: &mut State, place: Place) {
             tab_opened(st);
         }
         Place::Match { match_id, .. } => super::board::start(st, match_id, false),
+        Place::Hero { account_id, hero_id } => super::hero_page::start(st, account_id, hero_id),
     }
 }
 
@@ -489,6 +509,20 @@ mod tests {
         assert_eq!(s.stats.nav.stack.len(), 1);
         ev.key = Key::Escape;
         assert!(!on_key(&mut s, &ev, &mut tx), "and does nothing on a player page");
+    }
+
+    #[test]
+    fn a_hero_page_is_a_place_back_and_escape_leave() {
+        let mut s = state();
+        let mut tx = Tx::default();
+        set_tab(&mut s, Tab::Heroes);
+        open_hero(&mut s, &mut tx, 7);
+        let home = s.stats.snapshot.as_ref().unwrap().account_id;
+        assert_eq!(s.stats.nav.hero_open(), Some((home, 7)));
+        let ev = KeyEvent { key: Key::Escape, mods: Default::default() };
+        assert!(on_key(&mut s, &ev, &mut tx));
+        assert_eq!(s.stats.nav.hero_open(), None);
+        assert_eq!(s.stats.tab, Tab::Heroes);
     }
 
     #[test]

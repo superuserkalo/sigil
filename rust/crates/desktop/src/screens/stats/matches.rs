@@ -217,21 +217,7 @@ pub(super) fn matches(s: &State, u: &Ui, snap: &StatsSnapshot, d: &Derived) -> E
                 ),
         );
     }
-    table = table.child(head_row(
-        u,
-        &[
-            ("Result", 47.0, false),
-            ("Hero", 0.0, false),
-            ("K / D / A", 88.0, true),
-            ("KDA", 44.0, true),
-            ("Souls", 56.0, true),
-            ("SPM", 48.0, true),
-            ("Rank", 48.0, true),
-            ("Length", 48.0, true),
-            ("Time", 48.0, true),
-            ("", 16.0, false),
-        ],
-    ));
+    table = table.child(columns_head(u));
     let keep: std::collections::HashSet<u64> = rows.iter().map(|item| item.match_id).collect();
     let mut left = s.stats.list.shown;
     for (index, sitting) in d.sessions.iter().enumerate() {
@@ -267,6 +253,25 @@ pub(super) fn matches(s: &State, u: &Ui, snap: &StatsSnapshot, d: &Derived) -> E
         );
     }
     table
+}
+
+/// The column heads of a match list, on the same widths as `match_row`.
+pub(super) fn columns_head(u: &Ui) -> El {
+    head_row(
+        u,
+        &[
+            ("Result", 47.0, false),
+            ("Hero", 0.0, false),
+            ("K / D / A", 88.0, true),
+            ("KDA", 44.0, true),
+            ("Souls", 56.0, true),
+            ("SPM", 48.0, true),
+            ("Rank", 48.0, true),
+            ("Length", 48.0, true),
+            ("Time", 48.0, true),
+            ("", 16.0, false),
+        ],
+    )
 }
 
 fn sitting_head(u: &Ui, snap: &StatsSnapshot, sitting: &Session, index: usize) -> El {
@@ -305,7 +310,7 @@ fn sitting_head(u: &Ui, snap: &StatsSnapshot, sitting: &Session, index: usize) -
     r.child(el().w(48.0 + 48.0 + 16.0 + 3.0 * 16.0 - 12.0))
 }
 
-fn match_row(s: &State, u: &Ui, item: &MatchSummary) -> El {
+pub(super) fn match_row(s: &State, u: &Ui, item: &MatchSummary) -> El {
     let (result, color) = match item.win {
         Some(true) => (tr("Win").to_string(), u.teal),
         Some(false) => (tr("Loss").to_string(), u.rose),

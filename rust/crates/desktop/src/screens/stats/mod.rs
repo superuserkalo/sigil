@@ -29,6 +29,7 @@ use crate::jobs::Job;
 use crate::ui::{ActionKind, BODY, BODY_MED, H1, LABEL, PAGE_TOP, PAGE_X, SMALL, Ui};
 
 mod board;
+mod hero_page;
 pub mod lookup;
 pub mod nav;
 pub mod pictures;
@@ -266,6 +267,11 @@ pub struct View {
     pub list: matches::ListView,
     /// Items shows everyone's item meta instead of yours.
     pub items_everyone: bool,
+    /// The Heroes table's sort and its least matches.
+    pub hero_sort: heroes::HeroSort,
+    pub hero_min: u64,
+    /// The hero page's reads (`hero_page.rs`).
+    pub hero_page: hero_page::HeroPage,
     /// Steam accounts on this PC, read once for the start page.
     pub steam_job: Job<(Vec<SteamUser>, Vec<(String, Vec<u8>)>)>,
     pub steam_asked: bool,
@@ -344,6 +350,9 @@ impl Default for View {
             menu: None,
             list: matches::ListView::default(),
             items_everyone: false,
+            hero_sort: heroes::HeroSort::default(),
+            hero_min: 0,
+            hero_page: hero_page::HeroPage::default(),
             steam_job: Job::default(),
             steam_asked: false,
             social: Fetched::Idle,
@@ -497,6 +506,7 @@ pub fn poll(state: &mut State) -> bool {
         changed = true;
     }
     changed |= board::poll(state);
+    changed |= hero_page::poll(state);
     changed |= nav::poll(state);
     changed |= lookup::poll(state);
     changed |= pictures::poll(state);
@@ -714,6 +724,72 @@ pub fn scene_lookup(s: &mut State) {
     s.stats.remembered.push(Remembered { account_id: 55_000_123, name: "Mika (duo)".to_string(), primary: false });
 }
 
+/// A hero page: the fixture player's most played hero, with matchups and items made from the
+/// fixture's own heroes and the captured board's items.
+pub fn scene_hero(s: &mut State) {
+    use deadlock_core::stats::hero_detail::Matchup;
+    use deadlock_core::stats::items::ItemStat;
+    load_fixture(s);
+    let Some(snap) = s.stats.snapshot.clone() else { return };
+    let mut heroes: Vec<_> = snap.heroes.iter().collect();
+    heroes.sort_by(|a, b| b.matches_played.cmp(&a.matches_played));
+    let Some(hero) = heroes.first().map(|h| h.hero_id) else { return };
+    let matchups: Vec<Matchup> = heroes
+        .iter()
+        .skip(1)
+        .take(10)
+        .enumerate()
+        .map(|(i, h)| Matchup {
+            enemy_hero_id: h.hero_id,
+            matches: 40 - i as u64 * 3,
+            wins: 22 - i as u64 * 2 + (i as u64 % 3),
+            soul_gap: 900.0 - i as f64 * 260.0,
+        })
+        .collect();
+    let mut items = Vec::new();
+    let mut catalog = deadlock_core::stats::board::ItemCatalog::default();
+    if let Ok(board) = deadlock_core::stats::board::scoreboard_from_bundle(EXTRA) {
+        for item in board.teams.iter().flatten().flat_map(|p| p.build.iter()).filter(|it| it.slot != "other") {
+            if catalog.items.contains_key(&item.item_id) || items.len() >= 10 {
+                continue;
+            }
+            let i = items.len();
+            catalog.items.insert(item.item_id, (item.name.clone(), item.slot.clone(), item.tier));
+            let matches = 300 - i as u64 * 17;
+            let rate = (52 + (i * 7) % 15) as u64;
+            items.push(ItemStat {
+                item_id: item.item_id,
+                matches,
+                wins: matches * rate / 100,
+                losses: matches - matches * rate / 100,
+                players: 1,
+                win_rate_percent: rate as f64,
+                global_win_rate_percent: 0.0,
+                win_rate_delta_percent: 0.0,
+                avg_buy_time_s: 240.0 + i as f64 * 150.0,
+                global_avg_buy_time_s: 0.0,
+                buy_time_delta_s: 0.0,
+            });
+        }
+    }
+    let place = nav::Place::Hero { account_id: snap.account_id, hero_id: hero };
+    s.stats.nav.stack.push((place, 0.0));
+    s.stats.hero_page.detail = Fetched::Ready(hero_page::HeroDetail {
+        account_id: snap.account_id,
+        hero_id: hero,
+        matchups: Ok(matchups),
+        items: Ok(more::ItemsLoad::joined(items, &catalog)),
+    });
+}
+
+/// Heroes sorted by souls a minute, five matches or more.
+pub fn scene_heroes(s: &mut State) {
+    load_fixture(s);
+    s.stats.tab = Tab::Heroes;
+    s.stats.hero_sort = heroes::HeroSort::Spm;
+    s.stats.hero_min = 5;
+}
+
 /// Squad: the cards, the lists and the planner, from the fixture. The captured bundle lists
 /// only three shared match ids per mate, so the scene marks three premades and spreads their
 /// shared matches over the loaded history, for the with and without split.
@@ -869,6 +945,8 @@ pub fn view(s: &State, u: &Ui) -> El {
     let mut page = col().key("stats-page").w_full().px(PAGE_X).pt(PAGE_TOP).pb(48.0).child(head);
     if v.nav.match_open().is_some() {
         page = page.child(board::page(s, u).mt(12.0));
+    } else if v.nav.hero_open().is_some() {
+        page = page.child(hero_page::page(s, u).mt(12.0));
     } else {
         if let Some(bar) = shared::context_bar(s, u) {
             page = page.child(bar.mt(8.0));

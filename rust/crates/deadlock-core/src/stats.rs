@@ -29,6 +29,7 @@ pub mod art;
 pub mod board;
 pub mod cache;
 pub mod filters;
+pub mod hero_detail;
 pub mod insight;
 pub mod items;
 pub mod leaderboard;
@@ -123,6 +124,9 @@ pub struct HeroPerformance {
     pub win_rate_high_percent: f64,
     pub last_played: String,
     pub last_played_unix: i64,
+    /// Share of shots that hit, 0 to 1 (`accuracy`). 0 when the API left it out.
+    #[serde(default)]
+    pub accuracy: f64,
 }
 
 /// One row from `/v1/players/{account_id}/match-history`.
@@ -1993,6 +1997,8 @@ struct RawHeroStats {
     denies_per_match: f64,
     #[serde(default)]
     total_boss_damage: u64,
+    #[serde(default)]
+    accuracy: f64,
 }
 
 impl RawHeroStats {
@@ -2023,6 +2029,7 @@ impl RawHeroStats {
             win_rate_high_percent,
             last_played: unix_seconds_to_iso(self.last_played),
             last_played_unix: self.last_played,
+            accuracy: self.accuracy,
         }
     }
 }

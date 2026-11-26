@@ -3085,6 +3085,8 @@ pub fn scenes() -> &'static [(&'static str, fn(&mut State))] {
         ("stats-visit", screens::stats::scene_visit),
         ("stats-lookup", screens::stats::scene_lookup),
         ("stats-squad", screens::stats::scene_squad),
+        ("stats-hero", screens::stats::scene_hero),
+        ("stats-heroes", screens::stats::scene_heroes),
         ("stats-people", screens::stats::scene_people),
         ("stats-partner", screens::stats::scene_partner),
         ("stats-tracked", screens::stats::scene_tracked),

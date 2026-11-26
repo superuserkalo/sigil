@@ -354,8 +354,20 @@ after a press.
 
 ### Heroes, Items, Squad, Leaderboard, Map
 
-- **Heroes.** As before (win rate on a 0 to 100 track with its Wilson range and the tier's tick);
-  a row press shows Matches on that hero.
+- **Heroes.** A sortable table (press a column head): matches, win rate on a 0 to 100 track with
+  its Wilson range and the tier's tick, the gap to the tier (or your own rate), KDA, souls a minute
+  (`networth_per_min`), accuracy and last played, all from `/v1/players/hero-stats`. A "least
+  matches" selector (any, 5, 20) hides thin heroes instead of dimming them. A row opens the hero
+  page.
+- **Hero page** (`screens/stats/hero_page.rs`, a place in the stack). The header numbers from the
+  hero row (matches, win rate and range, gap to the rank, KDA and deaths, souls a minute and
+  accuracy), the matchups against each enemy hero from
+  `/v1/analytics/hero-counter-stats?account_id=` (the player's wins and matches against each enemy
+  hero, 2 matches or more, a rate from 5, and the average soul gap), the items bought most on that
+  hero from `/v1/analytics/item-stats?account_id=&hero_id=`, and the newest matches on it from the
+  loaded history. Both analytics reads follow the page's mode and window filter and are kept 12
+  hours (`deadlock_core::stats::hero_detail`). "All matches on this hero" shows the Matches tab
+  filtered to it.
 - **Items.** One "Mine | Everyone" selector: your item rows against everyone, or the item meta.
 - **Squad** (was People). Loads by itself when the tab opens (three responses, an hour's cache).
   First the squad: the three premades played with most (`same_party=true`, same team and Steam
@@ -383,8 +395,8 @@ badges from `/v1/assets/ranks/{rank}/{subrank}/image?format=webp` on the API hos
 search results and the first Squad rows. Owner approved 2026-11-26. Each picture is scaled (64
 pixels for badges and avatars, 48 for items) and kept in `cache/stats/art` for 30 days.
 `deadlock_core::stats::art::is_allowed_image_url` refuses any other host before a socket opens.
-Until a picture loads, its place holds a fallback of the same size: the subrank in an outlined
-square, the name's initial, the item's initials over its slot colour. Nothing is fetched while
+Until a picture loads, its place holds a fallback of the same size: a filled tile with the tier's
+initial and the subrank ("E5"), the name's initial, the item's initials over its slot colour. Nothing is fetched while
 Player stats is off.
 
 ### Insight rules
@@ -459,8 +471,7 @@ generator is a local script (`.scratch/ui-hill/stats2/make-fixture.py`).
   script does not copy that folder yet, so a packaged build shows letters.
 - The live match view is built (`screens/stats/live.rs`, `deadlock_core::live_match`,
   `deadlock_core::live_bridge`; `docs/design/stats-live.md`) and not yet checked in a real match.
-- Match page Build and Lobby views, a hero detail page, a sortable hero table and bracket
-  percentiles are planned (spec slices 5 to 7).
+- Match page Build and Lobby views and bracket percentiles are planned (spec slices 6 and 7).
 
 ## CLI surface
 

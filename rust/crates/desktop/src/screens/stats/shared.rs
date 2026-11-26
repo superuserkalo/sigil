@@ -58,22 +58,39 @@ pub(super) fn player_avatar(s: &State, u: &Ui, account_id: u64, name: &str, size
     }
 }
 
-/// A rank badge: the badge art when it is loaded, else an outlined square with the subrank,
-/// so the cell keeps its size either way. Nothing for an unranked badge.
+/// A rank badge: the badge art when it is loaded, else a filled tile that still reads as a
+/// rank: the tier's initial and the subrank ("E5" for Eternus 5), sized to the tile, so an
+/// offline page looks finished. Nothing for an unranked badge.
 pub(super) fn rank_badge(s: &State, u: &Ui, badge: u32, size: f32) -> El {
     let Some(key) = super::pictures::rank_key(badge) else {
         return el().size(size, size).a11y_hidden();
     };
-    match s.thumbnails.get(&key) {
-        Some(pixels) => el().size(size, size).pixels_fit(pixels, SurfaceFit::Fit).a11y_hidden(),
-        None => el()
-            .size(size, size)
-            .radius(crate::ui::r(2.0))
-            .border(1.0, u.hair_strong)
-            .center()
-            .a11y_hidden()
-            .child(text((badge % 10).to_string()).font(crate::ui::MICRO).color(u.muted)),
+    if let Some(pixels) = s.thumbnails.get(&key) {
+        return el().size(size, size).pixels_fit(pixels, SurfaceFit::Fit).a11y_hidden();
     }
+    let initial = s
+        .stats
+        .snapshot
+        .as_ref()
+        .and_then(|snap| snap.tier_names.get(&(badge / 10)))
+        .and_then(|name| name.chars().next())
+        .map(|c| c.to_uppercase().collect::<String>())
+        .unwrap_or_default();
+    let font = if size >= 48.0 {
+        TextStyle::new(20.0, 650.0).lh(24.0).features("'tnum' 1")
+    } else if size >= 28.0 {
+        TextStyle::new(13.0, 600.0).lh(16.0).features("'tnum' 1")
+    } else {
+        TextStyle::new(10.0, 600.0).lh(12.0).features("'tnum' 1")
+    };
+    el()
+        .size(size, size)
+        .radius(crate::ui::r(2.0))
+        .fill(Color::WHITE.alpha(0.08))
+        .border(1.0, u.hair_strong)
+        .center()
+        .a11y_hidden()
+        .child(text(format!("{initial}{}", badge % 10)).font(font).color(u.ink))
 }
 
 /// The one clickable player cell every table uses: picture and name. A press opens the
@@ -148,7 +165,7 @@ pub(super) fn person_menu(s: &State, u: &Ui, account_id: u64, anchor: &str) -> E
 /// Above a visited player's page: Back, who this is, their badge, Track and Statlocker. Not
 /// drawn on your own page.
 pub(super) fn context_bar(s: &State, u: &Ui) -> Option<El> {
-    if s.stats.nav.stack.len() < 2 || s.stats.nav.match_open().is_some() {
+    if s.stats.nav.stack.len() < 2 || s.stats.nav.match_open().is_some() || s.stats.nav.hero_open().is_some() {
         return None;
     }
     let snap = s.stats.snapshot.as_ref();
