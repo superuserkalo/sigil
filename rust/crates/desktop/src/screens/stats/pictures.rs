@@ -1,4 +1,4 @@
-//! Pictures on the Stats page: rank badges (and, from slice 2, item icons and avatars).
+//! Pictures on the Stats page: rank badges, item icons and Steam avatars.
 //!
 //! Views never ask for a picture: `poll` reads what the page shows (the subject's rank, the
 //! open match's players, search results) and fetches what is missing on one worker, a batch
@@ -18,8 +18,13 @@ use crate::jobs::Job;
 const BATCH: usize = 24;
 /// How long a kept picture is used before it is fetched again.
 const KEEP_SECONDS: u64 = 30 * 86_400;
-/// Rank badges are kept at this many pixels on the long side.
+/// Rank badges and avatars are kept at this many pixels on the long side.
 pub const BADGE_PX: u32 = 64;
+const AVATAR_PX: u32 = 64;
+/// Item icons draw at 20 to 24 points: 48 pixels covers 2x.
+const ITEM_PX: u32 = 48;
+/// Squad rows whose avatars are fetched: the ones the tab shows first.
+const SQUAD_AVATARS: usize = 24;
 
 #[derive(Default)]
 pub struct Pictures {
@@ -44,6 +49,10 @@ pub fn avatar_key(account_id: u64) -> String {
     format!("stats-art:avatar:{account_id}")
 }
 
+fn profile_avatar(profile: &deadlock_core::stats::PlayerProfile) -> &str {
+    if profile.avatar_medium.is_empty() { &profile.avatar } else { &profile.avatar_medium }
+}
+
 fn cache_dir() -> PathBuf {
     crate::data::stats_cache_dir().join("art")
 }
@@ -60,10 +69,23 @@ fn wanted(st: &State) -> Vec<(String, String, u32)> {
     if let Some(snap) = &v.snapshot {
         badge(snap.rank.badge);
     }
+    let mut avatars: Vec<(u64, &str)> = Vec::new();
+    let mut items: Vec<(u64, &str)> = Vec::new();
+    if let Some(snap) = &v.snapshot {
+        avatars.push((snap.account_id, profile_avatar(&snap.profile)));
+    }
     if let super::Fetched::Ready(board) = &v.board {
         for player in board.teams.iter().flatten() {
             if let Some(b) = player.badge {
                 badge(b);
+            }
+            if let Some(url) = &player.avatar {
+                avatars.push((player.account_id, url));
+            }
+            for item in &player.build {
+                if let Some(url) = &item.icon {
+                    items.push((item.item_id, url));
+                }
             }
         }
         for b in board.average_badge.iter().flatten() {
@@ -74,6 +96,27 @@ fn wanted(st: &State) -> Vec<(String, String, u32)> {
         if let Some(rank) = found.rank {
             badge(rank.badge);
         }
+        if let Some(url) = &found.avatar {
+            avatars.push((found.account_id, url));
+        }
+    }
+    if let super::Fetched::Ready(social) = &v.social {
+        for record in social.mates.iter().take(SQUAD_AVATARS).chain(social.enemies.iter().take(SQUAD_AVATARS / 2)) {
+            if let Some(url) = &record.avatar {
+                avatars.push((record.account_id, url));
+            }
+        }
+    }
+    if let super::Fetched::Ready(load) = &v.more.items {
+        items.extend(load.icons.iter().map(|(id, url)| (*id, url.as_str())));
+    }
+    for (account_id, url) in avatars {
+        if !url.is_empty() {
+            out.push((avatar_key(account_id), url.to_string(), AVATAR_PX));
+        }
+    }
+    for (item_id, url) in items {
+        out.push((item_key(item_id), url.to_string(), ITEM_PX));
     }
     out
 }

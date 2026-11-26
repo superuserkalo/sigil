@@ -758,7 +758,7 @@ pub fn scene_partner(s: &mut State) {
 
 /// Items rows for a scene (`wave3_scenes`).
 pub fn more_items(rows: Vec<deadlock_core::stats::items::ItemStat>, names: std::collections::HashMap<u64, String>) -> more::ItemsLoad {
-    more::ItemsLoad { rows, names }
+    more::ItemsLoad { rows, names, icons: Default::default(), slots: Default::default() }
 }
 
 /// The account panel open, with tracked players and Steam accounts to add.

@@ -111,6 +111,10 @@ These are product constraints, not preferences.
   Worker and become public; browsing and applying send nothing about the player. No accounts, no
   install id, no IP stored; a daily network hash for limits and dedupe is deleted after 2 days, and
   a per-crosshair report hash after 90 days (`docs/decisions/0019-community-crosshairs.md`).
+  Stats pictures (2026-11-26, owner approved): only while Player stats is on and only for what the
+  Stats page shows, rank badges from `api.deadlock-api.com`, item icons from
+  `assets-bucket.deadlock-api.com` and Steam avatars from `avatars.steamstatic.com`; each request
+  carries the image URL and nothing else about the player (`deadlock_core::stats::art`).
 - Preserve MIT attribution for Rune, TinyAgent, Grimoire and every bundled community tool. See
   `THIRD_PARTY_NOTICES.md`. CSDK 12 has no license and is never redistributed.
 - No em dashes in code, UI strings, comments or docs. Use a colon, period or parentheses.

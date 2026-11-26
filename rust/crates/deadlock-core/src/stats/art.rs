@@ -1,14 +1,24 @@
-//! Pictures on the Stats page: rank badges.
+//! Pictures on the Stats page: rank badges, item icons and Steam avatars.
 //!
-//! Only `api.deadlock-api.com` serves them (`/v1/assets/ranks/{rank}/{subrank}/image`), read
-//! only while Player stats is on. A request carries the image path and nothing else about the
-//! player. Any other host is refused here before a socket opens, so a URL from an API response
-//! can never send Sigil elsewhere.
+//! Three hosts serve them, and only these three (owner approved 2026-11-26, read only while
+//! Player stats is on):
+//!
+//! - `api.deadlock-api.com`: rank badge art (`/v1/assets/ranks/{rank}/{subrank}/image`).
+//! - `assets-bucket.deadlock-api.com`: item icons, the URLs the item asset response names.
+//! - `avatars.steamstatic.com`: Steam avatars, the URLs `/v1/players/steam` names.
+//!
+//! A request carries the image path and nothing else about the player: no cookie, no key, no
+//! account id beyond what a public avatar URL already is. Any other host is refused here
+//! before a socket opens, so a URL from an API response can never send Sigil elsewhere.
 
 use crate::error::{Error, Result};
 
 /// Every host a Stats picture may come from.
-pub const IMAGE_HOSTS: [&str; 1] = ["api.deadlock-api.com"];
+pub const IMAGE_HOSTS: [&str; 3] = [
+    "api.deadlock-api.com",
+    "assets-bucket.deadlock-api.com",
+    "avatars.steamstatic.com",
+];
 
 /// The most bytes one picture may have. A badge is about 200 KB, an icon or avatar far less.
 pub const IMAGE_BYTES: u64 = 1024 * 1024;
@@ -48,21 +58,41 @@ pub fn cache_name(url: &str) -> String {
     format!("{hash:016x}")
 }
 
-/// Fetch one picture's bytes. Refuses a URL off the allowlist and a body over
-/// [`IMAGE_BYTES`]; goes through the offline gate like every core request.
+/// Fetch one picture's bytes. Refuses a URL off the allowlist before a socket opens, never
+/// follows a redirect (an allowed host must not be able to send the request elsewhere), and
+/// takes only a 2xx answer with an `image/` content type and at most [`IMAGE_BYTES`] of body.
+/// Goes through the offline gate like every core request.
 pub fn fetch_image(url: &str) -> Result<Vec<u8>> {
-    if !is_allowed_image_url(url) {
+    fetch_with(url, is_allowed_image_url)
+}
+
+fn fetch_with(url: &str, allowed: fn(&str) -> bool) -> Result<Vec<u8>> {
+    if !allowed(url) {
         return Err(Error::msg(format!("Refused a picture from a host Sigil does not use: {url}")));
     }
-    let agent = crate::net::agent(std::time::Duration::from_secs(20));
+    let agent = crate::net::builder()
+        .middleware(crate::net::gate)
+        .timeout_global(Some(std::time::Duration::from_secs(20)))
+        .max_redirects(0)
+        .http_status_as_error(false)
+        .build()
+        .new_agent();
     let mut response = agent
         .get(url)
         .header("User-Agent", super::STATS_USER_AGENT)
         .call()
         .map_err(|error| Error::Network(format!("Picture request failed: {error}")))?;
     let status = response.status().as_u16();
+    if (300..400).contains(&status) {
+        let to = response.headers().get("location").and_then(|v| v.to_str().ok()).unwrap_or("").to_string();
+        return Err(Error::Network(format!("Refused a picture redirect ({status}) to {to}")));
+    }
     if !(200..300).contains(&status) {
         return Err(Error::Network(format!("Picture request returned HTTP {status}.")));
+    }
+    let kind = response.headers().get("content-type").and_then(|v| v.to_str().ok()).unwrap_or("").to_ascii_lowercase();
+    if !kind.starts_with("image/") {
+        return Err(Error::Network(format!("Refused a picture that is not an image ({kind}).")));
     }
     response
         .body_mut()
@@ -77,13 +107,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn only_the_api_host_passes() {
+    fn only_the_three_hosts_pass() {
         assert!(is_allowed_image_url("https://api.deadlock-api.com/v1/assets/ranks/11/3/image?format=webp"));
-        assert!(is_allowed_image_url("https://API.deadlock-api.com/v1/assets/ranks/1/1/image"));
+        assert!(is_allowed_image_url("https://assets-bucket.deadlock-api.com/assets-api-res/images/items/weapon/basic_magazine.webp"));
+        assert!(is_allowed_image_url("https://avatars.steamstatic.com/7225d9a702f3e4804cac7eaf932384e53747028d_medium.jpg"));
+        assert!(is_allowed_image_url("https://AVATARS.steamstatic.com/a.jpg"));
         for bad in [
-            "https://avatars.steamstatic.com/a.jpg",
-            "http://api.deadlock-api.com/a.jpg",
-            "https://api.deadlock-api.com.evil.example/a.jpg",
+            "http://avatars.steamstatic.com/a.jpg",
             "https://avatars.steamstatic.com.evil.example/a.jpg",
             "https://evil.example/https://avatars.steamstatic.com/a.jpg",
             "https://user@avatars.steamstatic.com/a.jpg",
@@ -100,6 +130,46 @@ mod tests {
         crate::net::TEST_OFFLINE.with(|offline| offline.set(false));
         let error = fetch_image("https://evil.example/a.png").unwrap_err().to_string();
         assert!(error.contains("Refused"), "{error}");
+    }
+
+    /// One canned HTTP answer on a local port, for the fetch rules.
+    fn serve(answer: &'static [u8]) -> String {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let mut buf = [0u8; 2048];
+                let _ = stream.read(&mut buf);
+                let _ = stream.write_all(answer);
+            }
+        });
+        format!("http://127.0.0.1:{port}/a.png")
+    }
+
+    fn local(url: &str) -> bool {
+        url.starts_with("http://127.0.0.1:")
+    }
+
+    #[test]
+    fn a_redirect_is_never_followed() {
+        let url = serve(b"HTTP/1.1 302 Found\r\nLocation: https://evil.example/a.png\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+        let error = fetch_with(&url, local).unwrap_err().to_string();
+        assert!(error.contains("Refused a picture redirect") && error.contains("evil.example"), "{error}");
+    }
+
+    #[test]
+    fn only_an_image_within_the_cap_is_taken() {
+        let url = serve(b"HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: 4\r\nConnection: close\r\n\r\nhtml");
+        assert!(fetch_with(&url, local).unwrap_err().to_string().contains("not an image"));
+        let url = serve(b"HTTP/1.1 200 OK\r\nContent-Type: image/png\r\nContent-Length: 4\r\nConnection: close\r\n\r\nPNG!");
+        assert_eq!(fetch_with(&url, local).unwrap(), b"PNG!");
+        let big: &'static [u8] = Box::leak(
+            [format!("HTTP/1.1 200 OK\r\nContent-Type: image/png\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", IMAGE_BYTES + 10).into_bytes(), vec![0u8; IMAGE_BYTES as usize + 10]]
+                .concat()
+                .into_boxed_slice(),
+        );
+        assert!(fetch_with(&serve(big), local).is_err(), "over the cap");
     }
 
     #[test]

@@ -369,11 +369,15 @@ Fun run is the button beside the search, a place Back returns from.
 ### Pictures
 
 `screens/stats/pictures.rs` fetches what the page shows on one worker, never from a view: rank
-badges from `/v1/assets/ranks/{rank}/{subrank}/image?format=webp` on the API host. Each picture is
-scaled to 64 pixels and kept in `cache/stats/art` for 30 days, so a badge is fetched once a month at
-most. `deadlock_core::stats::art::is_allowed_image_url` refuses any other host before a socket
-opens. Until a badge loads, an outlined square with the subrank holds its place. Nothing is fetched
-while Player stats is off.
+badges from `/v1/assets/ranks/{rank}/{subrank}/image?format=webp` on the API host, item icons
+(`shop_image_webp` in the item assets) from `assets-bucket.deadlock-api.com`, and Steam avatars
+(`avatarmedium`) from `avatars.steamstatic.com` for the page's player, the match page's twelve, the
+search results and the first Squad rows. Owner approved 2026-11-26. Each picture is scaled (64
+pixels for badges and avatars, 48 for items) and kept in `cache/stats/art` for 30 days.
+`deadlock_core::stats::art::is_allowed_image_url` refuses any other host before a socket opens.
+Until a picture loads, its place holds a fallback of the same size: the subrank in an outlined
+square, the name's initial, the item's initials over its slot colour. Nothing is fetched while
+Player stats is off.
 
 ### Insight rules
 
@@ -443,9 +447,6 @@ generator is a local script (`.scratch/ui-hill/stats2/make-fixture.py`).
 
 ### Not done
 
-- Steam avatars and item icons are not drawn: `avatars.steamstatic.com` and
-  `assets-bucket.deadlock-api.com` are not on the network allowlist. Avatars show the initial (or
-  Steam's own cached picture for accounts on this PC), items a tile with the name's initials.
 - Hero chip icons come from the local Grimoire art (`hero_portraits/chip-icons`). The packaging
   script does not copy that folder yet, so a packaged build shows letters.
 - The live match view is built (`screens/stats/live.rs`, `deadlock_core::live_match`,

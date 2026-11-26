@@ -24,6 +24,7 @@ below and is not repeated in each one. Sigil itself stores no IP address and no 
 | [Steam](#steam) | Patch note requests | On |
 | [GameBanana](#gamebanana) | Catalog and update requests, the mods you open and install | On |
 | [deadlock-api](#deadlock-api) | Account ids for Stats, crosshair values, match ids and salts | Partly on, see below |
+| [Stats pictures](#stats-pictures) | Nothing from you: image requests for rank badges, item icons and Steam avatars | Only with Player stats on |
 | [GitHub](#github) | Update checks, performance config files, contributor list | On |
 | [Deadworks](#deadworks) | Server list and registry requests, server pings | Only when you use Servers |
 | [Divine Skins](#divine-skins) | Public one-click manifests | Not called today |
@@ -431,6 +432,17 @@ Nothing about you is sent beyond what answering those requests requires.
   Servers > Regions opens, the primary Stats account id is sent to `/v1/players/{id}/region` for
   its matches by month and datacenter, cached six hours. The counts stay on this computer and
   build the preset and the match count beside each location.
+
+## Stats pictures
+
+With Player stats on, the Stats page shows pictures for what it lists: rank badges from
+`api.deadlock-api.com`, item icons from `assets-bucket.deadlock-api.com` (run by deadlock-api) and
+Steam avatars from `avatars.steamstatic.com` (Valve). Each request is a plain GET of the image URL
+deadlock-api named; it carries no account id, cookie or key beyond what the URL itself is. Sigil
+refuses any other host for these pictures. Each picture is scaled down and kept in `cache/stats/art`
+for 30 days, so it is asked for at most once a month. With Player stats off nothing is fetched. For
+accounts signed in on your PC, the start page shows the avatar Steam already keeps on disk
+(`config/avatarcache`), without a request.
 
 ## GitHub
 

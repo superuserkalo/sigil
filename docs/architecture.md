@@ -297,7 +297,7 @@ Enforced in code:
    on the player's Apply or Reset, behind Windows' admin prompt, and reads them back after.
 5. **Secrets.** Decrypted keys exist only in main. The agent host receives provider auth through a
    narrow handshake, not the transcript. Tool output and logs are scrubbed for known key shapes.
-6. **Network allowlist.** Provider endpoints, `api.steampowered.com` (patch feed and Valve's relay list), `api.deadlock-api.com`, GameBanana, the GitHub update check and signed update download, Deadworks for Servers, the local Discord IPC socket, and Sigil's own telemetry Worker (opt-in, off by default, except the public catalog search index: Sigil downloads a public search index of GameBanana mods from its own server; the request carries nothing about the player). No other
+6. **Network allowlist.** Provider endpoints, `api.steampowered.com` (patch feed and Valve's relay list), `api.deadlock-api.com` (and, for Stats pictures while Player stats is on, `assets-bucket.deadlock-api.com` and `avatars.steamstatic.com`), GameBanana, the GitHub update check and signed update download, Deadworks for Servers, the local Discord IPC socket, and Sigil's own telemetry Worker (opt-in, off by default, except the public catalog search index: Sigil downloads a public search index of GameBanana mods from its own server; the request carries nothing about the player). No other
    outbound calls from tools without a documented allowlist entry.
    - `gamebanana.com/apiv11`, `images.gamebanana.com` and `files.gamebanana.com`: Browse.
      Anonymous GETs, no key, no user data: `Game/20948/Subfeed?_nPage=N&_csvModelInclusions=Mod|Sound|Wip`
@@ -355,6 +355,13 @@ Enforced in code:
      Size and SHA-256 are checked against the signed manifest before anything is staged; the swap
      happens only on "Restart to update" or the next launch, and never touches the game install.
      Offline mode blocks all of it. See `docs/runbooks/releasing.md`.
+   - Stats pictures (owner approved 2026-11-26), only while Player stats is on and only for what
+     the Stats page shows: rank badges from `api.deadlock-api.com`
+     (`/v1/assets/ranks/{rank}/{subrank}/image`), item icons from
+     `assets-bucket.deadlock-api.com` (the URLs the item asset response names) and Steam avatars
+     from `avatars.steamstatic.com` (the URLs `/v1/players/steam` names). Anonymous GETs that
+     carry the image URL only; `deadlock_core::stats::art::is_allowed_image_url` refuses any
+     other host, and each picture is scaled and kept 30 days in `cache/stats/art`.
    - `api.deadlock-api.com`: Stats (public match and player data for the account the user enters)
      and Crosshair share codes. "Copy code" sends only the crosshair convar values, as a GET to
      `/v1/crosshair/settings/code`, and only when the user presses it. Import sends a pasted

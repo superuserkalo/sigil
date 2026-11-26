@@ -451,11 +451,7 @@ fn start_meta(st: &mut State) {
         }
         let rows = deadlock_core::stats::items::global_item_stats(&filter).map_err(|e| e.to_string())?;
         let catalog = crate::data::stats_client().fetch_item_catalog().unwrap_or_default();
-        let names = rows
-            .iter()
-            .filter_map(|row| catalog.get(row.item_id).map(|(name, _, _)| (row.item_id, name.clone())))
-            .collect();
-        Ok((ItemsLoad { rows, names }, since))
+        Ok((ItemsLoad::joined(rows, &catalog), since))
     });
 }
 
@@ -518,10 +514,11 @@ pub fn meta_section(s: &State, u: &Ui) -> El {
             ));
             for item in load.rows.iter().take(META_ROWS) {
                 let name = load.names.get(&item.item_id).cloned().unwrap_or_else(|| format!("Item {}", item.item_id));
+                let slot = load.slots.get(&item.item_id).map(String::as_str).unwrap_or("other");
                 let secs = item.avg_buy_time_s.round().max(0.0) as u64;
                 table = table.child(
                     data_row(format!("stats-meta-{}", item.item_id), u, 40.0)
-                        .child(cell(text(name).font(BODY_MED).color(u.ink).truncate(), 0.0))
+                        .child(cell(row().gap(10.0).center_y().child(item_tile(s, u, item.item_id, &name, slot, 24.0, None)).child(text(name).font(BODY_MED).color(u.ink).truncate().min_w(0.0)), 0.0))
                         .child(num(thousands(item.matches), 96.0, u.prose))
                         .child(num(format!("{:.1}%", item.win_rate_percent), 80.0, u.ink))
                         .child(num(format!("{}:{:02}", secs / 60, secs % 60), 80.0, u.prose)),

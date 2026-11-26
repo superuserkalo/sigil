@@ -43,6 +43,26 @@ pub const SINCE: [(&str, u64); 4] = [("Any time", 0), ("Last 7 days", 7), ("Last
 pub struct ItemsLoad {
     pub rows: Vec<ItemStat>,
     pub names: std::collections::HashMap<u64, String>,
+    /// Item id to icon URL and slot, for the rows shown.
+    pub icons: std::collections::HashMap<u64, String>,
+    pub slots: std::collections::HashMap<u64, String>,
+}
+
+impl ItemsLoad {
+    /// Rows with their names, icons and slots joined from the item catalog.
+    pub fn joined(rows: Vec<ItemStat>, catalog: &deadlock_core::stats::board::ItemCatalog) -> ItemsLoad {
+        let mut load = ItemsLoad { rows, names: Default::default(), icons: Default::default(), slots: Default::default() };
+        for row in &load.rows {
+            if let Some((name, slot, _)) = catalog.get(row.item_id) {
+                load.names.insert(row.item_id, name.clone());
+                load.slots.insert(row.item_id, slot.clone());
+            }
+            if let Some(url) = catalog.icon(row.item_id) {
+                load.icons.insert(row.item_id, url.to_string());
+            }
+        }
+        load
+    }
 }
 
 /// The filter, the three reads and the party picks, kept in Stats' view.
@@ -190,11 +210,7 @@ pub fn start_items(st: &mut State) {
     st.stats.more.items_job.start(wake, move || {
         let rows = deadlock_core::stats::items::item_stats(account, &filter).map_err(|e| e.to_string())?;
         let catalog = crate::data::stats_client().fetch_item_catalog().unwrap_or_default();
-        let names = rows
-            .iter()
-            .filter_map(|row| catalog.get(row.item_id).map(|(name, _, _)| (row.item_id, name.clone())))
-            .collect();
-        Ok(ItemsLoad { rows, names })
+        Ok(ItemsLoad::joined(rows, &catalog))
     });
 }
 
@@ -587,11 +603,12 @@ pub(super) fn items_section(s: &State, u: &Ui) -> El {
             ));
             for item in rows.iter().take(shown) {
                 let name = load.names.get(&item.item_id).cloned().unwrap_or_else(|| format!("Item {}", item.item_id));
+                let slot = load.slots.get(&item.item_id).map(String::as_str).unwrap_or("other");
                 let better = item.win_rate_delta_percent >= 0.0;
                 let earlier = item.buy_time_delta_s <= 0.0;
                 table = table.child(
                     data_row(format!("stats-item-{}", item.item_id), u, 40.0)
-                        .child(cell(text(name).font(BODY_MED).color(u.ink).truncate(), 0.0))
+                        .child(cell(row().gap(10.0).center_y().child(item_tile(s, u, item.item_id, &name, slot, 24.0, None)).child(text(name).font(BODY_MED).color(u.ink).truncate().min_w(0.0)), 0.0))
                         .child(num(item.matches.to_string(), 72.0, u.prose))
                         .child(num(format!("{:.0}%", item.win_rate_percent), 80.0, u.prose))
                         .child(num(

@@ -223,30 +223,30 @@ pub(super) fn slot_color(u: &Ui, slot: &str) -> Color {
     }
 }
 
-/// One item: its icon when loaded, else a tile with the name's first letters, always with a
-/// 1 point slot colour edge along the bottom. Hover names it and when it was bought.
+/// One item of a final build: its tile, with the buy time on hover.
 pub(super) fn item_icon(s: &State, u: &Ui, item: &deadlock_core::stats::board::BuildItem, size: f32) -> El {
-    let help = if item.bought_at > 0 {
-        format!("{}, {} {}", item.name, tr("bought at"), super::notes::clock(item.bought_at))
-    } else {
-        item.name.clone()
+    let bought = (item.bought_at > 0).then_some(item.bought_at);
+    item_tile(s, u, item.item_id, &item.name, &item.slot, size, bought)
+}
+
+/// One item: its icon when loaded, else a tile with the name's first letters, always with a
+/// 1 point slot colour edge along the bottom. Hover names it (and when it was bought).
+pub(super) fn item_tile(s: &State, u: &Ui, item_id: u64, name: &str, slot: &str, size: f32, bought_at: Option<u32>) -> El {
+    let help = match bought_at {
+        Some(at) => format!("{name}, {} {}", tr("bought at"), super::notes::clock(at)),
+        None => name.to_string(),
     };
     let tile = el()
         .size(size, size)
         .radius(crate::ui::r(2.0))
         .fill(Color::WHITE.alpha(0.05))
-        .border_sides([0.0, 0.0, 1.0, 0.0], slot_color(u, &item.slot))
+        .border_sides([0.0, 0.0, 1.0, 0.0], slot_color(u, slot))
         .help(help)
-        .label(item.name.clone());
-    match s.thumbnails.get(&super::pictures::item_key(item.item_id)) {
+        .label(name.to_string());
+    match s.thumbnails.get(&super::pictures::item_key(item_id)) {
         Some(pixels) => tile.pixels_fit(pixels, SurfaceFit::Fit),
         None => {
-            let letters: String = item
-                .name
-                .split_whitespace()
-                .filter_map(|word| word.chars().next())
-                .take(2)
-                .collect();
+            let letters: String = name.split_whitespace().filter_map(|word| word.chars().next()).take(2).collect();
             tile.center().child(text(letters).font(crate::ui::MICRO).color(u.muted).a11y_hidden())
         }
     }
