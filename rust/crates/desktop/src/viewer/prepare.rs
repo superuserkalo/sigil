@@ -498,7 +498,9 @@ fn alive(s: &State, key: &str, owner: Owner) -> bool {
 
 /// The hero the Locker's 3D view should show now, if any.
 fn locker_want(s: &State) -> Option<String> {
-    if s.screen != Screen::Locker || !s.locker.view3d {
+    // Long out of sight, the view closes and gives back its GPU device; it opens again, on the
+    // same hero, once the window shows.
+    if s.screen != Screen::Locker || !s.locker.view3d || super::long_out_of_sight(s) {
         return None;
     }
     match &s.locker.page {
@@ -584,6 +586,24 @@ pub fn prune_when_idle(s: &mut State) -> bool {
 mod tests {
     use super::*;
     use deadlock_core::viewer::{SourceKind, SourceUsage};
+
+    /// Out of sight past `OUT_OF_SIGHT_DROP`, the Locker's 3D view is no longer wanted, so its
+    /// render thread and GPU device go; back in sight it is wanted again, on the same hero.
+    #[test]
+    fn the_locker_view_lets_its_device_go_while_sigil_is_long_out_of_sight() {
+        let mut st = State::default();
+        st.screen = Screen::Locker;
+        st.locker.view3d = true;
+        st.locker.page = crate::screens::locker::Page::Hero("Infernus".into());
+        assert_eq!(locker_want(&st).as_deref(), Some("Infernus"));
+        st.viewers.hidden_since = Some(std::time::Instant::now());
+        assert!(locker_want(&st).is_some(), "a short minimize keeps it");
+        st.viewers.hidden_since = std::time::Instant::now().checked_sub(super::super::OUT_OF_SIGHT_DROP);
+        assert!(st.viewers.hidden_since.is_some());
+        assert_eq!(locker_want(&st), None);
+        st.viewers.hidden_since = None;
+        assert_eq!(locker_want(&st).as_deref(), Some("Infernus"), "it opens again in sight");
+    }
 
     #[test]
     fn a_mod_none_of_whose_files_are_drawn_is_named() {

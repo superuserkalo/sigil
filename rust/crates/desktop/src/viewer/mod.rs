@@ -169,6 +169,28 @@ pub struct Viewers {
     headless: HashMap<String, [f32; 2]>,
     /// The kept look new views open with (`controls::Prefs`); read from disk on first use.
     pub prefs: Option<controls::Prefs>,
+    /// Since when Sigil's window is out of sight (minimized, hidden in the tray, covered whole):
+    /// past `OUT_OF_SIGHT_DROP` the Locker's view lets its render thread and GPU device go, and
+    /// opens again when the window shows (`sight`).
+    hidden_since: Option<std::time::Instant>,
+}
+
+/// How long the window may be out of sight before the Locker's 3D view gives back its device.
+pub const OUT_OF_SIGHT_DROP: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// `App::on_visibility`: the window went out of sight or came back. Out of sight, a wake comes
+/// when the Locker's view is due to let its device go; back in sight, it opens again on the
+/// next poll (`prepare::sync_locker`).
+pub fn sight(s: &mut State, visible: bool, tx: &mut Tx) {
+    s.viewers.hidden_since = if visible { None } else { Some(std::time::Instant::now()) };
+    if !visible {
+        tx.wake_after(OUT_OF_SIGHT_DROP);
+    }
+}
+
+/// The window has been out of sight for `OUT_OF_SIGHT_DROP` or longer.
+pub(crate) fn long_out_of_sight(s: &State) -> bool {
+    s.viewers.hidden_since.is_some_and(|at| at.elapsed() >= OUT_OF_SIGHT_DROP)
 }
 
 fn send(s: &mut State, key: &str, cmd: Cmd) {

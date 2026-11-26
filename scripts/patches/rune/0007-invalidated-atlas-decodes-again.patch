@@ -1,0 +1,39 @@
+diff --git a/crates/rune/src/image/memory_tests.rs b/crates/rune/src/image/memory_tests.rs
+index 5d5e0e9..c3fa856 100644
+--- a/crates/rune/src/image/memory_tests.rs
++++ b/crates/rune/src/image/memory_tests.rs
+@@ -39,6 +39,34 @@ fn a_decoded_image_drops_its_cpu_pixels_once_the_atlas_copied_it_and_decodes_aga
+     assert!(atlas.place(&pixels, [300.0, 200.0]).is_some());
+ }
+ 
++/// A window that gives up its GPU (hidden with `App::release_gpu_when_closed`, or a lost device)
++/// invalidates its atlas: a page that lived only on the GPU is freed with its slots, and an image
++/// whose CPU pixels were dropped decodes again from its source when it is next drawn.
++#[test]
++fn an_invalidated_atlas_frees_gpu_pages_and_their_images_decode_again() {
++    let cache = ImageCache::new(Arc::new(|| {}));
++    let image = cache.load(png(120, 80, [200, 100, 50, 255]));
++    assert_eq!(image.wait(), Ok([120, 80]));
++    let pixels = image.pixels().clone();
++    let mut atlas = ImageAtlas::default();
++    let placed = atlas.place(&pixels, [120.0, 80.0]).expect("drawn");
++    for _ in 0..=RELEASE_AFTER_FRAMES {
++        atlas.place(&pixels, [120.0, 80.0]);
++        // What `Renderer::upload_images` does with the page each frame.
++        atlas.pages[placed.page].dirty = None;
++        atlas.uploaded(placed.page);
++        atlas.end_frame();
++    }
++    assert!(!pixels.has_pixels(), "only the GPU page holds it");
++    assert!(pixels.is_ready(), "drawn from the GPU page");
++    atlas.invalidate();
++    assert!(!pixels.is_ready(), "the GPU page went with the device");
++    assert_eq!(atlas.place(&pixels, [120.0, 80.0]), None, "drawing it asks for a decode");
++    assert_eq!(image.wait(), Ok([120, 80]));
++    assert!(pixels.has_pixels(), "decoded again from its bytes");
++    assert!(atlas.place(&pixels, [120.0, 80.0]).is_some());
++}
++
+ #[test]
+ fn pixels_an_app_set_are_never_dropped() {
+     let px = Pixels::new();

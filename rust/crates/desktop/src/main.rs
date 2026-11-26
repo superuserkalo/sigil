@@ -149,8 +149,9 @@ fn main() -> std::process::ExitCode {
         glass::frame_drawn(rt.transparent);
         first_show::frame_drawn();
     })
-    .on_visibility(|_, visible, _| {
+    .on_visibility(|st, visible, tx| {
         first_show::visible(visible);
+        viewer::sight(st, visible, tx);
         if visible {
             win_frame::rearm();
         }

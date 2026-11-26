@@ -253,6 +253,34 @@ Nothing here is measured on Windows yet; see "How to measure on Windows" below.
    (and maximized or full screen) across the release, which it did not before. `on_window`'s hooks
    (shell, Crosshair's pin, glass, the title bar guard) only store the handle or reapply to the new
    window.
+3. **Minimized for a while: only the safe half.**
+   - Done: the Locker's 3D view, which has its own wgpu device on its render thread, closes when
+     Sigil's window has been out of sight (minimized, hidden in the tray, covered whole) for 30 s
+     (`viewer::OUT_OF_SIGHT_DROP`), and opens again on the same hero when the window shows. A
+     preview dialog and the full screen Hideout stay open: the player opened them.
+   - Done: the contract with batch one's freed CPU pictures is settled and tested. An atlas that
+     loses its GPU (`ImageAtlas::invalidate`, run on a release or a lost device) frees its
+     GPU-only pages with their slots, and a picture whose CPU pixels were dropped decodes again
+     from its source when next drawn (Rune patch 0007's test).
+   - **Not done: dropping the main window's D3D12 device while minimized.** The plan was Rune
+     `drop_gpu()`, the first half of `Host::reattach` (drop the surface, then the device,
+     invalidate the atlases), with the restore going through the lost-device path. It frees
+     nothing on Windows as things stand: a window that started on the CPU draws through a
+     DirectComposition visual (`platform/win32/dcomp_handover.rs`), and wgpu-hal's D3D12 surface
+     sets its swap chain as that visual's content on configure (`IDCompositionVisual::SetContent`,
+     `vendor/wgpu-hal/src/dx12/mod.rs`) and never clears it on unconfigure or drop. The visual
+     keeps the swap chain, the swap chain keeps its command queue, and the queue keeps the device,
+     so dropping wgpu's objects leaves the driver's memory in place. What it needs: (a) a
+     `Handover::clear()` that calls `SetContent(None)` and commits before the surface is dropped,
+     then a check in Task Manager that the process's dedicated GPU memory falls to 0; (b) a
+     decision on what the window shows between a restore and the new swap chain's first frame
+     (the cleared visual shows the window's GDI surface below it, which holds the launch's CPU
+     frame or nothing), either the cloak held until the first frame presents, or a fresh CPU
+     frame painted into a new DIB first (`SurfaceMode::Cpu` again, then the launch's hand-over);
+     (c) `replace_lost_surface` not counting a deliberate drop against `SURFACE_TRIES`. Both (a)
+     and (b) change what DWM composes and can only be judged on a Windows machine, so none of it
+     ships here. Hidden in the tray (step 2) already frees everything, because the window itself
+     goes.
 
 ## Remaining opportunities
 

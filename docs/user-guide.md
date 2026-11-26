@@ -207,7 +207,8 @@ and as a full screen Hideout. The viewer draws the hero with the mod on and, wit
 before and after switch, against the hero without it. It has controls for animation clips,
 lighting, background, cloth, particles, exposure and wireframe, plus orbit, zoom, capture and full
 screen. A preview waits until the hero and room are ready and shows a loading state instead of a
-half-built scene.
+half-built scene. The Locker's 3D view gives its graphics memory back when Sigil has been
+minimized or hidden for half a minute, and loads the hero again when you come back.
 
 You can use the posed view as the mod's cover or as in-game card art. The Hideout shows the menu
 map around the hero with your mods applied. This part has been checked on stand-ins only, not yet
