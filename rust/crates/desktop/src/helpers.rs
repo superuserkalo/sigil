@@ -91,7 +91,7 @@ pub fn dispatch() -> Option<std::process::ExitCode> {
         return Some(std::process::ExitCode::from(code.clamp(0, 255) as u8));
     }
     if first == AGENT_HOST {
-        return Some(dah_agent::run(dah_agent::CliLaunch::SelfCli));
+        return Some(run_agent_host());
     }
     if first == NOTICES {
         attach_console();
@@ -99,6 +99,20 @@ pub fn dispatch() -> Option<std::process::ExitCode> {
         return Some(std::process::ExitCode::SUCCESS);
     }
     None
+}
+
+/// `Sigil agent-host`: the TinyAgent host, in a build with the agent (`agent` feature).
+#[cfg(feature = "agent")]
+fn run_agent_host() -> std::process::ExitCode {
+    dah_agent::run(dah_agent::CliLaunch::SelfCli)
+}
+
+/// A build without the agent has no host: it says so and exits, rather than open a window.
+#[cfg(not(feature = "agent"))]
+fn run_agent_host() -> std::process::ExitCode {
+    attach_console();
+    eprintln!("This build of Sigil has no agent host (it is built without the `agent` feature).");
+    std::process::ExitCode::from(2)
 }
 
 /// `Sigil notices` prints the licences of the projects Sigil includes. The text is built into

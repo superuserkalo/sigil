@@ -1,6 +1,7 @@
-//! The shareable result card: a 1200 x 630 PNG drawn here, without the window. Text is Inter
-//! (the faces Rune already embeds) rasterized with `swash`, which Rune already links; the image
-//! is written with the `image` crate Sigil already uses. Nothing is uploaded.
+//! The shareable result card: a 1200 x 630 PNG drawn here, without the window. Text is Inter,
+//! the faces Rune already embeds (taken from Rune, not embedded again), rasterized with `swash`,
+//! which Rune already links; the image is written with the `image` crate Sigil already uses.
+//! Nothing is uploaded.
 
 use deadlock_core::benchmark::compare::Verdict;
 use deadlock_core::benchmark::store::{RunRecord, run_label};
@@ -16,9 +17,23 @@ use crate::screens::settings::i18n::fill;
 pub const W: u32 = 1200;
 pub const H: u32 = 630;
 
-const REGULAR: &[u8] = include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../../vendor/rune/crates/rune/assets/Inter-Regular.ttf"));
-const MEDIUM: &[u8] = include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../../vendor/rune/crates/rune/assets/Inter-Medium.ttf"));
-const SEMIBOLD: &[u8] = include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../../vendor/rune/crates/rune/assets/Inter-SemiBold.ttf"));
+/// Rune's own Inter faces (`rune::text::embedded_fonts`: regular, medium, semibold), so the
+/// executable carries them once. Missing faces draw no text rather than fail.
+fn face(at: usize) -> &'static [u8] {
+    rune::text::embedded_fonts().get(at).copied().unwrap_or(&[])
+}
+
+fn regular() -> &'static [u8] {
+    face(0)
+}
+
+fn medium() -> &'static [u8] {
+    face(1)
+}
+
+fn semibold() -> &'static [u8] {
+    face(2)
+}
 
 type Rgb = [u8; 3];
 const BG: Rgb = [23, 23, 26];
@@ -180,11 +195,11 @@ pub fn png(run: &RunRecord, frames: &[(Side, Vec<f64>)]) -> Result<Vec<u8>, Stri
     let mut c = Canvas::new();
     let x0 = 56.0;
     // Head.
-    let w = c.text(SEMIBOLD, 22.0, x0, 74.0, "Sigil", EMBER, 1.0);
-    c.text(REGULAR, 22.0, x0 + w + 10.0, 74.0, tr("Benchmark"), MUTED, 1.0);
+    let w = c.text(semibold(), 22.0, x0, 74.0, "Sigil", EMBER, 1.0);
+    c.text(regular(), 22.0, x0 + w + 10.0, 74.0, tr("Benchmark"), MUTED, 1.0);
     let date = crate::prefs::show_stamp_date(&run.spec.created_at).unwrap_or_default();
-    let dw = c.measure(REGULAR, 18.0, &date);
-    c.text(REGULAR, 18.0, W as f32 - x0 - dw, 74.0, &date, FAINT, 1.0);
+    let dw = c.measure(regular(), 18.0, &date);
+    c.text(regular(), 18.0, W as f32 - x0 - dw, 74.0, &date, FAINT, 1.0);
     let mut sub = vec![run_label(run)];
     if let Some(demo) = &run.spec.demo {
         sub.push(fill(tr("Match {}"), &[&demo.label]));
@@ -196,15 +211,15 @@ pub fn png(run: &RunRecord, frames: &[(Side, Vec<f64>)]) -> Result<Vec<u8>, Stri
     if let Some(build) = &run.settings.build {
         sub.push(fill(tr("build {}"), &[build]));
     }
-    c.text(REGULAR, 18.0, x0, 108.0, &sub.join("  ·  "), MUTED, 1.0);
+    c.text(regular(), 18.0, x0, 108.0, &sub.join("  ·  "), MUTED, 1.0);
 
     // The headline.
     let head = run.headline();
     let summary = head.as_ref().map(|h| h.summary.clone()).unwrap_or_default();
     let big = if summary.avg_fps > 0.0 { format!("{:.0}", summary.avg_fps) } else { "-".into() };
-    let bw = c.text(SEMIBOLD, 128.0, x0 - 4.0, 252.0, &big, INK, 1.0);
-    c.text(MEDIUM, 26.0, x0 + bw + 6.0, 252.0, "FPS", MUTED, 1.0);
-    c.text(REGULAR, 17.0, x0, 286.0, tr("average"), FAINT, 1.0);
+    let bw = c.text(semibold(), 128.0, x0 - 4.0, 252.0, &big, INK, 1.0);
+    c.text(medium(), 26.0, x0 + bw + 6.0, 252.0, "FPS", MUTED, 1.0);
+    c.text(regular(), 17.0, x0, 286.0, tr("average"), FAINT, 1.0);
 
     let stats: [(&str, Option<String>); 4] = [
         ("1% low", summary.low_1.map(number)),
@@ -215,8 +230,8 @@ pub fn png(run: &RunRecord, frames: &[(Side, Vec<f64>)]) -> Result<Vec<u8>, Stri
     let mut sx = 500.0;
     for (label, value) in stats {
         let value = value.unwrap_or_else(|| "-".into());
-        c.text(SEMIBOLD, 40.0, sx, 236.0, &value, INK, 1.0);
-        c.text(REGULAR, 16.0, sx, 266.0, tr(label), FAINT, 1.0);
+        c.text(semibold(), 40.0, sx, 236.0, &value, INK, 1.0);
+        c.text(regular(), 16.0, sx, 266.0, tr(label), FAINT, 1.0);
         sx += 166.0;
     }
 
@@ -238,7 +253,7 @@ pub fn png(run: &RunRecord, frames: &[(Side, Vec<f64>)]) -> Result<Vec<u8>, Stri
     };
     if let Some((color, words)) = line {
         c.rect(x0 as i32, 318, 4, 26, color, 1.0);
-        c.text(MEDIUM, 21.0, x0 + 16.0, 338.0, &words, color, 1.0);
+        c.text(medium(), 21.0, x0 + 16.0, 338.0, &words, color, 1.0);
     }
 
     // The graph: frame time per bin, A muted behind B in ember.
@@ -257,7 +272,7 @@ pub fn png(run: &RunRecord, frames: &[(Side, Vec<f64>)]) -> Result<Vec<u8>, Stri
         let y = py1 - (py1 - py0) * step as f32;
         c.rect(px0 as i32, y as i32, (px1 - px0) as i32, 1, INK, 0.05);
         let label = format!("{:.0} ms", top_ms * step);
-        c.text(REGULAR, 12.0, px0 + 2.0, y - 4.0, &label, FAINT, 1.0);
+        c.text(regular(), 12.0, px0 + 2.0, y - 4.0, &label, FAINT, 1.0);
     }
     let two = series.len() > 1;
     for (side, bins) in &series {
@@ -281,20 +296,20 @@ pub fn png(run: &RunRecord, frames: &[(Side, Vec<f64>)]) -> Result<Vec<u8>, Stri
     }
     if series.is_empty() {
         let words = tr("No per-frame data for this run");
-        let ww = c.measure(REGULAR, 16.0, words);
-        c.text(REGULAR, 16.0, gx as f32 + (gw as f32 - ww) / 2.0, gy as f32 + gh as f32 / 2.0 + 6.0, words, FAINT, 1.0);
+        let ww = c.measure(regular(), 16.0, words);
+        c.text(regular(), 16.0, gx as f32 + (gw as f32 - ww) / 2.0, gy as f32 + gh as f32 / 2.0 + 6.0, words, FAINT, 1.0);
     } else {
         let label = tr("Frame time across the section");
-        c.text(MEDIUM, 13.0, px0, gy as f32 + 20.0, label, MUTED, 1.0);
+        c.text(medium(), 13.0, px0, gy as f32 + 20.0, label, MUTED, 1.0);
         if two {
             let a = run.spec.test.sides().map(|s| tr(s.0)).unwrap_or("A");
             let b = run.spec.test.sides().map(|s| tr(s.1)).unwrap_or("B");
-            let bw = c.measure(MEDIUM, 13.0, b);
-            let aw = c.measure(MEDIUM, 13.0, a);
+            let bw = c.measure(medium(), 13.0, b);
+            let aw = c.measure(medium(), 13.0, a);
             c.rect((px1 - bw - 14.0) as i32, gy + 12, 8, 8, EMBER, 1.0);
-            c.text(MEDIUM, 13.0, px1 - bw, gy as f32 + 20.0, b, MUTED, 1.0);
+            c.text(medium(), 13.0, px1 - bw, gy as f32 + 20.0, b, MUTED, 1.0);
             c.rect((px1 - bw - aw - 40.0) as i32, gy + 12, 8, 8, MUTED, 1.0);
-            c.text(MEDIUM, 13.0, px1 - bw - aw - 26.0, gy as f32 + 20.0, a, MUTED, 1.0);
+            c.text(medium(), 13.0, px1 - bw - aw - 26.0, gy as f32 + 20.0, a, MUTED, 1.0);
         }
     }
 
@@ -319,7 +334,7 @@ pub fn png(run: &RunRecord, frames: &[(Side, Vec<f64>)]) -> Result<Vec<u8>, Stri
     if let Some(ram) = m.ram_mb {
         foot.push(format!("{} GB", (ram as f64 / 1024.0).round()));
     }
-    c.text(REGULAR, 16.0, x0, 594.0, &foot.join("  ·  "), FAINT, 1.0);
+    c.text(regular(), 16.0, x0, 594.0, &foot.join("  ·  "), FAINT, 1.0);
     c.png()
 }
 

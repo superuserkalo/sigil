@@ -73,6 +73,7 @@ cat > "$out/bin/README.txt" <<'TXT'
 dah-desktop             native Rust and Rune workbench (Sigil)
 dah-desktop cli ...     the dah CLI
 dah-desktop agent-host  the TinyAgent JSONL host, started by the app as a child process
+                        (only in a build with the agent feature)
 
 Set DAH_AGENT_BIN or DAH_RS_BIN to use a standalone build instead. No CSDK,
 game file, VPK, key or log is included.

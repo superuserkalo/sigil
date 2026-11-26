@@ -12,7 +12,8 @@ Sigil-Setup.exe              per-user installer: Sigil.exe into %LOCALAPPDATA%\P
                              Start menu and desktop shortcuts, an uninstaller
 Sigil-<version>-windows-x64/
   Sigil.exe                  the whole app: the Rune window, the Locker art (built in),
-                             the notices, and the `cli` and `agent-host` subcommands
+                             the notices, and the `cli` subcommand (`agent-host` too in
+                             a build with the `agent` feature)
 ```
 
 Players get the installer from
@@ -22,9 +23,10 @@ Downloads, or straight from the zip. Neither needs administrator rights. The fir
 writes its art once to `%APPDATA%\Sigil\art\<build id>` and removes the art of older
 builds.
 
-The CLI and the agent host are folded into `Sigil.exe`. With the experimental Agent page on, the app
-starts the host as a child process, `Sigil.exe agent-host` (or `DAH_AGENT_BIN` when set), and in-app
-sign-in runs `Sigil.exe cli auth login <provider>`. From a terminal, `Sigil.exe cli doctor` prints
+The CLI is folded into `Sigil.exe`, and in a build with the `agent` feature the agent host too
+(release builds leave it out). With the experimental Agent page on, the app starts the host as a
+child process, `Sigil.exe agent-host` (or `DAH_AGENT_BIN` when set), and in-app sign-in runs
+`Sigil.exe cli auth login <provider>`. From a terminal, `Sigil.exe cli doctor` prints
 like the old `dah.exe doctor`: the GUI-subsystem exe attaches to the parent console for the `cli`
 path. No Electron, no WebView, no bundled CSDK or game files.
 

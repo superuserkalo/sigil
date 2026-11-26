@@ -9,6 +9,9 @@ Updated: 2026-11-26
 
 The desktop app is one Rust executable. The `dah` CLI and the TinyAgent host are folded into it as
 subcommands: `dah-desktop cli ...` (`Sigil.exe cli ...` on Windows) and `dah-desktop agent-host`.
+The agent host and its stack (TinyAgent, reqwest, tokio, jsonschema) are linked only with the
+desktop crate's `agent` feature; release builds leave it off, and their `agent-host` says so and
+exits.
 The host still runs as its own child process with the same stdin and stdout JSONL protocol; only
 the file is shared. There is no Electron `node_modules` allowlist and no browser shell. Packaging
 carries one binary and its art.
@@ -17,7 +20,7 @@ carries one binary and its art.
 
 | Artifact | Built from | Purpose |
 | --- | --- | --- |
-| `dah-desktop` (`Sigil.exe`) | `rust/crates/desktop`, linking `rust/crates/dah-rs` and `rust/crates/agent-host` as libraries | Native Rune workbench; `cli` runs the CLI, `agent-host` the TinyAgent v2 JSONL host |
+| `dah-desktop` (`Sigil.exe`) | `rust/crates/desktop`, linking `rust/crates/dah-rs` and (with the `agent` feature) `rust/crates/agent-host` as libraries | Native Rune workbench; `cli` runs the CLI, `agent-host` the TinyAgent v2 JSONL host |
 | `Sigil-<version>-windows-x64.zip` | `scripts/package-windows.sh` | `Sigil.exe` alone; the update asset and the no-installer download |
 | `Sigil-Setup.exe` | `scripts/package-installer.sh` and `scripts/installer/sigil.nsi` | Per-user Windows installer (below) |
 | `Sigil-<version>-x86_64.AppImage` | `scripts/package-linux.sh` | Linux workbench; updates itself from the signed manifest |

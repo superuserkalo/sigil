@@ -1,0 +1,25 @@
+diff --git a/changelog/unreleased/2026-11-26-embedded-fonts.md b/changelog/unreleased/2026-11-26-embedded-fonts.md
+new file mode 100644
+index 0000000..4ef4bd5
+--- /dev/null
++++ b/changelog/unreleased/2026-11-26-embedded-fonts.md
+@@ -0,0 +1 @@
++- `text::embedded_fonts` gives the font files text falls back to (Inter with `embedded-fonts`), so an app that draws text outside a window uses the same bytes instead of embedding the faces again.
+diff --git a/crates/rune/src/text.rs b/crates/rune/src/text.rs
+index 6e6d6b1..0159099 100644
+--- a/crates/rune/src/text.rs
++++ b/crates/rune/src/text.rs
+@@ -113,6 +113,13 @@ pub(crate) use case::Source as CaseSource;
+ pub(crate) use layout_cache::CachedElision;
+ 
+ use default_fonts::DEFAULT_FONTS;
++
++/// The font files text falls back to when the app registers none (`embedded-fonts`: Inter), the
++/// same bytes the text system loads, for an app that draws text outside a window (an exported
++/// image) without embedding the faces a second time. Empty without the feature.
++pub fn embedded_fonts() -> &'static [&'static [u8]] {
++    DEFAULT_FONTS
++}
+ use fallback::Route;
+ pub(crate) use fallback::is_pictographic;
+ use glyph_emit::Face;

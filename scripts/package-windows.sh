@@ -2,7 +2,8 @@
 # Build the Windows x64 bundle from macOS or Linux with cargo-xwin.
 #
 # The bundle is one file, Sigil.exe. The Locker art and the notices are built into it, and the
-# dah CLI (`Sigil.exe cli ...`) and the agent host (`Sigil.exe agent-host`) are folded in.
+# dah CLI (`Sigil.exe cli ...`) is folded in. The agent host (`Sigil.exe agent-host`) is folded in
+# only with the desktop crate's `agent` feature, which release builds leave off.
 # It never includes CSDK 12, game files, VPKs, keys or logs.
 set -euo pipefail
 

@@ -7,7 +7,9 @@ license.workspace = true
 [features]
 # The mod agent (Agent page, Models and sign-in, the agent host process). Off in release builds:
 # it is not verified end to end yet (ROADMAP.md). `cargo run -p dah-desktop --features agent`.
-agent = []
+# Release builds leave the agent host (`dah-agent`, TinyAgent, reqwest, tokio, jsonschema) out of
+# the executable: `Sigil agent-host` exists only with this feature.
+agent = ["dep:dah-agent"]
 # The German translation (and the language choice in Settings). Off in release builds: it is
 # parked until someone can keep it current (ROADMAP.md). `cargo run -p dah-desktop --features languages`.
 languages = []
@@ -15,9 +17,10 @@ languages = []
 [dependencies]
 rune = { path = "../../../vendor/rune/crates/rune", features = ["tooling", "native-file-dialog"] }
 deadlock-core = { path = "../deadlock-core" }
-# Folded helpers: `Sigil cli ...` runs the dah CLI and `Sigil agent-host` the TinyAgent host.
+# Folded helpers: `Sigil cli ...` runs the dah CLI and, with the `agent` feature, `Sigil
+# agent-host` the TinyAgent host.
 dah-rs = { path = "../dah-rs" }
-dah-agent = { path = "../agent-host" }
+dah-agent = { path = "../agent-host", optional = true }
 # The 3D viewer's renderer (src/viewer/): its own wgpu device on a render thread.
 sigil-viewer = { path = "../sigil-viewer" }
 serde_json = { workspace = true }

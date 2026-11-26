@@ -62,4 +62,4 @@ if find "$dir" -iname "*.pdb" -o -iname "resourcecompiler.exe" -o -iname "*.vpk"
   echo "unexpected build or game file in the bundle" >&2
   exit 1
 fi
-echo "helpers: folded into Sigil.exe (cli, agent-host)"
+echo "helpers: folded into Sigil.exe (cli; agent-host only with the agent feature)"

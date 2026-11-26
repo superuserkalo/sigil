@@ -304,6 +304,14 @@ Nothing here is measured on Windows yet; see "How to measure on Windows" below.
      build, which reads English only).
    - Windows: `icu.dll` and its word dictionaries load the first time word boundaries are asked
      for, not after every launch's first frame (Rune patch 0008, about 800 KB and a thread).
+5. **Executable diet, the safe cuts.** The agent host (`dah-agent`, TinyAgent, reqwest, h2,
+   hyper, tokio, jsonschema and native-tls) is linked only with the desktop crate's `agent`
+   feature, which release builds leave off; without it `Sigil agent-host` says so and exits with
+   code 2 (`helpers.rs`). The benchmark card draws with Rune's own Inter bytes
+   (`rune::text::embedded_fonts`, Rune patch 0009) instead of embedding the three faces again
+   (1,248,684 B). `cargo tree` confirms none of the agent stack is in the default graph.
+   `panic`, `opt-level`, the TLS and HTTP stacks, the compression features and Rune's `tooling`
+   feature are unchanged.
 
 ## Remaining opportunities
 

@@ -5,8 +5,8 @@
 #   scripts/package-linux.sh --deps     # first install the Ubuntu or Debian build packages (sudo)
 #
 # The program is one file, `sigil` (the dah-desktop crate): the Locker art and the notices are
-# built into it, and the CLI (`sigil cli ...`) and the agent host (`sigil agent-host`) are
-# subcommands. It never includes CSDK 12, game files, VPKs, keys or logs.
+# built into it, and the CLI (`sigil cli ...`) is a subcommand, as is the agent host
+# (`sigil agent-host`) in a build with the `agent` feature. It never includes CSDK 12, game files, VPKs, keys or logs.
 #
 # Outputs, in .scratch/package/:
 #   Sigil-<version>-x86_64.AppImage   updates itself (rust/crates/desktop/src/updater.rs)

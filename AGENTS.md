@@ -30,7 +30,7 @@ launch). Agent tools still never do. Rows not yet verified on a real Windows ins
 ## Repository layout
 
 ```text
-rust/crates/desktop       the Sigil app (Rune); also runs as `Sigil cli` and `Sigil agent-host`
+rust/crates/desktop       the Sigil app (Rune); also runs as `Sigil cli` and (`agent` feature) `Sigil agent-host`
 rust/crates/deadlock-core Rust domain core: discovery, VPK, installs, load order, launch, catalog,
                           crosshair, stats, servers, telemetry client
 rust/crates/sigil-viewer  3D viewer (wgpu)
@@ -127,7 +127,8 @@ These are product constraints, not preferences.
   JSONL journals under the app data directory.
 - The host runs as `Sigil agent-host` (the app's own executable, still a separate child process
   speaking the same JSONL protocol); its tools run `Sigil cli ...`. `DAH_AGENT_BIN` and `DAH_RS_BIN`
-  point at standalone builds instead.
+  point at standalone builds instead. The host is linked only with the desktop crate's `agent`
+  feature; release builds leave it out.
 - Tools call the Rust domain core through `dah-rs`. The payload validator is also implemented in the
   host for pure checks.
 - Mark a tool `idempotent: true` only for reads and pure computation. Writes, process launches and

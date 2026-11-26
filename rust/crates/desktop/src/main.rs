@@ -4,7 +4,8 @@
 //!
 //! `cargo run -p dah-desktop` opens the window. Headless scenes render with
 //! `cargo run -p dah-desktop -- --snap out.png --scene index`. The same executable is the dah
-//! CLI (`dah-desktop cli doctor`) and the agent host (`dah-desktop agent-host`).
+//! CLI (`dah-desktop cli doctor`) and, in a build with the `agent` feature, the agent host
+//! (`dah-desktop agent-host`).
 
 mod agent;
 mod app;
