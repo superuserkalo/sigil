@@ -4,7 +4,7 @@
 
 Sigil reads GameBanana's Deadlock catalog live, so you can find a mod, read its page and install it without a browser or an unzip step.
 
-![Sigil's Browse page with a trending banner, a top ten for the week and a row of rising mods.](https://sigilmods.app/img/hero-1200.webp)
+![Sigil's Browse page with a featured banner, a top ten for the week and a row of rising mods.](https://sigilmods.app/img/hero-v2-1200.webp)
 
 ## Finding a mod
 

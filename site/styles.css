@@ -30,7 +30,7 @@
   --accent-ink: oklch(0.17 0 0);
   --focus: oklch(0.96 0 0);
   /* The showcase panel: the app's orange, dimmed to sit behind a screenshot. */
-  --stage: oklch(0.47 0.105 50);
+  --stage: oklch(0.3 0.06 30);
 
   /* H1 then H2: the step is clear but small, as on cursor.com (their 26 to 22). The H1 is sized
      so the home headline holds one line at desktop widths. */
@@ -285,14 +285,15 @@ pre code { background: none; padding: 0; overflow-wrap: normal; font-size: var(-
    glow, no grain. */
 .stage { margin-top: clamp(40px, 5vw, 64px); }
 .stage__card {
-  padding: clamp(16px, 5vw, 72px) clamp(12px, 5vw, 72px) 0;
-  background: var(--stage);
-  overflow: hidden;
+  padding: clamp(14px, 5vw, 72px);
+  background:
+    linear-gradient(rgb(0 0 0 / 0.05), rgb(0 0 0 / 0.2)),
+    url("/img/stage-bg.webp") center / cover no-repeat,
+    var(--stage);
 }
 .stage__card picture { display: block; }
 .shot--hero {
   display: block;
-  border-bottom: 0;
   box-shadow: 0 24px 60px -12px rgb(0 0 0 / 0.55);
 }
 .shot {

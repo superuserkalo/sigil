@@ -448,7 +448,7 @@ def app_ld():
         "operatingSystem": "Windows 10, Windows 11, Linux, macOS",
         "url": SITE + "/",
         "image": SITE + "/img/og.jpg",
-        "screenshot": SITE + "/img/hero.webp",
+        "screenshot": SITE + "/img/hero-v2.webp",
         "downloadUrl": DOWNLOAD,
         "releaseNotes": RELEASES,
         "license": LICENCE,
@@ -511,8 +511,7 @@ def build_home(pages):
     <div class="stage">
       <div class="wrap"><div class="stage__card">
         <picture>
-          <source media="(max-width: 640px)" srcset="/img/hero-phone.webp" width="1000" height="833">
-          <img class="shot shot--hero" src="/img/hero.webp" srcset="/img/hero-1200.webp 1200w, /img/hero.webp 2400w" sizes="(max-width: 1264px) calc(100vw - 64px), 1200px" width="2400" height="1518" alt="{esc(HOME["hero_alt"])}" fetchpriority="high">
+          <img class="shot shot--hero" src="/img/hero-v2.webp" srcset="/img/hero-v2-1200.webp 1200w, /img/hero-v2.webp 2400w" sizes="(max-width: 1264px) calc(100vw - 64px), 1200px" width="2400" height="1518" alt="{esc(HOME["hero_alt"])}" fetchpriority="high">
         </picture>
       </div></div>
     </div>
