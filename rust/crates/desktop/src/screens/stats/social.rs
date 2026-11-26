@@ -1,4 +1,9 @@
-//! Players you meet: the teammates and opponents behind a match window.
+//! Squad: the players you queue with, then teammates and opponents.
+//!
+//! The squad is the premades (`same_party=true`: same team and Steam friends at the start of the
+//! match), as cards with your win rate with and without them. "Without" joins each row's
+//! shared match ids with the loaded match history (`deadlock_core::stats::social::with_without`)
+//! and reads "-" when the history holds less than half of them or either side has under five.
 //!
 //! Both lists need three shared matches before a row appears, the API's own
 //! floor, and a rate needs five (`MIN_RATE_SAMPLE`): below that it reads "-",
@@ -7,8 +12,9 @@
 //! (lanes from `deadlock_core::stats::social`). A premade is marked from the
 //! same-party request, and every row opens that player's page.
 
-use deadlock_core::stats::social::{PlayerRecord, Social};
-use rune::{Color, El, col, icon, row, spacer, text};
+use deadlock_core::stats::MatchSummary;
+use deadlock_core::stats::social::{PlayerRecord, Social, with_without};
+use rune::{Color, El, col, el, icon, row, spacer, text};
 
 use crate::app::State;
 use crate::icons;
@@ -24,46 +30,32 @@ const ROWS_ALL: usize = 12;
 
 pub(super) fn social_section(s: &State, u: &Ui) -> El {
     let v: &View = &s.stats;
-    let mut section = col()
-        .key("stats-social")
-        .w_full()
-        .gap(12.0)
-        .child(section_head(
-            u,
-            tr("Squad"),
-            tr("Teammates and opponents, three shared matches or more"),
-        ));
-
-    section = match &v.social {
-        Fetched::Idle | Fetched::Loading => section.child(
-            text(tr("Loading teammates and opponents"))
-                .font(BODY)
-                .color(u.muted),
-        ),
-        Fetched::Failed(error) => section.child(problem(u, error)),
+    let section = col().key("stats-social").w_full().gap(12.0);
+    match &v.social {
+        Fetched::Idle | Fetched::Loading => section
+            .child(section_head(u, tr("Squad"), ""))
+            .child(text(tr("Loading teammates and opponents")).font(BODY).color(u.muted)),
+        Fetched::Failed(error) => section.child(section_head(u, tr("Squad"), "")).child(problem(u, error)),
         Fetched::Ready(social) => section.child(body(s, u, social)),
-    };
-    section
+    }
 }
 
 fn body(s: &State, u: &Ui, social: &Social) -> El {
     let all = s.stats.social_all;
     let limit = if all { ROWS_ALL } else { ROWS };
     let total = social.mates.len() + social.enemies.len();
+    let history: &[MatchSummary] = s.stats.snapshot.as_ref().map(|snap| snap.matches.as_slice()).unwrap_or(&[]);
     if total == 0 {
         return col()
             .w_full()
             .gap(12.0)
-            .child(
-                text(tr("Nobody has three shared matches yet. It fills in as you play."))
-                    .font(BODY)
-                    .color(u.muted),
-            )
+            .child(text(tr("Nobody has three shared matches yet. It fills in as you play.")).font(BODY).color(u.muted))
             .child(refresh(u));
     }
 
     let sort = s.stats.people_sort;
-    let mates: Vec<&PlayerRecord> = sorted_mates(social, sort, limit);
+    let squad_only = s.stats.squad_only;
+    let mates: Vec<&PlayerRecord> = sorted_mates(social, sort, limit, history, squad_only);
     let enemies: Vec<&PlayerRecord> = social
         .enemies
         .iter()
@@ -71,16 +63,31 @@ fn body(s: &State, u: &Ui, social: &Social) -> El {
         .take(limit)
         .collect();
 
+    let only = crate::ui::Segmented::new("stats-squad-only", tr("Teammates shown"))
+        .size(crate::ui::SegSize::M)
+        .part(crate::ui::SegPart::new("stats-squad-only-all", tr("Everyone")).on(!squad_only).with(|e| e.on_press(|st: &mut State| st.stats.squad_only = false)))
+        .part(crate::ui::SegPart::new("stats-squad-only-squad", tr("Squad only")).on(squad_only).with(|e| e.on_press(|st: &mut State| st.stats.squad_only = true)))
+        .build(u);
     let mut mates_table = col()
         .key("stats-people-mates")
         .w_full()
-        .child(text(tr("Teammates")).font(BODY_MED).color(u.muted).pb(6.0))
+        .child(
+            row()
+                .w_full()
+                .h(32.0)
+                .gap(12.0)
+                .center_y()
+                .child(text(tr("Teammates")).font(BODY_MED).color(u.ink))
+                .child(text(tr("three shared matches or more")).font(SMALL).color(u.muted))
+                .child(spacer())
+                .child(only),
+        )
         .child(mates_head(u, sort, social.lanes_known));
     if mates.is_empty() {
         mates_table = mates_table.child(text(tr("None yet")).font(BODY).color(u.muted).py(10.0));
     }
     for record in &mates {
-        mates_table = mates_table.child(mate_row(s, u, record, social.lanes_known));
+        mates_table = mates_table.child(mate_row(s, u, record, social.lanes_known, history));
     }
     if !social.lanes_known && !social.mates.is_empty() {
         mates_table = mates_table.child(
@@ -91,17 +98,27 @@ fn body(s: &State, u: &Ui, social: &Social) -> El {
                 .wrap(),
         );
     }
+    mates_table = mates_table.child(
+        text(tr("Without: your win rate in the other matches of the loaded history. Shown when that history holds at least half of the shared matches, and both sides have 5 matches."))
+            .font(SMALL)
+            .color(u.muted)
+            .pt(8.0)
+            .wrap(),
+    );
 
     let mut enemies_table = col()
         .key("stats-people-enemies")
         .w_full()
-        .child(text(tr("Frequent opponents")).font(BODY_MED).color(u.muted).pb(6.0))
-        .child(head_row(u, &[("Player", 0.0, false), ("Against", COL_COUNT, true), ("Win rate", COL_RATE, true), ("", MARKS, false)]));
+        .child(row().h(32.0).center_y().child(text(tr("Opponents")).font(BODY_MED).color(u.ink)))
+        .child(head_row(
+            u,
+            &[("Player", 0.0, false), ("Against", COL_COUNT, true), ("Your win rate", COL_LANE_RATE, true), ("Last met", COL_LAST, true), ("", MARKS, false)],
+        ));
     if enemies.is_empty() {
         enemies_table = enemies_table.child(text(tr("None yet")).font(BODY).color(u.muted).py(10.0));
     }
     for record in &enemies {
-        enemies_table = enemies_table.child(enemy_row(s, u, record));
+        enemies_table = enemies_table.child(enemy_row(s, u, record, history));
     }
 
     let hidden = social.mates.len() > ROWS || social.enemies.len() > ROWS;
@@ -118,9 +135,71 @@ fn body(s: &State, u: &Ui, social: &Social) -> El {
     col()
         .w_full()
         .gap(24.0)
+        .child(squad_cards(s, u, social, history))
         .child(mates_table)
         .child(enemies_table)
         .child(foot.child(refresh(u)))
+}
+
+/// The squad: the three premades played with most, as cards, with and without them.
+fn squad_cards(s: &State, u: &Ui, social: &Social, history: &[MatchSummary]) -> El {
+    use crate::screens::settings::i18n::fill;
+    let mine = !super::nav::visiting(s);
+    let mut squad: Vec<&PlayerRecord> = social.premades().collect();
+    squad.sort_by(|a, b| b.matches.cmp(&a.matches).then(a.account_id.cmp(&b.account_id)));
+    let head = row()
+        .w_full()
+        .h(32.0)
+        .gap(12.0)
+        .center_y()
+        .child(text(if mine { tr("Your squad") } else { tr("Their squad") }).font(crate::ui::H2).color(u.ink))
+        .child(text(tr("players queued with: Steam friends on the same team")).font(SMALL).color(u.muted));
+    if squad.is_empty() {
+        return col().key("stats-squad-cards").w_full().gap(4.0).child(head).child(
+            text(tr("No squad found. deadlock-api only knows a squad when the Steam friends list is public."))
+                .font(BODY)
+                .color(u.muted),
+        );
+    }
+    let mut cards = row().w_full().gap(8.0);
+    for record in squad.iter().take(3) {
+        let split = with_without(record, history);
+        let name = record.persona_name.clone().unwrap_or_else(|| record.account_id.to_string());
+        let together = match record.rate_together() {
+            Some(rate) => fill(tr("{} together, {} win"), &[&record.matches.to_string(), &format!("{rate:.0}%")]),
+            None => fill(tr("{} together"), &[&record.matches.to_string()]),
+        };
+        let lane = match record.lane {
+            Some(lane) if lane.matches > 0 => match record.rate_in_lane() {
+                Some(rate) => fill(tr("same lane {}, {} win"), &[&lane.matches.to_string(), &format!("{rate:.0}%")]),
+                None => fill(tr("same lane {}"), &[&lane.matches.to_string()]),
+            },
+            _ => String::new(),
+        };
+        let account_id = record.account_id;
+        cards = cards.child(
+            col()
+                .key(format!("stats-squad-card-{account_id}"))
+                .w(0.0)
+                .grow(1.0)
+                .min_w(0.0)
+                .h(176.0)
+                .padding(12.0)
+                .gap(6.0)
+                .radius(crate::ui::r(4.0))
+                .fill(u.raised)
+                .border(1.0, u.hair)
+                .child(player_link(s, u, account_id, &name, 28.0, false))
+                .child(text(together).font(TNUM_SMALL).color(u.prose))
+                .child(lift_bar(u, record.rate_together(), split.without_rate(), split.lift_from(record.rate_together())))
+                .child(text(lane).font(TNUM_SMALL).color(u.muted)),
+        );
+    }
+    // Keep three columns: a squad of one or two leaves the room empty.
+    for _ in squad.len().min(3)..3 {
+        cards = cards.child(el().w(0.0).grow(1.0).min_w(0.0).h(176.0));
+    }
+    col().key("stats-squad-cards").w_full().gap(8.0).child(head).child(cards)
 }
 
 /// Column widths of the people tables. Fixed, so a sort or a new number never moves a column.
@@ -128,6 +207,8 @@ const COL_COUNT: f32 = 72.0;
 const COL_RATE: f32 = 72.0;
 const COL_LANE: f32 = 80.0;
 const COL_LANE_RATE: f32 = 104.0;
+const COL_LIFT: f32 = 56.0;
+const COL_LAST: f32 = 96.0;
 /// The row's more button.
 const MARKS: f32 = 32.0;
 
@@ -138,19 +219,30 @@ pub enum PeopleSort {
     Together,
     #[default]
     Rate,
+    Without,
+    Lift,
     Lane,
     LaneRate,
 }
 
 /// Teammates in the table's order, `limit` of them.
-pub(super) fn sorted_mates(social: &Social, sort: PeopleSort, limit: usize) -> Vec<&PlayerRecord> {
+pub(super) fn sorted_mates<'a>(
+    social: &'a Social,
+    sort: PeopleSort,
+    limit: usize,
+    history: &[MatchSummary],
+    squad_only: bool,
+) -> Vec<&'a PlayerRecord> {
     let mut rows: Vec<&PlayerRecord> = social
         .mates
         .iter()
         .filter(|row| row.matches >= deadlock_core::stats::social::MIN_SHARED_MATCHES)
+        .filter(|row| !squad_only || row.premade)
         .collect();
     let key = |row: &PlayerRecord| -> (Option<f64>, u64) {
         match sort {
+            PeopleSort::Without => (with_without(row, history).without_rate(), row.matches),
+            PeopleSort::Lift => (with_without(row, history).lift_from(row.rate_together()), row.matches),
             PeopleSort::Together => (Some(row.matches as f64), row.wins),
             PeopleSort::Rate => (row.rate_together(), row.matches),
             PeopleSort::Lane => (row.lane.map(|lane| lane.matches as f64), row.lane.map(|lane| lane.wins).unwrap_or(0)),
@@ -192,6 +284,8 @@ fn mates_head(u: &Ui, sort: PeopleSort, lanes: bool) -> El {
     for (label, help, width, key) in [
         ("Together", tr("Matches on the same team"), COL_COUNT, PeopleSort::Together),
         ("Win rate", tr("Your win rate in those matches, from 5 matches up"), COL_RATE, PeopleSort::Rate),
+        ("Without", tr("Your win rate in the other matches of the loaded history"), COL_RATE, PeopleSort::Without),
+        ("Lift", tr("With minus without, in points"), COL_LIFT, PeopleSort::Lift),
         ("Same lane", lane_help, COL_LANE, PeopleSort::Lane),
         ("Lane win rate", tr("Your win rate when you shared the lane, from 5 matches up"), COL_LANE_RATE, PeopleSort::LaneRate),
     ] {
@@ -219,7 +313,30 @@ fn mates_head(u: &Ui, sort: PeopleSort, lanes: bool) -> El {
                 ),
         );
     }
-    r.child(row().w(MARKS))
+    r.child(cell(text(tr("Last together")).font(SMALL).color(u.muted).align(rune::Align::End).pr(12.0), COL_LAST)).child(row().w(MARKS))
+}
+
+/// "Yesterday", "3 d ago": when a match in the history was played.
+fn ago(s: &State, at: Option<i64>) -> String {
+    let now = s.stats.snapshot.as_ref().map(|snap| snap.generated_unix).unwrap_or(0);
+    match at {
+        Some(at) => deadlock_core::stats::insight::day_label(at, now),
+        None => "-".to_string(),
+    }
+}
+
+fn text_cell(u: &Ui, value: String, w: f32) -> El {
+    cell(text(value).font(TNUM_SMALL).color(u.muted).align(rune::Align::End).pr(12.0).truncate(), w)
+}
+
+fn lift_cell(u: &Ui, lift: Option<f64>, w: f32) -> El {
+    match lift {
+        Some(points) => cell(
+            text(format!("{points:+.0}")).font(TNUM).color(if points >= 3.0 { u.teal } else if points <= -3.0 { u.rose } else { u.prose }).align(rune::Align::End).pr(12.0),
+            w,
+        ),
+        None => count_cell(None, w, u.muted),
+    }
 }
 
 /// A rate, or "-" with the reason in a tooltip below the sample floor.
@@ -292,23 +409,29 @@ fn marks(u: &Ui, record: &PlayerRecord) -> El {
     )
 }
 
-fn mate_row(s: &State, u: &Ui, record: &PlayerRecord, lanes: bool) -> El {
+fn mate_row(s: &State, u: &Ui, record: &PlayerRecord, lanes: bool, history: &[MatchSummary]) -> El {
     let id = record.account_id;
+    let split = with_without(record, history);
     person(u, record)
         .child(name_cell(s, u, record))
         .child(count_cell(Some(record.matches), COL_COUNT, u.prose))
         .child(rate_cell(u, record.rate_together(), COL_RATE, format!("stats-person-rate-{id}")))
+        .child(rate_cell(u, split.without_rate(), COL_RATE, format!("stats-person-without-{id}")))
+        .child(lift_cell(u, split.lift_from(record.rate_together()), COL_LIFT))
         .child(count_cell(record.lane.map(|lane| lane.matches), COL_LANE, if lanes { u.prose } else { u.muted }))
         .child(rate_cell(u, record.rate_in_lane(), COL_LANE_RATE, format!("stats-person-lane-rate-{id}")))
+        .child(text_cell(u, ago(s, split.last_together), COL_LAST))
         .child(marks(u, record))
 }
 
-fn enemy_row(s: &State, u: &Ui, record: &PlayerRecord) -> El {
+fn enemy_row(s: &State, u: &Ui, record: &PlayerRecord, history: &[MatchSummary]) -> El {
     let id = record.account_id;
+    let split = with_without(record, history);
     person(u, record)
         .child(name_cell(s, u, record))
         .child(count_cell(Some(record.matches), COL_COUNT, u.prose))
-        .child(rate_cell(u, record.rate_together(), COL_RATE, format!("stats-person-rate-{id}")))
+        .child(rate_cell(u, record.rate_together(), COL_LANE_RATE, format!("stats-person-rate-{id}")))
+        .child(text_cell(u, ago(s, split.last_together), COL_LAST))
         .child(marks(u, record))
 }
 

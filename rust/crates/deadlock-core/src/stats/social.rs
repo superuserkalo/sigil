@@ -140,7 +140,12 @@ impl WithWithout {
     /// With minus without, in points, when both sides have [`MIN_RATE_SAMPLE`] matches and
     /// the window covers the row.
     pub fn lift(&self) -> Option<f64> {
-        Some(self.with_rate()? - self.without_rate()?)
+        self.lift_from(self.with_rate())
+    }
+
+    /// `with` (a rate from elsewhere, such as the API's together rate) minus without.
+    pub fn lift_from(&self, with: Option<f64>) -> Option<f64> {
+        Some(with? - self.without_rate()?)
     }
 }
 
@@ -576,6 +581,8 @@ mod tests {
         assert_eq!(split.last_together, Some(106));
         let lift = split.lift().expect("lift");
         assert!((lift - (500.0 / 6.0 - 40.0)).abs() < 1e-9, "{lift}");
+        assert_eq!(split.lift_from(Some(80.0)), Some(40.0), "the shown together rate minus without");
+        assert_eq!(split.lift_from(None), None);
     }
 
     #[test]

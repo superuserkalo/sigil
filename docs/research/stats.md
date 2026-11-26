@@ -358,8 +358,16 @@ after a press.
   a row press shows Matches on that hero.
 - **Items.** One "Mine | Everyone" selector: your item rows against everyone, or the item meta.
 - **Squad** (was People). Loads by itself when the tab opens (three responses, an hour's cache).
-  Teammates and opponents with three shared matches or more; names are links, "squad" marks a
-  premade, the row's more button holds Track, Statlocker and Copy id. The party planner follows.
+  First the squad: the three premades played with most (`same_party=true`, same team and Steam
+  friends at the start), as cards with matches together, the win rate with them and without them,
+  the lift in points and the same lane record. Without a public friends list deadlock-api knows no
+  squad, and the page says so. Then teammates (Everyone or Squad only; sortable by together, win
+  rate, without, lift, same lane and lane win rate; last time together) and opponents (your win
+  rate against them, last met). "Without" is `deadlock_core::stats::social::with_without`: the
+  scored matches of the loaded history whose id is not in the row's shared list. It reads "-" when
+  the history holds less than half of the row's shared matches or either side has fewer than five;
+  lift is the shown together rate minus without. Names are links, "squad" marks a premade, the
+  row's more button holds Track, Statlocker and Copy id. The party planner follows.
 - **Leaderboard.** An entry is a link when `possible_account_ids` holds one account; with several,
   a press lists them in the search popover.
 - **Map.** Unchanged.

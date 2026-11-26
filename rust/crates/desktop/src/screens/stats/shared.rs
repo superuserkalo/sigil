@@ -252,6 +252,34 @@ pub(super) fn item_tile(s: &State, u: &Ui, item_id: u64, name: &str, slot: &str,
     }
 }
 
+/// Win rate with and without a teammate: two thin bars on one 0 to 100 track, each with its
+/// number, and the lift in points. A side without a rate reads "-".
+pub(super) fn lift_bar(u: &Ui, with: Option<f64>, without: Option<f64>, lift: Option<f64>) -> El {
+    let w = 120.0;
+    let bar = |rate: Option<f64>, color: Color| {
+        let fill = rate.map(|r| (r.clamp(0.0, 100.0) / 100.0) as f32 * w).unwrap_or(0.0);
+        el().w(w).h(4.0).fill(Color::WHITE.alpha(0.08)).child(el().absolute(0.0, 0.0).w(fill).h(4.0).fill(color))
+    };
+    let pct = |rate: Option<f64>| rate.map(|r| format!("{r:.0}%")).unwrap_or_else(|| "-".to_string());
+    let line = |label: &str, rate: Option<f64>, color: Color| {
+        row()
+            .gap(8.0)
+            .center_y()
+            .child(text(tr(label).to_string()).font(SMALL).color(u.muted).w(56.0))
+            .child(bar(rate, color))
+            .child(text(pct(rate)).font(TNUM_SMALL).color(u.prose).w(36.0).align(rune::Align::End))
+    };
+    let mut c = col().gap(4.0).child(line("With", with, u.teal.alpha(0.85))).child(line("Without", without, u.muted));
+    if let Some(points) = lift {
+        c = c.child(
+            text(crate::screens::settings::i18n::fill(tr("{} points with them"), &[&format!("{points:+.0}")]))
+                .font(TNUM_SMALL)
+                .color(if points >= 3.0 { u.teal } else if points <= -3.0 { u.rose } else { u.muted }),
+        );
+    }
+    c.a11y_hidden()
+}
+
 /// Souls a minute of a history row.
 pub(super) fn spm(item: &deadlock_core::stats::MatchSummary) -> u64 {
     deadlock_core::stats::board::souls_per_minute(item.net_worth, item.duration_seconds)

@@ -274,6 +274,8 @@ pub struct View {
     pub social_all: bool,
     /// The Squad tab's teammates sort.
     pub people_sort: social::PeopleSort,
+    /// The Squad tab shows premades only.
+    pub squad_only: bool,
     pub leaderboard: Fetched<Leaderboard>,
     pub leaderboard_job: Job<Leaderboard>,
     pub leaderboard_all: bool,
@@ -348,6 +350,7 @@ impl Default for View {
             social_job: Job::default(),
             social_all: false,
             people_sort: social::PeopleSort::default(),
+            squad_only: false,
             leaderboard: Fetched::Idle,
             leaderboard_job: Job::default(),
             leaderboard_all: false,
@@ -711,10 +714,20 @@ pub fn scene_lookup(s: &mut State) {
     s.stats.remembered.push(Remembered { account_id: 55_000_123, name: "Mika (duo)".to_string(), primary: false });
 }
 
-/// Squad: the lists, the cards and the planner, from the fixture.
+/// Squad: the cards, the lists and the planner, from the fixture. The captured bundle lists
+/// only three shared match ids per mate, so the scene marks three premades and spreads their
+/// shared matches over the loaded history, for the with and without split.
 pub fn scene_squad(s: &mut State) {
     scene_people(s);
     s.stats.tab = Tab::Squad;
+    let ids: Vec<u64> = s.stats.snapshot.as_ref().map(|snap| snap.matches.iter().map(|m| m.match_id).collect()).unwrap_or_default();
+    if let Fetched::Ready(social) = &mut s.stats.social {
+        for (index, mate) in social.mates.iter_mut().enumerate() {
+            let step = 3 + index;
+            mate.match_ids = ids.iter().copied().enumerate().filter(|(i, _)| i % step == index % step).map(|(_, id)| id).collect();
+            mate.premade = index < 3;
+        }
+    }
 }
 
 /// Teammates, opponents and the leaderboard, from the fixture.
