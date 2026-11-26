@@ -337,14 +337,14 @@ def head(title, description, path, md_path, jsonld):
 <meta property="og:title" content="{esc(title)}">
 <meta property="og:description" content="{esc(description)}">
 <meta property="og:url" content="{url}">
-<meta property="og:image" content="{SITE}/img/og.jpg">
+<meta property="og:image" content="{SITE}/img/og-v2.jpg">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
 <meta property="og:image:alt" content="Sigil, a Deadlock mod manager: the headline beside the app's Browse page.">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="{esc(title)}">
 <meta name="twitter:description" content="{esc(description)}">
-<meta name="twitter:image" content="{SITE}/img/og.jpg">
+<meta name="twitter:image" content="{SITE}/img/og-v2.jpg">
 <meta name="twitter:image:alt" content="Sigil, a Deadlock mod manager: the headline beside the app's Browse page.">
 <link rel="preload" href="/fonts/Inter-Regular.woff" as="font" type="font/woff" crossorigin>
 <link rel="preload" href="/fonts/Inter-SemiBold.woff" as="font" type="font/woff" crossorigin>
@@ -447,7 +447,7 @@ def app_ld():
         "applicationSubCategory": "Mod manager for Deadlock",
         "operatingSystem": "Windows 10, Windows 11, Linux, macOS",
         "url": SITE + "/",
-        "image": SITE + "/img/og.jpg",
+        "image": SITE + "/img/og-v2.jpg",
         "screenshot": SITE + "/img/hero-v2.webp",
         "downloadUrl": DOWNLOAD,
         "releaseNotes": RELEASES,
