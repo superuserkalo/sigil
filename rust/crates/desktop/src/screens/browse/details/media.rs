@@ -201,6 +201,16 @@ pub(crate) fn open_lightbox(st: &mut State, index: usize) {
     }
     details.lightbox = Some(index);
     let full = details.images().get(index).map(|image| image.full_url.clone());
+    // One original at a time: the others go (their gallery copies stay).
+    let others: Vec<String> = details
+        .images()
+        .iter()
+        .filter(|image| image.full_url != image.url && Some(&image.full_url) != full.as_ref())
+        .map(|image| image.full_url.clone())
+        .collect();
+    for url in others {
+        st.thumbnails.remove(&url);
+    }
     super::super::w4::reset_zoom(st);
     crate::data::queue_images(st, full.into_iter().collect(), true);
 }
@@ -223,8 +233,15 @@ pub(crate) fn step_lightbox(st: &mut State, next: bool) {
 
 pub(crate) fn close_lightbox(st: &mut State) {
     super::super::w4::reset_zoom(st);
-    if let Some(details) = st.browse_view.details.as_mut() {
-        details.lightbox = None;
+    let Some(details) = st.browse_view.details.as_mut() else {
+        return;
+    };
+    // The original it showed goes with it.
+    let shown = details.lightbox.take().and_then(|index| details.images().get(index).cloned());
+    if let Some(image) = shown
+        && image.full_url != image.url
+    {
+        st.thumbnails.remove(&image.full_url);
     }
 }
 

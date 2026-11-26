@@ -6,6 +6,24 @@
 
 use crate::app::State;
 
+/// GPU texture bytes for thumbnail-sized pictures (Rune's atlas shelf pages, images up to 1024
+/// pixels a side, every window together): Browse cards at 2x are about 0.25 MB each on the GPU,
+/// so 32 MB holds several screens of them. Pages not drawn in the last few frames are freed,
+/// least recently drawn first, while over it.
+pub const THUMB_BUDGET: u64 = 32 << 20;
+/// GPU texture bytes for all pictures: the thumbnails plus large ones (the billboard, a
+/// gallery or lightbox picture, the Crosshair backdrop, Locker renders).
+pub const IMAGE_BUDGET: u64 = 64 << 20;
+/// The largest picture decoded at all, in pixels (4096 by 4096, 64 MB of RGBA while it is
+/// scaled): GameBanana originals reach 7960 by 4412. A larger one shows its placeholder.
+pub const MAX_DECODE_PIXELS: u64 = 4096 * 4096;
+
+/// Sets Rune's image budgets and decode limit (`app::setup`).
+pub fn configure_images() {
+    rune::set_image_budget(THUMB_BUDGET, IMAGE_BUDGET);
+    rune::set_max_decode_pixels(MAX_DECODE_PIXELS);
+}
+
 pub struct Reading {
     /// Live bytes the Rust allocator handed out.
     pub heap: Option<u64>,

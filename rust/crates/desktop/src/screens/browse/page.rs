@@ -35,7 +35,7 @@ pub(crate) fn grid_page(s: &State, u: &Ui) -> El {
 
     let width = super::toolbar::page_width(s);
     let (cols, card_w) = grid_columns(width, s.browse_view.card_size);
-    // Card thumbnails are fetched at this width (`data::shrink_card_thumb`).
+    // Card thumbnails decode to this width (`data::thumb_fit`).
     crate::data::set_card_points(card_w);
 
     let body = if collecting {

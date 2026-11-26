@@ -9,9 +9,21 @@ pub(crate) fn pixels_for<'a>(s: &'a State, url: Option<&String>) -> Option<&'a r
 }
 
 /// An image filling its parent. A hidden mature image is blurred under the parent's clip.
+///
+/// The picture shows once its pixels are ready (decoded, or still in the GPU atlas). Until then
+/// the placeholder shows and the decode is asked for, so a picture fetched now, or one whose
+/// atlas copy was freed while it was off screen, fades in over its placeholder rather than
+/// popping in over an empty slot.
 pub(crate) fn image_fill(s: &State, key: String, url: Option<&String>, radii: [f32; 4], blur: bool) -> El {
     let base = el().absolute(0.0, 0.0).w_full().h_full().corners(radii);
-    match pixels_for(s, url) {
+    let ready = pixels_for(s, url).filter(|pixels| {
+        let ready = pixels.is_ready();
+        if !ready {
+            pixels.prefetch();
+        }
+        ready
+    });
+    match ready {
         Some(pixels) => {
             let image = base.key(key).pixels_fit(pixels, SurfaceFit::Fill).transition(crate::motion::image_in()).a11y_hidden();
             if blur { image.blur(crate::screens::settings::nsfw::card_blur()) } else { image }

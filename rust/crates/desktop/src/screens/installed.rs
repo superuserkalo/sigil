@@ -3030,10 +3030,7 @@ pub fn poll(st: &mut State) -> bool {
     while let Some((url, bytes)) = st.installed.thumbs.try_next() {
         match (st.images.as_ref(), bytes) {
             (Some(cache), Some(bytes)) => {
-                let image = match bytes {
-                    crate::data::ThumbBytes::Encoded(bytes) => cache.load(bytes),
-                    crate::data::ThumbBytes::Rgba(w, h, pixels) => cache.rgba(w, h, pixels),
-                };
+                let image = crate::data::thumb_image(cache, &url, bytes, false);
                 st.thumbnails.insert(url, image.pixels().clone());
             }
             _ => {

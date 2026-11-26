@@ -90,6 +90,8 @@ pub struct State {
     pub conflicts_query: TextEdit,
     pub images: Option<ImageCache>,
     pub thumbnails: HashMap<String, Pixels>,
+    /// Rune's decode count last seen by `poll` (`rune::image_memory`).
+    pub image_decodes: u64,
     pub pending_thumbs: Vec<(String, Vec<u8>)>,
     pub thumb_crew: ThumbCrew,
     /// Windows: drops a system title bar that shows above Sigil's (`win_frame`).
@@ -203,6 +205,7 @@ impl Default for State {
             conflicts_query: TextEdit::new(""),
             images: None,
             thumbnails: HashMap::new(),
+            image_decodes: 0,
             pending_thumbs: Vec::new(),
             thumb_crew: ThumbCrew::shrinking(),
             frame_guard: Default::default(),
@@ -2233,7 +2236,10 @@ fn launch_layer(s: &State, u: &Ui) -> El {
 /// the selected scene.
 pub fn setup(s: &mut State, waker: Waker) {
     s.wake = Some(waker.clone());
-    s.images = Some(ImageCache::new(waker));
+    crate::memory::configure_images();
+    // Pictures decode when drawn: a request reads the header for the size, so a window started
+    // minimized, or a screen not shown, decodes nothing (`memory.rs`).
+    s.images = Some(ImageCache::new(waker).decode_when_drawn(true));
     crate::brand::load(s);
     preload_thumbnails(s);
     if s.demo || rune::is_headless() {
@@ -2335,7 +2341,14 @@ pub fn poll(s: &mut State, t: f64, _tx: &mut Tx) -> bool {
         changed = true;
     }
     // Images that landed fade in over their placeholders (`motion.md` 4.16), decided at the end.
-    let thumbs_landed = crate::data::drain_thumbnails(s);
+    let mut thumbs_landed = crate::data::drain_thumbnails(s);
+    // A picture decoded (it was drawn or prefetched, or decoded again after its atlas copy was
+    // freed): views that show a placeholder until it is ready build again.
+    let decodes = rune::image_memory().decodes;
+    if decodes != s.image_decodes {
+        s.image_decodes = decodes;
+        thumbs_landed = true;
+    }
     if let Some(result) = s.review_job.try_take() {
         crate::data::apply_review_queue(s, result);
         changed = true;

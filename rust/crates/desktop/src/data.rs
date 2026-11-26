@@ -813,35 +813,47 @@ fn billboard_px() -> Option<(u32, u32)> {
 
 /// The size a `w` by `h` picture is scaled to so it still covers a `box_w` by `box_h` banner
 /// (the billboard draws it to fill, cropping the rest), or `None` when it is no more than
-/// about 15% over that and a second copy is not worth the work.
+/// about 15% over that and a second copy is not worth the work. Rune's image decoder scales to
+/// this as it decodes (`thumb_fit`, `rune::Fit::Cover`); the tests pin its numbers.
+#[cfg(test)]
 pub(crate) fn billboard_fit(w: u32, h: u32, box_w: u32, box_h: u32) -> Option<(u32, u32)> {
-    if w == 0 || h == 0 || box_w == 0 || box_h == 0 {
+    if box_w == 0 || box_h == 0 {
         return None;
     }
-    let scale = (box_w as f64 / w as f64).max(box_h as f64 / h as f64);
-    if scale * 1.15 >= 1.0 {
-        return None;
-    }
-    let width = ((w as f64 * scale).ceil() as u32).clamp(1, w);
-    let height = ((h as f64 * scale).ceil() as u32).clamp(1, h);
-    Some((width, height))
+    rune::Fit::Cover(box_w, box_h).target(w, h)
 }
 
-/// Decode and scale the billboard's original upload on the fetch worker to what the banner
-/// shows, so the image cache keeps (with its mips, and again on the GPU) a banner's worth of
-/// pixels, not the full upload. Anything that cannot be read stays encoded.
-fn shrink_billboard(bytes: Vec<u8>) -> ThumbBytes {
-    let Some((box_w, box_h)) = billboard_px() else {
-        return ThumbBytes::Encoded(bytes);
-    };
-    let Ok(image) = image::load_from_memory(&bytes) else {
-        return ThumbBytes::Encoded(bytes);
-    };
-    let Some((width, height)) = billboard_fit(image.width(), image.height(), box_w, box_h) else {
-        return ThumbBytes::Encoded(bytes);
-    };
-    let scaled = image::imageops::resize(&image.to_rgba8(), width, height, image::imageops::FilterType::Triangle);
-    ThumbBytes::Rgba(width, height, scaled.into_raw())
+/// The longest side any other fetched picture decodes to (gallery, lightbox, avatars, banners),
+/// in device pixels: a 2560 pixel window shows it one to one. A GameBanana original can be
+/// 7960 by 4412; scaled on decode it holds 25 MB, not 134 MB.
+pub const LARGE_EDGE: u32 = 2560;
+
+/// How a fetched picture decodes: card thumbnails to the card's width, the billboard to the
+/// banner, anything else no larger than [`LARGE_EDGE`].
+fn thumb_fit(url: &str, card: bool) -> rune::Fit {
+    if url.ends_with(BILLBOARD_MARK)
+        && let Some((w, h)) = billboard_px()
+    {
+        return rune::Fit::Cover(w, h);
+    }
+    let is_card = url.rsplit('/').next().is_some_and(|name| name.starts_with("530-90_"));
+    if card
+        && is_card
+        && let Some(width) = card_thumb_px()
+    {
+        return rune::Fit::Cover(width, 0);
+    }
+    rune::Fit::Contain(LARGE_EDGE, LARGE_EDGE)
+}
+
+/// A fetched picture for the image cache: decoded and scaled by Rune's decoder on the image
+/// workers (`ImageCache::file_fit`), only once something draws it.
+pub fn thumb_image(cache: &rune::ImageCache, url: &str, bytes: ThumbBytes, card: bool) -> rune::Image {
+    let fit = thumb_fit(url, card);
+    match bytes {
+        ThumbBytes::File(path) => cache.file_fit(path, fit),
+        ThumbBytes::Encoded(bytes) => cache.load_fit(bytes, fit),
+    }
 }
 
 /// The billboard grew (a wider window, a sharper screen): fetch its held pictures again at the
@@ -857,36 +869,11 @@ fn regrow_billboard(state: &mut State) {
     state.thumb_crew.add(held, wake, false);
 }
 
-/// A fetched image, as the bytes or already scaled to the size it draws at.
+/// A fetched image: the file in the disk cache, or the bytes when the cache could not be
+/// written. Decoding is Rune's (`thumb_image`), so a fetch worker holds no pixels.
 pub enum ThumbBytes {
+    File(PathBuf),
     Encoded(Vec<u8>),
-    Rgba(u32, u32, Vec<u8>),
-}
-
-/// GameBanana's 530 px card thumbnails (`530-90_*`) are drawn at the card's width, often half
-/// that or less. Decode and scale them on the fetch worker so the image cache keeps (with its
-/// mips, and again on the GPU) only the pixels a card shows. Anything else stays encoded.
-fn shrink_card_thumb(url: &str, bytes: Vec<u8>) -> ThumbBytes {
-    let is_card = url.rsplit('/').next().is_some_and(|name| name.starts_with("530-90_"));
-    let Some(target) = card_thumb_px().filter(|_| is_card) else {
-        return ThumbBytes::Encoded(bytes);
-    };
-    let Ok(image) = image::load_from_memory(&bytes) else {
-        return ThumbBytes::Encoded(bytes);
-    };
-    let (w, h) = (image.width(), image.height());
-    // Within about 15% is not worth a second copy of the work.
-    if w == 0 || h == 0 || w * 20 <= target * 23 {
-        return ThumbBytes::Encoded(bytes);
-    }
-    let height = ((h as u64 * target as u64) / w as u64).max(1) as u32;
-    let scaled = image::imageops::resize(
-        &image.to_rgba8(),
-        target,
-        height,
-        image::imageops::FilterType::Triangle,
-    );
-    ThumbBytes::Rgba(target, height, scaled.into_raw())
 }
 
 /// Thumbnail bytes arrive as each worker finishes, so the first card paints while
@@ -906,7 +893,7 @@ pub struct ThumbCrew {
     /// queue what they still miss on every poll, so without this a dead image was fetched
     /// again and again, each answer waking the window for another round.
     failed: std::collections::HashMap<String, Instant>,
-    /// Scale Browse card thumbnails to the card on the worker (`shrink_card_thumb`).
+    /// Browse card thumbnails decode to the card's width (`thumb_fit`).
     shrink: bool,
     /// Bumped by `clear`, so a surface that queued its images once (the Browse landing) can
     /// see that the queue forgot them and ask again.
@@ -928,6 +915,11 @@ impl ThumbCrew {
     /// The Browse crew: card thumbnails arrive scaled to the card they draw in.
     pub fn shrinking() -> Self {
         Self { shrink: true, ..Self::default() }
+    }
+
+    /// Whether card thumbnails decode to the card's width.
+    pub fn shrinks(&self) -> bool {
+        self.shrink
     }
 
     /// Drop everything queued and start over with `urls`.
@@ -973,7 +965,6 @@ impl ThumbCrew {
             let tx = tx.clone();
             let wake = wake.clone();
             let n = queue.workers;
-            let shrink = self.shrink;
             let spawned = std::thread::Builder::new()
                 .name(format!("sigil-thumbs-{n}"))
                 .spawn(move || {
@@ -989,15 +980,7 @@ impl ThumbCrew {
                             Err(_) => break,
                         };
                         let billboard = next.strip_suffix(BILLBOARD_MARK);
-                        let bytes = fetch_thumb_bytes(billboard.unwrap_or(&next)).map(|bytes| {
-                            if billboard.is_some() {
-                                shrink_billboard(bytes)
-                            } else if shrink {
-                                shrink_card_thumb(&next, bytes)
-                            } else {
-                                ThumbBytes::Encoded(bytes)
-                            }
-                        });
+                        let bytes = fetch_thumb_file(billboard.unwrap_or(&next));
                         if tx.send((next, bytes)).is_err() {
                             if let Ok(mut queue) = shared.lock() {
                                 queue.workers = queue.workers.saturating_sub(1);
@@ -1129,6 +1112,21 @@ fn thumb_cache_path(url: &str) -> PathBuf {
         .join("cache")
         .join("images")
         .join(format!("{:016x}-{tail}", hasher.finish()))
+}
+
+/// `fetch_thumb_bytes`, answered with the disk cache file when it holds the image (or now holds
+/// it), so the bytes are read again only by the decoder.
+pub(crate) fn fetch_thumb_file(url: &str) -> Option<ThumbBytes> {
+    let cached = thumb_cache_path(url);
+    if fs::metadata(&cached).is_ok_and(|m| m.len() > 0) {
+        return Some(ThumbBytes::File(cached));
+    }
+    let bytes = fetch_thumb_bytes(url)?;
+    if fs::metadata(&cached).is_ok_and(|m| m.len() as usize == bytes.len()) {
+        Some(ThumbBytes::File(cached))
+    } else {
+        Some(ThumbBytes::Encoded(bytes))
+    }
 }
 
 pub(crate) fn fetch_thumb_bytes(url: &str) -> Option<Vec<u8>> {
@@ -1565,6 +1563,24 @@ pub fn apply_browse_page(state: &mut State, result: Result<BrowsePageView, Strin
                 Some(_) if view.page > 1 => {}
                 _ => {
                     state.thumb_crew.clear();
+                    // A new query replaces the page: its pictures go, but not the landing's
+                    // covers (the same mods as the top of the grid) or the open details'.
+                    let (now, next) = crate::screens::browse::top::cover_urls(state);
+                    let keep: std::collections::HashSet<String> = now
+                        .into_iter()
+                        .chain(next)
+                        .chain(state.browse_view.details.as_ref().and_then(|d| d.thumbnail_url.clone()))
+                        .collect();
+                    let old: Vec<String> = state
+                        .browse
+                        .page
+                        .iter()
+                        .flat_map(|page| page.mods.iter().filter_map(|card| card.thumbnail_url.clone()))
+                        .filter(|url| !keep.contains(url))
+                        .collect();
+                    for url in old {
+                        state.thumbnails.remove(&url);
+                    }
                     let total = view.total;
                     state.browse.page = Some(view);
                     crate::screens::settings::product::browse_query(state, total);
@@ -1616,10 +1632,7 @@ pub fn drain_thumbnails(state: &mut State) -> bool {
     }
     while let Some((url, bytes)) = state.thumb_crew.try_next() {
         if let (Some(cache), Some(bytes)) = (state.images.as_ref(), bytes) {
-            let image = match bytes {
-                ThumbBytes::Encoded(bytes) => cache.load(bytes),
-                ThumbBytes::Rgba(width, height, pixels) => cache.rgba(width, height, pixels),
-            };
+            let image = thumb_image(cache, &url, bytes, state.thumb_crew.shrinks());
             state.thumbnails.insert(url, image.pixels().clone());
             changed = true;
         }
@@ -4682,6 +4695,31 @@ mod thumb_tests {
     /// The billboard keeps a banner's worth of pixels: a 4K upload under a 1200 pt banner at 2x
     /// (2432 by 840 px) becomes 2432 by 1368, still covering it; at 1x a 1080p upload becomes
     /// 1216 by 684. A picture already about the banner's size is left alone.
+    /// GameBanana originals reach 7960 by 4412 (134 MB of RGBA). Sigil's decode limit refuses an
+    /// 8000 by 4000 picture from its header: the file here has no pixel data, so only a header
+    /// check can give this error.
+    #[test]
+    fn an_8000_by_4000_picture_is_never_decoded() {
+        crate::memory::configure_images();
+        let mut ihdr = b"IHDR".to_vec();
+        ihdr.extend_from_slice(&8000u32.to_be_bytes());
+        ihdr.extend_from_slice(&4000u32.to_be_bytes());
+        ihdr.extend_from_slice(&[8, 6, 0, 0, 0]);
+        let crc = !ihdr.iter().fold(!0u32, |c, &b| (0..8).fold(c ^ b as u32, |c, _| (c >> 1) ^ (0xedb8_8320 & 0u32.wrapping_sub(c & 1))));
+        let mut bytes = b"\x89PNG\r\n\x1a\n".to_vec();
+        bytes.extend_from_slice(&13u32.to_be_bytes());
+        bytes.extend_from_slice(&ihdr);
+        bytes.extend_from_slice(&crc.to_be_bytes());
+        // An empty IDAT ends the header the decoder reads; no pixel data follows.
+        bytes.extend_from_slice(&[0, 0, 0, 0, b'I', b'D', b'A', b'T', 0x35, 0xaf, 0x06, 0x1e]);
+        let cache = rune::ImageCache::new(std::sync::Arc::new(|| {})).decode_when_drawn(true);
+        for image in [cache.load(bytes.clone()), cache.load_fit(bytes, rune::Fit::Cover(1280, 420))] {
+            let error = image.wait().unwrap_err().0.clone();
+            assert!(error.contains("over the decode limit"), "{error}");
+            assert!(!image.pixels().is_ready());
+        }
+    }
+
     #[test]
     fn the_billboard_picture_is_scaled_to_cover_the_banner() {
         assert_eq!(billboard_fit(3840, 2160, 2432, 840), Some((2432, 1368)));

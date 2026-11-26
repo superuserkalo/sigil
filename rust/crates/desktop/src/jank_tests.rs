@@ -1246,3 +1246,53 @@ fn segmented_labels_stay_over_the_sliding_box() {
     wrong.truncate(12);
     assert!(wrong.is_empty(), "segmented labels are covered or remounted:\n{}", wrong.join("\n"));
 }
+
+/// A card picture decodes only when drawn and can be evicted from the GPU atlas while off
+/// screen. Until its pixels are ready the card shows its placeholder in the same box, and the
+/// picture then takes that box: nothing else on the page moves.
+#[test]
+fn a_card_picture_replaces_its_placeholder_in_the_same_box() {
+    let _globals = crate::ui::test_globals();
+    let size = (1280.0, 800.0);
+    let mut rt = runtime("browse-fixture", size);
+    let (id, url) = rt
+        .state
+        .browse
+        .page
+        .as_ref()
+        .and_then(|page| page.mods.iter().find_map(|c| c.thumbnail_url.clone().map(|u| (c.id, u))))
+        .expect("a card with a picture");
+    let dir = std::env::temp_dir().join(format!("sigil-jank-picture-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("thumb.png");
+    let picture = image::RgbaImage::from_pixel(530, 298, image::Rgba([40, 80, 120, 255]));
+    picture.save(&file).unwrap();
+    let cache = rune::ImageCache::new(std::sync::Arc::new(|| {})).decode_when_drawn(true);
+    let image = cache.file_fit(&file, rune::Fit::Cover(256, 0));
+    // The header is read: the size is known, no pixel is decoded.
+    while !image.is_ready() {
+        std::thread::yield_now();
+    }
+    rt.state.thumbnails.insert(url, image.pixels().clone());
+    rt.invalidate();
+    settle(&mut rt);
+    let before = rects(&rt);
+    let placeholder = format!("thumb-{id}-missing");
+    let shown = before.iter().find(|(k, _)| *k == placeholder).map(|(_, r)| *r);
+    assert!(shown.is_some(), "the placeholder shows until the pixels are ready");
+    // Building the card asked for the decode; wait for it, then build again.
+    image.wait().unwrap();
+    rt.invalidate();
+    settle(&mut rt);
+    let after = rects(&rt);
+    let picture = after.iter().find(|(k, _)| *k == format!("thumb-{id}")).map(|(_, r)| *r);
+    assert_eq!(picture, shown, "the picture takes the placeholder's box");
+    // Everything else is where it was (keys repeat, so compare the sorted lists whole).
+    let rest = |all: &[(String, [i32; 4])]| -> Vec<(String, [i32; 4])> {
+        all.iter().filter(|(k, _)| !k.starts_with(&format!("thumb-{id}"))).cloned().collect()
+    };
+    let (was, now) = (rest(&before), rest(&after));
+    let moved: Vec<_> = now.iter().filter(|e| !was.contains(e)).collect();
+    assert!(moved.is_empty(), "these moved when the picture arrived: {moved:?}");
+    let _ = std::fs::remove_dir_all(&dir);
+}

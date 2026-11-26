@@ -1,0 +1,1747 @@
+diff --git a/changelog/unreleased/2026-11-25-image-memory.md b/changelog/unreleased/2026-11-25-image-memory.md
+new file mode 100644
+index 0000000..ee56dd1
+--- /dev/null
++++ b/changelog/unreleased/2026-11-25-image-memory.md
+@@ -0,0 +1 @@
++- Images hold less memory. A decoded image's CPU pixels are dropped once a window's atlas has copied them (an image from a file, a URL or encoded bytes decodes again if it is drawn after its atlas copy was freed). Atlas pages are made at full size on the GPU only after the first upload, new pixels go up as regions, and a page no element drew from for 5 s, or the least recently drawn one while over the budget (`set_image_budget`, 64 MB of shelf pages and 128 MB in all by default), is freed with its texture. `ImageCache::decode_when_drawn` reads only an image's header until it is drawn or `Pixels::prefetch`ed; `ImageCache::file_fit` and `load_fit` decode to the box an image is drawn in (`Fit::Cover`, `Fit::Contain`); `set_max_decode_pixels` refuses larger images from their header. `Pixels::is_ready` says whether a draw shows it this frame. `image_memory` reports what images hold. Region uploads stage in 1 MiB slices. Three image decoder threads instead of four.
+diff --git a/crates/rune-staging/src/lib.rs b/crates/rune-staging/src/lib.rs
+index 3315642..0b23ae1 100644
+--- a/crates/rune-staging/src/lib.rs
++++ b/crates/rune-staging/src/lib.rs
+@@ -36,6 +36,9 @@ const KEEP_CHUNK_MAX: u64 = 1 << 20;
+ /// Staged bytes past which a write first submits what is pending, so a caller that never
+ /// flushes can't grow the chunks without bound.
+ const MAX_PENDING: u64 = 16 << 20;
++/// Bytes of one slice of a region write (`write_texture_region`): a 2560 by 1440 image goes up
++/// in 1 MiB slices instead of one 16 MiB chunk, which on D3D12 would take a heap block of its own.
++pub const REGION_SLICE: u64 = 1 << 20;
+ /// Staged texture rows start at this alignment, and `bytes_per_row` is a multiple of it.
+ const ROW_ALIGN: u64 = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT as u64;
+ 
+@@ -75,6 +78,8 @@ enum Dst {
+     Buffer(wgpu::Buffer, u64),
+     /// Full-width texture rows from `y`, `rows` of them, `bytes_per_row` apart in the chunk.
+     Rows { texture: wgpu::Texture, y: u32, rows: u32, bytes_per_row: u32 },
++    /// A `width`-texel-wide region at (`x`, `y`), `rows` tall, `bytes_per_row` apart in the chunk.
++    Region { texture: wgpu::Texture, x: u32, y: u32, width: u32, rows: u32, bytes_per_row: u32 },
+ }
+ 
+ struct Pending {
+@@ -169,6 +174,43 @@ impl Staging {
+             dst: Dst::Rows { texture: texture.clone(), y, rows: count, bytes_per_row: padded as u32 } });
+     }
+ 
++    /// Stages a write of a `width`-texel-wide region of `texture` at (`x`, `y`). `rows` holds
++    /// its rows tightly packed; its length is a whole number of rows. A region taller than
++    /// [`REGION_SLICE`] bytes goes in slices, so one large image never needs one large chunk.
++    pub fn write_texture_region(&self, texture: &wgpu::Texture, x: u32, y: u32, width: u32, rows: &[u8]) {
++        let texel = texture.format().block_copy_size(None).expect("a color format");
++        let row = width * texel;
++        if row == 0 { return; }
++        let count = (rows.len() / row as usize) as u32;
++        if count == 0 { return; }
++        let mut s = self.lock();
++        if cfg!(target_arch = "wasm32") {
++            return s.queue.write_texture(
++                wgpu::TexelCopyTextureInfo { texture, mip_level: 0, origin: wgpu::Origin3d { x, y, z: 0 }, aspect: wgpu::TextureAspect::All },
++                rows,
++                wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(row), rows_per_image: None },
++                wgpu::Extent3d { width, height: count, depth_or_array_layers: 1 },
++            );
++        }
++        let padded = u64::from(row).next_multiple_of(ROW_ALIGN);
++        let per_slice = (REGION_SLICE / padded).max(1) as u32;
++        let mut first = 0;
++        while first < count {
++            let n = per_slice.min(count - first);
++            let size = padded * u64::from(n);
++            let src = &rows[(first * row) as usize..((first + n) * row) as usize];
++            let (buffer, at) = s.stage(size, ROW_ALIGN, self, |view| {
++                for (r, line) in src.chunks_exact(row as usize).enumerate() {
++                    let start = r * padded as usize;
++                    view.slice(start..start + line.len()).copy_from_slice(line);
++                }
++            });
++            s.pending.push(Pending { src: buffer, offset: at, size,
++                dst: Dst::Region { texture: texture.clone(), x, y: y + first, width, rows: n, bytes_per_row: padded as u32 } });
++            first += n;
++        }
++    }
++
+     /// Records the pending writes into `encoder` here, ahead of what is recorded after them.
+     /// `encoder` must be submitted: dropped, the writes never land (`lost` counts it).
+     pub fn flush(&self, encoder: &mut wgpu::CommandEncoder) {
+@@ -310,6 +352,12 @@ impl Inner {
+                     wgpu::TexelCopyTextureInfo { texture: &texture, mip_level: 0, origin: wgpu::Origin3d { x: 0, y, z: 0 }, aspect: wgpu::TextureAspect::All },
+                     wgpu::Extent3d { width: texture.width(), height: rows, depth_or_array_layers: 1 },
+                 ),
++                Dst::Region { texture, x, y, width, rows, bytes_per_row } => encoder.copy_buffer_to_texture(
++                    wgpu::TexelCopyBufferInfo { buffer: &p.src, layout: wgpu::TexelCopyBufferLayout {
++                        offset: p.offset, bytes_per_row: Some(bytes_per_row), rows_per_image: None } },
++                    wgpu::TexelCopyTextureInfo { texture: &texture, mip_level: 0, origin: wgpu::Origin3d { x, y, z: 0 }, aspect: wgpu::TextureAspect::All },
++                    wgpu::Extent3d { width, height: rows, depth_or_array_layers: 1 },
++                ),
+             }
+         }
+         self.pending_bytes = 0;
+diff --git a/crates/rune/src/image.rs b/crates/rune/src/image.rs
+index 81eddd4..600d3a3 100644
+--- a/crates/rune/src/image.rs
++++ b/crates/rune/src/image.rs
+@@ -1,6 +1,14 @@
+-//! Content-addressed raster images. Decode and linear-light mip generation run on one
+-//! sleeping worker per cache, never in a view or a render frame.
++//! Content-addressed raster images. Decode and linear-light mip generation run on the process's
++//! decoder threads, never in a view or a render frame.
++//!
++//! Memory: decoded pixels stay on the CPU only until a window's atlas has copied them for
++//! upload (`pixels::ImageAtlas`); an image the cache can decode again (a file, a URL, encoded
++//! bytes) then drops them and decodes again if it is drawn after its atlas copy was freed. With
++//! [`ImageCache::decode_when_drawn`] nothing decodes until it is drawn or prefetched: a request
++//! reads only the image's header for its size. [`ImageCache::file_fit`] and
++//! [`ImageCache::load_fit`] decode to the size the image is drawn at, one level, no mip chain.
+ use std::collections::HashMap;
++use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+ use std::sync::{Arc, Mutex, OnceLock, Weak};
+ #[cfg(not(target_arch = "wasm32"))]
+ use std::sync::mpsc;
+@@ -27,11 +35,85 @@ pub(crate) struct Decoded {
+     pub mips: Vec<Mip>,
+     /// An animation's other frames and timing.
+     pub motion: Option<Box<animated::Motion>>,
++    /// Counted in `pixels::DECODED_BYTES` (`Image::finish`) until dropped.
++    pub counted: Counted,
++}
++
++/// Bytes of a `Decoded` counted in the process totals, given back when it drops.
++#[derive(Default)]
++pub(crate) struct Counted(u64);
++impl Drop for Counted {
++    fn drop(&mut self) {
++        if self.0 > 0 {
++            crate::pixels::DECODED_BYTES.fetch_sub(self.0, Ordering::Relaxed);
++            crate::pixels::DECODED_IMAGES.fetch_sub(1, Ordering::Relaxed);
++        }
++    }
++}
++impl Decoded {
++    fn bytes(&self) -> u64 {
++        let level = |m: &[Mip]| m.iter().map(|m| m.pixels.len() as u64).sum::<u64>();
++        level(&self.mips) + self.motion.as_ref().map_or(0, |m| m.frames.iter().map(|f| level(f)).sum())
++    }
+ }
+ struct State {
+     id: ImageId,
+     pixels: crate::Pixels,
+-    decoded: OnceLock<Result<Arc<Decoded>, ImageError>>,
++    /// The image's size, from its header or its first decode, or why it has none.
++    size: OnceLock<Result<[u32; 2], ImageError>>,
++    /// A decode that failed after the header gave a size.
++    failed: OnceLock<ImageError>,
++}
++
++/// Decodes larger than this many pixels are refused before any pixel is decoded
++/// ([`set_max_decode_pixels`]).
++static MAX_DECODE_PIXELS: AtomicU64 = AtomicU64::new(8192 * 8192);
++
++/// Refuse to decode images over `pixels` pixels (width times height, after reading the header):
++/// a 7960 by 4412 photo is 134 MiB of RGBA before any scaling. The default is 8192 by 8192.
++pub fn set_max_decode_pixels(pixels: u64) { MAX_DECODE_PIXELS.store(pixels.max(1), Ordering::Relaxed); }
++
++pub(crate) fn max_decode_pixels() -> u64 { MAX_DECODE_PIXELS.load(Ordering::Relaxed) }
++
++pub(crate) fn check_pixels(w: u32, h: u32) -> Result<(), ImageError> {
++    let max = max_decode_pixels();
++    if u64::from(w) * u64::from(h) > max {
++        return Err(ImageError(format!("image is {w}x{h}, over the decode limit of {max} pixels")));
++    }
++    Ok(())
++}
++
++/// The box an image is drawn in, in device pixels, for a decode that scales to it
++/// ([`ImageCache::file_fit`]). A zero side is unconstrained.
++#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
++pub enum Fit {
++    /// The image fills the box and is cropped (`SurfaceFit::Fill`): it decodes just large
++    /// enough to cover both sides.
++    Cover(u32, u32),
++    /// The image fits inside the box (`SurfaceFit::Fit`, a lightbox): it decodes no larger
++    /// than either side.
++    Contain(u32, u32),
++}
++
++impl Fit {
++    /// The size a `w`×`h` image decodes to, or `None` to keep it (no more than about 15% over).
++    pub fn target(self, w: u32, h: u32) -> Option<(u32, u32)> {
++        if w == 0 || h == 0 { return None; }
++        let ratio = |side: u32, of: u32| (side > 0).then(|| side as f64 / of as f64);
++        let scale = match self {
++            Fit::Cover(bw, bh) => match (ratio(bw, w), ratio(bh, h)) { (Some(a), Some(b)) => a.max(b), (a, b) => a.or(b)? },
++            Fit::Contain(bw, bh) => match (ratio(bw, w), ratio(bh, h)) { (Some(a), Some(b)) => a.min(b), (a, b) => a.or(b)? },
++        };
++        if scale * 1.15 >= 1.0 { return None; }
++        Some((((w as f64 * scale).ceil() as u32).clamp(1, w), ((h as f64 * scale).ceil() as u32).clamp(1, h)))
++    }
++
++    fn hash(self, hash: &mut blake3::Hasher) {
++        let (k, a, b) = match self { Fit::Cover(a, b) => (0u8, a, b), Fit::Contain(a, b) => (1, a, b) };
++        hash.update(&[k]);
++        hash.update(&a.to_le_bytes());
++        hash.update(&b.to_le_bytes());
++    }
+ }
+ 
+ /// A cheap shared handle. Pending images paint nothing until their worker wakes the app.
+@@ -53,31 +135,66 @@ impl Image {
+     /// any clone of it lives (an element drawing it), the cache hands back this image.
+     pub fn pixels(&self) -> &crate::Pixels { &self.1 }
+     pub fn id(&self) -> ImageId { self.0.id }
++    /// The size, once the header is read or the image decoded.
+     pub fn size(&self) -> Option<[u32; 2]> {
+-        let mip = self.decoded()?.ok()?.mips.first()?;
+-        Some([mip.width, mip.height])
++        self.0.size.get()?.as_ref().ok().copied()
++    }
++    /// Its size is known (or it failed): with `decode_when_drawn`, before any pixel decodes.
++    pub fn is_ready(&self) -> bool { self.0.size.get().is_some() }
++    pub fn error(&self) -> Option<&ImageError> {
++        self.0.failed.get().or_else(|| self.0.size.get()?.as_ref().err())
+     }
+-    pub fn is_ready(&self) -> bool { self.0.decoded.get().is_some() }
+-    pub fn error(&self) -> Option<&ImageError> { self.0.decoded.get()?.as_ref().err() }
+     /// Wait for fixture assets before advancing a deterministic headless scene. Interactive
+     /// apps use the cache's waker instead; decode still happens on the cache worker.
+     pub fn wait(&self) -> Result<[u32; 2], &ImageError> {
+         #[cfg(target_arch = "wasm32")]
+-        let decoded = self.0.decoded.get().expect("Image::wait cannot block on web; use is_ready and the cache waker");
++        let size = self.0.size.get().expect("Image::wait cannot block on web; use is_ready and the cache waker");
+         #[cfg(not(target_arch = "wasm32"))]
+-        let decoded = self.0.decoded.wait();
+-        let mip = &decoded.as_ref()?.mips[0];
+-        Ok([mip.width, mip.height])
++        let size = {
++            let size = self.0.size.wait();
++            // A deferred decode (`decode_when_drawn`): a headless scene waits for the pixels too.
++            if size.is_ok() && !self.1.has_pixels() {
++                self.1.prefetch();
++                let start = std::time::Instant::now();
++                while self.1.is_loading() && self.0.failed.get().is_none() && start.elapsed() < std::time::Duration::from_secs(120) {
++                    std::thread::sleep(std::time::Duration::from_millis(1));
++                }
++            }
++            size
++        };
++        if let Some(error) = self.0.failed.get() { return Err(error); }
++        size.as_ref().copied()
+     }
+-    pub(crate) fn decoded(&self) -> Option<Result<&Decoded, &ImageError>> {
+-        self.0.decoded.get().map(|r| r.as_ref().map(Arc::as_ref))
++    /// The decoded pixels while they are on the CPU.
++    #[cfg(test)]
++    pub(crate) fn decoded(&self) -> Option<Result<Arc<Decoded>, &ImageError>> {
++        if let Some(error) = self.error() { return Some(Err(error)); }
++        self.1.mips().map(Ok)
+     }
+     // The handle is ready before its pixels wake any window, so a woken frame sees its size.
+     fn finish(&self, decoded: Result<Decoded, ImageError>) {
+-        let decoded = decoded.map(Arc::new);
+-        let mips = decoded.as_ref().ok().cloned();
+-        let _ = self.0.decoded.set(decoded);
+-        if let Some(mips) = mips { self.0.pixels.set_mips(mips); }
++        crate::pixels::DECODES.fetch_add(1, Ordering::Relaxed);
++        match decoded {
++            Ok(mut decoded) => {
++                let size = [decoded.mips[0].width, decoded.mips[0].height];
++                let bytes = decoded.bytes().max(1);
++                decoded.counted = Counted(bytes);
++                crate::pixels::DECODED_BYTES.fetch_add(bytes, Ordering::Relaxed);
++                crate::pixels::DECODED_IMAGES.fetch_add(1, Ordering::Relaxed);
++                let _ = self.0.size.set(Ok(size));
++                self.0.pixels.set_mips(Arc::new(decoded));
++            }
++            Err(error) => {
++                // The header already gave a size: the decode failed after it.
++                if self.0.size.set(Err(error.clone())).is_err() { let _ = self.0.failed.set(error); }
++                self.0.pixels.load_ended();
++            }
++        }
++    }
++    /// The header said the size; the pixels decode when drawn.
++    fn sized(&self, size: [u32; 2]) {
++        let _ = self.0.size.set(Ok(size));
++        self.0.pixels.set_size(size[0], size[1]);
+     }
+ }
+ 
+@@ -90,6 +207,8 @@ enum Input {
+     File(std::path::PathBuf, u32),
+     /// `ImageCache::url`, and `ImageCache::file` on web.
+     Url(String, u32),
++    /// `ImageCache::file_fit` and `load_fit`: `Encoded` or `File`, scaled to the box on decode.
++    Fitted(Box<Input>, Fit),
+     /// A decoder that panics, standing in for a codec bug.
+     #[cfg(test)]
+     Panic,
+@@ -98,8 +217,54 @@ enum Input {
+ }
+ 
+ impl Input {
++    /// A copy to decode again after the atlas dropped the pixels; `None` for pixels only the
++    /// caller had (RGBA), which are kept.
++    fn reloadable(&self) -> Option<Input> {
++        Some(match self {
++            Input::Encoded(bytes) => Input::Encoded(bytes.clone()),
++            Input::Icon(path, px) => Input::Icon(path.clone(), *px),
++            Input::Svg(bytes, px) => Input::Svg(bytes.clone(), *px),
++            #[cfg(not(target_arch = "wasm32"))]
++            Input::File(path, px) => Input::File(path.clone(), *px),
++            Input::Url(url, px) => Input::Url(url.clone(), *px),
++            Input::Fitted(input, fit) => Input::Fitted(Box::new(input.reloadable()?), *fit),
++            _ => return None,
++        })
++    }
++
++    /// The size from the header alone, as the decode would make it (EXIF orientation and a fit
++    /// applied); `None` when the format can't say without decoding (SVG, AVIF, ICNS).
++    #[cfg(not(target_arch = "wasm32"))]
++    fn probe(&self) -> Option<Result<[u32; 2], ImageError>> {
++        let (bytes, fit): (std::borrow::Cow<'_, [u8]>, Option<Fit>) = match self {
++            Input::Encoded(bytes) => (std::borrow::Cow::Borrowed(&bytes[..]), None),
++            Input::File(path, _) if !has_svg_extension(path) => match read_head(path) {
++                Ok(head) => (std::borrow::Cow::Owned(head), None),
++                Err(e) => return Some(Err(e)),
++            },
++            Input::Url(url, px) => return match from_url::file_path(url) { Ok(path) => Input::File(path, *px).probe(), Err(e) => Some(Err(e)) },
++            Input::Fitted(input, fit) => {
++                let size = input.probe()?;
++                return Some(size.map(|[w, h]| fit.target(w, h).map_or([w, h], |(w, h)| [w, h])));
++            }
++            _ => return None,
++        };
++        if is_svg(&bytes) || avif::is_avif(&bytes) || bytes.starts_with(b"icns") { return None; }
++        let _ = fit;
++        Some(header_size(&bytes))
++    }
++
+     fn decode(self) -> Result<Decoded, ImageError> {
+         match self {
++            Input::Fitted(input, fit) => match *input {
++                Input::Encoded(bytes) => decode_fitted(&bytes, fit),
++                #[cfg(not(target_arch = "wasm32"))]
++                Input::File(path, _) => {
++                    let bytes = std::fs::read(&path).map_err(|e| ImageError(format!("{}: {e}", path.display())))?;
++                    decode_fitted(&bytes, fit)
++                }
++                other => other.decode(),
++            },
+             Input::Encoded(bytes) => decode(&bytes),
+             Input::Rgba(w, h, bytes) => mip_chain(w, h, &bytes),
+             Input::Svg(bytes, px) => svg_rgba(&bytes, px).and_then(|(w, h, bytes)| mip_chain(w, h, &bytes)),
+@@ -142,10 +307,11 @@ impl Input {
+     }
+ }
+ #[cfg(not(target_arch = "wasm32"))]
+-struct Job { image: Image, input: Input, waker: crate::Waker }
+-/// Decoder threads for the process, at most one per core.
++struct Job { image: Image, input: Input, waker: crate::Waker, probe: bool }
++/// Decoder threads for the process, at most one per core. Three keep a screen of thumbnails
++/// quick without a thread per core in a UI process.
+ #[cfg(not(target_arch = "wasm32"))]
+-const DECODERS: usize = 4;
++const DECODERS: usize = 3;
+ /// Straight RGBA images up to this many pixels (64 x 64) finish on the calling thread.
+ #[cfg(not(target_arch = "wasm32"))]
+ const INLINE_RGBA_PIXELS: u64 = 64 * 64;
+@@ -178,7 +344,22 @@ fn decoders() -> &'static mpsc::Sender<Job> {
+ fn decode_jobs(receive: &Mutex<mpsc::Receiver<Job>>) {
+     loop {
+         let Ok(job) = receive.lock().unwrap_or_else(|e| e.into_inner()).recv() else { return };
+-        job.image.finish(job.input.decode_caught());
++        // Nothing holds the image any more (a request a view dropped): skip the work.
++        if Arc::strong_count(&job.image.0) <= 2 {
++            job.image.0.pixels.load_ended();
++            continue;
++        }
++        if job.probe {
++            match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| job.input.probe())) {
++                Ok(Some(Ok(size))) => job.image.sized(size),
++                Ok(Some(Err(error))) => job.image.finish(Err(error)),
++                // The format can't say its size without decoding: decode now.
++                Ok(None) => job.image.finish(job.input.decode_caught()),
++                Err(_) => job.image.finish(Err(ImageError("image header reader panicked".into()))),
++            }
++        } else {
++            job.image.finish(job.input.decode_caught());
++        }
+         (job.waker)();
+     }
+ }
+@@ -192,15 +373,53 @@ pub struct ImageCache {
+     waker: crate::Waker,
+     #[cfg(target_arch = "wasm32")]
+     wake: crate::Waker,
++    /// `decode_when_drawn`.
++    lazy: AtomicBool,
+ }
+ impl ImageCache {
+     #[cfg(target_arch = "wasm32")]
+     pub fn new(wake: crate::Waker) -> Self {
+-        Self { entries: Mutex::new(HashMap::new()), wake }
++        Self { entries: Mutex::new(HashMap::new()), wake, lazy: AtomicBool::new(false) }
+     }
+     #[cfg(not(target_arch = "wasm32"))]
+     pub fn new(waker: crate::Waker) -> Self {
+-        Self { entries: Mutex::new(HashMap::new()), waker }
++        Self { entries: Mutex::new(HashMap::new()), waker, lazy: AtomicBool::new(false) }
++    }
++
++    /// Decode an image (from a file, a URL or encoded bytes) only once an element draws it or
++    /// [`Pixels::prefetch`](crate::Pixels::prefetch) asks: a request reads just its header, so
++    /// its size is known for layout. A window that is never shown decodes nothing. Images given
++    /// as RGBA, SVG and formats whose header doesn't give the size decode at once as before.
++    pub fn decode_when_drawn(self, on: bool) -> Self {
++        self.lazy.store(on, Ordering::Relaxed);
++        self
++    }
++
++    /// An image file decoded to the size it is drawn at: scaled to `fit` (device pixels) as it
++    /// decodes. Its size is the scaled size. The file is read again if
++    /// the image is drawn after its atlas copy was freed. Handles are shared by path and fit.
++    pub fn file_fit(&self, path: impl AsRef<std::path::Path>, fit: Fit) -> Image {
++        let path = path.as_ref().to_path_buf();
++        let mut hash = blake3::Hasher::new();
++        hash.update(b"rune-file-fit\0");
++        hash.update(path.as_os_str().as_encoded_bytes());
++        hash.update(&[0]);
++        fit.hash(&mut hash);
++        #[cfg(target_arch = "wasm32")]
++        let input = Input::Url(path.to_string_lossy().into_owned(), 0);
++        #[cfg(not(target_arch = "wasm32"))]
++        let input = Input::Fitted(Box::new(Input::File(path, 0)), fit);
++        self.request(*hash.finalize().as_bytes(), input)
++    }
++
++    /// Encoded bytes decoded to the size they are drawn at, as [`ImageCache::file_fit`].
++    pub fn load_fit(&self, bytes: impl Into<Arc<[u8]>>, fit: Fit) -> Image {
++        let bytes = bytes.into();
++        let mut hash = blake3::Hasher::new();
++        hash.update(b"rune-encoded-fit\0");
++        fit.hash(&mut hash);
++        hash.update(&bytes);
++        self.request(*hash.finalize().as_bytes(), Input::Fitted(Box::new(Input::Encoded(bytes)), fit))
+     }
+ 
+     /// PNG (APNG animates), JPEG, GIF and WebP (both animate), BMP, ICO, AVIF (with the `avif`
+@@ -312,7 +531,7 @@ impl ImageCache {
+             Input::File(path, _) => Some(path.to_string_lossy().into()),
+             _ => None,
+         };
+-        let image = Image::new(Arc::new(State { id, pixels: crate::Pixels::from_url(url, srcset), decoded: OnceLock::new() }));
++        let image = Image::new(Arc::new(State { id, pixels: crate::Pixels::from_url(url, srcset), size: OnceLock::new(), failed: OnceLock::new() }));
+         entries.insert(id, Arc::downgrade(&image.0));
+         // A small straight RGBA image (a 16 pt tile at 2x) is ready at once: its mips take
+         // microseconds, less than handing it to a decoder, and the view that asked for it draws it
+@@ -327,8 +546,13 @@ impl ImageCache {
+             return image;
+         }
+         #[cfg(not(target_arch = "wasm32"))]
+-        if decoders().send(Job { image: image.clone(), input, waker: self.waker.clone() }).is_err() {
+-            let _ = image.0.decoded.set(Err(ImageError("image worker stopped".into())));
++        {
++            let again = input.reloadable();
++            let lazy = again.is_some() && self.lazy.load(Ordering::Relaxed);
++            if let Some(again) = again { image.0.pixels.set_reload(reloader(&image.0, again, self.waker.clone()), !lazy); }
++            if decoders().send(Job { image: image.clone(), input, waker: self.waker.clone(), probe: lazy }).is_err() {
++                let _ = image.0.size.set(Err(ImageError("image worker stopped".into())));
++            }
+         }
+         #[cfg(target_arch = "wasm32")]
+         {
+@@ -361,6 +585,22 @@ impl ImageCache {
+     }
+ }
+ 
++/// What a dropped image's pixels come back from: a decode of `input` on the decoder threads.
++#[cfg(not(target_arch = "wasm32"))]
++fn reloader(state: &Arc<State>, input: Input, waker: crate::Waker) -> Arc<dyn Fn() + Send + Sync> {
++    let weak = Arc::downgrade(state);
++    let input = Mutex::new(input);
++    Arc::new(move || {
++        let Some(state) = weak.upgrade() else { return };
++        let Some(again) = input.lock().unwrap_or_else(|e| e.into_inner()).reloadable() else { return };
++        if state.pixels.signature().1 > 0 { crate::pixels::RELOADS.fetch_add(1, Ordering::Relaxed); }
++        let image = Image::new(state);
++        if decoders().send(Job { image: image.clone(), input: again, waker: waker.clone(), probe: false }).is_err() {
++            image.0.pixels.load_ended();
++        }
++    })
++}
++
+ /// Encoded bytes a web build hands to the browser's codecs: everything but PNG (decoded exactly,
+ /// alpha and all, by Rune), SVG and ICNS.
+ #[cfg_attr(not(any(test, target_arch = "wasm32")), allow(dead_code))]
+@@ -670,6 +910,49 @@ fn decode(bytes: &[u8]) -> Result<Decoded, ImageError> {
+     }
+     let bytes = if bytes.starts_with(b"icns") { icns_png(bytes)? } else { bytes };
+     if let Some(animation) = animated::decode(bytes) { return animation; }
++    let image = decode_rgba(bytes)?;
++    mip_chain(image.width(), image.height(), image.as_raw())
++}
++
++/// `decode`, scaled to `fit` on the worker. Its mip chain lives only until a window's atlas
++/// copies the level it draws at (an image also drawn smaller, as a list row, samples a
++/// prefiltered level, not a 4:1 bilinear one). Animations, AVIF and ICNS decode as `decode` does.
++fn decode_fitted(bytes: &[u8], fit: Fit) -> Result<Decoded, ImageError> {
++    if is_svg(bytes) {
++        let (Fit::Cover(w, h) | Fit::Contain(w, h)) = fit;
++        let (w, h, rgba) = svg_rgba(bytes, w.max(h).clamp(1, 4096))?;
++        return mip_chain(w, h, &rgba);
++    }
++    if avif::is_avif(bytes) || bytes.starts_with(b"icns") { return decode(bytes); }
++    if let Some(animation) = animated::decode(bytes) { return animation; }
++    let mut image = decode_rgba(bytes)?;
++    if let Some((w, h)) = fit.target(image.width(), image.height()) {
++        image = image::imageops::resize(&image, w, h, image::imageops::FilterType::Triangle);
++    }
++    mip_chain(image.width(), image.height(), image.as_raw())
++}
++
++/// The size in an image's header, upright (EXIF orientation applied), refused over the decode
++/// limit. Reads no pixels.
++#[cfg(not(target_arch = "wasm32"))]
++fn header_size(bytes: &[u8]) -> Result<[u32; 2], ImageError> {
++    use image::ImageDecoder;
++    use image::metadata::Orientation as O;
++    let reader = image::ImageReader::new(std::io::Cursor::new(bytes)).with_guessed_format().map_err(|e| ImageError(e.to_string()))?;
++    let mut decoder = reader.into_decoder().map_err(|e| ImageError(e.to_string()))?;
++    let (w, h) = decoder.dimensions();
++    check_pixels(w, h)?;
++    let turned = matches!(decoder.orientation(), Ok(O::Rotate90 | O::Rotate270 | O::Rotate90FlipH | O::Rotate270FlipH));
++    Ok(if turned { [h, w] } else { [w, h] })
++}
++
++#[cfg(not(target_arch = "wasm32"))]
++fn read_head(path: &std::path::Path) -> Result<Vec<u8>, ImageError> {
++    std::fs::read(path).map_err(|e| ImageError(format!("{}: {e}", path.display())))
++}
++
++/// Encoded bytes to upright straight-alpha RGBA8, refused over the decode limit before decoding.
++fn decode_rgba(bytes: &[u8]) -> Result<image::RgbaImage, ImageError> {
+     use image::ImageDecoder;
+     let error = |e: image::ImageError| ImageError(e.to_string());
+     let mut reader = image::ImageReader::new(std::io::Cursor::new(bytes))
+@@ -682,13 +965,14 @@ fn decode(bytes: &[u8]) -> Result<Decoded, ImageError> {
+     // `ImageReader::decode`, keeping the decoder to read its EXIF orientation (a phone's JPEG
+     // stores its pixels as the sensor saw them and says how to turn them upright).
+     let mut decoder = reader.into_decoder().map_err(error)?;
++    let (w, h) = decoder.dimensions();
++    check_pixels(w, h)?;
+     limits.reserve(decoder.total_bytes()).map_err(error)?;
+     decoder.set_limits(limits).map_err(error)?;
+     let orientation = decoder.orientation().unwrap_or(image::metadata::Orientation::NoTransforms);
+     let mut image = image::DynamicImage::from_decoder(decoder).map_err(error)?;
+     image.apply_orientation(orientation);
+-    let image = image.into_rgba8();
+-    mip_chain(image.width(), image.height(), image.as_raw())
++    Ok(image.into_rgba8())
+ }
+ 
+ /// A PNG decoded to 8-bit RGBA by the PNG decoder alone. `image::load_from_memory_with_format`
+@@ -758,7 +1042,7 @@ mod tests {
+ 
+     #[test]
+     fn decoded_pixels_wake_windows_only_once_the_image_reports_ready() {
+-        let image = Image::new(Arc::new(State { id: [0; 32], pixels: crate::Pixels::new(), decoded: OnceLock::new() }));
++        let image = Image::new(Arc::new(State { id: [0; 32], pixels: crate::Pixels::new(), size: OnceLock::new(), failed: OnceLock::new() }));
+         let seen = Arc::new(Mutex::new(Vec::new()));
+         let (probe, record) = (image.clone(), seen.clone());
+         let wake = crate::live::Wake::new(Arc::new(move || {
+@@ -811,7 +1095,7 @@ mod tests {
+ 
+     #[test]
+     fn a_fetch_is_wanted_while_a_handle_or_its_drawn_pixels_live() {
+-        let image = Image::new(Arc::new(State { id: [0; 32], pixels: crate::Pixels::new(), decoded: OnceLock::new() }));
++        let image = Image::new(Arc::new(State { id: [0; 32], pixels: crate::Pixels::new(), size: OnceLock::new(), failed: OnceLock::new() }));
+         let weak = Arc::downgrade(&image.0);
+         let drawn = image.pixels().clone();
+         drop(image);
+@@ -940,7 +1224,8 @@ mod tests {
+         ];
+         for (what, image, size) in cases {
+             assert_eq!(image.wait(), Ok(size), "{what}");
+-            let mip = &image.decoded().unwrap().unwrap().mips[0];
++            let decoded = image.decoded().unwrap().unwrap();
++            let mip = &decoded.mips[0];
+             let at = |x: u32, y: u32| &mip.pixels[((y * mip.width + x) * 4) as usize..][..4];
+             assert_eq!(at(1, size[1] / 2), [255, 0, 0, 255], "{what}: the left half is red");
+             assert_eq!(at(size[0] - 2, size[1] / 2), [0, 0, 0, 0], "{what}: the right half is clear");
+@@ -1002,7 +1287,8 @@ mod tests {
+         assert!(Arc::ptr_eq(&icon.0, &cache.app_icon("/System/Applications/Calculator.app", 32.0).0));
+         assert!(!Arc::ptr_eq(&icon.0, &cache.app_icon_scaled("/System/Applications/Calculator.app", 32.0, 1.0).0));
+         assert_eq!(icon.wait(), Ok([64, 64]));
+-        let pixels = &icon.decoded().unwrap().unwrap().mips[0].pixels;
++        let decoded = icon.decoded().unwrap().unwrap();
++        let pixels = &decoded.mips[0].pixels;
+         let opaque = pixels.chunks_exact(4).filter(|p| p[3] > 0).count();
+         assert!(opaque > 64 * 64 / 4, "icon is mostly empty: {opaque} visible pixels");
+     }
+diff --git a/crates/rune/src/image/animated.rs b/crates/rune/src/image/animated.rs
+index 962fa4a..019e55f 100644
+--- a/crates/rune/src/image/animated.rs
++++ b/crates/rune/src/image/animated.rs
+@@ -96,7 +96,13 @@ pub(super) fn decode(bytes: &[u8]) -> Option<Result<Decoded, ImageError>> {
+     };
+     let (w, h) = size;
+     if w == 0 || h == 0 || w > 8192 || h > 8192 { return Some(Err(ImageError("animation is too large".into()))); }
++    // The canvas size from the header, refused over the decode limit before any frame decodes,
++    // as a still image is (`decode_rgba`): an animated file is as untrusted as any other.
++    if let Err(e) = super::check_pixels(w, h) { return Some(Err(e)); }
+     let per_frame = w as usize * h as usize * 16 / 3;
++    // Frames decoded at most: four canvases of the decode limit in all, and within `BUDGET`.
++    let frame_pixels = u64::from(w) * u64::from(h);
++    let max_frames = (super::max_decode_pixels().saturating_mul(4) / frame_pixels).max(1) as usize;
+     let mut chains = Vec::new();
+     let mut ends = Vec::new();
+     let mut elapsed = 0.0;
+@@ -107,7 +113,7 @@ pub(super) fn decode(bytes: &[u8]) -> Option<Result<Decoded, ImageError>> {
+             Err(_) if !chains.is_empty() => break,
+             Err(e) => return Some(Err(error(e))),
+         };
+-        if !chains.is_empty() && (chains.len() + 1) * per_frame > BUDGET { return Some(still(chains)); }
++        if !chains.is_empty() && ((chains.len() + 1) * per_frame > BUDGET || chains.len() + 1 > max_frames) { return Some(still(chains)); }
+         let (numer, denom) = frame.delay().numer_denom_ms();
+         let ms = f64::from(numer) / f64::from(denom.max(1));
+         // Browsers show a frame of 10 ms or less for 100 ms: such files mean "as fast as you
+@@ -123,13 +129,13 @@ pub(super) fn decode(bytes: &[u8]) -> Option<Result<Decoded, ImageError>> {
+     if chains.len() < 2 { return (!chains.is_empty()).then(|| still(chains)); }
+     let mut chains = chains.into_iter();
+     let first = chains.next().expect("two frames or more");
+-    Some(Ok(Decoded { mips: first, motion: Some(Box::new(Motion { frames: chains.collect(), ends, plays })) }))
++    Some(Ok(Decoded { mips: first, motion: Some(Box::new(Motion { frames: chains.collect(), ends, plays })), counted: Default::default() }))
+ }
+ 
+ /// The first frame alone, for an animation too large to hold.
+ fn still(chains: Vec<Vec<Mip>>) -> Result<Decoded, ImageError> {
+     let first = chains.into_iter().next().ok_or_else(|| ImageError("animation has no frames".into()))?;
+-    Ok(Decoded { mips: first, motion: None })
++    Ok(Decoded { mips: first, motion: None, counted: Default::default() })
+ }
+ 
+ fn finite(count: image::metadata::LoopCount) -> Option<u32> {
+diff --git a/crates/rune/src/image/memory_tests.rs b/crates/rune/src/image/memory_tests.rs
+new file mode 100644
+index 0000000..5d5e0e9
+--- /dev/null
++++ b/crates/rune/src/image/memory_tests.rs
+@@ -0,0 +1,150 @@
++//! Image memory: decoded pixels leave the CPU once an atlas copied them, the atlas keeps to its
++//! budget, and oversized images are refused from their header.
++
++use std::sync::Arc;
++
++use super::*;
++use crate::image::ImageCache;
++
++/// A PNG of `w`×`h` with every pixel `rgba`.
++fn png(w: u32, h: u32, rgba: [u8; 4]) -> Vec<u8> {
++    let image = image::RgbaImage::from_pixel(w, h, image::Rgba(rgba));
++    let mut out = std::io::Cursor::new(Vec::new());
++    image.write_to(&mut out, image::ImageFormat::Png).unwrap();
++    out.into_inner()
++}
++
++#[test]
++fn a_decoded_image_drops_its_cpu_pixels_once_the_atlas_copied_it_and_decodes_again_after_eviction() {
++    let cache = ImageCache::new(Arc::new(|| {}));
++    let image = cache.load(png(300, 200, [10, 20, 30, 255]));
++    assert_eq!(image.wait(), Ok([300, 200]));
++    let pixels = image.pixels().clone();
++    assert!(pixels.has_pixels(), "decoded, not yet drawn");
++    let mut atlas = ImageAtlas::default();
++    let placed = atlas.place(&pixels, [300.0, 200.0]).expect("drawn");
++    for _ in 0..=RELEASE_AFTER_FRAMES {
++        assert_eq!(atlas.place(&pixels, [300.0, 200.0]), Some(placed), "still drawn from its slot");
++        atlas.end_frame();
++    }
++    assert!(!pixels.has_pixels(), "no CPU copy once the atlas holds it");
++    assert!(pixels.is_ready(), "the atlas still holds it");
++    assert_eq!(atlas.place(&pixels, [300.0, 200.0]), Some(placed), "drawn without pixels");
++    // The atlas lets the page go: the image is no longer ready, and drawing it asks for a decode.
++    atlas.forget_all();
++    assert!(!pixels.is_ready());
++    assert_eq!(atlas.place(&pixels, [300.0, 200.0]), None, "nothing to draw this frame");
++    assert_eq!(image.wait(), Ok([300, 200]));
++    assert!(pixels.has_pixels(), "decoded again");
++    assert!(atlas.place(&pixels, [300.0, 200.0]).is_some());
++}
++
++#[test]
++fn pixels_an_app_set_are_never_dropped() {
++    let px = Pixels::new();
++    px.set(4, 4, vec![9; 64]);
++    let mut atlas = ImageAtlas::default();
++    for _ in 0..20 {
++        atlas.place(&px, [4.0; 2]);
++        atlas.end_frame();
++    }
++    assert!(px.has_pixels());
++}
++
++#[test]
++fn a_scroll_through_500_images_keeps_the_atlas_within_its_budget() {
++    let cache = ImageCache::new(Arc::new(|| {}));
++    let budget = 8u64 << 20;
++    let mut atlas = ImageAtlas::default();
++    atlas.budget = Some((budget, budget));
++    atlas.gpu = true;
++    let images: Vec<_> = (0..500u32).map(|i| cache.load(png(200, 120, [i as u8, (i >> 8) as u8, 7, 255]))).collect();
++    let mut peak = 0;
++    // Six cards on screen, the window moves one card a frame.
++    for top in 0..images.len() - 6 {
++        for image in &images[top..top + 6] {
++            let pixels = image.pixels();
++            if atlas.place(pixels, [200.0, 120.0]).is_none() {
++                image.wait().unwrap();
++                atlas.place(pixels, [200.0, 120.0]).expect("placed once decoded");
++            }
++        }
++        atlas.end_frame();
++        let (shelf, large) = atlas.bytes();
++        peak = peak.max(shelf + large);
++    }
++    assert!(peak <= budget, "atlas peaked at {peak} bytes over a {budget} byte budget");
++    let decoded = images.iter().filter(|i| i.pixels().has_pixels()).count();
++    assert!(decoded <= 6 + RELEASE_AFTER_FRAMES as usize, "{decoded} images still hold CPU pixels");
++}
++
++#[test]
++fn an_image_over_the_decode_limit_is_refused_from_its_header() {
++    // A PNG signature and an IHDR saying 9000 by 9000, and no pixel data at all: a decode that
++    // got past the header would fail on the missing data, not on the size.
++    let mut bytes = b"\x89PNG\r\n\x1a\n".to_vec();
++    let mut ihdr = b"IHDR".to_vec();
++    ihdr.extend_from_slice(&9000u32.to_be_bytes());
++    ihdr.extend_from_slice(&9000u32.to_be_bytes());
++    ihdr.extend_from_slice(&[8, 6, 0, 0, 0]);
++    let crc = !ihdr.iter().fold(!0u32, |c, &b| (0..8).fold(c ^ b as u32, |c, _| (c >> 1) ^ (0xedb8_8320 & 0u32.wrapping_sub(c & 1))));
++    bytes.extend_from_slice(&13u32.to_be_bytes());
++    bytes.extend_from_slice(&ihdr);
++    bytes.extend_from_slice(&crc.to_be_bytes());
++    // An empty IDAT ends the header the decoder reads; no pixel data follows.
++    bytes.extend_from_slice(&[0, 0, 0, 0, b'I', b'D', b'A', b'T', 0x35, 0xaf, 0x06, 0x1e]);
++    let cache = ImageCache::new(Arc::new(|| {}));
++    let error = cache.load(bytes.clone()).wait().unwrap_err().0.clone();
++    assert!(error.contains("over the decode limit"), "{error}");
++    let lazy = ImageCache::new(Arc::new(|| {})).decode_when_drawn(true);
++    let error = lazy.load(bytes).wait().unwrap_err().0.clone();
++    assert!(error.contains("over the decode limit"), "{error}");
++}
++
++#[test]
++fn a_lazy_cache_reads_the_size_and_decodes_only_when_drawn_or_prefetched() {
++    let (tx, rx) = std::sync::mpsc::channel();
++    let cache = ImageCache::new(Arc::new(move || { let _ = tx.send(()); })).decode_when_drawn(true);
++    let image = cache.file_fit(write_temp("lazy.png", &png(800, 400, [1, 2, 3, 255])), crate::image::Fit::Cover(200, 0));
++    rx.recv_timeout(std::time::Duration::from_secs(30)).unwrap();
++    assert_eq!(image.size(), Some([200, 100]), "the header, scaled to the fit");
++    assert!(!image.pixels().has_pixels(), "nothing decoded");
++    let mut atlas = ImageAtlas::default();
++    assert_eq!(atlas.place(image.pixels(), [200.0, 100.0]), None, "the first draw asks for it");
++    rx.recv_timeout(std::time::Duration::from_secs(30)).unwrap();
++    assert!(image.pixels().has_pixels());
++    let placed = atlas.place(image.pixels(), [200.0, 100.0]).unwrap();
++    assert_eq!(&placed.rect[2..], &[200, 100], "decoded at the fitted size");
++}
++
++fn write_temp(name: &str, bytes: &[u8]) -> std::path::PathBuf {
++    let dir = std::env::temp_dir().join(format!("rune-image-memory-{}", std::process::id()));
++    std::fs::create_dir_all(&dir).unwrap();
++    let path = dir.join(name);
++    std::fs::write(&path, bytes).unwrap();
++    path
++}
++
++/// A GIF header (logical screen `w`×`h`, no global palette) followed by its trailer: the size is
++/// all a decoder can read, no frame follows.
++fn gif_header(w: u16, h: u16) -> Vec<u8> {
++    let mut bytes = b"GIF89a".to_vec();
++    bytes.extend_from_slice(&w.to_le_bytes());
++    bytes.extend_from_slice(&h.to_le_bytes());
++    bytes.extend_from_slice(&[0, 0, 0, 0x3b]);
++    bytes
++}
++
++#[test]
++fn an_animated_image_over_the_decode_limit_is_refused_from_its_header() {
++    // Under the 8192 a side animations always had, over a 4096 by 4096 limit (an app's, as
++    // Sigil's): the animation path checks the limit too, before any frame decodes.
++    crate::image::set_max_decode_pixels(4096 * 4096);
++    let bytes = gif_header(8000, 4000);
++    assert!(crate::image::animated::decode(&bytes).is_some_and(|r| r.is_err_and(|e| e.0.contains("over the decode limit"))));
++    let cache = ImageCache::new(Arc::new(|| {}));
++    let error = cache.load(bytes.clone()).wait().unwrap_err().0.clone();
++    assert!(error.contains("over the decode limit"), "{error}");
++    let fitted = cache.load_fit(bytes, crate::image::Fit::Cover(256, 0)).wait().unwrap_err().0.clone();
++    assert!(fitted.contains("over the decode limit"), "{fitted}");
++}
+diff --git a/crates/rune/src/image/mips.rs b/crates/rune/src/image/mips.rs
+index d709ea3..6c254d7 100644
+--- a/crates/rune/src/image/mips.rs
++++ b/crates/rune/src/image/mips.rs
+@@ -69,7 +69,7 @@ impl<'a> MipSteps<'a> {
+         }
+     }
+ 
+-    pub(super) fn finish(self) -> Decoded { Decoded { mips: self.mips, motion: None } }
++    pub(super) fn finish(self) -> Decoded { Decoded { mips: self.mips, motion: None, counted: Default::default() } }
+ }
+ 
+ /// Rows `rows` of `w`×`h` RGBA8 `src` halved by area, appended to `out`, summing `linear`
+diff --git a/crates/rune/src/image/pixels.rs b/crates/rune/src/image/pixels.rs
+index f25d9c3..6efe069 100644
+--- a/crates/rune/src/image/pixels.rs
++++ b/crates/rune/src/image/pixels.rs
+@@ -1,14 +1,93 @@
+ //! Pixel buffers an app replaces at will (a CPU-shaded HUD frame, a video frame), drawn by
+-//! `El::pixels`. Each runtime keeps a CPU-side RGBA atlas the renderer uploads by dirty rows,
+-//! like the glyph atlas, allocated only once an element shows pixels.
++//! `El::pixels`. Each runtime keeps an RGBA atlas the renderer uploads, allocated only once an
++//! element shows pixels.
++//!
++//! Memory: a decoded image's pixels live on the CPU only until an atlas has copied them for
++//! upload. An image an [`ImageCache`](crate::ImageCache) can decode again (from a file, a URL or
++//! encoded bytes) then drops them, and the atlas keeps the GPU copy. Atlas pages are freed when
++//! no element drew from them for a while ([`IDLE_FREE`]) or when the atlas is over its budget
++//! ([`set_image_budget`]); an image drawn again after that decodes again. Once a renderer has
++//! the atlas, a page has no CPU copy: new pixels go up as regions.
+ 
+ use std::collections::HashMap;
+ use std::sync::atomic::{AtomicU64, Ordering};
+-use std::sync::{Arc, Mutex};
++use std::sync::{Arc, Mutex, Weak};
+ 
+ pub const IMAGE_ATLAS_SIZE: u32 = 1024;
+-/// Rows a shelf page starts with (`ImagePage::new`).
++/// Rows a shelf page starts with (`ImagePage::new`) while it keeps a CPU copy.
+ const IMAGE_PAGE_START_ROWS: u32 = 128;
++/// Frames a page must go undrawn before the budget may free it: what is on screen is never
++/// evicted, nor what a frame or two of motion briefly left out.
++const KEEP_FRAMES: u64 = 3;
++/// A page no element drew from for this long while the window kept drawing is freed even under
++/// the budget: a screen left behind gives its pictures back.
++pub const IDLE_FREE: std::time::Duration = std::time::Duration::from_secs(5);
++/// Frames after its last copy into an atlas that a reloadable image's CPU pixels are dropped.
++/// An image whose drawn size crosses a mip level during an animation copies again within this.
++const RELEASE_AFTER_FRAMES: u64 = 8;
++
++/// Byte budgets of every runtime's image atlas, GPU texture bytes: shelf pages (images up to
++/// [`IMAGE_ATLAS_SIZE`] a side) and all pages together. The defaults hold a few screens of
++/// thumbnails; an app sets its own with [`set_image_budget`].
++static SHELF_BUDGET: AtomicU64 = AtomicU64::new(64 << 20);
++static TOTAL_BUDGET: AtomicU64 = AtomicU64::new(128 << 20);
++
++/// Sets the atlas budgets in bytes of GPU texture: `shelf` for pages of small images, `total`
++/// for all pages. Pages drawn in the last few frames are kept even over budget.
++pub fn set_image_budget(shelf: u64, total: u64) {
++    SHELF_BUDGET.store(shelf, Ordering::Relaxed);
++    TOTAL_BUDGET.store(total.max(shelf), Ordering::Relaxed);
++}
++
++static SHELF_BYTES: AtomicU64 = AtomicU64::new(0);
++static LARGE_BYTES: AtomicU64 = AtomicU64::new(0);
++static MIRROR_BYTES: AtomicU64 = AtomicU64::new(0);
++static PAGES: AtomicU64 = AtomicU64::new(0);
++pub(crate) static DECODED_BYTES: AtomicU64 = AtomicU64::new(0);
++pub(crate) static DECODED_IMAGES: AtomicU64 = AtomicU64::new(0);
++pub(crate) static RELOADS: AtomicU64 = AtomicU64::new(0);
++pub(crate) static DECODES: AtomicU64 = AtomicU64::new(0);
++static EVICTED_PAGES: AtomicU64 = AtomicU64::new(0);
++
++/// What the process's images hold, for an app's memory report.
++#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
++#[non_exhaustive]
++pub struct ImageMemory {
++    /// Decoded pixels on the CPU (mips included): images decoded and not yet copied for upload,
++    /// animations, and images an app gave as RGBA.
++    pub decoded_bytes: u64,
++    /// Images holding decoded pixels.
++    pub decoded_images: u64,
++    /// GPU texture bytes of atlas shelf pages, every window together.
++    pub shelf_bytes: u64,
++    /// GPU texture bytes of the pages of images over [`IMAGE_ATLAS_SIZE`] a side.
++    pub large_bytes: u64,
++    /// CPU copies of atlas pages a renderer has not taken over yet.
++    pub mirror_bytes: u64,
++    /// Atlas pages live.
++    pub pages: u64,
++    /// Decodes finished, first ones and reloads.
++    pub decodes: u64,
++    /// Images decoded again after their pixels were dropped.
++    pub reloads: u64,
++    /// Pages freed by the budget or for going undrawn.
++    pub evicted_pages: u64,
++    /// The budgets ([`set_image_budget`]).
++    pub shelf_budget: u64,
++    pub total_budget: u64,
++}
++
++/// The process's image memory now.
++pub fn image_memory() -> ImageMemory {
++    let r = |a: &AtomicU64| a.load(Ordering::Relaxed);
++    ImageMemory {
++        decoded_bytes: r(&DECODED_BYTES), decoded_images: r(&DECODED_IMAGES), shelf_bytes: r(&SHELF_BYTES),
++        large_bytes: r(&LARGE_BYTES), mirror_bytes: r(&MIRROR_BYTES), pages: r(&PAGES), decodes: r(&DECODES),
++        reloads: r(&RELOADS), evicted_pages: r(&EVICTED_PAGES), shelf_budget: r(&SHELF_BUDGET), total_budget: r(&TOTAL_BUDGET),
++    }
++}
++
++type Reload = Arc<dyn Fn() + Send + Sync>;
+ 
+ struct Frame {
+     width: u32,
+@@ -16,6 +95,14 @@ struct Frame {
+     rgba: Vec<u8>,
+     generation: u64,
+     mips: Option<Arc<crate::image::Decoded>>,
++    /// Mip levels the image decodes to, kept after its pixels are dropped.
++    levels: usize,
++    /// Asks the image's cache to decode it again; `None` for pixels only the app has.
++    reload: Option<Reload>,
++    /// A decode is queued or running.
++    loading: bool,
++    /// Atlas slots holding a copy, in any window.
++    resident: u32,
+ }
+ 
+ /// A replaceable RGBA image, shared between the producer and the view. Clone it freely.
+@@ -53,7 +140,8 @@ impl Pixels {
+         static NEXT: AtomicU64 = AtomicU64::new(1);
+         Pixels {
+             id: NEXT.fetch_add(1, Ordering::Relaxed),
+-            frame: Arc::new(Mutex::new(Frame { width: 0, height: 0, rgba: Vec::new(), generation: 0, mips: None })),
++            frame: Arc::new(Mutex::new(Frame { width: 0, height: 0, rgba: Vec::new(), generation: 0, mips: None, levels: 1,
++                reload: None, loading: false, resident: 0 })),
+             source: crate::live::Source::new(0),
+             url: None,
+             srcset: None,
+@@ -98,27 +186,92 @@ impl Pixels {
+             frame.rgba = rgba;
+             frame.generation += 1;
+             frame.mips = None;
++            frame.levels = 1;
++            frame.reload = None;
+         }
+         self.source.notify();
+     }
+ 
++    /// Decoded pixels. A decode of the same image again (after the atlas dropped its pixels)
++    /// keeps the generation, so atlas slots still holding it stay valid.
+     pub(crate) fn set_mips(&self, mips: Arc<crate::image::Decoded>) {
+         {
+             let mut frame = self.frame.lock().unwrap();
+-            frame.width = mips.mips[0].width;
+-            frame.height = mips.mips[0].height;
++            let (w, h) = (mips.mips[0].width, mips.mips[0].height);
++            if frame.generation == 0 || frame.width != w || frame.height != h || frame.levels != mips.mips.len() {
++                frame.generation += 1;
++            }
++            frame.width = w;
++            frame.height = h;
++            frame.levels = mips.mips.len();
+             frame.rgba.clear();
+             frame.mips = Some(mips);
+-            frame.generation += 1;
++            frame.loading = false;
+         }
+         self.source.notify();
+     }
+ 
++    /// The image's size, known before its pixels decode (`ImageCache::decode_when_drawn`).
++    pub(crate) fn set_size(&self, width: u32, height: u32) {
++        {
++            let mut frame = self.frame.lock().unwrap();
++            frame.width = width;
++            frame.height = height;
++        }
++        self.source.notify();
++    }
++
++    /// A decode ended without pixels (it failed, or the image was dropped meanwhile).
++    pub(crate) fn load_ended(&self) {
++        self.frame.lock().unwrap().loading = false;
++        self.source.notify();
++    }
++
++    pub(crate) fn set_reload(&self, reload: Reload, loading: bool) {
++        let mut frame = self.frame.lock().unwrap();
++        frame.reload = Some(reload);
++        frame.loading = loading;
++    }
++
++    #[cfg(test)]
++    pub(crate) fn mips(&self) -> Option<Arc<crate::image::Decoded>> {
++        self.frame.lock().unwrap().mips.clone()
++    }
++
+     pub fn size(&self) -> (u32, u32) {
+         let frame = self.frame.lock().unwrap();
+         (frame.width, frame.height)
+     }
+ 
++    /// Whether drawing it shows it this frame: its pixels are on the CPU or an atlas holds a
++    /// copy. An image from an `ImageCache` that isn't (never drawn yet, or evicted) shows
++    /// nothing the frame it is drawn and asks for its pixels; a view can draw a placeholder
++    /// instead and [`Pixels::prefetch`] it.
++    pub fn is_ready(&self) -> bool {
++        let frame = self.frame.lock().unwrap();
++        frame.mips.is_some() || !frame.rgba.is_empty() || frame.resident > 0
++    }
++
++    /// Asks the image's cache to decode it, if its pixels are not on the CPU and no decode is
++    /// running; its cache's waker runs when they are. Nothing for pixels an app set.
++    pub fn prefetch(&self) {
++        let reload = {
++            let mut frame = self.frame.lock().unwrap();
++            if frame.mips.is_some() || frame.loading || frame.width == 0 && frame.reload.is_none() { return; }
++            let Some(reload) = frame.reload.clone() else { return };
++            frame.loading = true;
++            reload
++        };
++        reload();
++    }
++
++    pub(crate) fn has_pixels(&self) -> bool {
++        let frame = self.frame.lock().unwrap();
++        frame.mips.is_some() || !frame.rgba.is_empty()
++    }
++
++    pub(crate) fn is_loading(&self) -> bool { self.frame.lock().unwrap().loading }
++
+     pub(crate) fn signature(&self) -> (u64, u64) {
+         let frame = self.frame.lock().unwrap();
+         (self.id, frame.generation)
+@@ -130,6 +283,21 @@ impl Pixels {
+     }
+ }
+ 
++/// Drops the CPU pixels of a reloadable still image (an animation keeps its frames).
++fn release(frame: &Weak<Mutex<Frame>>) {
++    let Some(frame) = frame.upgrade() else { return };
++    let mut frame = frame.lock().unwrap();
++    if frame.reload.is_some() && !frame.loading && frame.mips.as_ref().is_some_and(|m| m.motion.is_none()) {
++        frame.mips = None;
++    }
++}
++
++/// The size of mip `level` of a `w`×`h` image, as `mip_chain` builds them.
++fn level_size(mut w: u32, mut h: u32, level: usize) -> (u32, u32) {
++    for _ in 0..level { (w, h) = ((w / 2).max(1), (h / 2).max(1)); }
++    (w, h)
++}
++
+ /// Where an image of `size` texels draws in `rect` ([x, y, w, h], device pixels) and which window
+ /// of it shows, as fractions [x0, y0, x1, y1]. `None` stretches; `Fit` letterboxes (on whole
+ /// pixels at unscaled rest, continuous while scaled); `Fill` keeps the rect and crops the
+@@ -212,15 +380,36 @@ struct Slot {
+     generation: u64,
+     /// The animation frame copied in.
+     frame: usize,
++    /// The image's frame, for its resident count.
++    owner: Weak<Mutex<Frame>>,
++}
++
++/// Pixels placed into a page that lives on the GPU only, waiting for the renderer.
++pub struct Region {
++    pub x: u32,
++    pub y: u32,
++    pub w: u32,
++    pub h: u32,
++    pub rgba: Vec<u8>,
+ }
+ 
+ /// One stable shelf page, or an exact-size standalone page for a large image.
+ pub struct ImagePage {
+     pub width: u32,
+     pub height: u32,
++    /// The page's CPU copy, kept until a renderer takes the page over: a CPU-painted frame reads
++    /// it, and a renderer uploads it whole when it makes the page's texture. Empty after.
+     pub data: Vec<u8>,
+-    /// Rows `[y0, y1)` changed since the last upload.
++    /// Rows `[y0, y1)` of `data` changed since the last upload.
+     pub dirty: Option<(u32, u32)>,
++    /// Pixels placed since the last upload, once the page has no CPU copy.
++    pub regions: Vec<Region>,
++    /// Holds images (else freed: its texture goes at the next upload).
++    pub live: bool,
++    /// The renderer took the page over: no CPU copy, no growing.
++    gpu: bool,
++    /// A renderer uploaded `data` since the page was made.
++    uploaded: bool,
+     shelf_x: u32,
+     shelf_y: u32,
+     shelf_h: u32,
+@@ -228,6 +417,9 @@ pub struct ImagePage {
+     shown: bool,
+     /// Drawn from in this frame so far; only ever set until the frame ends.
+     touched: bool,
++    /// The atlas frame and the time it was last drawn from.
++    last_frame: u64,
++    last_at: crate::time::Instant,
+ }
+ 
+ #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+@@ -238,18 +430,56 @@ pub struct Placed {
+ }
+ 
+ /// Streaming buffers keep one slot. Static images keep a slot per sampled mip level.
+-#[derive(Default)]
+ pub struct ImageAtlas {
+     pub pages: Vec<ImagePage>,
+     slots: HashMap<(u64, usize), Slot>,
+     /// When each animated image drawn here started playing, on the animation clock: its first
+     /// draw, kept while the atlas holds it.
+     starts: HashMap<u64, f64>,
++    /// Frames ended.
++    frame: u64,
++    /// Images copied in, by pixels id: their frame and the atlas frame of the last copy, so
++    /// their CPU pixels are dropped once they settle (`RELEASE_AFTER_FRAMES`).
++    copied: HashMap<u64, (Weak<Mutex<Frame>>, u64)>,
++    /// Slots removed since the frame began, whose images' resident counts go down at its end
++    /// (a removal can happen while the image's own frame is locked).
++    dropped: Vec<Weak<Mutex<Frame>>>,
++    /// A renderer has uploaded this atlas: new pages are made on the GPU only.
++    gpu: bool,
++    /// The atlas frame a CPU painter last read the pages (`cpu_boot::Scene::new`): CPU copies
++    /// stay while one may still paint.
++    cpu_read: std::sync::atomic::AtomicU64,
++    /// What this atlas added to the process totals ([`image_memory`]): shelf, large and mirror
++    /// bytes, and pages.
++    reported: [u64; 4],
++    /// A test's own budgets, instead of the process's ([`set_image_budget`]).
++    #[cfg(test)]
++    budget: Option<(u64, u64)>,
+     /// Frames copied in so far, so the idle meter sees new pixels in a slot it already drew.
+     #[cfg(debug_assertions)]
+     pub(crate) copies: u64,
+ }
+ 
++impl Default for ImageAtlas {
++    fn default() -> Self {
++        ImageAtlas { pages: Vec::new(), slots: HashMap::new(), starts: HashMap::new(), frame: 0, copied: HashMap::new(),
++            dropped: Vec::new(), gpu: false, cpu_read: std::sync::atomic::AtomicU64::new(u64::MAX), reported: [0; 4],
++            #[cfg(test)] budget: None,
++            #[cfg(debug_assertions)] copies: 0 }
++    }
++}
++
++impl Drop for ImageAtlas {
++    fn drop(&mut self) {
++        for slot in self.slots.values() { self.dropped.push(slot.owner.clone()); }
++        self.slots.clear();
++        self.settle_dropped();
++        for weak in self.copied.drain().map(|(_, (w, _))| w) { release(&weak); }
++        self.pages.clear();
++        self.report();
++    }
++}
++
+ impl ImageAtlas {
+     /// The atlas origin and size of `pixels`, copying a new frame in when it changed. None while
+     /// it's empty or doesn't fit.
+@@ -260,9 +490,10 @@ impl ImageAtlas {
+     /// [`Self::place`] at `now` on the animation clock: an animated image shows the frame for
+     /// the time since it was first drawn here, and says when (on the same clock) the next one
+     /// shows, or `None` for a still or an animation that has stopped. `None` for `now` shows
+-    /// an animation's first frame.
++    /// an animation's first frame. An image whose pixels were dropped and that no slot holds
++    /// asks for them (`Pixels::prefetch`) and shows nothing this frame.
+     pub(crate) fn place_at(&mut self, pixels: &Pixels, drawn: [f32; 2], now: Option<f64>) -> Option<(Placed, Option<f64>)> {
+-        let frame = pixels.frame.lock().unwrap();
++        let mut frame = pixels.frame.lock().unwrap();
+         let (mut w, mut h) = (frame.width, frame.height);
+         if w == 0 || h == 0 || w > 8192 || h > 8192 {
+             return None;
+@@ -270,7 +501,8 @@ impl ImageAtlas {
+         let mut level = 0;
+         let mut shown = 0;
+         let mut next = None;
+-        let bytes = if let Some(decoded) = &frame.mips {
++        let decoded = frame.mips.clone();
++        let bytes: Option<&[u8]> = if let Some(decoded) = &decoded {
+             let mips = match (&decoded.motion, now) {
+                 (Some(motion), Some(now)) => {
+                     let start = *self.starts.entry(pixels.id).or_insert(now);
+@@ -289,24 +521,59 @@ impl ImageAtlas {
+             }
+             let mip = &mips[level];
+             (w, h) = (mip.width, mip.height);
+-            &mip.pixels
+-        } else { &frame.rgba };
++            Some(&mip.pixels)
++        } else if !frame.rgba.is_empty() {
++            Some(&frame.rgba)
++        } else {
++            // Dropped after an upload, or not decoded yet: the same level choice from the sizes.
++            while level + 1 < frame.levels {
++                let (nw, nh) = level_size(frame.width, frame.height, level + 1);
++                if (nw as f32) < drawn[0].clamp(1.0, frame.width as f32) || (nh as f32) < drawn[1].clamp(1.0, frame.height as f32) { break; }
++                level += 1;
++            }
++            (w, h) = level_size(frame.width, frame.height, level);
++            None
++        };
+         let key = (pixels.id, level);
+         if self.slots.get(&key).is_some_and(|s| s.w != w || s.h != h) {
+-            self.slots.remove(&key);
++            let old = self.slots.remove(&key).unwrap();
++            self.dropped.push(old.owner);
+         }
+-        if !self.slots.contains_key(&key) {
++        let current = self.slots.get(&key).is_some_and(|s| s.generation == frame.generation && s.frame == shown);
++        let Some(bytes) = bytes.filter(|_| !current) else {
++            if !current {
++                // Nothing to copy from: ask the cache for the pixels again, and meanwhile draw
++                // another level this atlas holds (a zoom that needs a sharper level shows the
++                // softer one for the frames of the decode, not nothing).
++                let reload = (!frame.loading).then(|| frame.reload.clone()).flatten();
++                if reload.is_some() { frame.loading = true; }
++                let generation = frame.generation;
++                drop(frame);
++                if let Some(reload) = reload { reload(); }
++                let other = self.slots.iter().find(|((id, _), s)| *id == pixels.id && s.generation == generation).map(|(_, s)| (s.page, [s.x, s.y, s.w, s.h]));
++                let (page, rect) = other?;
++                self.pages[page].touched = true;
++                return Some((Placed { rect, page, premultiplied: true }, None));
++            }
++            let slot = &self.slots[&key];
++            self.pages[slot.page].touched = true;
++            return Some((Placed { rect: [slot.x, slot.y, w, h], page: slot.page, premultiplied: frame.mips.is_some() || frame.rgba.is_empty() }, next));
++        };
++        let new_slot = !self.slots.contains_key(&key);
++        if new_slot {
+             let (page, x, y) = self.allocate(w, h);
+-            self.slots.insert(key, Slot { page, x, y, w, h, generation: 0, frame: 0 });
++            self.slots.insert(key, Slot { page, x, y, w, h, generation: 0, frame: 0, owner: Arc::downgrade(&pixels.frame) });
+         }
+         let slot = self.slots.get_mut(&key).unwrap();
+         self.pages[slot.page].touched = true;
+-        if slot.generation != frame.generation || slot.frame != shown {
+-            slot.generation = frame.generation;
+-            slot.frame = shown;
+-            #[cfg(debug_assertions)]
+-            { self.copies += 1; }
+-            let page = &mut self.pages[slot.page];
++        slot.generation = frame.generation;
++        slot.frame = shown;
++        #[cfg(debug_assertions)]
++        { self.copies += 1; }
++        let page = &mut self.pages[slot.page];
++        if page.gpu {
++            page.regions.push(Region { x: slot.x, y: slot.y, w, h, rgba: bytes[..(w * h * 4) as usize].to_vec() });
++        } else {
+             let row = (page.width * 4) as usize;
+             for line in 0..h as usize {
+                 let dst = (slot.y as usize + line) * row + slot.x as usize * 4;
+@@ -316,104 +583,248 @@ impl ImageAtlas {
+             let (y0, y1) = (slot.y, slot.y + h);
+             page.dirty = Some(page.dirty.map_or((y0, y1), |(a, b)| (a.min(y0), b.max(y1))));
+         }
+-        Some((Placed { rect: [slot.x, slot.y, w, h], page: slot.page, premultiplied: frame.mips.is_some() }, next))
++        let placed = Placed { rect: [slot.x, slot.y, w, h], page: slot.page, premultiplied: frame.mips.is_some() };
++        if new_slot { frame.resident += 1; }
++        if frame.reload.is_some() {
++            self.copied.insert(pixels.id, (Arc::downgrade(&pixels.frame), self.frame));
++        }
++        Some((placed, next))
+     }
+ 
+-    /// Forgets images no element showed since the last call, except on pages that still show
+-    /// one and on the first page: shelves never reuse a slot's space until their page starts
+-    /// over, so an image shown again there (a view come back to) needs no copy or upload. A
+-    /// page left with nothing starts over so replaced sizes don't fill the atlas; a full atlas
+-    /// starts over a page that showed nothing last frame or yet this one before it adds one.
++    /// Ends a frame: pages drawn from are fresh; a page no element drew from for [`IDLE_FREE`]
++    /// is freed, and while the atlas is over its budget the least recently drawn page not drawn
++    /// in the last [`KEEP_FRAMES`] is freed too. Images settled since their copy drop their CPU
++    /// pixels, and pages a renderer has uploaded drop their CPU copy once no CPU painter reads
++    /// them.
+     pub fn end_frame(&mut self) {
+-        let pages = &self.pages;
+-        let first_kept = pages.first().is_some_and(|p| p.width <= IMAGE_ATLAS_SIZE && p.height <= IMAGE_ATLAS_SIZE);
+-        self.slots.retain(|_, s| pages[s.page].touched || (s.page == 0 && first_kept));
++        self.frame += 1;
++        let now = crate::time::Instant::now();
++        for page in &mut self.pages {
++            if page.touched { page.last_frame = self.frame; page.last_at = now; }
++            page.shown = std::mem::take(&mut page.touched);
++        }
++        let frame = self.frame;
++        for i in 0..self.pages.len() {
++            let p = &self.pages[i];
++            if p.live && !p.shown && frame - p.last_frame > KEEP_FRAMES && now.duration_since(p.last_at) >= IDLE_FREE {
++                self.free_page(i);
++            }
++        }
++        self.keep_budget(None);
++        let cpu_read = self.cpu_read.load(Ordering::Relaxed);
++        let cpu_idle = cpu_read == u64::MAX || cpu_read + 2 < frame;
++        if cpu_idle {
++            for page in &mut self.pages {
++                if page.uploaded && !page.gpu && page.dirty.is_none() { page.gpu = true; page.data = Vec::new(); }
++            }
++        }
++        let due: Vec<u64> = self.copied.iter().filter(|(_, (_, at))| at + RELEASE_AFTER_FRAMES <= frame).map(|(id, _)| *id).collect();
++        for id in due {
++            if let Some((weak, _)) = self.copied.remove(&id) { release(&weak); }
++        }
+         if !self.starts.is_empty() {
+             let slots = &self.slots;
+             self.starts.retain(|id, _| slots.keys().any(|(slot, _)| slot == id));
+         }
+-        for (i, page) in self.pages.iter_mut().enumerate() {
+-            page.shown = std::mem::take(&mut page.touched);
+-            if !self.slots.values().any(|slot| slot.page == i) {
+-                (page.shelf_x, page.shelf_y, page.shelf_h) = (0, 0, 0);
+-                page.dirty = None;
+-                if page.width > IMAGE_ATLAS_SIZE || page.height > IMAGE_ATLAS_SIZE {
+-                    page.data = Vec::new();
+-                }
+-            }
+-        }
+-        let keep = self.slots.values().map(|s| s.page + 1).max().unwrap_or(0);
+-        self.pages.truncate(keep);
++        self.finish_changes();
+     }
+ 
+-    /// A window at rest (`window::rest`): forgets the images no element showed in the last
+-    /// frame, the first page's included, and frees the CPU copy of every page left empty. An
+-    /// image shown again after it is copied in again.
++    /// Drops the CPU pixels of every image copied in, now (a frame after which nothing moves).
++    pub(crate) fn release_copied(&mut self) {
++        for (weak, _) in std::mem::take(&mut self.copied).into_values() { release(&weak); }
++    }
++
++    /// A window at rest (`window::rest`): frees every page no element drew from in the last
++    /// frame, and drops the CPU pixels of every image copied in. An image shown again after it
++    /// decodes again.
+     pub fn rest(&mut self) {
+-        let pages = &self.pages;
+-        self.slots.retain(|_, s| pages[s.page].shown);
++        for i in 0..self.pages.len() {
++            if self.pages[i].live && !self.pages[i].shown { self.free_page(i); }
++        }
++        for (weak, _) in std::mem::take(&mut self.copied).into_values() { release(&weak); }
+         let slots = &self.slots;
+         self.starts.retain(|id, _| slots.keys().any(|(slot, _)| slot == id));
+-        for (i, page) in self.pages.iter_mut().enumerate() {
+-            if !self.slots.values().any(|slot| slot.page == i) {
+-                (page.shelf_x, page.shelf_y, page.shelf_h) = (0, 0, 0);
+-                page.dirty = None;
+-                page.data = Vec::new();
+-            }
++        self.finish_changes();
++    }
++
++    /// Forgets every image (the renderer lost what it held): they are placed and copied again.
++    pub fn forget_all(&mut self) {
++        for i in 0..self.pages.len() {
++            if self.pages[i].live { self.free_page(i); }
+         }
+-        let keep = self.slots.values().map(|s| s.page + 1).max().unwrap_or(0);
+-        self.pages.truncate(keep);
++        self.finish_changes();
++    }
++
++    /// Forgets the images on `page` (its texture was made afresh, empty).
++    pub fn forget_page(&mut self, page: usize) {
++        if self.pages.get(page).is_some_and(|p| p.live) { self.free_page(page); }
++        self.finish_changes();
++    }
++
++    /// A renderer uploaded the CPU copy of `page` (`Renderer::upload_images`).
++    pub fn uploaded(&mut self, page: usize) {
++        self.gpu = true;
++        if let Some(p) = self.pages.get_mut(page) { p.uploaded = true; }
++    }
++
++    /// A CPU painter read the pages this frame (`cpu_boot::Scene::new`).
++    pub(crate) fn cpu_reading(&self) {
++        self.cpu_read.store(self.frame, Ordering::Relaxed);
+     }
+ 
+     /// Marks every row for upload (a new texture).
+     pub fn invalidate(&mut self) {
+-        for page in &mut self.pages { page.dirty = Some((0, page.height)); }
++        let mut lost = false;
++        for page in &mut self.pages {
++            if page.gpu { lost |= page.live; } else { page.dirty = Some((0, page.height)); }
++        }
++        if lost {
++            for i in 0..self.pages.len() {
++                if self.pages[i].gpu && self.pages[i].live { self.free_page(i); }
++            }
++            self.finish_changes();
++        }
++    }
++
++    /// Texture bytes of live shelf pages and of live large pages.
++    fn bytes(&self) -> (u64, u64) {
++        let (mut shelf, mut large) = (0, 0);
++        for p in self.pages.iter().filter(|p| p.live) {
++            let b = u64::from(p.width) * u64::from(p.height) * 4;
++            if p.is_shelf() { shelf += b } else { large += b }
++        }
++        (shelf, large)
++    }
++
++    /// Frees least recently drawn pages not drawn in the last few frames until the atlas fits
++    /// its budget with `adding` more bytes (a page about to be made: (bytes, is_shelf)), and
++    /// returns a freed page that can take a shelf image, if one was freed.
++    fn keep_budget(&mut self, adding: Option<(u64, bool)>) -> Option<usize> {
++        let (shelf_budget, total_budget) = (SHELF_BUDGET.load(Ordering::Relaxed), TOTAL_BUDGET.load(Ordering::Relaxed));
++        #[cfg(test)]
++        let (shelf_budget, total_budget) = self.budget.unwrap_or((shelf_budget, total_budget));
++        let mut reuse = None;
++        loop {
++            let (mut shelf, large) = self.bytes();
++            let mut total = shelf + large;
++            if let Some((b, is_shelf)) = adding { total += b; if is_shelf { shelf += b; } }
++            let over_shelf = shelf > shelf_budget;
++            if !over_shelf && total <= total_budget { return reuse; }
++            let frame = self.frame;
++            let victim = self.pages.iter().enumerate()
++                .filter(|(_, p)| p.live && !p.touched && frame.saturating_sub(p.last_frame) > KEEP_FRAMES)
++                // Over the shelf budget, a shelf page; over the total, any page.
++                .filter(|(_, p)| !over_shelf || p.is_shelf() || total > total_budget)
++                .min_by_key(|(_, p)| p.last_frame)
++                .map(|(i, _)| i);
++            let Some(i) = victim else { return reuse };
++            if self.pages[i].is_shelf() && reuse.is_none() { reuse = Some(i); }
++            self.free_page(i);
++        }
++    }
++
++    fn free_page(&mut self, page: usize) {
++        let dropped = &mut self.dropped;
++        self.slots.retain(|_, s| {
++            if s.page == page { dropped.push(s.owner.clone()); false } else { true }
++        });
++        let p = &mut self.pages[page];
++        p.live = false;
++        p.data = Vec::new();
++        p.regions = Vec::new();
++        p.dirty = None;
++        (p.shelf_x, p.shelf_y, p.shelf_h) = (0, 0, 0);
++        EVICTED_PAGES.fetch_add(1, Ordering::Relaxed);
++    }
++
++    /// Resident counts of removed slots, trailing free pages, and the process totals.
++    fn finish_changes(&mut self) {
++        self.settle_dropped();
++        let keep = self.pages.iter().rposition(|p| p.live).map_or(0, |i| i + 1);
++        self.pages.truncate(keep);
++        self.report();
++    }
++
++    fn settle_dropped(&mut self) {
++        for weak in self.dropped.drain(..) {
++            if let Some(frame) = weak.upgrade() {
++                let mut frame = frame.lock().unwrap();
++                frame.resident = frame.resident.saturating_sub(1);
++            }
++        }
++    }
++
++    fn report(&mut self) {
++        let (shelf, large) = self.bytes();
++        let mirror: u64 = self.pages.iter().map(|p| p.data.len() as u64).sum();
++        let pages = self.pages.iter().filter(|p| p.live).count() as u64;
++        let now = [shelf, large, mirror, pages];
++        for (i, total) in [&SHELF_BYTES, &LARGE_BYTES, &MIRROR_BYTES, &PAGES].into_iter().enumerate() {
++            if now[i] >= self.reported[i] { total.fetch_add(now[i] - self.reported[i], Ordering::Relaxed); }
++            else { total.fetch_sub(self.reported[i] - now[i], Ordering::Relaxed); }
++        }
++        self.reported = now;
+     }
+ 
+     fn allocate(&mut self, w: u32, h: u32) -> (usize, u32, u32) {
++        let gpu = self.gpu && {
++            let cpu_read = self.cpu_read.load(Ordering::Relaxed);
++            cpu_read == u64::MAX || cpu_read + 2 < self.frame
++        };
+         for (i, page) in self.pages.iter_mut().enumerate() {
+-            if page.data.is_empty() { *page = ImagePage::new(w, h); }
++            if !page.live { continue; }
+             if let Some((x, y)) = page.allocate(w, h) { return (i, x, y); }
+         }
+-        // Full: start over a shelf page that showed nothing last frame or yet this one. A page
+-        // not drawn from yet this frame may still be, later in the tree.
+-        let idle = |p: &ImagePage| !p.shown && !p.touched && p.width <= IMAGE_ATLAS_SIZE && p.height <= IMAGE_ATLAS_SIZE
+-            && p.shelf_y + p.shelf_h > 0;
+-        if w <= IMAGE_ATLAS_SIZE && h <= IMAGE_ATLAS_SIZE && let Some(i) = self.pages.iter().position(idle) {
+-            self.slots.retain(|_, s| s.page != i);
+-            let page = &mut self.pages[i];
+-            (page.shelf_x, page.shelf_y, page.shelf_h) = (0, 0, 0);
+-            let (x, y) = page.allocate(w, h).unwrap();
+-            return (i, x, y);
+-        }
+-        let mut page = ImagePage::new(w, h);
+-        let (x, y) = page.allocate(w, h).unwrap();
+-        self.pages.push(page);
+-        (self.pages.len() - 1, x, y)
++        let shelf = w <= IMAGE_ATLAS_SIZE && h <= IMAGE_ATLAS_SIZE;
++        let fresh = ImagePage::new(w, h, gpu);
++        let bytes = u64::from(fresh.width) * u64::from(fresh.height) * 4;
++        // Full: free what the budget says before adding, and reuse a freed shelf page.
++        let reuse = self.keep_budget(Some((bytes, shelf)));
++        let slot = reuse.filter(|_| shelf).or_else(|| self.pages.iter().position(|p| !p.live));
++        let page = match slot {
++            Some(i) => { self.pages[i] = fresh; i }
++            None => { self.pages.push(fresh); self.pages.len() - 1 }
++        };
++        self.pages[page].last_frame = self.frame;
++        let (x, y) = self.pages[page].allocate(w, h).unwrap();
++        (page, x, y)
+     }
+ }
+ 
+ impl ImagePage {
+-    /// A shelf page starts with the rows its first image needs (at least
++    /// A shelf page with a CPU copy starts with the rows its first image needs (at least
+     /// `IMAGE_PAGE_START_ROWS`) and grows as its shelves fill (`allocate`), up to
+-    /// `IMAGE_ATLAS_SIZE`: a window that shows a few icons holds 512 KiB of it, not 4 MiB.
+-    fn new(w: u32, h: u32) -> Self {
+-        let (width, height) = if w > IMAGE_ATLAS_SIZE || h > IMAGE_ATLAS_SIZE { (w, h) }
++    /// `IMAGE_ATLAS_SIZE`: a window that shows a few icons holds 512 KiB of it, not 4 MiB. A
++    /// page on the GPU only is made at its full size and never grows.
++    fn new(w: u32, h: u32, gpu: bool) -> Self {
++        let large = w > IMAGE_ATLAS_SIZE || h > IMAGE_ATLAS_SIZE;
++        let (width, height) = if large { (w, h) }
++            else if gpu { (IMAGE_ATLAS_SIZE, IMAGE_ATLAS_SIZE) }
+             else { (IMAGE_ATLAS_SIZE, h.next_power_of_two().max(IMAGE_PAGE_START_ROWS)) };
+-        Self { width, height, data: vec![0; width as usize * height as usize * 4],
+-            dirty: None, shelf_x: 0, shelf_y: 0, shelf_h: 0, shown: false, touched: false }
++        let data = if gpu { Vec::new() } else { vec![0; width as usize * height as usize * 4] };
++        Self { width, height, data, dirty: None, regions: Vec::new(), live: true, gpu, uploaded: false,
++            shelf_x: 0, shelf_y: 0, shelf_h: 0, shown: false, touched: false, last_frame: 0, last_at: crate::time::Instant::now() }
+     }
+ 
++    fn is_shelf(&self) -> bool { self.width == IMAGE_ATLAS_SIZE && self.height <= IMAGE_ATLAS_SIZE }
++
++    /// Whether the page lives on the GPU only.
++    pub fn on_gpu(&self) -> bool { self.gpu }
++
+     fn allocate(&mut self, w: u32, h: u32) -> Option<(u32, u32)> {
+-        let shelf = self.width == IMAGE_ATLAS_SIZE && self.height <= IMAGE_ATLAS_SIZE;
+-        if w > self.width || h > if shelf { IMAGE_ATLAS_SIZE } else { self.height } { return None; }
++        let shelf = self.is_shelf();
++        if !shelf {
++            // A standalone page holds its one image.
++            return (self.shelf_h == 0 && w <= self.width && h <= self.height).then(|| { self.shelf_h = h; self.shelf_x = w; (0, 0) });
++        }
++        if w > self.width || h > IMAGE_ATLAS_SIZE { return None; }
+         if self.shelf_x + w > self.width {
+             self.shelf_y += self.shelf_h;
+             self.shelf_x = 0;
+             self.shelf_h = 0;
+         }
+         if self.shelf_y + h > self.height {
+-            if !shelf || self.shelf_y + h > IMAGE_ATLAS_SIZE { return None; }
++            if self.gpu || self.shelf_y + h > IMAGE_ATLAS_SIZE { return None; }
+             // Rows already placed keep their texels; the renderer makes the page's texture again
+             // at its new size and uploads all of it.
+             self.height = (self.shelf_y + h).next_power_of_two().min(IMAGE_ATLAS_SIZE);
+@@ -427,6 +838,10 @@ impl ImagePage {
+     }
+ }
+ 
++#[cfg(test)]
++#[path = "memory_tests.rs"]
++mod memory_tests;
++
+ #[cfg(test)]
+ mod tests {
+     use super::*;
+diff --git a/crates/rune/src/lib.rs b/crates/rune/src/lib.rs
+index c708b46..780ce56 100644
+--- a/crates/rune/src/lib.rs
++++ b/crates/rune/src/lib.rs
+@@ -173,10 +173,12 @@ pub use gpu::springs as gpu_springs;
+ pub use growth::GROWTH;
+ pub use growth::StreamEdge;
+ pub use growth::edge;
++pub use image::Fit;
+ pub use image::Image;
+ pub use image::ImageCache;
+ pub use image::ImageError;
+ pub use image::ImageId;
++pub use image::set_max_decode_pixels;
+ pub use input::canvas_input::GesturePhase;
+ pub use input::canvas_input::MagnifyEvent;
+ pub use input::canvas_input::PointerButton;
+@@ -223,7 +225,10 @@ pub use overlay::options::OverlayLevel;
+ pub use overlay::options::OverlayOptions;
+ pub use overlay::options::OverlayPlacement;
+ pub use overlay::options::OverlaySupport;
++pub use pixels::ImageMemory;
+ pub use pixels::Pixels;
++pub use pixels::image_memory;
++pub use pixels::set_image_budget;
+ pub use platform::accent::SystemAccent;
+ pub use platform::accent::system_accent;
+ pub use platform::app_icon::set_app_icon;
+diff --git a/crates/rune/src/render/cpu_boot.rs b/crates/rune/src/render/cpu_boot.rs
+index ad62076..7a7920b 100644
+--- a/crates/rune/src/render/cpu_boot.rs
++++ b/crates/rune/src/render/cpu_boot.rs
+@@ -124,6 +124,7 @@ impl<'a> Scene<'a> {
+     /// sRGB encoding as windows do by default.
+     pub fn new(instances: &'a [Instance], atlas: &'a Atlas, images: &'a ImageAtlas, size: (u32, u32), clear: [f32; 4]) -> Self {
+         let glyph_pages = (0..atlas.page_count()).filter_map(|p| atlas.page_data(p)).collect();
++        images.cpu_reading();
+         let images = images.pages.iter().map(|p| Image { width: p.width, data: &p.data, dirty: p.dirty }).collect();
+         Scene { instances, glyph_pages, outlines: Some(&atlas.outlines), images, size, clear, lcd: atlas.lcd, srgb_blend: true, native_surfaces: false, compositor: false, smoothing: None, atlas_resets: atlas.resets(), half: HalfRounding::default() }
+     }
+diff --git a/crates/rune/src/render/layers.rs b/crates/rune/src/render/layers.rs
+index 1f43293..95d3987 100644
+--- a/crates/rune/src/render/layers.rs
++++ b/crates/rune/src/render/layers.rs
+@@ -319,6 +319,9 @@ impl Renderer {
+         self.uploads.trim();
+     }
+ 
++    /// Whether a retained layer cache may still bind an old image page texture.
++    pub(super) fn layers_retained(&self) -> bool { !self.layers.retained.is_empty() }
++
+     pub(super) fn sync_resident_caches(&self, out: &mut std::collections::HashMap<u64, u64>) {
+         if !out.is_empty() {
+             out.clear();
+diff --git a/crates/rune/src/render/upload.rs b/crates/rune/src/render/upload.rs
+index a7c1317..e4ca539 100644
+--- a/crates/rune/src/render/upload.rs
++++ b/crates/rune/src/render/upload.rs
+@@ -140,31 +140,75 @@ impl Renderer {
+         staging.write_texture_rows(texture, y0, &data[(y0 * row) as usize..(y1 * row) as usize]);
+     }
+ 
+-    /// Uploads changed rows of the runtime's image atlas (`El::pixels`), creating its texture on
+-    /// first use.
++    /// Uploads the runtime's image atlas (`El::pixels`): changed rows of pages with a CPU copy,
++    /// and the regions placed into pages that live on the GPU only. Makes a page's texture on
++    /// first use and destroys the textures of freed pages, so their memory goes back at once.
+     pub fn upload_images(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, images: &mut ImageAtlas) {
+         if images.pages.is_empty() && self.images.is_empty() { return self.refresh_layer_bindings(device); }
+         let staging = self.uploads.staging(device, queue);
+         if staging.lost() != self.uploads.lost.1 {
+             self.uploads.lost.1 = staging.lost();
+-            for page in &mut images.pages { page.dirty = Some((0, page.height)); }
++            // Pages with a CPU copy go up again whole; GPU-only pages are placed again.
++            images.invalidate();
+         }
+         let mut changed = self.images.len() != images.pages.len();
++        let gone: Vec<_> = self.images.drain(images.pages.len().min(self.images.len())..).flatten().collect();
++        for (texture, _) in gone { self.retire(texture); }
+         self.images.resize_with(images.pages.len(), || None);
++        let mut emptied = Vec::new();
++        let mut retired = Vec::new();
+         for (index, page) in images.pages.iter_mut().enumerate() {
+-            if page.data.is_empty() { changed |= self.images[index].is_some(); self.images[index] = None; continue; }
++            if !page.live {
++                if let Some((texture, _)) = self.images[index].take() { retired.push(texture); changed = true; }
++                continue;
++            }
+             if self.images[index].as_ref().is_none_or(|(t, _)| t.width() != page.width || t.height() != page.height) {
++                if let Some((old, _)) = self.images[index].take() { retired.push(old); }
+                 let texture = Self::image_texture(device, page.width, page.height);
+                 let bind = Self::bind_group(device, &self.bind_layout, &self.globals, self.uber.outlines(), &self.atlas, &texture, None);
+                 self.images[index] = Some((texture, bind));
+                 changed = true;
+-                page.dirty = Some((0, page.height));
++                // A new texture starts empty: a page with a CPU copy goes up whole; a GPU-only
++                // page holds what is placed after this, so its earlier images are placed again.
++                if page.on_gpu() { emptied.push(index); } else { page.dirty = Some((0, page.height)); }
++            }
++            let texture = &self.images[index].as_ref().unwrap().0;
++            if let Some(rows) = page.dirty.take() {
++                Self::write_rows(&staging, texture, &page.data, rows);
++            }
++            for region in page.regions.drain(..) {
++                staging.write_texture_region(texture, region.x, region.y, region.w, &region.rgba);
+             }
+-            let Some(rows) = page.dirty.take() else { continue };
+-            Self::write_rows(&staging, &self.images[index].as_ref().unwrap().0, &page.data, rows);
+         }
++        for index in 0..images.pages.len() {
++            if images.pages[index].live && !images.pages[index].on_gpu() { images.uploaded(index); }
++        }
++        for index in emptied { images.forget_page(index); }
+         if changed { self.images_changed(); }
+         self.refresh_layer_bindings(device);
++        for texture in retired { self.retire(texture); }
++    }
++
++    /// Frees a page texture now (`Texture::destroy`), unless a retained layer cache may still
++    /// bind it: then it goes when that cache is made again or dropped.
++    fn retire(&self, texture: wgpu::Texture) {
++        if !self.layers_retained() { texture.destroy(); }
++    }
++
++    /// Destroys the textures of the atlas pages freed since the last upload (`window::rest`,
++    /// which frees pages without a frame to upload them).
++    pub(crate) fn release_images(&mut self, images: &ImageAtlas) {
++        let mut changed = false;
++        let mut retired = Vec::new();
++        for (index, slot) in self.images.iter_mut().enumerate() {
++            if images.pages.get(index).is_none_or(|p| !p.live) && let Some((texture, _)) = slot.take() {
++                retired.push(texture);
++                changed = true;
++            }
++        }
++        if changed { self.images_changed(); }
++        // Bind groups of live layer targets name the old textures until they are made again.
++        if !self.layers.targets.iter().flatten().any(|_| true) { for texture in retired { self.retire(texture); } }
+     }
+ 
+     /// Uploads several instance lists back to back (one buffer, one glyph upload) and returns
+diff --git a/crates/rune/src/runtime/frame.rs b/crates/rune/src/runtime/frame.rs
+index aa7efd3..5491515 100644
+--- a/crates/rune/src/runtime/frame.rs
++++ b/crates/rune/src/runtime/frame.rs
+@@ -876,6 +876,9 @@ impl<S: 'static> Runtime<S> {
+         // resolves hover then, taken from the state each frame so a re-arm moves it on.
+         if let Some(due) = hold_wake { self.wake_for_clock(due); }
+         self.images.end_frame();
++        // A frame that leaves nothing moving is the last for now: the images it copied in drop
++        // their CPU pixels here, not after a rest.
++        if !animating { self.images.release_copied(); }
+         if self.track_marks {
+             self.marks.resize(self.instances.len(), 0);
+         }
+diff --git a/crates/rune/src/window/rest.rs b/crates/rune/src/window/rest.rs
+index f04e79b..f21f811 100644
+--- a/crates/rune/src/window/rest.rs
++++ b/crates/rune/src/window/rest.rs
+@@ -13,9 +13,10 @@
+ //! shows it again makes its targets afresh.
+ //!
+ //! Either way the runtime's caches go back to what the screen on show uses: text layouts the last
+-//! two commits didn't use and their glyph runs (`TextSystem::rest`), images no element showed in
+-//! the last frame and the CPU copies of pages left empty (`ImageAtlas::rest`). Then the app's
+-//! `App::on_rest` runs, for its own caches.
++//! two commits didn't use and their glyph runs (`TextSystem::rest`), atlas pages no element drew
++//! from in the last frame, with their textures, and the CPU pixels of images copied in
++//! (`ImageAtlas::rest`, `Renderer::release_images`). Then the app's `App::on_rest` runs, for its
++//! own caches.
+ 
+ use super::*;
+ use crate::machine::Effects;
+@@ -98,6 +99,8 @@ impl<S: 'static> Host<S> {
+         if let Some(f) = self.on_rest { self.rt.update_if(f); }
+         if let Some((gpu, renderer)) = &mut self.gpu {
+             renderer.give_back(all, &mut self.rt.text.atlas.resident_caches);
++            // The atlas pages `ImageAtlas::rest` freed: their textures go now, not at the next frame.
++            renderer.release_images(&self.rt.images);
+             // Out of sight, what the last frame used goes too, and the staging chunks: an empty
+             // submission and a wait land those frees now. At an idle rest the device isn't
+             // polled: a poll costs the next two frames' submits 4-9 ms each on an Iris Xe.
