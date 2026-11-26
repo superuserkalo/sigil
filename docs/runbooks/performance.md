@@ -2,7 +2,7 @@
 
 Status: active. Measured on macOS 26.0 (Apple silicon) only; the Windows exe size is measured from
 a cross build, its run time is not.
-Updated: 2026-11-25
+Updated: 2026-11-26
 
 How Sigil is measured, what changed in the 2026-11-17 pass and what is left. The method follows
 the Rust Performance Book as bundled in the `rust-performance` skill: one falsifiable experiment at
@@ -168,6 +168,59 @@ a sixth of it is building the mounted cards; the rest is Rune's apply and layout
 nodes. A per-row `rune::memo` was tried and saved nothing measurable (the reused subtree is still
 applied), and Rune's virtual list overscan (two viewports a side) is a Rune constant.
 
+## Memory: pictures, GPU uploads, manifest (2026-11-26)
+
+A memory profile of 0.1.42 on Windows 11 (RTX 5060 Ti, D3D12) measured 284 MB commit and 68 MB
+VRAM fresh on Browse and 593 MB and 232 MB after two hours (`.scratch/memory-profile/`, local).
+What it found and what changed:
+
+- Decoded pictures stayed on the CPU after upload. Rune's `ImageCache` kept every decoded image
+  with its whole CPU mip chain while any `Pixels` handle lived (`State::thumbnails` holds one per
+  picture), and each window's image atlas kept a CPU copy of every page. Now an atlas drops a
+  picture's CPU pixels once it has copied it for upload (Rune patch 0003); a picture drawn again
+  after its atlas page was freed decodes again from its file. Pages live on the GPU only after
+  the first upload and new pixels go up as regions.
+- Pictures decoded at full size. The card and billboard copies were scaled on the fetch worker
+  after a full decode. Now Rune decodes them to the box they are drawn in
+  (`ImageCache::file_fit`), reads the header first, and refuses anything over 4096 by 4096
+  (`memory::MAX_DECODE_PIXELS`); every other fetched picture is capped at 2560 pixels a side.
+- Everything decoded at once. The cache now decodes a picture only when it is drawn
+  (`decode_when_drawn`): a request reads its header for the size. A minimized or hidden window
+  decodes nothing.
+- No eviction. Atlas pages are freed when not drawn for 5 s or, least recently drawn first, while
+  over the budget (`memory::THUMB_BUDGET` 32 MB, `IMAGE_BUDGET` 64 MB); textures are destroyed at
+  once. Card pictures show their placeholder until ready and fade in.
+- D3D12 upload heap blocks (Windows only, unverified here): devices ask for 8 to 16 MB blocks
+  (4 to 8 MB upload blocks), large uploads stage in 1 MiB slices, and an idle window polls once
+  after an upload burst so the staging chunks are freed (Rune patch 0004). The GPU allocator's
+  report is logged at debug level and in the copied memory report.
+- Sigil.exe had no application manifest: it now embeds one (Segment Heap, per-monitor v2 DPI,
+  UTF-8, long paths, supported OS ids, Common Controls 6) from `build.rs`.
+
+Method (macOS, Apple silicon): the `fastrel` build of `main` and of the change, headless with
+`--realtime --size 1280x800 --scale 2`, `SIGIL_DATA_DIR` a copy of one seeded folder (97 cached
+pictures), runs alternated before and after. The footprint (`footprint -p`, physical footprint:
+dirty, compressed and Metal memory) is sampled 1.5 s before the script ends; the peak is
+`/usr/bin/time -l`. Medians of 3 runs, range in brackets, MB.
+
+| Scenario | Before, end | After, end | Before, peak | After, peak |
+| --- | --- | --- | --- | --- |
+| Browse idle (`browse-dashboard`, 20 s) | 313 (311 to 335) | 290 (280 to 292) | 383 | 349 |
+| After visiting every page (11 nav taps, 2.5 s each) | 378 (370 to 389) | 308 (296 to 324) | 527 | 487 |
+| The same, then scrolling Browse through the whole grid | 330 (326 to 375) | 278 (267 to 301) | 502 | 481 |
+| Locker with art loaded (`locker`, 10 s) | 221 (220 to 235) | 183 (179 to 193) | 288 | 252 |
+
+About 130 MB of every row is Metal's own memory for the headless offscreen targets, unchanged.
+Malloc after the page tour went from 226 to 139 MB, and the Locker's GPU allocations
+(`IOAccelerator`) from 60 to 11 MB. The fixture has one page of mods, so the scroll passes about
+50 cards, not 60. Snapshots of `browse-fixture`, `browse-dashboard`, `browse-details`, `locker`,
+`crosshair` and `stats-profile` at 1x and 2x are byte-identical before and after.
+
+Windows, not measured: commit, VRAM, the upload heap blocks and the manifest's effect. The steps
+are in the memory profile's section 8; Settings > About > Memory now shows commit first, the
+process's GPU memory (DXGI) and the picture figures, and its copied report holds the GPU
+allocator report.
+
 ## Remaining opportunities
 
 - The toggle commit itself (see above): fewer mounted cards needs a configurable overscan in Rune.
@@ -176,8 +229,8 @@ applied), and Rune's virtual list overscan (two viewports a side) is a Rune cons
 
 - Send the traffic-lights fix upstream to Rune, then drop the local patch. Measure real time to
   first presented frame with `RUNE_READY_DIR` (`ready_ms`).
-- Thumbnail memory: `State::thumbnails` never evicts, so scrolling Browse pages grows RSS without
-  bound. A bounded cache keyed by visible range would cap it; it needs a re-decode policy.
+- Memory, next batch: make the GPU only when the window is first shown (started minimized),
+  release it when minimized, and the binary diet (duplicate HTTP, TLS and codec stacks).
 - Size: `rust/crates/tinyagent` pulls reqwest with default features (native-tls, HTTP/2) next to
   ureq's rustls; moving reqwest onto rustls and HTTP/1 would drop one TLS stack and h2. It changes
   the provider transport, so it needs its own decision and a provider test.
