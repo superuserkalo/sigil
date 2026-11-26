@@ -66,6 +66,8 @@ pub fn dragging(s: &mut State) {
     let from = order.iter().position(|slot| *slot == 5).unwrap_or(0);
     let to = order.iter().position(|slot| *slot == 2).unwrap_or(0);
     s.installed.drag = Some(drag::Dragging { slot: 5, enabled: true, from, to });
+    // The card follows the pointer, most of the way over card 02.
+    drag::follow().set([290.0, -210.0]);
 }
 
 /// The list look with row 07 dragged up over row 03.
@@ -77,6 +79,27 @@ pub fn dragging_list(s: &mut State) {
     let from = order.iter().position(|slot| *slot == 7).unwrap_or(0);
     let to = order.iter().position(|slot| *slot == 3).unwrap_or(0);
     s.installed.drag = Some(drag::Dragging { slot: 7, enabled: true, from, to });
+    drag::follow().set([0.0, -(to.abs_diff(from) as f32) * layout::ROW_H + 10.0]);
+}
+
+/// Sorted by name in the list look, a row hovered: the grip is quiet and sorts by load order,
+/// and the status row says the page is not the load order.
+pub fn sorted_by_name(s: &mut State) {
+    base(s);
+    s.installed.layout = layout::Layout::List;
+    s.installed.sort = super::Sort::Name;
+    s.installed.hovered = s.addons.addons.iter().find(|a| a.enabled).map(|a| a.slot);
+}
+
+/// A saved mod late in the load order, in the list look: in Load order it keeps its place.
+pub fn saved_in_load_order(s: &mut State) {
+    base(s);
+    s.installed.layout = layout::Layout::List;
+    let last = s.addons.addons.iter().filter(|a| a.enabled).map(|a| a.slot).max();
+    if let Some(addon) = last.and_then(|slot| s.addons.addons.iter().find(|a| a.slot == slot).cloned()) {
+        let key = super::extras_key(s, &addon);
+        s.installed.notes.extras.entry(key).favorite = true;
+    }
 }
 
 /// Two files of one mod, both on, with the picker open.

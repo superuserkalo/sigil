@@ -395,6 +395,39 @@ impl Sort {
             Sort::Hero => "Hero",
         }
     }
+
+    /// The key `options.json` keeps it by.
+    pub fn key(self) -> &'static str {
+        match self {
+            Sort::LoadOrder => "load_order",
+            Sort::Name => "name",
+            Sort::Recent => "recent",
+            Sort::Size => "size",
+            Sort::Hero => "hero",
+        }
+    }
+
+    /// The sort a key names; Load order for anything else.
+    pub fn from_key(key: &str) -> Sort {
+        Sort::ALL.into_iter().find(|sort| sort.key() == key).unwrap_or_default()
+    }
+
+    /// The sort chosen last run.
+    pub fn saved() -> Sort {
+        Sort::from_key(&crate::screens::settings::options::get().installed_sort)
+    }
+}
+
+/// Sort the page and remember it for the next run.
+pub(super) fn set_sort(st: &mut State, sort: Sort) {
+    st.installed.menu = None;
+    st.installed.sort = sort;
+    crate::screens::settings::options::edit(st, |o| o.installed_sort = sort.key().to_string());
+}
+
+/// Back to the Load order sort: the grip's press in another sort, and the status row's chip.
+pub(super) fn sort_by_load_order(st: &mut State) {
+    set_sort(st, Sort::LoadOrder);
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -468,9 +501,12 @@ fn shown_addons_in<'a>(s: &'a State, idx: &index::Index) -> Vec<&'a AddonRow> {
         }),
     }
     // Pinned mods sit at the top of the disabled group, in the chosen order within it. Saved
-    // mods (Grimoire #593) sort first within each group.
+    // mods (Grimoire #593) sort first within each group. Not in Load order: there the page is
+    // the order the game loads, which a drag reads place by place, so a saved mod lifted to the
+    // top showed a priority it did not have and a drop next to it landed somewhere else.
+    let lift = v.sort != Sort::LoadOrder;
     shown.sort_by_key(|addon| {
-        let extra = idx.extra_ref(s, addon);
+        let extra = idx.extra_ref(s, addon).filter(|_| lift);
         let (pinned, favorite) = extra.map_or((false, false), |e| (e.pinned, e.favorite));
         let group = if addon.enabled {
             0
@@ -573,7 +609,7 @@ pub fn view(s: &State, u: &Ui) -> El {
     if s.game_detected {
         head = head.child(status_row(s, u, &idx, shown.len()));
     }
-    let scroll = u.scroll_area(col()
+    let scroll = u.scroll_area(drag::watch(col()
         .key("installed-scroll")
         .w_full()
         .grow(1.0)
@@ -590,7 +626,7 @@ pub fn view(s: &State, u: &Ui) -> El {
                 // Room for the selection bar, always, so the last row never hides under it.
                 .pb(72.0)
                 .child(body),
-        ));
+        )));
 
     // Files dropped anywhere on the page open the import review, which asks before writing.
     let mut root = col()
@@ -899,6 +935,21 @@ fn status_row(s: &State, u: &Ui, idx: &index::Index, shown: usize) -> El {
     }
     if let Some(chip) = updates_chip(s, u, idx) {
         left.push(chip);
+    }
+    if s.installed.sort != Sort::LoadOrder && s.addons.addons.len() > 1 {
+        // The page is not the load order now, so drag is off: say so where the eye goes after
+        // a grip that does not drag, with the way back in the same press.
+        left.push(
+            u.state_chip(&order::ARROW_UP_DOWN, tr("Not in load order"), crate::ui::Tone::Quiet)
+                .key("installed-sort-chip")
+                .hover(u.hover)
+                .focusable(true)
+                .role("button")
+                .label(tr("Sort by load order to drag"))
+                .help(tr("Sort by load order to drag"))
+                .cursor(rune::Cursor::Pointer)
+                .on_press(sort_by_load_order),
+        );
     }
     let n = &s.installed.notes;
     let mut chips: Vec<El> = Vec::new();
@@ -1510,12 +1561,9 @@ fn card_view(s: &State, u: &Ui, idx: &index::Index, card: &layout::Group, pitch:
     }
     let mut top = row().w_full().items_start().gap(4.0).child(pick_box);
     let dragging = s.installed.drag.is_some_and(|d| d.slot == slot);
-    // The grip keeps its box when the sort cannot drag, so the marks never shift.
-    top = top.child(if drag::allowed(s) {
-        drag::grip(u, slot, addon.enabled, pitch, cols, dragging, hovered)
-    } else {
-        el().size(28.0, 28.0).a11y_hidden()
-    });
+    // The grip keeps its box in every sort, so the marks never shift; outside Load order it
+    // switches the sort back (`drag::grip`).
+    top = top.child(drag::grip(s, u, slot, addon.enabled, pitch, cols, dragging, hovered));
     // One row of marks, warnings first, at most three (two on small cards): the rest fold
     // into "+N", which opens the card menu. It never wraps, so every card keeps one height.
     let cap = if compact { 2 } else { 3 };
@@ -1619,7 +1667,6 @@ fn card_view(s: &State, u: &Ui, idx: &index::Index, card: &layout::Group, pitch:
         .min_w(0.0)
         .padding(1.0)
         .radius(crate::ui::r(CARD_RADIUS))
-        .opacity(if dragging { 0.55 } else { 1.0 })
         .fill(if selected { u.selected } else { u.well })
         .border(1.0, if selected { u.accent.alpha(0.85) } else { Color::WHITE.alpha(0.07) })
         // Hover paints the reveals below (`hover_reveal`) without running the view: a commit per
@@ -1641,7 +1688,7 @@ fn card_view(s: &State, u: &Ui, idx: &index::Index, card: &layout::Group, pitch:
             line.pin(Some(-gutter), Some(0.0), None, Some(0.0))
         });
     }
-    card_el
+    drag::lift(card_el, dragging)
 }
 
 /// The quiet marks on a preview corner: pinned, loads first, mature. Not buttons.
@@ -2102,7 +2149,8 @@ pub fn overlay(s: &State, u: &Ui) -> Option<El> {
             let at = group.iter().position(|&g| g == slot).unwrap_or(0);
             if group.len() > 1 {
                 items.push(menu_rule(u));
-                let moves: [(&str, &str, &'static rune::Icon, Option<usize>); 3] = [
+                let last = group.len() - 1;
+                let moves: [(&str, &str, &'static rune::Icon, Option<usize>); 4] = [
                     ("menu-first", "Load first", &ARROW_UP_TO_LINE, (at > 0).then_some(0)),
                     ("menu-earlier", "Load earlier", &icons::ARROW_UP, at.checked_sub(1)),
                     (
@@ -2111,6 +2159,7 @@ pub fn overlay(s: &State, u: &Ui) -> Option<El> {
                         &ARROW_DOWN,
                         (at + 1 < group.len()).then_some(at + 1),
                     ),
+                    ("menu-last", "Load last", &order::ARROW_DOWN_TO_LINE, (at < last).then_some(last)),
                 ];
                 for (key, label, glyph, index) in moves {
                     let group = group.clone();
@@ -2379,10 +2428,7 @@ pub fn overlay(s: &State, u: &Ui) -> Option<El> {
                         "",
                         true,
                     )
-                    .on_press(move |st: &mut State| {
-                        st.installed.menu = None;
-                        st.installed.sort = sort;
-                    }),
+                    .on_press(move |st: &mut State| set_sort(st, sort)),
                 );
             }
         }

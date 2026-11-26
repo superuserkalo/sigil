@@ -540,7 +540,7 @@ static ARROW_UP_TO_LINE: rune::Icon = rune::Icon {
 };
 
 /// Lucide arrow-down-to-line (ISC).
-static ARROW_DOWN_TO_LINE: rune::Icon = rune::Icon {
+pub(super) static ARROW_DOWN_TO_LINE: rune::Icon = rune::Icon {
     name: "sigil-order-arrow-down-to-line",
     view: 24.0,
     body: r#"<g fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 17V3"/><path d="m6 11 6 6 6-6"/><path d="M19 21H5"/></g>"#,

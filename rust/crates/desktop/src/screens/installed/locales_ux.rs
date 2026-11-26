@@ -158,4 +158,9 @@ pub const DE: &[(&str, &str)] = &[
     ("Pack all enabled", "Alle aktiven packen"),
     ("into 2 to 8 VPKs", "in 2 bis 8 VPKs"),
     ("{} more", "{} weitere"),
+    // Sorting and drag to reorder.
+    ("Load first", "Zuerst laden"),
+    ("Load last", "Zuletzt laden"),
+    ("Not in load order", "Nicht nach Ladereihenfolge"),
+    ("Sort by load order to drag", "Nach Ladereihenfolge sortieren, um zu ziehen"),
 ];

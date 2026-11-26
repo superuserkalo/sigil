@@ -80,6 +80,8 @@ pub struct Options {
     // Page preferences
     pub locker_expanded: bool,
     pub installed_open_page: bool,
+    /// Installed's sort, by its key (`installed::Sort::key`): kept between runs.
+    pub installed_sort: String,
     pub confirm_profile_update: bool,
     pub prompt_requirements: bool,
     pub ignore_overlap_default: bool,
@@ -190,6 +192,7 @@ impl Default for Options {
             always_tag: false,
             locker_expanded: false,
             installed_open_page: false,
+            installed_sort: String::new(),
             confirm_profile_update: true,
             prompt_requirements: true,
             ignore_overlap_default: false,
@@ -348,6 +351,7 @@ impl Options {
             always_tag: b("always_tag", d.always_tag),
             locker_expanded: b("locker_expanded", d.locker_expanded),
             installed_open_page: b("installed_open_page", d.installed_open_page),
+            installed_sort: s("installed_sort").unwrap_or_default(),
             confirm_profile_update: b("confirm_profile_update", d.confirm_profile_update),
             prompt_requirements: b("prompt_requirements", d.prompt_requirements),
             ignore_overlap_default: b("ignore_overlap_default", d.ignore_overlap_default),
@@ -449,6 +453,7 @@ impl Options {
         m.insert("always_tag".into(), json!(self.always_tag));
         m.insert("locker_expanded".into(), json!(self.locker_expanded));
         m.insert("installed_open_page".into(), json!(self.installed_open_page));
+        m.insert("installed_sort".into(), json!(self.installed_sort));
         m.insert("confirm_profile_update".into(), json!(self.confirm_profile_update));
         m.insert("prompt_requirements".into(), json!(self.prompt_requirements));
         m.insert("ignore_overlap_default".into(), json!(self.ignore_overlap_default));
@@ -690,6 +695,7 @@ mod tests {
             always_tag: true,
             locker_expanded: true,
             installed_open_page: true,
+            installed_sort: "name".into(),
             confirm_profile_update: false,
             prompt_requirements: false,
             ignore_overlap_default: true,

@@ -467,26 +467,13 @@ pub fn list_row(s: &State, u: &Ui, idx: &super::index::Index, card: &Group) -> E
         .center_y()
         .px(8.0)
         .radius(crate::ui::r(8.0))
-        .opacity(if dragging { 0.55 } else { 1.0 })
-        .fill(if selected { u.selected } else { Color::TRANSPARENT })
+        .fill(if selected { u.selected } else if dragging { u.well } else { Color::TRANSPARENT })
         .border_sides([0.0, 0.0, 1.0, 0.0], u.hair)
         .hover(u.hover)
         // The grip and the box fade in on hover without a commit (`super::hover_reveal`).
         .hover_group();
-    // The grip keeps its box when the sort cannot drag, so rows never slide sideways.
-    line = line.child(if super::drag::allowed(s) {
-        super::drag::grip(
-            u,
-            slot,
-            addon.enabled,
-            [0.0, ROW_H],
-            1,
-            dragging,
-            s.installed.hovered == Some(slot),
-        )
-    } else {
-        el().size(28.0, 28.0).a11y_hidden()
-    });
+    // The grip keeps its box in every sort, so rows never slide sideways.
+    line = line.child(super::drag::grip(s, u, slot, addon.enabled, [0.0, ROW_H], 1, dragging, s.installed.hovered == Some(slot)));
     line = line
         .child(super::hover_reveal(
             el()
@@ -579,7 +566,7 @@ pub fn list_row(s: &State, u: &Ui, idx: &super::index::Index, card: &Group) -> E
             mark.pin(Some(0.0), Some(-1.0), Some(0.0), None)
         });
     }
-    line
+    super::drag::lift(line, dragging)
 }
 
 /// One row of the list look: fixed, so the virtual list steps by it.
