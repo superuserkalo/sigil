@@ -43,6 +43,10 @@ pub struct PlayerRecord {
     /// The shared matches that were looked up for lanes, and the ones in the same lane.
     /// `None` when no lane data was read for this player.
     pub lane: Option<LaneRecord>,
+    /// The shared match ids the API listed for this row (mate-stats and enemy-stats `matches`).
+    pub match_ids: Vec<u64>,
+    /// The Steam avatar URL (`avatarmedium`) from the name request, when it answered.
+    pub avatar: Option<String>,
 }
 
 /// Lane facts for one teammate, over the shared matches whose lanes were read.
@@ -84,6 +88,8 @@ impl PlayerRecord {
             },
             premade: false,
             lane: None,
+            match_ids: Vec::new(),
+            avatar: None,
         }
     }
 
@@ -96,6 +102,70 @@ impl PlayerRecord {
     pub fn rate_in_lane(&self) -> Option<f64> {
         self.lane.and_then(|lane| rate(lane.wins, lane.matches))
     }
+}
+
+/// A teammate against the rest of the subject's matches, over the loaded match history.
+///
+/// "With" counts the scored history matches whose id is in the row's shared list, "without"
+/// every other scored history match. The history is a window (the newest few hundred), so the
+/// split is only trusted when at least half of the row's shared matches fall inside it
+/// ([`WithWithout::covered`]); older shared games often have no valid outcome.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct WithWithout {
+    pub with_matches: u64,
+    pub with_wins: u64,
+    pub without_matches: u64,
+    pub without_wins: u64,
+    /// Newest `start_time` of a shared match found in the history.
+    pub last_together: Option<i64>,
+    /// At least half the row's shared matches are in the history window.
+    pub covered: bool,
+}
+
+impl WithWithout {
+    /// Win rate in the shared matches inside the window, from [`MIN_RATE_SAMPLE`] up.
+    pub fn with_rate(&self) -> Option<f64> {
+        rate(self.with_wins, self.with_matches)
+    }
+
+    /// Win rate in the other matches of the window, from [`MIN_RATE_SAMPLE`] up, and only
+    /// when the window covers the row ([`WithWithout::covered`]).
+    pub fn without_rate(&self) -> Option<f64> {
+        if !self.covered {
+            return None;
+        }
+        rate(self.without_wins, self.without_matches)
+    }
+
+    /// With minus without, in points, when both sides have [`MIN_RATE_SAMPLE`] matches and
+    /// the window covers the row.
+    pub fn lift(&self) -> Option<f64> {
+        Some(self.with_rate()? - self.without_rate()?)
+    }
+}
+
+/// Join one row's shared match ids with the subject's match history.
+pub fn with_without(record: &PlayerRecord, history: &[super::MatchSummary]) -> WithWithout {
+    let shared: std::collections::HashSet<u64> = record.match_ids.iter().copied().collect();
+    let mut out = WithWithout::default();
+    let mut found = 0u64;
+    for item in history {
+        let together = shared.contains(&item.match_id);
+        if together {
+            found += 1;
+            out.last_together = Some(out.last_together.map_or(item.start_time, |at| at.max(item.start_time)));
+        }
+        let Some(win) = item.win else { continue };
+        if together {
+            out.with_matches += 1;
+            out.with_wins += u64::from(win);
+        } else {
+            out.without_matches += 1;
+            out.without_wins += u64::from(win);
+        }
+    }
+    out.covered = !shared.is_empty() && found * 2 >= shared.len() as u64;
+    out
 }
 
 /// The people a player meets, named.
@@ -305,6 +375,7 @@ fn merge(
                 let mut record = PlayerRecord::new(account_id, row.matches_played, row.wins.min(row.matches_played));
                 record.persona_name = names.get(&account_id).cloned();
                 record.premade = premade.contains(&account_id);
+                record.match_ids = row.matches;
                 record
             })
             .collect();
@@ -475,6 +546,57 @@ impl RawCount {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn summary(match_id: u64, start_time: i64, win: Option<bool>) -> crate::stats::MatchSummary {
+        let json = format!(
+            r#"{{"match_id": {match_id}, "hero_id": 1, "start_time": {start_time}, "game_mode": 1, "match_mode": 4,
+                "player_team": 0, "player_kills": 0, "player_deaths": 0, "player_assists": 0,
+                "net_worth": 0, "last_hits": 0, "denies": 0{}}}"#,
+            match win {
+                Some(true) => r#", "match_result": 0"#,
+                Some(false) => r#", "match_result": 1"#,
+                None => r#", "player_match_outcome": 5"#,
+            }
+        );
+        serde_json::from_str::<crate::stats::RawMatch>(&json).unwrap().into_summary()
+    }
+
+    #[test]
+    fn with_and_without_split_the_history_on_shared_ids() {
+        let mut record = PlayerRecord::new(9, 6, 5);
+        record.match_ids = vec![1, 2, 3, 4, 5, 6];
+        // Shared 1 to 6 (5 wins, 1 loss); others 10 to 19 (4 wins, 6 losses); one unscored.
+        let mut history: Vec<_> = (1..=6).map(|id| summary(id, 100 + id as i64, Some(id != 6))).collect();
+        history.extend((10..20).map(|id| summary(id, 1000 + id as i64, Some(id < 14))));
+        history.push(summary(30, 5000, None));
+        let split = with_without(&record, &history);
+        assert_eq!((split.with_matches, split.with_wins), (6, 5));
+        assert_eq!((split.without_matches, split.without_wins), (10, 4));
+        assert!(split.covered);
+        assert_eq!(split.last_together, Some(106));
+        let lift = split.lift().expect("lift");
+        assert!((lift - (500.0 / 6.0 - 40.0)).abs() < 1e-9, "{lift}");
+    }
+
+    #[test]
+    fn a_thin_window_shows_no_without_or_lift() {
+        let mut record = PlayerRecord::new(9, 12, 8);
+        record.match_ids = (1..=12).collect();
+        // Only 5 of 12 shared matches are in the window: less than half.
+        let mut history: Vec<_> = (1..=5).map(|id| summary(id, id as i64, Some(true))).collect();
+        history.extend((20..40).map(|id| summary(id, id as i64, Some(false))));
+        let split = with_without(&record, &history);
+        assert!(!split.covered);
+        assert_eq!(split.without_rate(), None);
+        assert_eq!(split.lift(), None);
+        assert_eq!(split.with_rate(), Some(100.0));
+        // Too few on one side is "-" too.
+        record.match_ids = vec![1, 2];
+        let split = with_without(&record, &history);
+        assert!(split.covered);
+        assert_eq!(split.lift(), None, "two shared matches are below the floor");
+        assert_eq!(with_without(&PlayerRecord::new(1, 0, 0), &history).covered, false);
+    }
 
     const MATES: &str = r#"[
         {"mate_id": 10, "wins": 7, "matches_played": 10},

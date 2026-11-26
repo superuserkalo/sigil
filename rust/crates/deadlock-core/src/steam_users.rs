@@ -155,6 +155,16 @@ pub fn detect(steam_roots: &[PathBuf]) -> Vec<SteamUser> {
     Vec::new()
 }
 
+/// The avatar Steam itself keeps for an account signed in on this PC
+/// (`config/avatarcache/<steamid64>.png`), so the Stats start page can show the player's own
+/// picture before anything is asked of the network. `None` when Steam has no copy.
+pub fn cached_avatar(steam_roots: &[PathBuf], steam_id64: u64) -> Option<PathBuf> {
+    steam_roots
+        .iter()
+        .map(|root| root.join("config").join("avatarcache").join(format!("{steam_id64}.png")))
+        .find(|path| path.is_file())
+}
+
 fn read(path: &Path) -> Option<Vec<SteamUser>> {
     fs::read_to_string(path).ok().map(|text| parse(&text))
 }

@@ -25,6 +25,7 @@
 //! Per-match position timelines exist only through the asynchronous demo query
 //! endpoints, which are not used here.
 
+pub mod art;
 pub mod board;
 pub mod cache;
 pub mod filters;
@@ -605,6 +606,39 @@ impl Leaderboard {
     }
 }
 
+/// One player's rank from the batch rank read. `badge` is `rank * 10 + subrank`, 0 for none.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+pub struct RankBadge {
+    pub account_id: u64,
+    #[serde(default, deserialize_with = "null_as_zero")]
+    pub badge: u32,
+    #[serde(default, deserialize_with = "null_as_zero")]
+    pub rank: u32,
+    #[serde(default, deserialize_with = "null_as_zero")]
+    pub subrank: u32,
+}
+
+fn null_as_zero<'de, D: serde::Deserializer<'de>>(de: D) -> std::result::Result<u32, D::Error> {
+    Ok(Option::<u32>::deserialize(de)?.unwrap_or(0))
+}
+
+/// Account id to avatar URL (`avatarmedium`, else `avatar`) for the profiles that have one.
+fn avatars_of(profiles: &[PlayerProfile]) -> HashMap<u64, String> {
+    profiles
+        .iter()
+        .filter_map(|row| {
+            let url = if row.avatar_medium.is_empty() { &row.avatar } else { &row.avatar_medium };
+            (!url.is_empty()).then(|| (row.account_id, url.clone()))
+        })
+        .collect()
+}
+
+/// True when an API error says the thing asked for does not exist (yet): a match
+/// deadlock-api has not analysed answers 404.
+pub fn is_not_found(message: &str) -> bool {
+    message.contains("HTTP 404")
+}
+
 /// Shared HTTP client for the public Deadlock API.
 ///
 /// The client is read only. It never sends player identifiers anywhere except
@@ -723,6 +757,21 @@ impl StatsClient {
             cache::TTL_STEAM_PROFILE,
         )?;
         Ok(rows.into_iter().map(RawSteamProfile::into_profile).collect())
+    }
+
+    /// Ranks of several players in one request (`/v1/players/rank?account_ids=`), for search
+    /// results and lobby rows. A player the API has no rank for comes back with badge 0.
+    pub fn fetch_ranks(&self, account_ids: &[u64]) -> Result<Vec<RankBadge>> {
+        let mut ids: Vec<u64> = account_ids.iter().copied().filter(|id| *id > 0).collect();
+        ids.sort_unstable();
+        ids.dedup();
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let joined = ids.iter().map(u64::to_string).collect::<Vec<_>>().join(",");
+        let rows: Vec<RankBadge> =
+            self.get_cached("/v1/players/rank", &[("account_ids", joined)], cache::TTL_RANK)?;
+        Ok(rows)
     }
 
     /// Rank at the end of the latest ranked match.
@@ -929,26 +978,40 @@ impl StatsClient {
         match_id: u64,
         account_id: u64,
     ) -> Result<board::MatchScoreboard> {
+        self.fetch_match_scoreboard_from(match_id, account_id, false)
+    }
+
+    /// [`StatsClient::fetch_match_scoreboard`], with `from_steam` asking deadlock-api to fetch a
+    /// match it has not analysed yet from Steam. That path is limited to 3 requests an hour per
+    /// IP, so it is a press by the player after a 404, never the first try.
+    pub fn fetch_match_scoreboard_from(
+        &self,
+        match_id: u64,
+        account_id: u64,
+        from_steam: bool,
+    ) -> Result<board::MatchScoreboard> {
         if match_id == 0 {
             return Err(Error::msg("A match id is needed to open a scoreboard."));
         }
+        let query: Vec<(&str, String)> =
+            if from_steam { Vec::new() } else { vec![("disable_steam", "true".to_string())] };
         let metadata = self.get_text(
             &format!("/v1/matches/{match_id}/metadata"),
-            &[("disable_steam", "true".to_string())],
+            &query,
             cache::TTL_MATCH_METADATA,
         )?;
         let catalog = self.fetch_item_catalog().unwrap_or_default();
         let hero_names = self.fetch_hero_names().unwrap_or_default();
         let accounts = board::accounts_in(&metadata);
-        let names: HashMap<u64, String> = self
-            .fetch_profiles(&accounts)
-            .map(|rows| {
-                rows.into_iter()
-                    .map(|row| (row.account_id, row.persona_name))
-                    .collect()
-            })
-            .unwrap_or_default();
-        board::assemble_board(account_id, &metadata, &catalog, &names, &hero_names)
+        let profiles = self.fetch_profiles(&accounts).unwrap_or_default();
+        let names: HashMap<u64, String> =
+            profiles.iter().map(|row| (row.account_id, row.persona_name.clone())).collect();
+        let mut board = board::assemble_board(account_id, &metadata, &catalog, &names, &hero_names)?;
+        let avatars = avatars_of(&profiles);
+        for player in board.teams.iter_mut().flatten() {
+            player.avatar = avatars.get(&player.account_id).cloned();
+        }
+        Ok(board)
     }
 
     /// Teammates and opponents, named, from the mate and enemy statistics.
@@ -979,15 +1042,14 @@ impl StatsClient {
         )?;
 
         let ids = social::top_accounts(&mates, &party, &enemies, SOCIAL_NAMES);
-        let names: HashMap<u64, String> = self
-            .fetch_profiles(&ids)
-            .map(|rows| {
-                rows.into_iter()
-                    .map(|row| (row.account_id, row.persona_name))
-                    .collect()
-            })
-            .unwrap_or_default();
+        let profiles = self.fetch_profiles(&ids).unwrap_or_default();
+        let names: HashMap<u64, String> =
+            profiles.iter().map(|row| (row.account_id, row.persona_name.clone())).collect();
         let mut people = social::assemble_social(&mates, &party, &enemies, &names)?;
+        let avatars = avatars_of(&profiles);
+        for record in people.mates.iter_mut().chain(people.enemies.iter_mut()) {
+            record.avatar = avatars.get(&record.account_id).cloned();
+        }
         // Lanes are extra: a failed or refused request leaves the lists as they are.
         if let Ok(lanes) = self.fetch_match_lanes(&social::lane_match_ids(&mates)) {
             social::apply_lanes(&mut people, account_id, &mates, &lanes);

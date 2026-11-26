@@ -50,11 +50,64 @@ pub struct BoardPlayer {
     /// How the match was scored for this player (`player_match_outcome`), when the
     /// metadata says.
     pub outcome: Option<super::MatchOutcome>,
+    /// The lane the game assigned (`assigned_lane`), when the metadata says.
+    pub lane: Option<u32>,
+    /// The Steam avatar URL (`avatarmedium`) from the name request, when it answered.
+    pub avatar: Option<String>,
 }
 
 impl BoardPlayer {
     pub fn kda(&self) -> f64 {
         (self.kills + self.assists) as f64 / self.deaths.max(1) as f64
+    }
+
+    /// Souls a minute over the whole match: net worth over minutes played.
+    pub fn souls_per_minute(&self, duration_seconds: u32) -> u64 {
+        souls_per_minute(self.net_worth, duration_seconds)
+    }
+}
+
+/// Souls a minute: `net_worth / (duration / 60)`, rounded; 0 for a match with no length.
+pub fn souls_per_minute(net_worth: u64, duration_seconds: u32) -> u64 {
+    if duration_seconds == 0 {
+        return 0;
+    }
+    (net_worth as f64 / (duration_seconds as f64 / 60.0)).round() as u64
+}
+
+/// The number columns of the match page, for the lobby best.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Column {
+    Kills,
+    Assists,
+    Souls,
+    SoulsPerMinute,
+    Damage,
+    Healing,
+    LastHits,
+}
+
+impl Column {
+    pub const ALL: [Column; 7] = [
+        Column::Kills,
+        Column::Assists,
+        Column::Souls,
+        Column::SoulsPerMinute,
+        Column::Damage,
+        Column::Healing,
+        Column::LastHits,
+    ];
+
+    fn value(self, player: &BoardPlayer, duration_seconds: u32) -> u64 {
+        match self {
+            Column::Kills => player.kills.into(),
+            Column::Assists => player.assists.into(),
+            Column::Souls => player.net_worth,
+            Column::SoulsPerMinute => player.souls_per_minute(duration_seconds),
+            Column::Damage => player.player_damage,
+            Column::Healing => player.player_healing,
+            Column::LastHits => player.last_hits.into(),
+        }
     }
 }
 
@@ -66,6 +119,10 @@ pub struct BuildItem {
     /// `weapon`, `vitality`, `spirit`, or `other` when the catalog did not know it.
     pub slot: String,
     pub tier: u32,
+    /// Seconds into the match of the latest purchase.
+    pub bought_at: u32,
+    /// The item's icon on `assets-bucket.deadlock-api.com`, when the catalog names one.
+    pub icon: Option<String>,
 }
 
 /// Souls of both teams at one sample of the match.
@@ -98,6 +155,12 @@ pub struct MatchScoreboard {
     /// Team 0 first, each ordered by net worth.
     pub teams: [Vec<BoardPlayer>; 2],
     pub souls: Vec<SoulPoint>,
+    /// Each team's average rank badge (`average_badge_team0/1`), when the API has one.
+    pub average_badge: [Option<u32>; 2],
+    /// Objectives lost, as (seconds into the match, team that lost it), earliest first: walkers,
+    /// guardians and base buildings from `objectives`, and each Mid Boss kill as a loss for the
+    /// team that did not claim it.
+    pub objectives_lost: Vec<(u32, i32)>,
 }
 
 impl MatchScoreboard {
@@ -125,15 +188,39 @@ impl MatchScoreboard {
     pub fn team(&self, index: usize) -> &[BoardPlayer] {
         self.teams.get(index).map(Vec::as_slice).unwrap_or(&[])
     }
+
+    /// The team of the player the page is about, when they are on the board.
+    pub fn my_team(&self) -> Option<usize> {
+        self.me().map(|me| me.team.clamp(0, 1) as usize)
+    }
+
+    /// Whether `account_id` holds the lobby's best value in `column` (ties all count). A column
+    /// where every value is 0 has no best.
+    pub fn is_best(&self, column: Column, account_id: u64) -> bool {
+        let values: Vec<(u64, u64)> = self
+            .teams
+            .iter()
+            .flatten()
+            .map(|player| (player.account_id, column.value(player, self.duration_seconds)))
+            .collect();
+        let top = values.iter().map(|(_, value)| *value).max().unwrap_or(0);
+        top > 0 && values.iter().any(|(id, value)| *id == account_id && *value == top)
+    }
 }
 
 /// Item id to name, slot and tier, from `/v1/assets/items/by-type/upgrade`.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct ItemCatalog {
     pub items: HashMap<u64, (String, String, u32)>,
+    /// Item id to icon URL (`shop_image_webp`, else `shop_image`).
+    pub icons: HashMap<u64, String>,
 }
 
 impl ItemCatalog {
+    pub fn icon(&self, item_id: u64) -> Option<&str> {
+        self.icons.get(&item_id).map(String::as_str)
+    }
+
     pub fn get(&self, item_id: u64) -> Option<&(String, String, u32)> {
         self.items.get(&item_id)
     }
@@ -190,24 +277,39 @@ struct RawItemAsset {
     item_slot_type: String,
     #[serde(default)]
     item_tier: u32,
+    #[serde(default)]
+    shop_image_webp: Option<String>,
+    #[serde(default)]
+    shop_image: Option<String>,
 }
 
 impl RawItemAsset {
+    fn icon(&self) -> Option<String> {
+        self.shop_image_webp.clone().or_else(|| self.shop_image.clone()).filter(|url| !url.is_empty())
+    }
+
     fn into_catalog_row(self) -> (u64, (String, String, u32)) {
         (self.id, (self.name, self.item_slot_type, self.item_tier))
     }
+}
+
+fn catalog_of(rows: Vec<RawItemAsset>) -> ItemCatalog {
+    let mut catalog = ItemCatalog { items: HashMap::with_capacity(rows.len()), icons: HashMap::new() };
+    for row in rows {
+        if let Some(icon) = row.icon() {
+            catalog.icons.insert(row.id, icon);
+        }
+        let (id, value) = row.into_catalog_row();
+        catalog.items.insert(id, value);
+    }
+    catalog
 }
 
 /// Build a catalog from the item asset response.
 pub(crate) fn parse_item_catalog(json: &str) -> Result<ItemCatalog> {
     let rows: Vec<RawItemAsset> = serde_json::from_str(json)
         .map_err(|error| Error::msg(format!("Item asset did not parse: {error}")))?;
-    let mut items = HashMap::with_capacity(rows.len());
-    for row in rows {
-        let (id, value) = row.into_catalog_row();
-        items.insert(id, value);
-    }
-    Ok(ItemCatalog { items })
+    Ok(catalog_of(rows))
 }
 
 /// Parse one metadata response and assemble the board.
@@ -230,13 +332,7 @@ pub(crate) fn assemble_board(
 pub fn scoreboard_from_bundle(json: &str) -> Result<MatchScoreboard> {
     let bundle: BoardBundle = serde_json::from_str(json)
         .map_err(|error| Error::msg(format!("Scoreboard bundle did not parse: {error}")))?;
-    let catalog: ItemCatalog = ItemCatalog {
-        items: bundle
-            .items
-            .into_iter()
-            .map(RawItemAsset::into_catalog_row)
-            .collect(),
-    };
+    let catalog: ItemCatalog = catalog_of(bundle.items);
     let names: HashMap<u64, String> = bundle
         .steam
         .into_iter()
@@ -306,6 +402,8 @@ fn build_board(
             build: final_build(&player.items, catalog),
             abandoned_seconds: player.abandon_match_time_s.filter(|seconds| *seconds > 0),
             outcome: player.player_match_outcome.map(super::MatchOutcome::from_api),
+            lane: player.assigned_lane.filter(|lane| *lane > 0),
+            avatar: None,
         });
     }
 
@@ -318,7 +416,23 @@ fn build_board(
         });
     }
 
+    let mut objectives_lost: Vec<(u32, i32)> = info
+        .objectives
+        .iter()
+        .filter(|objective| objective.destroyed_time_s > 0)
+        .map(|objective| (objective.destroyed_time_s, objective.team))
+        .chain(
+            info.mid_boss
+                .iter()
+                .filter(|boss| boss.destroyed_time_s > 0 && (0..=1).contains(&boss.team_claimed))
+                .map(|boss| (boss.destroyed_time_s, 1 - boss.team_claimed)),
+        )
+        .collect();
+    objectives_lost.sort_unstable();
+    let badge = |value: Option<u32>| value.filter(|badge| *badge > 0);
     MatchScoreboard {
+        average_badge: [badge(info.average_badge_team0), badge(info.average_badge_team1)],
+        objectives_lost,
         match_id: info.match_id,
         start_time: info.start_time,
         started_at: unix_seconds_to_iso(info.start_time),
@@ -343,13 +457,14 @@ fn build_board(
 /// one row per item (the latest), in shop order weapon, vitality, spirit.
 fn final_build(items: &[RawItem], catalog: &ItemCatalog) -> Vec<BuildItem> {
     let mut latest: BTreeMap<u64, u32> = BTreeMap::new();
+    let icon = |item_id: u64| catalog.icon(item_id).map(str::to_string);
     for item in items.iter().filter(|item| item.sold_time_s == 0) {
         let at = latest.entry(item.item_id).or_insert(0);
         *at = (*at).max(item.game_time_s);
     }
     let mut build: Vec<(u8, BuildItem)> = latest
-        .into_keys()
-        .map(|item_id| match catalog.get(item_id) {
+        .into_iter()
+        .map(|(item_id, bought_at)| match catalog.get(item_id) {
             Some((name, slot, tier)) => (
                 slot_order(slot),
                 BuildItem {
@@ -357,6 +472,8 @@ fn final_build(items: &[RawItem], catalog: &ItemCatalog) -> Vec<BuildItem> {
                     name: name.clone(),
                     slot: slot.clone(),
                     tier: *tier,
+                    bought_at,
+                    icon: icon(item_id),
                 },
             ),
             None => (
@@ -366,6 +483,8 @@ fn final_build(items: &[RawItem], catalog: &ItemCatalog) -> Vec<BuildItem> {
                     name: format!("Item {item_id}"),
                     slot: "other".to_string(),
                     tier: 0,
+                    bought_at,
+                    icon: None,
                 },
             ),
         })
@@ -409,6 +528,30 @@ struct RawMatchInfo {
     winning_team: Option<i32>,
     #[serde(default)]
     players: Vec<RawBoardPlayer>,
+    #[serde(default)]
+    average_badge_team0: Option<u32>,
+    #[serde(default)]
+    average_badge_team1: Option<u32>,
+    #[serde(default)]
+    objectives: Vec<RawObjective>,
+    #[serde(default)]
+    mid_boss: Vec<RawMidBoss>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RawObjective {
+    #[serde(default)]
+    destroyed_time_s: u32,
+    #[serde(default)]
+    team: i32,
+}
+
+#[derive(Debug, Deserialize)]
+struct RawMidBoss {
+    #[serde(default)]
+    destroyed_time_s: u32,
+    #[serde(default)]
+    team_claimed: i32,
 }
 
 #[derive(Debug, Deserialize)]
@@ -446,6 +589,8 @@ struct RawBoardPlayer {
     abandon_match_time_s: Option<u32>,
     #[serde(default)]
     player_match_outcome: Option<i32>,
+    #[serde(default)]
+    assigned_lane: Option<u32>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -606,6 +751,50 @@ mod tests {
         assert_eq!(ours.badge, None);
         assert_eq!(ours.mvp_rank, Some(2));
         assert!((ours.kda() - 3.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn lobby_best_and_souls_a_minute() {
+        let catalog = parse_item_catalog(ITEMS).expect("catalog");
+        let board = assemble_board(1, METADATA, &catalog, &HashMap::new(), &HashMap::new()).expect("board");
+        // 20,000 souls over 30 minutes.
+        assert_eq!(board.team(0)[0].souls_per_minute(board.duration_seconds), 667);
+        assert_eq!(souls_per_minute(1000, 0), 0);
+        assert!(board.is_best(Column::Kills, 2));
+        assert!(!board.is_best(Column::Kills, 1));
+        assert!(board.is_best(Column::Assists, 1));
+        assert!(board.is_best(Column::Damage, 1), "player 2 has no damage sample");
+        assert!(!board.is_best(Column::Healing, 2), "player 2 healed nothing");
+        assert!(!board.is_best(Column::LastHits, 2));
+        assert_eq!(board.my_team(), Some(0));
+    }
+
+    #[test]
+    fn build_items_carry_their_buy_time_and_icon() {
+        let items = r#"[{"id": 11, "name": "Rapid Recharge", "item_slot_type": "spirit", "item_tier": 2,
+            "shop_image": "https://assets-bucket.deadlock-api.com/a.png",
+            "shop_image_webp": "https://assets-bucket.deadlock-api.com/a.webp"}]"#;
+        let catalog = parse_item_catalog(items).expect("catalog");
+        let board = assemble_board(1, METADATA, &catalog, &HashMap::new(), &HashMap::new()).expect("board");
+        let recharge = board.team(0)[0].build.iter().find(|item| item.item_id == 11).expect("item 11");
+        assert_eq!(recharge.bought_at, 900, "the latest purchase");
+        assert_eq!(recharge.icon.as_deref(), Some("https://assets-bucket.deadlock-api.com/a.webp"));
+    }
+
+    #[test]
+    fn objectives_badges_and_lanes_read_from_the_metadata() {
+        let metadata = r#"{"match_info": {"match_id": 7, "duration_s": 1800, "winning_team": 0,
+            "average_badge_team0": 113, "average_badge_team1": 0,
+            "objectives": [{"destroyed_time_s": 900, "team": 1}, {"destroyed_time_s": 0, "team": 0},
+                           {"destroyed_time_s": 400, "team": 0}],
+            "mid_boss": [{"destroyed_time_s": 1200, "team_claimed": 0}],
+            "players": [{"account_id": 1, "team": 0, "hero_id": 1, "assigned_lane": 4},
+                        {"account_id": 2, "team": 1, "hero_id": 2}]}}"#;
+        let board = assemble_board(1, metadata, &ItemCatalog::default(), &HashMap::new(), &HashMap::new()).unwrap();
+        assert_eq!(board.average_badge, [Some(113), None]);
+        assert_eq!(board.objectives_lost, vec![(400, 0), (900, 1), (1200, 1)]);
+        assert_eq!(board.team(0)[0].lane, Some(4));
+        assert_eq!(board.team(1)[0].lane, None);
     }
 
     #[test]
