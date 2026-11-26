@@ -1,0 +1,191 @@
+diff --git a/changelog/unreleased/2026-11-26-gpu-page-kept.md b/changelog/unreleased/2026-11-26-gpu-page-kept.md
+new file mode 100644
+index 0000000..119ba4f
+--- /dev/null
++++ b/changelog/unreleased/2026-11-26-gpu-page-kept.md
+@@ -0,0 +1 @@
++- A GPU-only image atlas page made since the last upload keeps its images when its texture is made: they were all in its pending regions, but the page was forgotten right after they were written, so each new page was placed and uploaded twice, a frame apart. Tests for the image budget, idle freeing and decode limits now assert the behaviour rather than the layer that refuses an oversized image.
+diff --git a/crates/rune/src/image/memory_tests.rs b/crates/rune/src/image/memory_tests.rs
+index 95dcd5c..7612d82 100644
+--- a/crates/rune/src/image/memory_tests.rs
++++ b/crates/rune/src/image/memory_tests.rs
+@@ -121,12 +121,22 @@ fn an_image_over_the_decode_limit_is_refused_from_its_header() {
+     bytes.extend_from_slice(&crc.to_be_bytes());
+     // An empty IDAT ends the header the decoder reads; no pixel data follows.
+     bytes.extend_from_slice(&[0, 0, 0, 0, b'I', b'D', b'A', b'T', 0x35, 0xaf, 0x06, 0x1e]);
++    // Refused for its size, whichever layer says so first: Rune's pixel limit, or the `image`
++    // crate's side limit Rune sets (8192), which a 9000 px side meets before the pixel check.
+     let cache = ImageCache::new(Arc::new(|| {}));
+-    let error = cache.load(bytes.clone()).wait().unwrap_err().0.clone();
+-    assert!(error.contains("over the decode limit"), "{error}");
+-    let lazy = ImageCache::new(Arc::new(|| {})).decode_when_drawn(true);
+-    let error = lazy.load(bytes).wait().unwrap_err().0.clone();
+-    assert!(error.contains("over the decode limit"), "{error}");
++    let eager = cache.load(bytes.clone());
++    assert!(refused_for_size(&eager.wait().unwrap_err().0), "{:?}", eager.wait());
++    assert!(!eager.pixels().is_ready());
++    let lazy = ImageCache::new(Arc::new(|| {})).decode_when_drawn(true).load(bytes);
++    assert!(refused_for_size(&lazy.wait().unwrap_err().0), "{:?}", lazy.wait());
++    assert!(!lazy.pixels().is_ready());
++}
++
++/// An error that refuses an image for its size (a decode limit), not for anything else (a
++/// truncated file, a missing frame).
++fn refused_for_size(error: &str) -> bool {
++    let error = error.to_lowercase();
++    error.contains("limit") || error.contains("too large")
+ }
+ 
+ #[test]
+@@ -153,13 +163,19 @@ fn write_temp(name: &str, bytes: &[u8]) -> std::path::PathBuf {
+     path
+ }
+ 
+-/// A GIF header (logical screen `w`×`h`, no global palette) followed by its trailer: the size is
+-/// all a decoder can read, no frame follows.
++/// A GIF whose logical screen (its canvas) is `w`×`h`, holding one 1 by 1 frame: a file a
++/// decoder opens, so the canvas size is what refuses it. A header with no frame at all is
++/// refused for missing data before any size is checked, which proves nothing about the limit.
+ fn gif_header(w: u16, h: u16) -> Vec<u8> {
+     let mut bytes = b"GIF89a".to_vec();
+     bytes.extend_from_slice(&w.to_le_bytes());
+     bytes.extend_from_slice(&h.to_le_bytes());
+-    bytes.extend_from_slice(&[0, 0, 0, 0x3b]);
++    // A two-colour global palette, a graphic control extension, a 1 by 1 image at the origin,
++    // its LZW data (minimum code size 2), and the trailer.
++    bytes.extend_from_slice(&[0x80, 0, 0, 0xff, 0xff, 0xff, 0, 0, 0]);
++    bytes.extend_from_slice(&[0x21, 0xf9, 0x04, 0x01, 0x0a, 0x00, 0x00, 0x00]);
++    bytes.extend_from_slice(&[0x2c, 0, 0, 0, 0, 1, 0, 1, 0, 0]);
++    bytes.extend_from_slice(&[0x02, 0x02, 0x44, 0x01, 0x00, 0x3b]);
+     bytes
+ }
+ 
+@@ -169,12 +185,16 @@ fn an_animated_image_over_the_decode_limit_is_refused_from_its_header() {
+     // Sigil's): the animation path checks the limit too, before any frame decodes.
+     crate::image::set_max_decode_pixels(4096 * 4096);
+     let bytes = gif_header(8000, 4000);
+-    assert!(crate::image::animated::decode(&bytes).is_some_and(|r| r.is_err_and(|e| e.0.contains("over the decode limit"))));
++    let animated = crate::image::animated::decode(&bytes);
++    assert!(animated.as_ref().is_some_and(|r| r.as_ref().is_err_and(|e| refused_for_size(&e.0))), "{:?}", animated.map(|r| r.err()));
+     let cache = ImageCache::new(Arc::new(|| {}));
+-    let error = cache.load(bytes.clone()).wait().unwrap_err().0.clone();
+-    assert!(error.contains("over the decode limit"), "{error}");
+-    let fitted = cache.load_fit(bytes, crate::image::Fit::Cover(256, 0)).wait().unwrap_err().0.clone();
+-    assert!(fitted.contains("over the decode limit"), "{fitted}");
++    let eager = cache.load(bytes.clone());
++    assert!(refused_for_size(&eager.wait().unwrap_err().0), "{:?}", eager.wait());
++    let fitted = cache.load_fit(bytes.clone(), crate::image::Fit::Cover(256, 0));
++    assert!(refused_for_size(&fitted.wait().unwrap_err().0), "{:?}", fitted.wait());
++    // The same file under the limit decodes: the limit, not the fixture, refused it above.
++    let small = cache.load(gif_header(64, 32));
++    assert_eq!(small.wait(), Ok([64, 32]));
+ }
+ 
+ /// A picture decoded blurred (`ImageCache::load_fit_blurred`) has no sharp pixel at any time:
+diff --git a/crates/rune/src/image/pixels.rs b/crates/rune/src/image/pixels.rs
+index 6efe069..670f667 100644
+--- a/crates/rune/src/image/pixels.rs
++++ b/crates/rune/src/image/pixels.rs
+@@ -410,6 +410,10 @@ pub struct ImagePage {
+     gpu: bool,
+     /// A renderer uploaded `data` since the page was made.
+     uploaded: bool,
++    /// GPU only: a renderer has written regions of this page to a texture. A new texture for it
++    /// lost those images, so they are placed again (`Renderer::upload_images`); a page made this
++    /// frame has every image in its pending regions and keeps them.
++    sent: bool,
+     shelf_x: u32,
+     shelf_y: u32,
+     shelf_h: u32,
+@@ -615,7 +619,7 @@ impl ImageAtlas {
+         let cpu_idle = cpu_read == u64::MAX || cpu_read + 2 < frame;
+         if cpu_idle {
+             for page in &mut self.pages {
+-                if page.uploaded && !page.gpu && page.dirty.is_none() { page.gpu = true; page.data = Vec::new(); }
++                if page.uploaded && !page.gpu && page.dirty.is_none() { page.gpu = true; page.data = Vec::new(); page.sent = true; }
+             }
+         }
+         let due: Vec<u64> = self.copied.iter().filter(|(_, (_, at))| at + RELEASE_AFTER_FRAMES <= frame).map(|(id, _)| *id).collect();
+@@ -802,7 +806,7 @@ impl ImagePage {
+             else if gpu { (IMAGE_ATLAS_SIZE, IMAGE_ATLAS_SIZE) }
+             else { (IMAGE_ATLAS_SIZE, h.next_power_of_two().max(IMAGE_PAGE_START_ROWS)) };
+         let data = if gpu { Vec::new() } else { vec![0; width as usize * height as usize * 4] };
+-        Self { width, height, data, dirty: None, regions: Vec::new(), live: true, gpu, uploaded: false,
++        Self { width, height, data, dirty: None, regions: Vec::new(), live: true, gpu, uploaded: false, sent: false,
+             shelf_x: 0, shelf_y: 0, shelf_h: 0, shown: false, touched: false, last_frame: 0, last_at: crate::time::Instant::now() }
+     }
+ 
+@@ -811,6 +815,12 @@ impl ImagePage {
+     /// Whether the page lives on the GPU only.
+     pub fn on_gpu(&self) -> bool { self.gpu }
+ 
++    /// GPU only: whether a renderer has written its images to a texture before (`sent`).
++    pub(crate) fn sent(&self) -> bool { self.sent }
++
++    /// A renderer wrote this GPU-only page's pending regions to its texture.
++    pub(crate) fn mark_sent(&mut self) { if self.gpu { self.sent = true; } }
++
+     fn allocate(&mut self, w: u32, h: u32) -> Option<(u32, u32)> {
+         let shelf = self.is_shelf();
+         if !shelf {
+@@ -1189,11 +1199,14 @@ mod tests {
+ 
+     #[test]
+     fn a_full_atlas_starts_over_pages_that_show_nothing_before_it_grows() {
++        // A page is started over rather than grown past the budget once none of its images was
++        // drawn for `KEEP_FRAMES` frames; within the budget a new page is made instead, and an
++        // idle page goes after `IDLE_FREE` or when the window rests.
+         let mut atlas = ImageAtlas::default();
++        atlas.budget = Some((4 << 20, 4 << 20));
+         let old: Vec<Pixels> = (0..4).map(|_| { let p = Pixels::new(); p.set(512, 512, vec![1; 512 * 512 * 4]); p }).collect();
+         for p in &old { atlas.place(p, [512.0; 2]); }
+-        atlas.end_frame();
+-        atlas.end_frame();
++        for _ in 0..KEEP_FRAMES + 2 { atlas.end_frame(); }
+         assert_eq!(atlas.pages.len(), 1);
+         let new = Pixels::new();
+         new.set(512, 512, vec![2; 512 * 512 * 4]);
+@@ -1258,10 +1271,16 @@ mod tests {
+         assert_eq!(atlas.place(&stream, [112.0, 64.0]).unwrap(), first);
+         atlas.place(&full, [1024.0; 2]);
+         atlas.end_frame();
++        // Pages no element drew from go when the window rests (and after `IDLE_FREE`, or over
++        // the budget), not at the first frame without them.
++        assert_eq!(atlas.pages.len(), 3);
++        assert!(atlas.pages[second.page].live, "kept until rest, idle time or the budget");
++        atlas.rest();
+         assert_eq!(atlas.pages.len(), 3);
+-        assert!(atlas.pages[second.page].data.is_empty(), "unused middle standalone page releases storage");
++        assert!(!atlas.pages[second.page].live && atlas.pages[second.page].data.is_empty(), "unused middle standalone page releases storage");
+         assert_eq!(atlas.place(&stream, [112.0, 64.0]).unwrap(), first);
+         atlas.end_frame();
++        atlas.rest();
+         assert_eq!(atlas.pages.len(), 1, "unused trailing pages release their storage");
+         atlas.end_frame();
+         assert_eq!(atlas.pages.len(), 1, "the first page keeps its images");
+diff --git a/crates/rune/src/render/upload.rs b/crates/rune/src/render/upload.rs
+index 7f463ec..5325481 100644
+--- a/crates/rune/src/render/upload.rs
++++ b/crates/rune/src/render/upload.rs
+@@ -174,8 +174,11 @@ impl Renderer {
+                 self.images[index] = Some((texture, bind));
+                 changed = true;
+                 // A new texture starts empty: a page with a CPU copy goes up whole; a GPU-only
+-                // page holds what is placed after this, so its earlier images are placed again.
+-                if page.on_gpu() { emptied.push(index); } else { page.dirty = Some((0, page.height)); }
++                // page whose images went to an earlier texture has them placed again. A GPU-only
++                // page made since the last upload has all of its images in `regions`, written
++                // below: forgetting it too dropped the page a frame after it was made, so every
++                // new page was placed and uploaded twice.
++                if !page.on_gpu() { page.dirty = Some((0, page.height)); } else if page.sent() { emptied.push(index); }
+             }
+             let texture = &self.images[index].as_ref().unwrap().0;
+             if let Some(rows) = page.dirty.take() {
+@@ -184,6 +187,7 @@ impl Renderer {
+             for region in page.regions.drain(..) {
+                 staging.write_texture_region(texture, region.x, region.y, region.w, &region.rgba);
+             }
++            page.mark_sent();
+         }
+         for index in 0..images.pages.len() {
+             if images.pages[index].live && !images.pages[index].on_gpu() { images.uploaded(index); }
