@@ -242,7 +242,8 @@ impl MatchScoreboard {
         self.teams.get(index).map(Vec::as_slice).unwrap_or(&[])
     }
 
-    /// Lanes in play, lowest id first, each with its players of both teams.
+    /// Lanes in play, lowest id first (York, Broadway, Greenwich: see [`lane_name`]), each with
+    /// its players of both teams.
     pub fn lanes(&self) -> Vec<(u32, [Vec<&BoardPlayer>; 2])> {
         let mut ids: Vec<u32> = self.teams.iter().flatten().filter_map(|p| p.lane).collect();
         ids.sort_unstable();
@@ -271,6 +272,20 @@ impl MatchScoreboard {
             .collect();
         let top = values.iter().map(|(_, value)| *value).max().unwrap_or(0);
         top > 0 && values.iter().any(|(id, value)| *id == account_id && *value == top)
+    }
+}
+
+/// The name and colour (RGB) of a lane by its `assigned_lane` id. The id is an index into the
+/// game's `lane_info` table (`/v1/assets/generic-data` on api.deadlock-api.com, which the
+/// API's `assigned_lane` filter points to): 1 is York (yellow), 4 Broadway (blue), 6 Greenwich
+/// (green; its class is still `purpleLane` from before the recolour). The other entries are
+/// `Unused` or the enemy lane, so `None`.
+pub fn lane_name(id: u32) -> Option<(&'static str, [u8; 3])> {
+    match id {
+        1 => Some(("York", [241, 204, 48])),
+        4 => Some(("Broadway", [41, 177, 204])),
+        6 => Some(("Greenwich", [89, 178, 71])),
+        _ => None,
     }
 }
 
@@ -929,6 +944,16 @@ mod tests {
         assert_eq!(board.objectives_lost, vec![(400, 0), (900, 1), (1200, 1)]);
         assert_eq!(board.team(0)[0].lane, Some(4));
         assert_eq!(board.team(1)[0].lane, None);
+    }
+
+    #[test]
+    fn lane_ids_name_the_three_lanes() {
+        // `lane_info` of the game's generic data: 1 York, 4 Broadway, 6 Greenwich.
+        assert_eq!(lane_name(1).map(|l| l.0), Some("York"));
+        assert_eq!(lane_name(4).map(|l| l.0), Some("Broadway"));
+        assert_eq!(lane_name(6).map(|l| l.0), Some("Greenwich"));
+        assert_eq!(lane_name(0), None);
+        assert_eq!(lane_name(7), None, "the enemy lane entry is not a lane players are assigned");
     }
 
     #[test]

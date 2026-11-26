@@ -279,13 +279,26 @@ pub(super) fn lobby(s: &State, u: &Ui, board: &MatchScoreboard) -> El {
     for (index, (lane, sides)) in lanes.iter().enumerate() {
         let souls = |team: usize| sides[team].iter().map(|p| p.net_worth_by(AT)).sum::<u64>();
         let gap = souls(ours) as i64 - souls(theirs) as i64;
+        // The game's lane names with a square of the lane's colour; a number for an id the
+        // table does not know.
         let mut head = row()
+            .key(format!("stats-lane-{lane}"))
             .w_full()
             .h(32.0)
-            .gap(12.0)
+            .gap(8.0)
             .center_y()
-            .border_sides([0.0, 0.0, 1.0, 0.0], u.hair)
-            .child(text(fill(tr("Lane {}"), &[&(index + 1).to_string()])).font(BODY_MED).color(u.ink));
+            .border_sides([0.0, 0.0, 1.0, 0.0], u.hair);
+        head = match deadlock_core::stats::board::lane_name(*lane) {
+            Some((name, [r, g, b])) => head
+                .child(
+                    el().size(10.0, 10.0)
+                        .fill(rune::color::hex(&format!("#{r:02x}{g:02x}{b:02x}")).unwrap_or(u.muted))
+                        .a11y_hidden(),
+                )
+                .child(text(name).font(BODY_MED).color(u.ink)),
+            None => head.child(text(fill(tr("Lane {}"), &[&(index + 1).to_string()])).font(BODY_MED).color(u.ink)),
+        };
+        head = head.child(el().w(4.0));
         if my_lane == Some(*lane) {
             head = head.child(text(tr("your lane")).font(SMALL).color(u.accent));
         }

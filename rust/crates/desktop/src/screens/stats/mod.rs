@@ -1631,5 +1631,28 @@ mod tests {
         assert!(board.board.place_of(board.account_id).is_some());
         assert!(board.board.season_id.is_some());
     }
+
+    #[test]
+    fn the_lobby_names_its_lanes_in_map_order() {
+        let board = deadlock_core::stats::board::scoreboard_from_bundle(EXTRA).expect("board");
+        let names: Vec<&str> = board
+            .lanes()
+            .iter()
+            .filter_map(|(lane, _)| deadlock_core::stats::board::lane_name(*lane).map(|l| l.0))
+            .collect();
+        assert_eq!(names, vec!["York", "Broadway", "Greenwich"]);
+
+        // The Lobby view draws one head per lane, keyed by its id, in that order.
+        let mut s = crate::data::init_state();
+        scene_match_lobby(&mut s);
+        let mut rt = rune::Runtime::new(s, crate::app::view, (1280.0, 900.0), rune::Env::new(true, 1.0));
+        rt.frame(1.0 / 60.0);
+        let heads: Vec<String> = rt
+            .elements()
+            .into_iter()
+            .filter_map(|e| e.key.filter(|k| k.starts_with("stats-lane-")))
+            .collect();
+        assert_eq!(heads, vec!["stats-lane-1", "stats-lane-4", "stats-lane-6"]);
+    }
 }
 
