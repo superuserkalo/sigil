@@ -300,8 +300,9 @@ fn sitting_head(u: &Ui, snap: &StatsSnapshot, sitting: &Session, index: usize) -
                 .color(if sitting.rank_delta > 0 { u.teal } else { u.rose }),
         );
     }
-    // Lines the rank points up with the Rank column.
-    r.child(el().w(48.0 + 48.0 + 16.0 + 3.0 * 16.0))
+    // Lines the rank points up with the Rank column: Length, Time and the chevron with their
+    // 16 point gaps, less this row's own 12 point gap.
+    r.child(el().w(48.0 + 48.0 + 16.0 + 3.0 * 16.0 - 12.0))
 }
 
 fn match_row(s: &State, u: &Ui, item: &MatchSummary) -> El {
