@@ -723,9 +723,10 @@ fn short_stamp(value: &str) -> String {
 
 const BROWSE_PER_PAGE: usize = 50;
 const THUMB_TIMEOUT_SECONDS: u64 = 8;
-/// Parallel image downloads. GameBanana's image host serves keep-alive HTTPS, so
-/// a handful of workers on one shared agent fills a page in about one round trip.
-const THUMB_WORKERS: usize = 6;
+/// Parallel image downloads per crew. GameBanana's image host serves keep-alive HTTPS, so
+/// a handful of workers on one shared agent fills a page in about one round trip. They only
+/// fetch: Rune's decoder threads decode.
+const THUMB_WORKERS: usize = 4;
 
 /// Device pixels per point in the window, as `f32` bits. `app::view` keeps it current.
 static PIXEL_SCALE: AtomicU32 = AtomicU32::new(0x3f80_0000);
@@ -1119,6 +1120,10 @@ fn thumb_cache_path(url: &str) -> PathBuf {
 pub(crate) fn fetch_thumb_file(url: &str) -> Option<ThumbBytes> {
     let cached = thumb_cache_path(url);
     if fs::metadata(&cached).is_ok_and(|m| m.len() > 0) {
+        // Used now: the cache cap removes the least recently used first (`prune_image_cache`).
+        if let Ok(file) = fs::File::options().write(true).open(&cached) {
+            let _ = file.set_modified(std::time::SystemTime::now());
+        }
         return Some(ThumbBytes::File(cached));
     }
     let bytes = fetch_thumb_bytes(url)?;
@@ -1127,6 +1132,51 @@ pub(crate) fn fetch_thumb_file(url: &str) -> Option<ThumbBytes> {
     } else {
         Some(ThumbBytes::Encoded(bytes))
     }
+}
+
+/// The most the picture disk cache (`cache/images`) keeps: GameBanana's 530 pixel card
+/// thumbnails are 30 to 80 KB, so this holds a few thousand of them; originals for the billboard
+/// and the lightbox are 1 to 5 MB each.
+pub const IMAGE_CACHE_CAP: u64 = 192 << 20;
+
+/// Trims the picture disk cache to `cap` bytes, least recently used first (a cache hit touches
+/// the file's modified time). Run on a worker at startup. Returns the bytes removed.
+pub fn prune_image_cache(dir: &Path, cap: u64) -> u64 {
+    let Ok(entries) = fs::read_dir(dir) else { return 0 };
+    let mut files: Vec<(std::time::SystemTime, u64, PathBuf)> = entries
+        .flatten()
+        .filter_map(|entry| {
+            let meta = entry.metadata().ok()?;
+            meta.is_file().then(|| (meta.modified().unwrap_or(std::time::UNIX_EPOCH), meta.len(), entry.path()))
+        })
+        .collect();
+    let mut total: u64 = files.iter().map(|f| f.1).sum();
+    if total <= cap {
+        return 0;
+    }
+    files.sort_by_key(|f| f.0);
+    let mut removed = 0;
+    for (_, len, path) in files {
+        if total <= cap {
+            break;
+        }
+        if fs::remove_file(&path).is_ok() {
+            total -= len;
+            removed += len;
+        }
+    }
+    removed
+}
+
+/// [`prune_image_cache`] of this data folder's cache on a worker thread.
+pub fn prune_image_cache_later() {
+    let dir = data_dir().join("cache").join("images");
+    let _ = std::thread::Builder::new().name("sigil-prune-images".into()).spawn(move || {
+        let removed = prune_image_cache(&dir, IMAGE_CACHE_CAP);
+        if removed > 0 {
+            crate::screens::settings::log::debug(format!("Picture cache trimmed by {}", crate::memory::mb(removed)));
+        }
+    });
 }
 
 pub(crate) fn fetch_thumb_bytes(url: &str) -> Option<Vec<u8>> {
@@ -2337,13 +2387,14 @@ fn card_copy(src: &Path, width: u32, cache: &Path) -> Option<PathBuf> {
     Some(out)
 }
 
-/// [`card_copy`] for many files at once, on a few threads. Keys are the sources.
+/// [`card_copy`] for many files at once, on a few threads (at most 3: a UI process, not a
+/// batch job, and each thread holds a decoded render). Keys are the sources.
 fn card_copies(sources: Vec<PathBuf>, width: u32) -> std::collections::HashMap<PathBuf, PathBuf> {
     let cache = locker_art_cache();
     let threads = std::thread::available_parallelism()
         .map(|n| n.get())
         .unwrap_or(2)
-        .clamp(1, 6);
+        .clamp(1, 3);
     let chunk = sources.len().div_ceil(threads).max(1);
     std::thread::scope(|scope| {
         let handles: Vec<_> = sources
@@ -4718,6 +4769,24 @@ mod thumb_tests {
             assert!(error.contains("over the decode limit"), "{error}");
             assert!(!image.pixels().is_ready());
         }
+    }
+
+    #[test]
+    fn the_picture_cache_cap_removes_least_recently_used_first() {
+        let dir = std::env::temp_dir().join(format!("sigil-image-cache-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let base = std::time::SystemTime::now() - Duration::from_secs(1000);
+        for (i, name) in ["old", "mid", "new"].iter().enumerate() {
+            let path = dir.join(name);
+            fs::write(&path, vec![0u8; 100]).unwrap();
+            let file = fs::File::options().write(true).open(&path).unwrap();
+            file.set_modified(base + Duration::from_secs(i as u64 * 100)).unwrap();
+        }
+        assert_eq!(prune_image_cache(&dir, 1000), 0, "under the cap nothing goes");
+        assert_eq!(prune_image_cache(&dir, 150), 200);
+        assert!(!dir.join("old").exists() && !dir.join("mid").exists() && dir.join("new").exists());
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]

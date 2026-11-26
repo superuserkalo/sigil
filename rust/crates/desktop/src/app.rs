@@ -2245,6 +2245,9 @@ pub fn setup(s: &mut State, waker: Waker) {
     s.images = Some(ImageCache::new(waker).decode_when_drawn(true));
     crate::brand::load(s);
     preload_thumbnails(s);
+    if !s.demo && !rune::is_headless() {
+        crate::data::prune_image_cache_later();
+    }
     if s.demo || rune::is_headless() {
         // Scenes get their fixture link (or none) as before.
         s.start_host();

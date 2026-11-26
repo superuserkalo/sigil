@@ -1274,7 +1274,16 @@ pub fn on_start() -> Option<std::process::ExitCode> {
     }
     let layout = current_layout().ok()?;
     let dir = updates_dir();
-    let code = start_with(&layout, &dir, VERSION, platform_key(), true)?;
+    let code = start_with(&layout, &dir, VERSION, platform_key(), true);
+    if code.is_none() {
+        // Downloads of versions this one already is or passed (an update applied, then the
+        // next one staged; a rollback) stay in `staged/` otherwise: 90 MB each. Off the UI
+        // thread: a delete of a large tree can take a moment behind an antivirus filter.
+        let _ = std::thread::Builder::new().name("sigil-prune-staged".into()).spawn(move || {
+            prune_staged(&dir, VERSION);
+        });
+    }
+    let code = code?;
     // The started version waits for this process; let go of the single-instance claim first.
     rune::release_instance();
     Some(code)
@@ -1372,6 +1381,27 @@ pub fn start_with(
             }
         }
     }
+}
+
+/// Removes `staged/<version>` folders for versions not newer than `current`, keeping the one a
+/// pending install names. Returns how many it removed.
+pub fn prune_staged(dir: &Path, current: &str) -> usize {
+    let pending = fs::read_to_string(dir.join("pending.json"))
+        .ok()
+        .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
+        .and_then(|v| v.get("version").and_then(|v| v.as_str()).map(str::to_string));
+    let Ok(entries) = fs::read_dir(dir.join("staged")) else { return 0 };
+    let mut removed = 0;
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if parse_version(&name).is_none() || is_newer(&name, current) || pending.as_deref() == Some(name.as_str()) {
+            continue;
+        }
+        if fs::remove_dir_all(entry.path()).is_ok() {
+            removed += 1;
+        }
+    }
+    removed
 }
 
 /// The new version drew its first frame: record it, so the next start keeps it.
@@ -2446,5 +2476,23 @@ mod tests {
         assert_eq!(plain_notes("## Fixes\n\n* **Faster** start\n\n\n- `x` fixed\n", 10), "Fixes\n- Faster start\n- x fixed");
         assert_eq!(plain_notes("## New\n\n- a\n\n## Fixes\n\n- b", 10), "New\n- a\n\nFixes\n- b");
         assert_eq!(plain_notes("a\nb\nc", 2), "a\nb");
+    }
+
+    #[test]
+    fn prune_staged_removes_old_versions_and_keeps_newer_and_pending() {
+        let dir = std::env::temp_dir().join(format!("sigil-prune-staged-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        for v in ["0.1.38", "0.1.39", "0.1.42", "0.1.44", "0.1.45", "junk"] {
+            fs::create_dir_all(dir.join("staged").join(v).join("tree")).unwrap();
+        }
+        write_json(&dir.join("pending.json"), &serde_json::json!({ "version": "0.1.45" })).unwrap();
+        assert_eq!(prune_staged(&dir, "0.1.42"), 3);
+        let left: std::collections::BTreeSet<String> = fs::read_dir(dir.join("staged"))
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(left, ["0.1.44", "0.1.45", "junk"].map(String::from).into_iter().collect());
+        let _ = fs::remove_dir_all(&dir);
     }
 }

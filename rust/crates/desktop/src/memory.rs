@@ -25,30 +25,79 @@ pub fn configure_images() {
 }
 
 pub struct Reading {
+    /// The process's private memory (Windows commit, macOS physical footprint): what it owes
+    /// in RAM and pagefile, the number to compare.
+    pub process: Option<u64>,
+    /// Windows: the private working set, the number Task Manager's Memory column shows. It
+    /// drops when Windows trims the process; commit doesn't.
+    pub task_manager: Option<u64>,
     /// Live bytes the Rust allocator handed out.
     pub heap: Option<u64>,
-    /// The process's private memory (Windows commit, macOS physical footprint).
-    pub process: Option<u64>,
-    /// Windows: the private working set, the number Task Manager's Memory column shows.
-    pub task_manager: Option<u64>,
-    /// Decoded images held, and their estimated bytes with mips.
-    pub images: (usize, u64),
+    /// Windows: GPU memory this process uses, dedicated (on the card) and shared (system RAM
+    /// the GPU maps), from DXGI. Not part of commit.
+    pub gpu: Option<(u64, u64)>,
+    /// Rune's pictures: decoded pixels on the CPU and atlas textures on the GPU.
+    pub images: rune::ImageMemory,
+    /// Pictures the app holds a handle on.
+    pub handles: usize,
 }
 
 pub fn read(st: &State) -> Reading {
     let heap = procwatch::alloc::heap().map(|h| h.live.max(0) as u64);
-    let mut count = 0;
-    let mut bytes = 0u64;
-    for px in st.thumbnails.values() {
-        let (w, h) = px.size();
-        if w > 0 && h > 0 {
-            count += 1;
-            // RGBA with the mip chain (a third more).
-            bytes += u64::from(w) * u64::from(h) * 4 * 4 / 3;
-        }
-    }
     let (process, task_manager) = process_bytes();
-    Reading { heap, process, task_manager, images: (count, bytes) }
+    Reading { process, task_manager, heap, gpu: gpu_bytes(), images: rune::image_memory(), handles: st.thumbnails.len() }
+}
+
+/// GPU memory in use by this process on every adapter: (dedicated, shared), as Task Manager's
+/// GPU columns count it (`IDXGIAdapter3::QueryVideoMemoryInfo`).
+#[cfg(windows)]
+fn gpu_bytes() -> Option<(u64, u64)> {
+    use windows::Win32::Graphics::Dxgi::{
+        CreateDXGIFactory1, DXGI_MEMORY_SEGMENT_GROUP_LOCAL, DXGI_MEMORY_SEGMENT_GROUP_NON_LOCAL,
+        DXGI_QUERY_VIDEO_MEMORY_INFO, IDXGIAdapter3, IDXGIFactory1,
+    };
+    use windows::core::Interface;
+    // SAFETY: plain DXGI queries; every out pointer is a local of the right type.
+    unsafe {
+        let factory: IDXGIFactory1 = CreateDXGIFactory1().ok()?;
+        let (mut local, mut shared) = (0u64, 0u64);
+        let mut index = 0;
+        while let Ok(adapter) = factory.EnumAdapters1(index) {
+            index += 1;
+            let Ok(adapter) = adapter.cast::<IDXGIAdapter3>() else { continue };
+            let mut info = DXGI_QUERY_VIDEO_MEMORY_INFO::default();
+            if adapter.QueryVideoMemoryInfo(0, DXGI_MEMORY_SEGMENT_GROUP_LOCAL, &mut info).is_ok() {
+                local += info.CurrentUsage;
+            }
+            let mut info = DXGI_QUERY_VIDEO_MEMORY_INFO::default();
+            if adapter.QueryVideoMemoryInfo(0, DXGI_MEMORY_SEGMENT_GROUP_NON_LOCAL, &mut info).is_ok() {
+                shared += info.CurrentUsage;
+            }
+        }
+        Some((local, shared))
+    }
+}
+
+#[cfg(not(windows))]
+fn gpu_bytes() -> Option<(u64, u64)> {
+    None
+}
+
+/// Rune's image figures on one line.
+pub fn images_line(m: &rune::ImageMemory) -> String {
+    format!(
+        "decoded {} in {}; GPU atlas {} of {} ({} thumbnails of {}, {} large), {} pages; {} decodes, {} again after eviction",
+        mb(m.decoded_bytes),
+        m.decoded_images,
+        mb(m.shelf_bytes + m.large_bytes),
+        mb(m.total_budget),
+        mb(m.shelf_bytes),
+        mb(m.shelf_budget),
+        mb(m.large_bytes),
+        m.pages,
+        m.decodes,
+        m.reloads,
+    )
 }
 
 /// Logs Rune's GPU allocator report when a window took a new one (`poll`, debug level): at its
@@ -107,16 +156,21 @@ pub fn report(st: &State) -> String {
     let m = read(st);
     let opt = |b: Option<u64>| b.map_or_else(|| "-".to_string(), mb);
     let mut out = format!(
-        "Sigil {} memory on {}\nTask Manager (private working set): {}\nCommitted private: {}\nApp heap: {}\nImages: {} in {}\n",
+        "Sigil {} memory on {}\nCommitted private: {}\nGPU (dedicated, shared): {}\nTask Manager (private working set): {}\nApp heap: {}\nImages: {}; {} handles\n",
         crate::updater::VERSION,
         std::env::consts::OS,
-        opt(m.task_manager),
         opt(m.process),
+        m.gpu.map_or_else(|| "-".to_string(), |(local, shared)| format!("{}, {}", mb(local), mb(shared))),
+        opt(m.task_manager),
         opt(m.heap),
-        mb(m.images.1),
-        m.images.0,
+        images_line(&m.images),
+        m.handles,
     );
     out.push_str(&regions());
+    if let Some(gpu) = rune::gpu_allocator_report() {
+        out.push_str(&gpu);
+        out.push('\n');
+    }
     out
 }
 

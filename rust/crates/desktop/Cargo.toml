@@ -49,4 +49,7 @@ rodio = { version = "0.23", default-features = false, features = ["playback", "m
 # IO and SystemInformation are for Sigil's own crash detection (screens/settings/crash.rs).
 # Graphics_Dwm, UI_Controls and UI_Accessibility are for the glass sidebar (src/glass.rs).
 [target.'cfg(windows)'.dependencies]
+# DXGI's per-process GPU memory for Settings > About > Memory (`memory.rs`). The same `windows`
+# version wgpu's D3D12 backend already links.
+windows = { version = "0.62", features = ["Win32_Graphics_Dxgi", "Win32_Graphics_Dxgi_Common"] }
 windows-sys = { version = "0.59", features = ["Win32_Graphics_Dwm", "Win32_UI_Controls", "Win32_UI_Accessibility", "Win32_Foundation", "Win32_Security", "Win32_System_Registry", "Win32_System_ProcessStatus", "Win32_System_Threading", "Win32_System_Memory", "Win32_System_LibraryLoader", "Win32_UI_WindowsAndMessaging", "Win32_Graphics_Gdi", "Win32_UI_HiDpi", "Win32_System_Diagnostics_Debug", "Win32_System_Kernel", "Win32_Storage_FileSystem", "Win32_System_IO", "Win32_System_SystemInformation"] }

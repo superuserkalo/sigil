@@ -3088,12 +3088,22 @@ fn memory_row(s: &State, u: &Ui) -> El {
         format!("{} {}", tr(label), bytes.map_or_else(|| "-".to_string(), crate::memory::mb))
     };
     let mut parts = Vec::new();
+    parts.push(part("Committed", m.process));
+    if let Some((local, shared)) = m.gpu {
+        parts.push(format!("{} {} + {}", tr("GPU"), crate::memory::mb(local), crate::memory::mb(shared)));
+    }
     if m.task_manager.is_some() {
         parts.push(part("Task Manager", m.task_manager));
     }
-    parts.push(part("Committed", m.process));
     parts.push(part("App heap", m.heap));
-    parts.push(format!("{} {} ({})", tr("Images"), crate::memory::mb(m.images.1), m.images.0));
+    parts.push(format!(
+        "{} {} · {} {} / {}",
+        tr("Decoded images"),
+        crate::memory::mb(m.images.decoded_bytes),
+        tr("Image textures"),
+        crate::memory::mb(m.images.shelf_bytes + m.images.large_bytes),
+        crate::memory::mb(m.images.total_budget)
+    ));
     let line = parts.join(" · ");
     col()
         .key("settings-memory")
