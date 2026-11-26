@@ -103,7 +103,7 @@ jobs:
 
   macos:
     runs-on: macos-latest
-    timeout-minutes: 120
+    timeout-minutes: 180
     steps:
       - name: Check the tag
         run: |
@@ -134,6 +134,9 @@ jobs:
           channel="$(sed -n 's/^channel = "\(.*\)"/\1/p' rust/rust-toolchain.toml)"
           rustup toolchain install "$channel" --profile minimal \
             --target aarch64-apple-darwin,x86_64-apple-darwin
+          # The packaging script runs cargo from the repository root, where rust-toolchain.toml
+          # is not seen: make the pinned toolchain the default so both targets are found.
+          rustup default "$channel"
 
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
