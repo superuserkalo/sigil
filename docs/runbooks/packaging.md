@@ -1,9 +1,11 @@
 # Packaging the workbench
 
-Status: active. Windows is the released platform: `Sigil.exe` in a zip and a per-user NSIS
-installer, both built on macOS. The checklist below says what has been run where. macOS and Linux
-packages build but are not released.
-Updated: 2026-11-25
+Status: active. Windows is the main platform: `Sigil.exe` in a zip and a per-user NSIS
+installer, both built on macOS and signed into the update manifest. Linux (AppImage) and macOS
+(universal dmg) builds are attached to each published release by CI (`release-assets` workflow):
+unsigned, outside the update manifest, and not verified with a real game install. The checklist
+below says what has been run where.
+Updated: 2026-11-26
 
 The desktop app is one Rust executable. The `dah` CLI and the TinyAgent host are folded into it as
 subcommands: `dah-desktop cli ...` (`Sigil.exe cli ...` on Windows) and `dah-desktop agent-host`.
@@ -20,6 +22,8 @@ carries one binary and its art.
 | `Sigil-Setup.exe` | `scripts/package-installer.sh` and `scripts/installer/sigil.nsi` | Per-user Windows installer (below) |
 | `Sigil-<version>-x86_64.AppImage` | `scripts/package-linux.sh` | Linux workbench; updates itself from the signed manifest |
 | `sigil_<version>_amd64.deb` | `scripts/package-linux.sh` | Debian/Ubuntu install (`/usr/lib/sigil/sigil`); updated by hand |
+| `Sigil-linux-x86_64.AppImage` | the `release-assets` workflow (`scripts/package-linux.sh`, renamed) | Linux release download, stable name; not in the manifest, so it does not update itself |
+| `Sigil-macos.dmg` | the `release-assets` workflow (`scripts/package-desktop.sh universal-apple-darwin --dmg`) | macOS release download (Apple silicon and Intel), stable name; signed ad hoc only |
 | `THIRD_PARTY_NOTICES.md` | repo root | MIT attribution for Rune, TinyAgent, Grimoire and tools |
 | `manifest.json` | the script | Byte counts, SHA-256, included and excluded material |
 
@@ -30,6 +34,8 @@ stores, downloaded mods.
 
 ```bash
 scripts/package-desktop.sh                 # host target
+scripts/package-desktop.sh universal-apple-darwin --dmg .scratch/package/Sigil-macos.dmg
+                                           # macOS arm64 + x86_64 (lipo), ad-hoc signed, in a dmg
 scripts/package-windows.sh                 # Windows x64 via cargo-xwin
 scripts/package-installer.sh <Sigil.exe> <version> <out>/Sigil-Setup.exe   # NSIS installer
 scripts/package-linux.sh --deps            # Linux x64: install the build packages first (sudo)
@@ -63,6 +69,35 @@ macOS or the distro on Linux), using `scripts/installer/sigil.nsi` and the app i
 
 It prints the output path, size and SHA-256. The release uploads it as `Sigil-Setup.exe`, a stable
 name the download links rely on (`docs/runbooks/releasing.md`).
+
+### Release downloads for Linux and macOS
+
+`.github/workflows/release-assets.yml` runs when a release is published, or by hand with a tag
+(`gh workflow run release-assets.yml -f tag=v<version>`). It checks out that tag, fails when the
+tag is not `v` plus the workspace version in `rust/Cargo.toml`, and builds:
+
+- on `ubuntu-22.04`: `scripts/package-linux.sh --deps`, a `cli --help` smoke test, and the AppImage
+  renamed to `Sigil-linux-x86_64.AppImage`;
+- on `macos-latest`: `scripts/package-desktop.sh universal-apple-darwin --dmg dist/Sigil-macos.dmg`,
+  which builds both slices with the pinned toolchain, joins them with `lipo`, signs the bundle ad
+  hoc (`codesign --force --deep -s -`) and packs `Sigil.app` beside an Applications link with
+  `hdiutil`.
+
+Two separate jobs with `contents: write` then attach the files with `gh release upload --clobber`.
+The build jobs only read. The workflow never touches the Windows assets, `sigil-update.json` or its
+`.sig`, and needs no secret: the signing key stays on the maintainer's machine.
+
+What a player meets:
+
+- macOS: the dmg is not notarized and has no Developer ID. Gatekeeper blocks the first open of a
+  downloaded copy ("Apple could not verify"); the player opens it once, then chooses Open Anyway in
+  System Settings > Privacy & Security (or runs `xattr -dr com.apple.quarantine
+  /Applications/Sigil.app`). The ad-hoc signature is only what Apple silicon needs to run the
+  binary at all. Deadlock has no macOS version; nothing here claims Sigil can play it on a Mac.
+- Linux: the AppImage needs glibc 2.35 or newer and FUSE 2 (`libfuse2`), or
+  `APPIMAGE_EXTRACT_AND_RUN=1` without it (see below). The game itself runs through Proton.
+- Neither file is in the signed manifest, so neither updates itself: the updater on those systems
+  says the release does not update itself there and points at the release page.
 
 ### Linux
 

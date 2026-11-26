@@ -12,9 +12,12 @@ variables (`DAH_*`). The data folder is `Sigil` since 0.1.43, moved once from `D
 (`deadlock_core::app_data`).
 
 Status: released for Windows 10 and 11 x64 (0.1.42 on 2026-11-25), with a per-user installer and
-signed self-updates. The app writes to the game install on the player's actions (install, toggle,
-load order, `gameinfo.gi`, autoexec, launch). Agent tools still never do. Rows not yet verified on a
-real Windows install are listed in `docs/runbooks/windows.md`.
+signed self-updates. From the next release, the `release-assets` workflow also attaches a Linux
+AppImage and a macOS dmg: unsigned, not in the update manifest, and not verified with a real game
+install (Deadlock runs on Linux through Proton and has no macOS version). The app writes to the
+game install on the player's actions (install, toggle, load order, `gameinfo.gi`, autoexec,
+launch). Agent tools still never do. Rows not yet verified on a real Windows install are listed in
+`docs/runbooks/windows.md`.
 
 ## Read first
 

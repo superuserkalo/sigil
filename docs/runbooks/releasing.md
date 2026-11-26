@@ -1,8 +1,9 @@
 # Releasing Sigil
 
 Status: active. Describes how 0.1.42 was released (2026-11-25): built, signed and published from
-the maintainer's Mac, Windows only, with the installer and the stable-name assets.
-Updated: 2026-11-25
+the maintainer's Mac, Windows only, with the installer and the stable-name assets. From the next
+release, CI adds unsigned Linux and macOS downloads after publishing (see the asset table).
+Updated: 2026-11-26
 
 Sigil updates itself from GitHub releases of `superuserkalo/sigil`. A release is trusted only when
 its manifest carries a valid Ed25519 signature by the key compiled into Sigil. CI builds and
@@ -44,15 +45,25 @@ node scripts/release-sign.mjs pubkey            # prints the public key and key 
 | `Sigil-Setup.exe` | `scripts/package-installer.sh` (NSIS, `scripts/installer/sigil.nsi`) | the website and README download link |
 | `sigil-update.json` | `scripts/release-sign.mjs manifest`, run by the packaging script | the updater |
 | `sigil-update.json.sig` | `scripts/sign-release.sh`, on the maintainer's machine only | the updater |
+| `Sigil-linux-x86_64.AppImage` | the `release-assets` workflow, after publishing | the README download link; not the updater |
+| `Sigil-macos.dmg` | the `release-assets` workflow, after publishing | the README download link; not the updater |
 
 The two stable names exist because the website and the README link to
 `releases/latest/download/Sigil-Setup.exe` and `releases/latest/download/Sigil-windows-x64.zip`.
 Every release must carry both, or those links break the moment it becomes the latest. The updater
 never reads them; it downloads the versioned zip the signed manifest names.
 
-`scripts/package-desktop.sh` (macOS) and the `linux-build` workflow (AppImage) can add
-`Sigil-<version>-macos-arm64.zip` and `Sigil-<version>-x86_64.AppImage`; recent releases are
-Windows only. See "Adding macOS or Linux" below.
+The last two arrive on their own: publishing the release starts
+`.github/workflows/release-assets.yml`, which builds the AppImage on Ubuntu 22.04 and a universal
+dmg on macOS from the release tag and uploads both with `gh release upload --clobber`. It never
+replaces the five assets above. They are unsigned, not in `sigil-update.json`, and not verified
+with a real game install (`docs/runbooks/packaging.md`). If a run fails, rerun it by hand:
+`gh workflow run release-assets.yml -f tag=v<version>`. Until a release carries them, the
+`releases/latest/download/` links for these two names return 404.
+
+To let Linux or macOS copies update themselves instead, the signed manifest needs their entries
+(`Sigil-<version>-macos-<arch>.zip`, `Sigil-<version>-x86_64.AppImage`); see "Adding macOS or
+Linux" below. The CI downloads are not those entries.
 
 The manifest:
 
@@ -209,6 +220,8 @@ Nothing in this repository records these as checked:
 - The `build-windows` workflow's draft-release step, `choco install webp` and the 7-Zip archive.
 - A real GitHub release download (the redirect to GitHub's asset host).
 - macOS swap of a real `/Applications/Sigil.app`, and Gatekeeper on the swapped bundle.
+- The `release-assets` workflow's first run, the dmg on a Mac other than the maintainer's, and
+  the AppImage on a real Linux desktop.
 - The Linux AppImage swap and rollback on a real desktop (renaming the running AppImage, the
   relaunch under `RUNE_RELAUNCH_AFTER`, the `.deb` hand update), and the `linux-build` workflow's
   first green run.

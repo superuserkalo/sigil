@@ -15,7 +15,16 @@ view, fixes `gameinfo.gi` after game updates, and starts the game modded or vani
   More info, then Run anyway.
 - Prefer no installer? The same app is a single `Sigil.exe` in
   [Sigil-windows-x64.zip](https://github.com/superuserkalo/sigil/releases/latest/download/Sigil-windows-x64.zip).
-- Sigil updates itself from signed GitHub releases once you allow the update check.
+- Sigil for Windows updates itself from signed GitHub releases once you allow the update check.
+- Linux and macOS: each release also carries
+  [Sigil-linux-x86_64.AppImage](https://github.com/superuserkalo/sigil/releases/latest/download/Sigil-linux-x86_64.AppImage)
+  and [Sigil-macos.dmg](https://github.com/superuserkalo/sigil/releases/latest/download/Sigil-macos.dmg)
+  (Apple silicon and Intel), built by GitHub Actions. They are unsigned, they do not update
+  themselves, and neither has been checked against a real game install. Deadlock is a Windows game:
+  on Linux it runs through Steam's Proton, and it has no macOS version, so the Mac app is for
+  browsing and preparing mods, untested with any way of running the game. macOS blocks the
+  unsigned app on first open: open it, then choose Open Anyway in System Settings > Privacy &
+  Security.
 - Website and guides: [sigilmods.app](https://sigilmods.app). Every release and its notes:
   [Releases](https://github.com/superuserkalo/sigil/releases).
 
@@ -67,13 +76,15 @@ it.
 
 ## Requirements
 
-- To play: Windows 10 or 11, 64-bit, and Deadlock from Steam. That is the only released platform.
+- To play: Windows 10 or 11, 64-bit, and Deadlock from Steam. Windows is the main platform; the
+  Linux and macOS downloads are built by CI and not verified with a real game install.
 - To build: Rust (the pinned toolchain in `rust/rust-toolchain.toml` installs through rustup), git,
   and Node 24 for the release scripts and the Worker tests.
 - macOS and Linux: the app builds and runs there for development and the tests, and
   `scripts/package-desktop.sh` and `scripts/package-linux.sh` produce a macOS bundle, an AppImage
-  and a `.deb`. None of those are released or checked against a real game install, and Windows-only
-  parts (firewall rules, hosting a server) do nothing there.
+  and a `.deb`. The `release-assets` workflow attaches the AppImage and a dmg to each release; none
+  of them is checked against a real game install, and Windows-only parts (firewall rules, hosting a
+  server) do nothing there.
 
 ## Build from source
 
