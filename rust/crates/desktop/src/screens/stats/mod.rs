@@ -30,6 +30,7 @@ use crate::ui::{ActionKind, BODY, BODY_MED, H1, LABEL, PAGE_TOP, PAGE_X, SMALL, 
 
 mod board;
 mod hero_page;
+mod match_views;
 pub mod lookup;
 pub mod nav;
 pub mod pictures;
@@ -270,6 +271,9 @@ pub struct View {
     /// The Heroes table's sort and its least matches.
     pub hero_sort: heroes::HeroSort,
     pub hero_min: u64,
+    /// The match page's view, and the player its Build view shows.
+    pub match_view: match_views::MatchView,
+    pub build_player: Option<u64>,
     /// The hero page's reads (`hero_page.rs`).
     pub hero_page: hero_page::HeroPage,
     /// Steam accounts on this PC, read once for the start page.
@@ -353,6 +357,8 @@ impl Default for View {
             hero_sort: heroes::HeroSort::default(),
             hero_min: 0,
             hero_page: hero_page::HeroPage::default(),
+            match_view: match_views::MatchView::default(),
+            build_player: None,
             steam_job: Job::default(),
             steam_asked: false,
             social: Fetched::Idle,
@@ -685,6 +691,35 @@ pub fn scene_board(s: &mut State) {
         return;
     };
     nav::scene_match(s, board);
+}
+
+/// The match page's Build view, for the page player.
+pub fn scene_match_build(s: &mut State) {
+    scene_board(s);
+    s.stats.match_view = match_views::MatchView::Build;
+    // The captured bundle was trimmed of the `gold_*` sample fields: fill a plausible split so
+    // the scene shows the sources bar.
+    if let Fetched::Ready(board) = &mut s.stats.board {
+        for (i, p) in board.teams.iter_mut().flatten().enumerate() {
+            let n = p.net_worth;
+            p.sources = deadlock_core::stats::board::SoulSources {
+                troopers: n * (44 + i as u64 % 5) / 100,
+                players: n * (18 + i as u64 % 7) / 100,
+                neutrals: n * 16 / 100,
+                objectives: n * 12 / 100,
+                treasure: n * 3 / 100,
+            };
+        }
+    }
+}
+
+/// The match page's Lobby view, with the Squad lists loaded for "met before".
+pub fn scene_match_lobby(s: &mut State) {
+    scene_board(s);
+    if let Ok(social) = deadlock_core::stats::social::social_from_bundle(EXTRA) {
+        s.stats.social = Fetched::Ready(social);
+    }
+    s.stats.match_view = match_views::MatchView::Lobby;
 }
 
 /// Another player's page, opened from a list: the context bar with Back and Track.

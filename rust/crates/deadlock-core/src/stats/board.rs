@@ -54,9 +54,60 @@ pub struct BoardPlayer {
     pub lane: Option<u32>,
     /// The Steam avatar URL (`avatarmedium`) from the name request, when it answered.
     pub avatar: Option<String>,
+    /// Every finished item purchase, in buy order, sold ones included.
+    pub purchases: Vec<Purchase>,
+    /// Net worth at each sample (seconds into the match, souls).
+    pub net_worth_at: Vec<(u32, u64)>,
+    /// Where the souls came from, from the last sample.
+    pub sources: SoulSources,
+}
+
+/// One item bought in a match.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Purchase {
+    pub item_id: u64,
+    pub name: String,
+    pub slot: String,
+    pub tier: u32,
+    pub bought_at: u32,
+    pub sold_at: Option<u32>,
+    pub icon: Option<String>,
+}
+
+/// Souls by source over a whole match (the last sample's `gold_*` fields; orbs count with their
+/// source).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct SoulSources {
+    pub players: u64,
+    pub troopers: u64,
+    pub neutrals: u64,
+    pub objectives: u64,
+    pub treasure: u64,
+}
+
+impl SoulSources {
+    pub fn total(&self) -> u64 {
+        self.players + self.troopers + self.neutrals + self.objectives + self.treasure
+    }
+
+    /// (label, souls), in a fixed order for the stacked bar.
+    pub fn parts(&self) -> [(&'static str, u64); 5] {
+        [
+            ("Troopers", self.troopers),
+            ("Players", self.players),
+            ("Neutrals", self.neutrals),
+            ("Objectives", self.objectives),
+            ("Treasure", self.treasure),
+        ]
+    }
 }
 
 impl BoardPlayer {
+    /// Net worth at `at_s` seconds: the last sample at or before it (0 before the first).
+    pub fn net_worth_by(&self, at_s: u32) -> u64 {
+        self.net_worth_at.iter().take_while(|(t, _)| *t <= at_s).last().map(|(_, n)| *n).unwrap_or(0)
+    }
+
     pub fn kda(&self) -> f64 {
         (self.kills + self.assists) as f64 / self.deaths.max(1) as f64
     }
@@ -161,6 +212,8 @@ pub struct MatchScoreboard {
     /// guardians and base buildings from `objectives`, and each Mid Boss kill as a loss for the
     /// team that did not claim it.
     pub objectives_lost: Vec<(u32, i32)>,
+    /// Heroes banned before the match (`banned_hero_ids`), when the mode has bans.
+    pub banned_hero_ids: Vec<u32>,
 }
 
 impl MatchScoreboard {
@@ -187,6 +240,19 @@ impl MatchScoreboard {
     /// The two teams, team 0 first.
     pub fn team(&self, index: usize) -> &[BoardPlayer] {
         self.teams.get(index).map(Vec::as_slice).unwrap_or(&[])
+    }
+
+    /// Lanes in play, lowest id first, each with its players of both teams.
+    pub fn lanes(&self) -> Vec<(u32, [Vec<&BoardPlayer>; 2])> {
+        let mut ids: Vec<u32> = self.teams.iter().flatten().filter_map(|p| p.lane).collect();
+        ids.sort_unstable();
+        ids.dedup();
+        ids.into_iter()
+            .map(|lane| {
+                let side = |team: usize| self.team(team).iter().filter(|p| p.lane == Some(lane)).collect::<Vec<_>>();
+                (lane, [side(0), side(1)])
+            })
+            .collect()
     }
 
     /// The team of the player the page is about, when they are on the board.
@@ -404,6 +470,19 @@ fn build_board(
             outcome: player.player_match_outcome.map(super::MatchOutcome::from_api),
             lane: player.assigned_lane.filter(|lane| *lane > 0),
             avatar: None,
+            purchases: purchases(&player.items, catalog),
+            net_worth_at: {
+                let mut at: Vec<(u32, u64)> = player.stats.iter().map(|s| (s.time_stamp_s, s.net_worth)).collect();
+                at.sort_unstable();
+                at
+            },
+            sources: last.map(|s| SoulSources {
+                players: s.gold_player + s.gold_player_orbs,
+                troopers: s.gold_lane_creep + s.gold_lane_creep_orbs,
+                neutrals: s.gold_neutral_creep + s.gold_neutral_creep_orbs,
+                objectives: s.gold_boss + s.gold_boss_orb,
+                treasure: s.gold_treasure,
+            }).unwrap_or_default(),
         });
     }
 
@@ -430,7 +509,9 @@ fn build_board(
         .collect();
     objectives_lost.sort_unstable();
     let badge = |value: Option<u32>| value.filter(|badge| *badge > 0);
+    let banned_hero_ids = info.banned_hero_ids.clone();
     MatchScoreboard {
+        banned_hero_ids,
         average_badge: [badge(info.average_badge_team0), badge(info.average_badge_team1)],
         objectives_lost,
         match_id: info.match_id,
@@ -453,12 +534,44 @@ fn build_board(
     }
 }
 
+/// A finished purchase: `upgrade_id` 1 when the metadata says (other values are ability points
+/// and component bookkeeping), and, with a catalog at hand, an item the catalog knows (abilities
+/// share the list and are not in the item catalog).
+fn is_purchase(item: &RawItem, catalog: &ItemCatalog) -> bool {
+    item.upgrade_id.is_none_or(|id| id == 1) && (catalog.is_empty() || catalog.get(item.item_id).is_some())
+}
+
+/// Every finished purchase in buy order, with names and slots from the catalog.
+fn purchases(items: &[RawItem], catalog: &ItemCatalog) -> Vec<Purchase> {
+    let mut out: Vec<Purchase> = items
+        .iter()
+        .filter(|item| is_purchase(item, catalog))
+        .map(|item| {
+            let (name, slot, tier) = catalog
+                .get(item.item_id)
+                .cloned()
+                .unwrap_or_else(|| (format!("Item {}", item.item_id), "other".to_string(), 0));
+            Purchase {
+                item_id: item.item_id,
+                name,
+                slot,
+                tier,
+                bought_at: item.game_time_s,
+                sold_at: (item.sold_time_s > 0).then_some(item.sold_time_s),
+                icon: catalog.icon(item.item_id).map(str::to_string),
+            }
+        })
+        .collect();
+    out.sort_by_key(|p| (p.bought_at, p.item_id));
+    out
+}
+
 /// The items a player still held at the end: every purchase that was not sold,
 /// one row per item (the latest), in shop order weapon, vitality, spirit.
 fn final_build(items: &[RawItem], catalog: &ItemCatalog) -> Vec<BuildItem> {
     let mut latest: BTreeMap<u64, u32> = BTreeMap::new();
     let icon = |item_id: u64| catalog.icon(item_id).map(str::to_string);
-    for item in items.iter().filter(|item| item.sold_time_s == 0) {
+    for item in items.iter().filter(|item| item.sold_time_s == 0 && is_purchase(item, catalog)) {
         let at = latest.entry(item.item_id).or_insert(0);
         *at = (*at).max(item.game_time_s);
     }
@@ -536,6 +649,8 @@ struct RawMatchInfo {
     objectives: Vec<RawObjective>,
     #[serde(default)]
     mid_boss: Vec<RawMidBoss>,
+    #[serde(default)]
+    banned_hero_ids: Vec<u32>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -607,6 +722,8 @@ struct RawItem {
     game_time_s: u32,
     #[serde(default)]
     sold_time_s: u32,
+    #[serde(default)]
+    upgrade_id: Option<u64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -621,6 +738,24 @@ struct RawSample {
     player_healing: u64,
     #[serde(default)]
     player_damage_taken: u64,
+    #[serde(default)]
+    gold_player: u64,
+    #[serde(default)]
+    gold_player_orbs: u64,
+    #[serde(default)]
+    gold_lane_creep: u64,
+    #[serde(default)]
+    gold_lane_creep_orbs: u64,
+    #[serde(default)]
+    gold_neutral_creep: u64,
+    #[serde(default)]
+    gold_neutral_creep_orbs: u64,
+    #[serde(default)]
+    gold_boss: u64,
+    #[serde(default)]
+    gold_boss_orb: u64,
+    #[serde(default)]
+    gold_treasure: u64,
 }
 
 #[cfg(test)]
@@ -741,11 +876,10 @@ mod tests {
         let board = assemble_board(1, METADATA, &catalog, &HashMap::new(), &HashMap::new())
             .expect("board");
         let ours = &board.team(0)[0];
-        assert_eq!(ours.build.len(), 3);
+        // Item 99 is not in the catalog: an ability or another non-item id, not a purchase.
+        assert_eq!(ours.build.len(), 2);
         assert_eq!(ours.build[0].name, "Bullet Armor");
         assert_eq!(ours.build[1].name, "Rapid Recharge");
-        assert_eq!(ours.build[2].name, "Item 99");
-        assert_eq!(ours.build[2].slot, "other");
         assert_eq!(ours.player_damage, 15000);
         assert_eq!(ours.player_healing, 400);
         assert_eq!(ours.badge, None);
@@ -795,6 +929,40 @@ mod tests {
         assert_eq!(board.objectives_lost, vec![(400, 0), (900, 1), (1200, 1)]);
         assert_eq!(board.team(0)[0].lane, Some(4));
         assert_eq!(board.team(1)[0].lane, None);
+    }
+
+    #[test]
+    fn purchases_sources_lanes_and_bans_read_from_the_metadata() {
+        let metadata = r#"{"match_info": {"match_id": 9, "duration_s": 1200, "banned_hero_ids": [3, 5],
+            "players": [
+              {"account_id": 1, "team": 0, "hero_id": 7, "assigned_lane": 4,
+               "items": [{"item_id": 11, "game_time_s": 300, "upgrade_id": 1},
+                         {"item_id": 12, "game_time_s": 100, "upgrade_id": 1, "sold_time_s": 700},
+                         {"item_id": 11, "game_time_s": 50, "upgrade_id": 0},
+                         {"item_id": 777, "game_time_s": 20, "upgrade_id": 1}],
+               "stats": [{"time_stamp_s": 540, "net_worth": 9000},
+                         {"time_stamp_s": 180, "net_worth": 2000},
+                         {"time_stamp_s": 1200, "net_worth": 30000, "gold_player": 4000, "gold_player_orbs": 100,
+                          "gold_lane_creep": 9000, "gold_lane_creep_orbs": 8000, "gold_neutral_creep": 3000,
+                          "gold_boss": 4000, "gold_treasure": 700}]},
+              {"account_id": 2, "team": 1, "hero_id": 8, "assigned_lane": 4},
+              {"account_id": 3, "team": 1, "hero_id": 9, "assigned_lane": 1}
+            ]}}"#;
+        let catalog = parse_item_catalog(ITEMS).expect("catalog");
+        let board = assemble_board(1, metadata, &catalog, &HashMap::new(), &HashMap::new()).unwrap();
+        let me = board.me().unwrap();
+        let bought: Vec<(u64, u32, Option<u32>)> = me.purchases.iter().map(|p| (p.item_id, p.bought_at, p.sold_at)).collect();
+        assert_eq!(bought, vec![(12, 100, Some(700)), (11, 300, None)], "an ability step and an unknown id are not purchases");
+        assert_eq!(me.build.len(), 1, "the sold item is out of the final build");
+        assert_eq!(me.net_worth_by(600), 9000);
+        assert_eq!(me.net_worth_by(100), 0);
+        assert_eq!(me.sources, SoulSources { players: 4100, troopers: 17000, neutrals: 3000, objectives: 4000, treasure: 700 });
+        assert_eq!(me.sources.total(), 28800);
+        assert_eq!(board.banned_hero_ids, vec![3, 5]);
+        let lanes = board.lanes();
+        assert_eq!(lanes.iter().map(|(id, _)| *id).collect::<Vec<_>>(), vec![1, 4]);
+        assert_eq!(lanes[1].1[0].len(), 1);
+        assert_eq!(lanes[1].1[1][0].account_id, 2);
     }
 
     #[test]

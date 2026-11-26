@@ -18,7 +18,7 @@
 use std::collections::BTreeSet;
 
 use deadlock_core::stats::filters::StatsFilter;
-use deadlock_core::stats::items::{ItemPurchase, ItemStat};
+use deadlock_core::stats::items::ItemStat;
 use deadlock_core::stats::party::LineupRating;
 use deadlock_core::stats::MatchSummary;
 use rune::{El, KeyEvent, col, row, text};
@@ -74,8 +74,6 @@ pub struct More {
     pub items: Fetched<ItemsLoad>,
     pub items_job: Job<ItemsLoad>,
     pub items_all: bool,
-    pub timeline: Fetched<(u64, Vec<(ItemPurchase, String)>)>,
-    pub timeline_job: Job<(u64, Vec<(ItemPurchase, String)>)>,
     pub party: Fetched<Vec<LineupRating>>,
     pub party_job: Job<Vec<LineupRating>>,
     /// Other players picked for the party, by account id.
@@ -117,8 +115,6 @@ impl Default for More {
             items: Fetched::Idle,
             items_job: Job::default(),
             items_all: false,
-            timeline: Fetched::Idle,
-            timeline_job: Job::default(),
             party: Fetched::Idle,
             party_job: Job::default(),
             members: BTreeSet::new(),
@@ -214,37 +210,6 @@ pub fn start_items(st: &mut State) {
     });
 }
 
-/// Read one match's purchases for the player.
-pub fn start_timeline(st: &mut State, match_id: u64) {
-    if st.stats.more.timeline_job.is_running() {
-        return;
-    }
-    let account = match allowed(st) {
-        Ok(account) => account,
-        Err(error) => {
-            st.stats.more.timeline = Fetched::Failed(error);
-            return;
-        }
-    };
-    st.stats.more.timeline = Fetched::Loading;
-    let wake = st.wake.clone();
-    st.stats.more.timeline_job.start(wake, move || {
-        let bought = deadlock_core::stats::items::item_timeline(match_id, account).map_err(|e| e.to_string())?;
-        let catalog = crate::data::stats_client().fetch_item_catalog().unwrap_or_default();
-        let rows = bought
-            .into_iter()
-            .map(|p| {
-                let name = catalog
-                    .get(p.item_id)
-                    .map(|(name, _, _)| name.clone())
-                    .unwrap_or_else(|| format!("Item {}", p.item_id));
-                (p, name)
-            })
-            .collect();
-        Ok((match_id, rows))
-    });
-}
-
 /// Rate the party's lineups for the current filter.
 pub fn start_party(st: &mut State) {
     if st.stats.more.party_job.is_running() {
@@ -279,13 +244,6 @@ pub fn poll(st: &mut State) -> bool {
     if let Some(result) = m.items_job.try_take() {
         m.items = match result {
             Ok(load) => Fetched::Ready(load),
-            Err(error) => Fetched::Failed(error),
-        };
-        changed = true;
-    }
-    if let Some(result) = m.timeline_job.try_take() {
-        m.timeline = match result {
-            Ok(rows) => Fetched::Ready(rows),
             Err(error) => Fetched::Failed(error),
         };
         changed = true;
@@ -637,44 +595,6 @@ pub(super) fn items_section(s: &State, u: &Ui) -> El {
         }
     };
     section
-}
-
-/// One match's purchases, under its open row.
-pub(super) fn timeline(s: &State, u: &Ui, match_id: u64) -> El {
-    let m = &s.stats.more;
-    match &m.timeline {
-        Fetched::Ready((id, rows)) if *id == match_id => {
-            if rows.is_empty() {
-                return text(tr("No purchases were recorded for you in this match.")).font(SMALL).color(u.muted);
-            }
-            let mut line = row().w_full().gap(6.0).flex_wrap();
-            for (purchase, name) in rows {
-                let sold = purchase.sold_at_s.map(|at| format!(", {} {}", tr("sold"), minutes(at as f64))).unwrap_or_default();
-                line = line.child(
-                    row()
-                        .h(24.0)
-                        .px(8.0)
-                        .gap(6.0)
-                        .center_y()
-                        .radius(crate::ui::r(4.0))
-                        .border(1.0, u.hair)
-                        .child(text(minutes(purchase.bought_at_s as f64)).font(TNUM_SMALL).color(u.muted))
-                        .child(text(format!("{name}{sold}")).font(SMALL).color(u.prose)),
-                );
-            }
-            col().w_full().gap(6.0).child(text(tr("Items in the order you bought them")).font(SMALL).color(u.muted)).child(line)
-        }
-        Fetched::Loading => text(tr("Loading the item timeline")).font(SMALL).color(u.muted),
-        Fetched::Failed(error) => problem_retry(u, error, &format!("stats-timeline-retry-{match_id}"), move |st: &mut State| {
-            start_timeline(st, match_id)
-        }),
-        _ => row().child(
-            u.action(tr("Item timeline"), ActionKind::Secondary)
-                .key(format!("stats-timeline-{match_id}"))
-                .cursor(rune::Cursor::Pointer)
-                .on_press(move |st: &mut State| start_timeline(st, match_id)),
-        ),
-    }
 }
 
 fn hero_label(s: &State, hero_id: u32) -> String {

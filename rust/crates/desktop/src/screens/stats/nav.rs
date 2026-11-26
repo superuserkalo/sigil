@@ -316,7 +316,6 @@ fn install(st: &mut State, snapshot: StatsSnapshot) {
     super::set_snapshot_only(&mut st.stats, snapshot);
     st.stats.more.items = Fetched::Idle;
     st.stats.more.party = Fetched::Idle;
-    st.stats.more.timeline = Fetched::Idle;
     st.stats.w4.scoped = Fetched::Idle;
     st.stats.w4.scoped_for = None;
     st.stats.w4.scoped_derived = None;

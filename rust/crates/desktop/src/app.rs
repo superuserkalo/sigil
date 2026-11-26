@@ -3082,6 +3082,8 @@ pub fn scenes() -> &'static [(&'static str, fn(&mut State))] {
         ("stats-entry-manual", screens::stats::scene_entry_manual),
         ("stats-board", screens::stats::scene_board),
         ("stats-match", screens::stats::scene_board),
+        ("stats-match-build", screens::stats::scene_match_build),
+        ("stats-match-lobby", screens::stats::scene_match_lobby),
         ("stats-visit", screens::stats::scene_visit),
         ("stats-lookup", screens::stats::scene_lookup),
         ("stats-squad", screens::stats::scene_squad),

@@ -347,6 +347,18 @@ slot colour edge and the buy time on hover. The best value in each number column
 is drawn at weight 600 (`MatchScoreboard::is_best`). Each team head shows its average badge.
 Street Brawl matches draw no soul lead.
 
+Three views share the one metadata response. **Scoreboard** as above, ending on the way to Build.
+**Build**: pick any of the twelve players (the page player first); their souls through the match
+with a tick per purchase, the purchases in five minute stretches under the same time axis (sold
+items dimmed), where the souls came from as one stacked bar (troopers, players, neutrals,
+objectives, treasure, from the last sample's `gold_*` fields with their orbs), and every purchase
+with buy and sell time. A purchase is an item row with `upgrade_id` 1 that the item catalog knows;
+the other rows of the list are ability points and component steps and are left out (the final
+build applies the same rule). **Lobby**: each lane in play (lanes in id order) with both teams'
+players, a link each, their souls at 9:00 and the lane's soul difference, "your lane" marked, each
+team's average badge, bans (`banned_hero_ids`) when the mode has them, and "met before" (matches
+together and against) from the page player's Squad lists, which the view loads when it opens.
+
 The metadata is read with `disable_steam=true` and kept for a week. A 404 means deadlock-api has
 not analysed the match: the page says so and offers "Fetch from Steam", which repeats the read
 without the flag. deadlock-api allows that 3 times an hour per IP, so the button waits 20 minutes
@@ -471,7 +483,7 @@ generator is a local script (`.scratch/ui-hill/stats2/make-fixture.py`).
   script does not copy that folder yet, so a packaged build shows letters.
 - The live match view is built (`screens/stats/live.rs`, `deadlock_core::live_match`,
   `deadlock_core::live_bridge`; `docs/design/stats-live.md`) and not yet checked in a real match.
-- Match page Build and Lobby views and bracket percentiles are planned (spec slices 6 and 7).
+- Bracket percentiles are planned (spec slice 7).
 
 ## CLI surface
 

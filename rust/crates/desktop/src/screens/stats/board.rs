@@ -51,6 +51,7 @@ pub(super) fn start(st: &mut State, match_id: u64, from_steam: bool) {
         return;
     }
     let Some((_, account_id)) = st.stats.nav.match_open() else { return };
+    st.stats.build_player = None;
     st.stats.board = Fetched::Loading;
     if from_steam {
         st.stats.board_steam_at = Some(Instant::now());
@@ -92,9 +93,13 @@ fn walk(s: &State) -> Vec<u64> {
 pub(super) fn page(s: &State, u: &Ui) -> El {
     let Some((match_id, _)) = s.stats.nav.match_open() else { return col() };
     let mut page = col().key("stats-match").w_full().gap(12.0).transition(crate::motion::page_enter());
-    page = page.child(top_bar(s, u, match_id));
+    page = page.child(top_bar(s, u, match_id)).child(super::match_views::picker(s, u));
     page = match &s.stats.board {
-        Fetched::Ready(board) if board.match_id == match_id => page.child(body(s, u, board)),
+        Fetched::Ready(board) if board.match_id == match_id => page.child(match s.stats.match_view {
+            super::match_views::MatchView::Scoreboard => body(s, u, board),
+            super::match_views::MatchView::Build => super::match_views::build(s, u, board),
+            super::match_views::MatchView::Lobby => super::match_views::lobby(s, u, board),
+        }),
         Fetched::Failed(error) => page.child(failed(s, u, match_id, error)),
         _ => page.child(skeleton(u)),
     };
@@ -133,6 +138,7 @@ fn top_bar(s: &State, u: &Ui, match_id: u64) -> El {
         .child(text(crate::screens::settings::i18n::fill(tr("Match {}"), &[&match_id.to_string()])).font(H1).color(u.ink))
         .child(text(meta.join("  ·  ")).font(TNUM_SMALL).color(u.muted).truncate().min_w(0.0).shrink())
         .child(spacer())
+        .children(review_button(s, u, match_id))
         .child(step("stats-match-newer", &icons::CHEVRON_LEFT, tr("Newer match"), newer))
         .child(step("stats-match-older", &icons::CHEVRON_RIGHT, tr("Older match"), older))
         .child(
@@ -142,6 +148,17 @@ fn top_bar(s: &State, u: &Ui, match_id: u64) -> El {
                 .on_press_tx(move |_st: &mut State, tx: &mut Tx| tx.copy(match_id.to_string())),
         )
         .child(statlocker_link(u, "stats-match-statlocker".to_string(), statlocker_match_url(match_id), tr("Open on Statlocker")))
+}
+
+/// "Review this match" when a demo of it is imported.
+fn review_button(s: &State, u: &Ui, match_id: u64) -> Option<El> {
+    let key = match_id.to_string();
+    s.stats.demos.iter().any(|demo| demo.match_id == key).then(|| {
+        u.action(tr("Review this match"), ActionKind::Secondary)
+            .key(format!("stats-review-{key}"))
+            .cursor(rune::Cursor::Pointer)
+            .on_press(move |st: &mut State| crate::data::open_review(st, &key))
+    })
 }
 
 fn mode_label(mode: i32) -> &'static str {
@@ -233,23 +250,21 @@ fn body(s: &State, u: &Ui, board: &MatchScoreboard) -> El {
     for team in order {
         teams = teams.child(team_block(s, u, board, team));
     }
-    c = c.child(teams);
-    // The page player's own purchases, in order, and the way to their demo review.
-    if board.me().is_some() {
-        c = c.child(col().w_full().gap(8.0).pt(8.0).child(section_head(u, "Your purchases", "")).child(super::more::timeline(s, u, board.match_id)));
-        let key = board.match_id.to_string();
-        if s.stats.demos.iter().any(|demo| demo.match_id == key) {
-            c = c.child(
-                row().child(
-                    u.action(tr("Review this match"), ActionKind::Secondary)
-                        .key(format!("stats-review-{key}"))
-                        .cursor(rune::Cursor::Pointer)
-                        .on_press(move |st: &mut State| crate::data::open_review(st, &key)),
-                ),
-            );
-        }
-    }
-    c
+    // Purchases live in the Build view, one press away; the table ends the page.
+    c.child(teams).child(
+        row()
+            .w_full()
+            .h(36.0)
+            .gap(8.0)
+            .center_y()
+            .child(text(tr("Every purchase and where the souls came from:")).font(SMALL).color(u.muted))
+            .child(
+                u.action(tr("Open the Build view"), ActionKind::Ghost)
+                    .key("stats-match-to-build")
+                    .cursor(rune::Cursor::Pointer)
+                    .on_press(|st: &mut State| super::match_views::set_view(st, super::match_views::MatchView::Build)),
+            ),
+    )
 }
 
 /// "Win as Drifter  7 / 6 / 24  1,203 a minute  +480 rank points", with the hero average.

@@ -6,6 +6,32 @@ use std::collections::HashMap;
 use std::sync::OnceLock;
 
 pub const DE: &[(&str, &str)] = &[
+    ("Banned", "Gesperrt"),
+    ("Every purchase and where the souls came from:", "Jeder Kauf und woher die Seelen kamen:"),
+    ("Lane {}", "Lane {}"),
+    ("Loading who you met before", "Lade, wen du schon getroffen hast"),
+    ("Match view", "Matchansicht"),
+    ("No purchases recorded", "Keine Käufe aufgezeichnet"),
+    ("Open the Build view", "Build-Ansicht öffnen"),
+    ("Show the build of {}", "Build von {} zeigen"),
+    ("Souls through the match", "Seelen im Matchverlauf"),
+    ("The match data has no soul sources for this player.", "Die Matchdaten enthalten keine Seelenquellen für diesen Spieler."),
+    ("This match's data names no lanes.", "Die Daten dieses Matches nennen keine Lanes."),
+    ("Ticks: purchases, in their slot colour", "Striche: Käufe, in ihrer Slotfarbe"),
+    ("Where the souls came from", "Woher die Seelen kamen"),
+    ("average", "Schnitt"),
+    ("your lane", "deine Lane"),
+    ("{} against", "{} gegen"),
+    ("{} on {}", "{} mit {}"),
+    ("{} souls at 9:00", "{} Seelen bei 9:00"),
+    ("{} souls, {} a minute", "{} Seelen, {} pro Minute"),
+    ("Lobby", "Lobby"),
+    ("Troopers", "Soldaten"),
+    ("Players", "Spieler"),
+    ("Neutrals", "Neutrale"),
+    ("Objectives", "Ziele"),
+    ("Treasure", "Schätze"),
+    ("Sold at", "Verkauft bei"),
     ("All matches on this hero", "Alle Matches mit diesem Helden"),
     ("Any", "Alle"),
     ("Least matches", "Mindestzahl Matches"),
@@ -523,7 +549,8 @@ pub fn routed(source: &str) -> Vec<String> {
 mod tests {
     use super::*;
 
-    const SOURCES: [&str; 18] = [
+    const SOURCES: [&str; 19] = [
+        include_str!("match_views.rs"),
         include_str!("hero_page.rs"),
         include_str!("nav.rs"),
         include_str!("lookup.rs"),
