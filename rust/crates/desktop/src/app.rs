@@ -359,6 +359,8 @@ impl State {
             match self.screen {
                 Screen::Locker => crate::data::release_locker_art(self),
                 Screen::Installed => screens::installed::release_previews(self),
+                // About 3 MB of parsed configs, read again from the disk cache on return.
+                Screen::Performance => screens::performance::release(self),
                 // Leaving Browse by any route (a toast, the stats strip, the sidebar, a key)
                 // closes the mod's details, as its X would (#6).
                 Screen::Browse => screens::browse::close_details(self),
@@ -409,6 +411,9 @@ impl State {
             Screen::Performance => {
                 if !self.performance.loaded && !self.performance.read_job.is_running() {
                     screens::performance::start_read(self);
+                } else {
+                    // Left earlier, it let its configs go (`performance::release`).
+                    screens::performance::ensure_catalog(self);
                 }
             }
             Screen::Autoexec => {

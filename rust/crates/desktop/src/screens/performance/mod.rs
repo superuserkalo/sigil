@@ -160,14 +160,30 @@ fn simulated(st: &State) -> bool {
     st.demo || rune::is_headless()
 }
 
-/// Read the game files, load the cache, and check GitHub when the cache is old.
-pub fn start_read(st: &mut State) {
-    if st.performance.catalog.is_none() && !simulated(st) {
+/// Load the configs from the disk cache on a worker, when they are not in memory.
+pub fn ensure_catalog(st: &mut State) {
+    if st.performance.catalog.is_none() && !st.performance.load_job.is_running() && !simulated(st) {
         let wake = st.wake.clone();
         st.performance
             .load_job
             .start(wake, || Ok(performance::load(&data_dir())));
     }
+}
+
+/// Leaving the page: the parsed configs go (about 3 MB, measured on macOS), and come back from
+/// the disk cache on the next visit (`ensure_catalog`). Kept while a load or a GitHub check runs,
+/// whose result would bring them back anyway.
+pub fn release(st: &mut State) {
+    // Demo and headless configs are not on disk to read again.
+    if simulated(st) || st.performance.load_job.is_running() || st.performance.fetch_job.is_running() {
+        return;
+    }
+    st.performance.catalog = None;
+}
+
+/// Read the game files, load the cache, and check GitHub when the cache is old.
+pub fn start_read(st: &mut State) {
+    ensure_catalog(st);
     if !st.performance.edits_loaded && !st.performance.edits_job.is_running() {
         let wake = st.wake.clone();
         st.performance.edits_job.start(wake, || {
@@ -687,6 +703,11 @@ fn list_page(s: &State, u: &Ui) -> El {
     }
 
     page = page.child(current(s, u));
+    // Back on the page after it let the configs go: they are read from the disk cache in a
+    // moment, so nothing says they are being downloaded.
+    if s.performance.catalog.is_none() && s.performance.load_job.is_running() {
+        return page;
+    }
     let Some(catalog) = s.performance.catalog.as_ref().filter(|c| !c.is_empty()) else {
         return page.child(first_run(s, u));
     };
@@ -1398,3 +1419,22 @@ pub fn dialog(s: &State, u: &Ui) -> Option<El> {
 mod scenes;
 
 pub use scenes::scene;
+
+#[cfg(test)]
+mod release_tests {
+    use super::*;
+
+    /// Leaving the page lets the parsed configs go, unless a load or a GitHub check would bring
+    /// them back anyway; demo configs stay (nothing on disk to read them from).
+    #[test]
+    fn leaving_the_page_lets_the_parsed_configs_go() {
+        let mut st = State::default();
+        st.performance.catalog = Some(Catalog::default());
+        release(&mut st);
+        assert!(st.performance.catalog.is_none());
+        st.performance.catalog = Some(Catalog::default());
+        st.demo = true;
+        release(&mut st);
+        assert!(st.performance.catalog.is_some(), "demo configs stay");
+    }
+}

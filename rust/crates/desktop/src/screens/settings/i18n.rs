@@ -140,14 +140,20 @@ pub fn current() -> Lang {
     Lang::ALL[CURRENT.load(Ordering::Relaxed) as usize % Lang::ALL.len()]
 }
 
-fn maps() -> &'static [HashMap<&'static str, &'static str>; 3] {
-    static MAPS: OnceLock<[HashMap<&'static str, &'static str>; 3]> = OnceLock::new();
-    MAPS.get_or_init(|| Lang::ALL.map(|lang| (if lang == Lang::German { super::locales_product::DE } else { &[] }).iter().chain(lang.table().iter()).chain(lang.more()).chain(lang.wave()).chain(if lang == Lang::German { super::locales_w4b::DE } else { &[] }).chain(if lang == Lang::German { locales_w4a::DE } else { &[] }).chain(if lang == Lang::German { locales_w4c::DE } else { &[] }).chain(if lang == Lang::German { crate::screens::servers::host::locales::DE } else { &[] }).chain(if lang == Lang::German { crate::screens::servers::regions::locales::DE } else { &[] }).chain(if lang == Lang::German { super::locales_smalls::DE } else { &[] }).chain(if lang == Lang::German { super::locales_upstream::DE } else { &[] }).chain(if lang == Lang::German { crate::viewer::locales::DE } else { &[] }).chain(if lang == Lang::German { crate::screens::import::locales::DE } else { &[] }).chain(if lang == Lang::German { crate::screens::installed::locales_ux::DE } else { &[] }).chain(if lang == Lang::German { crate::screens::installed::waiting::DE } else { &[] }).chain(if lang == Lang::German { crate::screens::profile_tools_de::DE } else { &[] }).copied().collect()))
+/// One language's table, built the first time that language is read: a build without the
+/// translations reads only English and never builds the German table.
+fn map(lang: Lang) -> &'static HashMap<&'static str, &'static str> {
+    static MAPS: [OnceLock<HashMap<&'static str, &'static str>>; 3] = [const { OnceLock::new() }; 3];
+    MAPS[index(lang) as usize % 3].get_or_init(|| build(lang))
+}
+
+fn build(lang: Lang) -> HashMap<&'static str, &'static str> {
+    (if lang == Lang::German { super::locales_product::DE } else { &[] }).iter().chain(lang.table().iter()).chain(lang.more()).chain(lang.wave()).chain(if lang == Lang::German { super::locales_w4b::DE } else { &[] }).chain(if lang == Lang::German { locales_w4a::DE } else { &[] }).chain(if lang == Lang::German { locales_w4c::DE } else { &[] }).chain(if lang == Lang::German { crate::screens::servers::host::locales::DE } else { &[] }).chain(if lang == Lang::German { crate::screens::servers::regions::locales::DE } else { &[] }).chain(if lang == Lang::German { super::locales_smalls::DE } else { &[] }).chain(if lang == Lang::German { super::locales_upstream::DE } else { &[] }).chain(if lang == Lang::German { crate::viewer::locales::DE } else { &[] }).chain(if lang == Lang::German { crate::screens::import::locales::DE } else { &[] }).chain(if lang == Lang::German { crate::screens::installed::locales_ux::DE } else { &[] }).chain(if lang == Lang::German { crate::screens::installed::waiting::DE } else { &[] }).chain(if lang == Lang::German { crate::screens::profile_tools_de::DE } else { &[] }).copied().collect()
 }
 
 #[cfg(test)]
 fn lookup(lang: Lang, english: &'static str) -> &'static str {
-    maps()[index(lang) as usize]
+    map(lang)
         .get(english)
         .copied()
         .unwrap_or(english)
@@ -156,25 +162,25 @@ fn lookup(lang: Lang, english: &'static str) -> &'static str {
 /// Every German string, for tests that lay out the longest ones.
 #[cfg(test)]
 pub(crate) fn german_strings() -> Vec<&'static str> {
-    maps()[index(Lang::German) as usize].values().copied().collect()
+    map(Lang::German).values().copied().collect()
 }
 
 /// Every German string that differs from its English, for the test that keeps German off the
 /// screen in a build without the translations.
 #[cfg(test)]
 pub(crate) fn german_only() -> Vec<&'static str> {
-    maps()[index(Lang::German) as usize].iter().filter(|(en, de)| en != de).map(|(_, de)| *de).collect()
+    map(Lang::German).iter().filter(|(en, de)| en != de).map(|(_, de)| *de).collect()
 }
 
 /// The German for `english`, when a table has it. Browse search reads it for mod-kind words.
 pub(crate) fn german_of(english: &str) -> Option<&'static str> {
-    maps()[index(Lang::German) as usize].get(english).copied()
+    map(Lang::German).get(english).copied()
 }
 
 /// `t` for any string: the translation, or the text itself. Settings' row helpers pass every
 /// title and line through this, so a literal handed to a helper is routed without a wrapper.
 pub fn tr(text: &str) -> &str {
-    maps()[index(current()) as usize % 3]
+    map(current())
         .get(text)
         .copied()
         .unwrap_or(text)

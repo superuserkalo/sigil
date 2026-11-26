@@ -264,22 +264,32 @@ pub struct Found {
 struct PreparedMod {
     id: u64,
     /// The normalised title.
-    title: String,
-    /// The raw title in lower case, for non-Latin text.
-    raw: String,
+    title: Box<str>,
+    /// The raw title in lower case, for non-Latin text: kept only when it has a letter past
+    /// Latin Extended (`is_foreign`), since only such a typed word is looked for in it, and a
+    /// title without one can never contain it.
+    raw: Option<Box<str>>,
     likes: u64,
     rated: bool,
 }
 
 /// An index made ready for matching: one token table, idf per token, the mods holding each.
+///
+/// Laid out flat to stay small (it lives as long as Browse search does): every token's text once
+/// in one string, a sorted id list to find a token by its text, and every posting in one list
+/// with each token's run found by offset. A token's df is the length of its run.
 pub struct Matcher {
-    vocab: HashMap<Box<str>, u32>,
-    tokens: Vec<Box<str>>,
-    df: Vec<u32>,
+    /// The tokens' text, back to back; token `i` ends at `ends[i]` and starts where `i - 1` ends.
+    text: String,
+    ends: Vec<u32>,
+    /// Token ids sorted by their text, for lookup by binary search.
+    sorted: Vec<u32>,
     /// The token appears somewhere outside a description (two-edit matches need it).
     strong: Vec<bool>,
-    /// Per token: (mod index, best weight in that mod).
-    postings: Vec<Vec<(u32, f32)>>,
+    /// Token `i`'s postings, (mod index, best weight in that mod), are
+    /// `postings[starts[i]..starts[i + 1]]`, by mod index.
+    starts: Vec<u32>,
+    postings: Vec<(u32, f32)>,
     mods: Vec<PreparedMod>,
     /// Some mod carries the content-rating key, so the flag can be trusted.
     has_ratings: bool,
@@ -295,29 +305,39 @@ struct Unit {
     share: f32,
 }
 
+/// What `Matcher::new` keeps while it reads the index: the token table it looks words up in, and
+/// every (token, mod, weight) found, flattened into the matcher's runs at the end.
+#[derive(Default)]
+struct Building {
+    vocab: HashMap<Box<str>, u32>,
+    found: Vec<(u32, u32, f32)>,
+}
+
 impl Matcher {
     pub fn new(index: &CatalogIndex) -> Matcher {
         let mut m = Matcher {
-            vocab: HashMap::new(),
-            tokens: Vec::new(),
-            df: Vec::new(),
+            text: String::new(),
+            ends: Vec::new(),
+            sorted: Vec::new(),
             strong: Vec::new(),
+            starts: Vec::new(),
             postings: Vec::new(),
             mods: Vec::with_capacity(index.mods.len()),
             has_ratings: index.mods.iter().any(|m| m.rated.is_some()),
             kind_words: HashMap::new(),
         };
+        let mut b = Building::default();
         let mut table: HashMap<u32, f32> = HashMap::new();
         for (at, item) in index.mods.iter().enumerate() {
             table.clear();
             let title = normalize(&item.title);
             let words: Vec<&str> = title.split(' ').filter(|w| !w.is_empty()).collect();
             for word in &words {
-                m.put(&mut table, word, WEIGHT_TITLE, true);
+                m.put(&mut b, &mut table, word, WEIGHT_TITLE, true);
             }
             let joinable: Vec<&str> = words.iter().copied().filter(|w| *w != "and").collect();
             for pair in joinable.windows(2) {
-                m.put(&mut table, &format!("{}{}", pair[0], pair[1]), WEIGHT_TITLE * JOINED_SHARE, true);
+                m.put(&mut b, &mut table, &format!("{}{}", pair[0], pair[1]), WEIGHT_TITLE * JOINED_SHARE, true);
             }
             for &packed in &item.fields {
                 let class = (packed % PACK) as u8;
@@ -325,40 +345,40 @@ impl Matcher {
                 let Some(weight) = class_weight(class, text) else { continue };
                 let parts: Vec<&str> = text.split(' ').filter(|w| !w.is_empty()).collect();
                 for part in &parts {
-                    m.put(&mut table, part, weight, class != CLS_DESCRIPTION);
+                    m.put(&mut b, &mut table, part, weight, class != CLS_DESCRIPTION);
                 }
                 if parts.len() > 1 {
-                    m.put(&mut table, &parts.concat(), weight, true);
+                    m.put(&mut b, &mut table, &parts.concat(), weight, true);
                 }
             }
             for (&token, &weight) in &table {
-                m.df[token as usize] += 1;
-                m.postings[token as usize].push((at as u32, weight));
+                b.found.push((token, at as u32, weight));
             }
+            let raw = item.title.to_lowercase();
             m.mods.push(PreparedMod {
                 id: item.id,
-                title,
-                raw: item.title.to_lowercase(),
+                title: title.into_boxed_str(),
+                raw: is_foreign(&raw).then(|| raw.into_boxed_str()),
                 likes: item.likes.unwrap_or(0),
                 rated: item.rated == Some(true),
             });
         }
+        m.finish(b);
         m
     }
 
-    fn put(&mut self, table: &mut HashMap<u32, f32>, token: &str, weight: f32, strong: bool) {
+    fn put(&mut self, b: &mut Building, table: &mut HashMap<u32, f32>, token: &str, weight: f32, strong: bool) {
         if token.is_empty() {
             return;
         }
-        let id = match self.vocab.get(token) {
+        let id = match b.vocab.get(token) {
             Some(&id) => id,
             None => {
-                let id = self.tokens.len() as u32;
-                self.vocab.insert(Box::from(token), id);
-                self.tokens.push(Box::from(token));
-                self.df.push(0);
+                let id = self.ends.len() as u32;
+                b.vocab.insert(Box::from(token), id);
+                self.text.push_str(token);
+                self.ends.push(self.text.len() as u32);
                 self.strong.push(false);
-                self.postings.push(Vec::new());
                 id
             }
         };
@@ -369,6 +389,53 @@ impl Matcher {
         if strong {
             self.strong[id as usize] = true;
         }
+    }
+
+    /// Flattens what `new` found: each token's postings in one run, by mod index (the order the
+    /// mods were read in), and the ids sorted by text for lookup.
+    fn finish(&mut self, b: Building) {
+        let Building { vocab, mut found } = b;
+        drop(vocab);
+        let tokens = self.ends.len();
+        found.sort_by_key(|&(token, at, _)| (token, at));
+        let mut starts = vec![0u32; tokens + 1];
+        for &(token, _, _) in &found {
+            starts[token as usize + 1] += 1;
+        }
+        for i in 0..tokens {
+            starts[i + 1] += starts[i];
+        }
+        self.postings = found.into_iter().map(|(_, at, weight)| (at, weight)).collect();
+        self.starts = starts;
+        let mut sorted: Vec<u32> = (0..tokens as u32).collect();
+        sorted.sort_unstable_by(|&a, &b| self.token(a).cmp(self.token(b)));
+        self.sorted = sorted;
+        self.text.shrink_to_fit();
+        self.strong.shrink_to_fit();
+    }
+
+    fn token(&self, id: u32) -> &str {
+        let end = self.ends[id as usize] as usize;
+        let start = if id == 0 { 0 } else { self.ends[id as usize - 1] as usize };
+        &self.text[start..end]
+    }
+
+    fn tokens(&self) -> impl Iterator<Item = &str> {
+        (0..self.ends.len() as u32).map(|id| self.token(id))
+    }
+
+    /// The id of the token written `word`.
+    fn lookup(&self, word: &str) -> Option<u32> {
+        self.sorted.binary_search_by(|&id| self.token(id).cmp(word)).ok().map(|at| self.sorted[at])
+    }
+
+    /// How many mods carry token `id`.
+    fn df(&self, id: u32) -> u32 {
+        self.starts[id as usize + 1] - self.starts[id as usize]
+    }
+
+    fn postings(&self, id: u32) -> &[(u32, f32)] {
+        &self.postings[self.starts[id as usize] as usize..self.starts[id as usize + 1] as usize]
     }
 
     /// Words in the app's UI languages for mod kinds, each to the English word it means.
@@ -403,17 +470,16 @@ impl Matcher {
     /// Tokens a typed word matches, with the match quality.
     fn expand(&self, word: &str) -> Vec<(u32, f32)> {
         let mut out = Vec::new();
-        let exact = self.vocab.get(word).copied();
+        let exact = self.lookup(word);
         if let Some(id) = exact {
             out.push((id, 1.0));
         }
         let len = word.len();
-        for (id, token) in self.tokens.iter().enumerate() {
+        for (id, token) in self.tokens().enumerate() {
             let id = id as u32;
             if Some(id) == exact {
                 continue;
             }
-            let token: &str = token;
             if len >= 3 && token.starts_with(word) {
                 out.push((id, 0.8));
             } else if len >= 4 && token.len() >= 4 && within_one_edit(word, token) {
@@ -427,11 +493,11 @@ impl Matcher {
 
     fn unit(&self, word: &str) -> Unit {
         let matches = self.expand(word);
-        let exact = self.vocab.get(word).copied();
+        let exact = self.lookup(word);
         let n = self.mods.len() as u32;
         let df = match exact {
-            Some(id) => self.df[id as usize],
-            None => matches.iter().map(|(id, _)| self.df[*id as usize]).sum::<u32>().min(n),
+            Some(id) => self.df(id),
+            None => matches.iter().map(|(id, _)| self.df(*id)).sum::<u32>().min(n),
         };
         let mut idf = if matches.is_empty() { self.idf(0) } else { self.idf(df) };
         let mut split = None;
@@ -443,8 +509,8 @@ impl Matcher {
                 if b.len() < 3 && !b.bytes().all(|c| c.is_ascii_digit()) {
                     continue;
                 }
-                let (Some(&ia), Some(&ib)) = (self.vocab.get(a), self.vocab.get(b)) else { continue };
-                let d = self.df[ia as usize].min(self.df[ib as usize]);
+                let (Some(ia), Some(ib)) = (self.lookup(a), self.lookup(b)) else { continue };
+                let d = self.df(ia).min(self.df(ib));
                 if d < best_df {
                     best_df = d;
                     split = Some((ia, ib));
@@ -465,7 +531,7 @@ impl Matcher {
     /// Per mod, the best weight times quality over `matches`.
     fn spread(&self, matches: &[(u32, f32)], out: &mut [f32]) {
         for &(token, quality) in matches {
-            for &(at, weight) in &self.postings[token as usize] {
+            for &(at, weight) in self.postings(token) {
                 let value = weight * quality;
                 let slot = &mut out[at as usize];
                 if value > *slot {
@@ -573,7 +639,7 @@ impl Matcher {
                 }
             }
             for word in &foreign {
-                if m.raw.contains(word) {
+                if m.raw.as_deref().is_some_and(|raw| raw.contains(*word)) {
                     mass += idf0;
                     score += f64::from(idf0 * 3.0);
                 }
@@ -581,7 +647,7 @@ impl Matcher {
             if mass == 0.0 {
                 continue;
             }
-            if !whole.is_empty() && m.title == whole {
+            if !whole.is_empty() && *m.title == *whole {
                 score += EXACT_TITLE;
             }
             score *= 1.0 + LIKES_LIFT * (1.0 + m.likes as f64).log10();

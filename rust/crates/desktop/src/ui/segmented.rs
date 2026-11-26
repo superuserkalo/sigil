@@ -257,14 +257,46 @@ impl Segmented {
 }
 
 fn label_w(text: &str) -> f32 {
-    rune::text::measure(text, &[], LABEL, None).0
+    width_of(text, LABEL, false)
 }
 
 /// The width a count keeps: its own, or `COUNT_DIGITS` figures when that is more.
 fn count_w(count: &str) -> f32 {
-    let own = rune::text::measure(count, &[], SMALL_NUM, None).0;
-    let least = rune::text::measure(&"0".repeat(COUNT_DIGITS), &[], SMALL_NUM, None).0;
+    let own = width_of(count, SMALL_NUM, true);
+    let least = width_of(&"0".repeat(COUNT_DIGITS), SMALL_NUM, true);
     own.max(least)
+}
+
+/// Widths measured while a view ran, by text, whether it was a count and the font epoch (a font
+/// or family change measures again): a selector's natural
+/// width is also asked for from handlers and polls (Browse's toolbar tier), where a measure
+/// would build a second text system for the thread (every font and fallback again). Bounded:
+/// cleared once it holds `WIDTHS_KEPT`.
+const WIDTHS_KEPT: usize = 512;
+
+thread_local! {
+    static WIDTHS: std::cell::RefCell<std::collections::HashMap<(String, bool, u64), f32>> = std::cell::RefCell::new(std::collections::HashMap::new());
+}
+
+/// `text`'s width in `style`: measured with the window's text system while a view runs and kept;
+/// outside a view, what a view measured, else an estimate (a view measures it for real the next
+/// time it builds the control). Tests measure directly.
+fn width_of(text: &str, style: rune::TextStyle, count: bool) -> f32 {
+    let key = (text.to_string(), count, rune::text::font_epoch());
+    if let Some(w) = WIDTHS.with_borrow(|m| m.get(&key).copied()) {
+        return w;
+    }
+    if !rune::text::in_view() && !cfg!(test) {
+        return text.chars().count() as f32 * style.size * 0.6;
+    }
+    let w = rune::text::measure(text, &[], style, None).0;
+    WIDTHS.with_borrow_mut(|m| {
+        if m.len() >= WIDTHS_KEPT {
+            m.clear();
+        }
+        m.insert(key, w);
+    });
+    w
 }
 
 fn part_width(part: &Part, size: Size) -> f32 {

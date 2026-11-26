@@ -281,6 +281,29 @@ Nothing here is measured on Windows yet; see "How to measure on Windows" below.
      and (b) change what DWM composes and can only be judged on a Windows machine, so none of it
      ships here. Hidden in the tray (step 2) already frees everything, because the window itself
      goes.
+4. **Heap diet** (the macOS heap report's owners, `.scratch/mem-research/heap-report.md`, local):
+   - Catalog search index (`catalog_index/matcher.rs`): every token's text once in one string with
+     a sorted id list for lookup (it was a `HashMap<Box<str>, u32>` key and a `Vec<Box<str>>`),
+     postings in one flat list with per-token offsets (one `Vec` per token before; a token's df
+     is its run's length now), and the lower-case raw title kept only for titles with non-Latin
+     letters, the only ones a non-Latin typed word can be found in. Measured with a counting
+     allocator on the 2,606-mod index in `.scratch/search-review`: 4.49 MB to 2.28 MB of
+     allocated bytes, far fewer allocations. Every result is identical: the full search output
+     (ids, score and coverage bits, closest and rated flags) for the 316 eval queries, each of
+     their prefixes and each with "nsfw" added, 6,310 searches over the plain index and the one
+     with likes and ratings, compared byte for byte before and after; `search_eval` gives the
+     same hit@5 and recall@10.
+   - Performance page: its parsed configs (about 3.1 MB in the heap report) go when the page is
+     left (`State::go`, `performance::release`) and come back from the disk cache on return; the
+     page shows nothing in their place for the moment that takes instead of "Getting configs".
+   - Segmented selectors measured their labels outside a view (Browse's toolbar tier from
+     handlers and polls), which made Rune build a second text system for the UI thread. They now
+     keep widths measured while a view runs, and outside one answer from those or an estimate
+     (Rune patch 0008 adds `text::in_view`).
+   - Translations: only the language read builds its table (0.14 MB of German in a release
+     build, which reads English only).
+   - Windows: `icu.dll` and its word dictionaries load the first time word boundaries are asked
+     for, not after every launch's first frame (Rune patch 0008, about 800 KB and a thread).
 
 ## Remaining opportunities
 

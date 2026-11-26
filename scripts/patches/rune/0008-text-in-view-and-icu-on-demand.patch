@@ -1,0 +1,124 @@
+diff --git a/changelog/unreleased/2026-11-26-icu-on-demand.md b/changelog/unreleased/2026-11-26-icu-on-demand.md
+new file mode 100644
+index 0000000..e08bb8c
+--- /dev/null
++++ b/changelog/unreleased/2026-11-26-icu-on-demand.md
+@@ -0,0 +1 @@
++- Windows: `icu.dll` and its word dictionaries load on their own thread the first time word boundaries are asked for (a double-click, word movement, or text in Thai, Lao, Khmer, Burmese, Chinese or Japanese), still never before the first frame, instead of after every launch's first frame. An app whose text never asks loads none of it (about 800 KB and a thread).
+diff --git a/changelog/unreleased/2026-11-26-text-in-view.md b/changelog/unreleased/2026-11-26-text-in-view.md
+new file mode 100644
+index 0000000..56c7fbe
+--- /dev/null
++++ b/changelog/unreleased/2026-11-26-text-in-view.md
+@@ -0,0 +1 @@
++- `text::in_view` says whether a window's view is running on this thread with its text system lent to `text::measure`, so an app can keep widths it measured in its views rather than build a second text system by measuring outside one.
+diff --git a/crates/rune/src/app.rs b/crates/rune/src/app.rs
+index d0bfdb0..f92abb0 100644
+--- a/crates/rune/src/app.rs
++++ b/crates/rune/src/app.rs
+@@ -636,7 +636,8 @@ impl<S: 'static> App<S> {
+ 
+     #[cfg(not(target_arch = "wasm32"))]
+     pub fn try_run(mut self) -> Result<(), String> {
+-        // Windows' word dictionaries start loading now, on their own thread (platform/win32/segmenter.rs).
++        // Windows' word dictionaries: they load on their own thread when first asked for
++        // (platform/win32/segmenter.rs).
+         #[cfg(all(target_os = "windows", not(feature = "segmenter-dictionaries")))]
+         crate::platform::win32::segmenter::install();
+         let args = match self.argv.take() {
+diff --git a/crates/rune/src/marks.rs b/crates/rune/src/marks.rs
+index 4f458fb..fc0c77b 100644
+--- a/crates/rune/src/marks.rs
++++ b/crates/rune/src/marks.rs
+@@ -134,7 +134,8 @@ static INPUT_READY: AtomicBool = AtomicBool::new(false);
+ pub(crate) fn presented() {
+     if !TOTALS_DONE.swap(true, Ordering::Relaxed) {
+         mark("frame.first.presented");
+-        // Windows' word dictionaries load once the first frame is out (platform/win32/segmenter.rs).
++        // Windows' word dictionaries load, when asked for, only once the first frame is out
++        // (platform/win32/segmenter.rs).
+         #[cfg(all(target_os = "windows", not(feature = "segmenter-dictionaries")))]
+         crate::platform::win32::segmenter::first_frame_presented();
+     }
+diff --git a/crates/rune/src/platform/win32/segmenter.rs b/crates/rune/src/platform/win32/segmenter.rs
+index 09b610f..bb1b176 100644
+--- a/crates/rune/src/platform/win32/segmenter.rs
++++ b/crates/rune/src/platform/win32/segmenter.rs
+@@ -6,8 +6,10 @@
+ //! the exe leaves out ICU4X's word dictionaries (Chinese and Japanese words above all), and
+ //! nothing a frame draws ever waits for `icu.dll`.
+ //!
+-//! `icu.dll` and its dictionaries load on a thread of their own once the first frame is out (`warm`: about
+-//! 12,000 µs of that thread and 800,000 B). Until they're ready, and without `icu.dll` (Windows
++//! `icu.dll` and its dictionaries load on a thread of their own the first time words are asked
++//! for (a double-click, word movement, or text in one of those scripts), and never before the
++//! first frame is out (`warm`: about 12,000 µs of that thread and 800,000 B). An app whose text
++//! never asks loads none of it. Until they're ready, and without `icu.dll` (Windows
+ //! Server Core, Windows 10 before 1903), words fall back to the rule-based segmenter's (per
+ //! character in Chinese and Japanese, the whole run in Thai): never a wait. The
+ //! `segmenter-dictionaries` feature links ICU4X's word dictionaries instead.
+@@ -19,10 +21,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
+ /// Set once `warm` has loaded `icu.dll` and opened each dictionary language once.
+ static READY: AtomicBool = AtomicBool::new(false);
+ 
+-/// Gives Parley Windows' word boundaries, once per process, and starts loading them (`warm`).
++/// Gives Parley Windows' word boundaries, once per process. They load the first time they are
++/// asked for (`warm`).
+ pub(crate) fn install() {
+     parley_engine::dictionary::set_dictionary_segmenter(dictionary_words);
+-    warm();
+ }
+ 
+ /// Wakes `warm`'s thread: the first frame is on screen (`marks::presented`).
+@@ -57,7 +59,7 @@ fn warm() {
+ /// The word boundaries strictly inside `text` (byte offsets, ascending) for one dictionary
+ /// language, once `icu.dll` is ready; none before, so Parley's rule-based words stand.
+ fn dictionary_words(text: &str, language: &str, out: &mut Vec<usize>) {
+-    if !READY.load(Ordering::Acquire) { return; }
++    if !READY.load(Ordering::Acquire) { warm(); return; }
+     let Some(bounds) = word_bounds(text, language) else { return };
+     // ICU's word iterator ends a `word` where UAX #14 never breaks: after marks with no letter
+     // under them (U+0E31 U+0308; LineBreakTest 17.0.0, case 14571), and before a non-starter or a
+@@ -79,7 +81,9 @@ fn marks_only(s: &str) -> bool {
+ /// with `text.len()` (as ICU4X's segmenter gives them, past the leading 0). Until `icu.dll` is
+ /// ready, or without it, the rule-based segmenter's.
+ pub(crate) fn words(text: &str) -> Vec<usize> {
+-    let icu = READY.load(Ordering::Acquire).then(|| word_bounds(text, "")).flatten();
++    let ready = READY.load(Ordering::Acquire);
++    if !ready { warm(); }
++    let icu = ready.then(|| word_bounds(text, "")).flatten();
+     let Some(bounds) = icu else {
+         use icu_segmenter::{WordSegmenter, options::WordBreakInvariantOptions};
+         return WordSegmenter::new_for_non_complex_scripts(WordBreakInvariantOptions::default()).segment_str(text).filter(|&b| b > 0).collect();
+diff --git a/crates/rune/src/text.rs b/crates/rune/src/text.rs
+index 04521c4..6e6d6b1 100644
+--- a/crates/rune/src/text.rs
++++ b/crates/rune/src/text.rs
+@@ -103,7 +103,7 @@ pub use case::TextCase;
+ pub use hash::text_hash;
+ pub(crate) use hash::{directed, elide_key, shape_key};
+ pub(crate) use families::choose_families;
+-pub use measure::{FamiliesGuard, TextInk, advance, content_widths, font_epoch, ink, measure, measure_with, with_families};
++pub use measure::{FamiliesGuard, TextInk, advance, content_widths, font_epoch, in_view, ink, measure, measure_with, with_families};
+ #[cfg(target_arch = "wasm32")]
+ pub(crate) use measure::line_starts;
+ pub(crate) use measure::lend;
+diff --git a/crates/rune/src/text/measure.rs b/crates/rune/src/text/measure.rs
+index f2bc4ac..41b874d 100644
+--- a/crates/rune/src/text/measure.rs
++++ b/crates/rune/src/text/measure.rs
+@@ -72,6 +72,14 @@ pub(crate) fn lend<R>(text: &mut TextSystem, f: impl FnOnce() -> R) -> R {
+     f()
+ }
+ 
++/// Whether a window's view is running on this thread with the window's text system lent to
++/// [`measure`] (`lend`). Outside one, the first [`measure`] on a thread builds that thread's own
++/// text system (every font, fallback and cache again), which an app that measures only while
++/// its views run never needs: it can keep what it measured there and answer from that instead.
++pub fn in_view() -> bool {
++    LENT.with(|l| !l.get().is_null())
++}
++
+ /// Runs `f` on the state this thread measures with: its override when a [`with_families`]
+ /// guard is alive, else the process-wide one.
+ fn with_state<R>(f: impl FnOnce(&mut Option<Fonts>) -> R) -> R {
