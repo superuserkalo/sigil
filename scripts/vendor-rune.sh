@@ -10,18 +10,19 @@ RUNE_REPO="${RUNE_REPO:-https://github.com/anomalyco/rune.git}"
 RUNE_REV="${RUNE_REV:-631e8a67cb3c40225efa3f6c4f57b80e7b18f190}"
 DEST="vendor/rune"
 
-# Local fixes on top of the pinned revision, applied in order. Each is skipped when it is
-# already in the checkout. Drop a patch once the pinned revision contains it upstream.
+# Local fixes on top of the pinned revision, applied in order. Later patches build on earlier
+# ones, so a single patch cannot be tested for "already applied" by itself: the checkout is put
+# back to the pinned revision first and every patch is applied again. vendor/rune is a throwaway
+# checkout; changes made in it by hand are lost here unless they are saved as a patch.
+# Drop a patch once the pinned revision contains it upstream.
 apply_patches() {
   local patch
+  git -C "$DEST" reset -q --hard "$RUNE_REV"
+  git -C "$DEST" clean -fdq
   for patch in scripts/patches/rune/*.patch; do
     [[ -e "$patch" ]] || continue
-    if git -C "$DEST" apply --reverse --check "../../$patch" 2>/dev/null; then
-      echo "patch already applied: $(basename "$patch")"
-    else
-      git -C "$DEST" apply "../../$patch"
-      echo "patch applied: $(basename "$patch")"
-    fi
+    git -C "$DEST" apply "../../$patch"
+    echo "patch applied: $(basename "$patch")"
   done
 }
 
