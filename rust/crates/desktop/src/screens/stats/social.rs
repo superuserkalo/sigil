@@ -30,30 +30,12 @@ pub(super) fn social_section(s: &State, u: &Ui) -> El {
         .gap(12.0)
         .child(section_head(
             u,
-            tr("Players you meet"),
+            tr("Squad"),
             tr("Teammates and opponents, three shared matches or more"),
         ));
 
     section = match &v.social {
-        Fetched::Idle => section
-            .child(
-                text(tr(
-                    "Who you queue with, who you keep facing, and how those games went.",
-                ))
-                .font(BODY)
-                .color(u.muted),
-            )
-            .child(
-                row()
-                    .w_full()
-                    .child(
-                        u.action(tr("Show players"), ActionKind::Secondary)
-                            .key("stats-social-load")
-                            .cursor(rune::Cursor::Pointer)
-                            .on_press(|st: &mut State| crate::data::start_social_load(st)),
-                    ),
-            ),
-        Fetched::Loading => section.child(
+        Fetched::Idle | Fetched::Loading => section.child(
             text(tr("Loading teammates and opponents"))
                 .font(BODY)
                 .color(u.muted),
@@ -98,7 +80,7 @@ fn body(s: &State, u: &Ui, social: &Social) -> El {
         mates_table = mates_table.child(text(tr("None yet")).font(BODY).color(u.muted).py(10.0));
     }
     for record in &mates {
-        mates_table = mates_table.child(mate_row(u, record, social.lanes_known));
+        mates_table = mates_table.child(mate_row(s, u, record, social.lanes_known));
     }
     if !social.lanes_known && !social.mates.is_empty() {
         mates_table = mates_table.child(
@@ -119,7 +101,7 @@ fn body(s: &State, u: &Ui, social: &Social) -> El {
         enemies_table = enemies_table.child(text(tr("None yet")).font(BODY).color(u.muted).py(10.0));
     }
     for record in &enemies {
-        enemies_table = enemies_table.child(enemy_row(u, record));
+        enemies_table = enemies_table.child(enemy_row(s, u, record));
     }
 
     let hidden = social.mates.len() > ROWS || social.enemies.len() > ROWS;
@@ -146,8 +128,8 @@ const COL_COUNT: f32 = 72.0;
 const COL_RATE: f32 = 72.0;
 const COL_LANE: f32 = 80.0;
 const COL_LANE_RATE: f32 = 104.0;
-/// The queued-together mark and the Statlocker button.
-const MARKS: f32 = 52.0;
+/// The row's more button.
+const MARKS: f32 = 32.0;
 
 /// How the teammates table is sorted. Every column sorts high to low; a rate below the
 /// sample floor ("-") always sorts last.
@@ -274,63 +256,46 @@ fn count_cell(value: Option<u64>, w: f32, color: Color) -> El {
     )
 }
 
-fn name_cell(u: &Ui, record: &PlayerRecord) -> (String, El) {
-    let name = record
-        .persona_name
-        .clone()
-        .unwrap_or_else(|| record.account_id.to_string());
-    let el = row()
-        .grow(1.0)
-        .min_w(0.0)
-        .gap(12.0)
-        .center_y()
-        .child(avatar(u, &name, 24.0))
-        .child(text(name.clone()).font(BODY_MED).color(u.ink).truncate());
-    (name, el)
+/// The player cell: picture and name, a link to their page, with "squad" after a premade.
+fn name_cell(s: &State, u: &Ui, record: &PlayerRecord) -> El {
+    let name = record.persona_name.clone().unwrap_or_else(|| record.account_id.to_string());
+    let mut cell = row().grow(1.0).min_w(0.0).gap(8.0).center_y().child(player_link(s, u, record.account_id, &name, 24.0, false));
+    if record.premade {
+        cell = cell.child(
+            text(tr("squad"))
+                .font(SMALL)
+                .color(u.muted)
+                .help(tr("Queued together: on your team and Steam friends at the start of the match")),
+        );
+    }
+    cell
 }
 
-fn person(u: &Ui, record: &PlayerRecord, name: &str) -> El {
-    let account_id = record.account_id;
+fn person(u: &Ui, record: &PlayerRecord) -> El {
     row()
-        .key(format!("stats-person-{account_id}"))
+        .key(format!("stats-person-{}", record.account_id))
         .w_full()
         .h(40.0)
         .gap(16.0)
         .center_y()
         .border_sides([0.0, 0.0, 1.0, 0.0], u.hair)
-        .hover(u.hover)
-        .focusable(true)
-        .role("button")
-        .label(crate::screens::settings::i18n::fill(tr("Open the stats for {}"), &[name]))
-        .cursor(rune::Cursor::Pointer)
-        .on_press(move |st: &mut State| crate::data::load_stats_account(st, account_id))
 }
 
-/// The queued-together mark keeps its slot, so the Statlocker buttons line up.
+/// The row's more button: Track, Statlocker and Copy id.
 fn marks(u: &Ui, record: &PlayerRecord) -> El {
     let account_id = record.account_id;
-    row()
-        .w(MARKS)
-        .gap(8.0)
-        .center_y()
-        .child(if record.premade {
-            row().w(16.0).center().child(icon(&icons::PIN, 12.0).color(u.muted).label(tr("Queued together")))
-        } else {
-            row().w(16.0)
-        })
-        .child(statlocker_link(
-            u,
-            format!("stats-person-statlocker-{account_id}"),
-            statlocker_profile_url(account_id),
-            tr("Open on Statlocker"),
-        ))
+    let key = format!("stats-person-more-{account_id}");
+    row().w(MARKS).center_y().justify_end().child(
+        u.more_button(tr("More for this player")).key(key.clone()).cursor(rune::Cursor::Pointer).on_press(move |st: &mut State| {
+            st.stats.menu = Some(super::Menu::Person(account_id, key.clone()));
+        }),
+    )
 }
 
-fn mate_row(u: &Ui, record: &PlayerRecord, lanes: bool) -> El {
-    let (name, name_el) = name_cell(u, record);
+fn mate_row(s: &State, u: &Ui, record: &PlayerRecord, lanes: bool) -> El {
     let id = record.account_id;
-    person(u, record, &name)
-        .child(name_el)
+    person(u, record)
+        .child(name_cell(s, u, record))
         .child(count_cell(Some(record.matches), COL_COUNT, u.prose))
         .child(rate_cell(u, record.rate_together(), COL_RATE, format!("stats-person-rate-{id}")))
         .child(count_cell(record.lane.map(|lane| lane.matches), COL_LANE, if lanes { u.prose } else { u.muted }))
@@ -338,11 +303,10 @@ fn mate_row(u: &Ui, record: &PlayerRecord, lanes: bool) -> El {
         .child(marks(u, record))
 }
 
-fn enemy_row(u: &Ui, record: &PlayerRecord) -> El {
-    let (name, name_el) = name_cell(u, record);
+fn enemy_row(s: &State, u: &Ui, record: &PlayerRecord) -> El {
     let id = record.account_id;
-    person(u, record, &name)
-        .child(name_el)
+    person(u, record)
+        .child(name_cell(s, u, record))
         .child(count_cell(Some(record.matches), COL_COUNT, u.prose))
         .child(rate_cell(u, record.rate_together(), COL_RATE, format!("stats-person-rate-{id}")))
         .child(marks(u, record))

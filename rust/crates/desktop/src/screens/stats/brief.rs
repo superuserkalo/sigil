@@ -189,7 +189,6 @@ pub(super) fn progress(s: &State, u: &Ui, snap: &StatsSnapshot, d: &Derived) -> 
                 .child(switch),
         )
         .child(body)
-        .child(form_strip(u, snap, d))
 }
 
 fn rank_chart(u: &Ui, snap: &StatsSnapshot, points: &[RankPoint]) -> El {
@@ -389,189 +388,185 @@ fn chart_empty(u: &Ui, message: &str) -> El {
         .child(text(tr(message)).font(BODY).color(u.muted))
 }
 
-/// The last 30 decided results as beads: a win stands up, a loss hangs down.
+/// The newest results as beads, oldest left, with the streak in words.
 fn form_strip(u: &Ui, snap: &StatsSnapshot, d: &Derived) -> El {
     let results: Vec<bool> = snap
         .matches
         .iter()
+        .filter(|item| !item.is_street_brawl())
         .filter_map(|item| item.win)
         .take(FORM_BEADS)
         .collect::<Vec<_>>()
         .into_iter()
         .rev()
         .collect();
-    let (bead, gap, h) = (6.0_f32, 3.0_f32, 24.0_f32);
-    let base = 14.0;
-    let mut shape = Shape::new();
-    for (index, win) in results.iter().enumerate() {
-        let x0 = index as f32 * (bead + gap);
-        shape = if *win {
-            shape.fill(rect(x0, 2.0, x0 + bead, base - 1.0), u.teal.alpha(0.85))
-        } else {
-            shape.fill(rect(x0, base + 1.0, x0 + bead, h - 2.0), u.rose.alpha(0.75))
-        };
-    }
-    let width = results.len() as f32 * (bead + gap);
     let wins = results.iter().filter(|w| **w).count();
     let mut words = vec![crate::screens::settings::i18n::fill(
-        tr("{} W {} L in your last {}"),
-        &[
-            &wins.to_string(),
-            &(results.len() - wins).to_string(),
-            &results.len().to_string(),
-        ],
+        tr("{} W {} L in the last {}, newest right"),
+        &[&wins.to_string(), &(results.len() - wins).to_string(), &results.len().to_string()],
     )];
     if let Some(streak) = d.streak.filter(|streak| streak.length >= 2) {
         words.push(crate::screens::settings::i18n::fill(
             tr("{} {} in a row now"),
-            &[
-                &streak.length.to_string(),
-                if streak.win { tr("wins") } else { tr("losses") },
-            ],
+            &[&streak.length.to_string(), if streak.win { tr("wins") } else { tr("losses") }],
         ));
     }
     row()
         .key("stats-form")
         .w_full()
+        .h(40.0)
+        .px(12.0)
         .gap(16.0)
         .center_y()
-        .child(text(tr("Form")).font(SMALL).color(u.muted).w(AXIS_W - 16.0))
-        .child(
-            canvas(shape)
-                .size(width.max(1.0), h)
-                .role("img")
-                .label(words[0].clone()),
-        )
-        .child(text(words.join("  ·  ")).font(TNUM_SMALL).color(u.muted))
+        .radius(crate::ui::r(4.0))
+        .fill(u.raised)
+        .border(1.0, u.hair)
+        .child(text(tr("Form")).font(SMALL).color(u.muted).w(64.0))
+        .child(form_beads(u, &results).role("img").label(words[0].clone()))
+        .child(text(words.join("  ·  ")).font(TNUM_SMALL).color(u.muted).truncate().min_w(0.0).shrink())
 }
-
 
 // --- overview --------------------------------------------------------------
 
-/// The Overview tab: who, the four numbers, what stands out, progress, then the newest
-/// matches beside the hero pool.
+/// The Overview tab: who and where they stand, the four numbers and the form, then the newest
+/// matches beside the hero pool, then (on your own page) what stands out, then progress.
 pub(super) fn overview(s: &State, u: &Ui, snap: &StatsSnapshot, d: &Derived) -> El {
     let mut c = col()
         .key("stats-overview")
         .w_full()
         .gap(8.0)
-        .child(band(u, snap))
+        .child(band(s, u, snap))
         .child(tiles(u, snap, d));
     if snap.matches.is_empty() {
         return c.child(
             row().h(32.0).center_y().child(
-                text(tr("The API only knows matches that finished. New ones show up a little while after they end."))
+                text(tr("No matches stored for this player yet. New matches show up a little while after they end."))
                     .font(BODY)
                     .color(u.prose),
             ),
         );
     }
-    c = c
-        .child(insights(s, u, snap, d).mt(16.0))
-        .child(progress(s, u, snap, d).mt(16.0))
-        .child(
-            row()
-                .w_full()
-                .mt(16.0)
-                .gap(24.0)
-                .flex_wrap()
-                .items_start()
-                .child(recent_matches(s, u, snap))
-                .child(top_heroes(s, u, snap)),
-        );
-    c
+    c = c.child(form_strip(u, snap, d)).child(
+        row()
+            .w_full()
+            .mt(16.0)
+            .gap(24.0)
+            .flex_wrap()
+            .items_start()
+            .child(recent_matches(s, u, snap))
+            .child(top_heroes(s, u, snap)),
+    );
+    if !super::nav::visiting(s) {
+        c = c.child(insights(s, u, snap, d).mt(16.0));
+    }
+    c.child(progress(s, u, snap, d).mt(16.0))
 }
 
-/// The profile band: avatar, name and account, then four key numbers in fixed cells.
-fn band(u: &Ui, snap: &StatsSnapshot) -> El {
-    let rank = if snap.rank.reported {
-        insight::badge_label(snap.rank.badge, &snap.tier_names)
-    } else {
-        "--".to_string()
-    };
+/// The header band: picture, name, id and when they last played; the rank badge, rank and
+/// place; then matches, win rate and its likely range.
+fn band(s: &State, u: &Ui, snap: &StatsSnapshot) -> El {
+    use crate::screens::settings::i18n::fill;
+    let rank = if snap.rank.reported { insight::badge_label(snap.rank.badge, &snap.tier_names) } else { tr("Unranked").to_string() };
     let top = snap
         .rank
         .benchmark
         .as_ref()
         .filter(|bench| bench.current_season)
         .map(|bench| match bench.top_percent_text() {
-            Some(share) => format!("{share}%"),
-            None => "<0.1%".to_string(),
-        })
-        .unwrap_or_else(|| "--".to_string());
-    let (wins, played) = snap
-        .heroes
-        .iter()
-        .fold((0u64, 0u64), |(w, m), hero| (w + hero.wins, m + hero.matches_played));
-    let win_rate = if played > 0 {
-        format!("{:.1}%", wins as f64 * 100.0 / played as f64)
-    } else {
-        "--".to_string()
-    };
-    // Four cells on the same columns as the four tiles below (equal widths, 8 apart), so the
-    // band's dividers sit on the tiles' edges and no gap opens between the name and the rank.
-    let cell = |key: &'static str, label: &str, value: El| {
-        col()
-            .key(key)
-            .min_w(0.0)
-            .h(48.0)
-            .pl(12.0)
-            .gap(2.0)
-            .justify_center()
-            .border_sides([0.0, 0.0, 0.0, 1.0], u.hair)
-            .child(text(tr(label).to_string()).font(SMALL).color(u.muted))
-            .child(value)
-    };
-    let number = |value: String| text(value).font(crate::ui::NUM).color(u.ink).truncate().min_w(0.0);
-    // The rank and how high it places, on one line: "Eternus 5  Top <0.1%".
-    let mut rank_line = row().w_full().gap(8.0).items_end().child(number(rank).shrink());
-    if top != "--" {
-        rank_line = rank_line.child(
-            text(format!("{} {top}", tr("Top")))
-                .font(TNUM_SMALL)
-                .color(u.muted)
-                .truncate()
+            Some(share) => format!("{} {share}%", tr("Top")),
+            None => format!("{} <0.1%", tr("Top")),
+        });
+    let change = snap
+        .rank
+        .last_match
+        .as_ref()
+        .and_then(|last| last.desired_progress_change)
+        .filter(|delta| *delta != 0)
+        .map(|delta| (fill(tr("{} last match"), &[&signed(delta)]), if delta > 0 { u.teal } else { u.rose }));
+    let career = &snap.career;
+    let last_played = snap.matches.first().map(|item| capitalise(&insight::day_label(item.start_time, snap.generated_unix)));
+    let account_id = snap.account_id;
+    let line = |value: String, color: Color| text(value).font(TNUM_SMALL).color(color).truncate().min_w(0.0);
+    let who = row()
+        .min_w(0.0)
+        .gap(12.0)
+        .center_y()
+        .child(player_avatar(s, u, account_id, &snap.profile.persona_name, 56.0))
+        .child(
+            col()
+                .grow(1.0)
                 .min_w(0.0)
-                .shrink(),
+                .gap(2.0)
+                .child(
+                    row()
+                        .gap(8.0)
+                        .center_y()
+                        .child(text(snap.profile.persona_name.clone()).font(H1).color(u.ink).truncate().min_w(0.0).shrink())
+                        .children(snap.profile.country_code.clone().map(|cc| text(cc).font(TNUM_SMALL).color(u.muted))),
+                )
+                .child(
+                    row()
+                        .gap(4.0)
+                        .center_y()
+                        .child(line(account_id.to_string(), u.muted))
+                        .child(
+                            u.icon_button(&crate::icons::COPY, tr("Copy account id"))
+                                .key("stats-band-copy")
+                                .size(20.0, 20.0)
+                                .cursor(rune::Cursor::Pointer)
+                                .on_press_tx(move |_st: &mut State, tx: &mut rune::Tx| tx.copy(account_id.to_string())),
+                        ),
+                )
+                .child(line(last_played.map(|day| fill(tr("Last played {}"), &[&day.to_lowercase()])).unwrap_or_default(), u.muted)),
         );
-    }
+    let mut standing = col().min_w(0.0).gap(2.0).child(text(rank).font(crate::ui::NUM).color(u.ink).truncate());
+    standing = standing.child(line(top.unwrap_or_default(), u.muted));
+    standing = standing.child(match change {
+        Some((words, color)) => line(words, color),
+        None => line(String::new(), u.muted),
+    });
+    let rank_cell = row()
+        .min_w(0.0)
+        .gap(12.0)
+        .center_y()
+        .pl(16.0)
+        .border_sides([0.0, 0.0, 0.0, 1.0], u.hair)
+        .child(rank_badge(s, u, if snap.rank.reported { snap.rank.badge } else { 0 }, 56.0))
+        .child(standing);
+    let record = if career.matches_played > 0 {
+        col()
+            .min_w(0.0)
+            .gap(2.0)
+            .pl(16.0)
+            .border_sides([0.0, 0.0, 0.0, 1.0], u.hair)
+            .child(
+                row()
+                    .gap(16.0)
+                    .items_end()
+                    .child(text(fill(tr("{} matches"), &[&thousands(career.matches_played)])).font(crate::ui::NUM).color(u.ink))
+                    .child(text(fill(tr("{} win"), &[&format!("{:.1}%", career.win_rate_percent)])).font(crate::ui::NUM).color(u.ink)),
+            )
+            .child(line(format!("{} W {} L", thousands(career.wins), thousands(career.losses)), u.muted))
+            .child(line(
+                fill(tr("Likely {} to {}"), &[&format!("{:.1}", career.win_rate_low_percent), &format!("{:.1}%", career.win_rate_high_percent)]),
+                u.muted,
+            ))
+    } else {
+        col().pl(16.0).border_sides([0.0, 0.0, 0.0, 1.0], u.hair).child(line(tr("No hero rows yet").to_string(), u.muted))
+    };
     el().key("stats-identity")
         .w_full()
-        .h(72.0)
+        .h(88.0)
+        .px(12.0)
         .py(12.0)
-        .equal_columns(4)
-        .gap(8.0)
+        .equal_columns(3)
+        .gap(16.0)
         .radius(crate::ui::r(4.0))
         .fill(u.raised)
         .border(1.0, u.hair)
-        .child(
-            row()
-                .min_w(0.0)
-                .h(48.0)
-                .pl(12.0)
-                .gap(12.0)
-                .center_y()
-                .child(avatar(u, &snap.profile.persona_name, 48.0))
-                .child(
-                    col()
-                        .grow(1.0)
-                        .min_w(0.0)
-                        .gap(2.0)
-                        .child(text(snap.profile.persona_name.clone()).font(H1).color(u.ink).truncate())
-                        .child(
-                            text(crate::screens::settings::i18n::fill(
-                                tr("Account {}"),
-                                &[&snap.account_id.to_string()],
-                            ))
-                            .font(TNUM_SMALL)
-                            .color(u.muted)
-                            .truncate(),
-                        ),
-                ),
-        )
-        .child(cell("stats-band-rank", "Rank", rank_line))
-        .child(cell("stats-band-win", "Win rate", number(win_rate)))
-        .child(cell("stats-band-matches", "Matches 30 d", number(snap.profile.matches_played_last_30d.to_string())))
+        .child(who)
+        .child(rank_cell)
+        .child(record)
 }
 
 /// The four numbers for the newest matches, each a tile of the same size.
@@ -609,15 +604,12 @@ fn tiles(u: &Ui, snap: &StatsSnapshot, d: &Derived) -> El {
     r
 }
 
-/// What stands out: what changed, then what to work on, as rows of one fixed grid.
+/// What stands out: at most three rows under one head, on your own page only.
 fn insights(s: &State, u: &Ui, snap: &StatsSnapshot, d: &Derived) -> El {
     let _ = snap;
     let mut list = col().key("stats-brief").w_full().child(section_head(
         u,
-        &crate::screens::settings::i18n::fill(
-            tr("Last {} matches: what stands out"),
-            &[&d.form.recent.matches.to_string()],
-        ),
+        &crate::screens::settings::i18n::fill(tr("Last {} matches: what stands out"), &[&d.form.recent.matches.to_string()]),
         "",
     ));
     let row_of = |key: String, label: &str, tone: Color, lead: Option<El>, title: String, detail: String| {
@@ -629,9 +621,7 @@ fn insights(s: &State, u: &Ui, snap: &StatsSnapshot, d: &Derived) -> El {
             .center_y()
             .border_sides([0.0, 0.0, 1.0, 0.0], u.hair)
             // The first cell holds the hero, or the tone mark when the note has none.
-            .child(row().w(24.0).h(24.0).center().child(lead.unwrap_or_else(|| {
-                el().size(8.0, 8.0).radius(1.0).fill(tone).a11y_hidden()
-            })))
+            .child(row().w(24.0).h(24.0).center().child(lead.unwrap_or_else(|| el().size(8.0, 8.0).radius(1.0).fill(tone).a11y_hidden())))
             .child(text(tr(label).to_string()).font(LABEL).color(u.muted).w(88.0))
             .child(
                 col()
@@ -648,115 +638,32 @@ fn insights(s: &State, u: &Ui, snap: &StatsSnapshot, d: &Derived) -> El {
         Tone::Neutral => u.muted,
     };
     let lead_of = |item: &insight::Insight| item.hero_id.map(|hero_id| hero_chip(s, u, hero_id, &item.title, 24.0));
+    let mut rows = Vec::new();
     if let Some(changed) = &d.brief.changed {
-        list = list.child(row_of(
-            "stats-changed".into(),
-            "Changed",
-            u.prose,
-            None,
-            changed.title.clone(),
-            changed.detail.clone(),
-        ));
+        rows.push(row_of("stats-changed".into(), "Changed", u.prose, None, changed.title.clone(), changed.detail.clone()));
     }
     if let Some(next) = &d.brief.next {
-        list = list.child(row_of(
-            "stats-next".into(),
-            "Next",
-            tone_of(next.tone),
-            lead_of(next),
-            next.title.clone(),
-            next.detail.clone(),
-        ));
+        rows.push(row_of("stats-next".into(), "Next", tone_of(next.tone), lead_of(next), next.title.clone(), next.detail.clone()));
     }
-    for (index, note) in d.brief.also.iter().take(2).enumerate() {
+    for (index, note) in d.brief.also.iter().enumerate() {
         let label = match note.tone {
             Tone::Good => "Going well",
             Tone::Focus => "Watch",
             Tone::Neutral => "Note",
         };
-        list = list.child(row_of(
-            format!("stats-note-{index}"),
-            label,
-            tone_of(note.tone),
-            lead_of(note),
-            note.title.clone(),
-            note.detail.clone(),
-        ));
+        rows.push(row_of(format!("stats-note-{index}"), label, tone_of(note.tone), lead_of(note), note.title.clone(), note.detail.clone()));
     }
-    if let Some(partner) = partner_row(s, u) {
-        list = list.child(partner);
+    for r in rows.into_iter().take(3) {
+        list = list.child(r);
     }
     list
 }
 
-/// "Best lane partner" (or "Best duo" without lane data): the teammate you win with most,
-/// from the People data once it is loaded. Before that, one press loads it.
-fn partner_row(s: &State, u: &Ui) -> Option<El> {
-    use crate::screens::settings::i18n::fill;
-    let frame = |lead: El, title: String, detail: String| {
-        row()
-            .key("stats-partner")
-            .w_full()
-            .h(44.0)
-            .gap(12.0)
-            .center_y()
-            .border_sides([0.0, 0.0, 1.0, 0.0], u.hair)
-            .child(row().w(24.0).h(24.0).center().child(lead))
-            .child(text(tr("Partner").to_string()).font(LABEL).color(u.muted).w(88.0))
-            .child(
-                col()
-                    .grow(1.0)
-                    .min_w(0.0)
-                    .gap(0.0)
-                    .child(text(title).font(BODY_MED).color(u.ink).truncate())
-                    .child(text(detail).font(SMALL).color(u.muted).truncate()),
-            )
-    };
-    let mark = || el().size(8.0, 8.0).radius(1.0).fill(u.muted).a11y_hidden();
-    match &s.stats.social {
-        super::Fetched::Ready(social) => {
-            let best = social.best_partner()?;
-            let name = best.persona_name.clone().unwrap_or_else(|| best.account_id.to_string());
-            let account_id = best.account_id;
-            let (title, detail) = if best.in_lane {
-                (
-                    fill(tr("Best lane partner: {}"), &[&name]),
-                    fill(tr("{}% when you share a lane, {} of {} matches"), &[&format!("{:.0}", best.rate_percent), &best.wins.to_string(), &best.matches.to_string()]),
-                )
-            } else {
-                (
-                    fill(tr("Best duo: {}"), &[&name]),
-                    fill(tr("{}% together, {} of {} matches"), &[&format!("{:.0}", best.rate_percent), &best.wins.to_string(), &best.matches.to_string()]),
-                )
-            };
-            Some(
-                frame(avatar(u, &name, 24.0), title, detail)
-                    .hover(u.hover)
-                    .focusable(true)
-                    .role("button")
-                    .label(fill(tr("Open the stats for {}"), &[&name]))
-                    .cursor(rune::Cursor::Pointer)
-                    .on_press(move |st: &mut State| crate::data::load_stats_account(st, account_id)),
-            )
-        }
-        super::Fetched::Idle => Some(
-            frame(mark(), tr("Best lane partner").to_string(), tr("Who you win with most when you share a lane").to_string()).child(
-                u.action(tr("Find out"), crate::ui::ActionKind::Ghost)
-                    .key("stats-partner-load")
-                    .h(28.0)
-                    .cursor(rune::Cursor::Pointer)
-                    .on_press(|st: &mut State| crate::data::start_social_load(st)),
-            ),
-        ),
-        super::Fetched::Loading => Some(frame(mark(), tr("Best lane partner").to_string(), tr("Loading teammates and opponents").to_string())),
-        super::Fetched::Failed(_) => None,
-    }
-}
-
-const SHORT_ROWS: usize = 5;
+const RECENT_ROWS: usize = 8;
+const HERO_ROWS: usize = 6;
 
 /// A column of the two side by side lists: head with its "All" button, then rows.
-fn short_list(u: &Ui, key: &str, title: &str, all: &str, to: super::Tab, rows: Vec<El>) -> El {
+fn short_list(u: &Ui, key: &str, title: &str, all: String, to: super::Tab, rows: Vec<El>) -> El {
     let mut c = col()
         .key(key.to_string())
         .w(0.0)
@@ -771,11 +678,12 @@ fn short_list(u: &Ui, key: &str, title: &str, all: &str, to: super::Tab, rows: V
                 .child(text(tr(title).to_string()).font(H2).color(u.ink))
                 .child(spacer())
                 .child(
-                    u.action(tr(all), crate::ui::ActionKind::Ghost)
+                    u.action(&all, crate::ui::ActionKind::Ghost)
                         .key(format!("{key}-all"))
                         .h(28.0)
+                        .mr(-12.0)
                         .cursor(rune::Cursor::Pointer)
-                        .on_press(move |st: &mut State| st.stats.tab = to),
+                        .on_press(move |st: &mut State| super::nav::set_tab(st, to)),
                 ),
         );
     for r in rows {
@@ -788,17 +696,14 @@ fn recent_matches(s: &State, u: &Ui, snap: &StatsSnapshot) -> El {
     let rows = snap
         .matches
         .iter()
-        .take(SHORT_ROWS)
+        .take(RECENT_ROWS)
         .map(|item| {
             let (result, color) = match item.win {
                 Some(true) => (tr("Win"), u.teal),
                 Some(false) => (tr("Loss"), u.rose),
                 None => ("--", u.muted),
             };
-            let name = item
-                .hero_name
-                .clone()
-                .unwrap_or_else(|| format!("Hero {}", item.hero_id));
+            let name = item.hero_name.clone().unwrap_or_else(|| format!("Hero {}", item.hero_id));
             let id = item.match_id;
             row()
                 .key(format!("stats-recent-{id}"))
@@ -812,54 +717,82 @@ fn recent_matches(s: &State, u: &Ui, snap: &StatsSnapshot) -> El {
                 .role("button")
                 .label(format!("{result} on {name}, open match"))
                 .cursor(rune::Cursor::Pointer)
-                .on_press(move |st: &mut State| {
-                    st.stats.tab = super::Tab::Matches;
-                    st.stats.expanded = Some(id);
-                })
+                .on_press_tx(move |st: &mut State, tx: &mut rune::Tx| super::nav::open_match(st, tx, id))
                 .child(el().w(3.0).h(40.0).fill(color).a11y_hidden())
-                .child(text(result.to_string()).font(BODY_MED).color(color).w(40.0))
+                .child(text(result.to_string()).font(BODY_MED).color(color).w(36.0))
                 .child(hero_chip(s, u, item.hero_id, &name, 24.0))
                 .child(text(name).font(BODY).color(u.ink).truncate().grow(1.0).min_w(0.0))
-                .child(kda_text(u, item.kills, item.deaths, item.assists).w(88.0))
-                .child(num(thousands(item.net_worth), 64.0, u.muted))
-                .child(num(insight::clock_label(item.start_time), 48.0, u.muted).mr(8.0))
+                .child(kda_text(u, item.kills, item.deaths, item.assists).w(84.0))
+                .child(num(thousands(spm(item)), 48.0, u.muted))
+                .child(num(format!("{}m", item.duration_seconds / 60), 36.0, u.muted).mr(8.0))
         })
         .collect();
-    short_list(u, "stats-recent", "Recent matches", "All matches", super::Tab::Matches, rows)
+    short_list(
+        u,
+        "stats-recent",
+        "Recent matches",
+        crate::screens::settings::i18n::fill(tr("All {}"), &[&thousands(snap.matches.len() as u64)]),
+        super::Tab::Matches,
+        rows,
+    )
 }
 
 fn top_heroes(s: &State, u: &Ui, snap: &StatsSnapshot) -> El {
     let mut heroes: Vec<&deadlock_core::stats::HeroPerformance> = snap.heroes.iter().collect();
     heroes.sort_by(|a, b| b.matches_played.cmp(&a.matches_played));
+    let total = heroes.len();
     let rows = heroes
         .into_iter()
-        .take(SHORT_ROWS)
+        .take(HERO_ROWS)
         .map(|hero| {
             let name = hero_name(hero);
+            let hero_id = hero.hero_id;
             row()
-                .key(format!("stats-top-{}", hero.hero_id))
+                .key(format!("stats-top-{hero_id}"))
                 .w_full()
                 .h(40.0)
                 .gap(12.0)
                 .center_y()
                 .border_sides([0.0, 0.0, 1.0, 0.0], u.hair)
-                .child(hero_chip(s, u, hero.hero_id, &name, 24.0))
+                .hover(u.hover)
+                .focusable(true)
+                .role("button")
+                .label(crate::screens::settings::i18n::fill(tr("Matches on {}"), &[&name]))
+                .cursor(rune::Cursor::Pointer)
+                .on_press(move |st: &mut State| super::matches::filter_hero(st, hero_id))
+                .child(hero_chip(s, u, hero_id, &name, 24.0))
                 .child(text(name).font(BODY_MED).color(u.ink).truncate().grow(1.0).min_w(0.0))
-                .child(num(format!("{:.0}%", hero.win_rate_percent), 64.0, u.prose))
-                .child(
-                    num(
-                        crate::screens::settings::i18n::fill(
-                            tr("{} matches"),
-                            &[&hero.matches_played.to_string()],
-                        ),
-                        96.0,
-                        u.muted,
-                    )
-                    .mr(8.0),
-                )
+                .child(num(thousands(hero.matches_played), 40.0, u.muted))
+                .child(num(format!("{:.0}%", hero.win_rate_percent), 40.0, u.prose))
+                .child(mini_bar(u, hero.win_rate_percent, 64.0))
+                .child(num(format!("{:.1} KDA", hero.kda), 64.0, u.muted).mr(8.0))
         })
         .collect();
-    short_list(u, "stats-top", "Top heroes", "All heroes", super::Tab::Heroes, rows)
+    short_list(
+        u,
+        "stats-top",
+        "Heroes",
+        crate::screens::settings::i18n::fill(tr("All {}"), &[&total.to_string()]),
+        super::Tab::Heroes,
+        rows,
+    )
+}
+
+/// A win rate on a thin 0 to 100 track, with a tick at 50.
+fn mini_bar(u: &Ui, percent: f64, w: f32) -> El {
+    let fill = (percent.clamp(0.0, 100.0) / 100.0) as f32 * w;
+    row()
+        .w(w)
+        .h(12.0)
+        .center_y()
+        .child(
+            el().w(w)
+                .h(4.0)
+                .fill(Color::WHITE.alpha(0.08))
+                .child(el().absolute(0.0, 0.0).w(fill).h(4.0).fill(if percent >= 50.0 { u.teal.alpha(0.8) } else { u.rose.alpha(0.7) }))
+                .child(el().absolute(w / 2.0, -2.0).w(1.0).h(8.0).fill(u.muted)),
+        )
+        .a11y_hidden()
 }
 
 /// K / D / A with quiet slashes and deaths in rose, right aligned.

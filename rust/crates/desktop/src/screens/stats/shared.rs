@@ -19,84 +19,242 @@ pub(super) const TNUM_SMALL: TextStyle = TextStyle::new(12.0, 430.0).lh(16.0).fe
 pub(super) const TNUM_BIG: TextStyle =
     TextStyle::new(22.0, 600.0).lh(28.0).tracking(-0.2).features("'tnum' 1");
 
-/// The Stats tab row: 32 high over a hairline, the open tab underlined in ink. Live keeps
-/// room for its "running" mark so the tabs after it never move.
+/// The Stats tab row: the shared segmented selector as tabs, eight parts. Live carries a green
+/// mark only while a match runs. Every press goes through `nav::set_tab`, so the top place
+/// remembers its tab.
 pub(super) fn tabs(s: &State, u: &Ui, open: super::Tab, enabled: bool) -> El {
     use super::Tab;
-    let running = super::live::running(s);
-    let mut r = row()
-        .key("stats-tabs")
-        .w_full()
-        .h(32.0)
-        .role("tablist")
-        .label(tr("Stats sections"))
-        .border_sides([0.0, 0.0, 1.0, 0.0], u.hair);
-    for tab in Tab::ALL {
-        let on = tab == open;
-        let usable = enabled || tab == Tab::FunRun;
-        let mut t = row()
-            .key(format!("stats-tab-{tab:?}").to_lowercase())
-            .h(32.0)
-            .px(12.0)
-            .gap(6.0)
-            .center_y()
-            .role("tab")
-            .checked(on)
-            .label(tr(tab.label()).to_string())
-            .opacity(if usable { 1.0 } else { 0.5 })
-            .child(
-                text(tr(tab.label()).to_string())
-                    .font(crate::ui::BODY_MED)
-                    .color(if on { u.ink } else { u.muted })
-                    .a11y_hidden(),
-            );
-        if tab == Tab::Live {
-            // Drawn in the tab's own padding, so a running match never widens the tab.
-            t = t.child(
-                el().absolute(2.0, 13.0)
-                    .size(6.0, 6.0)
-                    .radius(1.0)
-                    .fill(if running { crate::ui::switch_green() } else { Color::TRANSPARENT })
-                    .a11y_hidden(),
-            );
-        }
-        // One underline for the strip, in the open tab: on a tab press it flies from the old
-        // tab to the new one on the `base` token (`design/motion.md` 4.5). Absolute, so no tab
-        // changes size; under Reduce motion it is not matched and lands at once.
-        if on {
-            let bar = el()
-                .key("stats-tabs-underline")
-                .absolute(0.0, 30.0)
-                .w_full()
-                .h(2.0)
-                .fill(u.ink)
-                .a11y_hidden();
-            t = t.child(if crate::motion::reduced() {
-                bar
-            } else {
-                bar.matched("stats-tabs-underline").motion(crate::motion::base())
-            });
+    let running = super::live::running(s) && super::live::in_match(s);
+    let mut bar = crate::ui::Segmented::new("stats-tabs", tr("Stats sections")).tabs();
+    for tab in Tab::ROW {
+        let usable = enabled;
+        let mut part = crate::ui::SegPart::new(format!("stats-tab-{tab:?}").to_lowercase(), tr(tab.label())).on(tab == open);
+        if tab == Tab::Live && running {
+            part = part.mark(crate::ui::switch_green());
         }
         if usable {
-            t = t
-                .focusable(true)
-                .hover(u.hover)
-                .cursor(rune::Cursor::Pointer)
-                .on_press(move |st: &mut State| st.stats.tab = tab)
-                .on_key(move |st: &mut State, ev: &rune::KeyEvent, _| {
-                    let i = Tab::ALL.iter().position(|x| *x == st.stats.tab).unwrap_or(0);
-                    let next = match ev.key {
-                        rune::Key::Left => i.saturating_sub(1),
-                        rune::Key::Right => (i + 1).min(Tab::ALL.len() - 1),
-                        _ => return false,
-                    };
-                    st.stats.tab = Tab::ALL[next];
-                    true
-                });
+            part = part.with(move |e| e.on_press(move |st: &mut State| super::nav::set_tab(st, tab)));
+        } else {
+            part = part.with(|e| e.opacity(0.5).disabled(true));
         }
-        r = r.child(t);
+        bar = bar.part(part);
     }
-    r
+    bar.build(u)
+}
+
+/// Tabular figures at weight 600: the lobby's best value in a column.
+pub(super) const TNUM_BOLD: TextStyle = TextStyle::new(13.0, 600.0).lh(20.0).features("'tnum' 1");
+
+/// A player's picture: their avatar when it is loaded, else the initial in a square.
+pub(super) fn player_avatar(s: &State, u: &Ui, account_id: u64, name: &str, size: f32) -> El {
+    match s.thumbnails.get(&super::pictures::avatar_key(account_id)) {
+        Some(pixels) => el()
+            .size(size, size)
+            .radius(crate::ui::r(4.0))
+            .fill(Color::WHITE.alpha(0.04))
+            .pixels_fit(pixels, SurfaceFit::Fill)
+            .a11y_hidden(),
+        None => avatar(u, name, size),
+    }
+}
+
+/// A rank badge: the badge art when it is loaded, else an outlined square with the subrank,
+/// so the cell keeps its size either way. Nothing for an unranked badge.
+pub(super) fn rank_badge(s: &State, u: &Ui, badge: u32, size: f32) -> El {
+    let Some(key) = super::pictures::rank_key(badge) else {
+        return el().size(size, size).a11y_hidden();
+    };
+    match s.thumbnails.get(&key) {
+        Some(pixels) => el().size(size, size).pixels_fit(pixels, SurfaceFit::Fit).a11y_hidden(),
+        None => el()
+            .size(size, size)
+            .radius(crate::ui::r(2.0))
+            .border(1.0, u.hair_strong)
+            .center()
+            .a11y_hidden()
+            .child(text((badge % 10).to_string()).font(crate::ui::MICRO).color(u.muted)),
+    }
+}
+
+/// The one clickable player cell every table uses: picture and name. A press opens the
+/// player's page; a right press opens Track, Statlocker and Copy id. An account id of 0 (a
+/// bot, a hidden profile) is plain text.
+pub(super) fn player_link(s: &State, u: &Ui, account_id: u64, name: &str, size: f32, mine: bool) -> El {
+    let label = text(name.to_string())
+        .font(if mine { crate::ui::BODY_MED } else { BODY })
+        .color(u.ink)
+        .truncate()
+        .min_w(0.0)
+        .shrink();
+    let mut r = row()
+        .key(format!("stats-player-{account_id}-{}", name.len()))
+        .min_w(0.0)
+        .h(size + 8.0)
+        .pr(6.0)
+        .gap(8.0)
+        .center_y()
+        .radius(crate::ui::r(2.0))
+        .child(player_avatar(s, u, account_id, name, size))
+        .child(label);
+    if account_id == 0 {
+        return r;
+    }
+    r = r
+        .hover(u.hover)
+        .focusable(true)
+        .role("link")
+        .label(crate::screens::settings::i18n::fill(tr("Open the stats for {}"), &[name]))
+        .cursor(rune::Cursor::Pointer)
+        .on_press_tx(move |st: &mut State, tx: &mut Tx| super::nav::open_player(st, tx, account_id));
+    let anchor = format!("stats-player-{account_id}-{}", name.len());
+    r.on_secondary_press(move |st: &mut State, _p, _tx: &mut Tx| {
+        st.stats.menu = Some(super::Menu::Person(account_id, anchor.clone()));
+    })
+}
+
+/// Track, Statlocker and Copy id for one player, under the row that opened it.
+pub(super) fn person_menu(s: &State, u: &Ui, account_id: u64, anchor: &str) -> El {
+    let tracked = s.stats.remembered.iter().any(|r| r.account_id == account_id);
+    let mut menu = u.menu("stats-person-menu", anchor, 220.0);
+    if !tracked {
+        menu = menu.child(u.menu_item("stats-person-track", &icons::PIN, tr("Track"), false).on_press(move |st: &mut State| {
+            st.stats.menu = None;
+            let name = st
+                .stats
+                .snapshot
+                .as_ref()
+                .filter(|snap| snap.account_id == account_id)
+                .map(|snap| snap.profile.persona_name.clone())
+                .unwrap_or_else(|| account_id.to_string());
+            crate::data::remember_stats_account(st, account_id, &name);
+        }));
+    }
+    menu.child(
+        u.menu_item("stats-person-statlocker", &icons::EXTERNAL_LINK, tr("Open on Statlocker"), false).on_press_tx(
+            move |st: &mut State, tx: &mut Tx| {
+                st.stats.menu = None;
+                open_statlocker(st, tx, &statlocker_profile_url(account_id));
+            },
+        ),
+    )
+    .child(u.menu_item("stats-person-copy", &icons::COPY, tr("Copy account id"), false).on_press_tx(
+        move |st: &mut State, tx: &mut Tx| {
+            st.stats.menu = None;
+            tx.copy(account_id.to_string());
+        },
+    ))
+}
+
+/// Above a visited player's page: Back, who this is, their badge, Track and Statlocker. Not
+/// drawn on your own page.
+pub(super) fn context_bar(s: &State, u: &Ui) -> Option<El> {
+    if s.stats.nav.stack.len() < 2 || s.stats.nav.match_open().is_some() {
+        return None;
+    }
+    let snap = s.stats.snapshot.as_ref();
+    let pending = s.stats.nav.pending;
+    let account_id = snap.map(|snap| snap.account_id).or(pending).unwrap_or(0);
+    let name = snap.map(|snap| snap.profile.persona_name.clone()).unwrap_or_else(|| account_id.to_string());
+    let tracked = s.stats.remembered.iter().any(|r| r.account_id == account_id);
+    let home = Some(account_id) == s.stats.home;
+    let mut bar = row()
+        .key("stats-context")
+        .w_full()
+        .h(36.0)
+        .gap(12.0)
+        .center_y()
+        .child(back_button(u))
+        .child(text(if home { tr("Your page").to_string() } else { crate::screens::settings::i18n::fill(tr("Viewing {}"), &[&name]) }).font(crate::ui::BODY_MED).color(u.ink).truncate().min_w(0.0).shrink());
+    if let Some(snap) = snap
+        && snap.rank.reported
+    {
+        bar = bar
+            .child(rank_badge(s, u, snap.rank.badge, 20.0))
+            .child(text(deadlock_core::stats::insight::badge_label(snap.rank.badge, &snap.tier_names)).font(SMALL).color(u.prose));
+    }
+    bar = bar.child(el().w(0.0).grow(1.0));
+    if !home && snap.is_some() {
+        bar = bar.child(if tracked {
+            text(tr("Tracked")).font(SMALL).color(u.muted)
+        } else {
+            u.action(tr("Track"), crate::ui::ActionKind::Secondary)
+                .key("stats-context-track")
+                .cursor(rune::Cursor::Pointer)
+                .on_press(super::nav::track)
+        });
+    }
+    Some(bar.child(statlocker_link(u, "stats-context-statlocker".to_string(), statlocker_profile_url(account_id), tr("Open on Statlocker"))))
+}
+
+/// The Back button of the context bar and the match page.
+pub(super) fn back_button(u: &Ui) -> El {
+    u.icon_action(&icons::ARROW_LEFT, tr("Back"), crate::ui::ActionKind::Ghost)
+        .key("stats-back")
+        .cursor(rune::Cursor::Pointer)
+        .on_press_tx(|st: &mut State, tx: &mut Tx| {
+            super::nav::back(st, tx);
+        })
+}
+
+/// Results as beads, oldest left: a win stands up, a loss hangs down.
+pub(super) fn form_beads(u: &Ui, results: &[bool]) -> El {
+    let (bead, gap, h) = (6.0_f32, 3.0_f32, 24.0_f32);
+    let base = 14.0;
+    let mut shape = Shape::new();
+    for (index, win) in results.iter().enumerate() {
+        let x0 = index as f32 * (bead + gap);
+        shape = if *win {
+            shape.fill(rect(x0, 2.0, x0 + bead, base - 1.0), u.teal.alpha(0.85))
+        } else {
+            shape.fill(rect(x0, base + 1.0, x0 + bead, h - 2.0), u.rose.alpha(0.75))
+        };
+    }
+    let width = results.len() as f32 * (bead + gap);
+    canvas(shape).size(width.max(1.0), h)
+}
+
+/// An item's slot colour: weapon amber, vitality teal, spirit violet.
+pub(super) fn slot_color(u: &Ui, slot: &str) -> Color {
+    match slot {
+        "weapon" => u.amber,
+        "vitality" => u.teal,
+        "spirit" => u.violet,
+        _ => u.hair_strong,
+    }
+}
+
+/// One item: its icon when loaded, else a tile with the name's first letters, always with a
+/// 1 point slot colour edge along the bottom. Hover names it and when it was bought.
+pub(super) fn item_icon(s: &State, u: &Ui, item: &deadlock_core::stats::board::BuildItem, size: f32) -> El {
+    let help = if item.bought_at > 0 {
+        format!("{}, {} {}", item.name, tr("bought at"), super::notes::clock(item.bought_at))
+    } else {
+        item.name.clone()
+    };
+    let tile = el()
+        .size(size, size)
+        .radius(crate::ui::r(2.0))
+        .fill(Color::WHITE.alpha(0.05))
+        .border_sides([0.0, 0.0, 1.0, 0.0], slot_color(u, &item.slot))
+        .help(help)
+        .label(item.name.clone());
+    match s.thumbnails.get(&super::pictures::item_key(item.item_id)) {
+        Some(pixels) => tile.pixels_fit(pixels, SurfaceFit::Fit),
+        None => {
+            let letters: String = item
+                .name
+                .split_whitespace()
+                .filter_map(|word| word.chars().next())
+                .take(2)
+                .collect();
+            tile.center().child(text(letters).font(crate::ui::MICRO).color(u.muted).a11y_hidden())
+        }
+    }
+}
+
+/// Souls a minute of a history row.
+pub(super) fn spm(item: &deadlock_core::stats::MatchSummary) -> u64 {
+    deadlock_core::stats::board::souls_per_minute(item.net_worth, item.duration_seconds)
 }
 
 /// A stat tile: label, big number with an optional sparkline, then two reserved sub lines.
@@ -268,13 +426,6 @@ pub(super) fn hero_name(hero: &HeroPerformance) -> String {
     hero.hero_name
         .clone()
         .unwrap_or_else(|| format!("Hero {}", hero.hero_id))
-}
-
-pub(super) fn fact(u: &Ui, label: &str, value: String) -> El {
-    col()
-        .gap(2.0)
-        .child(text(tr(label)).font(SMALL).color(u.muted))
-        .child(text(value).font(TNUM).color(u.prose))
 }
 
 pub(super) fn compare_chip(u: &Ui, label: &str, better: bool) -> El {

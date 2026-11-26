@@ -1280,7 +1280,11 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
         // Mouse Back and Forward walk pages and the details or creator opened over them.
         .pointer_buttons([rune::PointerButton::Back, rune::PointerButton::Forward])
         .on_press_tx(|st: &mut State, tx: &mut Tx| match tx.button() {
-            rune::PointerButton::Back => crate::shell::back(st),
+            rune::PointerButton::Back => {
+                if !screens::stats::nav::mouse_back(st, tx) {
+                    crate::shell::back(st)
+                }
+            }
             rune::PointerButton::Forward => crate::shell::forward(st),
             _ => {}
         })
@@ -2113,6 +2117,7 @@ fn search_key(screen: Screen) -> Option<&'static str> {
         Screen::Browse => Some("search-browse"),
         Screen::Servers => Some("search-servers"),
         Screen::Conflicts => Some("search-conflicts"),
+        Screen::Stats => Some("stats-lookup"),
         _ => None,
     }
 }
@@ -2423,6 +2428,10 @@ pub fn on_key(s: &mut State, ev: &KeyEvent, tx: &mut Tx) -> bool {
     screens::browse::top::note_key(s, tx);
     // The shortcuts sheet, zoom, and the mods folder. These win over the screen chords.
     if crate::shell::on_key(s, ev, tx) {
+        return true;
+    }
+    // Stats: Alt+Left, and Escape on a match page, go back one place.
+    if screens::stats::nav::on_key(s, ev, tx) {
         return true;
     }
     // Escape leaves the 3D viewer's full screen wherever focus is (it covers the whole window).
@@ -3070,7 +3079,12 @@ pub fn scenes() -> &'static [(&'static str, fn(&mut State))] {
         ("stats-profile", screens::stats::scene_profile),
         ("stats-drill", screens::stats::scene_drill),
         ("stats-entry", screens::stats::scene_entry),
+        ("stats-entry-manual", screens::stats::scene_entry_manual),
         ("stats-board", screens::stats::scene_board),
+        ("stats-match", screens::stats::scene_board),
+        ("stats-visit", screens::stats::scene_visit),
+        ("stats-lookup", screens::stats::scene_lookup),
+        ("stats-squad", screens::stats::scene_squad),
         ("stats-people", screens::stats::scene_people),
         ("stats-partner", screens::stats::scene_partner),
         ("stats-tracked", screens::stats::scene_tracked),

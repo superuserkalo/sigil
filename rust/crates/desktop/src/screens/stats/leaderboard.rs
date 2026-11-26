@@ -115,7 +115,7 @@ fn body(s: &State, u: &Ui, board: &Leaderboard, account_id: u64) -> El {
     for entry in board.entries.iter().take(shown) {
         let is_me = account_id > 0 && entry.possible_account_ids.contains(&account_id);
         mine_shown |= is_me;
-        table = table.child(entry_row(u, entry, is_me));
+        table = table.child(entry_row(s, u, entry, is_me));
     }
     if !mine_shown
         && let Some(entry) = mine
@@ -128,7 +128,7 @@ fn body(s: &State, u: &Ui, board: &Leaderboard, account_id: u64) -> El {
                     .center_y()
                     .child(text(tr("· · ·")).font(SMALL).color(u.muted)),
             )
-            .child(entry_row(u, entry, true));
+            .child(entry_row(s, u, entry, true));
     }
 
     let hidden = board.entries.len() > shown;
@@ -169,7 +169,7 @@ fn body(s: &State, u: &Ui, board: &Leaderboard, account_id: u64) -> El {
     col().w_full().gap(12.0).child(table).child(foot)
 }
 
-fn entry_row(u: &Ui, entry: &LeaderboardEntry, mine: bool) -> El {
+fn entry_row(s: &State, u: &Ui, entry: &LeaderboardEntry, mine: bool) -> El {
     let place = match entry.rank {
         Some(rank) => format!("#{rank}"),
         None => "-".to_string(),
@@ -196,18 +196,40 @@ fn entry_row(u: &Ui, entry: &LeaderboardEntry, mine: bool) -> El {
                 .color(if mine { u.ink } else { u.prose })
                 .w(56.0),
         )
-        .child(
-            text(name)
-                .font(if mine { BODY_MED } else { BODY })
-                .color(u.ink)
-                .grow(1.0)
-                .min_w(0.0)
-                .truncate(),
-        )
+        .child(name_cell(s, u, entry, name, mine))
         .child(if mine {
             text(tr("You")).font(TNUM_SMALL).color(u.muted)
         } else {
             el()
         })
         .child(el().w(4.0))
+}
+
+/// The player: a link to their page when the board names one account, a press that lists the
+/// candidates when it names several, plain text when it names none.
+fn name_cell(s: &State, u: &Ui, entry: &LeaderboardEntry, name: String, mine: bool) -> El {
+    let ids = entry.possible_account_ids.clone();
+    let holder = row().grow(1.0).min_w(0.0).center_y();
+    match ids.len() {
+        1 => holder.child(super::shared::player_link(s, u, ids[0], &name, 20.0, mine)),
+        0 => holder.child(text(name).font(if mine { BODY_MED } else { BODY }).color(u.ink).truncate().min_w(0.0)),
+        n => holder.gap(8.0).child(
+            row()
+                .key(format!("lb-candidates-{}", entry.rank.unwrap_or(0)))
+                .min_w(0.0)
+                .h(28.0)
+                .pr(6.0)
+                .gap(8.0)
+                .center_y()
+                .radius(crate::ui::r(2.0))
+                .hover(u.hover)
+                .focusable(true)
+                .role("button")
+                .label(crate::screens::settings::i18n::fill(tr("{} possible accounts"), &[&n.to_string()]))
+                .cursor(rune::Cursor::Pointer)
+                .on_press(move |st: &mut State| super::lookup::show_candidates(st, ids.clone()))
+                .child(text(name).font(if mine { BODY_MED } else { BODY }).color(u.ink).truncate().min_w(0.0).shrink())
+                .child(text(crate::screens::settings::i18n::fill(tr("{} possible accounts"), &[&n.to_string()])).font(SMALL).color(u.muted)),
+        ),
+    }
 }

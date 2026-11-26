@@ -96,6 +96,15 @@ pub(super) fn heroes(s: &State, u: &Ui, snap: &StatsSnapshot) -> El {
         let ink = if thin { u.muted } else { u.ink };
         table = table.child(
             data_row(format!("hero-{}", hero.hero_id), u, 40.0)
+                .hover(u.hover)
+                .focusable(true)
+                .role("button")
+                .label(crate::screens::settings::i18n::fill(tr("Matches on {}"), &[&name]))
+                .cursor(rune::Cursor::Pointer)
+                .on_press({
+                    let hero_id = hero.hero_id;
+                    move |st: &mut State| super::matches::filter_hero(st, hero_id)
+                })
                 .child(
                     row()
                         .grow(1.0)

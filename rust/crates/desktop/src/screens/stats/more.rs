@@ -21,7 +21,7 @@ use deadlock_core::stats::filters::StatsFilter;
 use deadlock_core::stats::items::{ItemPurchase, ItemStat};
 use deadlock_core::stats::party::LineupRating;
 use deadlock_core::stats::MatchSummary;
-use rune::{El, KeyEvent, col, icon, row, text};
+use rune::{El, KeyEvent, col, row, text};
 
 use crate::app::State;
 use crate::jobs::Job;
@@ -367,11 +367,8 @@ fn strip(key: &str, name: &str, parts: Vec<crate::ui::SegPart>, u: &Ui) -> El {
     crate::ui::Segmented::new(key, tr(name)).size(crate::ui::SegSize::M).parts(parts).build(u)
 }
 
-fn group(u: &Ui) -> El {
-    row().h(28.0).gap(2.0).padding(2.0).center_y().radius(crate::ui::r(4.0)).border(1.0, u.hair)
-}
-
-/// The filter row over the tabs it scopes: one line of three groups.
+/// The filter line over the tabs it scopes: mode, window (the last part opens the ranked
+/// seasons), and Street Brawl.
 pub(super) fn filter_bar(s: &State, u: &Ui) -> El {
     let m = &s.stats.more;
     let mut modes = Vec::new();
@@ -398,8 +395,7 @@ pub(super) fn filter_bar(s: &State, u: &Ui) -> El {
             })
         }));
     }
-    let since = strip("stats-filter-days", "Window", since, u);
-    // One Season segment opens the list of ranked seasons (`season_menu`).
+    // The last part of the window strip is the season: it opens the ranked seasons.
     let season_name = m.season.and_then(|picked| {
         s.stats
             .seasons
@@ -407,52 +403,25 @@ pub(super) fn filter_bar(s: &State, u: &Ui) -> El {
             .find(|known| known.leaderboard_id == picked.id)
             .map(|known| known.name.clone())
     });
-    let season_on = m.season.is_some();
-    let season = group(u).child(
-        row()
-            .key("stats-filter-season")
-            .w(96.0)
-            .h(24.0)
-            .px(8.0)
-            .gap(4.0)
-            .center_y()
-            .radius(crate::ui::r(2.0))
-            .fill(if season_on { u.selected } else { rune::Color::TRANSPARENT })
-            .hover(u.hover)
-            .focusable(true)
-            .role("button")
-            .expanded(m.season_menu)
-            .label(tr("Ranked seasons").to_string())
-            .cursor(rune::Cursor::Pointer)
-            .on_press(|st: &mut State| {
-                st.stats.more.season_menu = !st.stats.more.season_menu;
-                if st.stats.more.season_menu && st.stats.seasons.is_empty() && !st.stats.more.seasons_job.is_running() {
-                    start_seasons(st);
-                }
-            })
-            .child(
-                text(season_name.unwrap_or_else(|| tr("Season").to_string()))
-                    .font(SMALL)
-                    .color(if season_on { u.ink } else { u.muted })
-                    .truncate()
-                    .grow(1.0)
-                    .min_w(0.0)
-                    .a11y_hidden(),
-            )
-            .child(icon(&crate::icons::CHEVRON_DOWN, 12.0).color(u.muted).a11y_hidden()),
+    since.push(
+        crate::ui::SegPart::new("stats-filter-season", format!("{}  \u{25be}", season_name.unwrap_or_else(|| tr("Season").to_string())))
+            .name(tr("Ranked seasons"))
+            .on(m.season.is_some())
+            .with(|e| {
+                e.on_press(|st: &mut State| {
+                    st.stats.more.season_menu = !st.stats.more.season_menu;
+                    if st.stats.more.season_menu && st.stats.seasons.is_empty() && !st.stats.more.seasons_job.is_running() {
+                        start_seasons(st);
+                    }
+                })
+            }),
     );
-    let mut brawl = Vec::new();
-    for (label, full, value) in [
-        ("With", "With Street Brawl", Brawl::Show),
-        ("Without", "Without Street Brawl", Brawl::Hide),
-        ("Only", "Street Brawl only", Brawl::Only),
-    ] {
-        brawl.push(
-            pill(format!("stats-filter-brawl-{full}"), label, full, m.brawl == value)
-                .with(move |e| e.on_press(move |st: &mut State| st.stats.more.brawl = value)),
-        );
-    }
-    let brawl = strip("stats-filter-brawl", "Street Brawl", brawl, u);
+    let since = strip("stats-filter-days", "Window", since, u);
+    let brawl = match m.brawl {
+        Brawl::Show => tr("Street Brawl: with"),
+        Brawl::Hide => tr("Street Brawl: without"),
+        Brawl::Only => tr("Street Brawl: only"),
+    };
     row()
         .key("stats-filter")
         .w_full()
@@ -461,14 +430,30 @@ pub(super) fn filter_bar(s: &State, u: &Ui) -> El {
         .center_y()
         .child(modes)
         .child(since)
-        .child(season)
         .child(
-            row()
-                .gap(8.0)
-                .center_y()
-                .child(text(tr("Street Brawl")).font(SMALL).color(u.muted))
-                .child(brawl),
+            u.select_box(brawl, 180.0)
+                .key("stats-filter-brawl")
+                .expanded(s.stats.menu == Some(super::Menu::Brawl))
+                .on_press(|st: &mut State| {
+                    st.stats.menu = if st.stats.menu == Some(super::Menu::Brawl) { None } else { Some(super::Menu::Brawl) };
+                }),
         )
+}
+
+/// The Street Brawl choice: with, without, or only Street Brawl.
+pub(super) fn brawl_menu(s: &State, u: &Ui) -> El {
+    let mut menu = u.menu("stats-brawl-menu", "stats-filter-brawl", 200.0);
+    for (label, value) in [("With Street Brawl", Brawl::Show), ("Without Street Brawl", Brawl::Hide), ("Street Brawl only", Brawl::Only)] {
+        let on = s.stats.more.brawl == value;
+        menu = menu.child(
+            u.menu_item(&format!("stats-filter-brawl-{value:?}"), if on { &crate::icons::CHECK } else { &crate::icons::MINUS }, tr(label), false)
+                .on_press(move |st: &mut State| {
+                    st.stats.more.brawl = value;
+                    st.stats.menu = None;
+                }),
+        );
+    }
+    menu
 }
 
 /// The ranked seasons, under the Season segment. Mounted beside the page so it is not clipped.

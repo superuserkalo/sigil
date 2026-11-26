@@ -101,6 +101,28 @@ pub(super) fn running(s: &State) -> bool {
     s.stats.live.scene_running.unwrap_or_else(crate::screens::settings::watch::game_is_running)
 }
 
+/// A match is in progress in the log (for the tab's green mark).
+pub(super) fn in_match(s: &State) -> bool {
+    s.stats
+        .live
+        .tail
+        .as_ref()
+        .and_then(|tail| tail.state.current.as_ref())
+        .is_some_and(|current| current.phase == MatchPhase::InProgress)
+}
+
+/// The Live tab: the panel, or what to do to see one.
+pub(super) fn tab(s: &State, u: &Ui) -> El {
+    panel(s, u).unwrap_or_else(|| {
+        // Starts at the same y as every other tab's first section.
+        col()
+            .w_full()
+            .gap(4.0)
+            .child(super::shared::section_head(u, tr("No match running"), ""))
+            .child(text(tr("Start Deadlock and this tab follows the match you are in.")).font(BODY).color(u.prose))
+    })
+}
+
 /// The game watcher runs its process check while this is true: Stats is open with the view on.
 pub fn wants_watch(st: &State) -> bool {
     options::get().live_view && st.screen == Screen::Stats
@@ -951,7 +973,7 @@ fn finished(s: &State, u: &Ui, last: &FinishedMatch) -> El {
         u.action(tr("Scoreboard"), ActionKind::Secondary)
             .key("stats-live-scoreboard")
             .cursor(rune::Cursor::Pointer)
-            .on_press(move |st: &mut State| crate::data::start_scoreboard_load(st, match_id))
+            .on_press_tx(move |st: &mut State, tx: &mut rune::Tx| super::nav::open_match(st, tx, match_id))
     });
     out.child(match_meta(u, match_id, scoreboard))
 }

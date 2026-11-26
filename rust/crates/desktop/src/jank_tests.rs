@@ -628,7 +628,7 @@ fn overlays_and_selections_move() {
         ("browse-view-menu", &[], Step::Press("menu-size-large"), "menu-seg-Cards-thumb", 800.0),
         ("demo-installed", &[], Step::Press("nav-browse"), "page-browse", 800.0),
         // The Stats tab underline flies to the pressed tab on `base`; the tabs stay put.
-        ("stats-profile", &[], Step::Press("stats-tab-heroes"), "stats-tabs-underline", 800.0),
+        ("stats-profile", &[], Step::Press("stats-tab-heroes"), "stats-tabs-thumb", 800.0),
         // The selection box glides between parts of uneven width:
         // Browse's sections, Installed's scope, the Servers tabs and the Settings sections.
         ("browse", &[], Step::Press("browse-tab-sounds"), "browse-sections-thumb", 800.0),

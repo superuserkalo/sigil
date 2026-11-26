@@ -68,13 +68,14 @@ pub struct Part {
     glyph: Option<&'static Icon>,
     name: Option<String>,
     on: bool,
+    mark: Option<Color>,
     attach: Option<Box<dyn FnOnce(El) -> El>>,
 }
 
 impl Part {
     /// A part keyed `key` showing `label`.
     pub fn new(key: impl Into<String>, label: impl Into<String>) -> Part {
-        Part { key: key.into(), label: label.into(), count: None, glyph: None, name: None, on: false, attach: None }
+        Part { key: key.into(), label: label.into(), count: None, glyph: None, name: None, on: false, mark: None, attach: None }
     }
 
     /// The count after the label, in tabular figures, grouped by thousands (1,234).
@@ -98,6 +99,13 @@ impl Part {
     /// This part is the picked one.
     pub fn on(mut self, on: bool) -> Part {
         self.on = on;
+        self
+    }
+
+    /// A 6 point square in the part's left padding, as a state mark ("a match is running").
+    /// It sits in the padding, so it never widens the part.
+    pub fn mark(mut self, color: Color) -> Part {
+        self.mark = Some(color);
         self
     }
 
@@ -308,6 +316,9 @@ fn part_el(u: &Ui, part: &Part, h: f32, px: f32) -> El {
             .child(crate::motion::colors(
                 icon(glyph, GLYPH).key(format!("{}-glyph", part.key)).color(if on { u.ink } else { u.muted }).a11y_hidden(),
             ));
+    }
+    if let Some(color) = part.mark {
+        cell = cell.child(el().absolute(2.0, (h - 6.0) / 2.0).size(6.0, 6.0).radius(1.0).fill(color).a11y_hidden());
     }
     cell = cell.child(crate::motion::colors(
         text(part.label.clone())

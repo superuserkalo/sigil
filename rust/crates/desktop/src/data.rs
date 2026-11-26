@@ -1882,7 +1882,7 @@ fn save_stats_remembered(rows: &[crate::screens::stats::Remembered]) {
     }
 }
 
-fn remember_stats_account(state: &mut State, account_id: u64, name: &str) {
+pub fn remember_stats_account(state: &mut State, account_id: u64, name: &str) {
     let rows = &mut state.stats.remembered;
     let had_primary = rows.iter().any(|row| row.primary);
     rows.retain(|row| row.account_id != account_id);
@@ -2138,42 +2138,7 @@ pub fn apply_stats(state: &mut State, result: Result<crate::screens::stats::Load
     }
 }
 
-/// Open one match's scoreboard: both teams, the final builds and the souls curve.
-pub fn start_scoreboard_load(state: &mut State, match_id: u64) {
-    use crate::screens::stats::Fetched;
-    if state.stats.board_job.is_running() {
-        return;
-    }
-    if !state.prefs.allow_stats {
-        state.stats.board = Fetched::Failed(
-            "Player stats are turned off in Settings, Privacy.".to_string(),
-        );
-        return;
-    }
-    let Some(account_id) = state.stats.snapshot.as_ref().map(|snap| snap.account_id) else {
-        return;
-    };
-    if let Fetched::Ready(board) = &state.stats.board
-        && board.match_id == match_id
-    {
-        state.stats.board_open = Some(match_id);
-        return;
-    }
-    state.stats.board = Fetched::Loading;
-    state.stats.board_open = Some(match_id);
-    let wake = state.wake.clone();
-    state.stats.board_job.start(wake, move || {
-        stats_client()
-            .fetch_match_scoreboard(match_id, account_id)
-            .map_err(|error| error.to_string())
-    });
-}
-
-pub fn close_scoreboard(state: &mut State) {
-    state.stats.board_open = None;
-}
-
-/// Teammates and opponents. Three large responses, so only on a press.
+/// Teammates and opponents: three large responses, read when the Squad tab opens.
 pub fn start_social_load(state: &mut State) {
     use crate::screens::stats::Fetched;
     if state.stats.social_job.is_running() {
