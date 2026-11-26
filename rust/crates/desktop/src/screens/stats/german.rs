@@ -10,7 +10,7 @@ pub const DE: &[(&str, &str)] = &[
     ("beats {} of matches at {}", "besser als {} der Matches auf {}"),
     ("fewer than {} of matches at {}", "weniger als {} der Matches auf {}"),
     ("median {}", "Median {}"),
-    ("your last {} against single matches at {}, last 30 days", "deine letzten {} gegen einzelne Matches auf {}, letzte 30 Tage"),
+    ("the last {} matches against single matches at {}, last 30 days", "die letzten {} Matches gegen einzelne Matches auf {}, letzte 30 Tage"),
     ("At your rank", "Auf deinem Rang"),
     ("Assists", "Assists"),
     ("Banned", "Gesperrt"),

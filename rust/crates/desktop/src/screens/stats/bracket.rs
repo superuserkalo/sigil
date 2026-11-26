@@ -114,7 +114,7 @@ pub(super) fn section(s: &State, u: &Ui, snap: &StatsSnapshot) -> Option<El> {
     if recent.is_empty() {
         return None;
     }
-    let meta = fill(tr("your last {} against single matches at {}, last 30 days"), &[&recent.len().to_string(), &tier]);
+    let meta = fill(tr("the last {} matches against single matches at {}, last 30 days"), &[&recent.len().to_string(), &tier]);
     let mut cells = Vec::new();
     for line in lines(&recent) {
         let Some(dist) = map.get(line.metric) else { continue };
