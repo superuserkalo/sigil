@@ -1,0 +1,227 @@
+diff --git a/changelog/unreleased/2026-11-25-gpu-upload-memory.md b/changelog/unreleased/2026-11-25-gpu-upload-memory.md
+new file mode 100644
+index 0000000..283cdfa
+--- /dev/null
++++ b/changelog/unreleased/2026-11-25-gpu-upload-memory.md
+@@ -0,0 +1 @@
++- Less GPU upload memory on D3D12 and Vulkan. Devices are requested with 8 to 16 MB device blocks (4 to 8 MB host blocks) instead of `MemoryUsage`'s blocks that grow to 64 and 32 MB: an upload block is committed whole while one small staging chunk lives in it. Staging chunks the GPU handed back are freed each frame (`Staging::reclaim`), and a window that goes idle after an upload burst polls the device once so the burst's chunks come back and are freed. `gpu_allocator_report` gives the allocator's last report (blocks, use and the largest allocations), taken at a window's first image upload, when it goes idle and when it goes out of sight.
+diff --git a/crates/rune-staging/src/lib.rs b/crates/rune-staging/src/lib.rs
+index 0b23ae1..62dbf51 100644
+--- a/crates/rune-staging/src/lib.rs
++++ b/crates/rune-staging/src/lib.rs
+@@ -99,6 +99,8 @@ struct Inner {
+     returned: mpsc::Receiver<Chunk>,
+     pending: Vec<Pending>,
+     pending_bytes: u64,
++    /// Bytes of chunks handed to the GPU and not yet received back.
++    outstanding: u64,
+     stats: Stats,
+ }
+ 
+@@ -121,7 +123,7 @@ impl Staging {
+         let (recycle, returned) = mpsc::channel();
+         Staging(Arc::new(Mutex::new(Inner {
+             device: device.clone(), queue: queue.clone(), active: Vec::new(), free: Vec::new(), recycle, returned,
+-            pending: Vec::new(), pending_bytes: 0, stats: Stats::default(),
++            pending: Vec::new(), pending_bytes: 0, outstanding: 0, stats: Stats::default(),
+         })), Arc::default(), Arc::default())
+     }
+ 
+@@ -211,6 +213,23 @@ impl Staging {
+         }
+     }
+ 
++    /// Drops the chunks the GPU has handed back that are over the keep bounds, now rather than
++    /// at the next write. Call it once a frame: a large upload's chunk is freed the frame after
++    /// the GPU is done with it, not whenever the next upload happens to need a new one.
++    pub fn reclaim(&self) {
++        self.lock().receive();
++    }
++
++    /// Bytes held in chunks: mapped with pending writes, and kept for reuse.
++    pub fn held_bytes(&self) -> u64 {
++        let s = self.lock();
++        s.active.iter().chain(s.free.iter()).map(|c| c.buffer.size()).sum::<u64>() + s.outstanding
++    }
++
++    /// Whether the chunks held, in flight included, are over what is kept for reuse: an upload
++    /// burst's chunks wait for a device poll to come back and be freed.
++    pub fn over_keep(&self) -> bool { self.held_bytes() > KEEP_BYTES }
++
+     /// Records the pending writes into `encoder` here, ahead of what is recorded after them.
+     /// `encoder` must be submitted: dropped, the writes never land (`lost` counts it).
+     pub fn flush(&self, encoder: &mut wgpu::CommandEncoder) {
+@@ -263,7 +282,7 @@ impl Staging {
+     /// makes a new one. Chunks holding pending writes stay.
+     pub fn trim(&self) {
+         let mut s = self.lock();
+-        while s.returned.try_recv().is_ok() {}
++        while let Ok(chunk) = s.returned.try_recv() { s.outstanding = s.outstanding.saturating_sub(chunk.buffer.size()); }
+         s.free.clear();
+     }
+ }
+@@ -319,6 +338,7 @@ impl Inner {
+     fn receive(&mut self) {
+         while let Ok(mut chunk) = self.returned.try_recv() {
+             chunk.used = 0;
++            self.outstanding = self.outstanding.saturating_sub(chunk.buffer.size());
+             let kept: u64 = self.free.iter().map(|c| c.buffer.size()).sum();
+             let size = chunk.buffer.size();
+             if size <= KEEP_CHUNK_MAX && self.free.len() < KEEP_CHUNKS && kept + size <= KEEP_BYTES {
+@@ -330,6 +350,7 @@ impl Inner {
+     fn encode(&mut self, encoder: &mut wgpu::CommandEncoder, staging: &Staging) {
+         self.copy(encoder);
+         for mut chunk in self.active.drain(..) {
++            self.outstanding += chunk.buffer.size();
+             chunk.view = None;
+             chunk.buffer.unmap();
+             let buffer = chunk.buffer.clone();
+diff --git a/crates/rune/src/lib.rs b/crates/rune/src/lib.rs
+index 780ce56..5b3fdf2 100644
+--- a/crates/rune/src/lib.rs
++++ b/crates/rune/src/lib.rs
+@@ -278,6 +278,7 @@ pub use recorder::Recorder;
+ pub use recorder::RecorderState;
+ pub use recorder::Recording;
+ pub use render::MAX_BACKDROP_BLURS;
++pub use render::gpu_allocator_report;
+ pub use render::gpu_events::GpuEvent;
+ pub use render::gpu_events::on_gpu;
+ pub use render::prewarm_gpu;
+diff --git a/crates/rune/src/render.rs b/crates/rune/src/render.rs
+index 15826f0..b70551b 100644
+--- a/crates/rune/src/render.rs
++++ b/crates/rune/src/render.rs
+@@ -535,9 +535,12 @@ impl Gpu {
+             experimental_features: Default::default(),
+             // `Performance` suballocates from 128 MB device and 64 MB host blocks, so a device
+             // that holds a few atlases commits about 190 MB more than it uses: process memory on
+-            // an integrated GPU, and on Windows on a discrete one too. Rune keeps and reuses its
+-            // buffers and textures, so the smaller blocks only cost a few more heaps.
+-            memory_hints: wgpu::MemoryHints::MemoryUsage,
++            // an integrated GPU, and on Windows on a discrete one too. `MemoryUsage` still grows
++            // blocks to 64 MB device and 32 MB host, and on D3D12 a host (upload) block is
++            // committed whole while one small staging chunk lives in it. Rune keeps and reuses
++            // its buffers and textures, so 8 to 16 MB device blocks and 4 to 8 MB host blocks
++            // cost a few more heaps; a larger allocation gets a block of its own, freed with it.
++            memory_hints: wgpu::MemoryHints::Manual { suballocated_device_memory_block_size: (8 << 20)..(16 << 20) },
+             trace: Default::default(),
+         }))
+         .map_err(|error| format!("no GPU device: {error}"));
+@@ -548,6 +551,27 @@ impl Gpu {
+         made
+     }
+ 
++    /// The GPU allocator's report (D3D12 and Vulkan; `None` on Metal, which doesn't
++    /// suballocate) as text: reserved and used bytes, each block with its allocation count, and
++    /// the largest allocations by name. Kept as the last report ([`gpu_allocator_report`]) for
++    /// the app to log.
++    pub fn capture_allocator_report(device: &wgpu::Device, when: &str) -> Option<String> {
++        let report = device.generate_allocator_report()?;
++        let mb = |b: u64| format!("{:.1} MB", b as f64 / 1_048_576.0);
++        let mut out = format!("gpu allocator at {when}: reserved {}, used {}, {} blocks, {} allocations\nblocks:",
++            mb(report.total_reserved_bytes), mb(report.total_allocated_bytes), report.blocks.len(), report.allocations.len());
++        for block in &report.blocks {
++            let used: u64 = report.allocations[block.allocations.clone()].iter().map(|a| a.size).sum();
++            out.push_str(&format!(" [{} with {} in {}]", mb(block.size), mb(used), block.allocations.len()));
++        }
++        let mut big: Vec<_> = report.allocations.iter().collect();
++        big.sort_by_key(|a| std::cmp::Reverse(a.size));
++        out.push_str("\nlargest:");
++        for a in big.iter().take(12) { out.push_str(&format!(" [{} {}]", mb(a.size), a.name)); }
++        *LAST_ALLOCATOR_REPORT.lock().unwrap_or_else(|e| e.into_inner()) = Some(out.clone());
++        Some(out)
++    }
++
+     #[cfg(target_arch = "wasm32")]
+     pub fn try_with_features(_: wgpu::Instance, _: Option<&wgpu::Surface<'_>>, _: wgpu::Features) -> Result<Gpu, String> {
+         Err("synchronous GPU initialization is unsupported on web; use App::run".into())
+@@ -705,6 +729,15 @@ fn choose_then_start(backend: crate::GpuBackend, choose: impl FnOnce(crate::GpuB
+     start();
+ }
+ 
++static LAST_ALLOCATOR_REPORT: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
++
++/// The last GPU allocator report a window took (`Gpu::capture_allocator_report`): at its first
++/// image upload, when it went idle after drawing, and when it went out of sight. `None` before
++/// one, and always on backends without a suballocator (Metal).
++pub fn gpu_allocator_report() -> Option<String> {
++    LAST_ALLOCATOR_REPORT.lock().unwrap_or_else(|e| e.into_inner()).clone()
++}
++
+ /// Starts `prewarm_gpu`'s thread over if it's working, for a backend chosen after it started.
+ #[cfg(all(target_os = "macos", feature = "metal-backend"))]
+ pub(crate) fn restart_prewarm() {
+diff --git a/crates/rune/src/render/layers.rs b/crates/rune/src/render/layers.rs
+index 95d3987..45c7d0e 100644
+--- a/crates/rune/src/render/layers.rs
++++ b/crates/rune/src/render/layers.rs
+@@ -322,6 +322,9 @@ impl Renderer {
+     /// Whether a retained layer cache may still bind an old image page texture.
+     pub(super) fn layers_retained(&self) -> bool { !self.layers.retained.is_empty() }
+ 
++    /// Whether the staging holds more than it keeps for reuse (`window::rest` then polls once).
++    pub(crate) fn uploads_over_keep(&self) -> bool { self.uploads.over_keep() }
++
+     pub(super) fn sync_resident_caches(&self, out: &mut std::collections::HashMap<u64, u64>) {
+         if !out.is_empty() {
+             out.clear();
+diff --git a/crates/rune/src/render/upload.rs b/crates/rune/src/render/upload.rs
+index e4ca539..7f463ec 100644
+--- a/crates/rune/src/render/upload.rs
++++ b/crates/rune/src/render/upload.rs
+@@ -64,6 +64,8 @@ impl Uploads {
+         self.staging.get_or_insert_with(|| Staging::new(device, queue)).clone()
+     }
+ 
++    pub(super) fn over_keep(&self) -> bool { self.staging.as_ref().is_some_and(Staging::over_keep) }
++
+     /// Frees the staging chunks kept for reuse (`Renderer::give_back`).
+     pub(super) fn trim(&self) {
+         if let Some(staging) = &self.staging { staging.trim(); }
+@@ -145,7 +147,10 @@ impl Renderer {
+     /// first use and destroys the textures of freed pages, so their memory goes back at once.
+     pub fn upload_images(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, images: &mut ImageAtlas) {
+         if images.pages.is_empty() && self.images.is_empty() { return self.refresh_layer_bindings(device); }
++        static FIRST: std::sync::Once = std::sync::Once::new();
++        FIRST.call_once(|| { let _ = Gpu::capture_allocator_report(device, "first image upload"); });
+         let staging = self.uploads.staging(device, queue);
++        staging.reclaim();
+         if staging.lost() != self.uploads.lost.1 {
+             self.uploads.lost.1 = staging.lost();
+             // Pages with a CPU copy go up again whole; GPU-only pages are placed again.
+diff --git a/crates/rune/src/window/rest.rs b/crates/rune/src/window/rest.rs
+index f21f811..e6360e0 100644
+--- a/crates/rune/src/window/rest.rs
++++ b/crates/rune/src/window/rest.rs
+@@ -16,7 +16,8 @@
+ //! two commits didn't use and their glyph runs (`TextSystem::rest`), atlas pages no element drew
+ //! from in the last frame, with their textures, and the CPU pixels of images copied in
+ //! (`ImageAtlas::rest`, `Renderer::release_images`). Then the app's `App::on_rest` runs, for its
+-//! own caches.
++//! own caches. An idle rest after an upload burst also polls the device once, so the staging
++//! chunks of the burst come back and are freed.
+ 
+ use super::*;
+ use crate::machine::Effects;
+@@ -101,6 +102,12 @@ impl<S: 'static> Host<S> {
+             renderer.give_back(all, &mut self.rt.text.atlas.resident_caches);
+             // The atlas pages `ImageAtlas::rest` freed: their textures go now, not at the next frame.
+             renderer.release_images(&self.rt.images);
++            // After an upload burst (a screen of new pictures) the staging chunks wait for a poll
++            // to come back; one non-blocking poll lets them go. Only then: see below.
++            if !all && renderer.uploads_over_keep() {
++                let _ = gpu.device.poll(wgpu::PollType::Poll);
++                renderer.trim_uploads();
++            }
+             // Out of sight, what the last frame used goes too, and the staging chunks: an empty
+             // submission and a wait land those frees now. At an idle rest the device isn't
+             // polled: a poll costs the next two frames' submits 4-9 ms each on an Iris Xe.
+@@ -109,6 +116,7 @@ impl<S: 'static> Host<S> {
+                 let _ = gpu.device.poll(wgpu::PollType::wait_indefinitely());
+                 renderer.trim_uploads();
+             }
++            let _ = crate::render::Gpu::capture_allocator_report(&gpu.device, if all { "out of sight" } else { "idle" });
+         }
+     }
+ }

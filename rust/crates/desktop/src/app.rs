@@ -92,6 +92,8 @@ pub struct State {
     pub thumbnails: HashMap<String, Pixels>,
     /// Rune's decode count last seen by `poll` (`rune::image_memory`).
     pub image_decodes: u64,
+    /// The GPU allocator report last logged (`memory::log_gpu_allocator`), as a hash.
+    pub gpu_report_logged: u64,
     pub pending_thumbs: Vec<(String, Vec<u8>)>,
     pub thumb_crew: ThumbCrew,
     /// Windows: drops a system title bar that shows above Sigil's (`win_frame`).
@@ -206,6 +208,7 @@ impl Default for State {
             images: None,
             thumbnails: HashMap::new(),
             image_decodes: 0,
+            gpu_report_logged: 0,
             pending_thumbs: Vec::new(),
             thumb_crew: ThumbCrew::shrinking(),
             frame_guard: Default::default(),
@@ -2349,6 +2352,7 @@ pub fn poll(s: &mut State, t: f64, _tx: &mut Tx) -> bool {
         s.image_decodes = decodes;
         thumbs_landed = true;
     }
+    crate::memory::log_gpu_allocator(&mut s.gpu_report_logged);
     if let Some(result) = s.review_job.try_take() {
         crate::data::apply_review_queue(s, result);
         changed = true;

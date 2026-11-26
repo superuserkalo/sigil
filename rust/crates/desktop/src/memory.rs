@@ -51,6 +51,21 @@ pub fn read(st: &State) -> Reading {
     Reading { heap, process, task_manager, images: (count, bytes) }
 }
 
+/// Logs Rune's GPU allocator report when a window took a new one (`poll`, debug level): at its
+/// first picture upload, when it went idle after drawing (a scroll burst) and when it went out
+/// of sight (minimised). D3D12 and Vulkan only; Metal has none.
+pub fn log_gpu_allocator(last: &mut u64) {
+    let Some(report) = rune::gpu_allocator_report() else { return };
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    report.hash(&mut hasher);
+    let hash = hasher.finish();
+    if hash != *last {
+        *last = hash;
+        crate::screens::settings::log::debug(report);
+    }
+}
+
 /// Committed private memory and the private working set.
 #[cfg(windows)]
 fn process_bytes() -> (Option<u64>, Option<u64>) {
