@@ -517,7 +517,7 @@ fn signed_download(
     let entry = parsed
         .platform(platform)
         .cloned()
-        .ok_or_else(|| "This release has no build for this system.".to_string())?;
+        .ok_or_else(|| "This release does not update itself on this system. Download it from the release page.".to_string())?;
     let url = find(&entry.asset).ok_or_else(|| format!("The release is missing {}.", entry.asset))?;
     Ok(Download {
         version: parsed.version,
@@ -568,7 +568,7 @@ pub fn download(
     let entry = manifest
         .platform(platform)
         .cloned()
-        .ok_or_else(|| "This release has no build for this system.".to_string())?;
+        .ok_or_else(|| "This release does not update itself on this system. Download it from the release page.".to_string())?;
     let io = |e: std::io::Error| format!("Could not save the update: {e}");
     let parts = dir.join("download");
     fs::create_dir_all(&parts).map_err(io)?;
