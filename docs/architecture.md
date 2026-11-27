@@ -313,8 +313,11 @@ Enforced in code:
      is matched on the PC against the catalog search index (ADR 0018) and sends no search text;
      GameBanana's name filter carries the typed text only as the fallback (no index yet, the
      Sounds and WiPs tabs, the Featured filter, or a failed card read). Images are cached under the app data directory
-     (`cache/images`). A sound's sample downloads only when the player presses Play, into memory
-     for the preview player; nothing is written to disk. Favorites (`browse/favorites.json`) and
+     (`cache/images`). A sound's sample downloads when the player presses Play or opens that
+     sound's details (fetched ahead, never played without a press), and starts playing while it
+     still downloads. Samples are capped at 12 MB and kept in memory (32 MB) and on disk
+     (`cache/sounds`, 64 MB, least recently played pruned first), so a second press needs no
+     network. Favorites (`browse/favorites.json`) and
      hidden items, ignored updates, filters and view options (`browse/state.json`) stay local.
    - `gamebanana.com/apiv11` background catalog sync: Browse keeps a bounded local index under
      `browse/mirror/` (`entries.jsonl`, `meta.json`, 40,000 rows and 24 MB caps). Every five

@@ -1221,6 +1221,7 @@ pub(crate) fn list_row(s: &State, u: &Ui, card: &BrowseCard) -> El {
     let age = gamebanana::relative_age(card.updated_ts, gamebanana::now_unix());
     let is_mod = card.model.eq_ignore_ascii_case("mod");
     let playing = s.browse_view.audio.playing == Some(id);
+    let loading = s.browse_view.audio.loading == Some(id);
     let width = crate::screens::browse::toolbar::page_width(s);
     let state = if is_mod {
         // The row reads its own mod's state, so one install never changes another row.
@@ -1352,12 +1353,15 @@ pub(crate) fn list_row(s: &State, u: &Ui, card: &BrowseCard) -> El {
                 .hover(u.hover)
                 .focusable(true)
                 .role("button")
-                .label(if playing { "Stop the sample" } else { "Play the sample" })
+                .label(if playing || loading { "Stop the sample" } else { "Play the sample" })
                 .cursor(rune::Cursor::Pointer)
                 .on_press(move |st: &mut State| st.browse_view.audio.toggle(id, url.clone()))
                 .child(
-                    icon(if playing { &icons::SQUARE_STOP } else { &icons::PLAY }, 14.0)
-                        .color(if playing { u.accent } else { u.muted })
+                    icon(
+                        if playing { &icons::SQUARE_STOP } else if loading { &icons::LOADER } else { &icons::PLAY },
+                        14.0,
+                    )
+                    .color(if playing || loading { u.accent } else { u.muted })
                         .a11y_hidden(),
                 ),
         );

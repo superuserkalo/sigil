@@ -254,6 +254,8 @@ pub(crate) fn card_el(s: &State, u: &Ui, card: &BrowseCard) -> El {
     }
 
     let playing = s.browse_view.audio.playing == Some(id);
+    // Shown on the frame after the press, so the button never feels dead while it loads.
+    let loading = s.browse_view.audio.loading == Some(id);
     let sample = |size: f32, big: bool| {
         let url = card.audio_url.clone().unwrap_or_default();
         let mut button = if big {
@@ -274,13 +276,16 @@ pub(crate) fn card_el(s: &State, u: &Ui, card: &BrowseCard) -> El {
             .hover(u.hover)
             .focusable(true)
             .role("button")
-            .label(if playing { "Stop the sample" } else { "Play the sample" })
+            .label(if playing || loading { "Stop the sample" } else { "Play the sample" })
             .cursor(rune::Cursor::Pointer)
             .on_press(move |st: &mut State| {
                 st.browse_view.audio.toggle(id, url.clone());
             })
             .child(
-                icon(if playing { &icons::SQUARE_STOP } else { &icons::PLAY }, if big { 20.0 } else { 14.0 })
+                icon(
+                    if playing { &icons::SQUARE_STOP } else if loading { &icons::LOADER } else { &icons::PLAY },
+                    if big { 20.0 } else { 14.0 },
+                )
                     // The small one sits on the image: white ink in every theme.
                     .color(if big { u.ink } else { Color::WHITE })
                     .a11y_hidden(),

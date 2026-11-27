@@ -2245,6 +2245,7 @@ fn launch_layer(s: &State, u: &Ui) -> El {
 /// the selected scene.
 pub fn setup(s: &mut State, waker: Waker) {
     s.wake = Some(waker.clone());
+    s.browse_view.audio.wake = Some(waker.clone());
     crate::memory::configure_images();
     // Pictures decode when drawn: a request reads the header for the size, so a window started
     // minimized, or a screen not shown, decodes nothing (`memory.rs`).

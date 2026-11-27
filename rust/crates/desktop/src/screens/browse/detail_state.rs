@@ -307,6 +307,13 @@ pub fn poll(st: &mut State, tx: &mut Tx) -> bool {
         }
         changed = true;
     }
+    // An open sound's sample downloads ahead (never plays), so its Play starts at once.
+    if !st.demo && !st.prefs.offline {
+        let view = &mut st.browse_view;
+        if let Some(url) = view.details.as_ref().and_then(|d| d.profile.as_ref()).and_then(|p| p.audio_url.as_deref()) {
+            view.audio.prefetch(url);
+        }
+    }
     if let Some(result) = st.browse_view.persisted_job.try_take() {
         if let Ok(saved) = result {
             changed |= apply_persisted(st, saved);

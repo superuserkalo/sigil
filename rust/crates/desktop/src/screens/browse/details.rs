@@ -396,11 +396,12 @@ pub(crate) fn details_actions(s: &State, u: &Ui, d: &Details) -> El {
 
     if let Some(url) = profile.audio_url.clone() {
         let playing = s.browse_view.audio.playing == Some(d.id);
+        let loading = s.browse_view.audio.loading == Some(d.id);
         let id = d.id;
         c = c.child(
             u.icon_action(
-                &icons::PLAY,
-                super::tree::tr(if playing { "Stop the sample" } else { "Play the sample" }),
+                if playing { &icons::SQUARE_STOP } else if loading { &icons::LOADER } else { &icons::PLAY },
+                super::tree::tr(if playing || loading { "Stop the sample" } else { "Play the sample" }),
                 ActionKind::Secondary,
             )
             .key("details-sample")

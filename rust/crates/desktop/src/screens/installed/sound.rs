@@ -51,6 +51,19 @@ fn press(st: &mut State, id: u64) {
     if st.installed.sounds.job.is_running() || st.demo || rune::is_headless() || st.prefs.offline {
         return;
     }
+    // The Browse mirror often knows the sample already: no page read before the download.
+    let known = st.browse_view.mirror.as_ref().and_then(|mirror| {
+        mirror
+            .entries
+            .iter()
+            .filter(|e| e.id == id && ["sound", "mod"].contains(&e.model.to_ascii_lowercase().as_str()))
+            .find_map(|e| e.audio_url.clone())
+    });
+    if let Some(url) = known {
+        st.installed.sounds.urls.insert(id, Some(url.clone()));
+        st.browse_view.audio.toggle(id, url);
+        return;
+    }
     st.browse_view.audio.loading = Some(id);
     st.installed.sounds.job.start(st.wake.clone(), move || {
         let url = [BrowseSection::Sounds, BrowseSection::Mods]
