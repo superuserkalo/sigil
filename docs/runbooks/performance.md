@@ -2,7 +2,7 @@
 
 Status: active. Measured on macOS 26.0 (Apple silicon) only; the Windows exe size is measured from
 a cross build, its run time is not.
-Updated: 2026-11-26
+Updated: 2026-11-27
 
 How Sigil is measured, what changed in the 2026-11-17 pass and what is left. The method follows
 the Rust Performance Book as bundled in the `rust-performance` skill: one falsifiable experiment at
@@ -364,7 +364,160 @@ change; a move of more than 5% fails.
 
 A failure in any row is a bug to report with the row number and the four Task Manager numbers.
 
+## Smoother and sooner (2026-11-27)
+
+The owner's report from Windows: animations such as the sidebar should be smoother, things should
+load faster and pictures should get sharp faster. Every number here is from a Mac (Apple silicon,
+macOS 26) shared with other build jobs (load average 10 to 60 during the runs), not from Windows.
+Paired runs come from one `fastrel` build with a temporary switch that restored the old behaviour
+(removed before commit), alternated, so both sides saw the same machine.
+
+### Animations
+
+What moves, all on the motion tokens in `motion.rs` (critically damped springs, ease out): hover
+fills land at once and fade out in 100 ms; selection thumbs, tab underlines and toasts closing
+140 ms; menus, dialogs and drawers in 180 ms with a 4 to 24 point travel, out in 80 to 110 ms;
+page bodies fade in over 120 ms with the old page gone the same frame; card pictures fade in over
+140 ms; the billboard's pager bar fills linearly (a countdown, on purpose); grid rows mount without
+a fade. These are paint only: no commit, no layout. Nothing was long or linear that should not be,
+so no duration changed.
+
+What was wrong:
+
+- **The sidebar jumped.** Its width changed in one frame (216 to 48 points and back) while only
+  the logo faded, and every page re-laid out at the new width in that frame. Now the sidebar's
+  width glides on `base` (140 ms) and clips what it holds, and the page beside it is laid out once
+  at the width it lands at and slides there as one (`motion::sidebar_glide`, `motion::page_glide`,
+  Rune's `hold_landing_width`): no text is shaped and nothing is laid out while it moves.
+- **Biggest cost: a second full Browse rebuild after every sidebar toggle, visit and resize.**
+  Browse's scroll area stored its laid-out width from a layout handler with a normal commit, so
+  the frame after the real commit rebuilt the whole page again, although the views already read
+  that width in the first commit (`toolbar::page_width`). The handler now stores it live only
+  (`browse/page.rs`, `browse/sources.rs`).
+
+CPU per frame, `fastrel`, headless (`--scene <scene> --script <taps> --fps 60 --scale 2 --size
+1360x860`, `RUNE_FRAME_LOG`), three toggles after the first, ms:
+
+| | Before | After |
+| --- | --- | --- |
+| Browse landing, sidebar toggle | two commits in a row: 11.8 to 14.7, then 6.9 to 9.8 (18.7 to 23.8 together) | one commit: 14.3 to 18.4 |
+| Browse landing, frames while it moves | 3.0 to 3.7 mean, 4.7 worst (the logo fading) | 4.1 to 5.2 mean, 6.8 worst (the glide) |
+| Installed, sidebar toggle | one commit, 3.2 to 7.3 | one commit, 6.8 to 7.6 |
+| Installed, frames while it moves | 0.4 to 1.3 mean, 2.3 worst | 1.8 to 2.7 mean, 5.2 worst |
+| Sidebar press to Browse | a commit and a second one of 1.5 to 4.7 | one commit, no second |
+
+The `fastrel` rows were taken before the glide's spring was kept to the moving edges (the page's
+own contents then sprang too), so its glide frames are an upper bound. The final code, debug test
+runtime (`smooth_tests::probe_shell_transitions`, 1280 by 800 at 1x, a calm machine, two paired
+runs), wall ms of the commit frames and of the frames after:
+
+| | Before | After |
+| --- | --- | --- |
+| Browse landing, collapse | 23.1 to 24.0, then a second commit of 8.6 to 9.4 | one commit, 24.0 to 29.3 |
+| Browse landing, frames after | 5.2 to 5.8 | 5.2 to 6.7, and 29 to 34 on three frames |
+| Installed, collapse frames after | 3.0 to 5.0 | 3.0 to 3.9, and 21 to 24 on three frames |
+| Sidebar press to Browse | 11.5 to 13.5, then 4.2 to 4.4 | one commit, 10.4 to 10.7 |
+
+The three heavier glide frames in a debug build are the page's text drawn at new fractional
+offsets; the optimized build showed no glide frame over 6.8 ms of CPU. Judge the glide in a
+release build.
+
+### First content
+
+Browse's first cards come from one GameBanana read on a worker (or the saved catalog, or the
+local search index); nothing parses on the UI thread for long. Live window, `fastrel`, fresh data
+folder each time (cold) or the second launch on it (warm), `SIGIL_LOAD_TRACE`: the first cards
+were in at 0.35 to 0.7 s cold and 0.16 to 0.27 s warm, before and after alike, usually in the
+first frame's poll. Nothing to fix here on this Mac; on Windows the read is the same one request.
+
+The second memory batch's two suspects, checked:
+
+- The picture gate (`first_show::Gate`) starts open for a window that opens shown
+  (`Gate::at_start(Start::Shown)`, test `a_normal_launch_shows_and_holds_nothing`): it costs a
+  normal launch nothing.
+- The fetch crews went from 6 to 4 workers. They start only while pictures wait and leave when the
+  queue is empty, so the idle cost was already zero; they are back to 6 (a browser's connections
+  per host) while pictures load.
+
+### Pictures getting sharp
+
+The path of a card picture: the grid's visible rows ask (`track_visible`, the rows on screen and
+one more, urgent), the crew reads the disk cache or GameBanana's 530 pixel thumbnail, the poll
+hands the file to Rune, which reads its header for the size, and the pixels decode (scaled to the
+card at the screen's scale) the first time the card draws it, then fade in. The billboard shows
+the 530 pixel thumbnail and swaps to the original upload (or the top list's 800 pixel art) once
+that is decoded, scaled to the banner. There is no per-frame upload budget: every decoded picture
+drawn in a frame is copied to the atlas in that frame.
+
+What was slow:
+
+- **Biggest: the billboard went blank while its original decoded.** It switched to the original
+  as soon as Rune knew its size from the header, before any pixel was decoded, and a picture
+  without pixels draws nothing: the banner showed its empty fill from the header read until the
+  multi-megabyte original was decoded, instead of the thumbnail. Now it draws the original only
+  once its pixels are ready and asks for both decodes, the thumbnail's first
+  (`top::billboard_pixels`). In the debug runtime's landing load, frames with an empty billboard
+  went from 22 to 29 of about 25 to 0.
+- The next pick's original decoded only when it was shown, so every step showed the thumbnail
+  first. It now decodes 1.5 s before the step (`top::prepare_next`, woken by the interval, no
+  commit).
+- Header reads and decodes shared one first-in, first-out queue on Rune's three decoder threads,
+  so the decode of a card on screen waited behind the header reads of every picture asked for
+  before it. Decodes now go first (Rune patch 0021, `image/decoders.rs`). A header read that
+  finds the size already known is skipped, and a header read takes the first 256 KB of a file
+  instead of the whole file (an original is 1 to 5 MB), reading the rest only when the header
+  lies past it.
+- Cards scrolled into view waited behind margin rows queued earlier: an urgent request now moves
+  pictures that were already waiting to the front, in the order asked (`data::enqueue`).
+
+Live window, `fastrel`, ms after the first frame, 3 alternated runs each:
+
+| | Before | After |
+| --- | --- | --- |
+| Warm: billboard sharp | 721, 747, 800 | 369, 411, 439 |
+| Cold: billboard sharp | 1012, 1142, 1727 | 1111, 1263, 1266 |
+| Cold: every picture then asked for decoded | 1949, 2109, not within 12 s | 314, 1211, 1347 |
+
+Warm, the billboard is sharp in about half the time; cold, the original's download dominates
+and the time did not change measurably. The "every picture" milestone depends on what the
+landing has chosen to show at that moment, so read it as a trend. Snapshots of the landing are
+unchanged except for the billboard during a load.
+
+Memory cost: up to two more fetch threads while pictures download (none when idle); one decoded
+banner (about 10 MB with its mips at 2x) held on the CPU for up to 1.5 s before a billboard step,
+or until the next step when a pause stops it; header reads hold at most 256 KB instead of a whole
+original. The atlas budgets, the decode pixel limit (`MAX_DECODE_PIXELS`) and the 2560 pixel cap
+are unchanged, and animated pictures decode as before.
+
+How to see it: `SIGIL_LOAD_TRACE=<file>` makes Sigil append its milestones (`first-frame`,
+`browse-cards`, `pictures-shown`, `billboard-sharp`, and `page browse visit N pictures-shown`
+for each later visit) in milliseconds since start. Ignored tests `probe_shell_transitions` and
+`measure_browse_pictures` (`SMOOTH_COLD=1` for a cold cache) repeat the in-process measurements.
+Guards: `the_sidebar_glides_in_one_commit_and_lays_nothing_out_while_it_moves`,
+`the_sidebar_lands_at_once_under_reduced_motion`, `opening_browse_is_one_commit`,
+`the_billboard_draws_the_upload_only_once_it_is_decoded`, the crew's `queue_order_tests`, and in
+Rune `a_decode_goes_ahead_of_every_header_read_queued_before_it`.
+
+### On Windows
+
+1. Collapse and expand the sidebar (the button by the logo, or Ctrl+B) on Browse and on Installed:
+   the sidebar should slide in about a seventh of a second and the page slide with its edge, with
+   no hitch at the start and no text re-wrapping during the slide.
+2. Press Browse in the sidebar from another page: the page fades in with no stutter after its
+   first frame.
+3. Start Sigil with `SIGIL_LOAD_TRACE=%TEMP%\sigil-load.txt` twice (the second start is warm) and
+   read the file: `billboard-sharp` minus `first-frame` was about 0.4 s warm here. On Browse the
+   billboard should never flash empty while it loads; it shows the small picture, then the sharp
+   one. Each billboard step should show the next picture sharp at once.
+4. Scroll the Browse grid quickly and stop: the cards in view should fill before the ones beyond.
+
 ## Remaining opportunities
+
+- Locker visits commit several times while its art lands (12 to 24 ms each in `fastrel` here)
+  during the page fade; batching those commits would smooth that page switch.
+- Every frame of any motion repaints the whole window (3 to 5 ms on the Browse landing here).
+- The billboard original takes 150 to 300 ms to decode and scale; a decoder that scales while it
+  decodes (JPEG DCT scaling) would cut that.
 
 - The toggle commit itself (see above): fewer mounted cards needs a configurable overscan in Rune.
 - Windows: measure the launch steps and a toggle on a real install with antivirus; the numbers above
