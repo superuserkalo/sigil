@@ -24,8 +24,6 @@ use super::{Fetched, HeatGrid, Tab};
 pub const DEPTH: usize = 24;
 /// Players kept in memory for an instant Back.
 const KEPT: usize = 4;
-/// Matches in a visited player's window, as on your own page.
-const WINDOW: usize = 200;
 /// The scroll view the page scrolls in.
 pub const SCROLL: &str = "stats-scroll";
 
@@ -58,24 +56,18 @@ struct Kept {
     social: Option<Social>,
 }
 
-/// A visited player's page, read on a worker.
-pub struct Visit {
-    pub account_id: u64,
-    pub snapshot: Result<StatsSnapshot, String>,
-    pub icons: Vec<(String, Vec<u8>)>,
-}
-
 #[derive(Default)]
 pub struct Nav {
     /// Places with the scroll offset they were left at. The top is shown.
     pub stack: Vec<(Place, f32)>,
     kept: Vec<Kept>,
-    visit_job: Job<Visit>,
-    /// The player a visit is loading for.
+    /// The player a visit is loading for, before any page of theirs is drawn. The page
+    /// draws at once now (`progress.rs`), so this is only set while Player stats is off.
     pub pending: Option<u64>,
     /// Why the last visit failed, shown in place of the page.
     pub error: Option<String>,
-    heat_job: Job<(u64, KillHeatmap)>,
+    /// The kill map, and the objective positions when they are not loaded yet.
+    heat_job: Job<(u64, KillHeatmap, Vec<deadlock_core::stats::MapObjective>)>,
 }
 
 thread_local! {
@@ -108,6 +100,11 @@ impl Nav {
             Some(Place::Hero { account_id, hero_id }) => Some((account_id, hero_id)),
             _ => None,
         }
+    }
+
+    /// The kill map is being read (the Map tab opened).
+    pub fn heat_loading(&self) -> bool {
+        self.heat_job.is_running()
     }
 
     /// The match page is open.
@@ -300,6 +297,12 @@ fn switch_subject(st: &mut State, account_id: u64) {
 fn stash(st: &mut State) {
     let Some(snapshot) = st.stats.snapshot.take() else { return };
     st.stats.derived = None;
+    if st.stats.progress.running() && st.stats.progress.account_id == Some(snapshot.account_id) {
+        // Half loaded: not kept, so coming back loads it again instead of showing gaps.
+        st.stats.heat = None;
+        st.stats.social = Fetched::Idle;
+        return;
+    }
     let social = match std::mem::replace(&mut st.stats.social, Fetched::Idle) {
         Fetched::Ready(social) => Some(social),
         _ => None,
@@ -312,7 +315,7 @@ fn stash(st: &mut State) {
 }
 
 /// A snapshot becomes the page's subject without touching home or the stack.
-fn install(st: &mut State, snapshot: StatsSnapshot) {
+pub(super) fn install(st: &mut State, snapshot: StatsSnapshot) {
     super::set_snapshot_only(&mut st.stats, snapshot);
     st.stats.more.items = Fetched::Idle;
     st.stats.more.party = Fetched::Idle;
@@ -323,20 +326,10 @@ fn install(st: &mut State, snapshot: StatsSnapshot) {
 }
 
 fn start_visit(st: &mut State, account_id: u64) {
-    st.stats.nav.pending = Some(account_id);
+    st.stats.nav.pending = None;
     st.stats.heat = None;
     st.stats.heat_error = None;
-    if !st.prefs.allow_stats {
-        st.stats.nav.pending = None;
-        st.stats.nav.error = Some("Player stats are turned off in Settings, Privacy.".to_string());
-        return;
-    }
-    if st.stats.nav.visit_job.is_running() || offline_build() {
-        // The running read finishes first; `poll` starts the one asked for now.
-        return;
-    }
-    let wake = st.wake.clone();
-    st.stats.nav.visit_job.start(wake, move || Ok(fetch_visit(account_id)));
+    super::progress::start(st, account_id, false);
 }
 
 /// Tests and headless scenes never reach the network from here.
@@ -344,34 +337,21 @@ pub fn offline_build() -> bool {
     cfg!(test) || rune::is_headless()
 }
 
-/// Profile, rank, match history and hero stats (names, ranks and the distribution are cached),
-/// then the rank tier's benchmarks, which the tier shares with every player in it.
-pub fn fetch_visit(account_id: u64) -> Visit {
-    let client = crate::data::stats_client();
-    let snapshot = client
-        .fetch_snapshot(account_id, WINDOW)
-        .map(|mut snapshot| {
-            let tier_name = snapshot.tier_names.get(&(snapshot.rank.badge / 10)).cloned();
-            snapshot.peers =
-                client.fetch_peer_benchmarks(snapshot.rank.badge, snapshot.generated_unix, tier_name).unwrap_or(None);
-            snapshot
-        })
-        .map_err(|error| error.to_string());
-    let icons = snapshot.as_ref().map(crate::data::stats_hero_icons).unwrap_or_default();
-    Visit { account_id, snapshot, icons }
-}
-
-/// Load the kill map for a visited player when the Map tab opens.
+/// Load the kill map when the Map tab opens. It is the slowest read a page has (two seconds
+/// or more when the API has not served it lately), so a Track press never waits for it.
 fn ensure_heat(st: &mut State) {
     let Some(account_id) = st.stats.snapshot.as_ref().map(|snap| snap.account_id) else { return };
     if st.stats.heat.is_some() || st.stats.nav.heat_job.is_running() || !st.prefs.allow_stats {
         return;
     }
+    let need_objectives = st.stats.objectives.is_empty();
     let wake = st.wake.clone();
     st.stats.nav.heat_job.start(wake, move || {
-        crate::data::stats_client()
+        let client = crate::data::stats_client();
+        let objectives = if need_objectives { client.fetch_map_objectives().unwrap_or_default() } else { Vec::new() };
+        client
             .fetch_kill_heatmap(account_id)
-            .map(|heat| (account_id, heat))
+            .map(|heat| (account_id, heat, objectives))
             .map_err(|error| error.to_string())
     });
 }
@@ -379,51 +359,30 @@ fn ensure_heat(st: &mut State) {
 /// Reload the visited player's page (the refresh button on a visit).
 pub fn reload(st: &mut State) {
     let Some(account_id) = st.stats.nav.top().map(Place::subject) else { return };
-    if st.stats.nav.visit_job.is_running() {
+    if st.stats.progress.running() {
         return;
     }
     st.stats.last_refresh = Some(std::time::Instant::now());
-    st.stats.nav.pending = Some(account_id);
-    let wake = st.wake.clone();
-    st.stats.nav.visit_job.start(wake, move || Ok(fetch_visit(account_id)));
+    super::progress::start(st, account_id, false);
 }
 
-/// Take finished visits and maps. Called from the Stats poll.
+/// Take finished maps. Called from the Stats poll.
 pub fn poll(st: &mut State) -> bool {
-    let mut changed = false;
-    if let Some(result) = st.stats.nav.heat_job.try_take() {
-        let subject = st.stats.snapshot.as_ref().map(|snap| snap.account_id);
-        match result {
-            Ok((account_id, heat)) if Some(account_id) == subject => {
+    let Some(result) = st.stats.nav.heat_job.try_take() else { return false };
+    let subject = st.stats.snapshot.as_ref().map(|snap| snap.account_id);
+    match result {
+        Ok((account_id, heat, objectives)) => {
+            if !objectives.is_empty() {
+                st.stats.objectives = objectives;
+            }
+            if Some(account_id) == subject {
                 st.stats.heat = Some(super::bucket(&heat, super::HEAT_CELLS, super::HEAT_CELLS));
                 st.stats.heat_error = None;
             }
-            Ok(_) => {}
-            Err(error) => st.stats.heat_error = Some(error),
         }
-        changed = true;
+        Err(error) => st.stats.heat_error = Some(error),
     }
-    if let Some(Ok(visit)) = st.stats.nav.visit_job.try_take() {
-        changed = true;
-        let wanted = st.stats.nav.pending;
-        st.pending_thumbs.extend(visit.icons);
-        if wanted == Some(visit.account_id) {
-            st.stats.nav.pending = None;
-            match visit.snapshot {
-                Ok(snapshot) => {
-                    // A refresh of the page already shown keeps its other sections.
-                    st.stats.snapshot = None;
-                    install(st, snapshot);
-                    tab_opened(st);
-                }
-                Err(error) => st.stats.nav.error = Some(error),
-            }
-        } else if let Some(account_id) = wanted {
-            let wake = st.wake.clone();
-            st.stats.nav.visit_job.start(wake, move || Ok(fetch_visit(account_id)));
-        }
-    }
-    changed
+    true
 }
 
 /// Track the page's player: add them to the tracked list, as the account button would.
@@ -472,8 +431,12 @@ mod tests {
         assert_eq!(s.stats.nav.stack.len(), 2);
         assert!(visiting(&s));
         assert_eq!(s.stats.tab, Tab::Overview);
-        assert_eq!(s.stats.nav.pending, Some(81_220_464), "a visit loads");
-        assert!(s.stats.snapshot.is_none(), "home is kept aside");
+        assert_eq!(s.stats.progress.account_id, Some(81_220_464), "a visit loads");
+        assert_eq!(
+            s.stats.snapshot.as_ref().map(|snap| snap.account_id),
+            Some(81_220_464),
+            "the visited player shows at once, home is kept aside"
+        );
         // Back: home again at once, on the tab it was left on.
         assert!(back(&mut s, &mut tx));
         assert_eq!(s.stats.snapshot.as_ref().map(|snap| snap.account_id), Some(home));

@@ -1931,10 +1931,6 @@ pub fn apply_autoexec(state: &mut State, result: Result<crate::screens::autoexec
 
 // --- stats -----------------------------------------------------------------
 
-/// Matches kept from the stored history. The API returns the whole history in
-/// one response, so a larger window costs no extra request; 200 covers a few
-/// weeks of rank movement and enough games for the form comparisons.
-const STATS_WINDOW: usize = 200;
 /// Tracked players kept for the account switcher.
 const STATS_REMEMBERED: usize = 6;
 
@@ -2076,22 +2072,25 @@ fn stats_input(state: &State) -> deadlock_core::stats::AccountInput {
 pub fn stats_hero_icons(
     snapshot: &deadlock_core::stats::StatsSnapshot,
 ) -> Vec<(String, Vec<u8>)> {
+    stats_icons_for(
+        snapshot
+            .heroes
+            .iter()
+            .map(|hero| (hero.hero_id, hero.hero_name.clone()))
+            .chain(snapshot.matches.iter().map(|item| (item.hero_id, item.hero_name.clone()))),
+    )
+}
+
+/// [`stats_hero_icons`] for any (hero id, name) rows: a part of a page as it arrives.
+pub fn stats_icons_for(
+    names: impl Iterator<Item = (u32, Option<String>)>,
+) -> Vec<(String, Vec<u8>)> {
     let assets = deadlock_core::locker::LockerAssetPaths::discover();
     let Some(dir) = assets.hero_portraits_dir.map(|dir| dir.join("chip-icons")) else {
         return Vec::new();
     };
     let mut seen = std::collections::BTreeSet::new();
     let mut out = Vec::new();
-    let names = snapshot
-        .heroes
-        .iter()
-        .map(|hero| (hero.hero_id, hero.hero_name.clone()))
-        .chain(
-            snapshot
-                .matches
-                .iter()
-                .map(|item| (item.hero_id, item.hero_name.clone())),
-        );
     for (hero_id, name) in names {
         let Some(name) = name else { continue };
         if !seen.insert(hero_id) {
@@ -2113,40 +2112,6 @@ pub fn stats_hero_icons(
     out
 }
 
-/// Steam accounts this computer has signed in with. Local file reads only.
-fn steam_users() -> Vec<deadlock_core::steam_users::SteamUser> {
-    deadlock_core::steam_users::detect(&deadlock_core::discovery::default_steam_roots())
-}
-
-fn fetch_stats(account_id: u64) -> crate::screens::stats::Load {
-    let client = stats_client();
-    let snapshot = client
-        .fetch_snapshot(account_id, STATS_WINDOW)
-        .map(|mut snapshot| {
-            let tier = snapshot.rank.badge / 10;
-            let tier_name = snapshot.tier_names.get(&tier).cloned();
-            snapshot.peers = client
-                .fetch_peer_benchmarks(snapshot.rank.badge, snapshot.generated_unix, tier_name)
-                .unwrap_or(None);
-            snapshot
-        })
-        .map_err(|error| error.to_string());
-    let heatmap = client
-        .fetch_kill_heatmap(account_id)
-        .map_err(|error| error.to_string());
-    let objectives = client.fetch_map_objectives().unwrap_or_default();
-    let icons = snapshot.as_ref().map(stats_hero_icons).unwrap_or_default();
-    crate::screens::stats::Load {
-        account_id,
-        snapshot,
-        heatmap,
-        objectives,
-        icons,
-        steam: steam_users(),
-        age: client.age(),
-    }
-}
-
 pub fn start_stats_load(state: &mut State) {
     load_stats(state, false);
 }
@@ -2155,9 +2120,6 @@ pub fn start_stats_load(state: &mut State) {
 /// another tracked player is a deliberate action, not a refresh.
 fn load_stats(state: &mut State, force: bool) {
     use deadlock_core::stats::AccountInput;
-    if state.stats_job.is_running() {
-        return;
-    }
     if !force && !state.stats.can_refresh() {
         let wait = state.stats.refresh_wait();
         state.status = format!("Stats refreshed a moment ago. Try again in {wait} seconds.");
@@ -2178,13 +2140,11 @@ fn load_stats(state: &mut State, force: bool) {
             return;
         }
     };
-    let wake = state.wake.clone();
     state.stats.error = None;
     state.stats.search.clear();
     state.stats.last_refresh = Some(std::time::Instant::now());
-    state
-        .stats_job
-        .start(wake, move || Ok(fetch_stats(account_id)));
+    // The page shows the player at once and fills in part by part (`stats::progress`).
+    crate::screens::stats::progress::start(state, account_id, true);
 }
 
 /// Load one account picked from a list.
@@ -2198,65 +2158,14 @@ pub fn load_stats_account(state: &mut State, account_id: u64) {
     load_stats(state, true);
 }
 
+/// The headless `stats` scene's load, on the calling thread.
 pub fn stats_now(state: &mut State) {
     use deadlock_core::stats::AccountInput;
     let AccountInput::Account(account_id) = stats_input(state) else {
         return;
     };
     state.stats.last_refresh = Some(std::time::Instant::now());
-    apply_stats(state, Ok(fetch_stats(account_id)));
-}
-
-pub fn apply_stats(state: &mut State, result: Result<crate::screens::stats::Load, String>) {
-    match result {
-        Ok(load) => {
-            state.stats.loaded = true;
-            state.stats.age = load.age;
-            state.stats.steam = load.steam;
-            state.pending_thumbs.extend(load.icons);
-            match load.snapshot {
-                Ok(snapshot) => {
-                    state.stats.account = TextEdit::new("");
-                    state.stats.account_open = false;
-                    remember_stats_account(
-                        state,
-                        load.account_id,
-                        &snapshot.profile.persona_name.clone(),
-                    );
-                    state.status = format!("Loaded player stats for account {}.", load.account_id);
-                    crate::screens::stats::set_snapshot(&mut state.stats, snapshot);
-                    state.stats.error = None;
-                    crate::screens::settings::product::stats(state);
-                }
-                Err(error) => {
-                    state.stats.error = Some(error.clone());
-                    state.status = error;
-                }
-            }
-            match load.heatmap {
-                Ok(heat) => {
-                    state.stats.heat = Some(crate::screens::stats::bucket(
-                        &heat,
-                        crate::screens::stats::HEAT_CELLS,
-                        crate::screens::stats::HEAT_CELLS,
-                    ));
-                    state.stats.heat_error = None;
-                }
-                Err(error) => {
-                    state.stats.heat = None;
-                    state.stats.heat_error = Some(error);
-                }
-            }
-            if !load.objectives.is_empty() {
-                state.stats.objectives = load.objectives;
-            }
-        }
-        Err(error) => {
-            state.stats.loaded = true;
-            state.stats.error = Some(error.clone());
-            state.status = error;
-        }
-    }
+    crate::screens::stats::progress::load_now(state, account_id);
 }
 
 /// Teammates and opponents: three large responses, read when the Squad tab opens.

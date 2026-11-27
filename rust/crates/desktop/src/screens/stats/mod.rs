@@ -18,6 +18,7 @@ use deadlock_core::stats::board::MatchScoreboard;
 use deadlock_core::stats::cache::Age;
 use deadlock_core::stats::insight::{self, Brief, Form, RankPoint, Session, Streak};
 use deadlock_core::stats::leaderboard::RankedSeason;
+use deadlock_core::stats::parts::PartKind;
 use deadlock_core::stats::social::Social;
 use deadlock_core::stats::{KillHeatmap, Leaderboard, MapObjective, PlayerProfile, StatsSnapshot};
 use deadlock_core::steam_users::SteamUser;
@@ -35,6 +36,7 @@ mod match_views;
 pub mod lookup;
 pub mod nav;
 pub mod pictures;
+pub mod progress;
 mod brief;
 mod demos;
 mod german;
@@ -108,18 +110,6 @@ pub struct DemoRow {
 pub struct DemoLoad {
     pub rows: Vec<DemoRow>,
     pub error: Option<String>,
-}
-
-pub struct Load {
-    pub account_id: u64,
-    pub snapshot: Result<StatsSnapshot, String>,
-    pub heatmap: Result<KillHeatmap, String>,
-    pub objectives: Vec<MapObjective>,
-    pub icons: Vec<(String, Vec<u8>)>,
-    /// Steam accounts this computer has signed in with, read off the UI thread.
-    pub steam: Vec<SteamUser>,
-    /// How old the data behind this load is, and whether a stale copy answered.
-    pub age: Age,
 }
 
 /// An account this machine has loaded before. One of them is the primary
@@ -309,6 +299,8 @@ pub struct View {
     pub live: live::Live,
     /// Fun run: a random hero and build from a share code (`roll.rs`).
     pub roll: roll::RollView,
+    /// The page's parts as they arrive (`progress.rs`).
+    pub progress: progress::Progress,
 }
 
 pub struct ReviewPanel {
@@ -384,6 +376,7 @@ impl Default for View {
             w4: w4::W4::default(),
             live: live::Live::default(),
             roll: roll::RollView::default(),
+            progress: progress::Progress::default(),
         }
     }
 }
@@ -518,6 +511,7 @@ pub fn poll(state: &mut State) -> bool {
     changed |= board::poll(state);
     changed |= hero_page::poll(state);
     changed |= bracket::poll(state);
+    changed |= progress::poll(state);
     changed |= nav::poll(state);
     changed |= lookup::poll(state);
     changed |= pictures::poll(state);
@@ -554,7 +548,8 @@ fn poll_steam(st: &mut State) -> bool {
         st.pending_thumbs.extend(avatars);
         changed = true;
     }
-    if st.stats.steam_asked || st.stats.snapshot.is_some() || st.screen != crate::model::Screen::Stats || nav::offline_build() || st.demo {
+    // Also with a page open: the account panel offers this PC's Steam accounts.
+    if st.stats.steam_asked || st.screen != crate::model::Screen::Stats || nav::offline_build() || st.demo {
         return changed;
     }
     st.stats.steam_asked = true;
@@ -739,6 +734,35 @@ pub fn scene_visit(s: &mut State) {
     snap.profile.persona_name = "Duo partner".to_string();
     snap.matches.truncate(37);
     nav::scene_visit(s, captured.snapshot);
+}
+
+/// Just after Track: the player's name, picture and country on the page, every other section
+/// loading in its own place.
+pub fn scene_loading_parts(s: &mut State) {
+    load_fixture(s);
+    let Some(full) = s.stats.snapshot.clone() else { return };
+    let mut snap = deadlock_core::stats::parts::placeholder(full.account_id, &full.profile.persona_name);
+    deadlock_core::stats::parts::apply(&mut snap, deadlock_core::stats::parts::Part::Profile(full.profile), progress::WINDOW);
+    set_snapshot(&mut s.stats, snap);
+    s.stats.bracket = bracket::Bracket::default();
+    progress::scene_parts(s, full.account_id, true, &[]);
+}
+
+/// The match history failed while the rest arrived: its section says so with Try again.
+pub fn scene_part_failed(s: &mut State) {
+    load_fixture(s);
+    let Some(mut snap) = s.stats.snapshot.clone() else { return };
+    let account_id = snap.account_id;
+    snap.matches.clear();
+    snap.window = deadlock_core::stats::window_stats(&[]);
+    set_snapshot(&mut s.stats, snap);
+    s.stats.bracket = bracket::Bracket::default();
+    progress::scene_parts(
+        s,
+        account_id,
+        true,
+        &[(PartKind::Matches, "Deadlock API returned HTTP 503 for /v1/players/{id}/match-history.")],
+    );
 }
 
 /// The name search open with results.
@@ -931,7 +955,7 @@ pub fn scene_entry_manual(s: &mut State) {
 
 pub fn view(s: &State, u: &Ui) -> El {
     let v = &s.stats;
-    let loading = s.stats_job.is_running() || v.nav.loading();
+    let loading = v.progress.running() || v.nav.loading();
     let ready = v.can_refresh();
     let has_player = v.snapshot.is_some();
     let visiting = nav::visiting(s);
@@ -942,8 +966,12 @@ pub fn view(s: &State, u: &Ui) -> El {
     let error = v.nav.error.as_ref().filter(|_| visiting).or(v.error.as_ref());
     let (status, warn) = match (&v.snapshot, error) {
         (Some(_), Some(error)) => (error.clone(), true),
-        (Some(_), None) if loading => (tr("Refreshing").to_string(), false),
-        (Some(_), None) if v.age.stale => (tr("Older copy").to_string(), false),
+        // "Updating" over a shown page, then how old it is.
+        (Some(_), None) => match progress::note(s) {
+            Some(note) => (note, false),
+            None if v.age.stale => (tr("Older copy").to_string(), false),
+            None => (String::new(), false),
+        },
         _ => (String::new(), false),
     };
     let mut slot = row().w(160.0).h(28.0).gap(6.0).center_y().justify_end();
@@ -1074,6 +1102,15 @@ fn tab_body(s: &State, u: &Ui, tab: Tab, snap: &StatsSnapshot, derived: &Derived
     // A tab body fades in whole on a tab press and the old one is gone that frame
     // (`design/motion.md` 4.12), so its rows never fade in one by one on their own default.
     let section = |key: &str| col().key(key.to_string()).w_full().gap(24.0).transition(crate::motion::page_enter());
+    // A tab whose part is still loading (or failed) shows that in place of its table.
+    let gate = match tab {
+        Tab::Matches => progress::gate(s, u, PartKind::Matches, !snap.matches.is_empty(), 8).map(|g| ("stats-tab-matches", g)),
+        Tab::Heroes => progress::gate(s, u, PartKind::Heroes, !snap.heroes.is_empty(), 8).map(|g| ("stats-tab-heroes", g)),
+        _ => None,
+    };
+    if let Some((key, gate)) = gate {
+        return section(key).child(gate);
+    }
     match tab {
         Tab::Overview => brief::overview(s, u, osnap, oderived).transition(crate::motion::page_enter()),
         Tab::Live => section("stats-tab-live").child(live::tab(s, u)),

@@ -116,7 +116,6 @@ pub struct State {
     pub autoexec_original: String,
     pub autoexec_job: Job<screens::autoexec::Read>,
     pub stats: screens::stats::View,
-    pub stats_job: Job<screens::stats::Load>,
     pub demo_job: Job<screens::stats::DemoLoad>,
     pub model_review_job: Job<Result<String, String>>,
     pub locker: screens::locker::View,
@@ -228,7 +227,6 @@ impl Default for State {
             autoexec_original: String::new(),
             autoexec_job: Job::default(),
             stats: screens::stats::View::default(),
-            stats_job: Job::default(),
             demo_job: Job::default(),
             model_review_job: Job::default(),
             locker: screens::locker::View::default(),
@@ -429,7 +427,7 @@ impl State {
                 }
             }
             Screen::Stats => {
-                if !self.stats.loaded && !self.stats_job.is_running() {
+                if !self.stats.loaded {
                     crate::data::start_stats_load(self);
                 }
                 if !self.demo_job.is_running() {
@@ -2379,10 +2377,6 @@ pub fn poll(s: &mut State, t: f64, _tx: &mut Tx) -> bool {
         crate::data::apply_autoexec(s, result);
         changed = true;
     }
-    if let Some(result) = s.stats_job.try_take() {
-        crate::data::apply_stats(s, result);
-        changed = true;
-    }
     if let Some(result) = s.demo_job.try_take() {
         crate::data::apply_demo_list(s, result);
         changed = true;
@@ -3117,6 +3111,8 @@ pub fn scenes() -> &'static [(&'static str, fn(&mut State))] {
         ("stats-match-build", screens::stats::scene_match_build),
         ("stats-match-lobby", screens::stats::scene_match_lobby),
         ("stats-visit", screens::stats::scene_visit),
+        ("stats-loading-parts", screens::stats::scene_loading_parts),
+        ("stats-part-failed", screens::stats::scene_part_failed),
         ("stats-lookup", screens::stats::scene_lookup),
         ("stats-squad", screens::stats::scene_squad),
         ("stats-hero", screens::stats::scene_hero),

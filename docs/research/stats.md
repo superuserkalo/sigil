@@ -290,9 +290,8 @@ Changing tab is not a step. The stack keeps 24 places, home always at the bottom
 
 Visiting never writes `stats-accounts.json`: only Track (in the context bar or the row menu) adds a
 player. The last four players left behind stay in memory so Back is instant; older ones load again
-from the response cache. A visit reads profile, rank, match history and hero stats (names, tier
-names and the rank distribution are cached) plus the tier's peer benchmarks; the kill raster loads
-only when Map opens, the Squad lists only when Squad opens.
+from the response cache. A visit loads in parts as Track does (see Loading in parts); the kill raster
+loads only when Map opens, the Squad lists only when Squad opens.
 
 ### Find a player
 
@@ -309,6 +308,33 @@ With nothing tracked, the page lists the Steam accounts signed in on this PC
 (`deadlock_core::steam_users`, read from `config/loginusers.vdf` on a worker), each with Steam's own
 cached avatar (`config/avatarcache/<id64>.png`, local) and one Track button. One press loads the
 page; nothing is fetched before it. Typing an id or a link is the fallback.
+
+### Loading in parts
+
+Track (and opening any player) draws the page in the same frame with the name and picture already
+known (tracked list, Steam accounts, search rows), then fills it part by part
+(`deadlock_core::stats::parts`, `screens/stats/progress.rs`). The first wave is four parts read side
+by side: profile, rank card (rank, tier names, distribution, seasons), hero rows and match history
+(hero names read once for both). The peer benchmarks follow the rank, as they need its badge. The
+kill raster and the map asset wait for the Map tab, the rank metrics for the Overview section once
+the rank is in, Squad and Leaderboard for their tabs. Each section has its own loading rows and,
+on failure, its own message and Try again, which reads that part only; a failed part never blanks
+the page. Only when every part fails does the page show the error in its place.
+
+Each part is first read from the response cache whatever its age, so a player seen before shows
+their last page at once with "Updating" in the head; the API is asked only when that copy is past
+its lifetime, and its answer replaces the copy (an error keeps the copy and says "Older copy").
+The head then reads "Updated just now" or "Updated N min ago".
+
+Match history has no paging, cursor or "newer than" parameter upstream: it is one response
+(about 80 to 210 KB gzipped, up to 3.6 MB of JSON for a busy player). A refresh merges the new
+answer into the rows shown (`parts::merge_history`: one row per match, the newer copy wins, newest
+first, 200 kept), so an answer that lags an earlier one does not drop rows.
+
+Measured on 2026-11-27 for public leaderboard accounts (`.scratch/stats-speed/`): the analytics
+endpoints cost 2 to 3.5 s on the API's side when their CDN has not served the query in the last
+five minutes (kill-death-stats 2.1 to 2.4 s, player-stats/metrics 3.5 s); the player endpoints
+cost 0.15 to 1.1 s cold. These set the floor for the Map tab and the "At your rank" section.
 
 ### Overview
 
@@ -454,14 +480,15 @@ not remembered; Track adds one.
 
 `deadlock_core::stats::cache::ResponseCache` keeps one file per request under the app data
 directory (`cache/stats`). A response inside its lifetime is used without a request; an older copy
-answers when the API cannot be reached and the page says "Showing an older copy". Manual refresh
-waits 60 seconds.
+answers when the API cannot be reached and the page says "Older copy". Manual refresh
+waits 60 seconds. Files older than 30 days are deleted once the directory holds more than 512;
+the check reads only each file's header line.
 
 | Endpoint | Lifetime |
 | --- | --- |
 | Match history, hero stats, kill and death raster | 10 minutes |
 | Rank | 30 minutes |
-| Rank distribution, peer benchmarks | 12 hours |
+| Rank distribution, peer benchmarks (window end rounded to the hour, so the key holds) | 12 hours |
 | Teammates, opponents, leaderboard | 1 hour |
 | Steam profiles | 24 hours |
 | Match metadata, hero, rank, season and item assets, map | 7 days |

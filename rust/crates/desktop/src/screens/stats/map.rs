@@ -131,11 +131,12 @@ pub(super) fn map_section(s: &State, u: &Ui) -> El {
     let mut section = col().key("stats-map").w_full().gap(12.0);
     let Some(heat) = &v.heat else {
         return section.child(section_head(u, "Where fights happen", "")).child(
-            text(
-                v.heat_error
-                    .clone()
-                    .unwrap_or_else(|| "The kill and death map did not load.".to_string()),
-            )
+            text(match (&v.heat_error, v.nav.heat_loading()) {
+                // Read when this tab opens: the slowest read a page has.
+                (None, true) => tr("Loading the kill and death map").to_string(),
+                (Some(error), _) => error.clone(),
+                (None, false) => "The kill and death map did not load.".to_string(),
+            })
             .font(BODY)
             .color(u.muted)
             .wrap(),

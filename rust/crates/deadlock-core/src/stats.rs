@@ -34,6 +34,7 @@ pub mod hero_detail;
 pub mod insight;
 pub mod items;
 pub mod leaderboard;
+pub mod parts;
 pub mod party;
 pub mod roll;
 pub mod social;
@@ -43,6 +44,7 @@ use std::fmt;
 
 use std::path::PathBuf;
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use serde::de::DeserializeOwned;
@@ -658,6 +660,11 @@ pub struct StatsClient {
     api_key: Option<String>,
     cache: Option<ResponseCache>,
     age: Mutex<Age>,
+    /// Answer from the disk cache only, whatever the age, and never ask the API
+    /// ([`StatsClient::cache_only`]): the page shows the last copy at once.
+    cache_only: bool,
+    /// A cache-only read used a copy past its endpoint's lifetime.
+    expired: AtomicBool,
 }
 
 impl StatsClient {
@@ -683,7 +690,22 @@ impl StatsClient {
             api_key: read_api_key(),
             cache: dir.map(ResponseCache::new),
             age: Mutex::new(Age::default()),
+            cache_only: false,
+            expired: AtomicBool::new(false),
         }
+    }
+
+    /// This client never reaches the network: every read is the stored copy, whatever its
+    /// age, or an error when there is none. Used to draw the last page at once while a
+    /// normal client refreshes it.
+    pub fn cache_only(mut self) -> Self {
+        self.cache_only = true;
+        self
+    }
+
+    /// A cache-only read used a copy past its endpoint's lifetime, so a refresh is due.
+    pub fn saw_expired(&self) -> bool {
+        self.expired.load(Ordering::Relaxed)
     }
 
     /// Age of the data the newest calls used, and whether a stale copy answered.
@@ -1135,45 +1157,35 @@ impl StatsClient {
     ) -> Result<StatsSnapshot> {
         ensure_account(account_id)?;
         self.reset_age();
-        let profile = self.fetch_player(account_id)?;
+        // The parts do not wait on each other: one request each, side by side, so the load
+        // costs the slowest request instead of their sum. Hero names are read once, before
+        // the rows that carry them.
+        let (profile, rank, heroes, matches, hero_names) = std::thread::scope(|scope| {
+            let profile = scope.spawn(|| self.fetch_player(account_id));
+            let rank = scope.spawn(|| self.fetch_rank_card(account_id));
+            let names = scope.spawn(|| self.fetch_hero_names().unwrap_or_default());
+            let heroes = scope.spawn(|| match filter {
+                Some(filter) => self.fetch_hero_stats_filtered(account_id, filter),
+                None => self.fetch_hero_stats(account_id),
+            });
+            let matches = match filter {
+                Some(filter) => self.fetch_matches_filtered(account_id, match_limit, filter),
+                None => self.fetch_matches(account_id, match_limit),
+            };
+            (
+                joined(profile),
+                joined(rank),
+                joined(heroes),
+                matches,
+                names.join().unwrap_or_default(),
+            )
+        });
+        let profile = profile?;
         // A rank 429 or outage must not take the hero rows and the match window down with
         // it: the card reads `--` and the rest of the page still loads.
-        let raw_rank: Option<RawRankResponse> = self
-            .get_cached(
-                &format!("/v1/players/{account_id}/rank"),
-                &[],
-                cache::TTL_RANK,
-            )
-            .ok();
-        let tier_names = self.fetch_rank_names().unwrap_or_default();
-        let mut rank = raw_rank
-            .map(RawRankResponse::into_rank)
-            .unwrap_or_else(PlayerRank::unavailable);
-        rank.benchmark = self.fetch_rank_benchmark(rank.badge).unwrap_or(None);
-        if rank.benchmark.is_some() {
-            // Show the share only for a badge earned in the season running now.
-            let seasons = self.fetch_seasons().unwrap_or_default();
-            let in_current_season = rank_in_current_season(&rank, &seasons, now_unix());
-            if let Some(benchmark) = rank.benchmark.as_mut() {
-                benchmark.current_season = in_current_season;
-            }
-        }
-        let (heroes, matches) = match filter {
-            Some(filter) => (
-                self.fetch_hero_stats_filtered(account_id, filter)?,
-                self.fetch_matches_filtered(account_id, match_limit, filter)?,
-            ),
-            None => (
-                self.fetch_hero_stats(account_id)?,
-                self.fetch_matches(account_id, match_limit)?,
-            ),
-        };
-        let hero_names = self.fetch_hero_names().unwrap_or_default();
-        let generated_unix = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|elapsed| elapsed.as_secs() as i64)
-            .unwrap_or(0);
-
+        let (rank, tier_names) = rank.unwrap_or_else(|_| (PlayerRank::unavailable(), BTreeMap::new()));
+        let (heroes, matches) = (heroes?, matches?);
+        let generated_unix = now_unix();
         let mut snapshot = assemble_snapshot(
             account_id,
             profile,
@@ -1181,11 +1193,44 @@ impl StatsClient {
             heroes,
             matches,
             &hero_names,
-            tier_names.into_iter().collect(),
+            tier_names,
             generated_unix,
         );
         snapshot.generated_at = now_iso();
         Ok(snapshot)
+    }
+
+    /// The rank card: the badge, its tier names, where it sits among ranked players and
+    /// whether it was earned this season. The rank itself must answer; the extras are best
+    /// effort. The asset and distribution reads run beside the rank read.
+    pub fn fetch_rank_card(&self, account_id: u64) -> Result<(PlayerRank, BTreeMap<u32, String>)> {
+        ensure_account(account_id)?;
+        let (raw, tier_names, distribution, seasons) = std::thread::scope(|scope| {
+            let names = scope.spawn(|| self.fetch_rank_names().unwrap_or_default());
+            let distribution = scope.spawn(|| self.fetch_rank_distribution().unwrap_or_default());
+            let seasons = scope.spawn(|| self.fetch_seasons().unwrap_or_default());
+            let raw: Result<RawRankResponse> =
+                self.get_cached(&format!("/v1/players/{account_id}/rank"), &[], cache::TTL_RANK);
+            (
+                raw,
+                names.join().unwrap_or_default(),
+                distribution.join().unwrap_or_default(),
+                seasons.join().unwrap_or_default(),
+            )
+        });
+        let mut rank = raw?.into_rank();
+        rank.tier_name = tier_names.get(&rank.rank).cloned();
+        if rank.badge > 0 {
+            rank.benchmark = rank_benchmark(rank.badge, &distribution);
+        }
+        if rank.benchmark.is_some() {
+            // Show the share only for a badge earned in the season running now.
+            let in_current_season = rank_in_current_season(&rank, &seasons, now_unix());
+            if let Some(benchmark) = rank.benchmark.as_mut() {
+                benchmark.current_season = in_current_season;
+            }
+        }
+        Ok((rank, tier_names.into_iter().collect()))
     }
 
     /// Per-hero averages for the rank tier that holds `badge`, over the 30 days
@@ -1204,6 +1249,9 @@ impl StatsClient {
         }
         let tier = badge / 10;
         let (min_badge, max_badge) = (tier * 10 + 1, tier * 10 + 6);
+        // The window's start is part of the cache key (here and at the API's CDN): to the
+        // second it never matched twice, so every load asked again.
+        let until_unix = peer_window_end(until_unix);
         let rows: Vec<RawHeroBenchmark> = self.get_cached(
             "/v1/analytics/hero-stats",
             &[
@@ -1258,10 +1306,27 @@ impl StatsClient {
     /// The body behind [`StatsClient::get_cached`].
     fn get_text(&self, path: &str, query: &[(&str, String)], ttl: i64) -> Result<String> {
         let Some(cache) = &self.cache else {
+            if self.cache_only {
+                self.expired.store(true, Ordering::Relaxed);
+                return Err(Error::msg("No stats cache to read from."));
+            }
             return self.get_raw(path, query);
         };
         let key = cache::key(path, query);
         let now = now_unix();
+        if self.cache_only {
+            let Some(stored) = cache.read(&key) else {
+                // A missing piece (hero names, say) also means the copy is not whole.
+                self.expired.store(true, Ordering::Relaxed);
+                return Err(Error::msg(format!("{path} is not cached yet.")));
+            };
+            let seconds = (now - stored.fetched_at).max(0);
+            if seconds > ttl {
+                self.expired.store(true, Ordering::Relaxed);
+            }
+            self.note(Age { seconds, stale: false });
+            return Ok(stored.body);
+        }
         if let Some(stored) = cache.read_fresh(&key, ttl, now) {
             self.note(Age {
                 seconds: (now - stored.fetched_at).max(0),
@@ -1342,6 +1407,17 @@ fn parse_body<T: DeserializeOwned>(path: &str, body: &str) -> Result<T> {
             snippet(body)
         ))
     })
+}
+
+/// A scoped worker's result; a worker that panicked reads as an error, not a crash.
+fn joined<T>(handle: std::thread::ScopedJoinHandle<'_, Result<T>>) -> Result<T> {
+    handle.join().unwrap_or_else(|_| Err(Error::msg("A stats worker stopped unexpectedly.")))
+}
+
+/// The end of the peer benchmarks' 30 day window, rounded down to the hour so the request
+/// (and its cache key) stays the same for an hour.
+pub fn peer_window_end(until_unix: i64) -> i64 {
+    until_unix - until_unix.rem_euclid(3_600)
 }
 
 /// Seconds since the Unix epoch, the clock the API's timestamps use.

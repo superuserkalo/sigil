@@ -7,7 +7,10 @@ use rune::{Color, El, Shape, canvas, col, el, row, spacer, text};
 use crate::app::State;
 use crate::ui::{BODY, BODY_MED, H1, H2, LABEL, SMALL, Ui};
 
+use deadlock_core::stats::parts::PartKind;
+
 use super::german::tr;
+use super::progress::Section;
 use super::shared::*;
 use super::{Chart, Derived, FORM_BEADS, SPARK_MATCHES};
 
@@ -437,6 +440,20 @@ pub(super) fn overview(s: &State, u: &Ui, snap: &StatsSnapshot, d: &Derived) -> 
         .gap(8.0)
         .child(band(s, u, snap))
         .child(tiles(u, snap, d));
+    // Each part fills its own sections as it arrives; one that failed says so with its own
+    // Try again and leaves the rest of the page standing.
+    if let Some(gate) = super::progress::gate(s, u, PartKind::Matches, !snap.matches.is_empty(), RECENT_ROWS) {
+        return c.child(
+            row()
+                .w_full()
+                .mt(16.0)
+                .gap(24.0)
+                .flex_wrap()
+                .items_start()
+                .child(list_frame(u, "stats-recent", "Recent matches", gate))
+                .child(top_heroes(s, u, snap)),
+        );
+    }
     if snap.matches.is_empty() {
         return c.child(
             row().h(32.0).center_y().child(
@@ -522,6 +539,11 @@ fn band(s: &State, u: &Ui, snap: &StatsSnapshot) -> El {
                 )
                 .child(line(last_played.map(|day| fill(tr("Last played {}"), &[&day.to_lowercase()])).unwrap_or_default(), u.muted)),
         );
+    let rank = match super::progress::section(s, PartKind::Rank) {
+        Section::Loading if !snap.rank.reported => tr("Loading").to_string(),
+        Section::Failed(_) if !snap.rank.reported => "--".to_string(),
+        _ => rank,
+    };
     let mut standing = col().min_w(0.0).gap(2.0).child(text(rank).font(crate::ui::NUM).color(u.ink).truncate());
     standing = standing.child(line(top.unwrap_or_default(), u.muted));
     standing = standing.child(match change {
@@ -536,7 +558,11 @@ fn band(s: &State, u: &Ui, snap: &StatsSnapshot) -> El {
         .border_sides([0.0, 0.0, 0.0, 1.0], u.hair)
         .child(rank_badge(s, u, if snap.rank.reported { snap.rank.badge } else { 0 }, 56.0))
         .child(standing);
-    let record = if career.matches_played > 0 {
+    let heroes_state = super::progress::section(s, PartKind::Heroes);
+    let record = if career.matches_played == 0 && heroes_state != Section::Ready {
+        let words = if heroes_state == Section::Loading { tr("Loading") } else { tr("The hero rows did not load.") };
+        col().pl(16.0).border_sides([0.0, 0.0, 0.0, 1.0], u.hair).child(line(words.to_string(), u.muted))
+    } else if career.matches_played > 0 {
         col()
             .min_w(0.0)
             .gap(2.0)
@@ -663,6 +689,25 @@ fn insights(s: &State, u: &Ui, snap: &StatsSnapshot, d: &Derived) -> El {
 }
 
 const RECENT_ROWS: usize = 8;
+
+/// One of the two side by side lists while its part loads or after it failed: the head
+/// without its "All" button, then `body`.
+fn list_frame(u: &Ui, key: &str, title: &str, body: El) -> El {
+    col()
+        .key(key.to_string())
+        .w(0.0)
+        .grow(1.0)
+        .min_w(440.0)
+        .child(
+            row()
+                .w_full()
+                .h(32.0)
+                .center_y()
+                .border_sides([0.0, 0.0, 1.0, 0.0], u.hair)
+                .child(text(tr(title).to_string()).font(H2).color(u.ink)),
+        )
+        .child(body)
+}
 const HERO_ROWS: usize = 6;
 
 /// A column of the two side by side lists: head with its "All" button, then rows.
@@ -741,6 +786,9 @@ fn recent_matches(s: &State, u: &Ui, snap: &StatsSnapshot) -> El {
 }
 
 fn top_heroes(s: &State, u: &Ui, snap: &StatsSnapshot) -> El {
+    if let Some(gate) = super::progress::gate(s, u, PartKind::Heroes, !snap.heroes.is_empty(), HERO_ROWS) {
+        return list_frame(u, "stats-top", "Heroes", gate);
+    }
     let mut heroes: Vec<&deadlock_core::stats::HeroPerformance> = snap.heroes.iter().collect();
     heroes.sort_by(|a, b| b.matches_played.cmp(&a.matches_played));
     let total = heroes.len();

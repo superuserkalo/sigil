@@ -121,36 +121,38 @@ impl ResponseCache {
     }
 
     /// Remove entries past [`MAX_AGE_SECONDS`] once the directory is large.
+    ///
+    /// Counts the files first and reads only each header line, and only when the
+    /// directory is over [`MAX_FILES`]. It used to read every stored body in full on
+    /// every write: with a few match histories of 1 to 4 MB each kept, one page load
+    /// read the whole directory about ten times over.
     fn prune(&self, now: i64) {
         let Ok(entries) = fs::read_dir(&self.dir) else {
             return;
         };
-        let mut files: Vec<(i64, PathBuf)> = Vec::new();
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.extension().and_then(|value| value.to_str()) != Some("httpcache") {
-                continue;
-            }
-            let at = fs::read_to_string(&path)
-                .ok()
-                .and_then(|text| {
-                    text.split('\n')
-                        .next()
-                        .and_then(|header| header.split_once('\t'))
-                        .and_then(|(at, _)| at.parse::<i64>().ok())
-                })
-                .unwrap_or(0);
-            files.push((at, path));
-        }
+        let files: Vec<PathBuf> = entries
+            .flatten()
+            .map(|entry| entry.path())
+            .filter(|path| path.extension().and_then(|value| value.to_str()) == Some("httpcache"))
+            .collect();
         if files.len() <= MAX_FILES {
             return;
         }
-        for (at, path) in files {
-            if now - at > MAX_AGE_SECONDS {
+        for path in files {
+            if now - header_time(&path).unwrap_or(0) > MAX_AGE_SECONDS {
                 let _ = fs::remove_file(path);
             }
         }
     }
+}
+
+/// The fetched-at time on a stored file's first line, without reading its body.
+fn header_time(path: &Path) -> Option<i64> {
+    use std::io::{BufRead, BufReader, Read};
+    let file = fs::File::open(path).ok()?;
+    let mut line = String::new();
+    BufReader::new(file.take(4096)).read_line(&mut line).ok()?;
+    line.split_once('\t')?.0.parse().ok()
 }
 
 /// The cache key for one request: the path and its query, in the order sent.
@@ -232,6 +234,22 @@ mod tests {
         assert!(cache.read("/v1/x").is_none());
         fs::write(cache.path("/v1/x"), "no header").expect("write");
         assert!(cache.read("/v1/x").is_none());
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn prune_reads_headers_and_drops_only_old_entries() {
+        let dir = temp_dir("prune");
+        let cache = ResponseCache::new(&dir);
+        for index in 0..=MAX_FILES {
+            let at = if index % 2 == 0 { 10 } else { MAX_AGE_SECONDS + 500 };
+            fs::write(cache.path(&format!("/v1/{index}")), format!("{at}\t/v1/{index}\nbody")).expect("write");
+        }
+        assert_eq!(header_time(&cache.path("/v1/0")), Some(10));
+        cache.write("/v1/new", "body", MAX_AGE_SECONDS + 1_000).expect("write");
+        assert!(cache.read("/v1/0").is_none(), "an entry past the age is gone");
+        assert!(cache.read("/v1/1").is_some(), "a recent one stays");
+        assert!(cache.read("/v1/new").is_some());
         let _ = fs::remove_dir_all(dir);
     }
 

@@ -43,6 +43,18 @@ pub const DE: &[(&str, &str)] = &[
     ("Any", "Alle"),
     ("Least matches", "Mindestzahl Matches"),
     ("Loading", "Lädt"),
+    ("Updating", "Wird aktualisiert"),
+    ("Updated just now", "Gerade aktualisiert"),
+    ("Updated {} min ago", "Vor {} Min. aktualisiert"),
+    ("Loading matches", "Lade Matches"),
+    ("Loading the kill and death map", "Lade die Kill- und Todeskarte"),
+    ("Loading heroes", "Lade Helden"),
+    ("Loading the rank", "Lade den Rang"),
+    ("The match history did not load.", "Der Matchverlauf wurde nicht geladen."),
+    ("The hero rows did not load.", "Die Heldenwerte wurden nicht geladen."),
+    ("The rank did not load.", "Der Rang wurde nicht geladen."),
+    ("The rank comparison did not load.", "Der Rangvergleich wurde nicht geladen."),
+    ("The profile did not load.", "Das Profil wurde nicht geladen."),
     ("Loading matchups", "Lade Matchups"),
     ("No enemy hero has two matches against this hero yet.", "Noch kein gegnerischer Held hat zwei Matches gegen diesen Helden."),
     ("No hero record for this player yet.", "Noch keine Heldenwerte für diesen Spieler."),
@@ -556,7 +568,8 @@ pub fn routed(source: &str) -> Vec<String> {
 mod tests {
     use super::*;
 
-    const SOURCES: [&str; 20] = [
+    const SOURCES: [&str; 21] = [
+        include_str!("progress.rs"),
         include_str!("bracket.rs"),
         include_str!("match_views.rs"),
         include_str!("hero_page.rs"),
