@@ -28,7 +28,7 @@ use super::fetch::{self, CachedConfig, Remote, git_blob_sha};
 use super::generate::{self, Held, OptIn};
 use super::{Config, GameConvars, classify::Group};
 use crate::error::{Error, Result};
-use crate::util::write_atomic;
+use crate::util::{write_atomic, write_atomic_cache};
 
 /// The store of custom presets, under the performance cache.
 pub const STORE_FILE: &str = "custom.json";
@@ -455,10 +455,10 @@ pub fn import(
 
     let id = new_id(&inspection.repository, now, &store);
     if let Some(text) = &config {
-        write_atomic(&fetch::file_path(data_dir, &id, "gameinfo.gi"), normalize_gameinfo(text).as_bytes())?;
+        write_atomic_cache(&fetch::file_path(data_dir, &id, "gameinfo.gi"), normalize_gameinfo(text).as_bytes())?;
     }
     if let Some(text) = &video {
-        write_atomic(&fetch::file_path(data_dir, &id, "video.txt"), text.as_bytes())?;
+        write_atomic_cache(&fetch::file_path(data_dir, &id, "video.txt"), text.as_bytes())?;
     }
     let preset = CustomPreset {
         id: id.clone(),

@@ -21,7 +21,7 @@ use sha1::{Digest, Sha1};
 use super::catalog::{self, ConfigDef, SourceDef, Versioning};
 use super::generate;
 use crate::error::{Error, Result};
-use crate::util::write_atomic;
+use crate::util::{write_atomic, write_atomic_cache};
 
 const USER_AGENT: &str = "sigil-mod-manager";
 const TIMEOUT_SECONDS: u64 = 20;
@@ -33,6 +33,8 @@ pub const CONVARS_REPO: &str = "SteamTracking/GameTracking-Deadlock";
 pub const CONVARS_PATH: &str = "DumpSource2/convars.txt";
 pub const CONVARS_ID: &str = "game";
 pub const CONVARS_FILE: &str = "convars.txt";
+/// The tracking repository's default branch, for the list when the API refuses.
+pub const CONVARS_BRANCH: &str = "master";
 
 /// One fetched config as the cache records it.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -121,8 +123,9 @@ pub struct RefreshReport {
     pub errors: Vec<String>,
 }
 
-/// The network half, behind a trait so tests can serve files from memory.
-pub trait Remote {
+/// The network half, behind a trait so tests can serve files from memory. `Sync`: a refresh
+/// asks for several sources and configs at once.
+pub trait Remote: Sync {
     fn get_json(&self, url: &str) -> Result<Value>;
     /// `None` on 404.
     fn get_bytes(&self, url: &str) -> Result<Option<Vec<u8>>>;
@@ -335,8 +338,9 @@ fn folder_commit(
     (!date.is_empty()).then_some((sha, date))
 }
 
+/// A cache copy of an upstream file, kept byte for byte (not a game file, so not guarded).
 fn store(data_dir: &Path, id: &str, name: &str, bytes: &[u8]) -> Result<()> {
-    write_atomic(&file_path(data_dir, id, name), bytes)
+    write_atomic_cache(&file_path(data_dir, id, name), bytes)
 }
 
 /// Cache a config the player downloaded from GameBanana. `stock` seeds the
@@ -372,11 +376,21 @@ pub fn refresh(remote: &dyn Remote, data_dir: &Path, now: &str) -> Result<Refres
     let mut report = RefreshReport::default();
     let mut releases: BTreeMap<&'static str, Release> = BTreeMap::new();
     let mut any = false;
-    for source in catalog::SOURCES {
-        if source.id == "gamebanana" || source.id == "mod" {
-            continue;
-        }
-        match resolve(remote, source) {
+    // Every source at once: each is a few API calls, and in series they were most of a cold
+    // refresh.
+    let sources: Vec<&'static SourceDef> = catalog::SOURCES
+        .iter()
+        .filter(|source| source.id != "gamebanana" && source.id != "mod")
+        .collect();
+    let resolved: Vec<(&'static SourceDef, Result<Release>)> = std::thread::scope(|scope| {
+        let handles: Vec<_> = sources
+            .iter()
+            .map(|source| scope.spawn(move || (*source, resolve(remote, source))))
+            .collect();
+        handles.into_iter().filter_map(|handle| handle.join().ok()).collect()
+    });
+    for (source, result) in resolved {
+        match result {
             Ok(release) => {
                 releases.insert(source.id, release);
                 any = true;
@@ -422,23 +436,33 @@ pub fn refresh(remote: &dyn Remote, data_dir: &Path, now: &str) -> Result<Refres
     let baseline_text =
         std::fs::read_to_string(file_path(data_dir, catalog::BASELINE_ID, "gameinfo.gi")).ok();
 
-    for def in catalog::CONFIGS {
-        if def.gamebanana.is_some() {
-            continue;
-        }
-        let source = catalog::source(def.source);
-        let Some(release) = releases.get(def.source) else {
-            continue;
-        };
-        match refresh_config(
-            remote,
-            data_dir,
-            def,
-            source,
-            release,
-            &index,
-            baseline_text.as_deref(),
-        ) {
+    // Every config at once, and Valve's convar list beside them. Each config writes only its
+    // own cache folder; the index is updated here, after all of them.
+    let wanted: Vec<&'static ConfigDef> = catalog::CONFIGS
+        .iter()
+        .filter(|def| def.gamebanana.is_none() && releases.contains_key(def.source))
+        .collect();
+    let mut convar_index = index.clone();
+    let (results, convars) = std::thread::scope(|scope| {
+        let index = &index;
+        let releases = &releases;
+        let baseline = baseline_text.as_deref();
+        let handles: Vec<_> = wanted
+            .iter()
+            .map(|def| {
+                scope.spawn(move || {
+                    let source = catalog::source(def.source);
+                    let release = &releases[def.source];
+                    (*def, refresh_config(remote, data_dir, def, source, release, index, baseline))
+                })
+            })
+            .collect();
+        let convars = scope.spawn(|| refresh_convars(remote, data_dir, &mut convar_index));
+        let results: Vec<_> = handles.into_iter().filter_map(|handle| handle.join().ok()).collect();
+        (results, convars.join().unwrap_or_else(|_| Err(Error::msg("the convar list check stopped"))))
+    });
+    for (def, result) in results {
+        match result {
             Ok(Some(entry)) => {
                 report.updated.push(def.name.to_string());
                 index.errors.remove(def.id);
@@ -453,7 +477,8 @@ pub fn refresh(remote: &dyn Remote, data_dir: &Path, now: &str) -> Result<Refres
             }
         }
     }
-    if let Err(error) = refresh_convars(remote, data_dir, &mut index) {
+    index.convars_commit = convar_index.convars_commit;
+    if let Err(error) = convars {
         report.errors.push(format!("Valve's convar list: {error}"));
     }
     index.checked_at = Some(now.to_string());
@@ -466,20 +491,35 @@ pub fn refresh(remote: &dyn Remote, data_dir: &Path, now: &str) -> Result<Refres
 /// (`autoexec::convars` validates every name and default before use), so a sanity
 /// check stands in for the blob check (the repository tree is too large to list).
 fn refresh_convars(remote: &dyn Remote, data_dir: &Path, index: &mut CacheIndex) -> Result<()> {
-    let list = remote.get_json(&format!(
-        "https://api.github.com/repos/{CONVARS_REPO}/commits?per_page=1&path={}",
-        encode_path(CONVARS_PATH)
-    ))?;
-    let commit = list[0]["sha"].as_str().unwrap_or_default().to_string();
-    if commit.len() != 40 {
-        return Err(Error::Network("no commit for the convar list".into()));
-    }
     let path = file_path(data_dir, CONVARS_ID, CONVARS_FILE);
-    if index.convars_commit.as_deref() == Some(commit.as_str()) && path.exists() {
-        return Ok(());
-    }
+    // The API names the newest commit. When it refuses (GitHub limits anonymous API calls per
+    // network, which a shared or school network reaches quickly) the list still comes from
+    // raw.githubusercontent.com at the default branch, which has no such limit.
+    let head = remote
+        .get_json(&format!(
+            "https://api.github.com/repos/{CONVARS_REPO}/commits?per_page=1&path={}",
+            encode_path(CONVARS_PATH)
+        ))
+        .and_then(|list| {
+            let commit = list[0]["sha"].as_str().unwrap_or_default().to_string();
+            if commit.len() == 40 {
+                Ok(commit)
+            } else {
+                Err(Error::Network("no commit for the convar list".into()))
+            }
+        });
+    let (reference, commit) = match head {
+        Ok(commit) => {
+            if index.convars_commit.as_deref() == Some(commit.as_str()) && path.exists() {
+                return Ok(());
+            }
+            (commit.clone(), Some(commit))
+        }
+        Err(error) if path.exists() => return Err(error),
+        Err(_) => (CONVARS_BRANCH.to_string(), None),
+    };
     let url = format!(
-        "https://raw.githubusercontent.com/{CONVARS_REPO}/{commit}/{}",
+        "https://raw.githubusercontent.com/{CONVARS_REPO}/{reference}/{}",
         encode_path(CONVARS_PATH)
     );
     let bytes = remote
@@ -493,7 +533,8 @@ fn refresh_convars(remote: &dyn Remote, data_dir: &Path, index: &mut CacheIndex)
         )));
     }
     store(data_dir, CONVARS_ID, CONVARS_FILE, &bytes)?;
-    index.convars_commit = Some(commit);
+    // From the branch: no commit is recorded, so the next check asks the API again.
+    index.convars_commit = commit;
     Ok(())
 }
 
@@ -571,10 +612,15 @@ fn refresh_config(
         generate::validate_body(&base, &config, &body).map_err(Error::msg)?;
     }
     let mut video_files = Vec::new();
+    // A video.txt is optional: one that fails to download or check is left out, never the
+    // config with it (the index keeps the upstream list, so the next check does not loop).
     for (name, _) in &videos {
-        let video = download(remote, source, release, &join(folder, name))?;
-        generate::validate_video(&String::from_utf8_lossy(&video)).map_err(Error::msg)?;
-        video_files.push((name.clone(), video));
+        let Ok(video) = download(remote, source, release, &join(folder, name)) else {
+            continue;
+        };
+        if generate::validate_video(&String::from_utf8_lossy(&video)).is_ok() {
+            video_files.push((name.clone(), video));
+        }
     }
 
     // Replace the folder only once everything downloaded and passed.

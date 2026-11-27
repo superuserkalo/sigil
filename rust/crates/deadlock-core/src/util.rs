@@ -7,7 +7,7 @@ use chrono::{SecondsFormat, TimeZone, Utc};
 
 use crate::error::Result;
 
-pub(crate) fn now_iso() -> String {
+pub fn now_iso() -> String {
     Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true)
 }
 
@@ -36,6 +36,14 @@ pub fn hidden_command(program: impl AsRef<std::ffi::OsStr>) -> std::process::Com
 
 pub(crate) fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
     crate::game_apply::refuse_malformed_config(path, bytes)?;
+    write_atomic_cache(path, bytes)
+}
+
+/// `write_atomic` without the malformed-config guard, for Sigil's own cache copies of upstream
+/// files under the app data folder. An author's `video.txt` can be a bare list of settings with
+/// no `"config" { }` wrapper (OptiLock's are); Sigil only reads settings out of it, so the cache
+/// keeps it byte for byte. Never use this for a file the game reads.
+pub(crate) fn write_atomic_cache(path: &Path, bytes: &[u8]) -> Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }

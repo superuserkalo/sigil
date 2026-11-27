@@ -1,4 +1,3 @@
-use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::fetch::{CachedConfig, Remote};
@@ -538,7 +537,9 @@ fn video_txt_is_found_in_the_newest_steam_account() {
 struct FakeGitHub {
     files: BTreeMap<String, Vec<u8>>,
     tamper: Option<String>,
-    downloads: RefCell<usize>,
+    downloads: std::sync::Mutex<usize>,
+    /// The API refuses the convar list's commit lookup (a rate limit).
+    convars_api_down: bool,
 }
 
 const SQ_COMMIT: &str = "1111111111111111111111111111111111111111";
@@ -584,7 +585,8 @@ impl FakeGitHub {
         FakeGitHub {
             files,
             tamper: None,
-            downloads: RefCell::new(0),
+            downloads: std::sync::Mutex::new(0),
+            convars_api_down: false,
         }
     }
 
@@ -616,6 +618,11 @@ impl Remote for FakeGitHub {
         } else if rest.starts_with("dacooderr/OptiLock/git/trees/") {
             self.tree("dacooderr/OptiLock")
         } else if rest.starts_with(&format!("{}/commits", fetch::CONVARS_REPO)) {
+            if self.convars_api_down {
+                return Err(crate::error::Error::Network(
+                    "GitHub is rate limiting requests from this network. Try again in an hour.".into(),
+                ));
+            }
             serde_json::json!([{ "sha": GT_COMMIT }])
         } else {
             panic!("unexpected api call {url}")
@@ -623,7 +630,7 @@ impl Remote for FakeGitHub {
     }
 
     fn get_bytes(&self, url: &str) -> Result<Option<Vec<u8>>> {
-        *self.downloads.borrow_mut() += 1;
+        *self.downloads.lock().unwrap() += 1;
         let rest = url
             .strip_prefix("https://raw.githubusercontent.com/")
             .expect("raw url");
@@ -676,7 +683,7 @@ fn refresh_caches_configs_and_loads_offline() {
         report.updated.contains(&"Sqooky's config".to_string()),
         "{report:?}"
     );
-    let first = *remote.downloads.borrow();
+    let first = *remote.downloads.lock().unwrap();
 
     let catalog = load(&data);
     assert!(catalog.game_convars);
@@ -714,7 +721,7 @@ fn refresh_caches_configs_and_loads_offline() {
 
     // A second refresh with nothing new downloads nothing.
     fetch::refresh(&remote, &data, "2026-11-17T01:00:00.000Z").unwrap();
-    assert_eq!(*remote.downloads.borrow(), first);
+    assert_eq!(*remote.downloads.lock().unwrap(), first);
     assert!(!fetch::stale(
         &fetch::read_index(&data),
         chrono::DateTime::parse_from_rfc3339("2026-11-17T02:00:00Z")
@@ -811,4 +818,213 @@ fn player_edits_ride_with_the_config_and_leave_with_it() {
     assert!(!back.contains("r_added_by_player"));
     assert!(back.contains("sv_lagcomp_filterbyviewangle \"false\""));
     assert_eq!(convar_values(&patched.text).get("r_added_by_player").map(String::as_str), Some("1"));
+}
+
+/// Live timings for the page's load path: a cold refresh from GitHub, then `load` from the
+/// cache it left. `DAH_PERF_DIR=<dir> cargo test -p deadlock-core live_perf_timings --
+/// --ignored --nocapture`; the directory is kept for later runs.
+#[test]
+#[ignore = "network"]
+fn live_perf_timings() {
+    let data = std::env::var("DAH_PERF_DIR")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| temp_dir("timings"));
+    let started = std::time::Instant::now();
+    let report = refresh(&data).expect("refresh");
+    eprintln!("refresh {:?} errors {:?}", started.elapsed(), report.errors);
+    for _ in 0..3 {
+        let started = std::time::Instant::now();
+        let catalog = load(&data);
+        eprintln!("load {:?} ({} configs)", started.elapsed(), catalog.configs.len());
+    }
+    let text = std::fs::read_to_string(fetch::file_path(&data, fetch::CONVARS_ID, fetch::CONVARS_FILE)).unwrap();
+    let started = std::time::Instant::now();
+    let game = GameConvars::parse(&text);
+    eprintln!("convar list parse {:?} ({})", started.elapsed(), game.len());
+    let index = fetch::read_index(&data);
+    let base = generate::parse(&std::fs::read_to_string(fetch::file_path(&data, catalog::BASELINE_ID, "gameinfo.gi")).unwrap());
+    let (mut parse, mut build) = (std::time::Duration::ZERO, std::time::Duration::ZERO);
+    for def in catalog::CONFIGS {
+        let Some(meta) = index.configs.get(def.id) else { continue };
+        let text = std::fs::read_to_string(fetch::file_path(&data, def.id, "gameinfo.gi")).unwrap();
+        let started = std::time::Instant::now();
+        let parsed = generate::parse(&text);
+        parse += started.elapsed();
+        let started = std::time::Instant::now();
+        let _ = Config::from_parsed(def, meta, &base, &parsed, &[], Some(&game));
+        build += started.elapsed();
+    }
+    let started = std::time::Instant::now();
+    let custom = repos::configs(&data, &base, Some(&game)).len();
+    eprintln!("config parse {parse:?}, diff and classify {build:?}, custom {custom} {:?}", started.elapsed());
+    let ids: Vec<&str> = load(&data).configs.iter().map(|c| c.id()).collect();
+    eprintln!("{ids:?}");
+}
+
+
+/// OptiLock's video.txt as upstream ships it: the settings with no `"config" {` header, so it
+/// ends on a closing brace with no opening one.
+const HEADERLESS_VIDEO: &str = "\t\"setting.r_citadel_antialiasing\"\t\t\"0\"\n\t\"setting.r_post_bloom\"\t\t\"false\"\n\t\"setting.r_depth_of_field\"\t\t\"false\"\n\t\"setting.r_texture_stream_mip_bias\"\t\t\"6\"\n\t\"setting.r_citadel_mboit\"\t\t\"false\"\n\t\"setting.r_screen_space_shadows\"\t\t\"false\"\n}\n";
+
+/// Potato-shaped: the shared upstream edits plus draw distance and particle cuts.
+fn potato_upstream() -> String {
+    upstream().replacen(
+        "r_ssao \"0\"",
+        "r_ssao \"0\"\n        r_farz \"4000\"\n        cl_particle_fallback_multiplier \"5\"",
+        1,
+    )
+}
+
+/// Regression (0.1.22 to now): the game-file guard refused Sigil's cache copy of OptiLock's
+/// headerless video.txt, so every OptiLock config (FPS, Community, Potato, Ultra Potato) failed
+/// its download and was missing from the list.
+#[test]
+fn optilock_with_a_headerless_video_txt_is_listed() {
+    let data = temp_dir("headerless");
+    let mut remote = FakeGitHub::new();
+    remote.files.insert(
+        "dacooderr/OptiLock/OptiLock Potato Config/gameinfo.gi".into(),
+        potato_upstream().into_bytes(),
+    );
+    remote.files.insert(
+        "dacooderr/OptiLock/OptiLock Potato Config/video.txt".into(),
+        HEADERLESS_VIDEO.as_bytes().to_vec(),
+    );
+    remote.files.insert(
+        "dacooderr/OptiLock/OptiLock FPS Config (Recommended)/video.txt".into(),
+        HEADERLESS_VIDEO.as_bytes().to_vec(),
+    );
+    let report = fetch::refresh(&remote, &data, "2026-11-27T00:00:00.000Z").unwrap();
+    // The fake repository ships only these two OptiLock configs; neither may fail.
+    assert!(
+        report.errors.iter().all(|e| !e.starts_with("OptiLock FPS") && !e.starts_with("OptiLock Potato")),
+        "{report:?}"
+    );
+    let catalog = load(&data);
+    let potato = catalog.get("optilock-potato").expect("OptiLock Potato is listed");
+    assert_eq!(potato.def.tier, Tier::Potato);
+    assert_eq!(potato.version, "v6.1d");
+    assert!(potato.body.convars.iter().any(|(k, v)| k == "r_farz" && v == "4000"));
+    let video = potato.video(None).expect("its video settings");
+    assert!(!video.settings.is_empty(), "{video:?}");
+    assert!(catalog.get("optilock-fps").is_some());
+    // The cache copy is byte for byte what the author committed.
+    let cached = std::fs::read(fetch::file_path(&data, "optilock-potato", "video.txt")).unwrap();
+    assert_eq!(cached, HEADERLESS_VIDEO.as_bytes());
+    let _ = std::fs::remove_dir_all(&data);
+}
+
+/// A video.txt that fails its own check leaves the video settings out, not the config.
+#[test]
+fn a_bad_video_txt_drops_only_the_video_settings() {
+    let data = temp_dir("bad-video");
+    let mut remote = FakeGitHub::new();
+    remote.files.insert(
+        "dacooderr/OptiLock/OptiLock FPS Config (Recommended)/video.txt".into(),
+        b"not a video file".to_vec(),
+    );
+    fetch::refresh(&remote, &data, "2026-11-27T00:00:00.000Z").unwrap();
+    let catalog = load(&data);
+    let fps = catalog.get("optilock-fps").expect("still listed");
+    assert!(fps.videos.is_empty());
+    assert!(!catalog.errors.contains_key("optilock-fps"));
+    let _ = std::fs::remove_dir_all(&data);
+}
+
+/// GitHub's API limit must not leave the convar list (Autoexec > All convars) empty: the file
+/// itself comes from raw.githubusercontent.com at the default branch.
+#[test]
+fn the_convar_list_downloads_when_the_api_refuses() {
+    let data = temp_dir("convars-raw");
+    let mut remote = FakeGitHub::new();
+    remote.convars_api_down = true;
+    fetch::refresh_convar_list(&remote, &data).unwrap();
+    assert!(crate::autoexec::convars::load_catalog(&data).convars.len() > 500);
+    assert_eq!(fetch::read_index(&data).convars_commit, None, "asks the API again next time");
+    // With a list on disk, a refused API keeps it and says why.
+    let error = fetch::refresh_convar_list(&remote, &data).unwrap_err().to_string();
+    assert!(error.contains("rate limiting"), "{error}");
+    assert!(!crate::autoexec::convars::load_catalog(&data).convars.is_empty());
+    let _ = std::fs::remove_dir_all(&data);
+}
+
+/// A fake install: `<root>/game/citadel/gameinfo.gi` holding the stock fixture.
+fn fake_install(name: &str) -> (std::path::PathBuf, std::path::PathBuf) {
+    let root = temp_dir(&format!("{name}-game"));
+    let data = temp_dir(&format!("{name}-data"));
+    let citadel = root.join("game").join("citadel");
+    std::fs::create_dir_all(&citadel).unwrap();
+    std::fs::write(citadel.join("gameinfo.gi"), STOCK).unwrap();
+    (root, data)
+}
+
+/// The exact file an apply leaves, against a reviewed copy in `tests/fixtures/performance`.
+/// `DAH_BLESS=1` rewrites the copy after a deliberate change.
+fn assert_golden(name: &str, text: &str) {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/performance")
+        .join(name);
+    if std::env::var_os("DAH_BLESS").is_some() {
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, text).unwrap();
+    }
+    let expected = std::fs::read_to_string(&path).unwrap_or_else(|_| panic!("{} missing", path.display()));
+    assert_eq!(text, expected, "{name}");
+}
+
+fn apply_check_and_compare(id: &str, upstream_text: &str, golden: &str) {
+    let (root, data) = fake_install(id);
+    let config = config(id, upstream_text);
+    let options = config.default_options();
+    let report = apply_and_check(&root, &data, &config, &options, "2026-11-27T00:00:00Z").unwrap();
+    let text = std::fs::read_to_string(gameinfo_path(&root)).unwrap();
+    assert_golden(golden, &text);
+    assert_eq!(report.path, gameinfo_path(&root));
+    assert_eq!(report.in_file, settings_in_file(&text));
+    assert!(report.in_file > 0 && report.written >= report.in_file - report.skipped.len());
+    // Every value the config means is in the file, as the game reads it (last line wins).
+    let values = convar_values(&text);
+    for (key, value) in exchange::effective(&config, &options) {
+        assert_eq!(values.get(&key), Some(&value), "{id} {key}");
+    }
+    assert!(matches!(applied(&text), Applied::Config { id: ref on, .. } if on == id));
+    assert_eq!(read_record(&data).unwrap().id, id);
+    assert!(reset_since_apply(&text, read_record(&data).as_ref()).is_none());
+
+    // Turn off: the stock file, byte for byte.
+    assert!(remove_from_install(&root).unwrap());
+    forget_record(&data).unwrap();
+    assert_eq!(std::fs::read_to_string(gameinfo_path(&root)).unwrap(), STOCK);
+    assert!(read_record(&data).is_none());
+
+    // A game update puts Valve's file back after an apply: the page sees the reset from the
+    // file plus the record, and applying again gives the same file as the first time.
+    apply_and_check(&root, &data, &config, &options, "2026-11-27T00:00:00Z").unwrap();
+    std::fs::write(gameinfo_path(&root), STOCK).unwrap();
+    let reset = std::fs::read_to_string(gameinfo_path(&root)).unwrap();
+    assert_eq!(applied(&reset), Applied::None);
+    let notice = reset_since_apply(&reset, read_record(&data).as_ref()).expect("reset noticed");
+    assert_eq!(notice.id, id);
+    apply_and_check(&root, &data, &config, &options, "2026-11-27T01:00:00Z").unwrap();
+    assert_golden(golden, &std::fs::read_to_string(gameinfo_path(&root)).unwrap());
+    let _ = std::fs::remove_dir_all(&root);
+    let _ = std::fs::remove_dir_all(&data);
+}
+
+#[test]
+fn optilock_potato_applies_exactly_turns_off_and_reapplies_after_a_reset() {
+    apply_check_and_compare("optilock-potato", &potato_upstream(), "optilock-potato.gi");
+}
+
+#[test]
+fn sqooky_applies_exactly_turns_off_and_reapplies_after_a_reset() {
+    apply_check_and_compare("sqooky", &upstream(), "sqooky.gi");
+}
+
+/// The applied file passes the game-file guard and the page's own reader.
+#[test]
+fn an_applied_file_is_well_formed_keyvalues() {
+    let config = config("optilock-potato", &potato_upstream());
+    let patched = apply_text(STOCK, &config, &all_switches(&config)).unwrap();
+    assert_eq!(crate::game_apply::keyvalues_syntax_error(&patched.text), None);
 }

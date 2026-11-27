@@ -231,9 +231,20 @@ impl Config {
         videos: &[(String, String)],
         game: Option<&GameConvars>,
     ) -> Config {
+        Config::from_parsed(def, meta, baseline, &generate::parse(text), videos, game)
+    }
+
+    /// `from_texts` with the config's file already parsed.
+    pub fn from_parsed(
+        def: &'static ConfigDef,
+        meta: &fetch::CachedConfig,
+        baseline: &generate::Parsed,
+        parsed: &generate::Parsed,
+        videos: &[(String, String)],
+        game: Option<&GameConvars>,
+    ) -> Config {
         let source = catalog::source(def.source);
-        let parsed = generate::parse(text);
-        let mut body = generate::generate(baseline, &parsed);
+        let mut body = generate::generate(baseline, parsed);
         let mut sets = Vec::new();
         for (file, raw) in videos {
             let (settings, held) =
@@ -293,6 +304,29 @@ fn video_label(file: &str, count: usize) -> String {
     }
 }
 
+/// `name default ... (flags)`: the name and the last parenthesised group, which must end the
+/// line and hold no parentheses. The same lines `^([A-Za-z_][\w.]*)\s.*\(([^()]*)\)\s*$` takes,
+/// without a regex (the list has thousands of lines and is read each time the page opens).
+fn dump_line(line: &str) -> Option<(&str, &str)> {
+    let first = line.chars().next()?;
+    if !(first.is_ascii_alphabetic() || first == '_') {
+        return None;
+    }
+    let name_end = line
+        .find(|c: char| !(c.is_alphanumeric() || c == '_' || c == '.'))
+        .unwrap_or(line.len());
+    if !line[name_end..].starts_with(char::is_whitespace) {
+        return None;
+    }
+    let rest = line.trim_end();
+    let body = rest.strip_suffix(')')?;
+    let open = body.rfind('(')?;
+    if open < name_end || body[open + 1..].contains(')') {
+        return None;
+    }
+    Some((&line[..name_end], &body[open + 1..]))
+}
+
 /// Valve's convar list: which convars exist and which the game refuses from
 /// `gameinfo.gi`.
 #[derive(Debug, Clone, Default)]
@@ -304,19 +338,14 @@ impl GameConvars {
     /// Parse `DumpSource2/convars.txt`: `name default (flags)` lines, each
     /// followed by an indented description.
     pub fn parse(text: &str) -> GameConvars {
-        static RE: OnceLock<Regex> = OnceLock::new();
-        let re = RE.get_or_init(|| Regex::new(r"^([A-Za-z_][\w.]*)\s.*\(([^()]*)\)\s*$").unwrap());
         let mut blocked = HashMap::new();
         for line in text.split('\n') {
             let line = line.trim_end_matches('\r');
             if line.starts_with(char::is_whitespace) {
                 continue;
             }
-            if let Some(caps) = re.captures(line) {
-                blocked.insert(
-                    caps[1].to_string(),
-                    caps[2].contains("gameinfo_cannot_override"),
-                );
+            if let Some((name, flags)) = dump_line(line) {
+                blocked.insert(name.to_string(), flags.contains("gameinfo_cannot_override"));
             }
         }
         GameConvars { blocked }
@@ -375,42 +404,53 @@ pub fn load(data_dir: &Path) -> Catalog {
     )) else {
         return catalog;
     };
-    let baseline = generate::parse(&baseline);
-    let game = std::fs::read_to_string(fetch::file_path(
-        data_dir,
-        fetch::CONVARS_ID,
-        fetch::CONVARS_FILE,
-    ))
-    .ok()
-    .map(|text| GameConvars::parse(&text))
-    .filter(|game| game.len() > 1000);
-    catalog.game_convars = game.is_some();
-    for def in catalog::CONFIGS {
-        let Some(meta) = index.configs.get(def.id) else {
-            continue;
-        };
-        let Ok(text) = std::fs::read_to_string(fetch::file_path(data_dir, def.id, "gameinfo.gi"))
-        else {
-            continue;
-        };
-        let videos: Vec<(String, String)> = meta
-            .videos
-            .iter()
-            .filter_map(|(name, _)| {
-                std::fs::read_to_string(fetch::file_path(data_dir, def.id, name))
-                    .ok()
-                    .map(|text| (name.clone(), text))
+    // Valve's convar list parses on its own thread while the stock file and the configs parse
+    // here. The configs stay in series: their parsers share compiled regexes, and on several
+    // threads at once they were slower than one after another (measured).
+    let (baseline, game, built) = std::thread::scope(|scope| {
+        let game = scope.spawn(|| {
+            std::fs::read_to_string(fetch::file_path(
+                data_dir,
+                fetch::CONVARS_ID,
+                fetch::CONVARS_FILE,
+            ))
+            .ok()
+            .map(|text| GameConvars::parse(&text))
+            .filter(|game| game.len() > 1000)
+        });
+        let baseline = generate::parse(&baseline);
+        let mut texts = Vec::new();
+        for def in catalog::CONFIGS {
+            let Some(meta) = index.configs.get(def.id) else {
+                continue;
+            };
+            let Ok(text) =
+                std::fs::read_to_string(fetch::file_path(data_dir, def.id, "gameinfo.gi"))
+            else {
+                continue;
+            };
+            let videos: Vec<(String, String)> = meta
+                .videos
+                .iter()
+                .filter_map(|(name, _)| {
+                    std::fs::read_to_string(fetch::file_path(data_dir, def.id, name))
+                        .ok()
+                        .map(|text| (name.clone(), text))
+                })
+                .collect();
+            texts.push((def, meta, generate::parse(&text), videos));
+        }
+        let game = game.join().ok().flatten();
+        let built: Vec<Config> = texts
+            .into_iter()
+            .map(|(def, meta, parsed, videos)| {
+                Config::from_parsed(def, meta, &baseline, &parsed, &videos, game.as_ref())
             })
             .collect();
-        catalog.configs.push(Config::from_texts(
-            def,
-            meta,
-            &baseline,
-            &text,
-            &videos,
-            game.as_ref(),
-        ));
-    }
+        (baseline, game, built)
+    });
+    catalog.game_convars = game.is_some();
+    catalog.configs.extend(built);
     // Custom presets from GitHub repositories the player added (#572), after the built-ins.
     catalog.configs.extend(repos::configs(data_dir, &baseline, game.as_ref()));
     catalog.configs.sort_by_key(|config| config.def.tier);
@@ -763,6 +803,143 @@ pub fn apply_to_install(game_root: &Path, config: &Config, options: &Options) ->
         let _ = std::fs::remove_file(as_written::stock_path(game_root));
     }
     Ok(patched)
+}
+
+/// What the last Apply wrote, kept in app data so the page can tell a game update or a Steam
+/// verify (which put Valve's `gameinfo.gi` back) from the player turning the config off. The
+/// page never trusts it for what is on: that is always read from the file.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AppliedRecord {
+    pub id: String,
+    pub name: String,
+    pub version: String,
+    /// How many settings the apply wrote.
+    pub written: usize,
+    /// When, RFC 3339.
+    pub at: String,
+}
+
+const APPLIED_RECORD: &str = "applied.json";
+
+fn record_path(data_dir: &Path) -> PathBuf {
+    fetch::cache_root(data_dir).join(APPLIED_RECORD)
+}
+
+pub fn read_record(data_dir: &Path) -> Option<AppliedRecord> {
+    let text = std::fs::read_to_string(record_path(data_dir)).ok()?;
+    serde_json::from_str(&text).ok()
+}
+
+/// Forget the last apply (Turn off, or the player dismissing a reset notice). App data only.
+pub fn forget_record(data_dir: &Path) -> Result<()> {
+    match std::fs::remove_file(record_path(data_dir)) {
+        Err(error) if error.kind() != std::io::ErrorKind::NotFound => Err(error.into()),
+        _ => Ok(()),
+    }
+}
+
+/// Lines in `text` that carry a Sigil performance change: added, changed and commented out.
+/// Read from the file itself, so it says what the game will read, not what Sigil remembers.
+pub fn settings_in_file(text: &str) -> usize {
+    let added = format!("// {MARKER} added");
+    let was = format!("// {MARKER} was ");
+    let removed = format!("// {MARKER} removed: ");
+    text.lines()
+        .filter(|line| line.contains(&added) || line.contains(&was) || line.contains(&removed))
+        .count()
+}
+
+/// The config the last Apply put in, when the file no longer has it: Valve's file came back
+/// (a game update or Steam's file check) or something else rewrote it.
+pub fn reset_since_apply(text: &str, record: Option<&AppliedRecord>) -> Option<AppliedRecord> {
+    let record = record?;
+    match applied(text) {
+        Applied::None if !as_written::is_applied(text) => Some(record.clone()),
+        _ => None,
+    }
+}
+
+/// What an Apply did, read back from the file after the write.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ApplyReport {
+    pub path: PathBuf,
+    /// Settings the apply wrote.
+    pub written: usize,
+    /// Settings lines found in the file when it was read back.
+    pub in_file: usize,
+    /// Engine edits that found no section.
+    pub skipped: Vec<String>,
+}
+
+/// GAME WRITE. Apply, then read the file back and check the game will see the config: the
+/// marker names it and every convar line holds the value Sigil meant. The record of the apply
+/// goes to app data only once the check passed. Called only from the Apply button.
+pub fn apply_and_check(
+    game_root: &Path,
+    data_dir: &Path,
+    config: &Config,
+    options: &Options,
+    now: &str,
+) -> Result<ApplyReport> {
+    let patched = apply_to_install(game_root, config, options)?;
+    let path = gameinfo_path(game_root);
+    let back = std::fs::read_to_string(&path)?;
+    let on = matches!(applied(&back), Applied::Config { ref id, .. } if id == config.id());
+    if !on {
+        return Err(Error::msg(format!(
+            "{} was written but does not hold {} when read back. Something else changed the file; try again.",
+            path.display(),
+            config.name()
+        )));
+    }
+    let values = convar_values(&back);
+    let wrong: Vec<String> = exchange::effective(config, options)
+        .into_iter()
+        // An edit the editor's check refuses never reaches the file (`apply_text`).
+        .filter(|(key, value)| {
+            !options.edits.contains_key(key) || edits::is_valid_edit(key, value)
+        })
+        .filter(|(key, value)| {
+            values.get(key).map(|v| normalize_value(v)) != Some(normalize_value(value))
+        })
+        .map(|(key, _)| key)
+        .collect();
+    if !wrong.is_empty() {
+        return Err(Error::msg(format!(
+            "{} was written, but {} setting{} did not read back as set ({}). Turn the config off and apply it again.",
+            path.display(),
+            wrong.len(),
+            if wrong.len() == 1 { "" } else { "s" },
+            wrong.iter().take(3).cloned().collect::<Vec<_>>().join(", ")
+        )));
+    }
+    let record = AppliedRecord {
+        id: config.id().to_string(),
+        name: config.name().to_string(),
+        version: config.version.clone(),
+        written: patched.written,
+        at: now.to_string(),
+    };
+    write_atomic(&record_path(data_dir), &serde_json::to_vec_pretty(&record)?)?;
+    Ok(ApplyReport {
+        path,
+        written: patched.written,
+        in_file: settings_in_file(&back),
+        skipped: patched.skipped,
+    })
+}
+
+fn normalize_value(value: &str) -> String {
+    let value = value.trim().trim_matches('"').trim().to_ascii_lowercase();
+    match value.as_str() {
+        "true" => "1".into(),
+        "false" => "0".into(),
+        _ => match value.parse::<f64>() {
+            Ok(number) if value.chars().any(|c| c.is_ascii_digit()) => format!("{number}"),
+            _ => value,
+        },
+    }
 }
 
 /// GAME WRITE. Remove Sigil's config from the install's `gameinfo.gi`, restoring
