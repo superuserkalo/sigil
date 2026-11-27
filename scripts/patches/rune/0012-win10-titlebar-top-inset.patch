@@ -1,0 +1,538 @@
+diff --git a/changelog/unreleased/2026-11-27-win10-titlebar-top-inset.md b/changelog/unreleased/2026-11-27-win10-titlebar-top-inset.md
+new file mode 100644
+index 0000000..b841c09
+--- /dev/null
++++ b/changelog/unreleased/2026-11-27-win10-titlebar-top-inset.md
+@@ -0,0 +1 @@
++- Windows 10: `App::titlebar` windows no longer show the native title bar above the app's own. A restored window's custom frame leaves no top non-client row (any row made DWM paint the whole caption over the window); `WM_NCCALCSIZE` frames the window the same way when only a rect comes (`wParam` FALSE); and a maximized window's client area is its rect cut to the display's work area, so nothing sits under the screen's edge when it maximizes onto a display of another scale.
+diff --git a/crates/rune/src/platform.rs b/crates/rune/src/platform.rs
+index 0c41aa3..ce64b7d 100644
+--- a/crates/rune/src/platform.rs
++++ b/crates/rune/src/platform.rs
+@@ -6,6 +6,8 @@ pub(crate) mod app_icon;
+ pub(crate) mod display_link;
+ #[cfg(target_vendor = "apple")]
+ pub mod embed;
++#[cfg(any(target_os = "windows", test))]
++pub(crate) mod frame_math;
+ pub(crate) mod ime;
+ #[cfg(all(unix, not(target_os = "macos"), not(target_os = "ios"), not(target_os = "android")))]
+ pub(crate) mod layer_shell;
+diff --git a/crates/rune/src/platform/frame_math.rs b/crates/rune/src/platform/frame_math.rs
+new file mode 100644
+index 0000000..1666be0
+--- /dev/null
++++ b/crates/rune/src/platform/frame_math.rs
+@@ -0,0 +1,121 @@
++//! The arithmetic of Windows' custom frame (`platform::win32::frame`), apart from the Win32 calls
++//! so it is tested on every platform: the client rect `WM_NCCALCSIZE` returns for a restored and a
++//! maximized window, the outer size for a client size, and what a point in the client area hits.
++//!
++//! Windows 10 and the top inset. A restored window's client area starts at its outer top: no
++//! non-client row is left there, not even one pixel. On Windows 10 (builds before 22000), DWM
++//! paints either none of a captioned window's top frame or all of it: as soon as the top
++//! non-client inset is positive it draws the whole native title bar (caption, title and buttons)
++//! over the top of the window, on top of the app's own bar, while `GetClientRect` still reports a
++//! client area that starts one pixel down. Windows Terminal found the same
++//! (`NonClientIslandWindow::_UpdateFrameMargins`, "DWM only wants to draw either nothing or the
++//! whole top part of the frame") and keeps a 0 top inset too. The cost on Windows 10 is the 1 px
++//! system border along the top of a restored window, which DWM then does not draw; Windows 11
++//! draws that border over the client area anyway. Do not bring the 1 px row back.
++//!
++//! A maximized window hangs its frame off the display on every side. Its client area is the
++//! window's rect cut to the display's work area, so nothing is drawn under the screen's edge, on a
++//! display of any scale, including when the window maximizes onto a display whose scale differs
++//! from the one it was on (the frame thickness Windows used then is the new display's).
++
++#![cfg_attr(not(target_os = "windows"), allow(dead_code))]
++
++use crate::titlebar::{Caption, CaptionButton};
++
++/// A rectangle by its four edges in pixels (a Win32 `RECT`), or a frame's four border widths.
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++pub(crate) struct Edges {
++    pub left: i32,
++    pub top: i32,
++    pub right: i32,
++    pub bottom: i32,
++}
++
++impl Edges {
++    pub(crate) const fn new(left: i32, top: i32, right: i32, bottom: i32) -> Self {
++        Self { left, top, right, bottom }
++    }
++
++    fn is_empty(&self) -> bool {
++        self.right <= self.left || self.bottom <= self.top
++    }
++
++    fn intersect(&self, other: &Edges) -> Edges {
++        Edges { left: self.left.max(other.left), top: self.top.max(other.top), right: self.right.min(other.right), bottom: self.bottom.min(other.bottom) }
++    }
++}
++
++/// What a custom frame adds around a restored window's client area, given what the standard
++/// frame adds (`standard`, each edge a positive width): the sides and the bottom stay (they are
++/// the invisible resize borders), the top is 0 (see the module's note on Windows 10).
++pub(crate) fn restored_borders(standard: Edges) -> Edges {
++    Edges { top: 0, ..standard }
++}
++
++/// A restored window's client rect for `WM_NCCALCSIZE`: the default procedure's (`def_client`)
++/// sides and bottom, and the window's own top (`outer.top`).
++pub(crate) fn restored_client(outer: Edges, def_client: Edges) -> Edges {
++    Edges { top: outer.top, ..def_client }
++}
++
++/// A maximized window's client rect for `WM_NCCALCSIZE`: the window's new rect (`outer`) cut to
++/// the work area of the display it maximizes on (`work`). Without a work area (the query failed,
++/// or the window does not reach it), the default procedure's rect with the top moved down by the
++/// sizing border (`frame`) that hangs off the display.
++pub(crate) fn maximized_client(outer: Edges, def_client: Edges, frame: i32, work: Option<Edges>) -> Edges {
++    let fallback = Edges { top: outer.top + frame, ..def_client };
++    match work.map(|w| outer.intersect(&w)) {
++        Some(cut) if !cut.is_empty() => cut,
++        _ => fallback,
++    }
++}
++
++/// The outer size `(width, height)` of a restored window whose client area is `w` x `h` and whose
++/// standard frame adds `standard`.
++pub(crate) fn outer_size(w: i32, h: i32, standard: Edges) -> (i32, i32) {
++    let b = restored_borders(standard);
++    (w + b.left + b.right, h + b.top + b.bottom)
++}
++
++/// The outer size `WM_GETDPISCALEDSIZE` answers for a restored window whose client area is `w` x
++/// `h` at `old_dpi`, moving to `new_dpi`, where the standard frame adds `new_standard`.
++pub(crate) fn dpi_scaled_outer_size(w: i32, h: i32, old_dpi: u32, new_dpi: u32, new_standard: Edges) -> (i32, i32) {
++    let ratio = f64::from(new_dpi) / f64::from(old_dpi.max(1));
++    outer_size((f64::from(w) * ratio).round() as i32, (f64::from(h) * ratio).round() as i32, new_standard)
++}
++
++/// A `WM_GETMINMAXINFO` track height winit sized for a standard title bar (it changed it:
++/// `after != before`), with the top border this frame removes taken back off.
++pub(crate) fn track_height(before: i32, after: i32, standard: Edges) -> i32 {
++    if after == before { return after; }
++    let removed = standard.top - restored_borders(standard).top;
++    (after - removed).max(1)
++}
++
++/// What a point in the client area hits.
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++pub(crate) enum ClientHit {
++    TopLeft,
++    Top,
++    TopRight,
++    Button(CaptionButton),
++    Client,
++}
++
++/// What the point `(x, y)` (client pixels) hits in a client area `width` pixels wide at `scale`:
++/// the top resize band (`edge` pixels tall, the sizing border's thickness) of a restored window
++/// that resizes, an enabled caption button, or the client.
++pub(crate) fn client_hit(caption: &Caption, width: i32, scale: f32, edge: i32, zoomed: bool, resizable: bool, (x, y): (i32, i32)) -> ClientHit {
++    if !zoomed && resizable && y >= 0 && y < edge {
++        return if x < edge { ClientHit::TopLeft } else if x >= width - edge { ClientHit::TopRight } else { ClientHit::Top };
++    }
++    let scale = if scale > 0.0 { scale } else { 1.0 };
++    match caption.hit(width as f32 / scale, scale, (x as f32 / scale, y as f32 / scale)) {
++        Some(button) => ClientHit::Button(button),
++        None => ClientHit::Client,
++    }
++}
++
++#[cfg(test)]
++#[path = "frame_math_tests.rs"]
++mod tests;
+diff --git a/crates/rune/src/platform/frame_math_tests.rs b/crates/rune/src/platform/frame_math_tests.rs
+new file mode 100644
+index 0000000..08463f0
+--- /dev/null
++++ b/crates/rune/src/platform/frame_math_tests.rs
+@@ -0,0 +1,160 @@
++use super::*;
++use crate::titlebar::CaptionState;
++
++/// What a standard captioned, resizable frame adds at 100%: 8 px sizing borders (4 px frame and
++/// 4 px padding) and a 23 px caption above the top one.
++const STANDARD_100: Edges = Edges::new(8, 31, 8, 8);
++/// The same at 150%: 12 px sizing borders and a taller caption.
++const STANDARD_150: Edges = Edges::new(12, 46, 12, 12);
++
++fn deflate(outer: Edges, by: Edges) -> Edges {
++    Edges::new(outer.left + by.left, outer.top + by.top, outer.right - by.right, outer.bottom - by.bottom)
++}
++
++fn inflate(r: Edges, by: i32) -> Edges {
++    Edges::new(r.left - by, r.top - by, r.right + by, r.bottom + by)
++}
++
++fn caption() -> Caption {
++    Caption { height: 36.0, state: CaptionState::Idle, maximized: false, minimizable: true, maximizable: true, hidden: false, mirrored: false }
++}
++
++#[test]
++fn a_restored_window_has_no_top_inset_at_any_scale() {
++    for standard in [STANDARD_100, STANDARD_150] {
++        let outer = Edges::new(100, 50, 916, 658);
++        let def_client = deflate(outer, standard);
++        let client = restored_client(outer, def_client);
++        assert_eq!(client.top, outer.top, "any top inset makes Windows 10 paint its own title bar");
++        assert_eq!((client.left, client.right, client.bottom), (def_client.left, def_client.right, def_client.bottom), "the side and bottom resize borders stay");
++        let b = restored_borders(standard);
++        assert_eq!(b, Edges::new(standard.left, 0, standard.right, standard.bottom));
++    }
++}
++
++#[test]
++fn restored_sizes_round_trip_through_the_frame() {
++    // request_inner_size, then WM_NCCALCSIZE: the client area is the size asked for.
++    let (w, h) = outer_size(800, 600, STANDARD_100);
++    assert_eq!((w, h), (816, 608));
++    let outer = Edges::new(120, 80, 120 + w, 80 + h);
++    let client = restored_client(outer, deflate(outer, STANDARD_100));
++    assert_eq!((client.right - client.left, client.bottom - client.top), (800, 600));
++
++    let (w, h) = outer_size(1200, 900, STANDARD_150);
++    let outer = Edges::new(-1500, 200, -1500 + w, 200 + h);
++    let client = restored_client(outer, deflate(outer, STANDARD_150));
++    assert_eq!((client.right - client.left, client.bottom - client.top), (1200, 900));
++}
++
++#[test]
++fn a_scale_change_keeps_the_content_size_and_adds_no_top_border() {
++    assert_eq!(dpi_scaled_outer_size(800, 600, 96, 144, STANDARD_150), (1200 + 24, 900 + 12), "100% to 150%");
++    assert_eq!(dpi_scaled_outer_size(1200, 900, 144, 96, STANDARD_100), (800 + 16, 600 + 8), "150% to 100%");
++    assert_eq!(dpi_scaled_outer_size(100, 100, 0, 96, STANDARD_100), (9600 + 16, 9600 + 8), "an unknown old scale counts as 1 dpi, never divides by 0");
++}
++
++#[test]
++fn track_heights_lose_the_title_bar_winit_counted() {
++    let min = 680 + STANDARD_100.top + STANDARD_100.bottom;
++    assert_eq!(track_height(0, min, STANDARD_100), outer_size(1040, 680, STANDARD_100).1);
++    let min = 680 + STANDARD_150.top + STANDARD_150.bottom;
++    assert_eq!(track_height(0, min, STANDARD_150), outer_size(1040, 680, STANDARD_150).1);
++    assert_eq!(track_height(500, 500, STANDARD_100), 500, "a height winit left alone stays");
++    assert_eq!(track_height(0, 10, STANDARD_100), 1, "never below a pixel");
++}
++
++#[test]
++fn a_maximized_window_fills_the_work_area_and_nothing_hangs_off_it() {
++    // 100%, 1920 x 1080 with a 40 px taskbar at the bottom.
++    let work = Edges::new(0, 0, 1920, 1040);
++    let outer = inflate(work, 8);
++    let def_client = deflate(outer, STANDARD_100);
++    assert_eq!(maximized_client(outer, def_client, 8, Some(work)), work);
++    assert_eq!(maximized_client(outer, def_client, 8, None), work, "without the work area the sizing border comes off the top");
++
++    // 150%, a second display to the right, 2560 x 1440 with the taskbar's 60 px.
++    let work = Edges::new(1920, 0, 4480, 1380);
++    let outer = inflate(work, 12);
++    let def_client = deflate(outer, STANDARD_150);
++    assert_eq!(maximized_client(outer, def_client, 12, Some(work)), work);
++    assert_eq!(maximized_client(outer, def_client, 12, None), work);
++
++    // A taskbar on the left or top moves the work area's origin.
++    let work = Edges::new(62, 48, 1920, 1080);
++    let outer = inflate(work, 8);
++    assert_eq!(maximized_client(outer, deflate(outer, STANDARD_100), 8, Some(work)), work);
++}
++
++#[test]
++fn maximizing_onto_a_display_of_another_scale_cuts_nothing_off() {
++    // Win+Shift+Arrow from a 100% display to a 150% one: Windows hangs the 150% frame (12 px) off
++    // the new display while the window still reports 100% (an 8 px frame).
++    let work = Edges::new(1920, 0, 4480, 1380);
++    let outer = inflate(work, 12);
++    let def_client = deflate(outer, STANDARD_150);
++    let fallback = maximized_client(outer, def_client, 8, None);
++    assert_eq!(fallback.top, -4, "the old scale's border alone leaves 4 px under the screen's top edge");
++    assert_eq!(maximized_client(outer, def_client, 8, Some(work)), work, "the work area fixes it");
++}
++
++#[test]
++fn a_maximized_window_capped_below_the_display_keeps_its_rect() {
++    // A maximum track size smaller than the display: the window does not reach the work area's
++    // edges, so the client area is its whole rect.
++    let work = Edges::new(0, 0, 1920, 1040);
++    let outer = Edges::new(200, 100, 1000, 700);
++    assert_eq!(maximized_client(outer, deflate(outer, STANDARD_100), 8, Some(work)), outer);
++    // A work area the window does not touch at all (a stale query): the default rect.
++    let elsewhere = Edges::new(5000, 0, 6000, 1000);
++    assert_eq!(maximized_client(outer, deflate(outer, STANDARD_100), 8, Some(elsewhere)), Edges::new(208, 108, 992, 692));
++}
++
++#[test]
++fn the_top_band_resizes_and_the_buttons_answer_at_100_percent() {
++    let c = caption();
++    let hit = |x, y, zoomed, resizable| client_hit(&c, 1360, 1.0, 8, zoomed, resizable, (x, y));
++    assert_eq!(hit(2, 3, false, true), ClientHit::TopLeft);
++    assert_eq!(hit(600, 0, false, true), ClientHit::Top);
++    assert_eq!(hit(600, 7, false, true), ClientHit::Top);
++    assert_eq!(hit(1355, 3, false, true), ClientHit::TopRight, "the corner resizes over the close button");
++    assert_eq!(hit(600, 8, false, true), ClientHit::Client, "below the band is the app's own title bar");
++    // Close, then Maximize, then Minimize from the right, 46 px each.
++    assert_eq!(hit(1355, 20, false, true), ClientHit::Button(CaptionButton::Close));
++    assert_eq!(hit(1314, 20, false, true), ClientHit::Button(CaptionButton::Close));
++    assert_eq!(hit(1313, 20, false, true), ClientHit::Button(CaptionButton::Maximize));
++    assert_eq!(hit(1250, 20, false, true), ClientHit::Button(CaptionButton::Minimize));
++    assert_eq!(hit(1221, 20, false, true), ClientHit::Client);
++    assert_eq!(hit(1355, 36, false, true), ClientHit::Client, "under the title bar");
++    // Maximized: no resize band, the buttons reach the top edge (Fitts).
++    assert_eq!(hit(600, 3, true, true), ClientHit::Client);
++    assert_eq!(hit(1355, 0, true, true), ClientHit::Button(CaptionButton::Close));
++    // A window that does not resize has no band.
++    assert_eq!(hit(600, 3, false, false), ClientHit::Client);
++}
++
++#[test]
++fn the_top_band_resizes_and_the_buttons_answer_at_150_percent() {
++    let c = caption();
++    // 1360 points wide is 2040 pixels; the band is 12 px, the buttons 69 px wide and 54 tall.
++    let hit = |x, y| client_hit(&c, 2040, 1.5, 12, false, true, (x, y));
++    assert_eq!(hit(5, 5), ClientHit::TopLeft);
++    assert_eq!(hit(1000, 11), ClientHit::Top);
++    assert_eq!(hit(2035, 5), ClientHit::TopRight);
++    assert_eq!(hit(1000, 12), ClientHit::Client);
++    assert_eq!(hit(2000, 30), ClientHit::Button(CaptionButton::Close));
++    assert_eq!(hit(1971, 30), ClientHit::Button(CaptionButton::Close));
++    assert_eq!(hit(1970, 30), ClientHit::Button(CaptionButton::Maximize));
++    assert_eq!(hit(1902, 30), ClientHit::Button(CaptionButton::Maximize));
++    assert_eq!(hit(1901, 30), ClientHit::Button(CaptionButton::Minimize));
++    assert_eq!(hit(2000, 53), ClientHit::Button(CaptionButton::Close));
++    assert_eq!(hit(2000, 54), ClientHit::Client);
++}
++
++#[test]
++fn a_disabled_or_hidden_button_is_client() {
++    let no_max = Caption { maximizable: false, ..caption() };
++    assert_eq!(client_hit(&no_max, 1360, 1.0, 8, false, true, (1300, 20)), ClientHit::Client);
++    let full_screen = Caption { hidden: true, ..caption() };
++    assert_eq!(client_hit(&full_screen, 1360, 1.0, 8, true, true, (1355, 20)), ClientHit::Client);
++}
+diff --git a/crates/rune/src/platform/win32/frame.rs b/crates/rune/src/platform/win32/frame.rs
+index 509e6c4..54f1b16 100644
+--- a/crates/rune/src/platform/win32/frame.rs
++++ b/crates/rune/src/platform/win32/frame.rs
+@@ -5,9 +5,12 @@
+ //! flyout, the window menu and its animations; only the title bar goes. `WM_NCCALCSIZE`
+ //! hands the caption's band to the client area and keeps the side and bottom borders, which
+ //! Windows 10 and 11 draw invisibly outside the window, as resize edges. The top resize edge
+-//! is then a band inside the client area that `WM_NCHITTEST` reports as `HTTOP`. Windows 11
+-//! draws the window's 1 px border over the client area; Windows 10 draws it only around
+-//! non-client pixels, so there a restored window keeps a 1 px non-client row at the top.
++//! is then a band inside the client area that `WM_NCHITTEST` reports as `HTTOP`. The top
++//! non-client inset is 0 on Windows 10 and 11 alike: on Windows 10 any positive top inset, even
++//! 1 px, makes DWM paint the whole native title bar over the window, above the app's own
++//! (`platform::frame_math` says why and holds the arithmetic and its tests). Windows 11 draws the
++//! window's 1 px border over the client area; Windows 10 shows none at the top of a restored
++//! window, the price of having one title bar.
+ //!
+ //! Rune draws the caption buttons as elements (`titlebar::caption`), and this procedure answers
+ //! hit tests over them as `HTMINBUTTON`, `HTMAXBUTTON` and `HTCLOSE`. Windows 11 shows its snap
+@@ -30,12 +33,12 @@ use std::sync::OnceLock;
+ 
+ use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, RECT, SIZE, WPARAM};
+ use windows_sys::Win32::Graphics::Gdi::{ClientToScreen, GetMonitorInfoW, InvalidateRect, MONITOR_DEFAULTTONEAREST, MONITORINFO, MonitorFromRect, ScreenToClient};
+-use windows_sys::Win32::System::LibraryLoader::{GetModuleHandleW, GetProcAddress};
+ use windows_sys::Win32::UI::HiDpi::{AdjustWindowRectExForDpi, GetDpiForWindow, GetSystemMetricsForDpi};
+ use windows_sys::Win32::UI::Input::KeyboardAndMouse::{ReleaseCapture, SetCapture, TME_LEAVE, TME_NONCLIENT, TRACKMOUSEEVENT, TrackMouseEvent};
+ use windows_sys::Win32::UI::Shell::{ABE_BOTTOM, ABE_LEFT, ABE_RIGHT, ABE_TOP, ABM_GETAUTOHIDEBAREX, APPBARDATA, DefSubclassProc, RemoveWindowSubclass, SHAppBarMessage, SetWindowSubclass};
+ use windows_sys::Win32::UI::WindowsAndMessaging::*;
+ 
++use crate::platform::frame_math::{self, ClientHit, Edges};
+ use crate::runtime::WindowMenu;
+ use crate::titlebar::{Caption, CaptionButton, CaptionState};
+ 
+@@ -106,8 +109,8 @@ pub(crate) fn request_inner_size(window: &winit::window::Window, size: (f32, f32
+     // SAFETY: Win32 calls on a live window this thread owns.
+     unsafe {
+         if IsZoomed(hwnd) != 0 { ShowWindow(hwnd, SW_RESTORE); }
+-        let b = borders(hwnd, GetDpiForWindow(hwnd));
+-        SetWindowPos(hwnd, std::ptr::null_mut(), 0, 0, w + b.left + b.right, h + top_border(hwnd) + b.bottom, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOOWNERZORDER);
++        let (cx, cy) = frame_math::outer_size(w, h, borders(hwnd, GetDpiForWindow(hwnd)));
++        SetWindowPos(hwnd, std::ptr::null_mut(), 0, 0, cx, cy, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOOWNERZORDER);
+     }
+     true
+ }
+@@ -230,12 +233,20 @@ unsafe extern "system" fn subclass(hwnd: HWND, message: u32, wparam: WPARAM, lpa
+     // live window this thread owns.
+     unsafe {
+         match message {
+-            WM_NCCALCSIZE if wparam != 0 => {
+-                let params = &mut *(lparam as *mut NCCALCSIZE_PARAMS);
+-                let outer = params.rgrc[0];
++            // The first RECT is the window's new rect on the way in and its client rect on the
++            // way out, whether wParam says the whole NCCALCSIZE_PARAMS comes (TRUE) or only that
++            // RECT (FALSE). Both get the same frame, so no path leaves the system's caption.
++            WM_NCCALCSIZE => {
++                let client = lparam as *mut RECT;
++                let outer = *client;
+                 DefSubclassProc(hwnd, message, wparam, lparam);
+-                params.rgrc[0].top = outer.top + top_border(hwnd);
+-                if IsZoomed(hwnd) != 0 { fit_maximized(hwnd, &outer, &mut params.rgrc[0]); }
++                let def_client = edges(*client);
++                let calculated = if IsZoomed(hwnd) != 0 {
++                    fit_maximized(&outer, frame_math::maximized_client(edges(outer), def_client, frame_thickness(GetDpiForWindow(hwnd)), work_area(&outer)))
++                } else {
++                    frame_math::restored_client(edges(outer), def_client)
++                };
++                *client = rect(calculated);
+                 return 0;
+             }
+             WM_NCHITTEST => {
+@@ -307,19 +318,16 @@ unsafe extern "system" fn subclass(hwnd: HWND, message: u32, wparam: WPARAM, lpa
+                 let (min, max) = (info.ptMinTrackSize.y, info.ptMaxTrackSize.y);
+                 let result = DefSubclassProc(hwnd, message, wparam, lparam);
+                 // winit sized them for a title bar: take it back off what it set.
+-                let top = borders(hwnd, GetDpiForWindow(hwnd)).top - top_border(hwnd);
+-                if info.ptMinTrackSize.y != min { info.ptMinTrackSize.y = (info.ptMinTrackSize.y - top).max(1); }
+-                if info.ptMaxTrackSize.y != max { info.ptMaxTrackSize.y = (info.ptMaxTrackSize.y - top).max(1); }
++                let standard = borders(hwnd, GetDpiForWindow(hwnd));
++                info.ptMinTrackSize.y = frame_math::track_height(min, info.ptMinTrackSize.y, standard);
++                info.ptMaxTrackSize.y = frame_math::track_height(max, info.ptMaxTrackSize.y, standard);
+                 return result;
+             }
+             WM_GETDPISCALEDSIZE if IsZoomed(hwnd) == 0 => {
+                 let dpi = wparam as u32;
+                 let (w, h) = client_size(hwnd);
+-                let ratio = f64::from(dpi) / f64::from(GetDpiForWindow(hwnd).max(1));
+-                let b = borders(hwnd, dpi);
+                 let out = &mut *(lparam as *mut SIZE);
+-                out.cx = (f64::from(w) * ratio).round() as i32 + b.left + b.right;
+-                out.cy = (f64::from(h) * ratio).round() as i32 + top_border(hwnd) + b.bottom;
++                (out.cx, out.cy) = frame_math::dpi_scaled_outer_size(w, h, GetDpiForWindow(hwnd), dpi, borders(hwnd, dpi));
+                 return 1;
+             }
+             // winit sizes the window for a title bar; Windows' rect (from WM_GETDPISCALEDSIZE)
+@@ -415,16 +423,15 @@ fn hit_test(state: &State, hwnd: HWND, mut point: POINT) -> u32 {
+         let style = GetWindowLongPtrW(hwnd, GWL_STYLE) as u32;
+         (GetDpiForWindow(hwnd), IsZoomed(hwnd) != 0, style & WS_THICKFRAME != 0)
+     };
+-    let edge = frame_thickness(dpi);
+-    let client_width = client_size(hwnd).0;
+-    if !zoomed && resizable && point.y >= 0 && point.y < edge {
+-        return if point.x < edge { HTTOPLEFT } else if point.x >= client_width - edge { HTTOPRIGHT } else { HTTOP };
+-    }
+-    match caption_hit(state, hwnd, point) {
+-        Some(CaptionButton::Minimize) => HTMINBUTTON,
+-        Some(CaptionButton::Maximize) => HTMAXBUTTON,
+-        Some(CaptionButton::Close) => HTCLOSE,
+-        None => HTCLIENT,
++    let scale = dpi as f32 / 96.0;
++    match frame_math::client_hit(&state.caption(hwnd), client_size(hwnd).0, scale, frame_thickness(dpi), zoomed, resizable, (point.x, point.y)) {
++        ClientHit::TopLeft => HTTOPLEFT,
++        ClientHit::Top => HTTOP,
++        ClientHit::TopRight => HTTOPRIGHT,
++        ClientHit::Button(CaptionButton::Minimize) => HTMINBUTTON,
++        ClientHit::Button(CaptionButton::Maximize) => HTMAXBUTTON,
++        ClientHit::Button(CaptionButton::Close) => HTCLOSE,
++        ClientHit::Client => HTCLIENT,
+     }
+ }
+ 
+@@ -443,43 +450,16 @@ fn frame_thickness(dpi: u32) -> i32 {
+     unsafe { GetSystemMetricsForDpi(SM_CYFRAME, dpi) + GetSystemMetricsForDpi(SM_CXPADDEDBORDER, dpi) }
+ }
+ 
+-/// The non-client pixels left at the top: Windows 10 draws a restored window's top border only
+-/// over non-client pixels.
+-fn top_border(hwnd: HWND) -> i32 {
+-    // SAFETY: reads a live window's state.
+-    i32::from(windows_10() && unsafe { IsZoomed(hwnd) } == 0)
+-}
+-
+-/// Windows before 11 (build 22000). `RtlGetVersion` reports the real build, whatever the
+-/// executable's manifest says.
+-fn windows_10() -> bool {
+-    static BEFORE_11: OnceLock<bool> = OnceLock::new();
+-    *BEFORE_11.get_or_init(|| {
+-        #[repr(C)]
+-        struct Version { size: u32, major: u32, minor: u32, build: u32, platform: u32, service_pack: [u16; 128] }
+-        let mut v = Version { size: size_of::<Version>() as u32, major: 0, minor: 0, build: 0, platform: 0, service_pack: [0; 128] };
+-        let ntdll: Vec<u16> = "ntdll.dll\0".encode_utf16().collect();
+-        // SAFETY: ntdll is loaded in every process; RtlGetVersion fills the OSVERSIONINFOW
+-        // `Version` mirrors, whose size field says which struct it is.
+-        unsafe {
+-            let Some(get) = GetProcAddress(GetModuleHandleW(ntdll.as_ptr()), c"RtlGetVersion".as_ptr().cast()) else { return false };
+-            let get: unsafe extern "system" fn(*mut Version) -> i32 = std::mem::transmute(get);
+-            get(&mut v) == 0 && v.major == 10 && v.build < 22000
+-        }
+-    })
+-}
+-
+ /// What the window's frame adds around its client area while it is restored, at `dpi`, each
+-/// edge as a positive width: a custom frame keeps the standard frame's sides and bottom, and at
+-/// the top only Windows 10's non-client row.
++/// edge as a positive width: a custom frame keeps the standard frame's sides and bottom, and
++/// nothing at the top (`frame_math::restored_borders`).
+ pub(super) fn restored_borders(hwnd: HWND, dpi: u32) -> RECT {
+     let b = borders(hwnd, dpi);
+-    if !installed(hwnd) || !framed(hwnd) { return b; }
+-    RECT { top: i32::from(windows_10()), ..b }
++    rect(if !installed(hwnd) || !framed(hwnd) { b } else { frame_math::restored_borders(b) })
+ }
+ 
+ /// What a standard frame adds around the client area at `dpi`, each edge as a positive width.
+-fn borders(hwnd: HWND, dpi: u32) -> RECT {
++fn borders(hwnd: HWND, dpi: u32) -> Edges {
+     let mut r = RECT { left: 0, top: 0, right: 0, bottom: 0 };
+     // SAFETY: reads a live window's styles, and fills `r`.
+     unsafe {
+@@ -487,21 +467,38 @@ fn borders(hwnd: HWND, dpi: u32) -> RECT {
+         let ex = GetWindowLongPtrW(hwnd, GWL_EXSTYLE) as u32;
+         AdjustWindowRectExForDpi(&mut r, style, 0, ex, dpi);
+     }
+-    RECT { left: -r.left, top: -r.top, right: r.right, bottom: r.bottom }
++    Edges::new(-r.left, -r.top, r.right, r.bottom)
++}
++
++fn edges(r: RECT) -> Edges {
++    Edges::new(r.left, r.top, r.right, r.bottom)
++}
++
++fn rect(e: Edges) -> RECT {
++    RECT { left: e.left, top: e.top, right: e.right, bottom: e.bottom }
++}
++
++/// The work area of the display a maximized window's new rect (`outer`) is on, which may not be
++/// the one it is on yet.
++fn work_area(outer: &RECT) -> Option<Edges> {
++    // SAFETY: plain queries on a rect and the monitor it picks; the struct carries its size.
++    unsafe {
++        let mut info: MONITORINFO = std::mem::zeroed();
++        info.cbSize = size_of::<MONITORINFO>() as u32;
++        (GetMonitorInfoW(MonitorFromRect(outer, MONITOR_DEFAULTTONEAREST), &mut info) != 0).then(|| edges(info.rcWork))
++    }
+ }
+ 
+-/// A maximized window hangs its frame off the display: the client area starts below the top
+-/// that hangs off, and leaves a pixel at an edge with an auto-hiding taskbar so the pointer
+-/// can still bring it up. `outer` is the window's new rect, on the display it maximizes on,
+-/// which may not be the one it is on yet.
+-fn fit_maximized(hwnd: HWND, outer: &RECT, client: &mut RECT) {
+-    // SAFETY: Win32 calls on a live window, its monitor and the shell's app bars.
++/// A maximized window's client rect (`frame_math::maximized_client`, the work area it fills),
++/// less a pixel at an edge with an auto-hiding taskbar, so the pointer can still bring it up.
++/// `outer` is the window's new rect.
++fn fit_maximized(outer: &RECT, mut client: Edges) -> Edges {
++    // SAFETY: Win32 calls on a monitor and the shell's app bars; each struct carries its size.
+     unsafe {
+-        client.top += frame_thickness(GetDpiForWindow(hwnd));
+         let monitor = MonitorFromRect(outer, MONITOR_DEFAULTTONEAREST);
+         let mut info: MONITORINFO = std::mem::zeroed();
+         info.cbSize = size_of::<MONITORINFO>() as u32;
+-        if GetMonitorInfoW(monitor, &mut info) == 0 { return; }
++        if GetMonitorInfoW(monitor, &mut info) == 0 { return client; }
+         for edge in [ABE_TOP, ABE_LEFT, ABE_BOTTOM, ABE_RIGHT] {
+             let mut bar: APPBARDATA = std::mem::zeroed();
+             bar.cbSize = size_of::<APPBARDATA>() as u32;
+@@ -517,6 +514,7 @@ fn fit_maximized(hwnd: HWND, outer: &RECT, client: &mut RECT) {
+             }
+         }
+     }
++    client
+ }
+ 
+ fn client_size(hwnd: HWND) -> (i32, i32) {

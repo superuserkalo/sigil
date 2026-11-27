@@ -1,12 +1,19 @@
 //! A guard against Windows' own title bar showing above Sigil's.
 //!
-//! Rune removes the system caption with a window subclass (`WM_NCCALCSIZE`). On some Windows 10
-//! machines players saw both bars stacked, so after the window opens Sigil checks its own
-//! windows: a top-level window with a caption style whose content starts more than a border
-//! below its outer edge still has the system title bar. The guard drops `WS_CAPTION` from it
-//! (the sizing border, snapping and the window menu stay) and asks for a new frame, then notes
-//! it in the log with the Windows build. Where Rune's frame works the gap is at most a border and
-//! nothing changes.
+//! Rune removes the system caption with a window subclass (`WM_NCCALCSIZE`). After the window
+//! opens Sigil checks its own windows: a top-level window with a caption style whose content
+//! starts more than a border below its outer edge still has the system title bar, because Rune's
+//! subclass never took hold. The guard drops `WS_CAPTION` from it (the sizing border, snapping
+//! and the window menu stay) and asks for a new frame, then notes it in the log with the Windows
+//! build. Where Rune's frame works the gap is 0 and nothing changes.
+//!
+//! The Windows 10 double title bar players reported was not that case, and this guard could not
+//! see it. Rune left a 1 px non-client row at the top of a restored window on Windows 10, and with
+//! any top non-client row at all DWM paints the whole native title bar over the top of the
+//! window, while the client area still starts 1 px down: a gap of 1 px, under the guard's limit.
+//! The fix is in Rune (`scripts/patches/rune/0012-win10-titlebar-top-inset.patch`, notes in
+//! `platform/frame_math.rs`): the top inset is 0 on every Windows. Do not measure for the
+//! Windows 10 case here; a geometric check cannot tell that DWM drew a caption.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;

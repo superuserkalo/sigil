@@ -129,6 +129,12 @@ Players run every release on Windows and report problems, but none of these has 
 - The 3D viewer, the live match bridge and the benchmark against a real game.
 - 7z and RAR archives from GameBanana on Windows paths (tested on macOS).
 - CSDK 12 `resourcecompiler.exe` for the agent's compile step.
+- The window frame on Windows 10 (Rune patch `0012-win10-titlebar-top-inset.patch`): one title
+  bar (Sigil's), with no native caption above it, restored, maximized and snapped; dragging,
+  double-click to maximize, the resize edges (the top one too), Alt+Space, and a maximized window
+  on a second display at another scale with nothing under the screen's edges. A restored window
+  on Windows 10 has no 1 px system border along its top; that is expected (`platform/frame_math.rs`
+  in Rune says why).
 - Code signing: there is no signing identity.
 
 `scripts/acceptance.sh` is macOS and Linux oriented; on Windows, use Git Bash and check the same

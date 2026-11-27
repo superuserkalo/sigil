@@ -12,6 +12,8 @@ one ember accent for the primary action, an on switch or focus.
 
 - A custom titlebar, 40 points, drawn by the app (`rune::Titlebar`). macOS keeps its traffic
   lights over the sidebar band; Windows gets Rune-drawn caption buttons at the trailing edge.
+  On Windows the custom frame leaves no top non-client row: on Windows 10 even a 1 px row makes
+  DWM paint its own title bar above Sigil's (Rune patch `0012-win10-titlebar-top-inset.patch`).
 - The titlebar band over the content holds the search for screens that search and a single line
   when something needs attention. No status bar, no stack or safety chips.
 
