@@ -498,6 +498,43 @@ Guards: `the_sidebar_glides_in_one_commit_and_lays_nothing_out_while_it_moves`,
 `the_billboard_draws_the_upload_only_once_it_is_decoded`, the crew's `queue_order_tests`, and in
 Rune `a_decode_goes_ahead_of_every_header_read_queued_before_it`.
 
+### Pictures that flickered
+
+The owner's second report: a picture in a mod's details was there, went grey, came back; or it
+was low resolution, then sharp, in the details and in the Locker. One cause under all of them:
+since the second memory pass, pictures decode when drawn and their size is known from the
+header long before their pixels, but several views still took a known size to mean decoded. A
+picture without pixels draws nothing, so each switch to one showed the empty box (grey) for the
+whole decode.
+
+- **Details, there, grey, back.** The details open on the card's own picture (its 530 pixel copy,
+  already decoded by the grid) and, when the page lands, switch the box to the gallery's 800 pixel
+  copy, which was then only queued. The box went to its empty fill until that copy was fetched and
+  decoded. Now the card's copy stays until the gallery copy can draw, then the gallery copy takes
+  over in the same element (`details/media.rs`, `data::first_ready`). The full size view does the
+  same with the original: the gallery copy stays until the original is decoded. Guard:
+  `a_shown_details_picture_never_goes_back_to_its_empty_box` (fails on the old rule: "frame 0
+  after the page landed: the box went empty").
+- **Cards, there, grey, back.** When cards grow (a sidebar toggle, a wider window, closing docked
+  details, a zoom), Sigil fetches a larger copy of every held card picture, and that copy replaced
+  the one on screen at once: every card went back to its empty box until its new copy decoded. Now
+  a copy that is drawn stays until the larger one can draw (`data::land_picture`,
+  `promote_upgrades`). Guard: `a_larger_copy_keeps_the_shown_pixels_until_it_is_ready` (fails on
+  the old rule).
+- **Locker, low resolution then sharp, with a blank between.** A hero page shows the hero's card
+  art and swaps to the full render once it is "ready", which was "its size is known": the render
+  drew nothing for its decode. It now swaps once the render's pixels draw and asks for the decode
+  at once (`locker.rs ready_pixels`); the card pick tiles likewise (`card_art.rs`). The card art
+  standing in is the only low resolution step left, and only while the render decodes: no second
+  fitted decode of the same art exists (the Locker decodes its art files whole).
+- The billboard had the same cause (above).
+
+A picture on screen is not evicted: atlas pages are freed only when nothing drew them for 5 s,
+or over the budget only among pages not drawn in the last 3 frames, and both run only on drawn
+frames. Not changed: a picture drawn small and later large (a landing tile, then the details box)
+draws its smaller level from the atlas for the length of a decode when its CPU copy was freed
+after upload (the first memory pass); it is soft for that moment, never empty.
+
 ### On Windows
 
 1. Collapse and expand the sidebar (the button by the logo, or Ctrl+B) on Browse and on Installed:
@@ -505,11 +542,15 @@ Rune `a_decode_goes_ahead_of_every_header_read_queued_before_it`.
    no hitch at the start and no text re-wrapping during the slide.
 2. Press Browse in the sidebar from another page: the page fades in with no stutter after its
    first frame.
-3. Start Sigil with `SIGIL_LOAD_TRACE=%TEMP%\sigil-load.txt` twice (the second start is warm) and
+3. Open a mod's details from Browse, several times, on a cold and a warm start: the big picture
+   never goes grey; it shows the card's picture, then the sharper one in place. Close docked
+   details or collapse the sidebar over the grid: no card goes grey. In the Locker, open a hero:
+   the card art, then the full render, with no empty frame between.
+4. Start Sigil with `SIGIL_LOAD_TRACE=%TEMP%\sigil-load.txt` twice (the second start is warm) and
    read the file: `billboard-sharp` minus `first-frame` was about 0.4 s warm here. On Browse the
    billboard should never flash empty while it loads; it shows the small picture, then the sharp
    one. Each billboard step should show the next picture sharp at once.
-4. Scroll the Browse grid quickly and stop: the cards in view should fill before the ones beyond.
+5. Scroll the Browse grid quickly and stop: the cards in view should fill before the ones beyond.
 
 ## Remaining opportunities
 
