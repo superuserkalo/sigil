@@ -495,6 +495,9 @@ impl Worker {
         let agent = deadlock_core::net::with_proxy(deadlock_core::net::builder())
             .middleware(deadlock_core::net::gate)
             .timeout_global(Some(Duration::from_secs(30)))
+            // Redirects are followed by hand in `fetch_into`, one checked hop at a time.
+            .max_redirects(0)
+            .http_status_as_error(false)
             .build()
             .new_agent();
         self.agent = Some((generation, agent.clone()));
@@ -572,12 +575,42 @@ fn download(agent: &ureq::Agent, url: String, buf: &Shared, cache_dir: Option<&P
     }
 }
 
+/// The most redirects a sample download follows.
+const MAX_HOPS: usize = 3;
+const NOT_GAMEBANANA: &str = "The sample is not hosted on GameBanana, so Sigil did not fetch it.";
+
+/// Where a redirect leads, if Sigil may follow it: only another GameBanana address.
+fn next_hop(location: Option<&str>) -> Result<String, String> {
+    match location {
+        Some(to) if deadlock_core::gamebanana::is_gamebanana_url(to) => Ok(to.to_string()),
+        _ => Err(NOT_GAMEBANANA.to_string()),
+    }
+}
+
+/// Downloads one sample. The address comes from a GameBanana API answer, which is untrusted
+/// text: only an https GameBanana address is fetched, and every redirect is checked the same
+/// way before it is followed, so a mod page cannot point Sigil at another host.
 fn fetch_into(agent: &ureq::Agent, url: &str, buf: &Shared) -> Result<(), String> {
-    let mut response = agent
-        .get(url)
-        .header("User-Agent", deadlock_core::gamebanana::GAMEBANANA_USER_AGENT)
-        .call()
-        .map_err(|_| "The sample could not be downloaded.".to_string())?;
+    if !deadlock_core::gamebanana::is_gamebanana_url(url) {
+        return Err(NOT_GAMEBANANA.to_string());
+    }
+    let mut url = url.to_string();
+    let mut hops = 0;
+    let mut response = loop {
+        let response = agent
+            .get(&url)
+            .header("User-Agent", deadlock_core::gamebanana::GAMEBANANA_USER_AGENT)
+            .call()
+            .map_err(|_| "The sample could not be downloaded.".to_string())?;
+        if !response.status().is_redirection() {
+            break response;
+        }
+        hops += 1;
+        if hops > MAX_HOPS {
+            return Err("The sample could not be downloaded.".to_string());
+        }
+        url = next_hop(response.headers().get("location").and_then(|v| v.to_str().ok()))?;
+    };
     if !response.status().is_success() {
         return Err(format!(
             "The sample could not be downloaded (HTTP {}).",
@@ -1243,5 +1276,17 @@ mod tests {
         }
         let _ = std::fs::remove_dir_all(&dir);
     }
-}
 
+    #[test]
+    fn only_a_gamebanana_address_is_fetched_or_followed() {
+        let agent = ureq::Agent::new_with_defaults();
+        let buf = Shared::default();
+        for bad in ["http://files.gamebanana.com/a.mp3", "https://evil.example/a.mp3", "https://gamebanana.com.evil.example/a.mp3", "https://127.0.0.1/a.mp3", "file:///etc/passwd"] {
+            assert_eq!(fetch_into(&agent, bad, &buf).unwrap_err(), NOT_GAMEBANANA, "{bad}");
+        }
+        assert_eq!(next_hop(Some("https://files.gamebanana.com/b.mp3")).unwrap(), "https://files.gamebanana.com/b.mp3");
+        assert_eq!(next_hop(Some("https://evil.example/b.mp3")).unwrap_err(), NOT_GAMEBANANA);
+        assert_eq!(next_hop(Some("/relative")).unwrap_err(), NOT_GAMEBANANA);
+        assert_eq!(next_hop(None).unwrap_err(), NOT_GAMEBANANA);
+    }
+}
