@@ -584,10 +584,12 @@ pub(super) fn pixels_for(s: &State, path: Option<&str>) -> Option<Pixels> {
     s.thumbnails.get(path?).cloned()
 }
 
-/// Pixels that have finished decoding, so a larger image can stand in for a smaller one only
-/// once it is there.
+/// Pixels that draw now (decoded, or held by an atlas), so a larger image stands in for a
+/// smaller one only once it is there; until then its decode is asked for. A known size is not
+/// enough: it comes from the header long before the pixels, and the hero's full render drawn
+/// then showed nothing (or its softer card) until the decode landed.
 fn ready_pixels(s: &State, path: Option<&str>) -> Option<Pixels> {
-    pixels_for(s, path).filter(|pixels| pixels.size().0 > 0)
+    pixels_for(s, path).filter(crate::data::draws_now)
 }
 
 /// An image cropped into a `box_w` by `box_h` box like CSS `object-fit: cover` with

@@ -98,10 +98,16 @@ fn carousel_frame(s: &State, u: &Ui, d: &Details) -> El {
     let veil = veiled(s, d.id, d.nsfw);
     let count = images.len();
     let index = d.image.min(count.saturating_sub(1));
-    let url = images
-        .get(index)
-        .map(|image| &image.url)
-        .or(d.thumbnail_url.as_ref());
+    // The gallery's picture (800 pixels where GameBanana has it) once it is decoded; until then
+    // the card's own picture (the first gallery picture's 530 pixel copy), which the grid has
+    // already decoded, stays in the box. The details opened on the card's copy and swapped to
+    // the gallery's URL when the page landed, which showed the empty box (grey) while it loaded.
+    let gallery = images.get(index).map(|image| &image.url);
+    let stand_in = if index == 0 || gallery.is_none() { d.thumbnail_url.as_ref() } else { None };
+    let url = match crate::data::first_ready(s, &[gallery, stand_in]) {
+        Some(1) => stand_in,
+        _ => gallery.or(stand_in),
+    };
     let mut frame = el()
         .key("carousel")
         .w_full()
@@ -250,11 +256,13 @@ pub(crate) fn lightbox(s: &State, u: &Ui, d: &Details, index: usize) -> El {
     let images = d.images();
     let count = images.len();
     let image = images.get(index);
-    let pixels = image.and_then(|image| {
-        s.thumbnails
-            .get(&image.full_url)
-            .or_else(|| s.thumbnails.get(&image.url))
+    // The original once it is decoded, else the gallery copy the carousel showed: never the
+    // original's empty box while it decodes (it is sized from its header long before).
+    let ready = image.and_then(|image| {
+        let urls = [Some(&image.full_url), Some(&image.url)];
+        crate::data::first_ready(s, &urls).and_then(|at| urls[at]).and_then(|url| s.thumbnails.get(url))
     });
+    let sized = image.and_then(|image| s.thumbnails.get(&image.full_url).or_else(|| s.thumbnails.get(&image.url)));
     let veil = veiled(s, d.id, d.nsfw);
     let round = |key: &str, glyph: &'static Icon, label: &str, size: f32| {
         el().key(key.to_string())
@@ -272,7 +280,7 @@ pub(crate) fn lightbox(s: &State, u: &Ui, d: &Details, index: usize) -> El {
     };
     // The picture box is fitted to the image's own ratio, so its close button and counter sit
     // on the picture, clear of the title bar and the window's own close button (issue #3).
-    let ratio = pixels
+    let ratio = sized
         .map(|p| p.size())
         .filter(|(w, h)| *w > 0 && *h > 0)
         .map(|(w, h)| w as f32 / h as f32)
@@ -300,7 +308,7 @@ pub(crate) fn lightbox(s: &State, u: &Ui, d: &Details, index: usize) -> El {
     } else {
         None
     };
-    let pixels = if veil && crate::hardware::cpu_only() { blurred.as_ref() } else { pixels };
+    let pixels = if veil && crate::hardware::cpu_only() { blurred.as_ref() } else { ready };
     if let Some(pixels) = pixels {
         picture = picture.pixels_fit(pixels, SurfaceFit::Fill);
         if veil && !crate::hardware::cpu_only() {

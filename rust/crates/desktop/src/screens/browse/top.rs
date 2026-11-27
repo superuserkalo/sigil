@@ -645,16 +645,9 @@ fn row_placeholder(u: &Ui, width: f32, n: usize, i: usize) -> El {
 /// read but whose pixels are not decoded draws nothing, so drawing the upload as soon as its
 /// size was known showed an empty banner for the length of its decode.
 pub(crate) fn billboard_pixels<'a>(s: &'a State, p: &Slide) -> Option<&'a rune::Pixels> {
-    let ready = |url: Option<&String>| {
-        let px = pixels_for(s, url)?;
-        if px.is_ready() {
-            return Some(px);
-        }
-        px.prefetch();
-        None
-    };
-    let small = ready(p.small.as_ref());
-    ready(p.image.as_ref()).or(small)
+    let urls = [p.image.as_ref(), p.small.as_ref()];
+    let at = crate::data::first_ready(s, &urls)?;
+    pixels_for(s, urls[at])
 }
 
 /// How long before a step the next pick's full-size upload is decoded, so it shows sharp from

@@ -248,3 +248,58 @@ fn opening_browse_is_one_commit() {
     assert_eq!(commits.iter().sum::<u64>(), 1, "commits per frame after the release: {commits:?}");
 }
 
+
+fn ready_pixels() -> rune::Pixels {
+    let px = rune::Pixels::new();
+    px.set(4, 4, vec![200; 64]);
+    px
+}
+
+/// The owner's "the picture is there, goes grey, comes back" in a mod's details: the details
+/// open on the card's own picture, and when the page lands the gallery's larger copy (sized from
+/// its header, not decoded) must not replace it before it can draw. Every frame shows a picture;
+/// the larger one takes over in place once decoded.
+#[test]
+fn a_shown_details_picture_never_goes_back_to_its_empty_box() {
+    let _globals = crate::ui::test_globals();
+    let mut rt = runtime("browse", (1280.0, 800.0));
+    let card = "https://images.gamebanana.com/img/ss/mods/530-90_smooth.jpg".to_string();
+    let gallery = "https://images.gamebanana.com/img/ss/mods/800-90_smooth.jpg".to_string();
+    rt.update(|s, _| {
+        let Some(first) = s.browse.page.as_ref().and_then(|p| p.mods.first()) else { return };
+        let mut card_now = crate::screens::browse::clone_card(first);
+        card_now.thumbnail_url = Some(card.clone());
+        card_now.nsfw = false;
+        s.thumbnails.insert(card.clone(), ready_pixels());
+        s.browse_view.details = Some(crate::screens::browse::Details::from_card(&card_now));
+    });
+    settle(&mut rt);
+    let carousel = |rt: &Runtime<State>| -> (bool, bool) {
+        let els = rt.elements();
+        let shown = els.iter().any(|e| !e.exiting && e.key.as_deref() == Some("carousel-0"));
+        let empty = els.iter().any(|e| !e.exiting && e.key.as_deref() == Some("carousel-0-missing"));
+        (shown, empty)
+    };
+    assert_eq!(carousel(&rt), (true, false), "the details open on the card's picture");
+    // The page lands: the gallery's first picture is the 800 pixel copy, only sized so far.
+    rt.update(|s, _| {
+        let details = s.browse_view.details.as_mut().expect("details");
+        details.profile = Some(deadlock_core::gamebanana::ModProfile {
+            images: vec![deadlock_core::gamebanana::ModImage { url: gallery.clone(), full_url: gallery.replace("800-90_", ""), aspect: 16.0 / 9.0, ..Default::default() }],
+            ..Default::default()
+        });
+        s.thumbnails.insert(gallery.clone(), rune::Pixels::new());
+    });
+    for n in 0..6 {
+        rt.frame(1.0 / 60.0);
+        assert_eq!(carousel(&rt), (true, false), "frame {n} after the page landed: the box went empty");
+    }
+    // Decoded: it takes over in the same element, with no empty frame between.
+    rt.update(|s, _| {
+        s.thumbnails.insert(gallery.clone(), ready_pixels());
+    });
+    for n in 0..6 {
+        rt.frame(1.0 / 60.0);
+        assert_eq!(carousel(&rt), (true, false), "frame {n} after the decode");
+    }
+}

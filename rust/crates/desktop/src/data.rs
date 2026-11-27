@@ -858,6 +858,32 @@ pub fn thumb_image(cache: &rune::ImageCache, url: &str, bytes: ThumbBytes, card:
     }
 }
 
+/// Which of `urls` to draw now: the first whose picture is decoded or held by an atlas, asking
+/// for the decode of each one before it that is not. A known size is not enough: since pictures
+/// decode when drawn, a header gives the size long before the pixels, and a picture without
+/// pixels draws nothing, so a view that switched to it as soon as its size was known showed its
+/// empty box (grey) for the whole decode. With the better picture listed first and a stand-in
+/// after it, the stand-in stays until the better one can replace it in the same frame.
+pub fn first_ready(state: &State, urls: &[Option<&String>]) -> Option<usize> {
+    for (i, url) in urls.iter().enumerate() {
+        let Some(pixels) = url.and_then(|url| state.thumbnails.get(url)) else { continue };
+        if pixels.is_ready() {
+            return Some(i);
+        }
+        pixels.prefetch();
+    }
+    None
+}
+
+/// Whether `pixels` draw now (decoded, or held by an atlas); when not, their decode is asked for.
+pub fn draws_now(pixels: &rune::Pixels) -> bool {
+    if pixels.is_ready() {
+        return true;
+    }
+    pixels.prefetch();
+    false
+}
+
 /// The billboard grew (a wider window, a sharper screen): fetch its held pictures again at the
 /// new size. The disk cache answers and each one replaces the softer copy as it arrives.
 fn regrow_billboard(state: &mut State) {
@@ -900,6 +926,9 @@ pub struct ThumbCrew {
     /// Bumped by `clear`, so a surface that queued its images once (the Browse landing) can
     /// see that the queue forgot them and ask again.
     generation: u64,
+    /// Larger copies of pictures that are drawn now (cards that grew), decoding: each replaces
+    /// the shown copy only once it can draw (`land_picture`).
+    upgrades: std::collections::HashMap<String, rune::Pixels>,
 }
 
 /// How long a failed image waits before it is asked for again.
@@ -1052,6 +1081,7 @@ impl ThumbCrew {
         if let Ok(mut queue) = self.queue.lock() {
             queue.urls.clear();
         }
+        self.upgrades.clear();
         // A fresh queue: workers of the old one see a closed channel and leave.
         self.queue = Default::default();
         self.rx = None;
@@ -1734,12 +1764,46 @@ fn drain_thumbnails_when(state: &mut State, allowed: bool) -> bool {
     while let Some((url, bytes)) = state.thumb_crew.try_next() {
         if let (Some(cache), Some(bytes)) = (state.images.as_ref(), bytes) {
             let image = thumb_image(cache, &url, bytes, state.thumb_crew.shrinks());
-            state.thumbnails.insert(url, image.pixels().clone());
-            changed = true;
+            changed |= land_picture(state, url, image.pixels().clone());
         }
     }
+    changed |= promote_upgrades(state);
     changed |= drain_blurred(state);
     changed
+}
+
+/// A fetched picture goes to the views, unless a copy of it is drawn now and the new one cannot
+/// draw yet (a card that grew asked for a larger copy): then the shown copy stays, the new one
+/// decodes, and `promote_upgrades` swaps it in once it can draw. Before, the new copy replaced
+/// the shown one at once, and every card on screen went back to its empty box until it decoded
+/// (after a sidebar toggle, a resize, a zoom). True when the views must build again.
+fn land_picture(state: &mut State, url: String, pixels: rune::Pixels) -> bool {
+    let shown = state.thumbnails.get(&url).is_some_and(rune::Pixels::is_ready);
+    if shown && !pixels.is_ready() {
+        pixels.prefetch();
+        state.thumb_crew.upgrades.insert(url, pixels);
+        return false;
+    }
+    state.thumb_crew.upgrades.remove(&url);
+    state.thumbnails.insert(url, pixels);
+    true
+}
+
+/// Larger copies that can draw now replace the copies shown; ones whose shown copy went (an
+/// evicted card) are dropped. True when one was swapped in.
+fn promote_upgrades(state: &mut State) -> bool {
+    if state.thumb_crew.upgrades.is_empty() {
+        return false;
+    }
+    let thumbnails = &state.thumbnails;
+    state.thumb_crew.upgrades.retain(|url, _| thumbnails.contains_key(url));
+    let ready: Vec<String> = state.thumb_crew.upgrades.iter().filter(|(_, px)| px.is_ready()).map(|(url, _)| url.clone()).collect();
+    for url in &ready {
+        if let Some(pixels) = state.thumb_crew.upgrades.remove(url) {
+            state.thumbnails.insert(url.clone(), pixels);
+        }
+    }
+    !ready.is_empty()
 }
 
 /// Hardware acceleration off: the hidden mature pictures views drew this frame, each decoded
@@ -4716,6 +4780,68 @@ pub fn use_subscription_for_agent(state: &mut State, provider: &str) {
         Err(error) => {
             state.subscription_log = Some(error.to_string());
         }
+    }
+}
+
+#[cfg(test)]
+mod first_ready_tests {
+    use super::*;
+
+    fn ready() -> rune::Pixels {
+        let px = rune::Pixels::new();
+        px.set(1, 1, vec![0; 4]);
+        px
+    }
+
+    /// A picture on screen never goes back to its empty box for a better one: the better one
+    /// is drawn only once it is ready, the one shown stays until then, and with nothing ready
+    /// there is nothing to draw.
+    #[test]
+    fn the_shown_picture_stays_until_the_better_one_is_ready() {
+        let mut s = State::default();
+        let (better, shown) = ("https://x.example/800-90_a.jpg".to_string(), "https://x.example/530-90_a.jpg".to_string());
+        s.thumbnails.insert(better.clone(), rune::Pixels::new());
+        s.thumbnails.insert(shown.clone(), ready());
+        assert_eq!(first_ready(&s, &[Some(&better), Some(&shown)]), Some(1), "the better one is only sized");
+        s.thumbnails.insert(better.clone(), ready());
+        assert_eq!(first_ready(&s, &[Some(&better), Some(&shown)]), Some(0), "decoded: it replaces the stand-in");
+        s.thumbnails.insert(shown.clone(), rune::Pixels::new());
+        s.thumbnails.insert(better.clone(), rune::Pixels::new());
+        assert_eq!(first_ready(&s, &[Some(&better), None, Some(&shown)]), None);
+        assert!(!draws_now(&s.thumbnails[&better]));
+    }
+}
+
+#[cfg(test)]
+mod upgrade_tests {
+    use super::*;
+
+    fn ready() -> rune::Pixels {
+        let px = rune::Pixels::new();
+        px.set(1, 1, vec![0; 4]);
+        px
+    }
+
+    /// A larger copy of a picture on screen keeps the shown copy until it can draw, then takes
+    /// its place; a picture not shown (or not drawable) is replaced at once.
+    #[test]
+    fn a_larger_copy_keeps_the_shown_pixels_until_it_is_ready() {
+        let mut s = State::default();
+        let url = "https://x.example/530-90_a.jpg".to_string();
+        let shown = ready();
+        s.thumbnails.insert(url.clone(), shown.clone());
+        let larger = rune::Pixels::new();
+        assert!(!land_picture(&mut s, url.clone(), larger.clone()), "nothing to rebuild yet");
+        assert!(s.thumbnails[&url].is_ready(), "the shown copy stays");
+        assert!(!promote_upgrades(&mut s), "the larger copy is not ready");
+        larger.set(2, 2, vec![0; 16]);
+        assert!(promote_upgrades(&mut s), "ready: it swaps in");
+        assert_eq!(s.thumbnails[&url].size(), (2, 2));
+        // A picture whose shown copy cannot draw is simply replaced.
+        let other = "https://x.example/530-90_b.jpg".to_string();
+        s.thumbnails.insert(other.clone(), rune::Pixels::new());
+        assert!(land_picture(&mut s, other.clone(), rune::Pixels::new()));
+        assert!(s.thumb_crew.upgrades.is_empty());
     }
 }
 

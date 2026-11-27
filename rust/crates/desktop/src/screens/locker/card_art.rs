@@ -266,7 +266,8 @@ fn tile(s: &State, u: &Ui, card: &CardArt, slot: &CardSlot) -> El {
     let tile_w = (TILE_H * ratio).clamp(56.0, 300.0);
     let tile_h = (tile_w / ratio).min(TILE_H);
     let pick = card.picks.iter().find(|p| p.slot == slot.path);
-    let picked = pick.and_then(|p| s.thumbnails.get(&p.file.display().to_string())).filter(|px| px.size().0 > 0);
+    // The pick once its pixels draw; the slot's own art stands in until then.
+    let picked = pick.and_then(|p| s.thumbnails.get(&p.file.display().to_string())).filter(|px| crate::data::draws_now(px));
     let base = s.thumbnails.get(&thumb_key(&slot.path)).filter(|px| px.size().0 > 0);
     let mut frame = el()
         .size(tile_w, tile_h)
