@@ -25,6 +25,7 @@
 //! preview; `main::poll` calls `viewer::poll`. Screens ask for a view through `prepare` (the
 //! export job that makes the files) rather than opening files themselves.
 
+mod bar;
 pub mod controls;
 pub mod dialog;
 mod gizmo;
@@ -39,7 +40,7 @@ pub(crate) mod locales;
 
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::mpsc::{self, Sender};
 use std::sync::{Arc, Mutex};
 
@@ -53,6 +54,7 @@ pub use worker::{Source, Status};
 use worker::{Cmd, Outputs, Shared};
 
 pub const KNOB: f32 = 12.0;
+/// The scrubber's width before the strip has laid it out (`bar::plan` sets it).
 const SEEK_W: f32 = 180.0;
 /// The most device pixels a viewport renders (see `viewport`'s layout handler).
 const MAX_PIXELS: f32 = 3_200_000.0;
@@ -85,6 +87,9 @@ pub struct View {
     shared: Arc<Mutex<Shared>>,
     progress_bar: Live<[f32; 2]>,
     knob: Live<[f32; 2]>,
+    /// The scrubber's track width now, as `f32` bits: the strip sets it as the view's width
+    /// changes, the render thread places the knob along it.
+    seek_w: Arc<AtomicU32>,
     time: LiveText,
     pub status: Status,
     pub clips: Vec<(String, f32)>,
@@ -207,6 +212,7 @@ fn new_view(title: &str) -> View {
         shared: Arc::new(Mutex::new(Shared::default())),
         progress_bar: Live::new([0.0, 0.0]),
         knob: Live::new([0.0, 0.0]),
+        seek_w: Arc::new(AtomicU32::new(SEEK_W.to_bits())),
         time: LiveText::new("0:00.0 / 0:00.0"),
         status: Status::Loading,
         clips: Vec::new(),
@@ -244,7 +250,7 @@ fn outputs(view: &View, wake: Option<rune::Waker>) -> Outputs {
         progress: view.progress_bar.clone(),
         knob: view.knob.clone(),
         time: view.time.clone(),
-        seek_width: SEEK_W,
+        seek_width: view.seek_w.clone(),
         wake,
         cancel: view.cancel.clone(),
         elapsed: view.elapsed.clone(),
@@ -971,26 +977,30 @@ fn strip_text(u: &Ui, label: String, a11y: &str, on: bool) -> El {
         .child(text(label).font(SMALL).color(if on { u.accent } else { Color::WHITE.alpha(0.86) }).a11y_hidden())
 }
 
-fn seek_bar(v: &View, key: &str) -> El {
+/// The scrubber, `w` points wide (`bar::plan`).
+fn seek_bar(v: &View, key: &str, w: f32) -> El {
     let k = key.to_string();
     let k2 = key.to_string();
-    let track = Shape::new().line([KNOB / 2.0, 12.0], [SEEK_W - KNOB / 2.0, 12.0], 3.0, rune::LineCap::Round, Color::WHITE.alpha(0.18));
-    let filled = Shape::new().line([KNOB / 2.0, 12.0], [SEEK_W - KNOB / 2.0, 12.0], 3.0, rune::LineCap::Round, Color::WHITE.alpha(0.9));
+    let track = Shape::new().line([KNOB / 2.0, 12.0], [w - KNOB / 2.0, 12.0], 3.0, rune::LineCap::Round, Color::WHITE.alpha(0.18));
+    let filled = Shape::new().line([KNOB / 2.0, 12.0], [w - KNOB / 2.0, 12.0], 3.0, rune::LineCap::Round, Color::WHITE.alpha(0.9));
+    // The knob follows the width at once, playing or not; the render thread keeps it moving.
+    v.seek_w.store(w.to_bits(), Ordering::Relaxed);
+    v.knob.set([v.progress_bar.get()[1] * (w - KNOB), 0.0]);
     el().key(format!("viewer-{key}-seek"))
-        .w(SEEK_W)
+        .w(w)
         .h(24.0)
         .focusable(true)
         .role("slider")
         .label(tr("Seek").to_string())
         .cursor(rune::Cursor::Pointer)
-        .child(el().absolute(0.0, 0.0).w(SEEK_W).h(24.0).shape(track).a11y_hidden())
-        .child(el().absolute(0.0, 0.0).w(SEEK_W).h(24.0).shape(filled).live_trim(&v.progress_bar).a11y_hidden())
+        .child(el().absolute(0.0, 0.0).w(w).h(24.0).shape(track).a11y_hidden())
+        .child(el().absolute(0.0, 0.0).w(w).h(24.0).shape(filled).live_trim(&v.progress_bar).a11y_hidden())
         .child(el().absolute(0.0, 6.0).size(KNOB, KNOB).radius(KNOB / 2.0).fill(Color::WHITE).shadow(1.0, 3.0, Color::BLACK.alpha(0.4)).live_offset(&v.knob).a11y_hidden())
         .on_drag(move |st: &mut State, d: &mut Drag, tx: &mut Tx| {
             if d.phase == Phase::Up && d.cancelled() {
                 return;
             }
-            let f = ((d.x - KNOB / 2.0) / (SEEK_W - KNOB)).clamp(0.0, 1.0);
+            let f = ((d.x - KNOB / 2.0) / ((if d.w > 0.0 { d.w } else { w }) - KNOB).max(1.0)).clamp(0.0, 1.0);
             if let Some(v) = st.viewers.map.get_mut(&k) {
                 v.playing = false;
             }
@@ -1017,53 +1027,36 @@ fn seek_bar(v: &View, key: &str) -> El {
         })
 }
 
-/// Below this width the strip folds into two rows and drops the speed, clip and clock (full
-/// screen has them).
+/// Below this view width the title drops its hint line.
 const COMPACT_W: f32 = 720.0;
+
+/// The width of the view `key` lays out at: its last layout, or the size it was opened at.
+fn view_width(v: &View, key: &str, fullscreen: bool) -> f32 {
+    let stage = format!("viewer-{key}{}", if fullscreen { "-full" } else { "" });
+    rune::memo::layout_size(&stage).map_or(v.points[0], |[w, _]| w).max(0.0)
+}
+
+/// A compare button's width: its label and padding.
+fn compare_w(label: &str) -> f32 {
+    (rune::text::measure(label, &[], SMALL, None).0 + 18.0).ceil()
+}
 
 /// `only_full`: the view exists only full screen (the Hideout), so leaving it closes it.
 fn strip(v: &View, u: &Ui, key: &str, fullscreen: bool, only_full: bool) -> El {
     let k = |_: ()| key.to_string();
     let (kp, kr, kc, kf, ks, kclip) = (k(()), k(()), k(()), k(()), k(()), k(()));
-    let compact = !fullscreen && v.points[0] > 0.0 && v.points[0] < COMPACT_W;
+    let view_w = view_width(v, key, fullscreen);
+    let compact = view_w > 0.0 && view_w < COMPACT_W;
     let animated = v.clips.iter().any(|(_, d)| *d > 0.0);
-    let bar = || row().gap(2.0).px(6.0).py(5.0).center().radius(crate::ui::r(10.0)).fill(shade("#0d0d0f").alpha(0.78)).border(1.0, Color::WHITE.alpha(0.08));
-    let rule = || el().w(1.0).h(18.0).mx(4.0).fill(Color::WHITE.alpha(0.12)).a11y_hidden();
-    let mut play_bar = bar();
-    if animated {
-        let play = if v.playing { strip_button(u, &icons::PAUSE, tr("Pause"), false) } else { strip_button(u, &crate::icons::PLAY, tr("Play"), false) };
-        play_bar = play_bar.child(play.on_press(move |st: &mut State| toggle_play(st, &kp))).child(el().px(6.0).child(seek_bar(v, key)));
-        if !compact {
-            play_bar = play_bar
-                .child(text(String::new()).live_text(&v.time).font(MICRO).color(Color::WHITE.alpha(0.7)).w(92.0))
-                .child(strip_text(u, format!("{}x", trim_speed(v.speed)), tr("Playback speed"), false).on_press(move |st: &mut State| {
-                    let Some(v) = st.viewers.map.get_mut(&ks) else { return };
-                    let i = SPEEDS.iter().position(|x| (*x - v.speed).abs() < 1e-3).unwrap_or(2);
-                    v.speed = SPEEDS[(i + 1) % SPEEDS.len()];
-                    let speed = v.speed;
-                    send(st, &ks, Cmd::Speed(speed));
-                }));
-            if v.clips.len() > 1 {
-                let name = v.clip.clone().unwrap_or_else(|| tr("No animation").to_string());
-                play_bar = play_bar.child(strip_text(u, name, tr("Animation"), false).on_press(move |st: &mut State| {
-                    let Some(v) = st.viewers.map.get_mut(&kclip) else { return };
-                    let i = v.clip.as_ref().and_then(|c| v.clips.iter().position(|(n, _)| n == c)).map_or(0, |i| (i + 1) % v.clips.len());
-                    let name = v.clips[i].0.clone();
-                    v.clip = Some(name.clone());
-                    v.playing = true;
-                    send(st, &kclip, Cmd::Clip(name));
-                    send(st, &kclip, Cmd::Play(true));
-                }));
-            }
-        }
-        play_bar = play_bar.child(rule());
-    }
-    let mut compare = bar();
+
+    // The compare buttons and the tools, built once and placed where the plan puts them.
+    let mut compare: Vec<(f32, El)> = Vec::new();
     if v.has_before {
         let [after, before] = v.labels;
         for (mode, label) in [(CompareMode::After, tr(after)), (CompareMode::Before, tr(before)), (CompareMode::Split, tr("Split"))] {
             let kk = key.to_string();
-            compare = compare.child(strip_text(u, label.to_string(), label, v.compare == mode).on_press(move |st: &mut State| set_compare(st, &kk, mode)));
+            let w = compare_w(label);
+            compare.push((w, strip_text(u, label.to_string(), label, v.compare == mode).w(w).on_press(move |st: &mut State| set_compare(st, &kk, mode))));
         }
     }
     let mut tools = controls::tools(v, u, key);
@@ -1083,8 +1076,76 @@ fn strip(v: &View, u: &Ui, key: &str, fullscreen: bool, only_full: bool) -> El {
         }
         .on_press(move |st: &mut State| toggle_fullscreen(st, &kf)),
     ]);
-    let mut layer = col().absolute(0.0, 0.0).w_full().h_full().padding(12.0).gap(8.0);
-    let mut head = col().gap(2.0).max_w(if compact { v.points[0] - 24.0 } else { 560.0 }).child(text(v.title.clone()).font(BODY_MED).color(Color::WHITE.alpha(0.92)).truncate());
+    let need = bar::Need { animated, clips: v.clips.len() > 1, compare: compare.iter().map(|(w, _)| *w).collect(), tools: tools.len() };
+    let plan = bar::plan(&need, view_w);
+    let mut compare: Vec<Option<El>> = compare.into_iter().map(|(_, e)| Some(e)).collect();
+    let mut tools: Vec<Option<El>> = tools.into_iter().map(Some).collect();
+
+    let mut item = |it: bar::Item| -> El {
+        match it {
+            bar::Item::Play => {
+                let kp = kp.clone();
+                let play = if v.playing { strip_button(u, &icons::PAUSE, tr("Pause"), false) } else { strip_button(u, &crate::icons::PLAY, tr("Play"), false) };
+                play.on_press(move |st: &mut State| toggle_play(st, &kp))
+            }
+            bar::Item::Seek => el().px(bar::SEEK_PAD).child(seek_bar(v, key, plan.seek)),
+            bar::Item::Time => text(String::new()).live_text(&v.time).font(MICRO).color(Color::WHITE.alpha(0.7)).w(bar::TIME_W),
+            bar::Item::Speed => {
+                let ks = ks.clone();
+                strip_text(u, format!("{}x", trim_speed(v.speed)), tr("Playback speed"), false).w(bar::SPEED_W).on_press(move |st: &mut State| {
+                    let Some(v) = st.viewers.map.get_mut(&ks) else { return };
+                    let i = SPEEDS.iter().position(|x| (*x - v.speed).abs() < 1e-3).unwrap_or(2);
+                    v.speed = SPEEDS[(i + 1) % SPEEDS.len()];
+                    let speed = v.speed;
+                    send(st, &ks, Cmd::Speed(speed));
+                })
+            }
+            bar::Item::Clip => {
+                let kclip = kclip.clone();
+                let name = clip_label(v);
+                strip_text_cut(u, name, tr("Animation")).w(bar::CLIP_W).on_press(move |st: &mut State| {
+                    let Some(v) = st.viewers.map.get_mut(&kclip) else { return };
+                    let i = v.clip.as_ref().and_then(|c| v.clips.iter().position(|(n, _)| n == c)).map_or(0, |i| (i + 1) % v.clips.len());
+                    let name = v.clips[i].0.clone();
+                    v.clip = Some(name.clone());
+                    v.playing = true;
+                    send(st, &kclip, Cmd::Clip(name));
+                    send(st, &kclip, Cmd::Play(true));
+                })
+            }
+            bar::Item::Rule => el().w(1.0).h(18.0).mx(4.0).fill(Color::WHITE.alpha(0.12)).a11y_hidden(),
+            bar::Item::Compare(i) => compare.get_mut(i).and_then(Option::take).unwrap_or_else(el),
+            bar::Item::Tool(i) => tools.get_mut(i).and_then(Option::take).unwrap_or_else(el),
+        }
+    };
+    let mut strip_bar = col()
+        .key(format!("viewer-{key}-bar"))
+        .w(plan.width)
+        .gap(bar::ROW_GAP)
+        .padding(bar::CHROME - 1.0)
+        .radius(crate::ui::r(10.0))
+        .fill(shade("#0d0d0f").alpha(0.78))
+        .border(1.0, Color::WHITE.alpha(0.08));
+    for (i, items) in plan.rows.iter().enumerate() {
+        // The playback row spans the bar; the rows under it centre their buttons.
+        let playback = items.contains(&bar::Item::Seek);
+        let mut r = row().w_full().h(bar::BUTTON).gap(bar::GAP).center_y();
+        if !playback {
+            r = r.justify_center();
+        }
+        if i > 0 && plan.rows[i - 1].contains(&bar::Item::Seek) {
+            // A hairline between the playback row and the buttons under it.
+            strip_bar = strip_bar.child(el().w_full().h(1.0).fill(Color::WHITE.alpha(0.06)).a11y_hidden());
+        }
+        for it in items {
+            r = r.child(item(*it));
+        }
+        strip_bar = strip_bar.child(r);
+    }
+
+    let mut layer = col().absolute(0.0, 0.0).w_full().h_full().padding(bar::SIDE).gap(8.0);
+    let head_w = if view_w > 0.0 { (view_w - 2.0 * bar::SIDE).clamp(0.0, 560.0) } else { 560.0 };
+    let mut head = col().gap(2.0).max_w(head_w).child(text(v.title.clone()).font(BODY_MED).color(Color::WHITE.alpha(0.92)).truncate());
     if !compact {
         head = head.child(text(tr("Drag to turn, scroll to zoom, Shift-drag to move, double-click to reset.").to_string()).font(MICRO).color(Color::WHITE.alpha(0.5)));
     }
@@ -1106,25 +1167,29 @@ fn strip(v: &View, u: &Ui, key: &str, fullscreen: bool, only_full: bool) -> El {
     if let Some(review) = controls::gif_review(v, u, key) {
         layer = layer.child(row().w_full().center().child(review));
     }
-    if compact {
-        if v.has_before {
-            layer = layer.child(row().w_full().center().child(compare));
-        }
-        layer.child(row().w_full().center().child(play_bar.children(tools)))
-    } else {
-        let mut one = play_bar;
-        if v.has_before {
-            for child in [strip_text_group(compare), rule()] {
-                one = one.child(child);
-            }
-        }
-        layer.child(row().w_full().center().child(one.children(tools)))
-    }
+    layer.child(row().w_full().center().child(strip_bar))
 }
 
-/// The compare buttons inside the one strip: their own bar's look dropped.
-fn strip_text_group(bar: El) -> El {
-    bar.fill(Color::TRANSPARENT).border(0.0, Color::TRANSPARENT).px(0.0).py(0.0)
+/// The clip button's text: the clip's friendly name when the Controls panel has one.
+fn clip_label(v: &View) -> String {
+    let Some(name) = v.clip.as_deref() else { return tr("No animation").to_string() };
+    v.ui.labels.iter().find(|(n, _, _)| n == name).map_or_else(|| name.to_string(), |(_, label, _)| label.clone())
+}
+
+/// A text button whose label is cut short to the width it is given.
+fn strip_text_cut(u: &Ui, label: String, a11y: &str) -> El {
+    let _ = u;
+    row()
+        .h(30.0)
+        .px(9.0)
+        .center()
+        .radius(crate::ui::r(7.0))
+        .hover(Color::WHITE.alpha(0.10))
+        .press(Color::WHITE.alpha(0.16))
+        .focusable(true)
+        .role("button")
+        .label(format!("{a11y}: {label}"))
+        .child(text(label).font(SMALL).color(Color::WHITE.alpha(0.86)).truncate().shrink().min_w(0.0).a11y_hidden())
 }
 
 fn trim_speed(k: f32) -> String {

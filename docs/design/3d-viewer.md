@@ -664,13 +664,18 @@ compare side, the room and its upload all load before the view turns Ready, and 
 the first frame ("Drawing the first frame"), with a 20 second fallback when no frame comes.
 The strip has play and pause, seek (pauses), speed, the clip, With mods / Without mods / Split
 (the split line drags), camera reset, a PNG capture into `Pictures/Sigil`, and full screen
-(`viewer::overlay`, placed by `app::view`). Below 720 points wide the strip folds into two rows
-and drops the clock, speed and clip (full screen has them). Headless snapshots render one fixed
+(`viewer::overlay`, placed by `app::view`). The strip follows the width of the view it sits in,
+not the window (`viewer/bar.rs`): one row spanning the view, 12 points in from each side and at
+most 1120 wide, the scrubber taking the spare room; when the scrubber would drop under 200 points
+the bar becomes two rows (playback on top, compare buttons and tools under it), then three (the
+compare buttons and the tools a row each). A short playback row drops the clip first, then the
+speed (both are also in the Controls panel), then the clock; play and the scrubber (at least 96
+points) always stay. Headless snapshots render one fixed
 frame on the calling thread, at the size a scene gives with `viewer::headless_points`.
 
 The strip also has (`viewer/controls.rs`) Auto-rotate, the Controls panel, Record a GIF and Record
 a video. The Controls panel (Grimoire's, anchored to its button by `viewer::popover`) holds the
-clip picker grouped Idle, Movement, Combat, Other with the sidecar's friendly names, Lighting
+playback speed, the clip picker grouped Idle, Movement, Combat, Other with the sidecar's friendly names, Lighting
 (Studio, Midtown dusk), Background (Studio, None, Transparent, Deadlock Mod Manager's studio
 gradient, Grimoire's ten soul gradients, a picture of the player's up to 12 MB) and switches for
 Auto-rotate, Cloth, Particles, Bloom, Shadows, Deadlock Mod Manager's axis gizmo (off by default,

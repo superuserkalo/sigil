@@ -424,6 +424,20 @@ pub fn popover(s: &State, u: &Ui) -> Option<El> {
             }
         }
     }
+    // The speed here too: a narrow view's play bar leaves its speed button out.
+    if v.clips.iter().any(|(_, d)| *d > 0.0) {
+        body = body.child(section(tr("Playback speed")));
+        for speed in super::SPEEDS {
+            let k = key.to_string();
+            let label = format!("{}x", super::trim_speed(speed));
+            body = body.child(option_row(u, format!("viewer-{key}-speed-{label}"), &label, (v.speed - speed).abs() < 1e-3).on_press(move |st: &mut State| {
+                if let Some(v) = st.viewers.map.get_mut(&k) {
+                    v.speed = speed;
+                }
+                send(st, &k, Cmd::Speed(speed));
+            }));
+        }
+    }
     if !v.scene {
         body = body.child(section(tr("Lighting")));
         for (lighting, label) in [(Lighting::Studio, tr("Studio")), (Lighting::Midtown, tr("Midtown dusk"))] {

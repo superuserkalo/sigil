@@ -6,7 +6,7 @@
 //! failed, a capture saved), through the app's waker.
 
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::mpsc::{Receiver, RecvTimeoutError};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -179,7 +179,8 @@ pub struct Outputs {
     pub progress: rune::Live<[f32; 2]>,
     pub knob: rune::Live<[f32; 2]>,
     pub time: rune::LiveText,
-    pub seek_width: f32,
+    /// The scrubber's track width, `f32` bits (`View::seek_w`).
+    pub seek_width: Arc<AtomicU32>,
     pub wake: Option<rune::Waker>,
     /// Set when the view closes: the load stops at its next file or placement.
     pub cancel: Arc<AtomicBool>,
@@ -330,7 +331,7 @@ pub fn publish_live(out: &Outputs, viewer: &Viewer) {
     let d = viewer.duration();
     let f = if d > 0.0 { (viewer.playback.time / d).clamp(0.0, 1.0) } else { 0.0 };
     out.progress.set([0.0, f]);
-    out.knob.set([f * (out.seek_width - super::KNOB), 0.0]);
+    out.knob.set([f * (f32::from_bits(out.seek_width.load(Ordering::Relaxed)) - super::KNOB), 0.0]);
     out.time.set(format!("{} / {}", clock(viewer.playback.time), clock(d)));
 }
 
