@@ -375,6 +375,7 @@ fn stray_vpks(addons_dir: &Path, folder: &Path, subfolder: bool, temp: &BTreeSet
         .filter(|n| crate::load_order::slot_of(n).is_none() && !temp.contains(n))
         .collect();
     names.sort();
+    let claimed = dmm_claimed(folder);
     let (dirs, chunks) = (dir_re(), chunk_re());
     let mut parts: BTreeMap<String, Vec<(u16, String)>> = BTreeMap::new();
     for name in &names {
@@ -407,9 +408,23 @@ fn stray_vpks(addons_dir: &Path, folder: &Path, subfolder: bool, temp: &BTreeSet
             slot: None,
             kind: Kind::Misplaced { files: shown, subfolder },
             fix: if complete { Fix::Adopt { files } } else { Fix::None },
-            suggested: complete && !subfolder,
+            // A mod Deadlock Mod Manager parked here: its Import keeps the name, a plain move
+            // would not, so it is offered unticked.
+            suggested: complete && !subfolder && !claimed.contains(&lower(name)),
         });
     }
+}
+
+/// File names (lower case) Deadlock Mod Manager's `.dmm.json` in `folder` lists for its mods.
+fn dmm_claimed(folder: &Path) -> BTreeSet<String> {
+    let Ok(text) = fs::read_to_string(folder.join(".dmm.json")) else { return BTreeSet::new() };
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(&text) else { return BTreeSet::new() };
+    let Some(mods) = value.get("mods").and_then(|m| m.as_object()) else { return BTreeSet::new() };
+    mods.values()
+        .flat_map(|entry| ["currentVpks", "disabledVpks"].map(|key| entry.get(key).and_then(|v| v.as_array()).cloned().unwrap_or_default()))
+        .flatten()
+        .filter_map(|name| name.as_str().map(lower))
+        .collect()
 }
 
 /// Slot-named units (`pakNN_dir.vpk` and its parts) in a folder the game does not mount.
@@ -734,6 +749,34 @@ mod tests {
         let finding = &review.findings[0];
         assert_eq!(finding.kind, Kind::Misplaced { files: vec!["addons/downloaded/cool_dir.vpk".into()], subfolder: true });
         assert!(!finding.suggested);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn a_mod_dmm_parked_in_addons_is_offered_unticked() {
+        let (root, addons) = scratch("dmm-parked");
+        pack(&addons, "pak01", &[("p.txt", b"p")]);
+        fs::rename(addons.join("pak01_dir.vpk"), addons.join("504_pak01_dir.vpk")).unwrap();
+        pack(&addons, "pak02", &[("q.txt", b"q")]);
+        fs::rename(addons.join("pak02_dir.vpk"), addons.join("hand_dir.vpk")).unwrap();
+        fs::write(
+            addons.join(".dmm.json"),
+            r#"{"version":3,"mods":{"504":{"enabled":false,"currentVpks":[],"disabledVpks":["504_pak01_dir.vpk"]}}}"#,
+        )
+        .unwrap();
+        let review = review(&addons, &Library::default()).unwrap();
+        let ticked: Vec<(String, bool)> = review
+            .findings
+            .iter()
+            .filter_map(|f| match &f.kind {
+                Kind::Misplaced { files, .. } => Some((files[0].clone(), f.suggested)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            ticked,
+            vec![("addons/504_pak01_dir.vpk".to_string(), false), ("addons/hand_dir.vpk".to_string(), true)]
+        );
         let _ = fs::remove_dir_all(root);
     }
 }
