@@ -185,11 +185,11 @@ pub(crate) fn grid_page(s: &State, u: &Ui) -> El {
         .on_layout_tx(|st: &mut State, r: [f32; 4], tx: &mut Tx| {
             st.browse_view.page_rect = r;
             let width = (r[2] - 2.0 * PAGE_X).max(0.0);
-            if (st.browse_view.width - width).abs() > 0.5 {
-                st.browse_view.width = width;
-            } else {
-                tx.live_only();
-            }
+            // Views read the laid-out width in the same commit (`toolbar::page_width`); the
+            // stored copy is for polls and handlers, so storing it needs no second commit (it
+            // cost one whole Browse rebuild after every sidebar toggle, resize and visit).
+            st.browse_view.width = width;
+            tx.live_only();
         })
         .child(col().key("browse-page").w_full().px(PAGE_X).pt(4.0).gap(16.0).child(body)));
     col().key("browse-frame").w_full().h_full().min_h(0.0).child(head).child(scroll)

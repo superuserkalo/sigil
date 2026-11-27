@@ -212,6 +212,25 @@ pub fn slides(e: El, spring: Spring) -> El {
     e.motion(spring)
 }
 
+/// The sidebar on collapse and expand: its width glides on `base` (140 ms, ease out) and
+/// clips what it holds, which is laid out at the width it lands at.
+pub fn sidebar_glide(e: El) -> El {
+    e.motion(base()).clip_rounded(0.0)
+}
+
+/// The page beside the sidebar: laid out once, at the width it lands at, and slid there as one
+/// on `base` with the sidebar's edge, so no text wraps again and nothing lays out again while
+/// it moves (Rune's `hold_landing_width`).
+pub fn page_glide(e: El) -> El {
+    e.hold_landing_width().motion(base())
+}
+
+/// The contents of a gliding part (`sidebar_glide`, `page_glide`): their layout lands at once
+/// as the root's does, so only the part's own edge moves. Fades keep their tokens.
+pub fn still(e: El) -> El {
+    e.motion(Spring::NONE)
+}
+
 /// A control that dims when it is unavailable: its opacity eases on `fast`.
 pub fn dims(e: El) -> El {
     e.opacity_motion(fast())

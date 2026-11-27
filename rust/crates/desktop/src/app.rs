@@ -374,6 +374,9 @@ impl State {
         {
             screens::settings::telemetry::event(self, name, None);
         }
+        if self.screen != screen && screen == Screen::Browse {
+            crate::load_trace::visit_browse();
+        }
         self.screen = screen;
         self.status.clear();
         crate::shell_w4::mark_seen(self, screen);
@@ -1250,10 +1253,9 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
         // Settings opens as a sheet; a stale Settings screen shows the library under it.
         Screen::Settings => screens::installed::view(s, &u),
     };
-    let mut main = col()
-        .key("main")
+    let mut main = crate::motion::still(col().key("main"))
         .grow(1.0)
-        .h_full()
+        .w_full()
         .min_w(0.0)
         // The band over the page exists only where it holds something for the whole run: the
         // Windows caption buttons, or the transient chips while the status bar is hidden. Pages
@@ -1320,10 +1322,12 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
                 .transition(crate::motion::page_enter())
                 .child(body);
             let main = main.child(col().key("page").grow(1.0).min_h(0.0).w_full().child(body));
-            match crate::statusbar::view(s, &u) {
+            let main = match crate::statusbar::view(s, &u) {
                 Some(bar) => main.child(bar),
                 None => main,
-            }
+            };
+            // Beside the sidebar: laid out once at the width it lands at, slid there as one.
+            crate::motion::page_glide(col().key("main-glide")).grow(1.0).h_full().min_w(0.0).child(main)
         });
     if glass.is_some() {
         // The pages' opaque ground, under the Personalize backdrop; only the sidebar is glass.
@@ -1639,8 +1643,7 @@ fn sidebar(s: &State, u: &Ui, insets: rune::ChromeInsets) -> El {
             }))
             .child(settings_item(s, u))
     };
-    col()
-        .key("sidebar")
+    crate::motion::sidebar_glide(col().key("sidebar"))
         .w(crate::shell_w4::sidebar_width(s, insets.leading))
         .h_full()
         .fill(screens::settings::personalize::sidebar_fill(s, u))
@@ -1655,62 +1658,67 @@ fn sidebar(s: &State, u: &Ui, insets: rune::ChromeInsets) -> El {
                 .fill(u.sidebar)
                 .a11y_hidden()
         }))
-        .children((lights_row && !collapsed).then(|| {
-            // The traffic lights alone, as tight as they allow; the brand row follows.
-            row().key("sidebar-lights").w_full().h(LIGHTS_H).window_drag()
-        }))
-        .child(if collapsed && lights_row {
-            // macOS rail: the traffic lights fill the top row; Expand sits in the foot.
-            row().key("brand").w_full().h(TITLEBAR_H).clip_rounded(0.0).window_drag()
-        } else if collapsed {
-            // Icons only: Expand 12 points under the window's top, centred on the rail's axis
-            // like the 32 point nav targets below. No logo in the rail. The row clips, so the
-            // lockup fading out on collapse never draws past the rail's edge.
-            col()
-                .key("brand")
-                .w_full()
-                .pt(crate::ui::standard(RAIL_TOP))
-                .items_center()
-                .clip_rounded(0.0)
-                .window_drag()
-                .child(crate::shell_w4::collapse_button(s, u))
-        } else {
-            row()
-                .key("brand")
-                .w_full()
-                // Under the traffic lights on macOS; elsewhere the row's own 12 point inset
-                // above the mark.
-                .h(if lights_row { TITLEBAR_H } else { crate::ui::standard(BRAND_H) })
-                // The 24 point mark is centred on the nav icon axis (14 to 38, centre 26) and
-                // the wordmark starts on the label edge (44); the collapse button mirrors the
-                // icon axis on the right.
-                .pl(crate::ui::standard(14.0))
-                .pr(crate::ui::standard(12.0))
-                .center_y()
-                .clip_rounded(0.0)
-                .window_drag()
-                .child(if s.shell.w4.eggs {
-                    // Easter eggs: five knocks on the wordmark open the news computer.
-                    el().on_press(crate::shell_tips::knock).child(crate::brand::header(s, u))
-                } else {
-                    crate::brand::header(s, u)
-                })
-                .child(spacer())
-                .child(crate::shell_w4::collapse_button(s, u))
-        })
+        // What the sidebar holds lands at its new layout at once (only the sidebar's own
+        // width glides), and its fades keep their tokens.
         .child(
-            u.scroll_area(col()
-                .key("nav-scroll")
-                .w_full()
-                .grow(1.0)
-                .min_h(0.0)
-                .pt(8.0)
-                .scroll(rune::ScrollSpec {
-                    stick_bottom: false,
-                })
-                .child(nav)),
+            crate::motion::still(col().key("sidebar-body").w_full().grow(1.0).min_h(0.0))
+            .children((lights_row && !collapsed).then(|| {
+                // The traffic lights alone, as tight as they allow; the brand row follows.
+                row().key("sidebar-lights").w_full().h(LIGHTS_H).window_drag()
+            }))
+            .child(if collapsed && lights_row {
+                // macOS rail: the traffic lights fill the top row; Expand sits in the foot.
+                row().key("brand").w_full().h(TITLEBAR_H).clip_rounded(0.0).window_drag()
+            } else if collapsed {
+                // Icons only: Expand 12 points under the window's top, centred on the rail's axis
+                // like the 32 point nav targets below. No logo in the rail. The row clips, so the
+                // lockup fading out on collapse never draws past the rail's edge.
+                col()
+                    .key("brand")
+                    .w_full()
+                    .pt(crate::ui::standard(RAIL_TOP))
+                    .items_center()
+                    .clip_rounded(0.0)
+                    .window_drag()
+                    .child(crate::shell_w4::collapse_button(s, u))
+            } else {
+                row()
+                    .key("brand")
+                    .w_full()
+                    // Under the traffic lights on macOS; elsewhere the row's own 12 point inset
+                    // above the mark.
+                    .h(if lights_row { TITLEBAR_H } else { crate::ui::standard(BRAND_H) })
+                    // The 24 point mark is centred on the nav icon axis (14 to 38, centre 26) and
+                    // the wordmark starts on the label edge (44); the collapse button mirrors the
+                    // icon axis on the right.
+                    .pl(crate::ui::standard(14.0))
+                    .pr(crate::ui::standard(12.0))
+                    .center_y()
+                    .clip_rounded(0.0)
+                    .window_drag()
+                    .child(if s.shell.w4.eggs {
+                        // Easter eggs: five knocks on the wordmark open the news computer.
+                        el().on_press(crate::shell_tips::knock).child(crate::brand::header(s, u))
+                    } else {
+                        crate::brand::header(s, u)
+                    })
+                    .child(spacer())
+                    .child(crate::shell_w4::collapse_button(s, u))
+            })
+            .child(
+                u.scroll_area(col()
+                    .key("nav-scroll")
+                    .w_full()
+                    .grow(1.0)
+                    .min_h(0.0)
+                    .pt(8.0)
+                    .scroll(rune::ScrollSpec {
+                        stick_bottom: false,
+                    })
+                    .child(nav)),
+            )
+            .child(foot)
         )
-        .child(foot)
 }
 
 fn nav_row(u: &Ui, key: String, on: bool) -> El {

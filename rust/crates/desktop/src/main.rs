@@ -22,10 +22,13 @@ mod hardware;
 mod helpers;
 mod icons;
 mod jobs;
+mod load_trace;
 #[cfg(test)]
 mod jank_tests;
 #[cfg(test)]
 mod scroll_bar_tests;
+#[cfg(test)]
+mod smooth_tests;
 #[cfg(test)]
 mod toast_tests;
 #[cfg(test)]
@@ -75,6 +78,8 @@ fn all_scenes() -> &'static [(&'static str, fn(&mut State))] {
 }
 
 fn main() -> std::process::ExitCode {
+    // `SIGIL_LOAD_TRACE`: the clock for Browse's fill times starts here.
+    load_trace::begin();
     // The data folder's one-time move from its old name comes before anything reads or writes
     // it (`data::start_data_folder`). Windows claims the single instance first: its claim uses a
     // named pipe, not the data folder, so a launch that hands over to a running Sigil (or waits
@@ -205,5 +210,6 @@ fn poll(s: &mut State, t: f64, tx: &mut rune::Tx) -> bool {
     let changed = app::poll(s, t, tx);
     // The 3D viewer's render threads: loaded, failed, a picture saved.
     let viewer = viewer::poll(s);
+    load_trace::poll(s);
     deeplink::poll(s) || changed || viewer || glass::take_dirty()
 }

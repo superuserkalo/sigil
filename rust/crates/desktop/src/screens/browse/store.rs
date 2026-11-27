@@ -536,6 +536,7 @@ pub(crate) fn track_visible(st: &mut State, range: Range<usize>, shown: &[usize]
             .collect()
     };
 
+    crate::load_trace::note_visible(urls_in(st, near(0)));
     let wanted = urls_in(st, near(1));
     crate::data::queue_images(st, wanted, true);
 
