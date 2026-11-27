@@ -417,6 +417,9 @@ impl State {
                 }
             }
             Screen::Autoexec => {
+                if self.autoexec.all_convars {
+                    screens::autoexec_convars::ensure(self);
+                }
                 // Reload on every visit unless there are edits to keep: the page has no
                 // reload button, and the crosshair page writes the same file.
                 let fresh = !self.autoexec.loaded

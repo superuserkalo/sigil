@@ -1,6 +1,11 @@
 //! German for the console variables section (`autoexec_convars.rs`).
 
 pub const DE: &[(&str, &str)] = &[
+    ("Try again", "Erneut versuchen"),
+    ("Reading the convar list", "Die Liste der Konsolenvariablen wird gelesen"),
+    ("Downloading the convar list from GitHub", "Die Liste der Konsolenvariablen wird von GitHub geladen"),
+    ("The convar list could not be downloaded", "Die Liste der Konsolenvariablen konnte nicht geladen werden"),
+    ("It comes from the public game tracking repository on GitHub. Sigil downloads it once, when you first open this tab, then keeps it.", "Sie stammt aus dem öffentlichen Game-Tracking-Repository auf GitHub. Sigil lädt sie einmal, wenn du diesen Tab zum ersten Mal öffnest, und behält sie dann."),
     ("This setting is not in the game's list.", "Diese Einstellung steht nicht in der Liste des Spiels."),
     ("{} convars. {}", "{} Konsolenvariablen. {}"),
     ("{} convars", "{} Konsolenvariablen"),

@@ -29,6 +29,12 @@ fn edited(s: &mut State) {
 
 /// The headless scenes. A demo catalog stands in for the GitHub cache so the
 /// scenes never touch the network or the real cache.
+/// The demo catalog, for tests.
+#[cfg(test)]
+pub fn demo_catalog() -> Catalog {
+    demo::catalog()
+}
+
 pub fn scene(s: &mut State, name: &str) {
     s.load_demo();
     s.screen = Screen::Performance;

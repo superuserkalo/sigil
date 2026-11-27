@@ -666,7 +666,14 @@ fn right_tabs(s: &State, u: &Ui) -> El {
     let part = |key: &str, label: &str, on: bool, value: bool| {
         crate::ui::SegPart::new(key, label)
             .on(on)
-            .with(move |e| e.on_press(move |st: &mut State| st.autoexec.all_convars = value))
+            .with(move |e| {
+                e.on_press(move |st: &mut State| {
+                    st.autoexec.all_convars = value;
+                    if value {
+                        crate::screens::autoexec_convars::ensure(st);
+                    }
+                })
+            })
     };
     crate::ui::Segmented::new("autoexec-right-tabs", tr("Convars"))
         .tabs()

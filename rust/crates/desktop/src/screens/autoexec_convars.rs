@@ -60,9 +60,13 @@ pub struct Convars {
     pub preview: Option<GamePreset>,
     pub preset_name: TextEdit,
     pub note: Option<String>,
-    /// The player's Download the list.
+    /// The player's Download the list, or the one the tab starts when no list is cached.
     pub download: Job<Catalog>,
     pub download_error: Option<String>,
+    /// Reading the cached list, off the UI thread.
+    pub load: Job<Catalog>,
+    /// The tab already started a download on its own this session; a failure waits for Try again.
+    pub auto_download: bool,
 }
 
 impl Default for Convars {
@@ -83,18 +87,26 @@ impl Default for Convars {
             note: None,
             download: Job::default(),
             download_error: None,
+            load: Job::default(),
+            auto_download: false,
         }
     }
 }
 
 // --- actions -----------------------------------------------------------------------------------
 
-/// Read the catalogue, the game's saved values and the saved presets. Local files only.
+/// Read the catalogue, the game's saved values and the saved presets. Local files only; the
+/// catalogue is parsed on a worker (`load`), so the tab shows at once.
 pub fn open(st: &mut State) {
     let data = crate::data::data_dir();
-    let catalog = if simulated(st) { sample_catalog() } else { core::load_catalog(&data) };
+    if simulated(st) {
+        st.autoexec.convars.catalog = Some(sample_catalog());
+    } else if !st.autoexec.convars.load.is_running() {
+        let wake = st.wake.clone();
+        let read = data.clone();
+        st.autoexec.convars.load.start(wake, move || Ok(core::load_catalog(&read)));
+    }
     let c = &mut st.autoexec.convars;
-    c.catalog = Some(catalog);
     c.saved = core::load_presets(&data);
     c.game = st
         .game_root
@@ -102,6 +114,14 @@ pub fn open(st: &mut State) {
         .and_then(|root| std::fs::read_to_string(core::machine_convars_path(root)).ok())
         .map(|text| core::parse_vcfg(&text))
         .unwrap_or_default();
+}
+
+/// The All convars tab is showing: read the list once, if it is not in memory or on its way.
+pub fn ensure(st: &mut State) {
+    let c = &st.autoexec.convars;
+    if c.catalog.is_none() && !c.load.is_running() {
+        open(st);
+    }
 }
 
 fn simulated(st: &State) -> bool {
@@ -131,9 +151,40 @@ fn start_download(st: &mut State) {
     });
 }
 
-/// Take a finished download.
+/// Keep a finished read. True when the tab should download the list now: none is cached and
+/// it has not tried on its own yet (after a failure, Try again is the player's).
+fn took_read(c: &mut Convars, catalog: Catalog) -> bool {
+    let empty = catalog.convars.is_empty();
+    c.catalog = Some(catalog);
+    if empty && !c.auto_download {
+        c.auto_download = true;
+        return true;
+    }
+    false
+}
+
+/// The empty card's title and button: downloading, failed (with Try again), or not yet.
+fn empty_texts(running: bool, failed: bool) -> (&'static str, &'static str) {
+    if running {
+        (tr("Downloading the convar list from GitHub"), tr("Downloading the list..."))
+    } else if failed {
+        (tr("The convar list could not be downloaded"), tr("Try again"))
+    } else {
+        (tr("The convar list is not on this computer yet"), tr("Download the list"))
+    }
+}
+
+/// Take a finished read or download. A read that finds no list starts the download once, so
+/// the tab never sits on an empty list waiting for a button the player may not see.
 pub fn poll(st: &mut State) -> bool {
-    let Some(result) = st.autoexec.convars.download.try_take() else { return false };
+    let mut changed = false;
+    if let Some(result) = st.autoexec.convars.load.try_take() {
+        if took_read(&mut st.autoexec.convars, result.unwrap_or_default()) {
+            start_download(st);
+        }
+        changed = true;
+    }
+    let Some(result) = st.autoexec.convars.download.try_take() else { return changed };
     let c = &mut st.autoexec.convars;
     match result {
         Ok(catalog) => {
@@ -508,7 +559,8 @@ fn convar_row(s: &State, u: &Ui, convar: &Convar, values: &BTreeMap<String, Stri
 fn empty_state(s: &State, u: &Ui) -> El {
     let c = &s.autoexec.convars;
     let running = c.download.is_running();
-    let label = if running { tr("Downloading the list...") } else { tr("Download the list") };
+    let failed = c.download_error.is_some() && !running;
+    let (title, label) = empty_texts(running, failed);
     let mut card = col()
         .key("convars-empty")
         .w_full()
@@ -517,9 +569,9 @@ fn empty_state(s: &State, u: &Ui) -> El {
         .radius(crate::ui::r(8.0))
         .fill(u.well)
         .border(1.0, u.hair)
-        .child(text(tr("The convar list is not on this computer yet")).font(BODY_MED).color(u.ink))
+        .child(text(title).font(BODY_MED).color(u.ink).wrap())
         .child(
-            text(tr("It comes from the public game tracking repository on GitHub. Sigil downloads it only when you press the button or refresh Performance."))
+            text(tr("It comes from the public game tracking repository on GitHub. Sigil downloads it once, when you first open this tab, then keeps it."))
                 .font(BODY)
                 .color(u.muted)
                 .wrap(),
@@ -544,22 +596,25 @@ pub fn section(s: &State, u: &Ui) -> El {
     let c = &s.autoexec.convars;
     let mut section = col().key("autoexec-convars").w_full().gap(12.0);
     let Some(catalog) = &c.catalog else {
-        return section.child(
-            row()
-                .w_full()
-                .h(32.0)
-                .gap(16.0)
-                .center_y()
-                .child(u.section(tr("Console variables")))
-                .child(text(tr("Every convar the game has, with Valve's descriptions")).font(SMALL).color(u.faint))
-                .child(spacer())
-                .child(
-                    u.action(tr("Browse convars"), ActionKind::Secondary)
-                        .key("convars-open")
-                        .cursor(rune::Cursor::Pointer)
-                        .on_press(open),
-                ),
-        );
+        let reading = c.load.is_running();
+        let mut head = row()
+            .w_full()
+            .h(32.0)
+            .gap(16.0)
+            .center_y()
+            .child(u.section(tr("Console variables")))
+            .child(spacer());
+        head = if reading {
+            head.child(text(tr("Reading the convar list")).font(SMALL).color(u.muted))
+        } else {
+            head.child(
+                u.action(tr("Browse convars"), ActionKind::Secondary)
+                    .key("convars-open")
+                    .cursor(rune::Cursor::Pointer)
+                    .on_press(open),
+            )
+        };
+        return section.child(head);
     };
     if catalog.convars.is_empty() {
         section = section
@@ -791,5 +846,30 @@ mod tests {
             assert!(DE.iter().any(|(en, _)| *en == preset.name), "untranslated preset {:?}", preset.name);
             assert!(DE.iter().any(|(en, _)| *en == preset.description), "untranslated {:?}", preset.description);
         }
+    }
+}
+
+#[cfg(test)]
+mod load_tests {
+    use super::*;
+
+    /// "All convars" on a PC with no cached list: the read finishes empty and the tab downloads
+    /// the list on its own once; a failure then waits for Try again instead of looping.
+    #[test]
+    fn an_empty_read_downloads_once_then_waits_for_try_again() {
+        let mut c = Convars::default();
+        assert!(took_read(&mut c, Catalog::default()));
+        assert!(c.catalog.as_ref().is_some_and(|catalog| catalog.convars.is_empty()));
+        assert!(!took_read(&mut c, Catalog::default()), "only once on its own");
+        let mut full = Convars::default();
+        assert!(!took_read(&mut full, sample_catalog()));
+        assert!(!full.catalog.unwrap().convars.is_empty());
+    }
+
+    #[test]
+    fn a_failed_download_says_so_and_offers_try_again() {
+        assert_eq!(empty_texts(false, true), ("The convar list could not be downloaded", "Try again"));
+        assert_eq!(empty_texts(true, false).1, "Downloading the list...");
+        assert_eq!(empty_texts(false, false).1, "Download the list");
     }
 }

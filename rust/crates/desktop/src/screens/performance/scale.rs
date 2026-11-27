@@ -6,7 +6,7 @@
 //! Arrow keys step, Home and End jump to the ends, Escape goes back to "All". Every part has a
 //! fixed size: nothing moves while dragging but the thumb and the readout text.
 
-use deadlock_core::performance::{Catalog, Tier};
+use deadlock_core::performance::Tier;
 use rune::{Drag, El, Key, KeyEvent, Phase, Tx, col, el, row, text};
 
 use crate::app::State;
@@ -36,10 +36,10 @@ fn nearest(x: f32, width: f32, n: usize) -> usize {
 }
 
 /// The tiers that have configs, lighter first, with their counts.
-pub fn tiers(catalog: &Catalog) -> Vec<(Tier, usize)> {
+pub fn tiers(rows: &[super::RowSummary]) -> Vec<(Tier, usize)> {
     Tier::ALL
         .into_iter()
-        .map(|tier| (tier, catalog.configs.iter().filter(|c| c.def.tier == tier).count()))
+        .map(|tier| (tier, rows.iter().filter(|r| r.tier == tier).count()))
         .filter(|(_, n)| *n > 0)
         .collect()
 }
@@ -77,9 +77,9 @@ fn stop_cell(u: &Ui, i: usize, n: usize, lit_left: bool, lit_right: bool, on: bo
 
 /// `on` is the tier of the applied config, its stop green like the toggles. `note` is the
 /// readout's second line.
-pub fn view(s: &State, u: &Ui, catalog: &Catalog, on: Option<Tier>, note: String) -> El {
-    let tiers = tiers(catalog);
-    let total = catalog.configs.len();
+pub fn view(s: &State, u: &Ui, rows: &[super::RowSummary], on: Option<Tier>, note: String) -> El {
+    let tiers = tiers(rows);
+    let total = rows.len();
     // Stop 0 is "All", then the tiers lighter first.
     let stops: Vec<(Option<Tier>, usize)> =
         std::iter::once((None, total)).chain(tiers.iter().map(|(t, n)| (Some(*t), *n))).collect();

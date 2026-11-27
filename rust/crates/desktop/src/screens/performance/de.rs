@@ -5,6 +5,17 @@ use std::collections::HashMap;
 use std::sync::OnceLock;
 
 pub const DE: &[(&str, &str)] = &[
+    ("Downloading the configs from their authors on GitHub", "Die Konfigurationen werden von ihren Autoren auf GitHub geladen"),
+    ("Downloading", "Wird geladen"),
+    ("{} is on: wrote {} settings to {}, checked by reading the file back.", "{} ist an: {} Einstellungen in {} geschrieben und durch erneutes Lesen der Datei geprüft."),
+    ("{} engine edits were skipped because the game no longer has that section.", "{} Engine-Änderungen wurden übersprungen, weil das Spiel diesen Abschnitt nicht mehr hat."),
+    ("Deadlock is running: it reads gameinfo.gi only at start, so quit and start it again.", "Deadlock läuft: Es liest gameinfo.gi nur beim Start, also beende es und starte es neu."),
+    ("Takes effect the next time Deadlock starts.", "Wirkt beim nächsten Start von Deadlock."),
+    ("Apply again", "Erneut anwenden"),
+    ("Dismiss", "Ausblenden"),
+    ("{} is no longer in gameinfo.gi", "{} ist nicht mehr in gameinfo.gi"),
+    ("A game update or Steam's file check put Valve's file back. The game runs stock until you apply again.", "Ein Spielupdate oder Steams Dateiprüfung hat Valves Datei zurückgelegt. Das Spiel läuft unverändert, bis du erneut anwendest."),
+    ("{} settings in gameinfo.gi", "{} Einstellungen in gameinfo.gi"),
     ("A backup is kept, and Restore puts your values back.", "Eine Sicherung wird behalten, und Wiederherstellen legt deine Werte zurück."),
     ("Apply changes to {}?", "Änderungen auf {} anwenden?"),
     ("Apply {}?", "{} anwenden?"),

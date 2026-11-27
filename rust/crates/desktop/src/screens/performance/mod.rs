@@ -101,6 +101,69 @@ pub struct View {
     pub benchmark: benchmark::Page,
     /// Custom presets from GitHub and Apply as written (`custom.rs`).
     pub custom: custom::Custom,
+    /// The list as it last showed, kept when the parsed configs go (`release`), so a later
+    /// visit draws the list at once while they are read again.
+    pub rows: Vec<RowSummary>,
+}
+
+/// One list row, without the parsed config behind it: a few strings, so it outlives `release`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RowSummary {
+    pub id: String,
+    pub name: String,
+    pub author: String,
+    pub version: String,
+    pub date: String,
+    pub note: String,
+    pub tier: Tier,
+    /// Settings an apply writes; `None` while the config is still being downloaded.
+    pub settings: Option<usize>,
+    /// The newest upstream version was refused; the row shows the saved one.
+    pub error: bool,
+    pub testing: bool,
+}
+
+/// The rows for the cached configs, in list order.
+pub fn summaries(s: &State, catalog: &Catalog) -> Vec<RowSummary> {
+    catalog
+        .configs
+        .iter()
+        .map(|config| RowSummary {
+            id: config.id().to_string(),
+            name: config.name().to_string(),
+            author: config.def.author.to_string(),
+            version: display_version(config),
+            date: config.date.clone(),
+            note: config.def.note.to_string(),
+            tier: config.def.tier,
+            settings: Some(config.setting_count(&options_for(s, config))),
+            error: catalog.errors.contains_key(config.id()),
+            testing: config.def.testing,
+        })
+        .collect()
+}
+
+/// The GitHub configs Sigil lists, named from its own catalog before the first download ends,
+/// so the page shows every config at once (Deadlock Mod Manager bundles its list the same way).
+pub fn placeholder_rows() -> Vec<RowSummary> {
+    let mut rows: Vec<RowSummary> = catalog::CONFIGS
+        .iter()
+        .filter(|def| def.gamebanana.is_none() && def.id != catalog::FROM_MOD_ID)
+        .map(|def| RowSummary {
+            id: def.id.to_string(),
+            name: def.name.to_string(),
+            author: def.author.to_string(),
+            version: String::new(),
+            date: String::new(),
+            note: def.note.to_string(),
+            tier: def.tier,
+            settings: None,
+            error: false,
+            testing: def.testing,
+        })
+        .collect();
+    rows.sort_by_key(|row| row.tier);
+    rows
 }
 
 /// What the game files say, read together so the page never shows half a state.
@@ -115,6 +178,11 @@ pub struct Status {
     pub video_kept: usize,
     /// The ConVars values `gameinfo.gi` holds now, for the editor.
     pub values: BTreeMap<String, String>,
+    /// Settings lines Sigil's config holds in `gameinfo.gi`, counted in the file itself.
+    pub in_file: usize,
+    /// The config the last Apply put in, when the file no longer has it (a game update or
+    /// Steam's file check put Valve's file back).
+    pub reset: Option<performance::AppliedRecord>,
 }
 
 #[derive(Default, Clone, PartialEq)]
@@ -178,6 +246,9 @@ pub fn release(st: &mut State) {
     if simulated(st) || st.performance.load_job.is_running() || st.performance.fetch_job.is_running() {
         return;
     }
+    if let Some(catalog) = &st.performance.catalog {
+        st.performance.rows = summaries(st, catalog);
+    }
     st.performance.catalog = None;
 }
 
@@ -206,6 +277,8 @@ pub fn start_read(st: &mut State) {
         let applied = performance::applied(&text);
         let values = performance::convar_values(&text);
         let data = data_dir();
+        let in_file = performance::settings_in_file(&text);
+        let reset = performance::reset_since_apply(&text, performance::read_record(&data).as_ref());
         let video = video::read_record(&data);
         let video_path = video::locate(&root, &deadlock_core::discovery::default_steam_roots());
         let video_kept = video
@@ -222,6 +295,8 @@ pub fn start_read(st: &mut State) {
             video_path,
             video_kept,
             values,
+            in_file,
+            reset,
         })
     });
 }
@@ -420,10 +495,39 @@ fn start_apply(st: &mut State, id: String) {
     }
     let wake = st.wake.clone();
     st.performance.write_job.start(wake, move || {
-        let patched =
-            performance::apply_to_install(&root, &config, &options).map_err(|e| e.to_string())?;
-        Ok(applied_line(config.name(), &patched.skipped))
+        let report = performance::apply_and_check(
+            &root,
+            &data_dir(),
+            &config,
+            &options,
+            &deadlock_core::util::now_iso(),
+        )
+        .map_err(|e| e.to_string())?;
+        let running = deadlock_core::launch::game_running();
+        Ok(written_line(config.name(), &report, running))
     });
+}
+
+/// What an Apply wrote and where, as read back from the file.
+fn written_line(name: &str, report: &performance::ApplyReport, running: bool) -> String {
+    let mut line = fill(
+        tr("{} is on: wrote {} settings to {}, checked by reading the file back."),
+        &[name, &report.written.to_string(), &report.path.display().to_string()],
+    );
+    if !report.skipped.is_empty() {
+        line.push(' ');
+        line.push_str(&fill(
+            tr("{} engine edits were skipped because the game no longer has that section."),
+            &[&report.skipped.len().to_string()],
+        ));
+    }
+    line.push(' ');
+    line.push_str(if running {
+        tr("Deadlock is running: it reads gameinfo.gi only at start, so quit and start it again.")
+    } else {
+        tr("Takes effect the next time Deadlock starts.")
+    });
+    line
 }
 
 fn applied_line(name: &str, skipped: &[String]) -> String {
@@ -438,6 +542,16 @@ fn applied_line(name: &str, skipped: &[String]) -> String {
     }
 }
 
+/// Forget the reset notice without applying again. App data only.
+fn dismiss_reset(st: &mut State) {
+    if let Some(Ok(status)) = &mut st.performance.status {
+        status.reset = None;
+    }
+    if !simulated(st) {
+        let _ = performance::forget_record(&data_dir());
+    }
+}
+
 fn set_applied(st: &mut State, applied: Applied) {
     match &mut st.performance.status {
         Some(Ok(status)) => status.applied = applied,
@@ -448,6 +562,8 @@ fn set_applied(st: &mut State, applied: Applied) {
                 video_path: None,
                 video_kept: 0,
                 values: BTreeMap::new(),
+                in_file: 0,
+                reset: None,
             }))
         }
     }
@@ -469,6 +585,7 @@ fn start_turn_off(st: &mut State) {
     let wake = st.wake.clone();
     st.performance.write_job.start(wake, move || {
         performance::remove_from_install(&root).map_err(|e| e.to_string())?;
+        performance::forget_record(&data_dir()).map_err(|e| e.to_string())?;
         let video = video::revert_install(&data_dir()).map_err(|e| e.to_string())?;
         Ok(if video {
             tr("Stock settings are back, in gameinfo.gi and video.txt.").to_string()
@@ -703,19 +820,29 @@ fn list_page(s: &State, u: &Ui) -> El {
     }
 
     page = page.child(current(s, u));
-    // Back on the page after it let the configs go: they are read from the disk cache in a
-    // moment, so nothing says they are being downloaded.
-    if s.performance.catalog.is_none() && s.performance.load_job.is_running() {
-        return page;
-    }
-    let Some(catalog) = s.performance.catalog.as_ref().filter(|c| !c.is_empty()) else {
-        return page.child(first_run(s, u));
+    let loading = s.performance.catalog.is_none() && s.performance.load_job.is_running();
+    let rows = match s.performance.catalog.as_ref().filter(|c| !c.is_empty()) {
+        Some(catalog) => summaries(s, catalog),
+        // Back on the page after it let the configs go: the list as it last showed, while
+        // the cache is read again in the background.
+        None if !s.performance.rows.is_empty() => s.performance.rows.clone(),
+        // The first download, or the first read of the cache: every config Sigil lists,
+        // filled in as it arrives.
+        None if loading || s.performance.fetch != Fetch::Idle => {
+            if let Fetch::Failed(_) = s.performance.fetch
+                && !loading
+            {
+                return page.child(first_run(s, u));
+            }
+            placeholder_rows()
+        }
+        None => return page.child(first_run(s, u)),
     };
     if let Some(hide) = custom::hide_choice(s, u) {
         page = page.child(hide);
     }
-    page.child(toolbar(s, u, catalog))
-        .child(groups(s, u, catalog))
+    page.child(toolbar(s, u, &rows))
+        .child(groups(s, u, &rows))
         .child(hosted_section(s, u))
         .child(
             text(tr("GitHub configs come from OptimizationLock and OptiLock, shared by their authors under GPL-3.0. GameBanana configs stay on their pages."))
@@ -778,6 +905,33 @@ fn current(s: &State, u: &Ui) -> El {
                 tr("Turn it off in Grimoire before picking one here.").into(),
                 u.amber,
             ),
+            Applied::None if status.reset.is_some() => {
+                let Some(record) = status.reset.clone() else { unreachable!("checked by the guard") };
+                if config(s, &record.id).is_some() {
+                    let id = record.id.clone();
+                    actions.push(
+                        u.action(tr("Apply again"), ActionKind::Primary)
+                            .key("perf-reapply")
+                            .cursor(rune::Cursor::Pointer)
+                            .on_press(move |st: &mut State| {
+                                if !st.performance.write_job.is_running() {
+                                    st.performance.dialog = Some(Dialog::Apply(id.clone()));
+                                }
+                            }),
+                    );
+                }
+                actions.push(
+                    u.action(tr("Dismiss"), ActionKind::Ghost)
+                        .key("perf-reset-dismiss")
+                        .cursor(rune::Cursor::Pointer)
+                        .on_press(dismiss_reset),
+                );
+                (
+                    fill(tr("{} is no longer in gameinfo.gi"), &[&record.name]),
+                    tr("A game update or Steam's file check put Valve's file back. The game runs stock until you apply again.").into(),
+                    u.amber,
+                )
+            }
             Applied::None => (
                 tr("Stock settings").into(),
                 if s.performance
@@ -809,7 +963,13 @@ fn current(s: &State, u: &Ui) -> El {
                     parts.retain(|part| !part.is_empty());
                     let options =
                         applied_options(s, config).unwrap_or_else(|| config.default_options());
-                    parts.push(fill(tr("{} settings"), &[&config.setting_count(&options).to_string()]));
+                    // Counted in the file itself, so it says what the game will read.
+                    let in_file = status.in_file;
+                    parts.push(if in_file > 0 {
+                        fill(tr("{} settings in gameinfo.gi"), &[&in_file.to_string()])
+                    } else {
+                        fill(tr("{} settings"), &[&config.setting_count(&options).to_string()])
+                    });
                     let on = switches.as_ref().map(|(on, _)| on.len()).unwrap_or(0);
                     if on > 0 {
                         parts.push(fill(
@@ -967,22 +1127,25 @@ fn dots(parts: &[String]) -> String {
 }
 
 /// The looks to frames scale, in place of the old tier filter.
-fn toolbar(s: &State, u: &Ui, catalog: &Catalog) -> El {
+fn toolbar(s: &State, u: &Ui, rows: &[RowSummary]) -> El {
     let on = applied_id(s)
-        .and_then(|id| catalog.configs.iter().find(|c| c.id() == id))
-        .map(|c| c.def.tier);
+        .and_then(|id| rows.iter().find(|r| r.id == id))
+        .map(|r| r.tier);
     // How fresh the configs are, under the slider's readout.
-    let fresh = freshness_line(s, catalog).0;
-    scale::view(s, u, catalog, on, fresh)
+    let fresh = freshness_line(s).0;
+    scale::view(s, u, rows, on, fresh)
 }
 
-fn freshness_line(s: &State, catalog: &Catalog) -> (String, bool) {
-    let checked = catalog
-        .checked_at
-        .as_deref()
+fn freshness_line(s: &State) -> (String, bool) {
+    let checked = s
+        .performance
+        .catalog
+        .as_ref()
+        .and_then(|catalog| catalog.checked_at.as_deref())
         .and_then(performance::minutes_since)
         .map(ago);
     match (&s.performance.fetch, checked) {
+        (Fetch::Running, None) => (tr("Downloading the configs from their authors on GitHub").to_string(), false),
         (Fetch::Running, _) => (tr("Checking GitHub for new versions").to_string(), false),
         (Fetch::Failed(_), Some(ago)) => (fill(tr("Offline. Showing configs saved {}"), &[&ago]), true),
         (Fetch::Failed(_), None) => (tr("Offline. Showing saved configs").to_string(), true),
@@ -1002,26 +1165,25 @@ fn ago(minutes: i64) -> String {
 }
 
 /// One group per tier, lighter first: the list is the scale.
-fn groups(s: &State, u: &Ui, catalog: &Catalog) -> El {
+fn groups(s: &State, u: &Ui, rows: &[RowSummary]) -> El {
     let on = applied_id(s);
     let mut out = col().w_full().gap(16.0);
     for tier in Tier::ALL {
         if s.performance.tier.is_some_and(|wanted| wanted != tier) {
             continue;
         }
-        let configs: Vec<&Config> = catalog
-            .configs
+        let configs: Vec<&RowSummary> = rows
             .iter()
-            .filter(|c| c.def.tier == tier)
-            .filter(|c| !custom::hides_builtins(s) || custom::is_custom(c.id()))
+            .filter(|r| r.tier == tier)
+            .filter(|r| !custom::hides_builtins(s) || custom::is_custom(&r.id))
             .collect();
         if configs.is_empty() {
             continue;
         }
         let count = configs.len();
-        let mut rows = col().w_full();
+        let mut list = col().w_full();
         for config in configs {
-            rows = rows.child(config_row(s, u, config, on.as_deref() == Some(config.id())));
+            list = list.child(config_row(u, config, on.as_deref() == Some(config.id.as_str())));
         }
         out = out.child(
             col()
@@ -1042,30 +1204,25 @@ fn groups(s: &State, u: &Ui, catalog: &Catalog) -> El {
                         )
                         .child(text(tr(tier.blurb())).font(SMALL).color(u.muted).truncate()),
                 )
-                .child(rows),
+                .child(list),
         );
     }
     out
 }
 
-fn config_row(s: &State, u: &Ui, config: &Config, is_on: bool) -> El {
-    let id = config.id().to_string();
+fn config_row(u: &Ui, config: &RowSummary, is_on: bool) -> El {
+    let id = config.id.clone();
     let mut name = row()
         .gap(8.0)
         .center_y()
-        .child(text(config.name()).font(BODY_MED).color(u.ink).truncate());
-    if config.id() == catalog::DEFAULT_ID {
+        .child(text(config.name.clone()).font(BODY_MED).color(u.ink).truncate());
+    if config.id == catalog::DEFAULT_ID {
         name = name.child(chip(u, tr("Recommended")));
     }
-    if config.def.testing {
+    if config.testing {
         name = name.child(chip(u, tr("Testing")));
     }
-    let meta = dots(&[
-        config.def.author.to_string(),
-        display_version(config),
-        short_date(&config.date),
-    ]);
-    let options = options_for(s, config);
+    let meta = dots(&[config.author.clone(), config.version.clone(), short_date(&config.date)]);
     // The state slot is reserved on every row, so "On" never pushes the columns.
     let mut state = row().w(40.0).gap(6.0).center_y();
     if is_on {
@@ -1078,12 +1235,15 @@ fn config_row(s: &State, u: &Ui, config: &Config, is_on: bool) -> El {
             .color(u.muted)
             .a11y_hidden(),
     );
-    let error = s
-        .performance
-        .catalog
-        .as_ref()
-        .and_then(|c| c.errors.get(config.id()))
-        .is_some();
+    let note = if config.error {
+        tr("Could not update from GitHub. Showing the last saved version.").to_string()
+    } else {
+        config.note.clone()
+    };
+    let settings = match config.settings {
+        Some(count) => fill(tr("{} settings"), &[&count.to_string()]),
+        None => tr("Downloading").to_string(),
+    };
     row()
         .key(format!("perf-row-{id}"))
         .w_full()
@@ -1094,7 +1254,7 @@ fn config_row(s: &State, u: &Ui, config: &Config, is_on: bool) -> El {
         .hover(u.hover)
         .focusable(true)
         .role("button")
-        .label(format!("{}, {}", config.name(), config.def.tier.label()))
+        .label(format!("{}, {}", config.name, config.tier.label()))
         .cursor(rune::Cursor::Pointer)
         .on_press(move |st: &mut State| {
             st.performance.open = Some(id.clone());
@@ -1108,20 +1268,16 @@ fn config_row(s: &State, u: &Ui, config: &Config, is_on: bool) -> El {
                 .child(text(meta).font(SMALL).color(u.muted).truncate()),
         )
         .child(
-            text(if error {
-                tr("Could not update from GitHub. Showing the last saved version.")
-            } else {
-                config.def.note
-            })
-            .font(BODY)
-            // Quieter than the name, so the name leads the row.
-            .color(if error { u.amber } else { u.muted })
-            .grow(1.0)
-            .min_w(0.0)
-            .truncate(),
+            text(note)
+                .font(BODY)
+                // Quieter than the name, so the name leads the row.
+                .color(if config.error { u.amber } else { u.muted })
+                .grow(1.0)
+                .min_w(0.0)
+                .truncate(),
         )
         .child(
-            text(fill(tr("{} settings"), &[&config.setting_count(&options).to_string()]))
+            text(settings)
                 .font(SMALL_NUM)
                 .color(u.muted)
                 .w(96.0)
@@ -1436,5 +1592,32 @@ mod release_tests {
         st.demo = true;
         release(&mut st);
         assert!(st.performance.catalog.is_some(), "demo configs stay");
+    }
+
+    /// The list outlives the parsed configs: a few strings per row stay, so the next visit
+    /// draws every row at once while the cache is read again.
+    #[test]
+    fn leaving_the_page_keeps_the_rows_to_draw_at_once() {
+        let mut st = State::default();
+        st.performance.catalog = Some(scenes::demo_catalog());
+        let shown = summaries(&st, st.performance.catalog.as_ref().unwrap());
+        release(&mut st);
+        assert!(st.performance.catalog.is_none());
+        assert_eq!(st.performance.rows, shown);
+        assert!(shown.iter().any(|row| row.id == "optilock-potato" && row.tier == Tier::Potato));
+    }
+
+    /// Before the first download ends, every GitHub config Sigil lists has a row, OptiLock
+    /// Potato in Potato among them.
+    #[test]
+    fn the_first_download_shows_every_config_at_once() {
+        let rows = placeholder_rows();
+        let potato = rows.iter().find(|row| row.id == "optilock-potato").expect("listed");
+        assert_eq!(potato.tier, Tier::Potato);
+        assert_eq!(potato.settings, None);
+        for def in catalog::CONFIGS.iter().filter(|def| def.gamebanana.is_none() && def.id != catalog::FROM_MOD_ID) {
+            assert!(rows.iter().any(|row| row.id == def.id), "{}", def.id);
+        }
+        assert!(rows.windows(2).all(|pair| pair[0].tier <= pair[1].tier));
     }
 }
