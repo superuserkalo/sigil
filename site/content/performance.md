@@ -14,7 +14,7 @@ Many players run community configs that change engine settings in `gameinfo.gi` 
 
 ## Choosing a config
 
-Configs are grouped by how much they change, from Light (a small gain, the game looks almost the same) through Balanced and Max FPS to Potato (for low-end PCs, expect the game to look rough). Each entry shows its author, version, date and how many settings it changes. Pick a config and a version, then apply it. The active config shows at the top with Details and Turn off.
+Configs are grouped by how much they change, from Light (a small gain, the game looks almost the same) through Balanced and Max FPS to Potato (for low-end PCs, expect the game to look rough). Each entry shows its author, version, date and how many settings it changes. Pick a config and a version, then apply it. After Apply, Sigil reads `gameinfo.gi` back and says how many settings it wrote and where; the active config shows at the top with Details and Turn off, counted from the file each time the page opens. The list shows every config at once, even before the first download from GitHub ends.
 
 ## Your changes stay yours
 
@@ -32,4 +32,4 @@ The editor searches the game's console variables, edits values and keeps a histo
 
 Performance, Benchmark is an early feature that runs the same replay section in the game and measures how it draws: average FPS, 1% and 0.1% lows and frame times, compared against vanilla or another run. It has been tested on recorded data so far, not yet with a real game, so treat its results as a preview.
 
-A game update resets `gameinfo.gi`, which also removes a config's changes. Sigil notices the reset and offers to fix the file again.
+A game update or Steam's file check resets `gameinfo.gi`, which also removes a config's changes. The Performance page notices that the config it applied is gone from the file and offers Apply again.

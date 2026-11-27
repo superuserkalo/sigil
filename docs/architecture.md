@@ -339,8 +339,11 @@ Enforced in code:
      commit, each checked against its git blob hash. Valve's convar list
      (`SteamTracking/GameTracking-Deadlock`, `DumpSource2/convars.txt`) comes from the same hosts.
      Runs when the Performance page opens and the cache is older than 12 hours, or on the refresh
-     button. Results are cached under the app data directory (`performance/`), so the page works
-     offline after the first fetch.
+     button; the sources and configs are fetched in parallel. Results are cached under the app
+     data directory (`performance/`), so the page works offline after the first fetch. When the
+     API refuses (its anonymous rate limit), the convar list alone comes from
+     `raw.githubusercontent.com` at the tracking repository's default branch. Autoexec > All
+     convars downloads the same list once when the tab first opens with no list cached.
      `api.github.com` also serves the update check: one anonymous GET of
      `/repos/superuserkalo/sigil/releases/latest` (Stable) or `releases?per_page=10` (Preview),
      from Settings > About and updates, at startup when the user turned "Check for Sigil updates"

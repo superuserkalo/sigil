@@ -294,8 +294,9 @@ Nothing here is measured on Windows yet; see "How to measure on Windows" below.
      with likes and ratings, compared byte for byte before and after; `search_eval` gives the
      same hit@5 and recall@10.
    - Performance page: its parsed configs (about 3.1 MB in the heap report) go when the page is
-     left (`State::go`, `performance::release`) and come back from the disk cache on return; the
-     page shows nothing in their place for the moment that takes instead of "Getting configs".
+     left (`State::go`, `performance::release`) and come back from the disk cache on return. A
+     few strings per row stay (`RowSummary`), so the list draws at once from them while the cache
+     is read again on a worker, configs in parallel (2026-11-27).
    - Segmented selectors measured their labels outside a view (Browse's toolbar tier from
      handlers and polls), which made Rune build a second text system for the UI thread. They now
      keep widths measured while a view runs, and outside one answer from those or an estimate
