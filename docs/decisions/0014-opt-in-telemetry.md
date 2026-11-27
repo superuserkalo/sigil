@@ -16,7 +16,10 @@ and approved changing the rule on 2026-11-18.
 
 - Sigil runs one Cloudflare Worker, `sigil-telemetry` (`services/telemetry/`), with Analytics
   Engine for usage events and D1 for crashes, diagnostics and the hash index. No third party.
-- Nothing is sent until the player agrees in a first-start dialog. Settings > Privacy has one
+- Nothing is sent until the player agrees. Until 0.1.45 that was a first-start dialog; it opened
+  right after the setup's own Help build Sigil question, so players were asked twice in a row.
+  Since 0.1.46 (2026-11-27) the dialog no longer opens by itself: the switches start off and are
+  turned on in Settings > Privacy. Settings > Privacy has one
   switch per kind: usage events, crash reports, unknown-mod lookup. Diagnostics are sent only when
   the player presses Send, every time.
 - Usage events carry an allowlisted event name, page, app version and OS, keyed by the SHA-256 of

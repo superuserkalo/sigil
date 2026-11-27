@@ -52,7 +52,7 @@ id, and never puts an install id into a crash report or a diagnostics bundle.
 
 ## Sigil telemetry
 
-Off until you agree, in a first-start dialog or in Settings > Privacy. There is one switch per kind:
+Off until you turn them on in Settings > Privacy. Since 0.1.46 there is no separate first-start dialog for these: the setup asks one question (Help build Sigil, below) and leaves these switches off. There is one switch per kind:
 usage events, crash reports and unknown-mod lookup. Diagnostics are never automatic: they are sent
 only when you press Send. After Sigil crashes, the next start asks about that one crash report even
 when crash reports are off (see [Crash reports](#crash-reports)).

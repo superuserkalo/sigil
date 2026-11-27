@@ -104,7 +104,8 @@ pub fn page_event(screen: crate::model::Screen) -> Option<&'static str> {
     })
 }
 
-/// The question opens once the first-run setup is done; the flush worker runs every 10 minutes.
+/// Settles the older three switches as off once the first-run setup is done (see below); the
+/// flush worker runs every 10 minutes.
 pub fn poll(st: &mut State) -> bool {
     let mut changed = super::crash::poll(st);
     let t = &mut st.settings.telemetry;
@@ -119,10 +120,17 @@ pub fn poll(st: &mut State) -> bool {
     if !t.loaded || st.demo || rune::is_headless() {
         return changed;
     }
-    if !t.consent.asked && !t.asking && !t.crash.asking && super::options::get().onboarded {
-        t.asking = true;
+    // One question, not two. The setup's privacy step asks Help build Sigil and says that crash
+    // reports, usage events and the unknown-mod lookup go only when they are turned on. A second
+    // dialog right after it asked for those three again, so it no longer opens: they are recorded
+    // as answered and off, and Settings > Privacy has a switch for each.
+    let settle = !t.consent.asked && !t.asking && !t.crash.asking && super::options::get().onboarded;
+    if settle {
+        let kept = t.consent;
+        save(st, Consent { asked: true, usage: false, crashes: false, hash_lookup: false, ..kept });
         changed = true;
     }
+    let t = &mut st.settings.telemetry;
     let due = t.last_flush.is_none_or(|at| at.elapsed() >= FLUSH_EVERY);
     if due && t.consent.asked && !st.prefs.offline && !t.flush.is_running() {
         t.last_flush = Some(Instant::now());
