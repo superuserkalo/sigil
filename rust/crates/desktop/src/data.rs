@@ -723,10 +723,11 @@ fn short_stamp(value: &str) -> String {
 
 const BROWSE_PER_PAGE: usize = 50;
 const THUMB_TIMEOUT_SECONDS: u64 = 8;
-/// Parallel image downloads per crew. GameBanana's image host serves keep-alive HTTPS, so
-/// a handful of workers on one shared agent fills a page in about one round trip. They only
-/// fetch: Rune's decoder threads decode.
-const THUMB_WORKERS: usize = 4;
+/// Parallel image downloads per crew, at most: a browser's six connections to one host.
+/// GameBanana's image host serves keep-alive HTTPS, so the workers on one shared agent fill a
+/// screen of cards in about two round trips. They only fetch (Rune's decoder threads decode),
+/// start only while pictures wait and leave when the queue is empty, so an idle Sigil has none.
+const THUMB_WORKERS: usize = 6;
 
 /// Device pixels per point in the window, as `f32` bits. `app::view` keeps it current.
 static PIXEL_SCALE: AtomicU32 = AtomicU32::new(0x3f80_0000);
@@ -934,12 +935,10 @@ impl ThumbCrew {
     pub fn add(&mut self, urls: Vec<String>, wake: Option<rune::Waker>, urgent: bool) {
         let failed = &self.failed;
         let resting = |url: &String| failed.get(url).is_some_and(|at| at.elapsed() < THUMB_RETRY);
-        let fresh: Vec<String> = urls
-            .into_iter()
-            .filter(|url| !url.is_empty() && !resting(url))
-            .filter(|url| self.inflight.insert(url.clone()))
-            .collect();
-        if fresh.is_empty() {
+        let asked: Vec<String> = urls.into_iter().filter(|url| !url.is_empty() && !resting(url)).collect();
+        let fresh: std::collections::HashSet<String> =
+            asked.iter().filter(|url| self.inflight.insert((*url).clone())).cloned().collect();
+        if fresh.is_empty() && !urgent {
             return;
         }
         if self.tx.is_none() || self.rx.is_none() {
@@ -951,13 +950,7 @@ impl ThumbCrew {
         let Ok(mut queue) = self.queue.lock() else {
             return;
         };
-        if urgent {
-            for url in fresh.into_iter().rev() {
-                queue.urls.push_front(url);
-            }
-        } else {
-            queue.urls.extend(fresh);
-        }
+        enqueue(&mut queue.urls, &asked, &fresh, urgent);
         // Workers leave when the queue is empty, under the same lock that adds
         // to it, so a URL queued here always has a worker to take it.
         let wanted = THUMB_WORKERS.min(queue.workers + queue.urls.len());
@@ -1064,6 +1057,26 @@ impl ThumbCrew {
         self.rx = None;
         self.tx = None;
         self.inflight.clear();
+    }
+}
+
+/// Puts what a surface asked for in the crew's queue. `fresh` are the ones not queued or
+/// downloading before. Urgent ones (on screen now) go to the front in the order asked, and so
+/// do the asked ones still waiting from an earlier, less urgent request: a card scrolled into
+/// view is fetched before the rows queued ahead of it as margin.
+fn enqueue(queue: &mut std::collections::VecDeque<String>, asked: &[String], fresh: &std::collections::HashSet<String>, urgent: bool) {
+    if !urgent {
+        queue.extend(asked.iter().filter(|url| fresh.contains(*url)).cloned());
+        return;
+    }
+    let wanted: std::collections::HashSet<&String> = asked.iter().collect();
+    let waiting: std::collections::HashSet<String> = queue.iter().filter(|url| wanted.contains(url)).cloned().collect();
+    queue.retain(|url| !wanted.contains(url));
+    let mut seen = std::collections::HashSet::new();
+    let front: Vec<&String> =
+        asked.iter().filter(|url| (fresh.contains(*url) || waiting.contains(*url)) && seen.insert(*url)).collect();
+    for url in front.into_iter().rev() {
+        queue.push_front(url.clone());
     }
 }
 
@@ -4703,6 +4716,41 @@ pub fn use_subscription_for_agent(state: &mut State, provider: &str) {
         Err(error) => {
             state.subscription_log = Some(error.to_string());
         }
+    }
+}
+
+#[cfg(test)]
+mod queue_order_tests {
+    use super::enqueue;
+    use std::collections::{HashSet, VecDeque};
+
+    fn urls(names: &[&str]) -> Vec<String> {
+        names.iter().map(|n| n.to_string()).collect()
+    }
+
+    /// Cards scrolled into view are fetched first, in the order asked, ahead of the margin rows
+    /// queued before them; a later margin request queues behind.
+    #[test]
+    fn visible_pictures_go_first_and_margin_waits_behind() {
+        let mut queue: VecDeque<String> = VecDeque::new();
+        let margin = urls(&["a", "b", "c", "d"]);
+        enqueue(&mut queue, &margin, &margin.iter().cloned().collect(), false);
+        // "d" and "c" scroll into view (already waiting), with "e" that is new.
+        let asked = urls(&["d", "c", "e"]);
+        let fresh: HashSet<String> = urls(&["e"]).into_iter().collect();
+        enqueue(&mut queue, &asked, &fresh, true);
+        assert_eq!(Vec::from(queue.clone()), urls(&["d", "c", "e", "a", "b"]));
+        // A margin request for something already waiting adds nothing and moves nothing.
+        enqueue(&mut queue, &urls(&["b", "f"]), &urls(&["f"]).into_iter().collect(), false);
+        assert_eq!(Vec::from(queue), urls(&["d", "c", "e", "a", "b", "f"]));
+    }
+
+    /// An urgent request for a picture already downloading (taken off the queue) queues nothing.
+    #[test]
+    fn a_picture_in_flight_is_not_queued_again() {
+        let mut queue: VecDeque<String> = urls(&["x"]).into();
+        enqueue(&mut queue, &urls(&["busy", "x"]), &HashSet::new(), true);
+        assert_eq!(Vec::from(queue), urls(&["x"]));
     }
 }
 

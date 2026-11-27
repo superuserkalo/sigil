@@ -523,11 +523,18 @@ pub fn tick(st: &mut State, tx: &mut Tx) -> bool {
         st.browse_view.shelves.due = Some(now + ADVANCE);
         st.browse_view.shelves.running = true;
         tx.motion_curve(crate::motion::countdown(ADVANCE.as_secs_f32()));
-        tx.wake_after(ADVANCE);
+        // Woken once before the step to decode the next pick (`prepare_next`); no commit then.
+        tx.wake_after(ADVANCE - PREPARE);
         return true;
     };
     if now < due {
-        tx.wake_after(due - now);
+        let left = due - now;
+        if left <= PREPARE {
+            prepare_next(st);
+            tx.wake_after(left);
+        } else {
+            tx.wake_after(left - PREPARE);
+        }
         return false;
     }
     // Over: the bar empties at once and the next pick slides in. The next poll starts its bar.
@@ -632,6 +639,56 @@ fn row_placeholder(u: &Ui, width: f32, n: usize, i: usize) -> El {
         )
 }
 
+/// The picture the billboard draws for `p`: the full-size upload once its pixels are decoded
+/// (or still held by the atlas), else the thumbnail once it is, else none (the banner's own
+/// fill). Each one not ready yet is asked for, the thumbnail first. A picture whose header is
+/// read but whose pixels are not decoded draws nothing, so drawing the upload as soon as its
+/// size was known showed an empty banner for the length of its decode.
+pub(crate) fn billboard_pixels<'a>(s: &'a State, p: &Slide) -> Option<&'a rune::Pixels> {
+    let ready = |url: Option<&String>| {
+        let px = pixels_for(s, url)?;
+        if px.is_ready() {
+            return Some(px);
+        }
+        px.prefetch();
+        None
+    };
+    let small = ready(p.small.as_ref());
+    ready(p.image.as_ref()).or(small)
+}
+
+/// How long before a step the next pick's full-size upload is decoded, so it shows sharp from
+/// its first frame rather than as the thumbnail. Its pixels wait on the CPU at most this long
+/// (one banner, about 12 MB with its mips at 2x) unless a pause stops the step.
+const PREPARE: Duration = Duration::from_millis(1500);
+
+/// Decodes the next pick's full-size upload ahead of the step (`PREPARE`).
+fn prepare_next(st: &State) {
+    let width = super::toolbar::page_width(st);
+    let p = plan(st, per_page(width), gamebanana::now_unix());
+    let count = p.billboard.len();
+    if count < 2 {
+        return;
+    }
+    let next = &p.billboard[(st.browse_view.shelves.spot + 1) % count];
+    if let Some(px) = pixels_for(st, next.image.as_ref()) {
+        px.prefetch();
+    }
+}
+
+/// The billboard's current pick and the picture it draws, for the load measurements.
+#[cfg(test)]
+pub(crate) fn billboard_now(s: &State) -> Option<(bool, bool)> {
+    let width = super::toolbar::page_width(s);
+    let p = plan(s, per_page(width), gamebanana::now_unix());
+    let count = p.billboard.len();
+    let pick = p.billboard.get(s.browse_view.shelves.spot % count.max(1))?;
+    // (draws something not decoded yet, the full-size upload is decoded)
+    let drawn = billboard_pixels(s, pick).is_some_and(|px| !px.is_ready());
+    let sharp = pixels_for(s, pick.image.as_ref()).is_some_and(rune::Pixels::is_ready);
+    Some((drawn, sharp))
+}
+
 /// The billboard: the pick's picture fills the whole banner (cropped from the top, as a wide
 /// banner wants), fading into the page at the bottom and the left, with the title and the
 /// actions on that fade. The picture is the mod's full-size upload, so it stays sharp.
@@ -651,9 +708,7 @@ fn billboard(s: &State, u: &Ui, picks: &[Slide], width: f32) -> El {
     let p = &picks[at];
     let id = p.card.id;
     let r = crate::ui::r(8.0);
-    // The full-size upload once it is decoded, else the thumbnail.
-    let decoded = |url: Option<&String>| pixels_for(s, url).filter(|px| px.size().0 > 0);
-    let pixels = decoded(p.image.as_ref()).or_else(|| decoded(p.small.as_ref()));
+    let pixels = billboard_pixels(s, p);
     let dir = s.browse_view.shelves.spot_dir;
     let base = u.bg;
     let opened = super::store::clone_card(&p.card);
@@ -1181,6 +1236,43 @@ pub(crate) fn tile(s: &State, u: &Ui, slot: usize, card: &BrowseCard, tw: f32, t
 
 fn card_nsfw_reveals(st: &State, _id: u64) -> bool {
     crate::screens::settings::nsfw::reveal_on_hover() && st.prefs.mature == crate::prefs::Mature::Blur
+}
+
+#[cfg(test)]
+mod billboard_picture_tests {
+    use super::*;
+
+    fn slide() -> Slide {
+        Slide {
+            card: card_of(&gamebanana::TopSub::default()),
+            eyebrow: String::new(),
+            description: String::new(),
+            image: Some("large".into()),
+            small: Some("small".into()),
+        }
+    }
+
+    fn ready() -> rune::Pixels {
+        let px = rune::Pixels::new();
+        px.set(1, 1, vec![0; 4]);
+        px
+    }
+
+    /// The full-size upload only once its pixels are there: a picture whose size is known but
+    /// whose pixels are not decoded draws nothing, which showed an empty banner for the decode.
+    #[test]
+    fn the_billboard_draws_the_upload_only_once_it_is_decoded() {
+        let mut s = State::default();
+        s.thumbnails.insert("large".into(), rune::Pixels::new());
+        s.thumbnails.insert("small".into(), ready());
+        assert!(billboard_pixels(&s, &slide()).is_some_and(|px| px.is_ready() && std::ptr::eq(px, &s.thumbnails["small"])));
+        s.thumbnails.insert("large".into(), ready());
+        assert!(billboard_pixels(&s, &slide()).is_some_and(|px| std::ptr::eq(px, &s.thumbnails["large"])));
+        s.thumbnails.clear();
+        s.thumbnails.insert("large".into(), rune::Pixels::new());
+        s.thumbnails.insert("small".into(), rune::Pixels::new());
+        assert!(billboard_pixels(&s, &slide()).is_none(), "nothing ready: the banner's own fill");
+    }
 }
 
 #[cfg(test)]
