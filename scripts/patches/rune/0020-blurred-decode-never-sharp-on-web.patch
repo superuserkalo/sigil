@@ -1,0 +1,30 @@
+diff --git a/crates/rune/src/image.rs b/crates/rune/src/image.rs
+index 7946b2e..6d7f3a9 100644
+--- a/crates/rune/src/image.rs
++++ b/crates/rune/src/image.rs
+@@ -448,8 +448,10 @@ impl ImageCache {
+         hash.update(&[0]);
+         fit.hash(&mut hash);
+         hash.update(&sigma.to_le_bytes());
++        // On web a path is a URL the browser fetches, and only encoded bytes and files decode
++        // blurred: the request fails (its placeholder shows) rather than loading it sharp.
+         #[cfg(target_arch = "wasm32")]
+-        let input = Input::Url(path.to_string_lossy().into_owned(), 0);
++        let input = Input::Blurred(Box::new(Input::Url(path.to_string_lossy().into_owned(), 0)), fit, sigma);
+         #[cfg(not(target_arch = "wasm32"))]
+         let input = Input::Blurred(Box::new(Input::File(path, 0)), fit, sigma);
+         self.request(*hash.finalize().as_bytes(), input)
+@@ -1106,6 +1108,13 @@ mod tests {
+         assert_eq!(tail.mips[1].pixels, [0, 0, 0, 0], "alpha rounded to zero cannot emit light");
+     }
+ 
++    #[test]
++    fn a_blurred_request_the_decoder_cannot_blur_fails_rather_than_showing_sharp() {
++        // What a web build's `file_fit_blurred` hands the decoder: a URL inside `Blurred`.
++        let input = Input::Blurred(Box::new(Input::Url("https://example.com/a.png".into(), 0)), Fit::Cover(64, 64), 4.0);
++        assert!(input.decode().is_err());
++    }
++
+     #[test]
+     fn decoded_pixels_wake_windows_only_once_the_image_reports_ready() {
+         let image = Image::new(Arc::new(State { id: [0; 32], pixels: crate::Pixels::new(), size: OnceLock::new(), failed: OnceLock::new() }));
