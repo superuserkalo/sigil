@@ -1,0 +1,267 @@
+diff --git a/crates/rune/src/image.rs b/crates/rune/src/image.rs
+index 6d7f3a9..e781dd6 100644
+--- a/crates/rune/src/image.rs
++++ b/crates/rune/src/image.rs
+@@ -10,7 +10,7 @@
+ use std::collections::HashMap;
+ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+ use std::sync::{Arc, Mutex, OnceLock, Weak};
+-#[cfg(not(target_arch = "wasm32"))]
++#[cfg(all(test, not(target_arch = "wasm32")))]
+ use std::sync::mpsc;
+ 
+ pub type ImageId = [u8; 32];
+@@ -243,7 +243,12 @@ impl Input {
+         let (bytes, fit): (std::borrow::Cow<'_, [u8]>, Option<Fit>) = match self {
+             Input::Encoded(bytes) => (std::borrow::Cow::Borrowed(&bytes[..]), None),
+             Input::File(path, _) if !has_svg_extension(path) => match read_head(path) {
+-                Ok(head) => (std::borrow::Cow::Owned(head), None),
++                Ok(head) if head.len() < HEAD_BYTES || head_parses(&head) => (std::borrow::Cow::Owned(head), None),
++                // A header past the first read (a large EXIF block before a JPEG's frame).
++                Ok(_) => match std::fs::read(path) {
++                    Ok(all) => (std::borrow::Cow::Owned(all), None),
++                    Err(e) => return Some(Err(ImageError(format!("{}: {e}", path.display())))),
++                },
+                 Err(e) => return Some(Err(e)),
+             },
+             Input::Url(url, px) => return match from_url::file_path(url) { Ok(path) => Input::File(path, *px).probe(), Err(e) => Some(Err(e)) },
+@@ -321,60 +326,33 @@ impl Input {
+ }
+ #[cfg(not(target_arch = "wasm32"))]
+ struct Job { image: Image, input: Input, waker: crate::Waker, probe: bool }
+-/// Decoder threads for the process, at most one per core. Three keep a screen of thumbnails
+-/// quick without a thread per core in a UI process.
+-#[cfg(not(target_arch = "wasm32"))]
+-const DECODERS: usize = 3;
+ /// Straight RGBA images up to this many pixels (64 x 64) finish on the calling thread.
+ #[cfg(not(target_arch = "wasm32"))]
+ const INLINE_RGBA_PIXELS: u64 = 64 * 64;
+ 
+-/// The process's decoder threads, shared by every cache and started by the first image to
+-/// decode: an app that makes a cache per feature, or shows no image, pays no thread for it.
+-/// The caller starts one; that one starts the others, so the first image (often in a window's
+-/// first frame) costs its thread one spawn, not four.
++/// One job on a decoder thread: a header read (`probe`) or a decode.
+ #[cfg(not(target_arch = "wasm32"))]
+-fn decoders() -> &'static mpsc::Sender<Job> {
+-    static JOBS: OnceLock<mpsc::Sender<Job>> = OnceLock::new();
+-    JOBS.get_or_init(|| {
+-        let (jobs, receive) = mpsc::channel::<Job>();
+-        // A session opening on several screenshots decodes them side by side, not one by one.
+-        let receive = Arc::new(Mutex::new(receive));
+-        let count = DECODERS.min(std::thread::available_parallelism().map_or(1, |n| n.get()));
+-        let first = receive.clone();
+-        std::thread::Builder::new().name("rune-images".into()).spawn(move || {
+-            for _ in 1..count {
+-                let receive = receive.clone();
+-                let _ = std::thread::Builder::new().name("rune-images".into()).spawn(move || decode_jobs(&receive));
+-            }
+-            decode_jobs(&first);
+-        }).expect("image worker");
+-        jobs
+-    })
+-}
+-
+-#[cfg(not(target_arch = "wasm32"))]
+-fn decode_jobs(receive: &Mutex<mpsc::Receiver<Job>>) {
+-    loop {
+-        let Ok(job) = receive.lock().unwrap_or_else(|e| e.into_inner()).recv() else { return };
+-        // Nothing holds the image any more (a request a view dropped): skip the work.
+-        if Arc::strong_count(&job.image.0) <= 2 {
+-            job.image.0.pixels.load_ended();
+-            continue;
+-        }
+-        if job.probe {
+-            match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| job.input.probe())) {
+-                Ok(Some(Ok(size))) => job.image.sized(size),
+-                Ok(Some(Err(error))) => job.image.finish(Err(error)),
+-                // The format can't say its size without decoding: decode now.
+-                Ok(None) => job.image.finish(job.input.decode_caught()),
+-                Err(_) => job.image.finish(Err(ImageError("image header reader panicked".into()))),
+-            }
+-        } else {
+-            job.image.finish(job.input.decode_caught());
++fn decode_job(job: Job) {
++    // Nothing holds the image any more (a request a view dropped): skip the work.
++    if Arc::strong_count(&job.image.0) <= 2 {
++        job.image.0.pixels.load_ended();
++        return;
++    }
++    if job.probe {
++        // A decode that ran first (drawn or prefetched before its header was read) already
++        // gave the size: reading the header again is wasted work.
++        if job.image.0.size.get().is_some() { return; }
++        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| job.input.probe())) {
++            Ok(Some(Ok(size))) => job.image.sized(size),
++            Ok(Some(Err(error))) => job.image.finish(Err(error)),
++            // The format can't say its size without decoding: decode now.
++            Ok(None) => job.image.finish(job.input.decode_caught()),
++            Err(_) => job.image.finish(Err(ImageError("image header reader panicked".into()))),
+         }
+-        (job.waker)();
++    } else {
++        job.image.finish(job.input.decode_caught());
+     }
++    (job.waker)();
+ }
+ 
+ /// Construct once during app setup. The cache deduplicates by content, not a path or pointer;
+@@ -596,9 +574,7 @@ impl ImageCache {
+             let again = input.reloadable();
+             let lazy = again.is_some() && self.lazy.load(Ordering::Relaxed);
+             if let Some(again) = again { image.0.pixels.set_reload(reloader(&image.0, again, self.waker.clone()), !lazy); }
+-            if decoders().send(Job { image: image.clone(), input, waker: self.waker.clone(), probe: lazy }).is_err() {
+-                let _ = image.0.size.set(Err(ImageError("image worker stopped".into())));
+-            }
++            decoders::send(Job { image: image.clone(), input, waker: self.waker.clone(), probe: lazy });
+         }
+         #[cfg(target_arch = "wasm32")]
+         {
+@@ -641,9 +617,7 @@ fn reloader(state: &Arc<State>, input: Input, waker: crate::Waker) -> Arc<dyn Fn
+         let Some(again) = input.lock().unwrap_or_else(|e| e.into_inner()).reloadable() else { return };
+         if state.pixels.signature().1 > 0 { crate::pixels::RELOADS.fetch_add(1, Ordering::Relaxed); }
+         let image = Image::new(state);
+-        if decoders().send(Job { image: image.clone(), input: again, waker: waker.clone(), probe: false }).is_err() {
+-            image.0.pixels.load_ended();
+-        }
++        decoders::send(Job { image: image.clone(), input: again, waker: waker.clone(), probe: false });
+     })
+ }
+ 
+@@ -1014,9 +988,27 @@ fn header_size(bytes: &[u8]) -> Result<[u32; 2], ImageError> {
+     Ok(if turned { [h, w] } else { [w, h] })
+ }
+ 
++/// How much of a file a header read takes first: a card thumbnail whole, the start of a
++/// multi-megabyte original.
++#[cfg(not(target_arch = "wasm32"))]
++const HEAD_BYTES: usize = 256 << 10;
++
+ #[cfg(not(target_arch = "wasm32"))]
+ fn read_head(path: &std::path::Path) -> Result<Vec<u8>, ImageError> {
+-    std::fs::read(path).map_err(|e| ImageError(format!("{}: {e}", path.display())))
++    use std::io::Read;
++    let error = |e: std::io::Error| ImageError(format!("{}: {e}", path.display()));
++    let mut head = Vec::with_capacity(HEAD_BYTES.min(64 << 10));
++    std::fs::File::open(path).map_err(error)?.take(HEAD_BYTES as u64).read_to_end(&mut head).map_err(error)?;
++    Ok(head)
++}
++
++/// Whether the first [`HEAD_BYTES`] of a file are enough to read its size, or what refuses it.
++#[cfg(not(target_arch = "wasm32"))]
++fn head_parses(head: &[u8]) -> bool {
++    is_svg(head) || avif::is_avif(head) || head.starts_with(b"icns") || match header_size(head) {
++        Ok(_) => true,
++        Err(error) => error.0.contains("decode limit"),
++    }
+ }
+ 
+ /// Encoded bytes to upright straight-alpha RGBA8, refused over the decode limit before decoding.
+@@ -1087,6 +1079,9 @@ use mips::byte;
+ #[cfg(not(target_arch = "wasm32"))]
+ pub(crate) use from_url::font_file;
+ 
++#[cfg(not(target_arch = "wasm32"))]
++mod decoders;
++
+ #[cfg(test)]
+ mod mip_tests;
+ 
+diff --git a/crates/rune/src/image/decoders.rs b/crates/rune/src/image/decoders.rs
+new file mode 100644
+index 0000000..1104a83
+--- /dev/null
++++ b/crates/rune/src/image/decoders.rs
+@@ -0,0 +1,92 @@
++//! The process's decoder threads and their queue. A decode a window waits on (an image drawn,
++//! prefetched, or decoded again after its atlas copy was freed) goes ahead of a header read
++//! (`ImageCache::decode_when_drawn`'s size probe): a page that requests fifty pictures at once
++//! reads fifty headers, and the dozen on screen must not wait behind them.
++
++use std::collections::VecDeque;
++use std::sync::{Condvar, Mutex, OnceLock};
++
++use super::Job;
++
++/// Decoder threads for the process, at most one per core. Three keep a screen of thumbnails
++/// quick without a thread per core in a UI process.
++const DECODERS: usize = 3;
++
++/// Jobs waiting, by lane.
++pub(super) struct Lanes<T> {
++    decode: VecDeque<T>,
++    probe: VecDeque<T>,
++}
++
++impl<T> Default for Lanes<T> {
++    fn default() -> Self { Lanes { decode: VecDeque::new(), probe: VecDeque::new() } }
++}
++
++impl<T> Lanes<T> {
++    pub(super) fn push(&mut self, job: T, probe: bool) {
++        if probe { self.probe.push_back(job) } else { self.decode.push_back(job) }
++    }
++
++    /// The oldest decode, else the oldest header read.
++    pub(super) fn pop(&mut self) -> Option<T> {
++        self.decode.pop_front().or_else(|| self.probe.pop_front())
++    }
++}
++
++struct Queue {
++    lanes: Mutex<Lanes<Job>>,
++    ready: Condvar,
++}
++
++/// Queues a job: a header read (`probe`) behind every decode. The first job starts the
++/// threads, so an app that shows no image pays no thread for them; the first thread starts the
++/// others, so that job (often in a window's first frame) costs its caller one spawn, not three.
++pub(super) fn send(job: Job) {
++    static QUEUE: OnceLock<Queue> = OnceLock::new();
++    static STARTED: std::sync::Once = std::sync::Once::new();
++    let queue: &'static Queue = QUEUE.get_or_init(|| Queue { lanes: Mutex::new(Lanes::default()), ready: Condvar::new() });
++    STARTED.call_once(|| {
++        let count = DECODERS.min(std::thread::available_parallelism().map_or(1, |n| n.get()));
++        std::thread::Builder::new()
++            .name("rune-images".into())
++            .spawn(move || {
++                for _ in 1..count {
++                    let _ = std::thread::Builder::new().name("rune-images".into()).spawn(move || run(queue));
++                }
++                run(queue);
++            })
++            .expect("image worker");
++    });
++    let probe = job.probe;
++    queue.lanes.lock().unwrap_or_else(|e| e.into_inner()).push(job, probe);
++    queue.ready.notify_one();
++}
++
++fn run(queue: &Queue) {
++    loop {
++        let job = {
++            let mut lanes = queue.lanes.lock().unwrap_or_else(|e| e.into_inner());
++            loop {
++                if let Some(job) = lanes.pop() { break job; }
++                lanes = queue.ready.wait(lanes).unwrap_or_else(|e| e.into_inner());
++            }
++        };
++        super::decode_job(job);
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::Lanes;
++
++    #[test]
++    fn a_decode_goes_ahead_of_every_header_read_queued_before_it() {
++        let mut lanes = Lanes::default();
++        for n in 0..50 { lanes.push(n, true); }
++        lanes.push(100, false);
++        lanes.push(101, false);
++        assert_eq!(lanes.pop(), Some(100));
++        assert_eq!(lanes.pop(), Some(101));
++        assert_eq!(lanes.pop(), Some(0), "then the header reads, oldest first");
++    }
++}
