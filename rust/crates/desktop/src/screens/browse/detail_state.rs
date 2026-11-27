@@ -23,7 +23,12 @@ pub struct Details {
     /// The carousel image in the docked view.
     pub image: usize,
     pub lightbox: Option<usize>,
+    /// Every loaded change log entry, not only the latest (`CHANGES_SHOWN`).
     pub changelog_open: bool,
+    /// About in full instead of clamped (`details::clamp_about`).
+    pub about_open: bool,
+    /// Every loaded comment, not only the first few (`COMMENTS_SHOWN`).
+    pub comments_all: bool,
     pub open_updates: HashSet<u64>,
     pub archived_open: bool,
     /// The hero the page mentions, and the player's pick.
@@ -55,6 +60,8 @@ impl Details {
             image: 0,
             lightbox: None,
             changelog_open: false,
+            about_open: false,
+            comments_all: false,
             open_updates: HashSet::new(),
             archived_open: false,
             hero: None,

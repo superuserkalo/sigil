@@ -13,7 +13,7 @@
 use std::collections::HashMap;
 
 use deadlock_core::creators::{self as core, CreatorPage};
-use rune::{Color, El, SurfaceFit, Tx, col, el, row, spacer, text};
+use rune::{Color, El, SurfaceFit, Tx, col, el, row, text};
 
 use crate::app::State;
 use crate::jobs::Job;
@@ -44,6 +44,17 @@ const DE: &[(&str, &str)] = &[
     ("Sigil is offline.", "Sigil ist offline."),
     ("More from this creator", "Mehr von diesem Ersteller"),
     ("More from {}", "Mehr von {}"),
+    ("{} mod", "{} Mod"),
+    ("{} mods", "{} Mods"),
+    ("{} likes", "{} Likes"),
+    ("{} views", "{} Aufrufe"),
+    ("Updated {}", "Aktualisiert {}"),
+    ("View all their mods", "Alle Mods ansehen"),
+    ("Back to Browse", "Zurück zu Durchsuchen"),
+    ("Browse", "Durchsuchen"),
+    ("Show again", "Wieder zeigen"),
+    ("Hide creator", "Ersteller ausblenden"),
+    ("Hide every mod by this creator in Browse. Undo under Hidden items.", "Blendet jeden Mod dieses Erstellers in Durchsuchen aus. Rückgängig unter Ausgeblendet."),
 ];
 
 fn tr(text: &str) -> &str {
@@ -76,11 +87,18 @@ pub fn more_label(author: &str) -> String {
 
 /// Scope Browse to one creator.
 pub fn open(st: &mut State, id: u64, name: String) {
+    open_with(st, None, id, name);
+}
+
+/// Scope Browse to one creator from anywhere, closing an open mod's details first. Back (the
+/// page's Back link, mouse Back, Alt+Left) returns to the grid as it was.
+pub fn open_with(st: &mut State, tx: Option<&mut Tx>, id: u64, name: String) {
     if id == 0 {
         return;
     }
+    super::close_details(st);
     st.go(crate::model::Screen::Browse);
-    super::set_filters(st, None, move |f| {
+    super::set_filters(st, tx, move |f| {
         f.creator = Some(Pick { id, name });
         f.favorites = false;
         if f.owned == super::Owned::Installed {
@@ -172,13 +190,6 @@ fn day(ts: i64) -> String {
     crate::prefs::show_unix_date(ts)
 }
 
-fn stat(u: &Ui, label: &str, value: String) -> El {
-    col()
-        .gap(0.0)
-        .child(text(value).font(BODY_MED).color(u.ink))
-        .child(text(tr(label).to_string()).font(SMALL).color(u.faint))
-}
-
 fn picture(s: &State, u: &Ui, url: Option<&String>, name: &str, size: f32) -> El {
     match url.and_then(|url| s.thumbnails.get(url)) {
         Some(pixels) => el()
@@ -201,130 +212,198 @@ fn picture(s: &State, u: &Ui, url: Option<&String>, name: &str, size: f32) -> El
     }
 }
 
-/// The header over a creator scoped grid. `None` when Browse is not scoped to one creator.
+/// One line about a creator for the details' creator box: their mod count and likes once
+/// their page was read this run, else what the press does.
+pub fn facts_line(s: &State, id: u64) -> String {
+    match s.browse_view.w4.creator.pages.get(&id) {
+        Some(Ok(page)) => {
+            let totals = core::stats(&page.mods);
+            let mut facts = vec![count_label(totals.submissions as u64, "{} mod", "{} mods", page.more)];
+            if totals.likes > 0 {
+                facts.push(fill(tr("{} likes"), &[&grouped(totals.likes)]));
+            }
+            facts.join("  ·  ")
+        }
+        _ => tr("View all their mods").to_string(),
+    }
+}
+
+fn count_label(count: u64, one: &str, many: &str, more: bool) -> String {
+    let text = fill(tr(if count == 1 { one } else { many }), &[&grouped(count)]);
+    if more { format!("{text}+") } else { text }
+}
+
+/// The page's Back link, to the grid as it was before the creator was opened.
+fn back_link(u: &Ui) -> El {
+    row()
+        .key("browse-creator-back")
+        .h(28.0)
+        .pl(6.0)
+        .pr(10.0)
+        .ml(-6.0)
+        .gap(6.0)
+        .center_y()
+        .radius(crate::ui::r(6.0))
+        .hover(u.hover)
+        .press(u.over.alpha(0.08))
+        .focusable(true)
+        .role("button")
+        .label(tr("Back to Browse").to_string())
+        .cursor(rune::Cursor::Pointer)
+        .on_press_tx(|st: &mut State, tx: &mut Tx| {
+            super::set_filters(st, Some(tx), |f| f.creator = None);
+        })
+        .child(rune::icon(&crate::icons::ARROW_LEFT, 14.0).color(u.muted).a11y_hidden())
+        .child(text(tr("Browse").to_string()).font(BODY_MED).color(u.muted).a11y_hidden())
+}
+
+/// The creator's name: two lines before anything is cut, and the whole name as its tooltip.
+fn name_text(u: &Ui, name: &str) -> El {
+    text(name.to_string()).font(H1).color(u.ink).max_lines(2).wrap_anywhere().w_full().help(name.to_string())
+}
+
+/// Hide creator, or Show again when they are hidden: the same list as a card's menu.
+fn hide_action(s: &State, u: &Ui, name: &str) -> Option<El> {
+    if name.trim().is_empty() {
+        return None;
+    }
+    let author = name.to_string();
+    Some(if super::author_hidden(s, name) {
+        u.icon_action(&crate::icons::EYE, tr("Show again"), ActionKind::Secondary)
+            .key("browse-creator-unhide")
+            .cursor(rune::Cursor::Pointer)
+            .on_press(move |st: &mut State| super::unhide_author(st, &author))
+    } else {
+        u.icon_action(&super::EYE_OFF, tr("Hide creator"), ActionKind::Ghost)
+            .key("browse-creator-hide")
+            .help(tr("Hide every mod by this creator in Browse. Undo under Hidden items."))
+            .cursor(rune::Cursor::Pointer)
+            .on_press(move |st: &mut State| super::hide_author(st, author.clone()))
+    })
+}
+
+/// The header over a creator scoped grid: Back, then one row with the avatar, the full name,
+/// one line of facts and the creator's links, and the actions at the right edge. `None` when
+/// Browse is not scoped to one creator.
 pub fn header(s: &State, u: &Ui) -> Option<El> {
     let pick = s.browse_view.filters.creator.as_ref()?;
-    let mut card = row()
+    let card = row()
         .key("browse-creator-page")
         .w_full()
         .padding(16.0)
         .gap(16.0)
-        .items_start()
-        .radius(crate::ui::r(12.0))
+        .center_y()
+        .radius(crate::ui::r(8.0))
         .fill(Color::WHITE.alpha(0.02))
         .border(1.0, u.hair_strong);
-    match s.browse_view.w4.creator.pages.get(&pick.id) {
+    let frame = |card: El| col().w_full().gap(8.0).child(back_link(u)).child(card);
+    let mut actions = row().gap(8.0).center_y();
+    let body = match s.browse_view.w4.creator.pages.get(&pick.id) {
         None => {
-            Some(
-                card.child(picture(s, u, None, &pick.name, 64.0)).child(
-                    col()
-                        .grow(1.0)
-                        .gap(4.0)
-                        .child(text(tr("Creator")).font(SMALL).color(u.faint))
-                        .child(text(pick.name.clone()).font(H1).color(u.ink))
-                        .child(text(tr("Reading the creator's page")).font(SMALL).color(u.muted)),
-                ),
-            )
+            actions = actions.children(hide_action(s, u, &pick.name));
+            return Some(frame(
+                card.child(picture(s, u, None, &pick.name, 56.0))
+                    .child(
+                        col()
+                            .grow(1.0)
+                            .min_w(0.0)
+                            .gap(4.0)
+                            .child(name_text(u, &pick.name))
+                            .child(text(tr("Reading the creator's page")).font(SMALL).color(u.muted)),
+                    )
+                    .child(actions),
+            ));
         }
         Some(Err(error)) => {
             let id = pick.id;
-            Some(
-                card.child(picture(s, u, None, &pick.name, 64.0)).child(
-                    col()
-                        .grow(1.0)
-                        .gap(6.0)
-                        .child(text(pick.name.clone()).font(H1).color(u.ink))
-                        .child(text(fill(tr("The creator's page did not load: {}"), &[error])).font(SMALL).color(u.rose).wrap())
-                        .child(
-                            u.action(tr("Try again"), ActionKind::Secondary)
-                                .key("browse-creator-retry")
-                                .cursor(rune::Cursor::Pointer)
-                                .on_press(move |st: &mut State| {
-                                    st.browse_view.w4.creator.pages.remove(&id);
-                                }),
-                        ),
-                ),
-            )
-        }
-        Some(Ok(page)) => {
-            let totals = core::stats(&page.mods);
-            let name = if page.profile.name.is_empty() { pick.name.clone() } else { page.profile.name.clone() };
-            let mut meta: Vec<String> = Vec::new();
-            if let Some(title) = &page.extras.title {
-                meta.push(title.clone());
-            }
-            if let Some(joined) = page.extras.joined {
-                meta.push(fill(tr("Member since {}"), &[&month_year(joined)]));
-            }
-            if page.extras.subscribers > 0 {
-                meta.push(fill(tr("{} subscribers"), &[&grouped(page.extras.subscribers)]));
-            }
-            let downloads: u64 = page
-                .mods
-                .iter()
-                .filter_map(|item| s.browse_view.download_counts.get(&item.id))
-                .sum();
-            let mut stats = row()
-                .gap(24.0)
-                .flex_wrap()
-                .child(stat(u, "Submissions", grouped(totals.submissions as u64)))
-                .child(stat(u, "Likes", grouped(totals.likes)))
-                .child(stat(u, "Views", grouped(totals.views)))
-                .child(stat(u, "Comments", grouped(totals.comments)));
-            if downloads > 0 {
-                stats = stats.child(stat(u, "Downloads", grouped(downloads)).help(tr("Downloads from mods whose page you opened.")));
-            }
-            if totals.last_update > 0 {
-                stats = stats.child(stat(u, "Last update", day(totals.last_update)));
-            }
-            let mut body = col()
-                .grow(1.0)
-                .min_w(0.0)
-                .gap(6.0)
-                .child(text(tr("Creator")).font(SMALL).color(u.faint))
-                .child(text(name.clone()).font(H1).color(u.ink).truncate())
-                .children((!meta.is_empty()).then(|| text(meta.join("  ·  ")).font(SMALL).color(u.muted)))
-                .children(super::w4::author_links(s, u, pick.id))
-                .child(el().h(4.0))
-                .child(stats);
-            let categories: Vec<String> = totals
-                .categories
-                .iter()
-                .take(5)
-                .map(|(category, count)| format!("{category} {count}"))
-                .collect();
-            if !categories.is_empty() {
-                body = body.child(text(categories.join("  ·  ")).font(SMALL).color(u.faint));
-            }
-            if let Some((_, top, likes)) = &totals.top
-                && *likes > 0
-            {
-                body = body.child(text(fill(tr("Most liked: {}"), &[top])).font(SMALL).color(u.muted).truncate());
-            }
-            if page.more {
-                body = body.child(
-                    text(fill(tr("Counts the newest {} submissions; GameBanana lists more."), &[&totals.submissions.to_string()]))
-                        .font(SMALL)
-                        .color(u.faint),
-                );
-            }
-            // From the API response: the button only ever opens a GameBanana page.
-            let url = Some(page.profile.profile_url.clone())
-                .filter(|url| deadlock_core::gamebanana::is_gamebanana_url(url))
-                .unwrap_or_default();
-            card = card
-                .child(picture(s, u, page.extras.hd_avatar.as_ref().or(page.profile.avatar_url.as_ref()), &name, 64.0))
-                .child(body)
-                .child(spacer().w(0.0))
-                .children((!url.is_empty()).then(|| {
-                    u.action(tr("Open on GameBanana"), ActionKind::Secondary)
-                        .key("browse-creator-gamebanana")
+            actions = actions
+                .child(
+                    u.icon_action(&crate::icons::REFRESH_CW, tr("Try again"), ActionKind::Secondary)
+                        .key("browse-creator-retry")
                         .cursor(rune::Cursor::Pointer)
-                        .on_press_tx(move |st: &mut State, tx: &mut Tx| super::detail_state::open_url(st, tx, &url))
-                }));
-            Some(card)
+                        .on_press(move |st: &mut State| {
+                            st.browse_view.w4.creator.pages.remove(&id);
+                        }),
+                )
+                .children(hide_action(s, u, &pick.name));
+            return Some(frame(
+                card.child(picture(s, u, None, &pick.name, 56.0))
+                    .child(
+                        col()
+                            .grow(1.0)
+                            .min_w(0.0)
+                            .gap(4.0)
+                            .child(name_text(u, &pick.name))
+                            .child(text(fill(tr("The creator's page did not load: {}"), &[error])).font(SMALL).color(u.rose).wrap()),
+                    )
+                    .child(actions),
+            ));
         }
+        Some(Ok(page)) => page,
+    };
+    let page = body;
+    let totals = core::stats(&page.mods);
+    let name = if page.profile.name.is_empty() { pick.name.clone() } else { page.profile.name.clone() };
+    // Facts GameBanana gives: what they posted for Deadlock, its likes and views, then the
+    // member's own title, join date and subscribers.
+    let mut facts: Vec<String> = vec![count_label(totals.submissions as u64, "{} mod", "{} mods", page.more)];
+    if totals.likes > 0 {
+        facts.push(fill(tr("{} likes"), &[&grouped(totals.likes)]));
     }
+    if totals.views > 0 {
+        facts.push(fill(tr("{} views"), &[&grouped(totals.views)]));
+    }
+    if page.extras.subscribers > 0 {
+        facts.push(fill(tr("{} subscribers"), &[&grouped(page.extras.subscribers)]));
+    }
+    if let Some(joined) = page.extras.joined {
+        facts.push(fill(tr("Member since {}"), &[&month_year(joined)]));
+    }
+    if totals.last_update > 0 {
+        facts.push(fill(tr("Updated {}"), &[&day(totals.last_update)]));
+    }
+    let mut who = col().grow(1.0).min_w(0.0).gap(4.0);
+    if let Some(title) = page.extras.title.as_ref().filter(|title| !title.trim().is_empty()) {
+        who = who.child(text(title.clone()).font(SMALL).color(u.faint).truncate().w_full());
+    }
+    who = who
+        .child(name_text(u, &name))
+        .child(text(facts.join("  ·  ")).font(SMALL).color(u.muted).wrap().w_full())
+        .children(super::w4::author_links(s, u, pick.id));
+    if page.more {
+        who = who.child(
+            text(fill(tr("Counts the newest {} submissions; GameBanana lists more."), &[&totals.submissions.to_string()]))
+                .font(SMALL)
+                .color(u.faint),
+        );
+    }
+    // From the API response: the button only ever opens a GameBanana page.
+    let url = Some(page.profile.profile_url.clone())
+        .filter(|url| deadlock_core::gamebanana::is_gamebanana_url(url))
+        .unwrap_or_default();
+    actions = actions
+        .children((!url.is_empty()).then(|| {
+            u.icon_action(&crate::icons::EXTERNAL_LINK, tr("Open on GameBanana"), ActionKind::Secondary)
+                .key("browse-creator-gamebanana")
+                .cursor(rune::Cursor::Pointer)
+                .on_press_tx(move |st: &mut State, tx: &mut Tx| super::detail_state::open_url(st, tx, &url))
+        }))
+        .children(hide_action(s, u, &name));
+    Some(frame(
+        card.child(picture(s, u, page.extras.hd_avatar.as_ref().or(page.profile.avatar_url.as_ref()), &name, 56.0))
+            .child(who)
+            .child(actions),
+    ))
+}
+
+/// The empty grid under a creator's page: their mods are hidden, or this section has none.
+pub fn empty_copy(s: &State) -> Option<(&'static str, &'static str)> {
+    let pick = s.browse_view.filters.creator.as_ref()?;
+    Some(if super::author_hidden(s, &pick.name) {
+        ("You hid this creator", "Their mods stay out of Browse. Show them again from the page above.")
+    } else {
+        ("No mods from this creator here", "Try another section or fewer filters, or open their GameBanana page.")
+    })
 }
 
 /// `browse-creator`: the fixture grid scoped to a creator, with their page over it.
@@ -335,6 +414,29 @@ pub fn scene_creator(s: &mut State) {
     let key = super::query_key(s, &super::current_query(s));
     if let Some(page) = s.browse.page.as_mut() {
         page.key = key;
+    }
+}
+
+/// `browse-creator-loading`: the page while GameBanana is read.
+pub fn scene_creator_loading(s: &mut State) {
+    scene_creator(s);
+    s.browse_view.w4.creator.pages.clear();
+    s.browse.page = None;
+    s.browse.loading = true;
+}
+
+/// `browse-creator-error`: the profile did not load; Try again in the header.
+pub fn scene_creator_error(s: &mut State) {
+    scene_creator(s);
+    s.browse_view.w4.creator.pages.insert(1_874_253, Err("GameBanana answered 503".to_string()));
+}
+
+/// `browse-creator-empty`: the creator has nothing in this section.
+pub fn scene_creator_empty(s: &mut State) {
+    scene_creator(s);
+    if let Some(page) = s.browse.page.as_mut() {
+        page.mods.clear();
+        page.total = 0;
     }
 }
 
@@ -449,5 +551,51 @@ mod tests {
     fn numbers_group_by_thousands() {
         assert_eq!(grouped(1_284), "1,284");
         assert_eq!(grouped(12), "12");
+    }
+}
+
+#[cfg(test)]
+mod plan_tests {
+    use deadlock_core::gamebanana::BrowseOrder;
+
+    use super::*;
+
+    /// A creator's page is Browse's own read with the member filter: paged, in the grid's
+    /// order, never the unfiltered subfeed.
+    #[test]
+    fn the_creator_grid_reads_their_pages_in_the_chosen_order() {
+        let mut st = State::default();
+        st.browse_view.filters.creator = Some(Pick { id: 4_183_371, name: "Kirill".into() });
+        for (order, token) in [(BrowseOrder::Newest, "Generic_Newest"), (BrowseOrder::MostLiked, "Generic_MostLiked")] {
+            st.browse_view.filters.order = Some(order);
+            let query = super::super::current_query(&st);
+            assert_eq!(query.submitter, Some(4_183_371));
+            assert!(!query.uses_subfeed());
+            let url = query.url(2, 50);
+            assert!(url.contains("/Mod/Index?_nPage=2&_nPerpage=50"), "{url}");
+            assert!(url.contains(&format!("_sSort={token}")), "{url}");
+            assert!(url.contains("_aFilters%5BGeneric_Submitter%5D=4183371"), "{url}");
+        }
+        // The default (popular) order still reads the member's own index.
+        st.browse_view.filters.order = None;
+        assert!(!super::super::current_query(&st).uses_subfeed());
+    }
+
+    #[test]
+    fn facts_say_what_the_press_does_until_the_page_is_read() {
+        let mut st = State::default();
+        assert_eq!(facts_line(&st, 7), "View all their mods");
+        st.browse_view.w4.creator.pages.insert(7, Err("down".into()));
+        assert_eq!(facts_line(&st, 7), "View all their mods");
+    }
+
+    #[test]
+    fn hidden_creators_get_their_own_empty_page() {
+        let mut st = State::default();
+        assert!(empty_copy(&st).is_none());
+        st.browse_view.filters.creator = Some(Pick { id: 7, name: "Wren".into() });
+        assert_eq!(empty_copy(&st).unwrap().0, "No mods from this creator here");
+        st.browse_view.hidden_authors.insert("wren".into());
+        assert_eq!(empty_copy(&st).unwrap().0, "You hid this creator");
     }
 }

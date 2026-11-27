@@ -125,7 +125,7 @@ pub(crate) fn details_modal(s: &State, u: &Ui, d: &Details) -> El {
                         .padding(24.0)
                         .gap(24.0)
                         .items_start()
-                        // The reading column: the gallery, then About, videos, changes, comments.
+                        // The reading column: the gallery, About (clamped), videos, comments.
                         .child(
                             col()
                                 .key("browse-details-reading")
@@ -135,7 +135,8 @@ pub(crate) fn details_modal(s: &State, u: &Ui, d: &Details) -> El {
                                 .child(carousel(s, u, d))
                                 .child(details_reading(s, u, d)),
                         )
-                        // The action column: who, counts, Install, files, needs, creator.
+                        // The action column: Install first, then the creator, the change
+                        // log, the files and the rest of the facts.
                         .child(
                             col()
                                 .key("browse-details-info")
@@ -191,8 +192,7 @@ pub(crate) fn details_sidebar(s: &State, u: &Ui, d: &Details) -> El {
                         .padding(16.0)
                         .gap(20.0)
                         .child(carousel(s, u, d))
-                        .child(details_actions(s, u, d))
-                        .child(details_reading(s, u, d)),
+                        .child(details_docked(s, u, d)),
                 )),
         )
 }
@@ -315,18 +315,67 @@ pub(crate) fn avatar(s: &State, u: &Ui, member: Option<&ModMember>, name: &str, 
         )
 }
 
-/// The right column: category, files, artist, about, changelog, comments, and the link out.
-/// The action column: identity, counts, the last update, notices, Install and its state, the
-/// hero, the sample, the files, requirements, the map tools and the creator. Before the profile
-/// lands, a skeleton holds the same places.
+/// The action column of the wide details, in the order a player needs it: what the mod is and
+/// Install (with its state, hero, sample and the mods it needs), then who made it, what changed
+/// lately, the other files and the map tools. Before the profile lands, a skeleton holds the
+/// same places.
 pub(crate) fn details_actions(s: &State, u: &Ui, d: &Details) -> El {
-    let mut c = col().key("details-actions").w_full().gap(16.0);
+    let c = col().key("details-actions").w_full().gap(20.0);
     let Some(profile) = d.profile.as_ref() else {
-        if let Some(error) = &d.error {
-            return c.child(details_error(u, error));
-        }
-        return c.child(info_skeleton(u));
+        return c.child(placeholder(u, d));
     };
+    c.child(install_block(s, u, d, profile))
+        .children(creator_block(s, u, d, profile))
+        .children(changelog_section(u, d, profile))
+        .child(files_section(s, u, d, profile))
+        .children(map_tools(s, u, d, profile))
+}
+
+/// The docked details: one column, the wide order folded into one (Install, the creator,
+/// About, the change log, the other files, then comments).
+pub(crate) fn details_docked(s: &State, u: &Ui, d: &Details) -> El {
+    let c = col().key("details-actions").w_full().gap(20.0);
+    let Some(profile) = d.profile.as_ref() else {
+        return c.child(placeholder(u, d));
+    };
+    c.child(install_block(s, u, d, profile))
+        .children(creator_block(s, u, d, profile))
+        .children(about_section(u, d, profile))
+        .children((!profile.videos.is_empty()).then(|| videos_section(u, d, profile)))
+        .children(changelog_section(u, d, profile))
+        .child(files_section(s, u, d, profile))
+        .child(comments_section(s, u, d, profile))
+        .children(map_tools(s, u, d, profile))
+}
+
+fn placeholder(u: &Ui, d: &Details) -> El {
+    match &d.error {
+        Some(error) => details_error(u, error),
+        None => info_skeleton(u),
+    }
+}
+
+fn creator_block(s: &State, u: &Ui, d: &Details, profile: &ModProfile) -> Option<El> {
+    profile.submitter.as_ref().map(|member| artist_card(s, u, member, &d.author))
+}
+
+/// Custom maps (experimental): a map's name, Launch map and Invite friends (DMM).
+fn map_tools(s: &State, u: &Ui, d: &Details, profile: &ModProfile) -> Option<El> {
+    crate::screens::maps::details_section(
+        s,
+        u,
+        d.id,
+        &profile.super_category,
+        &profile.category,
+        &d.profile_url,
+        &profile.text,
+    )
+}
+
+/// What the mod is, its counts, GameBanana's notices, Install and its state, the hero, the
+/// sample and the mods it needs: everything that decides the install, kept together on top.
+fn install_block(s: &State, u: &Ui, d: &Details, profile: &ModProfile) -> El {
+    let mut c = col().key("details-install-block").w_full().gap(16.0);
 
     // Who and what: the hero portrait when GameBanana has one, the category, the 18+ tag.
     let mut identity = row().key("details-identity").w_full().h(24.0).gap(8.0).center_y();
@@ -412,22 +461,9 @@ pub(crate) fn details_actions(s: &State, u: &Ui, d: &Details) -> El {
         );
     }
 
-    c = c.child(files_section(s, u, d, profile));
-    c = c.child(requirements_section(s, u, d));
-    // Custom maps (experimental): a map's name, Launch map and Invite friends (DMM).
-    if let Some(play) = crate::screens::maps::details_section(
-        s,
-        u,
-        d.id,
-        &profile.super_category,
-        &profile.category,
-        &d.profile_url,
-        &profile.text,
-    ) {
-        c = c.child(play);
-    }
-    if let Some(member) = &profile.submitter {
-        c = c.child(artist_card(s, u, member, &d.author));
+    // An empty list renders nothing, so it adds no gap.
+    if d.requirements.as_ref().is_some_and(|need| need.as_ref().map_or(true, |list| !list.is_empty())) {
+        c = c.child(requirements_section(s, u, d));
     }
     c
 }
@@ -442,37 +478,125 @@ fn details_count(u: &Ui, glyph: &'static Icon, name: &str, value: u64) -> El {
         .child(text(group_digits(value)).font(crate::ui::SMALL_NUM).color(u.muted).a11y_hidden())
 }
 
-/// The reading column: About (with the date it was added), videos, changes and comments.
+/// The reading column of the wide details: About (clamped), videos, then the comments.
 pub(crate) fn details_reading(s: &State, u: &Ui, d: &Details) -> El {
-    let mut c = col().key("details-reading").w_full().gap(24.0);
+    let c = col().key("details-reading").w_full().gap(24.0);
     let Some(profile) = d.profile.as_ref() else {
         return c;
     };
-    let added = if profile.added_ts > 0 { profile.added_ts } else { d.added_ts };
-    if !profile.text.is_empty() || added > 0 {
-        let mut about = col().w_full().gap(8.0).child(section_head(u, None, "About", None));
-        if !profile.text.is_empty() {
-            about = about.child(
-                text(profile.text.clone())
-                    .font(BODY)
-                    .color(u.prose)
-                    .wrap()
-                    .max_w(READING_MAX_W)
-                    .selectable(true),
-            );
-        }
-        if added > 0 {
-            about = about.child(
-                text(crate::screens::settings::i18n::fill(super::tree::tr("Added {}"), &[&crate::prefs::show_local_date(added)]))
-                    .font(SMALL)
-                    .color(u.muted),
-            );
-        }
-        c = c.child(about);
-    }
-    c.child(videos_section(u, d, profile))
-        .child(changelog_section(u, d, profile))
+    c.children(about_section(u, d, profile))
+        .children((!profile.videos.is_empty()).then(|| videos_section(u, d, profile)))
         .child(comments_section(s, u, d, profile))
+}
+
+/// About with the date it was added. A long text shows its first part (`clamp_about`) and
+/// Show more; a short one shows no control.
+pub(crate) fn about_section(u: &Ui, d: &Details, profile: &ModProfile) -> Option<El> {
+    let added = if profile.added_ts > 0 { profile.added_ts } else { d.added_ts };
+    if profile.text.is_empty() && added <= 0 {
+        return None;
+    }
+    let mut about = col().key("details-about").w_full().gap(8.0).child(section_head(u, None, "About", None));
+    if !profile.text.is_empty() {
+        let short = clamp_about(&profile.text);
+        let shown = match (&short, d.about_open) {
+            (Some(short), false) => short.clone(),
+            _ => profile.text.clone(),
+        };
+        about = about.child(text(shown).font(BODY).color(u.prose).wrap().max_w(READING_MAX_W).selectable(true));
+        if short.is_some() {
+            let open = d.about_open;
+            about = about.child(
+                show_toggle(u, "details-about-more", if open { "Show less" } else { "Show more" }, open).on_press(|st: &mut State| {
+                    if let Some(details) = st.browse_view.details.as_mut() {
+                        details.about_open = !details.about_open;
+                    }
+                }),
+            );
+        }
+    }
+    if added > 0 {
+        about = about.child(
+            text(crate::screens::settings::i18n::fill(super::tree::tr("Added {}"), &[&crate::prefs::show_local_date(added)]))
+                .font(SMALL)
+                .color(u.muted),
+        );
+    }
+    Some(about)
+}
+
+/// A quiet Show more / Show less control, left aligned under what it opens.
+pub(crate) fn show_toggle(u: &Ui, key: &str, label: &str, open: bool) -> El {
+    row()
+        .key(key.to_string())
+        .h(28.0)
+        .px(8.0)
+        .ml(-8.0)
+        .gap(6.0)
+        .center_y()
+        .radius(crate::ui::r(6.0))
+        .hover(u.hover)
+        .press(u.over.alpha(0.08))
+        .focusable(true)
+        .role("button")
+        .label(super::tree::tr(label).to_string())
+        .cursor(rune::Cursor::Pointer)
+        .child(text(super::tree::tr(label).to_string()).font(BODY_MED).color(u.accent).a11y_hidden())
+        .child(icon(if open { &icons::CHEVRON_UP } else { &icons::CHEVRON_DOWN }, 14.0).color(u.accent).a11y_hidden())
+}
+
+/// About shown before Show more: at most this many characters,
+pub(crate) const ABOUT_CHARS: usize = 600;
+/// and this many lines of the reading column (a long line counts once per `ABOUT_LINE_CHARS`).
+pub(crate) const ABOUT_LINES: usize = 10;
+const ABOUT_LINE_CHARS: usize = 72;
+/// Less than this hidden is not worth a control: the whole text shows.
+const ABOUT_SLACK: usize = 120;
+
+/// The first part of a long About, cut at a paragraph break when one falls past 40 percent
+/// of the budget, else at a line break, a sentence end or a space, and ended with an ellipsis. `None`
+/// when the whole text fits (or only a little would be hidden).
+pub(crate) fn clamp_about(text: &str) -> Option<String> {
+    let text = text.trim_end();
+    // The byte index where the budget runs out, walking lines.
+    let mut lines = 0usize;
+    let mut chars = 0usize;
+    let mut limit = None;
+    let mut offset = 0usize;
+    for line in text.split_inclusive('\n') {
+        let len = line.trim_end_matches('\n').chars().count();
+        let rows = len.div_ceil(ABOUT_LINE_CHARS).max(1);
+        if lines + rows > ABOUT_LINES || chars + len > ABOUT_CHARS {
+            // Room left in this line, in characters.
+            let room_rows = ABOUT_LINES.saturating_sub(lines) * ABOUT_LINE_CHARS;
+            let room = room_rows.min(ABOUT_CHARS.saturating_sub(chars)).min(len);
+            let cut = line.char_indices().nth(room).map(|(at, _)| at).unwrap_or(line.len());
+            limit = Some(offset + cut);
+            break;
+        }
+        lines += rows;
+        chars += len;
+        offset += line.len();
+    }
+    let limit = limit?;
+    if text[limit..].chars().count() < ABOUT_SLACK {
+        return None;
+    }
+    let head = &text[..limit];
+    let floor = limit * 2 / 5;
+    let cut = [
+        head.rfind("\n\n"),
+        head.rfind('\n'),
+        head.rfind(". ").map(|at| at + 1),
+        head.rfind(' '),
+    ]
+    .into_iter()
+    .flatten()
+    .find(|at| *at >= floor)
+    .unwrap_or(limit);
+    let head = text[..cut].trim_end();
+    // A finished sentence needs no ellipsis: Show more under it says there is more.
+    Some(if head.ends_with(['.', '!', '?', ':']) { head.to_string() } else { format!("{head}\u{2026}") })
 }
 
 /// About's line length: about 72 characters of 13 point text.
@@ -826,3 +950,60 @@ pub(crate) fn info_skeleton(u: &Ui) -> El {
         )
 }
 
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_short_about_shows_whole_with_no_control() {
+        assert_eq!(clamp_about("A small HUD tweak."), None);
+        // A little over the budget is not worth a Show more.
+        let near = "word ".repeat((ABOUT_CHARS + 40) / 5);
+        assert_eq!(clamp_about(&near), None);
+    }
+
+    #[test]
+    fn a_long_about_cuts_at_a_paragraph_break() {
+        let first = "First paragraph that says what the mod is. ".repeat(6);
+        let text = format!("{first}\n\n{}", "Second paragraph with install notes. ".repeat(20));
+        let short = clamp_about(&text).expect("clamped");
+        assert_eq!(short, first.trim_end());
+        assert!(short.chars().count() <= ABOUT_CHARS + 1);
+    }
+
+    #[test]
+    fn many_short_lines_clamp_by_lines() {
+        let text = (1..=30).map(|n| format!("Fixed thing {n}.")).collect::<Vec<_>>().join("\n");
+        let short = clamp_about(&text).expect("clamped");
+        assert!(short.lines().count() <= ABOUT_LINES, "{short}");
+        assert!(short.ends_with('.'));
+    }
+
+    #[test]
+    fn one_long_paragraph_cuts_at_a_sentence_or_space() {
+        let text = "This sentence keeps going for a while. ".repeat(40);
+        let short = clamp_about(&text).expect("clamped");
+        let body = short.trim_end_matches('\u{2026}');
+        assert!(text.starts_with(body));
+        assert!(body.ends_with('.'), "{body}");
+        assert!(body.chars().count() <= ABOUT_CHARS);
+    }
+
+    /// The creator's name is never cut to one line, and every place that can cut it carries
+    /// the whole name as a tooltip.
+    #[test]
+    fn creator_names_wrap_and_keep_a_tooltip() {
+        for (file, source, marker) in [
+            ("content.rs", include_str!("details/content.rs"), "pub(crate) fn artist_card("),
+            ("creator_page.rs", include_str!("creator_page.rs"), "fn name_text("),
+        ] {
+            let at = source.find(marker).unwrap_or_else(|| panic!("{file}: {marker}"));
+            let body = &source[at..];
+            let body = &body[..body[1..].find("\nfn ").or_else(|| body[1..].find("\npub")).unwrap_or(body.len() - 1)];
+            assert!(body.contains(".max_lines(2)"), "{file}: the name wraps to two lines");
+            assert!(body.contains(".wrap_anywhere()"), "{file}: one long word still wraps");
+            assert!(body.contains(".help(name"), "{file}: the whole name is the tooltip");
+        }
+    }
+}

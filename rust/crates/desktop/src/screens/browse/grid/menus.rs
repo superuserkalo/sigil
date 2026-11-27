@@ -908,6 +908,24 @@ pub(crate) fn context_menu(s: &State, u: &Ui) -> Option<El> {
         )
         .on_press(move |st: &mut State| hide_mod(st, id)),
     );
+    let author_id = card.author_id;
+    if author_id > 0 && !author.is_empty() {
+        let view_name = author.clone();
+        items = items.child(
+            menu_item(
+                u,
+                "ctx-view-author",
+                Some(icon(&icons::USER, 14.0).color(u.muted).a11y_hidden()),
+                &format!("View {author}"),
+                "Their page in Sigil",
+                false,
+            )
+            .on_press_tx(move |st: &mut State, tx: &mut Tx| {
+                st.browse_view.context = None;
+                super::super::creator_page::open_with(st, Some(tx), author_id, view_name.clone());
+            }),
+        );
+    }
     if !author.is_empty() {
         items = items.child(
             menu_item(

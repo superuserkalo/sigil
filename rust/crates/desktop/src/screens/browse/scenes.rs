@@ -512,7 +512,6 @@ pub fn scene_details(s: &mut State) {
     details.profile = Some(profile);
     details.comments = Some(gamebanana::parse_mod_comments(FIXTURE_POSTS).map_err(|e| e.to_string()));
     details.updates = Some(gamebanana::parse_mod_updates(FIXTURE_UPDATES).map_err(|e| e.to_string()));
-    details.changelog_open = true;
     if let Some(Ok(updates)) = &details.updates
         && let Some(first) = updates.items.first()
     {
@@ -1085,3 +1084,60 @@ pub fn scene_search_local(s: &mut State) {
     s.browse_view.applied_search = "chainsaw man".into();
     super::search::show(s, 1);
 }
+
+/// The details with a long About, clamped to its first part with Show more.
+pub fn scene_details_about_long(s: &mut State) {
+    scene_details(s);
+    if let Some(profile) = s.browse_view.details.as_mut().and_then(|d| d.profile.as_mut()) {
+        profile.text = LONG_ABOUT.to_string();
+    }
+}
+
+/// The long About opened with Show more.
+pub fn scene_details_about_open(s: &mut State) {
+    scene_details_about_long(s);
+    if let Some(details) = s.browse_view.details.as_mut() {
+        details.about_open = true;
+    }
+}
+
+/// A creator whose name would not fit one line of the creator box.
+pub fn scene_details_long_name(s: &mut State) {
+    scene_details(s);
+    if let Some(member) = s.browse_view.details.as_mut().and_then(|d| d.profile.as_mut()).and_then(|p| p.submitter.as_mut()) {
+        member.name = "TheExtremelyLongCreatorNameThatKeepsGoing_and_going_2026".into();
+    }
+}
+
+/// A mod with no change log and no comments yet.
+pub fn scene_details_bare(s: &mut State) {
+    scene_details(s);
+    if let Some(details) = s.browse_view.details.as_mut() {
+        details.updates = Some(Ok(gamebanana::ModUpdates::default()));
+        details.comments = Some(Ok(gamebanana::ModComments::default()));
+        if let Some(profile) = details.profile.as_mut() {
+            profile.updates_count = 0;
+            profile.post_count = 0;
+        }
+    }
+}
+
+/// The long name and long About docked beside the grid.
+pub fn scene_docked_long(s: &mut State) {
+    scene_details_about_long(s);
+    if let Some(member) = s.browse_view.details.as_mut().and_then(|d| d.profile.as_mut()).and_then(|p| p.submitter.as_mut()) {
+        member.name = "TheExtremelyLongCreatorNameThatKeepsGoing_and_going_2026".into();
+    }
+    s.browse_view.docked = true;
+    s.browse_view.revealed.clear();
+}
+
+const LONG_ABOUT: &str = "A full rework of the hero's look, built from scratch over three months.\n\n\
+What is in it:\n\
+New body model with its own rig and physics on the coat and hair.\n\
+Four colour variants, each with matching ability effects.\n\
+Reworked idle and run poses so nothing clips through the coat.\n\
+A custom portrait for the hero picker and the scoreboard.\n\n\
+Install notes: pick one variant only. Two variants of the same mod fight over the same files and the lower slot wins, so the one you see may not be the one you picked last. If the hero shows the default look after a game update, Steam probably reset gameinfo.gi; launch through Sigil to fix it.\n\n\
+Known issues: the coat can stretch for a frame during the dash animation. The fix needs a new export and lands in the next version.\n\n\
+Credits: thanks to everyone in the modding Discord who tested the early builds and sent clips of every broken frame.";

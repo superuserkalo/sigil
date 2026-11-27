@@ -141,6 +141,9 @@ fn file_list(rows: Vec<El>, u: &Ui) -> El {
     list
 }
 
+/// The creator box: one press target (avatar, full name, one line of facts) that opens the
+/// creator's page in Browse, with Open on GameBanana and Hide creator as quiet icon buttons
+/// at the row's right edge. Support and contact links sit under it.
 pub(crate) fn artist_card(s: &State, u: &Ui, member: &ModMember, fallback: &str) -> El {
     let name = if member.name.is_empty() {
         fallback.to_string()
@@ -149,99 +152,96 @@ pub(crate) fn artist_card(s: &State, u: &Ui, member: &ModMember, fallback: &str)
     };
     let url = member.profile_url.clone();
     let author = fallback.to_string();
-    let creator = Pick {
-        id: member.id,
-        name: name.clone(),
-    };
+    let id = member.id;
+    let hidden = author_hidden(s, &author);
+    let facts = super::super::creator_page::facts_line(s, id);
+    let open_name = name.clone();
+    // The whole identity is the press: View creator.
     let mut who = row()
         .key("details-artist-link")
+        .grow(1.0)
         .min_w(0.0)
-        .gap(6.0)
-        .center_y()
-        .child(
-            text(name.clone())
-                .font(TextStyle::new(15.0, 620.0).lh(20.0))
-                .color(u.ink)
-                .truncate()
-                .min_w(0.0)
-                .shrink(),
-        );
-    if !url.is_empty() {
-        who = who
-            .focusable(true)
-            .role("link")
-            .label(format!("{name} on GameBanana"))
-            .cursor(rune::Cursor::Pointer)
-            .on_press_tx(move |st: &mut State, tx: &mut Tx| open_url(st, tx, &url))
-            .child(icon(&icons::CHEVRON_RIGHT, 16.0).color(u.faint).a11y_hidden());
-    }
-    row()
-        .key("details-artist")
-        .w_full()
-        .padding(12.0)
+        .py(4.0)
+        .px(4.0)
+        .ml(-4.0)
         .gap(12.0)
         .center_y()
-        .radius(crate::ui::r(12.0))
-        .fill(Color::WHITE.alpha(0.02))
-        .border(1.0, u.hair_strong)
-        .child(avatar(s, u, Some(member), &name, 44.0))
+        .radius(crate::ui::r(8.0))
+        .child(avatar(s, u, Some(member), &name, 40.0))
         .child(
             col()
                 .grow(1.0)
                 .min_w(0.0)
                 .gap(2.0)
-                .child(text("Creator").font(SMALL).color(u.faint))
-                .child(who)
-                .child(donation_row(u, member))
-                // Wave 4: the creator's own links (both apps read `_aContactInfo`).
-                .children(super::super::w4::author_links(s, u, member.id)),
-        )
-        .child(
-            row()
-                .key("details-more-artist")
-                .h(32.0)
-                .px(10.0)
-                .gap(6.0)
-                .center()
-                .radius(crate::ui::r(8.0))
-                .hover(u.hover)
-                .press(Color::WHITE.alpha(0.08))
-                .focusable(true)
-                .role("button")
-                .label(format!("More from {}", creator.name))
+                // Two lines before anything is cut; the tooltip always has the whole name.
+                .child(
+                    text(name.clone())
+                        // A long name steps down a size before it would ever be cut.
+                        .font(if name.chars().count() > 24 { TextStyle::new(13.0, 620.0).lh(17.0) } else { TextStyle::new(15.0, 620.0).lh(20.0) })
+                        .color(u.ink)
+                        .max_lines(2)
+                        .wrap_anywhere()
+                        .w_full()
+                        .help(name.clone()),
+                )
+                .child(text(facts).font(SMALL).color(u.muted).truncate().w_full()),
+        );
+    if id > 0 {
+        who = who
+            .hover(u.hover)
+            .press(u.over.alpha(0.08))
+            .focusable(true)
+            .role("link")
+            .label(format!("View {name}'s mods in Sigil"))
+            .cursor(rune::Cursor::Pointer)
+            .on_press_tx(move |st: &mut State, tx: &mut Tx| {
+                super::super::creator_page::open_with(st, Some(tx), id, open_name.clone());
+            })
+            .child(icon(&icons::CHEVRON_RIGHT, 16.0).color(u.faint).a11y_hidden());
+    }
+    let mut actions = row().gap(2.0).center_y();
+    if !url.is_empty() {
+        actions = actions.child(
+            u.icon_button(&icons::EXTERNAL_LINK, "Open on GameBanana")
+                .key("details-artist-gamebanana")
                 .cursor(rune::Cursor::Pointer)
-                .on_press_tx(move |st: &mut State, tx: &mut Tx| {
-                    let creator = creator.clone();
-                    close_details(st);
-                    set_filters(st, Some(tx), move |f| {
-                        f.creator = Some(creator);
-                        f.favorites = false;
-                        if f.owned == Owned::Installed {
-                            f.owned = Owned::Any;
-                        }
-                    });
-                })
-                .child(icon(&icons::USER, 14.0).color(u.muted).a11y_hidden())
-                .child(text("More").font(SMALL).color(u.muted).a11y_hidden()),
-        )
-        .child(
-            row()
+                .on_press_tx(move |st: &mut State, tx: &mut Tx| open_url(st, tx, &url)),
+        );
+    }
+    if !author.is_empty() {
+        actions = actions.child(if hidden {
+            u.icon_button(&icons::EYE, "Show this creator again")
+                .key("details-unhide-artist")
+                .cursor(rune::Cursor::Pointer)
+                .on_press(move |st: &mut State| unhide_author(st, &author))
+        } else {
+            u.icon_button(&EYE_OFF, "Hide creator")
                 .key("details-hide-artist")
-                .h(32.0)
-                .px(10.0)
-                .gap(6.0)
-                .center()
-                .radius(crate::ui::r(8.0))
-                .hover(u.hover)
-                .press(Color::WHITE.alpha(0.08))
-                .focusable(true)
-                .role("button")
-                .label("Hide creator")
                 .cursor(rune::Cursor::Pointer)
                 .on_press(move |st: &mut State| hide_author(st, author.clone()))
-                .child(icon(&EYE_OFF, 14.0).color(u.muted).a11y_hidden())
-                .child(text("Hide creator").font(SMALL).color(u.muted).a11y_hidden()),
-        )
+        });
+    }
+    let mut card = col()
+        .key("details-artist")
+        .w_full()
+        .padding(8.0)
+        .pl(12.0)
+        .gap(4.0)
+        .radius(crate::ui::r(8.0))
+        .fill(Color::WHITE.alpha(0.02))
+        .border(1.0, u.hair_strong)
+        .child(row().w_full().gap(4.0).center_y().child(who).child(actions));
+    let links = super::super::w4::author_links(s, u, id);
+    if !member.donations.is_empty() || links.is_some() {
+        card = card.child(
+            col()
+                .w_full()
+                .pb(4.0)
+                .children((!member.donations.is_empty()).then(|| donation_row(u, member)))
+                .children(links),
+        );
+    }
+    card
 }
 
 /// A creator's donation links, as small buttons under their name.
@@ -300,74 +300,52 @@ pub(crate) fn version_label(version: &str) -> String {
     }
 }
 
-pub(crate) fn changelog_section(u: &Ui, d: &Details, profile: &ModProfile) -> El {
-    let open = d.changelog_open;
+/// Change log entries shown before Show all.
+pub(crate) const CHANGES_SHOWN: usize = 2;
+/// Comments shown before Show more.
+pub(crate) const COMMENTS_SHOWN: usize = 3;
+
+/// The change log: the latest entries, each opening to its notes, and Show all for the rest.
+/// Nothing at all when the mod never posted an update.
+pub(crate) fn changelog_section(u: &Ui, d: &Details, profile: &ModProfile) -> Option<El> {
+    let all = d.changelog_open;
     let total = match &d.updates {
         Some(Ok(updates)) => updates.total as u64,
         _ => profile.updates_count,
     };
-    let mut head = row()
-        .key("details-changelog")
-        .w_full()
-        .gap(8.0)
-        .center_y()
-        .focusable(true)
-        .role("button")
-        .label("Changelog")
-        .cursor(rune::Cursor::Pointer)
-        .on_press(|st: &mut State| {
-            if let Some(details) = st.browse_view.details.as_mut() {
-                details.changelog_open = !details.changelog_open;
-            }
-        })
-        .child(
-            icon(
-                if open {
-                    &icons::CHEVRON_DOWN
-                } else {
-                    &icons::CHEVRON_RIGHT
-                },
-                14.0,
-            )
-            .color(u.muted)
-            .a11y_hidden(),
-        );
-    head = head.child(section_head(u, Some(&icons::REFRESH_CW), "Changelog", Some(total)));
-    let mut c = col().w_full().gap(8.0).child(head);
-    if !open {
-        return c;
+    let mut c = col().key("details-changelog").w_full().gap(8.0);
+    if matches!(&d.updates, Some(Ok(updates)) if updates.items.is_empty()) || (d.updates.is_none() && total == 0) {
+        return None;
     }
+    c = c.child(section_head(u, Some(&icons::REFRESH_CW), "Changelog", Some(total)));
     match &d.updates {
         None => {
             c = c.child(el().w_full().h(44.0).radius(crate::ui::r(8.0)).fill(u.hover));
         }
         Some(Err(_)) => c = c.child(note_box(u, "The changelog could not be loaded.")),
-        Some(Ok(updates)) if updates.items.is_empty() => {
-            c = c.child(text("No changelog yet.").font(BODY).color(u.muted));
-        }
         Some(Ok(updates)) => {
-            for update in &updates.items {
+            let shown = if all { updates.items.len() } else { updates.items.len().min(CHANGES_SHOWN) };
+            for update in &updates.items[..shown] {
                 c = c.child(update_card(u, d, update));
             }
-            if updates.items.len() < updates.total {
+            let hidden = updates.total.saturating_sub(shown);
+            if !all && hidden > 0 {
                 c = c.child(
-                    row().w_full().h(40.0).center().child(
-                        u.action(
-                            &format!(
-                                "Show more changes ({})",
-                                updates.total.saturating_sub(updates.items.len())
-                            ),
-                            ActionKind::Ghost,
-                        )
-                        .key("details-more-updates")
-                        .cursor(rune::Cursor::Pointer)
+                    super::show_toggle(u, "details-changelog-all", &format!("Show all {}", updates.total), false).on_press(|st: &mut State| {
+                        if let Some(details) = st.browse_view.details.as_mut() {
+                            details.changelog_open = true;
+                        }
+                    }),
+                );
+            } else if all && updates.items.len() < updates.total {
+                c = c.child(
+                    super::show_toggle(u, "details-more-updates", &format!("Show more changes ({})", hidden), false)
                         .on_press(load_more_updates),
-                    ),
                 );
             }
         }
     }
-    c
+    Some(c)
 }
 
 pub(crate) fn update_card(u: &Ui, d: &Details, update: &ModUpdate) -> El {
@@ -495,7 +473,10 @@ pub(crate) fn update_card(u: &Ui, d: &Details, update: &ModUpdate) -> El {
 
 pub(crate) fn comments_section(s: &State, u: &Ui, d: &Details, profile: &ModProfile) -> El {
     let (total, shown) = match &d.comments {
-        Some(Ok(comments)) => (comments.total as u64, comments.items.len() as u64),
+        Some(Ok(comments)) => (
+            comments.total as u64,
+            if d.comments_all { comments.items.len() } else { comments.items.len().min(COMMENTS_SHOWN) } as u64,
+        ),
         _ => (profile.post_count, 0),
     };
     let mut head = row()
@@ -538,8 +519,9 @@ pub(crate) fn comments_section(s: &State, u: &Ui, d: &Details, profile: &ModProf
                 .radius(crate::ui::r(8.0))
                 .fill(Color::WHITE.alpha(0.015))
                 .border(1.0, u.hair_strong);
-            let last = comments.items.len().saturating_sub(1);
-            for (i, comment) in comments.items.iter().enumerate() {
+            let shown = if d.comments_all { comments.items.len() } else { comments.items.len().min(COMMENTS_SHOWN) };
+            let last = shown.saturating_sub(1);
+            for (i, comment) in comments.items[..shown].iter().enumerate() {
                 let mut item = row()
                     .key(format!("comment-{}", comment.id))
                     .w_full()
@@ -587,21 +569,19 @@ pub(crate) fn comments_section(s: &State, u: &Ui, d: &Details, profile: &ModProf
                 list = list.child(item);
             }
             c = c.child(list);
-            if comments.items.len() < comments.total {
-                c = c.child(
-                    row().w_full().h(40.0).center().child(
-                        u.action(
-                            &format!(
-                                "Show more comments ({})",
-                                comments.total.saturating_sub(comments.items.len())
-                            ),
-                            ActionKind::Ghost,
-                        )
-                        .key("details-more-comments")
-                        .cursor(rune::Cursor::Pointer)
-                        .on_press(load_more_comments),
-                    ),
-                );
+            let rest = comments.total.saturating_sub(shown);
+            if rest > 0 {
+                let label = format!("Show more comments ({rest})");
+                c = c.child(if shown < comments.items.len() {
+                    // The page already holds more: show them, then read on from there.
+                    super::show_toggle(u, "details-more-comments", &label, false).on_press(|st: &mut State| {
+                        if let Some(details) = st.browse_view.details.as_mut() {
+                            details.comments_all = true;
+                        }
+                    })
+                } else {
+                    super::show_toggle(u, "details-more-comments", &label, false).on_press(load_more_comments)
+                });
             }
         }
     }

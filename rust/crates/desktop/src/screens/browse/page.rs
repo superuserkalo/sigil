@@ -70,7 +70,10 @@ pub(crate) fn grid_page(s: &State, u: &Ui) -> El {
         let mut action = row().gap(8.0);
         let filtered = f.active() > 0 || !s.browse_query.text.trim().is_empty();
         let only_favorites = f.favorites && f.active() == 1 && s.browse_query.text.trim().is_empty();
-        if only_favorites {
+        // On a creator's page the creator is the place, not a filter to clear.
+        let only_creator = f.creator.is_some() && f.active() == 1 && s.browse_query.text.trim().is_empty();
+        if only_creator {
+        } else if only_favorites {
             action = action.child(
                 u.action(super::tree::tr("Show everything"), ActionKind::Secondary)
                     .key("browse-all")
@@ -96,7 +99,9 @@ pub(crate) fn grid_page(s: &State, u: &Ui) -> El {
                     .on_press(load_more_pressed),
             );
         }
-        let (title, detail) = if f.favorites && only_favorites {
+        let (title, detail) = if let Some(copy) = super::creator_page::empty_copy(s).filter(|_| f.active() == 1 && s.browse_query.text.trim().is_empty()) {
+            copy
+        } else if f.favorites && only_favorites {
             ("No favorites here yet", "Save a mod with the star on its card.")
         } else if f.owned == Owned::Installed && !f.favorites {
             ("No installed GameBanana mods", "Mods you install from Browse show up here.")
@@ -116,10 +121,6 @@ pub(crate) fn grid_page(s: &State, u: &Ui) -> El {
         }
         if let Some(rail) = creator_rail(s, u) {
             c = c.child(rail);
-        }
-        // DMM's author page: the creator's profile and totals over their grid.
-        if let Some(page) = super::creator_page::header(s, u) {
-            c = c.child(page);
         }
         if s.browse_view.paged
             && let Some(bar) = pagination(s, u)
@@ -142,6 +143,13 @@ pub(crate) fn grid_page(s: &State, u: &Ui) -> El {
             virtual_grid(s, shown.clone(), cols, card_w)
         };
         c.child(if stale { list.opacity(0.45) } else { list })
+    };
+
+    // DMM's author page: the creator's profile over their grid, and over its loading, empty
+    // and error states too, so the page never loses who it is about.
+    let body = match super::creator_page::header(s, u).filter(|_| !collecting) {
+        Some(head) => col().w_full().gap(16.0).child(head).child(body),
+        None => body,
     };
 
     let detail = if collecting {

@@ -92,9 +92,13 @@ The landing page has a top-this-week strip, trending rails, a Browse by hero rai
 picks. Favorites are saved on this computer. Hidden mods and creators are kept in Hidden items,
 with the date you hid them, a picture and a note.
 
-Opening a mod shows its pictures at full size, its description, files, changelog, comments,
-requirements, videos and creator. Use the arrow keys to walk to the previous or next mod. A creator
-name opens a creator page with their uploads and totals.
+Opening a mod shows its pictures, a short About (Show more opens the rest) and its comments on
+the left; Install, the creator, the latest changelog entries (Show all for the rest), the files and
+the requirements on the right. Docked beside the grid, the same parts sit in one column. Use the
+arrow keys to walk to the previous or next mod. Pressing the creator (in the details, or View in a
+card's right-click menu) opens their page inside Sigil: their Deadlock mods in the usual grid with
+the usual sort, a line of facts from GameBanana, Open on GameBanana and Hide creator. Back returns
+to the grid as it was.
 
 To install:
 
