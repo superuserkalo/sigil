@@ -1,7 +1,7 @@
 # How Deadlock mods load
 
 Status: active. Verify against the current game build after a patch.
-Updated: 2026-11-16
+Updated: 2026-11-27
 
 This is the domain ground truth for the harness. It summarizes the community documentation and
 names the sources at the bottom. When this document disagrees with the installed game, the game
@@ -135,6 +135,25 @@ This is why the harness treats compile as a backend with availability, not a gua
 
 Repair is path migration plus recompile and repack. Use the `GameTracking-Deadlock` file history to
 see what moved instead of guessing.
+
+## Other managers' files in the addon folder
+
+Deadlock Mod Manager (2.x, read from its source, behaviour only) keeps a switched-on mod of its
+default profile as a plain `pakNN_dir.vpk` in `citadel/addons` (past 99 in `citadel/addons2` and
+up), parks a switched-off mod in the same folder as `<mod id>_<original name>.vpk` (a name the game
+ignores), and records which file belongs to which mod in `citadel/addons/.dmm.json` (`mods.<id>`:
+`enabled`, `shard`, `currentVpks`, `disabledVpks`). Names, authors and pictures live in its
+`state.json` (`%APPDATA%\dev.stormix.deadlock-mod-manager`), under `local-config`: `localMods` for
+the active profile and `profiles.<id>.mods` for each profile. Its download cache is
+`%LOCALAPPDATA%\dev.stormix.deadlock-mod-manager\mods\<id>\files`. Other profiles live in
+`citadel/addons/<folder>` with their own `.dmm.json`.
+
+So a player coming from DMM already has every switched-on mod installed under slot names, with
+nothing in the file saying what it is. Sigil names those slots from DMM's records on each addon
+scan (`import::name_known_slots`, library store only), the DMM import adopts them in place and
+moves a parked file into a free slot instead of copying it, and Repair the mods folder offers a
+DMM-parked file unticked so the import keeps its name. Grimoire keeps switched-on mods as slot
+files in `addons` too and parks switched-off ones in `addons/.disabled/`.
 
 ## Community tools
 
