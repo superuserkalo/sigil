@@ -1264,7 +1264,35 @@ pub fn start_addon_scan(state: &mut State) {
     };
     let wake = state.wake.clone();
     state.addons.error = None;
-    state.addon_job.start(wake, move || scan_addons(&game_root));
+    let name_slots = !state.demo && !rune::is_headless();
+    state.addon_job.start(wake, move || {
+        if name_slots {
+            name_other_managers_slots(&game_root);
+        }
+        scan_addons(&game_root)
+    });
+}
+
+/// Set when [`name_other_managers_slots`] wrote names, so Installed reads the library again.
+pub static OTHER_MANAGER_NAMES: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Name the slot files Deadlock Mod Manager or Grimoire already put in the addon folder, from
+/// their own records (`import::name_known_slots`), so a player coming from them sees their
+/// mods by name at first start instead of nameless rows. Reads the other managers' data and
+/// writes only Sigil's library store; the game folder is untouched.
+fn name_other_managers_slots(game_root: &Path) {
+    use deadlock_core::import;
+    let sources = import::detect_sources(&import::DetectRoots::from_environment(), Some(game_root));
+    if sources.is_empty() {
+        return;
+    }
+    let addons = deadlock_core::deploy::addons_dir(game_root);
+    let library = import::library_path(&data_dir());
+    if let Ok(named) = import::name_known_slots(&sources, &addons, &library)
+        && !named.is_empty()
+    {
+        OTHER_MANAGER_NAMES.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
 }
 
 /// Take a finished addon scan. True when what the view shows changed: a read that comes back

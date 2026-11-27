@@ -218,7 +218,7 @@ fn confirm(st: &mut State) {
         let mut report = ImportReport::default();
         for item in &chosen.items {
             match item.action {
-                ImportAction::Copy { slot } | ImportAction::Archive { slot } => {
+                ImportAction::Copy { slot } | ImportAction::Archive { slot } | ImportAction::Move { slot } => {
                     report.imported.push((slot, item.source.name.clone()))
                 }
                 ImportAction::Adopt { slot } => report.adopted.push((slot, item.source.name.clone())),
@@ -474,7 +474,7 @@ fn item_list(s: &State, u: &Ui, d: &Dialog, plan: &ImportPlan) -> El {
         let on = d.selected.get(index).copied().unwrap_or(false);
         let skip = matches!(item.action, ImportAction::Skip { .. });
         let (detail, detail_color) = match &item.action {
-            ImportAction::Copy { slot } | ImportAction::Archive { slot } => {
+            ImportAction::Copy { slot } | ImportAction::Archive { slot } | ImportAction::Move { slot } => {
                 let mut parts = Vec::new();
                 if let Some(author) = &item.source.author {
                     parts.push(format!("by {author}"));

@@ -11,6 +11,8 @@
 //!    Manager on this machine and lists the mods they manage, [`local_mods`] turns files the
 //!    user picked into the same shape, and [`plan_import`] validates each VPK, skips what is
 //!    already installed and assigns free slots. [`assign_slots`] is the pure slot rule.
+//!    [`name_known_slots`] names, with no import, the slot files another manager already put in
+//!    the addon folder (library store only).
 //! 3. [`apply_plan`]: the one function here that writes into `game/citadel/addons`.
 //!
 //! Layout facts about the other managers come from reading their on-disk data, not their code.
@@ -394,10 +396,27 @@ pub fn read_dmm(app_dirs: &[PathBuf], game_root: Option<&Path>) -> DetectedSourc
             Some(other) => other.clone(),
             None => Value::Null,
         };
-        if let Some(list) = config
-            .pointer("/state/localMods")
-            .and_then(Value::as_array)
-        {
+        // `localMods` is the active profile's list; every profile also keeps its own `mods`.
+        // The default profile's files are the ones in `citadel/addons`, and it need not be
+        // the active one, so names come from all of them (active first).
+        let mut lists: Vec<&Vec<Value>> = Vec::new();
+        if let Some(list) = config.pointer("/state/localMods").and_then(Value::as_array) {
+            lists.push(list);
+        }
+        match config.pointer("/state/profiles") {
+            Some(Value::Object(profiles)) => lists.extend(
+                profiles
+                    .values()
+                    .filter_map(|profile| profile.get("mods").and_then(Value::as_array)),
+            ),
+            Some(Value::Array(profiles)) => lists.extend(
+                profiles
+                    .iter()
+                    .filter_map(|profile| profile.get("mods").and_then(Value::as_array)),
+            ),
+            _ => {}
+        }
+        for list in lists {
             for record in list {
                 if let Some(id) = dmm_id(record.get("remoteId")) {
                     records.entry(id).or_insert_with(|| record.clone());
@@ -463,15 +482,18 @@ pub fn read_dmm(app_dirs: &[PathBuf], game_root: Option<&Path>) -> DetectedSourc
             } else {
                 (names("disabledVpks"), names("currentVpks"))
             };
-            for name in first.iter().chain(second.iter()) {
-                if !is_plain_file_name(name) {
-                    continue;
-                }
-                for dir in [&shard_dir, base] {
-                    let path = dir.join(name);
-                    if path.is_file() && !files.contains(&path) {
+            // Every file of the mod, not just the first: a mod with two VPKs fills two slots,
+            // and a slot left out here would show as a nameless mod in Installed. A slot file
+            // Sigil switched off (`pakNN_dir.vpk.disabled`) is still the same file.
+            for list in [&first, &second] {
+                for name in list.iter().filter(|name| is_plain_file_name(name)) {
+                    let found = [&shard_dir, base].into_iter().find_map(|dir| {
+                        [dir.join(name), dir.join(format!("{name}{DISABLED_SUFFIX}"))]
+                            .into_iter()
+                            .find(|path| path.is_file() && !files.contains(path))
+                    });
+                    if let Some(path) = found {
                         files.push(path);
-                        break;
                     }
                 }
                 if !files.is_empty() {
@@ -511,10 +533,10 @@ pub fn read_dmm(app_dirs: &[PathBuf], game_root: Option<&Path>) -> DetectedSourc
             .and_then(|name| clean_imprint_text(&name))
             .unwrap_or_else(|| format!("Mod {id}"));
 
-        let Some(file) = files.into_iter().next() else {
+        if files.is_empty() {
             warnings.push(format!("{name}: no VPK file was found on disk."));
             continue;
-        };
+        }
         let thumbnail_url = field("thumbnailUrl").filter(|url| is_http(url)).or_else(|| {
             record
                 .and_then(|value| value.get("images"))
@@ -528,18 +550,21 @@ pub fn read_dmm(app_dirs: &[PathBuf], game_root: Option<&Path>) -> DetectedSourc
                 })
         });
 
-        used.insert(file.clone());
-        mods.push(ForeignMod {
-            name,
-            author: field("author").and_then(|author| clean_imprint_text(&author)),
-            thumbnail_url,
-            gamebanana_id: id.parse::<u64>().ok(),
-            chunks: chunks_for(&file),
-            size_bytes: file_size(&file),
-            file,
-            enabled_in_source: enabled,
-            archive: false,
-        });
+        let author = field("author").and_then(|author| clean_imprint_text(&author));
+        for file in files {
+            used.insert(file.clone());
+            mods.push(ForeignMod {
+                name: name.clone(),
+                author: author.clone(),
+                thumbnail_url: thumbnail_url.clone(),
+                gamebanana_id: id.parse::<u64>().ok(),
+                chunks: chunks_for(&file),
+                size_bytes: file_size(&file),
+                file,
+                enabled_in_source: enabled,
+                archive: false,
+            });
+        }
     }
 
     // Stamped files no state or manifest entry claims: still DMM's, still tied to their mod.
@@ -575,6 +600,56 @@ pub fn read_dmm(app_dirs: &[PathBuf], game_root: Option<&Path>) -> DetectedSourc
         mods,
         warnings,
     }
+}
+
+/// Name the slots another manager already put in `game/citadel/addons`, with no import.
+///
+/// Deadlock Mod Manager keeps a switched-on mod as a plain `pakNN_dir.vpk` in the addon folder
+/// and Grimoire does the same, so a player who switches to Sigil finds those files already
+/// installed. Without a record they showed as nameless mods. For every mod `sources` list
+/// whose file is a slot file directly in `addons` (on or off), and whose slot has no library
+/// entry for that file size, the manager's name, author, preview and GameBanana id are
+/// recorded, as an import's Adopt would. A slot Sigil already has a name for is never
+/// renamed, and a mod known only by its file name (a Grimoire file with no metadata) is left
+/// out. Writes the library store (app data) only, never the game folder. Returns what was
+/// named, `(slot, name)`.
+pub fn name_known_slots(sources: &[DetectedSource], addons: &Path, library_path: &Path) -> Result<Vec<(u16, String)>> {
+    let mut library = read_library(library_path)?;
+    let mut named = Vec::new();
+    for source in sources {
+        for foreign in &source.mods {
+            if foreign.archive {
+                continue;
+            }
+            let Some(slot) = slot_in_folder(&foreign.file, addons) else {
+                continue;
+            };
+            let size = file_size(&foreign.file);
+            if size == 0 || library.find(slot, size).is_some() || named.iter().any(|(s, _)| *s == slot) {
+                continue;
+            }
+            if foreign.name.trim().is_empty() || foreign.name == file_name_of(&foreign.file) {
+                continue;
+            }
+            library.mods.retain(|entry| entry.slot != slot);
+            library.mods.push(ModMeta {
+                slot,
+                size_bytes: size,
+                name: foreign.name.clone(),
+                author: foreign.author.clone(),
+                thumbnail_url: foreign.thumbnail_url.clone(),
+                gamebanana_id: foreign.gamebanana_id,
+                source: source.kind.key().to_string(),
+                recorded_at: now_iso(),
+            });
+            named.push((slot, foreign.name.clone()));
+        }
+    }
+    if !named.is_empty() {
+        library.mods.sort_by_key(|entry| entry.slot);
+        write_library(library_path, &library)?;
+    }
+    Ok(named)
 }
 
 /// Every VPK in the addon folder and DMM's shard folders (`addons2`, `addons3`, ...) that
@@ -703,6 +778,10 @@ pub enum ImportAction {
     Archive { slot: u16 },
     /// Already in the addon folder at this slot: only the name and preview are recorded.
     Adopt { slot: u16 },
+    /// Already in the addon folder under a name the game ignores (Deadlock Mod Manager parks a
+    /// switched-off mod as `<id>_pak01_dir.vpk`): renamed into this free slot as
+    /// `pakNN_dir.vpk.disabled`, so the mod is not kept twice.
+    Move { slot: u16 },
     Skip { reason: String },
 }
 
@@ -729,7 +808,7 @@ impl ImportPlan {
             .filter(|item| {
                 matches!(
                     item.action,
-                    ImportAction::Copy { .. } | ImportAction::Archive { .. }
+                    ImportAction::Copy { .. } | ImportAction::Archive { .. } | ImportAction::Move { .. }
                 )
             })
             .count()
@@ -779,8 +858,10 @@ pub fn plan_import(kind: SourceKind, addons: &Path, mods: Vec<ForeignMod>) -> Re
     let slots = assign_slots(&used, needs_slot.len());
     for (index, slot) in needs_slot.into_iter().zip(slots) {
         let archive = items[index].source.archive;
+        let parked = !archive && directly_in(&items[index].source.file, addons);
         items[index].action = match slot {
             Some(slot) if archive => ImportAction::Archive { slot },
+            Some(slot) if parked => ImportAction::Move { slot },
             Some(slot) => ImportAction::Copy { slot },
             None => ImportAction::Skip {
                 reason: "Every addon slot from 01 to 99 is taken.".to_string(),
@@ -889,6 +970,10 @@ pub fn apply_plan(plan: &ImportPlan, context: &ApplyContext) -> Result<ImportRep
                 record(context, &item.source, *slot, size, source_key)
                     .map(|_| report.adopted.push((*slot, name.clone())))
             }
+            ImportAction::Move { slot } => move_item(&addons, &item.source, *slot).and_then(|size| {
+                record(context, &item.source, *slot, size, source_key)
+                    .map(|_| report.imported.push((*slot, name.clone())))
+            }),
             ImportAction::Copy { slot } => copy_item(&addons, &item.source, *slot).and_then(|size| {
                 record(context, &item.source, *slot, size, source_key)
                     .map(|_| report.imported.push((*slot, name.clone())))
@@ -950,6 +1035,51 @@ fn copy_item(addons: &Path, source: &ForeignMod, slot: u16) -> Result<u64> {
     if outcome.is_err() {
         for path in &written {
             let _ = fs::remove_file(path);
+        }
+    }
+    outcome
+}
+
+/// Rename a file parked directly in the addon folder (and its chunks) into a free slot,
+/// switched off. Same checks as [`copy_item`]; a failure puts back what was renamed.
+fn move_item(addons: &Path, source: &ForeignMod, slot: u16) -> Result<u64> {
+    if !source.file.is_file() || file_size(&source.file) != source.size_bytes {
+        return Err(Error::msg(format!(
+            "{} changed since the plan. Nothing was moved.",
+            source.file.display()
+        )));
+    }
+    if occupied_slots(addons)?.contains(&slot) {
+        return Err(Error::msg(format!(
+            "Slot {slot:02} was taken since the plan. Nothing was moved."
+        )));
+    }
+    let mut moved: Vec<(PathBuf, PathBuf)> = Vec::new();
+    let outcome = (|| -> Result<u64> {
+        let mut pairs: Vec<(PathBuf, PathBuf)> = Vec::new();
+        for chunk in &source.chunks {
+            let index = chunk_index_of(chunk).ok_or_else(|| {
+                Error::msg(format!("{} is not named like a VPK chunk.", chunk.display()))
+            })?;
+            pairs.push((chunk.clone(), crate::addons::slot_path(addons, slot, &format!("_{index:03}.vpk"))));
+        }
+        let target = crate::addons::slot_path(addons, slot, &format!("_dir.vpk{DISABLED_SUFFIX}"));
+        pairs.push((source.file.clone(), target.clone()));
+        for (from, to) in pairs {
+            if to.exists() {
+                return Err(Error::msg(format!("{} already exists. Nothing was overwritten.", to.display())));
+            }
+            if let Some(parent) = to.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            fs::rename(&from, &to)?;
+            moved.push((from, to));
+        }
+        Ok(file_size(&target))
+    })();
+    if outcome.is_err() {
+        for (from, to) in moved.iter().rev() {
+            let _ = fs::rename(to, from);
         }
     }
     outcome
@@ -1222,6 +1352,17 @@ fn chunk_index_path(source: &ForeignMod, index: u16) -> Option<&PathBuf> {
         .find(|chunk| chunk_index_of(chunk) == Some(index))
 }
 
+/// Whether `file` sits directly in the addon folder (whatever its name).
+fn directly_in(file: &Path, addons: &Path) -> bool {
+    let Some(parent) = file.parent() else {
+        return false;
+    };
+    match (fs::canonicalize(parent), fs::canonicalize(addons)) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => parent == addons,
+    }
+}
+
 /// The slot of a file that already sits directly in the addon folder under a slot name.
 fn slot_in_folder(file: &Path, addons: &Path) -> Option<u16> {
     let parent = file.parent()?;
@@ -1448,9 +1589,155 @@ mod tests {
         assert_eq!(asa.chunks.len(), 1);
         assert!(source.warnings.iter().any(|w| w.contains("My local")));
 
-        // The parked file is in addons but not under a slot name: it is copied.
+        // The parked file is in addons but not under a slot name: it is moved, not copied.
         let plan = plan_import(SourceKind::Dmm, &addons, source.mods.clone()).unwrap();
-        assert_eq!(plan.items[0].action, ImportAction::Copy { slot: 1 });
+        assert_eq!(plan.items[0].action, ImportAction::Move { slot: 1 });
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    /// A Deadlock Mod Manager default profile as DMM 2.x leaves it: switched-on mods as plain
+    /// `pakNN_dir.vpk` in `citadel/addons` (one mod with two files), a switched-off mod parked
+    /// as `<id>_pak01_dir.vpk`, names in `state.json` (here under a profile that is not the
+    /// active one), slots in `.dmm.json`.
+    fn dmm_profile(root: &Path) -> (PathBuf, DetectRoots) {
+        let game = fake_game(root);
+        let addons = addons_dir(&game);
+        let config = root.join("roaming");
+        let app = config.join(DMM_IDENTIFIER);
+        fs::create_dir_all(&app).unwrap();
+        let inner = serde_json::json!({
+            "state": {
+                "localMods": [],
+                "activeProfileId": "other",
+                "profiles": {
+                    "default": {"isDefault": true, "folderName": null, "mods": [
+                        {"remoteId": "501", "name": "Neon Haze", "author": "ana"},
+                        {"remoteId": "502", "name": "Gold Abrams Pack", "author": "bo"},
+                        {"remoteId": "503", "name": "Quiet Footsteps"},
+                        {"remoteId": "504", "name": "Parked Skin"}
+                    ]},
+                    "other": {"isDefault": false, "folderName": "other", "mods": []}
+                }
+            },
+            "version": 3
+        });
+        fs::write(app.join("state.json"), serde_json::json!({"local-config": inner.to_string()}).to_string()).unwrap();
+        make_vpk(&addons, "pak01_dir.vpk", &[("materials/a.vmat_c", b"a")]);
+        make_vpk(&addons, "pak02_dir.vpk", &[("materials/b1.vmat_c", b"b1")]);
+        make_vpk(&addons, "pak03_dir.vpk", &[("materials/b2.vmat_c", b"b2")]);
+        make_vpk(&addons, "pak04_dir.vpk", &[("sounds/c.vsnd_c", b"c")]);
+        make_vpk(&addons, "504_pak01_dir.vpk", &[("materials/d.vmat_c", b"d")]);
+        fs::write(
+            addons.join(".dmm.json"),
+            r#"{"version":3,"mods":{
+                "501":{"enabled":true,"shard":1,"currentVpks":["pak01_dir.vpk"],"disabledVpks":[],"originalVpkNames":["pak01_dir.vpk"]},
+                "502":{"enabled":true,"shard":1,"currentVpks":["pak02_dir.vpk","pak03_dir.vpk"],"disabledVpks":[],"originalVpkNames":["pak01_dir.vpk","pak02_dir.vpk"]},
+                "503":{"enabled":true,"shard":1,"currentVpks":["pak04_dir.vpk"],"disabledVpks":[]},
+                "504":{"enabled":false,"shard":1,"currentVpks":[],"disabledVpks":["504_pak01_dir.vpk"]}
+            }}"#,
+        )
+        .unwrap();
+        (game, DetectRoots { config: vec![config], data: Vec::new() })
+    }
+
+    fn names_by_slot(library: &Path, game: &Path) -> Vec<(u16, Option<String>)> {
+        let library = read_library(library).unwrap();
+        crate::addons::list_installed(game)
+            .unwrap()
+            .iter()
+            .map(|addon| (addon.slot, library.find(addon.slot, addon.size_bytes).map(|m| m.name.clone())))
+            .collect()
+    }
+
+    #[test]
+    fn dmm_files_already_in_addons_are_named_at_first_start() {
+        let root = scratch("dmm-first-start");
+        let (game, roots) = dmm_profile(&root);
+        let addons = addons_dir(&game);
+        let library = library_path(&root.join("app"));
+
+        // What the player saw: four slots and no names for any of them.
+        assert!(names_by_slot(&library, &game).iter().all(|(_, name)| name.is_none()));
+
+        let sources = detect_sources(&roots, Some(&game));
+        let named = name_known_slots(&sources, &addons, &library).unwrap();
+        assert_eq!(named.len(), 4);
+        assert_eq!(
+            names_by_slot(&library, &game),
+            vec![
+                (1, Some("Neon Haze".to_string())),
+                (2, Some("Gold Abrams Pack".to_string())),
+                (3, Some("Gold Abrams Pack".to_string())),
+                (4, Some("Quiet Footsteps".to_string())),
+            ]
+        );
+        assert_eq!(read_library(&library).unwrap().find(1, file_size(&addons.join("pak01_dir.vpk"))).unwrap().gamebanana_id, Some(501));
+        // Running again names nothing new and never renames a slot Sigil knows.
+        assert!(name_known_slots(&sources, &addons, &library).unwrap().is_empty());
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn dmm_import_adopts_in_place_and_moves_parked_files_without_duplicates() {
+        let root = scratch("dmm-import");
+        let (game, roots) = dmm_profile(&root);
+        let addons = addons_dir(&game);
+        let source = detect_sources(&roots, Some(&game)).remove(0);
+        assert_eq!(source.mods.len(), 5, "{:?}", source.warnings);
+
+        let plan = plan_import(SourceKind::Dmm, &addons, source.mods.clone()).unwrap();
+        let actions: Vec<ImportAction> = plan.items.iter().map(|item| item.action.clone()).collect();
+        assert_eq!(
+            actions,
+            vec![
+                ImportAction::Adopt { slot: 1 },
+                ImportAction::Adopt { slot: 2 },
+                ImportAction::Adopt { slot: 3 },
+                ImportAction::Adopt { slot: 4 },
+                ImportAction::Move { slot: 5 },
+            ]
+        );
+        let context = ApplyContext {
+            game_root: game.clone(),
+            workspace: root.join("workspace"),
+            library: library_path(&root.join("app")),
+        };
+        let report = apply_plan(&plan, &context).unwrap();
+        assert!(report.failed.is_empty(), "{:?}", report.failed);
+        assert_eq!(report.imported, vec![(5, "Parked Skin".to_string())]);
+
+        // Five mods, five slots, every one named; the parked file is gone, not doubled.
+        let names = names_by_slot(&context.library, &game);
+        assert_eq!(names.len(), 5);
+        assert!(names.iter().all(|(_, name)| name.is_some()), "{names:?}");
+        assert!(!addons.join("504_pak01_dir.vpk").exists());
+        assert!(addons.join("pak05_dir.vpk.disabled").is_file());
+        assert!(addons.join("pak05_000.vpk").is_file());
+        let vpks = fs::read_dir(&addons)
+            .unwrap()
+            .flatten()
+            .filter(|e| file_name_of(&e.path()).contains("_dir.vpk"))
+            .count();
+        assert_eq!(vpks, 5);
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn dmm_mods_the_player_switched_off_in_sigil_keep_their_names() {
+        let root = scratch("dmm-switched-off");
+        let (game, roots) = dmm_profile(&root);
+        let addons = addons_dir(&game);
+        // The report: the player turned the nameless rows off in Sigil before any import.
+        for slot in 1..=4u16 {
+            crate::addons::set_enabled(&game, slot, false, true).unwrap();
+        }
+        let sources = detect_sources(&roots, Some(&game));
+        let library = library_path(&root.join("app"));
+        assert_eq!(name_known_slots(&sources, &addons, &library).unwrap().len(), 4);
+        assert!(names_by_slot(&library, &game).iter().all(|(_, name)| name.is_some()));
+        // And an import after that still copies nothing it already has.
+        let plan = plan_import(SourceKind::Dmm, &addons, sources[0].mods.clone()).unwrap();
+        assert_eq!(plan.items.iter().filter(|i| matches!(i.action, ImportAction::Copy { .. })).count(), 0);
         let _ = fs::remove_dir_all(&root);
     }
 

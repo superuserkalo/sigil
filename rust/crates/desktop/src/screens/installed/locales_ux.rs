@@ -163,4 +163,8 @@ pub const DE: &[(&str, &str)] = &[
     ("Load last", "Zuletzt laden"),
     ("Not in load order", "Nicht nach Ladereihenfolge"),
     ("Sort by load order to drag", "Nach Ladereihenfolge sortieren, um zu ziehen"),
+    // A slot Sigil has no record of.
+    ("Unknown mod", "Unbekannter Mod"),
+    ("Unknown {} mod", "Unbekannter {}-Mod"),
+    ("Put there by another tool or by hand", "Von einem anderen Tool oder von Hand abgelegt"),
 ];

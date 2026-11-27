@@ -1419,6 +1419,48 @@ pub fn meta_for<'a>(s: &'a State, addon: &AddonRow) -> Option<&'a ModMeta> {
     s.installed.library.find(addon.slot, addon.size_bytes)
 }
 
+/// The name of a slot Sigil has no record of: what its files change, as the hero guess read
+/// them from the VPK (`Unknown Haze mod`, `Unknown HUD mod`), else `Unknown mod`.
+pub fn unknown_name(s: &State, addon: &AddonRow) -> String {
+    use deadlock_core::mod_heroes::Payload;
+    use crate::screens::settings::i18n::{fill, tr};
+    let answer = s.installed.notes.guess.answers.get(&(addon.slot, addon.size_bytes));
+    let what = match answer.map(|answer| &answer.payload) {
+        Some(Payload::Hero(hero)) => Some(hero.clone()),
+        Some(Payload::General(kind)) => Some(tr(kind.label()).to_string()),
+        _ => match notes::hero_guess::heroes_of(s, addon).as_slice() {
+            [hero] => Some(hero.clone()),
+            _ => None,
+        },
+    };
+    match what {
+        Some(what) => fill(tr("Unknown {} mod"), &[&what]),
+        None => tr("Unknown mod").to_string(),
+    }
+}
+
+/// The detail line of a slot Sigil has no record of: where it likely came from, its size and
+/// the date of its file, so the player can tell what it is before switching it off.
+pub fn unknown_detail(s: &State, addon: &AddonRow) -> String {
+    use crate::screens::settings::i18n::tr;
+    let mut parts = vec![tr("Put there by another tool or by hand").to_string(), addon.size_label()];
+    let modified = s
+        .installed
+        .notes
+        .guess
+        .answers
+        .get(&(addon.slot, addon.size_bytes))
+        .map(|answer| (answer.modified_nanos / 1_000_000_000) as i64)
+        .filter(|seconds| *seconds > 0);
+    if let Some(seconds) = modified {
+        let date = crate::prefs::show_local_date(seconds);
+        if !date.is_empty() {
+            parts.push(date);
+        }
+    }
+    parts.join("  ·  ")
+}
+
 /// One card: a 16:9 preview with the selection box, warning buttons and the "more" button,
 /// the slot number and an update chip on it; the name, a line of detail and the switch below.
 /// A variant group shows the file it is playing and how many it holds.
@@ -1431,10 +1473,11 @@ fn card_view(s: &State, u: &Ui, idx: &index::Index, card: &layout::Group, pitch:
     let inner = (crate::ui::r(CARD_RADIUS) - 1.0).max(0.0);
     let name = meta
         .map(|meta| meta.name.clone())
-        .unwrap_or_else(|| "Unnamed mod".to_string());
-    let mut detail = match meta.and_then(|meta| meta.author.clone()) {
-        Some(author) => format!("by {author}"),
-        None => format!("{}  ·  {}", slot_file_name(addon), addon.size_label()),
+        .unwrap_or_else(|| unknown_name(s, addon));
+    let mut detail = match (meta, meta.and_then(|meta| meta.author.clone())) {
+        (_, Some(author)) => format!("by {author}"),
+        (Some(_), None) => format!("{}  ·  {}", slot_file_name(addon), addon.size_label()),
+        (None, None) => unknown_detail(s, addon),
     };
     if card.is_variants() {
         let on = card.addons.iter().filter(|addon| addon.enabled).count();
@@ -2983,6 +3026,10 @@ pub fn poll(st: &mut State) -> bool {
             .iter()
             .map(|addon| (addon.slot, addon.size_bytes))
             .collect();
+        // A scan that named other managers' files changed the library, not the folder.
+        if crate::data::OTHER_MANAGER_NAMES.swap(false, std::sync::atomic::Ordering::Relaxed) {
+            st.installed.library_sig = None;
+        }
         if st.installed.library_sig.as_ref() != Some(&sig) {
             st.installed.library =
                 import::read_library(&import::library_path(&crate::data::data_dir()))

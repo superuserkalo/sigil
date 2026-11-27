@@ -400,10 +400,11 @@ pub fn list_row(s: &State, u: &Ui, idx: &super::index::Index, card: &Group) -> E
     let slot = addon.slot;
     let name = idx.meta(s, addon)
         .map(|meta| meta.name.clone())
-        .unwrap_or_else(|| "Unnamed mod".to_string());
-    let mut detail = match idx.meta(s, addon).and_then(|meta| meta.author.clone()) {
-        Some(author) => format!("by {author}"),
-        None => super::slot_file_name(addon),
+        .unwrap_or_else(|| super::unknown_name(s, addon));
+    let mut detail = match (idx.meta(s, addon), idx.meta(s, addon).and_then(|meta| meta.author.clone())) {
+        (_, Some(author)) => format!("by {author}"),
+        (Some(_), None) => super::slot_file_name(addon),
+        (None, None) => format!("{}  ·  {}", super::slot_file_name(addon), super::unknown_detail(s, addon)),
     };
     if card.is_variants() {
         detail = format!("{} files  ·  {detail}", card.addons.len());
